@@ -97,7 +97,9 @@ Composer Stop cancels only the chat's own game's builds (`gameBuilds.cancelGame`
 every copy's) and agent runs; another game's go on. It builds the Mac and the web (packaged by
 [`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell; Live opens a
 `game.mouseLook` game's page at `index.html?mouseLook`, and the shell then takes the pointer lock
-on a click, as Native does); the phones'
+on a click, as Native does; under Studio's page shim the shell holds the page's readiness from its
+boot's start, `__studioClock.hold()`, and declares it at the first lit frame, so no quiet settles
+its loading screen as booted); the phones'
 builders and settings ([`rust-build-mobile.ts`](../../src/main/rust-build-mobile.ts)), registered
 by `rustTargetBuilders`, build on a Mac (Android also on Linux);
 Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register once

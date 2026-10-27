@@ -510,6 +510,23 @@ describe("readiness", () => {
     });
     assert.equal(drewNothing.settle, "quiet-no-draw");
   });
+
+  it("never settles a page that holds its own readiness on quiet alone (B6: bodycam's loading screen read as booted at 7.5 s)", () => {
+    // Half the default budget: the Rust shell, still compiling its shaders with its loader up and
+    // nothing fetched or drawn, was settled `quiet-no-draw` here, every reload.
+    const loading = { elapsed: 7_600, quiet: true, complete: true, frames: 455, drawCalls: 0, readyMs: 15_000 };
+    assert.equal(readinessVerdict(loading).settle, "quiet-no-draw", "an unheld page, as before");
+    const held = readinessVerdict({ ...loading, held: true });
+    assert.equal(held.settle, null, "a held page waits for its own ready()");
+    assert.equal(held.timedOut, false);
+    const drew = readinessVerdict({ ...loading, drawCalls: 40, held: true });
+    assert.equal(drew.settle, null, "drawing a loading screen is no boot either");
+    assert.equal(
+      readinessVerdict({ ...loading, elapsed: 15_001, held: true }).timedOut,
+      true,
+      "the budget still ends it",
+    );
+  });
 });
 
 describe("the studio's own globals", () => {

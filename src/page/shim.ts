@@ -615,6 +615,11 @@ export function createClock(host: Foreign, rawOptions = {}) {
  * a 40 MB level or an 18 s shader compile used to blind the scout for the whole run instead of
  * costing it one note. A timed-out page keeps booting: a late quiet, or the game's own
  * `__studio.ready()`, still settles it ready.
+ *
+ * A `held` page said it declares its own readiness (`__studioClock.hold()`, the Rust web shell
+ * while it boots): no quiet settles it, only its `ready()` or the spent budget. Its loading screen
+ * draws and its shader compiles go quiet long before the game's first frame (B6: bodycam read as
+ * booted at half the budget, 7.5 s, with the loader still up).
  */
 export function readinessVerdict(
   input: {
@@ -624,10 +629,12 @@ export function readinessVerdict(
     frames?: unknown;
     drawCalls?: unknown;
     complete?: boolean;
+    held?: boolean;
   } = {},
 ) {
   const readyMs = Number.isFinite(Number(input.readyMs)) ? Number(input.readyMs) : DEFAULT_SHIM_OPTIONS.readyMs;
   const elapsed = Number(input.elapsed) || 0;
+  if (input.held === true) return { settle: null, ready: false, timedOut: elapsed > readyMs };
   const quiet = input.quiet === true;
   const frames = Number(input.frames) || 0;
   const drawCalls = input.drawCalls === null || input.drawCalls === undefined ? null : Number(input.drawCalls);
@@ -1310,6 +1317,8 @@ interface Readiness {
   state: { ready: boolean; phase: string; why: Foreign; at: number | null };
   /** The boot budget ran out with the page still booting. A note, never a refusal — see below. */
   timedOut: boolean;
+  /** The page declares its own readiness (`__studioClock.hold()`): only its `ready()` or the budget settles it. */
+  held: boolean;
   gestureSeen: boolean;
   resolve: (value: unknown) => void;
 }
@@ -1357,6 +1366,7 @@ function evaluateReady(r: Readiness, page: ReadyInputs) {
     frames: clock.frames(),
     drawCalls: drawCallsNow(),
     readyMs: options.readyMs,
+    held: r.held,
   });
   if (verdict.settle) return void settleReady(r, natives, clock, verdict.settle, true);
   if (verdict.timedOut) r.timedOut = true;
@@ -1716,6 +1726,13 @@ function installClockGlobal(parts: ClockParts) {
       seed: clock.seed,
       boot: () => bootReport(readiness, natives, clock, lock),
       ready: parts.ready,
+      // The page declares its own readiness from here (`readinessVerdict`'s `held`), or stops declaring it.
+      hold: () => {
+        readiness.held = true;
+      },
+      release: () => {
+        readiness.held = false;
+      },
       rafReal: (cb: Foreign) => realFrame(natives, cb),
       afterFrame: clock.afterFrame,
       pumpFrame: clock.pumpFrame,
@@ -1777,6 +1794,7 @@ export function installStudioShim(rawOptions: Foreign) {
     bootAt: natives.performanceNow(),
     state: { ready: false, phase: "boot", why: null, at: null },
     timedOut: false,
+    held: false,
     gestureSeen: false,
     resolve: () => {},
   };

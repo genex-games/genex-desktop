@@ -1032,3 +1032,64 @@ describe("the Rust web shell's input and a lost device", { skip: browserSkip() }
     }
   });
 });
+
+// ── the studio's wait for the page ──
+
+/** A stand-in for Studio's page shim's clock: records what the shell tells it about its readiness. */
+const RECORDING_CLOCK = `{
+  window.__readiness = [];
+  const note = (word) => (why) => window.__readiness.push(why ? word + ":" + why : word);
+  window.__studioClock = { hold: note("hold"), ready: note("ready"), release: note("release") };
+}`;
+
+/** What the shell told the clock by the time its boot ended (running, or on a card). */
+async function readinessOf(
+  browser: Browser,
+  module: string,
+): Promise<{ state: string; told: string[]; reason: string | null }> {
+  const root = await tmpDir("rust-shell-readiness-");
+  await writeFile(path.join(root, "index.html"), webShellPage(await readFile(SHELL, "utf8"), "Ready"));
+  await writeFile(path.join(root, "game.js"), module);
+  await writeFile(path.join(root, "assets.json"), JSON.stringify({ version: 1, files: [] }));
+  const served = await serve(root);
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(CORE_ADAPTER);
+    await page.addInitScript(RECORDING_CLOCK);
+    await page.goto(`${served.origin}/index.html?paused`);
+    const told = () => page.evaluate(() => (window as unknown as { __readiness: string[] }).__readiness);
+    await page.waitForFunction(() => (window as unknown as { __readiness: string[] }).__readiness.length > 1, null, {
+      timeout: BOOT_TIMEOUT_MS,
+    });
+    const status = await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.status);
+    return { state: status.state, told: await told(), reason: status.reason };
+  } finally {
+    await context.close();
+    served.close();
+  }
+}
+
+describe("the Rust web shell tells Studio when its game is on screen (B6)", { skip: browserSkip() }, () => {
+  let browser: Browser;
+  before(async () => {
+    browser = await chromium.launch({ headless: true });
+  });
+  after(async () => {
+    await browser?.close();
+  });
+
+  it("holds Studio's wait from the start of its boot and ends it at the first lit frame, never at the loading screen", async () => {
+    const booted = await readinessOf(browser, assetModule([]));
+    assert.equal(booted.state, ShellState.Running, JSON.stringify(booted));
+    assert.deepEqual(booted.told, ["hold", "ready:first-lit-frame"]);
+  });
+
+  it("lets Studio's wait go when the boot ends on a card", async () => {
+    const broken = BROKEN.find((row) => row.name === "studio_boot throws");
+    assert.ok(broken?.module);
+    const failed = await readinessOf(browser, broken.module);
+    assert.equal(failed.state, ShellState.Failed);
+    assert.deepEqual(failed.told, ["hold", "release"]);
+  });
+});
