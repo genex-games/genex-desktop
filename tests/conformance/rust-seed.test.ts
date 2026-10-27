@@ -10,7 +10,19 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
@@ -406,6 +418,29 @@ async function refusedSeed(
   assert.deepEqual(await Promise.all(watched.map(snapshot)), before, "no store changed");
 }
 
+describe("seedRustComponents: a component's own links", POSIX_ONLY, () => {
+  it("copies the relative links an archive made inside its component (llvm-mingw's shared include folders) as links", async () => {
+    const root = await realpath(await tmpDir("rust-seed-links-"));
+    const { store, lock } = await sourceStore(root);
+    const binaryen = componentFolder(store, ToolchainId.Binaryen, pinOf(ToolchainId.Binaryen));
+    await writeTree(binaryen, { "generic-w64-mingw32/include/windows.h": "// shared header\n" });
+    await mkdir(path.join(binaryen, "aarch64-w64-mingw32"));
+    await symlink("../generic-w64-mingw32/include", path.join(binaryen, "aarch64-w64-mingw32", "include"));
+    await symlink("wasm-opt", path.join(binaryen, "bin", "wasm-opt-alias"));
+    const to = path.join(root, "profile");
+    const seeded = await seedRustComponents({ from: store, to, lock, host: HOST });
+    assert.ok(seeded.copied.includes(ToolchainId.Binaryen));
+    const copy = componentFolder(to, ToolchainId.Binaryen, pinOf(ToolchainId.Binaryen));
+    const include = path.join(copy, "aarch64-w64-mingw32", "include");
+    assert.ok((await lstat(include)).isSymbolicLink(), "the folder link is copied as a link");
+    assert.equal(await readlink(include), "../generic-w64-mingw32/include");
+    assert.equal(await readFile(path.join(include, "windows.h"), "utf8"), "// shared header\n");
+    assert.equal(await readlink(path.join(copy, "bin", "wasm-opt-alias")), "wasm-opt");
+    const again = await seedRustComponents({ from: store, to, lock, host: HOST });
+    assert.ok(again.kept.includes(ToolchainId.Binaryen), "a copy holding the same links is kept");
+  });
+});
+
 describe("seedRustComponents: hostile-input table", POSIX_ONLY, () => {
   it("refuses overlapping stores: the same store, a target inside the source and a source inside the target", async () => {
     const root = await realpath(await tmpDir("rust-seed-hostile-"));
@@ -491,6 +526,24 @@ describe("seedRustComponents: hostile-input table", POSIX_ONLY, () => {
       { from: fresh.store, to: path.join(second, "profile"), lock: fresh.lock },
       SeedRefusal.NotRegular,
     );
+  });
+
+  it("refuses a link that climbs out of its component, an absolute link (even one naming a file inside) and a dangling one", async () => {
+    const cases: Array<[string, (folder: string) => Promise<void>]> = [
+      ["climbs out", (folder) => symlink("../../../outside/secret", path.join(folder, "bin", "escape"))],
+      ["absolute, inside", (folder) => symlink(path.join(folder, "bin", "wasm-opt"), path.join(folder, "bin", "abs"))],
+      ["dangling", (folder) => symlink("missing-file", path.join(folder, "bin", "dangling"))],
+    ];
+    for (const [name, plant] of cases) {
+      const root = await realpath(await tmpDir("rust-seed-hostile-"));
+      const { store, lock } = await sourceStore(root);
+      const outside = path.join(root, "outside");
+      await mkdir(outside, { recursive: true });
+      await writeFile(path.join(outside, "secret"), "not a toolchain file\n");
+      await plant(componentFolder(store, ToolchainId.Binaryen, pinOf(ToolchainId.Binaryen)));
+      await refusedSeed({ from: store, to: path.join(root, "profile"), lock }, SeedRefusal.NotRegular, [outside]);
+      assert.ok(true, name);
+    }
   });
 
   it("refuses a vendored set whose tree is not the digest its install recorded", async () => {
