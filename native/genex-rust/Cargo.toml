@@ -234,6 +234,7 @@ lto = "thin"
 # The @genex-ai/physics WebAssembly module (`scripts/physics-wasm.ts`): release with fat LTO, at
 # opt-level 3 for the authority host's speed. Measured on the worst-case heap (lane P2): opt-level
 # "z" is 739 KB gzipped against this 1.07 MB, but steps 3.7x slower; "s" is 920 KB and 2.4x slower.
+# `physics-wasm.ts` also builds it with simd128, 1.6-1.9x faster again with the same results.
 [profile.wasm-physics]
 inherits = "release"
 opt-level = 3

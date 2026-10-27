@@ -7,7 +7,10 @@
  *    profile (release, opt-level 3, fat LTO), through the cargo env helper
  *    (`scripts/toolchains/rust-env.ts`: the pinned toolchain, vendored crates, `--locked`), with
  *    `GENEX_RUST_REMAP_PATHS=1` so every source path in the module is relative (`vendor/…`,
- *    `genex-rust/…`) and its bytes do not depend on where the checkout or the toolchain lives.
+ *    `genex-rust/…`) and its bytes do not depend on where the checkout or the toolchain lives, and
+ *    `GENEX_RUST_WASM_SIMD=1`, so the module uses WebAssembly SIMD (simd128). The results are the
+ *    same bits as without it (every vector and the bench's stateHash agree); a step is 1.6-1.9x
+ *    faster. Node 24 and every current browser run SIMD (Safari since 16.4).
  * 2. The toolchain's wasm-bindgen (0.2.129) writes the ES module glue with `--target web` and its
  *    instance reset (the wrapper's new instance after a trap, CONTRACT.md §11.3); the package's
  *    `node.js` reads the `.wasm` beside it, so one glue serves Node 24 and browsers.
@@ -55,8 +58,8 @@ const JS_SOURCE = path.join(PHYSICS, "js");
 const BUILD_ROOT = path.join(REPO, ".studio-dev/build");
 const DIST = path.join(REPO, ".studio-dev/dist");
 const GZIP_LEVEL = 9;
-/** The env helper's opt-in to relative source paths (`rust-env.ts`). */
-const REMAP_PATHS_ENV = { GENEX_RUST_REMAP_PATHS: "1" };
+/** The env helper's opt-ins (`rust-env.ts`): relative source paths, and WebAssembly SIMD. */
+const BUILD_ENV = { GENEX_RUST_REMAP_PATHS: "1", GENEX_RUST_WASM_SIMD: "1" };
 /** `cargo metadata` of the whole workspace can pass the default 1 MiB of output. */
 const METADATA_MAX_BYTES = 256 * 1024 * 1024;
 const NOTICES_FILE = "THIRD-PARTY-NOTICES.md";
@@ -66,7 +69,7 @@ const LICENSE_FILE = "LICENSE";
  * crates use. Only Apache-2.0: an MIT text carries its own copyright line, which is no other crate's.
  */
 const CANONICAL_LICENCE_FILES: [string, RegExp][] = [["Apache-2.0", /^LICENSE-APACHE$/]];
-/** The features the pinned Rust's wasm32 target emits; wasm-opt must accept and keep them (web.sh's list). */
+/** The features the pinned Rust's wasm32 target emits (web.sh's list), and simd128 (`BUILD_ENV`); wasm-opt must accept and keep them. */
 const WASM_OPT_FEATURES = [
   "--enable-bulk-memory",
   "--enable-nontrapping-float-to-int",
@@ -74,6 +77,7 @@ const WASM_OPT_FEATURES = [
   "--enable-mutable-globals",
   "--enable-reference-types",
   "--enable-multivalue",
+  "--enable-simd",
 ];
 /** What the package carries from `js/`; `testing.js` joins it in the test build only. */
 const PACKAGE_FILES = ["package.json", "index.js", "node.js", "core.js", "index.d.ts", "README.md"];
@@ -131,7 +135,7 @@ function cargoBuild(test: boolean): string {
       "--locked",
       ...features,
     ],
-    REMAP_PATHS_ENV,
+    BUILD_ENV,
   );
   const wasm = path.join(targetDir(), WASM_TARGET, CARGO_PROFILE, `${GLUE_NAME}.wasm`);
   if (!existsSync(wasm)) throw new Error(`physics-wasm: cargo produced no ${wasm}`);

@@ -564,6 +564,24 @@ describe("rust-env.ts runs cargo with the pinned toolchain only", POSIX_ONLY, ()
     }
   });
 
+  it("adds its own simd128 flag only on GENEX_RUST_WASM_SIMD=1, beside the remaps and never a caller's", async () => {
+    const f = await fakeToolchain();
+    const callerFlags = { RUSTFLAGS: "-Clinker=/bin/false", CARGO_ENCODED_RUSTFLAGS: "-Clinker=/bin/false" };
+    const encoded = async (extra: Record<string, string>) => {
+      const result = await runEnv(["--", "cargo", "build", "--offline"], { ...f.env, ...callerFlags, ...extra });
+      assert.equal(result.code, 0, result.stderr);
+      return ((JSON.parse(result.stdout) as FakeCargoOutput).env.CARGO_ENCODED_RUSTFLAGS ?? "").split("\x1f");
+    };
+    assert.deepEqual(await encoded({ GENEX_RUST_WASM_SIMD: "1" }), ["-Ctarget-feature=+simd128"]);
+    assert.deepEqual(await encoded({ GENEX_RUST_WASM_SIMD: "yes" }), [""], "only 1 opts in");
+    const both = await encoded({ GENEX_RUST_WASM_SIMD: "1", GENEX_RUST_REMAP_PATHS: "1" });
+    assert.equal(both.at(-1), "-Ctarget-feature=+simd128");
+    assert.ok(
+      both.slice(0, -1).every((flag) => flag.startsWith("--remap-path-prefix=")),
+      `remaps, then simd128: ${both.join(" ")}`,
+    );
+  });
+
   it("builds the genex workspace by default, also without the leading --", async () => {
     const f = await fakeToolchain();
     const { GENEX_RUST_WORKSPACE: _workspace, ...env } = f.env;

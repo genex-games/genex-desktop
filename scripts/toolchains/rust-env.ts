@@ -32,6 +32,8 @@
  *   set `CARGO_ENCODED_RUSTFLAGS` to `--remap-path-prefix` flags of its own and nothing else: the
  *   repository, the workspace, the vendored `CARGO_HOME` and crate tree become `genex`,
  *   `genex-rust`, `cargo-home` and `vendor`, so no absolute path of this machine lands in the binary.
+ * - `GENEX_RUST_WASM_SIMD=1` adds the helper's own `-Ctarget-feature=+simd128` to those flags (a
+ *   wasm32 build only: the flag reaches the `--target` crates, never a build script or the host).
  * - The cross-compiler env (Android NDK, llvm-mingw, iOS deployment target, JAVA_HOME) is set for
  *   whatever is installed. `CARGO_TARGET_DIR` defaults to `.studio-dev/cargo-target`.
  *
@@ -141,6 +143,9 @@ const FLAG_VARIABLES = [
 /** The caller's opt-in to remapping the build's absolute paths (see the header). */
 const REMAP_PATHS_ENV = "GENEX_RUST_REMAP_PATHS";
 const REMAP_PATHS_ON = "1";
+/** The caller's opt-in to WebAssembly SIMD (see the header); the flag is the helper's, never the caller's. */
+const WASM_SIMD_ENV = "GENEX_RUST_WASM_SIMD";
+const WASM_SIMD_FLAG = "-Ctarget-feature=+simd128";
 /** What `CARGO_ENCODED_RUSTFLAGS` separates its flags with. */
 const ENCODED_FLAG_SEPARATOR = "\x1f";
 /** The vendored source's folder as the toolchain's cargo config names it. */
@@ -485,9 +490,11 @@ export function rustEnvironment(layout: RustToolchainLayout, env: NodeJS.Process
   }
   // Empty, not unset: an empty wrapper variable also overrides `build.rustc-wrapper` in a config.
   for (const name of WRAPPER_VARIABLES) out[name] = "";
-  if (env[REMAP_PATHS_ENV] === REMAP_PATHS_ON) {
-    out.CARGO_ENCODED_RUSTFLAGS = remapPathFlags(layout).join(ENCODED_FLAG_SEPARATOR);
-  }
+  const flags = [
+    ...(env[REMAP_PATHS_ENV] === REMAP_PATHS_ON ? remapPathFlags(layout) : []),
+    ...(env[WASM_SIMD_ENV] === REMAP_PATHS_ON ? [WASM_SIMD_FLAG] : []),
+  ];
+  if (flags.length > 0) out.CARGO_ENCODED_RUSTFLAGS = flags.join(ENCODED_FLAG_SEPARATOR);
   return {
     ...out,
     PATH: [bin, ...extras, ...filteredPath(env)].join(path.delimiter),
