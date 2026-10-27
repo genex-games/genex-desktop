@@ -20,7 +20,8 @@ export interface Vector {
   name: string;
   world: Physics.WorldDesc;
   static: Physics.StaticWorld;
-  mode: "each" | "atomic";
+  /** Absent means "each" (§16). */
+  mode?: "each" | "atomic";
   steps: VectorStep[];
 }
 
@@ -32,10 +33,24 @@ export interface VectorOutcome {
   checks: number;
   /** The world's last stateHash ("" when no world ran). */
   stateHash: string;
+  /** The first step with a mismatch: its full `bodies()` dump, and the first body differing from the reference dump, if one was given. */
+  firstMismatch?: { step: number; bodies: Physics.BodyState[]; differingBody?: string };
 }
+
+/** How to run a vector. */
+export interface RunOptions {
+  /** Reference `bodies()` dumps by step index (the native runner's `GENEX_PHYSICS_WRITE_BODIES` file). */
+  reference?: Record<number, Physics.BodyState[]>;
+}
+
+/** The key of the first body, in key order, that differs between two dumps (numbers as f32); undefined when they match. */
+export declare function firstDifferingBody(
+  ours: Physics.BodyState[],
+  reference: Physics.BodyState[],
+): string | undefined;
 
 /** The build a vector must be pinned on: a buildId without its `+<target>` (§2, §16). */
 export declare function buildWithoutTarget(buildId: string): string;
 
 /** Runs one vector on the package's exports; never throws on a vector. */
-export declare function runVector(physics: typeof Physics, vector: Vector): VectorOutcome;
+export declare function runVector(physics: typeof Physics, vector: Vector, options?: RunOptions): VectorOutcome;

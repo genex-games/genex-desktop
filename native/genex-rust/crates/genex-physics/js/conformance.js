@@ -6,13 +6,21 @@
 // How it reads §16's open details is the native runner's (see `../vectors/README.md`): `repeat`
 // defaults to 1 and may be 0; `events` and `escaped` are the last step's; a number under `events`
 // is a count; `refused` is `[[index, code], …]` (atomic: the failing index, or none); a query
-// answer is `{ hit }`, `{ keys }` or `{ error }`; numbers compare as f32.
+// answer is `{ hit }`, `{ keys }` or `{ error }`; numbers compare as f32; an absent `mode` is
+// "each" (§16); in "each" mode a failure of the whole batch is one `[null, code]`.
+//
+// At the first step with a mismatch the outcome carries that step's full `bodies()` dump, and, given
+// a reference dump of that step (`options.reference`, e.g. the native runner's
+// `GENEX_PHYSICS_WRITE_BODIES` file), the first body that differs from it (§16).
 
 /** The vector format's contract (§16). */
 export const VECTOR_CONTRACT = "1.0";
 
 /** The modes a vector applies its commands in (§7.1). */
 const Mode = Object.freeze({ Each: "each", Atomic: "atomic" });
+
+/** The mode of a vector that names none (§16). */
+const DEFAULT_MODE = Mode.Each;
 
 /** The fields an `expect` may pin. */
 const EXPECT_FIELDS = new Set(["stateHash", "physicsHash", "refused", "queries", "escaped", "events"]);
@@ -57,8 +65,9 @@ function refusal(vector, ours) {
   }
   if (!isObject(vector.world)) return "format: `world` is a WorldDesc object";
   if (!isObject(vector.static)) return "format: `static` is a StaticWorld object";
-  if (!Object.values(Mode).includes(vector.mode))
+  if (vector.mode !== undefined && !Object.values(Mode).includes(vector.mode)) {
     return `format: \`mode\` is "each" or "atomic", not ${JSON.stringify(vector.mode)}`;
+  }
   if (!Array.isArray(vector.steps) || !vector.steps.every(isObject)) return "format: `steps` is a list of objects";
   return undefined;
 }
@@ -81,6 +90,7 @@ function refusals(world, commands, atomic) {
     return result.ok ? [] : [[result.index ?? null, result.code]];
   }
   const results = world.apply(commands, Mode.Each);
+  if (!Array.isArray(results)) return [[null, results.code]];
   return results.flatMap((result, index) => (result.ok ? [] : [[index, result.code]]));
 }
 
@@ -140,24 +150,57 @@ function compare(expected, actual, index, state) {
 }
 
 /** Runs one entry on `state.world`: restore, apply, queries, steps, then its expectations. */
-function runEntry(physics, vector, state, entry, index) {
+function runEntry(physics, vector, state, entry, index, options) {
   const restoreProblem = entry.snapshotRestore ? snapshotRestore(physics, vector, state) : undefined;
   if (restoreProblem) return [`step ${index}: ${restoreProblem}`];
-  const refused = entry.apply ? refusals(state.world, entry.apply, vector.mode === Mode.Atomic) : [];
+  const refused = entry.apply ? refusals(state.world, entry.apply, (vector.mode ?? DEFAULT_MODE) === Mode.Atomic) : [];
   const queries = (entry.query ?? []).map((query) => answer(state.world.query(query)));
   const stepped = stepRepeatedly(state.world, entry.repeat ?? 1);
   if (stepped.problem) return [`step ${index}: ${stepped.problem}`];
   const expected = isObject(entry.expect) ? entry.expect : {};
-  return compare(expected, observed(state.world, refused, queries, stepped.last, expected), index, state);
+  const problems = compare(expected, observed(state.world, refused, queries, stepped.last, expected), index, state);
+  if (problems.length > 0 && state.firstMismatch === undefined) {
+    problems.push(...firstMismatch(state, index, options));
+  }
+  return problems;
+}
+
+/** Records the first mismatching step's dump and, against a reference dump, its first differing body. */
+function firstMismatch(state, index, options) {
+  const bodies = state.world.bodies();
+  state.firstMismatch = { step: index, bodies };
+  const reference = options.reference?.[index];
+  if (!Array.isArray(reference)) return [];
+  const key = firstDifferingBody(bodies, reference);
+  state.firstMismatch.differingBody = key;
+  if (key === undefined) return [`step ${index}: every body matches the reference dump`];
+  const ours = bodies.find((body) => body.key === key) ?? null;
+  const theirs = reference.find((body) => body.key === key) ?? null;
+  return [
+    `step ${index}: first differing body: ${JSON.stringify(key)}: ${JSON.stringify(ours)}, reference ${JSON.stringify(theirs)}`,
+  ];
+}
+
+/**
+ * The key of the first body, in key order, that differs between two `bodies()` dumps (one side
+ * lacking it counts), comparing numbers as f32; `undefined` when they match.
+ */
+export function firstDifferingBody(ours, reference) {
+  const byKey = (dump) => new Map(dump.map((body) => [body.key, asF32(body)]));
+  const left = byKey(ours);
+  const right = byKey(reference);
+  const keys = [...new Set([...left.keys(), ...right.keys()])].sort();
+  return keys.find((key) => !(left.has(key) && right.has(key) && same(left.get(key), right.get(key))));
 }
 
 /**
  * Runs one §16 vector on `physics` (the package's exports, after `init()` in a browser) and
- * answers `{ problems, checks, stateHash }`: every pinned value that differs, how many were
- * compared, and the world's last stateHash. A vector pinned on another build or contract, or
- * malformed, is one problem and opens no world. Never throws on a vector.
+ * answers `{ problems, checks, stateHash, firstMismatch? }`: every pinned value that differs, how
+ * many were compared, the world's last stateHash, and the first mismatching step's dump (see the
+ * header). A vector pinned on another build or contract, or malformed, is one problem and opens no
+ * world. Never throws on a vector.
  */
-export function runVector(physics, vector) {
+export function runVector(physics, vector, options = {}) {
   const reason = refusal(vector, buildWithoutTarget(physics.buildId()));
   if (reason) return { problems: [reason], checks: 0, stateHash: "" };
   const opened = openWorld(physics, vector);
@@ -166,9 +209,11 @@ export function runVector(physics, vector) {
   const problems = [];
   try {
     for (const [index, entry] of vector.steps.entries()) {
-      problems.push(...runEntry(physics, vector, state, entry, index));
+      problems.push(...runEntry(physics, vector, state, entry, index, options));
     }
-    return { problems, checks: state.checks, stateHash: state.world.stateHash() };
+    const outcome = { problems, checks: state.checks, stateHash: state.world.stateHash() };
+    if (state.firstMismatch !== undefined) outcome.firstMismatch = state.firstMismatch;
+    return outcome;
   } finally {
     state.world.free();
   }

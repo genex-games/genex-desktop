@@ -6,8 +6,15 @@
 //! `step()` `repeat` times (default 1; 0 runs no step, so a hostile entry can expect the hash it
 //! left unchanged), then checks `expect` after the last step: `stateHash`, `events` (a count or the
 //! full list, of the last step), `refused` (`[[index, code], …]` from `apply`), `queries` (each
-//! answer in the binding's form, `{ hit }` or `{ keys }`), `escaped` and `physicsHash`. The first
-//! mismatch names the step and the field, and prints the world's full `bodies()` dump.
+//! answer in the binding's form, `{ hit }` or `{ keys }`), `escaped` and `physicsHash`. A file with no
+//! `mode` runs in `"each"` (§16). The first mismatch names the step and the field, then the first body
+//! that differs from a reference dump when one is given (`GENEX_PHYSICS_REFERENCE_BODIES`, a folder of
+//! `<name>.bodies.json` files as `GENEX_PHYSICS_WRITE_BODIES` writes them, or the JS runner records),
+//! then the world's full `bodies()` dump, in the binding's form.
+//!
+//! It also writes and holds the cross-target snapshot fixture (§9.4,
+//! `tests/fixtures/cross-target-snapshot.json`): this build's snapshot after a pinned vector's steps
+//! and again after more steps, which the package's tests restore and rewrite in wasm32.
 //!
 //! The pins are this build's. `GENEX_PHYSICS_WRITE_VECTORS=1 cargo test --test vectors -- --ignored
 //! write_vectors` rewrites them from the scenes below; a rewritten pin is a determinism change to
@@ -16,7 +23,7 @@
 use std::path::PathBuf;
 
 use genex_physics::{
-    BodyFilter, PhysicsError, PhysicsEvent, PhysicsFailure, QueryAnswer, StaticWorld, StepResult, World, WorldDesc,
+    BodyFilter, BodyState, PhysicsError, PhysicsEvent, PhysicsFailure, QueryAnswer, StaticWorld, StepResult, World, WorldDesc,
     build_id, build_id_without_target,
 };
 use serde_json::{Map, Value, json};
@@ -31,6 +38,14 @@ const VECTOR_CONTRACT: &str = "1.0";
 const UNREACHABLE_BY_VECTOR_OPERATIONS: [PhysicsError; 5] =
     [PhysicsError::LimitStatic, PhysicsError::BadSnapshot, PhysicsError::BuildMismatch, PhysicsError::ContractMismatch, PhysicsError::Internal];
 
+/// The vector the cross-target snapshot fixture is taken from, and how many steps it runs after.
+const CROSS_TARGET_VECTOR: &str = "spread-kicked-props.json";
+const CROSS_TARGET_STEPS_AFTER: u32 = 30;
+/// A folder to write every pinned vector's per-step `bodies()` dumps into (`write_bodies`).
+const WRITE_BODIES_ENV: &str = "GENEX_PHYSICS_WRITE_BODIES";
+/// A folder of reference dumps a mismatch is compared against.
+const REFERENCE_BODIES_ENV: &str = "GENEX_PHYSICS_REFERENCE_BODIES";
+
 fn vectors_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vectors")
 }
@@ -41,6 +56,15 @@ fn vector_files() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     files.sort();
     files
+}
+
+fn cross_target_fixture_file() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cross-target-snapshot.json")
+}
+
+/// A vector's file name without `.json`, its dump file's stem.
+fn vector_name(vector: &Value) -> String {
+    vector["name"].as_str().unwrap_or("unnamed").to_string()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -115,6 +139,56 @@ fn answer_json(answer: Result<QueryAnswer, PhysicsFailure>) -> Value {
     }
 }
 
+/// One body in the binding's `BodyState` form (`index.d.ts`), `kind` only when it has one.
+fn body_json(state: &BodyState) -> Value {
+    let mut out = Map::new();
+    out.insert("key".into(), json!(state.key));
+    if let Some(kind) = &state.kind {
+        out.insert("kind".into(), json!(kind));
+    }
+    out.insert("type".into(), json!(state.body_type.name()));
+    out.insert("pose".into(), json!({ "p": state.pose.p, "q": state.pose.q }));
+    out.insert("linvel".into(), json!(state.linvel));
+    out.insert("angvel".into(), json!(state.angvel));
+    out.insert("sleeping".into(), json!(state.sleeping));
+    Value::Object(out)
+}
+
+/// The world's full `bodies()` dump in the binding's form.
+fn bodies_json(w: &World) -> Value {
+    Value::Array(w.bodies(&BodyFilter::default()).iter().map(body_json).collect())
+}
+
+/// The key of the first body, in key order, that differs between two dumps (a body one side lacks
+/// counts), numbers compared as f32; `None` when they match. The JS runner's `firstDifferingBody`.
+fn first_differing_body(ours: &Value, reference: &Value) -> Option<String> {
+    let by_key = |dump: &Value| -> std::collections::BTreeMap<String, Value> {
+        let bodies = dump.as_array().cloned().unwrap_or_default();
+        bodies.iter().map(|body| (body["key"].as_str().unwrap_or_default().to_string(), as_f32(body))).collect()
+    };
+    let (left, right) = (by_key(ours), by_key(reference));
+    let mut keys: Vec<&String> = left.keys().chain(right.keys()).collect();
+    keys.sort();
+    keys.dedup();
+    keys.into_iter().find(|key| left.get(*key) != right.get(*key)).cloned()
+}
+
+/// The first-differing-body part of a mismatch report, against `reference`'s dump of step `index`.
+fn against_reference(dump: &Value, reference: Option<&Value>, index: usize) -> String {
+    let Some(theirs) = reference.and_then(|r| r.get(index.to_string())) else { return "no reference dump".into() };
+    match first_differing_body(dump, theirs) {
+        Some(key) => format!("first differing body: {key:?}"),
+        None => "every body matches the reference dump".into(),
+    }
+}
+
+/// The reference dumps of `vector` from `GENEX_PHYSICS_REFERENCE_BODIES`, if that folder has them.
+fn reference_bodies(vector: &Value) -> Option<Value> {
+    let dir = std::env::var_os(REFERENCE_BODIES_ENV)?;
+    let text = std::fs::read_to_string(PathBuf::from(dir).join(format!("{}.bodies.json", vector_name(vector)))).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 fn static_world(value: &Value) -> StaticWorld {
     let rows = |key: &str| -> Vec<Vec<f64>> {
         let rows = value.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
@@ -186,32 +260,83 @@ fn actual(w: &World, observed: &Observed, field: &str, expected: &Value) -> Valu
     }
 }
 
+/// What a run gives besides its verdict: the recorded vector and each expecting step's dump.
+struct Run {
+    recorded: Value,
+    bodies: Map<String, Value>,
+}
+
 /// Runs `vector`, which must be pinned on this build (`build`, the buildId without its target, §2).
 /// With `record`, every expected value is replaced by what this build gives and
 /// the recorded vector is returned; without, the first mismatch is an error naming its step.
 fn run_vector(vector: &Value, record: bool) -> Result<Value, String> {
+    run_vector_against(vector, record, reference_bodies(vector).as_ref()).map(|run| run.recorded)
+}
+
+/// `run_vector`, comparing a mismatching step's dump with `reference` (step index → dump).
+fn run_vector_against(vector: &Value, record: bool, reference: Option<&Value>) -> Result<Run, String> {
     let ours = build_id_without_target();
     if !record && vector.get("build").and_then(Value::as_str) != Some(ours.as_str()) {
         return Err(format!("build: the vector is pinned on {}, this core is {ours}; vectors are per build (§16)", vector["build"]));
     }
     let atomic = vector.get("mode").and_then(Value::as_str) == Some("atomic");
     let mut w = open_world(vector)?;
-    let mut recorded = vector.clone();
+    let mut run = Run { recorded: vector.clone(), bodies: Map::new() };
     let entries = vector["steps"].as_array().ok_or("no steps")?;
     for (index, entry) in entries.iter().enumerate() {
         let observed = run_entry(&mut w, vector, entry, atomic).map_err(|e| format!("step {index}: {e}"))?;
         let Some(expect) = entry.get("expect").and_then(Value::as_object) else { continue };
+        let dump = bodies_json(&w);
         for (field, expected) in expect {
             let got = actual(&w, &observed, field, expected);
             if record {
-                recorded["steps"][index]["expect"][field] = got;
+                run.recorded["steps"][index]["expect"][field] = got;
             } else if as_f32(&got) != as_f32(expected) {
-                let dump = w.bodies(&BodyFilter::default());
-                return Err(format!("step {index}: {field} expected {expected} got {got}; bodies: {dump:?}"));
+                let first = against_reference(&dump, reference, index);
+                return Err(format!("step {index}: {field} expected {expected} got {got}; {first}; bodies: {dump}"));
             }
         }
+        run.bodies.insert(index.to_string(), dump);
     }
-    Ok(recorded)
+    Ok(run)
+}
+
+/// Lowercase hex of `bytes`, as the fixture holds snapshots.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn from_hex(text: &str) -> Vec<u8> {
+    let digits = text.as_bytes().chunks(2).map(|pair| std::str::from_utf8(pair).ok().and_then(|p| u8::from_str_radix(p, 16).ok()));
+    digits.collect::<Option<Vec<u8>>>().expect("hex")
+}
+
+/// The cross-target snapshot fixture (§9.4): this build's snapshot after every step of
+/// `CROSS_TARGET_VECTOR`, its stateHash, then the snapshot and hash after `CROSS_TARGET_STEPS_AFTER`
+/// more steps.
+fn cross_target_fixture() -> Value {
+    let text = std::fs::read_to_string(vectors_dir().join(CROSS_TARGET_VECTOR)).expect("the vector");
+    let vector: Value = serde_json::from_str(&text).expect("JSON");
+    let atomic = vector.get("mode").and_then(Value::as_str) == Some("atomic");
+    let mut w = open_world(&vector).expect("opens");
+    for entry in vector["steps"].as_array().expect("steps") {
+        run_entry(&mut w, &vector, entry, atomic).expect("runs");
+    }
+    let snapshot = w.snapshot().expect("snapshots");
+    let state_hash = w.state_hash_hex();
+    for _ in 0..CROSS_TARGET_STEPS_AFTER {
+        w.step().expect("steps");
+    }
+    let after = w.snapshot().expect("snapshots");
+    json!({
+        "build": build_id_without_target(),
+        "vector": CROSS_TARGET_VECTOR,
+        "snapshot": hex(&snapshot),
+        "stateHash": state_hash,
+        "stepsAfter": CROSS_TARGET_STEPS_AFTER,
+        "snapshotAfter": hex(&after),
+        "stateHashAfter": w.state_hash_hex(),
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -637,6 +762,76 @@ fn write_vectors() {
         let text = serde_json::to_string_pretty(&recorded).expect("JSON") + "\n";
         std::fs::write(file_of(&scene), text).expect("writes");
     }
+    let fixture = serde_json::to_string_pretty(&cross_target_fixture()).expect("JSON") + "\n";
+    std::fs::create_dir_all(cross_target_fixture_file().parent().expect("a folder")).expect("the fixtures folder");
+    std::fs::write(cross_target_fixture_file(), fixture).expect("writes");
+}
+
+#[test]
+#[ignore = "writes dumps: GENEX_PHYSICS_WRITE_BODIES=<dir> cargo test --test vectors -- --ignored write_bodies"]
+fn write_bodies() {
+    let Some(dir) = std::env::var_os(WRITE_BODIES_ENV) else { return };
+    std::fs::create_dir_all(&dir).expect("the dump folder");
+    for path in vector_files() {
+        let vector: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("JSON");
+        let run = run_vector_against(&vector, false, None).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+        let text = serde_json::to_string(&Value::Object(run.bodies)).expect("JSON") + "\n";
+        std::fs::write(PathBuf::from(&dir).join(format!("{}.bodies.json", vector_name(&vector))), text).expect("writes");
+    }
+}
+
+#[test]
+fn the_cross_target_snapshot_fixture_is_this_builds_and_restores() {
+    let pinned: Value = serde_json::from_str(&std::fs::read_to_string(cross_target_fixture_file()).expect("pinned")).expect("JSON");
+    assert_eq!(pinned, cross_target_fixture(), "rewrite with GENEX_PHYSICS_WRITE_VECTORS=1 ... write_vectors");
+    let vector: Value = serde_json::from_str(&std::fs::read_to_string(vectors_dir().join(CROSS_TARGET_VECTOR)).expect("reads")).expect("JSON");
+    let mut w = open_world(&vector).expect("opens");
+    w.restore(&from_hex(pinned["snapshot"].as_str().expect("hex"))).expect("restores");
+    assert_eq!(json!(w.state_hash_hex()), pinned["stateHash"]);
+    assert_eq!(hex(&w.snapshot().expect("snapshots")), pinned["snapshot"].as_str().expect("hex"), "a restored world writes the same bytes");
+    let mut fresh = open_world(&vector).expect("opens");
+    fresh.restore(&with_writer(&from_hex(pinned["snapshot"].as_str().expect("hex")), "wasm32")).expect("restores a wasm32 header");
+    assert_eq!(json!(fresh.state_hash_hex()), pinned["stateHash"], "wasm32's bytes (same state, its own header) restore here");
+}
+
+/// Where a snapshot's buildId length sits: after the magic and the contract version (§9.4 header).
+const SNAPSHOT_BUILD_ID_AT: usize = 8;
+
+/// `bytes` with its header's buildId naming `target` as the writer: what that target's build writes
+/// for the same state (the package's tests hold wasm32 to native's state bytes).
+fn with_writer(bytes: &[u8], target: &str) -> Vec<u8> {
+    let length = usize::from(u16::from_le_bytes([bytes[SNAPSHOT_BUILD_ID_AT], bytes[SNAPSHOT_BUILD_ID_AT + 1]]));
+    let start = SNAPSHOT_BUILD_ID_AT + 2;
+    let build = format!("{}+{target}", build_id_without_target());
+    let mut out = bytes[..SNAPSHOT_BUILD_ID_AT].to_vec();
+    out.extend_from_slice(&u16::try_from(build.len()).expect("short").to_le_bytes());
+    out.extend_from_slice(build.as_bytes());
+    out.extend_from_slice(&bytes[start + length..]);
+    out
+}
+
+#[test]
+fn a_vector_without_a_mode_runs_in_each_mode() {
+    let mut vector = hostile("each");
+    let pinned: Value = serde_json::from_str(&std::fs::read_to_string(file_of(&vector)).expect("pinned")).expect("JSON");
+    vector = pinned;
+    vector.as_object_mut().expect("an object").remove("mode");
+    run_vector(&vector, false).expect("the each pins hold");
+}
+
+#[test]
+fn a_mismatch_names_the_first_body_differing_from_a_reference_dump() {
+    let pinned: Value = serde_json::from_str(&std::fs::read_to_string(file_of(&key_at_64_bytes())).expect("pinned")).expect("JSON");
+    let run = run_vector_against(&pinned, false, None).expect("passes");
+    let mut reference = Value::Object(run.bodies);
+    let key = reference["0"][0]["key"].as_str().expect("a body").to_string();
+    reference["0"][0]["linvel"][0] = json!(123.0);
+    let mut vector = pinned;
+    vector["steps"][0]["expect"] = json!({ "stateHash": "0000000000000000" });
+    let Err(error) = run_vector_against(&vector, false, Some(&reference)) else { panic!("a wrong hash") };
+    assert!(error.contains(&format!("first differing body: {key:?}")), "{error}");
+    assert!(first_differing_body(&reference["0"], &reference["0"]).is_none());
+    assert_eq!(first_differing_body(&json!([]), &reference["0"]), Some(key));
 }
 
 #[test]

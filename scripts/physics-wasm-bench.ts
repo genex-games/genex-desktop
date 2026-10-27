@@ -196,7 +196,8 @@ function run(physics: typeof Physics, dt: number, substeps: number, correct: boo
   const [steps, ticks]: number[][] = [[], []];
   for (let tick = 0; tick < warmup + measured; tick += 1) {
     const start = performance.now();
-    const refused = w.apply(commands(tick, ticksPerSecond), "each").find((outcome) => !outcome.ok);
+    const applied = w.apply(commands(tick, ticksPerSecond), "each");
+    const refused = Array.isArray(applied) ? applied.find((outcome) => !outcome.ok) : applied;
     if (refused) throw new Error(`command: ${JSON.stringify(refused)}`);
     if (correct) corrections(w);
     queries(w, tick);

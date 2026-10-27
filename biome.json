@@ -14,6 +14,8 @@
       "!native/genex-rust/crates/genex-nav/tests/fixtures/recast",
       "!native/genex-rust/crates/genex-net/tests/fixtures",
       "!native/genex-rust/examples/*/tests/goldens",
+      "!native/genex-rust/crates/genex-physics/vectors/*.json",
+      "!native/genex-rust/crates/genex-physics/tests/fixtures",
       "!research",
       "!archive",
       "!design",

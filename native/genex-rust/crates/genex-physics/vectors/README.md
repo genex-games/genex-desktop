@@ -19,11 +19,19 @@ A new core version, backend version or feature set is a new `build`: the vectors
 published with that release. A rewritten hash on an unchanged `build` is a determinism change, explained in
 its commit.
 
+**Exception until the first publish:** the core shares the workspace version, `0.1.0`, which no
+published package has yet carried, and it stays `0.1.0` while results still move (the exact integer
+hull moved the y pin on this same `build`). So a snapshot or vector written by an earlier `0.1.0` build
+on this branch may pass the build check and replay differently. The first published release freezes its
+`build`; from then on any change that moves a pin bumps the core's version.
+
 ## Format
 
 The format is §16's. The runner (`tests/vectors.rs`, and its JS twin `../js/conformance.js` for the
 `@genex-ai/physics` package) reads it as follows where §16 leaves a detail open:
 
+- No `mode` means `"each"`. In `"each"` mode a failure of the whole batch (not a list, over the
+  package's input budget, `internal`) is one refusal `[null, code]`.
 - `repeat: 0` runs no step, so a hostile entry can expect the hash its refusal left unchanged.
 - `events` is the last step's list (or its length when the pin is a number), in the binding's form:
   `{ kind, a, b, ca, cb, ka?, kb?, impulse, point, normal }` for contacts, `{ kind, sensor, sc, other, oc,
@@ -33,7 +41,25 @@ The format is §16's. The runner (`tests/vectors.rs`, and its JS twin `../js/con
 - `refused` is `[[index, code], …]`; in `"atomic"` mode it has at most one pair, the first failing index.
 - Numbers are compared as f32 (§16: every number a vector writes is f32-exact).
 
-The first mismatch names the step entry and the field, then prints the world's full `bodies()` dump.
+The first mismatch names the step entry and the field, then the first body (in key order) that differs
+from a reference dump of that step, then the world's full `bodies()` dump in the package's `BodyState`
+form. Reference dumps are what another run recorded: `GENEX_PHYSICS_WRITE_BODIES=<dir>` writes this
+build's (`<name>.bodies.json`, step index to dump; `cargo test --test vectors -- --ignored
+write_bodies`), the native runner reads them from `GENEX_PHYSICS_REFERENCE_BODIES=<dir>`, and the JS
+runner takes them as `runVector(physics, vector, { reference })` and reports `firstMismatch`. Without a
+reference the report says so and the dump follows.
+
+The files are generator output held byte-equal to it, so `biome.json` leaves `vectors/*.json` (and the
+snapshot fixture below) out: a formatter must never rewrite them.
+
+## Cross-target snapshot fixture
+
+`../tests/fixtures/cross-target-snapshot.json` is this build's native snapshot after every step of
+`spread-kicked-props.json`, its stateHash, and the snapshot and stateHash 30 steps later.
+`write_vectors` rewrites it and a test holds it to this build. The package's tests restore it in wasm32
+(same stateHash, then the same hash 30 steps on) and check wasm32 writes the same state bytes (only the
+header's buildId names the writer's target); the native test restores those bytes under a `+wasm32`
+header. Together that is §9.4's restore on any target, both ways.
 
 ## Scenes
 

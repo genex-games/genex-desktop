@@ -22,6 +22,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type * as Physics from "../../native/genex-rust/crates/genex-physics/js/index.d.ts";
 import {
   buildWithoutTarget,
+  firstDifferingBody,
   runVector,
   type Vector,
   type VectorOutcome,
@@ -98,6 +99,23 @@ describe("@genex-ai/physics: every conformance vector in wasm32 matches native (
 });
 
 describe("the conformance runner reports what differs and refuses what it cannot judge", () => {
+  it("names the first body, in key order, that differs between two bodies() dumps", () => {
+    const body = (key: string, x: number): Physics.BodyState => ({
+      key,
+      type: "dynamic",
+      pose: { p: [x, 0, 0], q: [0, 0, 0, 1] },
+      linvel: [0, 0, 0],
+      angvel: [0, 0, 0],
+      sleeping: false,
+    });
+    const ours = [body("a", 1), body("b", 2), body("c", 3)];
+    assert.equal(firstDifferingBody(ours, structuredClone(ours)), undefined);
+    assert.equal(firstDifferingBody(ours, [body("a", 1), body("b", 2.5), body("c", 4)]), "b");
+    assert.equal(firstDifferingBody(ours, [body("a", 1), body("c", 3)]), "b", "a body only one side has");
+    assert.equal(firstDifferingBody([body("b", 2)], [body("a", 1), body("b", 2)]), "a");
+    assert.equal(firstDifferingBody(ours, [body("a", Math.fround(1)), body("b", 2), body("c", 3)]), undefined);
+  });
+
   it("strips the target from a buildId, and leaves a buildId without one as it is", () => {
     assert.equal(buildWithoutTarget(WASM_BUILD), PINNED_BUILD);
     assert.equal(buildWithoutTarget(`${PINNED_BUILD}+aarch64-macos`), PINNED_BUILD);
@@ -182,6 +200,47 @@ describe("the conformance runner on the real package catches a changed pin", gat
     assert.ok(
       dropped.problems.some((problem) => problem.includes(`step ${withEvents.index}: events`)),
       `${withEvents.file}: ${dropped.problems.join("; ")}`,
+    );
+  });
+
+  it("runs a vector with no mode in each mode, as §16 defaults it", () => {
+    const vector = readVector(SMALL_VECTOR);
+    assert.equal(vector.mode, "each");
+    const { mode: _mode, ...modeless } = vector;
+    passes(runVector(pkg(), modeless as Vector), `${SMALL_VECTOR} without mode`);
+  });
+
+  it("records a whole-batch failure in each mode as one refusal with no index, never a throw", () => {
+    const vector = readVector(SMALL_VECTOR);
+    vector.steps = [
+      {
+        apply: "not a list" as unknown as Physics.Command[],
+        repeat: 0,
+        expect: { refused: [[null, "bad-command"]] },
+      },
+    ];
+    let outcome: VectorOutcome | undefined;
+    assert.doesNotThrow(() => {
+      outcome = runVector(pkg(), vector);
+    });
+    assert.deepEqual(outcome?.problems, []);
+  });
+
+  it("reports the first mismatching step's bodies, and the first body differing from a reference dump", () => {
+    const vector = readVector(SMALL_VECTOR);
+    (vector.steps[0].expect as Record<string, unknown>).stateHash = "0000000000000000";
+    const plain = runVector(pkg(), vector);
+    assert.equal(plain.firstMismatch?.step, 0);
+    const bodies = plain.firstMismatch?.bodies ?? [];
+    assert.ok(bodies.length > 0, "the full bodies() dump of the mismatching step");
+    const key = bodies[0].key;
+    const reference = structuredClone(bodies);
+    reference[0].linvel = [reference[0].linvel[0] + 1, reference[0].linvel[1], reference[0].linvel[2]];
+    const compared = runVector(pkg(), vector, { reference: { 0: reference } });
+    assert.equal(compared.firstMismatch?.differingBody, key);
+    assert.ok(
+      compared.problems.some((problem) => problem.startsWith(`step 0: first differing body: ${JSON.stringify(key)}`)),
+      compared.problems.join("; "),
     );
   });
 

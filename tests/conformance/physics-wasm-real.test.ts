@@ -28,8 +28,26 @@ const ERROR_CODES = 22;
 const LEAK_WORLDS = 1000;
 const LEAK_WARMUP_WORLDS = 50;
 const LEAK_BODIES = 8;
-/** One past the wrapper's input cap (`MAX_INPUT_CHARS` in core.js). */
-const OVER_INPUT_CAP = 128 * 1024 * 1024 + 1;
+/**
+ * The wrapper's per-call budget for a world of default limits (core.js `inputBudget`): 8 Mi
+ * characters and 524,288 values besides the geometry, plus 24 characters and one value for each of
+ * the 1,048,576 heightfield samples the limits admit.
+ */
+const INPUT_CHARS_BUDGET = 32 * 1024 * 1024;
+const OVER_INPUT_CAP = INPUT_CHARS_BUDGET + 1;
+/** The most commands one `apply` carries (core.js `BATCH_COMMANDS_MAX`). */
+const BATCH_COMMANDS_MAX = 16_384;
+/**
+ * How far the heaviest inputs the budget lets through may grow the shared instance's linear memory
+ * (it never shrinks): measured at about 120 MB for a default-limit heightfield, the largest legal input.
+ */
+const TRANSIENT_GROWTH_BOUND = 256 * 1024 * 1024;
+const DEFAULT_HEIGHTFIELD_SIDE = 1024;
+/** The native core's snapshot of a vector scene, and the hashes around it (`tests/vectors.rs`). */
+const CROSS_TARGET_FIXTURE = path.join(
+  REPO,
+  "native/genex-rust/crates/genex-physics/tests/fixtures/cross-target-snapshot.json",
+);
 const EXPORT_STRIDE = 14;
 
 type Package = typeof Physics;
@@ -301,6 +319,27 @@ interface HostileRow {
 
 const cyclic: Record<string, unknown> = { key: "loop" };
 cyclic.self = cyclic;
+const boom = () => {
+  throw new Error("a hostile getter");
+};
+/** An object whose `field` getter throws. */
+const throwingGetter = (field: string): object => Object.defineProperty({}, field, { get: boom, enumerable: true });
+/** A Proxy whose every trap throws. */
+const throwingProxy = new Proxy(
+  {},
+  { ownKeys: boom, getOwnPropertyDescriptor: boom, get: boom, has: boom, getPrototypeOf: boom },
+);
+/** A revoked Proxy: every operation on it throws a TypeError. */
+const revokedProxy = (() => {
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  return proxy;
+})();
+/** A real Uint8Array whose own `length` getter throws (the glue reads `length`). */
+const bytesWithThrowingLength = (bytes: Uint8Array): Uint8Array =>
+  Object.defineProperty(bytes, "length", { get: boom });
+const POSE: Physics.Pose = { p: [0, 1, 0], q: IDENTITY };
+const hostileOptions = (options: unknown) => options as Physics.SetPoseOptions;
 const hostileRows: HostileRow[] = [
   { name: "spawn of undefined", call: (w) => w.spawn(undefined as unknown as Physics.BodyDesc), code: "bad-command" },
   { name: "spawn of a number", call: (w) => w.spawn(42 as unknown as Physics.BodyDesc), code: "bad-command" },
@@ -408,6 +447,63 @@ const hostileRows: HostileRow[] = [
     code: "bad-command",
   },
   { name: "a zero ray direction", call: (w) => w.ray([0, 0, 0], [0, 0, 0], 1), code: "out-of-range" },
+  {
+    name: "a spawn with a throwing getter",
+    call: (w) => w.spawn(throwingGetter("key") as Physics.BodyDesc),
+    code: "bad-command",
+  },
+  { name: "a spawn of a revoked Proxy", call: (w) => w.spawn(revokedProxy as Physics.BodyDesc), code: "bad-command" },
+  {
+    name: "setPose options with a throwing getter",
+    call: (w) => w.setPose("a", POSE, hostileOptions(throwingGetter("wake"))),
+    code: "bad-command",
+  },
+  {
+    name: "setPose options of a throwing Proxy",
+    call: (w) => w.setPose("a", POSE, hostileOptions(throwingProxy)),
+    code: "bad-command",
+  },
+  {
+    name: "setPose options of a revoked Proxy",
+    call: (w) => w.setPose("a", POSE, hostileOptions(revokedProxy)),
+    code: "bad-command",
+  },
+  {
+    name: "a static world with a throwing getter",
+    call: (w) => w.addStaticWorld(throwingGetter("boxes") as Physics.StaticWorld),
+    code: "bad-command",
+  },
+  {
+    name: "a static world with a throwing row",
+    call: (w) => w.addStaticWorld({ boxes: [throwingProxy as number[]], ramps: [] }),
+    code: "bad-command",
+  },
+  {
+    name: "a static world of a revoked Proxy",
+    call: (w) => w.addStaticWorld(revokedProxy as Physics.StaticWorld),
+    code: "bad-command",
+  },
+  { name: "restore of a throwing Proxy", call: (w) => w.restore(throwingProxy as Uint8Array), code: "bad-snapshot" },
+  { name: "restore of a revoked Proxy", call: (w) => w.restore(revokedProxy as Uint8Array), code: "bad-snapshot" },
+  {
+    name: "restore of zeros with a throwing length",
+    call: (w) => w.restore(bytesWithThrowingLength(new Uint8Array(64))),
+    code: "bad-snapshot",
+  },
+  {
+    name: `an apply of more than ${BATCH_COMMANDS_MAX} commands, in each mode`,
+    call: (w) =>
+      w.apply(
+        Array.from({ length: BATCH_COMMANDS_MAX + 1 }, () => ({ wake: { key: "a" } })),
+        "each",
+      ),
+    code: "out-of-range",
+  },
+  {
+    name: "a name whose JSON escapes pass the budget though its length does not",
+    call: (w) => w.spawn({ ...box("x", 1), ["\u0001".repeat(INPUT_CHARS_BUDGET / 4)]: 0 } as Physics.BodyDesc),
+    code: "out-of-range",
+  },
 ];
 
 /** `bytes` with one payload byte flipped, so its checksum fails. */
@@ -463,6 +559,13 @@ describe("@genex-ai/physics: hostile inputs through JS", gate, () => {
       2n,
       cyclic,
       () => 1,
+      throwingGetter("key"),
+      throwingGetter("boxes"),
+      throwingGetter("kinds"),
+      throwingProxy,
+      revokedProxy,
+      bytesWithThrowingLength(new Uint8Array(16)),
+      new Proxy([], { get: boom, getPrototypeOf: boom }),
     ];
     const before = observe(world);
     const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(world)).filter(
@@ -478,6 +581,7 @@ describe("@genex-ai/physics: hostile inputs through JS", gate, () => {
       }
     }
     assert.equal(observe(world), before);
+    assert.equal(hooks().instance().poisoned, false, "no hostile argument made the instance trap");
     assert.deepEqual(
       [
         world.body(5 as unknown as string),
@@ -520,6 +624,149 @@ describe("@genex-ai/physics: memory per world (§11.1)", gate, () => {
     for (let i = 0; i < LEAK_WORLDS; i += 1) cycle();
     assert.equal(hooks().liveWorlds(), worlds);
     assert.equal(hooks().wasmMemoryBytes(), bytes, "the linear memory did not grow");
+  });
+});
+
+/** A fixed body on a square heightfield of `side × side` samples. */
+function heightfield(key: string, side: number): Physics.BodyDesc {
+  const heights = Array.from({ length: side * side }, (_, i) => Math.fround(Math.sin(i) * 0.37));
+  const shape: Physics.Shape = { kind: "heightfield", rows: side, cols: side, heights, size: [1000, 10, 1000] };
+  return { key, type: "fixed", pose: { p: [0, 0, 0], q: IDENTITY }, colliders: [{ key: "hf", shape }] };
+}
+
+describe("@genex-ai/physics: one world's input cannot sink the shared instance (§11.1, §11.3)", gate, () => {
+  it("refuses an input past the budget before it crosses, and bounds what the heaviest legal ones cost", () => {
+    const victim = scene();
+    ok(victim.step());
+    const reference = scene();
+    ok(reference.step());
+    const attacker = made();
+    const start = hooks().wasmMemoryBytes();
+
+    const overBudget: [string, () => unknown][] = [
+      [
+        "a million empty commands",
+        () => attacker.apply(Array.from({ length: 1_000_000 }, () => []) as unknown as Physics.Command[], "each"),
+      ],
+      [
+        "a value tree past the budget",
+        () =>
+          attacker.spawn({
+            ...box("x", 1),
+            colliders: Array.from({ length: 2_000_000 }, () => []),
+          } as unknown as Physics.BodyDesc),
+      ],
+      ["a string past the budget", () => attacker.wake("k".repeat(OVER_INPUT_CAP))],
+      [
+        "a non-ASCII string past the budget at 3 per character",
+        () => attacker.wake("é".repeat(INPUT_CHARS_BUDGET / 2)),
+      ],
+    ];
+    for (const [name, call] of overBudget) {
+      assert.equal(code(call()), "out-of-range", name);
+      assert.equal(hooks().wasmMemoryBytes(), start, `${name}: nothing crossed`);
+    }
+
+    const heaviestLegal: [string, () => unknown][] = [
+      ["a default-limit heightfield", () => attacker.spawn(heightfield("ground", DEFAULT_HEIGHTFIELD_SIDE))],
+      [
+        "a full batch of hostile commands",
+        () =>
+          attacker.apply(
+            Array.from({ length: BATCH_COMMANDS_MAX }, (_, i) => ({ wake: { key: `k${i}`, junk: [1, 2, 3] } })),
+            "each",
+          ),
+      ],
+      ["a string at the budget", () => attacker.wake("k".repeat(INPUT_CHARS_BUDGET - 64))],
+      [
+        "a value tree at the budget",
+        () =>
+          attacker.spawn({
+            ...box("y", 1),
+            colliders: Array.from({ length: 1_400_000 }, () => []),
+          } as unknown as Physics.BodyDesc),
+      ],
+    ];
+    for (const [name, call] of heaviestLegal) {
+      call();
+      assert.equal(hooks().instance().poisoned, false, `${name}: the instance did not trap`);
+      const grown = hooks().wasmMemoryBytes() - start;
+      assert.ok(grown <= TRANSIENT_GROWTH_BOUND, `${name}: the instance grew ${grown} bytes`);
+    }
+
+    for (let i = 0; i < 10; i += 1) {
+      ok(victim.step());
+      ok(reference.step());
+    }
+    assert.equal(victim.stateHash(), reference.stateHash(), "another world in the instance steps on unharmed");
+    for (const world of [victim, reference, attacker]) world.free();
+  });
+
+  it("restores a real snapshot handed over with a hostile length property, without a trap", () => {
+    const world = scene();
+    for (let i = 0; i < 5; i += 1) ok(world.step());
+    const bytes = world.snapshot();
+    const copy = made();
+    ok(copy.restore(bytesWithThrowingLength(bytes)));
+    assert.equal(copy.stateHash(), world.stateHash());
+    assert.equal(hooks().instance().poisoned, false);
+    world.free();
+    copy.free();
+  });
+});
+
+/** The fixture `tests/vectors.rs` writes: a native snapshot taken after a vector's steps. */
+interface CrossTargetFixture {
+  build: string;
+  vector: string;
+  snapshot: string;
+  stateHash: string;
+  stepsAfter: number;
+  snapshotAfter: string;
+  stateHashAfter: string;
+}
+
+const fromHex = (hex: string) => Uint8Array.from(hex.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
+const toHex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+/** Where a snapshot's buildId length sits (after the magic and the contract version, §9.4 header). */
+const SNAPSHOT_BUILD_ID_AT = 8;
+const SNAPSHOT_BUILD_ID_LENGTH_BYTES = 2;
+
+/** A snapshot split at its buildId: the header names the writer's target, everything after it is the state. */
+function splitSnapshot(bytes: Uint8Array): { buildId: string; rest: string } {
+  const length = bytes[SNAPSHOT_BUILD_ID_AT] | (bytes[SNAPSHOT_BUILD_ID_AT + 1] << 8);
+  const start = SNAPSHOT_BUILD_ID_AT + SNAPSHOT_BUILD_ID_LENGTH_BYTES;
+  const buildId = new TextDecoder().decode(bytes.subarray(start, start + length));
+  return { buildId, rest: toHex(bytes.subarray(start + length)) };
+}
+
+describe("@genex-ai/physics: a snapshot restores on any target of the same build (§9.4)", gate, () => {
+  it("restores the native core's snapshot in wasm32 and writes the same bytes native does", () => {
+    const fixture: CrossTargetFixture = JSON.parse(readFileSync(CROSS_TARGET_FIXTURE, "utf8"));
+    assert.equal(`${fixture.build}+wasm32`, pkg().buildId(), "the fixture is this build's");
+    const vector = JSON.parse(readFileSync(path.join(VECTORS, fixture.vector), "utf8"));
+    const world = made(vector.world);
+    const statics: Physics.StaticWorld = vector.static;
+    if (statics.boxes.length + statics.ramps.length > 0) ok(world.addStaticWorld(statics));
+    ok(world.restore(fromHex(fixture.snapshot)));
+    assert.equal(world.stateHash(), fixture.stateHash, "native → wasm32: the restored world is native's");
+    const native = splitSnapshot(fromHex(fixture.snapshot));
+    const ours = splitSnapshot(world.snapshot());
+    assert.ok(native.buildId.startsWith(`${fixture.build}+`) && native.buildId !== ours.buildId, native.buildId);
+    assert.equal(ours.buildId, pkg().buildId());
+    assert.equal(
+      ours.rest,
+      native.rest,
+      "wasm32 writes native's state bytes; the header names only the writer's target",
+    );
+    for (let i = 0; i < fixture.stepsAfter; i += 1) ok(world.step());
+    assert.equal(world.stateHash(), fixture.stateHashAfter, "and steps on bit for bit");
+    assert.equal(
+      splitSnapshot(world.snapshot()).rest,
+      splitSnapshot(fromHex(fixture.snapshotAfter)).rest,
+      "wasm32 → native: the same state bytes after stepping (native restores a +wasm32 header: tests/vectors.rs)",
+    );
+    world.free();
   });
 });
 

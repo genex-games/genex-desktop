@@ -23,6 +23,8 @@
     "index.d.ts",
     "README.md",
     "CONTRACT.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
     "wasm/genex_physics_wasm.js",
     "wasm/genex_physics_wasm_bg.wasm"
   ],

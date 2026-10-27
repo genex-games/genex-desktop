@@ -52,6 +52,22 @@
 //! and hull shapes are swept or overlapped (`OutOfRange` otherwise). A query counts toward
 //! `queriesPerStep` only when it succeeds.
 //!
+//! # Measured worst case (§11.2)
+//!
+//! The required scene at default limits (512 bodies in one heap, 64 joints, 16 CCD bodies, 64
+//! queries a step), on a Mac M-series (arm64), idle; `tests/bench.rs` (`cargo test --release --test
+//! bench -- --ignored --nocapture`) natively, `scripts/physics-wasm-bench.ts` for wasm32 in Node 24.
+//! Milliseconds a step, mean / p99:
+//!
+//! | Target | dt 1/60, 1 substep | dt 1/20, 3 substeps |
+//! |---|---|---|
+//! | native aarch64-macos | 0.494 / 0.787 | 1.437 / 2.148 |
+//! | wasm32, Node 24 | 1.264 / 1.775 | 3.666 / 4.705 |
+//! | native x86_64-linux | pending (the owner-approved droplet run) | pending |
+//!
+//! A whole tick with its commands and queries: native 0.612 / 1.054 and 1.561 / 2.425, wasm32 1.784 /
+//! 2.555 and 4.207 / 5.344. The package README holds the same table.
+//!
 //! # Time (§11.4)
 //!
 //! The core reads no clock. `stats().stepMs` reports what a binding recorded with

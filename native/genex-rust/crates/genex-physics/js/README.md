@@ -38,9 +38,19 @@ or takes `init({ module })` (a `WebAssembly.Module` or its bytes). A bundler res
   NaN, ±Infinity and numbers too large for f32 give `non-finite`. The static world's values must
   already be exact float32s (§6.5).
 - **Wrong types** (a string where a number belongs, a missing field, an unknown one, a BigInt, a
-  cyclic object) give `bad-command`, as in the command JSON form (§7.3). An input larger than any
-  world accepts (over 128 Mi characters of JSON) gives `out-of-range` before it reaches the
-  instance; a snapshot over 512 MiB gives `bad-snapshot`.
+  cyclic object) give `bad-command`, as in the command JSON form (§7.3), and so does an argument
+  that throws while it is read (a getter, a Proxy, a revoked Proxy); a snapshot that is not a real
+  `Uint8Array` gives `bad-snapshot`. Arguments are read once, never handed to the module as given.
+- **Each call has an input budget** (§11.1, §11.3), checked before anything crosses: the module
+  parses a call's JSON whole, in linear memory no world is charged for and that WebAssembly never
+  gives back. A call carries at most 524,288 JSON values and 8 Mi characters, plus one heightfield or
+  trimesh as large as the world's own limits admit (`max(heightfieldSamples, 16 × triangles)` more
+  values of 24 characters each); text with non-ASCII characters counts three per character. At the
+  default limits that is 1,572,864 values and 32 Mi characters. Past it the call gives
+  `out-of-range`; so does an `apply` of more than 16,384 commands, as one failure in either mode. A
+  snapshot over 512 MiB gives `bad-snapshot`. Measured at the default limits, the heaviest input
+  the budget admits (a 1,048,576-sample heightfield) grows the instance's memory by about 117 MB
+  once and every other stays within that; at the 4× ceiling expect about four times as much.
 - **Reads with no error channel** (`body`, `bodies`, `exportChanged`, `exportBodyState`, `stats`,
   the hashes, `snapshot`, `tick`) return their empty forms for anything they cannot answer: a
   malformed filter, a freed world, a failed instance.
@@ -58,15 +68,37 @@ forms, and `world.check()` names the failure (`desc()` stays readable). End thos
 `await init()` makes a new instance, and `World.create` works again. Worlds of the old instance stay
 `internal`.
 
+## Measured worst case (§11.2)
+
+The required scene at default limits (512 bodies in one heap, 64 joints, 16 CCD bodies, 64 queries a
+step; 10 s measured after 1 s), on a Mac M-series (arm64), idle. Native is `tests/bench.rs`
+(`cargo test --release --test bench -- --ignored --nocapture`), wasm32 is this package in Node
+v24.18.0 (`node scripts/physics-wasm-bench.ts`). Milliseconds, mean / p99.
+
+| Target | Schedule | step | tick (with commands and queries) |
+|---|---|---|---|
+| native aarch64-macos | dt 1/60, 1 substep | 0.494 / 0.787 | 0.612 / 1.054 |
+| native aarch64-macos | dt 1/20, 3 substeps | 1.437 / 2.148 | 1.561 / 2.425 |
+| wasm32, Node 24 | dt 1/60, 1 substep | 1.264 / 1.775 | 1.784 / 2.555 |
+| wasm32, Node 24 | dt 1/20, 3 substeps | 3.666 / 4.705 | 4.207 / 5.344 |
+| native x86_64-linux (droplet) | both | pending the owner-approved run | |
+
+In WASM the 1/60 tick mean is over the authority host's 1 ms meter (§11.4); the worst tick stays under
+8 ms. Correcting every body each tick (512 `exportBodyState` + `importBodyState`) costs about 10 ms a
+tick more in WASM.
+
 ## Building
 
 The package is built offline from `native/genex-rust` by `node scripts/physics-wasm.ts`
-(cargo through the pinned toolchain, wasm-bindgen 0.2.129, `wasm-opt -Oz`, then `npm pack` into
-`.studio-dev/dist/` with a `.sha256` beside the tarball). `--test` builds the test flavour its
+(cargo through the pinned toolchain with source paths made relative, wasm-bindgen 0.2.129, the
+toolchain's own `wasm-opt -Oz`, a check that the module holds no absolute path of the build machine,
+then `npm pack` into `.studio-dev/dist/` with a `.sha256` beside the tarball). `--test` builds the test flavour its
 tests load (`tests/conformance/physics-wasm-real.test.ts`). The Rust exports are
 `crates/genex-physics-wasm`; this wrapper is `core.js`, with the entries `index.js` and `node.js`.
 
 ## Licence
 
-MIT. The module includes compiled code of rapier3d, parry3d, nalgebra and simba (Apache-2.0), of
-glamx, serde, serde_json, postcard and wasm-bindgen (MIT or Apache-2.0) and of libm (MIT).
+MIT (`LICENSE`). The module includes compiled code of rapier3d, parry3d, nalgebra and simba
+(Apache-2.0) and of other crates under MIT, Apache-2.0, Zlib or Unicode-3.0 terms (glamx, serde,
+serde_json, postcard, wasm-bindgen, libm and more). `THIRD-PARTY-NOTICES.md` lists every one with
+its licence and authors, and holds their licence and notice texts.

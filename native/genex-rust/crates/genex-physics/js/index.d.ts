@@ -321,8 +321,12 @@ export declare class World {
   sleep(key: Key): Result;
   /** Applies commands in order (§7.1): all or none. */
   apply(commands: Command[], mode: "atomic"): Result;
-  /** Applies every command that succeeds, in order, one result per command (§7.1). */
-  apply(commands: Command[], mode: "each"): CommandResult[];
+  /**
+   * Applies every command that succeeds, in order, one result per command (§7.1). A failure of the
+   * whole batch (not a list, over the call's input budget or 16,384 commands, `internal`) is one
+   * `Failure`, not a list.
+   */
+  apply(commands: Command[], mode: "each"): CommandResult[] | Failure;
 
   /** Advances `dt` in `substeps` inner steps (§8). Fails only with `internal` (§11.3). */
   step(): Result<StepResult>;

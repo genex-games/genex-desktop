@@ -44,11 +44,25 @@ const ApplyMode = Object.freeze({ Atomic: "atomic", Each: "each" });
 /** Nesting deeper than any contract shape (a body's collider's shape's points is 5). */
 const MAX_DEPTH = 32;
 /**
- * The largest input, in UTF-16 units of its JSON text: above any input the 4x limit ceiling
- * admits (4,194,304 heightfield samples of f32 text), so only an input no world could take is
- * refused here, with the code a limit gives (`out-of-range`), before it reaches the instance.
+ * The per-call input budget (§11.1, §11.3). The binding parses a call's JSON text whole before the
+ * core sees it, at a cost in linear memory no world is charged for and that WebAssembly never gives
+ * back, so an input over its budget is refused here with `out-of-range` before it crosses. A call
+ * may carry `BASE_VALUES` JSON values (every number, string, boolean, null, array and object counts
+ * one) and `BASE_CHARS` UTF-16 units of text, plus, for a world, one heightfield or trimesh as large
+ * as its own limits admit: `geometryValues(limits)` more values of at most `NUMBER_CHARS_MAX`
+ * characters each. At the default limits that is 1,572,864 values and 32 Mi characters.
  */
-const MAX_INPUT_CHARS = 128 * 1024 * 1024;
+const BASE_VALUES = 524_288;
+const BASE_CHARS = 8 * 1024 * 1024;
+/** The longest text a number crosses as (`-1.1754943508222875e-38`) with its comma. */
+const NUMBER_CHARS_MAX = 24;
+/** The JSON values one trimesh triangle can take: an index triple and up to three vertices of its own. */
+const TRIMESH_VALUES_PER_TRIANGLE = 16;
+/** Any character outside ASCII, and what each such string's characters count toward the budget. */
+const NON_ASCII = /[^\u0000-\u007f]/;
+const NON_ASCII_WEIGHT = 3;
+/** The most commands one `apply` carries; a longer batch is refused whole with `out-of-range`. */
+const BATCH_COMMANDS_MAX = 16_384;
 /** The largest snapshot `restore` hands over: above any world the 4x memory ceiling admits. */
 const MAX_SNAPSHOT_BYTES = 512 * 1024 * 1024;
 /** §17.7's caps on the static world, refused here with the core's code before flattening. */
@@ -77,7 +91,8 @@ const Detail = Object.freeze({
   Poisoned: "the WebAssembly instance trapped and is unusable (§11.3): await init() for a new one and make new worlds",
   Stale: "this world belongs to an instance that trapped (§11.3)",
   Freed: "this world was freed",
-  TooLarge: "the input is larger than any world accepts",
+  TooLarge: "the input is over this call's budget (values and characters of JSON; see README)",
+  BigBatch: "the batch holds more than 16,384 commands",
   TooDeep: "the input nests deeper than any contract shape",
   BigInt: "a BigInt is not a number",
   Unreadable: "the input could not be read",
@@ -178,6 +193,17 @@ class Refusal {
   }
 }
 
+/** The values of one heightfield or trimesh as large as `limits` admit. */
+function geometryValues(limits) {
+  return Math.max(limits.heightfieldSamples, TRIMESH_VALUES_PER_TRIANGLE * limits.triangles);
+}
+
+/** What one call may carry (see `BASE_VALUES`): the base budget, or a world's from its resolved limits. */
+function inputBudget(limits) {
+  const geometry = limits === undefined ? 0 : geometryValues(limits);
+  return { values: BASE_VALUES + geometry, chars: BASE_CHARS + geometry * NUMBER_CHARS_MAX };
+}
+
 function numberText(value) {
   const rounded = Math.fround(value);
   if (Number.isNaN(rounded) || rounded === Number.POSITIVE_INFINITY) return NOT_FINITE_TEXT;
@@ -191,14 +217,36 @@ function omitted(value) {
   return value === undefined || typeof value === "function" || typeof value === "symbol";
 }
 
-/** Writes `value` as JSON into `out`, every number as its f32 (§4.1). */
+/** Appends `text` to the output, refusing once the text passes the call's budget. */
+function emit(out, text) {
+  out.size += text.length;
+  if (out.size > out.budget.chars) throw new Refusal(PhysicsError.OutOfRange, Detail.TooLarge);
+  out.parts.push(text);
+}
+
+/**
+ * A string as JSON text, refused before it is escaped when it alone passes the budget. Text that is
+ * not all ASCII counts `NON_ASCII_WEIGHT` per character: the glue reserves three bytes of linear
+ * memory for each UTF-16 unit of such text when it crosses.
+ */
+function stringText(value, out) {
+  const weight = NON_ASCII.test(value) ? NON_ASCII_WEIGHT : 1;
+  if (out.size + value.length * weight > out.budget.chars) {
+    throw new Refusal(PhysicsError.OutOfRange, Detail.TooLarge);
+  }
+  const text = JSON.stringify(value);
+  out.size += text.length * (weight - 1);
+  return text;
+}
+
+/** Writes `value` as JSON into `out`, every number as its f32 (§4.1), counting it against the budget. */
 function write(value, out, depth) {
   if (depth > MAX_DEPTH) throw new Refusal(PhysicsError.BadCommand, Detail.TooDeep);
-  if (out.size > MAX_INPUT_CHARS) throw new Refusal(PhysicsError.OutOfRange, Detail.TooLarge);
-  const text = scalarText(value);
+  out.values += 1;
+  if (out.values > out.budget.values) throw new Refusal(PhysicsError.OutOfRange, Detail.TooLarge);
+  const text = scalarText(value, out);
   if (text !== undefined) {
-    out.parts.push(text);
-    out.size += text.length;
+    emit(out, text);
     return;
   }
   if (Array.isArray(value)) {
@@ -209,13 +257,13 @@ function write(value, out, depth) {
 }
 
 /** A scalar's JSON text, or `undefined` for an array or object. */
-function scalarText(value) {
+function scalarText(value, out) {
   if (value === null || omitted(value)) return "null";
   switch (typeof value) {
     case "number":
       return numberText(value);
     case "string":
-      return JSON.stringify(value);
+      return stringText(value, out);
     case "boolean":
       return value ? "true" : "false";
     case "bigint":
@@ -226,70 +274,141 @@ function scalarText(value) {
 }
 
 function writeArray(items, out, depth) {
-  out.parts.push("[");
-  for (let index = 0; index < items.length; index += 1) {
-    if (index > 0) out.parts.push(",");
+  emit(out, "[");
+  const length = items.length;
+  for (let index = 0; index < length; index += 1) {
+    if (index > 0) emit(out, ",");
     write(items[index], out, depth + 1);
   }
-  out.parts.push("]");
-  out.size += items.length + 2;
+  emit(out, "]");
 }
 
 function writeObject(object, out, depth) {
-  out.parts.push("{");
+  emit(out, "{");
   let first = true;
   for (const name of Object.keys(object)) {
     const item = object[name];
     if (omitted(item)) continue;
-    out.parts.push(first ? "" : ",", JSON.stringify(name), ":");
-    out.size += name.length + 4;
+    if (!first) emit(out, ",");
+    emit(out, stringText(name, out));
+    emit(out, ":");
     first = false;
     write(item, out, depth + 1);
   }
-  out.parts.push("}");
+  emit(out, "}");
 }
 
-/** `value` as JSON text with f32 numbers, or a failure value for one that cannot cross. */
-function encode(value) {
-  const out = { parts: [], size: 0 };
+/**
+ * `value` as JSON text with f32 numbers, or a failure value for one that cannot cross: over
+ * `budget` (`inputBudget`) it is `out-of-range`; anything thrown while reading it (a getter, a
+ * Proxy trap, a revoked Proxy) is `bad-command`. Nothing of `value` is read outside this function.
+ */
+function encode(value, budget) {
+  const out = { parts: [], size: 0, values: 0, budget };
   try {
     write(value, out, 0);
+    return { text: out.parts.join("") };
   } catch (error) {
     if (error instanceof Refusal) return failure(error.code, error.detail);
+    if (error instanceof RangeError) return failure(PhysicsError.OutOfRange, Detail.TooLarge);
     return failure(PhysicsError.BadCommand, Detail.Unreadable);
   }
-  if (out.size > MAX_INPUT_CHARS) return failure(PhysicsError.OutOfRange, Detail.TooLarge);
-  return { text: out.parts.join("") };
 }
 
-/** The static world's flat form (§6.5), every value as given (§17.7 checks float32s exactly). */
+/** A batch's command count when it is over `BATCH_COMMANDS_MAX`, read without running its code. */
+function batchTooLong(commands) {
+  try {
+    return Array.isArray(commands) && commands.length > BATCH_COMMANDS_MAX;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The static world's flat form (§6.5), every value as given (§17.7 checks float32s exactly). Each
+ * field and element is read once; anything thrown while reading (a getter, a Proxy) is `bad-command`.
+ */
 function flattenStatic(world) {
-  const shapeOk =
-    world !== null && typeof world === "object" && Array.isArray(world.boxes) && Array.isArray(world.ramps);
-  if (!shapeOk || Object.keys(world).some((name) => name !== "boxes" && name !== "ramps")) {
+  try {
+    return flattenStaticFields(world);
+  } catch {
     return failure(PhysicsError.BadCommand, Detail.BadStatic);
   }
-  if (world.boxes.length > STATIC_BOXES_MAX || world.ramps.length > STATIC_RAMPS_MAX) {
-    return failure(PhysicsError.OutOfRange, Detail.StaticCaps);
-  }
-  const boxes = flattenRows(world.boxes);
-  const ramps = flattenRows(world.ramps);
-  if (boxes === undefined || ramps === undefined) return failure(PhysicsError.BadCommand, Detail.BadStatic);
-  return { boxes, ramps };
 }
 
-/** Rows of numbers as lengths and values; `undefined` when a row is not an array of numbers. */
+function flattenStaticFields(world) {
+  if (world === null || typeof world !== "object") return failure(PhysicsError.BadCommand, Detail.BadStatic);
+  if (Object.keys(world).some((name) => name !== "boxes" && name !== "ramps")) {
+    return failure(PhysicsError.BadCommand, Detail.BadStatic);
+  }
+  const { boxes, ramps } = world;
+  if (!Array.isArray(boxes) || !Array.isArray(ramps)) return failure(PhysicsError.BadCommand, Detail.BadStatic);
+  if (boxes.length > STATIC_BOXES_MAX || ramps.length > STATIC_RAMPS_MAX) {
+    return failure(PhysicsError.OutOfRange, Detail.StaticCaps);
+  }
+  const flatBoxes = flattenRows(boxes);
+  const flatRamps = flattenRows(ramps);
+  if (flatBoxes === undefined || flatRamps === undefined) return failure(PhysicsError.BadCommand, Detail.BadStatic);
+  return { boxes: flatBoxes, ramps: flatRamps };
+}
+
+/**
+ * Rows of numbers as lengths and values; `undefined` when a row is not an array of numbers. A row
+ * longer than `STATIC_ROW_PASS` hands over only its first values (the core refuses it by length).
+ */
 function flattenRows(rows) {
-  const lengths = new Uint32Array(rows.length);
+  const count = rows.length;
+  const lengths = new Uint32Array(count);
   const values = [];
-  for (let index = 0; index < rows.length; index += 1) {
+  for (let index = 0; index < count; index += 1) {
     const row = rows[index];
-    if (!Array.isArray(row) || row.some((value) => typeof value !== "number")) return undefined;
-    const kept = row.length > STATIC_ROW_PASS ? row.slice(0, STATIC_ROW_PASS) : row;
-    lengths[index] = kept.length;
-    values.push(...kept);
+    if (!Array.isArray(row)) return undefined;
+    const length = row.length;
+    for (let at = 0; at < length; at += 1) {
+      const value = row[at];
+      if (typeof value !== "number") return undefined;
+      if (at < STATIC_ROW_PASS) values.push(value);
+    }
+    lengths[index] = Math.min(length, STATIC_ROW_PASS);
   }
   return { lengths, values: Float64Array.from(values) };
+}
+
+/** `setPose`'s command, or a failure for options that are not a plain object of its own fields. */
+function setPoseCommand(key, pose, options) {
+  if (options === undefined) return { command: { setPose: { key, pose } } };
+  try {
+    const optionsOk = options !== null && typeof options === "object" && !Array.isArray(options);
+    if (!optionsOk || Object.hasOwn(options, "key") || Object.hasOwn(options, "pose")) {
+      return { refused: failure(PhysicsError.BadCommand, Detail.BadOptions) };
+    }
+    return { command: { setPose: { ...options, key, pose } } };
+  } catch {
+    return { refused: failure(PhysicsError.BadCommand, Detail.BadOptions) };
+  }
+}
+
+/** The %TypedArray% accessors, called on a value to read its internal slots: no getter, own property or Proxy trap of it runs. */
+const typedArray = Object.getPrototypeOf(Uint8Array.prototype);
+const typedArrayName = Object.getOwnPropertyDescriptor(typedArray, Symbol.toStringTag).get;
+const typedArrayBuffer = Object.getOwnPropertyDescriptor(typedArray, "buffer").get;
+const typedArrayOffset = Object.getOwnPropertyDescriptor(typedArray, "byteOffset").get;
+const typedArrayLength = Object.getOwnPropertyDescriptor(typedArray, "byteLength").get;
+
+/**
+ * A snapshot's bytes as a plain view of the caller's buffer, read from the Uint8Array's internal
+ * slots only, or a failure: what crosses is never an object the caller can make throw.
+ */
+function snapshotBytes(bytes) {
+  try {
+    if (typedArrayName.call(bytes) !== "Uint8Array")
+      return { refused: failure(PhysicsError.BadSnapshot, Detail.NotSnapshot) };
+    const length = typedArrayLength.call(bytes);
+    if (length > MAX_SNAPSHOT_BYTES) return { refused: failure(PhysicsError.BadSnapshot, Detail.BigSnapshot) };
+    return { view: new Uint8Array(typedArrayBuffer.call(bytes), typedArrayOffset.call(bytes), length) };
+  } catch {
+    return { refused: failure(PhysicsError.BadSnapshot, Detail.NotSnapshot) };
+  }
 }
 
 /** A key a read hands over: a string cut to at most `KEY_PASS_CHARS`, or `undefined` for a non-string. */
@@ -349,7 +468,7 @@ export class World {
   static create(desc) {
     const refused = unavailable();
     if (refused !== undefined) return refused;
-    const encoded = encode(desc);
+    const encoded = encode(desc, inputBudget(undefined));
     if (encoded.text === undefined) return encoded;
     return guarded(
       () => failure(PhysicsError.Internal, Detail.Poisoned),
@@ -392,16 +511,21 @@ export class World {
     return this.#result((wasm, id) => JSON.parse(fn(wasm, id)));
   }
 
+  /** What one call on this world may carry (`inputBudget`), from its resolved limits. */
+  #budget() {
+    return inputBudget(this.#desc.limits);
+  }
+
   /** One command in its JSON form (§7.3). */
   #command(command) {
-    const encoded = encode(command);
+    const encoded = encode(command, this.#budget());
     if (encoded.text === undefined) return encoded;
     return this.#json((wasm, id) => wasm.world_command(id, encoded.text));
   }
 
   /** One query in its JSON form (§13). */
   #query(query) {
-    const encoded = encode(query);
+    const encoded = encode(query, this.#budget());
     if (encoded.text === undefined) return encoded;
     return this.#json((wasm, id) => wasm.world_query(id, encoded.text));
   }
@@ -458,12 +582,9 @@ export class World {
   }
 
   setPose(key, pose, options) {
-    if (options === undefined) return this.#command({ setPose: { key, pose } });
-    const optionsOk = options !== null && typeof options === "object" && !Array.isArray(options);
-    if (!optionsOk || Object.hasOwn(options, "key") || Object.hasOwn(options, "pose")) {
-      return failure(PhysicsError.BadCommand, Detail.BadOptions);
-    }
-    return this.#command({ setPose: { ...options, key, pose } });
+    const { command, refused } = setPoseCommand(key, pose, options);
+    if (refused !== undefined) return refused;
+    return this.#command(command);
   }
 
   setNextKinematicPose(key, pose) {
@@ -486,10 +607,15 @@ export class World {
     return this.#command({ sleep: { key } });
   }
 
-  /** Applies commands in order (§7.1): `"atomic"` all or none, `"each"` one result per command. */
+  /**
+   * Applies commands in order (§7.1): `"atomic"` all or none, `"each"` one result per command. A
+   * failure of the whole batch (not a list, over the budget or `BATCH_COMMANDS_MAX`, `internal`) is
+   * one failure value in either mode.
+   */
   apply(commands, mode) {
     if (mode !== ApplyMode.Atomic && mode !== ApplyMode.Each) return failure(PhysicsError.BadCommand, Detail.BadMode);
-    const encoded = encode(commands);
+    if (batchTooLong(commands)) return failure(PhysicsError.OutOfRange, Detail.BigBatch);
+    const encoded = encode(commands, this.#budget());
     if (encoded.text === undefined) return encoded;
     const result = this.#json((wasm, id) => wasm.world_apply(id, encoded.text, mode === ApplyMode.Atomic));
     if (mode === ApplyMode.Each && result.ok) return result.results;
@@ -518,9 +644,11 @@ export class World {
   bodies(filter) {
     const read = bodyFilter(filter);
     if (read === undefined) return [];
+    const kinds = read.kinds === undefined ? undefined : encode(read.kinds, this.#budget()).text;
+    if (read.kinds !== undefined && kinds === undefined) return [];
     return this.#read(
       () => [],
-      (wasm, id) => JSON.parse(wasm.world_bodies(id, read.kinds, read.awakeOnly, read.since)),
+      (wasm, id) => JSON.parse(wasm.world_bodies(id, kinds, read.awakeOnly, read.since)),
     );
   }
 
@@ -546,7 +674,7 @@ export class World {
   importBodyState(key, state) {
     const passed = passedKey(key);
     if (passed === undefined) return failure(PhysicsError.InvalidKey, "a key is a string");
-    const encoded = encode(state);
+    const encoded = encode(state, this.#budget());
     if (encoded.text === undefined) return encoded;
     return this.#json((wasm, id) => wasm.world_import_body_state(id, passed, encoded.text));
   }
@@ -578,9 +706,9 @@ export class World {
 
   /** Replaces the whole world from a snapshot of the same build (§9.4). */
   restore(bytes) {
-    if (!(bytes instanceof Uint8Array)) return failure(PhysicsError.BadSnapshot, Detail.NotSnapshot);
-    if (bytes.byteLength > MAX_SNAPSHOT_BYTES) return failure(PhysicsError.BadSnapshot, Detail.BigSnapshot);
-    const result = this.#json((wasm, id) => wasm.world_restore(id, bytes));
+    const { view, refused } = snapshotBytes(bytes);
+    if (refused !== undefined) return refused;
+    const result = this.#json((wasm, id) => wasm.world_restore(id, view));
     if (result.ok) {
       this.#desc =
         this.#read(
@@ -625,8 +753,19 @@ export class World {
   }
 }
 
-/** A `bodies()` filter (§9.1) as the export takes it, or `undefined` for a malformed one. */
+/**
+ * A `bodies()` filter (§9.1), its `kinds` still to encode, or `undefined` for a malformed one, including
+ * one that throws while it is read (a getter, a Proxy).
+ */
 function bodyFilter(filter) {
+  try {
+    return bodyFilterFields(filter);
+  } catch {
+    return undefined;
+  }
+}
+
+function bodyFilterFields(filter) {
   if (filter === undefined) return { kinds: undefined, awakeOnly: false, since: NO_TICK };
   if (filter === null || typeof filter !== "object") return undefined;
   const known = Object.keys(filter).every((name) => ["kinds", "awakeOnly", "changedSinceTick"].includes(name));
@@ -635,7 +774,7 @@ function bodyFilter(filter) {
   const tickOk = changedSinceTick === undefined || isWholeTick(changedSinceTick);
   if (!(known && kindsOk && tickOk && typeof awakeOnly === "boolean")) return undefined;
   const since = changedSinceTick ?? NO_TICK;
-  return { kinds: kinds === undefined ? undefined : JSON.stringify(kinds), awakeOnly, since };
+  return { kinds, awakeOnly, since };
 }
 
 /** Internal, for this package's own tests: a world's id in the instance. */

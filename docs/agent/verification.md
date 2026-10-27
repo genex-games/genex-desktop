@@ -142,8 +142,11 @@ budget; the raylib comparison needs `GENEX_RAYLIB_BENCH_RECORD`, and
 `GENEX_REQUIRE_RAYLIB_BASELINE=1` fails without it). Run cargo only through `node scripts/toolchains/rust-env.ts -- cargo …` with
 one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check free disk first.
 `physics-wasm-real` loads the `@genex-ai/physics` test build (`node scripts/physics-wasm.ts --test`, the
-`test-trap` flavour) in Node 24: every method, hostile inputs, memory per world, every conformance vector in
-wasm32 and the §11.3 poison rule; it skips without that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`.
+`test-trap` flavour) in Node 24: every method, hostile inputs (getters, Proxies and revoked Proxies included),
+memory per world, the per-call input budget keeping another world in the instance unharmed, the
+cross-target snapshot fixture, every conformance vector in wasm32 and the §11.3 poison rule; it skips without
+that build and fails under `GENEX_REQUIRE_TOOLCHAINS=1`. `physics-wasm-package` checks the built package's
+`LICENSE`, `THIRD-PARTY-NOTICES.md` and that its module holds no absolute path of the build machine.
 `physics-wasm-vectors` replays every conformance vector through the shipped package
 (`.studio-dev/build/physics-wasm/`, or `GENEX_PHYSICS_PACKAGE=<unpacked tarball>`) with the shared runner
 `crates/genex-physics/js/conformance.js`, so a pass means wasm32 gives native's pins; with
