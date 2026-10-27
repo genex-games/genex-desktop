@@ -442,6 +442,127 @@ describe("@genex-ai/physics-native: a failed process fails its own world only", 
   });
 });
 
+// ---------------------------------------------------------------------------------------------
+// The client's watchdog, in a Node process of its own: a call to a hung process blocks that
+// thread until the watchdog kills it, so a watchdog that never fires must not hang this file.
+
+/** Each row's deadline: far above a light step, far below `WATCH_CHILD_MS`. */
+const WATCH_DEADLINE_MS = 250;
+/** How long a row's Node process may run before the row calls its watchdog dead. */
+const WATCH_CHILD_MS = 20_000;
+/** Round trips a polling watchdog takes with no notify. */
+const WATCH_ROUND_TRIPS = 2_000;
+/** The row's process: `scenario` is `hung` (a call right away), `polling` or `parked`. */
+const WATCH_CHILD_SOURCE = `
+const native = await import(process.env.GX_NATIVE_URL);
+const report = (fields) => console.log(JSON.stringify(fields));
+const stats = () => native.watchdogStats();
+const started = native.createNativeCore({ ...native.packagedBinary(), dir: process.env.GX_ROOMS, deadlineMs: ${WATCH_DEADLINE_MS} });
+if (!started.ok) throw new Error(JSON.stringify(started));
+const { core } = started;
+const made = core.createWorld(${JSON.stringify(DESC)});
+if (!made.ok) throw new Error(JSON.stringify(made));
+const world = made.world;
+report({ pid: core.pid });
+const before = {};
+if (process.env.GX_SCENARIO === "polling") {
+  const first = stats().wakes;
+  for (let i = 0; i < ${WATCH_ROUND_TRIPS}; i += 1) if (!world.step().ok) throw new Error("a step failed");
+  before.wakes = stats().wakes - first;
+  before.parked = stats().parked;
+}
+if (process.env.GX_SCENARIO === "parked") {
+  const since = performance.now();
+  while (!stats().parked && performance.now() - since < 5_000) await new Promise((done) => setTimeout(done, 20));
+  before.parked = stats().parked;
+  before.wakesAtPark = stats().wakes;
+}
+process.kill(core.pid, "SIGSTOP");
+const start = performance.now();
+const stepped = world.step();
+const took = performance.now() - start;
+report({ before, code: stepped.code, took, kills: native.watchdogKills(), wakes: native.watchdogStats?.().wakes, alive: core.alive() });
+`;
+
+/** What a watchdog row's process reported: its room's pid, then the hung call's outcome. */
+interface WatchReport {
+  pid?: number;
+  before?: { wakes?: number; parked?: boolean; wakesAtPark?: number };
+  code?: string;
+  took?: number;
+  kills?: number;
+  wakes?: number;
+  alive?: boolean;
+  timedOut?: boolean;
+}
+
+/** How a row's Node process runs its source: as `-e` under `--input-type=module`, or as a module file. */
+const ChildForm = { InputTypeModule: "input-type-module", ModuleFile: "module-file" } as const;
+type ChildForm = (typeof ChildForm)[keyof typeof ChildForm];
+
+async function watchChild(scenario: string, form: ChildForm): Promise<WatchReport> {
+  const folder = await tmpDir("gxph-watch-");
+  const file = path.join(folder, "child.mjs");
+  writeFileSync(file, WATCH_CHILD_SOURCE);
+  const args = form === ChildForm.InputTypeModule ? ["--input-type=module", "-e", WATCH_CHILD_SOURCE] : [file];
+  const env = {
+    ...process.env,
+    GX_NATIVE_URL: pathToFileURL(path.join(PACKAGE, "native.js")).href,
+    GX_ROOMS: folder,
+    GX_SCENARIO: scenario,
+  };
+  const child = spawn(process.execPath, args, { env, stdio: ["ignore", "pipe", "inherit"] });
+  let out = "";
+  child.stdout?.on("data", (chunk: Buffer) => {
+    out += chunk.toString("utf8");
+  });
+  const exit = new Promise((resolve) => child.on("exit", resolve));
+  const timedOut = await Promise.race([exit.then(() => false), sleep(WATCH_CHILD_MS).then(() => true)]);
+  if (timedOut) child.kill("SIGKILL");
+  await exit;
+  const report: WatchReport = Object.assign({ timedOut }, ...out.trim().split("\n").filter(Boolean).map(parse));
+  if (report.pid !== undefined && running(report.pid)) process.kill(report.pid, "SIGKILL");
+  return report;
+}
+
+function parse(line: string): WatchReport {
+  return JSON.parse(line) as WatchReport;
+}
+
+/** The hung call ended near its deadline with `internal`, by one watchdog kill. */
+function assertKilledInTime(report: WatchReport): void {
+  assert.equal(report.timedOut, false, "the watchdog never ended the hung call");
+  assert.equal(report.code, "internal", JSON.stringify(report));
+  assert.equal(report.kills, 1);
+  assert.equal(report.alive, false);
+  const took = report.took ?? Number.NaN;
+  assert.ok(took >= WATCH_DEADLINE_MS - 1, `the watchdog fired early, after ${took} ms`);
+  assert.ok(took < WATCH_DEADLINE_MS + SLACK_MS, `the watchdog fired after ${took} ms`);
+}
+
+describe("@genex-ai/physics-native: the client's watchdog kills a hung process", gate, () => {
+  it("in a process started with --input-type=module (its worker must not inherit the flag)", async () => {
+    assertKilledInTime(await watchChild("hung", ChildForm.InputTypeModule));
+  });
+
+  it("while it polls: round trips need no notify, and a deadline fires on its own clock", async () => {
+    const report = await watchChild("polling", ChildForm.ModuleFile);
+    assertKilledInTime(report);
+    assert.equal(report.before?.parked, false, "a ticking watchdog stays awake");
+    assert.ok(
+      (report.before?.wakes ?? Number.NaN) <= 1,
+      `${WATCH_ROUND_TRIPS} round trips woke it ${report.before?.wakes} times`,
+    );
+  });
+
+  it("parked after a quiet while: the next call wakes it once, and its deadline still fires", async () => {
+    const report = await watchChild("parked", ChildForm.ModuleFile);
+    assertKilledInTime(report);
+    assert.equal(report.before?.parked, true, "a quiet watchdog parks");
+    assert.equal(report.wakes, (report.before?.wakesAtPark ?? Number.NaN) + 1, "one notify woke it");
+  });
+});
+
 describe("@genex-ai/physics-native: starting refuses what it must, starting nothing", gate, () => {
   const badOptions: [string, (good: Native.NativeCoreOptions) => unknown][] = [
     ["no options", () => undefined],

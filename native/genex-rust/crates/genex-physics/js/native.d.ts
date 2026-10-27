@@ -111,3 +111,9 @@ export declare function liveCores(): number;
 
 /** How many processes this JS thread's watchdog has killed. */
 export declare function watchdogKills(): number;
+
+/**
+ * This JS thread's watchdog: the processes it killed, the notifies a call sent to wake it from
+ * parked (none while calls keep it awake), and whether it is parked now.
+ */
+export declare function watchdogStats(): { kills: number; wakes: number; parked: boolean };

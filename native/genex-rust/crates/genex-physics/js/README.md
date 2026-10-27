@@ -134,8 +134,11 @@ core.close(); // or world.free(): the process exits and its folder is removed
   into exactly the objects the separate calls give, refusals included. This package's internal
   `tickWorld` crosses a WebAssembly world's tick in the same form, in one call.
 - **Deadline:** every round trip has `deadlineMs`. Past it the process ends itself (exit 4), and a
-  `worker_thread` watchdog in the caller (one per thread, waiting at no CPU cost) kills it with SIGKILL,
-  which ends the blocked read. The call then answers `internal`. `core.setDeadline(ms)` sets this side's
+  `worker_thread` watchdog in the caller (one per thread) kills it with SIGKILL, which ends the blocked
+  read. The call then answers `internal`. The watchdog polls every 4 ms while calls run, so arming it is
+  a few plain stores with no syscall and a kill lands at most 4 ms past the deadline; after half a second
+  with no call it parks at no CPU, and the next call wakes it with one notify. It runs with no `execArgv`,
+  so a caller started with `--input-type=module` keeps it. `core.setDeadline(ms)` sets this side's
   deadline for later round trips (the process keeps its start's), so a server starts cores with a
   generous deadline for setup frames (create, a heavy spawn) and sets a tick's before ticking.
 - **If the process fails** (§11.3): a crash, the deadline, `kill -9`, EPIPE, or a reply that does not

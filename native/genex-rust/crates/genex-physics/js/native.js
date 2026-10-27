@@ -12,8 +12,9 @@
 //   answers `internal` to every call with a result and its reads their empty forms, for good, as a
 //   trapped WASM instance does (§11.3); nothing is thrown. Other cores never notice.
 // - Deadline: every round trip has `deadlineMs`. The process ends itself past it (exit 4), and a
-//   watchdog thread here (one `worker_thread` per JS thread, waiting on a SharedArrayBuffer at no
-//   CPU) SIGKILLs it, which ends the blocked read with EOF. Opening the FIFOs has `startMs`.
+//   watchdog thread here (one `worker_thread` per JS thread, polling a SharedArrayBuffer every 4 ms
+//   while calls run and parked at no CPU after half a second without one) SIGKILLs it, which ends the
+//   blocked read with EOF. Arming it is a few plain stores, no syscall. Opening the FIFOs has `startMs`.
 // - A malformed frame or reply is a fault: the process exits 3 before running any of it; a reply
 //   this side cannot read kills the process. Either way the core is dead.
 import { spawn } from "node:child_process";
@@ -117,83 +118,151 @@ class SidecarGone extends Error {}
 // The watchdog.
 
 /** Slots of the watchdog's shared Int32Array. */
-const Slot = Object.freeze({ State: 0, DeadlineMs: 1, Pid: 2, Fired: 3, Sequence: 4, RescueLength: 5 });
+const Slot = Object.freeze({ State: 0, Pid: 1, Fired: 2, Sequence: 3, RescueLength: 4, Parked: 5 });
 const WatchState = Object.freeze({ Idle: 0, Armed: 1 });
 const WATCH_SLOTS = 16;
-const RESCUE_AT = WATCH_SLOTS * Int32Array.BYTES_PER_ELEMENT;
+/** The armed call's deadline in `process.hrtime` milliseconds: one Float64 after the slots. */
+const DEADLINE_AT = WATCH_SLOTS * Int32Array.BYTES_PER_ELEMENT;
+const RESCUE_AT = DEADLINE_AT + Float64Array.BYTES_PER_ELEMENT;
 const RESCUE_BYTES = 4096;
 /** How often a fired watchdog opens the FIFOs' other ends while a start still waits on them. */
 const RESCUE_EVERY_MS = 2;
+/** How often an awake watchdog looks at the armed call: a kill lands at most this long past its deadline. */
+const WATCH_POLL_MS = 4;
+/** How long the watchdog stays awake with nothing armed before it parks (then one notify wakes it). */
+const PARK_AFTER_MS = 500;
 
 /**
- * The watchdog thread (CommonJS, run with `eval`). Armed, it waits the deadline on the State slot;
- * if the same call is still armed then, it SIGKILLs the process, which ends the main thread's
- * blocked read with EOF and its write with EPIPE. While the main thread waits to open the FIFOs it
- * names their folder: opening each FIFO's other end without blocking releases a blocked open, and
- * the dead process's FIFOs then answer EOF and EPIPE too.
+ * The watchdog thread, run with `eval` and no `execArgv` (so a parent's `--input-type=module` cannot
+ * make it a module); it takes its modules from `process.getBuiltinModule`, which either kind has.
+ * Awake, it polls: every `WATCH_POLL_MS` (or sooner, at the armed call's deadline) it looks at the
+ * slots, so arming and disarming are plain stores with no notify. Past the armed call's deadline, if
+ * that call is still armed, it SIGKILLs the process, which ends the main thread's blocked read with
+ * EOF and its write with EPIPE. While the main thread waits to open the FIFOs it names their folder:
+ * opening each FIFO's other end without blocking releases a blocked open, and the dead process's FIFOs
+ * then answer EOF and EPIPE too. With nothing armed for `PARK_AFTER_MS` it parks on the Parked slot,
+ * at no CPU, and the next `arm` wakes it with one notify.
  */
 const WATCHDOG_SOURCE = `
-const { workerData } = require("node:worker_threads");
-const fs = require("node:fs");
+const { workerData } = process.getBuiltinModule("node:worker_threads");
+const fs = process.getBuiltinModule("node:fs");
 const flags = new Int32Array(workerData.sab, 0, ${WATCH_SLOTS});
+const deadlineAt = new Float64Array(workerData.sab, ${DEADLINE_AT}, 1);
 const rescueBytes = new Uint8Array(workerData.sab, ${RESCUE_AT}, ${RESCUE_BYTES});
+const nap = new Int32Array(new SharedArrayBuffer(4));
 const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+const now = () => Number(process.hrtime.bigint()) / 1e6;
+const sleep = (ms) => Atomics.wait(nap, 0, 0, ms);
 const armed = (sequence) => Atomics.load(flags, ${Slot.State}) === ${WatchState.Armed} && Atomics.load(flags, ${Slot.Sequence}) === sequence;
 const release = (folder) => {
   for (const [name, mode] of [["${FIFO_IN}", O_RDONLY | O_NONBLOCK], ["${FIFO_OUT}", O_WRONLY | O_NONBLOCK]]) {
     try { fs.closeSync(fs.openSync(folder + "/" + name, mode)); } catch {}
   }
 };
-for (;;) {
-  Atomics.wait(flags, ${Slot.State}, ${WatchState.Idle});
-  const sequence = Atomics.load(flags, ${Slot.Sequence});
-  if (Atomics.wait(flags, ${Slot.State}, ${WatchState.Armed}, Atomics.load(flags, ${Slot.DeadlineMs})) !== "timed-out") continue;
-  if (!armed(sequence)) continue;
-  try { process.kill(Atomics.load(flags, ${Slot.Pid}), "SIGKILL"); } catch {}
+const fire = (sequence, pid) => {
+  if (!armed(sequence)) return;
+  try { process.kill(pid, "SIGKILL"); } catch {}
   Atomics.add(flags, ${Slot.Fired}, 1);
   const length = Atomics.load(flags, ${Slot.RescueLength});
   const folder = length > 0 ? Buffer.from(rescueBytes.subarray(0, length)).toString("utf8") : "";
   while (armed(sequence)) {
     if (folder !== "") release(folder);
-    Atomics.wait(flags, ${Slot.State}, ${WatchState.Armed}, ${RESCUE_EVERY_MS});
+    sleep(${RESCUE_EVERY_MS});
+  }
+};
+const park = (sequence) => {
+  Atomics.store(flags, ${Slot.Parked}, 1);
+  const quiet = Atomics.load(flags, ${Slot.Sequence}) === sequence && Atomics.load(flags, ${Slot.State}) === ${WatchState.Idle};
+  if (quiet) Atomics.wait(flags, ${Slot.Parked}, 1);
+  Atomics.store(flags, ${Slot.Parked}, 0);
+};
+let seen = Atomics.load(flags, ${Slot.Sequence});
+let activeAt = now();
+for (;;) {
+  const sequence = Atomics.load(flags, ${Slot.Sequence});
+  const isArmed = Atomics.load(flags, ${Slot.State}) === ${WatchState.Armed};
+  const at = deadlineAt[0];
+  const pid = Atomics.load(flags, ${Slot.Pid});
+  const time = now();
+  if (isArmed || sequence !== seen) {
+    seen = sequence;
+    activeAt = time;
+  }
+  if (isArmed && time >= at) {
+    fire(sequence, pid);
+  } else if (isArmed) {
+    sleep(Math.min(${WATCH_POLL_MS}, at - time));
+  } else if (time - activeAt >= ${PARK_AFTER_MS}) {
+    park(sequence);
+    activeAt = now();
+  } else {
+    sleep(${WATCH_POLL_MS});
   }
 }
 `;
 
-/** This JS thread's watchdog, started on first use. */
+/** This JS thread's watchdog, started on first use (and again if its thread ever ends). */
 let watchdog;
+
+/** The current time in `process.hrtime` milliseconds, one clock for every thread of the process. */
+function nowMs() {
+  return Number(process.hrtime.bigint()) / 1e6;
+}
 
 function watch() {
   if (watchdog !== undefined) return watchdog;
   const sab = new SharedArrayBuffer(RESCUE_AT + RESCUE_BYTES);
-  const worker = new Worker(WATCHDOG_SOURCE, { eval: true, workerData: { sab } });
+  const worker = new Worker(WATCHDOG_SOURCE, { eval: true, execArgv: [], workerData: { sab } });
+  const started = {
+    flags: new Int32Array(sab, 0, WATCH_SLOTS),
+    deadlineAt: new Float64Array(sab, DEADLINE_AT, 1),
+    rescue: new Uint8Array(sab, RESCUE_AT, RESCUE_BYTES),
+    wakes: 0,
+  };
+  const forget = () => {
+    if (watchdog === started) watchdog = undefined;
+  };
+  worker.on("error", forget);
+  worker.on("exit", forget);
   worker.unref();
-  watchdog = { flags: new Int32Array(sab, 0, WATCH_SLOTS), rescue: new Uint8Array(sab, RESCUE_AT, RESCUE_BYTES) };
+  watchdog = started;
   return watchdog;
 }
 
-/** Arms the watchdog for one call on `pid`; `folder` names the FIFOs while they are being opened. */
+/**
+ * Arms the watchdog for one call on `pid`; `folder` names the FIFOs while they are being opened.
+ * Plain stores: the deadline and pid before the sequence and state, which the watchdog reads first.
+ * Only a parked watchdog needs a notify.
+ */
 function arm(pid, deadlineMs, folder) {
-  const { flags, rescue } = watch();
-  const named = folder === undefined ? 0 : rescue.byteLength;
-  const written = folder === undefined ? 0 : Buffer.from(rescue.buffer, RESCUE_AT, named).write(folder, "utf8");
+  const dog = watch();
+  const { flags, rescue } = dog;
+  const written = folder === undefined ? 0 : Buffer.from(rescue.buffer, RESCUE_AT, RESCUE_BYTES).write(folder, "utf8");
   Atomics.store(flags, Slot.RescueLength, written);
-  Atomics.store(flags, Slot.DeadlineMs, deadlineMs);
+  dog.deadlineAt[0] = nowMs() + deadlineMs;
   Atomics.store(flags, Slot.Pid, pid);
   Atomics.add(flags, Slot.Sequence, 1);
   Atomics.store(flags, Slot.State, WatchState.Armed);
-  Atomics.notify(flags, Slot.State);
+  if (Atomics.load(flags, Slot.Parked) === 0) return;
+  Atomics.store(flags, Slot.Parked, 0);
+  Atomics.notify(flags, Slot.Parked);
+  dog.wakes += 1;
 }
 
 function disarm() {
-  const { flags } = watch();
-  Atomics.store(flags, Slot.State, WatchState.Idle);
-  Atomics.notify(flags, Slot.State);
+  Atomics.store(watch().flags, Slot.State, WatchState.Idle);
 }
 
 /** How many processes the watchdog has killed (for this package's tests). */
 export function watchdogKills() {
   return watchdog === undefined ? 0 : Atomics.load(watchdog.flags, Slot.Fired);
+}
+
+/** The watchdog's kills, the notifies `arm` sent to wake it, and whether it is parked (for this package's tests). */
+export function watchdogStats() {
+  if (watchdog === undefined) return { kills: 0, wakes: 0, parked: false };
+  const { flags, wakes } = watchdog;
+  return { kills: Atomics.load(flags, Slot.Fired), wakes, parked: Atomics.load(flags, Slot.Parked) === 1 };
 }
 
 /** Blocks this thread for `ms` (the start's wait for the FIFOs is synchronous). */
