@@ -103,8 +103,7 @@ its loading screen as booted); the phones'
 builders and settings ([`rust-build-mobile.ts`](../../src/main/rust-build-mobile.ts)), registered
 by `rustTargetBuilders`, build on a Mac (Android also on Linux);
 Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register
-because the Rust recipe pins their cross components (a row without them refuses `target-unbuilt`);
-a lock's base sysroot holds every destination's standard library it names. Live and judging builds of a desktop
+while the Rust recipe pins their cross components, else `target-unbuilt`. Live and judging builds of a desktop
 destination link the facade's dev flavour (`studio` feature: the game serves fd 3, contract v2);
 an export and every web build never do (`RustFlavour`, `rust-manifest.ts`). A `[net] enabled = true`
 game (G6 MP-5b) links the facade's `net-loopback` (the in-process room) in Live, judging and the
