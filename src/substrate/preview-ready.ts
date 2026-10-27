@@ -17,6 +17,7 @@
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PreviewPort } from "./preview-port.ts";
 import { COMPUTER_VIEW } from "./computer-tool.ts";
+import { BootStage } from "../shared/native-contract.ts";
 import { ReadyPhase, type ReadyResult, ReadyVia } from "../shared/preview-contract.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
@@ -122,6 +123,9 @@ export interface ReadySnapshot {
 
 const NO_GESTURE = { needed: false, done: false, reasons: [] as string[] };
 
+/** The Genex web shell's own boot states (`window.GenexShell.status.state`, `shell.html`). Wire values. */
+const ShellState = { Starting: "starting", Running: "running" } as const;
+
 /**
  * The expression the studio evaluates in the page.
  *
@@ -142,18 +146,27 @@ const NO_GESTURE = { needed: false, done: false, reasons: [] as string[] };
  * refused shows its card instead and is read as before.
  */
 export const READY_PROBE = `(() => {
+  /* The Genex web shell (a Rust · wgpu page) binds the game's verbs only when studio_boot answers,
+     and its loading screen leaves at the first lit frame. The shim settles a quiet page that drew
+     nothing at half its budget, which a shell still compiling its pipelines is: until the shell
+     says it is up, every seed, pause, step and key reaches the shim alone. A shell that failed or
+     found no WebGPU shows its card and is read as before; the C++ shell has neither field. */
   var shellLoading = function () {
     var shell = window.GenexShell;
-    var progress = shell && shell.progress;
-    if (!progress || typeof progress !== "object" || typeof progress.stage !== "string") return null;
-    var state = shell.status && shell.status.state;
-    if (state === "failed" || state === "unsupported" || progress.stage === "ready") return null;
-    var counted = typeof progress.done === "number" && typeof progress.total === "number" ? " " + progress.done + " of " + progress.total : "";
-    return ("the game is still on its loading screen (" + progress.stage + counted + ")").slice(0, ${MAX_REASON_CHARS});
+    var status = shell && typeof shell.status === "object" ? shell.status : null;
+    var progress = shell && typeof shell.progress === "object" ? shell.progress : null;
+    var stage = progress && typeof progress.stage === "string" ? progress.stage : null;
+    var state = status ? status.state : null;
+    var starting = state === ${JSON.stringify(ShellState.Starting)};
+    var lighting = stage !== null && stage !== ${JSON.stringify(BootStage.Ready)} && (state === null || state === ${JSON.stringify(ShellState.Running)});
+    if (!starting && !lighting) return null;
+    var counted = progress && typeof progress.done === "number" && typeof progress.total === "number" ? " " + progress.done + " of " + progress.total : "";
+    return ("the game is still on its loading screen (" + (stage || "starting") + counted + ")").slice(0, ${MAX_REASON_CHARS});
   };
   var held = function (answer) {
-    var loading = answer.via === "none" ? null : shellLoading();
+    var loading = shellLoading();
     if (!loading) return answer;
+    answer.via = answer.via === "none" ? "contract" : answer.via;
     answer.ready = false;
     answer.phase = "boot";
     answer.reason = loading;

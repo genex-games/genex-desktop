@@ -235,6 +235,34 @@ describe("booted means booted", () => {
     assert.equal(contract.ready, false);
   });
 
+  it("waits for the Genex web shell's first lit frame, not the shim's quiet page (bodycam dead-input)", () => {
+    // The shim settles a quiet page with no draws at half its budget (7.5 s). A Rust · wgpu page
+    // still compiling its pipelines is quiet and has drawn nothing: judged then, every seed,
+    // pause, step and key went to the shim alone, and the title card never left.
+    const quietShim = {
+      boot: () => ({ ready: true, phase: "ready", at: 7_500, since: 7_600, frames: 400, drawCalls: 0 }),
+    };
+    const shellAt = (state: string, stage: string) => ({
+      __studioClock: quietShim,
+      GenexShell: { status: { state, code: null, reason: null }, progress: { stage, done: 3, total: 40 } },
+    });
+    const compiling = probe(shellAt("starting", "pipelines"));
+    assert.equal(compiling.ready, false);
+    assert.equal(compiling.phase, "boot");
+    assert.match(String(compiling.reason), /pipelines/);
+    // Booted, but its first lit frame is not on screen yet: the loading screen still covers it.
+    assert.equal(probe(shellAt("running", "frame")).ready, false);
+    const up = probe(shellAt("running", "ready"));
+    assert.equal(up.ready, true);
+    assert.equal(up.via, "shim");
+    // A shell that failed or found no WebGPU is the shim's answer as before: its typed code is
+    // what the verbs and the cards report, and no WebGPU is the preview's limit, never the game's.
+    assert.equal(probe(shellAt("unsupported", "device")).ready, true);
+    assert.equal(probe(shellAt("failed", "pipelines")).ready, true);
+    // The C++ · raylib shell is a GenexShell with no boot status of its own: the shim answers it.
+    assert.equal(probe({ __studioClock: quietShim, GenexShell: { VERBS: [] } }).ready, true);
+  });
+
   it("polls immediately, gives up at the budget, and never throws at a page that is going away", async () => {
     // An already-up page costs nothing where it used to cost a flat 1.5 s.
     const up = scriptedPort([booting({ ready: true, phase: "ready", pageMs: 120 })]);

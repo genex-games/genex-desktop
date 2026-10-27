@@ -793,9 +793,8 @@ Every shot records its provenance. Draw calls are counted at the graphics API (`
 **Readiness and validation.** [`src/substrate/preview-ready.ts`](../../src/substrate/preview-ready.ts)
 waits for a fact (`READY_PROBE`, `via: shim | contract | none`) and never throws. The order is
 ready → gesture → setup → start, with one boot budget (`bootBudget`, 1000–60000 ms, default 15000,
-`studio.json` `bootMs`). Rust shells boot until `GenexShell.progress` is `ready`. A
-spent budget is a note (`timedOut`; capture says `NOT LOADED:`), not a failure; `phase:
-"failed"` is a page's own failure. `validateAt` answers `loaded`, `attached` or `missing`;
+`studio.json` `bootMs`). Rust shells boot until `GenexShell.progress` is `ready`. A spent budget is a note (`timedOut`; capture says `NOT LOADED:`),
+not a failure; `phase: "failed"` is a page's own failure. `validateAt` answers `loaded`, `attached` or `missing`;
 `game.attached` asks the live page what the studio attached to. `preview.ready`, `preview.gesture`,
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 
