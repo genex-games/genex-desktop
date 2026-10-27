@@ -168,7 +168,9 @@ A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the ord
 with Rapier colliders, fetch a CC0 scan per surface, then build the shell as one GLB kit with
 `blender__model` from a bpy script at `assets/src/<name>.py` (walls with real openings, frames,
 sills, trims, radiators, world-scale UVs; `docs/examples/room-kit/room_kit.py` is one) and draw it
-with `frame.model`. Then light it as World look says: a sun that falls in at the windows, every
+with `frame.model`. Neither stretch a scan nor tile it in a grid: uneven panels, each jittered
+from a seed, close tints of one scan, a second scan only in a zone of its own, decals over the
+rest. Then light it as World look says: a sun that falls in at the windows, every
 glowing fitting paired with a light, a probe and a volume per room, decals for wear, thin fog.
 Boxes are for the greybox; a box face stretches its scan.
 

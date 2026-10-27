@@ -47,62 +47,127 @@ const BULB: Color = Color::rgb(255, 190, 120);
 /// every corner; this much still shows the sun's shafts at `high` and `ultra`.
 const FOG_DENSITY: f32 = 0.012;
 const FOG_FALLOFF: f32 = 0.05;
+/// How many wear decals the layout seed scatters over the walls and the floor.
+const WALL_STREAKS: usize = 8;
+const FLOOR_SCUFFS: usize = 6;
 /// Where the camera stands and looks: from the back corner, past the desks to the windows.
 const EYE: Vec3 = vec3(-3.3, 1.6, -2.4);
 const LOOK_AT: Vec3 = vec3(1.2, 1.1, 2.4);
 
-/// A CC0 scan as `cc0__fetch` delivers it: its folder under `assets/`, its id, the size in metres
-/// one copy of it covers, whether it came with an `arm` (occlusion-roughness-metal) map, and the
-/// colour drawn until its maps load (or when they are missing).
+/// A CC0 scan as `cc0__fetch` delivers it: its folder under `assets/`, its id, how its maps are
+/// named, the size in metres one copy of it covers, and the colour drawn until its maps load (or
+/// when they are missing).
 struct Scan {
     folder: &'static str,
     id: &'static str,
+    maps: Maps,
     tile: f32,
-    arm: bool,
     stand_in: Color,
+}
+
+/// How a source names a scan's maps.
+#[derive(Clone, Copy)]
+enum Maps {
+    /// Poly Haven: `<id>_diff_1k.jpg`, `<id>_nor_gl_1k.jpg`, and `<id>_arm_1k.jpg` when it has one.
+    PolyHaven { arm: bool },
+    /// ambientCG: `<id>_1K-JPG_Color.jpg` and `<id>_1K-JPG_NormalGL.jpg` (its roughness map is one
+    /// grey channel, not the green-roughness, blue-metal packing a material samples, so it is left out).
+    AmbientCg,
 }
 
 // `cc0__fetch {source: "polyhaven", id, resolution: "1k"}` lands each scan in exactly these
 // folders; if a fetch answers another path, use the path it answered.
-const PLASTER: Scan = Scan { folder: "cc0/aeaef6d7-72f1-a42b-cd06-d4d2de83a72a", id: "peeling_painted_wall", tile: 2.0, arm: true, stand_in: Color::rgb(150, 160, 140) };
-const TILES: Scan = Scan { folder: "cc0/e6657b6b-b54c-49ce-7af8-709354a34ed0", id: "floor_tiles_06", tile: 2.0, arm: true, stand_in: Color::rgb(120, 100, 90) };
-const CONCRETE: Scan = Scan { folder: "cc0/69d58cd7-d02f-5f73-c20b-748197b36df8", id: "concrete_wall_003", tile: 2.5, arm: true, stand_in: Color::rgb(140, 138, 132) };
-const WOOD: Scan = Scan { folder: "cc0/e1301015-c73e-179e-3826-3d51565ca96f", id: "wood_table_worn", tile: 1.2, arm: false, stand_in: Color::rgb(110, 80, 55) };
-const RUST: Scan = Scan { folder: "cc0/9356d36e-45b6-0825-4b29-fa582aa2f82a", id: "rusty_metal_02", tile: 1.0, arm: false, stand_in: Color::rgb(90, 70, 60) };
+const PLASTER: Scan = Scan { folder: "cc0/aeaef6d7-72f1-a42b-cd06-d4d2de83a72a", id: "peeling_painted_wall", maps: Maps::PolyHaven { arm: true }, tile: 2.0, stand_in: Color::rgb(150, 160, 140) };
+// `{source: "ambientcg", id: "PaintedPlaster016", resolution: "1k"}`: the oil-painted dado below.
+const PLASTER_B: Scan = Scan { folder: "cc0/bda79521-bec0-2370-fb9d-36bab473c63b", id: "PaintedPlaster016", maps: Maps::AmbientCg, tile: 2.0, stand_in: Color::rgb(160, 165, 150) };
+const TILES: Scan = Scan { folder: "cc0/e6657b6b-b54c-49ce-7af8-709354a34ed0", id: "floor_tiles_06", maps: Maps::PolyHaven { arm: true }, tile: 2.0, stand_in: Color::rgb(120, 100, 90) };
+const CONCRETE: Scan = Scan { folder: "cc0/69d58cd7-d02f-5f73-c20b-748197b36df8", id: "concrete_wall_003", maps: Maps::PolyHaven { arm: true }, tile: 2.5, stand_in: Color::rgb(140, 138, 132) };
+const WOOD: Scan = Scan { folder: "cc0/e1301015-c73e-179e-3826-3d51565ca96f", id: "wood_table_worn", maps: Maps::PolyHaven { arm: false }, tile: 1.2, stand_in: Color::rgb(110, 80, 55) };
+const RUST: Scan = Scan { folder: "cc0/9356d36e-45b6-0825-4b29-fa582aa2f82a", id: "rusty_metal_02", maps: Maps::PolyHaven { arm: false }, tile: 1.0, stand_in: Color::rgb(90, 70, 60) };
+/// Each finish's variants: one scan in a few close tints (multiplied with its colour map). Keep
+/// them a shade apart: two differently coloured scans mixed panel by panel read as a quilt.
+const PLASTER_TINTS: [Color; 3] = [Color::WHITE, Color::rgb(240, 234, 224), Color::rgb(228, 228, 226)];
+const DADO_TINTS: [Color; 3] = [Color::rgb(150, 186, 160), Color::rgb(144, 180, 156), Color::rgb(156, 190, 164)];
+const PLAIN_TINTS: [Color; 2] = [Color::WHITE, Color::rgb(236, 234, 230)];
+/// The painted dado's top: the second paint goes below it, where a real one ends at a line.
+const DADO: f32 = 1.3;
+/// The seed of the panel layout (cuts, variants, turns, wear): change it for another arrangement.
+const LAYOUT_SEED: u64 = 0x7007_5eed;
 
 impl Scan {
-    /// The scan as a PBR surface; `roughness` scales the scan's own (1 keeps it).
-    fn material(&self, roughness: f32) -> Material {
-        let map = |kind: &str| format!("{}/{}_{kind}_1k.jpg", self.folder, self.id);
-        let surface = Material::color(Color::WHITE)
-            .with_untextured_color(self.stand_in)
-            .with_roughness(roughness)
-            .with_base_texture(&map("diff"))
-            .with_normal_texture(&map("nor_gl"), 1.0);
-        if self.arm { surface.with_metal_rough_texture(&map("arm")) } else { surface }
+    /// The scan as a PBR surface, its colour map times `tint`; `roughness` scales the scan's own.
+    fn material(&self, roughness: f32, tint: Color) -> Material {
+        let (folder, id) = (self.folder, self.id);
+        let surface = Material::color(tint).with_untextured_color(self.stand_in).with_roughness(roughness);
+        match self.maps {
+            Maps::PolyHaven { arm } => {
+                let map = |kind: &str| format!("{folder}/{id}_{kind}_1k.jpg");
+                let surface = surface.with_base_texture(&map("diff")).with_normal_texture(&map("nor_gl"), 1.0);
+                if arm { surface.with_metal_rough_texture(&map("arm")) } else { surface }
+            }
+            Maps::AmbientCg => {
+                let map = |kind: &str| format!("{folder}/{id}_1K-JPG_{kind}.jpg");
+                surface.with_base_texture(&map("Color")).with_normal_texture(&map("NormalGL"), 1.0)
+            }
+        }
+    }
+}
+
+/// A surface made of panels: its variants (one scan in a few tints) and the size one copy covers.
+/// Mixing close variants panel by panel is what keeps a wall from reading as one photo repeated.
+pub struct Finish {
+    variants: Vec<Material>,
+    tile: f32,
+}
+
+impl Finish {
+    fn new(scan: &Scan, roughness: f32, tints: &[Color]) -> Finish {
+        Finish { variants: tints.iter().map(|tint| scan.material(roughness, *tint)).collect(), tile: scan.tile }
+    }
+
+    /// The finish as one plain material, for a part too small to panel (a sill).
+    fn plain(&self) -> &Material {
+        &self.variants[0]
     }
 }
 
 /// Every surface, made once per seed.
 pub struct Surfaces {
-    plaster: Material,
-    tiles: Material,
-    concrete: Material,
+    plaster: Finish,
+    dado: Finish,
+    tiles: Finish,
+    concrete: Finish,
     wood: Material,
     radiator: Material,
     steel: Material,
     ground: Material,
 }
 
+impl Surfaces {
+    /// The classroom's walls: whitewash over a painted dado.
+    fn painted(&self) -> Paint<'_> {
+        Paint::Dado { below: &self.dado, above: &self.plaster, line: &self.steel }
+    }
+}
+
+/// How a wall is finished: one finish floor to ceiling, or a dado below a painted line.
+#[derive(Clone, Copy)]
+enum Paint<'a> {
+    One(&'a Finish),
+    Dado { below: &'a Finish, above: &'a Finish, line: &'a Material },
+}
+
 impl Default for Surfaces {
     fn default() -> Surfaces {
         Surfaces {
-            plaster: PLASTER.material(1.0),
+            plaster: Finish::new(&PLASTER, 1.0, &PLASTER_TINTS),
+            // Oil paint is glossier than whitewash.
+            dado: Finish::new(&PLASTER_B, 0.6, &DADO_TINTS),
             // Old terrazzo polished by feet: lower roughness so the probe's reflection shows.
-            tiles: TILES.material(0.6),
-            concrete: CONCRETE.material(1.0),
-            wood: WOOD.material(0.8),
-            radiator: RUST.material(1.0),
+            tiles: Finish::new(&TILES, 0.6, &PLAIN_TINTS),
+            concrete: Finish::new(&CONCRETE, 1.0, &PLAIN_TINTS),
+            wood: WOOD.material(0.8, Color::WHITE),
+            radiator: RUST.material(1.0, Color::WHITE),
             steel: Material::color(Color::rgb(60, 62, 64)).with_metallic(1.0).with_roughness(0.45),
             ground: Material::color(Color::rgb(70, 72, 58)).with_roughness(0.95),
         }
@@ -164,25 +229,25 @@ fn outside(frame: &mut Frame, s: &Surfaces) {
     frame.tag("outside");
     block(frame, vec3(-60.0, -0.3, ROOM_MAX.z + WALL), vec3(60.0, -0.02, 60.0), &s.ground);
     // Low and far enough that the sun (17 degrees up) clears it and falls in through the windows.
-    tiled(frame, vec3(-20.0, 0.0, 40.0), vec3(20.0, 8.0, 41.0), CONCRETE.tile * 2.0, &s.concrete);
+    tiled(frame, vec3(-20.0, 0.0, 40.0), vec3(20.0, 8.0, 41.0), &s.concrete);
 }
 
 /// The walls, floors and ceilings of both rooms, the window frames and sills.
 fn shell(frame: &mut Frame, s: &Surfaces) {
     frame.tag("shell");
     let (lo, hi) = (ROOM_MIN, ROOM_MAX);
-    tiled(frame, vec3(lo.x, -0.2, lo.z), vec3(hi.x, 0.0, hi.z), TILES.tile, &s.tiles);
-    tiled(frame, vec3(lo.x, CEILING, lo.z), vec3(HALL_MAX.x, CEILING + 0.2, HALL_MAX.z), CONCRETE.tile, &s.concrete);
-    tiled(frame, vec3(HALL_MIN.x, -0.2, HALL_MIN.z), vec3(HALL_MAX.x, 0.0, HALL_MAX.z), CONCRETE.tile, &s.concrete);
+    tiled(frame, vec3(lo.x, -0.2, lo.z), vec3(hi.x, 0.0, hi.z), &s.tiles);
+    tiled(frame, vec3(lo.x, CEILING, lo.z), vec3(HALL_MAX.x, CEILING + 0.2, HALL_MAX.z), &s.concrete);
+    tiled(frame, vec3(HALL_MIN.x, -0.2, HALL_MIN.z), vec3(HALL_MAX.x, 0.0, HALL_MAX.z), &s.concrete);
     let windows: Vec<Opening> = WINDOWS.iter().map(|&(from, to)| Opening { from, to, sill: SILL, head: HEAD }).collect();
-    wall(frame, Side::AlongX(hi.z, hi.z + WALL), (lo.x - WALL, hi.x + WALL), &windows, &s.plaster);
-    wall(frame, Side::AlongX(lo.z - WALL, lo.z), (lo.x - WALL, hi.x + WALL), &[], &s.plaster);
-    wall(frame, Side::AlongZ(lo.x - WALL, lo.x), (lo.z, hi.z), &[], &s.plaster);
+    wall(frame, Side::AlongX(hi.z, hi.z + WALL), (lo.x - WALL, hi.x + WALL), &windows, s.painted());
+    wall(frame, Side::AlongX(lo.z - WALL, lo.z), (lo.x - WALL, hi.x + WALL), &[], s.painted());
+    wall(frame, Side::AlongZ(lo.x - WALL, lo.x), (lo.z, hi.z), &[], s.painted());
     let door = Opening { from: DOOR.0, to: DOOR.1, sill: 0.0, head: DOOR_HEAD };
-    wall(frame, Side::AlongZ(hi.x, hi.x + WALL), (HALL_MIN.z, HALL_MAX.z), &[door], &s.plaster);
-    wall(frame, Side::AlongZ(HALL_MAX.x, HALL_MAX.x + WALL), (HALL_MIN.z, HALL_MAX.z), &[], &s.concrete);
-    wall(frame, Side::AlongX(HALL_MIN.z - WALL, HALL_MIN.z), (HALL_MIN.x, HALL_MAX.x), &[], &s.concrete);
-    wall(frame, Side::AlongX(HALL_MAX.z, HALL_MAX.z + WALL), (HALL_MIN.x, HALL_MAX.x), &[], &s.concrete);
+    wall(frame, Side::AlongZ(hi.x, hi.x + WALL), (HALL_MIN.z, HALL_MAX.z), &[door], s.painted());
+    wall(frame, Side::AlongZ(HALL_MAX.x, HALL_MAX.x + WALL), (HALL_MIN.z, HALL_MAX.z), &[], Paint::One(&s.concrete));
+    wall(frame, Side::AlongX(HALL_MIN.z - WALL, HALL_MIN.z), (HALL_MIN.x, HALL_MAX.x), &[], Paint::One(&s.concrete));
+    wall(frame, Side::AlongX(HALL_MAX.z, HALL_MAX.z + WALL), (HALL_MIN.x, HALL_MAX.x), &[], Paint::One(&s.concrete));
     // Each window: a steel frame with a mullion and a transom (its glass long gone, so the sun's
     // shafts reach the floor), and a concrete sill standing proud of the wall inside.
     let mid = hi.z + WALL * 0.5;
@@ -193,7 +258,7 @@ fn shell(frame: &mut Frame, s: &Surfaces) {
         for y in [SILL, 1.9, HEAD - 0.05] {
             block(frame, vec3(x0, y, mid - 0.03), vec3(x1, y + 0.05, mid + 0.03), &s.steel);
         }
-        block(frame, vec3(x0 - 0.08, SILL - 0.05, hi.z - 0.08), vec3(x1 + 0.08, SILL, hi.z + 0.02), &s.concrete);
+        block(frame, vec3(x0 - 0.08, SILL - 0.05, hi.z - 0.08), vec3(x1 + 0.08, SILL, hi.z + 0.02), s.concrete.plain());
     }
 }
 
@@ -269,6 +334,26 @@ fn decals(frame: &mut Frame) {
     let puddle = Decal::on_ground(vec3(1.0, 0.0, 2.2), 1.6, 1.1).rotated(0.4).with_base_texture("decals/stain.png");
     frame.decal(&puddle.with_color(Color::rgb(40, 38, 34)).with_roughness(0.08).with_flatten(1.0));
     frame.decal(&Decal::on_ground(vec3(5.4, 0.0, -3.5), 1.4, 2.6).with_base_texture("decals/stain.png").with_opacity(0.7));
+    wear(frame);
+}
+
+/// Wear scattered from the layout seed: faint streaks down the solid walls and scuffs on the floor,
+/// each a different size, strength and turn. Over the panels they hide any repeat that still shows.
+fn wear(frame: &mut Frame) {
+    let mut rng = Pcg32::seeded(LAYOUT_SEED);
+    // The room's solid inner faces: a point on each and the way it faces.
+    let walls = [(vec3(0.0, 0.0, ROOM_MIN.z), Vec3::Z, Vec3::X), (vec3(ROOM_MIN.x, 0.0, 0.0), Vec3::X, Vec3::Z)];
+    for i in 0..WALL_STREAKS {
+        let (base, facing, along) = walls[i % walls.len()];
+        let at = base + along * rng.range_f32(-2.8, 2.8) + Vec3::Y * rng.range_f32(0.8, 2.4);
+        let streak = Decal::on_wall(at, facing, rng.range_f32(0.5, 1.4), rng.range_f32(1.0, 2.2));
+        frame.decal(&streak.with_base_texture("decals/grime-streaks.png").with_opacity(rng.range_f32(0.25, 0.6)));
+    }
+    for _ in 0..FLOOR_SCUFFS {
+        let at = vec3(rng.range_f32(-3.5, 3.5), 0.0, rng.range_f32(-2.5, 2.5));
+        let scuff = Decal::on_ground(at, rng.range_f32(0.6, 1.5), rng.range_f32(0.6, 1.5)).rotated(rng.range_f32(0.0, std::f32::consts::TAU));
+        frame.decal(&scuff.with_base_texture("decals/stain.png").with_opacity(rng.range_f32(0.2, 0.45)));
+    }
 }
 
 /// A wall's footprint: along x between two z planes, or along z between two x planes.
@@ -288,19 +373,32 @@ struct Opening {
 }
 
 /// A wall `span` long from floor to ceiling, with `openings` cut through it, as panels: a full
-/// pier between openings, and under and over each opening. Each panel is tiled to the scan's size.
+/// pier between openings, and under and over each opening, each covered in its paint's panels.
 // TODO(runtime mesh): once the facade builds a mesh from vertices, make each wall one mesh with
 // its openings and world-scale UVs here, as `docs/examples/room-kit/room_kit.py` does in Blender.
-fn wall(frame: &mut Frame, side: Side, span: (f32, f32), openings: &[Opening], material: &Material) {
+fn wall(frame: &mut Frame, side: Side, span: (f32, f32), openings: &[Opening], paint: Paint<'_>) {
+    let bounds = |along: (f32, f32), up: (f32, f32), proud: f32| match side {
+        Side::AlongX(z0, z1) => (vec3(along.0, up.0, z0 - proud), vec3(along.1, up.1, z1 + proud)),
+        Side::AlongZ(x0, x1) => (vec3(x0 - proud, up.0, along.0), vec3(x1 + proud, up.1, along.1)),
+    };
     let panel = |frame: &mut Frame, along: (f32, f32), up: (f32, f32)| {
         if along.1 - along.0 < 0.01 || up.1 - up.0 < 0.01 {
             return;
         }
-        let (min, max) = match side {
-            Side::AlongX(z0, z1) => (vec3(along.0, up.0, z0), vec3(along.1, up.1, z1)),
-            Side::AlongZ(x0, x1) => (vec3(x0, up.0, along.0), vec3(x1, up.1, along.1)),
-        };
-        tiled(frame, min, max, PLASTER.tile, material);
+        let (min, max) = bounds(along, up, 0.0);
+        match paint {
+            Paint::One(finish) => tiled(frame, min, max, finish),
+            // Split at the dado: its paint below, the whitewash above, and the line between them.
+            Paint::Dado { below, above, line } => {
+                let split = DADO.clamp(up.0, up.1);
+                tiled(frame, min, vec3(max.x, split, max.z), below);
+                tiled(frame, vec3(min.x, split, min.z), max, above);
+                if up.0 < DADO && DADO < up.1 {
+                    let (lo, hi) = bounds(along, (DADO - 0.015, DADO + 0.015), 0.006);
+                    block(frame, lo, hi, line);
+                }
+            }
+        }
     };
     let mut from = span.0;
     for hole in openings {
@@ -312,24 +410,69 @@ fn wall(frame: &mut Frame, side: Side, span: (f32, f32), openings: &[Opening], m
     panel(frame, (from, span.1), (0.0, CEILING));
 }
 
-/// A box from `min` to `max` cut into pieces about `tile` across on its two largest sides, so a
-/// scan keeps its real size instead of stretching over the whole box.
-// TODO(Material UV scale): once `Material` takes a UV scale or world-space mapping, draw one box
-// with the scan's size and drop the cutting.
-fn tiled(frame: &mut Frame, min: Vec3, max: Vec3, tile: f32, material: &Material) {
+/// A box from `min` to `max` covered in `finish`'s panels. Each face of a box shows its scan once,
+/// so the box is cut on its two largest sides into panels about the scan's size: no stretching.
+/// The cuts are uneven, each panel draws a variant picked from the layout seed and turns a half
+/// (or, when square, a quarter) turn about the box's thin axis: no grid of identical copies.
+// TODO(Material UV scale): once `Material::with_world_uv(tile)` lands, draw each wall, floor and
+// ceiling as a few large uneven patches with it (a variant each) instead of cutting tile-sized
+// panels; the variants, turns and wear decals still break the repeat.
+fn tiled(frame: &mut Frame, min: Vec3, max: Vec3, finish: &Finish) {
     let size = max - min;
-    let count = |length: f32| (length / tile).ceil().max(1.0) as u32;
-    let thin = size.min_element();
-    let n = [size.x, size.y, size.z].map(|length| if length == thin { 1 } else { count(length) });
-    let step = size / vec3(n[0] as f32, n[1] as f32, n[2] as f32);
-    for i in 0..n[0] {
-        for j in 0..n[1] {
-            for k in 0..n[2] {
-                let lo = min + step * vec3(i as f32, j as f32, k as f32);
-                block(frame, lo, lo + step, material);
+    if size.min_element() < 0.005 {
+        return;
+    }
+    let thin = if size.x <= size.y.min(size.z) { 0 } else if size.y <= size.z { 1 } else { 2 };
+    let mut rng = Pcg32::seeded(LAYOUT_SEED ^ place_key(min));
+    let cuts = [0, 1, 2].map(|axis| if axis == thin { vec![min[axis], max[axis]] } else { cuts(min[axis], max[axis], finish.tile, &mut rng) });
+    for x in cuts[0].windows(2) {
+        for y in cuts[1].windows(2) {
+            for z in cuts[2].windows(2) {
+                panel(frame, vec3(x[0], y[0], z[0]), vec3(x[1], y[1], z[1]), thin, finish, &mut rng);
             }
         }
     }
+}
+
+/// Where to cut `from..to` into pieces of about `tile`, each 0.75 to 1.25 times the others.
+fn cuts(from: f32, to: f32, tile: f32, rng: &mut Pcg32) -> Vec<f32> {
+    let count = ((to - from) / tile).ceil().max(1.0) as usize;
+    let weights: Vec<f32> = (0..count).map(|_| rng.range_f32(0.75, 1.25)).collect();
+    let total: f32 = weights.iter().sum();
+    let mut at = from;
+    let mut out = vec![from];
+    for weight in weights {
+        at += (to - from) * weight / total;
+        out.push(at);
+    }
+    if let Some(last) = out.last_mut() {
+        *last = to;
+    }
+    out
+}
+
+/// One panel from `lo` to `hi`: a variant of `finish`, turned about the `thin` axis.
+fn panel(frame: &mut Frame, lo: Vec3, hi: Vec3, thin: usize, finish: &Finish, rng: &mut Pcg32) {
+    let size = hi - lo;
+    let variant = &finish.variants[rng.below(finish.variants.len() as u32) as usize];
+    let (a, b) = ((thin + 1) % 3, (thin + 2) % 3);
+    let square = (size[a] - size[b]).abs() < 0.25 * size[a].max(size[b]);
+    let turns = if square { rng.below(4) } else { rng.below(2) * 2 };
+    // A quarter turn swaps the box's two long sides, so it still fills `lo..hi`.
+    let mut scale = size;
+    if turns % 2 == 1 {
+        scale[a] = size[b];
+        scale[b] = size[a];
+    }
+    let axis = [Vec3::X, Vec3::Y, Vec3::Z][thin];
+    let turn = Quat::from_axis_angle(axis, turns as f32 * std::f32::consts::FRAC_PI_2);
+    frame.cube_with(Transform::from_translation((lo + hi) * 0.5).with_rotation(turn).with_scale(scale), variant);
+}
+
+/// A key for a place, so each box's panels keep their layout from frame to frame.
+fn place_key(at: Vec3) -> u64 {
+    let q = |v: f32| (v * 64.0).round() as i64 as u64;
+    q(at.x).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ q(at.y).rotate_left(21) ^ q(at.z).rotate_left(42)
 }
 
 /// One box from `min` to `max`.

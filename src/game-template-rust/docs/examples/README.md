@@ -6,7 +6,7 @@ where yours go. Keep your own title, and merge `genex.toml` switches rather than
 
 | Example | What it shows | Read it for |
 | --- | --- | --- |
-| `docs/examples/interior-room/` | A classroom and a corridor: walls with window and door openings, CC0 scans at their real size, a probe and a volume per room, fluorescent tubes paired with lights, decals, the low sun's shafts through the windows, fog and a grade last | any indoor scene, any "photoreal" brief |
+| `docs/examples/interior-room/` | A classroom and a corridor: walls with window and door openings, CC0 scans at their real size in uneven, seeded panels of close variants (whitewash over a painted dado), a probe and a volume per room, fluorescent tubes paired with lights, decals, the low sun's shafts through the windows, fog and a grade last | any indoor scene, any "photoreal" brief |
 | `docs/examples/room-kit/room_kit.py` | The same shell as one GLB kit made in Local Blender, with world-scale UVs on every face | the shell of a finished level (`docs/examples/rooms-and-buildings.md`) |
 | `docs/examples/fps/` | An FPS facet set: mouse look, a chest camera with bob, a view model of forearms, gloves and a pistol built from parts, hitscan against Rapier colliders, recoil, and a rigged enemy with idle, walk, fire, hit and death | any first-person game (`docs/examples/fps.md` explains each part) |
 
@@ -16,7 +16,8 @@ The examples ship no asset files; without them they draw stand-in colours, so th
 as they are copied.
 
 - **interior-room**: `cc0__fetch` at `1k` from Poly Haven: `peeling_painted_wall`, `floor_tiles_06`,
-  `concrete_wall_003`, `wood_table_worn`, `rusty_metal_02`. Each `Scan` names the folder that fetch
+  `concrete_wall_003`, `wood_table_worn`, `rusty_metal_02`; and from ambientCG `PaintedPlaster016`
+  (the dado). Each `Scan` names the folder that fetch
   lands in; if yours answers another path, use it. Three RGBA decals: `decals/grime-streaks.png`,
   `decals/poster.png`, `decals/stain.png` (an alpha shape on transparency; a decal without its
   texture is not drawn).

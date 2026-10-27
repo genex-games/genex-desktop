@@ -41,7 +41,19 @@ fn the_room_draws_its_shell_furniture_and_lamps_with_a_probe_and_volume_per_room
     for tag in ["outside", "shell", "furniture", "lamps"] {
         assert!(tags.contains(&tag), "the room draws {tag}");
     }
-    assert_eq!(frame.decals().len(), 5, "grime under both sills, a poster, a puddle and a stain");
+    assert_eq!(frame.decals().len(), 19, "grime under both sills, a poster, a puddle, a stain, 8 streaks and 6 scuffs");
+}
+
+#[test]
+fn the_walls_show_whitewash_over_a_painted_dado_in_panels_that_hold_still_from_frame_to_frame() {
+    let mut runtime = started();
+    let frame = runtime.frame(View::Game).expect("a frame");
+    let shell: Vec<String> = frame.draws().iter().filter(|draw| draw.tag == "shell").map(|draw| format!("{:?}", draw.shape)).collect();
+    for paint in ["peeling_painted_wall", "PaintedPlaster016"] {
+        assert!(shell.iter().any(|shape| shape.contains(paint)), "the walls show {paint} (whitewash above, the dado below)");
+    }
+    let again: Vec<String> = runtime.frame(View::Game).expect("a frame").draws().iter().filter(|draw| draw.tag == "shell").map(|draw| format!("{:?}", draw.shape)).collect();
+    assert_eq!(shell, again, "the layout comes from its seed, not the frame");
 }
 
 #[test]
