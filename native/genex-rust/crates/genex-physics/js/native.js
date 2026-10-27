@@ -688,6 +688,18 @@ function coreOf(proc, binding, wire) {
         return false;
       }
     },
+    /**
+     * Sets this side's deadline for every later round trip (whole ms, 1-600000; false and unchanged
+     * otherwise). The process keeps the start's own deadline, so a deadline above it changes nothing
+     * the process does: a server starts cores with a generous deadline for setup frames (create,
+     * restore, a heavy spawn) and sets a tick's before its ticks.
+     */
+    setDeadline(ms) {
+      if (!isWholeMs(ms)) return false;
+      proc.deadlineMs = ms;
+      return true;
+    },
+    deadlineMs: () => proc.deadlineMs,
     cpuNs: () => proc.cpuNs,
     lastCpuNs: () => proc.lastCpuNs,
     frames: () => proc.frames,

@@ -374,6 +374,27 @@ describe("@genex-ai/physics-native: a failed process fails its own world only", 
     sibling.world.free();
     assert.deepEqual(roomsLeft(), [], "every ended core removed its folder");
   });
+
+  it("a deadline set after the start bounds every later frame: setup roomy, ticks tight", () => {
+    const tight = world(ROOMY_MS);
+    const sibling = world();
+    assert.equal(tight.core.deadlineMs(), ROOMY_MS);
+    for (const bad of [0, 1.5, 600_001, Number.NaN, "16"]) {
+      assert.equal(tight.core.setDeadline(bad as number), false, `refuses ${String(bad)}`);
+    }
+    assert.equal(tight.core.deadlineMs(), ROOMY_MS, "a refused deadline changes nothing");
+    assert.ok(tight.core.runTick({ step: true }).ok, "a light tick fits any deadline");
+    assert.equal(tight.core.setDeadline(TIGHT_MS), true);
+    assert.equal(tight.core.deadlineMs(), TIGHT_MS);
+    const start = performance.now();
+    assert.equal(code(tight.core.runTick({ batches: [[{ spawn: heightfield("ground") }]] })), "internal");
+    const took = performance.now() - start;
+    assert.ok(took < TIGHT_MS + SLACK_MS + 1_500, `the watchdog ended the frame after ${took} ms`);
+    assertGone(tight.core, tight.world);
+    assert.ok(sibling.world.step().ok, "the sibling never noticed");
+    tight.world.free();
+    sibling.world.free();
+  });
 });
 
 describe("@genex-ai/physics-native: starting refuses what it must, starting nothing", gate, () => {

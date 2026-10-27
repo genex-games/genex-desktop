@@ -69,6 +69,14 @@ export interface NativeCore {
   alive(): boolean;
   /** Whether the process's counting allocator measures the world's memory (§11.1). */
   memoryIsMeasured(): boolean;
+  /**
+   * Sets this side's deadline for every later round trip: whole milliseconds 1-600000, else false and
+   * nothing changes. The process keeps its start's deadline, so start with a generous one for setup
+   * frames and set a tick's before ticking.
+   */
+  setDeadline(ms: number): boolean;
+  /** This side's current round-trip deadline, ms. */
+  deadlineMs(): number;
   /** The process's CPU time over every frame so far, in nanoseconds. */
   cpuNs(): number;
   /** The last frame's CPU time, in nanoseconds. */
