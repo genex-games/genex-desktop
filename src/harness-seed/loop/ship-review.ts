@@ -23,6 +23,8 @@ import { JudgeParse } from "./judge-provenance.ts";
 import { workingGoal } from "./goal-prompts.ts";
 import { scopeLines } from "./scope-prompts.ts";
 import { visionJudgeLines } from "./vision-prompts.ts";
+import { asksForLook, blocksLook, genreOf, notShippedLooks, notShippedText } from "./look-bar.ts";
+import { shippedLookLine } from "./look-bar-prompts.ts";
 import { clip, CLIP_REASON } from "./text.ts";
 import { doNotRegressOf } from "./do-not-regress.ts";
 import { roleEffort, RoleKey } from "./model-roles.ts";
@@ -207,6 +209,7 @@ function shipContent(ask: ShipAsk, labels: readonly string[]): string {
     partsLine(parts),
     framesLine(labels, view),
     ...evidenceLines(evidence, hudBudgetFor(run.game)),
+    asksForLook(run) ? shippedLookLine(genreOf(run), Boolean(run.reference?.frames?.length), "this build") : "",
     SHIP_ASK,
     SHIP_REPLY,
   ]
@@ -234,7 +237,19 @@ function defectOf(raw: unknown, partIds: ReadonlySet<string>, cameras: ReadonlyS
   const what = clip(String(record.what ?? "").trim(), CLIP_REASON);
   if (!what) return null;
   const part = typeof record.part === "string" && partIds.has(record.part) ? record.part : null;
-  return { what, camera: cameraOf(record.camera, cameras), part, severity: severityOf(record.severity) };
+  // A look blocker is a blocker whatever severity the judge gave it (look-bar.ts).
+  const severity = blocksLook(what) ? DefectSeverity.Blocker : severityOf(record.severity);
+  return { what, camera: cameraOf(record.camera, cameras), part, severity };
+}
+
+/** Each camera the review said would not pass as a shipped game's screenshot, as a blocker no part owns. */
+function notShippedOf(raw: AnyRecord, cameras: ReadonlySet<string> | null): ShipDefect[] {
+  return notShippedLooks(raw.shipped, cameras).map((look) => ({
+    what: clip(notShippedText(look), CLIP_REASON),
+    camera: look.camera,
+    part: null,
+    severity: DefectSeverity.Blocker,
+  }));
 }
 
 /**
@@ -256,11 +271,13 @@ export function readShipReview(
       parse: JudgeParse.Invalid,
     };
   const ids = new Set(parts.map((part) => part.id));
-  const defects = (Array.isArray(raw.defects) ? raw.defects : [])
+  const listed = (Array.isArray(raw.defects) ? raw.defects : [])
     .map((defect: unknown) => defectOf(defect, ids, cameras))
-    .filter((defect: ShipDefect | null): defect is ShipDefect => defect !== null)
-    .slice(0, MAX_SHIP_DEFECTS);
-  return { ship: raw.ship, defects, doNotRegress: doNotRegressOf(raw), reason, parse: JudgeParse.Valid };
+    .filter((defect: ShipDefect | null): defect is ShipDefect => defect !== null);
+  const defects = [...listed, ...notShippedOf(raw, cameras)].slice(0, MAX_SHIP_DEFECTS);
+  // `ship` is true only when no defect is a blocker: a look blocker the judge let through says no.
+  const ship = raw.ship && !defects.some((defect) => defect.severity === DefectSeverity.Blocker);
+  return { ship, defects, doNotRegress: doNotRegressOf(raw), reason, parse: JudgeParse.Valid };
 }
 
 /**
@@ -279,7 +296,8 @@ export async function shipReview(ctx: HarnessCtx, ask: ShipAsk): Promise<ShipRev
     };
   const { run, evidence, parts, max = SHIP_REVIEW_IMAGES } = ask;
   const images = shipImages(run, evidence, max);
-  const systemPrompt = await judgeParts.judgePrompt(ctx, "ship-review.md", SHIP_REVIEW_FALLBACK);
+  const tokens = typeof judgeParts.artefactTokens === "function" ? judgeParts.artefactTokens(run) : [];
+  const systemPrompt = await judgeParts.judgePrompt(ctx, "ship-review.md", SHIP_REVIEW_FALLBACK, tokens);
   const userContent = shipContent(
     ask,
     images.map((image) => image.label ?? ""),

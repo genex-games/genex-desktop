@@ -58,6 +58,21 @@ passes press the keys before the opening sample (the web pass once `begin()` ref
 reports no `flow` (a Rust or C++ game unless it adds a `flow` probe) gets one settle step and a
 warning asking for it. A judge's `[dead-input]` defect is read off state, never asked of a frame
 (`facet/defects.ts`): it goes to the defect ledger, and the kind's look and move probes measure it.
+
+The look a run is held to is one table for every stack (`loop/look-bar.ts`). The look blockers —
+`[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`, `[placeholder-particles]`,
+`[sky-contradicts]`, `[visible-tiling]` and `[not-shipped]` (`judge/artefact-classes.md`) — hold
+the work open in code: a taste verdict naming one, in `defects` or in `polish` (moved into
+`defects`), is never `satisfied`, a finisher's `finishDone` waits while one remains, and the ship
+review makes it a `blocker` whatever severity it gave, so `ship` is false. A run whose ask sets a
+visual bar (`asksForLook`: reference stills, or a photoreal, realistic, AAA or beautiful brief)
+asks the taste judge and the ship review `shipped` per scene camera — would the frame, next to the
+reference stills, pass as a screenshot from a shipped game of its genre — and a camera that would
+not is a `[not-shipped]` blocker. The director's `plan` refuses such a run without `art=`, the art
+pass: every area's assets by tier (hero, mid, scatter, sky), each sourced from a Genex generation,
+a scan, a Blender script, or code with a why. It is kept on `run.art` (a re-plan keeps it), counts
+the Genex generations it reserves, and every builder's brief carries it with the greybox rule
+(`loop/look-bar-prompts.ts`).
 A play script may
 `touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for
 the finger): it reaches a Rust · wgpu game's contract v2 run or web page through `preview.input`;

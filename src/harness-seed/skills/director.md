@@ -55,6 +55,15 @@ itself and keeps the memory file its brief names current.)
    judgement, and a game that reports `flow` in `state()` tells the harness when play began.
    `play_script=` overrides the kind's controls; a part of a different kind takes `kind=` on its
    `worker_start`.
+   When the ask sets a visual bar (photoreal, realistic, AAA, beautiful, or reference stills), the
+   same call takes `art=`, the art pass: every area's assets by tier (hero near the camera, mid,
+   scatter and ground cover, sky with weather and the light's mood), each with its source — a
+   Genex generation (model, texture, rigged character), a Poly Haven or ambientCG scan, or a
+   Blender bpy script. Code-built geometry is the last resort and says why. The plan refuses a
+   look brief without it, every builder reads it, and its Genex generations are reserved for it.
+   Greybox is a step inside a round: a judge that still sees `[primitive]`, a black viewmodel,
+   pure-black shadows, cube particles, a sky against the weather or a visible texture repeat
+   holds the part open.
 
 ## Before anyone builds
 

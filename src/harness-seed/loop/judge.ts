@@ -43,6 +43,8 @@ import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { workingGoal } from "./goal-prompts.ts";
 import { judgeScopeLines, LIVENESS_SCOPE_RULE, PROPOSAL_SCOPE_RULE } from "./scope-prompts.ts";
 import { visionJudgeLines } from "./vision-prompts.ts";
+import { asksForLook, genreOf, lookBlockersIn, notShippedDefects } from "./look-bar.ts";
+import { shippedLookLine } from "./look-bar-prompts.ts";
 import { runScope } from "./scope.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CompleteResponse, HarnessCompleteParams, MessageImage, StillSource } from "../types/host-api.d.ts";
@@ -1272,7 +1274,8 @@ export async function facetCompare(
     // nobody could read, which is not a tie.
     pick: pick === Side.Challenger ? Side.Challenger : Side.Incumbent,
     tie: measured && pick === Side.Tie,
-    satisfied: measured && raw?.satisfied === true,
+    // A look blocker on screen holds the facet open, whatever the critic said (look-bar.ts).
+    satisfied: measured && raw?.satisfied === true && lookBlockersIn(defects).length === 0,
     defects,
     // The headline stays the worst defect, so everything keyed on biggest_gap reads on.
     biggest_gap: defects[0] ?? "",
@@ -1654,6 +1657,7 @@ export async function tasteVeto(
   },
 ) {
   const finishing = stageOf({ stage }) === FacetStage.Finish;
+  const lookBar = asksForLook(run);
   const system = await tasteSystemPrompt(ctx, run, finishing);
   const challengerIsA = random() < 0.5;
   const incumbent = { incumbent: true, evidence: incumbentEvidence ?? null };
@@ -1687,6 +1691,7 @@ export async function tasteVeto(
     "BUILD B",
     describeCandidate(B, hudBudget),
     "",
+    lookBar ? shippedLookLine(genreOf(run), Boolean(run.reference?.frames?.length)) : "",
     `Reply with JSON only: ${runScope(run) ? TASTE_REPLY_SCOPED : TASTE_REPLY}`,
   ]
     .filter(Boolean)
@@ -1694,7 +1699,7 @@ export async function tasteVeto(
 
   const answer = await askJudgeFor(ctx, { run, systemPrompt: system, userContent, images });
   const verdict = {
-    ...tasteVerdictOf(answer, challengerIsA, move, finishing ? FINISH_POLISH_NOTES : MAX_POLISH_NOTES),
+    ...tasteVerdictOf(answer, challengerIsA, move, finishing ? FINISH_POLISH_NOTES : MAX_POLISH_NOTES, lookBar),
     facetId: facet.id,
     iterationId,
     ...provenanceOf(answer, answer.judged.parse, challengerIsA),
@@ -1717,6 +1722,7 @@ async function tasteSystemPrompt(ctx: HarnessCtx, run: Run, finishing: boolean):
       "Pick the side with the better feel, or tie. If you pick the side that lost on the checks you MUST name the one regression that justifies it and phrase it as a new yes/no vision check.",
       'Name `bigMove`: the ONE bold step inside SCOPE (what the user asked for) that would most close the gap to the goal and the reference — deeper, reworked, a better feel of what they asked for; a new system only when SCOPE names it; never a tweak. When several problems share a root cause, name the cause. Its "scope" is "deepens", or "adds" when it needs something SCOPE does not name.',
       "List in `defects` what is broken, missing or unreadable in the better build, worst first; at most three small cosmetic nits go in `polish`, never in `defects`. `satisfied` = the facet genuinely delivers its brief; be strict.",
+      "A look blocker — [primitive], [dark-viewmodel], [crushed-shadow], [placeholder-particles], [sky-contradicts], [visible-tiling], [not-shipped] — is a tagged defect, never polish, and holds `satisfied` false. When asked SHIPPED LOOK, answer `shipped` per scene camera.",
       "When the user content names THE MOVE the builder was asked to make, answer `moveDelivered`: is that structural change there in the build the checks accepted (true even when the other build has it too — then `moveAlreadyPresent` is true)? And `scale`: is the difference between the two builds structural (extent, a system, a mechanic, the player's path, the UI) or polish (materials, lighting, parameters)?",
       `Reply with JSON only: ${TASTE_REPLY}`,
     ].join("\n"),
@@ -1726,12 +1732,26 @@ async function tasteSystemPrompt(ctx: HarnessCtx, run: Run, finishing: boolean):
   return `${rubric}\n\n${await judgePrompt(ctx, "taste-finish.md", FINISH_RUBRIC_FALLBACK)}`;
 }
 
+/**
+ * The taste judge's defects with the look's own: a look blocker it filed as polish is work, not a
+ * nit, and on a run with a visual bar each scene camera it says would not pass as a shipped game's
+ * screenshot is a `[not-shipped]` defect (look-bar.ts).
+ */
+function lookDefects(raw: AnyRecord, lookBar: boolean): string[] {
+  const defects = normalizeDefects(raw);
+  const polish = Array.isArray(raw.polish) ? raw.polish.filter((entry: unknown) => typeof entry === "string") : [];
+  const moved = lookBlockersIn(polish).map((text) => text.trim());
+  const shipped = lookBar ? notShippedDefects(raw.shipped) : [];
+  return [...new Set([...defects, ...moved, ...shipped])];
+}
+
 /** What a taste answer decides. An answer nobody could read says nothing: no pick, defects, veto or tie. */
 function tasteVerdictOf(
   answer: JudgeAnswer,
   challengerIsA: boolean,
   move: string | null,
   polishCap = MAX_POLISH_NOTES,
+  lookBar = false,
 ) {
   const readable = answer.judged.parse === JudgeParse.Valid;
   const raw: AnyRecord = readable ? answer.raw : {};
@@ -1740,7 +1760,8 @@ function tasteVerdictOf(
   const moveDelivered = move ? yesNoOrNull(raw.moveDelivered) : null;
   const moveAlreadyPresent = move ? yesNoOrNull(raw.moveAlreadyPresent) : null;
   const scale = raw.scale === ChangeScale.Structural || raw.scale === ChangeScale.Polish ? raw.scale : null;
-  const defects = normalizeDefects(raw);
+  const defects = lookDefects(raw, lookBar);
+  const lookBlockers = lookBlockersIn(defects);
   const regression = namedRegression(raw.regression);
   const newCheck = tasteCheck(raw.newCheck, regression);
   return {
@@ -1750,7 +1771,9 @@ function tasteVerdictOf(
     veto: pick === Side.Incumbent && regression !== null,
     regression,
     newCheck,
-    satisfied: raw.satisfied === true,
+    // A look blocker on screen holds the facet open, whatever the judge said (look-bar.ts).
+    satisfied: raw.satisfied === true && lookBlockers.length === 0,
+    lookBlockers,
     defects,
     polish: polishNotes(raw.polish, defects, polishCap),
     bigMove: normalizeBigMove(raw.bigMove),

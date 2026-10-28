@@ -11,6 +11,8 @@ with these changes for this round:
 - List up to eight `polish` items, worst first, each naming what, where and which camera shows
   it. They are the builder's work now, not optional nits.
 - `bigMove` may be null.
+- A look blocker still on screen is not polish: list it in `defects`, and the finish is not in
+  while one remains.
 - A regression still needs a name in `regression` and a `newCheck`, exactly as above.
 
 Reply with JSON only, in the shape above.

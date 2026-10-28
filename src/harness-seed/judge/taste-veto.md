@@ -32,6 +32,11 @@ Rules:
   builder receives this list verbatim.
 - At most three small cosmetic nits go in `polish` (a stray stripe, mitten hands, a hard
   shadow) — never in `defects`. They are optional for the builder.
+- A look blocker (the classes below say which) in the better build is a defect, never polish,
+  and `satisfied` is false while one is on screen.
+- When the user content asks SHIPPED LOOK, answer `shipped` for each scene camera of the better
+  build: would that frame pass as a screenshot from a shipped game of its genre? A camera that
+  would not is a blocker.
 - `satisfied` is the exit question: does the better build now genuinely deliver the facet brief
   against the reference — would a player point at this facet as done? Be strict. When in doubt,
   say false.
@@ -49,4 +54,4 @@ Rules:
 {{artefact-classes}}
 
 Reply with JSON only:
-{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"kebab-slug","camera":"…","ask":"yes/no question that passes when fixed"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"},"defects":["worst …","next …"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}
+{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"kebab-slug","camera":"…","ask":"yes/no question that passes when fixed"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"},"defects":["worst …","next …"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","shipped":[{"camera":"…","passes":true|false,"why":"…"}]|null,"reason":"…"}

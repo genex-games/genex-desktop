@@ -27,6 +27,8 @@ import { CoreFact, type FactRef, ProjectTool } from "../folder-facts.ts";
 import { appIdentity } from "../project-prompts.ts";
 import { DIRECTOR_SCOPE_RULE, scopeLines } from "../scope-prompts.ts";
 import { visionBriefLines } from "../vision-prompts.ts";
+import { asksForLook } from "../look-bar.ts";
+import { ART_PASS_RULE, artPassLines } from "../look-bar-prompts.ts";
 import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import { layeredBarRule } from "./layer-prompts.ts";
 import type { AnyRecord, Run } from "../../types/harness.d.ts";
@@ -267,6 +269,7 @@ function rulesThatNeverMove(run: Run, loop: DirectorLoop, leads: boolean): strin
       : `- After the starting point, delegate with plan and worker_start: a worker per area the ask names, the UI and HUD too, on its own files. Handle foundations, integration and small repairs yourself. If capacity or shared ownership blocks delegation, note why and keep improving and playtesting.`,
     // A run from before scope reads its old rules: the rule names a SCOPE its brief has not got.
     scopeLines(run) ? `- ${DIRECTOR_SCOPE_RULE}` : "",
+    asksForLook(run) ? ART_PASS_RULE : "",
     `- First playable: prioritize a small complete playable loop and integrate its healthy revision before broad atmosphere or asset polish. Continue judging normally; a preview is not acceptance or landing.`,
     `- Asset truth: run_status.assets lists generated originals and current workspace copies. Read it before answering asset questions. Preserve delivered local files; integrate checkpoints them through the host. Never move them to /tmp or swap in remote URLs: assets live in the game folder. State generated-but-unused assets and procedural fallbacks explicitly in completion reports.`,
     `- Completion reporting: distinguish delivered changes from passed, failed and unverified checks. The Studio outcome card counts integrations separately from evaluated attempts; never call all requested features verified merely because the structural board passed.`,
@@ -504,6 +507,7 @@ export function singleWorkerBrief({
     `GAME GOAL (context): ${workingGoal(run)}`,
     scopeLines(run),
     visionBriefLines(run),
+    artPassLines(run),
     ``,
     `YOUR BRIEF FROM THE DIRECTOR — ${worker.title}:`,
     worker.brief,

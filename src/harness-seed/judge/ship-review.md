@@ -32,6 +32,14 @@ List every distinct defect a player would notice, worst first. For each one:
   close look finds it. Only a blocker sends a builder back to work: visible flaws and nits go in
   the user's report, so never raise one to a blocker to have it fixed.
 
+A defect of a known class carries its class in square brackets at the start of `what`. A look
+blocker is a `blocker` whatever else the game does well: the classes below say which.
+
+When the user content asks SHIPPED LOOK, answer `shipped` for each scene camera: would that frame
+pass as a screenshot from a shipped game of its genre? A camera that would not is a blocker.
+
+{{artefact-classes}}
+
 `ship` is true when no defect is a blocker.
 
 ## Do not regress
@@ -42,4 +50,4 @@ Every builder is handed this list and every round's taste judge holds them to it
 loses one has regressed.
 
 Reply with JSON only:
-{"ship":true|false,"defects":[{"what":"…","camera":"…","part":"<a PARTS id>"|null,"severity":"blocker"|"visible"|"nit"}],"doNotRegress":["…"],"reason":"…"}
+{"ship":true|false,"defects":[{"what":"…","camera":"…","part":"<a PARTS id>"|null,"severity":"blocker"|"visible"|"nit"}],"doNotRegress":["…"],"shipped":[{"camera":"…","passes":true|false,"why":"…"}]|null,"reason":"…"}

@@ -123,10 +123,15 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
           description:
             'Required with contract: JSON {"scale","far","set_pieces":[2–3],"headroom"} — the world\'s scale, what the player sees past the nearest building, set-pieces, what it could grow into. Committed as docs/VISION.md; never frozen.',
         },
+        art: {
+          type: "string",
+          description:
+            'Required when the ask sets a visual bar (photoreal, AAA, reference stills): every area\'s assets, JSON [{"area","tier","asset","source","why"}], sourced from Genex, scans or Blender; a refusal gives the grammar.',
+        },
         start: {
           type: "string",
           description:
-            'Required with kind: how the game leaves its title before the harness drives it — the keys a player presses there as a JSON array (["Enter"]), or "none" when it boots straight into play. Pressed before every judgement.',
+            'Required with kind: the keys that leave its title (["Enter"]), or "none". Pressed before every judgement.',
         },
         play_script: {
           type: "string",
