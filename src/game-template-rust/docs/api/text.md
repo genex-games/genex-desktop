@@ -52,5 +52,6 @@ hud-coins = { $coins ->
   issues also in `state().__render.assetIssues`. A check that switches locale should expect `[]`.
 - Right-to-left scripts are not supported yet.
 
-Check a translated game under the `xx-pseudo` locale on a landscape screen and on a phone with a
-notch: a label that leaves the screen or its cell is a defect.
+`native/genex-rust/examples/menus-saves` translates every screen into English and French: its
+checks walk the menus under `xx-pseudo` on a landscape screen and on a phone with a notch and
+fail when a label leaves the screen or its cell.

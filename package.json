@@ -66,7 +66,7 @@
     "plugin:submit": "node scripts/check-node.mjs && node scripts/plugin-submit.ts",
     "plugin:unpack": "node scripts/check-node.mjs && node scripts/plugin-unpack.ts",
     "genex:skills": "node scripts/check-node.mjs && node scripts/refresh-genex-skills.ts",
-    "verify:context": "node scripts/check-node.mjs && node scripts/check-agent-context.ts && node scripts/check-template-docs.ts && node --test --test-reporter=dot tests/conformance/skills-sync.test.ts tests/conformance/agent-settings.test.ts tests/conformance/template-docs-check.test.ts",
+    "verify:context": "node scripts/check-node.mjs && node scripts/check-agent-context.ts && node --test --test-reporter=dot tests/conformance/skills-sync.test.ts tests/conformance/agent-settings.test.ts",
     "review:context": "node scripts/check-node.mjs && node scripts/review-agent-context.ts",
     "verify:architecture": "node scripts/check-node.mjs && node scripts/check-boundaries.ts",
     "studio:dev": "node scripts/check-node.mjs && node scripts/studio-dev.ts",

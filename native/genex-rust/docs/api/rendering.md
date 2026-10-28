@@ -50,10 +50,10 @@ The look's `tonemapper`: `khronos-neutral` (default) keeps
 authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx` is muted;
 `aces` punchier; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
-meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max` (default -8 and 8),
+meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max`,
 adds the compensation and adapts at `adaptation_speed_up` (default 4) and `adaptation_speed_down`
-(3) EV per simulated second. Use `auto` where light meets shade (each scene's compensation is in
-`docs/look-recipes.md`), `manual` for flat, stylized colour. The rest of
+(3) EV per simulated second. Use `auto` where light meets shade (`ev_compensation = 0.5` when
+sunlit), `manual` for flat, stylized colour. The rest of
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (its spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
@@ -100,14 +100,14 @@ blend_band = 0.1            # of each cascade, 0..=0.5
 render_scale = 0.67         # 0.5..=1
 fps = 30                    # 30 | 60
 bloom = false               # any switch
-lod_threshold_px = 3.0      # with lod_fade_band, far_density (docs/api/drawing.md)
+lod_threshold_px = 3.0      # with lod_fade_band, far_density: see Drawing
 ```
 
 The build lane compiles `[render]` into every destination; `game.render_settings(..)` replaces
-it, and `RenderConfig::from_build()` starts from it. Give the person the last word: the settings
-menu `genex::settings::menu(ui)` shows `settings_panel(ui)` as its Graphics tab (the class,
-presets, Max being `ultra` at Native, Upscaling, Frame rate, Dynamic resolution, the render
-scale, Detail distance and feature switches). A preset change
+it, and `RenderConfig::from_build()` starts from it. Give the person the last word: call
+`settings_panel(ui)` from `on_ui`; it shows the detected class, presets (none
+drawing less than the one below; Max is `ultra` at Native), Upscaling, Frame rate, Dynamic
+resolution, the render scale, Detail distance and feature switches. A preset change
 rebuilds the renderer; a mode change only resizes the next frame. A switch this
 build does not draw reads off, listed `not-landed`. A game may start devices on a mode (`.upscale(..)`),
 hold one (`.upscale_locked(..)`: the panel hides Upscaling), or hold Native in a photo mode
@@ -140,8 +140,8 @@ in a few pixels). `state().volatile.render` (class, preset, scale, `features`,
 Rules for agents:
 
 - Never hard-code `ultra`, a resolution, a render scale or an upscaling mode (only a photo mode
-  holds Native), and never read render settings in a simulation hook. Author for `ultra` on
-  desktop; check `low` and a phone stay readable.
+  holds Native), and never read render settings in a simulation hook. Make content cheap at `low`
+  and let presets add to it.
 - Never switch `shadows`, `meshlets` or `occlusion` off to save frame time, nor ask for more
   cascades than a preset has outside `shadows_at`: presets and class caps already scale them.
 - Test as a phone: `renderSettings` `{set: {deviceClass: "mobile-mid"}}`, `{set: {preset: "low"}}`,

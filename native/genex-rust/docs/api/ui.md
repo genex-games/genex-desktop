@@ -75,6 +75,7 @@ repeated key records `ui-key-invalid` or `ui-key-duplicate`. `state().volatile.u
 `{locale, scale, safeArea, issues}`, and a text file's issues also appear in
 `state().__render.assetIssues`. None of it enters the checksum.
 
-`docs/examples/menus-saves/` is a complete menu game: title, pause, the settings menu, save and
-load slot lists over an autosave ring, a quit dialog and toasts, all by pad or keys. A screen there ignores answers on the tick it opened, so the press
+`native/genex-rust/examples/menus-saves` is a complete menu game: title, pause, settings with a
+Game tab, an inventory grid, save and load slot lists over an autosave ring, a quit dialog and
+toasts, all by pad or keys. A screen there ignores answers on the tick it opened, so the press
 that opened it (Escape opening a pause menu whose back key is also Escape) never picks in it.

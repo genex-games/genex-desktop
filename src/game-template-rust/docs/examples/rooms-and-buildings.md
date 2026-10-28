@@ -72,8 +72,7 @@ same photo tiled in a grid. Fix both, in this order.
 `docs/examples/interior-room/` is steps 1, 2 and 5 to 8 in one file (its shell boxes in world-UV
 patches, the stand-in for step 3); `docs/examples/interior-kit/` is every step on a corridor and a
 classroom built from the kit. Clutter the kit lacks comes from `cc0__search` models first, then
-`genex__asset` `model` with `auto-size`; a `blender__model` script makes kit pieces textured with
-scans, never a prop the camera comes near.
+Blender scripts.
 
 A finished room shows its light in a capture at a desktop preset: sun patches on the floor with
 the window bars' shadows, walls that bounce their colour, a floor that reflects the room, and

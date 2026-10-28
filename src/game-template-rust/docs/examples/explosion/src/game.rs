@@ -1,6 +1,3 @@
-//! GREYBOX: replace the barrel and the crates (primitives) with models before done.
-//! Copy the blast's timing, particles, flash, sound, impulse and shake.
-//!
 //! An explosion: a barrel in a yard of crates goes off on a key, a pad button or a tap, and the
 //! blast is six parts on the same tick: a fireball (an emissive sphere that swells and dies, with
 //! fire particles), sparks that fall and bounce, a smoke cloud that thins out, a point light's

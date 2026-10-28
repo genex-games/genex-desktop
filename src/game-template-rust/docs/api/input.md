@@ -142,5 +142,5 @@ world or a repeated id). The player's file answers `input-bindings-invalid`,
 `input-track-mismatch`, and a remote player's actions that do not read against the map
 `input-wire-invalid`.
 
-`docs/examples/fps/` and `docs/examples/third-person/` read their moves and buttons as actions;
-`docs/examples/menus-saves/` walks its menus by the same keys, pad and taps.
+`native/genex-rust/examples/input-twinstick` plays with keys and mouse, a pad or touch, rebinds in
+its pause menu and replays a recorded session to an equal checksum.

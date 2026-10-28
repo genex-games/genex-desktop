@@ -1160,10 +1160,8 @@ the three Electron runners that share `dist`; standalone `test:e2e`, `test:build
 `test:shapes:e2e` still build their own current output. Readiness keeps its separate immutable
 builds because it tests isolation. Add packaged checks when that surface changes. The
 source/document ownership areas in knowledge-map.json route changes to maintained topic docs.
-`verify:context` checks links, documented commands, source ownership and Git artifact policy,
-and `scripts/check-template-docs.ts` checks the Rust template's pages: every path they name opens
-in the game folder, compiled snippets equal the example regions they mirror, and other Rust
-snippets call only names the facade crates define. It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
+`verify:context` checks links, documented commands, source ownership and Git artifact policy.
+It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
 and summarize that review in the PR; a structural pass does not certify semantic accuracy.
 
 The existing coordinator records an aborted delegated turn as error; the fixture

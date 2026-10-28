@@ -25,7 +25,7 @@ data.cuboid(min, max, metres).quad(corners, metres);        // data: MeshData::n
 model.with_levels(&[(lod1, 24.0)]).with_lod_bias(2.0).with_impostor(Impostor::hemi()); // -> Model
 model.impostor(); model.lod_refusal();                      // -> Option<Impostor>, Option<LodRefusalCode>
 gfx.assets().compound(&[&wood, &foliage]);                  // -> Model
-Camera::look_at(position, target);                          // Camera { projection: Projection::Orthographic, fovy, .. }; fovy: vertical, degrees
+Camera::look_at(position, target);                          // Camera { projection: Projection::Orthographic, fovy, .. }
 ```
 
 Draw a first-person game's arms and weapon between `frame.view_model()` and

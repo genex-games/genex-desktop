@@ -1,7 +1,3 @@
-//! GREYBOX: replace the boxes before done. The shell's walls, the desks, chairs and radiators are
-//! boxes: build the shell from a kit and fetch or generate the furniture as `docs/examples/interior-kit/`
-//! does. Copy the light, the probes and volumes, the decals and the scans' tiling from here.
-//!
 //! A lit interior room, distilled from the engine team's café showcase: a classroom with two
 //! window openings in its sunlit wall and a door into a dark corridor. Every surface is a CC0 scan
 //! kept at its real size, each room has its own reflection probe and irradiance volume, grime and

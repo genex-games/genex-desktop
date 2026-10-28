@@ -80,10 +80,10 @@ gx_shadow_sampler: sampler_comparison` (in the cascade `c` whose `gx_frame.casca
 point's view depth, compare the depth of the point lifted by `cascade_offsets[c]` along its normal
 in `cascade_view_proj[c]` less `shadow_params.x`, the comparison bias every cascade shares;
 `cascade_splits.w` is 0 on a frame without sun
-shadows). The tables carry the fog row
+shadows; the showcase's grass does this). The tables carry the fog row
 (`gx_frame.fog_color`, `gx_frame.fog_params`) and the environment cube (`gx_env_specular`) but no
 fog function, so such a pass repeats the height fog with the cube read just above the horizon as
-its in-scatter (the air's aerial perspective does not reach it) and
+its in-scatter (the showcase's `look_fog`; the air's aerial perspective does not reach it) and
 lights a ground lantern with a soft additive disc of its own. Every resource counts against the GPU caps, WGSL is checked against WebGPU core
 plus `[gpu] native_features`, no buffer is mappable, and a pass wgpu rejects stops running with
 `gpu-pass-invalid` (listed with its code in `state().volatile.customPasses`). In-world draws are
