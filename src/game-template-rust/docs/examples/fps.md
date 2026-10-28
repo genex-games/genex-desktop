@@ -31,32 +31,12 @@ The player is a `Character` capsule (`docs/api/characters.md`) driven with
 turned by the yaw. The level's boxes are fixed Rapier cuboids from the same numbers that draw
 them, so what the player bumps, what a shot hits and what the picture shows agree.
 
-## The camera: field of view and comfort
+## The camera: chest-cam bob
 
-`Camera::fovy` is the vertical field of view in degrees. Keep a first-person game between 55 and
-80 (about 85 to 110 degrees across a 16:9 screen): 70 for a shooter, 72 for a bodycam on the chest
-(about 1.4 m up). A wider lens than 80 stretches the edges and, with any bob, makes people ill; a
-fisheye is a post pass at most, never a wider `fovy`.
-
-Camera motion is judged over time against these caps. The bob comes from the gait, not the clock:
-keep a gait phase in the world (`phase += speed * ctx.dt / stride` in `on_update`), with the
-stride growing with speed (about 0.45 m plus 0.25 m per m/s, so 0.8 m at a walk and 1.75 m at a
-sprint), and derive the bob from it in the camera hook with smooth curves: a sideways sway of
-`sin(phase)`, a lift of `(1 - cos(2 * phase)) / 2` (once per step, never `abs(..)`, whose cusp
-jerks), and a roll through `Camera::up` following the sway, all eased in and out with the speed.
-
-| Motion | Cap |
-| --- | --- |
-| Bob, peak to peak, at a sprint | 3 cm (1.5 cm at a walk) |
-| Roll at a sprint | 1.5 degrees; 2 degrees in all, any cause |
-| Bob cadence (steps per second) | under 3 Hz at a sprint; nothing above 6 Hz |
-| Shake | eased from world state, never a fresh `ctx.rng` value per tick |
-| Sprint field-of-view kick | 5 degrees at most, eased over a quarter second |
-| Reduced motion (the settings menu's Accessibility tab) | a tenth of every amplitude above |
-
-`docs/examples/fps/`'s `bob()` predates these caps (a fixed 0.75 m stride and a lift at four times
-the sway's rate through `abs(..)`): copy the caps and the curves above, not that function. A draw
-or camera hook has no `ctx`, so every motion comes from world state.
+A bodycam rides on the chest (about 1.4 m) with a wide lens (`fovy` about 72). Keep the metres
+walked in the world (`stride += speed * dt`) and derive the bob from it in the camera hook: a
+sway at the step's rate, a lift at twice it, a slight roll through `Camera::up`, all scaled by the
+speed. A draw or camera hook has no `ctx`, so every motion comes from world state.
 
 ## Hitscan against Rapier colliders
 

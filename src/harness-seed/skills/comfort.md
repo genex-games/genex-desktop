@@ -13,12 +13,12 @@ judge sees one frame of a sprint and calls it fine. Treat motion as a measured m
 
 | Motion | Cap |
 | --- | --- |
-| Vertical field of view (first person) | 55 to 80 degrees; 70 for a shooter, 72 for a bodycam |
-| Bob, peak to peak, at a sprint | 3 cm (1.5 cm at a walk) |
-| Roll at a sprint | 1.5 degrees; 2 degrees in all, any cause |
-| Bob cadence | under 3 Hz at a sprint; no energy above 6 Hz |
-| Shake | eased from world state; never a fresh random value per tick |
-| Sprint field-of-view kick | at most 5 degrees, eased over a quarter second |
+| Vertical field of view (first person) | 60 to 80 degrees; 70 for a shooter, 72 for a bodycam |
+| Bob, peak to peak, at a sprint | 2.8 cm |
+| Roll | 1.2 degrees at a walk; 2 degrees in all, any cause |
+| Step cadence | 2.8 Hz at most at a sprint |
+| Shake and noise | eased from world state, nothing above 8 Hz; never a fresh random value per tick |
+| Sprint field-of-view kick | at most 4 degrees, eased in and out |
 | Reduced motion on | a tenth of every amplitude above |
 
 Lens effects stay off where the person steers: no depth of field or motion blur in play, and a
@@ -26,11 +26,10 @@ stylised lens (fisheye, grain, vignette) has a setting that turns it off.
 
 ## Building it
 
-- The bob comes from a gait phase the world keeps, advanced by speed over a stride that grows with
-  speed (about 0.8 m at a walk, 1.75 m at a sprint), with smooth curves: a sway of `sin(phase)`,
-  a lift of `(1 - cos(2 * phase)) / 2`, never an `abs(..)` whose cusp jerks. In a Rust game folder
-  `docs/examples/fps.md` (The camera) has the rules; its FPS example's own `bob()` is older than
-  these caps and is not to be copied.
+- In a Rust game folder a first-person view is the engine's camera rig (`docs/examples/fps.md`,
+  The camera), whose caps hold whatever a brief asks: never write a head bob, roll or shake of your
+  own. Elsewhere, derive the bob from a gait phase the world keeps, over a stride that grows with
+  speed, with smooth curves: never an `abs(..)` whose cusp jerks.
 - A brief, a milestone or a critic idea asking for "heavier shake", "more bob" or a wider lens
   is answered within the caps: more weight is a longer ease, a footstep sound and a small dip on
   landing, not amplitude.
@@ -39,5 +38,6 @@ stylised lens (fisheye, grain, vignette) has a setting that turns it off.
 
 Give the game a demo that sprints along a straight path for a few seconds and a probe of the
 camera's pose each tick (its height above the feet, its roll, its field of view). From the series:
-the bob's peak to peak, the roll's largest value, the dominant bob frequency and the energy above
-6 Hz. A round that moves any of them past its cap is a regression, whatever it adds.
+the bob's peak to peak, the roll's largest value, the step cadence and the energy above 8 Hz. A
+Rust game's rig reports these itself under `state().volatile.camera` once its probe is
+registered. A round that moves any of them past its cap is a regression, whatever it adds.

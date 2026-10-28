@@ -67,7 +67,7 @@ read each row.
 
 | Kind | Read | Copy from `docs/examples/` | Look recipe | Assets first |
 | --- | --- | --- | --- | --- |
-| First-person shooter, bodycam | `docs/api/characters.md`, `docs/api/input.md`, `docs/api/animation.md`, `docs/examples/fps.md` (camera comfort) | `fps/`, `fps-arms/`, `soldier/` | the place's (interior, street) | arms and weapon kit, rigged enemies (`genex__asset character`), props up close |
+| First-person shooter, bodycam | `docs/api/characters.md`, `docs/api/input.md`, `docs/api/animation.md`, `docs/examples/fps.md` | `fps/`, `fps-arms/`, `soldier/` | the place's (interior, street) | arms and weapon kit, rigged enemies (`genex__asset character`), props up close |
 | Horror, stealth | as FPS, plus `docs/api/lighting.md` (local lights, fog) | `fps/`, `interior-kit/` | interior night | the kit, scans with normal and ORM, decals for wear |
 | Third-person action, adventure | `docs/api/characters.md`, `docs/api/animation.md` | `third-person/` | the place's | rigged hero (`genex__asset character`), props |
 | Interior, architecture, school, office | `docs/examples/rooms-and-buildings.md`, `docs/api/lighting.md` | `interior-kit/`, `interior-room/`, `looks/` | interior day or night | 2k scans per surface, kit pieces, hero props |
@@ -114,9 +114,9 @@ calling that facet done.
 - `flat-prop`: an untextured, flat-coloured surface the camera comes within 10 m of.
 - `scan-missing-maps`: a scan drawn without its normal and ORM maps, or below `2k` up close.
 - `box-ground`: a box or a quad as the outdoor ground.
-- `camera-over-comfort`: head bob, roll or cadence over the comfort caps (`docs/examples/fps.md`).
+- `camera-over-comfort`: head bob over 2.8 cm, roll over 2 degrees or a step cadence over 2.8 Hz.
 - `camera-tick-noise`: camera shake drawn fresh from `ctx.rng` every tick.
-- `fov-out-of-range`: a first-person `fovy` (vertical, degrees) outside 55 to 80.
+- `fov-out-of-range`: a first-person `fovy` (vertical, degrees) outside 60 to 80.
 - `stacked-darkening`: a dark look made of negative compensation, a raised `ev_min`, a vignette
   and a dark grade together; a dark room needs less light, not every control turned down.
 - `post-without-clean-tier`: a lens, grain or vignette pass with no way off in the settings.
