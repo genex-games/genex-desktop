@@ -18867,6 +18867,14 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     const defect = String(comfortDefect(gen3));
     assert.match(defect, /^\[uncomfortable-camera\] demo:sprint-run: the sprint camera roll ±5\.8°/);
     assert.match(defect, /bob \d\.\d cm peak to peak.*bob at 7\.5 Hz.*above 6 Hz/);
+    // The demo's own result carries the rig's probe rows (bobM, rollDeg) tick by tick; with no trace, the rig's cadence.
+    const rows = gen3.__camera.trace.map(({ t, y, roll_deg }) => ({ t, bobM: y - 1.7, rollDeg: roll_deg }));
+    assert.match(String(comfortDefect({}, { ok: true, trace: rows })), /roll ±5\.8°/);
+    assert.match(
+      String(comfortDefect({ volatile: { camera: { cadenceHz: 7.5, bobM: 0.01, rollDeg: 0.4 } } })),
+      /steps at 7\.5 Hz/,
+    );
+    assert.equal(comfortDefect({ volatile: { camera: { cadenceHz: 2.2 } } }), null);
     // A rig inside the caps: 1° roll and a 2.4 cm bob at 2.2 Hz, the slope of a ramp removed.
     assert.equal(comfortDefect(pose(1, 1.1, 0.024, 2.2)), null);
     assert.ok(

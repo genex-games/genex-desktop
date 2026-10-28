@@ -7,8 +7,9 @@
  * - the luminance band: every playable camera's settled frame (look-facts.ts `lumaBandDefect`);
  * - `demo:doorway`: the per-tick exposure trace the engine keeps (`__render.exposure_trace`), held
  *   to a smooth transition with no overshoot;
- * - `demo:sprint-run`: the per-tick camera pose (`__camera.trace`), held to the comfort caps the
- *   engine's first-person rig enforces (the aaa-motion lane owns those numbers; keep these equal).
+ * - `demo:sprint-run`: the per-tick camera pose the demo returns (`{ ok, trace }`, the rig's probe
+ *   row `state().volatile.camera` collected each tick, or the eye's height and roll for a camera
+ *   of the game's own), held to the comfort caps the engine's first-person rig enforces.
  *
  * Each finding is a tagged blocking defect; a round that adds one is not kept (facet/phases/taste.ts).
  *
@@ -184,9 +185,34 @@ function detrended(times: readonly number[], values: readonly number[]): number[
   return values.map((value, i) => value - meanV - slope * ((times[i] ?? 0) - meanT));
 }
 
+/**
+ * One pose sample: the eye's height (`y`), or the engine rig's own bob offset (`bobM`, its probe row
+ * `state().volatile.camera`), with its roll.
+ */
+function poseOf(entry: unknown): AnyRecord | null {
+  if (!entry || typeof entry !== "object") return null;
+  const raw = entry as AnyRecord;
+  return { t: raw.t, y: num(raw.y) ?? num(raw.bobM) ?? num(raw.bob_m), rollDeg: num(field(raw, "rollDeg")) };
+}
+
+/**
+ * Where a sprint's pose trace is: the demo's own result (`{ ok, trace }`: the demo steps the game and
+ * collects the rig's probe row each tick), else the end state's `__camera.trace`.
+ */
+function sprintTrace(state: AnyRecord | null | undefined, result: AnyRecord | null | undefined): unknown {
+  if (Array.isArray(result?.trace)) return result.trace;
+  return fieldOf(state?.__camera, "trace");
+}
+
+/** The rig's own cadence at the demo's end (`state().volatile.camera.cadenceHz`), when the game probes it. */
+function rigCadence(state: AnyRecord | null | undefined): number | null {
+  const camera = (state?.volatile as AnyRecord | undefined)?.camera as AnyRecord | undefined;
+  return camera ? num(field(camera, "cadenceHz")) : null;
+}
+
 /** The comfort reading of a per-tick camera pose trace, or null when it is too short to read. */
 export function comfortReading(trace: unknown): ComfortReading | null {
-  const samples = samplesOf(trace, ["y", "rollDeg"]);
+  const samples = samplesOf(Array.isArray(trace) ? trace.map(poseOf) : null, ["y", "rollDeg"]);
   const span = spanOf(samples);
   if (span < MIN_TRACE_S || samples.length < 8) return null;
   const dt = span / (samples.length - 1);
@@ -209,13 +235,12 @@ export function comfortReading(trace: unknown): ComfortReading | null {
   };
 }
 
-/** `demo:sprint-run`'s pose log against the comfort caps, as a blocking defect, or null. */
-export function comfortDefect(state: AnyRecord | null | undefined): string | null {
-  const camera = state?.__camera as AnyRecord | undefined;
-  const reading = comfortReading(camera ? field(camera, "trace") : null);
-  if (!reading) return null;
+/** What a sprint reading passes its caps by, in words; empty when it is inside every cap. */
+function overCaps(reading: ComfortReading | null, cadence: number | null): string[] {
   const past = (value: number, cap: number) => value > cap * MEASURE_SLACK;
-  const over = [
+  const cadenceOver = cadence !== null && past(cadence, COMFORT_CAPS.bobHz);
+  if (!reading) return cadenceOver ? [`steps at ${fixed(cadence ?? 0)} Hz (cap ${COMFORT_CAPS.bobHz} Hz)`] : [];
+  return [
     past(reading.rollDeg, COMFORT_CAPS.rollDeg)
       ? `roll ±${fixed(reading.rollDeg)}° (cap ${COMFORT_CAPS.rollDeg}°)`
       : "",
@@ -230,6 +255,14 @@ export function comfortDefect(state: AnyRecord | null | undefined): string | nul
       ? `${Math.round(reading.highShare * 100)}% of the motion above ${HIGH_HZ} Hz (cap ${COMFORT_CAPS.highShare * 100}%)`
       : "",
   ].filter(Boolean);
+}
+
+/**
+ * `demo:sprint-run` against the comfort caps, as a blocking defect, or null: its pose trace (the
+ * demo's result, else the end state's), or with no trace the rig's own cadence.
+ */
+export function comfortDefect(state: AnyRecord | null | undefined, result: AnyRecord | null = null): string | null {
+  const over = overCaps(comfortReading(sprintTrace(state, result)), rigCadence(state));
   if (!over.length) return null;
   return `[${LookBlocker.UncomfortableCamera}] demo:${SPRINT_DEMO}: the sprint camera ${over.join(", ")} — demo:${SPRINT_DEMO}`;
 }
@@ -294,13 +327,14 @@ export function measuredBlockers(
 ): Measured[] {
   const states = (evidence?.demoStates ?? {}) as Record<string, AnyRecord>;
   const doorway = exposureMotion(fieldOf(states[DOORWAY_DEMO]?.__render, "exposureTrace"));
-  const sprint = comfortReading(fieldOf(states[SPRINT_DEMO]?.__camera, "trace"));
+  const results = (evidence?.demos ?? {}) as Record<string, AnyRecord>;
+  const sprint = comfortReading(sprintTrace(states[SPRINT_DEMO], results[SPRINT_DEMO]));
   const doorwayText = doorwayDefect(states[DOORWAY_DEMO]);
-  const sprintText = comfortDefect(states[SPRINT_DEMO]);
+  const sprintText = comfortDefect(states[SPRINT_DEMO], results[SPRINT_DEMO] ?? null);
   return [
     ...(lookBar ? lumaBandDefects(evidence, declaresNight(run)) : []),
     ...(doorwayText && doorway ? [{ ...flat(doorwayText), severity: doorway.maxStep + doorway.overshoot }] : []),
-    ...(sprintText && sprint ? [{ ...flat(sprintText), severity: comfortSeverity(sprint) }] : []),
+    ...(sprintText ? [{ ...flat(sprintText), severity: sprint ? comfortSeverity(sprint) : 1 }] : []),
   ];
 }
 
