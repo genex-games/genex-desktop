@@ -1,6 +1,6 @@
 # First-person arms kit
 
-Gloved arms on an AK-pattern rifle as one rigged GLB, `fps-arms.glb` (2.5 MB, about 14k
+Gloved arms on an AK-pattern rifle as one rigged GLB, `fps-arms.glb` (5.1 MB, about 14k
 triangles). The rifle is built from parts: receiver, dust cover, barrel, gas tube, wooden
 handguards, grip and stock, iron sights and a side rail. Its magazine, charging handle and
 trigger are bones of their own, with the clips a view model plays. `fps_arms.py` makes it in
@@ -56,7 +56,11 @@ rifle by IK in Blender and baked into every clip, so the hands stay on it with n
 ## Change it
 
 Copy `fps_arms.py` to `assets/src/fps_arms.py` and run
-`blender__model {name: "fps-arms", rig: true}`. Its `SEED`, `LOOK` (colours and roughness), `HIP`
-and `ADS` poses, and each clip's function are at the top of the file. Its textures are made by
-the script itself (tileable, at world scale), so it needs no inputs and nothing is fetched. A
-different rifle keeps the joint names and moves `SIGHT_HEIGHT`, `MAG_TOP` and the other points.
+`blender__model {name: "fps-arms", rig: true, inputs: "<maps>"}`. Its `SEED`, `TINT` and `LOOK`
+(colours and roughness), `HIP` and `ADS` poses, and each clip's function are at the top of the
+file. The shipped GLB's surfaces are CC0 scans at 2k: ambientCG's Metal029 and Plastic014A, and
+Poly Haven's dark_wood, leather_white and book_pattern, tinted and fitted to 2k colour, 1k normal
+and 512 roughness/metal maps. Fetch them with `cc0__fetch` at 2k. One call takes 8 inputs, so pass
+the colour and normal maps of the surfaces you change; a map not passed is made by the script
+(tileable, at world scale). A different rifle keeps the joint names and moves `SIGHT_HEIGHT`,
+`MAG_TOP` and the other points.

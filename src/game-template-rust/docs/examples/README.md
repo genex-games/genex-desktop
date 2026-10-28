@@ -15,6 +15,7 @@ where yours go. Keep your own title, and merge `genex.toml` switches rather than
 | `docs/examples/crowd/` | A crowd on a nav mesh: 120 walkers wander a walled market square, each a nav agent driving its own sensor capsule through the documented loop, sent to the least busy stall near the last, animated at their ground speed; 240 trees round the walls as two retained instance groups; a camera that draws the nav mesh | townsfolk, shoppers, zombies, any many-agent scene, and many things that stand still |
 | `docs/examples/explosion/` | An explosion on one tick: an emissive fireball that swells and dies, fire, sparks that fall and bounce, a smoke cloud that thins out, a point light's flash, the bang played where it happened, a radial impulse that throws Rapier crates, and a camera shake, all drawn from the blast's age | any burst effect (a grenade, a spell, a hit, a pickup) with sound and shake |
 | `docs/examples/menus-saves/` | Menus and save slots: a title menu (Continue, New game, Load, Settings), a pause menu, a quit confirm, slot lists that save and load the whole world, an autosave ring, the facade's settings menu and a toast per slot event, all from the kit's menus so keys, a pad and a tap walk them; a HUD with a health bar and the buttons a phone plays with | any game with a title screen, a pause menu or saving |
+| `docs/examples/soldier/` | The soldier kit: a rigged soldier in combat gear holding the arms kit's rifle (`soldier.glb`, made by `soldier.py` from Quaternius' CC0 animation library), animated from a remote player's replicated state alone: gaits from the velocity, an aim layer along the pitch, fire, reload, hits by side and death, framed close by the game camera | enemies and remote players in any shooter (`docs/examples/soldier/README.md`) |
 
 ## Building blocks
 
@@ -25,7 +26,7 @@ it from the reference page named, and look at a capture after each step.
 | --- | --- | --- |
 | Interior, architecture | `interior-room/`, `interior-kit/` (`rooms-and-buildings.md`) | `docs/api/lighting.md` |
 | Outdoor terrain and nature | gap: `crowd/` stands trees as instance groups and the yards are open ground under a sky, but no example shapes terrain, water or foliage | `docs/api/terrain.md`, `docs/api/water.md`, `docs/api/instance-groups.md` |
-| Rigged characters, animation | `third-person/` (a graph with a masked layer and an event), `fps/` (an enemy's graph with one-shot clips), `crowd/` (simple animators at ground speed), `fps-arms/` (a weapon rig) | `docs/api/animation.md` |
+| Rigged characters, animation | `third-person/` (a graph with a masked layer and an event), `fps/` (an enemy's graph with one-shot clips), `crowd/` (simple animators at ground speed), `fps-arms/` (a weapon rig), `soldier/` (gaits from velocity, an aim layer, hits, death) | `docs/api/animation.md` |
 | First-person controller and weapon | `fps/`, `fps-arms/` | `docs/api/characters.md`, `docs/api/input.md` |
 | Third-person controller and camera | `third-person/` | `docs/api/characters.md` |
 | Vehicle | gap | `docs/api/physics.md` |
@@ -55,6 +56,8 @@ The interior kit and the arms kit ship their own GLBs.
 - **fps-arms**: `fps-arms.glb` from this folder copied to `kits/fps-arms.glb`; without it the view
   model is left out and its probe says `"kit": false`. Its `studio.json` declares the same traits
   as the FPS set's.
+- **soldier**: `soldier.glb` from this folder copied to `kits/soldier.glb`; without it the soldier is
+  left out and its probe says `"kit": false`.
 - **fps**: a rigged character at `characters/enemy.glb` with clips you rename in `CLIPS` (Uthana
   makes one from a generated model), and `decals/bullet-hole.png`. Its `studio.json` declares
   `"game": { "kind": "first-person", "hud": true, "mouseLook": true, "keyboardMove": true }`, so
