@@ -135,7 +135,7 @@ const GOLDEN: [(&str, usize); 35] = [
     // balance a 3x3 matrix (three 16-byte columns) where the gains row was (96 before). P2-0.10
     // flipped 128 -> 144: AgX punchy's curve row (Godot's AgX, contrast, toe, slope and w). A.2
     // flipped 144 -> 256: grading's seven rows (global knobs, ranges, five per-section knobs).
-    ("GxTonemapParams", 256),
+    ("GxTonemapParams", 288),
 ];
 
 fn parse(name: &str, source: &str) -> naga::Module {

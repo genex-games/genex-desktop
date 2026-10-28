@@ -600,6 +600,16 @@ impl RenderConfig {
         self
     }
 
+    /// The config with its look's local exposure on `high` and `ultra`: regions brighter than
+    /// middle grey (a sunlit yard through a window) move towards it by `highlights`, darker ones
+    /// (a corridor ceiling) by `shadows`, each `0.25..=1` (lower is stronger; 1 leaves that side
+    /// as it is), keeping the detail inside each region. The default is 0.6 and 0.8.
+    pub fn local_exposure(mut self, highlights: f32, shadows: f32) -> RenderConfig {
+        let local = genex_render::post::local_exposure::LocalExposure::new(highlights, shadows);
+        self.look = self.look.with_local_exposure(local);
+        self
+    }
+
     /// The config with its look's colour grading, each knob held to its range (the neutral
     /// default changes nothing). The knobs grade the HDR scene before the tonemapper (contrast
     /// turns about middle grey, so it never shifts the exposure); a LUT grades the display colour

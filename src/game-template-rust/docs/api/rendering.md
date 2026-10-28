@@ -1,7 +1,6 @@
 # Rendering
 
-One game runs on desktops, phones and browsers, so the renderer adapts and a game states only
-what is its own. A **look** is the game's art direction, the same on every device. A **quality** belongs to the device: a preset (`auto`, `low`,
+The renderer adapts to each desktop, phone and browser; a game states only what is its own. A **look** is the game's art direction, the same on every device. A **quality** belongs to the device: a preset (`auto`, `low`,
 `medium`, `high`, `ultra`), one switch per feature, an upscaling mode, a render scale and a
 frame-rate target. The renderer probes the adapter at boot into a device class (`desktop-ultra`, `desktop-high`,
 `desktop-mid`, `desktop-low`, `mobile-high`, `mobile-mid`, `mobile-low`; a browser from its own
@@ -44,7 +43,8 @@ sunlit), `manual` for flat, stylized colour. Keep dusk dark with
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (its spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
-`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`. In code:
+`fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`;
+`local_exposure_highlights`, `local_exposure_shadows` (Lighting). In code:
 `RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5))`
 (`genex::render`). The grade, white balance and lens are code only: see Grading and the lens.
 

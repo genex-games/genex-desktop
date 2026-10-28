@@ -455,6 +455,8 @@ fn module_frame(gpu: &Gpu, froxels: &mut genex_render::froxel::FroxelFog, eye: [
         env_probes: &inputs.probes,
         env_sampler: &inputs.filtering,
         aerial: &inputs.aerial,
+        rooms: &inputs.table,
+        room_cells: &inputs.aerial,
     };
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("froxel") });
     let passes = froxels.encode(&gpu.device, &gpu.queue, &mut encoder, &froxel_inputs, &froxel_frame);
@@ -626,6 +628,8 @@ fn pass_time(gpu: &Gpu, grid: genex_render::froxel::FroxelGrid, runs: u64) -> f6
             env_probes: &inputs.probes,
             env_sampler: &inputs.filtering,
             aerial: &inputs.aerial,
+            rooms: &inputs.table,
+            room_cells: &inputs.aerial,
         };
         let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("froxel timing") });
         let stamps = wgpu::ComputePassTimestampWrites { query_set: &queries, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1) };

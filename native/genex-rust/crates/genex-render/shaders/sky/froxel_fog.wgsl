@@ -13,7 +13,10 @@
 // - the light is the fog chunk's in-scatter (the environment's horizon radiance plus the sun's
 //   forward lobe, both tinted by the fog's colour, `gx_fog_inscatter`) with the lobe shadowed by the
 //   sun's cascades, plus the binned local lights through the same lobe (our tile masks and z-bins,
-//   not Godot's cluster); no GI or fog volumes;
+//   not Godot's cluster); no fog volumes. Inside a room a game declares (an irradiance volume,
+//   AAA push P3) the horizon's radiance gives way to what the volume's cells see there (the mean of
+//   their ambient cube, `froxel_room_light`), as the forward pass's diffuse light does: the sky does
+//   not glow in a corridor through its walls, only the sun's shafts and the lamps do;
 // - the opacity holds the fog's `max_opacity` (each slice adds `(T_before - T_after) × light`);
 // - the integration folds the aerial perspective in behind the fog: the texel the forward pass reads
 //   is `fog(aerial(colour))`, in the split layout (fog.rs `AIR_HALVES`: in-scatter in front with
@@ -36,6 +39,17 @@
 @group(0) @binding(11) var froxel_injected: texture_3d<f32>;
 @group(0) @binding(12) var froxel_aerial: texture_3d<f32>;
 @group(0) @binding(13) var froxel_air_out: texture_storage_3d<rgba16float, write>;
+// The inject's irradiance volumes (`probes::ENV_PROBE_ROWS`, `irradiance::ENV_IRRADIANCE`): the
+// probes' and volumes' rows and the volumes' atlas.
+@group(0) @binding(14) var<storage, read> froxel_rooms: array<FroxelRoom>;
+@group(0) @binding(15) var froxel_room_cells: texture_3d<f32>;
+
+// A probe's or volume's row (`probes::GpuProbeRow`, forward_env.wgsl's `GxProbeRow`).
+struct FroxelRoom {
+    min_blend: vec4<f32>,
+    max_layer: vec4<f32>,
+    capture_intensity: vec4<f32>,
+}
 
 // froxel.rs `GpuFroxelParams`.
 struct FroxelParams {
@@ -213,6 +227,62 @@ fn froxel_local_lights(p: vec3<f32>, dir: vec3<f32>, pixel: vec2<f32>) -> vec3<f
     return light;
 }
 
+// How much of a room's light point `p` takes: 1 inside its box, easing to 0 over its fade past it
+// (forward_env.wgsl's `gx_probe_influence`).
+fn froxel_room_influence(room: FroxelRoom, p: vec3<f32>) -> f32 {
+    let blend = room.min_blend.w;
+    let inside = min(p - (room.min_blend.xyz - vec3<f32>(blend)), (room.max_layer.xyz + vec3<f32>(blend)) - p);
+    if any(inside < vec3<f32>(0.0)) {
+        return 0.0;
+    }
+    if blend <= 0.0 {
+        return 1.0;
+    }
+    let ramp = smoothstep(vec3<f32>(0.0), vec3<f32>(1.0), inside / blend);
+    return ramp.x * ramp.y * ramp.z;
+}
+
+// The mean of a volume's ambient cube at `p` (the radiance its cells see there, all round), read
+// with the sampler's trilinear filter: forward_env.wgsl's `gx_volume_irradiance` without its leak
+// control, over all six faces.
+fn froxel_room_mean(room: FroxelRoom, p: vec3<f32>) -> vec3<f32> {
+    let packed = u32(room.capture_intensity.x);
+    let cells = vec3<i32>(i32(packed & 63u), i32((packed >> 6u) & 63u), i32((packed >> 12u) & 63u));
+    let origin = i32(-room.max_layer.w) - 1;
+    let lo = room.min_blend.xyz;
+    let spacing = (room.max_layer.xyz - lo) / vec3<f32>(cells);
+    let grid = clamp((p - lo) / spacing - 0.5, vec3<f32>(0.0), vec3<f32>(cells - 1));
+    let size = vec3<f32>(textureDimensions(froxel_room_cells));
+    let texel = vec3<f32>(f32(origin), 0.0, 0.0) + grid + 0.5;
+    var sum = vec3<f32>(0.0);
+    for (var face = 0u; face < 6u; face++) {
+        let offset = vec3<f32>(0.0, f32(face & 1u) * f32(cells.y), f32(face >> 1u) * f32(cells.z));
+        sum += textureSampleLevel(froxel_room_cells, env_sampler, (texel + offset) / size, 0.0).rgb;
+    }
+    return sum / 6.0;
+}
+
+// The environment's light at `p` with the rooms around it: each baked volume's mean weighed by its
+// influence, how far it has faded in and its multiplier, the horizon's `sky` filling what they
+// leave (exactly the sky outside every room), as forward_env.wgsl's `gx_env_light` shares them.
+fn froxel_room_light(p: vec3<f32>, sky: vec3<f32>) -> vec3<f32> {
+    var light = vec3<f32>(0.0);
+    var weight = 0.0;
+    for (var i = 0u; i < arrayLength(&froxel_rooms); i++) {
+        let room = froxel_rooms[i];
+        // A volume's layer is negative once baked; a probe's is positive, an empty row's 0.
+        if room.max_layer.w >= 0.0 {
+            continue;
+        }
+        let influence = froxel_room_influence(room, p) * room.capture_intensity.y;
+        if influence > 0.0 {
+            light += froxel_room_mean(room, p) * (influence * room.capture_intensity.w);
+            weight += influence;
+        }
+    }
+    return light / max(weight, 1.0) + sky * max(1.0 - weight, 0.0);
+}
+
 // One froxel's fog: rgb the light it scatters towards the camera per unit length (extinction times
 // the in-scatter radiance, Godot's `scattering × total_light`), a its extinction per unit length.
 fn froxel_density(fog: GxFog, uv: vec2<f32>, k: u32, jitter_z: f32) -> vec4<f32> {
@@ -228,7 +298,7 @@ fn froxel_density(fog: GxFog, uv: vec2<f32>, k: u32, jitter_z: f32) -> vec4<f32>
     var light = fog.color.rgb;
     if froxel.screen.z > 0.5 {
         let horizon = gx_fog_horizon(dir);
-        let sky = gx_fog_sky_light(gx_env_sky(horizon, gx_env_lod(GX_FOG_ENV_ROUGHNESS)), horizon, dir);
+        let sky = froxel_room_light(p, gx_fog_sky_light(gx_env_sky(horizon, gx_env_lod(GX_FOG_ENV_ROUGHNESS)), horizon, dir));
         let locals = froxel_local_lights(p, dir, uv * froxel.screen.xy) * GX_FOG_LOCAL_SHARE;
         light = fog.color.rgb * (sky + gx_fog_sun_lobe(dir) * froxel_sun_visibility(p) + locals);
     }

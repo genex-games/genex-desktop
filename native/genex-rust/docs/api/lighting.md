@@ -99,7 +99,8 @@ beside a sunlit red wall, until it has an irradiance volume:
 (`use genex::render::IrradianceVolume;`) covers the axis-aligned box `min..max` with a grid of
 cells (about one per metre; `.with_cells([x, y, z])`, 1 to 32 each, at most 4096) baked from the
 scene: surfaces in it take their diffuse ambient light from the cells around them, the light the
-room's own walls, floor and lamps bounce, fading into the sky's over `blend` units past the box's
+room's own walls, floor and lamps bounce (the first bounce baked, the ones after it estimated, so a
+ceiling the sun never reaches still takes some), fading into the sky's over `blend` units past the box's
 faces. A cell behind a wall lends a surface no light, so a volume may reach across a wall into the
 next room or the street. The grid is baked a few cells a frame the first time the volume appears
 and fades in once baked, and again when the sky changes or the box or its cells change: objects
@@ -163,6 +164,13 @@ replaces the clear colour; elsewhere the flat ambient light and the clear colour
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
 
+One exposure cannot hold a sunlit window and the dark room around it. On `high` and `ultra` local
+exposure moves each region towards middle grey: bright ones (the yard through a window) by
+`local_exposure_highlights` (default 0.6), dark ones (a corridor ceiling) by `local_exposure_shadows`
+(0.8), keeping the detail inside each; 0.25 is strongest, 1 turns that side off. In code:
+`RenderConfig::new().local_exposure(0.5, 0.8)`. Light the room
+first (lamps, a volume); local exposure only redistributes what reaches the camera.
+
 The air between is the look's fog, off by default: `[render.look]`'s `fog_*` keys, or in code
 `RenderConfig::new().fog(Fog::default().with_density(0.02).with_height(0.3, 0.0).with_range(0.0, 0.9)
 .with_color([1.0, 1.0, 1.0]))` (`use genex::render::Fog;`). Its in-scatter is the environment's
@@ -171,7 +179,9 @@ own scattering. On desktop and web `high` and `ultra` the fog is a lit volume wi
 `.with_volumetric(false)` keeps the plain height fog there too. In the volume the sun's shadows
 carve shafts (through a canopy, between buildings, in at a window) and point and spot lights glow
 in it, so a street lamp in a misty night needs no glow sprite; elsewhere the same fog is drawn
-without them. Fog gives depth: keep it thin outdoors, shape a valley's mist with the height
+without them. Inside a room's irradiance volume the fog takes the light the volume's cells see
+there instead of the horizon's, so a corridor's air glows where its windows and lamps light it, not
+with the sky through its walls. Fog gives depth: keep it thin outdoors, shape a valley's mist with the height
 falloff rather than more density, and check in a capture that the near ground keeps its colour.
 Never fake haze with stacked transparent planes.
 

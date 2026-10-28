@@ -142,6 +142,24 @@ pub struct IrradianceVolume {
     pub blend: f32,
     /// The multiplier of its irradiance (1: as baked).
     pub intensity: f32,
+    /// The room's albedo its bake assumes for the bounces after the first (AAA push P3,
+    /// [`bounce_gain`]): `0..=`[`BOUNCE_MAX`], [`DEFAULT_BOUNCE`] by default; 0 bakes the first
+    /// bounce alone (a ceiling the sun never reaches stays black).
+    pub bounce: f32,
+}
+
+/// The room albedo a volume's bake assumes by default for the bounces after the first: about a
+/// lived-in room's (plaster, concrete, tiles and furniture).
+pub const DEFAULT_BOUNCE: f32 = 0.45;
+/// The largest albedo a volume's bake assumes (the bounces' sum grows without bound towards 1).
+pub const BOUNCE_MAX: f32 = 0.8;
+
+/// The gain of the bounces after the first for a room of albedo `bounce`: each bounce is `bounce`
+/// times the one before, so they sum to `bounce / (1 - bounce)` times the light the first bounce
+/// leaves around a cell (the reduce's `grid_bake.sky.y`).
+pub fn bounce_gain(bounce: f32) -> f32 {
+    let bounce = bounce.clamp(0.0, BOUNCE_MAX);
+    bounce / (1.0 - bounce)
 }
 
 impl IrradianceVolume {
@@ -151,7 +169,7 @@ impl IrradianceVolume {
         let (a, b) = (Vec3::from(min), Vec3::from(max));
         let extent = (b - a).abs();
         let cells = extent.to_array().map(|side| cells_for(side / DEFAULT_SPACING));
-        IrradianceVolume { min, max, cells, blend: 0.1 * extent.min_element(), intensity: 1.0 }
+        IrradianceVolume { min, max, cells, blend: 0.1 * extent.min_element(), intensity: 1.0, bounce: DEFAULT_BOUNCE }
     }
 
     /// The volume with `cells` cells along x, y and z.
@@ -169,11 +187,17 @@ impl IrradianceVolume {
         IrradianceVolume { intensity, ..self }
     }
 
+    /// The volume baked for a room of albedo `bounce` (0: the first bounce alone).
+    pub fn with_bounce(self, bounce: f32) -> IrradianceVolume {
+        IrradianceVolume { bounce, ..self }
+    }
+
     /// The volume as the renderer keeps it, or None when it cannot be baked: a corner that is not
     /// finite, or a box side below [`VOLUME_EXTENT_MIN`] or above [`VOLUME_EXTENT_MAX`] (corners in
     /// either order are sorted). Cells are held to `1..=`[`CELLS_PER_AXIS_MAX`] per axis and cut
     /// along the longest axes to at most [`CELLS_MAX`]; the fade to `0..=` half the smallest side
-    /// (0 when not finite); the multiplier to `0..=`[`VOLUME_INTENSITY_MAX`] (1 when not finite).
+    /// (0 when not finite); the multiplier to `0..=`[`VOLUME_INTENSITY_MAX`] (1 when not finite); the
+    /// bounce albedo to `0..=`[`BOUNCE_MAX`] ([`DEFAULT_BOUNCE`] when not finite).
     pub fn held(&self) -> Option<IrradianceVolume> {
         let finite = |v: &[f32; 3]| v.iter().all(|c| c.is_finite());
         if !finite(&self.min) || !finite(&self.max) {
@@ -192,7 +216,8 @@ impl IrradianceVolume {
         }
         let blend = if self.blend.is_finite() { self.blend.clamp(0.0, 0.5 * extent.min_element()) } else { 0.0 };
         let intensity = if self.intensity.is_finite() { self.intensity.clamp(0.0, VOLUME_INTENSITY_MAX) } else { 1.0 };
-        Some(IrradianceVolume { min: min.to_array(), max: max.to_array(), cells, blend, intensity })
+        let bounce = if self.bounce.is_finite() { self.bounce.clamp(0.0, BOUNCE_MAX) } else { DEFAULT_BOUNCE };
+        Some(IrradianceVolume { min: min.to_array(), max: max.to_array(), cells, blend, intensity, bounce })
     }
 
     /// The sphere around its influence (the box grown by the fade): what the binning reads.
@@ -201,14 +226,15 @@ impl IrradianceVolume {
         ClusterSphere { centre: ((a + b) * 0.5).to_array(), radius: 0.5 * (b - a).length() + self.blend * 3.0_f32.sqrt() }
     }
 
-    /// What identifies the volume's bake across frames: its box and cells, bit for bit (the fade
-    /// and the multiplier change only its row).
-    pub fn bake_key(&self) -> [u32; 9] {
-        let mut key = [0; 9];
+    /// What identifies the volume's bake across frames: its box, cells and bounce albedo, bit for
+    /// bit (the fade and the multiplier change only its row).
+    pub fn bake_key(&self) -> [u32; 10] {
+        let mut key = [0; 10];
         for (slot, value) in key.iter_mut().zip(self.min.iter().chain(&self.max)) {
             *slot = value.to_bits();
         }
-        key[6..].copy_from_slice(&self.cells);
+        key[6..9].copy_from_slice(&self.cells);
+        key[9] = self.bounce.to_bits();
         key
     }
 
@@ -527,10 +553,14 @@ pub fn blend(rows: &[GpuProbeRow], p: [f32; 3]) -> (Vec<f32>, f32) {
 /// direction's irradiance normalized by its discrete cosine weight (a constant environment bakes
 /// exactly its radiance), each reach the cos^4-weighted mean of the distance along its axis
 /// (a wall across the axis at h gives h from every texel that sees it), clamped to `reach_max`,
-/// packed by axis ([`ambient_cube`]).
-pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side: u32, reach_max: f32) -> AmbientCube {
+/// packed by axis ([`ambient_cube`]). The later bounces add `gain` ([`bounce_gain`]) times the
+/// mean radiance over the whole sphere to each direction, in proportion to the cosine weight of
+/// the texels a surface covers in its hemisphere (0: the first bounce alone).
+pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side: u32, reach_max: f32, gain: f32) -> AmbientCube {
     let mut light = [[0.0_f64; 4]; AXIS_DIRECTIONS];
     let mut reach = [[0.0_f64; 2]; AXIS_DIRECTIONS];
+    let mut surface = [0.0_f64; AXIS_DIRECTIONS];
+    let mut sphere = [0.0_f64; 4];
     for face in 0..FACES {
         for y in 0..side {
             for x in 0..side {
@@ -539,6 +569,10 @@ pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side:
                 let solid = crate::ibl::texel_solid_angle(side, x, y);
                 let (radiance, distance) = sees(dir);
                 let (distance, reach_max) = (distance.map(f64::from), f64::from(reach_max));
+                for (out, value) in sphere.iter_mut().zip(radiance) {
+                    *out += f64::from(value) * solid;
+                }
+                sphere[3] += solid;
                 for (a, (sum, focus)) in light.iter_mut().zip(reach.iter_mut()).enumerate() {
                     let axis = a / 2;
                     let sign = if a & 1 == 1 { -1.0 } else { 1.0 };
@@ -549,6 +583,9 @@ pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side:
                             *out += f64::from(value) * w;
                         }
                         sum[3] += w;
+                        if distance.is_some() {
+                            surface[a] += w;
+                        }
                         let f = c * c * c * c * solid;
                         // A texel no surface covers reaches the clamp along every axis.
                         focus[0] += distance.map_or(reach_max, |d| (d * c).min(reach_max)) * f;
@@ -558,10 +595,13 @@ pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side:
             }
         }
     }
+    let whole = sphere[3].max(1.0e-12);
+    let mean = [sphere[0] / whole, sphere[1] / whole, sphere[2] / whole];
     let rgb = std::array::from_fn(|a| {
         let [r, g, b, w] = light[a];
         let w = w.max(1.0e-12);
-        [(r / w) as f32, (g / w) as f32, (b / w) as f32]
+        let later = f64::from(gain) * surface[a] / w;
+        [(r / w + later * mean[0]) as f32, (g / w + later * mean[1]) as f32, (b / w + later * mean[2]) as f32]
     });
     let reaches = std::array::from_fn(|a| if reach[a][1] > 0.0 { (reach[a][0] / reach[a][1]) as f32 } else { reach_max });
     ambient_cube(rgb, reaches, reach_max)
@@ -681,7 +721,7 @@ pub struct GridFrame<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct GridSchedule {
     slots: Vec<VolumeSlot>,
-    keys: Vec<[u32; 9]>,
+    keys: Vec<[u32; 10]>,
     lit_by: u64,
     /// The volume whose bake is in progress (its staging block holds its cells so far).
     job: Option<usize>,
@@ -708,7 +748,7 @@ impl GridSchedule {
     /// starts over (every block is made again); a new light makes every bake stale (a bake in
     /// progress starts again). Returns the batches due this frame in encode order.
     pub fn advance(&mut self, frame: &GridFrame<'_>) -> GridWork {
-        let keys: Vec<[u32; 9]> = frame.volumes.iter().map(IrradianceVolume::bake_key).collect();
+        let keys: Vec<[u32; 10]> = frame.volumes.iter().map(IrradianceVolume::bake_key).collect();
         if keys != self.keys {
             self.keys = keys;
             self.slots = frame.volumes.iter().map(|volume| VolumeSlot { volume: *volume, published: false, stale: true, next: 0, shown: 0 }).collect();
@@ -1189,7 +1229,7 @@ impl GridGpu {
             cells,
             shape: [batch.cells.len().min(BATCH_CELLS) as u32, volume.cells[1], volume.cells[2], CAPTURE_SIDE],
             depth: [if reversed { 0.0 } else { 1.0 }, z_scale, z_offset, volume.reach_max()],
-            sky: [SKY_LEVEL, 0.0, 0.0, 0.0],
+            sky: [SKY_LEVEL, bounce_gain(volume.bounce), 0.0, 0.0],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&bake));
     }
@@ -1246,16 +1286,27 @@ mod tests {
         for volume in dropped {
             assert_eq!(volume.held(), None, "{volume:?}");
         }
-        let flipped = IrradianceVolume { min: [2.0, 2.0, 2.0], max: [0.0, 0.0, 0.0], cells: [0, 999, u32::MAX], blend: 99.0, intensity: f32::INFINITY };
+        let flipped = IrradianceVolume { min: [2.0, 2.0, 2.0], max: [0.0, 0.0, 0.0], cells: [0, 999, u32::MAX], blend: 99.0, intensity: f32::INFINITY, bounce: f32::NAN };
         let held = flipped.held().expect("held");
         assert_eq!((held.min, held.max), ([0.0; 3], [2.0; 3]), "corners sorted");
         assert!(held.cells.iter().all(|count| (1..=CELLS_PER_AXIS_MAX).contains(count)), "{:?}", held.cells);
         assert!(held.cell_count() <= CELLS_MAX, "{:?}", held.cells);
         assert_eq!((held.blend, held.intensity), (1.0, 1.0), "fade held to half the side, multiplier default");
+        assert_eq!(held.bounce, DEFAULT_BOUNCE, "a bounce albedo that is not finite is the default");
+        assert_eq!(room().with_bounce(2.0).held().map(|volume| volume.bounce), Some(BOUNCE_MAX));
         let negative = room().with_intensity(-2.0).with_blend(nan).held().expect("held");
         assert_eq!((negative.intensity, negative.blend), (0.0, 0.0));
         let many: Vec<IrradianceVolume> = (0..MAX_VOLUMES + 3).map(|i| IrradianceVolume::new([i as f32, 0.0, 0.0], [i as f32 + 1.0, 1.0, 1.0])).collect();
         assert_eq!(held_volumes(&many).len(), MAX_VOLUMES);
+    }
+
+    #[test]
+    fn the_later_bounces_sum_as_a_geometric_series_and_change_the_bake() {
+        assert_eq!(bounce_gain(0.0), 0.0, "albedo 0: the first bounce alone");
+        assert!((bounce_gain(0.5) - 1.0).abs() < 1e-6, "albedo 0.5 doubles the first bounce");
+        assert!((bounce_gain(1.0) - BOUNCE_MAX / (1.0 - BOUNCE_MAX)).abs() < 1e-6, "held below 1");
+        assert_ne!(room().bake_key(), room().with_bounce(0.0).bake_key(), "a new albedo is a new bake");
+        assert_eq!(room().bake_key(), room().with_intensity(3.0).bake_key(), "the multiplier is only the row's");
     }
 
     #[test]
@@ -1302,7 +1353,7 @@ mod tests {
 
     #[test]
     fn a_constant_environment_bakes_exactly_its_radiance() {
-        let cube = ambient_cube_of(&open([0.25, 0.5, 2.0]), CAPTURE_SIDE, 3.0);
+        let cube = ambient_cube_of(&open([0.25, 0.5, 2.0]), CAPTURE_SIDE, 3.0, 0.0);
         for texel in cube {
             for (value, want) in texel.iter().zip([0.25, 0.5, 2.0]) {
                 assert!((value - want).abs() < 1e-5, "{texel:?}");
@@ -1319,7 +1370,7 @@ mod tests {
     fn the_ambient_cube_holds_light_from_its_side() {
         // A red wall fills the +x half of the sphere at 1 unit, the sky the rest.
         let sees = |d: [f32; 3]| if d[0] > 0.0 { ([1.0, 0.0, 0.0], Some(1.0 / d[0])) } else { ([0.0, 0.0, 1.0], None) };
-        let cube = ambient_cube_of(&sees, CAPTURE_SIDE, 4.0);
+        let cube = ambient_cube_of(&sees, CAPTURE_SIDE, 4.0, 0.0);
         assert!(cube[0][0] > 0.99 && cube[0][2] < 0.01, "+x sees the wall: {:?}", cube[0]);
         assert!(cube[1][2] > 0.99 && cube[1][0] < 0.01, "-x sees the sky: {:?}", cube[1]);
         assert!((cube[2][0] - 0.5).abs() < 0.05, "+y sees half of each: {:?}", cube[2]);

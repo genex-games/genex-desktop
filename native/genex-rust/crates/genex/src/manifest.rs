@@ -88,6 +88,8 @@
 //! fog_color = [1.0, 1.0, 1.0]   # tint on the sky's in-scatter, each 0..=16
 //! fog_aerial_perspective = true # the sky's own scattering where the quality has it
 //! contact_shadow_length = 0.25  # world units, 0 < length <= 2
+//! local_exposure_highlights = 0.6 # bright regions towards grey, 0.25..=1 (1: off; high and ultra)
+//! local_exposure_shadows = 0.8    # dark regions towards grey, 0.25..=1 (1: off)
 //!
 //! [render.shadows]          # the sun's shadows on every preset (held to each class's caps)
 //! distance = 80             # world units, 10..=400 (default: each preset's own, 30..80)
@@ -329,6 +331,8 @@ pub const FOG_DISTANCE_LIMIT: f64 = 100_000.0;
 pub const FOG_COLOR_MAX: f64 = 16.0;
 /// The longest contact-shadow ray, in world units (above 0).
 pub const CONTACT_SHADOW_LENGTH_MAX: f64 = 2.0;
+/// The lowest local exposure contrast (the renderer's `local_exposure::CONTRAST_MIN`); 1 is off.
+pub const LOCAL_EXPOSURE_CONTRAST_MIN: f64 = 0.25;
 /// The shortest and longest `[render.shadows] distance`, whole world units (the renderer's
 /// `SHADOW_DISTANCE_MIN_M`, `SHADOW_DISTANCE_MAX_M`).
 pub const SHADOW_DISTANCE_MIN: i64 = genex_render::settings::SHADOW_DISTANCE_MIN_M as i64;
@@ -354,7 +358,7 @@ pub const WEB_WASM_CEILING_MB: i64 = 32;
 /// The `[render.shadows]` keys, in file-documentation order.
 pub const SHADOW_KEYS: [&str; 2] = ["distance", "blend_band"];
 /// The keys of `[render.look]`, in the wire table's order (the host's `LookKey`).
-pub const LOOK_KEYS: [&str; 21] = [
+pub const LOOK_KEYS: [&str; 23] = [
     "tonemapper",
     "exposure",
     "metering",
@@ -376,6 +380,8 @@ pub const LOOK_KEYS: [&str; 21] = [
     "fog_color",
     "fog_aerial_perspective",
     "contact_shadow_length",
+    "local_exposure_highlights",
+    "local_exposure_shadows",
 ];
 
 /// Declares a `[render]` vocabulary: its values, wire spellings, `ALL`, `as_str` and `from_wire`.
@@ -902,6 +908,12 @@ pub struct LookSection {
     /// Contact shadows' ray length in world units, `(0, CONTACT_SHADOW_LENGTH_MAX]`.
     #[serde(default)]
     pub contact_shadow_length: Option<f64>,
+    /// Local exposure's contrast above middle grey, `LOCAL_EXPOSURE_CONTRAST_MIN..=1` (1: off).
+    #[serde(default)]
+    pub local_exposure_highlights: Option<f64>,
+    /// Local exposure's contrast below middle grey, `LOCAL_EXPOSURE_CONTRAST_MIN..=1` (1: off).
+    #[serde(default)]
+    pub local_exposure_shadows: Option<f64>,
 }
 
 impl LookSection {
@@ -921,7 +933,8 @@ impl LookSection {
     }
 
     /// `look` with this table's RQ4 keys (bloom's threshold and spread, GTAO's strength and
-    /// radius, the fog, the contact shadows' length) applied; a key left out keeps `look`'s value.
+    /// radius, the fog, the contact shadows' length) and local exposure's contrasts applied; a key
+    /// left out keeps `look`'s value.
     /// The table is checked when parsed, and the renderer holds each value to its limits again.
     pub fn apply_effects(&self, look: genex_render::Look) -> genex_render::Look {
         let some = |value: Option<f64>, current: f32| value.map_or(current, |v| v as f32);
@@ -941,7 +954,12 @@ impl LookSection {
             fog = fog.with_aerial_perspective(aerial);
         }
         look.fog = fog;
-        look
+        let local = look.local_exposure;
+        let local = genex_render::post::local_exposure::LocalExposure::new(
+            some(self.local_exposure_highlights, local.highlights),
+            some(self.local_exposure_shadows, local.shadows),
+        );
+        look.with_local_exposure(local)
     }
 }
 
@@ -1660,7 +1678,7 @@ fn check_effects(look: &LookSection) -> Result<(), ManifestError> {
     let bad = |key: &str, value: Option<f64>| Err(ManifestError::new(ManifestErrorCode::InvalidRenderLook, format!("{key} {value:?}")));
     let within = |min: f64, max: f64| move |v: f64| (min..=max).contains(&v);
     let positive_up_to = |max: f64| move |v: f64| v > 0.0 && v <= max;
-    let ranges: [LookRange<'_>; 10] = [
+    let ranges: [LookRange<'_>; 12] = [
         ("bloom_threshold", look.bloom_threshold, &within(0.0, BLOOM_THRESHOLD_MAX)),
         ("bloom_radius", look.bloom_radius, &within(BLOOM_RADIUS_MIN, BLOOM_RADIUS_MAX)),
         ("ao_intensity", look.ao_intensity, &within(0.0, AO_INTENSITY_MAX)),
@@ -1671,6 +1689,8 @@ fn check_effects(look: &LookSection) -> Result<(), ManifestError> {
         ("fog_start", look.fog_start, &within(0.0, FOG_DISTANCE_LIMIT)),
         ("fog_max_opacity", look.fog_max_opacity, &within(0.0, 1.0)),
         ("contact_shadow_length", look.contact_shadow_length, &positive_up_to(CONTACT_SHADOW_LENGTH_MAX)),
+        ("local_exposure_highlights", look.local_exposure_highlights, &within(LOCAL_EXPOSURE_CONTRAST_MIN, 1.0)),
+        ("local_exposure_shadows", look.local_exposure_shadows, &within(LOCAL_EXPOSURE_CONTRAST_MIN, 1.0)),
     ];
     for (key, value, valid) in ranges {
         if value.is_some_and(|v| !valid(v)) {

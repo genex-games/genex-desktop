@@ -182,6 +182,10 @@ export const LookKey = {
   FogColor: "fog_color",
   FogAerialPerspective: "fog_aerial_perspective",
   ContactShadowLength: "contact_shadow_length",
+  /** Local exposure: how strongly bright regions come down towards middle grey (1: not at all). */
+  LocalExposureHighlights: "local_exposure_highlights",
+  /** Local exposure: how strongly dark regions come up towards middle grey (1: not at all). */
+  LocalExposureShadows: "local_exposure_shadows",
 } as const;
 export type LookKey = (typeof LookKey)[keyof typeof LookKey];
 
@@ -328,6 +332,8 @@ export const FOG_DISTANCE_LIMIT = 100_000;
 export const FOG_COLOR_MAX = 16;
 /** The longest contact-shadow ray, in world units (above 0). */
 export const CONTACT_SHADOW_LENGTH_MAX = 2;
+/** The lowest local exposure contrast (genex-render's `local_exposure::CONTRAST_MIN`); 1 is off. */
+export const LOCAL_EXPOSURE_CONTRAST_MIN = 0.25;
 /** The shortest and longest shadow distance a game may ask for, whole world units (genex-render's `SHADOW_DISTANCE_MIN_M`, `SHADOW_DISTANCE_MAX_M`). */
 export const SHADOW_DISTANCE_MIN = 10;
 export const SHADOW_DISTANCE_MAX = 400;
@@ -460,6 +466,10 @@ export interface RenderLook {
   fogAerialPerspective?: boolean;
   /** Contact shadows' ray length in world units. */
   contactShadowLength?: number;
+  /** Local exposure's contrast above middle grey (lower brings bright regions down more; 1: off). */
+  localExposureHighlights?: number;
+  /** Local exposure's contrast below middle grey (lower brings dark regions up more; 1: off). */
+  localExposureShadows?: number;
 }
 
 /** One `[render.class.<class>]` table: the quality a game asks for on that class. */
@@ -669,6 +679,8 @@ export const isFogStart = within(0, FOG_DISTANCE_LIMIT);
 export const isFogOpacity = within(0, 1);
 /** A contact-shadow length in `(0, CONTACT_SHADOW_LENGTH_MAX]`. */
 export const isContactShadowLength = positiveUpTo(CONTACT_SHADOW_LENGTH_MAX);
+/** A local exposure contrast within `LOCAL_EXPOSURE_CONTRAST_MIN..=1`. */
+export const isLocalExposureContrast = within(LOCAL_EXPOSURE_CONTRAST_MIN, 1);
 /** A shadow distance: a whole number within `SHADOW_DISTANCE_MIN..=SHADOW_DISTANCE_MAX`. */
 export const isShadowDistance = (value: unknown): value is number =>
   Number.isInteger(value) && within(SHADOW_DISTANCE_MIN, SHADOW_DISTANCE_MAX)(value);

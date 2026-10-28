@@ -164,7 +164,9 @@
       "fog_max_opacity",
       "fog_color",
       "fog_aerial_perspective",
-      "contact_shadow_length"
+      "contact_shadow_length",
+      "local_exposure_highlights",
+      "local_exposure_shadows"
     ],
     "qualityKeys": ["preset", "render_scale", "fps", "lod_threshold_px", "lod_fade_band", "far_density"],
     "renderKeys": ["form_factors", "preset", "look", "class", "shadows", "loading"],
@@ -210,6 +212,7 @@
     "fogDistanceLimit": 100000,
     "fogColorMax": 16,
     "contactShadowLengthMax": 2,
+    "localExposureContrastMin": 0.25,
     "wgslApis": [1, 2],
     "captureSettleFramesMax": 16,
     "renderSettingsApi": 1,

@@ -30,6 +30,7 @@ import {
   BLOOM_THRESHOLD_MAX,
   CAPTURE_SETTLE_FRAMES_MAX,
   CONTACT_SHADOW_LENGTH_MAX,
+  LOCAL_EXPOSURE_CONTRAST_MIN,
   CaptureExposure,
   DegradeReason,
   DeviceClass,
@@ -731,6 +732,15 @@ describe("genex.toml: the [render] table and [[wgsl]] api (rows shared with mani
     assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same look");
   });
 
+  it("reads local exposure's contrasts (AAA push P3) and writes them back into the fragment the facade reads", () => {
+    const look = ["[render.look]", "local_exposure_highlights = 0.5", "local_exposure_shadows = 1"].join("\n");
+    const manifest = accepted(`${RENDER_ROWS.game}${look}\n`);
+    assert.deepEqual(manifest.render?.look, { localExposureHighlights: 0.5, localExposureShadows: 1 });
+    assert.ok(manifest.render);
+    const back = accepted(`${RENDER_ROWS.game}${renderTomlFragment(manifest.render)}`);
+    assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same look");
+  });
+
   it("reads a class table's LOD keys and switches (LOD-06) and writes them back into the fragment the facade reads", () => {
     const table =
       "[render.class.mobile-mid]\nlod_threshold_px = 3\nlod_fade_band = 0\nfar_density = 0.5\nlod-fade = false\nimpostors = true\n";
@@ -769,6 +779,8 @@ describe("genex.toml: the [render] table and [[wgsl]] api (rows shared with mani
     ["a negative fog colour channel", "fog_color = [1.0, -0.5, 1.0]"],
     ["a zero contact-shadow length", "contact_shadow_length = 0"],
     ["a contact-shadow length past its limit", `contact_shadow_length = ${CONTACT_SHADOW_LENGTH_MAX + 1}`],
+    ["a highlights contrast under its floor", `local_exposure_highlights = ${LOCAL_EXPOSURE_CONTRAST_MIN / 2}`],
+    ["a shadows contrast past 1", "local_exposure_shadows = 1.5"],
   ];
   for (const [name, line] of rq4Hostile) {
     it(`refuses ${name} with invalid-render-look`, () => {
@@ -861,6 +873,7 @@ describe("genex.toml: the render vocabulary is the wire's", () => {
     assert.equal(FOG_DISTANCE_LIMIT, WIRE_RENDER.fogDistanceLimit);
     assert.equal(FOG_COLOR_MAX, WIRE_RENDER.fogColorMax);
     assert.equal(CONTACT_SHADOW_LENGTH_MAX, WIRE_RENDER.contactShadowLengthMax);
+    assert.equal(LOCAL_EXPOSURE_CONTRAST_MIN, WIRE_RENDER.localExposureContrastMin);
     assert.deepEqual(WGSL_EXTENSION_APIS, WIRE_RENDER.wgslApis);
     assert.equal(CAPTURE_SETTLE_FRAMES_MAX, WIRE_RENDER.captureSettleFramesMax);
   });

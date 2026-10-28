@@ -3120,14 +3120,24 @@ impl Renderer {
         crate::post::bloom::BloomSettings::new(&self.look, &self.quality.bloom).filter(|_| drawn)
     }
 
-    /// Hand the frame's bloom and the look's grading to the tonemap (the bloom chain's pipelines
-    /// and the graded tonemap pipelines are made here, never mid-pass; A.2).
+    /// The local exposure the frame's tonemap draws: the look's where the quality draws it on the
+    /// HDR scene's curve (None: the tonemap binds its neutral texels and skips it).
+    fn frame_local_exposure(&self) -> Option<crate::post::local_exposure::LocalExposure> {
+        let drawn = self.quality.local_exposure && self.quality.tonemap && self.path.hdr;
+        Some(self.look.local_exposure).filter(|local| drawn && local.is_on())
+    }
+
+    /// Hand the frame's bloom, local exposure and the look's grading to the tonemap (the bloom
+    /// chain's and the grid's pipelines and the graded tonemap pipelines are made here, never
+    /// mid-pass; A.2).
     fn prepare_bloom(&mut self) -> Result<(), RenderError> {
         let bloom = self.frame_bloom();
+        let local = self.frame_local_exposure();
         let class = self.class.unwrap_or(DeviceClass::new(self.form, crate::device_class::PerformanceTier::High));
         match self.post.get_mut() {
             Some((tonemap, _)) => {
                 tonemap.set_grading(&self.device, &self.queue, &self.look.grading, class);
+                tonemap.set_local_exposure(&self.device, local)?;
                 tonemap.set_bloom(&self.device, bloom)
             }
             None => Ok(()),

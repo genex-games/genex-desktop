@@ -611,6 +611,9 @@ fn high_row(quality: &mut Quality) {
     quality.environment.clouds = Some(crate::clouds::HIGH_GRID);
     quality.shadows = shadows(3, 2048, ShadowFilter::PcssLite, ShadowFormat::Depth32, &HIGH_REACH);
     quality.contact_shadows = true;
+    // AAA push P3: local exposure, so a sunlit window and the corridor around it both read (ultra
+    // inherits it).
+    quality.local_exposure = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
     // B.4: the visibility bitmask (no halo behind thin objects; ultra adds its GI). Medium keeps

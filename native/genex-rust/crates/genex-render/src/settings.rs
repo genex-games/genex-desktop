@@ -306,6 +306,11 @@ pub struct Look {
     /// frame, after depth of field ([`crate::post::motion_blur::MotionBlur`]; off, the default,
     /// draws nothing). Settled captures draw without it unless the shot asks.
     pub motion_blur: crate::post::motion_blur::MotionBlur,
+    /// Local exposure (AAA push P3): bright regions (a window onto a sunlit yard) come down and dark
+    /// ones (a corridor ceiling) come up towards middle grey, each region by its own amount, with
+    /// its detail kept ([`crate::post::local_exposure::LocalExposure`]; on by default, drawn where
+    /// the quality's [`Quality::local_exposure`] is). HDR scene only.
+    pub local_exposure: crate::post::local_exposure::LocalExposure,
 }
 
 /// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
@@ -610,6 +615,7 @@ const DEFAULT_LOOK: Look = Look {
     grading: crate::post::grading::Grading::NEUTRAL,
     depth_of_field: crate::post::dof::DepthOfField::OFF,
     motion_blur: crate::post::motion_blur::MotionBlur::OFF,
+    local_exposure: crate::post::local_exposure::LocalExposure::DEFAULT,
 };
 
 impl Default for Look {
@@ -715,6 +721,14 @@ impl Look {
     /// The look with `fog`.
     pub fn with_fog(mut self, fog: Fog) -> Look {
         self.fog = fog;
+        self
+    }
+
+    /// The look with `local` exposure (its contrasts held by
+    /// [`crate::post::local_exposure::LocalExposure::new`]; [`crate::post::local_exposure::LocalExposure::OFF`]
+    /// turns it off).
+    pub fn with_local_exposure(mut self, local: crate::post::local_exposure::LocalExposure) -> Look {
+        self.local_exposure = crate::post::local_exposure::LocalExposure::new(local.highlights, local.shadows);
         self
     }
 
@@ -1912,6 +1926,9 @@ pub struct Quality {
     pub shadows: ShadowQuality,
     /// Contact shadows.
     pub contact_shadows: bool,
+    /// Local exposure where the look asks for it (AAA push P3): on at `high` and `ultra`. A
+    /// resource knob (a compute pass and two bindings; the tonemap skips it on a uniform).
+    pub local_exposure: bool,
     /// Bloom.
     pub bloom: BloomQuality,
     /// Ambient occlusion.
@@ -1999,6 +2016,7 @@ impl Quality {
                 screen_mask: true,
             },
             contact_shadows: false,
+            local_exposure: false,
             bloom: BloomQuality { enabled: false, resolution: 0 },
             ao: AoQuality { resolution: AoResolution::Off, slices: 0, steps: 0, temporal: false },
             ao_method: AoMethod::Horizons,
