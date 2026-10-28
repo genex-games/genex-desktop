@@ -140,8 +140,8 @@ in a few pixels). `state().volatile.render` (class, preset, scale, `features`,
 Rules for agents:
 
 - Never hard-code `ultra`, a resolution, a render scale or an upscaling mode (only a photo mode
-  holds Native), and never read render settings in a simulation hook. Make content cheap at `low`
-  and let presets add to it.
+  holds Native), and never read render settings in a simulation hook. Author for `ultra` on
+  desktop; check `low` and a phone stay readable.
 - Never switch `shadows`, `meshlets` or `occlusion` off to save frame time, nor ask for more
   cascades than a preset has outside `shadows_at`: presets and class caps already scale them.
 - Test as a phone: `renderSettings` `{set: {deviceClass: "mobile-mid"}}`, `{set: {preset: "low"}}`,

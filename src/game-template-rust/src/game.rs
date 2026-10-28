@@ -1,7 +1,7 @@
 //! The game's world and its rules. The starter is a floor and one metal block that turns under the
 //! physical sky and an afternoon sun, a gear button that opens the graphics settings, a probe the
 //! checks can read and a camera that shows it all; replace the scene with the game in the brief and
-//! keep a way to reach the settings panel (a pause or options menu).
+//! keep a way to reach the settings menu (a pause or options menu).
 
 use genex::prelude::*;
 use genex::render::Environment;
