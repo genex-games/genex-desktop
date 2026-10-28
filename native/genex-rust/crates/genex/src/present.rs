@@ -3122,6 +3122,8 @@ fn lighting(lights: &Lights) -> Lighting {
             cells: volume.cells,
             blend: volume.blend,
             intensity: volume.intensity,
+            // The bounces after the first, at a lived-in room's albedo (AAA push P3).
+            bounce: genex_render::irradiance::DEFAULT_BOUNCE,
         })
         .collect();
     lighting

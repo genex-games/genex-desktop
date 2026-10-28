@@ -184,6 +184,8 @@ fn fs_post(in: GxPostInV2) -> @location(0) vec4<f32> {
 pub const TONEMAP: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/post/tonemap.wgsl")));
 /// The luminance-weighted MSAA resolve of the HDR scene (graph node 16 on desktop classes).
 pub const RESOLVE_HDR: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/post/resolve_hdr.wgsl")));
+/// Local exposure's bilateral grid of log luminance, before the tonemap (AAA push P3).
+pub const LOCAL_EXPOSURE: &str = shipped_wgsl!(include_str!("../shaders/post/local_exposure.wgsl"));
 /// Auto exposure's log-luminance histogram (graph node 20).
 pub const EXPOSURE_HISTOGRAM: &str =
     shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/post/exposure_histogram.wgsl")));
@@ -285,6 +287,7 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("post-v2-sample", POST_V2_SAMPLE),
     ("tonemap", TONEMAP),
     ("resolve-hdr", RESOLVE_HDR),
+    ("local-exposure", LOCAL_EXPOSURE),
     ("exposure-histogram", EXPOSURE_HISTOGRAM),
     ("exposure-adapt", EXPOSURE_ADAPT),
     ("background", BACKGROUND),

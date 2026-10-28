@@ -205,6 +205,11 @@ pub struct FroxelInputs<'a> {
     pub env_sampler: &'a Sampler,
     /// The aerial-perspective volume this frame (a one-texel neutral volume where none ran).
     pub aerial: &'a TextureView,
+    /// The probes' and irradiance volumes' rows (`probes::ENV_PROBE_ROWS`): inside a room's
+    /// volume the fog takes what its cells see instead of the horizon (AAA push P3).
+    pub rooms: &'a Buffer,
+    /// The irradiance volumes' atlas (`irradiance::ENV_IRRADIANCE`).
+    pub room_cells: &'a TextureView,
 }
 
 /// What the froxel fog knows about one frame.
@@ -315,7 +320,7 @@ fn storage_3d() -> BindingType {
 }
 
 /// The inject kernel's bindings (`froxel_fog.wgsl` 0-10).
-fn inject_entries() -> [BindGroupLayoutEntry; 11] {
+fn inject_entries() -> [BindGroupLayoutEntry; 13] {
     [
         entry(0, uniform()),
         entry(1, uniform()),
@@ -328,6 +333,8 @@ fn inject_entries() -> [BindGroupLayoutEntry; 11] {
         entry(8, BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
         entry(9, filterable_3d()),
         entry(10, storage_3d()),
+        entry(14, storage_read()),
+        entry(15, filterable_3d()),
     ]
 }
 
@@ -450,6 +457,8 @@ impl FroxelFog {
                 wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(inputs.env_sampler) },
                 wgpu::BindGroupEntry { binding: 9, resource: texture_resource(&self.injected[1 - slot]) },
                 wgpu::BindGroupEntry { binding: 10, resource: texture_resource(&self.injected[slot]) },
+                wgpu::BindGroupEntry { binding: 14, resource: inputs.rooms.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 15, resource: texture_resource(inputs.room_cells) },
             ],
         });
         let integrate = device.create_bind_group(&wgpu::BindGroupDescriptor {

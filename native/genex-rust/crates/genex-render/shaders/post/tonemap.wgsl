@@ -41,6 +41,14 @@
 // holds only the over-threshold part, so that part is traded for the glow and the rest is kept:
 // `scene + (bloom - part(scene)) * intensity` (a lerp would darken everything below it).
 //
+// Local exposure (AAA push P3, `post::local_exposure`) changes the scene before bloom and the curve
+// in every entry point: each region moves towards middle grey by its own EV, `base × (contrast - 1)`
+// held to ±3 EV, where the base is the bilateral grid (local_exposure.wgsl) sliced trilinearly at
+// the pixel's own EV and mixed with the cells' bilinear plain mean by `local.w`, and the contrast is the
+// look's highlights above middle grey and its shadows below. `local.z` 0 (the default look on a
+// quality without it: neutral textures are bound) skips it, so the picture is byte for byte the
+// one before.
+//
 // Grading (A.2, `post::grading`) is the pipeline's `GX_GRADING` override, `ShaderGrading`'s bits:
 // 1 the parametric knobs on the white-balanced scene before the curve (`gx_grade`: Bevy 0.16's
 // `sectional_color_grading`, MIT OR Apache-2.0, Copyright Bevy contributors, with contrast in log
@@ -82,6 +90,11 @@ struct GxTonemapParams {
     section_gamma: vec4<f32>,
     section_gain: vec4<f32>,
     section_lift: vec4<f32>,
+    // Local exposure (`post::local_exposure::tonemap_rows`): x the highlights' contrast, y the
+    // shadows', z 1 when on (0: skipped), w the plain mean's share of the base.
+    local: vec4<f32>,
+    // xy: the scene's uv to the grid's (the grid covers whole cells); zw: one cell in grid uv.
+    local_grid: vec4<f32>,
 }
 
 @group(0) @binding(0) var gx_hdr_scene: texture_2d<f32>;
@@ -93,6 +106,11 @@ struct GxTonemapParams {
 // The grading LUT's change from the identity per texel (`post::grading::GRADING_LUT_BINDING`);
 // a neutral 1x1x1 texel when the look has none.
 @group(0) @binding(5) var gx_grading_lut: texture_3d<f32>;
+// Local exposure's grid of (EV sum, weight) pairs (`post::local_exposure::TONEMAP_GRID_BINDING`) and
+// its cells' plain mean EVs (`TONEMAP_MEAN_BINDING`), read through the filtering sampler; neutral
+// 1x1 texels without local exposure.
+@group(0) @binding(6) var gx_local_grid: texture_3d<f32>;
+@group(0) @binding(7) var gx_local_mean: texture_2d<f32>;
 
 // RCAS's lobe limit (0.25 - 1/16): the sharpen never inverts a neighbourhood.
 const GX_TM_LOBE_LIMIT: f32 = 0.1875;
@@ -117,6 +135,15 @@ const GX_GRADE_GREY: f32 = 0.18;
 const GX_GRADE_MARGIN: f32 = 0.1;
 const GX_GRADE_FLOOR: f32 = 1e-10;
 const GX_GRADE_VIBRANCE_STEEPNESS: f32 = 3.0;
+// Local exposure (`post::local_exposure`): the grid's slices and EV range, middle grey, the least
+// weight a slice holds before the plain mean stands in, the most a pixel changes, in EV.
+const GX_LE_SLICES: f32 = 16.0;
+const GX_LE_EV_LO: f32 = -8.0;
+const GX_LE_EV_HI: f32 = 8.0;
+const GX_LE_KEY: f32 = 0.18;
+const GX_LE_BLACK: f32 = 1.0e-6;
+const GX_LE_WEIGHT_MIN: f32 = 1.0e-3;
+const GX_LE_CHANGE_LIMIT: f32 = 3.0;
 
 struct GxTonemapOut {
     @builtin(position) clip: vec4<f32>,
@@ -350,10 +377,34 @@ fn gx_tm_bloom(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     return scene + (bloom - gx_tm_bloom_part(scene)) * gx_tm.shape.z;
 }
 
+// `hdr` at `uv` under local exposure (unchanged when it is off, and black stays black): its region's
+// base EV from the grid, then `exp2(base × (contrast - 1))` (`LocalExposure::change_ev`).
+fn gx_tm_local(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+    if gx_tm.local.z <= 0.0 {
+        return hdr;
+    }
+    let luminance = gx_tm_luma(min(max(hdr, vec3<f32>(0.0)), vec3<f32>(GX_TM_RADIANCE_MAX)));
+    // NaN fails the comparison too.
+    if !(luminance > GX_LE_BLACK) {
+        return hdr;
+    }
+    let ev = clamp(log2(luminance / GX_LE_KEY), GX_LE_EV_LO, GX_LE_EV_HI);
+    let at = uv * gx_tm.local_grid.xy;
+    let slice = (ev - GX_LE_EV_LO) / (GX_LE_EV_HI - GX_LE_EV_LO) * (GX_LE_SLICES - 1.0);
+    let cell = textureSampleLevel(gx_local_grid, gx_tm_sampler, vec3<f32>(at, (slice + 0.5) / GX_LE_SLICES), 0.0);
+    // The cells' plain mean EV, bilinear between the four cells around the pixel.
+    let mean = textureSampleLevel(gx_local_mean, gx_tm_sampler, at, 0.0).x;
+    let bilateral = select(mean, cell.x / max(cell.y, GX_LE_WEIGHT_MIN) + GX_LE_EV_LO, cell.y > GX_LE_WEIGHT_MIN);
+    let base = mix(bilateral, mean, gx_tm.local.w);
+    let contrast = select(gx_tm.local.y, gx_tm.local.x, base > 0.0);
+    let change = clamp(base * (contrast - 1.0), -GX_LE_CHANGE_LIMIT, GX_LE_CHANGE_LIMIT);
+    return hdr * exp2(change);
+}
+
 // The tonemapped, encoded colour of `hdr` at output pixel `pixel` (`uv` on the target), bloom
 // composited, dithered when the pass asks.
 fn gx_tm_display(hdr: vec3<f32>, pixel: vec2<f32>, uv: vec2<f32>) -> vec4<f32> {
-    var encoded = gx_tm_encode(gx_tonemap_curve(gx_tm_bloom(hdr, uv)));
+    var encoded = gx_tm_encode(gx_tonemap_curve(gx_tm_bloom(gx_tm_local(hdr, uv), uv)));
     if (GX_GRADING & 2u) != 0u {
         encoded = gx_grade_lut(encoded);
     }
@@ -433,7 +484,7 @@ fn fs_tonemap_bilinear_msaa(in: GxTonemapOut) -> @location(0) vec4<f32> {
 
 // The bilinear scene at `uv`, bloom composited, through the curve, sRGB-encoded.
 fn gx_tm_tap(uv: vec2<f32>) -> vec3<f32> {
-    return gx_tm_encode(gx_tonemap_curve(gx_tm_bloom(gx_tm_bilinear(uv), uv)));
+    return gx_tm_encode(gx_tonemap_curve(gx_tm_bloom(gx_tm_local(gx_tm_bilinear(uv), uv), uv)));
 }
 
 fn gx_tm_max3(v: vec3<f32>) -> f32 {

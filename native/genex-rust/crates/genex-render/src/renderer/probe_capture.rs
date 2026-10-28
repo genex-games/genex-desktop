@@ -12,7 +12,8 @@
 //!
 //! What a capture leaves out (open, recorded with A.3): transparent draws, alpha-masked and
 //! double-sided variants, skinned meshes' motion, particles, lines, Level-2 custom materials and
-//! Level-3 passes; spot lights unshadowed; the sky's sun disk (the analytic sun lights instead).
+//! Level-3 passes; spot lights unshadowed; the sky's sun disk (the analytic sun lights instead);
+//! for an irradiance cell, the fog (`CaptureKind::fogged`).
 //!
 //! The irradiance volumes' bake (renderer pass 2 A.4, `crate::irradiance`) runs first in the
 //! node, because the probes' table carries the volumes' rows: each cell due this frame is six
@@ -205,7 +206,7 @@ impl Renderer {
         let key = SurfaceKey {
             shadow_filter: ShadowFilter::Pcf3x3,
             shadow_temporal: false,
-            effects: EffectKey { ao: false, ao_gi: false, contact_shadows: false, fog: self.surface_key(true).effects.fog, aerial: false },
+            effects: EffectKey { ao: false, ao_gi: false, contact_shadows: false, fog: kind.fogged() && self.surface_key(true).effects.fog, aerial: false },
             binned_lights: false,
             sun_soft_edges: false,
             sun_cascades: 1,
@@ -383,6 +384,14 @@ enum CaptureKind {
 }
 
 impl CaptureKind {
+    /// Whether its faces are drawn through the look's fog. An irradiance cell's are not (AAA push
+    /// P3): the analytic fog in-scatters the sky's horizon, so a cell inside a closed room would
+    /// see its air glow with the sky and light the room with it (and the froxel fog that reads the
+    /// cells); the fog is the frame's own, applied where the camera looks.
+    fn fogged(self) -> bool {
+        matches!(self, CaptureKind::Probe)
+    }
+
     fn cull(self) -> Option<wgpu::Face> {
         match self {
             CaptureKind::Probe => Some(wgpu::Face::Back),

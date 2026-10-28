@@ -659,6 +659,10 @@ fn starter_run(gpu: &Gpu, quality: &Quality, id: Option<&str>, turning: bool) ->
     renderer.set_quality(quality);
     renderer.set_render_scale(1.0);
     renderer.set_environment(&genex_render::settings::Environment::sky());
+    // TAA's history alone, in display levels: local exposure (on at ultra) lifts the shadow's
+    // levels and with them any difference in it (45 ghost pixels with it, 27 without).
+    let look = renderer.look().with_local_exposure(genex_render::post::local_exposure::LocalExposure::OFF);
+    renderer.set_look(look);
     let spin = |tick: u64| STARTER_SPIN_PER_SECOND * tick as f32 / STARTER_TICKS_PER_SECOND;
     for tick in 1..=STARTER_TICKS {
         let at = if turning { spin(tick) } else { spin(STARTER_TICKS) };

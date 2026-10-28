@@ -22,6 +22,11 @@ impl Renderer {
         else {
             return PassCounters::default();
         };
+        let (Some(wgpu::BindingResource::Buffer(rooms)), Some(wgpu::BindingResource::TextureView(room_cells))) =
+            (environment.binding(crate::probes::ENV_PROBE_ROWS), environment.binding(crate::irradiance::ENV_IRRADIANCE))
+        else {
+            return PassCounters::default();
+        };
         let effects = self.effects.borrow();
         let mut sky = self.sky.borrow_mut();
         let aerial = sky.sky_aerial_view().cloned().unwrap_or_else(|| effects.neutral_volume().clone());
@@ -36,6 +41,8 @@ impl Renderer {
             env_probes,
             env_sampler,
             aerial: &aerial,
+            rooms: rooms.buffer,
+            room_cells,
         };
         let plan_frame = &prep.plan.frame;
         let froxel_frame = crate::froxel::FroxelFrame {

@@ -137,6 +137,7 @@ import {
   isBloomRadius,
   isBloomThreshold,
   isContactShadowLength,
+  isLocalExposureContrast,
   isExposureEv,
   isFogBaseHeight,
   isFogColor,
@@ -1046,6 +1047,8 @@ const NUMERIC_LOOK_KEYS = [
   LookKey.FogStart,
   LookKey.FogMaxOpacity,
   LookKey.ContactShadowLength,
+  LookKey.LocalExposureHighlights,
+  LookKey.LocalExposureShadows,
 ] as const;
 
 /** `[render.look]`: its known keys, the vocabulary keys as strings, the switch as a boolean, the colour as numbers and the rest as numbers. */
@@ -1523,6 +1526,8 @@ const EFFECT_NUMBERS: ReadonlyArray<
   [LookKey.FogStart, isFogStart, (look, value) => (look.fogStart = value)],
   [LookKey.FogMaxOpacity, isFogOpacity, (look, value) => (look.fogMaxOpacity = value)],
   [LookKey.ContactShadowLength, isContactShadowLength, (look, value) => (look.contactShadowLength = value)],
+  [LookKey.LocalExposureHighlights, isLocalExposureContrast, (look, value) => (look.localExposureHighlights = value)],
+  [LookKey.LocalExposureShadows, isLocalExposureContrast, (look, value) => (look.localExposureShadows = value)],
 ];
 
 /** Bloom's threshold and spread, GTAO's strength and radius, the fog and the contact shadows' length (RQ4), in file-key order. */
@@ -1679,6 +1684,8 @@ function effectLines(look: RenderLook): ReadonlyArray<readonly [string, string |
     [LookKey.FogColor, color],
     [LookKey.FogAerialPerspective, aerial],
     [LookKey.ContactShadowLength, float(look.contactShadowLength)],
+    [LookKey.LocalExposureHighlights, float(look.localExposureHighlights)],
+    [LookKey.LocalExposureShadows, float(look.localExposureShadows)],
   ];
 }
 
