@@ -513,9 +513,13 @@ pub fn exposure_warnings(look: &Look) -> Vec<ExposureWarning> {
 /// that frame adapted at and the frame's number.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ExposureReading {
+    /// The history's state.
     pub state: GpuExposureState,
+    /// The metered frame's histogram.
     pub bins: [u32; EXPOSURE_HISTOGRAM_BINS as usize],
+    /// The doorway boost the frame adapted at (1: none).
     pub boost: f32,
+    /// The frame it was taken after.
     pub frame: u64,
 }
 
@@ -530,17 +534,22 @@ pub struct ExposureTelemetry {
     pub target_ev: Option<f32>,
     /// The EV the frame was drawn at: exposure `2^(compensation - applied_ev)`.
     pub applied_ev: f32,
+    /// The look's `ev_compensation`.
     pub compensation: f32,
+    /// The look's metering floor.
     pub ev_min: f32,
+    /// The look's metering ceiling (at least a span of [`HISTOGRAM_EV_SPAN_MIN`] over the floor).
     pub ev_max: f32,
     /// [`TELEMETRY_BINS`] shares summing to 1 over `ev_min..ev_max`; empty without a metered sample.
     pub histogram: Vec<f32>,
+    /// Whether that frame adapted at the doorway boost.
     pub doorway_boost: bool,
     /// Frames between the read-back and the frame described.
     pub age_frames: u64,
     /// The frame the read-back was taken after (`None` before the first, or under a fixed
     /// exposure): a new value is a new reading.
     pub reading: Option<u64>,
+    /// What the look deserves a warning for.
     pub warnings: Vec<ExposureWarning>,
 }
 
@@ -950,10 +959,11 @@ mod tests {
     #[test]
     fn warnings_name_a_raised_floor_under_doorway_adaptation_and_doorway_adaptation_under_manual() {
         let auto = Look { exposure: ExposureMode::Auto, ..Look::default() };
-        assert_eq!(exposure_warnings(&auto), [], "the template's look");
+        let none: [ExposureWarning; 0] = [];
+        assert_eq!(exposure_warnings(&auto), none, "the template's look");
         assert_eq!(exposure_warnings(&Look { ev_min: -2.5, ..auto }), [ExposureWarning::EvMinRaisedWithDoorwayAdaptation], "gen3's light facet");
-        assert_eq!(exposure_warnings(&Look { ev_min: -2.5, doorway_adaptation: false, ..auto }), []);
-        assert_eq!(exposure_warnings(&Look { ev_min: -12.0, ..auto }), [], "a lower floor is fine");
+        assert_eq!(exposure_warnings(&Look { ev_min: -2.5, doorway_adaptation: false, ..auto }), none);
+        assert_eq!(exposure_warnings(&Look { ev_min: -12.0, ..auto }), none, "a lower floor is fine");
         assert_eq!(exposure_warnings(&Look::default()), [ExposureWarning::DoorwayAdaptationUnderManual], "the engine default is manual");
         assert_eq!(ExposureWarning::EvMinRaisedWithDoorwayAdaptation.wire(), "ev-min-raised-with-doorway-adaptation");
         assert_eq!(ExposureWarning::DoorwayAdaptationUnderManual.wire(), "doorway-adaptation-under-manual");

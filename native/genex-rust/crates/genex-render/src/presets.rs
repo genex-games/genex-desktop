@@ -141,6 +141,7 @@ pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
 /// Volume cells a Live frame bakes on desktop `high` and on `ultra` (AAA review WP-12; `medium`
 /// and phones bake `irradiance::CELLS_PER_FRAME`).
 pub const HIGH_CELLS_PER_FRAME: u8 = 4;
+/// Volume cells a Live frame bakes on `ultra`.
 pub const ULTRA_CELLS_PER_FRAME: u8 = 8;
 /// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes at `high` and
 /// `ultra` (plan A.4: none on mobile-low, which keeps the sky's SH9; D16: none at a phone's

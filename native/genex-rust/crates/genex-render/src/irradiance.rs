@@ -681,7 +681,9 @@ pub fn cell_work() -> u64 {
 /// game's own first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct AutoRooms {
+    /// Pair declared probes and volumes.
     pub paired: bool,
+    /// Add the camera's own volume where no room holds it.
     pub camera: bool,
 }
 

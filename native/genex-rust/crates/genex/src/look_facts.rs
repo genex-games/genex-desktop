@@ -47,8 +47,9 @@ const EV_SCALE: f64 = 10_000.0;
 /// What a mesh's geometry says about its look, measured once when it loads.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshStats {
-    /// Model-space bounds.
+    /// Model-space bounds: the least corner.
     pub min: [f32; 3],
+    /// The greatest corner.
     pub max: [f32; 3],
     /// Triangles.
     pub triangles: u32,
@@ -473,15 +474,25 @@ fn median(values: &mut [f32]) -> Option<f64> {
 /// One tag's facts (`__render.look.tags[tag]`; `LookTagFacts` in the contract).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TagFacts {
+    /// The tag (`frame.tag(name)`).
     pub name: String,
+    /// Share of the screen where it is the nearest surface.
     pub coverage: f64,
+    /// Share of the screen where it is nearest with a flat material.
     pub flat_coverage: f64,
+    /// Median base-colour texels per world metre over its visible cells (None: untextured).
     pub texels_per_metre: Option<f64>,
+    /// Median screen pixels per world metre at its visible cells (None: unseen).
     pub pixels_per_metre: Option<f64>,
+    /// Coverage-weighted mean triangles per square metre of drawn surface (None: unseen).
     pub triangles_per_square_metre: Option<f64>,
+    /// Share of its visible cells with a normal map.
     pub normal_map_share: f64,
+    /// Share of its visible cells with an ORM or metal-rough map.
     pub orm_share: f64,
+    /// Share of its visible cells with an alpha-cut or double-sided card material.
     pub alpha_card_share: f64,
+    /// Meshes it handed the renderer, seen or not.
     pub draws: u32,
     /// The model paths drawn under the tag (as the game named them to `gfx.assets().model`), in
     /// first-draw order, at most [`MODELS_PER_TAG_MAX`]: the harness follows them to their lock rows.
@@ -508,10 +519,13 @@ impl LookFacts {
 /// The frame's look facts (`__render.look`; `RenderLookFacts` in the contract).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LookFacts {
+    /// The raster's cells across and down.
     pub grid: [u32; 2],
+    /// Share of the screen any world draw covers.
     pub coverage: f64,
+    /// Share of the screen covered by flat materials, tagged or not.
     pub flat_coverage: f64,
-    /// In first-draw order.
+    /// Per tag, in first-draw order.
     pub tags: Vec<TagFacts>,
 }
 
@@ -581,7 +595,9 @@ pub const EXPOSURE_TRACE_SECONDS: f64 = 10.0;
 pub struct TracePoint {
     /// Simulated seconds of the frame it describes.
     pub t: f64,
+    /// The EV the frame was drawn at.
     pub applied_ev: f32,
+    /// The EV metered (None before a metered frame).
     pub metered_ev: Option<f32>,
 }
 
