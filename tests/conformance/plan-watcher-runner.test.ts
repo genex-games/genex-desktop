@@ -524,6 +524,15 @@ describe("one job, spawned through the ProcessSandbox", () => {
     assert.equal(outcome.release, PlayerRelease.RunnerUnavailable);
   });
 
+  it("a binary that is not there never reaches the box, whatever words a shell would print", async () => {
+    const missing = path.join(os.tmpdir(), "genex-no-such-binary-xyz", "claude");
+    // Linux's /bin/sh (dash) says "not found", not the "No such file" a Mac's shell prints.
+    const { factory, runs } = recordingSandbox(() => ({ code: 127, stderr: `sh: 1: ${missing}: not found` }));
+    const outcome = await runJob(JOB, await options({ install: installOf(missing), sandbox: factory }));
+    assert.equal(outcome.release, PlayerRelease.RunnerUnavailable);
+    assert.equal(runs.length, 0);
+  });
+
   it("a wedged runner is killed at its timeout and its folder still goes", async () => {
     const binary = await fakeCli(`process.stdin.resume(); setInterval(() => {}, 1000);`);
     const boxes: Array<{ cwd: string; ownHome: readonly string[] }> = [];
@@ -572,7 +581,7 @@ describe("one job, spawned through the ProcessSandbox", () => {
     const { factory, runs, disposed } = recordingSandbox(() => ({
       stdout: JSON.stringify({ is_error: false, subtype: "success", result: "Blue" }),
     }));
-    const install: RunnerInstall = { ...installOf("/opt/claude/bin/claude"), homes: ["/Users/p/.claude"] };
+    const install: RunnerInstall = { ...installOf(await fakeCli("")), homes: ["/Users/p/.claude"] };
     const outcome = await runJob(JOB, await options({ install, sandbox: factory, home: "/Users/p" }));
     assert.equal(outcome.ok, true);
     const [run] = runs;

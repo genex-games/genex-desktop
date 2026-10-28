@@ -24,7 +24,8 @@
  * runs instead. Diagnostics carry codes and timings, never a prompt or an answer.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AiWatcherRunner } from "../../shared/game-ai-watcher.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
@@ -536,6 +537,13 @@ async function outcomeOf(job: RunnerJob, runner: AiWatcherRunner, result: RunRes
     : { ok: false, release: PlayerRelease.Failed, detail: read.detail };
 }
 
+/** Whether `binary` is a file this process may run. */
+const runnable = (binary: string): Promise<boolean> =>
+  access(binary, constants.X_OK).then(
+    () => true,
+    () => false,
+  );
+
 /** Run `request` in a box made for `cwd`, and give the box back. */
 async function inBox(
   factory: RunnerSandboxFactory,
@@ -560,6 +568,9 @@ export async function runJob(job: RunnerJob, options: RunJobOptions): Promise<Ru
   const started = Date.now();
   const { install } = options;
   const elapsed = () => Date.now() - started;
+  // A CLI that is gone is not installed, whatever the shell that would have started it prints.
+  if (!(await runnable(install.binary)))
+    return { ok: false, release: PlayerRelease.RunnerUnavailable, detail: "missing", durationMs: elapsed() };
   const cwd = await jobFolder(options.tmpRoot);
   try {
     const { argv, outFile } = await argvFor(job, options, cwd);
