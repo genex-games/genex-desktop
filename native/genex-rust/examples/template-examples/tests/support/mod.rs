@@ -1,8 +1,8 @@
 //! What the examples' rows share: the assets a run reads, and captures written as PNG evidence.
 //!
-//! The examples ship no asset files (a game fetches its CC0 scans and makes its decals and rigs),
-//! so a row reads them from `GENEX_EXAMPLES_ASSETS` when it is set (a folder laid out as a game's
-//! `assets/`) and otherwise draws the stand-in colours. The GPU rows write to
+//! The examples ship no asset files but the interior kit's (a game fetches its CC0 scans and makes
+//! its decals and rigs), so a row reads them from `GENEX_EXAMPLES_ASSETS` when it is set (a folder
+//! laid out as a game's `assets/`) and otherwise draws the stand-in colours. The GPU rows write to
 //! `GENEX_EXAMPLES_OUT` (default `.studio-dev/evidence/template-examples`).
 
 #![allow(dead_code)]
@@ -39,6 +39,14 @@ pub fn assets(extra: &[(&'static str, Vec<u8>)]) -> AssetTable {
         files.push((*name, Box::leak(bytes.clone().into_boxed_slice()) as &'static [u8]));
     }
     Box::leak(files.into_boxed_slice())
+}
+
+/// Every file under `dir` (a shipped example's own `assets/`), named by its path below it, to pass
+/// to [`assets`] as `extra`.
+pub fn folder(dir: &Path) -> Vec<(&'static str, Vec<u8>)> {
+    let mut files = Vec::new();
+    read_tree(dir, "", &mut files);
+    files.into_iter().map(|(name, bytes)| (name, bytes.to_vec())).collect()
 }
 
 /// The captures folder.

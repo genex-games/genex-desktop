@@ -49,7 +49,7 @@ fn the_walls_show_whitewash_over_a_painted_dado_in_panels_that_hold_still_from_f
     let mut runtime = started();
     let frame = runtime.frame(View::Game).expect("a frame");
     let shell: Vec<String> = frame.draws().iter().filter(|draw| draw.tag == "shell").map(|draw| format!("{:?}", draw.shape)).collect();
-    for paint in ["peeling_painted_wall", "PaintedPlaster016"] {
+    for paint in ["peeling_painted_wall", "blue_plaster_wall"] {
         assert!(shell.iter().any(|shape| shape.contains(paint)), "the walls show {paint} (whitewash above, the dado below)");
     }
     let again: Vec<String> = runtime.frame(View::Game).expect("a frame").draws().iter().filter(|draw| draw.tag == "shell").map(|draw| format!("{:?}", draw.shape)).collect();
