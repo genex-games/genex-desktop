@@ -287,12 +287,10 @@ the [feature map](feature-map.md). A file a chat names links once main confirms 
 **Composer.** What the composer's controls show is specified in the
 [prompt composer design](design.md#prompt-composer). Each chat keeps its own Loop
 (`storageKeyFor.threadLoop`, [`loop-setting.ts`](../../src/renderer/loop-setting.ts)), pinned on open
-from the last pick (`studio.composer.loop`, `studio.autopilotHours`), off until a person first turns
-it on; Mode around a build is in the
+from the last pick (`studio.composer.loop`, `studio.autopilotHours`); Mode around a build is in the
 [feature map](feature-map.md) (∞ is `budgets.untilSatisfied`, its 24 h `wallClockMs` a ceiling). The
 permissions pill (`ComposerPermissionMenu`) sets a Claude chat's mode. A
-saved `fast` preference is dropped. One composer effort (`ComposerEffort`, reading Default while none is
-picked, when the send names none and the provider's own default runs;
+saved `fast` preference is dropped. One composer effort (`ComposerEffort`,
 `effortScale`/`unifiedEffort` over the orchestrator's levels) is mapped per role by `nearestEffort`
 into `roles.efforts`, which `roleEffort` routes to each runtime job. A game chat keeps its own
 effort (`storageKeyFor.threadEffort`, then its last turn's); the effort saved per model seeds
