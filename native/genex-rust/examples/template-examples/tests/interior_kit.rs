@@ -94,6 +94,96 @@ fn the_walls_stop_a_ray_where_they_are_solid_and_let_it_through_their_openings()
     assert!(hit(vec3(5.0, 2.5, 2.0), Vec3::Z).is_some_and(|toi| toi < 2.0), "the wall over the door stops it");
 }
 
+/// Two faces meeting convexly at more than this read as a knife edge (a 2-segment bevel turns a
+/// right angle in steps of 30).
+const HARD_DEGREES: f32 = 60.0;
+/// A hard edge shorter than this is a corner notch where two bevels meet: 2 px from 5 m at 1080p.
+const HARD_EDGE_MIN: f32 = 0.02;
+/// Where a piece meets its neighbours (axis, value): module joints, floor, ceiling, wall faces.
+const SEAMS: [(usize, f32); 6] = [(0, -1.0), (0, 1.0), (1, 0.0), (1, 3.2), (2, 0.125), (2, -0.125)];
+
+/// A GLB's triangles as positions (every primitive, node transforms ignored: kit pieces have none).
+fn glb_triangles(bytes: &[u8]) -> Vec<[Vec3; 3]> {
+    let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes")) as usize;
+    let json_len = word(12);
+    let gltf: genex::Value = std::str::from_utf8(&bytes[20..20 + json_len]).expect("utf-8").parse().expect("glTF JSON");
+    let bin = &bytes[20 + json_len + 8..];
+    let read = |accessor: usize| -> Vec<u32> {
+        let a = &gltf["accessors"][accessor];
+        let view = &gltf["bufferViews"][a["bufferView"].as_u64().expect("a view") as usize];
+        let start = view["byteOffset"].as_u64().unwrap_or(0) as usize + a["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let width = match a["type"].as_str() {
+            Some("VEC3") => 3,
+            _ => 1,
+        };
+        let count = a["count"].as_u64().expect("a count") as usize * width;
+        match a["componentType"].as_u64() {
+            Some(5123) => (0..count).map(|k| u32::from(u16::from_le_bytes([bin[start + 2 * k], bin[start + 2 * k + 1]]))).collect(),
+            _ => (0..count).map(|k| u32::from_le_bytes(bin[start + 4 * k..start + 4 * k + 4].try_into().expect("four bytes"))).collect(),
+        }
+    };
+    let mut out = Vec::new();
+    for mesh in gltf["meshes"].as_array().into_iter().flatten() {
+        for primitive in mesh["primitives"].as_array().into_iter().flatten() {
+            let floats = read(primitive["attributes"]["POSITION"].as_u64().expect("positions") as usize);
+            let at = |i: u32| Vec3::from_slice(&floats[i as usize * 3..i as usize * 3 + 3].iter().map(|b| f32::from_bits(*b)).collect::<Vec<_>>());
+            for t in read(primitive["indices"].as_u64().expect("indices") as usize).chunks(3) {
+                out.push([at(t[0]), at(t[1]), at(t[2])]);
+            }
+        }
+    }
+    out
+}
+
+/// The convex edges sharper than `HARD_DEGREES` and longer than `HARD_EDGE_MIN`, off the seams.
+fn hard_edges(triangles: &[[Vec3; 3]], seams: &[(usize, f32)]) -> Vec<(Vec3, Vec3)> {
+    let key = |p: Vec3| (p * 1.0e5).round().as_ivec3().to_array();
+    let mut by_edge: std::collections::BTreeMap<([i32; 3], [i32; 3]), Vec<usize>> = std::collections::BTreeMap::new();
+    for (face, t) in triangles.iter().enumerate() {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            let (ka, kb) = (key(a), key(b));
+            by_edge.entry((ka.min(kb), ka.max(kb))).or_default().push(face);
+        }
+    }
+    let normal = |t: &[Vec3; 3]| (t[1] - t[0]).cross(t[2] - t[0]).normalize_or_zero();
+    let mut out = Vec::new();
+    for ((ka, kb), faces) in by_edge {
+        let [f0, f1] = faces[..] else { continue };
+        let (n0, n1) = (normal(&triangles[f0]), normal(&triangles[f1]));
+        let far = (triangles[f1][0] + triangles[f1][1] + triangles[f1][2]) / 3.0 - triangles[f0][0];
+        let (a, b) = (Vec3::from_array(ka.map(|v| v as f32 * 1.0e-5)), Vec3::from_array(kb.map(|v| v as f32 * 1.0e-5)));
+        let convex = n0 != Vec3::ZERO && n1 != Vec3::ZERO && far.dot(n0) <= 1.0e-6;
+        let on_seam = seams.iter().any(|(axis, value)| (a[*axis] - value).abs() < 1.0e-4 && (b[*axis] - value).abs() < 1.0e-4);
+        let sharp = genex::math::acos(n0.dot(n1).clamp(-1.0, 1.0)).to_degrees() > HARD_DEGREES;
+        if convex && sharp && !on_seam && a.distance(b) > HARD_EDGE_MIN {
+            out.push((a, b));
+        }
+    }
+    out
+}
+
+#[test]
+fn no_kit_piece_shows_a_knife_edge() {
+    let folder = Path::new(KIT).join("kit");
+    let mut pieces = 0;
+    for entry in std::fs::read_dir(&folder).expect("the kit") {
+        let path = entry.expect("an entry").path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+        // Glass is a pane, not a solid: its 4 mm edges are the pane's.
+        if !name.ends_with(".glb") || name.starts_with("window-glass") {
+            continue;
+        }
+        let mut seams = SEAMS.to_vec();
+        if name == "wall-corner.glb" {
+            seams.extend([(0, 0.0), (2, 0.0)]);
+        }
+        let hard = hard_edges(&glb_triangles(&std::fs::read(&path).expect("a GLB")), &seams);
+        assert!(hard.is_empty(), "{name}: {} hard edges, the first {:?}", hard.len(), hard.first());
+        pieces += 1;
+    }
+    assert!(pieces >= 38, "every solid piece checked: {pieces}");
+}
+
 #[test]
 fn the_flickering_tube_drops_out_and_comes_back() {
     let mut runtime = started();

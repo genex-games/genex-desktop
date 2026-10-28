@@ -17,7 +17,14 @@ The rules the pieces keep:
   scale, with stochastic tiling so a long corridor never shows a tile twice.
 - `trim` pieces map onto the trim sheet: u runs along the trim, one sheet width per metre, and the
   front face takes its strip's profile (a skirting's rounded top, an architrave's steps). `props`
-  pieces map each box into one region of the props atlas at 512 texels per metre.
+  pieces map each box into one region of the props atlas: 512 per metre in the 1k-texel units
+  below, which the shipped 2048 px atlas makes 1024 texels per metre (a face larger than its
+  region is shrunk to fit, so keep hero faces under a metre).
+- No knife edges: every box's edges are bevelled (`BEVEL` by role, two segments) except where it
+  meets a neighbour (a module joint, the floor, the ceiling, the wall it stands on), and a wall's
+  openings get rounded reveals. Each piece then gets weighted normals (its large faces shade flat,
+  its bevels turn) and a `_WEAR` point attribute, 0 on flat faces to 1 on its sharpest convex
+  edges, for edge wear (exported with `export_attributes`).
 
 Axes: the game's (y up). A wall runs along x from -MODULE/2 to MODULE/2, its two faces at
 z = +-WALL/2, its room face +z. Pieces that stand against a wall (radiator, lockers, blackboard) have
@@ -46,6 +53,24 @@ GLASS_DEPTH = (-0.042, -0.038)
 GRILLE_DEPTH = (-0.112, -0.096)
 # The seed of every scattered or broken piece: change it for another arrangement.
 SEED = 11
+# Each role's bevel (metres), held to a fifth of a box's thinnest side: wide enough to catch a
+# highlight from 5 m, narrow enough to keep the piece's lines. Glass and tubes take none.
+BEVEL = {"plaster": 0.01, "paint": 0.0015, "concrete": 0.006, "trim": 0.002, "props": 0.003, "glass": 0.0, "tube": 0.0}
+BEVEL_SEGMENTS = 2
+# Faces meeting at more than this keep a hard edge; the weighted normals smooth the rest.
+SMOOTH_DEGREES = 40.0
+# The convex turn (radians) at a vertex that reads as fully worn in `_WEAR`.
+WEAR_TURN = math.pi / 2
+# Where wall pieces meet their neighbours: module joints, the floor and the ceiling (axis, value);
+# coats and trims also lie flat on a wall face.
+SHELL_SEAMS = ((0, -MODULE / 2), (0, MODULE / 2), (1, 0.0), (1, HEIGHT))
+ROLE_SEAMS = {"plaster": SHELL_SEAMS, "paint": SHELL_SEAMS + ((2, FACE),), "trim": SHELL_SEAMS + ((2, FACE), (2, -FACE)), "concrete": SHELL_SEAMS}
+# Pieces that also butt something along a plane of their own.
+PIECE_SEAMS = {
+    "wall-corner": ((0, 0.0), (2, 0.0)),
+    "pilaster": ((2, FACE),),
+    "beam": ((0, -0.5), (0, 0.5)),
+}
 
 # The trim sheet: 1024 x 512 texels, one metre across, tiling along u. Each strip's rows (from the
 # top) hold one profile; the faces beside the front take the strip's flat middle.
@@ -87,10 +112,12 @@ ROLE_COLOURS = {
 
 
 class Piece:
-    """One piece: boxes, prisms and tubes joined into one mesh with one material and its UVs."""
+    """One piece: boxes, prisms and tubes joined into one mesh with one material and its UVs,
+    every box bevelled except along `seams` (planes as (axis, value) in game axes where the piece
+    meets a neighbour)."""
 
-    def __init__(self, name, role, seed=SEED):
-        self.name, self.role = name, role
+    def __init__(self, name, role, seed=SEED, seams=()):
+        self.name, self.role, self.seams = name, role, tuple(seams)
         self.bm = bmesh.new()
         self.uv = self.bm.loops.layers.uv.new("UVMap")
         self.pick = random.Random(f"{seed}:{name}")
@@ -104,12 +131,16 @@ class Piece:
         face = self.bm.faces.new(verts)
         for loop, (u, v) in zip(face.loops, uvs):
             loop[self.uv].uv = (u, 1.0 - v)
+        return verts
 
-    def box(self, lo, hi, uv=("metres",), turn=None):
+    def box(self, lo, hi, uv=("metres",), turn=None, bevel=None, edges=None):
         """A box from `lo` to `hi` (game axes), its faces mapped by `uv`, then moved by `turn` (a
-        matrix about the origin, see `rotation`)."""
+        matrix about the origin, see `rotation`), its edges bevelled by `bevel` metres (default: the
+        role's) except on the piece's seams; `edges(a, b)`, given an edge's two game-space ends,
+        narrows which are bevelled."""
         if min(h - l for l, h in zip(lo, hi)) <= 1e-5:
             return
+        made = []
         for axis in range(3):
             for side in (0, 1):
                 corners = face_corners(lo, hi, axis, side)
@@ -119,7 +150,26 @@ class Piece:
                 if turn is not None:
                     corners = [tuple(turn @ Vector(p)) for p in corners]
                     normal = tuple(turn.to_3x3() @ Vector(normal))
-                self.quad(corners, normal, uvs)
+                made += self.quad(corners, normal, uvs)
+        width = BEVEL[self.role] if bevel is None else bevel
+        self.bevel(made, min(width, 0.2 * min(h - l for l, h in zip(lo, hi))), edges)
+
+    def bevel(self, verts, width, edges=None):
+        """Weld a box's six faces into one shell and round its edges (`BEVEL_SEGMENTS`), all but
+        those on a seam plane or refused by `edges`."""
+        bmesh.ops.remove_doubles(self.bm, verts=verts, dist=1e-6)
+        verts = [v for v in verts if v.is_valid]
+        if width <= 1e-5:
+            return
+        wanted = set()
+        for v in verts:
+            for e in v.link_edges:
+                a, b = (game(tuple(x.co)) for x in e.verts)
+                on_seam = any(abs(a[axis] - value) < 1e-5 and abs(b[axis] - value) < 1e-5 for axis, value in self.seams)
+                if not on_seam and (edges is None or edges(a, b)):
+                    wanted.add(e)
+        if wanted:
+            bmesh.ops.bevel(self.bm, geom=list(wanted), offset=width, offset_type="OFFSET", segments=BEVEL_SEGMENTS, profile=0.5, affect="EDGES", clamp_overlap=True)
 
     def face_uvs(self, corners, lo, hi, axis, uv):
         kind = uv[0]
@@ -149,20 +199,23 @@ class Piece:
         """A profile in (z, y), counter-clockwise, extruded along x from `x0` to `x1`: a chamfered beam."""
         lo = (x0, min(y for _, y in profile), min(z for z, _ in profile))
         hi = (x1, max(y for _, y in profile), max(z for z, _ in profile))
+        made = []
         for (za, ya), (zb, yb) in zip(profile, profile[1:] + profile[:1]):
             corners = [(x0, ya, za), (x1, ya, za), (x1, yb, zb), (x0, yb, zb)]
             normal = (0.0, zb - za, -(yb - ya))
             axis = 1 if abs(zb - za) > abs(yb - ya) else 2
-            self.quad(corners, normal, self.face_uvs(corners, lo, hi, axis, uv))
+            made += self.quad(corners, normal, self.face_uvs(corners, lo, hi, axis, uv))
         for x, sign in ((x0, -1.0), (x1, 1.0)):
             verts = [self.bm.verts.new(blender((x, y, z))) for z, y in profile]
             face = self.bm.faces.new(verts if sign > 0 else verts[::-1])
             for loop, (z, y) in zip(face.loops, profile):
                 loop[self.uv].uv = (z, y)
+            made += verts
         self.bm.normal_update()
+        self.bevel(made, BEVEL[self.role])
 
-    def tube(self, a, b, radius, segments=8, uv=("metres",)):
-        """A capped cylinder from `a` to `b` (game axes)."""
+    def tube(self, a, b, radius, segments=12, uv=("metres",)):
+        """A capped cylinder from `a` to `b` (game axes), its cap edges rounded."""
         a, b = Vector(a), Vector(b)
         along = (b - a).normalized()
         side = along.orthogonal().normalized()
@@ -175,6 +228,7 @@ class Piece:
                 ring.append(end + (side * math.cos(angle) + up * math.sin(angle)) * radius)
             rings.append(ring)
         length = (b - a).length
+        made = []
         for i in range(segments):
             j = (i + 1) % segments
             corners = [tuple(rings[0][i]), tuple(rings[1][i]), tuple(rings[1][j]), tuple(rings[0][j])]
@@ -185,13 +239,15 @@ class Piece:
                 uvs = self.atlas_uvs([(u * math.tau * radius, -v, 0.0) for u, v in zip(us, vs)], 2, uv[1])
             else:
                 uvs = list(zip(us, vs))
-            self.quad(corners, tuple(mid), uvs)
+            made += self.quad(corners, tuple(mid), uvs)
         for ring, sign in ((rings[0], -1.0), (rings[1], 1.0)):
             verts = [self.bm.verts.new(blender(tuple(p))) for p in ring]
             face = self.bm.faces.new(verts)
             face.normal_update()
             if face.normal.dot(Vector(blender(tuple(along * sign)))) < 0:
                 face.normal_flip()
+            made += verts
+        self.bevel(made, min(BEVEL.get(self.role, 0.0) or 0.002, radius * 0.3), lambda p, q: abs((Vector(p) - Vector(q)).dot(along)) < 1e-6)
 
     def bar(self, start, end, width, z, uv):
         """A flat bar in the plane z = depth range, from (x, y) `start` to `end`: a grille's ray."""
@@ -201,20 +257,66 @@ class Piece:
         self.box((0.0, -width / 2, z[0]), (length, width / 2, z[1]), uv, turn)
 
     def finish(self):
-        """The piece as a mesh object with its one material."""
+        """The piece as a mesh object with its one material, weighted normals and its wear."""
+        self.bm.normal_update()
+        normals = weighted_normals(self.bm)
+        wear = edge_wear(self.bm)
         mesh = bpy.data.meshes.new(self.name)
         self.bm.to_mesh(mesh)
         self.bm.free()
+        for polygon in mesh.polygons:
+            polygon.use_smooth = True
+        mesh.normals_split_custom_set(normals)
+        mesh.attributes.new("_WEAR", "FLOAT", "POINT").data.foreach_set("value", wear)
         mesh.materials.append(role_material(self.role))
         obj = bpy.data.objects.new(self.name, mesh)
         bpy.context.scene.collection.objects.link(obj)
         return obj
 
 
+def weighted_normals(bm):
+    """Each corner's normal from every face at its vertex turned less than `SMOOTH_DEGREES` from
+    its own face, counted by area (the hard-surface weighted-normal step): a bevelled piece's large
+    faces shade flat and only its bevels turn. In the order `to_mesh` writes the corners."""
+    limit = math.cos(math.radians(SMOOTH_DEGREES))
+    areas = {f: f.calc_area() for f in bm.faces}
+    out = []
+    for face in bm.faces:
+        for loop in face.loops:
+            total = Vector((0.0, 0.0, 0.0))
+            for other in loop.vert.link_faces:
+                if other.normal.dot(face.normal) >= limit:
+                    total += other.normal * areas[other]
+            out.append(tuple(total.normalized() if total.length > 1e-12 else face.normal))
+    return out
+
+
+def edge_wear(bm):
+    """Each vertex's wear, 0..1: the convex turn of the edges at it over `WEAR_TURN`, so the
+    rounded edges a hand or a boot rubs read worn and the flat faces clean."""
+    bm.verts.index_update()
+    wear = [0.0] * len(bm.verts)
+    for e in bm.edges:
+        if len(e.link_faces) != 2:
+            continue
+        turn = e.calc_face_angle_signed(0.0)
+        if turn <= 0.0:
+            continue
+        for v in e.verts:
+            wear[v.index] += turn / 2
+    return [min(1.0, w / WEAR_TURN) for w in wear]
+
+
 def blender(p):
     """A game-space point in Blender's axes."""
     x, y, z = p
     return (x, -z, y)
+
+
+def game(p):
+    """A Blender-space point in the game's axes."""
+    x, y, z = p
+    return (x, z, -y)
 
 
 def rotation(axis, degrees, pivot=(0.0, 0.0, 0.0)):
@@ -298,16 +400,34 @@ def openings(kind):
 
 
 def wall_shell(p, kind):
-    """A module's wall, its opening's sides being the reveals."""
+    """A module's wall, its opening's sides being the reveals, their corners rounded as a plaster
+    corner bead rounds them. The piers are cut at the sill and the head so only the reveal's
+    corners round, never a line across the wall."""
     hole = openings(kind)
     if hole is None:
         p.box((-HALF, 0.0, -FACE), (HALF, HEIGHT, FACE))
         return
     x0, x1, sill, head = hole
-    p.box((-HALF, 0.0, -FACE), (x0, HEIGHT, FACE))
-    p.box((x1, 0.0, -FACE), (HALF, HEIGHT, FACE))
-    p.box((x0, 0.0, -FACE), (x1, sill, FACE))
-    p.box((x0, head, -FACE), (x1, HEIGHT, FACE))
+    rounded = reveal_edges(hole)
+    for a, b in ((-HALF, x0), (x1, HALF)):
+        for y0, y1 in ((0.0, sill), (sill, head), (head, HEIGHT)):
+            p.box((a, y0, -FACE), (b, y1, FACE), edges=rounded)
+    p.box((x0, 0.0, -FACE), (x1, sill, FACE), edges=rounded)
+    p.box((x0, head, -FACE), (x1, HEIGHT, FACE), edges=rounded)
+
+
+def reveal_edges(hole):
+    """Which box edges an opening rounds: those along its rim on either wall face (a door's foot on
+    the floor stays square)."""
+    x0, x1, sill, head = hole
+    near = lambda a, b: abs(a - b) < 1e-5
+
+    def on_rim(q):
+        across = (near(q[1], sill) and sill > 0) or near(q[1], head)
+        up = near(q[0], x0) or near(q[0], x1)
+        return (up and sill - 1e-5 <= q[1] <= head + 1e-5) or (across and x0 - 1e-5 <= q[0] <= x1 + 1e-5)
+
+    return lambda a, b: near(abs(a[2]), FACE) and near(abs(b[2]), FACE) and on_rim(a) and on_rim(b)
 
 
 def wall_paint(p, kind):
@@ -799,7 +919,7 @@ PIECES = {
 
 def build(name):
     role, make = PIECES[name]
-    piece = Piece(name, role)
+    piece = Piece(name, role, seams=ROLE_SEAMS.get(role, ()) + PIECE_SEAMS.get(name, ()))
     make(piece)
     return piece.finish()
 
