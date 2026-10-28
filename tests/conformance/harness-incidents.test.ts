@@ -18786,7 +18786,7 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       { night: false },
     );
     assert.ok(dark && blocksLook(dark), String(dark));
-    assert.match(String(dark), /classroom settles at mean luma 28 with 41\.0%/);
+    assert.match(String(dark), /classroom: settles at mean luma 28 with 41\.0%/);
     assert.equal(
       lumaBandDefect("classroom", { ev: 0, targetEv: 0, meanLuma: 105, histogram: histogram(0.08) }, { night: false }),
       null,
@@ -18803,6 +18803,119 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       lumaBandDefect("classroom", null, { night: false }),
       null,
       "a camera that reports nothing is not judged by facts",
+    );
+  });
+  it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's per-tick exposure trace is held to at most 1 EV per half second and no overshoot past where it settles", async () => {
+    const { doorwayDefect } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    const trace = (ev: (t: number) => number) => ({
+      __render: {
+        exposure_trace: Array.from({ length: 121 }, (_, i) => ({ t: i / 60, ev: ev(i / 60), mean_luma: 100 })),
+      },
+    });
+    // A cut from EV 2 to EV -1 the frame the player crosses, and a smooth 1.5 s ramp.
+    assert.match(
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : -1)))),
+      /^\[exposure-pump\] demo:doorway: .*EV moves 3\.0 inside 0\.5 s/,
+    );
+    assert.equal(doorwayDefect(trace((t) => 2 - 1.5 * Math.min(1, t / 1.5))), null);
+    // Over-darkening and coming back: it passes the settled EV.
+    assert.match(
+      String(doorwayDefect(trace((t) => (t < 1 ? 2 - 1.6 * t : -0.4 + 0.4 * (t - 1))))),
+      /passes its settled EV by/,
+    );
+    assert.equal(doorwayDefect({ __render: {} }), null, "a game with no trace is not judged on one");
+  });
+
+  it("G3-4c. the sprint camera rolled ±5.8° at 3.7 Hz with an 8.9 cm bob at 7.5 Hz and nothing read the pose: demo:sprint-run's pose log is held to the comfort caps", async () => {
+    const { comfortDefect, comfortReading, COMFORT_CAPS } = await import(
+      "../../src/harness-seed/loop/temporal-checks.ts"
+    );
+    const pose = (rollDeg: number, rollHz: number, bobM: number, bobHz: number) => ({
+      __camera: {
+        trace: Array.from({ length: 241 }, (_, i) => {
+          const t = i / 60;
+          return {
+            t,
+            x: 0,
+            y: 1.7 + (bobM / 2) * Math.sin(2 * Math.PI * bobHz * t) + 0.05 * t,
+            z: 5 * t,
+            roll_deg: rollDeg * Math.sin(2 * Math.PI * rollHz * t),
+            pitch_deg: 0,
+            yaw_deg: 0,
+          };
+        }),
+      },
+    });
+    const gen3 = pose(5.8, 3.7, 0.089, 7.5);
+    const reading = comfortReading(gen3.__camera.trace);
+    assert.ok(
+      reading && Math.abs(reading.bobHz - 7.5) < 0.3 && Math.abs(reading.bobM - 0.089) < 0.005,
+      JSON.stringify(reading),
+    );
+    const defect = String(comfortDefect(gen3));
+    assert.match(defect, /^\[uncomfortable-camera\] demo:sprint-run: the sprint camera roll ±5\.8°/);
+    assert.match(defect, /bob \d\.\d cm peak to peak.*bob at 7\.5 Hz.*above 6 Hz/);
+    // A rig inside the caps: 1° roll and a 2.4 cm bob at 2.2 Hz, the slope of a ramp removed.
+    assert.equal(comfortDefect(pose(1, 1.1, 0.024, 2.2)), null);
+    assert.ok(COMFORT_CAPS.rollDeg <= 1.5 && COMFORT_CAPS.bobHz < 7.5);
+  });
+
+  it("G3-4d. the light facet's darker classroom and the gunplay facet's heavier sprint were kept: a harness-measured blocker the accepted build did not have is one the round added, compared by what it is about, not its numbers", async () => {
+    const { addedMeasured, measuredBlockers } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    const shot = (camera: string, meanLuma: number, darkest: number) => ({
+      camera,
+      base64: "px",
+      stats: { meanLuma, histogram: [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)] },
+    });
+    const severities = (found: Array<{ key: string; severity: number }>) =>
+      Object.fromEntries(found.map((finding) => [finding.key, finding.severity]));
+    const lit = measuredBlockers(yard, { shots: [shot("eye:here", 105, 0.05), shot("demo:doorway", 10, 0.9)] }, true);
+    assert.deepEqual(lit, [], "a demo's end frame is not a playable camera");
+    const dim = measuredBlockers(yard, { shots: [shot("eye:here", 67, 0.12)] }, true);
+    const crushed = measuredBlockers(yard, { shots: [shot("eye:here", 28, 0.41)] }, true);
+    assert.deepEqual(
+      crushed.map((finding) => finding.key),
+      ["[crushed-shadow] eye:here"],
+    );
+    assert.equal(addedMeasured(crushed, severities(lit)).length, 1, "lit to crushed is added");
+    assert.equal(
+      addedMeasured(crushed, severities(dim)).length,
+      1,
+      "dim (67) to crushed (28) is the same finding made worse: the round's own",
+    );
+    assert.equal(addedMeasured(dim, severities(crushed)).length, 0, "brightening it adds nothing");
+    assert.equal(addedMeasured(dim, severities(dim)).length, 0, "the incumbent's own finding, unchanged, is not added");
+    const night = {
+      ...yard,
+      art: {
+        generations: 0,
+        assets: [
+          { area: "the yard", tier: "sky", kind: "atmosphere", asset: "moonless night", source: "scan", night: true },
+        ],
+      },
+    };
+    assert.deepEqual(
+      measuredBlockers(night, { shots: [shot("eye:here", 60, 0.3)] }, true),
+      [],
+      "a declared night look sits lower",
+    );
+    // The sprint and the doorway are measured on any run, look bar or not, when the game runs those demos.
+    const sprinting = {
+      demoStates: {
+        "sprint-run": {
+          __camera: {
+            trace: Array.from({ length: 241 }, (_, i) => ({
+              t: i / 60,
+              y: 1.7 + 0.045 * Math.sin(2 * Math.PI * 7.5 * (i / 60)),
+              roll_deg: 5.8 * Math.sin(2 * Math.PI * 3.7 * (i / 60)),
+            })),
+          },
+        },
+      },
+    };
+    assert.deepEqual(
+      measuredBlockers({ goal: "a chess board" }, sprinting, false).map((finding) => finding.key),
+      ["[uncomfortable-camera] demo:sprint-run"],
     );
   });
 });

@@ -182,8 +182,8 @@ export function lumaBandDefect(camera: string, exposure: ExposureFacts | null, r
   const floor = rule.night ? NIGHT_LUMA_FLOOR : LUMA_BAND.min;
   const crushed = darkest > DARKEST_BIN_MAX && !rule.night;
   if (luma < floor || crushed)
-    return `[${LookBlocker.CrushedShadow}] ${camera} settles at mean luma ${Math.round(luma)} with ${percent(darkest)} of the frame in the darkest bin (band ${floor}-${LUMA_BAND.max}, darkest ≤ ${percent(DARKEST_BIN_MAX)}) — ${camera}`;
+    return `[${LookBlocker.CrushedShadow}] ${camera}: settles at mean luma ${Math.round(luma)} with ${percent(darkest)} of the frame in the darkest bin (band ${floor}-${LUMA_BAND.max}, darkest ≤ ${percent(DARKEST_BIN_MAX)}) — ${camera}`;
   if (luma > LUMA_BAND.max && !rule.night)
-    return `[blown] ${camera} settles at mean luma ${Math.round(luma)}, above the band's ${LUMA_BAND.max} — ${camera}`;
+    return `[blown] ${camera}: settles at mean luma ${Math.round(luma)}, above the band's ${LUMA_BAND.max} — ${camera}`;
   return null;
 }

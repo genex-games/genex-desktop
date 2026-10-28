@@ -44,6 +44,10 @@ export const LookBlocker = {
   SlabSnow: "slab-snow",
   /** An asset delivered from a lesser source than the art pass planned (a box script where a model was planned). */
   ArtSourceMismatch: "art-source-mismatch",
+  /** The exposure jumps or overshoots crossing a doorway (the harness's `demo:doorway` trace). */
+  ExposurePump: "exposure-pump",
+  /** The first-person camera rolls, bobs or shakes past the comfort caps (the harness's `demo:sprint-run` pose log). */
+  UncomfortableCamera: "uncomfortable-camera",
 } as const;
 export type LookBlocker = (typeof LookBlocker)[keyof typeof LookBlocker];
 
@@ -211,6 +215,8 @@ export interface ArtAsset {
   tags?: string[];
   /** Why code builds it: required for `code`, the last resort, and for a Blender kit (the scans it wears). */
   why?: string;
+  /** On the sky row: the game's look is night or horror, so its playable cameras sit below the day band. */
+  night?: boolean;
 }
 
 /** The art pass a plan carries: every asset, and the Genex generations reserved for them. */
@@ -291,6 +297,7 @@ function assetOf(raw: AnyRecord): ArtAsset | null {
     ...(kind ? { kind: kind as ArtKind } : {}),
     ...(tags.length ? { tags } : {}),
     ...(why ? { why } : {}),
+    ...(tier === ArtTier.Sky && raw?.night === true ? { night: true } : {}),
   };
 }
 

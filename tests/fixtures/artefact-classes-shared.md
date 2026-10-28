@@ -2,7 +2,8 @@
 
 The look blockers — `[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`,
 `[placeholder-particles]`, `[sky-contradicts]`, `[visible-tiling]`, `[not-shipped]`,
-`[flat-material]`, `[stick-tree]`, `[slab-snow]` and `[art-source-mismatch]` — hold the work open: while one is on screen no facet is satisfied, no finish is done and the build does not
+`[flat-material]`, `[stick-tree]`, `[slab-snow]`, `[art-source-mismatch]`, `[exposure-pump]` and
+`[uncomfortable-camera]` — hold the work open: while one is on screen no facet is satisfied, no finish is done and the build does not
 ship, whichever list you put it in. Tag each one you see; never soften one into polish.
 
 Report a hit with its class name in square brackets, then what and where and which camera
@@ -40,6 +41,10 @@ a defect outside the list is described in full.
   surface.
 - `[art-source-mismatch]` the harness's own tag, never a judge's: a planned asset delivered from
   a lesser source than the art pass named.
+- `[exposure-pump]` the harness's own tag, measured on `demo:doorway`: the exposure jumps or
+  overshoots as the player crosses from light into dark.
+- `[uncomfortable-camera]` the harness's own tag, measured on `demo:sprint-run`: the camera
+  rolls, bobs or shakes past the comfort caps.
 - `[no-hands]` a first-person view with no arms or hands holding the weapon or tool.
 - `[noise-as-texture]` tiling noise standing in for a material.
 - `[z-fight]` flickering or striped coplanar surfaces.
