@@ -49,8 +49,12 @@ itself and keeps the memory file its brief names current.)
    top-down, side-2d, racing, flight, static-board, free-camera. The harness drives that kind's own
    controls before every judgement, puts only the checks that kind can pass on every board, and
    tells every judge in one line what it is looking at. Declare nothing and it assumes nothing — a
-   board game judged as a first-person walk comes back as "the player never moved". `play_script=`
-   overrides the kind's controls; a part of a different kind takes `kind=` on its `worker_start`.
+   board game judged as a first-person walk comes back as "the player never moved". `start=` says
+   how the game leaves its title: the keys a player presses there (`["Enter"]`), or `none` when it
+   boots straight into play. It is required with `kind=`: the harness presses it before every
+   judgement, and a game that reports `flow` in `state()` tells the harness when play began.
+   `play_script=` overrides the kind's controls; a part of a different kind takes `kind=` on its
+   `worker_start`.
 
 ## Before anyone builds
 

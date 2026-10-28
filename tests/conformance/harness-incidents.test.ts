@@ -225,7 +225,12 @@ it("AUDIT-SEED. preserved pre-wake budgets cannot break newly shipped completion
 import { reopenBudgets, reopenedRun } from "../../src/harness-seed/loop/reopen-run.ts";
 import { CompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
 import { turnBriefing } from "../../src/harness-seed/loop/turn-prompts.ts";
-import { compileWorkerSpec, LandingHow, monitorFindings } from "../../src/harness-seed/loop/director/rules.ts";
+import {
+  compilePlan,
+  compileWorkerSpec,
+  LandingHow,
+  monitorFindings,
+} from "../../src/harness-seed/loop/director/rules.ts";
 import { NoteKind } from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
 import { computePixelStats, labPalette } from "../../src/substrate/pixel-stats.ts";
@@ -17943,6 +17948,7 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
     const answer = await loopRun.setPlan({
       summary: "A playable bodycam shooter in an abandoned school wing.",
       kind: "first-person",
+      start: '["Enter"]',
       workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
     });
     assert.match(answer, /CRAFT FOR A FIRST-PERSON GAME/);
@@ -17954,6 +17960,7 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
     const again = await loopRun.setPlan({
       summary: "A playable bodycam shooter in an abandoned school wing.",
       kind: "first-person",
+      start: '["Enter"]',
       workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
     });
     assert.doesNotMatch(again, /CRAFT FOR/);
@@ -18040,5 +18047,137 @@ describe("a Rust builder's build loop (B6, bodycam)", () => {
     assert.match(eyes, /mcp__studio__computer action=check\b/, eyes);
     const offered = computerToolDefinition({ role: "builder" }).parameters.properties.action?.description ?? "";
     assert.match(offered, /\bcheck\b/, "the builder's computer offers check");
+  });
+});
+
+/**
+ * Bodycam rerun (run_mvr7v1x222st): "[dead-input] player.x, player.z and player.yaw are identical
+ * before and after the scripted controls" was raised in about 21 rounds. Two things in the
+ * harness made it: a Rust game reports no `state().flow` and has no `__studio.begin()`, so the
+ * drive never left the title and every scripted key landed on it; and once the game did move
+ * (its `walks` probe passed from the fps facet's third round on), the defect had become a
+ * picture question, "Is this defect gone?", that a still frame can never answer, and it failed
+ * every round to the end of the run.
+ */
+describe("Bodycam rerun: judges that could not drive the game", () => {
+  /** A Rust game on its title: Enter (its edge, as body-cam reads it) starts play; W walks only in play. No flow, no begin(). */
+  function rustTitleGame() {
+    let phase = "title";
+    let z = -8;
+    const held = new Set<string>();
+    const handlers: Record<string, CtxHandler> = {
+      [HostMethod.PreviewLoad]: () => "about:blank",
+      [HostMethod.PreviewReload]: () => true,
+      [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+      [HostMethod.PreviewStatus]: () => ({ crashed: false, unresponsive: false, loadError: null, buildFailed: null }),
+      [HostMethod.PreviewCall]: (params) => {
+        if (params.method === PageMethod.Cameras) return ["default"];
+        if (params.method === PageMethod.Demos || params.method === PageMethod.Eyes) return [];
+        if (params.method === PageMethod.Seed) {
+          phase = "title";
+          z = -8;
+          held.clear();
+          return 1;
+        }
+        if (params.method === PageMethod.Begin) return { ok: false, reason: "this page declares no begin()" };
+        if (params.method === PageMethod.Step && phase === "playing" && held.has("w")) z += 1;
+        return { ok: true, frame: 1 };
+      },
+      [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+      [HostMethod.PreviewState]: () => ({ version: 1, match: { phase }, player: { x: 0, z, yaw: 1.5708 } }),
+      [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+      [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0 }),
+      [HostMethod.PreviewInput]: (params) => {
+        for (const action of (params.actions ?? []) as Array<{ type: string; keys?: string[] }>) {
+          const keys = action.keys ?? [];
+          if (action.type === "down") for (const key of keys) held.add(key);
+          if (action.type === "up") for (const key of keys) held.delete(key);
+          const pressed = action.type === "tap" || action.type === "down";
+          if (pressed && keys.includes("Enter") && phase === "title") phase = "playing";
+        }
+        return { ok: true, applied: 1, width: 800, height: 600 };
+      },
+      [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+      [HostMethod.PreviewScreenshot]: (params) => ({
+        path: `/runs/shots/${String(params.label)}.jpg`,
+        base64: String(params.label),
+        bytes: 12,
+        stats: { canvas: true, litFraction: 0.4, drawCalls: 40 },
+      }),
+      [HostMethod.PreviewConsole]: () => [],
+      [HostMethod.PreviewGpuErrors]: () => [],
+    };
+    return ctxRecorder({ handlers, unknown: { value: null } });
+  }
+
+  it("BC3. a Rust game on its title with declared start keys and no state().flow: the drive presses them before the opening sample, and the scripted keys move the player", async () => {
+    const recorder = rustTitleGame();
+    const game = { kind: "first-person", start: { keys: ["Enter"] } };
+    const evidence = await gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_bodycam", project: "body-cam", game } as never,
+      iterationId: "001",
+      seed: 1234,
+    });
+    const early = evidence.stateEarly as { match: { phase: string }; player: { z: number } };
+    const late = evidence.state as { player: { z: number } };
+    assert.equal(early.match.phase, "playing", "the opening sample is taken in play, after the start keys");
+    assert.ok(
+      late.player.z > early.player.z,
+      `the scripted W walked the player: z ${early.player.z} → ${late.player.z}`,
+    );
+    assert.equal(evidence.play?.via, "keys");
+    assert.ok(
+      evidence.warnings.some((w: string) => /reports no state\(\)\.flow/.test(w)),
+      `the builder is told to report flow: ${evidence.warnings.join("; ")}`,
+    );
+  });
+
+  it("BC3. a game with no flow and no declared start keys is driven call for call as before", async () => {
+    const recorder = rustTitleGame();
+    const evidence = await gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_bodycam", project: "body-cam", game: { kind: "first-person" } } as never,
+      iterationId: "001",
+      seed: 1234,
+    });
+    const taps = recorder.paramsOf(HostMethod.PreviewInput).filter((p) => JSON.stringify(p.actions).includes("Enter"));
+    assert.deepEqual(taps, [], "nothing pressed that the game did not declare");
+    assert.equal("play" in evidence, false);
+  });
+
+  it("BC3. a [dead-input] defect never becomes a picture question: the kind's own input probes measure it", () => {
+    const fps = {
+      id: "fps",
+      title: "Gun, hands and bodycam feel",
+      intent: "the rifle in the hands",
+      owns: ["src/facets/weapon.rs"],
+      identity: ["rifle in hands"],
+      cameras: ["default"],
+      checks: [{ id: "walks", kind: "probe", expr: "abs(delta('player.x')) > 0 || abs(delta('player.z')) > 0" }],
+    };
+    const noted: Array<{ text: string; why: string }> = [];
+    const grown = defectsToChecks(
+      fps as never,
+      [
+        "[dead-input] player.yaw, player.x and player.z are identical before and after the scripted controls (yaw 1.5708, x 0, z -8). The match never leaves the title phase under the harness. On the default camera the title is still up.",
+      ],
+      { iteration: 1, noteDefect: ((note: { text: string; why: string }) => noted.push(note)) as never },
+    );
+    assert.deepEqual(
+      grown.map((check) => check.id),
+      [],
+      "no vision question a still frame can never answer",
+    );
+    assert.equal(noted.length, 1, "the ledger keeps the sentence");
+  });
+
+  it("BC3. a plan that declares a kind says how the game leaves its title: start keys, or none", () => {
+    const one = JSON.stringify([{ id: "core", title: "Core", owns: "src/game.rs", done: ["a match"] }]);
+    const missing = compilePlan({ summary: "a bodycam shooter", workers: one, kind: "first-person" });
+    assert.match(String(missing.error), /plan: start/, "refused at plan time");
+    const keyed = compilePlan({ summary: "a bodycam shooter", workers: one, kind: "first-person", start: '["Enter"]' });
+    assert.deepEqual(keyed.plan?.game?.start, { keys: ["Enter"] });
+    const none = compilePlan({ summary: "a chess board", workers: one, kind: "static-board", start: "none" });
+    assert.deepEqual(none.plan?.game?.start, { keys: [] }, "a game that boots into play says so");
+    assert.equal(compilePlan({ summary: "a sketch", workers: one }).error, undefined, "no kind, nothing to drive");
   });
 });

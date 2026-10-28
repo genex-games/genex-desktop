@@ -218,6 +218,14 @@ export function twinDefect(
 const READOUT_DEFECT = /\b(?:probe|readout|reports?|reporting|state|console|logs?|logged|fps|framerate)\b/i;
 
 /**
+ * The artefact classes (judge/artefact-classes.md) read off the game's state, never off a frame:
+ * `[dead-input]` is a comparison of two state samples that the kind's own input probes already
+ * make. Asked of a still, "is this defect gone?" was answered "no, the frame matches the reference"
+ * in every round of the Bodycam rerun after the player had started to walk.
+ */
+const STATE_DEFECT_CLASSES: ReadonlySet<string> = new Set(["dead-input"]);
+
+/**
  * The probe expression that would have measured a defect the camera cannot see. "the live probe
  * reports speedKept 0.069 while the HUD shows 4 km/h" names a number in the game's own state,
  * and the check that catches it is arithmetic, not a crop. Returns null when the text names no
@@ -354,12 +362,14 @@ export function defectsToChecks(
 }
 
 /**
- * No camera named and the complaint is about a number, a log line or an internal reading: the
- * ledger, not the board. Answers whether the defect went to the ledger.
+ * No camera named and the complaint is about a number, a log line or an internal reading, or a
+ * class read off the state whatever camera it names: the ledger, not the board. Answers whether
+ * the defect went to the ledger.
  */
 function notedAsReading(candidate: Candidate, noteDefect: DefectOptions["noteDefect"]): boolean {
   const { text } = candidate;
-  if (candidate.named || !READOUT_DEFECT.test(text)) return false;
+  const fromState = STATE_DEFECT_CLASSES.has(defectClass(text) ?? "");
+  if (!fromState && (candidate.named || !READOUT_DEFECT.test(text))) return false;
   if (typeof noteDefect === "function")
     noteDefect({
       text: text.slice(0, CLIP_REASON),
