@@ -84,9 +84,11 @@ is judged on captures against it, and a box, capsule or flat-coloured shape on s
   scatter (dense, varied, never one model in a row), a sky and weather that agree with the brief
   (snow is an overcast sky over white ground), and a light mood.
 - **Compare with the reference.** Look at every camera beside `references/` and fix the largest
-  gap first: silhouette, material, light, density. Never ship a black silhouette (first-person
-  hands stay lit), pure-black outdoor shadows, particles that read as cubes, or a texture whose
-  tiling shows at play distance.
+  gap first: silhouette, material, light, density. Never ship a black silhouette (draw
+  first-person hands and weapon between `frame.view_model()` and `frame.end_view_model()`),
+  pure-black outdoor shadows, particles that read as cubes (`Particles::snow(..)`,
+  `Particles::dust(..)`), or a texture whose tiling shows at play distance; snow and rain go under
+  `SkyParams::overcast()`.
 
 ## Assets
 
