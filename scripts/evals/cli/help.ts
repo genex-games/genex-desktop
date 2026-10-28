@@ -185,6 +185,17 @@ export const MESSAGE: Readonly<Record<EvalCommand, CommandHelp>> = {
     ],
     exits: "exit 0 the release gate passes, 1 it fails or a bundle was refused, 2 references missing, 64 bad usage",
   },
+  [EvalCommand.AaaCompare]: {
+    usage:
+      "aaa compare <candidateBundle> --baseline <baselineBundle> --out <dir> [--taste off|live] [--taste-family gpt|claude|gpt,claude] [--references <dir>]",
+    summary: "Compare a run with a baseline run of the same prompt, side by side",
+    details: [
+      "Writes compare.json and compare.md (both sides' captures per view, checks that moved, measured numbers).",
+      "--taste live also asks a blind pairwise look judge per view, in both orders (grader calls: needs --live).",
+    ],
+    exits:
+      "exit 0 the candidate is clearly better, 1 it is not or a bundle was refused, 2 references missing, 64 bad usage",
+  },
   [EvalCommand.AaaReferences]: {
     usage: "aaa references --live [--dir <dir>]",
     summary: "Fetch the suite's CC0 reference stills into the eval home",

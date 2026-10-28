@@ -481,6 +481,17 @@ tier. A view without a judgeable capture or references leaves taste unmeasured.
 still per yaw into `$GENEX_EVALS_HOME/aaa/references/`, and records the CC0 licence and authors in
 `references.json` there. Nothing from it enters Git.
 
+**Side by side** (`compare.ts`, `pairwise-taste-prompt.md`): `aaa compare <candidate> --baseline
+<baseline>` grades both bundles of one prompt and writes `compare.json` and a `compare.md` page
+with both sides' captures per view role (roles, never camera names), the checks that moved
+(unmeasured and failing rank alike, so a newly measured failure is not a regression), and every
+measured number next to its baseline. `--taste live` adds a blind pairwise look judge per view
+against the references, both orders per family; a side wins only when the orders and the families
+agree. The verdict is `clearly-better` (exit 0) when the grade rose, or held with no check
+regressed and at least three improved, and the judge prefers the baseline on no view;
+`worse` when the grade fell, more checks regressed than improved or the judge prefers the baseline
+on more views; otherwise `not-clearly-better`.
+
 **Gate** (`report.ts`): passes when at least three different prompts, each run on the suite's
 current brief (a run's goal opens with it), were graded and every graded run is AA+ or better.
 
@@ -529,6 +540,7 @@ exit 64, and with it they exit 1 in CI.
 | `aaa suite` | | Lists the [AA+ suite](#the-aa-release-gate) | |
 | `aaa collect --prompt <id> --run <dir> --roles <file> --out <dir> [--shots <dir>] [--facts <file>] [--clean yes\|no]` | | Writes an evidence bundle | |
 | `aaa grade <bundle>... --out <dir> [--taste off\|live] [--taste-family …] [--builder-family …] [--votes n] [--references <dir>]` | with `--taste live` | Grades bundles and judges the gate | 1 also a failed gate, 2 references not fetched |
+| `aaa compare <bundle> --baseline <bundle> --out <dir> [--taste off\|live] [--taste-family …] [--references <dir>]` | with `--taste live` | Candidate against a baseline run, side by side | 1 also not clearly better, 2 references not fetched |
 | `aaa references [--dir <dir>]` | yes | Fetches the CC0 reference stills | |
 
 `gc` never removes a run a committed baseline names, a symlink (at any level, the folders it reads

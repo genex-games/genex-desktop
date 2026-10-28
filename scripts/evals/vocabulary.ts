@@ -619,6 +619,7 @@ export const EvalCommand = {
   AaaSuite: "aaa suite",
   AaaCollect: "aaa collect",
   AaaGrade: "aaa grade",
+  AaaCompare: "aaa compare",
   AaaReferences: "aaa references",
 } as const;
 export type EvalCommand = (typeof EvalCommand)[keyof typeof EvalCommand];

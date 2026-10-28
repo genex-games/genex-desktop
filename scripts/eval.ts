@@ -34,7 +34,7 @@ const live = () => LiveNeed.Required;
 const liveWhenResampling = (args: readonly string[]) =>
   args.includes("--repeatability") ? LiveNeed.Required : LiveNeed.None;
 
-/** `aaa grade` asks a model only when its taste judge is live. */
+/** `aaa grade` and `aaa compare` ask a model only when their taste judge is live. */
 const liveWhenTasteLive = (args: readonly string[]) => {
   const at = args.indexOf("--taste");
   return at >= 0 && args[at + 1] === AaaTasteMode.Live ? LiveNeed.Required : LiveNeed.None;
@@ -71,6 +71,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   row(EvalCommand.AaaSuite, local),
   row(EvalCommand.AaaCollect, local),
   row(EvalCommand.AaaGrade, liveWhenTasteLive),
+  row(EvalCommand.AaaCompare, liveWhenTasteLive),
   row(EvalCommand.AaaReferences, live),
 ];
 
