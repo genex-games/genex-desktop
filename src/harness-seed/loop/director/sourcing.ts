@@ -14,7 +14,8 @@
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { asksForLook, ArtKind, runArtPass, type ArtAsset } from "../look-bar.ts";
+import { asksForLook, runArtPass, type ArtAsset } from "../look-bar.ts";
+import { ArtKind } from "../art-kinds.ts";
 import { DefectSeverity } from "../ship-review.ts";
 import { MINUTE_MS } from "../time.ts";
 import { yes } from "./args.ts";

@@ -1,4 +1,5 @@
 import { qualityRefusal } from "../quality-lint.ts";
+import { sharedOwnershipNote } from "./ownership.ts";
 import { sourcingRefusal, spreadRefusal } from "./sourcing.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
@@ -29,7 +30,8 @@ import { isRunning, setWorkerState, WorkerMode, WorkerState } from "../outcomes.
 import { runRef } from "../repo.ts";
 import { RunEvent } from "../run-events.ts";
 import { normalizeScoutSetup } from "../scout.ts";
-import { ArtRefusal, asksForLook, readArtPass, unplannedParts, type ArtPass } from "../look-bar.ts";
+import { ArtRefusal, asksForLook, readArtPass, type ArtPass } from "../look-bar.ts";
+import { unplannedParts } from "../art-kinds.ts";
 import { artRefusalWords } from "../look-bar-prompts.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { FINISH_SINGLE_REFUSAL, FINISH_START_MOVES } from "../facet/stage-prompts.ts";
@@ -655,7 +657,8 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   const answer = await planAnswer(loopRun, plan, { first, acceptanceKept, args });
   // The kind the plan declared brings its own recipes (director/craft.ts): only those not handed yet.
   const craft = await planCraft(loopRun, plan).catch(() => "");
-  const said = contracted ? `${answer} ${contracted}` : answer;
+  const owners = sharedOwnershipNote(plan.workers);
+  const said = [answer, contracted, owners].filter(Boolean).join(" ");
   return craft ? `${said}\n\n${craft}` : said;
 }
 

@@ -18942,9 +18942,9 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       ["[uncomfortable-camera] demo:sprint-run"],
     );
   });
-  it("G3-5a. milestones asked for 'a sprint that tilts and shakes the view' and 'birch and pine billboards', and the scaffold was told frame.cube: a mandate that asks for less is refused, two parts may not own one file, and a look brief starts from sourced models", async () => {
+  it("G3-5a. milestones asked for 'a sprint that tilts and shakes the view' and 'birch and pine billboards', and the scaffold was told frame.cube: a mandate that asks for less is refused, two parts owning one file are named, and a look brief starts from sourced models", async () => {
     const { qualityRefusal } = await import("../../src/harness-seed/loop/quality-lint.ts");
-    const { sharedOwnership } = await import("../../src/harness-seed/loop/director/rules.ts");
+    const { sharedOwnership } = await import("../../src/harness-seed/loop/director/ownership.ts");
     const { rustBaseBrief } = await import("../../src/harness-seed/loop/rust-briefs.ts");
     assert.match(
       String(qualityRefusal("milestones", [{ what: "a sprint that tilts and shakes the view" }])),

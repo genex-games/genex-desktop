@@ -6,7 +6,6 @@
  * A new module: a kept older sibling can never shadow these names.
  */
 import {
-  ArtKind,
   ArtRefusal,
   ArtSource,
   ArtTier,
@@ -16,6 +15,7 @@ import {
   type ArtAsset,
   type ArtProblem,
 } from "./look-bar.ts";
+import { ArtKind } from "./art-kinds.ts";
 import { BUDGETS_NEVER_CUT_MAPS, bootBudgetLine } from "./destination-budgets.ts";
 
 /** How the art pass is written: the plan's `art` argument. */
@@ -86,44 +86,7 @@ export function shippedLookLine(genre: string | null, stills: boolean, subject =
 }
 
 /**
- * The art-bar question a taste judge answers on a run with a visual bar: which look blockers the
- * build the checks accepted shows that the other does not, and the rule that a build below the
- * bar has regressed even where the other build lacks the thing. Gen3 kept a bench of twelve boxes
- * because a new ugly bench was never a regression against no bench.
- */
-export function artBarLine(accepted: string): string {
-  return `ART BAR: in "added", list each look blocker (tagged, what, where, camera) that build ${accepted} shows and the other build does not — a new box bench, stick tree or slab of snow where the other build had nothing is added. A round that adds one is not kept, whatever checks flipped. "Worse against the art bar" is a regression: when build ${accepted} adds something below the bar, pick the other build and name it in "regression", even though the other build lacks the thing.`;
-}
-
-/**
  * The art pass as the lead's rules say it, for a run whose ask sets a visual bar: list every area's
  * assets with a source before the builders start, reserve the Genex generations, never ship greybox.
  */
 export const ART_PASS_RULE = `- Art pass: this ask sets a visual bar, so \`plan\` takes art= — every area's assets by tier (hero assets near the camera, mid-range, scatter and ground cover, sky with weather and the light's mood), each with its kind, its draw tags and its source: a Genex plugin generation (model, texture, rigged character), a CC0 model, a Poly Haven or ambientCG scan, or a Blender kit for the modular shell only (walls, floors, trims, building blocks wearing scans — never a hero, a prop, a character or anything organic); code-built geometry, a box-and-cone bpy script included, is the last resort and says why. At round end the harness follows every planned tag to its file and its lock row: a tag delivered from a lesser source than planned is [${LookBlocker.ArtSourceMismatch}] and the round is not kept. A re-plan that adds a part gives art= again with that area's assets. The Genex generations it names are reserved for it: spend them on those assets first. Greybox is a step inside a round and never closes a part — a judge that sees a look blocker holds it open. ${BUDGETS_NEVER_CUT_MAPS}`;
-
-/**
- * The rule a game learns when its judges keep naming one look blocker (ledger.ts): what sources it
- * and what fixes it, so the next run plans against it from its first round instead of meeting it
- * again. Art, sourcing and comfort lessons, said once.
- */
-export const BLOCKER_RULES: Record<LookBlocker, string> = {
-  [LookBlocker.Primitive]: `source props, vehicles and characters as ${ArtSource.GenexModel}, ${ArtSource.Cc0Model} or ${ArtSource.GenexCharacter} before builders start; a box or cone script is ${ArtSource.Code}`,
-  [LookBlocker.DarkViewmodel]: "light the viewmodel with the scene and give it PBR materials; never draw it unlit",
-  [LookBlocker.CrushedShadow]:
-    "hold every playable camera in the luminance band: a practical light per fixture, centre metering, no negative lift",
-  [LookBlocker.PlaceholderParticles]: "use soft, lit particles with size variance, never cubes or hard quads",
-  [LookBlocker.SkyContradicts]: "source the sky as an HDRI scan matching the ask's weather and time",
-  [LookBlocker.VisibleTiling]:
-    "break tiling with 2k scans, stochastic tiling and decals; never a 4 m repeat at play distance",
-  [LookBlocker.NotShipped]:
-    "reach one area's finished look (its hero shot passes the art director) before spreading to more",
-  [LookBlocker.FlatMaterial]: "give every surface a scan or generated texture with its normal and ORM maps",
-  [LookBlocker.StickTree]: `source trees as models with leaf or twig cards (${ArtSource.GenexModel} or a decimated ${ArtSource.Cc0Model}); never cones`,
-  [LookBlocker.SlabSnow]: "put snow or dust on by material cover and a terrain layer, never as boxes laid on props",
-  [LookBlocker.ArtSourceMismatch]:
-    "deliver each planned tag from the source the art pass names, and list it in docs/ASSETS.md",
-  [LookBlocker.ExposurePump]:
-    "keep doorway adaptation smooth: at most 1 EV per half second, a low ev_min, no overshoot",
-  [LookBlocker.UncomfortableCamera]:
-    "drive the first-person camera with the engine rig inside its comfort caps; never add shake or bob of your own",
-};

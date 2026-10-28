@@ -103,12 +103,12 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
   in every art director's look.
 - Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
   textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
-  refused. Budgets are said per destination: a native game's slow web preview is the preview's boot,
+  answered with a warning naming them (`director/ownership.ts`). Budgets are said per destination: a native game's slow web preview is the preview's boot,
   and no judge or director meets a budget by dropping maps.
 
 Builder sessions are rotated every three rounds (`facet/session-rotation.ts`); the round after is briefed
 whole. A look blocker the judges keep naming becomes the game's lesson with the rule that fixes it
-(`ledger.ts`, `BLOCKER_RULES`).
+(`ledger.ts`, `look-bar-rules.ts`).
 
 A play script may
 `touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for

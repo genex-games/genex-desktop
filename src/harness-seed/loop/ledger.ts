@@ -26,7 +26,7 @@ import path from "node:path";
 import { EventKind, RunEvent, RunMode } from "./run-events.ts";
 import { roundRule, VerdictPass, VerdictRule, VerdictSource, verdictRecord } from "./verdict.ts";
 import { Side } from "./judge.ts";
-import { BLOCKER_RULES } from "./look-bar-prompts.ts";
+import { BLOCKER_RULES } from "./look-bar-rules.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 import type { Catalogue } from "./spec.ts";
 
@@ -610,7 +610,7 @@ const LOOK_RULES_NAMED = 3;
 
 /**
  * The art, sourcing and comfort rules for the look blockers this game's judges keep naming
- * (look-bar-prompts.ts `BLOCKER_RULES`): gen3's ledger said "primitive ×12" and never what to do.
+ * (look-bar-rules.ts `BLOCKER_RULES`): gen3's ledger said "primitive ×12" and never what to do.
  */
 function lookRuleLessons(rounds: readonly LedgerRecord[]): string[] {
   const rules = BLOCKER_RULES as Record<string, string>;
