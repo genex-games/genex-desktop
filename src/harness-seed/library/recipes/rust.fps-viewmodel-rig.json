@@ -1,0 +1,65 @@
+{
+  "id": "rust.fps-viewmodel-rig",
+  "runtime": "rust-wgpu",
+  "title": "First-person in Rust: the arms kit's rig, not boxes, so a reload takes the magazine out and the sights line up",
+  "tags": [
+    "viewmodel",
+    "arms",
+    "hands",
+    "rig",
+    "rigged",
+    "kit",
+    "reload",
+    "magazine",
+    "mag",
+    "ads",
+    "sights",
+    "aim",
+    "rifle",
+    "fps",
+    "firstperson",
+    "weapon",
+    "animator",
+    "sockets",
+    "muzzle",
+    "gloves",
+    "bodycam"
+  ],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "First-person shooter: start the arms and gun from docs/examples/fps-arms (a rigged GLB played by an animator), never from boxes: its reload takes the magazine out of the well and its ADS puts the sights on the centre.",
+  "intent": "A view model built from boxes cannot reload: the agent tilts the gun and judges say the reload reads as a tilt with no magazine leaving the well, ADS does not look down the sights, and the arms are flat grey. The template ships a kit for this: docs/examples/fps-arms/fps-arms.glb, gloved arms on an AK-pattern rifle whose magazine, charging handle and trigger are bones, with clips Idle, Walk, Sprint, AdsIn, Ads, AdsOut, Fire, DryFire, Reload and Inspect, and sockets muzzle, sight, sight_front and eject. Copy it to assets/kits/fps-arms.glb, and copy src/facets/viewmodel.rs and src/facets/rifle.rs from docs/examples/fps-arms (the folder is a whole game: copy it when starting). The kit is in the camera's frame, so frame.character draws it at the camera's position and turn under frame.tag(\"hands\") and one frame.id. Sway, kick and the pull-back from a wall come from simulation state and move that transform; they shrink down the sights, so the notch and the post settle on the centre. The rifle's rules decide rounds and timing on their own clock with the clips' numbers (6 ticks a round, a 156-tick reload, the magazine counted in at tick 111); the view model fires the graph's trigger on the tick a shot, a dry click, a reload or an inspect began. Fire plays on an additive layer whose reference is Fire's first frame, so a shot down the sights still cycles the carrier. The flash and tracer start at animator.socket(muzzle, ..). For another look or rifle, copy fps_arms.py to assets/src and run blender__model {name: \"fps-arms\", rig: true}: it keeps the joint names. Prove it with the viewmodel probe (sightsOffAxisDeg under 0.3 when aimed, magazineOutM about 0.15 mid-reload) or the ads and reload demos, and a capture of each.",
+  "sketch": "// genex.toml: [animation] enabled = true and [physics] enabled = true\n// assets/kits/fps-arms.glb: the kit, copied from docs/examples/fps-arms/; fps_arms.py makes it\n// src/facets/viewmodel.rs, wired after the rifle's rules (docs/examples/fps-arms/src/facets/):\nuse genex::animation::{Motion, TriggerParam};\nuse genex::prelude::*;\n\nconst KIT: &str = \"kits/fps-arms.glb\";\n\n#[derive(Default)]\npub struct ViewModel { kit: Option<(Animator, TriggerParam)> }\n\npub fn wire(game: &mut Game<super::World>) {\n    game.facet_state::<ViewModel>();\n    game.on_reset(|sim, _, _, gfx| {\n        let Ok(arms) = gfx.character(KIT) else { return };\n        let (Some(idle), Some(fire), Some(reload)) = (arms.clip(\"Idle\"), arms.clip(\"Fire\"), arms.clip(\"Reload\")) else { return };\n        let mut g = arms.graph();\n        let shot = g.trigger(\"fire\");\n        let base = g.layer(\"base\");\n        g.state(base, \"idle\", Motion::clip(idle));\n        let _reload = g.state(base, \"reload\", Motion::clip(reload).once()); // + walk, sprint, sights, inspect\n        // Shots add to whatever the base plays: Fire's first frame is the hip pose it adds against.\n        let shots = g.layer(\"shots\");\n        g.layer_additive(shots, fire);\n        let none = g.state(shots, \"none\", Motion::Empty);\n        let firing = g.state(shots, \"fire\", Motion::clip(fire).once());\n        g.transition(none, firing).when(shot.fired()).crossfade(0.0);\n        g.transition(firing, none).at_end().crossfade(0.03);\n        let Ok(graph) = g.build() else { return };\n        sim.facets.get_mut::<ViewModel>().kit = arms.animator(&graph).ok().map(|animator| (animator, shot));\n    });\n    game.on_update(|sim, ctx| {\n        let fired = sim.world.fired_at == Some(sim.world.tick); // the rifle's rules ran first\n        let Some((animator, shot)) = sim.facets.get_mut::<ViewModel>().kit.as_mut() else { return };\n        if fired { animator.fire(*shot); }\n        animator.update(ctx.dt);\n    });\n    game.on_draw(|sim, frame, camera| {\n        let Some((animator, _)) = &sim.facets.get::<ViewModel>().kit else { return };\n        // The kit is in the camera's frame: draw it at the camera, moved only by sim state.\n        let at = Transform::from_translation(camera.position).with_rotation(view_turn(sim.world.yaw, sim.world.pitch));\n        frame.tag(\"hands\").id(0x4b49_5441).character(animator, at).end_id();\n    });\n}\n\n/// The view's turn for a yaw about +y (0 along +x) and a pitch (up positive): the kit looks down -z.\nfn view_turn(yaw: f32, pitch: f32) -> Quat {\n    Quat::from_rotation_y(-yaw - std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(pitch)\n}\n",
+  "check": {
+    "id": "magazine-leaves-the-well",
+    "kind": "demo",
+    "name": "reload",
+    "expr": "result.magazineOutM > 0.08",
+    "weight": "identity",
+    "note": "A demo named reload fires, starts a reload and returns { magazineOutM }: how far the magazine is from its seat 0.75 s in. A reload that only tilts the gun leaves it at 0."
+  },
+  "port": "One facet owns the kit's animator and draws it from the camera; the rifle's rules facet runs before it and writes what began this tick into the world, and nothing else draws a second gun or hands.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/examples/fps-arms/README.md",
+      "note": "The kit's clips, joints and sockets, how viewmodel.rs plays them, and how to restyle it with fps_arms.py."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Animation)",
+      "note": "gfx.character, the graph (layers, additive layers, triggers, at_end), animator.update only in on_update, frame.character, animator.socket."
+    },
+    {
+      "source": "library/recipes/rust.fps-hands-in-frame.json",
+      "note": "The hands recipe this one finishes: a rig instead of parts, from the bodycam rerun's judges (reload as a tilt, ADS off the sights, flat grey arms)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

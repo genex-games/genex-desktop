@@ -4,9 +4,11 @@ for UI) for the destinations in `studio.json`: desktop, phones and the web, from
 `docs/api/`), and `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the
 game with and which refusals a run can meet. `docs/examples/README.md` lists working code for this
 engine to copy from: a lit interior room (`docs/examples/interior-room/`), a modular interior kit
-with a corridor and classroom built from it (`docs/examples/interior-kit/`), and an FPS facet set
-(`docs/examples/fps/`, explained in `docs/examples/fps.md`).
-Start an indoor scene or a first-person game from them, not from a blank file.
+with a corridor and classroom built from it (`docs/examples/interior-kit/`), an FPS facet set
+(`docs/examples/fps/`, explained in `docs/examples/fps.md`) and a first-person arms kit
+(`docs/examples/fps-arms/`: rigged gloved arms on a rifle whose magazine leaves the well on a
+reload). Start an indoor scene or a first-person game from them, not from a blank file; a
+shooter's arms and gun start from the kit, never from boxes.
 
 1. **Read `.studio/BRIEF.md` first when it exists.**
 2. **Keep the studio contract.** `src/main.rs` ends `main` with `genex::install(game);`. A facet

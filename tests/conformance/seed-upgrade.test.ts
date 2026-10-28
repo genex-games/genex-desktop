@@ -727,7 +727,11 @@ describe("the craft migration on an installed catalogue", () => {
 
   it("derives what it may retire from the shipped recipes alone", async () => {
     const owners = await craftCheckOwners(path.join(repoRoot, "src", "harness-seed"));
-    assert.equal(owners.size, 41, "one owner per retired opinion");
+    assert.equal(
+      owners.size,
+      42,
+      "one owner per craft check (rust.fps-viewmodel-rig's magazine-leaves-the-well is the 42nd)",
+    );
     assert.equal(owners.get("organic-not-solid"), "flora.organic-not-solid");
     for (const keeper of [
       "camera-player-eye",
