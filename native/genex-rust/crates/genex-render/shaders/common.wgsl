@@ -516,7 +516,7 @@ const GX_SWAY_EXTENT_MIN: f32 = 0.05;
 const GX_SWAY_BRANCH_RATE: f32 = 1.9;
 const GX_SWAY_BRANCH_CALM: f32 = 0.35;
 const GX_SWAY_FLUTTER_CALM: f32 = 0.5;
-const GX_TAU: f32 = 6.28318531;
+const GX_SWAY_TAU: f32 = 6.28318531;
 
 // The row's wind words.
 fn gx_row_wind(row: Instance) -> vec3<u32> {
@@ -544,7 +544,7 @@ fn gx_sway_offset(model: mat4x4<f32>, local: vec3<f32>, wind: vec3<u32>, t: f32)
     let branch = bend.y * scale * reach * reach * height * branch_gust * sin(t * GX_SWAY_BRANCH_RATE + branch_phase);
     let leaf_phase = 7.3 * local.x + 5.1 * local.y + 9.7 * local.z;
     let flutter_gust = GX_SWAY_FLUTTER_CALM + (1.0 - GX_SWAY_FLUTTER_CALM) * field.gust;
-    let flutter = leaf.x * scale * reach * flutter_gust * sin(t * leaf.y * GX_TAU + leaf_phase);
+    let flutter = leaf.x * scale * reach * flutter_gust * sin(t * leaf.y * GX_SWAY_TAU + leaf_phase);
     // The leaf shivers about an axis of its own; the lean sinks the vertex so the trunk keeps its
     // length (the circle's sagitta).
     let axis = vec3<f32>(0.45 * sin(leaf_phase), 0.8, 0.45 * cos(leaf_phase));

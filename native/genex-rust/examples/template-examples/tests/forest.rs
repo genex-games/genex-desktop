@@ -56,7 +56,7 @@ fn every_stand_grows_and_draws_without_an_asset_file() {
 fn the_same_seed_places_the_same_forest() {
     let placed = |seed| started(seed).state()["forest"].clone();
     assert_eq!(placed(1), placed(1));
-    assert_ne!(placed(1)["byTag"], placed(2)["byTag"], "another seed scatters another forest");
+    assert_ne!(placed(1)["firstAt"], placed(2)["firstAt"], "another seed scatters another forest");
 }
 
 #[test]

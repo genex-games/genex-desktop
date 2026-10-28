@@ -183,7 +183,7 @@ fn zlib(data: &[u8]) -> Vec<u8> {
     bits.put(1, 2);
     let mut head = vec![u32::MAX; 1 << HASH_BITS];
     let mut prev = vec![u32::MAX; WINDOW];
-    let mut insert = |head: &mut [u32], prev: &mut [u32], at: usize| {
+    let insert = |head: &mut [u32], prev: &mut [u32], at: usize| {
         if at + MATCH_MIN <= data.len() {
             let h = hash3(data, at);
             prev[at % WINDOW] = head[h];

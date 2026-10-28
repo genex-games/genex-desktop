@@ -120,13 +120,15 @@ impl Season {
     }
 }
 
-/// The smallest and largest side (texels) of a plant's maps.
+/// The smallest side (texels) of a plant's maps.
 pub const PLANT_TEXTURE_MIN: u32 = 128;
+/// The largest side (texels) of a plant's maps.
 pub const PLANT_TEXTURE_MAX: u32 = 2048;
 /// The side of a plant's maps unless its spec names one.
 pub const PLANT_TEXTURE_DEFAULT: u32 = 1024;
-/// The shortest and tallest plant (metres).
+/// The shortest plant (metres).
 pub const PLANT_HEIGHT_MIN: f32 = 0.1;
+/// The tallest plant (metres).
 pub const PLANT_HEIGHT_MAX: f32 = 120.0;
 /// Mesh levels a plant has (its impostor follows the last one).
 pub const PLANT_LEVELS: usize = 3;

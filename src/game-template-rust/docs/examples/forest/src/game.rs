@@ -120,6 +120,7 @@ pub fn wire(game: &mut Game<World>) {
             "plants": stands.iter().map(|stand| stand.plants).sum::<usize>() + sim.world.heroes.len(),
             "byTag": by_tag,
             "heroes": sim.world.heroes.len(),
+            "firstAt": stands.first().and_then(|stand| stand.group.transforms().first()).map(|at| [at.translation.x, at.translation.z]),
         })
     });
 }
@@ -142,7 +143,7 @@ fn texel_at(x: f32, z: f32) -> TerrainTexel {
     if x > 4.0 {
         return TerrainTexel::layer(ground);
     }
-    TerrainTexel::blend(SNOW, ground, (((x + 4.0) / 8.0) * 255.0) as u8)
+    TerrainTexel::blend(SNOW, ground, (x + 4.0) / 8.0)
 }
 
 fn ground() -> Terrain {
