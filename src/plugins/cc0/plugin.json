@@ -1,7 +1,7 @@
 {
   "apiVersion": 4,
   "id": "cc0",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "name": "CC0 Library",
   "publisher": "Studio",
   "description": "Free CC0 models, textures and skies from Poly Haven and ambientCG, fetched into your game with their licence recorded. No account or credits.",
@@ -19,7 +19,7 @@
   "tools": [
     {
       "name": "search",
-      "description": "Search the CC0 libraries: Poly Haven's models, textures and HDRI skies, and ambientCG's materials. Free, no account. Returns each result's source and id (what cc0__fetch takes), its name, authors, page, and for a model its polycount and size in millimetres. kind is model, texture or hdri (default texture); source narrows to polyhaven or ambientcg; limit is 1-24 (default 8). Search before generating a common prop, surface or sky.",
+      "description": "Search the CC0 libraries: Poly Haven's models, textures and HDRI skies, and ambientCG's materials. Free, no account. Any word may match a whole word of the name, tags or categories (a plural matches its singular): results matching more of your words come first, then name matches, then the most downloaded, so search with two or three plain nouns ('birch tree', 'snow ground'). Returns each result's source and id (what cc0__fetch takes), its name, authors, page, and for a model its triangles, budget (within, or over-import-cap past 250000) with a hint, and its size in millimetres. kind is model, texture or hdri (default texture); source narrows to polyhaven or ambientcg; limit is 1-24 (default 8). Search before generating a common prop, surface or sky.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -44,7 +44,7 @@
     },
     {
       "name": "fetch",
-      "description": "Fetch one CC0 asset into this game's assets/cc0/<job>/ folder. Studio downloads it, checks its size and digests and records it as CC0-1.0 with its source; you never download anything yourself. A Poly Haven model arrives as one self-contained GLB (its maps embedded); a texture as its maps (default diff, nor_gl and arm on Poly Haven; diff, nor_gl, rough, ao and metal on ambientCG); an HDRI as one .hdr. source is polyhaven, ambientcg or curated (a hand-picked, sha256-pinned pack by its id). resolution is 1k, 2k or 4k (default 1k): fetch the size it is seen at, phones 1k. maps names extra or different texture maps, comma-separated: diff, nor_gl, nor_dx, arm, rough, ao, metal, disp. Fetching the same asset and resolution again lands in the same folder.",
+      "description": "Fetch one CC0 asset into this game's assets/cc0/<job>/ folder. Studio downloads it, checks its size and digests and records it as CC0-1.0 with its source; you never download anything yourself. A Poly Haven model arrives as one self-contained GLB (its maps embedded); a texture as its maps (default diff, nor_gl and arm on Poly Haven; diff, nor_gl, rough, ao and metal on ambientCG); an HDRI as one .hdr. source is polyhaven, ambientcg or curated (a hand-picked, sha256-pinned pack by its id). resolution is 1k, 2k or 4k (default 1k): fetch the size it is seen at, phones 1k. maps names extra or different texture maps, comma-separated: diff, nor_gl, nor_dx, arm, rough, ao, metal, disp. A model heavier than its tier's budget arrives decimated to it (the answer's decimated names the tier and the triangles before and after); the import step then adds its LODs, and a game draws far copies as an impostor (.with_impostor(Impostor::hemi())). Fetching the same asset, resolution and tier again lands in the same folder.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -60,6 +60,10 @@
           },
           "maps": {
             "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "description": "A model's role, whose triangle budget the delivered GLB is decimated to when it is heavier: hero 250000, vegetation 40000, prop 30000, clutter 5000. Left out, only a model over the 250000 import cap is decimated, to it."
           }
         },
         "required": ["source", "id"]

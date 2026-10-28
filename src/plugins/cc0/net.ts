@@ -7,7 +7,7 @@
 import { Cc0Error, Cc0Refusal } from "../../substrate/cc0-fetch.ts";
 
 /** The plugin's version, as its `plugin.json` names it (a test holds the two equal). */
-export const CC0_PLUGIN_VERSION = "1.1.0";
+export const CC0_PLUGIN_VERSION = "1.2.0";
 /** What every request names itself as. */
 export const CC0_USER_AGENT = `Genex-CC0/${CC0_PLUGIN_VERSION} (+https://github.com/genex-games/genex-desktop)`;
 
