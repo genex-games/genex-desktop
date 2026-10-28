@@ -18,12 +18,15 @@ kit (sway, kick) by the transform you draw it at.
   and leaves the well by 0.6 s, a new one is in by 1.8 s, the handle racked at 2.3 s), Inspect (3.2).
 - ADS puts the sight line (the notch and the post, `SIGHT_HEIGHT` above the bore) on the eye's
   axis, so both sockets sit on the screen's centre.
-- Textures are made here from `SEED` with numpy, tileable and mapped at world scale (`TILE`), so
-  nothing is fetched and they carry this file's licence. Colour and normal maps are `MAP` texels,
-  roughness and metal `SMALL_MAP`, all JPEG.
+- Surfaces are CC0 scans at 2k (`SCANS`: black painted steel, dark wood, plum bakelite tinted from
+  plastic, coyote leather tinted from white, olive cotton), mapped at their real size (`TILE`) and
+  fitted to `COLOR_TEXELS`, `NORMAL_TEXELS` and `SURFACE_TEXELS` as JPEG. A map not passed in
+  `inputs` is made here from `SEED` with numpy instead (tileable), so the script runs without any.
 
-Copy it to `assets/src/fps_arms.py` and call `blender__model {name: "fps-arms", rig: true}`; change
-`SEED`, the colours in `LOOK` or the poses below and run it again for a variant. The game side is
+Copy it to `assets/src/fps_arms.py`, fetch the scans with `cc0__fetch` at 2k, and call
+`blender__model {name: "fps-arms", rig: true, inputs: "<the maps>"}`. A call takes at most 8 inputs:
+pass the colour and normal maps of the surfaces you want scanned, and the rest are made here.
+Change `SEED`, `TINT`, the colours in `LOOK` or the poses below and run it again for a variant. The game side is
 `docs/examples/fps-arms/` (its README explains it).
 """
 
@@ -68,7 +71,7 @@ EJECT = Vector((0.02, -0.03, 0.006))
 CARRIER_TRAVEL = 0.075
 
 # Metres one texture tile covers on each surface, and each surface's look.
-TILE = {"steel": 0.12, "wood": 0.3, "mag": 0.12, "glove": 0.07, "sleeve": 0.24}
+TILE = {"steel": 0.2, "wood": 0.35, "mag": 0.15, "glove": 0.12, "sleeve": 0.25}
 LOOK = {
     "steel": {"base": (0.105, 0.105, 0.11), "rough": 0.48, "metal": 0.85},
     "wood": {"dark": (0.12, 0.065, 0.04), "light": (0.27, 0.15, 0.085), "rough": 0.36},
@@ -77,6 +80,38 @@ LOOK = {
     "sleeve": {"base": (0.3, 0.32, 0.23), "rough": 0.9},
 }
 SLOTS = ["steel", "wood", "mag", "glove", "sleeve"]
+
+# Each surface's CC0 scan at 2k, as `cc0__fetch` delivers it (ambientCG's Metal029 and Plastic014A;
+# Poly Haven's dark_wood, leather_white and book_pattern). Pass the files in `inputs` (where a fetch
+# lands them under another folder, use that path here). A map left out is made here from `SEED`
+# instead, so the script also runs with no inputs at all.
+def ambient_cg(id, metal=False):
+    stem = f"assets/cc0/{id}/{id}_2K-JPG"
+    maps = {"color": f"{stem}_Color.jpg", "normal": f"{stem}_NormalGL.jpg", "rough": f"{stem}_Roughness.jpg"}
+    return {**maps, "metal": f"{stem}_Metalness.jpg"} if metal else maps
+
+
+def poly_haven(id, colour="diff"):
+    stem = f"assets/cc0/{id}/{id}"
+    return {"color": f"{stem}_{colour}_2k.jpg", "normal": f"{stem}_nor_gl_2k.jpg", "arm": f"{stem}_arm_2k.jpg"}
+
+
+SCANS = {
+    "steel": ambient_cg("Metal029", metal=True),
+    "wood": poly_haven("dark_wood"),
+    "mag": ambient_cg("Plastic014A"),
+    "glove": poly_haven("leather_white"),
+    "sleeve": poly_haven("book_pattern", "col1"),
+}
+# A scan's colour multiplied by this: the orange plastic becomes the AK-74's plum bakelite, the
+# white leather a grey coyote glove (never a skin tone), the cherry wood a darker stained birch.
+TINT = {"mag": (0.3, 0.2, 0.3), "glove": (0.33, 0.31, 0.26), "wood": (0.72, 0.6, 0.55)}
+# The least roughness a surface keeps: the rifle's finish is matte paint, not a mirror.
+ROUGH_FLOOR = {"steel": 0.45, "wood": 0.35}
+# Texels across in the GLB: the rifle's metal and wood and the hands fill the frame, so their colour keeps 2k.
+COLOR_TEXELS = {"steel": 2048, "wood": 2048, "mag": 1024, "glove": 2048, "sleeve": 2048}
+NORMAL_TEXELS = 1024
+SURFACE_TEXELS = 512
 
 # A metaball's surface lies this fraction of its radius out (threshold 0.6, stiffness 2).
 BALL_SURFACE = 0.574
@@ -170,7 +205,7 @@ def wood_maps():
 def mag_maps():
     mottle = fbm(SMALL_MAP, 40.0)
     colour = tinted(LOOK["mag"]["base"], 0.1 * mottle + 0.04 * noise(SMALL_MAP, 1.5))
-    return colour, channels(LOOK["mag"]["rough"] + 0.06 * mottle, 0.0)
+    return colour, normal_map(0.2 * noise(SMALL_MAP, 2.0), 0.5), channels(LOOK["mag"]["rough"] + 0.06 * mottle, 0.0)
 
 
 def glove_maps():
@@ -215,21 +250,66 @@ def material(name, colour, normal, rough_metal):
     return mat
 
 
+MAKERS = {"steel": steel_maps, "wood": wood_maps, "mag": mag_maps, "glove": glove_maps, "sleeve": sleeve_maps}
+
+
+def read_scan(path):
+    """The staged map at `path` as an array (rows from the bottom, RGB 0..1), or None when it was
+    not passed in `inputs`."""
+    staged = ASSET_INPUTS.get(path)
+    if staged is None:
+        return None
+    image = bpy.data.images.load(staged)
+    width, height = image.size
+    pixels = np.empty(width * height * 4, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    bpy.data.images.remove(image)
+    return pixels.reshape(height, width, 4)[..., :3]
+
+
+def fit(field, size):
+    """A square map averaged down to at most `size` texels across."""
+    return downsized(field, size) if field.shape[0] > size else field
+
+
+def unit_normals(field):
+    """A normal map whose averaged texels are made unit length again."""
+    n = field * 2.0 - 1.0
+    return n / np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-6) * 0.5 + 0.5
+
+
+def surface_maps(surface):
+    """A surface's colour, normal and roughness/metal maps: its scans where they were passed,
+    the maps made here for the rest."""
+    scans = {role: read_scan(path) for role, path in SCANS[surface].items()}
+    made = []
+
+    def fallback(index):
+        if not made:
+            made.extend(MAKERS[surface]())
+        return made[index]
+
+    colour = scans["color"] * np.array(TINT.get(surface, (1.0, 1.0, 1.0))) if scans["color"] is not None else fallback(0)
+    normal = unit_normals(fit(scans["normal"], NORMAL_TEXELS)) if scans["normal"] is not None else fallback(1)
+    if scans.get("arm") is not None:
+        rough_metal = scans["arm"]
+    elif scans.get("rough") is not None:
+        metal = scans["metal"][..., 0] if scans.get("metal") is not None else 0.0
+        rough_metal = channels(scans["rough"][..., 0], metal)
+    else:
+        rough_metal = fallback(2)
+    rough_metal = fit(rough_metal, SURFACE_TEXELS).copy()
+    rough_metal[..., 1] = np.maximum(rough_metal[..., 1], ROUGH_FLOOR.get(surface, 0.0))
+    return fit(colour, COLOR_TEXELS[surface]), fit(normal, NORMAL_TEXELS), rough_metal
+
+
 def materials():
-    """The five surfaces, in `SLOTS` order. The magazine reuses the steel's normal map."""
-    steel_c, steel_n, steel_rm = steel_maps()
-    wood_c, wood_n, wood_rm = wood_maps()
-    mag_c, mag_rm = mag_maps()
-    glove_c, glove_n, glove_rm = glove_maps()
-    sleeve_c, sleeve_n, sleeve_rm = sleeve_maps()
-    steel_normal = save_map("steel-normal", steel_n, False)
-    return [
-        material("steel", save_map("steel-color", steel_c, True), steel_normal, save_map("steel-rm", steel_rm, False)),
-        material("wood", save_map("wood-color", wood_c, True), save_map("wood-normal", wood_n, False), save_map("wood-rm", wood_rm, False)),
-        material("mag", save_map("mag-color", mag_c, True), steel_normal, save_map("mag-rm", mag_rm, False)),
-        material("glove", save_map("glove-color", glove_c, True), save_map("glove-normal", glove_n, False), save_map("glove-rm", glove_rm, False)),
-        material("sleeve", save_map("sleeve-color", sleeve_c, True), save_map("sleeve-normal", sleeve_n, False), save_map("sleeve-rm", sleeve_rm, False)),
-    ]
+    """The five surfaces, in `SLOTS` order."""
+    made = []
+    for surface in SLOTS:
+        colour, normal, rough_metal = surface_maps(surface)
+        made.append(material(surface, save_map(f"{surface}-color", colour, True), save_map(f"{surface}-normal", normal, False), save_map(f"{surface}-rm", rough_metal, False)))
+    return made
 
 
 # ── Geometry ──────────────────────────────────────────────────────────────────────────────────

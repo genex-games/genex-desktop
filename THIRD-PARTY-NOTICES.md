@@ -1200,6 +1200,20 @@ stand-ins without them.
 | `metal_grate_rusty` | the drains along the kerbs, the manhole covers, the alley's gutter and the air conditioners' grilles | https://polyhaven.com/a/metal_grate_rusty (`metal_grate_rusty_diff_1k.jpg`, `metal_grate_rusty_nor_gl_1k.jpg`, `metal_grate_rusty_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,774,295 bytes |
 | `kloppenheim_01_puresky` | the overcast dusk sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_01_puresky (`kloppenheim_01_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,187,954 bytes |
 
+## First-person arms kit scans
+
+`src/game-template-rust/docs/examples/fps-arms/fps-arms.glb` carries five CC0 scans, resized
+(2k colour, 1k normal, 512 roughness/metal), some tinted, and packed into the GLB by
+`fps_arms.py`. Every one is CC0; the credits are given anyway.
+
+| Scan | Used for | Source | Authors | Licence |
+| --- | --- | --- | --- | --- |
+| `Metal029` | the rifle's black painted steel | https://ambientcg.com/view?id=Metal029 (`Metal029_2K-JPG.zip`: Color, NormalGL, Roughness, Metalness) | Lennart Demes, via ambientCG | CC0 1.0 (ambientCG's licence, https://docs.ambientcg.com/license/); no attribution is required and it is given anyway |
+| `Plastic014A` | the magazine's bakelite, tinted plum | https://ambientcg.com/view?id=Plastic014A (`Plastic014A_2K-JPG.zip`: Color, NormalGL, Roughness) | Lennart Demes, via ambientCG | CC0 1.0 (ambientCG's licence, https://docs.ambientcg.com/license/); no attribution is required and it is given anyway |
+| `dark_wood` | the handguards, grip and stock | https://polyhaven.com/a/dark_wood (`dark_wood_diff_2k.jpg`, `dark_wood_nor_gl_2k.jpg`, `dark_wood_arm_2k.jpg`) | Dario Barresi, Dimitrios Savva and Rico Cilliers, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+| `leather_white` | the gloves, tinted coyote | https://polyhaven.com/a/leather_white (`leather_white_diff_2k.jpg`, `leather_white_nor_gl_2k.jpg`, `leather_white_arm_2k.jpg`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+| `book_pattern` | the sleeves' olive cotton | https://polyhaven.com/a/book_pattern (`book_pattern_col1_2k.jpg`, `book_pattern_nor_gl_2k.jpg`, `book_pattern_arm_2k.jpg`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+
 ## Rust toolchain runtime
 
 Besides its crates (above), a Rust game links what the pinned toolchains compile into every
