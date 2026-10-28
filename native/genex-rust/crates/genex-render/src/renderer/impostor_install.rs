@@ -17,7 +17,6 @@ use crate::impostor::{GpuImpostor, ImpostorBounds, ImpostorClass, ImpostorLayout
 use crate::layout::{GpuMaterial, GpuMaterialExt};
 use crate::mesh::{LOD_IMPOSTOR_MESH_LEVELS, impostor_level_error};
 use crate::scene::{Material, MeshId, MeshImpostor};
-use crate::settings::TextureClass;
 use crate::texture::TextureKind;
 
 /// One impostor to install: the model's parts with the materials they draw with, its layout, the
@@ -69,9 +68,7 @@ impl Renderer {
         let ext: Vec<GpuMaterialExt> = install.parts.iter().map(|(_, material)| material.to_gpu_ext()).collect();
         let materials = storage_rows(gpu, "impostor bake materials", bytemuck::cast_slice(&rows));
         let material_ext = storage_rows(gpu, "impostor bake material ext", bytemuck::cast_slice(&ext));
-        let arrays = TextureClass::ALL.map(|class| [TextureKind::Color, TextureKind::Data].map(|kind| self.textures.view(class, kind)));
-        let [[c256, d256], [c512, d512], [c1024, d1024], [c2048, d2048]] = arrays;
-        let bake_materials = BakeMaterials { materials: &materials, material_ext: &material_ext, arrays: [c256, d256, c512, d512, c1024, d1024, c2048, d2048], sampler: &self.texture_sampler };
+        let bake_materials = BakeMaterials { materials: &materials, material_ext: &material_ext, arrays: self.textures.slot_pairs(), sampler: &self.texture_sampler };
         let mesh = BakeMesh { vertices: &self.meshes.vertices, indices: &self.meshes.indices, parts: &parts };
         let Some(row) = self.impostors.bake(&gpu.device, &gpu.queue, install.class, &mesh, &bake_materials, &bounds, install.layout)? else { return Ok(None) };
         let meshes: Vec<MeshId> = entries.iter().map(|(mesh, _, _)| *mesh).collect();

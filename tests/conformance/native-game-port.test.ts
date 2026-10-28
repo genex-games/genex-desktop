@@ -1539,7 +1539,7 @@ describe("where a capture came from", () => {
     assert.deepEqual((await taking).provenance.outputSize, { width: 64, height: 64 });
   });
 
-  it("a capture size outside whole pixels in 64..4096 is refused before anything is sent", async () => {
+  it("a capture size outside whole pixels in 64..8192 is refused before anything is sent", async () => {
     const hostile = [
       { width: 63, height: 64 },
       { width: 64, height: NATIVE_CAPTURE_MAX_PX + 1 },

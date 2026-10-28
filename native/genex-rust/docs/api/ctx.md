@@ -37,9 +37,13 @@ that name alone. The pipeline cache counts toward the 64 MiB. The `.sav` suffix 
 genex's slot bodies, which load lazily on the web, so name your own files otherwise.
 
 `world_size` is the game's logical size on every screen: touches, the pointer, the HUD's points
-and a capture's default size are measured in it. It is not the resolution: Live frames are drawn
-at the window's own pixels (capped per device class), so a larger window is sharper, never a
-stretched picture, and a capture is drawn at the world size unless a check asks for another.
+and a capture's default size are measured in it (at most 4096 a side, so a manifest loads in a
+browser too). It is not the resolution. On a native desktop at `high` or `ultra` (TAA) Live
+draws the window's own pixels, up to 8192 a side, rendering a share of them and upscaling the
+rest; at `low` and `medium` (MSAA), in a browser and on a phone it draws the class's reference
+pixels (1080p or 1440p, a phone's screen at 0.6-0.75) and the window stretches them. A capture is
+drawn at the world size unless a check asks for another (`capture --size`, up to 8192 natively).
+`resolution.md` has the table.
 
 `Game::fit` says how the world meets a window of another aspect (keep `genex.toml` `[game] fit`
 the same; another word is refused `invalid-fit`). `Fit::Letterbox`, the default, keeps black bars.

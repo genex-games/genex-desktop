@@ -354,7 +354,7 @@ impl Renderer {
     /// the probe's box) and its visible lists (the casters' at view 1).
     fn probe_shadow_group(&self, uniform: &wgpu::BufferBinding<'_>, visible: &wgpu::BufferBinding<'_>) -> BindGroup {
         let t = &self.tables;
-        let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
+        let color_classes = self.textures.slot_views(TextureKind::Color);
         let mut entries = vec![
             wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(uniform.clone()) },
             entry(1, t.instances.get()),

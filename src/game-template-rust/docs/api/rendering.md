@@ -4,7 +4,7 @@ Every type and call in one line:
 
 ```rust
 use genex::render::{ClassOverride, DeviceClass, Exposure, FormFactor, LodConfig, Metering, PerformanceTier};
-use genex::render::{QualityPreset, RenderConfig, Tonemap, UpscaleMode, lock_upscale, settings_panel};
+use genex::render::{QualityPreset, RenderConfig, ResolutionPreset, Tonemap, UpscaleMode, lock_upscale, settings_panel};
 game.render_settings(RenderConfig::new().preset(QualityPreset::Medium)); // or RenderConfig::from_build()
 config.tonemap(Tonemap::AgxPunchy).exposure(Exposure::auto().compensation(0.5).metering(Metering::Ground));
 config.upscale(UpscaleMode::Quality); config.upscale_locked(UpscaleMode::Native);
@@ -45,6 +45,8 @@ resolution moves below the mode to hold the frame-rate target (30 or 60: frames 
 1080p rendered. Phones are capped whatever the preset:
 256 lights, at most one shadowed spot, TAA only on `mobile-high` at `high` and up, and no AO or contact
 shadows while the world pass is multisampled.
+
+Output sides, texture classes and budgets: `docs/api/resolution.md`.
 
 The look's `tonemapper`: `khronos-neutral` (default) keeps
 authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx` is muted;
@@ -140,8 +142,7 @@ in a few pixels). `state().volatile.render` (class, preset, scale, `features`,
 Rules for agents:
 
 - Never hard-code `ultra`, a resolution, a render scale or an upscaling mode (only a photo mode
-  holds Native), and never read render settings in a simulation hook. Make content cheap at `low`
-  and let presets add to it.
+  or a resolution tier holds Native); never read render settings in simulation.
 - Never switch `shadows`, `meshlets` or `occlusion` off to save frame time, nor ask for more
   cascades than a preset has outside `shadows_at`: presets and class caps already scale them.
 - Test as a phone: `renderSettings` `{set: {deviceClass: "mobile-mid"}}`, `{set: {preset: "low"}}`,

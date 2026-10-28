@@ -486,8 +486,8 @@ export { NativeRefusal, TargetRefusal };
 
 /** Pixel layout of a native capture, rows top-down. */
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
-/** The longest side a capture may have. */
-export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The longest side a capture may have: an 8K frame. */
+export const NATIVE_CAPTURE_MAX_PX = 8192;
 /** The shortest side a capture may be asked to draw at: the world target's smallest. */
 export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes one capture may take. */

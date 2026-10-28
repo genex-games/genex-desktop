@@ -28,11 +28,12 @@ use crate::settings::{
 const MIB: u64 = 1024 * 1024;
 /// One GiB.
 const GIB: u64 = 1024 * MIB;
-/// A native desktop's budget may grow to this share of its GPU-visible memory (one eighth)...
-pub const DESKTOP_BUDGET_MEMORY_DIVISOR: u64 = 8;
-/// ...up to this ceiling (owner decision 2026-10-12 (2): a 36 GB M-series Mac gets 2 GiB, an 8 GB
-/// MacBook Air about 680 MiB, an 8 GB discrete PC 1 GiB).
-pub const DESKTOP_BUDGET_MEMORY_CAP_BYTES: u64 = 2 * GIB;
+/// A native desktop's budget may grow to this share of its GPU-visible memory (a third, WP-9: an
+/// eighth up to 2 GiB held 4096 textures and 8K targets out of every native desktop)...
+pub const DESKTOP_BUDGET_MEMORY_DIVISOR: u64 = 3;
+/// ...up to this ceiling: a 36 GB M-series Mac gets 9 GiB, an 8 GB MacBook Air about 1.8 GiB, an
+/// 8 GB discrete PC about 2.7 GiB, a 128 GB Mac the ceiling.
+pub const DESKTOP_BUDGET_MEMORY_CAP_BYTES: u64 = 12 * GIB;
 /// A phone browser's memory budget never exceeds this, whatever the class.
 pub const WEB_BUDGET_CAP_BYTES: u64 = 256 * MIB;
 /// A phone browser's budget per GB of `navigator.deviceMemory`.
@@ -222,8 +223,15 @@ pub fn reference_resolution(class: DeviceClass) -> (u32, u32) {
 /// The exact target size of a frame rendered at `scale` of `output` (the rule
 /// [`RenderSettings::frame_config`] uses).
 pub fn step_size(output: (u32, u32), scale: f32) -> (u32, u32) {
-    let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, px.max(1));
+    let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, crate::settings::supersampled_side_max(px));
     (side(output.0), side(output.1))
+}
+
+/// The largest render scale `class` draws at under `os` (WP-9): 2 (supersampled,
+/// [`crate::settings::RENDER_SCALE_SUPERSAMPLE_MAX`]) on a native desktop-ultra, 1 everywhere else.
+pub fn render_scale_max(class: DeviceClass, os: TargetOs) -> f32 {
+    let native_ultra = matches!(os, TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux) && class.form == FormFactor::Desktop && class.tier == PerformanceTier::Ultra;
+    if native_ultra { crate::settings::RENDER_SCALE_SUPERSAMPLE_MAX } else { 1.0 }
 }
 
 /// The target size of each of `class`'s DRS steps at `output`, lowest first.
@@ -1105,8 +1113,9 @@ impl LodOverride {
 pub struct ClassOverride {
     /// The preset.
     pub preset: Option<QualityPreset>,
-    /// The nominal render scale (clamped to [`RENDER_SCALE_MIN`]..=1): of the output, or with an
-    /// upscaling mode in force ([`ClassOverride::upscale`]) of the mode's share.
+    /// The nominal render scale (clamped to [`RENDER_SCALE_MIN`]..=[`render_scale_max`]: 2,
+    /// supersampled, on a native desktop-ultra, else 1): of the output, or with an upscaling mode in
+    /// force ([`ClassOverride::upscale`]) of the mode's share.
     pub render_scale: Option<f32>,
     /// The frame-rate target dynamic resolution holds, one of [`crate::drs::FRAME_RATE_TARGETS`].
     pub fps: Option<u32>,
@@ -1126,6 +1135,11 @@ pub struct ClassOverride {
     /// Level-of-detail choices (game systems LOD-06): applied after the preset and before the
     /// switches, held to their ranges and the class's floor.
     pub lod: LodOverride,
+    /// The largest material texture class (WP-9; the cinematic tier's 8192), held to the
+    /// destination's ([`crate::texture::destination_max_class`]: 8192 on a native desktop, 2048 in
+    /// a browser, 1024 on a phone). None keeps the preset's (4096 at `high` and `ultra` on a native
+    /// desktop).
+    pub max_texture_class: Option<crate::settings::TextureClass>,
 }
 
 /// A game's genex.toml `[render]` quality: its preset and its per-class tables.
@@ -1202,8 +1216,11 @@ pub fn profile(facts: &DeviceFacts, class: DeviceClass, game: &RenderOverrides, 
     // pass ([`occlusion_runs_with`]). The settings must not claim it runs.
     quality.occlusion &= occlusion_runs_with(&quality);
     if let Some(scale) = layers.iter().flatten().filter_map(|layer| layer.render_scale).next_back() {
-        quality.render_scale = scale.clamp(RENDER_SCALE_MIN, 1.0);
+        quality.render_scale = scale.clamp(RENDER_SCALE_MIN, render_scale_max(class, facts.os));
     }
+    let budget_bytes = class_budget_bytes(class, facts);
+    let asked_class = layers.iter().flatten().filter_map(|layer| layer.max_texture_class).next_back();
+    quality.textures = crate::texture::native_textures(quality.textures, class, facts.os, budget_bytes, asked_class);
     let target_fps = layers.iter().flatten().filter_map(|layer| layer.fps).next_back().unwrap_or(defaults.target_fps);
     RenderProfile {
         class,
@@ -1212,8 +1229,77 @@ pub fn profile(facts: &DeviceFacts, class: DeviceClass, game: &RenderOverrides, 
         target_fps,
         sustained_fps: defaults.sustained_fps.filter(|fps| *fps < target_fps),
         scene_format: scene_format(class, facts.rg11b10_renderable()),
-        budget_bytes: class_budget_bytes(class, facts),
+        budget_bytes,
         drs_steps: defaults.drs_steps,
+    }
+}
+
+/// An explicit resolution tier (WP-9; `ResolutionPreset` on the wire): every output pixel rendered
+/// natively through TAA, `ultra`, no dynamic resolution, and the texture class the tier names. A
+/// native desktop draws it as named; a browser or a phone holds it to its own caps (2048 or 1024
+/// textures, its budget), so one config is right everywhere.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResolutionPreset {
+    /// A 3840x2160 output drawn natively, 4096 textures, 60 fps.
+    Native4k,
+    /// A 7680x4320 output drawn natively, 8192 textures, 30 fps: stills, trailers and photo modes.
+    Cinematic8k,
+}
+
+impl ResolutionPreset {
+    /// Every tier, smallest first.
+    pub const ALL: [ResolutionPreset; 2] = [ResolutionPreset::Native4k, ResolutionPreset::Cinematic8k];
+
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ResolutionPreset::Native4k => "native-4k",
+            ResolutionPreset::Cinematic8k => "cinematic-8k",
+        }
+    }
+
+    /// The tier spelled `wire`, if any.
+    pub fn from_wire(wire: &str) -> Option<ResolutionPreset> {
+        ResolutionPreset::ALL.into_iter().find(|tier| tier.wire() == wire)
+    }
+
+    /// The output the tier is measured and captured at (`capture --size`).
+    pub const fn output(self) -> (u32, u32) {
+        match self {
+            ResolutionPreset::Native4k => (3840, 2160),
+            ResolutionPreset::Cinematic8k => (7680, 4320),
+        }
+    }
+
+    /// The largest material texture class the tier asks for.
+    pub const fn texture_class(self) -> crate::settings::TextureClass {
+        match self {
+            ResolutionPreset::Native4k => crate::settings::TextureClass::S4096,
+            ResolutionPreset::Cinematic8k => crate::settings::TextureClass::S8192,
+        }
+    }
+
+    /// The frame rate the tier holds.
+    pub const fn target_fps(self) -> u32 {
+        match self {
+            ResolutionPreset::Native4k => 60,
+            ResolutionPreset::Cinematic8k => 30,
+        }
+    }
+
+    /// The class table the tier is ([`profile`] merges it like any other): `ultra`, render scale 1
+    /// under the Native upscaling mode, dynamic resolution off, the tier's texture class and rate.
+    pub fn class_override(self) -> ClassOverride {
+        ClassOverride {
+            preset: Some(QualityPreset::Ultra),
+            render_scale: Some(1.0),
+            fps: Some(self.target_fps()),
+            upscale: Some(crate::upscale::UpscaleMode::Native),
+            dynamic_resolution: Some(false),
+            max_texture_class: Some(self.texture_class()),
+            ..ClassOverride::default()
+        }
     }
 }
 

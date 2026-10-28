@@ -622,8 +622,8 @@ export type GameBoxProblem = (typeof GameBoxProblem)[keyof typeof GameBoxProblem
 
 /** Pixel layout of a capture file in `state/captures/<seq>.bgra`, rows top-down: what `computePixelStats` reads. */
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
-/** The longest side a capture may have; a reply declaring more is refused before any read. */
-export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The longest side a capture (and a native `ready.size`) may have, an 8K frame (genex-core's `NATIVE_MAX_WORLD_PX`); a reply declaring more is refused before any read. */
+export const NATIVE_CAPTURE_MAX_PX = 8192;
 /** The shortest side a capture may be asked to draw at: the world target's smallest (`MIN_WORLD_PX`). */
 export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes `readRegularFile` will take for one capture. */
@@ -817,7 +817,7 @@ export const NativeGpuBound = {
   WgslTooLarge: "wgsl-too-large",
   /** An empty buffer, or one above the WebGPU-core storage binding size. */
   BufferTooLarge: "buffer-too-large",
-  /** A texture above 4096 × 4096 × 4 bytes. */
+  /** A texture above the destination's cap: 8192 × 8192 × 4 bytes natively, 4096 × 4096 × 4 on the web. */
   TextureTooLarge: "texture-too-large",
   /** One frame's uploads above the per-frame budget. */
   UploadBudget: "upload-budget",
@@ -1383,7 +1383,7 @@ export interface NativeCaptureSize {
   height: number;
 }
 
-/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..4096. */
+/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..8192. */
 export function isNativeCaptureSize(value: unknown): value is NativeCaptureSize {
   const side = (n: unknown) =>
     Number.isSafeInteger(n) && Number(n) >= NATIVE_CAPTURE_MIN_PX && Number(n) <= NATIVE_CAPTURE_MAX_PX;

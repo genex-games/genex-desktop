@@ -97,6 +97,8 @@ genex-platform-desktop = { workspace = true }
 
 [dev-dependencies]
 trybuild = { workspace = true }
+# The engine camera lens's WGSL is validated as WebGPU core in its unit tests (`camera_lens.rs`).
+naga = { workspace = true }
 
 # The plan's pond snippet: compiled by `cargo test` (the facade's pass case), never run.
 [[example]]

@@ -206,15 +206,16 @@ const REFRESHED_GROUPS_KEPT: usize = 4;
 /// The device class texture arrays are sized for before the presenter names one (texture
 /// quality is off until a quality asks, so it sizes nothing then).
 const TEXTURE_DEFAULT_CLASS: DeviceClass = DeviceClass::new(FormFactor::Desktop, crate::device_class::PerformanceTier::High);
-/// The larger size classes' arrays in [`FRAME_MATERIAL_CLASS_BINDINGS`] order: colour then data
-/// per class past class 0.
-const MATERIAL_CLASS_ARRAYS: [(TextureClass, TextureKind); 6] = [
-    (TextureClass::S512, TextureKind::Color),
-    (TextureClass::S512, TextureKind::Data),
-    (TextureClass::S1024, TextureKind::Color),
-    (TextureClass::S1024, TextureKind::Data),
-    (TextureClass::S2048, TextureKind::Color),
-    (TextureClass::S2048, TextureKind::Data),
+/// The larger size class slots' arrays in [`FRAME_MATERIAL_CLASS_BINDINGS`] order: colour then
+/// data per slot past slot 0 (which class each slot holds is the arrays' ladder,
+/// `texture::class_ladder`).
+const MATERIAL_CLASS_ARRAYS: [(usize, TextureKind); 6] = [
+    (1, TextureKind::Color),
+    (1, TextureKind::Data),
+    (2, TextureKind::Color),
+    (2, TextureKind::Data),
+    (3, TextureKind::Color),
+    (3, TextureKind::Data),
 ];
 /// Where the frame's pre-exposure sits in the frame uniforms: `GpuFrame::cascade_splits[2]`, the
 /// legacy frame's unused lane (`lighting/output.wgsl` reads it; 0 on the legacy path). Auto
@@ -3541,9 +3542,7 @@ impl Renderer {
             .iter()
             .map(|(entry, material)| BakePart { first_index: entry.first_index, index_count: entry.index_count, base_vertex: entry.base_vertex, material: *material })
             .collect();
-        let arrays = TextureClass::ALL.map(|class| [TextureKind::Color, TextureKind::Data].map(|kind| self.textures.view(class, kind)));
-        let [[c256, d256], [c512, d512], [c1024, d1024], [c2048, d2048]] = arrays;
-        let arrays = [c256, d256, c512, d512, c1024, d1024, c2048, d2048];
+        let arrays = self.textures.slot_pairs();
         let materials = BakeMaterials { materials: self.tables.materials.get(), material_ext: self.tables.material_ext.get(), arrays, sampler: &self.texture_sampler };
         let mesh = BakeMesh { vertices: &self.meshes.vertices, indices: &self.meshes.indices, parts: &bake_parts };
         self.impostors.bake(&gpu.device, &gpu.queue, class, &mesh, &materials, &bounds, layout)
@@ -3691,6 +3690,14 @@ impl Renderer {
     }
 
     /// Fix the arrays to the quality and device class in effect, on the first texture.
+    /// The smallest side a compressed texture loads at (WP-9): slot 1's class of the ladder in
+    /// effect (the fixed arrays', else the quality's), since slot 0 is always RGBA8. 512 on the
+    /// web's ladder, 1024 under the native 4096 and 8192 ladders; a smaller file's image loads instead.
+    pub fn compressed_min_side(&self) -> u32 {
+        let quality = if self.textures_fixed { self.textures.quality() } else { self.quality.textures };
+        crate::texture::class_ladder(quality.max_class)[1].side()
+    }
+
     fn fix_texture_arrays(&mut self, device: &Device) {
         if !self.textures_fixed {
             let class = self.class.unwrap_or(TEXTURE_DEFAULT_CLASS);
@@ -3982,10 +3989,13 @@ impl Renderer {
         // ultra's RCAS (TaaSharpen) runs, as it does at scale 1.
         let tonemapped = if taau { output } else { render };
         let upscaled = tonemapped != output;
-        let fsr = if crate::post::fsr::LANDED { crate::post::fsr::passes(&self.quality, tonemapped, output) } else { FsrPasses::default() };
+        // Supersampled (WP-9, a scene larger than the output): the tonemap's luminance-weighted
+        // bilinear filter resolves it, never EASU, RCAS or a sharpened stretch built to enlarge.
+        let supersampled = tonemapped.0 > output.0 || tonemapped.1 > output.1;
+        let fsr = if crate::post::fsr::LANDED && !supersampled { crate::post::fsr::passes(&self.quality, tonemapped, output) } else { FsrPasses::default() };
         let fsr_runs = fsr.easu || fsr.rcas;
         // The tonemap's own sharpened stretch stands in for FSR1 only where it has not landed.
-        let sharpened = upscaled && self.quality.upscaler != Upscaler::Bilinear && !fsr_runs;
+        let sharpened = upscaled && !supersampled && self.quality.upscaler != Upscaler::Bilinear && !fsr_runs;
         let readers = self.hdr_readers || auto_exposure(&self.look, &self.quality);
         let resolve_pass = weighted && (readers || sharpened);
         ScenePath {
@@ -5473,7 +5483,7 @@ impl Renderer {
         ]);
         let [light_ext, light_bins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
         entries.extend([entry(light_ext, t.light_ext.get()), entry(light_bins, t.light_bins.get()), entry(material_ext, t.material_ext.get())]);
-        let class_views = MATERIAL_CLASS_ARRAYS.map(|(class, kind)| self.textures.view(class, kind));
+        let class_views = MATERIAL_CLASS_ARRAYS.map(|(slot, kind)| self.textures.slot_view(slot, kind));
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
@@ -5486,7 +5496,7 @@ impl Renderer {
             let entries: Vec<wgpu::BindGroupEntry<'_>> = entries.iter().filter(|entry| !material_array_binding(entry.binding)).cloned().collect();
             self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("impostor frame"), layout: &self.layouts.impostor_frame, entries: &entries })
         });
-        let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
+        let color_classes = self.textures.slot_views(TextureKind::Color);
         let mut shadow_entries =
             vec![entry(0, &self.frame_uniforms), entry(1, t.instances.get()), entry(2, t.visible.get()), entry(3, t.slot_base.get())];
         shadow_entries.extend([entry(SHADOW_MASK_MATERIALS, t.materials.get()), entry(SHADOW_MASK_MATERIAL_EXT, t.material_ext.get())]);
@@ -5841,16 +5851,22 @@ impl Renderer {
     }
 
     /// The colour texture array of size class `class` (`Rgba8UnormSrgb`; a 1 × 1 placeholder
-    /// before its first texture): immediate quads sample every class.
+    /// before its first texture).
     pub fn color_class_view(&self, class: TextureClass) -> &TextureView {
         self.textures.view(class, TextureKind::Color)
     }
 
-    /// The material texture views the frame group binds: class 0's colour and data arrays, then
+    /// The colour texture array bound in class slot `slot` (`Rgba8UnormSrgb`; a 1 × 1 placeholder
+    /// before its first texture): immediate quads sample every slot, whichever class it holds.
+    pub fn color_slot_view(&self, slot: usize) -> &TextureView {
+        self.textures.slot_view(slot, TextureKind::Color)
+    }
+
+    /// The material texture views the frame group binds: slot 0's colour and data arrays, then
     /// [`MATERIAL_CLASS_ARRAYS`]'.
     fn texture_views(&self) -> [TextureView; 8] {
-        let base = [(TextureClass::S256, TextureKind::Color), (TextureClass::S256, TextureKind::Data)];
-        let mut views = base.into_iter().chain(MATERIAL_CLASS_ARRAYS).map(|(class, kind)| self.textures.view(class, kind).clone());
+        let base = [(0, TextureKind::Color), (0, TextureKind::Data)];
+        let mut views = base.into_iter().chain(MATERIAL_CLASS_ARRAYS).map(|(slot, kind)| self.textures.slot_view(slot, kind).clone());
         std::array::from_fn(|_| views.next().unwrap_or_else(|| unreachable!("eight material arrays")))
     }
 

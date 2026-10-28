@@ -51,6 +51,7 @@ pub mod ui;
 /// and drawn with `frame.character`.
 pub mod animation;
 mod camera;
+mod camera_lens;
 mod character;
 mod ctx;
 mod decal;

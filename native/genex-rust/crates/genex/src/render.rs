@@ -74,7 +74,10 @@ use serde_json::{Map as JsonMap, Value, json};
 
 pub use genex_render::budget::BudgetInput;
 pub use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, ScoreLevel, TargetOs, WebHints};
-pub use genex_render::presets::{ClassDefaults, ClassOverride, RenderOverrides, RenderProfile, preset_quality};
+pub use genex_render::presets::{ClassDefaults, ClassOverride, RenderOverrides, RenderProfile, ResolutionPreset, preset_quality};
+/// The engine camera lens (WP-9): vignette, grain, chromatic aberration and barrel distortion as
+/// one `PassStage::Post` pass, `game.gpu_pass("camera-lens", PassStage::Post, CameraLens::bodycam())`.
+pub use crate::camera_lens::CameraLens;
 /// An upscaling mode (lane UQ): Native, Quality, Balanced or Performance, the share of the window a
 /// frame renders ([`RenderConfig::upscale`], [`lock_upscale`]).
 pub use genex_render::upscale::UpscaleMode;
@@ -89,7 +92,7 @@ pub use genex_render::settings::LodQuality;
 pub use genex_render::settings::{
     AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, ExposureMode, LdrReason, LightQuality, Look, Meshlets, Metering,
     PresetChoice, Quality, QualityPreset, RenderFeature, RenderSettings, SceneFormat, ShadowFilter, ShadowFormat, ShadowQuality,
-    Tonemapper, Upscaler,
+    TextureClass, Tonemapper, Upscaler,
 };
 /// TAA's resource knobs in a [`Quality`] (`quality.taa`: the jitter cycle, the accumulation floor
 /// and the texture LOD bias; RQ5). Whether TAA runs is [`AntiAliasing`] and the `taa` switch.
@@ -710,6 +713,27 @@ impl RenderConfig {
         match self.quality.classes.iter_mut().find(|(named, _)| *named == class) {
             Some((_, table)) => table.lod = table.lod.over(lod),
             None => self.quality.classes.push((class, ClassOverride { lod, ..ClassOverride::default() })),
+        }
+        self
+    }
+
+    /// The config at an explicit resolution tier (WP-9) on every desktop class: `ultra`, every
+    /// output pixel rendered (Native upscaling, no dynamic resolution) and the tier's texture class
+    /// ([`ResolutionPreset::Native4k`] 4096, [`ResolutionPreset::Cinematic8k`] 8192). A browser and
+    /// a phone hold it to their caps. The person's panel may still change the preset and the mode.
+    pub fn resolution(mut self, tier: ResolutionPreset) -> RenderConfig {
+        let table = tier.class_override();
+        self.quality.preset = table.preset;
+        self.upscale = UpscaleConfig { mode: table.upscale, locked: false };
+        for class in DeviceClass::ALL.into_iter().filter(|class| class.form == FormFactor::Desktop) {
+            match self.quality.classes.iter_mut().find(|(named, _)| *named == class) {
+                Some((_, held)) => {
+                    held.max_texture_class = table.max_texture_class;
+                    held.dynamic_resolution = table.dynamic_resolution;
+                    held.fps = table.fps;
+                }
+                None => self.quality.classes.push((class, table.clone())),
+            }
         }
         self
     }
@@ -1502,7 +1526,8 @@ impl RenderControl {
     /// render scale, else all of the mode's share (the mode replaces the class's nominal scale).
     fn nominal_within_mode(&self, class: DeviceClass) -> f32 {
         let game = self.config.quality.class(class).and_then(|table| table.render_scale);
-        self.person.render_scale.or(game).map_or(1.0, |scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0))
+        let most = genex_render::presets::render_scale_max(class, self.facts.os);
+        self.person.render_scale.or(game).map_or(1.0, |scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, most))
     }
 
     /// Whether dynamic resolution moves Live's scale: the person's switch, else the game's class
@@ -1700,7 +1725,8 @@ impl RenderControl {
         if thermal {
             self.drs.set_thermal(true, Duration::ZERO);
         }
-        self.scale = self.verb.scale_lock.map_or_else(|| self.drs.scale(), quantized);
+        let most = genex_render::presets::render_scale_max(class, self.facts.os);
+        self.scale = self.verb.scale_lock.map_or_else(|| self.drs.scale(), |lock| quantized(lock.min(most)));
         self.live = live;
     }
 
@@ -1794,7 +1820,8 @@ impl RenderControl {
             push_switch(&mut self.verb.switches, *switch);
         }
         if let Some(lock) = change.render_scale_lock {
-            self.verb.scale_lock = lock.map(|scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0));
+            // Supersampled locks (WP-9) are held to the class's own most when the frame resolves.
+            self.verb.scale_lock = lock.map(|scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, genex_render::settings::RENDER_SCALE_SUPERSAMPLE_MAX));
         }
         if let Some(budget) = change.frame_budget_ms {
             self.verb.frame_budget_ms = budget.map(|ms| ms.clamp(FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX));
@@ -1948,7 +1975,7 @@ impl RenderControl {
             self.last_gpu_ms = Some(*ms);
         }
         if let Some(lock) = self.verb.scale_lock {
-            self.scale = quantized(lock);
+            self.scale = quantized(lock.min(genex_render::presets::render_scale_max(self.live_class(), self.facts.os)));
             return;
         }
         let target = self.drs.gpu_target_ms();
@@ -2145,7 +2172,7 @@ fn person_from(entry: &Value) -> ClassOverride {
         .unwrap_or_default();
     ClassOverride {
         preset: entry["preset"].as_str().and_then(QualityPreset::from_wire),
-        render_scale: entry["renderScale"].as_f64().map(|scale| (scale as f32).clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0)),
+        render_scale: entry["renderScale"].as_f64().map(|scale| (scale as f32).clamp(genex_render::settings::RENDER_SCALE_MIN, genex_render::settings::RENDER_SCALE_SUPERSAMPLE_MAX)),
         fps: entry[PERSON_FPS_KEY].as_u64().and_then(|fps| u32::try_from(fps).ok()).filter(|fps| FRAME_RATE_TARGETS.contains(fps)),
         switches,
         lod: person_lod(entry),
@@ -3043,6 +3070,24 @@ mod tests {
         let mut phone = controlled(RenderConfig::new().upscale(UpscaleMode::Quality), "mobile-high", QualityPreset::Medium);
         phone.set_live_output((786, 1704), Some((1179, 2556)));
         assert_eq!(phone.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Game)), "the game's default applies on phones too");
+    }
+
+    /// WP-9: a game at an explicit resolution tier draws a 4K window natively at `ultra` with 4096
+    /// textures (8192 at the cinematic tier), no dynamic resolution, whatever the class it probed.
+    #[test]
+    fn a_resolution_tier_renders_every_pixel_at_ultra_with_its_texture_class() {
+        for tier in ResolutionPreset::ALL {
+            let mut control = controlled(RenderConfig::new().resolution(tier), "desktop-high", QualityPreset::High);
+            control.apply(&RenderChange { preset: Some(None), ..RenderChange::default() });
+            control.set_live_output(tier.output(), Some(tier.output()));
+            let profile = control.live_profile();
+            assert_eq!(profile.preset, QualityPreset::Ultra, "{}", tier.wire());
+            assert_eq!(profile.quality.textures.max_class, tier.texture_class(), "{}", tier.wire());
+            assert_eq!(profile.target_fps, tier.target_fps());
+            assert_eq!(control.upscale(), Some((UpscaleMode::Native, UpscaleSource::Game)), "{}", tier.wire());
+            assert_eq!(control.live_asked().scale, 1.0, "{}: every output pixel rendered", tier.wire());
+            assert_eq!(ResolutionPreset::from_wire(tier.wire()), Some(tier));
+        }
     }
 
     /// Lane UQ: the panel's Max is ultra drawn natively; leaving it for another preset leaves native

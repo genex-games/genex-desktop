@@ -28,8 +28,8 @@ scripts, cargo configuration or renderer internals.
 
 ## Topics
 
-This index holds the hooks and rules; each other topic is a page in `docs/api/`. Read each one a
-change touches (nearly every game needs Ctx and Drawing).
+This index holds the hooks and rules; each topic is a page in `docs/api/`. Read each one a
+change touches.
 
 | Topic | Page | What it covers |
 |-|-|-|
@@ -52,7 +52,8 @@ change touches (nearly every game needs Ctx and Drawing).
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
 | Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
-| Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
+| Rendering | `docs/api/rendering.md` | Presets, classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
+| Resolution | `docs/api/resolution.md` | Sides, textures, budgets. |
 | Grading and the lens | `docs/api/grading.md` | Build order, grade, white balance, LUTs, depth of field, motion blur. |
 | Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |

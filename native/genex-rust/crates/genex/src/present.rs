@@ -90,6 +90,7 @@ mod posed;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -471,8 +472,8 @@ impl Uploads for Resilient {
     }
 
     fn compressed_min_side(&self) -> u32 {
-        // Class 0 is always RGBA8 (`ClassArrays::family`): a family starts at the next class.
-        genex_render::layout::TEXTURE_SIZE_CLASSES[1]
+        // Class 0 is always RGBA8 (`ClassArrays::family`): a family starts at the next slot's class.
+        self.renderer().renderer().compressed_min_side()
     }
 
     fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
@@ -548,6 +549,34 @@ pub struct AssetCache {
     impostors: impostors::Impostors,
     /// The node-posed models' rigid skins (AN-27).
     posed: posed::Posed,
+    /// GLB textures by content (WP-9): one upload per image however many models hold it.
+    pub(crate) shared_textures: SharedTextures,
+}
+
+/// Textures a GLB uploaded, by content (WP-9): the same image embedded in several GLBs, or their
+/// identical sidecars, uploads once, so a kit of pieces sharing 2k and 4k scans costs one upload
+/// and one layer a scan, not one a piece. Keyed by an FNV-1a 64 digest of the bytes uploaded (a
+/// sidecar file's, or a decoded image's texels and size) and the slot's kind. The presenter never
+/// removes a model's texture, so a held id stays good as long as the cache.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SharedTextures(BTreeMap<u64, Vec<(TextureKind, TextureId)>>);
+
+impl SharedTextures {
+    /// The texture uploaded from content `digest` as `kind`, if any.
+    fn get(&self, digest: u64, kind: TextureKind) -> Option<TextureId> {
+        self.0.get(&digest)?.iter().find(|(held, _)| *held == kind).map(|(_, id)| *id)
+    }
+
+    /// Remember `id` as the upload of content `digest` as `kind`.
+    fn put(&mut self, digest: u64, kind: TextureKind, id: TextureId) {
+        self.0.entry(digest).or_default().push((kind, id));
+    }
+}
+
+/// The content digest of a decoded image: its size, then its texels.
+fn texels_digest(data: &TextureData) -> u64 {
+    let size = [data.width().to_le_bytes(), data.height().to_le_bytes()].concat();
+    genex_core::digest::fnv1a64_from(data.rgba(), genex_core::digest::fnv1a64(&size))
 }
 
 /// A model loaded with authored levels (LOD-07): its cache key, the GLBs it read and the load's
@@ -635,15 +664,19 @@ fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uplo
     if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
         return Ok(Compressed::Absent);
     }
-    load_family_file(&family_file(path, family), path, kind, source, uploads, log)
+    load_family_file(&family_file(path, family), path, kind, (source, uploads), None, log)
 }
 
 /// The family file `file` uploaded as `kind` in place of `path` (a loose image, or a GLB's
 /// `<model>#<image>`): absent when the game ships no such file or it is under the family's
 /// smallest size class (the image is held there by design), refused (logged) when it is
 /// unreadable or the renderer refuses it. A lost device is passed on.
-fn load_family_file(file: &str, path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
+fn load_family_file(file: &str, path: &str, kind: TextureKind, (source, uploads): (&dyn ModelSource, &mut dyn Uploads), shared: Option<&mut SharedTextures>, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
     let Some(bytes) = source.model_bytes(file) else { return Ok(Compressed::Absent) };
+    let digest = genex_core::digest::fnv1a64(&bytes);
+    if let Some(id) = shared.as_ref().and_then(|shared| shared.get(digest, kind)) {
+        return Ok(Compressed::Loaded(id));
+    }
     let texture = match read_ktx2(&bytes) {
         Ok(texture) => texture,
         Err(error) => {
@@ -657,7 +690,12 @@ fn load_family_file(file: &str, path: &str, kind: TextureKind, source: &dyn Mode
     }
     let again = source.static_bytes(file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
     match uploads.add_compressed_texture(&texture, kind, again) {
-        Ok(id) => Ok(Compressed::Loaded(id)),
+        Ok(id) => {
+            if let Some(shared) = shared {
+                shared.put(digest, kind, id);
+            }
+            Ok(Compressed::Loaded(id))
+        }
         Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
         Err(error) => {
             log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
@@ -790,7 +828,7 @@ impl AssetCache {
             Ok(levels) => (levels, None),
             Err(code) => (Vec::new(), Some(code)),
         };
-        let (loaded, refused) = load_model_levels(path, source, uploads, log, (levels, refused))?;
+        let (loaded, refused) = load_model_levels(path, (source, uploads, &mut self.shared_textures), log, (levels, refused))?;
         if let Some(code) = refused {
             log(&format!("model {path:?}: its levels were refused ({}); drawing it whole", code.wire()));
         }
@@ -819,7 +857,7 @@ impl AssetCache {
             let chained = model.and_then(|model| Some((model.path()?, model.lod_options().filter(|lod| lod.chained())?)));
             let loaded = match chained {
                 Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log)?,
-                None => load_model(key, source, uploads, log)?,
+                None => load_model(key, (source, uploads), &mut self.shared_textures, log)?,
             };
             self.models.push((key.to_owned(), loaded));
         }
@@ -1186,10 +1224,26 @@ fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &
     }
 }
 
+/// [`upload_texture`] of a GLB's decoded image, or the texture an identical image already took
+/// ([`SharedTextures`]).
+fn shared_upload(uploads: &mut dyn Uploads, shared: &mut SharedTextures, texture: TextureUpload<'_>, what: &str, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+    let (data, kind, _) = &texture;
+    let digest = texels_digest(data);
+    if let Some(id) = shared.get(digest, *kind) {
+        return Ok(Some(id));
+    }
+    let kind = *kind;
+    let id = upload_texture(uploads, texture, what, log)?;
+    if let Some(id) = id {
+        shared.put(digest, kind, id);
+    }
+    Ok(id)
+}
+
 /// Load one model: every part's mesh and the textures its materials sample. A missing or
 /// malformed file, or a refused mesh, refuses the model (logged); a refused texture only its slot.
-pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
-    Ok(load_model_levels(path, source, uploads, log, (Vec::new(), None))?.0)
+pub(crate) fn load_model(path: &str, (source, uploads): (&dyn ModelSource, &mut dyn Uploads), shared: &mut SharedTextures, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+    Ok(load_model_levels(path, (source, uploads, shared), log, (Vec::new(), None))?.0)
 }
 
 /// Each authored level's parts with its switch distance (LOD-07), read from the game's assets:
@@ -1274,8 +1328,7 @@ fn parts_sphere(parts: &ModelParts) -> [f32; 4] {
 /// refusal.
 fn load_model_levels(
     path: &str,
-    source: &dyn ModelSource,
-    uploads: &mut dyn Uploads,
+    (source, uploads, shared): (&dyn ModelSource, &mut dyn Uploads, &mut SharedTextures),
     log: &mut dyn FnMut(&str),
     (levels, refused): (Vec<(ModelParts, f32)>, Option<LodRefusalCode>),
 ) -> Result<(Option<LoadedModel>, Option<LodRefusalCode>), RenderError> {
@@ -1335,7 +1388,7 @@ fn load_model_levels(
         }
         triangles = triangles.saturating_add(triangles_of(&part.mesh));
         let material = match part.material {
-            Some(material) => Some(glb_textures(GlbSource { path, bytes: &bytes, still, glb: &glb }, &material, &mut images, (source, uploads), log)?),
+            Some(material) => Some(glb_textures(GlbSource { path, bytes: &bytes, still, glb: &glb }, &material, &mut images, (source, uploads, &mut *shared), log)?),
             None => None,
         };
         parts.push(ModelPart { mesh, material });
@@ -1373,11 +1426,11 @@ enum Sidecar {
 /// Image `image` of `model` uploaded as `kind` from its sidecar in the renderer's family (C-14);
 /// `None` when the GLB names no sidecar for it, the renderer stores RGBA8 or the family file is
 /// not shipped, so the embedded image loads. A lost device is passed on.
-fn upload_sidecar(model: &GlbSource<'_>, image: u32, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<Sidecar>, RenderError> {
+fn upload_sidecar(model: &GlbSource<'_>, (image, kind): (u32, TextureKind), (source, uploads, shared): (&dyn ModelSource, &mut dyn Uploads, &mut SharedTextures), log: &mut dyn FnMut(&str)) -> Result<Option<Sidecar>, RenderError> {
     let family = uploads.texture_family();
     let file = model.glb.sidecars().stem(image, kind).filter(|_| family != TextureFamily::Rgba8).and_then(|stem| sidecar_file(model.path, stem, family));
     let Some(file) = file else { return Ok(None) };
-    match load_family_file(&file, &format!("{}#{image}", model.path), kind, source, uploads, log)? {
+    match load_family_file(&file, &format!("{}#{image}", model.path), kind, (source, uploads), Some(shared), log)? {
         Compressed::Loaded(id) => Ok(Some(Sidecar::Loaded(id, family))),
         Compressed::Absent => Ok(None),
         Compressed::Refused => Ok(Some(Sidecar::Refused)),
@@ -1392,14 +1445,14 @@ fn glb_textures(
     model: GlbSource<'_>,
     material: &GlbMaterial,
     images: &mut Vec<(ModelTexture, Option<TextureId>)>,
-    (source, uploads): (&dyn ModelSource, &mut dyn Uploads),
+    (source, uploads, shared): (&dyn ModelSource, &mut dyn Uploads, &mut SharedTextures),
     log: &mut dyn FnMut(&str),
 ) -> Result<GlbMaterial<TextureId>, RenderError> {
     for (image, kind) in material.textures() {
         if images.iter().any(|(done, _)| done.image == image && done.kind == kind) {
             continue;
         }
-        let refused = match upload_sidecar(&model, image, kind, source, uploads, log)? {
+        let refused = match upload_sidecar(&model, (image, kind), (source, uploads, &mut *shared), log)? {
             Some(Sidecar::Loaded(id, family)) => {
                 images.push((ModelTexture { image, kind, origin: TextureOrigin::Family(family), issue: None }, Some(id)));
                 continue;
@@ -1410,7 +1463,7 @@ fn glb_textures(
         let what = format!("model {:?} image {image}", model.path);
         let again = model.still.map(|bytes| -> TextureSource { Arc::new(move || GlbModel::image_from_glb(bytes, image)) });
         let id = match GlbModel::image_from_glb(model.bytes, image) {
-            Ok(data) => upload_texture(uploads, (&data, kind, again), &what, log)?,
+            Ok(data) => shared_upload(uploads, shared, (&data, kind, again), &what, log)?,
             Err(error) => {
                 log(&format!("{what} refused: {error}"));
                 None
