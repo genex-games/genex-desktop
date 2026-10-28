@@ -23,8 +23,8 @@
 use std::path::PathBuf;
 
 use genex_physics::{
-    BodyFilter, BodyState, PhysicsError, PhysicsEvent, PhysicsFailure, QueryAnswer, StaticWorld, StepResult, World, WorldDesc,
-    build_id, build_id_without_target,
+    BodyFilter, BodyState, CORE_VERSION, PhysicsError, PhysicsEvent, PhysicsFailure, QueryAnswer, StaticWorld, StepResult, World,
+    WorldDesc, build_id, build_id_without_target,
 };
 use serde_json::{Map, Value, json};
 
@@ -958,6 +958,19 @@ fn the_readme_names_every_pinned_vector() {
         assert!(readme.contains(&format!("`{name}`")), "README.md lists {name}");
     }
     assert!(readme.contains(&build_id_without_target()), "README.md names the build the pins are for");
+}
+
+#[test]
+fn both_packages_are_released_at_the_core_version_the_build_names() {
+    let js = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("js");
+    let read = |file: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(js.join(file)).expect("a package manifest")).expect("JSON")
+    };
+    let (wasm, native) = (read("package.json"), read("native-package.json"));
+    assert_eq!(wasm["version"], json!(CORE_VERSION), "@genex-ai/physics");
+    assert_eq!(native["version"], json!(CORE_VERSION), "@genex-ai/physics-native");
+    assert_eq!(native["dependencies"]["@genex-ai/physics"], json!(CORE_VERSION), "the native package's WASM package");
+    assert!(build_id_without_target().starts_with(&format!("genex-physics/{CORE_VERSION}+")), "{}", build_id_without_target());
 }
 
 #[test]

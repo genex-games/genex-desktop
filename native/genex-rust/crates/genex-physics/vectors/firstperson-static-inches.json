@@ -1,6 +1,6 @@
 {
   "contract": "1.0",
-  "build": "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det",
+  "build": "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det",
   "name": "firstperson-static-inches",
   "world": {
     "contract": "1.0",
@@ -1373,7 +1373,7 @@
       "repeat": 30,
       "expect": {
         "stateHash": "27a99c5e293541fb",
-        "physicsHash": "0eacfd09c986bd69"
+        "physicsHash": "a90808a50507b1ed"
       }
     },
     {
