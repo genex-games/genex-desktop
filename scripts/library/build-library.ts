@@ -5,7 +5,7 @@
  *     Expand `picks.ts` from Poly Haven's API into `src/plugins/library/catalog.json`: name, tags,
  *     authors, real size, and every upstream file pinned by size and md5. A built entry whose
  *     upstream is unchanged keeps its build record.
- *   node scripts/library/build-library.ts build [--only <id,...>] [--tiers 2k,4k] [--out <dir>]
+ *   node scripts/library/build-library.ts build [--only <id,...>|starter] [--tiers 2k,4k] [--out <dir>]
  *     Download each entry's pinned sources (md5 and size checked, cached in .studio-dev/), process
  *     them (a material's maps kept as JPEG with a Basis UASTC KTX2 twin each; a sky's HDRIs; a model
  *     packed into one GLB, decimated to its budget, levels baked in) and write the pack's flat files
@@ -61,7 +61,7 @@ import {
   skyFacts,
   withLevels,
 } from "./pack.ts";
-import { LIBRARY_PICKS, type LibraryPick, MODEL_TIER, PICK_TIERS } from "./picks.ts";
+import { LIBRARY_PICKS, type LibraryPick, MODEL_TIER, PICK_TIERS, STARTER_IDS } from "./picks.ts";
 
 const REPO = path.resolve(import.meta.dirname, "../..");
 const CATALOG_FILE = path.join(REPO, "src/plugins/library/catalog.json");
@@ -477,7 +477,9 @@ async function main(): Promise<void> {
     options: { only: { type: "string" }, tiers: { type: "string" }, tier: { type: "string" }, out: { type: "string" } },
   });
   const [command, argument = ""] = positionals;
-  const only = values.only ? new Set(values.only.split(",")) : null;
+  const only = values.only
+    ? new Set(values.only.split(",").flatMap((id) => (id === "starter" ? STARTER_IDS : [id])))
+    : null;
   const out = path.resolve(values.out ?? PACK_DIR);
   const tiers = (values.tiers?.split(",") ?? [LibraryTier.TwoK, LibraryTier.FourK]) as LibraryTier[];
   if (command === "pin") return pin(only);

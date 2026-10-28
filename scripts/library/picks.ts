@@ -287,3 +287,62 @@ const SLOTS: SlotPick[] = [
 
 /** Every pick, in catalog order. */
 export const LIBRARY_PICKS: readonly LibraryPick[] = [...MATERIALS, ...SKIES, ...MODELS, ...SLOTS];
+
+/**
+ * The starter subset (`build-library.ts build --only starter`): about 25 materials, 6 skies and 15
+ * props that any game uses, built first so a pack is useful before the full set is.
+ */
+export const STARTER_IDS: readonly string[] = [
+  ...[
+    "snow_02",
+    "brown_mud_leaves_01",
+    "forrest_ground_01",
+    "rocky_trail_02",
+    "leafy_grass",
+    "asphalt_01",
+    "asphalt_06",
+    "gravel_stones",
+    "sand_01",
+    "beige_wall_001",
+    "plastered_wall",
+    "concrete_wall_003",
+    "concrete_floor_worn_001",
+    "concrete_floor_02",
+    "red_brick",
+    "brick_wall_001",
+    "interior_tiles",
+    "worn_tile_floor",
+    "laminate_floor_02",
+    "old_planks_02",
+    "weathered_brown_planks",
+    "metal_plate",
+    "rust_coarse_01",
+    "corrugated_iron",
+    "brown_leather",
+  ].map((id) => `material/${id}`),
+  ...[
+    "kloofendal_48d_partly_cloudy_puresky",
+    "noon_grass",
+    "overcast_soil_puresky",
+    "snowy_park_01",
+    "lilienstein",
+    "kloppenheim_02",
+  ].map((id) => `sky/${id}`),
+  ...[
+    "painted_wooden_bench",
+    "street_lamp_01",
+    "metal_trash_can",
+    "barrel_01",
+    "wooden_crate_01",
+    "plastic_crate_02",
+    "modular_chainlink_fence",
+    "concrete_road_barrier",
+    "fire_hydrant",
+    "rollershutter_door",
+    "wooden_picnic_table",
+    "woodentable_01",
+    "plastic_monobloc_chair_01",
+    "boulder_01",
+    "steel_frame_shelves_01",
+  ].map((id) => `model/${id}`),
+];
