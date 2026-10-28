@@ -237,12 +237,13 @@ export function mainAgentReachNote(platform: NodeJS.Platform = process.platform)
 }
 
 /**
- * How the session answering the person treats their words sent while it works. Claude Code hands
- * them over at the next tool result, asking only that they be addressed as the turn goes on, and
- * the model saved its answer for the wrap-up while the person watched a silent chat.
+ * How the session answering the person talks with them. A finished tower defense came back as a
+ * report on draw calls and frame rates; and words sent while it worked, which Claude Code hands
+ * over at the next tool result asking only that they be addressed as the turn goes on, were
+ * answered in the wrap-up while the person watched a silent chat.
  */
-export function midTurnReplyNote(): string {
-  return "When the person writes to you while you work, answer them in the chat at once, in a sentence or two, before your next step; then carry on, or change course when they asked you to. They are watching the chat, not your work.";
+export function personSessionNote(): string {
+  return "The person in this chat may not be a programmer, and reads every word: talk about their game in plain words (code, files and performance only when they ask), and keep a finished step's message short: what they can do now and how to play it. When they write to you while you work, answer them in the chat at once, in a sentence or two, before your next step; then carry on, or change course when they asked you to.";
 }
 
 /**

@@ -18,9 +18,9 @@ it.
   `none` left by an earlier publish is not this one's: a draft of a public game sends nothing.
 - Neither applies to a game whose owner keeps its code untouched (see below): it gets no
   `genex-cover` demo.
-- Make the cover in the same turn the game first looks like itself: a small side task beside the
-  build, never a turn of its own. Until a `genex-cover` demo exists, Studio keeps a plain frame of
-  the game as it loads so Publish always shows a cover; yours replaces it.
+- Make the cover when the game is about to be published, never while you build it: building the
+  game comes first. Until a `genex-cover` demo exists, Studio keeps a plain frame of the game as it
+  loads so Publish always shows a cover; yours replaces it.
 - The person can ask for another from Publish: "Make another Genex cover for this game: …" with
   what they want, or "a different moment". Stage a different honest moment (or what they asked
   for), point `genex-cover` at it and shoot it; the new shot shows on Publish's banner, where the

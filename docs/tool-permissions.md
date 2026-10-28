@@ -68,7 +68,8 @@ a mode), which the asking session takes itself. An "always" moves the chat only 
 the person moved to Auto or Bypass while the card waited keeps that mode, and the answer keeps its
 other grants (`#keptGrants`). A switch to Bypass answers every card still waiting that was asked
 while the chat was in another mode (`ToolPermissions.allowInBypass`, `by: mode`, "Allowed in
-Bypass"); a plan, and a card Claude Code asked in Bypass itself, still wait for the person. A lead switches one switch after another (`#switchLead`), each to
+Bypass"); a plan still waits for the person. Bypass asks nothing: what Claude Code still asks in
+Bypass itself (its own safety checks) is allowed by the host at once, with no card (`#ask`). A lead switches one switch after another (`#switchLead`), each to
 `leadModeFor` the chat's mode when it runs, so a later pick wins; a pick made while a lead starts is
 applied once its control arrives. Each question is routed by the host (`#leadAsk`) for the chat's
 mode at that moment, whether or not the person is talking to it: Bypass allows one running in
@@ -123,6 +124,12 @@ input closes (a pick made while the session starts is applied once that control 
 `ChatPermissionService#onControl`), and a refusal comes back as `ModeSwitchFailure.AutoUnavailable`, the only case the
 host shows beside the picker.
 
+Every session runs on Claude Code's own system prompt (`claudeCodeSystemPrompt`: the `claude_code`
+preset, which the Agent SDK otherwise replaces with an empty one), with what holds for the session's
+whole life appended once (`DelegateRequest.system`: where it reaches, its plugins, their guidance
+and connectors, and for the session answering the person `personSessionNote`), never repeated in
+each message ([delegation](../src/main/core/delegation.ts) `#brief`).
+
 No session gets Claude Code's own sub-agents (`Agent`, `Task`), in any mode or seat: Genex runs the
 workers, under the person's ceiling and the chat's mode (`disallowedToolsFor`).
 
@@ -132,7 +139,7 @@ a headless run) is a job (see Jobs below).
 
 A lead or coordinator with `leadAsks` (`leadAskingOptions`) starts in its chat's Auto, Accept edits
 or Bypass (what Claude Code asks in any mode, such as a dangerous `rm`, is carded as for the chat's
-own session), or in Manual (`default`), where every edit and command reaches `canUseTool` and the
+own session, and allowed at once in Bypass), or in Manual (`default`), where every edit and command reaches `canUseTool` and the
 host. It is launched with `allowDangerouslySkipPermissions`, as the chat's own session, so the
 picker can switch it to Bypass mid-turn; `liveControl` hands the host its `setPermissionMode` as
 for the chat's own session, and nothing else moves its mode. No `sandbox` key, no blanket `Bash`,

@@ -9044,7 +9044,11 @@ describe("the chat's agent briefed like plain Claude Code (lean chat)", () => {
   it("gives a new web game none of the judge-era template rules", async () => {
     const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
     for (const facts of [[], [{ id: "web-game", path: "index.html" }]]) {
-      const brief = buildContractorBrief({ ask: "Make a 2D platformer where a cat collects fish.", facts, fresh: true });
+      const brief = buildContractorBrief({
+        ask: "Make a 2D platformer where a cat collects fish.",
+        facts,
+        fresh: true,
+      });
       for (const rule of [/__studio/, /Math\.random/, /NOTES\.md/, /\.studio\//, /TMPDIR/, /statically analyze/]) {
         assert.doesNotMatch(brief, rule, `${rule}: ${brief}`);
       }

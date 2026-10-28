@@ -11,7 +11,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { mainAgentReachNote, midTurnReplyNote } from "../../src/main/core/delegation-prompts.ts";
+import { mainAgentReachNote, personSessionNote } from "../../src/main/core/delegation-prompts.ts";
 import { readsAfterRewind } from "../../src/main/core/rewind.ts";
 import { RecoveryService } from "../../src/main/core/recovery.ts";
 import type { CoreInternals, StudioCore } from "../../src/main/studio-core.ts";
@@ -188,14 +188,15 @@ describe("game chat permissions", () => {
 
   // Asked "how do I play it?" mid-build, the chat's agent kept building for two minutes and folded
   // the answer into its wrap-up: Claude Code hands such words over at the next tool result with
-  // "address it as you continue", and the person watching the chat read silence.
-  it("tells the session answering the person to reply at once to words sent while it works", async () => {
+  // "address it as you continue", and the person watching the chat read silence. Its wrap-up then
+  // reported draw calls and frame rates to someone who may not be a programmer.
+  it("tells the session answering the person to talk plainly and reply at once to words sent while it works", async () => {
     const chat = await brief({ prompt: "Make a platformer" });
-    assert.ok(chat.system?.includes(midTurnReplyNote()), "the chat's own session replies first");
+    assert.ok(chat.system?.includes(personSessionNote()), "the chat's own session replies first");
     for (const extra of [{ timeoutMs: 60_000 }, { readOnly: true }]) {
       const request = await brief(extra);
       const read = [request.prompt, request.system].join("\n");
-      assert.equal(read.includes(midTurnReplyNote()), false, `nobody to reply to: ${Object.keys(extra).join(", ")}`);
+      assert.equal(read.includes(personSessionNote()), false, `nobody to reply to: ${Object.keys(extra).join(", ")}`);
     }
   });
 

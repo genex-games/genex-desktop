@@ -388,8 +388,7 @@ function rulesOfFact(
   folder: FolderShape,
   made: ReadonlySet<string>,
 ): string[] {
-  if (fact.id === CoreFact.WebGame)
-    return folder.ownShape ? ownShapeRules(folder.shape) : [WEB_GAME_RULE];
+  if (fact.id === CoreFact.WebGame) return folder.ownShape ? ownShapeRules(folder.shape) : [WEB_GAME_RULE];
   if (fact.id !== CoreFact.UnrealProject) return ownKindRules(engine, fact, made.has(fact.id));
   if (game.pluginsOff) return unrealWithoutPlugin(engine);
   const found = game.unrealFound;

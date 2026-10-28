@@ -97,7 +97,7 @@ import {
   unsavedFilesNotice,
   leadToolsNote,
   mainAgentReachNote,
-  midTurnReplyNote,
+  personSessionNote,
   silentConnectorLog,
   silentConnectorsNotice,
   withdrawnNotice,
@@ -2759,7 +2759,7 @@ export class DelegationService {
     const toldWhereLeadToolsWork = session.hostTools && leadsElsewhere && tools.plugins.length > 0;
     return [
       reach.reachesMac ? mainAgentReachNote() : "",
-      reach.person ? midTurnReplyNote() : "",
+      reach.person ? personSessionNote() : "",
       session.hostTools ? handedPluginsNote(tools.handed) : "",
       session.hostTools ? tools.pluginGuidance : tools.capabilityFacts,
       toldWhereLeadToolsWork ? leadToolsNote() : "",
