@@ -147,11 +147,13 @@ describe("the director's tool schemas stay small", () => {
 describe("the pages a builder is handed", () => {
   const page = (rel: string) => readFileSync(pathMod.join(templateDir, rel), "utf8");
 
-  it("keeps CLAUDE.md to five rules on one screen", () => {
+  // Flipped: five judge-era rules (canvas-only HUD, tags and probes, harness materials) made the
+  // chat's agent study and obey the harness instead of building the game. The page now only says
+  // what the folder is; a Loop build's rules are its brief's.
+  it("keeps CLAUDE.md to a short note with no rules for the game to obey", () => {
     const text = page("CLAUDE.md");
-    assert.ok(text.split("\n").length <= 31, `CLAUDE.md is ${text.split("\n").length} lines`);
-    const rules = text.match(/^\d+\. /gm) ?? [];
-    assert.deepEqual(rules, ["1. ", "2. ", "3. ", "4. ", "5. "]);
+    assert.ok(text.split("\n").length <= 12, `CLAUDE.md is ${text.split("\n").length} lines`);
+    assert.deepEqual(text.match(/^\d+\. /gm) ?? [], []);
   });
 
   it("keeps CONTRACT.md to the tables, including the one written for a game the studio did not write", () => {

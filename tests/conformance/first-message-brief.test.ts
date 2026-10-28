@@ -130,12 +130,15 @@ describe("the first message on a project with no kind", () => {
     assert.deepEqual(both.bridged, [AUTO_LOOP, "ask_user"]);
   });
 
-  it("a project with no kind hears the web starter's rules as the web answer's, never as every kind's", async () => {
+  // Flipped: the web answer once carried the starter's harness contract to every kind on offer;
+  // the starter's page is now the game's to build, so a folder with no kind hears no web rules.
+  it("a project with no kind hears no harness contract for the web answer", async () => {
     for (const on of [NONE_ON, UNREAL_ON]) {
       const { lines } = await firstMessage(game([]), on);
-      const web = lines.filter((line) => line.includes("window.__studio"));
-      assert.equal(web.length, 1, "said once");
-      assert.match(web[0] ?? "", /^For a game that plays in Genex \(the web answer\)/, "and only for the web answer");
+      assert.deepEqual(
+        lines.filter((line) => line.includes("window.__studio")),
+        [],
+      );
     }
   });
 
@@ -271,7 +274,7 @@ describe("the rules each kind gets", () => {
         fact("godot-web-export", "web", "plugin:godot"),
       ] as never,
     });
-    assert.ok(!brief.includes("window.__studio"), "no web game's rules for the build");
+    assert.ok(!/serves its index\.html/.test(brief), "no web game's rules for the build");
     assert.match(brief, /The web page in `web\/` is a web build a plugin exports[^\n]*Never edit its files/);
     assert.ok(!brief.includes("godot-web-export"), "the plugin's fact needs no line of its own");
     const site = buildContractorBrief({
@@ -279,7 +282,7 @@ describe("the rules each kind gets", () => {
       engine: CLAUDE,
       facts: [fact(CoreFact.GodotProject, "godot"), fact(CoreFact.WebGame, "site")] as never,
     });
-    assert.ok(site.includes("window.__studio"), "a web game no plugin claims keeps its rules");
+    assert.ok(/serves its index\.html/.test(site), "a web game no plugin claims keeps its rules");
   });
 
   it("each kind gets its own rules, named by path when there are two", () => {
@@ -290,7 +293,7 @@ describe("the rules each kind gets", () => {
       facts: [fact(CoreFact.UnrealProject), fact(CoreFact.WebGame, "site")] as never,
     });
     const lines = brief.split("\n");
-    const web = lines.filter((line) => line.includes("window.__studio"));
+    const web = lines.filter((line) => line.includes("serves its index.html"));
     assert.ok(web.length > 0, "the web game's rules");
     for (const line of web) assert.ok(line.startsWith("For the web game in `site/`: "), line);
     const unreal = lines.filter((line) => line.includes("the Unreal editor connector's tools"));

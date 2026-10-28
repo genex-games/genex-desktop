@@ -237,6 +237,15 @@ export function mainAgentReachNote(platform: NodeJS.Platform = process.platform)
 }
 
 /**
+ * How the session answering the person treats their words sent while it works. Claude Code hands
+ * them over at the next tool result, asking only that they be addressed as the turn goes on, and
+ * the model saved its answer for the wrap-up while the person watched a silent chat.
+ */
+export function midTurnReplyNote(): string {
+  return "When the person writes to you while you work, answer them in the chat at once, in a sentence or two, before your next step; then carry on, or change course when they asked you to. They are watching the chat, not your work.";
+}
+
+/**
  * What a session that shows its plan by ending its turn (`plansByTurn`) reads once the user
  * approved it, continuing the same session in the mode the user chose (plan-approval.ts).
  */

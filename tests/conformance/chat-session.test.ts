@@ -74,7 +74,8 @@ describe("chat session helpers", () => {
       resume: true,
       folderLabel: "AI Games/blame",
     });
-    assert.match(brief, /resuming your own session/i);
+    // Flipped: the person's words alone, never an order to pick up where it left off.
+    assert.ok(brief.startsWith("Keep going"), brief);
     assert.doesNotMatch(brief, /Original request/);
   });
 
@@ -115,7 +116,7 @@ describe("chat session helpers", () => {
     ]) {
       const talk = brief.search(/greeting/i);
       assert.ok(talk >= 0, "the brief says how to answer a greeting");
-      assert.ok(talk < brief.search(/CLAUDE\.md/), "before any rule about building");
+      assert.ok(talk < brief.search(/checkpoint|its own shape/), "before any rule about building");
     }
     const loop = launchRules("claude-code", { toolName: "start_unattended_run" }).join("\n");
     assert.ok(
@@ -277,8 +278,9 @@ describe("the brief of a game that builds in Unreal", () => {
       assert.equal(buildContractorBrief({ ...options, gameEngine: GameEngine.Web }), web);
       assert.doesNotMatch(web, /Unreal/);
     }
+    // Flipped: the starter's page is the game's to build, with no harness contract to keep.
     const template = buildContractorBrief(briefs[0]!);
-    assert.match(template, /keep window\.__studio \(seed\/start\/pause\/step\/state\/debugCamera\) working/);
-    assert.match(template, /The game's work happens in this workspace/);
+    assert.match(template, /Genex serves its index\.html in the Live view/);
+    assert.doesNotMatch(template, /window\.__studio/);
   });
 });

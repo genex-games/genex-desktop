@@ -305,6 +305,16 @@ const CONVERSATION_RULE =
   "Talk with the user like a person. A greeting, thanks or small talk gets a short, friendly reply and no tools; when they have not said what to make or change yet, ask them. Talk about their game, never about the workspace, files, hooks, the renderer, panels or the studio's own machinery.";
 
 /**
+ * What a web game made from Genex's starter is: a page Genex serves, whose screen and controls are
+ * the game's own to build. Its starter's instrumentation is Genex's, not rules for the game.
+ */
+const WEB_GAME_RULE =
+  "Genex serves its index.html in the Live view beside this chat. The page, its menus, HUD and controls are yours to build however the game looks and plays best.";
+
+/** The fence a command for the user to run goes in: the chat offers Run under a one-line block of it. */
+const USER_COMMAND_FENCE = "bash";
+
+/**
  * What a brief knows about the game: what its folder holds (`facts`; `[]`: none, and then `holds`
  * says whether that is no kind yet), the Unreal project file it is linked to, and whether the Unreal
  * plugin is off. `legacy`: the caller named the engine, not the facts (a kept older caller), and the
@@ -379,7 +389,7 @@ function rulesOfFact(
   made: ReadonlySet<string>,
 ): string[] {
   if (fact.id === CoreFact.WebGame)
-    return folder.ownShape ? ownShapeRules(folder.shape) : [];
+    return folder.ownShape ? ownShapeRules(folder.shape) : [WEB_GAME_RULE];
   if (fact.id !== CoreFact.UnrealProject) return ownKindRules(engine, fact, made.has(fact.id));
   if (game.pluginsOff) return unrealWithoutPlugin(engine);
   const found = game.unrealFound;
@@ -435,6 +445,7 @@ function contractorRules(engine: string | undefined, game: GameBuild, app: AppLa
   return [
     languageRule(app),
     workspaceRule(game),
+    `When a sandbox blocks a step only the user's own computer can do (an install that needs the network, a system tool, a sign-in), end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why: the chat shows it with a Run button. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
     // The Reload a checkpoint lights is the web preview's: any other kind is seen in its own app.
     ...(servedAsWeb(game)
       ? [
