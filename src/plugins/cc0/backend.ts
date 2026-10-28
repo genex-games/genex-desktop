@@ -6,21 +6,13 @@
  * hands the files to `assets.deliver`, which lands them in `assets/cc0/<job>/` and records the
  * delivery. The plugin keeps a provenance record per delivery folder (`jobs.write`) from which the
  * host builds the CC0 rows of `genex-assets.lock` (`provenance.ts`).
- *
- * A model heavier than its role's budget (`tier`, else the import cap) is decimated before it is
- * delivered (`asset-import/decimate.ts`, with meshoptimizer's npm simplifier), so a 7.85M-triangle
- * Poly Haven fir reaches the game folder at 40k in one call; the import step builds its LODs and the
- * game draws its impostor from there.
  */
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { unzipSync } from "fflate";
-import { MeshoptSimplifier } from "meshoptimizer";
 import type { Activate, PluginActivation, PluginContext } from "../../plugin-sdk/index.d.ts";
 import { AssetLicence } from "../../shared/asset-db.ts";
-import { MODEL_IMPORT_TRIANGLES, MODEL_TIER_TRIANGLES, type ModelTier } from "../../shared/model-budget.ts";
-import { type DecimateSimplifier, decimateGlb } from "../../substrate/asset-import/decimate.ts";
 import {
   Cc0Error,
   Cc0Refusal,
@@ -63,18 +55,10 @@ const MESSAGE = {
   TwoFilesOneName: (name: string) => `two files of this fetch are named ${name}`,
 } as const;
 
-/** What the plugin needs from outside: the network, the curated manifest and the simplifier (tests pass their own). */
+/** What the plugin needs from outside: the network and the curated manifest (tests pass their own). */
 export interface Cc0Deps {
   net: Cc0Net;
   curated?: CuratedManifest;
-  simplifier?: DecimateSimplifier;
-}
-
-/** A model's decimation at fetch: its tier (null for the import cap) and its triangles before and after. */
-interface Decimation {
-  tier: ModelTier | null;
-  before: number;
-  after: number;
 }
 
 /** One file ready to deliver. */
@@ -87,9 +71,8 @@ interface Output {
 
 /** The delivery folder's job id: a UUID made from the source, id and resolution, so a repeat fetch lands beside the first. */
 function jobIdOf(request: Cc0Request): string {
-  const tiered = request.tier === null ? "" : `\n${request.tier}`;
   const hex = createHash("sha256")
-    .update(`${request.source}\n${request.id}\n${request.resolution ?? ""}${tiered}`)
+    .update(`${request.source}\n${request.id}\n${request.resolution ?? ""}`)
     .digest("hex");
   return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20, 32)].join("-");
 }
@@ -133,34 +116,20 @@ function wantedMembers(zip: Uint8Array, plan: NonNullable<FetchPlan["zip"]>): Zi
   return plan.maps.flatMap((map) => listed.filter((member) => member.map === map));
 }
 
-/** The packed model at its tier's budget (the import cap without one), and its decimation when it was over. */
-async function withinTier(
-  glb: Uint8Array,
-  tier: ModelTier | null,
-  simplifier: DecimateSimplifier,
-): Promise<{ bytes: Uint8Array; decimation: Decimation | null }> {
-  const budget = tier === null ? MODEL_IMPORT_TRIANGLES : MODEL_TIER_TRIANGLES[tier];
-  const outcome = await decimateGlb(glb, budget, simplifier);
-  if (!outcome.decimated) return { bytes: glb, decimation: null };
-  return { bytes: outcome.bytes, decimation: { tier, before: outcome.before, after: outcome.after } };
-}
-
 /** Every file the plan delivers, downloaded and verified in memory: a refusal leaves nothing anywhere. */
-async function outputsOf(
-  plan: FetchPlan,
-  request: Cc0Request,
-  deps: Cc0Deps,
-): Promise<{ outputs: Output[]; decimation: Decimation | null }> {
+async function outputsOf(plan: FetchPlan, net: Cc0Net): Promise<Output[]> {
   const outputs: Output[] = [];
-  const downloaded = downloader(deps.net);
-  let decimation: Decimation | null = null;
+  const downloaded = downloader(net);
   if (plan.model) {
     const resources = new Map<string, Uint8Array>();
     for (const resource of plan.model.resources) resources.set(resource.uri, await downloaded(resource));
     const gltf = await downloaded(plan.model.gltf);
-    const model = await withinTier(packGlb(gltf, resources), request.tier, deps.simplifier ?? MeshoptSimplifier);
-    decimation = model.decimation;
-    outputs.push({ name: plan.model.name, bytes: model.bytes, map: plan.model.gltf.map, url: plan.model.gltf.url });
+    outputs.push({
+      name: plan.model.name,
+      bytes: packGlb(gltf, resources),
+      map: plan.model.gltf.map,
+      url: plan.model.gltf.url,
+    });
   }
   for (const file of plan.files)
     outputs.push({ name: file.name, bytes: await downloaded(file), map: file.map, url: file.url });
@@ -176,7 +145,7 @@ async function outputsOf(
     if (names.has(folded)) throw new Cc0Error(Cc0Refusal.ManifestInvalid, MESSAGE.TwoFilesOneName(output.name));
     names.add(folded);
   }
-  return { outputs, decimation };
+  return outputs;
 }
 
 /** Writes the outputs into a fresh folder of the plugin's storage and has the host deliver them; the folder goes after. */
@@ -220,7 +189,7 @@ async function fetchAsset(args: Record<string, unknown>, ctx: PluginContext, dep
   const request = checkedRequest(args);
   if (!ctx.directory) throw new Error(MESSAGE.NoGame);
   const plan = await planFetch(request, deps.net, deps.curated ?? CURATED);
-  const { outputs, decimation } = await outputsOf(plan, request, deps);
+  const outputs = await outputsOf(plan, deps.net);
   const jobId = jobIdOf(request);
   const paths = await deliver(outputs, jobId, ctx);
   const byName = new Map(paths.map((file) => [path.posix.basename(file), file]));
@@ -241,7 +210,6 @@ async function fetchAsset(args: Record<string, unknown>, ctx: PluginContext, dep
     page: plan.page,
     authors: plan.authors,
     files: files.map(({ url: _url, ...file }) => file),
-    ...(decimation ? { decimated: decimation } : {}),
     ...(plan.source === Cc0Source.PolyHaven ? { credit: POLYHAVEN_CREDIT } : {}),
     use: MESSAGE.Use,
   };

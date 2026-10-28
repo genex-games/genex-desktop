@@ -1,21 +1,9 @@
 /**
  * `cc0__search`: Poly Haven's asset lists (cached for an hour per kind, as their API asks clients
- * to be gentle) ranked by the query's words, and ambientCG's own search for materials. A result
- * names its source and id, which is what `cc0__fetch` takes.
- *
- * Ranking (WP-0): any word may match, so "snow ground" still finds snow and ground textures. A word
- * matches a whole word of the asset's id, name, tags or categories, a plural its singular, never part
- * of one ("fir" is not "fire"). Results that match more of the query's words come first, then those
- * whose id or name holds them over those whose tags do, then the most downloaded. A model result
- * carries its triangles and how they stand against the import cap, with a hint to decimate past it.
+ * to be gentle) filtered by the query's words, most downloaded first, and ambientCG's own search
+ * for materials. A result names its source and id, which is what `cc0__fetch` takes.
  */
 import { HOUR_MS } from "../../shared/duration.ts";
-import {
-  MODEL_IMPORT_TRIANGLES,
-  MODEL_TIER_TRIANGLES,
-  ModelBudgetFit,
-  modelBudgetFit,
-} from "../../shared/model-budget.ts";
 import { Cc0Error, Cc0Refusal } from "../../substrate/cc0-fetch.ts";
 import type { Cc0Net } from "./net.ts";
 import { Cc0Kind, Cc0Source } from "./sources.ts";
@@ -45,12 +33,6 @@ export interface Cc0Result {
   page: string;
   authors: string[];
   polycount?: number;
-  /** A model's triangles (Poly Haven's polycount counts triangles). */
-  triangles?: number;
-  /** How a model's triangles stand against the import cap. */
-  budget?: ModelBudgetFit;
-  /** Past the cap: what to do about it. */
-  hint?: string;
   /** Poly Haven's dimensions, in millimetres. */
   dimensions?: number[];
 }
@@ -72,14 +54,6 @@ interface PolyHavenEntry {
   dimensions?: unknown;
   authors?: unknown;
 }
-
-const MESSAGE = {
-  OverImportCap: (triangles: number) =>
-    `${triangles} triangles, over the ${MODEL_IMPORT_TRIANGLES} import cap: fetch it with cc0__fetch tier ` +
-    `(${Object.entries(MODEL_TIER_TRIANGLES)
-      .map(([tier, budget]) => `${tier} ${budget}`)
-      .join(", ")}) and it arrives decimated to that budget; LODs and the impostor build from there.`,
-} as const;
 
 function invalid(detail: string): Cc0Error {
   return new Cc0Error(Cc0Refusal.ManifestInvalid, detail);
@@ -114,47 +88,17 @@ function polyHavenResult(id: string, entry: PolyHavenEntry, kind: Cc0Kind): Cc0R
     page: `https://polyhaven.com/a/${id}`,
     authors: Object.keys(typeof entry.authors === "object" && entry.authors !== null ? entry.authors : {}).sort(),
   };
-  if (typeof entry.polycount === "number") {
-    result.polycount = entry.polycount;
-    result.triangles = entry.polycount;
-    result.budget = modelBudgetFit(entry.polycount);
-    if (result.budget === ModelBudgetFit.OverImportCap) result.hint = MESSAGE.OverImportCap(entry.polycount);
-  }
+  if (typeof entry.polycount === "number") result.polycount = entry.polycount;
   const dimensions = Array.isArray(entry.dimensions) ? entry.dimensions.filter((n) => typeof n === "number") : [];
   if (dimensions.length === 3) result.dimensions = dimensions.map((n) => Math.round(n));
   return result;
 }
 
-/** The singular lowercase words of `texts`: runs of letters and digits ("collection: pine_forest" → collection, pine, forest). */
-const wordsOf = (texts: readonly string[]): Set<string> =>
-  new Set(
-    texts
-      .flatMap((text) => text.toLowerCase().split(/[^a-z0-9]+/))
-      .filter(Boolean)
-      .map(singular),
-  );
-
-/** A word's singular: "trees" → tree, "boxes" → box, "glass" stays. */
-function singular(word: string): string {
-  if (/(?:x|ch|sh)es$/.test(word)) return word.slice(0, -2);
-  return word.length > 3 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word;
-}
-
-/** How well an entry matches: the query's words it holds anywhere, and those its id or name holds. */
-interface Rank {
-  matched: number;
-  named: number;
-}
-
-function rank(id: string, entry: PolyHavenEntry, words: readonly string[]): Rank {
-  const named = wordsOf([id, String(entry.name ?? "")]);
-  const tagged = wordsOf([...strings(entry.tags), ...strings(entry.categories)]);
-  const rank: Rank = { matched: 0, named: 0 };
-  for (const word of words.map(singular)) {
-    if (named.has(word)) rank.named++;
-    if (named.has(word) || tagged.has(word)) rank.matched++;
-  }
-  return rank;
+function matches(id: string, entry: PolyHavenEntry, words: readonly string[]): boolean {
+  const text = [id, String(entry.name ?? ""), ...strings(entry.tags), ...strings(entry.categories)]
+    .join(" ")
+    .toLowerCase();
+  return words.every((word) => text.includes(word));
 }
 
 const downloads = (entry: PolyHavenEntry) => (typeof entry.download_count === "number" ? entry.download_count : 0);
@@ -171,17 +115,11 @@ export function createSearch(net: Cc0Net, now: () => number = Date.now) {
     return entries;
   };
   const polyHaven = async (search: Search): Promise<Cc0Result[]> => {
-    const ranked = Object.entries(await polyHavenList(search.kind))
-      .map(([id, entry]) => ({ id, entry, rank: rank(id, entry, search.words) }))
-      .filter((row) => row.rank.matched > 0);
-    ranked.sort(
-      (a, b) =>
-        b.rank.matched - a.rank.matched ||
-        b.rank.named - a.rank.named ||
-        downloads(b.entry) - downloads(a.entry) ||
-        (a.id < b.id ? -1 : 1),
+    const entries = Object.entries(await polyHavenList(search.kind)).filter(([id, entry]) =>
+      matches(id, entry, search.words),
     );
-    return ranked.slice(0, search.limit).map((row) => polyHavenResult(row.id, row.entry, search.kind));
+    entries.sort(([a, x], [b, y]) => downloads(y) - downloads(x) || (a < b ? -1 : 1));
+    return entries.slice(0, search.limit).map(([id, entry]) => polyHavenResult(id, entry, search.kind));
   };
   const ambient = async (search: Search): Promise<Cc0Result[]> => {
     const query = new URLSearchParams({ q: search.words.join(" "), type: "Material", sort: "Popular" });

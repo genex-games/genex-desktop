@@ -15,7 +15,6 @@
  * pure function of the input.
  */
 import { type ImportIssue, ImportIssueCode } from "../../shared/asset-db.ts";
-import { MODEL_IMPORT_TRIANGLES } from "../../shared/model-budget.ts";
 import { readGlb } from "./glb.ts";
 import { extension, index, isObject, type Json, objects } from "./gltf-json.ts";
 import { inspectGlb } from "./inspect.ts";
@@ -32,7 +31,7 @@ export interface TriangleBudgets {
  * Triangles per class, before import-time LODs: a hero character of an AA game, and a large prop
  * or building (owner-tunable; a level is many models, each with its own budget).
  */
-export const TRIANGLE_BUDGETS: TriangleBudgets = { character: 100_000, model: MODEL_IMPORT_TRIANGLES };
+export const TRIANGLE_BUDGETS: TriangleBudgets = { character: 100_000, model: 250_000 };
 
 /** A dielectric's base colour, as sRGB luminance 0-255. */
 const DIELECTRIC_LUMINANCE = { min: 30, max: 240 } as const;
@@ -117,7 +116,6 @@ const REPORT_CODES: readonly string[] = [
   ImportIssueCode.MetallicPartial,
   ImportIssueCode.IorOutOfRange,
   ImportIssueCode.TrianglesOverBudget,
-  ImportIssueCode.Decimated,
 ];
 
 /** A receipt's report: at most {@link IMPORT_REPORT_MAX} issues, each a report code and a short detail; null when one is bad. */

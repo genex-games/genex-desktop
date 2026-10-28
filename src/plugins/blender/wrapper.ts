@@ -7,16 +7,14 @@
  *
  * Arguments after `--`: the script, the GLB, the first render and the asset name, then flags:
  * `--rig 0|1` (also export armatures and their actions, each armature's scale applied to its bones
- * and clips), `--model <file>` (a transform's source), `--helpers <file>` (the shipped
- * `genex_bpy.py`, whose folder goes on the import path so a script can `import genex_bpy as gx`)
- * and, for a compose job, `--inputs <labels>` with one `--slot <file>` per label. A label is the
- * game path of an extra input, or `model`; the script reads them as `ASSET_INPUTS[label]`.
+ * and clips), `--model <file>` (a transform's source) and, for a compose job, `--inputs <labels>`
+ * with one `--slot <file>` per label. A label is the game path of an extra input, or `model`; the
+ * script reads them as `ASSET_INPUTS[label]`.
  *
  * Output contract: one line on stdout, `STUDIO_BLENDER_RESULT {json}`, with `ok`, what is in
  * the file (`meshes: [{name, polygons, triangles, materials, slots}]`, where `slots` holds each
  * material slot's `{slot, material, polygons, triangles}`, `materials: [names]`,
- * `armatures: [{name, bones}]`, `actions: [names]`, `rig`, `untextured: [names]`: the materials
- * no image feeds the colour of, flat colour on screen), the totals (`polygons`,
+ * `armatures: [{name, bones}]`, `actions: [names]`, `rig`), the totals (`polygons`,
  * `triangles`, `size`, `glbBytes`, `seconds`) and the two render paths, or `ok:false` and the
  * error. Anything else Blender prints is noise the studio clips.
  *
@@ -95,7 +93,7 @@ def error_text(error):
 
 def flags(rest):
     # The flags after the four positional arguments, each with one value; --slot repeats.
-    found = {"rig": "0", "model": None, "helpers": None, "inputs": "", "slot": []}
+    found = {"rig": "0", "model": None, "inputs": "", "slot": []}
     for i in range(0, len(rest) - 1, 2):
         key, value = rest[i][2:], rest[i + 1]
         if key == "slot":
@@ -125,8 +123,6 @@ def asset_inputs(given):
 
 given = flags(argv[4:])
 rig = given["rig"] == "1"
-if given["helpers"]:
-    sys.path.insert(0, os.path.dirname(os.path.abspath(given["helpers"])))
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 
@@ -377,18 +373,6 @@ def use_cpu_render():
     sun.rotation_euler = (math.radians(50), math.radians(10), math.radians(30))
     scene.collection.objects.link(sun)
 
-# Flat colour on screen: the meshes' materials whose colour no image feeds, measured before the
-# renders touch any material.
-untextured = []
-for o in meshes:
-    for slot in o.material_slots:
-        material = slot.material
-        if material is None or material.name[:60] in untextured:
-            continue
-        colour = base_colour_input(material) if material.use_nodes else None
-        if colour is None or image_feeding(colour, TEXTURE_LINKS) is None:
-            untextured.append(material.name[:60])
-
 # "What did I make" thumbnails: Workbench, studio light, the camera fitted to the framed box.
 gpu_render = gpu_draws()
 scene.render.engine = "BLENDER_WORKBENCH"
@@ -437,7 +421,6 @@ result({
     "size": size,
     "framedSize": [fx1 - fx0, fy1 - fy0, fz1 - fz0],
     "materials": material_names[:MAX_LISTED],
-    "untextured": untextured[:MAX_LISTED],
     "armatures": [
         {"name": o.name[:60], "bones": len(o.data.bones), **({"appliedScale": applied[o.name]} if applied.get(o.name) else {})}
         for o in armatures

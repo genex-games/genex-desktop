@@ -126,8 +126,6 @@ const MESSAGE = {
   ScriptMissing: (file: string) =>
     `No script at ${file}: write the bpy script to that file first (a regular file, not a link), then call blender__model again with its path as script.`,
   Renamed: (name: string, slug: string) => `The asset name ${name} became ${slug}.`,
-  FlatColour: (names: readonly string[]) =>
-    `Flat colour: no image feeds the colour of ${names.join(", ")}. Anything seen up close needs real maps: fetch a scan (cc0__fetch), name its maps in inputs and build the material with genex_bpy (gx.pbr(name, gx.scan(ASSET_INPUTS, stem))), or bake it with wear into one atlas (gx.bake_atlas(objects, wear=0.5)).`,
   WebGuidance:
     "Files are relative to the game workspace. Load model.glb with GLTFLoader at its returned asset path (omit public/ in a built app URL). Inspect these renders, integrate the mesh into the scene, then use the preview to verify visible use. A delivered file alone is not integration proof.",
   UnrealGuidance:
@@ -373,13 +371,11 @@ async function jobError(ctx: PluginContext, error: unknown): Promise<unknown> {
 /** What to do with the delivery in this engine (a Godot project when `resPath` names it), and what the file holds that needs a word. */
 function guidanceFor(
   engine: EngineKind,
-  stats: { meshCount?: number; armatures?: unknown[]; untextured?: unknown[] },
+  stats: { meshCount?: number; armatures?: unknown[] },
   rig: boolean,
   resPath: string | null = null,
 ): string {
   const notes: string[] = [deliveryGuidance(engine, resPath)];
-  const flat = (stats.untextured ?? []).filter((name): name is string => typeof name === "string");
-  if (flat.length) notes.push(MESSAGE.FlatColour(flat));
   const meshes = stats.meshCount ?? 0;
   if (engine === GameEngine.Unreal && meshes > 1) notes.push(MESSAGE.UnrealJoin(meshes));
   const armatures = stats.armatures?.length ?? 0;

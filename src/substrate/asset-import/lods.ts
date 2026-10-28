@@ -140,7 +140,7 @@ export function validateLodSet(set: LodSet, vertexCount: number): LodFault | nul
 }
 
 /** One primitive as the simplifier takes it: geometry, weighed attributes, locks and flags. */
-export interface SimplifyInput {
+interface SimplifyInput {
   geometry: Geometry;
   /** Per vertex: the normal (when the primitive has one), then UV0 (when it has one). */
   attributes: Float32Array;
@@ -424,18 +424,13 @@ async function fineBoundFor(inputs: SimplifyInput[], count: number): Promise<num
 }
 
 /** Each primitive's simplifier input, its attributes read from `doc`. */
-export function simplifyInputs(
-  doc: PackDoc,
-  primitives: Json[],
-  geometry: Geometry[],
-  options: { lockCards?: boolean } = {},
-): SimplifyInput[] {
+function simplifyInputs(doc: PackDoc, primitives: Json[], geometry: Geometry[]): SimplifyInput[] {
   const locks = sharedVertexLocks(geometry);
   return geometry.map((each, at) => {
     const primitive = primitives[at] ?? {};
     const count = each.positions.length / 3;
     const lock = locks[at] ?? new Uint8Array(count);
-    if (options.lockCards !== false) lockCards(each, lock);
+    lockCards(each, lock);
     return {
       geometry: each,
       ...weighedAttributes(doc, primitive, count),

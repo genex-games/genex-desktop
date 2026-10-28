@@ -327,17 +327,6 @@ describe("Local Blender model calls", () => {
     assert.match(notes, /rig/, "an armature left out: say how to export it");
   });
 
-  it("names flat-colour materials and points at scanned maps and the helper library; textured ones pass quietly", async () => {
-    const dir = await game();
-    const flat = await callModel(dir, { name: "panel" }, { made: { untextured: ["Wood", "Concrete"] } });
-    const notes = String((await flat.run).guidance);
-    assert.match(notes, /Wood, Concrete/);
-    assert.match(notes, /cc0__fetch/);
-    assert.match(notes, /gx\.pbr/);
-    const textured = await callModel(dir, { name: "panel" }, { made: { untextured: [] } });
-    assert.doesNotMatch(String((await textured.run).guidance), /Wood|gx\.pbr/);
-  });
-
   it("guides a game in any other engine to that engine's own import, never the web loader or Unreal's units", async () => {
     const dir = await game();
     const toy = {

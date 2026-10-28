@@ -139,8 +139,7 @@ async function buildGenex(root, resources, { dependencies }) {
 async function buildBlender(root, resources, sdk) {
   const blender = path.join(resources, "plugins/blender");
   await mkdir(blender, { recursive: true });
-  // genex_bpy.py: the helper library every job puts on its scripts' import path (`--helpers`).
-  for (const file of ["plugin.json", "icon.png", "genex_bpy.py"])
+  for (const file of ["plugin.json", "icon.png"])
     await cp(path.join(root, "src/plugins/blender", file), path.join(blender, file));
   await copyLocales(path.join(root, "src/plugins/blender"), blender);
   await writeFile(
