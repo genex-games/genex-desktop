@@ -8,8 +8,8 @@ with a corridor and classroom built from it (`docs/examples/interior-kit/`), an 
 (`docs/examples/fps/`, explained in `docs/examples/fps.md`), a first-person arms kit
 (`docs/examples/fps-arms/`: rigged gloved arms on a rifle whose magazine leaves the well on a
 reload) and a soldier kit (`docs/examples/soldier/`: a rigged soldier animated from replicated
-state). Start an indoor scene or a first-person game from them, not from a blank file; a shooter's
-arms, gun and enemies start from the kits, never from boxes or capsules.
+state). Copy how their calls fit together; their models are samples, and this game's own content
+is made as Art bar says.
 Before writing a Bevy, Unity, Unreal, three.js or Godot habit, find its genex call in
 `docs/examples/coming-from.md`.
 
@@ -67,6 +67,26 @@ A multiplayer game follows `docs/api/net.md`: no network before the player picks
 is a loopback room, and online play is proved only on the published draft in two windows.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
+
+## Art bar
+
+A brief that asks for a look (realistic, photoreal, AAA, beautiful, or an image in `references/`)
+is judged on captures against it, and a box, capsule or flat-coloured shape on screen fails it.
+
+- **Every visible thing is a real asset.** What the camera sees up close (weapon, hands,
+  characters, vehicles, the props the player touches) comes from `genex__asset` (`model` with
+  `auto-size`, `character` or `creature` for anything rigged, `texture` for a surface no scan
+  has) or a CC0 scan; repeated and modular pieces from a `blender__model` script; geometry in code
+  only where neither fits.
+- **Greybox only inside a round.** A box may stand in while a mechanic is proved; replace it
+  before calling that facet done.
+- **Plan each area as a shot.** Hero assets near the camera, mid-range dressing, ground cover and
+  scatter (dense, varied, never one model in a row), a sky and weather that agree with the brief
+  (snow is an overcast sky over white ground), and a light mood.
+- **Compare with the reference.** Look at every camera beside `references/` and fix the largest
+  gap first: silhouette, material, light, density. Never ship a black silhouette (first-person
+  hands stay lit), pure-black outdoor shadows, particles that read as cubes, or a texture whose
+  tiling shows at play distance.
 
 ## Assets
 
@@ -171,10 +191,10 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 ## Rooms and buildings
 
 A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the order. Greybox in code
-with Rapier colliders, fetch a CC0 scan per surface, then build the shell and its dressing from the
-interior kit: copy `docs/examples/interior-kit/assets/kit/` to `assets/kit/` and place its 2 m
-modules, windows, doors, trims and props with `frame.model_with` and its `hero/` models with
-`frame.model`, as that example does (a piece it lacks: its `interior_kit.py` with `blender__model`). Neither stretch a scan nor tile it in a
+with Rapier colliders, fetch a CC0 scan per surface, then build the shell and its dressing as
+`docs/examples/interior-kit/` does: 2 m modules, windows, doors and trims made for this game with
+`blender__model` (its `interior_kit.py` is the method), props and hero pieces from `genex__asset`,
+placed with `frame.model_with` and `frame.model`. Neither stretch a scan nor tile it in a
 grid: `.with_world_uv(metres)` at the scan's real size, `.with_stochastic_tiling(true)` and a macro
 variation, uneven patches each jittered from a seed, close tints of one scan, a second scan only in
 a zone of its own, decals over the rest. Then light it as World look says: a sun that falls in at the windows, every glowing
