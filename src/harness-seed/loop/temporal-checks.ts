@@ -83,9 +83,16 @@ const spanOf = (samples: ReadonlyArray<Record<string, number>>): number =>
 
 const fixed = (value: number, digits = 1): string => value.toFixed(digits);
 
+/** One exposure sample's EV: the applied one (what the screen shows), else the metered one, else `ev`. */
+function evOf(entry: unknown): AnyRecord | null {
+  if (!entry || typeof entry !== "object") return null;
+  const raw = entry as AnyRecord;
+  return { t: raw.t, ev: num(raw.appliedEv) ?? num(raw.meteredEv) ?? num(raw.ev) };
+}
+
 /** The fastest EV move inside any `EXPOSURE_WINDOW_S`, and how far the trace passed its settled EV. */
 export function exposureMotion(trace: unknown): { maxStep: number; overshoot: number; span: number } | null {
-  const samples = samplesOf(trace, ["ev"]);
+  const samples = samplesOf(Array.isArray(trace) ? trace.map(evOf) : null, ["ev"]);
   const span = spanOf(samples);
   if (span < MIN_TRACE_S) return null;
   let maxStep = 0;
@@ -253,11 +260,7 @@ export function lumaBandDefects(evidence: AnyRecord | null | undefined, night: b
     const stats = shot?.stats as AnyRecord | undefined;
     if (!isPlayable(shot?.camera) || typeof stats?.meanLuma !== "number") continue;
     const histogram = Array.isArray(stats.histogram) ? (stats.histogram as number[]) : [];
-    const defect = lumaBandDefect(
-      String(shot.camera),
-      { ev: null, targetEv: null, meanLuma: stats.meanLuma, histogram },
-      { night },
-    );
+    const defect = lumaBandDefect(String(shot.camera), { meanLuma: stats.meanLuma, histogram }, { night });
     if (defect?.startsWith(`[${LookBlocker.CrushedShadow}]`))
       out.push({ key: measuredKey(defect), text: defect, severity: Math.max(1, 255 - stats.meanLuma) });
   }

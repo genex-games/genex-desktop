@@ -4,9 +4,9 @@
  * built from twelve boxes, cone-script birches and a 3 cm slab of snow, because nothing measured
  * them: judges saw 960×540 stills and the round rule counted existence checks.
  *
- * The contract is `state().__render.look` (the Rust engine's look telemetry; snake_case or
- * camelCase): per-tag coverage, flat-material coverage, texel density, map presence and organic
- * cards, and the metered exposure. A game that reports none gets no fact blockers, and the judges'
+ * The contract is `state().__render.look` (the Rust engine's look telemetry, version 1): per-tag
+ * coverage, flat-material coverage, texel and pixel density, and the shares of normal maps, ORM
+ * maps and alpha cards. Which tags are organic is the art pass's word (`kind`), not the engine's. A game that reports none gets no fact blockers, and the judges'
  * tags still hold (look-bar.ts).
  *
  * A new module: a kept older sibling can never shadow these names.
@@ -27,82 +27,62 @@ const NIGHT_LUMA_FLOOR = 35;
 /** How many decimals a share is quoted with. */
 const SHARE_DIGITS = 1;
 
-/** One draw tag's look, as the engine reports it. */
+/**
+ * One draw tag's look, as the engine reports it (the aaa-lighting contract, `src/shared/render-look.ts`
+ * `LookTagFacts`, version 1). `models` and `primitiveOnly` are the harness's asks beyond version 1:
+ * read when present, and absent today.
+ */
 export interface TagLook {
-  /** Share of the frame the tag covers, 0-1. */
+  /** Share of the whole screen the tag covers after occlusion, 0-1. */
   coverage: number;
-  /** Share of the frame the tag draws with an untextured constant material, 0-1. */
+  /** Share of the whole screen where the tag's nearest surface is a flat material (no base-colour or emissive map). */
   flatCoverage: number;
-  /** Median on-screen texel density, px per metre; null when unreported. */
-  texelDensity: number | null;
-  /** Triangles per square metre of surface; null when unreported. */
-  triDensity: number | null;
-  normalMap: boolean | null;
-  ormMap: boolean | null;
-  /** A tree, bush, grass or other organic thing. */
-  organic: boolean;
-  /** Alpha-cut cards or twig instances are drawn for it. */
-  alphaCards: boolean | null;
-  /** Every mesh under the tag is a primitive (box, cylinder, cone, sphere) with no authored detail. */
+  /** Median base-colour texels per metre over its visible cells; null when untextured. */
+  texelsPerMetre: number | null;
+  /** Median screen pixels per metre at its visible cells; null when unseen. */
+  pixelsPerMetre: number | null;
+  trianglesPerSquareMetre: number | null;
+  /** Shares of the tag's visible cells with a normal map, an ORM map and an alpha-cut card. */
+  normalMapShare: number;
+  ormShare: number;
+  alphaCardShare: number;
+  draws: number;
+  /** The model files the tag draws (posix, relative to the game folder), when the engine names them. */
+  models: string[];
+  /** Every mesh under the tag is an untouched primitive, when the engine says so. */
   primitiveOnly: boolean;
-  /** The model file the tag draws (posix, relative to the game folder), when the engine names it. */
-  model: string | null;
 }
 
-/** The metered exposure of the frame. */
-export interface ExposureFacts {
-  ev: number | null;
-  targetEv: number | null;
-  /** Mean luma, 0-255. */
-  meanLuma: number | null;
-  /** Shares of the frame per luma bin, darkest first. */
-  histogram: number[];
-}
-
-/** The look a frame reports: per tag, and the exposure. */
+/** The look a frame reports, per tag. */
 export interface LookFacts {
   tags: Record<string, TagLook>;
-  exposure: ExposureFacts | null;
-}
-
-/** A field under its snake_case or camelCase name. */
-function field(raw: AnyRecord | null | undefined, camel: string): unknown {
-  if (!raw) return undefined;
-  const snake = camel.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
-  return raw[camel] ?? raw[snake];
+  /** Share of the screen any flat material covers, tagged or not. */
+  flatCoverage: number;
 }
 
 const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
-const bool = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
 const share = (value: unknown): number => Math.max(0, Math.min(1, num(value) ?? 0));
+
+/** The model files a tag names: `models`, or a lone `model`. */
+function modelsOf(raw: AnyRecord): string[] {
+  const listed = Array.isArray(raw.models) ? raw.models : [raw.model];
+  return listed.filter((model): model is string => typeof model === "string" && model.length > 0);
+}
 
 /** One tag's reported look, read defensively. */
 function tagLookOf(raw: AnyRecord): TagLook {
-  const model = field(raw, "model");
   return {
-    coverage: share(field(raw, "coverage")),
-    flatCoverage: share(field(raw, "flatCoverage")),
-    texelDensity: num(field(raw, "texelDensity")),
-    triDensity: num(field(raw, "triDensity")),
-    normalMap: bool(field(raw, "normalMap")),
-    ormMap: bool(field(raw, "ormMap")),
-    organic: field(raw, "organic") === true,
-    alphaCards: bool(field(raw, "alphaCards")),
-    primitiveOnly: field(raw, "primitiveOnly") === true,
-    model: typeof model === "string" && model ? model : null,
-  };
-}
-
-/** The exposure a frame reports, or null when it reports none. */
-function exposureOf(raw: unknown): ExposureFacts | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as AnyRecord;
-  const histogram = field(record, "histogram");
-  return {
-    ev: num(field(record, "ev")),
-    targetEv: num(field(record, "targetEv")),
-    meanLuma: num(field(record, "meanLuma")),
-    histogram: Array.isArray(histogram) ? histogram.map(share) : [],
+    coverage: share(raw.coverage),
+    flatCoverage: share(raw.flatCoverage),
+    texelsPerMetre: num(raw.texelsPerMetre),
+    pixelsPerMetre: num(raw.pixelsPerMetre),
+    trianglesPerSquareMetre: num(raw.trianglesPerSquareMetre),
+    normalMapShare: share(raw.normalMapShare),
+    ormShare: share(raw.ormShare),
+    alphaCardShare: share(raw.alphaCardShare),
+    draws: num(raw.draws) ?? 0,
+    models: modelsOf(raw),
+    primitiveOnly: raw.primitiveOnly === true,
   };
 }
 
@@ -115,7 +95,7 @@ export function lookFactsOf(state: AnyRecord | null | undefined): LookFacts | nu
   for (const [tag, raw] of Object.entries(rawTags)) {
     if (raw && typeof raw === "object") tags[tag] = tagLookOf(raw);
   }
-  return { tags, exposure: exposureOf(look.exposure) };
+  return { tags, flatCoverage: share(look.flatCoverage) };
 }
 
 /** A blocker read off the facts: its class and the tag it names, and the defect as a judge would write it. */
@@ -127,8 +107,8 @@ export interface FactBlocker {
 
 const percent = (value: number): string => `${(value * 100).toFixed(SHARE_DIGITS)}%`;
 
-/** The blockers one tag's look shows. */
-function tagBlockers(tag: string, look: TagLook): FactBlocker[] {
+/** The blockers one tag's look shows; `organic` is whether the art pass plans it as something grown. */
+function tagBlockers(tag: string, look: TagLook, organic: boolean): FactBlocker[] {
   if (look.coverage < MIN_TAG_COVERAGE) return [];
   const out: FactBlocker[] = [];
   const add = (blocker: LookBlocker, what: string) =>
@@ -136,15 +116,15 @@ function tagBlockers(tag: string, look: TagLook): FactBlocker[] {
   if (look.primitiveOnly) add(LookBlocker.Primitive, "every mesh is an untouched primitive");
   if (look.flatCoverage > FLAT_COVERAGE_MAX)
     add(LookBlocker.FlatMaterial, `${percent(look.flatCoverage)} of the frame in an untextured flat material`);
-  const stick = look.organic && look.alphaCards === false;
+  const stick = organic && look.alphaCardShare === 0;
   if (stick) add(LookBlocker.StickTree, "organic, drawn with no leaf or twig cards");
   return out;
 }
 
-/** Every blocker the facts show, tag by tag. */
-export function factBlockers(facts: LookFacts | null): FactBlocker[] {
+/** Every blocker the facts show, tag by tag; `organic` names the tags the art pass plans as grown things. */
+export function factBlockers(facts: LookFacts | null, organic: ReadonlySet<string> = new Set()): FactBlocker[] {
   if (!facts) return [];
-  return Object.entries(facts.tags).flatMap(([tag, look]) => tagBlockers(tag, look));
+  return Object.entries(facts.tags).flatMap(([tag, look]) => tagBlockers(tag, look, organic.has(tag)));
 }
 
 const blockerKey = (blocker: FactBlocker): string => `${blocker.blocker}\u0000${blocker.tag}`;
@@ -157,11 +137,20 @@ const blockerKey = (blocker: FactBlocker): string => `${blocker.blocker}\u0000${
 export function addedFactBlockers(
   challenger: AnyRecord | null | undefined,
   incumbent: AnyRecord | null | undefined,
+  organic: ReadonlySet<string> = new Set(),
 ): string[] {
-  const before = new Set(factBlockers(lookFactsOf(incumbent)).map(blockerKey));
-  return factBlockers(lookFactsOf(challenger))
+  const before = new Set(factBlockers(lookFactsOf(incumbent), organic).map(blockerKey));
+  return factBlockers(lookFactsOf(challenger), organic)
     .filter((blocker) => !before.has(blockerKey(blocker)))
     .map((blocker) => blocker.text);
+}
+
+/** A captured frame's luma, as the studio measures it (`PixelStats`): the band reads the pixels, not the engine's EV. */
+export interface FrameLuma {
+  /** Mean luma, 0-255. */
+  meanLuma: number | null;
+  /** Shares of the frame per luma bin, darkest first. */
+  histogram: number[];
 }
 
 /** What a playable camera's exposure is held to: the band, or a night look's floor. */
@@ -175,7 +164,7 @@ export interface LumaRule {
  * when it sits inside (or reports nothing). Gen3's classroom settled at mean luma 28 with 41% of
  * the frame in the darkest bin, and `[crushed-shadow]` never stopped a keep.
  */
-export function lumaBandDefect(camera: string, exposure: ExposureFacts | null, rule: LumaRule): string | null {
+export function lumaBandDefect(camera: string, exposure: FrameLuma | null, rule: LumaRule): string | null {
   const luma = exposure?.meanLuma ?? null;
   if (luma === null) return null;
   const darkest = exposure?.histogram[0] ?? 0;

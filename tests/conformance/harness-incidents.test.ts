@@ -18421,7 +18421,20 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     phase: "playing",
     __render: { look: { tags } },
   });
-  const BOX_BENCH = { coverage: 0.04, flat_coverage: 0.035, primitive_only: true, organic: false };
+  /** The bench of the lighting lane's fixture (`tests/fixtures/render-look-v1.json`): untextured, no maps. */
+  const BOX_BENCH = {
+    coverage: 0.04,
+    flatCoverage: 0.031,
+    texelsPerMetre: null,
+    pixelsPerMetre: 640,
+    trianglesPerSquareMetre: 2.5,
+    normalMapShare: 0,
+    ormShare: 0,
+    alphaCardShare: 0,
+    draws: 12,
+  };
+  /** A birch of cones: textured bark, no leaf or twig cards. */
+  const CONE_BIRCH = { ...BOX_BENCH, flatCoverage: 0, texelsPerMetre: 256, normalMapShare: 1, ormShare: 1 };
 
   it("G3-1a. yard it1 was kept on yard-is-a-courtyard while it added a bench of twelve boxes: a round that adds a look blocker is not kept, whatever checks flipped", async () => {
     const { acceptRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
@@ -18451,17 +18464,23 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     });
     assert.deepEqual(taste.addedBlockers, [bench], "only a tagged look blocker counts as added");
     assert.match(askedOf(recorder), /ART BAR: .*"added".*"Worse against the art bar" is a regression/);
-    // The engine's facts: a bench drawn as untouched primitives in flat colour, new in this round.
+    // The engine's facts: a bench drawn in flat colour and a birch with no cards (organic by the art pass), new in this round.
+    const art = {
+      generations: 0,
+      assets: [
+        { area: "the yard", tier: "mid", kind: "organic", asset: "birches", source: "genex-model", tags: ["birch"] },
+      ],
+    };
     const facts = await tasteVeto(judging(preferChallenger()).ctx, {
-      run: yard,
+      run: { ...yard, art },
       facet,
-      challenger: { state: lookState({ bench: BOX_BENCH }) },
+      challenger: { state: lookState({ bench: BOX_BENCH, birch: CONE_BIRCH }) },
       incumbentEvidence: { state: lookState({}) },
       random: () => 0.1,
     });
     assert.deepEqual(
-      facts.addedBlockers.map((text: string) => /^\[([a-z-]+)\] bench:/.exec(text)?.[1]),
-      ["primitive", "flat-material"],
+      facts.addedBlockers.map((text: string) => /^\[([a-z-]+)\] ([a-z]+):/.exec(text)?.slice(1).join(" ")),
+      ["flat-material bench", "stick-tree birch"],
     );
     // A blocker the incumbent already showed was not added by this round.
     const old = await tasteVeto(judging(preferChallenger()).ctx, {
@@ -18716,7 +18735,7 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
         { area: "the yard", tier: "scatter", kind: "surface", asset: "snow ground", source: "scan", tags: ["ground"] },
       ],
     };
-    const tag = (model: string, extra: Record<string, unknown> = {}) => ({ coverage: 0.05, model, ...extra });
+    const tag = (model: string, extra: Record<string, unknown> = {}) => ({ coverage: 0.05, models: [model], ...extra });
     const state = lookState({
       bench: tag("assets/blender/bench/model.glb"),
       bin: tag("assets/genex/bin/model.glb"),
@@ -18737,7 +18756,7 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     // The engine's word that a tag is all primitives outranks the folder it came from.
     const primitive = await auditProvenance(
       { ...yard, art },
-      lookState({ bin: tag("assets/genex/bin/model.glb", { primitive_only: true }) }),
+      lookState({ bin: tag("assets/genex/bin/model.glb", { primitiveOnly: true }) }),
       game,
     );
     assert.equal(primitive.length, 1);
@@ -18780,36 +18799,29 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     const { lumaBandDefect } = await import("../../src/harness-seed/loop/look-facts.ts");
     const { blocksLook } = await import("../../src/harness-seed/loop/look-bar.ts");
     const histogram = (darkest: number) => [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)];
-    const dark = lumaBandDefect(
-      "classroom",
-      { ev: -1, targetEv: -1, meanLuma: 28, histogram: histogram(0.41) },
-      { night: false },
-    );
+    const dark = lumaBandDefect("classroom", { meanLuma: 28, histogram: histogram(0.41) }, { night: false });
     assert.ok(dark && blocksLook(dark), String(dark));
     assert.match(String(dark), /classroom: settles at mean luma 28 with 41\.0%/);
-    assert.equal(
-      lumaBandDefect("classroom", { ev: 0, targetEv: 0, meanLuma: 105, histogram: histogram(0.08) }, { night: false }),
-      null,
-    );
+    assert.equal(lumaBandDefect("classroom", { meanLuma: 105, histogram: histogram(0.08) }, { night: false }), null);
     // A declared night look sits lower; a frame of black still fails it.
-    assert.equal(
-      lumaBandDefect("street", { ev: -3, targetEv: -3, meanLuma: 60, histogram: histogram(0.3) }, { night: true }),
-      null,
-    );
-    assert.ok(
-      lumaBandDefect("street", { ev: -5, targetEv: -5, meanLuma: 20, histogram: histogram(0.6) }, { night: true }),
-    );
+    assert.equal(lumaBandDefect("street", { meanLuma: 60, histogram: histogram(0.3) }, { night: true }), null);
+    assert.ok(lumaBandDefect("street", { meanLuma: 20, histogram: histogram(0.6) }, { night: true }));
     assert.equal(
       lumaBandDefect("classroom", null, { night: false }),
       null,
       "a camera that reports nothing is not judged by facts",
     );
   });
+
   it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's per-tick exposure trace is held to at most 1 EV per half second and no overshoot past where it settles", async () => {
     const { doorwayDefect } = await import("../../src/harness-seed/loop/temporal-checks.ts");
     const trace = (ev: (t: number) => number) => ({
       __render: {
-        exposure_trace: Array.from({ length: 121 }, (_, i) => ({ t: i / 60, ev: ev(i / 60), mean_luma: 100 })),
+        exposureTrace: Array.from({ length: 121 }, (_, i) => ({
+          t: i / 60,
+          appliedEv: ev(i / 60),
+          meteredEv: ev(i / 60),
+        })),
       },
     });
     // A cut from EV 2 to EV -1 the frame the player crosses, and a smooth 1.5 s ramp.

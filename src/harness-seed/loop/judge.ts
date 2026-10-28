@@ -43,7 +43,7 @@ import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { workingGoal } from "./goal-prompts.ts";
 import { judgeScopeLines, LIVENESS_SCOPE_RULE, PROPOSAL_SCOPE_RULE } from "./scope-prompts.ts";
 import { visionJudgeLines } from "./vision-prompts.ts";
-import { asksForLook, genreOf, LookBlocker, lookBlockersIn, notShippedDefects } from "./look-bar.ts";
+import { asksForLook, genreOf, LookBlocker, lookBlockersIn, notShippedDefects, organicTags } from "./look-bar.ts";
 import { addedFactBlockers } from "./look-facts.ts";
 import { artBarLine, shippedLookLine } from "./look-bar-prompts.ts";
 import { runScope } from "./scope.ts";
@@ -1713,7 +1713,7 @@ export async function tasteVeto(
 
   const answer = await askJudgeFor(ctx, { run, systemPrompt: system, userContent, images });
   // What the engine's own look facts say the round added, judge or no judge (look-facts.ts).
-  const factAdded = lookBar ? addedFactBlockers(challenger.state, incumbentEvidence?.state) : [];
+  const factAdded = lookBar ? addedFactBlockers(challenger.state, incumbentEvidence?.state, organicTags(run)) : [];
   const verdict = {
     ...tasteVerdictOf(
       answer,

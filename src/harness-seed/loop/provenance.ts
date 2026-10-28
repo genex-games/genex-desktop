@@ -221,7 +221,10 @@ export async function auditProvenance(
   const facts = lookFactsOf(state);
   if (!art || !facts || !root) return [];
   const drawn = new Map(
-    Object.entries(facts.tags).map(([tag, look]) => [tag, { model: look.model, primitiveOnly: look.primitiveOnly }]),
+    Object.entries(facts.tags).map(([tag, look]) => [
+      tag,
+      { model: look.models[0] ?? null, primitiveOnly: look.primitiveOnly },
+    ]),
   );
   const lock = lockRows(await readInside(root, ASSET_LOCK_FILE));
   const models = new Map<string, ModelFacts | null>();

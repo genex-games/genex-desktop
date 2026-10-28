@@ -374,6 +374,12 @@ export function unplannedParts(previousWorkers: readonly string[], workers: read
   return workers.filter((id) => !before.has(id));
 }
 
+/** The draw tags the art pass plans as grown things (`kind: organic`): the engine cannot tell a tree from a post. */
+export function organicTags(run: { readonly [field: string]: unknown } | null | undefined): Set<string> {
+  const assets = runArtPass(run)?.assets ?? [];
+  return new Set(assets.filter((asset) => asset.kind === ArtKind.Organic).flatMap((asset) => asset.tags ?? []));
+}
+
 /** The art pass a run carries, when its plan gave one. */
 export function runArtPass(run: { readonly [field: string]: unknown } | null | undefined): ArtPass | null {
   const art = run?.art as ArtPass | null | undefined;
