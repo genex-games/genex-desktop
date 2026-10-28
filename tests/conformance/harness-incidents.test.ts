@@ -18486,6 +18486,96 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     assert.doesNotMatch(askedOf(plain), /ART BAR/);
   });
 
+  it("G3-1c. light it1 and yard it1 were judged with no image attached and kept on the state alone: a round with no frame to show is captured once more, then Unmeasured, never judged blind", async () => {
+    const { verifyChallenger } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const verdictOf = async (again: Record<string, unknown>) => {
+      const recorder = judging({ pick: "A", satisfied: false, defects: [], reason: "fine" });
+      let captures = 0;
+      const loop = {
+        ctx: recorder.ctx,
+        legacy: true,
+        facet,
+        run: yard,
+        incumbentEvidence: null,
+        biggestGap: "the yard reads as boxes",
+        deadline: Date.now() + HOUR_MS,
+        budgets: { observationDelays: [] },
+        spec: { cameras: ["default"] },
+      };
+      const round: Record<string, any> = {
+        iterationId: "it1",
+        // Shots on record, but an alias fallback with no pixels: nothing a judge can be shown.
+        evidence: { ok: true, problems: [], shots: [{ camera: "default", path: "/f.jpg" }] },
+        gatherOnce: async () => {
+          captures++;
+          return { ok: true, problems: [], ...again };
+        },
+      };
+      await verifyChallenger(loop as never, round as never);
+      return { round, captures, judged: recorder.paramsOf("engine.complete").length };
+    };
+    const blind = await verdictOf({ shots: [{ camera: "default", path: "/f.jpg" }] });
+    assert.deepEqual(
+      [blind.round.verdictSource, blind.round.won, blind.captures, blind.judged],
+      ["unseen", false, 1, 0],
+    );
+    assert.match(blind.round.verdict.reason, /^unmeasured: no frame of this build could be shown/);
+    const seen = await verdictOf({ shots: [{ camera: "default", path: "/f.jpg", base64: "px" }] });
+    assert.deepEqual(
+      [seen.round.verdictSource, seen.captures, seen.judged],
+      ["legacy", 1, 1],
+      "a second capture with pixels is judged",
+    );
+  });
+
+  it("G3-1f. references/ held the owner's still while the report said referenceStills: [] and no judge compared with it: a run that brought no frames takes the game's references/", async () => {
+    const { loadReferenceStills } = await import("../../src/harness-seed/loop/reference-stills.ts");
+    const { loopRunReport } = await import("../../src/harness-seed/loop/director/setup.ts");
+    const still = { label: "owner-classroom", data: "iVBORw0KGgo=", mimeType: "image/png" };
+    const recorder = ctxRecorder({
+      handlers: {
+        "game.references": () => ({ frames: [still], skipped: [{ file: "notes.txt", why: "not an image" }] }),
+      },
+    });
+    const run = { ...yard, reference: { name: "a photoreal bodycam shooter", shots: [] } } as Run;
+    const notes = await loadReferenceStills(recorder.ctx, run);
+    assert.deepEqual(
+      run.reference?.frames?.map((frame) => frame.label),
+      ["owner-classroom"],
+    );
+    assert.deepEqual(loopRunReport(run).referenceStills, ["owner-classroom"]);
+    assert.deepEqual(notes, [
+      "loaded 1 reference still(s) from references/: owner-classroom",
+      "reference skipped: notes.txt is not an image",
+    ]);
+    // A run that brought its own stills keeps them, and the folder is not read.
+    const own = { ...yard, reference: { name: "x", shots: [], frames: [{ ...still, label: "brought" }] } } as Run;
+    const untouched = ctxRecorder({ handlers: { "game.references": () => ({ frames: [still] }) } });
+    assert.deepEqual(await loadReferenceStills(untouched.ctx, own), []);
+    assert.equal(untouched.paramsOf("game.references").length, 0);
+    assert.deepEqual(
+      own.reference?.frames?.map((frame) => frame.label),
+      ["brought"],
+    );
+  });
+
+  it("G3-1g. a parity capture labelled classroom was the title menu: a demo whose end frame is another frame of the same pass is flagged as not having moved the game", async () => {
+    const { weighDemoFrames } = await import("../../src/harness-seed/loop/frame-verdicts.ts");
+    const look = {
+      warnings: [] as string[],
+      shots: [
+        { camera: "default", base64: "title-menu" },
+        { camera: "demo:classroom", base64: "title-menu" },
+        { camera: "demo:doorway", base64: "doorway-end" },
+        { camera: "eye:spawn", base64: "yard" },
+      ],
+    };
+    assert.deepEqual(weighDemoFrames(look), [
+      "demo:classroom's end frame is the same picture as default — the demo did not move the game (a title screen or a paused game): its frame proves nothing about the demo",
+    ]);
+    assert.equal(look.warnings.length, 1, "the judge reads it beside the frame");
+  });
+
   it("G3-2a. the art pass took a cone-script birch and a box bench as `blender`, and the grammar's own example sourced the sky from Blender: a kit is the modular shell only, every asset says what it is, and the example is a valid pass", async () => {
     const { readArtPass, ArtRefusal } = await import("../../src/harness-seed/loop/look-bar.ts");
     const { ART_GRAMMAR } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");

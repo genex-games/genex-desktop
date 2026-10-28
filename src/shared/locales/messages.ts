@@ -4688,6 +4688,7 @@ export const MESSAGES = [
   "no game of its own",
   "no licence",
   "no matches",
+  "no picture of it could be shown to the judge",
   "no reason given",
   "no tools",
   "no verdict recorded",

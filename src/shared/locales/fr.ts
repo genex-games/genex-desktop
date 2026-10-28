@@ -5267,6 +5267,7 @@ export default {
   "the modeller": "le modeleur",
   "the must-fix was not fixed": "la correction obligatoire n’a pas été faite",
   "it added something below the game's look bar": "il a ajouté quelque chose en dessous du niveau visuel du jeu",
+  "no picture of it could be shown to the judge": "aucune image n’a pu être montrée au juge",
   "the plan": "le plan",
   "the plan is ready — {parts}.": "le plan est prêt — {parts}.",
   "the plan is ready.": "le plan est prêt.",

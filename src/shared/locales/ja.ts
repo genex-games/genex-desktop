@@ -5186,6 +5186,7 @@ export default {
   "the modeller": "モデラー",
   "the must-fix was not fixed": "必ず直すべき問題が直っていませんでした",
   "it added something below the game's look bar": "ゲームの見た目の基準に届かないものを追加しました",
+  "no picture of it could be shown to the judge": "判定役に見せられる画像がありませんでした",
   "the plan": "プラン",
   "the plan is ready — {parts}.": "プランができました：{parts}。",
   "the plan is ready.": "プランができました。",

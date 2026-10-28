@@ -134,6 +134,8 @@ export const VerdictSource = {
   Unfixed: "unfixed",
   /** On a run with a visual bar, the round added a look blocker (look-bar.ts): not kept, whatever checks flipped. */
   LookBlocked: "look-blocked",
+  /** No frame of the build could be shown to a judge, even after a second capture: Unmeasured, never judged blind. */
+  Unseen: "unseen",
   /** The challenger did not produce a judgeable build. */
   Broken: "broken",
   /** The judge could not be reached: an auto-tie. */
@@ -160,6 +162,7 @@ const LOST_BY_SOURCE: Record<string, string> = {
   [VerdictSource.NoMove]: VerdictRule.NoMove,
   [VerdictSource.Unfixed]: VerdictRule.Unfixed,
   [VerdictSource.LookBlocked]: VerdictRule.BelowLookBar,
+  [VerdictSource.Unseen]: VerdictRule.Unseen,
   [VerdictSource.Broken]: VerdictRule.Broken,
   [VerdictSource.Outage]: VerdictRule.Unreachable,
   [VerdictSource.Stopped]: VerdictRule.Stopped,

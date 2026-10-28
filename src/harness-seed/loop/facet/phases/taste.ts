@@ -33,10 +33,15 @@ interface Decision {
   moveNow: ReturnType<typeof moveVerdict>;
 }
 
+/** The cameras the taste judge is shown: the facet's own and the harness's eyes the evidence has. */
+export function tasteCamerasOf(loop: FacetLoop, round: FacetRound): string[] {
+  const eyes = (round.evidence.eyes ?? []).filter((e: string) => TASTE_EYES.includes(e));
+  return [...new Set([...loop.spec.cameras, ...eyes])];
+}
+
 /** Ask the taste judge, apply the acceptance rule, hold THE FIX to account, and grow the judge's own new check. */
 export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<void> {
   const { ctx, facet, run, spec } = loop;
-  const eyes = (round.evidence.eyes ?? []).filter((e: string) => TASTE_EYES.includes(e));
   round.taste = await tasteVeto(ctx, {
     run,
     facet,
@@ -44,7 +49,7 @@ export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<
     incumbentEvidence: loop.incumbentEvidence,
     board: round.nextBoard,
     comparison: round.comparison,
-    cameras: [...new Set([...spec.cameras, ...eyes])],
+    cameras: tasteCamerasOf(loop, round),
     iterationId: round.iterationId,
     move: loop.currentMove?.what ?? null,
     // A finishing round is judged as one: polish is expected, and its polish list is the work.

@@ -4898,6 +4898,7 @@ export default {
   "the modeller": "建模师",
   "the must-fix was not fixed": "必须修复的问题没有修好",
   "it added something below the game's look bar": "它加入了低于游戏画面标准的内容",
+  "no picture of it could be shown to the judge": "没有能给评审看的画面",
   "the plan": "计划",
   "the plan is ready — {parts}.": "计划已就绪——{parts}。",
   "the plan is ready.": "计划已就绪。",

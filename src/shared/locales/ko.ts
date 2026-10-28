@@ -5070,6 +5070,7 @@ export default {
   "the modeller": "모델러",
   "the must-fix was not fixed": "꼭 고쳐야 할 문제가 고쳐지지 않았어요",
   "it added something below the game's look bar": "게임의 비주얼 기준에 못 미치는 것을 추가했어요",
+  "no picture of it could be shown to the judge": "심사자에게 보여 줄 수 있는 이미지가 없었어요",
   "the plan": "계획",
   "the plan is ready — {parts}.": "계획이 준비됐어요 — {parts}.",
   "the plan is ready.": "계획이 준비됐어요.",
