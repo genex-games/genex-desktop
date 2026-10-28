@@ -15,8 +15,8 @@
  * on its discovery path; the security settings are `--config` overrides on every command. The lock
  * is generated offline against the vendored registry in the build folder, read back and verified
  * (every package the vendored registry's or a path package), then copied into the stage for
- * `--offline --locked` runs: clippy with the store's `clippy.toml` and `-D warnings` (style and
- * complexity lints allowed, the store's determinism bans denied: {@link CLIPPY_LINT_LEVELS}) first,
+ * `--offline --locked` runs: clippy with the store's `clippy.toml` and `-D warnings` (style,
+ * complexity and unused-code lints allowed, the store's determinism bans denied: {@link CLIPPY_LINT_LEVELS}) first,
  * then the build, both under `RUSTFLAGS=-F unsafe_code`.
  *
  * The game's trust flag (`rust-trust.ts`, set only by the person) is the one way off that policy
@@ -293,12 +293,20 @@ const GAME_RUSTFLAGS = "-F unsafe_code";
  * The lint levels clippy's gate runs a game crate at, in order (rustc lets the last flag naming a
  * lint or its group win). Every warning is an error, except clippy's style and complexity groups
  * and `approx_constant` (a literal near a std constant, as a hand-written TAU), which only say how
- * the code reads: they never fail a build (B6, bodycam's `collapsible_if`). The store's
- * `clippy.toml` determinism bans are in the style group, so they are denied again after it.
+ * the code reads: they never fail a build (B6, bodycam's `collapsible_if`). Nor does rustc's
+ * `unused` group: a field, function, import or variable a game in progress does not use yet
+ * (`dead_code`) cost bodycam's agents whole rounds, in every build alike, since an export that
+ * failed on what judged builds allowed would surprise the person last. A dropped `Result`
+ * (`unused_must_use`) is still an error. The store's `clippy.toml` determinism bans are in the
+ * style group, so they are denied again after it.
  */
 const CLIPPY_LINT_LEVELS: readonly string[] = [
   "-D",
   "warnings",
+  "-A",
+  "unused",
+  "-D",
+  "unused_must_use",
   "-A",
   "clippy::style",
   "-A",

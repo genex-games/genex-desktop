@@ -75,7 +75,8 @@ code and web shell), recorded as
 `<bin>.content` only when its stage is that tree file for file; any copy of the same content is
 served that admitted output (or waits for its build under way) instead of building. The person's
 Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Clippy denies
-every warning but its style and complexity groups and `approx_constant`; the store `clippy.toml`'s
+every warning but its style and complexity groups, `approx_constant` and rustc's `unused` group
+(code a game does not use yet; a dropped `Result` stays an error); the store `clippy.toml`'s
 determinism bans stay errors (`CLIPPY_LINT_LEVELS`). A failed step's lines are its first error as
 rustc renders it, empty gutter lines dropped, then how many more errors named a place; the note the
 console and the agents read (`buildFailureNote`) names the exit, never the command and its

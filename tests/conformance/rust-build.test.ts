@@ -195,12 +195,14 @@ interface LintHit {
   lint: string;
   group: string;
   level: "W" | "D";
+  /** A rustc lint (`dead_code`, group `unused`), named without clippy's prefix. */
+  rustc?: boolean;
 }
 
 /**
  * The stub clippy's run over a game that trips `hits`: each lint's level resolved from the lint
- * flags after `--` as rustc resolves them (in order, the last flag naming the lint, its group or
- * `clippy::all` wins; a lint left at warn is an error while `warnings` is denied), and an error
+ * flags after `--` as rustc resolves them (in order, the last flag naming the lint, its group or,
+ * for a clippy lint, `clippy::all` wins; a lint left at warn is an error while `warnings` is denied), and an error
  * message for each one that ends denied, failing the run when any does.
  */
 function clippyLevels(hits: readonly LintHit[]): string {
@@ -208,10 +210,11 @@ function clippyLevels(hits: readonly LintHit[]): string {
     "flags=''; after=0",
     'for a in "$@"; do if [ "$after" = 1 ]; then flags="$flags $a"; fi; if [ "$a" = -- ]; then after=1; fi; done',
     "level_of() {",
-    "  level=$3; flag=''",
+    "  level=$3; prefix=$4; flag=''",
     "  for a in $flags; do",
     "    case $a in -D|-W|-A|-F) flag=$a; continue ;; esac",
-    '    case $a in "clippy::$1"|"clippy::$2"|clippy::all) if [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
+    '    case $a in "$prefix$1"|"$prefix$2") if [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
+    '    if [ "$a" = clippy::all ] && [ -n "$prefix" ] && [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi',
     '    if [ "$a" = warnings ] && [ -n "$flag" ]; then warnings=$(echo "$flag" | cut -c2); fi',
     "    flag=''",
     "  done",
@@ -222,18 +225,19 @@ function clippyLevels(hits: readonly LintHit[]): string {
     "failed=0",
   ];
   const each = hits.map((hit) => {
+    const prefix = hit.rustc ? "" : "clippy::";
     const message = {
       reason: "compiler-message",
       message: {
         message: `lint ${hit.lint}`,
-        code: { code: `clippy::${hit.lint}` },
+        code: { code: `${prefix}${hit.lint}` },
         level: "error",
         spans: [{ file_name: "src/main.rs", line_start: 1, column_start: 1, is_primary: true }],
         children: [],
         rendered: `error: lint ${hit.lint}`,
       },
     };
-    const denied = `warnings=''; if [ "$(level_of ${hit.lint} ${hit.group} ${hit.level})" = D ]; then`;
+    const denied = `warnings=''; if [ "$(level_of ${hit.lint} ${hit.group} ${hit.level} '${prefix}')" = D ]; then`;
     return `${denied} printf '%s\\n' '${JSON.stringify(message)}'; failed=1; fi`;
   });
   return [...levelOf, ...each, 'if [ "$failed" = 1 ]; then exit 101; fi'].join("\n");
@@ -677,6 +681,36 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       ["bans", [...styleHits, ...bans], "clippy::disallowed_methods"],
     ] as const) {
       const parent = await realpath(await tmpDir(`rust-clippy-levels-${name}-`));
+      const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+      const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);
+      assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
+      if (failsOn) assert.deepEqual(codes, [failsOn]);
+    }
+  });
+
+  it("never fails a build on code the game does not use yet, while a dropped Result and the determinism bans stay errors (BC2: bodycam rerun's dead_code)", async () => {
+    // The rerun's agents lost rounds to these, each a hard error under `-D warnings`.
+    const unusedHits: LintHit[] = [
+      { lint: "dead_code", group: "unused", level: "W", rustc: true },
+      { lint: "unused_imports", group: "unused", level: "W", rustc: true },
+      { lint: "unused_variables", group: "unused", level: "W", rustc: true },
+      { lint: "unused_mut", group: "unused", level: "W", rustc: true },
+    ];
+    for (const [name, hits, failsOn] of [
+      ["unused", unusedHits, null],
+      [
+        "must-use",
+        [...unusedHits, { lint: "unused_must_use", group: "unused", level: "W", rustc: true }],
+        "unused_must_use",
+      ],
+      [
+        "bans",
+        [...unusedHits, { lint: "disallowed_methods", group: "style", level: "W" }],
+        "clippy::disallowed_methods",
+      ],
+    ] as const) {
+      const parent = await realpath(await tmpDir(`rust-unused-levels-${name}-`));
       const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
       const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
       const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);

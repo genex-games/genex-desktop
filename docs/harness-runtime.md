@@ -487,7 +487,9 @@ as `final-commit-failed`. A landing that git refuses over uncommitted changes in
 or one into a folder with something staged or a merge of its own under way (which the failed
 merge's abort would undo, so it is not tried), is refused as `uncommitted-changes` and names them
 without blaming anyone; a conflict with commits there, or a hook or lock that refuses the merge,
-stays `could-not-land` with git's words.
+stays `could-not-land` with git's words. A conflict in `studio.json` alone (the studio's own kind
+declaration beside the lead's `game` block) is merged by its keys (`loop/studio-json-merge.ts`):
+equal values are one, a key one side added is kept, and only a key both set apart still refuses.
 
 Genex's moments. Every restore of a game folder (`snapshot.restore` naming the game, and the
 person's file Rewind) runs the enabled plugins' `restore.before` and `restore.after` steps around
