@@ -789,6 +789,8 @@ pub struct SpelledChange {
     pub render_scale_lock: Option<Option<f64>>,
     /// `Some(Some(ms))` is the frame time dynamic resolution holds, `Some(None)` gives the class's back.
     pub frame_budget_ms: Option<Option<f64>>,
+    /// `Some(Some(json))` overlays these `[render.look]` keys, `Some(None)` gives the game's look back.
+    pub look: Option<Option<String>>,
 }
 
 /// `change` by its wire spellings.
@@ -800,6 +802,7 @@ pub fn spell_change(change: &RenderSettingsChange) -> SpelledChange {
         reset_features: change.reset_features,
         render_scale_lock: change.render_scale_lock,
         frame_budget_ms: change.frame_budget_ms,
+        look: change.look.clone(),
     }
 }
 

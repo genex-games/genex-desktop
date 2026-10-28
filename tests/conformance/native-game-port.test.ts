@@ -869,7 +869,8 @@ describe("captures", () => {
     return shot;
   }
 
-  it("a capture declaring 5000×5000 is refused before any read, and the game is killed", async () => {
+  // WP-9 flipped 5000×5000 -> 9000×9000: a native capture side now reaches 8192.
+  it("a capture declaring 9000×9000 is refused before any read, and the game is killed", async () => {
     const reads: string[] = [];
     const r = await rig({
       io: {
@@ -885,7 +886,7 @@ describe("captures", () => {
       id: request.id,
       ok: true,
       op: "capture",
-      result: { seq: 1, width: 5000, height: 5000, format: "bgra8", digest: "0".repeat(16) },
+      result: { seq: 1, width: 9000, height: 9000, format: "bgra8", digest: "0".repeat(16) },
     });
     assert.equal(await shot, NativeRefusal.ReplyInvalid);
     assert.deepEqual(reads, [], "nothing was read");

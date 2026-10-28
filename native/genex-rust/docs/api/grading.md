@@ -19,6 +19,11 @@ for each room or courtyard, the fog, the exposure (auto, with its curve), and on
 A grade never fixes light: a dark room wants a light, a probe or a volume, not lift; a grey
 meadow wants less fog, not saturation.
 
+Tune `[render.look]` live, no rebuild: the `renderSettings` verb's `{set: {look: {ev_compensation:
+0.7, bloom_intensity: 0.03, exposure: "auto"}}}` lays those keys over the running game's look (an
+unknown key or value answers `invalid-look`). Capture, adjust, then copy the values into
+`genex.toml` `[render.look]`; `{set: {look: null}}` gives the game's look back.
+
 The grade is code only (`use genex::render::{Grading, GradingLut, RenderConfig};`). A config
 set in code replaces `genex.toml`'s `[render]`, so start from the one the build compiled in and
 the toml's look, fog and per-class wishes stay: `game.render_settings(RenderConfig::from_build()

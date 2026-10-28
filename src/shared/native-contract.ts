@@ -563,10 +563,16 @@ function rangeError(value: unknown, range: readonly [number, number], outside: R
   return value >= range[0] && value <= range[1] ? null : outside;
 }
 
+/** A `look`: absent or null, else an object (the game checks its keys). */
+function lookError(value: unknown): RenderSettingsArgError | null {
+  return value === undefined || value === null || isRecord(value) ? null : NativeOpError.BadArgument;
+}
+
 /** The members of a checked `set` a game reads (it ignores any other). */
 function settingsChangeOf(set: Record<string, unknown>): RenderSettingsChange {
   const change: RenderSettingsChange = {};
-  const { preset, deviceClass, features, renderScaleLock, frameBudgetMs } = set;
+  const { preset, deviceClass, features, renderScaleLock, frameBudgetMs, look } = set;
+  if (look === null || isRecord(look)) change.look = look === null ? null : { ...look };
   if (preset === null || isQualityPreset(preset)) change.preset = preset;
   if (deviceClass === null || isDeviceClass(deviceClass)) change.deviceClass = deviceClass;
   if (features === null || isFeatureSwitches(features)) change.features = features === null ? null : { ...features };
@@ -590,7 +596,8 @@ export function checkRenderSettingsArg(arg: unknown): RenderSettingsArgCheck {
     wordError(set.deviceClass, isDeviceClass, RenderSettingsRefusal.UnknownDeviceClass) ??
     featuresError(set.features) ??
     rangeError(set.renderScaleLock, [RENDER_SCALE_MIN, RENDER_SCALE_MAX], RenderSettingsRefusal.InvalidScale) ??
-    rangeError(set.frameBudgetMs, [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX], RenderSettingsRefusal.InvalidFrameBudget);
+    rangeError(set.frameBudgetMs, [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX], RenderSettingsRefusal.InvalidFrameBudget) ??
+    lookError(set.look);
   return error ? { ok: false, error } : { ok: true, arg: { set: settingsChangeOf(set) } };
 }
 

@@ -28,9 +28,9 @@ everywhere. Check it with `capture --size 3840x2160` (or `7680x4320`): a native 
 up to 8192. Studio's embedded Live view stays at most 4096 a side; the game's own window and its
 captures are not held to it.
 
-Supersampling: on a native desktop-ultra a render scale may reach 2 (`ClassOverride { render_scale:
-Some(2.0), .. }`, or the `renderSettings` verb's `renderScaleLock`), and each output pixel is then
-the luminance-weighted mean of four rendered ones. Every other class stops at 1. Prefer the Native
+Supersampling: on a native desktop-ultra a render scale set in code may reach 2 (`ClassOverride {
+render_scale: Some(2.0), .. }`; `genex.toml` and the `renderSettings` lock stay within 0.5..=1), and
+each output pixel is then the luminance-weighted mean of four rendered ones. Every other class stops at 1. Prefer the Native
 tier first: scale 2 costs four times the pixels.
 
 A material texture keeps its source size up to the largest class it reaches: a 4096 map stays
