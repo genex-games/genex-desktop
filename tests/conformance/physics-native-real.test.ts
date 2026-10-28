@@ -21,7 +21,7 @@ import { type BindingBackend, registerBindingRows } from "./physics-binding-rows
 
 const REPO = path.resolve(import.meta.dirname, "../..");
 const PACKAGE = process.env.GENEX_PHYSICS_NATIVE_PACKAGE ?? path.join(REPO, ".studio-dev/build/physics-native-test");
-const BUILD_ID = /^genex-physics\/1\.0\.0\+contract-1\.0\+rapier-0\.36\.0\+det\+(aarch64-macos|x86_64-linux)$/;
+const BUILD_ID = /^genex-physics\/1\.1\.0-dev\.0\+contract-1\.0\+rapier-0\.36\.0\+det\+(aarch64-macos|x86_64-linux)$/;
 /** A round trip's deadline: the heaviest legal input (a default-limit heightfield) parses well within it. */
 const DEADLINE_MS = 20_000;
 /** A process per world: fewer than WASM's 1,000, each a spawn. */

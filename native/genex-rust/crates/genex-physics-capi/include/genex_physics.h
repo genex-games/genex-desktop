@@ -78,7 +78,7 @@ typedef struct gxph_bytes {
 
 /* The ABI version the library was built with (GXPH_ABI_VERSION). */
 uint32_t gxph_abi_version(void);
-/* This build's identity (§2), e.g. "genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det+aarch64-apple-darwin". */
+/* This build's identity (§2), e.g. "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+aarch64-apple-darwin". */
 gxph_result gxph_build_id(gxph_bytes *out);
 /* Gives a reply back and zeroes *buffer; freeing the empty buffer is a no-op. */
 gxph_result gxph_buf_free(gxph_bytes *buffer);

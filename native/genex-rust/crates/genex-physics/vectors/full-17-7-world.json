@@ -1,6 +1,6 @@
 {
   "contract": "1.0",
-  "build": "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det",
+  "build": "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det",
   "name": "full-17-7-world",
   "world": {
     "contract": "1.0",
@@ -38876,7 +38876,7 @@
       "repeat": 60,
       "expect": {
         "stateHash": "e38bbde6785362f6",
-        "physicsHash": "2444ee56c69f7d9c"
+        "physicsHash": "ee3d036dea1a7457"
       }
     }
   ]

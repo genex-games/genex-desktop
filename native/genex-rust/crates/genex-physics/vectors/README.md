@@ -12,7 +12,7 @@ Every file carries two version fields, and a runner refuses a file whose fields 
 | Field | Value for these pins | Meaning |
 |---|---|---|
 | `contract` | `1.0` | the contract version (§2) the file is written against |
-| `build` | `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det` | the `buildId` without its `+<target>` suffix (§2, the same string §10.2 hashes) |
+| `build` | `genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det` | the `buildId` without its `+<target>` suffix (§2, the same string §10.2 hashes) |
 
 Determinism is promised only between equal `buildId`s up to the target, so vectors are per build (§16).
 A new core version, backend version or feature set is a new `build`: the vectors are rewritten for it and
@@ -23,6 +23,10 @@ its commit.
 genex workspace's `0.1.0`, which no release carried, and results still moved on that one `build`. The core
 now has its own version (`CORE_VERSION`, the version both npm packages are released at), so from 1.0.0
 on any change that moves a pin bumps it, and a snapshot or vector of `0.1.0` is refused as another build.
+
+**Release 2 (this branch, `1.1.0-dev.0`):** the contract 1.1 draft's builds are prereleases of 1.1.0,
+so they never share a `build` with the release-1 core; these pins are this dev build's (the same
+results as 1.0.0's, under its own build string).
 
 ## Format
 

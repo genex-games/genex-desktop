@@ -218,9 +218,10 @@ fn malformed_snapshots_are_refused_and_change_nothing() {
     for build in [
         format!("genex-physics/9.9.9+contract-1.0+rapier-0.36.0+det+{target}"),
         format!("genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det+{target}"),
-        format!("genex-physics/1.0.0+contract-1.0+rapier-0.37.0+det+{target}"),
-        format!("genex-physics/1.0.0+contract-1.0+box3d-1.0.0+det+{target}"),
-        "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det".to_string(),
+        format!("genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+{target}"),
+        format!("genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.37.0+det+{target}"),
+        format!("genex-physics/1.1.0-dev.0+contract-1.0+box3d-1.0.0+det+{target}"),
+        "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det".to_string(),
         "no target".to_string(),
         String::new(),
     ] {

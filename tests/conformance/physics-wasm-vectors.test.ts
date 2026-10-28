@@ -37,7 +37,7 @@ const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const JS = path.join(REPO, "native/genex-rust/crates/genex-physics/js");
 const VECTORS = path.join(REPO, "native/genex-rust/crates/genex-physics/vectors");
 const PACKAGE = process.env.GENEX_PHYSICS_PACKAGE ?? path.join(REPO, ".studio-dev/build/physics-wasm");
-const PINNED_BUILD = "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det";
+const PINNED_BUILD = "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det";
 const WASM_BUILD = `${PINNED_BUILD}+wasm32`;
 /** The vector the runner's own rows mutate: one step, a stateHash pin, a short run. */
 const SMALL_VECTOR = "key-64-bytes.json";

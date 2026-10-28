@@ -340,7 +340,7 @@ pub extern "C" fn gxph_abi_version() -> u32 {
     GXPH_ABI_VERSION
 }
 
-/// This build's identity (§2) as text, e.g. `genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det+aarch64-apple-darwin`.
+/// This build's identity (§2) as text, e.g. `genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+aarch64-apple-darwin`.
 ///
 /// # Safety
 ///

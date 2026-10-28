@@ -1,6 +1,6 @@
 {
   "name": "@genex-ai/physics-native",
-  "version": "1.0.0",
+  "version": "1.1.0-dev.0",
   "description": "Genex Physics (contract 1.0) in a process of its own per world: the native core of @genex-ai/physics for authority servers on Linux x64 and macOS arm64, with the same API and errors as values.",
   "license": "MIT",
   "type": "module",
@@ -25,7 +25,7 @@
     "THIRD-PARTY-NOTICES.md"
   ],
   "dependencies": {
-    "@genex-ai/physics": "1.0.0"
+    "@genex-ai/physics": "1.1.0-dev.0"
   },
   "os": ["darwin", "linux"],
   "engines": {

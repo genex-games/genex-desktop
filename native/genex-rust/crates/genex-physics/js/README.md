@@ -5,7 +5,7 @@ for Node 24 and evergreen browsers. It is the TypeScript binding of the Layer 1 
 (`CONTRACT.md`, shipped beside this file; § numbers below are its own), over the same Rust core as
 native Genex games, with Rapier 0.36 as its backend.
 
-Version 1.0.0 is the release-1 core (contract 1.0). Its `buildId` (§2) is `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+<target>`.
+Version 1.1.0-dev.0 is a release-2 development build: contract 1.0 plus the 1.1 draft calls (CONTRACT.md §20, pending sign-off). Its `buildId` (§2) is `genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+<target>`. The release-1 core is 1.0.0.
 
 ## Use
 

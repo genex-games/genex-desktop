@@ -8,7 +8,7 @@ use crate::world_desc::CONTRACT_VERSION;
 /// at (`js/package.json`, `js/native-package.json`; a test holds both to it). It is the core's own,
 /// not the genex workspace's: the crate ships in the genex Rust release at the workspace version,
 /// which moves with the engine. Any change that moves a pinned result bumps it (`vectors/README.md`).
-pub const CORE_VERSION: &str = "1.0.0";
+pub const CORE_VERSION: &str = "1.1.0-dev.0";
 
 /// The `+<target>` suffix: `wasm32` for WebAssembly, else `<arch>-<os>` (e.g. `aarch64-macos`).
 pub fn target_name() -> String {
@@ -28,7 +28,7 @@ pub fn build_id_without_target() -> String {
     )
 }
 
-/// The full buildId (§2), e.g. `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+aarch64-macos`.
+/// The full buildId (§2), e.g. `genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+aarch64-macos`.
 pub fn build_id() -> String {
     format!("{}+{}", build_id_without_target(), target_name())
 }

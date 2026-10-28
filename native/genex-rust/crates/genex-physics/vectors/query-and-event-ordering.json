@@ -1,6 +1,6 @@
 {
   "contract": "1.0",
-  "build": "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det",
+  "build": "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det",
   "name": "query-and-event-ordering",
   "world": {
     "contract": "1.0",

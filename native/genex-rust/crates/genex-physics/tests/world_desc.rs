@@ -213,7 +213,7 @@ fn json_numbers_past_f32_give_non_finite() {
 fn physics_json_is_the_canonical_resolved_world() {
     let world = World::create(&base()).expect("valid");
     let expected = concat!(
-        r#"{"build":"genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det","static":{"boxes":[],"ramps":[]},"#,
+        r#"{"build":"genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det","static":{"boxes":[],"ramps":[]},"#,
         r#""world":{"contract":"1.0","dt":0.016666668,"gravity":[0,-9.81,0],"lengthUnit":1,"limits":{"#,
         r#""bodies":512,"ccdBodies":16,"collidersPerBody":8,"eventsPerStep":64,"heightfieldSamples":1048576,"#,
         r#""hullVertices":64,"joints":64,"maxAngularSpeed":1000,"maxSpeed":1000,"memoryBytes":67108864,"#,
@@ -222,7 +222,7 @@ fn physics_json_is_the_canonical_resolved_world() {
     );
     assert_eq!(world.physics_json(), expected);
     // FNV-1a 64 of the text above, computed independently with Node 24's BigInt.
-    assert_eq!(world.physics_hash(), "9074bb4bcb5b7a7f");
+    assert_eq!(world.physics_hash(), "a1d6bc387a4c3858");
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn physics_hash_covers_every_resolved_field() {
 #[test]
 fn build_id_names_core_contract_backend_features_and_target() {
     let without = build_id_without_target();
-    assert_eq!(without, "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det");
+    assert_eq!(without, "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det");
     assert_eq!(build_id(), format!("{without}+{}", target_name()));
     assert!(!target_name().contains('+'));
 }

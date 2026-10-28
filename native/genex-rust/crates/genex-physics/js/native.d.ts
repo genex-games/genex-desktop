@@ -59,7 +59,7 @@ export interface TickOutput {
 export interface NativeCore {
   /** The process id. */
   readonly pid: number;
-  /** The process's build identity (§2), e.g. `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+aarch64-macos`. */
+  /** The process's build identity (§2), e.g. `genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+aarch64-macos`. */
   buildId(): string;
   /** Makes the core's one world (§4); a second world is `internal`. */
   createWorld(desc: Physics.WorldDesc): Physics.Result<{ world: Physics.World }>;

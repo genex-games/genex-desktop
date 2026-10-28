@@ -115,7 +115,7 @@ fn replies_are_the_registry_text_and_a_world_steps_snapshots_and_restores() {
     let mut id = GxphBytes::EMPTY;
     // SAFETY: valid out.
     assert_eq!(unsafe { gxph_build_id(&mut id) }, GXPH_OK);
-    assert!(take(id).starts_with("genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det+"));
+    assert!(take(id).starts_with("genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+"));
     let mut measured = 0_u32;
     // SAFETY: valid out.
     assert_eq!(unsafe { gxph_world_memory_is_measured(world, &mut measured) }, GXPH_OK);

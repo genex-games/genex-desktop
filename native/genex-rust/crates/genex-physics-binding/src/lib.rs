@@ -58,7 +58,7 @@ fn internal(detail: &str) -> PhysicsFailure {
     PhysicsFailure::new(PhysicsError::Internal, detail)
 }
 
-/// This build's identity (§2), e.g. `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+wasm32`.
+/// This build's identity (§2), e.g. `genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det+wasm32`.
 pub fn build_id() -> String {
     genex_physics::build_id()
 }

@@ -3,7 +3,7 @@
 //! worlds, and through snapshot/restore into fresh worlds along the way; and its trace hashes to a
 //! pinned value.
 //!
-//! The pins are this build's (`genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det`): §1.2 promises
+//! The pins are this build's (`genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det`): §1.2 promises
 //! them on every target of the determinism row (Mac ARM, Linux x86_64, wasm32). They were computed
 //! on aarch64-macos; a different value on another target is a determinism break to investigate,
 //! never a pin to update. A change of backend or core that changes results changes the buildId's
@@ -19,7 +19,7 @@ const HEAP: usize = 64;
 const RESTORE_EVERY: usize = 50;
 /// The trace's FNV-1a 64 for the z-up and y-up scenes, this build.
 const PINNED_TRACE: [(UpAxis, &str); 2] = [(UpAxis::Z, "d0960f84d74a8226"), (UpAxis::Y, "e6a0bca37e622ca5")];
-const PINNED_BUILD: &str = "genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det";
+const PINNED_BUILD: &str = "genex-physics/1.1.0-dev.0+contract-1.0+rapier-0.36.0+det";
 
 fn trace(up: UpAxis) -> Vec<String> {
     let mut w = busy_world(up, HEAP);
