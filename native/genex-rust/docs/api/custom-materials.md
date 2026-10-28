@@ -19,7 +19,8 @@ RenderConfig::new().class(class, ClassOverride { taa: Some(TaaQuality::DEFAULT.w
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,
 `kind = "material"` or `"post"`, `api = 1`) and compile it in with
 `game.wgsl("shaders/glow.wgsl", include_str!("../shaders/glow.wgsl"))`: web, phone and export builds
-have no game folder to read it from. In `on_reset`, `gfx.material(path, &uniforms)` returns a
+have no game folder to read it from. Natively in Studio the folder's copy wins: edit the shader and
+call `seed` (the next reset reads it again), no rebuild. In `on_reset`, `gfx.material(path, &uniforms)` returns a
 `CustomMaterial` you draw with `frame.custom(mesh, transform, &material, tint)` (`mesh` is a `Model`,
 `CustomMesh::Cube` or `CustomMesh::Sphere`, radius 1; change its uniforms later with
 `gfx.set_material_uniforms(&material, &uniforms)`), and `gfx.post_pass(path)`, or

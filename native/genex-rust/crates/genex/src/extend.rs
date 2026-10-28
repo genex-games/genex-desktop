@@ -13,10 +13,11 @@
 //!    rows into every destination, an empty set for a game with none, so a lane build admits the
 //!    same sources natively, on the web and on a phone; only a build outside the lane (no rows
 //!    compiled in, no folder) admits a compiled-in source undeclared, at api 1;
-//! 3. its text comes from the binary (`game.wgsl(path, include_str!(..))`, what a web, phone or
-//!    exported build has) or, natively, from the game folder through genex-render's
-//!    `read_extension_source` (by realpath inside the folder, a regular file, never a link, at most
-//!    `WGSL_MAX_BYTES`);
+//! 3. its text comes, natively with a game folder (a dev build, Live), from the folder through
+//!    genex-render's `read_extension_source` (by realpath inside the folder, a regular file, never a
+//!    link, at most `WGSL_MAX_BYTES`), so an edited shader takes effect at the next reset with no
+//!    rebuild; else from the binary (`game.wgsl(path, include_str!(..))`, what a web, phone or
+//!    exported build has);
 //! 4. naga admits it against its api's prelude (v2: `GxMaterialInV2`/`GxPostInV2`, the renderer's
 //!    shading and the game group), the uniforms fit its block and a v2 material is handed as many
 //!    textures as it binds (`gfx.material_textured`; a missing one binds the neutral white texel).
@@ -492,7 +493,11 @@ impl Extensions {
             check_wgsl_api(row).map_err(|error| ExtensionRefusal::new(ExtensionRefusalCode::Manifest(error.code()), error.to_string()))?;
         }
         match (compiled, root) {
-            (Some(source), _) => Ok(source.to_owned()),
+            // With a game folder (a dev build, Live) its copy wins, so an edited shader takes
+            // effect at the next reset with no rebuild (WP-9); the compiled copy stands in where
+            // the folder has none or refuses it.
+            (Some(source), Some(root)) => Ok(read_extension_source(&root, path).unwrap_or_else(|_| source.to_owned())),
+            (Some(source), None) => Ok(source.to_owned()),
             (None, Some(root)) => Ok(read_extension_source(&root, path)?),
             (None, None) => Err(ExtensionRefusal::path(format!("`{path}` is neither compiled in (`game.wgsl`) nor in a game folder"))),
         }
