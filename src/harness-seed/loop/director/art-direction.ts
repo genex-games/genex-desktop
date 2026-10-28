@@ -26,6 +26,7 @@
  * it through the run and check that it is there. It reads budgets.ts and rules.ts by namespace,
  * so a kept older copy of either never stops it linking.
  */
+import { heroCameras } from "./sourcing.ts";
 import { asksForLook } from "../look-bar.ts";
 import { shortSha } from "../git.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
@@ -564,7 +565,16 @@ export async function artDirectionPass(loopRun: LoopRun, how: ArtDirectionAsk = 
   if (ctx.cancelled) return { head, review: null, skipped: ART_SKIPPED.stopped };
   if (!movedBeyondStart(loopRun, head)) return { head, review: null, skipped: ART_SKIPPED.nothingNew };
   if (state.healthByHead.get(head) === false) return { head, review: null, skipped: ART_SKIPPED.doesNotLoad };
-  const judged = { ...ask, target: BuildTarget.Integration, against: Against.None, ship: "yes" };
+  // Every part's hero camera is in the look (sourcing.ts `heroCameras`), beside the default view.
+  const heroes = heroCameras(state.plan);
+  const cameras = ask.cameras ?? (heroes.length ? [DEFAULT_CAMERA, ...heroes].join(",") : undefined);
+  const judged = {
+    ...ask,
+    ...(cameras ? { cameras } : {}),
+    target: BuildTarget.Integration,
+    against: Against.None,
+    ship: "yes",
+  };
   // `until` is read by the judge (tools.ts), which holds its calls to the wall clock: the same clock here.
   await loopRun
     .judge(judged, { borrow: true, final, until: Date.now() + judgeMs })

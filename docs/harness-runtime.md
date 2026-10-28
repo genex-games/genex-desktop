@@ -61,18 +61,55 @@ warning asking for it. A judge's `[dead-input]` defect is read off state, never 
 
 The look a run is held to is one table for every stack (`loop/look-bar.ts`). The look blockers —
 `[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`, `[placeholder-particles]`,
-`[sky-contradicts]`, `[visible-tiling]` and `[not-shipped]` (`judge/artefact-classes.md`) — hold
-the work open in code: a taste verdict naming one, in `defects` or in `polish` (moved into
-`defects`), is never `satisfied`, a finisher's `finishDone` waits while one remains, and the ship
-review makes it a `blocker` whatever severity it gave, so `ship` is false. A run whose ask sets a
-visual bar (`asksForLook`: reference stills, or a photoreal, realistic, AAA or beautiful brief)
-asks the taste judge and the ship review `shipped` per scene camera — would the frame, next to the
-reference stills, pass as a screenshot from a shipped game of its genre — and a camera that would
-not is a `[not-shipped]` blocker. The director's `plan` refuses such a run without `art=`, the art
-pass: every area's assets by tier (hero, mid, scatter, sky), each sourced from a Genex generation,
-a scan, a Blender script, or code with a why. It is kept on `run.art` (a re-plan keeps it), counts
-the Genex generations it reserves, and every builder's brief carries it with the greybox rule
-(`loop/look-bar-prompts.ts`).
+`[sky-contradicts]`, `[visible-tiling]`, `[not-shipped]`, `[flat-material]`, `[stick-tree]` and
+`[slab-snow]`, plus the harness's own `[art-source-mismatch]`, `[exposure-pump]` and
+`[uncomfortable-camera]` (`judge/artefact-classes.md`) — hold the work open in code: a taste
+verdict naming one, in `defects` or in `polish` (moved into `defects`), is never `satisfied`, a
+finisher's `finishDone` waits while one remains, and the ship review makes it a `blocker` whatever
+severity it gave, so `ship` is false. A run whose ask sets a visual bar (`asksForLook`: reference
+stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
+
+- Keeping. A round that adds a look blocker is not kept, whatever checks flipped
+  (`facet/rules.ts acceptRound`, verdict source `look-blocked`). Added means: the taste judge lists it
+  in `added` under its ART BAR line ("worse against the art bar" is a regression, even where the
+  other build lacks the thing), the engine's look facts show it (`loop/look-facts.ts`, reading
+  `state().__render.look`), or the harness measures it (`loop/provenance.ts`, `loop/temporal-checks.ts`)
+  where the accepted build did not have it or had it less badly.
+- Eyes. Facet rounds are captured at 1600×900, like the art director's look. A round with no frame a
+  judge can be shown is captured once more, then left Unmeasured (`unseen`), never judged blind.
+  `references/*` load onto every run that brought no stills (`loop/reference-stills.ts`). A demo whose
+  end frame is another frame of the same pass is flagged as not having moved the game. When
+  `judge/pin.json` names a `second` engine, a second taste judge looks too and its blockers count.
+- The close. The head a run lands always gets the art director's look against the references (in
+  the close's own judge when that judge asks a question); a report with none says it has no art
+  verdict (`shipReview.judged: false`).
+- Measured. Every playable camera sits in a luminance band (mean luma 90-130, darkest bin ≤ 15%; a sky
+  row with `"night": true` lowers it); `demo:doorway`'s exposure trace moves at most 1 EV per half
+  second with no overshoot; `demo:sprint-run`'s pose (the trace the demo returns, or the rig's
+  `volatile.camera`) stays inside the engine rig's comfort caps. The doorway and sprint checks run on
+  every run whose game has those demos.
+- The art pass. The director's `plan` refuses such a run without `art=`: every area's assets by tier
+  (hero, mid, scatter, sky), each with its `kind`, its draw `tags` and its source — a Genex generation,
+  a CC0 model, a scan, a `blender-kit` (the modular shell only: never a hero, a prop, a character or
+  anything organic, and it names the scans it wears) or code with a why; a bpy script of untouched
+  primitives counts as code. At round end the provenance audit follows each planned tag to its model,
+  its `genex-assets.lock` row and its normal maps. A re-plan that adds a part gives `art=` again. It is
+  kept on `run.art`, counts the Genex generations it reserves, and every builder's brief carries it
+  with the greybox rule and the boot rule (`loop/look-bar-prompts.ts`, `loop/destination-budgets.ts`).
+- Assets first (`director/sourcing.ts`). `worker_start` waits, up to 30 minutes from the art pass, until
+  `docs/ASSETS.md` in the integration names a file for every planned prop, organic and character tag
+  (`- <tag>: <file>`), except for the sourcing worker (`sourcing=yes`). Once one part builds, another
+  waits, up to 45 minutes, for an art director's review with no blocker. A plan part's `hero` camera is
+  in every art director's look.
+- Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
+  textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
+  refused. Budgets are said per destination: a native game's slow web preview is the preview's boot,
+  and no judge or director meets a budget by dropping maps.
+
+Builder sessions are rotated every three rounds (`facet/session-rotation.ts`); the round after is briefed
+whole. A look blocker the judges keep naming becomes the game's lesson with the rule that fixes it
+(`ledger.ts`, `BLOCKER_RULES`).
+
 A play script may
 `touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for
 the finger): it reaches a Rust · wgpu game's contract v2 run or web page through `preview.input`;

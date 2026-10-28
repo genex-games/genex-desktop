@@ -18969,4 +18969,165 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       /frame\.cube, frame\.sphere/,
     );
   });
+  it("G3-5b. no stage sourced a model before builders started and the yard spread over four parts before one frame was finished: on a look bar, worker_start waits for the planned models in docs/ASSETS.md, then for one area's hero shot to pass the art director, each timeboxed", async () => {
+    const { sourcingRefusal, spreadRefusal, heroCameras, SOURCING_MS, LOOK_DEV_MS } = await import(
+      "../../src/harness-seed/loop/director/sourcing.ts"
+    );
+    const integration = await tmpDir("g3-sourcing-");
+    const art = {
+      generations: 2,
+      assets: [
+        { area: "the yard", tier: "hero", kind: "prop", asset: "bench", source: "genex-model", tags: ["bench"] },
+        { area: "the yard", tier: "mid", kind: "organic", asset: "birches", source: "genex-model", tags: ["birch"] },
+        {
+          area: "the yard",
+          tier: "mid",
+          kind: "structure",
+          asset: "blocks",
+          source: "blender-kit",
+          why: "scans",
+          tags: ["block"],
+        },
+      ],
+    };
+    const t0 = Date.UTC(2026, 9, 29, 1, 0, 0);
+    const loopRun = {
+      integrationWorktree: integration,
+      run: { ...yard, art },
+      state: { artPlannedAt: t0, workers: new Map(), lastShip: null } as Record<string, any>,
+    };
+    const held = String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000));
+    assert.match(
+      held,
+      /^worker_start waits for the sourcing stage \(up to 29 more min\): docs\/ASSETS\.md in the integration names no file for bench, birch\./,
+    );
+    assert.equal(
+      await sourcingRefusal(loopRun as never, { sourcing: "yes" }, t0 + 60_000),
+      null,
+      "the sourcing worker starts",
+    );
+    await mkdir(path.join(integration, "docs"), { recursive: true });
+    await writeFile(path.join(integration, "docs", "ASSETS.md"), "# Assets\n- bench: assets/genex/b1/bench.glb\n");
+    assert.match(String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000)), /names no file for birch\./);
+    await writeFile(
+      path.join(integration, "docs", "ASSETS.md"),
+      "- bench: assets/genex/b1/bench.glb\n- `birch`: assets/cc0/c2/birch.glb\n",
+    );
+    assert.equal(await sourcingRefusal(loopRun as never, {}, t0 + 60_000), null, "every planned model is sourced");
+    assert.equal(
+      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, {}, t0 + SOURCING_MS),
+      null,
+      "the stage is timeboxed",
+    );
+    // Look-dev: one part builds; a second waits for a review of its hero shot with no blocker.
+    loopRun.state.workers.set("yard", { id: "yard" });
+    loopRun.state.lookDevSince = t0;
+    assert.match(
+      String(spreadRefusal(loopRun as never, "school", t0 + 60_000)),
+      /waits for the look-dev hero shot .*When yard's hero camera shows it/,
+    );
+    assert.equal(
+      spreadRefusal(loopRun as never, "yard", t0 + 60_000),
+      null,
+      "the part already building restarts freely",
+    );
+    loopRun.state.lastShip = { head: "h", defects: [{ what: "[primitive] bench", severity: "blocker" }] };
+    assert.ok(spreadRefusal(loopRun as never, "school", t0 + 60_000), "a review with a blocker holds breadth");
+    loopRun.state.lastShip = { head: "h", defects: [{ what: "a seam", severity: "visible" }] };
+    assert.equal(spreadRefusal(loopRun as never, "school", t0 + 60_000), null);
+    loopRun.state.lastShip = null;
+    assert.equal(spreadRefusal(loopRun as never, "school", t0 + LOOK_DEV_MS), null, "and timeboxed");
+    assert.equal(spreadRefusal({ ...loopRun, run: yard } as never, "school", t0), null, "no art pass, no hold");
+    assert.deepEqual(heroCameras({ workers: [{ id: "yard", hero: "hero:yard" }, { id: "school" }] }), ["hero:yard"]);
+  });
+  it("G3-6a. one model family judged its own builders and praised the yard: judge/pin.json may name a second taste judge, and on a look bar its blockers and its 'not satisfied' hold too", async () => {
+    const workspace = await tmpDir("g3-second-judge-");
+    await mkdir(path.join(workspace, "judge"), { recursive: true });
+    await writeFile(path.join(workspace, "judge", "pin.json"), JSON.stringify({ second: { engine: "codex" } }));
+    const birch = "[stick-tree] the birches are white cones with no twigs — eye:spawn";
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.complete": (params: Record<string, unknown>) => ({
+          message: {
+            content: JSON.stringify(
+              params.engine === "codex"
+                ? preferChallenger({ satisfied: false, added: [birch] })
+                : preferChallenger({ satisfied: true }),
+            ),
+          },
+        }),
+      },
+    });
+    const ctx = { ...recorder.ctx, workspace };
+    const run = { ...yard, engine: "claude" } as Run;
+    const taste = await tasteVeto(ctx as never, {
+      run,
+      facet,
+      challenger: { state: {} },
+      incumbentEvidence: { state: {} },
+      random: () => 0.1,
+    });
+    assert.deepEqual(
+      recorder.paramsOf("engine.complete").map((params) => params.engine),
+      ["claude", "codex"],
+    );
+    assert.deepEqual([taste.satisfied, taste.addedBlockers], [false, [birch]]);
+    assert.equal(taste.secondJudge?.engine, "codex");
+    // With no second judge named, one call, as before.
+    const single = ctxRecorder({
+      handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(preferChallenger()) } }) },
+    });
+    await tasteVeto(single.ctx, {
+      run,
+      facet,
+      challenger: { state: {} },
+      incumbentEvidence: { state: {} },
+      random: () => 0.1,
+    });
+    assert.equal(single.paramsOf("engine.complete").length, 1);
+  });
+
+  it("G3-7a. builders ran one uncompacted session to 830k tokens and about two hundred images: a builder's session is rotated every few rounds and the next round is briefed whole", async () => {
+    const { noteSessionRound, rotateSession, SESSION_ROUNDS } = await import(
+      "../../src/harness-seed/loop/facet/session-rotation.ts"
+    );
+    const appended: Array<[string, Record<string, unknown>]> = [];
+    const loop: Record<string, any> = {
+      sessionId: "ses_1",
+      sessionRounds: 0,
+      runThreadId: "t",
+      facet: { id: "yard" },
+      run: { runId: "r" },
+      appendRun: async (type: string, payload: Record<string, unknown>) => appended.push([type, payload]),
+    };
+    for (let i = 1; i < SESSION_ROUNDS; i++) {
+      noteSessionRound(loop as never);
+      assert.equal(await rotateSession(loop as never, i), false);
+    }
+    noteSessionRound(loop as never);
+    assert.equal(await rotateSession(loop as never, SESSION_ROUNDS), true);
+    assert.deepEqual([loop.sessionId, loop.sessionRounds], [null, 0]);
+    assert.equal(appended[0]?.[0], "facet_session_reset");
+    assert.match(String(appended[0]?.[1].reason), /^rotated after 3 rounds/);
+  });
+  it("G3-7b. the ledger recorded 'primitive ×12' and no rule: a look blocker the judges keep naming becomes the game's lesson with what sources and fixes it", async () => {
+    const { deriveLessons } = await import("../../src/harness-seed/loop/ledger.ts");
+    const round = (n: number, gap: string) => ({ round: n, decision: "kept", gap, unmeasuredChecks: [] }) as never;
+    const lessons = deriveLessons([
+      round(1, "[primitive] the bench is twelve boxes"),
+      round(2, "[primitive] the bins are boxes"),
+      round(3, "[stick-tree] the birches are cones"),
+      round(4, "[stick-tree] still cones"),
+      round(5, "[haze-plane] a milky band"),
+    ]);
+    assert.match(
+      lessons[0] ?? "",
+      /^\[primitive\] came back in 2 rounds here: source props, vehicles and characters as genex-model, cc0-model or genex-character/,
+    );
+    assert.match(
+      lessons[1] ?? "",
+      /^\[stick-tree\] came back in 2 rounds here: source trees as models with leaf or twig cards/,
+    );
+    assert.ok(!lessons.some((lesson) => lesson.startsWith("[haze-plane]")), "only look blockers carry a rule");
+  });
 });

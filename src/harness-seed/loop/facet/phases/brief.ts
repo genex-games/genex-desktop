@@ -1,4 +1,5 @@
 /** The brief (`.studio/BRIEF.md` in the worktree) and the prompt that points at it. */
+import { rotateSession } from "../session-rotation.ts";
 import { renderLiveness } from "../../judge.ts";
 import {
   CRAFT_ADOPT_SCORE,
@@ -78,6 +79,7 @@ export async function writeBrief(loop: FacetLoop, round: FacetRound): Promise<Ro
     incumbentEvidence: loop.incumbentEvidence,
     pairs: loop.lastPairs,
   });
+  await rotateSession(loop, round.iteration);
   round.prompt = facetPromptFor(loop, round, {
     resumed: Boolean(loop.sessionId),
     briefText: delegated ? null : round.brief,

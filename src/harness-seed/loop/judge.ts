@@ -419,6 +419,8 @@ interface JudgeAsk {
   userContent: string;
   images?: MessageImage[];
   effort?: string;
+  /** Ask this engine rather than the workspace's pin (the second taste judge). */
+  pin?: JudgePin;
 }
 
 /** The engine a verdict is asked of, whether it is already the fallback, and whether it may become one. */
@@ -469,7 +471,7 @@ async function askJudge(ctx: HarnessCtx, ask: JudgeAsk): Promise<AnyRecord> {
  */
 export async function askJudgeFor(ctx: HarnessCtx, ask: JudgeAsk): Promise<JudgeAnswer> {
   const { run } = ask;
-  const using = judgeEngineFor(run, await readJudgePin(ctx.workspace));
+  const using = judgeEngineFor(run, await pinFor(ctx, ask));
   const sha = promptSha256(ask.systemPrompt);
   let reasks = 0;
   for (let attempt = 0; ; attempt++) {
@@ -496,6 +498,11 @@ export async function askJudgeFor(ctx: HarnessCtx, ask: JudgeAsk): Promise<Judge
     reasks += 1;
     ctx.notify("judge.retry", { engine: using.engine, kind: JUDGE_UNUSABLE, attempt: reasks, waitMs: 0, message: "" });
   }
+}
+
+/** The pin a judge call is made under: the ask's own (the second taste judge), else the workspace's. */
+async function pinFor(ctx: HarnessCtx, ask: JudgeAsk): Promise<JudgePin | null> {
+  return ask.pin ?? readJudgePin(ctx.workspace);
 }
 
 /** The engine a verdict starts on: the pin's, else the run's judge, else the run's own engine. */
@@ -1714,14 +1721,14 @@ export async function tasteVeto(
   const answer = await askJudgeFor(ctx, { run, systemPrompt: system, userContent, images });
   // What the engine's own look facts say the round added, judge or no judge (look-facts.ts).
   const factAdded = lookBar ? addedFactBlockers(challenger.state, incumbentEvidence?.state, organicTags(run)) : [];
+  const polishCap = finishing ? FINISH_POLISH_NOTES : MAX_POLISH_NOTES;
+  const second = lookBar ? await secondTaste(ctx, { run, systemPrompt: system, userContent, images }) : null;
+  const secondWord = second ? tasteVerdictOf(second.answer, challengerIsA, move, polishCap, lookBar, factAdded) : null;
   const verdict = {
-    ...tasteVerdictOf(
-      answer,
-      challengerIsA,
-      move,
-      finishing ? FINISH_POLISH_NOTES : MAX_POLISH_NOTES,
-      lookBar,
-      factAdded,
+    ...withSecondTaste(
+      tasteVerdictOf(answer, challengerIsA, move, polishCap, lookBar, factAdded),
+      secondWord,
+      second?.engine,
     ),
     facetId: facet.id,
     iterationId,
@@ -1729,6 +1736,43 @@ export async function tasteVeto(
   };
   ctx.notify("judge.taste", verdict);
   return verdict;
+}
+
+/**
+ * The second taste judge's answer, when `judge/pin.json` names one (`second`); null otherwise, or
+ * when it could not be asked — the first judge's word then stands alone.
+ */
+async function secondTaste(ctx: HarnessCtx, ask: JudgeAsk): Promise<{ answer: JudgeAnswer; engine: string } | null> {
+  const pin = await readJudgePin(ctx.workspace);
+  if (!pin?.second) return null;
+  const second: JudgePin = { engine: pin.second.engine, model: pin.second.model, fallback: false };
+  const answer = await askJudgeFor(ctx, { ...ask, pin: second }).catch(() => null);
+  return answer && answer.judged.parse === JudgeParse.Valid ? { answer, engine: pin.second.engine } : null;
+}
+
+/**
+ * One verdict from two taste judges: the first's pick, and both judges' blockers. Either one's
+ * "not satisfied", added blocker or named regression holds — two eyes are stricter than one.
+ */
+function withSecondTaste<T extends ReturnType<typeof tasteVerdictOf>>(
+  first: T,
+  second: ReturnType<typeof tasteVerdictOf> | null,
+  engine: string | undefined,
+): T & { secondJudge?: AnyRecord } {
+  if (!second) return first;
+  const union = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
+  const vetoBySecond = !first.veto && second.veto;
+  return {
+    ...first,
+    satisfied: first.satisfied && second.satisfied,
+    addedBlockers: union(first.addedBlockers, second.addedBlockers),
+    lookBlockers: union(first.lookBlockers, second.lookBlockers),
+    defects: union(first.defects, second.defects),
+    veto: first.veto || second.veto,
+    regression: vetoBySecond ? second.regression : first.regression,
+    newCheck: first.newCheck ?? second.newCheck,
+    secondJudge: { engine, pick: second.pick, satisfied: second.satisfied, veto: second.veto },
+  };
 }
 
 /**

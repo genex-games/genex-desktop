@@ -57,12 +57,17 @@ itself and keeps the memory file its brief names current.)
    `worker_start`.
    When the ask sets a visual bar (photoreal, realistic, AAA, beautiful, or reference stills), the
    same call takes `art=`, the art pass: every area's assets by tier (hero near the camera, mid,
-   scatter and ground cover, sky with weather and the light's mood), each with its source — a
-   Genex generation (model, texture, rigged character), a Poly Haven or ambientCG scan, or a
-   Blender bpy script. Code-built geometry is the last resort and says why. The plan refuses a
-   look brief without it, every builder reads it, and its Genex generations are reserved for it.
-   Greybox is a step inside a round: a judge that still sees `[primitive]`, a black viewmodel,
-   pure-black shadows, cube particles, a sky against the weather or a visible texture repeat
+   scatter and ground cover, sky with weather and the light's mood), each with its `kind`, the draw
+   `tags` the game draws it under, and its source — a Genex generation (model, texture, rigged
+   character), a CC0 model, a Poly Haven or ambientCG scan, or a `blender-kit` for the modular shell
+   only (walls, floors, trims, building blocks wearing scans; never a prop, a tree or a character).
+   Code-built geometry, a box-and-cone bpy script included, is the last resort and says why. Source
+   the planned models first: until `docs/ASSETS.md` lists them (`- <tag>: <file>`) only a
+   `sourcing=yes` worker starts, and a second part waits for one area's hero shot to pass your
+   `judge ship=yes`. Give each part a `hero` camera. Never ask a builder for billboards, 1k textures
+   or camera shake, and never cut maps to save boot: stream asset groups instead. A round that adds
+   a look blocker is not kept; a judge that still sees `[primitive]`, a black viewmodel, pure-black
+   shadows, cube particles, a sky against the weather or a visible texture repeat
    holds the part open.
 
 ## Before anyone builds

@@ -1074,7 +1074,8 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
     assert.equal(live.shipReview.ship, false);
     assert.equal(live.shipReview.defectsLeft, 3);
     assert.equal(live.shipReview.blockers, 1);
-    assert.equal((await reported(FORK)).shipReview, undefined, "a review of another head says nothing of this one");
+    // Flipped (gen3 G3-1e): a review of another head says nothing of this one, and the report says no art verdict stands on it.
+    assert.equal((await reported(FORK)).shipReview?.judged, false, "a review of another head says nothing of this one");
   });
 
   it("AD-8. a goal build's finish with no ship review on its head is reviewed once and refused once on a no; the next finish closes and says how many defects are left", async () => {

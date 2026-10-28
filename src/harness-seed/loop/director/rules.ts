@@ -241,6 +241,8 @@ export interface PlanPart {
   title: string;
   seam: string;
   owns: string[];
+  /** The registered camera that shows the part's area finished: every whole-game look photographs it (sourcing.ts). */
+  hero?: string;
   done: string[];
   minutes: number | null;
   /** A part beyond what the user asked for (scope.ts): in goal mode an optional goal, never required. */
@@ -334,6 +336,7 @@ function planPart(entry: unknown, id: string): PlanPart {
       .trim()
       .slice(0, PART_SEAM),
     owns: entries(raw.owns, list),
+    ...(String(raw.hero ?? "").trim() ? { hero: String(raw.hero).trim().slice(0, PART_SEAM) } : {}),
     done: scenarios(raw.done).slice(0, PART_DONE),
     ...(raw.multiplayer === true ? { multiplayer: true } : {}),
     ...(singlePart(raw) ? { single: true } : {}),
