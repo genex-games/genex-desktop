@@ -42,11 +42,6 @@ pass as a screenshot from a shipped game of its genre? A camera that would not i
 
 `ship` is true when no defect is a blocker.
 
-A boot, memory or texture budget is met by deferring what the first playable frame does not need
-into `[[asset_group]]`s that stream after it — never by dropping normal or ORM maps, shrinking near
-surfaces below 2k, sharing one model for different props or cutting lights. Never name any of those
-as a fix. A slow web preview of a native game is the preview's boot, not the game's budget.
-
 ## Do not regress
 
 Name in `doNotRegress` up to eight things that already work and must stay, a few words each

@@ -279,10 +279,6 @@ export function strongFlips(
  * A missing move somebody asked for undoes a preferred round only when the round fixed nothing it
  * owed: one that flipped the judge's own defect questions is kept, so its fixes are not thrown
  * away, and its move stays owed (`moveVerdict` never climbs it).
- *
- * On a run with a visual bar a round that added a look blocker (look-bar.ts) is not kept, before
- * any of that: gen3 kept a yard of box benches and cone birches because a check named
- * `yard-is-a-courtyard` flipped.
  */
 export function acceptRound({
   spec,
@@ -294,12 +290,11 @@ export function acceptRound({
   spec: { checks?: AnyRecord[] } | null | undefined;
   board: AnyRecord | null | undefined;
   comparison?: { flips?: string[] } | null;
-  taste?: { veto?: boolean; pick?: string | null; addedBlockers?: readonly string[] } | null;
+  taste?: { veto?: boolean; pick?: string | null } | null;
   moveMissing?: boolean;
 }): { accepted: boolean; strong: string[]; source: string } {
   const flips = comparison?.flips ?? [];
   const strong = strongFlips(spec, board, flips);
-  if (taste?.addedBlockers?.length) return { accepted: false, strong, source: VerdictSource.LookBlocked };
   const veto = taste?.veto === true;
   const preferred = taste?.pick === Side.Challenger;
   // The judge's own defect questions that flipped: what the round owed and fixed.

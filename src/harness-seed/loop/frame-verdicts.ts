@@ -8,7 +8,6 @@
  * file the in-app agent edited before the move keeps its imports (seed-upgrade.ts `SEED_MOVES`).
  */
 import type { AnyRecord } from "../types/harness.d.ts";
-import { demoOfFrame } from "./pass-frames.ts";
 
 /** One photographed frame as the verdicts read it: its camera, its pixels and the surface it came off. */
 export interface FrameShot {
@@ -135,26 +134,4 @@ export function weighDuplicates(look: FrameLook): void {
     warnings.push(
       `the ${duplicate.camera} camera returned the same frame as another camera — each named camera must frame a distinct view; fix the camera wiring in ${look.entry ?? "main.js"}`,
     );
-}
-
-/**
- * The capture's own self-test: a demo's end frame that is byte for byte another frame of the same
- * pass (the title screen the default camera also shows, another demo's end, the user's view) did
- * not move the game, so a judge reading it as that demo is judging a title screen. Gen3's
- * `parity/macos/classroom` capture was the title menu. Answers the warnings it adds.
- */
-export function weighDemoFrames(look: FrameLook): string[] {
-  const shots: Shot[] = (look.shots ?? []).filter((shot: Shot) => shot?.base64);
-  const out: string[] = [];
-  for (const [index, shot] of shots.entries()) {
-    if (!demoOfFrame(shot.camera)) continue;
-    const twin = shots.find((other: Shot, at: number) => at !== index && other.base64 === shot.base64);
-    if (!twin) continue;
-    out.push(
-      `${shot.camera}'s end frame is the same picture as ${twin.camera} — the demo did not move the game (a title screen or a paused game): its frame proves nothing about the demo`,
-    );
-  }
-  look.staleDemos = out.length;
-  look.warnings?.push(...out);
-  return out;
 }

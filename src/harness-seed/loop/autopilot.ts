@@ -12,7 +12,6 @@
  * local engine runs the same facets sequentially against the live folder, because a 30 tok/s
  * GPU is saturated by one stream.
  */
-import { loadReferenceStills } from "./reference-stills.ts";
 import { runGauntlet } from "./gauntlet.ts";
 import { gatherEvidence, observationOnlyFailure } from "./evidence.ts";
 import { runFacetLoop } from "./facet-loop.ts";
@@ -67,6 +66,7 @@ import {
   appendRun as appendRunEvent,
   EventKind,
   JournalPhase,
+  REFERENCE_MIN_STILLS,
   ReferenceKind,
   RunEvent,
   RunMode,
@@ -134,6 +134,8 @@ const PLANNER_ATTEMPTS = 2;
 /** The most facets a plan keeps. */
 const MAX_PLAN_FACETS = 6;
 /** How many reference stills a run loads from the project's references/ folder, and their size. */
+const MAX_REFERENCE_STILLS = 12;
+const REFERENCE_MAX_PX = 1024;
 
 /** How long the inherited-console read waits for the game to say it is up, and how often it asks. */
 const INHERITED_SETTLE_MS = 6 * SECOND_MS;
@@ -1208,7 +1210,7 @@ async function gatherReferences(pipeline: Pipeline): Promise<PipelineEnd> {
   const referenceNotes: string[] = [];
   pipeline.referenceNotes = referenceNotes;
   if (!run.reference) run.reference = { name: "unnamed", shots: [] };
-  if (!(run.reference.frames?.length > 0)) referenceNotes.push(...(await loadReferenceStills(ctx, run)));
+  if (!(run.reference.frames?.length > 0)) referenceNotes.push(...(await loadReferencesFromDisk(ctx, run)));
   if (!run.reference.frames?.length) return;
   const stats = await measureReferences(ctx, run.reference.frames);
   run.reference.stats = stats;
@@ -1222,6 +1224,30 @@ async function gatherReferences(pipeline: Pipeline): Promise<PipelineEnd> {
   referenceNotes.push(
     `${run.reference.frames.length} reference still(s) in every judge call and the first brief; style distance measured on ${stats.length} of them`,
   );
+}
+
+/**
+ * A resumed run, or a board attached in an earlier chat: the stills live on disk. Loads them onto
+ * the run's reference and answers the decision notes about what was loaded and skipped.
+ */
+async function loadReferencesFromDisk(ctx: HarnessCtx, run: Run): Promise<string[]> {
+  const notes: string[] = [];
+  const fromDisk = await ctx
+    .call(HostMethod.GameReferences, { project: run.project, max: MAX_REFERENCE_STILLS, maxPx: REFERENCE_MAX_PX })
+    .catch(() => null);
+  const frames = fromDisk?.frames ?? [];
+  if (frames.length) {
+    run.reference.frames = frames;
+    // Two stills or more make a reference; a direction keeps its kind on one.
+    const enoughStills = frames.length >= REFERENCE_MIN_STILLS;
+    if (run.reference.kind !== ReferenceKind.Direction || enoughStills)
+      run.reference.kind = enoughStills ? ReferenceKind.Reference : run.reference.kind;
+    notes.push(
+      `loaded ${frames.length} reference still(s) from references/: ${frames.map((f: AnyRecord) => f.label).join(", ")}`,
+    );
+  }
+  for (const skip of fromDisk?.skipped ?? []) notes.push(`reference skipped: ${skip.file} is ${skip.why}`);
+  return notes;
 }
 
 /** Each still's colour statistics, for the style metric. */

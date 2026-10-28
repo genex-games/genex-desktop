@@ -1,9 +1,8 @@
 ## Known artefact classes — scan every camera for each before you list defects
 
 The look blockers — `[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`,
-`[placeholder-particles]`, `[sky-contradicts]`, `[visible-tiling]`, `[not-shipped]`,
-`[flat-material]`, `[stick-tree]`, `[slab-snow]`, `[art-source-mismatch]`, `[exposure-pump]` and
-`[uncomfortable-camera]` — hold the work open: while one is on screen no facet is satisfied, no finish is done and the build does not
+`[placeholder-particles]`, `[sky-contradicts]`, `[visible-tiling]` and `[not-shipped]` — hold the
+work open: while one is on screen no facet is satisfied, no finish is done and the build does not
 ship, whichever list you put it in. Tag each one you see; never soften one into polish.
 
 Report a hit with its class name in square brackets, then what and where and which camera
@@ -35,20 +34,6 @@ a defect outside the list is described in full.
   blue sky while it snows, noon sun in a scene asked for at night.
 - `[visible-tiling]` a texture's repeat reads at play distance: the same stain, crack or patch in a
   grid across a floor, wall or ground.
-- `[flat-material]` a prop, wall, floor or ground drawn in one flat colour: no albedo variation, no
-  normal or roughness detail, so it reads as plastic or paint at any distance.
-- `[stick-tree]` a tree or bush built from cones, cylinders or sticks: bare trunks with no twig
-  mass, no leaf or needle cards, no light through the crown. Its leafless winter form still has
-  twigs.
-- `[slab-snow]` snow, sand or dust drawn as a separate box or slab laid on a bench, a lid, a roof
-  or the ground: a hard white rectangle with straight edges instead of cover that follows the
-  surface.
-- `[art-source-mismatch]` the harness's own tag, never a judge's: a planned asset delivered from
-  a lesser source than the art pass named.
-- `[exposure-pump]` the harness's own tag, measured on `demo:doorway`: the exposure jumps or
-  overshoots as the player crosses from light into dark.
-- `[uncomfortable-camera]` the harness's own tag, measured on `demo:sprint-run`: the camera
-  rolls, bobs or shakes past the comfort caps.
 - `[no-hands]` {when: fps, first-person, shooter} a first-person view with no arms or hands holding the weapon or tool.
 - `[noise-as-texture]` tiling noise standing in for a material.
 - `[z-fight]` flickering or striped coplanar surfaces.

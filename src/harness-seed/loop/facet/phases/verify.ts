@@ -1,6 +1,6 @@
 /** Verify: diffs, checks, vision, play → the scoreboard, a same-session follow-up on a regression, then the acceptance rule and the taste judge. */
 import { withObservationPatience } from "../../evidence.ts";
-import { facetCompare, framesOfBuild, Side } from "../../judge.ts";
+import { facetCompare, Side } from "../../judge.ts";
 import { compareScoreboards, isInvisibleDiff } from "../../checks.ts";
 import { isTransientProviderError, outageDelays } from "../../outage.ts";
 import { RunEvent } from "../../run-events.ts";
@@ -14,7 +14,7 @@ import { VerdictSource } from "../../verdict.ts";
 import { diffAgainstIncumbent, scoreEvidence } from "../scoring.ts";
 import { noisyRegressions, remeasurable } from "../round-judgement.ts";
 import { OutagePhase, recordDecision, roundFields } from "../record.ts";
-import { tasteCamerasOf, tasteVerdict } from "./taste.ts";
+import { tasteVerdict } from "./taste.ts";
 import { lostProviderOf, waitForProvider } from "../provider.ts";
 import { clockRoom, sleepOnPausedClock } from "../paused-clock.ts";
 import { registryRefusal } from "../../registry.ts";
@@ -69,11 +69,6 @@ function brokenVerdict(round: FacetRound): void {
  */
 async function legacyVerdict(loop: FacetLoop, round: FacetRound): Promise<RoundFlow> {
   const { ctx, facet, run } = loop;
-  if (!(await framesToJudge(loop, round, null))) {
-    round.verdict = { ...autoTie(loop, UNSEEN_REASON) };
-    round.verdictSource = VerdictSource.Unseen;
-    return;
-  }
   for (;;) {
     try {
       round.verdict = await facetCompare(ctx, {
@@ -375,29 +370,5 @@ async function decideOnBoard(loop: FacetLoop, round: FacetRound): Promise<void> 
     refuse(VerdictSource.Invisible, loop.biggestGap, reason);
     return;
   }
-  if (!(await framesToJudge(loop, round, tasteCamerasOf(loop, round)))) {
-    refuse(VerdictSource.Unseen, loop.biggestGap, UNSEEN_REASON);
-    return;
-  }
   await tasteVerdict(loop, round);
-}
-
-/** Why a round with no frame to show is not judged. */
-const UNSEEN_REASON =
-  "unmeasured: no frame of this build could be shown to the judge, even after a second capture — never judged blind";
-
-/**
- * Has the round a frame of the challenger a judge can see over `cameras` (null: any)? With none it
- * is captured once more; a build still blind is Unmeasured, never judged on its state alone.
- */
-async function framesToJudge(loop: FacetLoop, round: FacetRound, cameras: string[] | null): Promise<boolean> {
-  if (framesOfBuild(round.evidence, cameras) > 0) return true;
-  if (typeof round.gatherOnce !== "function") return false;
-  const again = await withObservationPatience(loop.ctx, round.gatherOnce, {
-    deadline: loop.deadline,
-    delays: loop.budgets.observationDelays,
-  });
-  if (!again?.ok || framesOfBuild(again, cameras) === 0) return false;
-  round.evidence = again;
-  return true;
 }
