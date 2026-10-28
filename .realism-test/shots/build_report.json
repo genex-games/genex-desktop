@@ -1,0 +1,156 @@
+{
+ "started": "2026-10-28T20:54:17.893Z",
+ "step": "all",
+ "place": "realism-test",
+ "calls": 161,
+ "sent": 72011875,
+ "shots": [
+  {
+   "look": "today",
+   "shot": "alley",
+   "file": "/Users/boozybats/Public/Repos/scratch/roblox-realism/work/shots/today_alley.jpg",
+   "viewport": [
+    1029,
+    687
+   ],
+   "bytes": 160385
+  },
+  {
+   "look": "today",
+   "shot": "door",
+   "file": "/Users/boozybats/Public/Repos/scratch/roblox-realism/work/shots/today_door.jpg",
+   "viewport": [
+    1029,
+    687
+   ],
+   "bytes": 179076
+  },
+  {
+   "look": "today",
+   "shot": "steps",
+   "file": "/Users/boozybats/Public/Repos/scratch/roblox-realism/work/shots/today_steps.jpg",
+   "viewport": [
+    1029,
+    687
+   ],
+   "bytes": 113413
+  },
+  {
+   "look": "realistic",
+   "shot": "alley",
+   "file": "/Users/boozybats/Public/Repos/scratch/roblox-realism/work/shots/realistic_alley.jpg",
+   "viewport": [
+    1029,
+    687
+   ],
+   "bytes": 557328
+  },
+  {
+   "look": "realistic",
+   "shot": "door",
+   "file": "/Users/boozybats/Public/Repos/scratch/roblox-realism/work/shots/realistic_door.jpg",
+   "viewport": [
+    1029,
+    687
+   ],
+   "bytes": 597696
+  },
+  {
+   "look": "realistic",
+   "shot": "steps",
+   "file": "/Users/boozybats/Public/Repos/scratch/roblox-realism/work/shots/realistic_steps.jpg",
+   "viewport": [
+    1029,
+    687
+   ],
+   "bytes": 575807
+  }
+ ],
+ "tools": [
+  "upload_image",
+  "search_game_tree",
+  "script_search",
+  "skill",
+  "multi_edit",
+  "start_stop_play",
+  "get_console_output",
+  "user_mouse_input",
+  "store_image",
+  "http_get",
+  "character_navigation",
+  "script_read",
+  "get_studio_state",
+  "screen_capture",
+  "script_grep",
+  "wait_job_finished",
+  "generate_procedural_model",
+  "user_keyboard_input",
+  "generate_texture",
+  "list_skills",
+  "segment_mesh",
+  "create_skill",
+  "execute_luau",
+  "subagent",
+  "generate_mesh",
+  "generate_material",
+  "search_asset",
+  "inspect_instance",
+  "edit_skill",
+  "insert_asset",
+  "list_roblox_studios"
+ ],
+ "studio": {
+  "id": "563340ca-1972-4233-9ab7-2157da4bfdf7",
+  "name": "realism-test.rbxlx"
+ },
+ "probe": {
+  "editableImage": true,
+  "place": "realism-test.rbxlx",
+  "technology": "unreadable",
+  "quality": "Automatic",
+  "lightingStyle": "Enum.LightingStyle.Soft",
+  "calls": 2,
+  "clock": 14,
+  "editableMesh": true,
+  "luauBase64": true,
+  "encodingService": true,
+  "persists": true
+ },
+ "chunkChars": 4128768,
+ "quality": {
+  "ok": true,
+  "level": "Level21"
+ },
+ "sun": {
+  "sun": [
+   -0.7247793078422546,
+   0.6594982147216797,
+   0.19939178228378296
+  ],
+  "yaw": -5.4193098687072645,
+  "clock": 15.18,
+  "latitude": 35,
+  "elevationMissDeg": 0.1291753160309873
+ },
+ "shadowCasters": 46,
+ "buildMs": 3866,
+ "mapFailures": [],
+ "dress": {
+  "looks": 56,
+  "remade": 0,
+  "maps": 185
+ },
+ "textureMs": 6229,
+ "lighting": {
+  "lightingStyle": true,
+  "refused": [],
+  "future": false,
+  "technology": "unreadable"
+ },
+ "qualityRestored": {
+  "ok": true,
+  "level": "Automatic"
+ },
+ "ok": true,
+ "finished": "2026-10-28T20:54:57.193Z"
+}
