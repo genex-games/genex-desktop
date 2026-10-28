@@ -538,6 +538,8 @@ export default {
   Building: "만드는 중",
   "Building the Mac version of this build… {clock}": "이 빌드의 Mac 버전을 빌드하는 중… {clock}",
   "Building the Mac version of your changes… {clock}": "변경 사항의 Mac 버전을 빌드하는 중… {clock}",
+  "Getting this build ready… {clock}": "이 빌드를 준비하는 중… {clock}",
+  "Getting the newest build ready… {clock}": "최신 빌드를 준비하는 중… {clock}",
   "Building the Mac version… {clock}": "Mac 버전을 빌드하는 중… {clock}",
   "Building the browser version of your changes… {clock}": "변경 사항의 브라우저 버전을 빌드하는 중… {clock}",
   "Building the game": "게임 빌드 중",

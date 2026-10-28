@@ -542,6 +542,8 @@ export default {
   Building: "制作中",
   "Building the Mac version of this build… {clock}": "このビルドのMac版をビルド中… {clock}",
   "Building the Mac version of your changes… {clock}": "変更のMac版をビルド中… {clock}",
+  "Getting this build ready… {clock}": "このビルドを準備中… {clock}",
+  "Getting the newest build ready… {clock}": "最新のビルドを準備中… {clock}",
   "Building the Mac version… {clock}": "Mac版をビルド中… {clock}",
   "Building the browser version of your changes… {clock}": "変更のブラウザ版をビルド中… {clock}",
   "Building the game": "ゲームをビルド中",

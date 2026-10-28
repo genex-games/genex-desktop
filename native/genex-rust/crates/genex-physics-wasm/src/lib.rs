@@ -49,7 +49,7 @@ fn registry<T>(f: impl FnOnce(&mut Registry) -> T) -> T {
     REGISTRY.with_borrow_mut(f)
 }
 
-/// This build's identity (§2), e.g. `genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det+wasm32`.
+/// This build's identity (§2), e.g. `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det+wasm32`.
 #[wasm_bindgen]
 pub fn build_id() -> String {
     genex_physics_binding::build_id()

@@ -601,6 +601,8 @@ export default {
   Building: "Création",
   "Building the Mac version of this build… {clock}": "Création de la version Mac de ce build… {clock}",
   "Building the Mac version of your changes… {clock}": "Création de la version Mac de tes modifications… {clock}",
+  "Getting this build ready… {clock}": "Préparation de ce build… {clock}",
+  "Getting the newest build ready… {clock}": "Préparation du build le plus récent… {clock}",
   "Building the Mac version… {clock}": "Création de la version Mac… {clock}",
   "Building the browser version of your changes… {clock}":
     "Création de la version navigateur de tes modifications… {clock}",

@@ -12,18 +12,17 @@ Every file carries two version fields, and a runner refuses a file whose fields 
 | Field | Value for these pins | Meaning |
 |---|---|---|
 | `contract` | `1.0` | the contract version (§2) the file is written against |
-| `build` | `genex-physics/0.1.0+contract-1.0+rapier-0.36.0+det` | the `buildId` without its `+<target>` suffix (§2, the same string §10.2 hashes) |
+| `build` | `genex-physics/1.0.0+contract-1.0+rapier-0.36.0+det` | the `buildId` without its `+<target>` suffix (§2, the same string §10.2 hashes) |
 
 Determinism is promised only between equal `buildId`s up to the target, so vectors are per build (§16).
 A new core version, backend version or feature set is a new `build`: the vectors are rewritten for it and
 published with that release. A rewritten hash on an unchanged `build` is a determinism change, explained in
 its commit.
 
-**Exception until the first publish:** the core shares the workspace version, `0.1.0`, which no
-published package has yet carried, and it stays `0.1.0` while results still move (the exact integer
-hull moved the y pin on this same `build`). So a snapshot or vector written by an earlier `0.1.0` build
-on this branch may pass the build check and replay differently. The first published release freezes its
-`build`; from then on any change that moves a pin bumps the core's version.
+**Release 1 (core 1.0.0):** these pins are the release-1 checkpoint's. Until then the core shared the
+genex workspace's `0.1.0`, which no release carried, and results still moved on that one `build`. The core
+now has its own version (`CORE_VERSION`, the version both npm packages are released at), so from 1.0.0
+on any change that moves a pin bumps it, and a snapshot or vector of `0.1.0` is refused as another build.
 
 ## Format
 

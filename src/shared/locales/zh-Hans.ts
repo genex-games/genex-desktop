@@ -516,6 +516,8 @@ export default {
   Building: "制作中",
   "Building the Mac version of this build… {clock}": "正在构建这个构建的 Mac 版本… {clock}",
   "Building the Mac version of your changes… {clock}": "正在构建你所做更改的 Mac 版本… {clock}",
+  "Getting this build ready… {clock}": "正在准备此构建… {clock}",
+  "Getting the newest build ready… {clock}": "正在准备最新的构建… {clock}",
   "Building the Mac version… {clock}": "正在构建 Mac 版本… {clock}",
   "Building the browser version of your changes… {clock}": "正在构建你所做更改的浏览器版本… {clock}",
   "Building the game": "正在构建游戏",

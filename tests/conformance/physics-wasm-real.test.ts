@@ -16,7 +16,7 @@ import { type BindingBackend, registerBindingRows } from "./physics-binding-rows
 
 const REPO = path.resolve(import.meta.dirname, "../..");
 const PACKAGE = path.join(REPO, ".studio-dev/build/physics-wasm-test");
-const BUILD_ID = /^genex-physics\/0\.1\.0\+contract-1\.0\+rapier-0\.36\.0\+det\+wasm32$/;
+const BUILD_ID = /^genex-physics\/1\.0\.0\+contract-1\.0\+rapier-0\.36\.0\+det\+wasm32$/;
 const LEAK_WORLDS = 1000;
 const LEAK_WARMUP_WORLDS = 50;
 

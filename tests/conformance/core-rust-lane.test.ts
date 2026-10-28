@@ -393,9 +393,10 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
     });
     // Flipped (release R-2): the template switches off nav, streaming and animation, so the facade
     // is linked without default features. Flipped again (gate GR): audio is off too, keeping physics.
+    // Flipped again (shared physics P4): the deprecated physics-raw follows physics.
     assert.match(
       await readFile(path.join(into, "Cargo.toml"), "utf8"),
-      /^genex = \{ version = "=0\.1\.0", default-features = false, features = \["physics"\] \}$/m,
+      /^genex = \{ version = "=0\.1\.0", default-features = false, features = \["physics", "physics-raw"\] \}$/m,
     );
   });
 

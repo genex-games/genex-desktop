@@ -367,10 +367,15 @@ test("a live profile in a checkout under a .claude folder keeps its games outsid
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const home = path.join(base, "home");
   fs.mkdirSync(home);
+  // os.homedir() reads HOME on macOS and Linux, USERPROFILE on Windows.
   const realHome = process.env.HOME;
+  const realProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   t.after(() => {
     process.env.HOME = realHome;
+    if (realProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = realProfile;
   });
   const worktree = path.join(base, "repo/.claude/worktrees/wt");
   const plain = path.join(base, "plain");
