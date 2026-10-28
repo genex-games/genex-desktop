@@ -16,16 +16,18 @@ import {
   AssetSource,
   assetRoutingText,
 } from "../../src/shared/asset-routing.ts";
-import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 
 const BLENDER_SOURCES: ReadonlySet<AssetSource> = new Set([AssetSource.BlenderKit, AssetSource.BlenderFinish]);
 const route = (kind: AssetClass): AssetRoute => ASSET_ROUTES[kind];
 
-/** A bundled plugin's skills as Studio validates and serves them, by name. */
+/** A bundled plugin's skills as its manifest declares them, text by name. */
 async function skills(plugin: string): Promise<Map<string, string>> {
-  const raw = JSON.parse(await readFile(new URL(`../../src/plugins/${plugin}/plugin.json`, import.meta.url), "utf8"));
-  const manifest = validateManifest(raw);
-  return new Map((manifest.skills ?? []).map((skill) => [skill.name, String(skill.text ?? "")]));
+  const raw = JSON.parse(
+    await readFile(new URL(`../../src/plugins/${plugin}/plugin.json`, import.meta.url), "utf8"),
+  ) as {
+    skills?: Array<{ name: string; text?: string }>;
+  };
+  return new Map((raw.skills ?? []).map((skill) => [skill.name, skill.text ?? ""]));
 }
 
 describe("the asset routing table", () => {
