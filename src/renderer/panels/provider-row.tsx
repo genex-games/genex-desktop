@@ -4,6 +4,7 @@
  * context and at most one visible action.
  */
 import type { JSX } from "react";
+import type { ProviderRowFace } from "../analytics/welcome-vocabulary.ts";
 import { BetaTag } from "../ui/beta-tag.tsx";
 
 /** The words a provider row speaks in: its name, the plans it uses, and its install guide. */
@@ -43,6 +44,8 @@ export interface RowView {
   status: string;
   line: string | null;
   actions: JSX.Element | null;
+  /** Which of its faces the row shows, as usage analytics names it; rows with a state of their own leave it out. */
+  face?: ProviderRowFace;
 }
 
 /** The row's heading: the provider's name and version, its status, its line and its actions. */

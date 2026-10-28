@@ -52,6 +52,7 @@ import {
   removeSyncedDrafts,
   stageLocalDrafts,
 } from "./local-item-files.ts";
+import { keepDraftPicture } from "./item-pictures.ts";
 
 /** How long one CLI command may run before it is stopped. */
 export const GENEX_CLI_TIMEOUT_MS = 90 * SECOND_MS;
@@ -127,6 +128,11 @@ export interface GenexCliDeps {
   onListingDraft?: (draft: ListingRecord, binding: PluginBinding, fingerprint?: string | null) => Promise<void>;
   /** Local drafts an agent's `shop remove` took out of the game. Its failure never fails the call. */
   onLocalDraftsRemoved?: (project: string, localIds: readonly string[]) => Promise<void>;
+  /**
+   * `<userData>/item-pictures`: Studio's own copy of each local draft's picture (`item-pictures.ts`),
+   * which its card reads while the draft lives only in a build's copy of the game.
+   */
+  picturesRoot?: string;
 }
 
 /**
@@ -261,7 +267,7 @@ export class GenexCliService {
     return this.#execute(request, { game, project }, options.signal, async (answer, run) => {
       const delivered = await this.#deliver(answer, request, run.work, game);
       const { carried, written } = await this.#carry(delivered, request, run, game, binding.project);
-      await this.#announceDraft(carried, binding, project, new Map([...run.staged, ...written]));
+      await this.#announceDraft(carried, binding, project, new Map([...run.staged, ...written]), run.work);
       return carried;
     });
   }
@@ -436,6 +442,7 @@ export class GenexCliService {
     binding: PluginBinding,
     project: { id: string } | null,
     prints: DraftPrints,
+    work: string,
   ): Promise<void> {
     const announce = this.#deps.onListingDraft;
     const draft = announce ? draftInCliAnswer(answer, binding.project, project?.id ?? null) : null;
@@ -444,6 +451,9 @@ export class GenexCliService {
       await announce(draft, binding).catch(() => undefined);
       return;
     }
+    // Its card shows the picture at once, wherever the draft lives until a build lands.
+    const pictures = this.#deps.picturesRoot;
+    if (pictures) await keepDraftPicture(pictures, work, draft).catch(() => undefined);
     const fingerprint = prints.get(draft.localId);
     if (fingerprint) await announce(draft, binding, fingerprint).catch(() => undefined);
   }

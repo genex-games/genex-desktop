@@ -75,7 +75,8 @@ function FriendRow({
     </>
   );
   return (
-    <div className="sidebar-game sidebar-friend" data-sidebar-friend={friend.id} data-avatar-host>
+    // A friend, by their name.
+    <div className="sidebar-game sidebar-friend" data-sidebar-friend={friend.id} data-avatar-host data-analytics-mask>
       {plate ? (
         <Nameplate recipe={plate} className="nameplate-friend" sparkles={false} hover>
           {row}

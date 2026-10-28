@@ -1,9 +1,16 @@
 import path from "node:path";
 import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
-import { type PluginManifest, type PluginScan, type PluginSource, PluginSourceKind } from "../shared/plugins.ts";
+import { CodedError } from "../shared/errors.ts";
+import {
+  PluginInstallProblem,
+  type PluginManifest,
+  type PluginScan,
+  type PluginSource,
+  PluginSourceKind,
+} from "../shared/plugins.ts";
 import { t } from "../shared/i18n.ts";
 import type { PluginRegistry } from "../substrate/plugins/registry.ts";
-import { inspectPackage } from "../substrate/plugins/manifest.ts";
+import { inspectForInstall } from "../substrate/plugins/manifest.ts";
 import { scanPackage } from "../substrate/plugins/scan.ts";
 import { packageCopyFilter } from "../substrate/plugins/pack.ts";
 
@@ -54,7 +61,8 @@ export function reviewPluginInstall(
 ): PluginInstallReview {
   const from: PluginSource = origin ?? { kind: PluginSourceKind.Bundled };
   registry.assertInstallable(manifest, from);
-  if (connectorIds.includes(manifest.id)) throw new Error(MESSAGE.connectorHasId(manifest.id));
+  if (connectorIds.includes(manifest.id))
+    throw new CodedError(PluginInstallProblem.IdTaken, MESSAGE.connectorHasId(manifest.id));
   const replaces = registry.replacement(manifest, from);
   return replaces ? { replaces } : {};
 }
@@ -85,8 +93,8 @@ export async function installLocalPlugin(
     (s) => s.isDirectory(),
     () => false,
   );
-  if (!stillThere) throw new Error(MESSAGE.folderGone());
-  await inspectPackage(directory);
+  if (!stillThere) throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.folderGone());
+  await inspectForInstall(directory);
   const staging = path.join(registry.root, "staging");
   await mkdir(staging, { recursive: true });
   const holder = await mkdtemp(path.join(staging, "local-review-"));
@@ -98,8 +106,9 @@ export async function installLocalPlugin(
       force: false,
       filter: packageCopyFilter(directory),
     });
-    const manifest = await inspectPackage(snapshot);
-    if (expectedId && manifest.id !== expectedId) throw new Error(MESSAGE.differentPlugin());
+    const manifest = await inspectForInstall(snapshot);
+    if (expectedId && manifest.id !== expectedId)
+      throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.differentPlugin());
     const scan = await scanPackage(snapshot, manifest);
     const previous = registry.list().find((p) => p.manifest.id === manifest.id);
     if (!(await confirm(manifest, origin, scan, previous?.manifest))) return;

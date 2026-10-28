@@ -142,13 +142,14 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   cancels it on genex.games, and the next sheet waits 5 seconds; a page that reloads or leaves, or a
   viewer that closes, cancels one still unpaid. Its states: Ask (`× N` above one; a game-priced
   payment's terms whole, in a scroll area), Paying, Paid (the receipt and what is left), Not enough
-  coin (Get Nex opens genex.games; once the coin arrives, Review; after genex.games refused Pay for
-  want of coin, try again in the game), Sign in (Review once signed in), Pending (genex.games has not
-  answered; asked every 2 seconds) and Failed (timed out, canceled, refused or refunded). A purchase
+  coin (Get Nex opens genex.games' Buy Nex picker, `/inventory?buy=nex`; once the coin arrives,
+  Review; after genex.games refused Pay for want of coin, try again in the game), Sign in (Review
+  once signed in), Pending (genex.games has not answered; asked every 2 seconds) and Failed (timed
+  out, canceled, refused or refunded). A purchase
   genex.games still holds open never times out sooner than its two minutes after the game asked, by
   the app's own clock, however far that clock runs ahead. Signing in from the sheet signs the bar in
-  too. UNCONFIRMED with genex.games: confirming from Studio on the `native_modal` surface, and
-  `/inventory` as Get Nex's page; each is one constant (`STUDIO_CONFIRM_SURFACE`, `playCoinPageUrl`).
+  too. UNCONFIRMED with genex.games: confirming from Studio on the `native_modal` surface, one
+  constant (`STUDIO_CONFIRM_SURFACE`). Get Nex's page is the website's own coin page (`playCoinPageUrl`).
   A development profile pointing Studio at another API catches nothing.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
   few seconds. A coin purchase's popup is the exception above: its confirm address no longer goes to
@@ -381,7 +382,9 @@ frame only, `STUDIO_UI_ONLY`); prices, shares and counts are genex.games' own, n
   show again (a burst once, `REREAD_GAP_MS`); Put on sale, Take off sale and sharing read Selling
   again at once, Add to and Remove from the item's detail.
 - The **Listing draft card**: when `genex__cli` runs `shop add` (no card asks first; it refuses an item
-  without its picture, `image`, and runs at any time, with or without a build) or `genex__cli-paid` runs `shop set` and the pinned
+  without its picture, `image`, and a picture that is not a square PNG or WebP of at least 768 × 768,
+  since the card shows it edge to edge (`item-pictures.ts` `fitsItemCard`); it runs at any time, with
+  or without a build) or `genex__cli-paid` runs `shop set` and the pinned
   CLI answers its `--json` draft (`kind: "genex.item_draft"`, version 1) for the game's own hosted
   project, main records `item_drafted` in the chat (`main/core/item-draft.ts`) and announces
   `item.drafted`. The harness may write neither, and a draft an agent writes in words is text. The
@@ -398,7 +401,11 @@ frame only, `STUDIO_UI_ONLY`); prices, shares and counts are genex.games' own, n
 - **Local drafts** (an item made before its game is on Genex, contract "Local item drafts"): the CLI
   keeps it in the game's `.genex/items/` (`<localId>.json` and a `<localId>/` folder). Studio copies
   those drafts into each `shop` run's folder and carries a `shop add|set|remove`'s change back
-  (`main/core/local-item-files.ts`: drafts only, never through a link, capped). Its card (`state:
+  (`main/core/local-item-files.ts`: drafts only, never through a link, capped). A Loop's builder makes
+  its drafts in its build's copy of the game, which reaches the game's folder only when the build
+  lands, so Studio also keeps its own copy of each draft's picture as the CLI wrote it
+  (`<userData>/item-pictures/<game>/`, `main/core/item-pictures.ts`; a plain file, never through a
+  link): the card reads that copy first, then the game's folder. Its card (`state:
   "local"`, keyed by local id) says "Draft · goes on sale when you publish" and offers no **Other games
   can use it**, since no other game can reach an item before its game is on Genex. Once the game's publish
   record says its publish made it public (`status: "published"`, written last: a publish that failed
@@ -410,7 +417,8 @@ frame only, `STUDIO_UI_ONLY`); prices, shares and counts are genex.games' own, n
   publish it also puts on sale the game's items still drafts on genex.games (`hostedDraftIds` over
   Selling), never on a mere focus, since only a publish carries the code that delivers them. The card
   then becomes the item's: On sale, or genex.games' refusal; a refused upload stays local with its
-  reason. When the content Genex got is not the draft the card shows (files edited outside Studio),
+  reason, and with genex.games' own code beside the words when Studio has none for it
+  (`unwordedRefusalCode`, `[data-listing-refusal]`). When the content Genex got is not the draft the card shows (files edited outside Studio),
   the card offers no sharing and sends the person to Items › Selling. Nothing in the game folder names
   what goes up, so a `last-sync.json` from a terminal `genex publish` uploads nothing.
 - The **Shop** tab (`panels/shop/`): beside Live and Builds once the game sells something, every item

@@ -20,8 +20,13 @@ import {
   type ClaudeAuthStatus,
   type ClaudeLoginStart,
 } from "../substrate/engines/claude-cli.ts";
-import { isClaudeLoginActive, type ClaudeLoginState } from "../shared/claude-login.ts";
-import { errorMessage } from "../shared/errors.ts";
+import {
+  ClaudeLoginProblem,
+  ClaudeLoginRefusal,
+  isClaudeLoginActive,
+  type ClaudeLoginState,
+} from "../shared/claude-login.ts";
+import { CodedError, errorMessage } from "../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { t } from "../shared/i18n.ts";
 
@@ -121,11 +126,11 @@ export class ClaudeLoginController {
     this.#deps.onState(this.snapshot());
   }
 
-  #fail(message: string): void {
+  #fail(message: string, problem: ClaudeLoginProblem): void {
     clearTimeout(this.#attempt?.timer);
     clearTimeout(this.#attempt?.grace);
     this.#url = null;
-    this.#update({ phase: "failed", hasBrowserUrl: false, error: message });
+    this.#update({ phase: "failed", hasBrowserUrl: false, error: message, problem });
   }
 
   /**
@@ -153,7 +158,7 @@ export class ClaudeLoginController {
     };
     this.#attempt = attempt;
     this.#url = null;
-    this.#update({ phase: "starting", hasBrowserUrl: false, error: undefined });
+    this.#update({ phase: "starting", hasBrowserUrl: false, error: undefined, problem: undefined });
     let settle: (result: ClaudeLoginStart) => void = () => {};
     const settled = new Promise<ClaudeLoginStart>((resolve) => {
       settle = (result) => {
@@ -168,7 +173,8 @@ export class ClaudeLoginController {
       this.#drive(attempt, settle);
     } catch (error) {
       // The card shows a sentence, not the home directory a failed mkdir or spawn names.
-      if (!attempt.cancelled && this.#attempt === attempt) this.#fail(MESSAGE.couldNotStart());
+      if (!attempt.cancelled && this.#attempt === attempt)
+        this.#fail(MESSAGE.couldNotStart(), ClaudeLoginProblem.CouldNotStart);
       settle({ started: false, error: errorMessage(error) });
     }
     return settled;
@@ -180,12 +186,12 @@ export class ClaudeLoginController {
     try {
       installation = await this.#deps.resolveCli?.();
     } catch (error) {
-      this.#fail(errorMessage(error));
+      this.#fail(errorMessage(error), ClaudeLoginProblem.CliUnresolved);
       return { started: false, error: errorMessage(error) };
     }
     const binary = installation?.path ?? (await this.#deps.findBinary());
     if (!binary) {
-      this.#fail(MISSING_CLAUDE_CLI);
+      this.#fail(MISSING_CLAUDE_CLI, ClaudeLoginProblem.MissingCli);
       return { started: false, missingCli: true, error: MISSING_CLAUDE_CLI };
     }
     return { binary, env: installation?.env };
@@ -232,7 +238,7 @@ export class ClaudeLoginController {
     }, this.#deps.graceMs ?? DEFAULT_GRACE_MS);
     attempt.timer = setTimeout(() => {
       void this.cancel().then(() => {
-        if (this.#attempt === attempt) this.#fail(MESSAGE.timedOut());
+        if (this.#attempt === attempt) this.#fail(MESSAGE.timedOut(), ClaudeLoginProblem.TimedOut);
       });
     }, this.#deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     attempt.timer.unref?.();
@@ -271,12 +277,12 @@ export class ClaudeLoginController {
   async submitCode(code: string): Promise<ClaudeLoginState> {
     const attempt = this.#attempt;
     if (!attempt || attempt.cancelled || this.#state.phase !== "code" || !attempt.child?.stdin) {
-      throw new Error(MESSAGE.noCodeWaiting());
+      throw new CodedError(ClaudeLoginRefusal.NoCodeWaiting, MESSAGE.noCodeWaiting());
     }
     const trimmed = code.trim();
     // One line, no whitespace: what goes into the CLI's stdin is a code, never a second command.
     if (!/^[A-Za-z0-9._~#/+=-]{6,512}$/.test(trimmed)) {
-      throw new Error(MESSAGE.notACode());
+      throw new CodedError(ClaudeLoginRefusal.NotACode, MESSAGE.notACode());
     }
     attempt.child.stdin.write(`${trimmed}\n`);
     // Forget what has been read: the prompt we just answered must not read as a second ask, and
@@ -288,7 +294,8 @@ export class ClaudeLoginController {
   }
 
   async openBrowser(): Promise<void> {
-    if (!this.#url || !isClaudeLoginActive(this.#state)) throw new Error(MESSAGE.noLink());
+    if (!this.#url || !isClaudeLoginActive(this.#state))
+      throw new CodedError(ClaudeLoginRefusal.NoLink, MESSAGE.noLink());
     await this.#deps.openExternal(this.#url);
   }
 
@@ -323,6 +330,8 @@ export class ClaudeLoginController {
     clearTimeout(attempt.grace);
     await this.#kill(attempt);
     if (this.#attempt !== attempt || attempt.cancelled) return;
+    // No terminal, or one that could not open: the sign-in failed for want of a terminal, not in the CLI.
+    let noTerminal = !this.#deps.terminal;
     const result: ClaudeLoginStart & { cancel?: () => Promise<void> } = await (
       this.#deps.terminal ?? (async () => ({ started: false, error: MESSAGE.noTerminal() }))
     )({
@@ -340,10 +349,10 @@ export class ClaudeLoginController {
       onExit: (code) => {
         if (this.#attempt === attempt && !attempt.cancelled) void this.#finish(attempt, code);
       },
-    }).catch(() => ({
-      started: false,
-      error: MESSAGE.terminalFailed(),
-    }));
+    }).catch(() => {
+      noTerminal = true;
+      return { started: false, error: MESSAGE.terminalFailed() };
+    });
     attempt.terminalCancel = "cancel" in result ? result.cancel : undefined;
     if (this.#attempt !== attempt || attempt.cancelled) {
       await attempt.terminalCancel?.();
@@ -351,7 +360,7 @@ export class ClaudeLoginController {
       return;
     }
     if (result.started) this.#update({ phase: "terminal", hasBrowserUrl: this.#url !== null });
-    else this.#fail(result.error ?? why ?? MESSAGE.cliFailed());
+    else this.#fail(result.error ?? why ?? MESSAGE.cliFailed(), handOverProblem(result, noTerminal));
     const publicResult: ClaudeLoginStart = { started: result.started };
     if (result.error) publicResult.error = result.error;
     if (result.missingCli) publicResult.missingCli = true;
@@ -364,7 +373,7 @@ export class ClaudeLoginController {
     clearTimeout(attempt.grace);
     this.#url = null;
     if (code !== 0) {
-      this.#fail(MESSAGE.notFinished());
+      this.#fail(MESSAGE.notFinished(), ClaudeLoginProblem.NotFinished);
       return;
     }
     // The code path already said "verifying"; a second identical announcement is a second render.
@@ -379,12 +388,19 @@ export class ClaudeLoginController {
       if (status.loggedIn !== true) throw new Error(MESSAGE.notConfirmed());
       await this.#deps.onConnected(attempt.home, status.email);
       if (this.#attempt !== attempt || attempt.cancelled) return;
-      this.#update({ phase: "connected", hasBrowserUrl: false, error: undefined });
+      this.#update({ phase: "connected", hasBrowserUrl: false, error: undefined, problem: undefined });
     } catch {
       // The one authored throw above says exactly this; a raw one from the probe must not reach the card.
-      if (this.#attempt === attempt && !attempt.cancelled) this.#fail(MESSAGE.notConfirmed());
+      if (this.#attempt === attempt && !attempt.cancelled)
+        this.#fail(MESSAGE.notConfirmed(), ClaudeLoginProblem.NotConfirmed);
     }
   }
+}
+
+/** Why a sign-in handed to the embedded terminal did not start there. */
+function handOverProblem(result: ClaudeLoginStart, noTerminal: boolean): ClaudeLoginProblem {
+  if (result.missingCli) return ClaudeLoginProblem.MissingCli;
+  return noTerminal ? ClaudeLoginProblem.TerminalFailed : ClaudeLoginProblem.CliFailed;
 }
 
 /** Only Anthropic's own sign-in hosts, and only a plain https link. */

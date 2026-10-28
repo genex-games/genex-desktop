@@ -4479,6 +4479,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Claude가 묻지 않고 하는 작업이에요. 채팅에서 ‘항상 허용’을 고르면 그 게임에 대한 작업이 여기에 추가돼요.",
   "What Harness has learned": "Harness가 배운 것",
+  "What changed": "바뀐 점",
   "What changes": "바뀌는 내용",
   "What credits pay for": "크레딧 사용처",
   "What do you want to make?": "무엇을 만들고 싶어요?",
@@ -5364,6 +5365,8 @@ export default {
     "{count, plural, other {원래 기록은 이름을 .git.studio-backup으로 바꿔서 바로 옆에 보관해 뒀어요.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {게임 파일 #개를 복원했어요.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, other {이 변경이 한 번에 {size}를 넘어 가장 큰 파일 #개가 저장되지 않았고, 되감기로 되돌릴 수 없어요: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, other {저장하기에 너무 큰 파일 #개는 되감기로 되돌릴 수 없어요: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -6014,4 +6017,20 @@ export default {
   "Allow in this chat": "이 채팅에서 허용",
   "Allowed in this chat": "이 채팅에서 허용됨",
   "Don't ask again for this action in this chat.": "이 채팅에서는 이 작업을 다시 묻지 않아요.",
+  "A replay of your first week": "첫 1주일 기록",
+  "Change it anytime in Settings.": "설정에서 언제든 바꿀 수 있어요.",
+  "Don't share": "공유 안 함",
+  "Help improve Genex?": "Genex 개선을 도와줄래요?",
+  "How you move through the app, with your work blanked out": "앱에서 어떻게 움직이는지, 작업 내용은 가려져요",
+  "Never your work or name": "작업 내용과 이름은 절대 보내지 않아요",
+  "Prompts, code, files, game names and accounts are left out": "프롬프트, 코드, 파일, 게임 이름, 계정은 빠져요",
+  "Screens, clicks and errors": "화면, 클릭, 오류",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "화면, 클릭, 오류, 대기 시간, 그리고 {date}까지는 작업 내용을 가린 채 앱에서 어떻게 움직이는지 기록해요. 무작위 ID로 EU의 PostHog에 보내요.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "화면, 클릭, 오류, 대기 시간. 무작위 ID로 EU의 PostHog에 보내요.",
+  "Share usage data": "사용 데이터 공유",
+  "Show us where Genex gets in your way.": "Genex가 어디서 방해되는지 알려 주세요.",
+  "Where you go, what fails and how long it takes": "어디로 가고, 무엇이 실패하고, 얼마나 걸리는지",
+  "usage data\u0004Share": "공유",
 } satisfies LocaleCatalog;

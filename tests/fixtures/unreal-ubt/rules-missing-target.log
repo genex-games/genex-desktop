@@ -1,0 +1,14 @@
+Setting up bundled DotNet SDK
+/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/ThirdParty/DotNet/10.0/mac-arm64
+Running dotnet Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll GxCheckEditor Mac Development -Project=/Users/me/Games/check/unreal/Gx-Check.uproject -NoMutex -NoUBA
+Log file: /Users/me/Library/Application Support/Epic/UnrealBuildTool/Log.txt
+Skipping /Users/Shared/Epic Games/UE_5.8/Engine/Intermediate/Build/BuildRules/UE5Rules.dll: File is installed
+Skipping /Users/Shared/Epic Games/UE_5.8/Engine/Intermediate/Build/BuildRules/UE5ProgramRules.dll: File is installed
+Determining max actions to execute in parallel (12 physical cores, 12 logical cores)
+  Executing up to 12 processes, one per physical core
+Creating makefile for GxCheckEditor (no existing makefile)
+Couldn't find target rules file for target 'GxCheckEditor' in rules assembly 'UE5Rules, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null'
+Location: /Users/Shared/Epic Games/UE_5.8/Engine/Intermediate/Build/BuildRules/UE5Rules.dll
+
+Result: Failed (RulesError)
+Total execution time: 1.49 seconds

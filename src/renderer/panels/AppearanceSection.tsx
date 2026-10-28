@@ -19,6 +19,7 @@ import {
   importTheme,
   paletteFor,
   selectedPreset,
+  themeImportProblem,
   themeVariables,
   type Appearance,
   AppearanceMode,
@@ -28,6 +29,10 @@ import {
   type ThemeSelection,
 } from "../appearance/themes.ts";
 import { useAppearance } from "../appearance/store.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { trackSettingChanged } from "../analytics/workspace-track.ts";
+import { SettingKey, ThemeImportOutcome } from "../analytics/workspace-vocabulary.ts";
 import { HomeBackdropSection } from "./HomeBackdropSection.tsx";
 import { t } from "../../shared/i18n.ts";
 import { isLanguageChoice, LOCALE_NAMES, LOCALES, SYSTEM_LANGUAGE } from "../../shared/locale.ts";
@@ -79,6 +84,9 @@ const CODE_FONT_OPTIONS = [
   { value: "geist", label: "Geist Mono" },
   { value: "system", label: t("System mono") },
 ];
+/** A custom preset's name is the person's own: kept out of usage recordings. */
+const presetName = (value: string) => (value.startsWith(CUSTOM_PRESET_PREFIX) ? { "data-analytics-mask": "" } : {});
+
 function Choice({
   label,
   value,
@@ -104,7 +112,9 @@ function Choice({
               Aa
             </span>
           )}
-          <span className="min-w-0 flex-1 truncate text-left">{selected?.label ?? value}</span>
+          <span className="min-w-0 flex-1 truncate text-left" {...presetName(value)}>
+            {selected?.label ?? value}
+          </span>
           <Icon name="chevron-down" size={14} />
         </Button>
       </DropdownMenuTrigger>
@@ -122,7 +132,9 @@ function Choice({
                     Aa
                   </span>
                 )}
-                <span className="min-w-0 break-words">{option.label}</span>
+                <span className="min-w-0 break-words" {...presetName(option.value)}>
+                  {option.label}
+                </span>
               </span>
             </DropdownMenuRadioItem>
           ))}
@@ -516,21 +528,31 @@ function ThemeShare({ editor }: { editor: ThemeEditorModel }) {
       setNotice(t("Select and copy the theme below."));
     }
   };
+  const imported = (outcome: ThemeImportOutcome, error?: unknown): void =>
+    track(AnalyticsEvent.ThemeImported, { outcome, problem: themeImportProblem(error) });
   const applyImport = () => {
     try {
-      const imported = importTheme(source, scheme);
-      if (imported.scheme !== scheme)
-        throw new Error(
-          imported.scheme === Scheme.Light
+      const theme = importTheme(source, scheme);
+      if (theme.scheme !== scheme) {
+        imported(ThemeImportOutcome.WrongScheme);
+        setError(
+          theme.scheme === Scheme.Light
             ? t("This is a light theme. Import it in the light theme section.")
             : t("This is a dark theme. Import it in the dark theme section."),
         );
-      if (!editor.save(imported.name, imported.colors, imported.contrast)) return;
+        return;
+      }
+      if (!editor.save(theme.name, theme.colors, theme.contrast)) {
+        imported(ThemeImportOutcome.LimitReached);
+        return;
+      }
+      imported(ThemeImportOutcome.Imported);
       setShare(null);
       setSource("");
       setError("");
-      setNotice(t("Imported {name}.", { name: imported.name }));
+      setNotice(t("Imported {name}.", { name: theme.name }));
     } catch (e) {
+      imported(ThemeImportOutcome.Failed, e);
       setError(e instanceof Error ? e.message : t("Could not import this theme."));
     }
   };
@@ -687,7 +709,10 @@ function LanguageSection() {
     ...LOCALES.map((locale) => ({ value: locale, label: LOCALE_NAMES[locale] })),
   ];
   const choose = (next: string): void => {
-    if (next !== choice && isLanguageChoice(next)) void switchLanguage(window.studio, next);
+    if (next === choice || !isLanguageChoice(next)) return;
+    // Counted before the window reloads to speak it.
+    trackSettingChanged(SettingKey.Language, next);
+    void switchLanguage(window.studio, next);
   };
   return (
     <section className="appearance-typography" aria-label={t("Language")} data-language-setting>

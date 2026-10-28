@@ -9,6 +9,7 @@ import { type BootGate, createBootGate, startStepAfter } from "../../src/main/bo
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerBootIpc } from "../../src/main/ipc/boot.ts";
 import {
+  BootFailure,
   BootPhase,
   SandboxProblemCode,
   SandboxSetupOutcome,
@@ -159,6 +160,7 @@ describe("starting and a studio that would not start", () => {
       phase: BootPhase.Failed,
       sandbox: null,
       failure: "harness exited during boot",
+      failureCode: BootFailure.CoreFailed,
     });
     assert.deepEqual(await gate.retry(), { platform: StudioPlatform.Mac, phase: BootPhase.Ready, sandbox: null });
     assert.equal(attempts, 1);
@@ -185,6 +187,7 @@ describe("starting and a studio that would not start", () => {
       phase: BootPhase.Ready,
       sandbox: null,
       failure: "srt-win acl stamp timed out after 60000ms",
+      failureCode: BootFailure.HarnessFailed,
     });
     assert.deepEqual(await gate.retry(), { platform: StudioPlatform.Windows, phase: BootPhase.Ready, sandbox: null });
     assert.equal(attempts, 1);

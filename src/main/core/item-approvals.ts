@@ -19,7 +19,7 @@ import {
   LocalOutcomeKind,
   localDraftOf,
 } from "../../shared/item-draft.ts";
-import { isItemId, storeRefusalOf } from "../../shared/store-items.ts";
+import { isItemId, storeRefusalOf, unwordedRefusalCode } from "../../shared/store-items.ts";
 import { AsyncLock, atomicWriteJson, readRegularFile } from "../../substrate/fsx.ts";
 
 /** The file's name in the profile's app data. */
@@ -101,7 +101,9 @@ function outcomeOf(value: unknown): LocalOutcome | null {
   const needsSku = value.kind !== LocalOutcomeKind.Refused;
   if (needsSku && !skuId) return null;
   const contentHash = isContentHash(value.contentHash) ? value.contentHash : null;
-  return { kind: value.kind as LocalOutcome["kind"], skuId, contentHash, refusal, field, at: value.at };
+  const code = unwordedRefusalCode(value.code);
+  const kind = value.kind as LocalOutcome["kind"];
+  return { kind, skuId, contentHash, refusal, field, ...(code ? { code } : {}), at: value.at };
 }
 
 function gameOf(value: unknown, project: string): GameRecord {

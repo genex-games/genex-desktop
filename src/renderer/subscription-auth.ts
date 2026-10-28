@@ -11,6 +11,7 @@ import { SECOND_MS } from "../shared/duration.ts";
 import { EngineStatusCode, needsSignIn } from "../shared/engine-descriptor.ts";
 import { t } from "../shared/i18n.ts";
 import { EngineId, loginKind, PROVIDERS, providerInfo } from "../shared/providers.ts";
+import { reportSignInStarted } from "./analytics/welcome-report.ts";
 import { useAsyncEffect } from "./use-async-effect.ts";
 
 /** The subscriptions the composer and the Models room show, in order: the provider table's. */
@@ -206,6 +207,7 @@ export function useSubscriptionAuth(
     const result = await window.studio
       .subscriptionSignIn({ engine: engineId, ...(opts ?? {}) })
       .catch((err: Error) => ({ started: false as const, missingCli: false, error: err.message }));
+    reportSignInStarted(engineId, result.started, Boolean(!result.started && result.missingCli));
     if (!result.started) {
       setMissingCli(Boolean(result.missingCli));
       setError(result.error ?? t("Couldn't start sign-in"));

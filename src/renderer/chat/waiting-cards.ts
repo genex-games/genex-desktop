@@ -19,6 +19,8 @@ export interface WaitingCard {
 export interface OwnAnswer {
   placeholder: string;
   send?: (text: string) => Promise<void>;
+  /** The words answer an agent's question, sent to the chat as the person's message. */
+  answersQuestion?: boolean;
 }
 
 /**

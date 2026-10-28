@@ -263,7 +263,8 @@ function RecentRow({ entry }: { entry: CreditEntry }): JSX.Element {
 function RecentSpending({ credits }: { credits: PlayCredits }): JSX.Element {
   const none = credits.recent.length === 0;
   return (
-    <section className="credits-column" aria-label={WORDS.recent} data-credits-recent>
+    // Each spend names the game it was for.
+    <section className="credits-column" aria-label={WORDS.recent} data-credits-recent data-analytics-mask>
       {/* Its heading and line stand at the foot of the heading rows, just over its list. */}
       <div className="credits-head-end">
         <h2 className="credits-heading">{WORDS.recent}</h2>

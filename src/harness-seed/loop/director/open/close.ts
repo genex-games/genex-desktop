@@ -47,6 +47,8 @@ export interface OpenEnd {
    * it): the journal keeps the working time the Loop came with, so the attempt spends none of its hours.
    */
   unworked?: boolean;
+  /** A new Loop a plugin's step held back before its first turn: the report says so, and the app tells the chat's agent. */
+  startHeld?: boolean;
 }
 
 /** A close the log refuses is written again, at most this many times this far apart: one never written leaves the run running. */
@@ -154,6 +156,7 @@ function finishReport(
     ...(notDone.length ? { notDone } : {}),
     ...leftToFix(loopRun, end, paused),
     ...(state.limit ? { limit: limitRecord(state.limit) } : {}),
+    ...(end.startHeld ? { startHeld: true } : {}),
     finishedAt: new Date().toISOString(),
   });
   report.notes = [...(report.notes ?? []), ...(loopRun.journal.director.notes ?? [])];

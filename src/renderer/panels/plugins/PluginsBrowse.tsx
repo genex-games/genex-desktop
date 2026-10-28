@@ -28,7 +28,8 @@ import {
 import { MarketplaceSoon } from "./MarketplaceSoon.tsx";
 import type { CatalogRow, PluginsPage } from "./page.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
-import { PluginRows, PluginToggle, pluginMatches, Section } from "./rows.tsx";
+import { installListed, PluginRows, PluginToggle, pluginMatches, Section } from "./rows.tsx";
+import { PluginInstallOrigin, PluginInstallSurface } from "../../analytics/plugins-page.ts";
 
 const WORDS = PLUGINS_WORDS;
 
@@ -71,7 +72,10 @@ function EntryAction({
       label={
         removed.has(entry.id) ? t("Reinstall {name}", { name: entry.name }) : t("Install {name}", { name: entry.name })
       }
-      onClick={() => void page.act(() => window.studio.pluginInstall(entry.id))}
+      onClick={() => {
+        const origin = removed.has(entry.id) ? PluginInstallOrigin.Reinstall : PluginInstallOrigin.Index;
+        void page.act(() => installListed(entry.id, origin, PluginInstallSurface.BrowseRow));
+      }}
     />
   );
 }
@@ -192,7 +196,9 @@ function OurPlugins({
             icon="plus"
             disabled={page.busy}
             label={t("Install {name}", { name: p.name })}
-            onClick={() => void page.act(() => window.studio.pluginInstall(p.id))}
+            onClick={() =>
+              void page.act(() => installListed(p.id, PluginInstallOrigin.Catalog, PluginInstallSurface.BrowseRow))
+            }
           />
         </CatalogEntry>
       ))}

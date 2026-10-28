@@ -9,6 +9,14 @@
 import { type FormEvent, type JSX, useEffect, useRef, useState } from "react";
 import { EngineId } from "../../shared/providers.ts";
 import type { FoundLocalServer, LocalServerInfo } from "../../shared/local-server.ts";
+import {
+  reportClock,
+  reportLocalServerConnect,
+  reportLocalServersFound,
+  reportProviderPress,
+  useRowViewed,
+} from "../analytics/welcome-report.ts";
+import { LocalServerVia, ProviderAction, ProviderSurface } from "../analytics/welcome-vocabulary.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
 import { DropdownMenuItem } from "../ui/dropdown-menu.tsx";
@@ -33,13 +41,18 @@ const ROW_WORDS: ProviderWords = { name: WORDS.name, plans: "", guide: "" };
 const FIELD =
   "h-8 min-w-0 rounded-control border border-input bg-field px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent-ink";
 
-/** The row's actions: check again, change the address, or disconnect. */
-type RowActions = { recheck: () => void; change: () => void; disconnect: () => void };
+/** The row's actions: check again (saying which button asked), change the address, or disconnect. */
+type RowActions = { recheck: (pressed: ProviderAction) => void; change: () => void; disconnect: () => void };
 
 /** The saved server's menu: Check connection, then Change address… and Disconnect. */
 function ServerMenu({ act }: { act: RowActions }): JSX.Element {
   return (
-    <AccountMenu name={WORDS.name} label={WORDS.menu} menuName={WORDS.menuName} onCheck={act.recheck}>
+    <AccountMenu
+      name={WORDS.name}
+      label={WORDS.menu}
+      menuName={WORDS.menuName}
+      onCheck={() => act.recheck(ProviderAction.CheckConnection)}
+    >
       <>
         <DropdownMenuItem onSelect={act.change}>
           <ItemWords title={WORDS.change} line={WORDS.changeLine} />
@@ -58,7 +71,9 @@ function troubleView(tone: RowTone, status: string, line: string, act: RowAction
     line,
     actions: (
       <>
-        {retry && <Button onClick={act.recheck}>{METERED_PROVIDER_WORDS.checkAgain}</Button>}
+        {retry && (
+          <Button onClick={() => act.recheck(ProviderAction.Recheck)}>{METERED_PROVIDER_WORDS.checkAgain}</Button>
+        )}
         <ServerMenu act={act} />
       </>
     ),
@@ -115,7 +130,14 @@ function localServerView(
 /** The servers answering on this computer's usual ports, each one click from connected. */
 function FoundServers({ found, onUse }: { found: FoundLocalServer[]; onUse: (server: FoundLocalServer) => void }) {
   return (
-    <div role="group" aria-label={WORDS.found} className="flex flex-col gap-1" data-local-server-found>
+    // Each server is named by its address on this network: a replay shows them masked.
+    <div
+      role="group"
+      aria-label={WORDS.found}
+      className="flex flex-col gap-1"
+      data-local-server-found
+      data-analytics-mask
+    >
       <span className="text-body-sm font-medium text-ink">{WORDS.found}</span>
       {found.map((server) => (
         <div key={server.url} className="flex min-h-9 items-center gap-3">
@@ -141,7 +163,11 @@ function useFoundServers(): FoundLocalServer[] {
     let live = true;
     window.studio
       .localServerFind()
-      .then((servers) => live && setFound(servers))
+      .then((servers) => {
+        if (!live) return;
+        reportLocalServersFound(servers);
+        setFound(servers);
+      })
       .catch(() => {});
     return () => {
       live = false;
@@ -165,7 +191,8 @@ function AddressEntry({
   busy: boolean;
   /** The server just asked for a key: the key field takes focus. */
   askedForKey: boolean;
-  onConnect: (url: string, key: string) => void;
+  /** Connect: the address, the key, and whether it was typed or a found server's Use (usage analytics). */
+  onConnect: (url: string, key: string, via: LocalServerVia) => void;
   onCancel: (() => void) | null;
 }): JSX.Element {
   const [url, setUrl] = useState(initialUrl);
@@ -175,20 +202,20 @@ function AddressEntry({
     if (askedForKey && !busy) keyField.current?.focus();
   }, [askedForKey, busy]);
   const found = useFoundServers().filter((server) => server.url !== initialUrl);
-  const send = (address: string): void => {
+  const send = (address: string, via: LocalServerVia): void => {
     const pasted = key;
     // The field forgets the key the moment it is sent.
     setKey("");
-    onConnect(address, pasted);
+    onConnect(address, pasted, via);
   };
   const submit = (event: FormEvent): void => {
     event.preventDefault();
-    if (url.trim() && !busy) send(url);
+    if (url.trim() && !busy) send(url, LocalServerVia.Typed);
   };
   const use = (server: FoundLocalServer): void => {
     setUrl(server.url);
     if (server.needsKey) keyField.current?.focus();
-    else send(server.url);
+    else send(server.url, LocalServerVia.Found);
   };
   return (
     <form onSubmit={submit} className="flex flex-col gap-3" data-local-server-form>
@@ -265,10 +292,12 @@ function KeyEntry({ busy, onSave }: { busy: boolean; onSave: (key: string) => vo
 function ServerModels({ models }: { models: EngineDescriptor["models"] }): JSX.Element | null {
   if (models.length === 0) return null;
   return (
+    // The person's own server names its models: a replay shows them masked.
     <ul
       aria-label={WORDS.models}
       className="mt-1 -mx-2.5 flex flex-col border-t border-line pt-2"
       data-local-server-models
+      data-analytics-mask
     >
       {models.map((model) => (
         <li key={model.id} className="flex min-h-8 flex-wrap items-baseline gap-x-2.5 px-2.5 py-1">
@@ -287,11 +316,17 @@ function useServerActions(onEnginesRefresh: () => Promise<void> | void) {
   const { run, error } = useRun();
   const [connecting, setConnecting] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
-  const connect = (url: string, key: string, done: () => void): Promise<void> =>
+  const connect = (url: string, key: string, via: LocalServerVia, done: () => void): Promise<void> =>
     run(async () => {
       setConnecting(true);
+      const attempt = { via, hasKey: key.trim() !== "" };
+      const startedAt = reportClock();
       try {
-        const result = await window.studio.localServerConnect(url, key.trim() || undefined);
+        const result = await window.studio.localServerConnect(url, key.trim() || undefined).catch((err: unknown) => {
+          reportLocalServerConnect(attempt, null, startedAt);
+          throw err;
+        });
+        reportLocalServerConnect(attempt, result, startedAt);
         setRefusal(result.ok ? null : result);
         if (result.ok) done();
         await onEnginesRefresh();
@@ -321,8 +356,12 @@ export function LocalServerRow({
   const [editing, setEditing] = useState(false);
   const server = engine.server ?? null;
   const state = localServerRowState(engine, { connecting: actions.connecting });
+  useRowViewed(EngineId.LocalServer, state, ProviderSurface.Settings, null);
   const view = localServerView(state, engine, server, {
-    recheck: () => void actions.run(recheck),
+    recheck: (pressed) => {
+      reportProviderPress(EngineId.LocalServer, pressed, ProviderSurface.Settings);
+      void actions.run(recheck);
+    },
     change: () => setEditing(true),
     disconnect: () => void actions.disconnect(() => setEditing(false)),
   });
@@ -344,7 +383,7 @@ export function LocalServerRow({
           initialUrl={server?.url ?? ""}
           busy={actions.connecting}
           askedForKey={isKeyRefusal(actions.refusal)}
-          onConnect={(url, key) => void actions.connect(url, key, () => setEditing(false))}
+          onConnect={(url, key, via) => void actions.connect(url, key, via, () => setEditing(false))}
           onCancel={
             editing
               ? () => {
@@ -356,7 +395,10 @@ export function LocalServerRow({
         />
       )}
       {asksForKey && server && (
-        <KeyEntry busy={actions.connecting} onSave={(key) => void actions.connect(server.url, key, () => {})} />
+        <KeyEntry
+          busy={actions.connecting}
+          onSave={(key) => void actions.connect(server.url, key, LocalServerVia.SavedKey, () => {})}
+        />
       )}
       {state === LocalServerRowState.Connected && !editing && <ServerModels models={engine.models} />}
       {problem && (

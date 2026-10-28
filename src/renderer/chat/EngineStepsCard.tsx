@@ -6,7 +6,7 @@
  * button that does every step it can for the person (Do it for me), and its own way out in Hide's
  * place (Don't use Unity); otherwise Hide puts it away for this game until the agent offers it again.
  */
-import { type JSX, useEffect, useRef, useState } from "react";
+import { type JSX, useEffect, useMemo, useRef, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { isUserCancelled } from "../../shared/errors.ts";
 import { readText, storageKeyFor, writeText } from "../storage.ts";
@@ -29,6 +29,19 @@ import {
   stepsShown,
   watchSteps,
 } from "./engine-steps.ts";
+import {
+  pressOutcomeOf,
+  type SetupPlugin,
+  setupCardShown,
+  setupPluginOf,
+  setupStepChanges,
+  setupStepId,
+  type StepStates,
+} from "../analytics/builds-stage.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { SetupButton, SetupEnd } from "../analytics/events/builds.ts";
+import { elapsedMs } from "../analytics/properties.ts";
 
 /** How often the card asks the plugin again while it shows. */
 const STEPS_REFRESH_MS = 5 * SECOND_MS;
@@ -63,6 +76,44 @@ function useSteps(offer: StepsOffer | null, live: boolean, onFinished: (says: st
     });
   }, [offerId, pluginId, project, live]);
   return stepsCardFor(kept, offer);
+}
+
+/** One showing of a card: when it showed, and where each row stood. */
+type Showing = { offer: string; at: number; rows: StepStates };
+
+/**
+ * The card's life as analytics counts it: shown, each row moving, and gone with nothing left open.
+ * Returns how long the card has been up, for a hide or a press.
+ */
+function useSetupEvents(offerId: string | null, card: StepsCard | null, plugin: SetupPlugin): () => number | null {
+  const showing = useRef<Showing | null>(null);
+  const pluginRef = useRef(plugin);
+  pluginRef.current = plugin;
+  useEffect(() => {
+    if (!offerId || !card) return;
+    const now = Date.now();
+    const shown = showing.current?.offer === offerId ? showing.current : null;
+    if (!shown) {
+      if (!card.open) return;
+      showing.current = { offer: offerId, at: now, rows: new Map() };
+      setupStepChanges(card, showing.current.rows, { plugin: pluginRef.current, now, shownAt: now });
+      track(AnalyticsEvent.EngineSetupCardShown, setupCardShown(card, pluginRef.current));
+      return;
+    }
+    const moves = setupStepChanges(card, shown.rows, { plugin: pluginRef.current, now, shownAt: shown.at });
+    for (const move of moves) track(AnalyticsEvent.EngineSetupStepChanged, move);
+    if (card.open) return;
+    track(AnalyticsEvent.EngineSetupEnded, {
+      plugin_ref: pluginRef.current.ref,
+      outcome: SetupEnd.Done,
+      open_steps: 0,
+      ms_since_shown: elapsedMs(shown.at, now),
+    });
+  }, [offerId, card]);
+  return () => {
+    const shown = showing.current;
+    return shown?.offer === offerId ? elapsedMs(shown.at, Date.now()) : null;
+  };
 }
 
 /** A row's command copied to the clipboard; Copy says Copied for a moment, then Copy again. */
@@ -173,20 +224,40 @@ export function EngineStepsCard({
   useEffect(() => setDismissed(key ? readText(key) : null), [key]);
   const shown = stepsShown(offer, dismissed);
   const card = useSteps(offer, shown, onFinished);
-  const plugin = usePlugins((s) => s.list.find((p) => p.manifest.id === offer?.pluginId) ?? null);
+  const plugins = usePlugins((s) => s.list);
+  const plugin = plugins.find((p) => p.manifest.id === offer?.pluginId) ?? null;
+  const setup = useMemo(() => setupPluginOf(offer?.pluginId ?? "", plugins), [offer?.pluginId, plugins]);
+  const upFor = useSetupEvents(shown ? offer.id : null, card, setup);
   if (!shown || !card?.open) return null;
   const hide = () => {
+    track(AnalyticsEvent.EngineSetupEnded, {
+      plugin_ref: setup.ref,
+      outcome: SetupEnd.Hidden,
+      open_steps: card.steps.filter((row) => !row.done).length,
+      ms_since_shown: upFor(),
+    });
     if (key) writeText(key, offer.id);
     setDismissed(offer.id);
   };
   // Saying no in the action's dialog is an answer, not a problem to show.
-  const press = (button: StepButton | undefined) => {
-    void runButton(plugin, offer, button).catch((error: unknown) => {
-      if (!isUserCancelled(error)) notifyProblem(onNotice)(error);
-    });
+  const press = (button: StepButton | undefined, which: SetupButton, stepId?: string) => {
+    const pressed = (error?: unknown) =>
+      track(AnalyticsEvent.EngineSetupButtonPressed, {
+        plugin_ref: setup.ref,
+        button: which,
+        step_id: setupStepId(setup, stepId),
+        outcome: pressOutcomeOf(error),
+      });
+    void runButton(plugin, offer, button).then(
+      () => pressed(),
+      (error: unknown) => {
+        pressed(error);
+        if (!isUserCancelled(error)) notifyProblem(onNotice)(error);
+      },
+    );
   };
   const run = (row: StepRow) => {
-    press(row.action);
+    press(row.action, SetupButton.Step, row.id);
   };
   const wayOut = card.secondary;
   return (
@@ -196,7 +267,8 @@ export function EngineStepsCard({
           {card.title}
         </h3>
         <p className="mt-0.5 text-chat-sub text-ink-3">{card.intro}</p>
-        <ul className="@container mt-3 flex min-w-0 flex-col gap-2">
+        {/* The steps are the plugin's words, and their commands can hold paths and user names. */}
+        <ul data-analytics-mask className="@container mt-3 flex min-w-0 flex-col gap-2">
           {card.steps.map((row) => (
             <StepLine key={row.id} row={row} onRun={run} />
           ))}
@@ -205,10 +277,12 @@ export function EngineStepsCard({
       {/* The card's buttons stay in view under the steps, which scroll above them. */}
       <div
         data-engine-steps-actions
+        // A plugin that is not bundled words its own buttons.
+        {...(setup.bundled ? {} : { "data-analytics-mask": "" })}
         className="flex shrink-0 items-center justify-end gap-2 border-t border-line px-4 py-2.5"
       >
         {wayOut ? (
-          <Button size="sm" variant="secondary" onClick={() => press(wayOut)}>
+          <Button size="sm" variant="secondary" onClick={() => press(wayOut, SetupButton.Secondary)}>
             {wayOut.label}
           </Button>
         ) : (
@@ -216,7 +290,9 @@ export function EngineStepsCard({
             {STEPS_WORDS.hide}
           </Button>
         )}
-        {card.primary ? <PrimaryButton button={card.primary} onRun={press} /> : null}
+        {card.primary ? (
+          <PrimaryButton button={card.primary} onRun={(button) => press(button, SetupButton.Primary)} />
+        ) : null}
       </div>
     </section>
   );

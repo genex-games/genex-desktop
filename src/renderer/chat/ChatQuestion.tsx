@@ -11,6 +11,9 @@ import { problemWords } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { answerKeys, pressesAnswer } from "./answer-keys.ts";
+import { QuestionDeferral } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 export interface ChatChoice {
   id: string;
@@ -244,6 +247,7 @@ export function ChatQuestion({
     if (recommended) void submit(recommended.id);
   });
   const putAside = (): void => {
+    track(AnalyticsEvent.ChatQuestionDeferred, { action: QuestionDeferral.PutAside });
     setCollapsed(true);
     requestAnimationFrame(() => reopen.current?.focus());
   };
@@ -253,6 +257,7 @@ export function ChatQuestion({
         buttonRef={reopen}
         label={reopenLabel}
         onReopen={() => {
+          track(AnalyticsEvent.ChatQuestionDeferred, { action: QuestionDeferral.Reopened });
           setCollapsed(false);
           requestAnimationFrame(() => (first.current ?? card.current)?.focus());
         }}

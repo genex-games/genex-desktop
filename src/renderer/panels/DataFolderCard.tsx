@@ -65,7 +65,7 @@ export function DataFolderCard({ state }: { state: DataFolderState }): JSX.Eleme
       )}
       <h3 className="settings-card-title">{WORDS.title}</h3>
       <div className="mt-2.5 flex min-w-0 items-center gap-2">
-        <div data-data-folder-path title={state.dir} className="settings-path">
+        <div data-data-folder-path data-analytics-mask title={state.dir} className="settings-path">
           <Icon name="folder" size={14} className="shrink-0 text-ink-3" />
           {/* One run of text: the parent's separator sits right against the folder's name. */}
           <span className="flex min-w-0">
@@ -79,12 +79,12 @@ export function DataFolderCard({ state }: { state: DataFolderState }): JSX.Eleme
       </div>
       <p className="mt-2.5 text-ink-3">{WORDS.hint}</p>
       {state.failed && !error && (
-        <p data-data-folder-failed className="mt-2 text-orange">
+        <p data-data-folder-failed data-analytics-mask className="mt-2 text-orange">
           {WORDS.failed(state.failed.to, state.failed.problem)}
         </p>
       )}
       {state.kept.map((dir) => (
-        <p key={dir} data-data-folder-kept className="mt-2 text-ink-3">
+        <p key={dir} data-data-folder-kept data-analytics-mask className="mt-2 text-ink-3">
           {WORDS.kept(dir)}
         </p>
       ))}

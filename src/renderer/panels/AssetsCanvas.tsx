@@ -40,6 +40,10 @@ import { ShareDialog } from "./assets/ShareDialog.tsx";
 import { ViewerActions } from "./assets/ViewerActions.tsx";
 import { t } from "../../shared/i18n.ts";
 import { Skeleton } from "../ui/Skeleton.tsx";
+import { assetPreviewMode } from "../../shared/asset-preview.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { AssetOpenedFrom } from "../analytics/events/builds.ts";
 
 /** How wide each waiting tile's name is: six tiles, as many as a first look usually shows. */
 const ASSET_TILE_NAMES = ["70%", "55%", "62%", "48%", "66%", "40%"] as const;
@@ -701,20 +705,22 @@ export function AssetsCanvas({ project, onNotice, focusJob }: Props): JSX.Elemen
   const [sharing, setSharing] = useState<ProjectAsset[] | null>(null);
   const clearPicks = pick.picked.size > 0 ? pick.clear : () => setSelected(null);
   useEscapeClears(pick.picked.size > 0 || selected !== null, previewAsset !== null, clearPicks);
-  const openAsset = useCallback(
-    (asset: ProjectAsset) => {
+  const show = useCallback(
+    (asset: ProjectAsset, from: AssetOpenedFrom) => {
+      track(AnalyticsEvent.AssetPreviewOpened, { mode: assetPreviewMode(asset.file), kind: asset.kind, from });
       pick.clear();
       setSelected(asset.file);
       setPreviewAsset(asset);
     },
     [pick.clear, setSelected, setPreviewAsset],
   );
+  const openAsset = useCallback((asset: ProjectAsset) => show(asset, AssetOpenedFrom.Canvas), [show]);
   const openFound = useCallback(
     (asset: ProjectAsset) => {
       setQuery("");
-      openAsset(asset);
+      show(asset, AssetOpenedFrom.Search);
     },
-    [setQuery, openAsset],
+    [setQuery, show],
   );
 
   return (

@@ -29,6 +29,8 @@ import {
   EngineFailureKind,
   StopReason,
   type DelegateOwnership,
+  type TurnFailure,
+  turnFailure,
 } from "../../shared/engine-requests.ts";
 import { type ConversationRecord, type EventEnvelope, ThreadKind } from "../../shared/event-log.ts";
 import { ExecutionStatus, RUN_START_EVENTS } from "../../shared/run-state.ts";
@@ -473,6 +475,12 @@ function answeredPhase(result: DelegateResult): ChatActivityPhase {
  * How a lead's turn that threw ended: an abort (the user's stop, or the harness dying or
  * restarting) reads as interrupted, anything else failed.
  */
+/** How a chat turn's delegation failed, for the turn's end to record. */
+function failedTurn(failure: unknown): TurnFailure {
+  if (!(failure instanceof EngineError)) return turnFailure(EngineFailureKind.Other);
+  return turnFailure(failure.kind, failure.retryAfterMs);
+}
+
 function thrownPhase(err: unknown): ChatActivityPhase {
   const stopped = err instanceof EngineError && err.kind === EngineFailureKind.Aborted;
   return stopped ? ChatActivityPhase.Interrupted : ChatActivityPhase.Failed;
@@ -3022,6 +3030,7 @@ export class DelegationService {
     if (streamId) this.#core.emit(UiEvent.ChatStreamEnded, { threadId: session.threadId, streamId, failed: true });
     await this.#leadTurnEnded(session, thrownPhase(err), engineId);
     const failure = await withFallbacks(this.#core.engines, engineId, err);
+    if (session.conversational || session.leadTurn) this.#core.turns.noteFailure(session.threadId, failedTurn(failure));
     if (failure instanceof EngineError && failure.kind === EngineFailureKind.Auth) {
       this.#core.emit(UiEvent.EnginesChanged, { engine: engineId });
     }

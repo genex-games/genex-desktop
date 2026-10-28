@@ -28,7 +28,8 @@ Where it disagrees with this preface, this preface wins.
   `items list` and `items search`: `genex__cli`. `budget --assets` is not available: Studio's own
   asset allowance and the user's approval govern asset spending. `shop add` asks nobody: it makes
   a store item's draft, which spends nothing and sells nothing until Studio puts it on sale with the game's publish,
-  and it needs the item's picture (`image`), at any time, with or without a build.
+  and it needs the item's picture (`image`, a square PNG of at least 768 × 768), at any time, with or
+  without a build.
   So do `shop set` and `shop remove` on a local draft (`local_…`).
 - `llm bench`, `shop set|remove` on an item in the store, `shop test` and `items add|remove`:
   `genex__cli-paid`. The user

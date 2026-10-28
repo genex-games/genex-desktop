@@ -118,7 +118,8 @@ function PromptLine({ prompt }: { prompt: string }): JSX.Element {
           {prompt}
         </span>
       </TooltipTrigger>
-      <TooltipContent side="right" align="center" sideOffset={10} className="making-tooltip">
+      {/* The tooltip is portaled, outside the card's mask: it masks the prompt itself. */}
+      <TooltipContent side="right" align="center" sideOffset={10} className="making-tooltip" data-analytics-mask>
         {prompt}
       </TooltipContent>
     </Tooltip>
@@ -394,10 +395,12 @@ export function MakingCard({
   // A press on a review's or a credits wait's controls is theirs: it never starts a pan of the canvas.
   const pressable = card.phase === MakingPhase.Review || card.phase === MakingPhase.NeedsCredits;
   return (
+    // The card says what the person asked for, beside its candidate and approve buttons.
     <div
       role="group"
       aria-label={card.label}
       data-asset-pending={id}
+      data-analytics-mask
       data-making={card.phase}
       className="making-card"
       onPointerDown={pressable ? (event) => event.stopPropagation() : undefined}

@@ -22,6 +22,13 @@ export interface ViewSwitcherItem<K extends string> {
    * that genuinely needs a sentence.
    */
   hint?: string;
+  /** The label is the person's own words (a file name): kept out of usage recordings. */
+  mask?: boolean;
+}
+
+/** A chip's label, wrapped to be masked in usage recordings when it is the person's own words. */
+function chipLabel<K extends string>(item: ViewSwitcherItem<K>): React.ReactNode {
+  return item.mask ? <span data-analytics-mask="">{item.label}</span> : item.label;
 }
 
 /** A chip's look: its height and family, square when it is a glyph, and whether it is active. */
@@ -139,7 +146,7 @@ export function ViewSwitcher<K extends string>({
         className={chipClass({ sans, iconOnly, fullWidth, isActive })}
       >
         {item.icon}
-        {iconOnly ? null : item.label}
+        {iconOnly ? null : chipLabel(item)}
         {item.count ? <span className="font-mono text-micro tabular-nums opacity-70">{item.count}</span> : null}
       </button>
     );

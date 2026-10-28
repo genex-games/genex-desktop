@@ -231,6 +231,7 @@ describe("the one Loop's start", () => {
         assert.equal(closes.length, 1);
         assert.match(String(report.stoppedBecause), /The toy editor didn't open\./);
         assert.match(String(report.stoppedBecause), /start the Loop again/);
+        assert.equal(report.startHeld, true, "the chat's agent is told to fix it (core/held-start.ts)");
         assert.equal(report.victory, false);
         assert.deepEqual(
           host.rec.paramsOf("checkpoint.take"),
@@ -4031,6 +4032,7 @@ describe("the one Loop's resume held back", () => {
     const resumed = await host.start({ resume: true });
     assert.equal(resumed.executionStatus, "paused");
     assert.equal(resumed.landed, false);
+    assert.equal(resumed.startHeld, undefined, "a resumed Loop waits for Resume, not for the agent");
     assert.equal(host.appended("autopilot_paused").length, 2, "paused again");
     assert.match(String(resumed.stoppedBecause), /Resume/);
     const journal = host.artifacts.get(`autopilot_${host.run.runId}`) as { phase?: string };
@@ -4066,6 +4068,19 @@ describe("the one Loop's resume held back", () => {
       assert.match(String(resumed.stoppedBecause), /Plan mode/);
       assert.match(String(resumed.stoppedBecause), /press Resume/);
       assert.doesNotMatch(String(resumed.stoppedBecause), /Start it again/);
+    },
+  );
+
+  it(
+    "Genex's own hold of a new Loop's start waits for the person: the chat's agent is not told to fix it",
+    TEST_TIMEOUT,
+    async () => {
+      const host = await hostOn(Project.ToyProject, { facts: TOY, manifest: TOY_MANIFEST, turns: [finishes] });
+      host.planning = true;
+      const report = await host.start();
+      assert.equal(host.leadCalls().length, 0, "no turn");
+      assert.match(String(report.stoppedBecause), /Plan mode/);
+      assert.equal(report.startHeld, undefined);
     },
   );
 

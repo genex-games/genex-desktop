@@ -181,7 +181,10 @@ export function SettingsDialog({
         </nav>
         <div className="settings-content flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="mt-3.5 flex min-h-8 shrink-0 items-center gap-3 ps-5 pe-14">
-            <h2 className="text-lg font-medium text-foreground">{sectionTitle(section, signedIn)}</h2>
+            {/* The section's name is the app's own word: a replay may show it. */}
+            <h2 data-analytics-visible className="text-lg font-medium text-foreground">
+              {sectionTitle(section, signedIn)}
+            </h2>
             {section === SettingsSection.Account && signedIn && <AccountSignOut />}
           </div>
           <div

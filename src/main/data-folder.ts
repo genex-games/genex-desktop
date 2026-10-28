@@ -73,7 +73,8 @@ export const DataLaunchKind = {
 export type DataLaunchKind = (typeof DataLaunchKind)[keyof typeof DataLaunchKind];
 
 export type DataLaunch =
-  | { kind: typeof DataLaunchKind.Default; dir: string }
+  /** `fellBack`: the folder this launch was to use could not be, so Electron kept its default. */
+  | { kind: typeof DataLaunchKind.Default; dir: string; fellBack?: true }
   | { kind: typeof DataLaunchKind.Moved; dir: string }
   | { kind: typeof DataLaunchKind.Move; from: string; to: string }
   | { kind: typeof DataLaunchKind.Missing; dir: string }
@@ -292,7 +293,7 @@ function pointAt(host: DataPathsHost, decided: DataLaunch): DataLaunch {
     return launch;
   } catch {
     if (launch.kind !== DataLaunchKind.Moved || !host.argvNormal)
-      return { kind: DataLaunchKind.Default, dir: defaultDataDir(host.appData, host.appName) };
+      return { kind: DataLaunchKind.Default, dir: defaultDataDir(host.appData, host.appName), fellBack: true };
     return pointAt(host, { kind: DataLaunchKind.Missing, dir: launch.dir });
   }
 }

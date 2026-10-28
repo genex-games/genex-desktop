@@ -168,7 +168,14 @@ export function FriendCard(props: FriendCardProps): JSX.Element {
   const { person, kind } = props;
   const live = kind === FriendCardKind.Playing;
   return (
-    <article className="friend-card" data-friend-card={kind} data-person={person.id} data-avatar-host>
+    // A person, by their name and what they play.
+    <article
+      className="friend-card"
+      data-friend-card={kind}
+      data-person={person.id}
+      data-avatar-host
+      data-analytics-mask
+    >
       {kind === FriendCardKind.Friend && (
         <FriendMoreMenu person={person} className="friend-card-more" disabled={props.offline} />
       )}

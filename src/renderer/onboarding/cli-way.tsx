@@ -6,6 +6,14 @@
 import { lazy, Suspense, useState, type JSX } from "react";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import type { TerminalSession } from "../../shared/terminal.ts";
+import { cliInstallAction, cliRecheckAction } from "../analytics/welcome-providers.ts";
+import {
+  reportProviderPress,
+  reportSignInHelper,
+  reportSignInStarted,
+  reportTerminalSignInCancelled,
+} from "../analytics/welcome-report.ts";
+import { ProviderAction, ProviderSurface, SignInHelper } from "../analytics/welcome-vocabulary.ts";
 import { useCliInstall } from "../cli-install.ts";
 import { CLI_SIGN_IN, type CliProvider } from "../panels/cli-sign-in.ts";
 import { openCodeRowState } from "../panels/opencode-row.ts";
@@ -49,24 +57,41 @@ export function useCli(provider: CliProvider, engines: EngineDescriptor[], onEng
       setChecking(false);
     }
   };
+  const press = (action: ProviderAction) => reportProviderPress(provider, action, ProviderSurface.Onboarding);
   return {
     row,
     checking,
     terminal,
     problem: problem ?? terminalError ?? install.problem,
     setTerminalError,
-    install: () => run(install.install),
-    recheck: () => run(recheck),
-    signIn: () =>
+    install: () => {
+      press(cliInstallAction(row));
+      run(install.install);
+    },
+    recheck: () => {
+      press(cliRecheckAction(row));
+      run(recheck);
+    },
+    signIn: () => {
+      press(ProviderAction.SignIn);
       run(async () => {
         setTerminalError(null);
         const started = await startSignIn();
+        reportSignInStarted(provider, started.started);
         if (!started.started) await recheck();
-      }),
-    cancelSignIn: () => {
-      if (terminal) run(() => window.studio.terminalStop(terminal.id));
+      });
     },
-    openSignInPage: terminal?.signInPage ? () => run(() => window.studio.terminalOpenLink(terminal.id)) : null,
+    cancelSignIn: () => {
+      if (!terminal) return;
+      reportTerminalSignInCancelled(provider);
+      run(() => window.studio.terminalStop(terminal.id));
+    },
+    openSignInPage: terminal?.signInPage
+      ? () => {
+          reportSignInHelper(provider, SignInHelper.PageReopened, { surface: ProviderSurface.Onboarding });
+          run(() => window.studio.terminalOpenLink(terminal.id));
+        }
+      : null,
   };
 }
 export type Cli = ReturnType<typeof useCli>;

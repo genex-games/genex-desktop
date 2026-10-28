@@ -743,6 +743,14 @@ for it. The marks are the vendors' own paths, unaltered (`ui/provider-marks.ts`)
 language, reads theme colours from CSS and holds a still frame under Reduce Motion. Skip for now
 and Start building fade into home, the welcome's idea waiting in its composer.
 
+A build with usage analytics asks **Help improve Genex?** first (`panels/AnalyticsConsent.tsx`):
+the standard 448px dialog over the welcome's first frame, its film held on the caret, with no close
+and no Escape. One line under the title, then the promo's row pattern (18px glyph, 14px medium
+title, one 13px ink-3 line): screens, clicks and errors; the replay of the first week, only on a
+sampled install; never your work or name, its glyph ink-3. **Don't share** and **Share** are the
+same quiet button, right of a 13px ink-3 "Change it anytime in Settings." On a profile welcomed
+before, the same dialog opens over home once; the promo and the avatar welcome wait for it.
+
 After the welcome, the Genex promo is a 360px surface card floating 16px from a bottom corner
 (above the workspace, beneath dialogs and toasts) that moves nothing beneath it: bottom-left while
 home is up, clear of home's composer, and bottom-right over a game's stage, away from the chat's

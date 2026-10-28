@@ -175,6 +175,16 @@ const isStoreRefusal = (value: unknown): value is StoreRefusal => typeof value =
 /** A refusal code, known or not: an unknown one reads as {@link StoreRefusal.Unknown}. */
 export const storeRefusalOf = (code: unknown): StoreRefusal => (isStoreRefusal(code) ? code : StoreRefusal.Unknown);
 
+/** A code genex.games or its CLI refuses with, as it spells one: a lowercase word, never prose. */
+const REFUSAL_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * `code` when Studio has no words of its own for it (`storeRefusalOf` reads it as unknown) and it
+ * reads as a code: what a card shows beside "Genex couldn't do that", so the refusal still says why.
+ */
+export const unwordedRefusalCode = (code: unknown): string | null =>
+  typeof code === "string" && REFUSAL_CODE.test(code) && !isStoreRefusal(code) ? code : null;
+
 /**
  * Tags as genex.games stores them: trimmed, inner whitespace collapsed, lowercased, empty ones
  * dropped, the first of each kept. Tags are search words, never a type (P2).

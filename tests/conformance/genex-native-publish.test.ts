@@ -5,7 +5,7 @@
  * folder is ever handed to the CLI, a Linux one with its platform and program named. One app that fails is kept as that app's failure, in the CLI's own words.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -439,6 +439,131 @@ describe("a game with only apps, published", () => {
       state.native?.sent.map((sent) => sent.platform),
       ["mac", "windows"],
     );
+  });
+
+  /** A publish workspace already linked to `meta`, as an earlier publish left it. */
+  async function linkedTo(genex: GenexTools, meta: Record<string, unknown>) {
+    const workspace = path.join(genex.root, "publish", "dust");
+    await mkdir(path.join(workspace, ".genex"), { recursive: true });
+    await writeFile(path.join(workspace, ".genex", "project.json"), JSON.stringify(meta));
+    return workspace;
+  }
+
+  it("makes a new hosted project when the linked one is gone or isn't this account's, keeping the old link aside", async () => {
+    const answers: Record<string, () => object> = {
+      deleted: () => ({ error: "Not found" }),
+      // An admin's sign-in sees someone else's game: it is still not this account's to publish to.
+      "someone-elses": () => ({ project: { id: "p-other", slug: "someone-elses", owner: { id: "u-other" } } }),
+      replaced: () => ({ project: { id: "p-new", slug: "replaced", owner: { id: "u-me" } } }),
+    };
+    const server = await startGenexFixtureApi((req, reply) => {
+      if (req.url === "/api/auth/get-session") return reply.json({ user: { id: "u-me", email: "me@example.invalid" } });
+      const slug = /^\/api\/projects\/by-slug\/([^/?]+)/.exec(req.url)?.[1] ?? "";
+      const answer = answers[slug];
+      if (answer) return reply.json(answer(), slug === "deleted" ? 404 : 200);
+    });
+    servers.push(server);
+    for (const [slug, id] of [
+      ["deleted", "p-old"],
+      ["someone-elses", "p-other"],
+      ["replaced", "p-old"],
+    ]) {
+      const { genex, runs } = await toolsWithStandIn(true, server.url);
+      const workspace = await linkedTo(genex, { slug, id, status: "published" });
+      await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
+      const state = await genex.publishWait("dust");
+      assert.equal((await runs())[0]?.args[0], "init", `${slug}: a new hosted project is made first`);
+      assert.equal(state.job?.state, "done", `${slug}: ${JSON.stringify(state.job)}`);
+      assert.equal(state.slug, "dust-runners", slug);
+      const aside = (await readdir(path.join(workspace, ".genex"))).filter((name) =>
+        name.startsWith("project.unlinked-"),
+      );
+      assert.equal(aside.length, 1, `${slug}: the old link is kept aside, not deleted`);
+    }
+  });
+
+  it("keeps publishing to its hosted project while Genex says it is this account's, or can't be asked", async () => {
+    const server = await startGenexFixtureApi((req, reply) => {
+      if (req.url === "/api/auth/get-session") return reply.json({ user: { id: "u-me", email: "me@example.invalid" } });
+      if (req.url.startsWith("/api/projects/by-slug/mine"))
+        return reply.json({ project: { id: "p1", slug: "mine", status: "published", owner: { id: "u-me" } } });
+      if (req.url.startsWith("/api/projects/by-slug/flaky")) return reply.json({ error: "down" }, 503);
+    });
+    servers.push(server);
+    for (const slug of ["mine", "flaky"]) {
+      const { genex, runs } = await toolsWithStandIn(true, server.url);
+      await linkedTo(genex, { slug, id: "p1", status: "published" });
+      await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
+      await genex.publishWait("dust");
+      assert.equal(
+        (await runs()).some((call) => call.args[0] === "init"),
+        false,
+        `${slug}: no new hosted project`,
+      );
+    }
+  });
+
+  it("keeps its link while the sign-in no longer holds, though Genex then reads every game as unknown", async () => {
+    const server = await startGenexFixtureApi((req, reply) => {
+      if (req.url === "/api/auth/get-session") return reply.json({ user: null });
+    });
+    servers.push(server);
+    const { genex, runs } = await toolsWithStandIn(true, server.url);
+    const workspace = await linkedTo(genex, { slug: "mine", id: "p1", status: "published" });
+    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners").catch(() => null);
+    await genex.publishWait("dust");
+    assert.equal(
+      (await runs()).some((call) => call.args[0] === "init"),
+      false,
+      "no new hosted project",
+    );
+    assert.deepEqual(await readdir(path.join(workspace, ".genex")), ["project.json"], "the link stays");
+  });
+
+  it("puts back its own game set aside under another sign-in, instead of making a third", async () => {
+    const server = await startGenexFixtureApi((req, reply) => {
+      if (req.url === "/api/auth/get-session") return reply.json({ user: { id: "u-me", email: "me@example.invalid" } });
+      if (req.url.startsWith("/api/projects/by-slug/mine"))
+        return reply.json({ project: { id: "p1", slug: "mine", owner: { id: "u-me" } } });
+    });
+    servers.push(server);
+    const { genex, runs } = await toolsWithStandIn(true, server.url);
+    // The other sign-in's game is linked now; this account's own was set aside when it was made.
+    const workspace = await linkedTo(genex, { slug: "theirs", id: "p2", status: "draft" });
+    await writeFile(
+      path.join(workspace, ".genex", "project.unlinked-1793000000000.json"),
+      JSON.stringify({ slug: "mine", id: "p1", status: "published" }),
+    );
+    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
+    await genex.publishWait("dust");
+    assert.equal(
+      (await runs()).some((call) => call.args[0] === "init"),
+      false,
+      "no new hosted project",
+    );
+    const linked = JSON.parse(await readFile(path.join(workspace, ".genex", "project.json"), "utf8"));
+    assert.equal(linked.slug, "mine", "its own game is linked again");
+    const aside = (await readdir(path.join(workspace, ".genex"))).filter((name) =>
+      name.startsWith("project.unlinked-"),
+    );
+    assert.equal(aside.length, 1, "the other sign-in's link is set aside in its turn");
+  });
+
+  it("puts back no link set aside that Genex can't vouch for: a new game is made instead", async () => {
+    const server = await startGenexFixtureApi((req, reply) => {
+      if (req.url === "/api/auth/get-session") return reply.json({ user: { id: "u-me", email: "me@example.invalid" } });
+      if (req.url.startsWith("/api/projects/by-slug/flaky")) return reply.json({ error: "down" }, 503);
+    });
+    servers.push(server);
+    const { genex, runs } = await toolsWithStandIn(true, server.url);
+    const workspace = await linkedTo(genex, { slug: "gone", id: "p3", status: "draft" });
+    await writeFile(
+      path.join(workspace, ".genex", "project.unlinked-1793000000000.json"),
+      JSON.stringify({ slug: "flaky", id: "p1", status: "published" }),
+    );
+    await genex.publishAppsOnly("dust", [app("Dust Runners")], "Dust Runners");
+    await genex.publishWait("dust");
+    assert.equal((await runs())[0]?.args[0], "init", "a new hosted project, not a link Genex didn't answer for");
   });
 
   it("keeps the apps live but fails the publish when Genex refuses the listing, in its words", async () => {

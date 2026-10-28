@@ -952,11 +952,16 @@ export type EngineKind = 'direct' | 'delegated';
 export type EngineStatusCode = 'ready' | 'not_installed' | 'not_running' | 'needs_login' | 'error';
 // ↑ src/shared/engine-descriptor.ts
 
+export type EngineStatusReason = 'not_signed_in' | 'api_key_login' | 'auth_failed' | 'check_failed' | 'cli_missing';
+// ↑ src/shared/engine-descriptor.ts
+
 export interface EngineStatus {
   code: EngineStatusCode;
   detail: string;
   /** What the UI should offer to do about it. */
   remedy?: string;
+  /** Why it is not ready, when the engine knows. */
+  reason?: EngineStatusReason;
 }
 // ↑ src/shared/engine-descriptor.ts
 
@@ -2615,7 +2620,7 @@ export interface AutopilotCommission {
 }
 // ↑ src/shared/protocol.ts
 
-export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry';
+export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry' | 'loop-held';
 // ↑ src/shared/protocol.ts
 
 export interface RunReference {

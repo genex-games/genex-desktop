@@ -48,6 +48,11 @@ its `npm install -g` stays in the profile. A Claude Code sign-in leaves a
 `Claude Code-credentials-<hash>` item in your login keychain that neither sign-out nor `clean`
 removes; delete it in Keychain Access when you like.
 
+To see [usage analytics](usage-analytics.md) send from an owned profile, set
+`STUDIO_POSTHOG_KEY` to a test PostHog project's key and `STUDIO_ANALYTICS=1` on the start: the
+development build then keeps the key and the launch offers the question. Never use the release
+project's key; releases read it from the repository variable `STUDIO_POSTHOG_KEY`.
+
 A live launch keeps the caller's environment except its agent session's own variables: the
 keys and endpoint it routes model calls through, Claude Code's and the Agent SDK's switches, the
 session's nesting, effort, context, timeout, MCP and OAuth markers, and `ELECTRON_RUN_AS_NODE`

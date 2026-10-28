@@ -11,7 +11,7 @@ const MESSAGE = {
 /** The complete host-generated file list for a staged upload, including excluded paths. */
 export function ExportReview({ review }: { review: Review }): JSX.Element {
   return (
-    <div data-export-review className="mt-2 space-y-2 text-chat-sub">
+    <div data-export-review data-analytics-mask className="mt-2 space-y-2 text-chat-sub">
       {(
         [
           ["included", MESSAGE.Included, review.included],

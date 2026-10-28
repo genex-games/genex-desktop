@@ -22,6 +22,7 @@ import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
 import { HarnessGuideButton } from "../chat/HarnessGuide.tsx";
 import { SidebarToggle } from "../shell/use-shell-chrome.ts";
 import { setEngineSlot } from "./engine-slot.ts";
+import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
 
 interface Props {
   chatTitle: string;
@@ -191,6 +192,7 @@ function ChatTitle({
         project ? t("Rename game: {name}", { name: chatTitle }) : t("Rename chat: {name}", { name: chatTitle })
       }
       onClick={onEdit}
+      data-analytics-mask
       className="no-drag chat-header-title"
     >
       {isDraft ? t("New chat") : chatTitle}
@@ -209,7 +211,13 @@ function FreeSpaceButton({ storage, game }: { storage: GameStorage; game: string
   return (
     <>
       {confirming && (
-        <FreeSpaceSheet space={space} game={game} onFree={storage.free} onDone={() => setConfirming(false)} />
+        <FreeSpaceSheet
+          space={space}
+          game={game}
+          surface={StorageSurface.ChatHeader}
+          onFree={storage.free}
+          onDone={() => setConfirming(false)}
+        />
       )}
       <Tooltip>
         <TooltipTrigger asChild>

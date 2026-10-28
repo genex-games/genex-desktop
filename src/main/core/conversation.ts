@@ -3,7 +3,7 @@
  * build's coordinator), the coordinator's tools, wrapping up a run, and Stop. Composed by
  * `StudioCore`; its state stays in the core.
  */
-import { PlanReviewState, type ComposerSendOptions, type PlanReview } from "../../shared/composer.ts";
+import { PlanReviewState, type ComposerSendOptions, type PlanReview, SendRefusal } from "../../shared/composer.ts";
 import path from "node:path";
 import {
   CoordinatorTool,
@@ -161,6 +161,13 @@ const MESSAGE = {
   stopsThenRestarts:
     "The build stops when your reply ends, what it built is kept, and it goes on again as soon as it has stopped, with the instruction you gave.",
 } as const;
+
+/** What the chat says for each commission refusal. */
+const REFUSAL_WORDS: Record<SendRefusal, () => string> = {
+  [SendRefusal.AutopilotOutdated]: MESSAGE.autopilotOutdated,
+  [SendRefusal.LoopOutdated]: MESSAGE.loopOutdated,
+  [SendRefusal.LocalRolesOutdated]: MESSAGE.localRolesOutdated,
+};
 
 type ThreadMeta = { kind?: string; project?: string | null } | undefined;
 
@@ -332,16 +339,17 @@ export class ConversationService {
     });
     const refusal = this.#commissionRefusal(sendOptions);
     if (refusal) {
+      const message = REFUSAL_WORDS[refusal]();
       // The renderer already cleared the composer — the brief must survive in the log, ahead of
       // the refusal that explains it.
       await this.#core.append(
         [
           { type: EventKind.Messages, messages: [{ role: "user", content: text }] },
-          { type: EventKind.Error, message: refusal },
+          { type: EventKind.Error, message },
         ],
         target.threadId,
       );
-      this.#core.emit(UiEvent.ChatError, { threadId: target.threadId, message: refusal });
+      this.#core.emit(UiEvent.ChatError, { threadId: target.threadId, message, refusal });
       return;
     }
     // The person sent this, on this thread: a session answering it answers them (chat-permissions.ts).
@@ -631,13 +639,13 @@ export class ConversationService {
    * promise of an unattended run, and the user would wake to nothing. Gated on "ready" only: a
    * starting/restarting harness has not claimed anything yet.
    */
-  #commissionRefusal(options: ComposerSendOptions): string | null {
+  #commissionRefusal(options: ComposerSendOptions): SendRefusal | null {
     const host = this.#core.host;
     if (host.state !== HarnessState.Ready) return null;
-    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return MESSAGE.autopilotOutdated();
-    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return MESSAGE.loopOutdated();
+    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return SendRefusal.AutopilotOutdated;
+    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return SendRefusal.LoopOutdated;
     const localRoles = crossesCompletionEngine(options.engine ?? "", options.autopilot?.roles);
-    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return MESSAGE.localRolesOutdated();
+    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return SendRefusal.LocalRolesOutdated;
     return null;
   }
 

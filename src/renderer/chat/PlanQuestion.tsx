@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from "react";
 import { type PlanReview, PlanReviewState } from "../../shared/composer.ts";
+import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { t } from "../../shared/i18n.ts";
 import { Markdown } from "../ui/Markdown.tsx";
 import { FileText } from "../ui/FileText.tsx";
@@ -11,7 +12,7 @@ import { planAwaitsAnswer } from "./use-plan-review.ts";
 
 type Review = Omit<PlanReview, "options">;
 
-/** Why a plan could not be prepared, as far as its error says: sign-in, the model, or anything else. */
+/** Why a plan could not be prepared, as its failure says: sign-in, the model, or anything else. */
 const Recovery = {
   Auth: "auth",
   Limited: "limited",
@@ -19,8 +20,13 @@ const Recovery = {
 } as const;
 type Recovery = (typeof Recovery)[keyof typeof Recovery];
 
-const LIMITED_ERROR = /limit|quota|credits|capacity|unavailable|not.found|not.available/i;
-const AUTH_ERROR = /sign.?in|log.?in|auth|credential|unauthorized|401/i;
+/** The failures a person recovers from somewhere else than Try again: a sign-in, or another model. */
+const FAILURE_RECOVERY: Partial<Record<EngineFailureKind, Recovery>> = {
+  [EngineFailureKind.Auth]: Recovery.Auth,
+  [EngineFailureKind.RateLimit]: Recovery.Limited,
+  [EngineFailureKind.UsageLimit]: Recovery.Limited,
+  [EngineFailureKind.Unavailable]: Recovery.Limited,
+};
 
 const RECOVERY_WORDS: Record<Recovery, { title: string; next: string }> = {
   [Recovery.Auth]: {
@@ -34,11 +40,9 @@ const RECOVERY_WORDS: Record<Recovery, { title: string; next: string }> = {
   [Recovery.Other]: { title: t("Couldn’t prepare the plan"), next: t("Try again, or choose another model.") },
 };
 
-/** A sign-in problem wins over a model limit; the error text is all the plan record carries. */
-function recoveryOf(error: string | undefined): Recovery {
-  if (AUTH_ERROR.test(error ?? "")) return Recovery.Auth;
-  if (LIMITED_ERROR.test(error ?? "")) return Recovery.Limited;
-  return Recovery.Other;
+/** How to recover from a plan's failure; a record written before failures were kept reads as Other. */
+function recoveryOf(failure: EngineFailureKind | undefined): Recovery {
+  return (failure && FAILURE_RECOVERY[failure]) || Recovery.Other;
 }
 
 /** One action at a time: a second click while one runs does nothing, and a failure is shown. */
@@ -168,7 +172,7 @@ function PlanRecovery({
   action: ReturnType<typeof useSingleAction>;
   answer: (approved: boolean) => void;
 }) {
-  const words = RECOVERY_WORDS[recoveryOf(review.error)];
+  const words = RECOVERY_WORDS[recoveryOf(review.failure)];
   return (
     <section data-model-recovery aria-labelledby={titleId} aria-busy={blocked} className="chat-plan">
       <div className="min-h-0 overflow-y-auto px-4 py-3">

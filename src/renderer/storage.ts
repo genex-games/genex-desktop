@@ -37,6 +37,16 @@ export const STORAGE_KEYS = {
   notifications: "studio.notifications",
   /** Set once the first-launch welcome is finished or skipped on this profile. */
   welcomed: "studio.welcomed",
+  /** The person's answer about usage analytics and its consent version (`analytics/consent.ts` owns the format). */
+  analytics: "studio.analytics",
+  /** Whether this install records replays and until when, drawn once (`analytics/consent.ts` owns the format). */
+  analyticsReplay: "studio.analytics.replay",
+  /** The newest log record analytics has counted, so a reload never counts one twice (`analytics/observers.ts`). */
+  analyticsLogSeen: "studio.analytics.logSeen",
+  /** A random id per game, never derived from its name (`analytics/game-ref.ts` owns the format). */
+  analyticsGames: "studio.analytics.games",
+  /** The screen an unfinished welcome stood on, gone once it ends (`analytics/welcome-report.ts` owns the value). */
+  analyticsWelcomeScreen: "studio.analytics.welcomeScreen",
   /** The Genex promo after the welcome: queued, then settled (`genex-promo.ts` owns the values). */
   genexPromo: "studio.genexPromo",
   /** The games last opened in Play, newest first (`play/play-model.ts` owns the format). */

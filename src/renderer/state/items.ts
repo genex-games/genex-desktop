@@ -508,6 +508,16 @@ const LOCAL_CALL: Record<
 /** Whether main's answer is a game's local drafts (an approval or its undo), not a sharing result. */
 const isLocalView = (answer: LocalItemsView | LocalShareResult): answer is LocalItemsView => "approvals" in answer;
 
+/**
+ * Whether `view` names an item uploaded since `before`: a draft with a SKU it had not, a refused
+ * one included. Selling names the uploaded item's picture, so it is read again.
+ */
+function wentUpSince(before: LocalItemsView | undefined, view: LocalItemsView): boolean {
+  return Object.entries(view.outcomes).some(
+    ([localId, outcome]) => outcome.skuId !== null && before?.outcomes[localId]?.skuId !== outcome.skuId,
+  );
+}
+
 /** The local-draft presses, each carried out by main; a sharing press reads the game's drafts again. */
 function localPresses(ctx: ItemsContext, readSelling: () => Promise<void>) {
   const { set, api } = ctx;
@@ -527,7 +537,7 @@ function localPresses(ctx: ItemsContext, readSelling: () => Promise<void>) {
     if (!view) return;
     const before = ctx.store.getState().local[project];
     set((state) => localRead(state, view));
-    const uploaded = Object.keys(view.outcomes).some((localId) => !before?.outcomes[localId]);
+    const uploaded = wentUpSince(before, view);
     // An item that went up, or a publish that put the game's drafts on sale, changed the account's
     // items on genex.games: Selling, once read, reads them again.
     if ((uploaded || force) && ctx.store.getState().selling.read !== ItemsRead.Idle) await readSelling();

@@ -1,7 +1,10 @@
 /** One connector in the list: its row with health and tools, its notes, and — expanded — its actions. */
 import type { JSX } from "react";
 import { t } from "../../../shared/i18n.ts";
-import { McpHealth, type McpConnectorView } from "../../../shared/mcp.ts";
+import { McpHealth, type McpConnectorView, type McpTestResult } from "../../../shared/mcp.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { ConnectorAction, connectorTestedProperties, trackedConnectorAction } from "../../analytics/plugins-page.ts";
 import { Button } from "../../ui/Button.tsx";
 import { Toggle } from "../../ui/Toggle.tsx";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
@@ -69,20 +72,34 @@ const connectable = (view: McpConnectorView): boolean =>
 function OwnActions({ view, actions }: { view: McpConnectorView; actions: EntryActions }): JSX.Element {
   const c = view.connector;
   const { busy, act, project, setTested } = actions;
-  const test = () =>
+  const run = (action: ConnectorAction, fn: () => Promise<unknown>) => () =>
+    void act(() => trackedConnectorAction(action, c.transport, fn));
+  const test = () => {
+    const started = performance.now();
+    const tested = (result: McpTestResult | null): void =>
+      track(
+        AnalyticsEvent.ConnectorTested,
+        connectorTestedProperties(c.transport, result, performance.now() - started),
+      );
     void window.studio
       .mcpTest(c.id)
-      .then((result) => setTested((current) => ({ ...current, [c.id]: testWords(result) })))
-      .catch((err: Error) => setTested((current) => ({ ...current, [c.id]: err.message })));
-  const connect = () =>
-    void act(async () => {
-      setTested((current) => {
-        const next = { ...current };
-        delete next[c.id];
-        return next;
+      .then((result) => {
+        tested(result);
+        setTested((current) => ({ ...current, [c.id]: testWords(result) }));
+      })
+      .catch((err: Error) => {
+        tested(null);
+        setTested((current) => ({ ...current, [c.id]: err.message }));
       });
-      await window.studio.mcpConnect(c.id, project ?? undefined);
+  };
+  const connect = run(ConnectorAction.Connect, async () => {
+    setTested((current) => {
+      const next = { ...current };
+      delete next[c.id];
+      return next;
     });
+    await window.studio.mcpConnect(c.id, project ?? undefined);
+  });
   const signIn = view.authentication?.state;
   return (
     <div className="flex flex-wrap gap-2">
@@ -98,12 +115,18 @@ function OwnActions({ view, actions }: { view: McpConnectorView; actions: EntryA
         </Button>
       )}
       {signIn === "authorizing" && (
-        <Button disabled={busy} onClick={() => void act(() => window.studio.mcpCancelAuthorization(c.id))}>
+        <Button
+          disabled={busy}
+          onClick={run(ConnectorAction.CancelSignIn, () => window.studio.mcpCancelAuthorization(c.id))}
+        >
           {t("Cancel sign-in")}
         </Button>
       )}
       {signIn === "connected" && (
-        <Button disabled={busy} onClick={() => void act(() => window.studio.mcpDisconnectAccount(c.id))}>
+        <Button
+          disabled={busy}
+          onClick={run(ConnectorAction.DisconnectAccount, () => window.studio.mcpDisconnectAccount(c.id))}
+        >
           {t("Disconnect account")}
         </Button>
       )}
@@ -111,7 +134,7 @@ function OwnActions({ view, actions }: { view: McpConnectorView; actions: EntryA
         variant="ghost"
         aria-label={t("Remove connector {id}", { id: c.id })}
         disabled={busy}
-        onClick={() => void act(() => window.studio.mcpRemove(c.id))}
+        onClick={run(ConnectorAction.Remove, () => window.studio.mcpRemove(c.id))}
       >
         {t("Remove")}
       </Button>
@@ -182,7 +205,8 @@ export function ConnectorEntry({
   const owned = pluginOwner(view);
   const { busy, act, project } = actions;
   return (
-    <div className="connector-entry">
+    // A server the person added, by their name for it.
+    <div data-analytics-mask className="connector-entry">
       <div className="extension-row">
         <button
           type="button"
@@ -207,10 +231,16 @@ export function ConnectorEntry({
             ariaLabel={t("Use connector {id}", { id: c.id })}
             disabled={busy}
             onChange={(next) =>
-              void act(async () => {
-                const saved = await window.studio.mcpSave({ ...c, enabled: next });
-                if (next && !saved.pending) await window.studio.mcpConnect(c.id, project ?? undefined);
-              })
+              void act(() =>
+                trackedConnectorAction(
+                  next ? ConnectorAction.TurnOn : ConnectorAction.TurnOff,
+                  c.transport,
+                  async () => {
+                    const saved = await window.studio.mcpSave({ ...c, enabled: next });
+                    if (next && !saved.pending) await window.studio.mcpConnect(c.id, project ?? undefined);
+                  },
+                ),
+              )
             }
           />
         )}

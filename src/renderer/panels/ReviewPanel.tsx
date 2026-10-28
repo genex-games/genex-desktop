@@ -27,6 +27,19 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { intlLocale, t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { ACTIVITY_WORDS, problemWords } from "../words.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import {
+  type ActivityTally,
+  activityLoadedProperties,
+  changeUndoneProperties,
+  improvementCheckProperties,
+  SuggestionDecision,
+  suggestionsDecidedProperties,
+  takeHarnessOpening,
+} from "../analytics/plugins-harness.ts";
+import { countBucket } from "../analytics/properties.ts";
+import { studio } from "../state/studio.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 
@@ -98,8 +111,10 @@ function ExpandRow({
   const id = useId();
   return (
     <div {...props} className="border-b border-line last:border-0">
+      {/* A row's header names a game, a request or a change: the person's work. */}
       <button
         type="button"
+        data-analytics-mask
         aria-expanded={open}
         aria-controls={id}
         aria-label={label}
@@ -244,6 +259,24 @@ function useLearningSwitch(setError: (error: string | null) => void) {
 /** What a load counted: the suggestions waiting and the improvements applied. */
 type Tally = { staged: number; learned: number };
 
+/**
+ * Activity's loads as usage analytics hears them: the visit's first, and the first that works after
+ * one failed (a Retry, or the reload after an event). Every other reload is quiet.
+ */
+function useLoadReport(): (tally: ActivityTally | null, startedAt: number) => void {
+  const loads = useRef({ attempt: 0, settled: false, failed: false });
+  return useCallback((tally: ActivityTally | null, startedAt: number): void => {
+    const seen = loads.current;
+    seen.attempt += 1;
+    const quiet = seen.settled && (!seen.failed || tally === null);
+    seen.settled = true;
+    seen.failed = tally === null;
+    if (quiet) return;
+    const load = { tally, startedAt, now: Date.now(), attempt: seen.attempt };
+    track(AnalyticsEvent.ActivityLoaded, activityLoadedProperties(load));
+  }, []);
+}
+
 const countLearned = (items: StudioActivityItem[]): number =>
   items.filter((item) => item.kind === "improvement").length;
 
@@ -255,8 +288,10 @@ function useActivity(onStagedCount: (count: number) => void, latestEvent: string
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
+  const reportLoad = useLoadReport();
   const load = useCallback(async (): Promise<Tally | null> => {
     const current = ++generation.current;
+    const startedAt = Date.now();
     try {
       const [activity, self] = await Promise.all([window.studio.studioActivity(), window.studio.selfChanges()]);
       if (current !== generation.current) return null;
@@ -265,14 +300,19 @@ function useActivity(onStagedCount: (count: number) => void, latestEvent: string
       setStaged(self.staged);
       onStagedCount(self.staged.length);
       setError(null);
-      return { staged: self.staged.length, learned: countLearned(activity) };
+      const tally = { staged: self.staged.length, learned: countLearned(activity) };
+      reportLoad({ ...tally, runs: activity.filter((item) => item.kind === "run").length }, startedAt);
+      return tally;
     } catch (cause) {
-      if (current === generation.current) setError(problemWords(cause));
+      if (current === generation.current) {
+        setError(problemWords(cause));
+        reportLoad(null, startedAt);
+      }
       return null;
     } finally {
       if (current === generation.current) setLoading(false);
     }
-  }, [onStagedCount]);
+  }, [onStagedCount, reportLoad]);
   useEffect(() => {
     void load();
     return () => {
@@ -313,27 +353,39 @@ function useImprovementCheck(activity: ReturnType<typeof useActivity>) {
   const [checkNote, setCheckNote] = useState("");
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const beforeCheck = useRef<Tally | null>(null);
-  const report = useCallback((before: Tally | null, after: Tally | null): void => {
-    if (!before || !after) {
-      setCheck(LookState.Idle);
-      return;
-    }
-    // The button itself reports the result for a moment, then offers the check again.
-    const result = checkResult(before, after);
-    setCheck(result.state);
-    setCheckNote(result.note);
-    if (settle.current) clearTimeout(settle.current);
-    settle.current = setTimeout(() => {
-      setCheck(LookState.Idle);
-      setCheckNote("");
-    }, CHECK_RESULT_MS);
+  const checkStarted = useRef(0);
+  /** A look this room started ended: with what it found, or (null) failed. */
+  const reportCheck = useCallback((before: Tally | null, after: Tally | null): void => {
+    if (!before) return;
+    const check = { before, after, startedAt: checkStarted.current, now: Date.now() };
+    track(AnalyticsEvent.ImprovementCheckFinished, improvementCheckProperties(check));
   }, []);
+  const report = useCallback(
+    (before: Tally | null, after: Tally | null): void => {
+      reportCheck(before, after);
+      if (!before || !after) {
+        setCheck(LookState.Idle);
+        return;
+      }
+      // The button itself reports the result for a moment, then offers the check again.
+      const result = checkResult(before, after);
+      setCheck(result.state);
+      setCheckNote(result.note);
+      if (settle.current) clearTimeout(settle.current);
+      settle.current = setTimeout(() => {
+        setCheck(LookState.Idle);
+        setCheckNote("");
+      }, CHECK_RESULT_MS);
+    },
+    [reportCheck],
+  );
   useEffect(
     () =>
       window.studio.onEvent((event) => {
         if (!event.type.startsWith(SKILLOPT_EVENTS)) return;
         if (event.type === UiEvent.SkilloptFailed) {
           setCheck(LookState.Idle);
+          reportCheck(beforeCheck.current, null);
           beforeCheck.current = null;
           setError(problemWords(event.payload?.error ?? t("Could not look for improvements. Try again.")));
           return;
@@ -346,7 +398,7 @@ function useImprovementCheck(activity: ReturnType<typeof useActivity>) {
           report(before, after);
         });
       }),
-    [load, report, setError],
+    [load, report, reportCheck, setError],
   );
   useEffect(
     () => () => {
@@ -360,8 +412,10 @@ function useImprovementCheck(activity: ReturnType<typeof useActivity>) {
     setError(null);
     setCheckNote("");
     beforeCheck.current = { staged: activity.staged.length, learned: countLearned(activity.items) };
+    checkStarted.current = Date.now();
     void window.studio.startSkillOpt().catch((cause) => {
       setCheck(LookState.Idle);
+      reportCheck(beforeCheck.current, null);
       beforeCheck.current = null;
       setError(problemWords(cause));
     });
@@ -516,7 +570,7 @@ function LearnedRow({
   item: StudioActivityItem;
   change: SelfChange | undefined;
   busy: boolean;
-  onUndo: (from: string) => void;
+  onUndo: (from: string, at: string) => void;
 }): JSX.Element {
   const how = item.approvedBy ? APPROVED_BY[item.approvedBy] : t("Applied");
   const plain = !item.summary?.length && !item.undone;
@@ -546,7 +600,7 @@ function LearnedRow({
         )}
         {plainDetail && <p className="text-ink-2 [overflow-wrap:anywhere]">{plainDetail}</p>}
         {change && !item.undone && (
-          <Button variant="secondary" disabled={busy} onClick={() => onUndo(change.from)}>
+          <Button variant="secondary" disabled={busy} onClick={() => onUndo(change.from, item.at)}>
             {t("Undo this change")}
           </Button>
         )}
@@ -570,7 +624,7 @@ function LearnedSection({
   hasRuns: boolean;
   improvement: ReturnType<typeof useImprovementCheck>;
   busy: boolean;
-  onUndo: (from: string) => void;
+  onUndo: (from: string, at: string) => void;
 }): JSX.Element {
   const { check, checkNote, findImprovements } = improvement;
   return (
@@ -609,18 +663,23 @@ function LearnedSection({
   );
 }
 
-/** One review action at a time, reloading the feed after it and keeping its error for the page. */
+/**
+ * One review action at a time, reloading the feed after it and keeping its error for the page.
+ * Resolves with whether it worked, or null when another was still running.
+ */
 function useReviewAction(activity: ReturnType<typeof useActivity>) {
   const [busy, setBusy] = useState(false);
-  const perform = async (action: () => Promise<unknown>) => {
-    if (busy) return;
+  const perform = async (action: () => Promise<unknown>): Promise<boolean | null> => {
+    if (busy) return null;
     setBusy(true);
     activity.setError(null);
     try {
       await action();
       await activity.load();
+      return true;
     } catch (cause) {
       activity.setError(problemWords(cause));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -631,6 +690,31 @@ function useReviewAction(activity: ReturnType<typeof useActivity>) {
       for (const index of [...indices].sort((a, b) => b - a)) await act(index);
     });
   return { busy, perform, each };
+}
+
+/** The room coming up (how it was reached, how many suggestions wait), and a failure only Quit can mend, once a visit. */
+function useRoomReports(problem: StudioActivityItem | null): void {
+  useEffect(() => {
+    const staged = studio().library.getState().stagedCount;
+    track(AnalyticsEvent.HarnessOpened, { via: takeHarnessOpening(), staged_count: countBucket(staged) });
+  }, []);
+  const told = useRef(false);
+  useEffect(() => {
+    if (!problem || told.current) return;
+    told.current = true;
+    track(AnalyticsEvent.HarnessRecoveryProblemShown, { has_detail: Boolean(problem.detail) });
+  }, [problem]);
+}
+
+/** Apply or Discard on the suggestions ticked, reported with how it went. */
+function useDecide(staged: StagedProposal[], each: ReturnType<typeof useReviewAction>["each"]) {
+  return (decision: SuggestionDecision, indices: number[], opened: boolean, act: (index: number) => Promise<unknown>) =>
+    void each(indices, act).then((ok) => {
+      if (ok === null) return;
+      const chosen = indices.map((index) => ({ at: staged[index]?.at }));
+      const decided = { decision, chosen, waiting: staged.length, openedDetails: opened, ok, now: Date.now() };
+      track(AnalyticsEvent.SuggestionsDecided, suggestionsDecidedProperties(decided));
+    });
 }
 
 function ActivityNotices({
@@ -721,6 +805,8 @@ export function ReviewPanel({
   // Restores, restarts and app updates are Harness looking after itself. A failed self-update is
   // normally followed by an automatic restore; only one that was not needs the user.
   const problem = useMemo(() => unrecoveredFailure(items), [items]);
+  useRoomReports(problem);
+  const decide = useDecide(staged, each);
   const nothingYet = !runs.length && !learned.length && !staged.length;
   const empty = !activity.loading && !activity.error && !problem && nothingYet;
   const target = (index: number) => ({ at: staged[index]?.at, skill: staged[index]?.skill });
@@ -741,9 +827,15 @@ export function ReviewPanel({
               key={staged.map((p) => p.at).join()}
               proposals={staged}
               busy={busy}
-              onApply={(indices) => void each(indices, (index) => window.studio.acceptProposal(index, target(index)))}
-              onDiscard={(indices) =>
-                void each(indices, (index) => window.studio.discardProposal(index, undefined, target(index)))
+              onApply={(indices, opened) =>
+                decide(SuggestionDecision.Apply, indices, opened, (index) =>
+                  window.studio.acceptProposal(index, target(index)),
+                )
+              }
+              onDiscard={(indices, opened) =>
+                decide(SuggestionDecision.Discard, indices, opened, (index) =>
+                  window.studio.discardProposal(index, undefined, target(index)),
+                )
               }
             />
           )}
@@ -762,7 +854,11 @@ export function ReviewPanel({
             hasRuns={runs.length > 0}
             improvement={improvement}
             busy={busy}
-            onUndo={(from) => void perform(() => window.studio.undoChange(from))}
+            onUndo={(from, at) =>
+              void perform(() => window.studio.undoChange(from)).then((ok) => {
+                if (ok !== null) track(AnalyticsEvent.ChangeUndone, changeUndoneProperties(at, ok, Date.now()));
+              })
+            }
           />
         </div>
       )}
@@ -817,6 +913,8 @@ function RunDetails({
         {game && project && (
           <Button
             variant="ghost"
+            // Its label names the game.
+            data-analytics-mask
             aria-label={t("Open game chat for {game}", { game: game.title })}
             onClick={() => onOpenGame(project)}
           >

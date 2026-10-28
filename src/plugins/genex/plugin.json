@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.42",
+  "version": "1.10.44",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -67,7 +67,7 @@
     },
     {
       "name": "cli",
-      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, items list (the other creators' items this game added) or items search (Browse, with the words in args and a tag list option). shop add makes a new store item's draft, which spends nothing and asks nobody, at any time: its name in args, its price (0 is Free) and its picture (image, required: no item is listed without one), and type, description, tag (a list), shared (true or false), model and package; image, model and package are each a path inside this game that Studio copies in; the answer is the draft, which Studio puts on sale when the game is published (shop publish is not available). It also works before the game is on Genex, as a local draft its publish uploads; shop set and shop remove on such a draft (its local_ id in args) run here too, asking nobody. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend Nex or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
+      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, items list (the other creators' items this game added) or items search (Browse, with the words in args and a tag list option). shop add makes a new store item's draft, which spends nothing and asks nobody, at any time: its name in args, its price (0 is Free) and its picture (image, required: no item is listed without one; a square PNG or WebP of at least 768 × 768, 1024 × 1024 best, that the item fills edge to edge), and type, description, tag (a list), shared (true or false), model and package; image, model and package are each a path inside this game that Studio copies in; the answer is the draft, which Studio puts on sale when the game is published (shop publish is not available). It also works before the game is on Genex, as a local draft its publish uploads; shop set and shop remove on such a draft (its local_ id in args) run here too, asking nobody. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend Nex or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
       "parameters": {
         "type": "object",
         "properties": {

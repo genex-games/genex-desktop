@@ -157,7 +157,8 @@ function NoticeRow({
       onClick={() => onChoose(notice)}
     >
       <NoticeArt notice={notice} game={game} gameChat={gameChat} />
-      <span className="notify-copy">
+      {/* Its game, chat and words are the person's. */}
+      <span className="notify-copy" data-analytics-mask>
         <span className="notify-title">
           <span className="min-w-0 truncate">{noticeSource(notice, game?.title, gameChat)}</span>
           <span className="notify-time">{noticeTime(notice, now)}</span>

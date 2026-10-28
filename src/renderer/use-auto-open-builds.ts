@@ -4,6 +4,8 @@
  */
 import { useEffect, useRef } from "react";
 import { RunState, runExecution } from "../shared/run-state.ts";
+import { noteStageSwitch } from "./analytics/workspace-trackers.ts";
+import { StageSwitchVia } from "./analytics/workspace-vocabulary.ts";
 import { StageView } from "./stage.ts";
 import { prefersReducedMotion } from "./ui/media-queries.ts";
 import type { EventEnvelope } from "./types.ts";
@@ -46,11 +48,14 @@ export function useAutoOpenBuilds({
       !prefersReducedMotion();
     clearTimeout(handOff.current);
     if (!idea) {
+      noteStageSwitch(StageSwitchVia.AutoRunStarted);
       chooseView(StageView.Builds);
       return;
     }
     handOff.current = setTimeout(() => {
-      if (openedBuild.current === key && viewNow.current === StageView.Live) chooseView(StageView.Builds);
+      if (openedBuild.current !== key || viewNow.current !== StageView.Live) return;
+      noteStageSwitch(StageSwitchVia.AutoRunStarted);
+      chooseView(StageView.Builds);
     }, HAND_OFF_MS);
   }, [active, threadId, stateEvents, chooseView]);
 }

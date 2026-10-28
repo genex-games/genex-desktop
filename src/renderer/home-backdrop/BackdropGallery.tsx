@@ -88,6 +88,7 @@ const change = (update: (previous: BackdropSettings) => BackdropSettings): void 
 function Tile({
   look,
   name,
+  own = false,
   selected,
   onChoose,
   onRemove,
@@ -96,6 +97,8 @@ function Tile({
 }: {
   look: string;
   name: string;
+  /** The name is the person's own (a background they made): kept out of usage recordings. */
+  own?: boolean;
   selected: boolean;
   onChoose: () => void;
   onRemove?: () => void;
@@ -103,7 +106,7 @@ function Tile({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div className="backdrop-tile">
+    <div className="backdrop-tile" {...(own ? { "data-analytics-mask": "" } : {})}>
       <button
         type="button"
         className="backdrop-tile-choice"
@@ -131,6 +134,7 @@ function Tile({
 function LiveTile(props: {
   look: string;
   name: string;
+  own?: boolean;
   body: string;
   settings: BackdropSettings;
   selected: boolean;
@@ -182,6 +186,7 @@ function MadeTile({ made, settings }: { made: MadeShader; settings: BackdropSett
     <LiveTile
       look={made.id}
       name={made.title}
+      own
       body={made.wgsl}
       settings={shown}
       selected={selected}

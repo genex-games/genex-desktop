@@ -4697,6 +4697,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Was Claude tut, ohne zu fragen. Wählst du in einem Chat „Immer erlauben“, landet die Aktion hier – für dieses Spiel.",
   "What Harness has learned": "Was Harness gelernt hat",
+  "What changed": "Was sich geändert hat",
   "What changes": "Was sich ändert",
   "What credits pay for": "Wofür Credits da sind",
   "What do you want to make?": "Was willst du machen?",
@@ -5623,6 +5624,8 @@ export default {
     "{count, plural, one {Sein eigener Verlauf bleibt daneben erhalten, umbenannt in .git.studio-backup.} other {Ihre eigenen Verläufe bleiben daneben erhalten, umbenannt in .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {# Spieldatei wiederhergestellt.} other {# Spieldateien wiederhergestellt.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, one {Zurückspulen kann # Datei aus dieser Änderung nicht zurückholen: Sie war auf einmal größer als {size}, also blieben die größten draußen: {files}.} other {Zurückspulen kann # Dateien aus dieser Änderung nicht zurückholen: Sie war auf einmal größer als {size}, also blieben die größten draußen: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, one {Zurückspulen kann # Datei nicht zurückholen, weil sie zu groß zum Speichern ist: {files}.} other {Zurückspulen kann # Dateien nicht zurückholen, weil sie zu groß zum Speichern sind: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -6300,4 +6303,22 @@ export default {
   "Allow in this chat": "In diesem Chat erlauben",
   "Allowed in this chat": "In diesem Chat erlaubt",
   "Don't ask again for this action in this chat.": "In diesem Chat für diese Aktion nicht mehr fragen.",
+  "A replay of your first week": "Eine Aufzeichnung deiner ersten Woche",
+  "Change it anytime in Settings.": "Du kannst das jederzeit in den Einstellungen ändern.",
+  "Don't share": "Nicht teilen",
+  "Help improve Genex?": "Hilfst du, Genex besser zu machen?",
+  "How you move through the app, with your work blanked out":
+    "Wie du dich durch die App bewegst, deine Arbeit abgedeckt",
+  "Never your work or name": "Nie deine Arbeit oder dein Name",
+  "Prompts, code, files, game names and accounts are left out":
+    "Prompts, Code, Dateien, Spielnamen und Konten bleiben draußen",
+  "Screens, clicks and errors": "Bildschirme, Klicks und Fehler",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "Bildschirme, Klicks, Fehler und Wartezeiten, und bis {date} eine Aufzeichnung, wie du dich durch die App bewegst, deine Arbeit abgedeckt. Geht an PostHog in der EU unter einer zufälligen ID.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "Bildschirme, Klicks, Fehler und Wartezeiten. Geht an PostHog in der EU unter einer zufälligen ID.",
+  "Share usage data": "Nutzungsdaten teilen",
+  "Show us where Genex gets in your way.": "Zeig uns, wo Genex dir im Weg steht.",
+  "Where you go, what fails and how long it takes": "Wohin du gehst, was schiefgeht und wie lange es dauert",
+  "usage data\u0004Share": "Teilen",
 } satisfies LocaleCatalog;

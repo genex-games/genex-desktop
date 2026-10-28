@@ -14,6 +14,17 @@ import type { PluginInfo } from "../../shared/plugins.ts";
 import type { McpConnectorView } from "../../shared/mcp.ts";
 import { UiEvent, type UiEventType } from "../../shared/ui-events.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import {
+  ConnectorAction,
+  notePluginsOpening,
+  PluginAction,
+  PluginSurface,
+  PluginsOpenedFrom,
+  trackedConnectorAction,
+  trackedPluginAction,
+} from "../analytics/plugins-page.ts";
 import { useAsyncEffect } from "../use-async-effect.ts";
 import {
   type AddMenuEntry,
@@ -290,7 +301,13 @@ function useMentionPicker(input: {
     .map((doc) => ({
       id: `card-${doc.handle}`,
       name: doc.title,
-      pick: input.tagging.atCap && !input.tagging.tagged.has(doc.handle) ? () => {} : () => input.tagging.onPick(doc),
+      pick:
+        input.tagging.atCap && !input.tagging.tagged.has(doc.handle)
+          ? () => trackMention(doc, true)
+          : () => {
+              trackMention(doc, false);
+              input.tagging.onPick(doc);
+            },
     }));
   // Images heads the list as a row; the cards follow, the plugins' cards last.
   const lead = input.rows.filter((row) => row.id === IMAGES_OPTION);
@@ -331,6 +348,14 @@ function EntryWords({ entry, id, scope }: { entry: AddMenuEntry; id: string; sco
 /** A row's name spans the space its controls leave, top to bottom, so all of it takes the click. */
 const ENTRY_NAME = "flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 self-stretch text-left";
 
+/** Marks what the person named themselves, so usage recordings leave it out (`analytics/masking.ts`). */
+const ownName = (own: boolean) => (own ? { "data-analytics-mask": "" } : {});
+
+/** An @ card picked, or refused because the message already tags as many as it may. */
+function trackMention(doc: MentionDoc, atCap: boolean): void {
+  track(AnalyticsEvent.MentionAdded, { kind: doc.kind, origin: doc.origin, at_cap: atCap });
+}
+
 /**
  * A plugin or server row: its name, a status only when something needs doing, and its switch. A
  * plugin's name opens its page, and Settings shows beside the switch while the row is hovered or
@@ -354,7 +379,7 @@ function EntryRow({
   const scope = !entry.status && entry.scope === EntryScope.AllGames ? `${id}-scope` : undefined;
   const words = <EntryWords entry={entry} id={id} scope={scope} />;
   return (
-    <div className={`${pickerItem} hover:bg-control-hover`} data-plugin-row={entry.id}>
+    <div className={`${pickerItem} hover:bg-control-hover`} data-plugin-row={entry.id} {...ownName(entry.own)}>
       {entry.open ? (
         <button
           type="button"
@@ -535,22 +560,49 @@ function entryActions(
   project: string | null | undefined,
 ): EntryActions {
   const where = project ?? undefined;
+  const pluginPress = (action: PluginAction, plugin: PluginInfo) => ({
+    action,
+    plugin,
+    surface: PluginSurface.AddMenu,
+  });
   return {
     manage,
-    connect: (view) => void act(() => window.studio.mcpConnect(view.connector.id, where)),
+    connect: (view) =>
+      void act(() =>
+        trackedConnectorAction(ConnectorAction.Connect, view.connector.transport, () =>
+          window.studio.mcpConnect(view.connector.id, where),
+        ),
+      ),
     connectAccount: (plugin) =>
-      void act(async () => {
-        const name = plugin.manifest.account?.connect;
-        if (name === undefined) return;
-        const action = plugin.manifest.actions.find((a) => a.name === name);
-        const review = action?.confirmation
-          ? await window.studio.pluginReview(plugin.manifest.id, name, {}, where)
-          : undefined;
-        await window.studio.pluginAction(plugin.manifest.id, name, {}, where, review?.ticket);
-      }),
-    enablePlugin: (plugin, on) => void act(() => window.studio.pluginEnable(plugin.manifest.id, on)),
-    enableServer: (view, on) => void act(() => window.studio.mcpSave({ ...view.connector, enabled: on })),
+      void act(() =>
+        trackedPluginAction(pluginPress(PluginAction.AccountConnect, plugin), () =>
+          connectPluginAccount(plugin, where),
+        ),
+      ),
+    enablePlugin: (plugin, on) =>
+      void act(() =>
+        trackedPluginAction(pluginPress(on ? PluginAction.Enable : PluginAction.Disable, plugin), () =>
+          window.studio.pluginEnable(plugin.manifest.id, on),
+        ),
+      ),
+    enableServer: (view, on) =>
+      void act(() =>
+        trackedConnectorAction(on ? ConnectorAction.TurnOn : ConnectorAction.TurnOff, view.connector.transport, () =>
+          window.studio.mcpSave({ ...view.connector, enabled: on }),
+        ),
+      ),
   };
+}
+
+/** A plugin row's Connect: its account's connect action, after Studio's review when it asks for one. */
+async function connectPluginAccount(plugin: PluginInfo, where: string | undefined): Promise<void> {
+  const name = plugin.manifest.account?.connect;
+  if (name === undefined) return;
+  const action = plugin.manifest.actions.find((a) => a.name === name);
+  const review = action?.confirmation
+    ? await window.studio.pluginReview(plugin.manifest.id, name, {}, where)
+    : undefined;
+  await window.studio.pluginAction(plugin.manifest.id, name, {}, where, review?.ticket);
 }
 
 /** Add's button, with its tip while the menu is closed. */
@@ -601,6 +653,7 @@ function useEntryActions(
   };
   const manage = (plugin?: string) => {
     close();
+    notePluginsOpening(PluginsOpenedFrom.ComposerManage);
     window.dispatchEvent(new CustomEvent(OPEN_PLUGINS_EVENT, { detail: { plugin } }));
   };
   const actions = entryActions(act, manage, project);

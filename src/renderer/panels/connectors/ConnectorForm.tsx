@@ -288,7 +288,8 @@ function SecretRowFields({
   onRemove: () => void;
 }): JSX.Element {
   return (
-    <div className="connector-secret">
+    // The variable's name is the person's configuration.
+    <div data-analytics-mask className="connector-secret">
       <input
         aria-label={MESSAGE.secretNameLabel[kind]}
         className="font-mono"
@@ -452,7 +453,8 @@ function ToolChecklist({
 }): JSX.Element | null {
   if (!tools.length) return null;
   return (
-    <div className="flex flex-col gap-1">
+    // The tools of a server the person chose, by its own names for them.
+    <div className="flex flex-col gap-1" data-analytics-mask>
       <span className="connector-label">{MESSAGE.tools}</span>
       {tools.map((tool) => (
         <div key={tool.name} className="flex flex-col gap-1 text-xs">

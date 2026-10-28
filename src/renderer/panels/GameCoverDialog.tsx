@@ -6,6 +6,8 @@ import { DialogSurface } from "../ui/dialog.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
+import { GameAction } from "../analytics/workspace-vocabulary.ts";
+import { useGameManaged } from "./GameDialogs.tsx";
 import { problemWords } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
 
@@ -56,6 +58,7 @@ export function GameCoverDialog({
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
+  const managed = useGameManaged(GameAction.CoverChanged, game, onDismiss);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -81,10 +84,15 @@ export function GameCoverDialog({
       title={t("Change image")}
       size="md"
       onDismiss={() => {
-        if (!busy) onDismiss();
+        if (!busy) managed.dismiss();
       }}
     >
-      <div className="game-cover-preview" role="img" aria-label={t("{game} cover preview", { game: game.title })}>
+      <div
+        className="game-cover-preview"
+        data-analytics-block
+        role="img"
+        aria-label={t("{game} cover preview", { game: game.title })}
+      >
         <GameAvatar cover={pending ?? game.cover} gameKey={game.name} />
       </div>
       <input
@@ -109,7 +117,7 @@ export function GameCoverDialog({
           {t("Choose image…")}
         </Button>
         <div className="flex gap-2">
-          <Button variant="ghost" disabled={busy} onClick={onDismiss}>
+          <Button variant="ghost" disabled={busy} onClick={managed.dismiss}>
             {t("Cancel")}
           </Button>
           <Button
@@ -119,8 +127,11 @@ export function GameCoverDialog({
               if (!pending) return;
               setBusy(true);
               void onSave({ cover: pending })
-                .then(onDismiss)
-                .catch((error) => setError(problemWords(error)))
+                .then(managed.done)
+                .catch((error) => {
+                  managed.failed(error);
+                  setError(problemWords(error));
+                })
                 .finally(() => setBusy(false));
             }}
           >

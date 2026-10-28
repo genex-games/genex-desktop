@@ -20,7 +20,7 @@ import {
   readApprovals,
   withdraw,
 } from "../../src/main/core/item-approvals.ts";
-import type { SyncedItem } from "../../src/main/core/item-draft.ts";
+import { ITEM_SYNC_KIND, ITEM_SYNC_VERSION, itemSyncOf, type SyncedItem } from "../../src/main/core/item-draft.ts";
 import type { LocalDraftChange } from "../../src/main/core/genex-cli.ts";
 import {
   hostedDraftIds,
@@ -87,6 +87,7 @@ const uploaded = (localId: string, skuId: string, contentHash = HASH): SyncedIte
   skuId,
   refusal: null,
   field: null,
+  code: null,
 });
 
 /** A Studio with its app data, a game folder beside it, and recorders for every outside call. */
@@ -265,7 +266,14 @@ describe("settling a game's local drafts after its publish", () => {
         uploaded(ICE, "sku_ice"),
         uploaded(SLED, "sku_sled", OTHER_HASH),
         uploaded(CAPE, "sku_cape"),
-        { localId: AXE, contentHash: HASH, skuId: null, refusal: StoreRefusal.PriceOffGrid, field: "price" },
+        {
+          localId: AXE,
+          contentHash: HASH,
+          skuId: null,
+          refusal: StoreRefusal.PriceOffGrid,
+          field: "price",
+          code: null,
+        },
       ],
     });
     for (const localId of [ICE, SLED, AXE]) {
@@ -322,6 +330,37 @@ describe("settling a game's local drafts after its publish", () => {
       field: null,
       at: T0,
     });
+  });
+
+  /**
+   * An arena's four classes were refused after its publish with a code Studio had no words for, and
+   * every card said only "Genex couldn't do that": the code is what says why.
+   */
+  it("keeps the code Genex or its CLI gave for a refusal Studio has no words for", async () => {
+    const synced = itemSyncOf({
+      kind: ITEM_SYNC_KIND,
+      version: ITEM_SYNC_VERSION,
+      items: [
+        { localId: ICE, contentHash: HASH, error: "media_upload_failed", field: "picture" },
+        { localId: SLED, contentHash: HASH, error: "price_off_grid", field: "price" },
+        { localId: CAPE, contentHash: HASH, error: "<b>not a code</b>" },
+      ],
+    });
+    assert.deepEqual(
+      synced?.map((item) => [item.refusal, item.code]),
+      [
+        [StoreRefusal.Unknown, "media_upload_failed"],
+        [StoreRefusal.PriceOffGrid, null],
+        [StoreRefusal.Unknown, null],
+      ],
+    );
+    const r = await rig({ synced });
+    for (const localId of [ICE, SLED, CAPE]) await r.items.noteDraft(draft(localId), PRINT);
+    await r.items.settle(GAME, { force: true });
+    const view = await r.items.view(GAME);
+    assert.equal(view.outcomes[ICE]?.code, "media_upload_failed", "kept in the record");
+    assert.equal(view.outcomes[SLED]?.code, undefined, "a refusal Studio words needs no code");
+    assert.equal(view.outcomes[CAPE]?.code, undefined);
   });
 
   it("does nothing for a game that is not published on Genex, or holds no drafts", async () => {

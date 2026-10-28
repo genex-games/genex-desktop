@@ -13,12 +13,16 @@
  * runs (`installSandbox`); once installed it retries, and a dismissed prompt changes nothing.
  */
 import {
+  BootFailure,
+  type BootFailureCode,
   BootPhase,
   type BootState,
   type SandboxProblem,
   SandboxProblemCode,
   SandboxSetupOutcome,
   type SandboxSetupResult,
+  type StartFacts,
+  StartPassage,
   StartStep,
 } from "../shared/boot.ts";
 import type { DataMoveProgress } from "../shared/data-folder.ts";
@@ -52,10 +56,11 @@ export interface BootGate {
   /** Show that the studio would not start, with `error`; Try again runs `attempt`, and a failure there shows its own words. */
   fail(error: string, attempt: () => Promise<void>): void;
   /**
-   * The studio is open but its agents would not start: it stays, saying so with `error`; Try again
-   * runs `attempt`, and a failure there shows its own words.
+   * The studio is open but its agents would not start: it stays, saying so with `error` and `code`
+   * (the sandbox's own when it is what stopped them); Try again runs `attempt`, and a failure there
+   * shows its own words.
    */
-  agentsFailed(error: string, attempt: () => Promise<void>): void;
+  agentsFailed(error: string, attempt: () => Promise<void>, code?: BootFailureCode): void;
   /** Genex is moving its data before it starts again: the window shows how far. */
   moving(progress: DataMoveProgress): void;
   /**
@@ -74,6 +79,8 @@ export interface BootGate {
   retry(): Promise<BootState>;
   /** Install the sandbox, then retry; throws when there is nothing to set up or the install fails. */
   setUp(): Promise<SandboxSetupResult>;
+  /** How this launch's start went until the studio first opened: the steps, the last failure, the tries. */
+  started(): StartFacts;
 }
 
 /** What the setup screen shows when Set up has nothing to do. */
@@ -106,6 +113,39 @@ function waitsOnInstall(state: BootState): state is BootState & { sandbox: Sandb
   return state.phase === BootPhase.SandboxSetup && state.sandbox?.code === SandboxProblemCode.NotProvisioned;
 }
 
+/** What a failure screen shows besides its platform and code. */
+type FailureScreen = Pick<BootState, "phase" | "failure" | "move" | "dataFolder">;
+
+/** A move to `to` that stopped part-way, for `error`. */
+const stoppedMove = (to: string, error: string): FailureScreen => ({
+  phase: BootPhase.Moving,
+  move: { to, done: 0, total: 0 },
+  failure: error,
+});
+
+/**
+ * How a start goes until the studio opens: the screens a Retry or Try again left, the last failure
+ * shown, and the tries. An open studio's agents (`agentsFailed`, Try again from Ready) are not its start.
+ */
+function startLog() {
+  const passed = new Set<StartPassage>();
+  let failure: BootFailureCode | null = null;
+  let retries = 0;
+  return {
+    failed(code: BootFailureCode): void {
+      failure = code;
+    },
+    /** An attempt runs from the screen `from` shows. */
+    retried(from: BootState): void {
+      if (from.phase === BootPhase.Ready) return;
+      retries++;
+      if (from.phase === BootPhase.SandboxSetup) passed.add(StartPassage.SandboxSetup);
+      else if (showsFailure(from)) passed.add(StartPassage.FailureRetried);
+    },
+    facts: (): StartFacts => ({ passed: [...passed], failure, retries }),
+  };
+}
+
 /** A gate for this launch's `platform`, starting Ready. */
 export function createBootGate(platform: string, options: BootGateOptions = {}): BootGate {
   const ready: BootState = { platform, phase: BootPhase.Ready, sandbox: null };
@@ -119,12 +159,18 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
   // The install went through but the startup after it failed: the sandbox is there, so the next
   // Set up only starts again, without another administrator prompt.
   let installed = false;
+  const start = startLog();
 
   // Every screen with a Try again: its state, and the attempt the Try again runs.
   const holdOn = (next: BootState, run: () => Promise<void>): void => {
     holds++;
     state = next;
     attempt = run;
+  };
+  // A screen that shows a failure: its code beside what it shows, and the attempt its Try again runs.
+  const failOn = (failureCode: BootFailureCode, shown: FailureScreen, run: () => Promise<void>): void => {
+    start.failed(failureCode);
+    holdOn({ platform, sandbox: null, ...shown, failureCode }, run);
   };
 
   const settle = async (run: () => Promise<void>): Promise<BootState> => {
@@ -149,6 +195,7 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
 
   const retry = (): Promise<BootState> => {
     if (!attempt) return Promise.resolve(state);
+    if (!running) start.retried(state);
     running ??= settle(attempt).finally(() => {
       running = null;
     });
@@ -180,21 +227,18 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
       state = ready;
     },
     hold: (problem, next) => holdOn({ platform, phase: BootPhase.SandboxSetup, sandbox: problem }, next),
-    fail: (error, next) => holdOn({ platform, phase: BootPhase.Failed, sandbox: null, failure: error }, next),
-    agentsFailed: (error, next) => holdOn({ ...ready, failure: error }, next),
+    fail: (error, next) => failOn(BootFailure.CoreFailed, { phase: BootPhase.Failed, failure: error }, next),
+    agentsFailed: (error, next, code = BootFailure.HarnessFailed) =>
+      holdOn({ ...ready, failure: error, failureCode: code }, next),
     moving(progress) {
       state = { platform, phase: BootPhase.Moving, sandbox: null, move: progress };
     },
-    moveStopped: (to, error, next) =>
-      holdOn(
-        { platform, phase: BootPhase.Moving, sandbox: null, move: { to, done: 0, total: 0 }, failure: error },
-        next,
-      ),
+    moveStopped: (to, error, next) => failOn(BootFailure.MoveStopped, stoppedMove(to, error), next),
     dataMissing: (dir, next) =>
-      holdOn({ platform, phase: BootPhase.DataMissing, sandbox: null, dataFolder: dir }, next),
+      failOn(BootFailure.DataMissing, { phase: BootPhase.DataMissing, dataFolder: dir }, next),
     overdue(error, next) {
       if (state.phase !== BootPhase.Starting) return false;
-      holdOn({ platform, phase: BootPhase.Failed, sandbox: null, failure: error }, next);
+      failOn(BootFailure.StartOverdue, { phase: BootPhase.Failed, failure: error }, next);
       return true;
     },
     retry,
@@ -214,5 +258,6 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
         });
       return installing;
     },
+    started: () => start.facts(),
   };
 }

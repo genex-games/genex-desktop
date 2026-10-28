@@ -4314,6 +4314,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Claude 无需询问就会执行的操作。在对话中选择“始终允许”，该操作就会添加到这里，仅对那个游戏生效。",
   "What Harness has learned": "Harness 学到了什么",
+  "What changed": "改了什么",
   "What changes": "更改内容",
   "What credits pay for": "积分可用于",
   "What do you want to make?": "你想做什么？",
@@ -5182,6 +5183,8 @@ export default {
     "{count, plural, other {原有的历史记录已改名为 .git.studio-backup，保存在旁边。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {已恢复 # 个游戏文件。}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, other {这次更改一次超过了 {size}，最大的 # 个文件未保存，回退时无法恢复：{files}。}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, other {有 # 个文件过大，无法保存，回退时无法恢复：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -5811,4 +5814,20 @@ export default {
   "Allow in this chat": "在此对话中允许",
   "Allowed in this chat": "已在此对话中允许",
   "Don't ask again for this action in this chat.": "在此对话中不再询问此操作。",
+  "A replay of your first week": "你第一周的录屏",
+  "Change it anytime in Settings.": "随时可以在设置里更改。",
+  "Don't share": "不分享",
+  "Help improve Genex?": "帮助改进 Genex？",
+  "How you move through the app, with your work blanked out": "你在应用里怎么操作，你的作品会被遮住",
+  "Never your work or name": "绝不包括你的作品和名字",
+  "Prompts, code, files, game names and accounts are left out": "提示词、代码、文件、游戏名称和账号都不包括",
+  "Screens, clicks and errors": "页面、点击和错误",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "页面、点击、错误和等待时长，{date}前还会录下你在应用里怎么操作，作品内容会被遮住。以随机 ID 发送到欧盟的 PostHog。",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "页面、点击、错误和等待时长。以随机 ID 发送到欧盟的 PostHog。",
+  "Share usage data": "分享使用数据",
+  "Show us where Genex gets in your way.": "告诉我们 Genex 哪里碍事了。",
+  "Where you go, what fails and how long it takes": "你去了哪里、什么出错了、花了多久",
+  "usage data\u0004Share": "分享",
 } satisfies LocaleCatalog;

@@ -3,6 +3,8 @@ import { useState, type JSX } from "react";
 import { Button } from "../ui/Button.tsx";
 import { problemWords } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { LaunchEvent } from "../analytics/events/launch.ts";
 
 export function DiagnosticsRow(): JSX.Element {
   const [busy, setBusy] = useState(false);
@@ -13,8 +15,10 @@ export function DiagnosticsRow(): JSX.Element {
     try {
       await navigator.clipboard.writeText(await window.studio.diagnostics());
       setNotice(t("Copied."));
+      track(LaunchEvent.DiagnosticsCopied, { ok: true });
     } catch (cause) {
       setNotice(problemWords(cause));
+      track(LaunchEvent.DiagnosticsCopied, { ok: false });
     } finally {
       setBusy(false);
     }

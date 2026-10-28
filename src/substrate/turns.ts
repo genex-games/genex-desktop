@@ -8,6 +8,7 @@
  * A {@link TurnHandle} carries the head forward so every subsequent write inside the turn is
  * head-checked — two writers on one thread can never interleave silently.
  */
+import type { TurnFailure } from "../shared/engine-requests.ts";
 import { EventKind } from "../shared/event-log.ts";
 import type { AppendResult, EventStore } from "./event-store.ts";
 import { shortId } from "./ids.ts";
@@ -110,6 +111,8 @@ export class TurnFactory {
   readonly store: EventStore;
   readonly sessionId: string;
   readonly #sessionOpened = new Set<string>();
+  /** Each chat's engine failure since its turn began, for that turn's end to record. */
+  readonly #failures = new Map<string, TurnFailure>();
 
   constructor(store: EventStore, sessionId = shortId("ses")) {
     this.store = store;
@@ -118,6 +121,7 @@ export class TurnFactory {
 
   async beginTurn(threadId: string, options: BeginTurnOptions = {}): Promise<TurnHandle> {
     const turnId = shortId("turn");
+    this.#failures.delete(threadId);
     const batch: EventData[] = [];
     if (!this.#sessionOpened.has(threadId)) {
       this.#sessionOpened.add(threadId);
@@ -132,6 +136,18 @@ export class TurnFactory {
       turnId,
     });
     return new TurnHandle(this.store, threadId, this.sessionId, turnId, result.latestEventId);
+  }
+
+  /** A chat's engine failed during its open turn: that turn's end says how (`takeFailure`). */
+  noteFailure(threadId: string, failure: TurnFailure): void {
+    this.#failures.set(threadId, failure);
+  }
+
+  /** The engine failure noted for `threadId` since its turn began, once. */
+  takeFailure(threadId: string): TurnFailure | undefined {
+    const failure = this.#failures.get(threadId);
+    this.#failures.delete(threadId);
+    return failure;
   }
 
   async endSession(threadId: string, reason = "shutdown"): Promise<void> {

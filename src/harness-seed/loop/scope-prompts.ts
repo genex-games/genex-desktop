@@ -16,7 +16,7 @@ const WORDS = {
   cut: "CUT — not this build; never build or propose it:",
   added: "ADDED beyond the ask — not in scope until the user says yes:",
   store:
-    "GENEX STORE — sold in this build for Nex whatever CUT says. Give each item its picture as soon as it can be drawn (render it alone on a transparent background with the game's own code, save the PNG under .genex/scratch/), then list it with genex__cli shop add, its name in args and its price, type, description and image options, unless genex__cli shop list shows it already: the store takes no item without its picture, and shop set changes one at any time. Build each in, unlock it with getEntitlements() and sell it with buy() (the genex-items skill):",
+    "GENEX STORE — sold in this build for Nex whatever CUT says. Give each item its picture as soon as it can be drawn (a square PNG of 1024 × 1024, at least 768, that the item fills edge to edge, lit in the game's own scene and never on an empty black background; render it with the game's own code and save it under .genex/scratch/), then list it with genex__cli shop add, its name in args and its price, type, description and image options, unless genex__cli shop list shows it already: the store takes no item without its picture, and shop set changes one at any time. Build each in, unlock it with getEntitlements() and sell it with buy() (the genex-items skill):",
   reference: "The reference is a look-and-feel bar, not a feature list.",
 } as const;
 

@@ -35,6 +35,16 @@ import {
   type PluginPanelDocument,
   type PluginToolbarStatus,
 } from "../../shared/plugins.ts";
+import {
+  ActionOutcome,
+  actionOutcome,
+  isPluginsOpenedFrom,
+  notePluginsOpening,
+  PluginAction,
+  PluginsOpenedFrom,
+  PluginSurface,
+  reportPluginAction,
+} from "../analytics/plugins-page.ts";
 import { composeInChat } from "../compose-in-chat.ts";
 import { type PluginReviewRequest, runPluginAction } from "../plugin-actions.ts";
 import { PLUGIN_SETUP_EVENT } from "../plugin-setup.ts";
@@ -58,6 +68,7 @@ import { useCoverAfterTurns } from "./plugins/genex/use-cover-after-turns.ts";
 import { PluginApproval } from "./PluginApproval.tsx";
 import { PluginPanelDialog } from "./PluginPanelDialog.tsx";
 import { useEngineSlot } from "./engine-slot.ts";
+import { errorCode, isUserCancelled } from "../../shared/errors.ts";
 
 /** Status refreshes coalesce: a burst of change events wakes each plugin's process once. */
 const STATUS_DEBOUNCE_MS = SECOND_MS;
@@ -324,13 +335,15 @@ function ToolbarButton({
   // Updating needs no game and isn't the plugin's own action, so nothing the plugin says holds it back.
   const blocked = update ? false : Boolean(status?.disabled) || needsGame;
   const disabled = blocked || busy;
-  const press = update ? () => openPluginsAt(entry.plugin.manifest.id) : onPress;
+  const press = update ? () => openPluginsFromToolbar(entry.plugin.manifest.id) : onPress;
   return (
     <ToolbarTip lines={toolbarTip(status)} tip={entry.key} place={place}>
       <Button
         variant={toolbarLook(isGenexPublish(entry), due)}
         data-due={due ? "" : undefined}
         data-plugin-toolbar={entry.key}
+        // Labels and status come from the plugin and can quote the person's work.
+        data-analytics-mask
         aria-label={entry.item.ariaLabel}
         // The label names the button; the badge, its state, is read after it ("Unreal Editor, Ready").
         aria-describedby={status?.badge ? badgeId : undefined}
@@ -356,43 +369,74 @@ interface PressDeps {
   setBusy: Dispatch<SetStateAction<string | null>>;
 }
 
-/** The user turned the action down, in Studio's review or the native dialog: nothing to report. */
-const declined = (err: unknown): boolean => /Cancelled/.test(String(err));
+/** Open a button's panel over the stage (Genex's Publish is Studio's own dialog); a panel that fails to open is toasted. */
+async function openToolbarPanel(entry: PluginToolbarEntry, panelId: string, deps: PressDeps): Promise<void> {
+  const { plugin } = entry;
+  if (drawnByStudio(plugin, panelId)) {
+    deps.setPanel({ key: entry.key, plugin, title: GENEX_WORDS.publish.title, document: null, drawn: true });
+    return;
+  }
+  const press = { action: PluginAction.PanelOpened, plugin, surface: PluginSurface.Toolbar };
+  const started = performance.now();
+  try {
+    const doc = await window.studio.pluginPanel(plugin.manifest.id, panelId);
+    deps.setPanel({ key: entry.key, plugin, title: doc.title, document: doc });
+    reportPluginAction(press, ActionOutcome.Ok, started, performance.now());
+  } catch (err) {
+    deps.onNotice(problemWords(err), ToastTone.Error, errorCode(err));
+    reportPluginAction(press, ActionOutcome.Failed, started, performance.now(), err);
+  }
+}
+
+/** Run a button's action through review and approval: what it did is toasted, a no in either says nothing. */
+async function runToolbarAction(
+  entry: PluginToolbarEntry,
+  action: { name: string; args?: unknown },
+  deps: PressDeps,
+): Promise<void> {
+  const { plugin, item } = entry;
+  deps.setBusy(entry.key);
+  const press = { action: PluginAction.ToolbarAction, plugin, surface: PluginSurface.Toolbar };
+  const started = performance.now();
+  // Whether the person turned the pictures down in Studio's own review, before any native dialog.
+  let reviewDeclined = false;
+  const review = (request: PluginReviewRequest): void =>
+    deps.setReview({
+      ...request,
+      resolve: (yes) => {
+        reviewDeclined = !yes;
+        request.resolve(yes);
+      },
+    });
+  try {
+    const result = await runPluginAction({
+      plugin,
+      name: action.name,
+      args: action.args ?? {},
+      project: deps.project,
+      review,
+    });
+    deps.onNotice(actionMessage(result, item.label), ToastTone.Ok);
+    deps.refreshRef.current();
+    reportPluginAction(press, ActionOutcome.Ok, started, performance.now());
+  } catch (err) {
+    // The person's no, in Studio's review or the native dialog, says nothing.
+    if (!isUserCancelled(err)) deps.onNotice(problemWords(err), ToastTone.Error, errorCode(err));
+    const outcome = reviewDeclined ? ActionOutcome.DeclinedReview : actionOutcome(err, true);
+    reportPluginAction(press, outcome, started, performance.now(), err);
+  } finally {
+    deps.setBusy((current) => (current === entry.key ? null : current));
+  }
+}
 
 /** Press a button: open its panel over the stage, or run its action through review and approval. */
 function usePress({ project, onNotice, refreshRef, setPanel, setReview, setBusy }: PressDeps) {
   return useCallback(
     async (entry: PluginToolbarEntry) => {
-      const { plugin, item } = entry;
-      if (item.target.kind === "panel") {
-        if (drawnByStudio(plugin, item.target.id)) {
-          setPanel({ key: entry.key, plugin, title: GENEX_WORDS.publish.title, document: null, drawn: true });
-          return;
-        }
-        try {
-          const doc = await window.studio.pluginPanel(plugin.manifest.id, item.target.id);
-          setPanel({ key: entry.key, plugin, title: doc.title, document: doc });
-        } catch (err) {
-          onNotice(problemWords(err), ToastTone.Error);
-        }
-        return;
-      }
-      setBusy(entry.key);
-      try {
-        const result = await runPluginAction({
-          plugin,
-          name: item.target.name,
-          args: item.target.args ?? {},
-          project,
-          review: setReview,
-        });
-        onNotice(actionMessage(result, item.label), ToastTone.Ok);
-        refreshRef.current();
-      } catch (err) {
-        if (!declined(err)) onNotice(problemWords(err), ToastTone.Error);
-      } finally {
-        setBusy((current) => (current === entry.key ? null : current));
-      }
+      const deps = { project, onNotice, refreshRef, setPanel, setReview, setBusy };
+      const { target } = entry.item;
+      if (target.kind === "panel") await openToolbarPanel(entry, target.id, deps);
+      else await runToolbarAction(entry, target, deps);
     },
     [project, onNotice, refreshRef, setPanel, setReview, setBusy],
   );
@@ -429,6 +473,12 @@ function useStudioPublish(
 /** A second Multiplayer press within this long is the same press. */
 const REPEAT_PRESS_MS = 1.5 * SECOND_MS;
 
+/** A button's Update: Plugins opens at the plugin, and usage analytics hears it came from the toolbar. */
+function openPluginsFromToolbar(id: string): void {
+  notePluginsOpening(PluginsOpenedFrom.ToolbarUpdate);
+  openPluginsAt(id);
+}
+
 function useMultiplayer(project: string | null, shown: boolean, genex: PluginToolbarEntry | undefined) {
   const genexOn = Boolean(genex);
   const behind = genex ? toolbarUpdateStatus(genex.plugin, PLUGIN_TOOLBAR_WORDS.update) : null;
@@ -442,7 +492,7 @@ function useMultiplayer(project: string | null, shown: boolean, genex: PluginToo
     composeInChat({ project, text: GENEX_WORDS.multiplayer.prompt, send: true });
   }, [project]);
   const press = useCallback(() => {
-    if (pressed === MultiplayerPress.Update) openPluginsAt(GENEX_PLUGIN_ID);
+    if (pressed === MultiplayerPress.Update) openPluginsFromToolbar(GENEX_PLUGIN_ID);
     else if (pressed === MultiplayerPress.Ask) ask();
     else setSetup(true);
   }, [pressed, ask]);
@@ -585,10 +635,14 @@ const multiplayerOn = (publish: boolean, emptyGame: boolean, game: GameMultiplay
 function usePluginSetupEvent(entries: readonly PluginToolbarEntry[], press: (entry: PluginToolbarEntry) => unknown) {
   useEffect(() => {
     const open = (event: Event) => {
-      const id = (event as CustomEvent).detail?.id;
+      const detail = (event as CustomEvent).detail;
+      const id = detail?.id;
       const entry = entries.find((e) => e.plugin.manifest.id === id && e.item.target.kind === "panel");
       if (entry) void press(entry);
-      else if (typeof id === "string") openPluginsAt(id);
+      else if (typeof id === "string") {
+        notePluginsOpening(isPluginsOpenedFrom(detail?.from) ? detail.from : PluginsOpenedFrom.SetupRequest);
+        openPluginsAt(id);
+      }
     };
     window.addEventListener(PLUGIN_SETUP_EVENT, open);
     return () => window.removeEventListener(PLUGIN_SETUP_EVENT, open);

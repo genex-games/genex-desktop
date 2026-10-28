@@ -17,7 +17,7 @@ import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { EventKind } from "../../shared/event-log.ts";
 import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import { type ListingDraft, LOCAL_DRAFT_STATE, type LocalListingDraft } from "../../shared/item-draft.ts";
-import { isItemId, ItemState, ItemType, storeRefusalOf } from "../../shared/store-items.ts";
+import { isItemId, ItemState, ItemType, storeRefusalOf, unwordedRefusalCode } from "../../shared/store-items.ts";
 import type { LocalDraftChange } from "../core/genex-cli.ts";
 import type { SyncedItem } from "../core/item-draft.ts";
 import { LOCAL_ITEMS_DIR, localDraftFingerprint, removeSyncedDrafts } from "../core/local-item-files.ts";
@@ -150,8 +150,9 @@ async function uploadDraft(deps: FixtureLocalDeps, hostedId: string, draft: Loca
   });
   const body = isRecord(answer.body) ? answer.body : {};
   if (answer.status === 200 && isItemId(body.id))
-    return { localId, contentHash, skuId: body.id, refusal: null, field: null };
-  return { localId, contentHash, skuId: null, refusal: storeRefusalOf(body.error), field: null };
+    return { localId, contentHash, skuId: body.id, refusal: null, field: null, code: null };
+  const refusal = storeRefusalOf(body.error);
+  return { localId, contentHash, skuId: null, refusal, field: null, code: unwordedRefusalCode(body.error) };
 }
 
 /**

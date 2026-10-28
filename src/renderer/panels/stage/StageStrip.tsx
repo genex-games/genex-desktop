@@ -29,15 +29,29 @@ import { liveBehindLabel, liveBehindWords, STAGE_WORDS } from "../../words.ts";
 import type { Notify } from "../../state/toasts.ts";
 import { PluginToolbar } from "../PluginToolbar.tsx";
 import { LiveRun } from "./live-run.ts";
-import { activeStageTab, type StageTab, type StageTabKey, stageTabs, tabGlyph, tabPluginId } from "./stage-tabs.ts";
+import {
+  activeStageTab,
+  type StageTab,
+  type StageTabKey,
+  stageTabs,
+  tabGlyph,
+  tabNamesTheirWork,
+  tabPluginId,
+} from "./stage-tabs.ts";
 import { StripFoldStep, useStripFold } from "./strip-fold.ts";
 
 /** The facts of a game whose descriptor isn't loaded yet: none, served as a web game. */
 const NO_FACTS: readonly FactRef[] = [];
 
-/** The view switcher's items: the strip's tabs (`stage-tabs.ts`), a file's with its glyph. */
+/**
+ * The view switcher's items: the strip's tabs (`stage-tabs.ts`), a file's with its glyph and its
+ * name masked in usage recordings (`tabNamesTheirWork`).
+ */
 const switcherItems = (tabs: readonly StageTab[]) =>
-  tabs.map(({ icon, ...tab }) => (icon ? { ...tab, icon: <Icon name={icon} size={13} /> } : tab));
+  tabs.map(({ icon, ...tab }) => {
+    const item = { ...tab, mask: tabNamesTheirWork(tab) };
+    return icon ? { ...item, icon: <Icon name={icon} size={13} /> } : item;
+  });
 
 /**
  * Reload. While Live is behind — the game changed, a build is ready — it carries the accent dot
@@ -187,6 +201,11 @@ function SoundButton({ on, onToggle }: { on: boolean; onToggle: () => void }): J
   );
 }
 
+/** A tab's name, masked in usage recordings when it is the person's (`tabNamesTheirWork`). */
+function TabName({ tab }: { tab: StageTab }): JSX.Element {
+  return <span {...(tabNamesTheirWork(tab) ? { "data-analytics-mask": "" } : {})}>{tab.label}</span>;
+}
+
 /** A view's mark where the folded views name it: a plugin view's own picture, else the view's glyph. */
 function ViewMark({
   tab,
@@ -244,7 +263,7 @@ function ViewMenu({
         >
           <span className="selected-tint flex h-7 items-center gap-1.5 rounded-md px-2.5 font-mono text-body-sm">
             <ViewMark tab={current} views={views} plugins={plugins} />
-            {current.label}
+            <TabName tab={current} />
           </span>
           <Icon name="chevron-down" size={14} />
         </button>
@@ -255,7 +274,7 @@ function ViewMenu({
             <DropdownMenuRadioItem key={tab.key} value={tab.key} data-stage-action={tab.key}>
               <span className="flex items-center gap-2">
                 <ViewMark tab={tab} views={views} plugins={plugins} />
-                {tab.label}
+                <TabName tab={tab} />
               </span>
             </DropdownMenuRadioItem>
           ))}

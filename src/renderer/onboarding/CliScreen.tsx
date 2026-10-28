@@ -5,6 +5,8 @@
  */
 import type { JSX } from "react";
 import { EngineId, isBeta } from "../../shared/providers.ts";
+import { useRowViewed } from "../analytics/welcome-report.ts";
+import { ProviderSurface } from "../analytics/welcome-vocabulary.ts";
 import { OpenCodeRowState } from "../panels/opencode-row.ts";
 import { BetaTag } from "../ui/beta-tag.tsx";
 import { Button } from "../ui/Button.tsx";
@@ -96,6 +98,7 @@ export function CliScreen({
   const words = WAYS_WORDS[provider];
   const heading = useHeadingFocus();
   const session = cli.row === OpenCodeRowState.SigningIn ? cli.terminal : undefined;
+  useRowViewed(provider, cli.row, ProviderSurface.Onboarding, null);
   return (
     <section className="onboarding-screen onboarding-provider onboarding-enter" data-cli-screen={provider}>
       <TopBar onBack={onBack} onSkip={anyOn ? undefined : onSkip} />

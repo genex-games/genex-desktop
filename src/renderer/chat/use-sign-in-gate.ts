@@ -20,6 +20,10 @@ import { modelKey, parseModelKey } from "../model-key.ts";
 import { useSubscriptionAuth } from "../subscription-auth.ts";
 import type { SignInCard } from "../ui/SignInCard.tsx";
 import { CHAT_WORDS } from "../words.ts";
+import { engineRef } from "../analytics/chat-properties.ts";
+import { SignInAction } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 type EngineModel = EngineDescriptor["models"][number];
 
@@ -88,6 +92,10 @@ export function useSignInGate({
   if (!blocked) return { needsSignIn: false, signIn, card: null };
   const local = signInRequested(threadEvents) ? localToolModel(engines) : null;
   const continueLocal = (target: { engine: EngineDescriptor; model: EngineModel }): void => {
+    track(AnalyticsEvent.SignInCardAction, {
+      action: SignInAction.ContinueLocal,
+      engine: engineRef(selectedEngine?.id ?? parseModelKey(selected).engine),
+    });
     setModelKey(modelKey(target.engine.id, target.model.id));
     // Don't go through submit() — it still thinks Claude is selected and
     // would start sign-in again instead of sending.
@@ -105,6 +113,7 @@ export function useSignInGate({
       // card offers the install link instead of a sign-in that cannot start.
       missingCli: auth.missingCli || selectedEngine?.status.code === EngineStatusCode.NotInstalled,
       allowLocal: local !== null,
+      // The card itself counts its Sign in and Recheck presses (provider_action_clicked, chat_card).
       onSignIn: () => void signIn(),
       onRecheck: () => void window.studio.recheckEngines(selectedEngine?.id).then(onEnginesRefresh),
       onContinueLocal: local ? () => continueLocal(local) : undefined,

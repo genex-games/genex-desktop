@@ -11,6 +11,12 @@ import { EventKind, type EventEnvelope } from "../../shared/event-log.ts";
 import { escapeCancels, stopTurn } from "../composer-stop.ts";
 import { problemWords } from "../words.ts";
 import { ToastTone, type Notify } from "../state/toasts.ts";
+import { chatMemory, noteStop } from "../analytics/chat-memory.ts";
+import { stopRequestedProperties } from "../analytics/chat-properties.ts";
+import { StopIgnored, StopVia } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { errorCode } from "../../shared/errors.ts";
 
 /**
  * How long after a Stop it acted on the chat ignores the button: a double press must not cancel
@@ -78,14 +84,23 @@ export function requestChatStop(
   return mark;
 }
 
-/** Escape: cancel the chat turn `escapeCancels` names, and nothing else. */
+/** Escape: cancel the chat turn `escapeCancels` names, and nothing else. Returns that chat, if any. */
 export function escapeStops(
   api: { cancelTurn(threadId: string): Promise<unknown> },
   event: { key: string; target: unknown },
   state: { threadId: string | null; runId: string | null; turnInFlight: boolean },
-): void {
+): string | null {
   const cancel = escapeCancels(event, state);
   if (cancel) void api.cancelTurn(cancel);
+  return cancel;
+}
+
+/** A Stop press, for usage analytics: acted on (the next send is `after_stop`), or ignored and why. */
+function trackStop(thread: string, how: { via: StopVia; ignored: StopIgnored; buildRunning: boolean }): void {
+  const now = Date.now();
+  const properties = stopRequestedProperties(chatMemory, { thread, ...how }, now);
+  if (how.ignored === StopIgnored.None) noteStop(chatMemory, thread, now);
+  track(AnalyticsEvent.ChatStopRequested, properties);
 }
 
 /**
@@ -114,17 +129,22 @@ export function useChatStop({
   const requestStop = useCallback((): void => {
     const next = requestChatStop(window.studio, { threadId, stopping, events, mark }, (err) => {
       setMark(null);
-      onNotice(problemWords(err), ToastTone.Error);
+      onNotice(problemWords(err), ToastTone.Error, errorCode(err));
     });
+    const ignored = next ? StopIgnored.None : StopIgnored.RepeatWithin5s;
+    if (threadId) trackStop(threadId, { via: StopVia.Button, ignored, buildRunning: Boolean(runId) });
     if (next) setMark(next);
-  }, [threadId, onNotice, stopping, events, mark]);
+  }, [threadId, runId, onNotice, stopping, events, mark]);
 
   // Escape belongs to the composer and to nothing else. It used to be a window listener that
   // stopped the run, so the Escape that closed the model menu at 11 pm ended the run; now it
   // reaches only a chat turn, and while a build runs `escapeCancels` leaves it with nothing to do.
   useEffect(() => {
     if (!turnInFlight) return;
-    const onKey = (event: KeyboardEvent): void => escapeStops(window.studio, event, { threadId, runId, turnInFlight });
+    const onKey = (event: KeyboardEvent): void => {
+      const stopped = escapeStops(window.studio, event, { threadId, runId, turnInFlight });
+      if (stopped) trackStop(stopped, { via: StopVia.Escape, ignored: StopIgnored.None, buildRunning: Boolean(runId) });
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [turnInFlight, threadId, runId]);

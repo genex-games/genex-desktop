@@ -7,6 +7,8 @@
 import { useEffect, useState } from "react";
 import type { StudioApi, StudioSettingsView } from "../shared/studio-api.ts";
 import { UiEvent } from "../shared/ui-events.ts";
+import { trackSettingChanged } from "./analytics/workspace-track.ts";
+import { SettingKey } from "./analytics/workspace-vocabulary.ts";
 import { problemWords } from "./words.ts";
 
 /** Whether the host's settings have computer control on; off until they say so. */
@@ -55,8 +57,14 @@ export function useComputerControl(): ComputerControlSetting {
     setBusy(true);
     setError(null);
     void setComputerControl(window.studio, on)
-      .then(setView)
-      .catch((cause) => setError(problemWords(cause)))
+      .then((saved) => {
+        trackSettingChanged(SettingKey.ComputerControl, on);
+        setView(saved);
+      })
+      .catch((cause) => {
+        trackSettingChanged(SettingKey.ComputerControl, on, true);
+        setError(problemWords(cause));
+      })
       .finally(() => setBusy(false));
   };
   return { on: view ? computerControlOn(view) : null, busy, error, change };

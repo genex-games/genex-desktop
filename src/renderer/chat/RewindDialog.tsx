@@ -6,6 +6,9 @@ import { DialogSurface } from "../ui/dialog.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { problemWords } from "../words.ts";
 import { REWIND_WORDS, restoresByDefault, rewindBusyLabel, rewindFilesWords } from "./rewind-words.ts";
+import { REWIND_CANCELLED, rewindConfirmedProperties, rewindPreviewProperties } from "../analytics/chat-properties.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** What the dialog says about the game files: checking, refused, or what they will do, and what an engine project keeps. */
 function RewindFilesBody({
@@ -44,7 +47,11 @@ function RewindFilesBody({
           <label htmlFor={switchId} className="flex min-w-0 flex-col">
             <span className="text-ink">{REWIND_WORDS.restoreFiles}</span>
             <span className="text-ink-3">{words.line}</span>
-            {words.outside && <span className="text-ink-3 [overflow-wrap:anywhere]">{words.outside}</span>}
+            {words.outside && (
+              <span data-analytics-mask className="text-ink-3 [overflow-wrap:anywhere]">
+                {words.outside}
+              </span>
+            )}
           </label>
           <Switch id={switchId} checked={restore} disabled={busy} onCheckedChange={onRestore} />
         </div>
@@ -108,27 +115,41 @@ export function RewindDialog({
         setFiles(preview.files);
         setStopsBuild(preview.stopsBuild === true);
         if (!restoresByDefault(preview.files)) setRestore(false);
+        track(AnalyticsEvent.RewindPreviewed, rewindPreviewProperties(preview));
       })
       .catch((err) => {
-        if (current) setRefused(problemWords(err));
+        if (!current) return;
+        setRefused(problemWords(err));
+        track(AnalyticsEvent.RewindPreviewed, rewindPreviewProperties(null, err));
       });
     return () => {
       current = false;
     };
   }, [threadId, eventId, messageId]);
+  const decided = (failed: boolean, failure: unknown = null): void => {
+    const choice = { restore, restoresByDefault: Boolean(files && restoresByDefault(files)), failed };
+    track(AnalyticsEvent.RewindDecided, rewindConfirmedProperties(files, choice, failure));
+  };
   const confirm = (): void => {
     setBusy(true);
     setError("");
     void window.studio
       .rewindChat(threadId, eventId, messageId, files?.state === "restore" && restore)
       .then((result) => {
+        decided(false);
         onRewound(result);
         onDismiss();
       })
       .catch((err) => {
+        decided(true, err);
         setError(problemWords(err));
         setBusy(false);
       });
+  };
+  // Cancel and every other way out of the dialog; a rewind that went closes it through `onDismiss`.
+  const dismiss = (): void => {
+    track(AnalyticsEvent.RewindDecided, REWIND_CANCELLED);
+    onDismiss();
   };
   return (
     <DialogSurface
@@ -141,7 +162,7 @@ export function RewindDialog({
         "This message and everything after it leave the chat. The message goes back in the composer so you can change it.",
       )}
       onDismiss={() => {
-        if (!busy) onDismiss();
+        if (!busy) dismiss();
       }}
     >
       <RewindFilesBody
@@ -158,7 +179,7 @@ export function RewindDialog({
         </p>
       )}
       <div className="flex justify-end gap-2">
-        <Button ref={cancel} variant="ghost" disabled={busy} onClick={onDismiss}>
+        <Button ref={cancel} variant="ghost" disabled={busy} onClick={dismiss}>
           {t("Cancel")}
         </Button>
         <Button

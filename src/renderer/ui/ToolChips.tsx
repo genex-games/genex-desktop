@@ -217,7 +217,7 @@ export const ToolRow = memo(function ToolRow({
   const file = useToolFile(row);
   const shots = rowShots(row, inStrip);
   return (
-    <div data-tool-state={state}>
+    <div data-tool-state={state} data-analytics-mask>
       <div data-tool-head className="chat-tool-head text-step">
         <button
           type="button"

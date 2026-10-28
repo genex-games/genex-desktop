@@ -19,9 +19,11 @@ export function PluginApproval({ review, onClose }: { review: PluginReviewReques
   }, [review]);
   const ready = review.images.every((i) => loaded.includes(i.label));
   return (
+    // The plugin's message and pictures can repeat what the person asked for; the dialog is portaled,
+    // so it masks them itself.
     <DialogSurface
       title={t("Plugin approval")}
-      description={review.message}
+      description={<span data-analytics-mask>{review.message}</span>}
       size="xl"
       onDismiss={() => {
         review.resolve(false);
@@ -29,7 +31,7 @@ export function PluginApproval({ review, onClose }: { review: PluginReviewReques
       }}
     >
       {review.images.map((img) => (
-        <figure key={img.label}>
+        <figure key={img.label} data-analytics-mask>
           <img src={img.dataUrl} alt={img.label} onLoad={() => setLoaded((items) => [...items, img.label])} />
           <figcaption>{img.label}</figcaption>
         </figure>

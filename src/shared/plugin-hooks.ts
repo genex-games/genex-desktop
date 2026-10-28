@@ -390,6 +390,10 @@ export const isSeedFiredHookEvent = (value: unknown): value is HookEvent =>
 /** The code of the error a restore a handler blocked fails with (`restoreWithHooks`): nothing was restored. */
 export const HOOK_BLOCKED = "hook_blocked";
 
+/** A moment's step stopped what it guarded: `HOOK_BLOCKED` as a code that crosses IPC (`shared/error-codes.ts`). */
+export const HookRefusal = { Blocked: HOOK_BLOCKED } as const;
+export type HookRefusal = (typeof HookRefusal)[keyof typeof HookRefusal];
+
 /**
  * What a checkpoint answers: the snapshot it took with its handlers' notes and pictures; why a
  * handler, a lock or Plan mode stopped it (no snapshot; `hold` when it was Genex's); or why one

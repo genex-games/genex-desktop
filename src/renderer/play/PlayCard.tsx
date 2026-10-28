@@ -115,9 +115,15 @@ function MarqueeTitle({ title }: { title: string }): JSX.Element {
 /** Who made the game; their name opens their profile when the gallery named their account. */
 function Author({ author }: { author: PlayGame["author"] }): JSX.Element {
   const { id } = author;
-  if (!id) return <p className="play-card-author">{WORDS.by(author.name)}</p>;
+  if (!id)
+    return (
+      <p className="play-card-author" data-analytics-mask>
+        {WORDS.by(author.name)}
+      </p>
+    );
   return (
-    <p className="play-card-author">
+    // The game's maker, by their name.
+    <p className="play-card-author" data-analytics-mask>
       <button type="button" className="play-card-author-link" onClick={() => studio().play.showProfile(id)}>
         {WORDS.by(author.name)}
       </button>

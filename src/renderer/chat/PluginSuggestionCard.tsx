@@ -6,6 +6,10 @@
  * click turns a plugin on.
  */
 import { type JSX, useState } from "react";
+import type { PluginInfo, PluginSourceKind } from "../../shared/plugins.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { PluginsOpenedFrom, suggestionClosedProperties, trackedSuggestionPress } from "../analytics/plugins-page.ts";
 import type { Entry, EntryKind } from "../chat-entries.ts";
 import { openPluginSetup } from "../plugin-setup.ts";
 import { usePlugins } from "../state/hooks.ts";
@@ -41,12 +45,14 @@ function SuggestionButton({
   onTurnedOn: (name: string) => void;
 }): JSX.Element {
   const folders = usePlugins((s) => suggestionFolders(s.list, pluginId));
+  const source = usePlugins((s) => sourceOf(s.list, pluginId));
   const [busy, setBusy] = useState(false);
   const press = () => {
     if (busy) return;
     setBusy(true);
     // Install asks the person to review the plugin first, in Genex's own dialog.
-    void pressSuggestion(window.studio, state, { pluginId, name }, onTurnedOn)
+    const run = () => pressSuggestion(window.studio, state, { pluginId, name }, onTurnedOn);
+    void trackedSuggestionPress({ state, id: pluginId, source }, run)
       .catch(notifyProblem(onNotice))
       .finally(() => setBusy(false));
   };
@@ -64,17 +70,22 @@ function SuggestionButton({
   );
 }
 
+/** Where an installed plugin came from, or null while it is not installed. */
+const sourceOf = (list: readonly PluginInfo[], id: string): PluginSourceKind | null =>
+  list.find((plugin) => plugin.manifest.id === id)?.source ?? null;
+
 /** The card once its plugin is on: one line that says so, and the plugin's page, where it turns off again. */
 function PluginOnLine({ pluginId, name, icon }: { pluginId: string; name: string; icon?: string }): JSX.Element {
   return (
-    <section data-plugin-suggestion={pluginId} data-plugin-on="" className="chat-question">
+    // The plugin's name, which a local plugin's author chose.
+    <section data-plugin-suggestion={pluginId} data-plugin-on="" data-analytics-mask className="chat-question">
       <div className="flex items-center gap-2.5 px-4 py-2">
         <PluginIcon name={name} src={icon} size="menu" />
         <p className="min-w-0 flex-1 truncate text-chat">{PLUGIN_SUGGESTION_WORDS.isOn(name)}</p>
         <Button
           variant="ghost"
           aria-label={PLUGIN_SUGGESTION_WORDS.manageLabel(name)}
-          onClick={() => openPluginSetup(pluginId)}
+          onClick={() => openPluginSetup(pluginId, PluginsOpenedFrom.SuggestionManage)}
         >
           {PLUGIN_SUGGESTION_WORDS.manage}
         </Button>
@@ -107,15 +118,23 @@ export function PluginSuggestionCard({
   const icon = usePlugins((s) => s.list.find((plugin) => plugin.manifest.id === suggestion.pluginId)?.iconUrl);
   const localAccess = usePlugins((s) => suggestionLocalAccess(s.list, suggestion.pluginId));
   const state = usePlugins((s) => suggestionState(s.list, suggestion.pluginId));
+  const source = usePlugins((s) => sourceOf(s.list, suggestion.pluginId));
   if (closed) return null;
   if (state === SuggestionState.On) return <PluginOnLine pluginId={suggestion.pluginId} name={name} icon={icon} />;
   const titleId = `plugin-suggestion-${entry.id}`;
   const close = () => {
     closedCards.add(entry.id);
     setClosed(true);
+    track(AnalyticsEvent.PluginSuggestionAnswered, suggestionClosedProperties(suggestion.pluginId, source, state));
   };
   return (
-    <section data-plugin-suggestion={suggestion.pluginId} aria-labelledby={titleId} className="chat-question">
+    // The agent's reason, the plugin's name and the folders it writes to: kept out of usage recordings.
+    <section
+      data-plugin-suggestion={suggestion.pluginId}
+      aria-labelledby={titleId}
+      data-analytics-mask
+      className="chat-question"
+    >
       <div className="flex flex-col gap-1 px-4 py-3">
         <div className="flex items-center gap-2.5">
           <PluginIcon name={name} src={icon} size="menu" />

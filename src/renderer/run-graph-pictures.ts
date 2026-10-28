@@ -59,6 +59,45 @@ export function savePointShot(
   return best ?? thumbShot(node);
 }
 
+/** The demo cameras record play, not the scene: a step's pictures never include them. */
+const isDemoCamera = (camera: string): boolean => camera.startsWith("demo");
+
+/** One picture an opened step can show: the lead's named picture of its change, or one camera's. */
+export interface ShotView {
+  key: string;
+  shot: Shot;
+  /** the picture the lead named as showing what the step changed */
+  changed: boolean;
+}
+
+const CHANGED_VIEW_KEY = "changed";
+const cameraViewKey = (camera: string): string => `camera:${camera}`;
+
+/** A try's pictures: the one the lead named first, then each scene camera once. */
+export function shotViews(node: IterationNode): ShotView[] {
+  const views: ShotView[] = node.shown ? [{ key: CHANGED_VIEW_KEY, shot: node.shown, changed: true }] : [];
+  for (const shot of node.shots) {
+    const key = cameraViewKey(shot.camera);
+    if (isDemoCamera(shot.camera) || views.some((view) => view.key === key)) continue;
+    views.push({ key, shot, changed: false });
+  }
+  return views;
+}
+
+/** The picture a step opens on: the one its card wears (`savePointShot`), else its first. */
+export function openingView(views: readonly ShotView[], card: Shot | null): ShotView | null {
+  return views.find((view) => view.shot.path === card?.path) ?? views[0] ?? null;
+}
+
+/**
+ * The same picture of the step before, for the compare: that camera's, never another one's. The
+ * lead's named picture is its own framing, so it has none.
+ */
+export function viewBefore(view: ShotView, before: IterationNode): Shot | null {
+  if (view.changed) return null;
+  return before.shots.find((shot) => shot.camera === view.shot.camera) ?? null;
+}
+
 /**
  * How different two frames of one size are, 0 (the same) to 1: the mean difference of their colour
  * channels. Frames of different sizes are as different as can be.

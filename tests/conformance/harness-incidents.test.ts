@@ -16389,3 +16389,35 @@ describe("the language of Genex's own turns", () => {
       );
   });
 });
+
+describe("a new Loop a plugin held back before its first turn", () => {
+  it("HS1. the Loop's start was held back (Unreal wouldn't reopen) and nobody acted until the person asked the chat to reopen it: the close says startHeld and the chat's agent is told once", async () => {
+    const { heldStartAsk } = await import("../../src/main/core/held-start.ts");
+    const { MessageOrigin } = await import("../../src/shared/protocol.ts");
+    const record = (id: string, event_type: string, payload: Record<string, unknown>) => ({
+      id,
+      thread_id: "t1",
+      turn_id: null,
+      session_id: null,
+      created_at: "2026-10-27T18:58:00.000Z",
+      data: { type: "custom" as const, event_type, payload },
+    });
+    const person = { type: "user_message", threadId: "t1", text: "make it photoreal", engine: "claude-code" };
+    const because = "The Loop didn't start: a plugin of this project held it back: Unreal couldn't be reopened.";
+    const events = [
+      record("1", "coordinator_message_queued", { messageId: "m1", action: person }),
+      record("2", "run_finished", { runId: "r1", stoppedBecause: because, startHeld: true }),
+    ];
+    const ask = heldStartAsk("t1", events, "r1");
+    assert.equal(ask?.options.origin, MessageOrigin.LoopHeld);
+    assert.equal(ask?.options.engine, "claude-code");
+    assert.ok(ask?.text.includes(because));
+    const asked = { ...person, origin: MessageOrigin.LoopHeld };
+    const again = [
+      ...events,
+      record("3", "coordinator_message_queued", { messageId: "m2", action: asked }),
+      record("4", "run_finished", { runId: "r2", stoppedBecause: because, startHeld: true }),
+    ];
+    assert.equal(heldStartAsk("t1", again, "r2"), null, "held again: it waits for the person");
+  });
+});

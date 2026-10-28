@@ -11,6 +11,7 @@ import type { ChatThread } from "./use-chat-thread.ts";
 import { useSignInGate } from "./use-sign-in-gate.ts";
 import { runLoopSetting } from "./transcript.ts";
 import { useThreadDrafts } from "./use-thread-drafts.ts";
+import { errorCode } from "../../shared/errors.ts";
 
 /** Compact the chat's context on the model it runs on; a failure is toasted. */
 function useCompact(threadId: string | undefined, selected: string | null, onNotice: Notify) {
@@ -22,7 +23,7 @@ function useCompact(threadId: string | undefined, selected: string | null, onNot
     try {
       await window.studio.compactThread(threadId, { ...(engine ? { engine } : {}), ...(model ? { model } : {}) });
     } catch (err) {
-      onNotice(problemWords(err), ToastTone.Error);
+      onNotice(problemWords(err), ToastTone.Error, errorCode(err));
     } finally {
       setCompacting(false);
     }

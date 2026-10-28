@@ -8,7 +8,7 @@ import { SecretStore } from "../../substrate/secrets.ts";
 import { deliverGenexFiles } from "../../substrate/genex-delivery.ts";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, lstat, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, lstat, rename, rm } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { atomicWriteJson } from "../../substrate/fsx.ts";
 import { writeFile } from "node:fs/promises";
@@ -189,6 +189,7 @@ import {
   isOpen,
   markUnknownAfterRestart,
   MAX_UPLOADS,
+  linkedElsewhere,
   mergeMeta,
   MESSAGE as PUBLISH_MESSAGE,
   needsRelisting,
@@ -322,6 +323,8 @@ async function readJsonOr<T>(file: string, fallback: T | null = null): Promise<T
 
 /** The CLI's record of a publish workspace's hosted project. */
 const metaFile = (dir: string) => path.join(dir, ".genex/project.json");
+/** A link set aside once its game was gone: `.genex/project.unlinked-<ms>.json`, beside the new one. */
+const UNLINKED_PREFIX = "project.unlinked-";
 /** The installed SDK's browser files, where a run from source (no build beside the backend) finds them. */
 const installedEmbedSdk = () => path.dirname(fileURLToPath(import.meta.resolve("@genex-ai/embed-sdk")));
 
@@ -1255,7 +1258,12 @@ export class GenexTools {
     signal: AbortSignal,
   ): Promise<HostedMeta> {
     const existing = await readJsonOr<HostedMeta>(metaFile(dir));
-    if (existing?.slug) return existing;
+    if (existing?.slug && !(await this.#linkGone(existing, signal))) return existing;
+    // A deleted game, or one this account doesn't own, refuses every upload: this account's own
+    // game set aside earlier (another sign-in's publish) comes back, else a new game is made.
+    if (existing?.slug) await this.#unlink(dir);
+    const restored = await this.#relinkOwn(dir, signal);
+    if (restored) return restored;
     job.phase = GenexPublishPhase.CreatingProject;
     await this.#persistJob(project, job);
     // Without `--no-auth` the fd-3 token satisfies the CLI, so the hosted project is created here
@@ -1264,6 +1272,55 @@ export class GenexTools {
     const created = await readJsonOr<HostedMeta>(metaFile(dir));
     if (!created?.slug) throw new Error(PUBLISH_MESSAGE.NoHostedProject);
     return created;
+  }
+  /**
+   * Whether the game this workspace is linked to is gone or not this account's: Genex knows no such
+   * game for this signed-in account (it answers a stranger's game as unknown too), or
+   * {@link linkedElsewhere}. False when Genex can't be asked, or the sign-in no longer holds (a dead
+   * sign-in reads every game as unknown): no answer is evidence of nothing.
+   */
+  async #linkGone(meta: HostedMeta, signal: AbortSignal): Promise<boolean> {
+    const session = await this.#session(signal).catch(() => null);
+    if (!session?.user) return false;
+    try {
+      const answer = await this.#fetch(GenexRoute.projectBySlug(String(meta.slug)), withSignal(signal));
+      const project = answer?.project;
+      return linkedElsewhere(meta, { id: project?.id, ownerId: project?.owner?.id }, session.user.id);
+    } catch (error) {
+      return statusOf(error) === HTTP_NOT_FOUND;
+    }
+  }
+  /** Sets a stale link aside, never deleting it, so `genex init` makes a new hosted project. */
+  async #unlink(dir: string): Promise<void> {
+    await rename(metaFile(dir), path.join(dir, ".genex", `${UNLINKED_PREFIX}${Date.now()}.json`));
+  }
+  /**
+   * Whether Genex says the game `meta` links to is this signed-in account's: it answered, and
+   * names the same project and no other owner. Not knowing is no.
+   */
+  async #linkOwned(meta: HostedMeta, signal: AbortSignal): Promise<boolean> {
+    const session = await this.#session(signal).catch(() => null);
+    if (!session?.user) return false;
+    const answer = await this.#fetch(GenexRoute.projectBySlug(String(meta.slug)), withSignal(signal)).catch(() => null);
+    const project = answer?.project;
+    if (!project) return false;
+    return !linkedElsewhere(meta, { id: project.id, ownerId: project.owner?.id }, session.user.id);
+  }
+  /** The newest link set aside that Genex says is this account's game, put back; null when none is. */
+  async #relinkOwn(dir: string, signal: AbortSignal): Promise<HostedMeta | null> {
+    const folder = path.join(dir, ".genex");
+    const names = await readdir(folder).catch(() => []);
+    const aside = names
+      .filter((name) => name.startsWith(UNLINKED_PREFIX))
+      .sort()
+      .reverse();
+    for (const name of aside) {
+      const meta = await readJsonOr<HostedMeta>(path.join(folder, name));
+      if (!meta?.slug || !(await this.#linkOwned(meta, signal))) continue;
+      await rename(path.join(folder, name), metaFile(dir));
+      return meta;
+    }
+    return null;
   }
   /**
    * Finished CLI runs, one output per step: record the pages they printed, then verify the draft

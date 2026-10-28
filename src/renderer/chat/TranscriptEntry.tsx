@@ -3,6 +3,9 @@
  */
 import { type JSX, memo, useCallback, useMemo } from "react";
 import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { BuildSurface } from "../analytics/events/builds.ts";
 import { type Entry, EntryAction, EntryKind, type MorningEntry, systemTagWords } from "../chat-entries.ts";
 import { ExportReview } from "./ExportReview.tsx";
 import { type ConversationEntry, WORK_KIND } from "./conversation-entries.ts";
@@ -333,6 +336,12 @@ function quietLine(
   return null;
 }
 
+/** The chat card's own Resume, counted from the card; MorningCard's Resume counts its own. */
+const resumedFromCard = (resume: (runId: string) => () => void, runId: string) => (): void => {
+  resume(runId)();
+  track(AnalyticsEvent.RunResumePressed, { surface: BuildSurface.ChatCard });
+};
+
 function ActionEntry({
   entry,
   context,
@@ -388,7 +397,7 @@ function ActionEntry({
           <FileText text={entry.text} />
         </span>
         {resumable(entry.runId, context) ? (
-          <ResultButton type="button" data-run-resume={entry.runId} onClick={resume(entry.runId)}>
+          <ResultButton type="button" data-run-resume={entry.runId} onClick={resumedFromCard(resume, entry.runId)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>

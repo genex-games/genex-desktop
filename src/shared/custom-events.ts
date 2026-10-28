@@ -14,6 +14,7 @@ import type { ChatActivityPhase } from "./chat-activity.ts";
 import type { ChatRewind, CheckpointSkippedPayload, RewindUndonePayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
+import type { EngineFailureKind } from "./engine-requests.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
 import type { MentionTaggedPayload } from "./prompt-mention.ts";
 import type { PluginConsentEvent } from "./plugins.ts";
@@ -352,6 +353,11 @@ export interface RunFinishedPayload extends RunScope {
   limit?: RunLimit | null;
   /** Older closes marked a pause with this flag instead of `executionStatus`. */
   paused?: boolean;
+  /**
+   * A new Loop a plugin's step held back before its first turn (not Genex's own hold, not a resume):
+   * the chat's agent is told why, to fix it and start the Loop again (`core/held-start.ts`).
+   */
+  startHeld?: boolean;
   integrationHead?: string;
   baseCommit?: string;
   landingResult?: { line?: string };
@@ -382,6 +388,29 @@ export type AutoResumeCause = (typeof AutoResumeCause)[keyof typeof AutoResumeCa
 export interface RunAutoResumedPayload extends RunScope {
   cause?: AutoResumeCause;
   attempt?: number;
+}
+
+/**
+ * Why the harness refused to start a run (`refusal` on `run_start_blocked`, beside its English
+ * `reason`). The seed's copy is `RunStartRefusal` in `loop/run-dispatch.ts`
+ * (tests/conformance/seed-contracts.test.ts holds the two together); an older seed writes none.
+ * Persisted: never rename a value.
+ */
+export const RunStartRefusal = {
+  /** A run already owns the chat or the game. */
+  RunOwnsThread: "run_owns_thread",
+  /** The folder is an engine's export: compiled, with nothing a run could edit. */
+  EngineExport: "engine_export",
+  /** Genex's `web.ready` gate: the web page lacks files it needs to load. */
+  WebNotReady: "web_not_ready",
+} as const;
+export type RunStartRefusal = (typeof RunStartRefusal)[keyof typeof RunStartRefusal];
+
+/** A run's start the harness refused: the run that holds the chat (when one does), the one asked for, and why. */
+export interface RunStartBlockedPayload extends RunScope {
+  requestedRunId?: string;
+  reason?: string;
+  refusal?: RunStartRefusal;
 }
 
 /** One part of the plan, as the start and plan-review records list it. */
@@ -647,6 +676,8 @@ export interface CustomEventMap {
    * (shared/chat-rewind.ts `endsChatSessions`); its summary, when it reports one, is the provider's own.
    */
   compacted: Partial<ContextMeasurement> & { messages?: number; trigger?: string; summary?: string; native?: boolean };
+  /** A summary that could not be written (loop/compact.ts): its engine, the words, and why. */
+  compaction_failed: { engine?: string; model?: string; error?: string; failure?: EngineFailureKind };
   completion_call: CompletionCallPayload;
   connector_tool: RunScope & Omit<ConnectorToolEvent, "error"> & { error?: string | null };
   connector_tool_started: RunScope & ConnectorToolStartedEvent;
@@ -742,6 +773,7 @@ export interface CustomEventMap {
   run_finished: RunFinishedPayload;
   run_iteration: RunScope & { winner?: string; biggest_gap?: string; verdict?: RoundVerdict | null };
   run_registered: RunScope & { budgets?: RecordedRunBudgets; resumed?: boolean };
+  run_start_blocked: RunStartBlockedPayload;
   run_started: RunScope & {
     budgets?: RecordedRunBudgets;
     goal?: string;

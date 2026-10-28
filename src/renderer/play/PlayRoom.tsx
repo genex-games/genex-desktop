@@ -15,6 +15,9 @@ import { SECOND_MS } from "../../shared/duration.ts";
 import { PlayCategory, type PlayGame, PlayShelf } from "../../shared/play.ts";
 import { SIDEBAR_TOGGLE, SidebarToggle } from "../shell/use-shell-chrome.ts";
 import { feedOf } from "../state/play.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { playSearchedProperties } from "../analytics/plugins-play.ts";
 import { usePlay, useShallow } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { Icon } from "../ui/icons.tsx";
@@ -121,6 +124,10 @@ export interface SearchState {
   status: FeedStatus;
 }
 
+/** A Play search's answer, for usage analytics: never its words. */
+const reportSearch = (shelf: PlayShelf, query: string, games: number | null): void =>
+  track(AnalyticsEvent.PlaySearched, playSearchedProperties(shelf, query, games));
+
 /** What on `shelf` answers `query`, read a moment after typing stops, and a way to read it again. */
 function useSearch(query: string, shelf: PlayShelf): { search: SearchState | null; retry: () => void } {
   const [state, setState] = useState<SearchState | null>(null);
@@ -138,8 +145,16 @@ function useSearch(query: string, shelf: PlayShelf): { search: SearchState | nul
       studio()
         .api.playSearch(trimmed, shelf)
         .then(
-          (games) => live && setState({ query: trimmed, games, status: FeedStatus.Ready }),
-          () => live && setState({ query: trimmed, games: [], status: FeedStatus.Failed }),
+          (games) => {
+            if (!live) return;
+            reportSearch(shelf, trimmed, games.length);
+            setState({ query: trimmed, games, status: FeedStatus.Ready });
+          },
+          () => {
+            if (!live) return;
+            reportSearch(shelf, trimmed, null);
+            setState({ query: trimmed, games: [], status: FeedStatus.Failed });
+          },
         );
     }, SEARCH_DEBOUNCE_MS);
     return () => {

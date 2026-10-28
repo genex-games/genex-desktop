@@ -30,7 +30,12 @@ export const GENEX_CLI_PROMPT = {
   NeedsPositional: (command: string) => `\`genex ${command}\` needs its positional argument in args.`,
   NeedsOption: (command: string, name: string) => `\`genex ${command}\` needs the ${name} option.`,
   NeedsPicture:
-    "A store item is listed with its picture, never without: render the item alone on a transparent background with the game's own code (or make it with genex__asset image), save the PNG under .genex/scratch/, then call shop add again with the image option.",
+    "A store item is listed with its picture, never without: a square PNG of at least 768 × 768 (1024 × 1024 is best) that the item fills edge to edge, lit in the game's own scene, never on an empty black or flat background. Render it with the game's own code (or make it with genex__asset image), save it under .genex/scratch/, then call shop add again with the image option.",
+  /** A picture that would not fill its card: its size, and what a card takes. */
+  PictureShape: (given: string, width: number, height: number) =>
+    `image ${JSON.stringify(given)} is ${width} × ${height}: a store item's picture is square, at least 768 × 768 (1024 × 1024 is best), and fills its card edge to edge. Render it again at that size with the item filling the frame; nothing was run.`,
+  PictureNotImage: (given: string) =>
+    `image ${JSON.stringify(given)} is not a PNG or WebP picture. Save the render as a square PNG of at least 768 × 768; nothing was run.`,
   Locked: "Genex is locked: ask the user to unlock Genex in Studio's Plugins page, then try again.",
   NoDraft:
     'This game has no hosted Genex project yet. Publish a draft first with genex__publish {"operation":"draft"}, then run the command again.',

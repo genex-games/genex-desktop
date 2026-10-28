@@ -32,7 +32,7 @@ import {
   DotGrid,
 } from "./settings.ts";
 import { useAppearance } from "../appearance/store.ts";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { BackdropGallery } from "./BackdropGallery.tsx";
 import type { GenerationModel } from "./generation-model.ts";
 import { MakeBackground } from "./MakeBackground.tsx";
@@ -453,7 +453,7 @@ export function BackdropControls({
   const [making, setMaking] = useState(false);
   const make = (): void => {
     if (model) setMaking(true);
-    else openSettings(SettingsSection.Providers);
+    else openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.Backdrop);
   };
   return (
     <div className="backdrop-controls">

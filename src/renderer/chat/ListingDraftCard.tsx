@@ -246,6 +246,7 @@ function ItemListingCard({
   note = null,
   settled = null,
   locked = false,
+  picture = null,
   onAsk,
 }: {
   draft: ListingDraft;
@@ -253,6 +254,8 @@ function ItemListingCard({
   note?: string | null;
   settled?: StoreRefusal | null;
   locked?: boolean;
+  /** The local draft's picture an uploaded item showed, until Selling names the item's own. */
+  picture?: string | null;
   onAsk?: (() => void) | undefined;
 }): JSX.Element {
   // A press's answer is the newest; else Selling's row, which follows a sale Studio made after a publish.
@@ -267,7 +270,7 @@ function ItemListingCard({
     id: view.itemId,
     name,
     description: view.description ? gameText(view.description) : null,
-    iconUrl: view.iconUrl ?? listed?.iconUrl ?? null,
+    iconUrl: view.iconUrl ?? listed?.iconUrl ?? picture,
     priceCoins: view.priceCoins,
     status: statusOf(view),
     local: false,
@@ -315,6 +318,9 @@ function LocalListingCard({
   const busy = useItems((s) => s.localBusy[draft.localId]);
   const failed = useItems((s) => s.localFailed[draft.localId] === true);
   const card = localCard(draft, view, busy, failed);
+  // Studio's kept copy of its picture, read whether the draft is still local or went up.
+  const shown = "uploaded" in card ? draft : card.local.draft;
+  const picture = useLocalPicture(shown.project, shown.picture, shown.contentHash);
   if ("uploaded" in card)
     return (
       <ItemListingCard
@@ -323,10 +329,11 @@ function LocalListingCard({
         note={uploadedNote(card)}
         settled={card.refusal}
         locked={card.unseen}
+        picture={picture}
         onAsk={onAsk}
       />
     );
-  return <LocalCard view={card.local} look={look} onAsk={onAsk} />;
+  return <LocalCard view={card.local} look={look} picture={picture} onAsk={onAsk} />;
 }
 
 /** What an uploaded local draft's card says of it: a version it never showed, or a change since approval. */
@@ -339,14 +346,16 @@ function uploadedNote(card: { changed: boolean; unseen: boolean }): string | nul
 function LocalCard({
   view,
   look,
+  picture,
   onAsk,
 }: {
   view: LocalCardView;
   look: ListingLook;
+  /** Its picture as Studio read it. */
+  picture: string | null;
   onAsk?: (() => void) | undefined;
 }): JSX.Element {
   const { draft } = view;
-  const picture = useLocalPicture(draft.project, draft.picture, draft.contentHash);
   const name = gameText(draft.name);
   const removed = view.sale === LocalSale.Removed;
   const face: CardFace = {
@@ -369,8 +378,9 @@ function LocalCard({
       <Face face={face} look={look} askable={!removed} onAsk={onAsk} />
       {removed && <p className="listing-sale-state">{WORDS.localRemoved}</p>}
       {view.refusal && (
-        <p role="alert" className="listing-refusal">
+        <p role="alert" className="listing-refusal" data-listing-refusal={view.refusalCode ?? view.refusal}>
           {itemRefusalWords(view.refusal)}
+          {view.refusalCode && <span className="listing-refusal-code">{view.refusalCode}</span>}
         </p>
       )}
       {view.failed && (

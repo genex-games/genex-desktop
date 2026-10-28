@@ -6,6 +6,11 @@
  */
 import { type JSX, useEffect, useRef, useState } from "react";
 import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { countBucket } from "../analytics/properties.ts";
+import { trackSettingChanged } from "../analytics/workspace-track.ts";
+import { ActionOutcome, RuleScope, SettingKey } from "../analytics/workspace-vocabulary.ts";
 import {
   permissionModeWords,
   PERMISSION_MODES,
@@ -139,14 +144,15 @@ function ActionRow({
 }: {
   action: AllowedAction;
   busy: boolean;
-  onForget: (rule: string, projects: string[]) => void;
+  onForget: (rule: string, projects: string[], scope: RuleScope) => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const covers = useLibrary((s) => s.games);
   const words = permissionRuleWords(action.rule);
   const stopAll = WORDS.stop(action, words);
+  // The rule (a command, a path) and the games it is allowed in are the person's.
   return (
-    <li className="settings-list-group">
+    <li className="settings-list-group" data-analytics-mask>
       <div className="flex items-center gap-1 pe-1">
         <button
           type="button"
@@ -177,6 +183,7 @@ function ActionRow({
             onForget(
               action.rule,
               action.games.map((game) => game.project),
+              RuleScope.AllGames,
             )
           }
         >
@@ -200,7 +207,7 @@ function ActionRow({
                 aria-label={WORDS.stopIn(game.title)}
                 title={WORDS.stopIn(game.title)}
                 disabled={busy}
-                onClick={() => onForget(action.rule, [game.project])}
+                onClick={() => onForget(action.rule, [game.project], RuleScope.OneGame)}
               >
                 <Icon name="trash" />
               </Button>
@@ -220,7 +227,7 @@ function AllowedActions({
 }: {
   settings: PermissionSettingsView;
   busy: boolean;
-  onForget: (rule: string, projects: string[]) => void;
+  onForget: (rule: string, projects: string[], scope: RuleScope) => void;
 }): JSX.Element {
   const actions = allowedActions(settings.rules);
   const games = settings.rules.filter((game) => game.rules.length > 0).length;
@@ -246,6 +253,13 @@ function AllowedActions({
   );
 }
 
+/** A rule forgotten (or not), with how many allowed actions are left, for usage analytics. */
+function trackForgotten(scope: RuleScope, view: PermissionSettingsView | null | undefined): void {
+  const left = view ? { remaining_rules_bucket: countBucket(allowedActions(view.rules).length) } : {};
+  const outcome = view === undefined ? ActionOutcome.Failed : ActionOutcome.Ok;
+  track(AnalyticsEvent.PermissionRuleForgotten, { scope, ...left, outcome });
+}
+
 export function PermissionsSection(): JSX.Element {
   const { settings, setSettings, error } = usePermissionSettings();
   const [busy, setBusy] = useState(false);
@@ -261,23 +275,31 @@ export function PermissionsSection(): JSX.Element {
     (next ?? root.current?.closest<HTMLElement>('[role="tabpanel"]'))?.focus();
     refocus.current = null;
   }, [busy, settings]);
-  /** Run one change to the host's settings, showing its answer, or why it failed. */
-  const change = async (work: () => Promise<PermissionSettingsView | null>, focusAt: number | null) => {
-    if (busy) return;
+  /**
+   * Run one change to the host's settings, showing its answer, or why it failed. Answers the view
+   * it left (null when there was none), or undefined when it failed or did not run.
+   */
+  const change = async (
+    work: () => Promise<PermissionSettingsView | null>,
+    focusAt: number | null,
+  ): Promise<PermissionSettingsView | null | undefined> => {
+    if (busy) return undefined;
     setBusy(true);
     setFailure(null);
     try {
       const view = await work();
       if (view) setSettings(view);
       refocus.current = focusAt;
+      return view;
     } catch (cause) {
       setFailure(problemWords(cause));
+      return undefined;
     } finally {
       setBusy(false);
     }
   };
   // One game at a time: each answer is the whole view, so the last is the one that holds.
-  const forget = (rule: string, projects: string[]) => {
+  const forget = (rule: string, projects: string[], scope: RuleScope) => {
     const at = allowedActions(settings?.rules ?? []).findIndex((action) => action.rule === rule);
     void change(
       async () => {
@@ -286,9 +308,12 @@ export function PermissionsSection(): JSX.Element {
         return view;
       },
       Math.max(0, at),
-    );
+    ).then((view) => trackForgotten(scope, view));
   };
-  const pickMode = (mode: PermissionMode) => void change(() => window.studio.setPermissionMode(null, mode), null);
+  const pickMode = (mode: PermissionMode) =>
+    void change(() => window.studio.setPermissionMode(null, mode), null).then((view) =>
+      trackSettingChanged(SettingKey.DefaultPermissionMode, mode, view === undefined),
+    );
   if (!settings)
     return (
       <div data-permission-settings className="appearance-section">

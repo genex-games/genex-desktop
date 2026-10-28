@@ -122,6 +122,8 @@ export interface LocalCardView {
   canShare: boolean;
   /** Why genex.games refused to upload it after the publish; it stays local. */
   refusal: StoreRefusal | null;
+  /** The code it was refused with when Studio has no words for it. */
+  refusalCode: string | null;
   /** Main could not carry out the last press. */
   failed: boolean;
 }
@@ -197,6 +199,7 @@ export function localCard(
       shared: draft.shareable,
       canShare: open && draft.type === ItemType.Durable,
       refusal: outcome?.kind === LocalOutcomeKind.Refused ? outcome.refusal : null,
+      refusalCode: outcome?.kind === LocalOutcomeKind.Refused ? (outcome.code ?? null) : null,
       failed,
     },
   };

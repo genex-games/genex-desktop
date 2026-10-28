@@ -39,9 +39,12 @@ import {
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
+  PluginInstallProblem,
   PluginToolAudience,
   TOOLBAR_ICON_NAMES,
 } from "../../shared/plugins.ts";
+import { CodedError } from "../../shared/errors.ts";
+import { refusedAs } from "./install-problem.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
 import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
 import { MCP_ID, McpTransport } from "../../shared/mcp.ts";
@@ -1011,6 +1014,14 @@ export async function inspectPackage(root: string): Promise<PluginManifest> {
 }
 
 /**
+ * `inspectPackage` for an install, update or reinstall: a refusal carries its code beside the same
+ * words (a link or special file `UnsafePackage`, anything else `PackageInvalid`). A check outside an
+ * install (`plugin-check`) reads `inspectPackage`'s own errors, a Node `ENOENT` or a `SyntaxError`.
+ */
+export const inspectForInstall = (root: string): Promise<PluginManifest> =>
+  refusedAs(PluginInstallProblem.PackageInvalid, () => inspectPackage(root));
+
+/**
  * Every entry below `root` must be a plain file or folder: a link or special file anywhere refuses
  * the package. A bundled package holds thousands of files and is inspected at every launch, so the
  * walk takes each entry's type from its folder's listing and reads several folders at once;
@@ -1032,7 +1043,7 @@ async function plainFolderEntries(dir: string): Promise<string[]> {
     // A file system that does not say what an entry is gets it asked of the entry itself.
     const kind = typeKnown(entry) ? entry : await lstat(file);
     const linkOrSpecial = kind.isSymbolicLink() || (!kind.isDirectory() && !kind.isFile());
-    if (linkOrSpecial) throw new Error(MESSAGE.LinksInPackage);
+    if (linkOrSpecial) throw new CodedError(PluginInstallProblem.UnsafePackage, MESSAGE.LinksInPackage);
     if (kind.isDirectory()) folders.push(file);
   }
   return folders;

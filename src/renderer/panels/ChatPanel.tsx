@@ -34,6 +34,9 @@ import { notifyProblem } from "../state/toasts.ts";
 import { isLocalDraft } from "../../shared/item-draft.ts";
 import { useLocalItemsSettle } from "../chat/use-local-items.ts";
 import { ChatSkeleton } from "../chat/ChatSkeleton.tsx";
+import { chatRoom, trackSendBlocked } from "../chat/send-analytics.ts";
+import { QuestionVia, SendBlock, SendSource } from "../analytics/chat-vocabulary.ts";
+import { sendQuestionAnswer } from "../analytics/events/chat.ts";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import { PromptBar, type PromptBarHandle } from "../ui/PromptBar.tsx";
 import { engineLoopGate, engineRewindNote } from "../engine-game.ts";
@@ -98,13 +101,22 @@ function heldAsksSignIn({ handover, composer }: ChatParts): boolean {
   return handover.held?.state === HeldState.SignedOut && !composer.gate.card?.waiting;
 }
 
+/** A send while an agent's question waits: the person's own words are its answer, counted once it went. */
+function questionSend(send: Send, thread: string | undefined): Send {
+  return (text, extras, preserveDraft, source) => {
+    const deliver = () => send(text, extras, preserveDraft, source);
+    if (!text.trim()) return deliver();
+    return sendQuestionAnswer({ thread, via: QuestionVia.OwnWords }, deliver);
+  };
+}
+
 /**
  * The composer's send while a card waits: words go to the card's own answer when it takes them
  * (words for Claude instead of its request); pictures alone, and every other card, go to the chat.
  */
-function ownSend(own: OwnAnswer | null, send: Send): Send {
+function ownSend(own: OwnAnswer | null, send: Send, thread: string | undefined): Send {
   const answer = own?.send;
-  if (!answer) return send;
+  if (!answer) return own?.answersQuestion ? questionSend(send, thread) : send;
   return async (text, extras, preserveDraft) => {
     if (!text.trim()) return send(text, extras, preserveDraft);
     await answer(text.trim());
@@ -150,7 +162,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
       signIn={heldAsksSignIn(parts) ? null : gate.card}
       questions={transcript.interviewQuestions.filter((entry) => entry.kind === EntryKind.Question)}
       questionsDisabled={busy || working}
-      onAnswerQuestion={(answer) => submit(answer, undefined, true)}
+      onAnswerQuestion={(answer) => submit(answer, undefined, true, SendSource.QuestionCard)}
       plan={planPrompt(parts, composerRef)}
       consents={transcript.pendingConsents.filter((entry) => entry.kind === EntryKind.Action)}
       onConsent={answerConsent}
@@ -200,11 +212,15 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
           busy={busy}
           // A game chat with no model keeps its prompt: Connect AI model takes the model's place.
           disabled={composer.noModel && chat.isStudioThread}
-          onSend={ownSend(own, submit)}
+          room={chatRoom(chat)}
+          onSend={ownSend(own, submit, threadId)}
           stoppable={work.stoppable && Boolean(parts.props.activeThread)}
           onStop={work.stop.requestStop}
           blockSend={gate.needsSignIn}
-          onBlockedSend={() => void gate.signIn()}
+          onBlockedSend={() => {
+            trackSendBlocked(parts, SendBlock.SignInNeeded, model.selected);
+            void gate.signIn();
+          }}
         />
       )}
     </ComposerDock>

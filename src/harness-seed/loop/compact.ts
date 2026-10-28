@@ -13,7 +13,7 @@ import { HostMethod } from "./host-methods.ts";
 import { RunEvent } from "./run-events.ts";
 import { lastContractorSession } from "./chat-session.ts";
 import { appendCustom, COMPACTING_PHASE, latestCompaction } from "./compaction-log.ts";
-import { StopReason } from "./outage.ts";
+import { EngineFailure, StopReason } from "./outage.ts";
 import type { HarnessCtx } from "../types/harness.d.ts";
 import type { Message } from "../types/host-api.d.ts";
 
@@ -109,11 +109,7 @@ export async function compactThread(ctx: HarnessCtx, options: CompactOptions): P
   try {
     summary = await summarise(ctx, options, engine, toSummarise, limit);
   } catch (error) {
-    await appendCustom(ctx, threadId, RunEvent.CompactionFailed, {
-      engine,
-      model: options.model,
-      error: String(error),
-    });
+    await appendCustom(ctx, threadId, RunEvent.CompactionFailed, failedRecord(engine, options.model, error));
     throw error;
   }
   if (ctx.cancelled) throw new Error(MESSAGE.cancelled);
@@ -217,4 +213,11 @@ async function summariseChunk(
   const content = response.message?.content?.trim();
   if (response.stopReason === StopReason.Length || !content) throw new Error(MESSAGE.incomplete);
   return content;
+}
+
+/** A summary that could not be written: its engine, the words, and the failure kind when the call named one. */
+function failedRecord(engine: string, model: string | undefined, error: unknown): Record<string, unknown> {
+  const kind = (error as { kind?: unknown } | null)?.kind;
+  const named = (Object.values(EngineFailure) as unknown[]).includes(kind);
+  return { engine, model, error: String(error), ...(named ? { failure: kind } : {}) };
 }

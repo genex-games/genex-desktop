@@ -92,7 +92,8 @@ function workLine(props: ChatWorkProps, leadFrame: AgentScreenFrame | undefined)
       {
         key: WorkKind.Work,
         node: (
-          <div className="flex min-w-0 flex-col gap-1">
+          // What the agent is doing, in its words, outside the transcript.
+          <div data-analytics-mask className="flex min-w-0 flex-col gap-1">
             <LoadingState
               key={props.workKey}
               details={props.details ? <WorkLogContent items={props.details} /> : undefined}
@@ -110,7 +111,8 @@ function workLine(props: ChatWorkProps, leadFrame: AgentScreenFrame | undefined)
       {
         key: WorkKind.Build,
         node: (
-          <div className="chat-work-build flex min-w-0 flex-col gap-2">
+          // The build's lead screen and its parts, named from the person's ask.
+          <div data-analytics-mask className="chat-work-build flex min-w-0 flex-col gap-2">
             <BuildStatus
               {...(props.runStarted !== undefined ? { since: props.runStarted } : {})}
               budgetMs={props.budgetMs}

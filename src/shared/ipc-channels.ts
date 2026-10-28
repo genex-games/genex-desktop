@@ -15,6 +15,7 @@
  * validating the fields it acts on.
  */
 import type { StudioApi } from "./studio-api.ts";
+import type { StudioErrorCode } from "./error-codes.ts";
 import type { AddSource, ShareItem } from "./asset-library.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
 import type { PlayControl, PlayPoint, PlayShelf } from "./play.ts";
@@ -613,8 +614,11 @@ export type StudioInvokeResult<C extends StudioInvokeChannel> = Awaited<
   ReturnType<StudioApi[(typeof STUDIO_INVOKE_CHANNELS)[C]]>
 >;
 
-/** Every invoke answers with this envelope; the preload turns `ok: false` into a rejection. */
-export type IpcResult<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
+/**
+ * Every invoke answers with this envelope; the preload turns `ok: false` into a rejection, with the
+ * failure's typed code when it had one (`CodedError`).
+ */
+export type IpcResult<T = unknown> = { ok: true; value: T } | { ok: false; error: string; code?: StudioErrorCode };
 
 /** Each push channel and the `StudioApi` subscription that delivers it. */
 export const STUDIO_PUSH_CHANNELS = {

@@ -163,10 +163,11 @@ describe("settling a Genex publish whose outcome is unknown", () => {
   it("a CLI failure after an upload that did land stays unresolved: no second upload", () =>
     withFixtureGit(async () => {
       let reads = 0;
+      // Two reads before the upload: whether the link is still this account's game, then its revision.
       const server = await startGenexFixtureApi(({ url }, reply) => {
         if (url === `/api/projects/by-slug/${SLUG}`)
           return reply.json({
-            project: { slug: SLUG, status: "draft", stagingCommitSha: reads++ === 0 ? "r1" : "r2" },
+            project: { slug: SLUG, status: "draft", stagingCommitSha: reads++ < 2 ? "r1" : "r2" },
           });
       });
       servers.push(server);

@@ -5,7 +5,11 @@
  */
 import { type JSX, useEffect, useState } from "react";
 import { sizeWords } from "../../shared/byte-size.ts";
-import { freeableBytes, STORAGE_KINDS, type StorageSpace } from "../../shared/storage-space.ts";
+import { freeableBytes, STORAGE_KINDS, type StorageFreed, type StorageSpace } from "../../shared/storage-space.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { freedProperties } from "../analytics/workspace-properties.ts";
+import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
 import { useLibrary } from "../state/hooks.ts";
 import { Button } from "../ui/Button.tsx";
 import { Pending } from "../ui/Pending.tsx";
@@ -89,8 +93,16 @@ export function StorageSection(): JSX.Element {
     setFreeing(true);
     setNotice(null);
     setError(null);
+    const offered = space ? freeableBytes(space) : 0;
+    const answered = (freed: StorageFreed | null): void =>
+      track(AnalyticsEvent.FreeSpaceAnswered, freedProperties(StorageSurface.Settings, offered, freed));
     try {
-      setNotice(freedWords(await window.studio.freeStorage(), titleOf));
+      const freed = await window.studio.freeStorage().catch((cause: unknown) => {
+        answered(null);
+        throw cause;
+      });
+      answered(freed);
+      setNotice(freedWords(freed, titleOf));
       setSpace(await window.studio.storageSpace());
     } catch (cause) {
       setError(problemWords(cause));
@@ -101,7 +113,12 @@ export function StorageSection(): JSX.Element {
   return (
     <div data-storage-settings className="appearance-section flex flex-col gap-3">
       {confirming && space && (
-        <FreeSpaceSheet space={space} onFree={() => void free()} onDone={() => setConfirming(false)} />
+        <FreeSpaceSheet
+          space={space}
+          surface={StorageSurface.Settings}
+          onFree={() => void free()}
+          onDone={() => setConfirming(false)}
+        />
       )}
       <section aria-label={STORAGE_WORDS.title} data-row className="settings-card">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -122,7 +139,8 @@ export function StorageSection(): JSX.Element {
       <InstalledGamesSection />
       {dataFolder?.movable && <DataFolderCard state={dataFolder} />}
       {notice && (
-        <p role="status" className="text-ink-2">
+        // It names the games that were left alone.
+        <p role="status" className="text-ink-2" data-analytics-mask>
           {notice}
         </p>
       )}

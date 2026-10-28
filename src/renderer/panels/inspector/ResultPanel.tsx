@@ -25,6 +25,39 @@ import { Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
 import { type Notify, notifyProblem, ToastTone } from "../../state/toasts.ts";
 import { webBuildShown } from "../../web-build-shown.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { BuildSurface } from "../../analytics/events/builds.ts";
+
+/** Play this build from the result card, and say whether it played. */
+function playBuild(build: { project: string; head: string }, refuse: (error: unknown) => void): void {
+  const played = (ok: boolean) =>
+    track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.ResultPanel, run_active: false, ok });
+  void window.studio
+    .showBuild(build.project, build.head)
+    .then(() => {
+      played(true);
+      webBuildShown(build.project);
+    })
+    .catch((error: unknown) => {
+      played(false);
+      refuse(error);
+    });
+}
+
+/** Make this build the game, and say whether it went. */
+function landBuild(build: { project: string; head: string }, onNotice: Notify, refuse: (error: unknown) => void): void {
+  void window.studio
+    .landBuild(build.project, build.head)
+    .then(() => {
+      track(AnalyticsEvent.BuildMadeLive, { ok: true });
+      onNotice(TOAST_WORDS.buildLive, ToastTone.Ok);
+    })
+    .catch((error: unknown) => {
+      track(AnalyticsEvent.BuildMadeLive, { ok: false });
+      refuse(error);
+    });
+}
 
 /** The most open problems the panel lists. */
 const STILL_OPEN_SHOWN = 5;
@@ -56,28 +89,11 @@ function BuildActions({
   const refuse = notifyProblem(onNotice);
   return (
     <>
-      <Button
-        variant="default"
-        onClick={() =>
-          void window.studio
-            .showBuild(build.project, build.head)
-            .then(() => webBuildShown(build.project))
-            .catch(refuse)
-        }
-      >
+      <Button variant="default" onClick={() => playBuild(build, refuse)}>
         <Icon name="play" size={13} />
         {t("Play this build")}
       </Button>
-      <Button
-        onClick={() =>
-          void window.studio
-            .landBuild(build.project, build.head)
-            .then(() => onNotice(TOAST_WORDS.buildLive, ToastTone.Ok))
-            .catch(refuse)
-        }
-      >
-        {t("Make it live")}
-      </Button>
+      <Button onClick={() => landBuild(build, onNotice, refuse)}>{t("Make it live")}</Button>
     </>
   );
 }

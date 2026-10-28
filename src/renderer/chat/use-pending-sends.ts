@@ -12,6 +12,8 @@ import type { QueueView } from "../../shared/message-queue.ts";
 import type { EventEnvelope } from "../types.ts";
 import { rememberMessageImages } from "./MessageImages.tsx";
 import { PENDING_SEND_GRACE_MS, type PendingSend, reconcilePendingSends, SendPlacement } from "./pending-sends.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** How long a message sent to an idle chat keeps its place while the queue picks it up. */
 const HOLD_IN_PLACE_MS = 1500;
@@ -136,6 +138,9 @@ export function usePendingSends(input: {
   useLayoutEffect(() => {
     for (const id of adoptedInPlace) if (!heldInPlace.current.has(id)) heldInPlace.current.set(id, Date.now());
     for (const id of sends.adopted.values()) adoptedEntries.current.add(id);
+    // Counted while still pending, so a second run of this effect cannot count it again.
+    for (const send of pending)
+      if (sends.expired.includes(send.clientId)) track(AnalyticsEvent.MessageRowMissing, { placement: send.placement });
     const settled = new Set([...sends.adopted.keys(), ...sends.expired]);
     if (settled.size) setPending((list) => list.filter((send) => !settled.has(send.clientId)));
   }, [sends, adoptedInPlace]);

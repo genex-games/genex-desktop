@@ -9,6 +9,17 @@ import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { TerminalSession } from "../../shared/terminal.ts";
+import { cliInstallAction, cliRecheckAction } from "../analytics/welcome-providers.ts";
+import {
+  reportAccountChanged,
+  reportProviderPress,
+  reportSignInHelper,
+  reportSignInStarted,
+  reportTerminalSignInCancelled,
+  settled,
+  useRowViewed,
+} from "../analytics/welcome-report.ts";
+import { AccountAction, ProviderAction, ProviderSurface, SignInHelper } from "../analytics/welcome-vocabulary.ts";
 import { useCliInstall } from "../cli-install.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
@@ -314,31 +325,52 @@ export default function CliSignInRow({
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const ready = engine.status.code === EngineStatusCode.Ready;
   const state = openCodeRowState(engine, { installing: install.installing, signingIn: Boolean(terminal) });
-  const signIn = (): void =>
+  useRowViewed(provider, state, ProviderSurface.Settings, engine.account?.cli.state);
+  const press = (action: ProviderAction) => reportProviderPress(provider, action, ProviderSurface.Settings);
+  const signIn = (): void => {
+    press(ProviderAction.SignIn);
     void run(async () => {
       setTerminalError(null);
       const started = await startSignIn();
+      reportSignInStarted(provider, started.started);
       if (!started.started) await recheck();
     });
-  const cancelSignIn = (): void => {
-    if (terminal) void run(() => window.studio.terminalStop(terminal.id));
   };
+  const cancelSignIn = (): void => {
+    if (!terminal) return;
+    reportTerminalSignInCancelled(provider);
+    void run(() => window.studio.terminalStop(terminal.id));
+  };
+  const openSignInPage = (session: TerminalSession) => (): void => {
+    reportSignInHelper(provider, SignInHelper.PageReopened, { surface: ProviderSurface.Settings });
+    void run(() => window.studio.terminalOpenLink(session.id));
+  };
+  const signedOut = (ok: boolean) => reportAccountChanged(provider, AccountAction.SignedOut, ok);
   const view = cliRowView(
     state,
     {
-      install: () => void install.install(),
-      recheck: () => void run(recheck),
+      install: () => {
+        press(cliInstallAction(state));
+        void install.install();
+      },
+      recheck: () => {
+        press(cliRecheckAction(state));
+        void run(recheck);
+      },
       signIn,
       cancelSignIn,
-      openSignInPage: terminal?.signInPage ? () => void run(() => window.studio.terminalOpenLink(terminal.id)) : null,
+      openSignInPage: terminal?.signInPage ? openSignInPage(terminal) : null,
       signOut: forgetSignIn
         ? () =>
             void run(async () => {
-              await forgetSignIn();
+              await settled(forgetSignIn, signedOut);
               await onEnginesRefresh();
             })
         : null,
-      update: () => void install.update(),
+      update: () => {
+        press(ProviderAction.Update);
+        void install.update();
+      },
     },
     words,
   );

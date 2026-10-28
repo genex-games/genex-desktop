@@ -158,6 +158,8 @@ export interface LocalOutcome {
   refusal: StoreRefusal | null;
   /** The field a refused upload names (`price`, `name`), when it names one. */
   field: string | null;
+  /** The code it was refused with when Studio has no words for it, which its card shows. */
+  code?: string;
   at: number;
 }
 

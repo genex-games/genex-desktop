@@ -26,7 +26,9 @@ A renderer action that needs main-process or core work.
 4. Main: register it in the domain's registrar, `src/main/ipc/<domain>.ts` (composed by
    `src/main/index.ts`), with `handle('studio:<area>.<verb>', payload => core.<method>(...))`.
    Do not annotate the payload: `handle()` types it and the result from the map, so a handler
-   that disagrees with the preload does not compile. It wraps errors and runs the fixture guard. Validate payload fields here or
+   that disagrees with the preload does not compile. It wraps errors and runs the fixture guard; a
+   refusal the renderer must tell apart throws a `CodedError` whose vocabulary is listed in
+   `src/shared/error-codes.ts`, and reaches the renderer with its code (`errorCode`). Validate payload fields here or
    in the core method (the sender is a browser); resolve path parameters by realpath inside the
    owned root. Push with `pushToRenderer(window.webContents, channel, payload)`, never a raw
    `send`.

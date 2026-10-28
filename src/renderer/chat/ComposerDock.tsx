@@ -9,7 +9,7 @@ import { t } from "../../shared/i18n.ts";
 import { CONFIRMATION_INPUT_MAX_CHARS } from "../../shared/plugins.ts";
 import type { PlanReviewRecord } from "../../shared/composer.ts";
 import { hostPlatform } from "../platform.ts";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { Button } from "../ui/Button.tsx";
 import { Input } from "../ui/input.tsx";
 import { AnimateHeight } from "../ui/animate-height.tsx";
@@ -24,6 +24,9 @@ import { ExportReview } from "./ExportReview.tsx";
 import { PermissionRequest, permissionOwnAnswer } from "./PermissionRequest.tsx";
 import { PlanQuestion } from "./PlanQuestion.tsx";
 import { type OwnAnswer, type WaitingCard, waitingHead } from "./waiting-cards.ts";
+import { trackPlanAction } from "./composer-cards.ts";
+import { PlanAction, QuestionVia } from "../analytics/chat-vocabulary.ts";
+import { sendQuestionAnswer } from "../analytics/events/chat.ts";
 import type { PermissionMode, ToolPermissionAnswer } from "../../shared/permissions.ts";
 
 type Question = Extract<ConversationEntry, { kind: typeof EntryKind.Question }>;
@@ -39,8 +42,14 @@ export interface PlanPrompt {
   onRevise: () => void;
 }
 
-/** What answering a consent card sends: approved or not, Always allow, and the edit of its field. */
-type OnConsent = (consentId: string, approved: boolean, always: boolean, input?: string) => Promise<void>;
+/** What answering a consent card sends: approved or not, Always allow, its field's value and whether it was edited. */
+type OnConsent = (
+  consentId: string,
+  approved: boolean,
+  always: boolean,
+  input?: string,
+  inputEdited?: boolean,
+) => Promise<void>;
 
 /** A card's field the person may edit before Allow, filled with what the agent asked for. */
 function ConsentField({
@@ -108,6 +117,7 @@ function ConsentCard({
           choice !== ConsentChoice.Decline,
           choice === ConsentChoice.Always,
           field ? typed : undefined,
+          field ? typed !== field.value : false,
         )
       }
     >
@@ -152,7 +162,7 @@ interface ComposerDockProps {
 type DockCard = WaitingCard & { node: ReactNode; own?: OwnAnswer };
 
 /** What the composer invites while an agent's question waits: its words are the answer. */
-const QUESTION_OWN_ANSWER: OwnAnswer = { placeholder: t("Write your own answer…") };
+const QUESTION_OWN_ANSWER: OwnAnswer = { placeholder: t("Write your own answer…"), answersQuestion: true };
 
 /**
  * Everything waiting on the user, most pressing first: permission requests hold up work already
@@ -192,7 +202,10 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
                 onAnswer={plan.onAnswer}
                 onRetry={plan.onRetry}
                 onChooseModel={plan.onChooseModel}
-                onSettings={() => openSettings(SettingsSection.Providers)}
+                onSettings={() => {
+                  trackPlanAction(plan.review.id, PlanAction.ModelProviders);
+                  openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.PlanCard);
+                }}
                 onRevise={plan.onRevise}
               />
             ),
@@ -210,8 +223,12 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
           choices={entry.choices}
           disabled={questionsDisabled}
           onConfirm={async (choice) => {
-            const answer = entry.choices.find((item) => item.id === choice);
-            if (answer) await onAnswerQuestion(choiceLabel(answer));
+            const index = entry.choices.findIndex((item) => item.id === choice);
+            const answer = entry.choices[index];
+            if (!answer) return;
+            await sendQuestionAnswer({ thread: props.conversationKey, via: QuestionVia.Choice, index }, () =>
+              onAnswerQuestion(choiceLabel(answer)),
+            );
           }}
         />
       ),
@@ -265,7 +282,10 @@ export function ComposerDock(props: ComposerDockProps): JSX.Element {
       {connectModel && (
         <div className="mb-2 text-chat-sub text-ink-3">
           {t("Connect a model to chat with Studio.")}
-          <Button variant="ghost" onClick={() => openSettings(SettingsSection.Providers)}>
+          <Button
+            variant="ghost"
+            onClick={() => openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.ConnectCard)}
+          >
             {t("Model Providers")}
           </Button>
         </div>

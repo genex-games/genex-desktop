@@ -43,6 +43,9 @@ export interface StageTab {
   icon?: IconName;
 }
 
+/** Whether a tab's name is the person's work (a file opened beside), kept out of usage recordings. */
+export const tabNamesTheirWork = (tab: Pick<StageTab, "key">): boolean => tab.key === StageView.File;
+
 /** What a tab press means: the stage view, and for a Live tab the observer key of its view (null for the pictures). */
 export type TabChoice = { view: typeof StageView.Live; live: string | null } | { view: StageView };
 

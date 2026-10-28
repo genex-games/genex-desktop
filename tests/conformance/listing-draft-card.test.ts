@@ -484,6 +484,28 @@ describe("the local card's presses", () => {
   });
 });
 
+describe("an upload after a refused one", () => {
+  /**
+   * An arena's classes were refused once, then went up on a later settle: the cards lost their
+   * pictures, since Selling, which names the uploaded item's picture, was never read again.
+   */
+  it("reads Selling again when a draft refused before went up", async () => {
+    const outcome = (kind: LocalOutcomeKind, skuId: string | null, refusal: StoreRefusal | null) => ({
+      [ICE.localId]: { kind, skuId, contentHash: ICE.contentHash, refusal, field: null, at: 1 },
+    });
+    const refused = localView({ outcomes: outcome(LocalOutcomeKind.Refused, null, StoreRefusal.Unknown) });
+    const onSale = localView({ outcomes: outcome(LocalOutcomeKind.OnSale, "sku_ice", null) });
+    const fake = fakeStudioApi({ itemsLocal: async () => refused, itemsLocalSettle: async () => onSale });
+    const items = createItemsStore(fake.api);
+    await items.readSelling();
+    await items.readLocal("ice-palace");
+    await items.settleLocal("ice-palace", false);
+    assert.equal(fake.callsOf("itemsSelling").length, 2, "Selling is read again for the item's picture");
+    await items.settleLocal("ice-palace", false);
+    assert.equal(fake.callsOf("itemsSelling").length, 2, "an upload Selling already read is not read again");
+  });
+});
+
 describe("when a chat with a local draft asks main to settle it at once", () => {
   const record = (state: GenexPublishJobState, finishedAt?: string) =>
     ({ job: { state, ...(finishedAt ? { finishedAt } : {}) } }) as unknown as GenexPublishState;

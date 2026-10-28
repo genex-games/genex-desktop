@@ -125,9 +125,11 @@ function NodeFrame({
     containIntrinsicSize: `${rect.w}px ${rect.h}px`,
   };
   return (
+    // A node names the build's own steps, written from the person's request.
     <button
       type="button"
       data-graph-node={id}
+      data-analytics-mask
       data-working={variant === Variant.Working && !selected ? "true" : undefined}
       data-agent-screen={screen ?? undefined}
       aria-label={label}

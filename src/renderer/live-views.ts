@@ -34,7 +34,7 @@ import {
 } from "../shared/project-facts.ts";
 import { RunState } from "../shared/run-state.ts";
 import type { HistoryEntry } from "./build-progress.ts";
-import { type CaptureInfo, GraphNodeKind, type IterationNode, type RunGraph, thumbShot } from "./run-graph.ts";
+import { type CaptureInfo, GraphNodeKind, type IterationNode, type RunGraph, roundShot } from "./run-graph.ts";
 import { STAGE_WORDS, savedByLead } from "./words.ts";
 
 /** The view Live shows: which one, the folder it shows, and the observer it comes from (none for the pictures). */
@@ -258,11 +258,14 @@ function newestSavePoint(graph: RunGraph): IterationNode | null {
   return newest;
 }
 
-/** The Unreal card's shot: the observer's newest capture, else the newest save point's still, as a run file path. */
+/**
+ * The Unreal card's shot: the observer's newest capture, else the newest save point's picture (the
+ * one its card wears), as a run file path.
+ */
 export function latestShot(graph: RunGraph | null | undefined, observer: string): string | null {
   if (!graph) return null;
   const [captured] = latestCaptures(graph, observer);
   if (captured) return captured.file;
   const saved = newestSavePoint(graph);
-  return saved ? (thumbShot(saved)?.path ?? null) : null;
+  return saved ? (roundShot(saved)?.path ?? null) : null;
 }

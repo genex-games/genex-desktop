@@ -11,7 +11,7 @@ import {
   openLoopBecause,
   startWebIfPending,
 } from "./folder-facts.ts";
-import { fireGates } from "./builtin-hooks.ts";
+import { BuiltinGate, fireGates } from "./builtin-hooks.ts";
 import { OLDER_LEAD_JOURNAL_KIND } from "./director/open/older-journal.ts";
 import { openLoopServed } from "./open-loop-parts.ts";
 import { leadsInPlace } from "./engine-seat.ts";
@@ -35,6 +35,22 @@ import { resumeStopped } from "./after-loop-run.ts";
 import { forgetProviderLosses } from "./provider-loss.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall, Run } from "../types/harness.d.ts";
 import type { EngineDescriptor, GameProject } from "../types/host-api.d.ts";
+
+/**
+ * Why a run's start was refused (`refusal` on `run_start_blocked`, beside its `reason` for the
+ * chat). The app reads it (its copy is `RunStartRefusal` in `shared/custom-events.ts`): never
+ * rename a value. It lives here, beside the one module that writes it, so a kept copy of any
+ * other loop file from before it still loads with this one.
+ */
+export const RunStartRefusal = {
+  /** A run already owns the chat or the game. */
+  RunOwnsThread: "run_owns_thread",
+  /** The folder is an engine's export: compiled, with nothing a run could edit. */
+  EngineExport: "engine_export",
+  /** Genex's `web.ready` gate: the web page lacks files it needs to load. */
+  WebNotReady: "web_not_ready",
+} as const;
+export type RunStartRefusal = (typeof RunStartRefusal)[keyof typeof RunStartRefusal];
 
 /**
  * This start reads a reopened run's inbox from its ask (`RunStart.reopen`), and closes a crashed
@@ -393,6 +409,7 @@ async function refuseSecondRun(host: Host, action: RunStart, conflict: ActiveRun
         runId: conflict.run.runId,
         requestedRunId: action.run.runId,
         reason: MESSAGE.runOwnsThread,
+        refusal: RunStartRefusal.RunOwnsThread,
       }),
       // Without this the refusal is an event nothing renders, and the chat's last word is a
       // promise to build for the whole run.
@@ -417,13 +434,18 @@ async function startReservedRun(
   const games = await host.call(HostMethod.GameList, {}).catch(() => []);
   const listed = games.find((g) => g.name === action.run.project) ?? null;
   const missing = launched && action.resume !== true ? await missingFiles(host, listed) : undefined;
-  const refused = loopRunRefusal(listed, [], missing);
+  const refused = loopRunRefused(listed, missing);
   if (refused) {
+    const { reason, refusal } = refused;
     await host.call(HostMethod.EventsAppend, {
       threadId,
       batch: [
-        customEvent(RunEvent.RunStartBlocked, { requestedRunId: action.run.runId, reason: refused }),
-        assistantSays(refused),
+        customEvent(RunEvent.RunStartBlocked, {
+          requestedRunId: action.run.runId,
+          reason,
+          ...(refusal ? { refusal } : {}),
+        }),
+        assistantSays(reason),
       ],
     });
     return;
@@ -808,10 +830,37 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
  * builder's first job.
  */
 export function loopRunRefusal(
-  descriptor: (FactsOfDescriptor & { name?: string; shape?: { kind?: string } | null }) | null | undefined,
+  descriptor: LoopRunFolder,
   _problems: readonly string[] | null | undefined,
   missing?: unknown,
 ): string | null {
-  if (descriptor?.shape?.kind === "engine-export") return MESSAGE.engineExport(descriptor.name);
-  return fireGates(HookEvent.RunPrepare, { game: descriptor, missing }).blocked?.reason ?? null;
+  return loopRunRefused(descriptor, missing)?.reason ?? null;
+}
+
+/** The folder a run would be spent on, as `game.list` describes it. */
+type LoopRunFolder = (FactsOfDescriptor & { name?: string; shape?: { kind?: string } | null }) | null | undefined;
+
+/** The refusal each of Genex's own gates stands for when it blocks a run's start. */
+const GATE_REFUSALS: Readonly<Record<BuiltinGate, RunStartRefusal>> = {
+  [BuiltinGate.WebReady]: RunStartRefusal.WebNotReady,
+};
+
+/** The refusal a block by `step` stands for: one of Genex's gates, or null for any other step. */
+function gateRefusal(step: string): RunStartRefusal | null {
+  const gate = Object.values(BuiltinGate).find((value) => value === step);
+  return gate ? GATE_REFUSALS[gate] : null;
+}
+
+/**
+ * {@link loopRunRefusal} with its code: the sentence for the chat and the `RunStartRefusal` the
+ * start's `run_start_blocked` records beside it, or null to launch.
+ */
+export function loopRunRefused(
+  descriptor: LoopRunFolder,
+  missing?: unknown,
+): { reason: string; refusal: RunStartRefusal | null } | null {
+  if (descriptor?.shape?.kind === "engine-export")
+    return { reason: MESSAGE.engineExport(descriptor.name), refusal: RunStartRefusal.EngineExport };
+  const blocked = fireGates(HookEvent.RunPrepare, { game: descriptor, missing }).blocked;
+  return blocked ? { reason: blocked.reason, refusal: gateRefusal(blocked.tool) } : null;
 }

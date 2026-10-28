@@ -150,7 +150,12 @@ function RuntimeBody({ blender }: { blender: ReturnType<typeof useBlenderStatus>
         }
         actions={<Button onClick={() => void blender.refresh()}>{WORDS.checkAgain}</Button>}
       >
-        {runtime.path && <p className="blender-path">{appBundle(runtime.path)}</p>}
+        {runtime.path && (
+          // The Blender the person chose, named from where it is on their disk.
+          <p className="blender-path" data-analytics-mask>
+            {appBundle(runtime.path)}
+          </p>
+        )}
       </Prompt>
     );
   const { title, text } = notReadyWords(runtime, pinned, size);

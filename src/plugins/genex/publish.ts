@@ -90,6 +90,23 @@ export interface HostedMeta {
   stagingCommit?: string;
 }
 
+/** What Genex says about the game a workspace is linked to: the project under its slug and that project's owner. */
+export interface LinkedAnswer {
+  id?: unknown;
+  ownerId?: unknown;
+}
+
+/**
+ * Whether the game a workspace is linked to is no longer this account's to publish to: another
+ * project now holds its slug, or someone else owns it (an admin's sign-in sees other people's
+ * games). A field Genex or the sign-in didn't give never decides.
+ */
+export function linkedElsewhere(meta: HostedMeta, answer: LinkedAnswer, userId: unknown): boolean {
+  const known = (value: unknown): value is string => typeof value === "string" && value !== "";
+  if (known(meta.id) && known(answer.id) && meta.id !== answer.id) return true;
+  return known(answer.ownerId) && known(userId) && answer.ownerId !== userId;
+}
+
 /** A job's phase when its outcome became unknown: `phase` then reads 'unresolved' for the panel, and Check again still needs to know a gallery listing from a promotion. */
 export type InterruptedJob = GenexPublishJob & { interruptedIn?: GenexPublishJob["phase"] };
 export const phaseOf = (job: GenexPublishJob): GenexPublishJob["phase"] =>

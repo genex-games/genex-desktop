@@ -28,6 +28,7 @@ import type { PluginBinding } from "../../src/shared/plugins.ts";
 import { ItemState, ItemType } from "../../src/shared/store-items.ts";
 import { isHostOnlyUiEvent, UiEvent } from "../../src/shared/ui-events.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
+import { pngPicture } from "../helpers/picture.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const HOSTED = "proj_1";
@@ -304,7 +305,7 @@ async function profile() {
   // The game the call is bound to, with the item's picture a shop add names.
   const game = path.join(root, "games", "space-race");
   await mkdir(path.join(game, ".genex", "scratch"), { recursive: true });
-  await writeFile(path.join(game, ".genex", "scratch", "frost-axe.png"), "PNG-frost");
+  await writeFile(path.join(game, ".genex", "scratch", "frost-axe.png"), pngPicture(1024, 1024, "frost"));
   return { root, genexStorage, game };
 }
 

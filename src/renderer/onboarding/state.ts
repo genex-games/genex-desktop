@@ -24,6 +24,18 @@ export function shouldWelcome(allowed: boolean | undefined, games: number, stora
   return allowed === true && games === 0 && storage.getItem(WELCOMED_KEY) !== "1";
 }
 
+/** The onboarding screens: the welcome, Connect, and one for each of Connect's other ways. */
+export const WelcomeScreen = {
+  Welcome: "welcome",
+  Connect: "connect",
+  Local: "local",
+  OpenRouter: "openrouter",
+  OpenCode: "opencode",
+  Grok: "grok",
+  Cursor: "cursor",
+} as const;
+export type WelcomeScreen = (typeof WelcomeScreen)[keyof typeof WelcomeScreen];
+
 /** A subscription first launch offers to connect: Claude Code or Codex. */
 export type Subscription = SubscriptionId;
 /** The subscriptions, in the order their buttons stand. */

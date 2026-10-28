@@ -37,9 +37,12 @@ import {
   PluginAccountState,
   PluginCapability,
   PluginChangeReason,
+  PluginFailure,
   PluginHealth,
+  PluginInstallProblem,
   PluginService,
   PluginSourceKind,
+  PluginStateRefusal,
   type CallCutOff,
   type PluginBinding,
   type PluginCatalogEntry,
@@ -68,6 +71,7 @@ import {
 import { atomicWriteJson } from "../fsx.ts";
 import {
   canonicalManifest,
+  inspectForInstall,
   inspectPackage,
   readPluginIcon,
   readSkillFile,
@@ -85,6 +89,8 @@ import { containedReal } from "../paths.ts";
 import { SessionCredentials } from "../session-credentials.ts";
 import { PluginCallCutOff, type PluginHostEnv, type PluginInvocation, PluginProcess } from "./process.ts";
 import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
+import { asInstallProblem, refusedAs } from "./install-problem.ts";
+import { CodedError } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { currentLocale, t } from "../../shared/i18n.ts";
 import type { Locale } from "../../shared/locale.ts";
@@ -523,18 +529,21 @@ function recordedOrigin(source: PluginSourceKind, directory: string): PluginSour
 }
 /** A catalog artifact's bytes, refused past {@link MAX_ARTIFACT_BYTES}. */
 async function downloadArtifact(url: string): Promise<Buffer> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(CATALOG_DOWNLOAD_TIMEOUT_MS), redirect: "error" });
-  if (!response.ok || !response.body) throw new Error(MESSAGE.DownloadFailed(response.status));
+  const response = await refusedAs(PluginInstallProblem.DownloadFailed, () =>
+    fetch(url, { signal: AbortSignal.timeout(CATALOG_DOWNLOAD_TIMEOUT_MS), redirect: "error" }),
+  );
+  if (!response.ok || !response.body)
+    throw new CodedError(PluginInstallProblem.DownloadFailed, MESSAGE.DownloadFailed(response.status));
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await refusedAs(PluginInstallProblem.DownloadFailed, () => reader.read());
     if (done) break;
     size += value.length;
     if (size > MAX_ARTIFACT_BYTES) {
       await reader.cancel();
-      throw new Error(MESSAGE.ArtifactTooLarge());
+      throw new CodedError(PluginInstallProblem.TooLarge, MESSAGE.ArtifactTooLarge());
     }
     chunks.push(value);
   }
@@ -553,7 +562,7 @@ function assertReplacementConfirmed(
   answer: { key: string; expires: number } | undefined,
 ) {
   const confirmed = answer?.key === identityKey(identity) && answer.expires >= Date.now();
-  if (!confirmed) throw new Error(MESSAGE.ConfirmReplacement(next, previous));
+  if (!confirmed) throw new CodedError(PluginInstallProblem.NeedsReview, MESSAGE.ConfirmReplacement(next, previous));
 }
 /** An update may not gain capabilities, servers or hosts the user was never shown. */
 function assertUpdateReviewed(
@@ -562,18 +571,19 @@ function assertUpdateReviewed(
   approved: string[] | undefined,
   reason: PluginChange["reason"] | undefined,
 ) {
-  if (expandsCapabilities(next, current, approved)) throw new Error(MESSAGE.PermissionExpansion());
+  const needsReview = (words: string) => new CodedError(PluginInstallProblem.NeedsReview, words);
+  if (expandsCapabilities(next, current, approved)) throw needsReview(MESSAGE.PermissionExpansion());
   // An MCP server is native code with an environment of its own: changing what one runs, where
   // it runs or what it is handed is an expansion of the same kind a new capability is, and an
   // update that was never shown to anybody must not quietly acquire it.
-  if (approved === undefined && !sameServers(next, current)) throw new Error(MESSAGE.PermissionExpansion());
+  if (approved === undefined && !sameServers(next, current)) throw needsReview(MESSAGE.PermissionExpansion());
   // A hot reload carries the capabilities the user approved, not a review of new servers or hosts.
   if (reason === PluginChangeReason.Reloaded && reviewedLaunch(next) !== reviewedLaunch(current))
-    throw new Error(MESSAGE.ServersChanged());
+    throw needsReview(MESSAGE.ServersChanged());
   // Nor of the steps Genex runs on its own, with no card: a hook, an observer, a lock's person-first
   // probe, a folder workers may write in, a harness tool or a readiness check.
   if (reason === PluginChangeReason.Reloaded && harnessSteps(next) !== harnessSteps(current))
-    throw new Error(MESSAGE.StepsChanged());
+    throw needsReview(MESSAGE.StepsChanged());
 }
 
 /** What of a plugin Genex runs or widens on its own, without asking, in one comparable form. */
@@ -1138,7 +1148,10 @@ export class PluginRegistry {
   assertInstallable(manifest: Pick<PluginManifest, "id">, origin: PluginSource) {
     const fromStudio = origin.kind === PluginSourceKind.Bundled || origin.kind === PluginSourceKind.Catalog;
     if (fromStudio || !this.#seedManifests.has(manifest.id)) return;
-    throw new Error(MESSAGE.BundledId(manifest.id, origin.kind === PluginSourceKind.Local));
+    throw new CodedError(
+      PluginInstallProblem.IdTaken,
+      MESSAGE.BundledId(manifest.id, origin.kind === PluginSourceKind.Local),
+    );
   }
   /**
    * The installed (or removed) plugin this package would replace, when it is not the same identity:
@@ -1622,7 +1635,7 @@ export class PluginRegistry {
   async setEnabled(id: string, enabled: boolean) {
     return this.#serial(async () => {
       const p = this.#installed.get(id);
-      if (!p || p.removed) throw new Error(MESSAGE.InstallFirst());
+      if (!p || p.removed) throw new CodedError(PluginStateRefusal.InstallFirst, MESSAGE.InstallFirst());
       const wasEnabled = p.enabled;
       // A local plugin loaded off ran none of its code: its backend is proven as the person turns it on.
       if (enabled && !wasEnabled && p.source === PluginSourceKind.Local) await this.#probe(p.directory, p.manifest);
@@ -1670,8 +1683,9 @@ export class PluginRegistry {
   async remove(id: string) {
     return this.#serial(async () => {
       const p = this.#installed.get(id);
-      if (!p) throw new Error(MESSAGE.UnknownPlugin);
-      if (this.#keepsAccount(p)) throw new Error(MESSAGE.AccountPlugin(p.manifest.name));
+      if (!p) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.UnknownPlugin);
+      if (this.#keepsAccount(p))
+        throw new CodedError(PluginStateRefusal.KeepsAccount, MESSAGE.AccountPlugin(p.manifest.name));
       p.enabled = false;
       p.removed = true;
       this.#lockAccount(id);
@@ -1700,13 +1714,14 @@ export class PluginRegistry {
         p?.scan,
       );
     if (origin?.kind === PluginSourceKind.Local) {
-      if (!origin.directory || !(await isDirectory(origin.directory))) throw new Error(MESSAGE.FolderGone());
+      if (!origin.directory || !(await isDirectory(origin.directory)))
+        throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.FolderGone());
       // No `scan` argument: the folder is read again, so the verdict is recomputed rather than inherited.
       return this.installLocal(origin.directory, PluginSourceKind.Local, p?.manifest.capabilities, origin);
     }
-    if (!origin) throw new Error(MESSAGE.OriginUnknown());
+    if (!origin) throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.OriginUnknown());
     const info = this.list().find((x) => x.manifest.id === id);
-    if (!this.reacquire || !info) throw new Error(MESSAGE.NeedsMarketplace());
+    if (!this.reacquire || !info) throw new CodedError(PluginInstallProblem.NotReady, MESSAGE.NeedsMarketplace());
     await this.reacquire(info);
     const after = this.#installed.get(id);
     if (!after || after.removed) throw new Error(MESSAGE.NotReinstalled());
@@ -1729,7 +1744,7 @@ export class PluginRegistry {
     scan?: PluginScan,
     reason?: PluginChange["reason"],
   ) {
-    const manifest = await inspectPackage(directory),
+    const manifest = await inspectForInstall(directory),
       previous = this.#installed.get(manifest.id);
     const recorded = origin ?? recordedOrigin(source, directory);
     // An answer is spent by the next install of that id, whatever becomes of it.
@@ -1786,7 +1801,7 @@ export class PluginRegistry {
         filter: (source) => packaged(source) && fromSeed(source),
         mode: constants.COPYFILE_FICLONE,
       });
-      await inspectPackage(destination);
+      await inspectForInstall(destination);
     } catch (e) {
       await rm(destination, { recursive: true, force: true });
       throw e;
@@ -1800,7 +1815,10 @@ export class PluginRegistry {
     }
     return destination;
   }
-  /** Prove a staged package's backend starts: it loads and answers a ping, with no host services. */
+  /**
+   * Prove a staged package's backend starts: it loads and answers a ping, with no host services.
+   * Whatever stops it (it exits, throws, never answers) is refused as `BackendFailed`.
+   */
   async #probe(directory: string, manifest: PluginManifest, seed?: string): Promise<void> {
     const probe = new PluginProcess(
       this.bootstrap,
@@ -1813,6 +1831,8 @@ export class PluginRegistry {
     );
     try {
       await probe.call("ping", "", {});
+    } catch (error) {
+      throw asInstallProblem(PluginInstallProblem.BackendFailed, error);
     } finally {
       probe.stop();
     }
@@ -1835,7 +1855,7 @@ export class PluginRegistry {
   async allowUnlisted(id: string, approvedCapabilities?: string[], scan?: PluginScan) {
     return this.#serial(async () => {
       const u = this.#unlisted.get(id);
-      if (!u) throw new Error(MESSAGE.UnknownPlugin);
+      if (!u) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.UnknownPlugin);
       const manifest = await this.#installLocal(
         u.directory,
         PluginSourceKind.Local,
@@ -1853,11 +1873,12 @@ export class PluginRegistry {
   }
   async installCatalog(id: string, approvedCapabilities: string[]) {
     const entry = (await this.catalog()).find((p) => p.manifest.id === id);
-    if (!entry) throw new Error(MESSAGE.NotInCatalog());
+    if (!entry) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.NotInCatalog());
     if (!entry.url.startsWith("https://") || !SHA256_HEX.test(entry.sha256))
-      throw new Error(MESSAGE.InvalidCatalogArtifact());
+      throw new CodedError(PluginInstallProblem.CatalogMismatch, MESSAGE.InvalidCatalogArtifact());
     const bytes = await downloadArtifact(entry.url);
-    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error(MESSAGE.DigestMismatch());
+    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256)
+      throw new CodedError(PluginInstallProblem.IntegrityMismatch, MESSAGE.DigestMismatch());
     return this.installEnvelope(
       bytes,
       PluginSourceKind.Catalog,
@@ -1865,7 +1886,7 @@ export class PluginRegistry {
       { kind: PluginSourceKind.Catalog, url: entry.url, sha256: entry.sha256 },
       async (manifest) => {
         if (canonicalManifest(manifest) !== canonicalManifest(entry.manifest))
-          throw new Error(MESSAGE.CatalogMismatch());
+          throw new CodedError(PluginInstallProblem.CatalogMismatch, MESSAGE.CatalogMismatch());
         return undefined;
       },
     );
@@ -1886,7 +1907,7 @@ export class PluginRegistry {
     await mkdir(stage, { recursive: true, mode: 0o700 });
     try {
       await unpackEnvelope(bytes, stage);
-      const manifest = await inspectPackage(stage);
+      const manifest = await inspectForInstall(stage);
       const scan = verify ? await verify(manifest, stage) : undefined;
       return await this.installLocal(stage, source, approvedCapabilities, origin, scan);
     } finally {
@@ -1955,7 +1976,7 @@ export class PluginRegistry {
     } catch (e) {
       this.#errors.set(id, String(e));
       this.debug?.(id, `reload failed: ${String(e)}`);
-      this.#fire({ id, reason: PluginChangeReason.Failed });
+      this.#fire({ id, reason: PluginChangeReason.Failed, failure: PluginFailure.ReloadRefused });
     }
   }
   /**
@@ -2042,13 +2063,13 @@ export class PluginRegistry {
         this.bootstrap,
         path.join(p.directory, p.manifest.backend),
         this.#hostService(id, p),
-        (error) => {
+        (error, failure) => {
           if (this.#processes.get(id) === process) {
             this.#errors.set(id, error);
             this.#processes.delete(id);
             // A backend that ended takes its jobs with it: nobody is left to read or stop them.
             void this.sandboxJobs?.stopAll(id).catch(() => {});
-            this.#fire({ id, reason: PluginChangeReason.Failed });
+            this.#fire({ id, reason: PluginChangeReason.Failed, failure });
           }
         },
         {

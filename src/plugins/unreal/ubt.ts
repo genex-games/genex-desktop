@@ -1,7 +1,8 @@
 /**
  * Compiling a game's C++ with UnrealBuildTool. A builder's part is compiled in the builder's own
  * copy of the game, so the editor queue only ever gets code that compiles: the engine's `Build.sh`
- * builds `<Module>Editor` for the copy's .uproject with `-NoMutex`, since UBT otherwise holds one
+ * builds the project's editor target (`editorTarget`: `<Module>Editor` unless the project named it
+ * otherwise) for the copy's .uproject with `-NoMutex`, since UBT otherwise holds one
  * lock per engine and a second build fails (ConflictingInstance), and `-NoUBA`: the build
  * accelerator opens a network port and resolves paths by listing the folders above the project,
  * which the build's sandbox closes when the copy is in the home folder (the plain executor builds
@@ -18,7 +19,7 @@ import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
-import { isModuleName } from "./cpp-module.ts";
+import { editorTarget, isModuleName } from "./cpp-module.ts";
 import { isProjectPath } from "./project-file.ts";
 import {
   type BuildSandbox,
@@ -45,7 +46,6 @@ const ELLIPSIS = "…";
 const MAC = "darwin";
 const TARGET_PLATFORM = "Mac";
 const CONFIGURATION = "Development";
-const EDITOR_SUFFIX = "Editor";
 const NO_MUTEX = "-NoMutex";
 const NO_ACCELERATOR = "-NoUBA";
 /** Where a project keeps its own plugins, each in a folder with its descriptor. */
@@ -159,7 +159,7 @@ const REFERENCED_BY = /^(?<user>.+ in \S+\.o)$/;
 const RESULT_LINE = /^Result: /;
 /** Lines UBT prints just before its result that never say why it failed. */
 const RESULT_NOISE =
-  /^(?:Total time in |Total execution time|Trace written|Output binary:|Deploying|\[\d+\/\d+\] |\d+ errors? generated\.)/;
+  /^(?:Total time in |Total execution time|Trace written|Output binary:|Deploying|Location: |\[\d+\/\d+\] |\d+ errors? generated\.)/;
 /** UBT's progress lines from the start of a build: reaching them, nothing before the result explained it. */
 const PREAMBLE =
   /^(?:Setting up bundled|Running dotnet|Log file:|Determining max actions|Executing up to|UbaServer|Invalidating makefile|Creating makefile|Compiling with|Using |Building |CppDependencyCache|UHT |\/.+\/DotNet\/)/;
@@ -489,7 +489,7 @@ async function runConfined(options: CompileOptions, args: string[], signal: Abor
 /** Runs Build.sh once, within the deadline, and reads its output. */
 async function build(options: CompileOptions): Promise<CompileResult> {
   const now = options.now ?? Date.now;
-  const target = `${options.module}${EDITOR_SUFFIX}`;
+  const target = await editorTarget(options.projectFile, options.module);
   const args = [target, TARGET_PLATFORM, CONFIGURATION, `-Project=${options.projectFile}`, NO_MUTEX, NO_ACCELERATOR];
   const deadline = new AbortController();
   const timer = setTimeout(() => deadline.abort(), options.timeoutMs ?? COMPILE_TIMEOUT_MS);
@@ -512,7 +512,7 @@ async function build(options: CompileOptions): Promise<CompileResult> {
 }
 
 /**
- * Compiles the game's editor target (`<Module>Editor Mac Development -Project=… -NoMutex -NoUBA`) with
+ * Compiles the game's editor target (`<EditorTarget> Mac Development -Project=… -NoMutex -NoUBA`) with
  * the engine's Build.sh, waiting for a free slot first. Never throws: off a Mac, for input it
  * won't hand UBT, when stopped, past the deadline or when Build.sh can't start, the result says so.
  */

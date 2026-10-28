@@ -7,6 +7,8 @@
  */
 import { useId, useState, type JSX } from "react";
 import { EngineId } from "../../shared/providers.ts";
+import { reportFreeModelPicked, useRowViewed } from "../analytics/welcome-report.ts";
+import { ProviderSurface } from "../analytics/welcome-vocabulary.ts";
 import { OpenCodeRowState } from "../panels/opencode-row.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
@@ -55,8 +57,12 @@ export function useFreeModel(code: OpenCode, engines: EngineDescriptor[], others
   const [key, setKey] = useState(() => defaultModelKey(EngineId.OpenCode));
   const models = engines.find((engine) => engine.id === EngineId.OpenCode)?.models ?? [];
   const options = freeModelOptions(models);
+  const pick = (next: string): void => {
+    reportFreeModelPicked(next === defaultModelKey(EngineId.OpenCode), options.length);
+    setKey(next);
+  };
   const free: FreeModels | null = picksFreeModel(code.row, othersOn)
-    ? { options, picked: pickedFreeModel(options, key), onPick: setKey }
+    ? { options, picked: pickedFreeModel(options, key), onPick: pick }
     : null;
   return {
     free,
@@ -204,6 +210,7 @@ export function OpenCodeScreen({
   const heading = useHeadingFocus();
   const session = code.row === OpenCodeRowState.SigningIn ? code.terminal : undefined;
   const picking = free !== null && code.row === OpenCodeRowState.FreeOnly;
+  useRowViewed(EngineId.OpenCode, code.row, ProviderSurface.Onboarding, null);
   return (
     <section className="onboarding-screen onboarding-provider onboarding-enter" data-picking={picking || undefined}>
       <TopBar onBack={onBack} onSkip={anyOn ? undefined : onSkip} />

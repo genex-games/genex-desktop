@@ -4638,6 +4638,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "O que o Claude faz sem perguntar. Escolher “Sempre permitir” em um chat adiciona a ação aqui, para aquele jogo.",
   "What Harness has learned": "O que o Harness aprendeu",
+  "What changed": "O que mudou",
   "What changes": "O que muda",
   "What credits pay for": "Para que servem os créditos",
   "What do you want to make?": "O que você quer criar?",
@@ -5561,6 +5562,8 @@ export default {
     "{count, plural, one {O histórico dele fica guardado ao lado, renomeado para .git.studio-backup.} other {Os históricos deles ficam guardados ao lado, renomeados para .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {# arquivo do jogo restaurado.} other {# arquivos do jogo restaurados.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, one {Ao voltar, não dá para recuperar # arquivo desta mudança: ela passou de {size} de uma vez, então os maiores ficaram de fora: {files}.} other {Ao voltar, não dá para recuperar # arquivos desta mudança: ela passou de {size} de uma vez, então os maiores ficaram de fora: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, one {Ao voltar, não dá para recuperar # arquivo grande demais para salvar: {files}.} other {Ao voltar, não dá para recuperar # arquivos grandes demais para salvar: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -6231,4 +6234,21 @@ export default {
   "Allow in this chat": "Permitir neste chat",
   "Allowed in this chat": "Permitido neste chat",
   "Don't ask again for this action in this chat.": "Não perguntar de novo sobre esta ação neste chat.",
+  "A replay of your first week": "Uma gravação da sua primeira semana",
+  "Change it anytime in Settings.": "Dá para mudar quando quiser em Configurações.",
+  "Don't share": "Não compartilhar",
+  "Help improve Genex?": "Quer ajudar a melhorar o Genex?",
+  "How you move through the app, with your work blanked out": "Como você navega pelo app, com seu trabalho escondido",
+  "Never your work or name": "Nunca seu trabalho nem seu nome",
+  "Prompts, code, files, game names and accounts are left out":
+    "Pedidos, código, arquivos, nomes de jogos e contas ficam de fora",
+  "Screens, clicks and errors": "Telas, cliques e erros",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "Telas, cliques, erros e tempos de espera, e até {date} uma gravação de como você navega pelo app com seu trabalho escondido. Vai para o PostHog na UE com um id aleatório.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "Telas, cliques, erros e tempos de espera. Vai para o PostHog na UE com um id aleatório.",
+  "Share usage data": "Compartilhar dados de uso",
+  "Show us where Genex gets in your way.": "Mostre onde o Genex atrapalha você.",
+  "Where you go, what fails and how long it takes": "Aonde você vai, o que falha e quanto tempo leva",
+  "usage data\u0004Share": "Compartilhar",
 } satisfies LocaleCatalog;

@@ -203,6 +203,7 @@ export class LocalItems {
         contentHash,
         refusal: item.refusal ?? StoreRefusal.Unknown,
         field: item.field,
+        ...(item.code ? { code: item.code } : {}),
         at,
       };
     const uploaded = { skuId, contentHash, refusal: null, field: null, at };

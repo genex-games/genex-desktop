@@ -106,7 +106,7 @@ export interface AutopilotCommission {
 /**
  * Who wrote a message the chat sends when the words are not the user's: the chat reporting how a
  * command the user ran from a reply went, that the person turned on a plugin the agent suggested,
- * or what an engine's setup card has to say (done, or a step stopped). The agent reads it; the transcript never
+ * what an engine's setup card has to say (done, or a step stopped), or why a Loop didn't start. The agent reads it; the transcript never
  * draws it. Recorded with the queued message: never rename a value.
  */
 export const MessageOrigin = {
@@ -115,6 +115,8 @@ export const MessageOrigin = {
   SetupCard: "setup-card",
   /** A tag the person tried again, now attached: its line for the agent. */
   TagRetry: "tag-retry",
+  /** A Loop the chat started that a plugin held back before its first turn: why, for the agent to fix (`core/held-start.ts`). */
+  LoopHeld: "loop-held",
 } as const;
 export type MessageOrigin = (typeof MessageOrigin)[keyof typeof MessageOrigin];
 const MESSAGE_ORIGINS: ReadonlySet<unknown> = new Set(Object.values(MessageOrigin));

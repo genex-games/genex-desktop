@@ -4,8 +4,15 @@
  * When the installer finishes, the CLI is looked for afresh; an installer that exits cleanly but
  * leaves no working CLI is a failure. The installer's own words go to the log, never the screen.
  */
-import { CliInstallOperation, CliInstallPhase, CliInstallProblem, type CliInstallJob } from "../shared/cli-install.ts";
+import {
+  CliInstallOperation,
+  CliInstallPhase,
+  CliInstallProblem,
+  CliInstallRefusal,
+  type CliInstallJob,
+} from "../shared/cli-install.ts";
 import type { CodingProvider } from "../shared/coding-cli.ts";
+import { CodedError } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 import { EngineId } from "../shared/providers.ts";
 import { UiEvent } from "../shared/ui-events.ts";
@@ -96,10 +103,12 @@ export function createCliInstalls(deps: CliInstallsDeps) {
   return {
     /** Start `provider`'s install, or return the one already running. Anything else is refused. */
     start(provider: unknown, operation: CliInstallOperation = CliInstallOperation.Install): CliInstallJob {
-      if (!isInstallable(provider)) throw new Error(MESSAGE.unknownProvider(provider));
+      if (!isInstallable(provider))
+        throw new CodedError(CliInstallRefusal.UnknownProvider, MESSAGE.unknownProvider(provider));
       const current = jobs.get(provider);
       if (current?.phase === CliInstallPhase.Installing) return current;
-      if (operation === CliInstallOperation.Update && deps.busy?.()) throw new Error(MESSAGE.busy());
+      if (operation === CliInstallOperation.Update && deps.busy?.())
+        throw new CodedError(CliInstallRefusal.Busy, MESSAGE.busy());
       const job = publish({ provider, operation, phase: CliInstallPhase.Installing, startedAt: now().toISOString() });
       running.set(
         provider,

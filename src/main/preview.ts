@@ -2,10 +2,12 @@ import { previewVisibility } from "./preview-visibility.ts";
 import {
   CaptureSource,
   CaptureSurface,
+  LiveLoadFailure,
   type PreviewGone,
   PreviewConsoleSource,
   previewGone,
 } from "../shared/preview-contract.ts";
+import { failedLoad } from "./preview-load-failure.ts";
 import { PreviewProfiler, type ProfileRequest } from "../substrate/preview-profiler.ts";
 /**
  * Game preview.
@@ -141,7 +143,13 @@ export interface PreviewLiveStatus {
   /** The person stopped the game: its page is gone until Play (`resume`) brings it back. */
   stopped: boolean;
   loadError: string | null;
+  /** What kind of failure `loadError` is: Chromium's, or the game's own build; null while there is none. */
+  loadFailure: LiveLoadFailure | null;
   crashed: boolean;
+  /** Why the renderer went away while `crashed`; null while it runs. */
+  gone: PreviewGone | null;
+  /** The page's loop stopped answering (Electron's `unresponsive`) and has not answered since. */
+  unresponsive: boolean;
   page: { complete: boolean; resources: number; state: Record<string, unknown> | null } | null;
 }
 
@@ -254,6 +262,8 @@ export class GamePreview {
   #gone: PreviewGone | null = null;
   #unresponsive = false;
   #loadError: string | null = null;
+  /** What kind of failure `#loadError` is; set and cleared with it. */
+  #loadFailure: LiveLoadFailure | null = null;
   #captureRecoveries = 0;
   /** What the page said about the last picture it took (or declined to take) — M4.9a. */
   #pageCaptureInfo: PageCaptureInfo | null = null;
@@ -414,8 +424,11 @@ export class GamePreview {
       this.#unresponsive = false;
     });
     wc.on("did-fail-load", (_event, code, description, url) => {
-      if (code === -3) return; // aborted, e.g. superseded navigation
-      this.#loadError = `${description} (${code}) for ${url}`;
+      // Null for an aborted load, e.g. a superseded navigation.
+      const failed = failedLoad(code, description, url);
+      if (!failed) return;
+      this.#loadError = failed.loadError;
+      this.#loadFailure = failed.loadFailure;
       this.#push({ at: Date.now(), level: "error", message: this.#loadError });
     });
     // At commit the new document exists and its module scripts are still being fetched: the
@@ -425,6 +438,7 @@ export class GamePreview {
     wc.on("did-finish-load", () => {
       this.#syncAnimationVisibility();
       this.#loadError = null;
+      this.#loadFailure = null;
       this.#crashed = false;
       this.#gone = null;
       void wc.executeJavaScript('console.debug("__studio_console_channel_probe__")').catch(() => {
@@ -723,6 +737,7 @@ export class GamePreview {
       const servedDir = path.resolve(this.#gameRoot(project));
       this.#pinnedRoot = { project, dir: servedDir, real: await realpath(servedDir).catch(() => null) };
       this.#loadError = null;
+      this.#loadFailure = null;
       this.#crashed = false;
       this.#gone = null;
       this.#console = [];
@@ -767,6 +782,7 @@ export class GamePreview {
     this.#blockedNoted.clear();
     this.#consoleAvailable = false;
     this.#loadError = null;
+    this.#loadFailure = null;
     this.#navigating = true;
     try {
       await wc.loadURL(url);
@@ -786,6 +802,7 @@ export class GamePreview {
     this.#blockedNoted.clear();
     this.#consoleAvailable = false;
     this.#loadError = null;
+    this.#loadFailure = null;
     // The user pressing Reload means "show me what is on disk NOW" — never a cached copy.
     this.#navigating = true;
     const wc = this.#view.webContents;
@@ -1267,7 +1284,10 @@ export class GamePreview {
     const base = {
       project: this.#project,
       loadError: this.#loadError,
+      loadFailure: this.#loadFailure,
       crashed: this.#crashed,
+      gone: this.#gone,
+      unresponsive: this.#unresponsive,
       stopped: this.#stoppedUrl !== null,
     };
     if (!wc || wc.isDestroyed()) return { ...base, navigating: false, page: null };
@@ -1496,10 +1516,15 @@ export class GamePreview {
         ];
   }
 
-  /** A line the studio itself puts on the game's console — a build that failed before the page could load. */
-  note(level: string, message: string, options: { loadError?: boolean } = {}): void {
+  /**
+   * A line the studio itself puts on the game's console — a build that failed before the page could
+   * load. As the page's load error it keeps its kind (`failure`, `Other` when the caller names none).
+   */
+  note(level: string, message: string, options: { loadError?: boolean; failure?: LiveLoadFailure } = {}): void {
     this.#push({ at: Date.now(), level, message });
-    if (options.loadError) this.#loadError = message;
+    if (!options.loadError) return;
+    this.#loadError = message;
+    this.#loadFailure = options.failure ?? LiveLoadFailure.Other;
   }
 
   status(): PreviewStatus {

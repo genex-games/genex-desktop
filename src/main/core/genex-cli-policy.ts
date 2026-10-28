@@ -210,7 +210,7 @@ const sharedItem = (delivers: boolean): CommandRow => ({
 });
 
 /** The option naming a store item's picture: `shop add` needs it, since no item is listed without one. */
-const PICTURE_OPTION = "image";
+export const PICTURE_OPTION = "image";
 
 /**
  * Every command Studio runs. `budget` only reads: its `--assets` allowance lives in the run folder,

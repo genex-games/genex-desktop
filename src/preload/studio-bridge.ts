@@ -3,6 +3,7 @@
  * test can drive it with a recorder. Every call goes through {@link invoke} or {@link subscribe},
  * whose channel, payload and result types come from `shared/ipc-channels.ts`.
  */
+import { CodedError, errorCode } from "../shared/errors.ts";
 import { createRunSummaryFeeds, type GraphCursor } from "../shared/run-summary-feed.ts";
 import type { StudioApi } from "../shared/studio-api.ts";
 import type {
@@ -54,7 +55,7 @@ export function createStudioBridge(
   ): Promise<StudioInvokeResult<C>> {
     // Main answers every invoke with `IpcResult` (`main/ipc-handle.ts`), typed by the same map.
     const result = (await ipc.invoke(channel, args[0])) as IpcResult<StudioInvokeResult<C>>;
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw failure(result);
     return result.value;
   }
   function subscribe<C extends StudioPushChannel>(
@@ -88,6 +89,12 @@ export function createStudioBridge(
     ...terminalCalls(bridge),
     ...previewCalls(bridge),
   };
+}
+
+/** A failed invoke as the renderer catches it: its words, and its code when it is one of the app's. */
+function failure(result: Extract<IpcResult, { ok: false }>): Error {
+  const code = errorCode(result);
+  return code ? new CodedError(code, result.error) : new Error(result.error);
 }
 
 /** What every group of calls is built from: the raw IPC, and the typed invoke and subscribe over it. */

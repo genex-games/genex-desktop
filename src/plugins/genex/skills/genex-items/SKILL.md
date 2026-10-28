@@ -46,8 +46,10 @@ Where it disagrees with this preface, this preface wins.
   `genex items add <id>` and `genex items remove <id>` are `genex__cli-paid` with the id in `args`:
   the person approves them, because they change what this game sells. After `items add`, Studio
   writes `genex-items/<id>/` into this game; read it from there.
-- Render the picture with the game's own code (the item alone, on a transparent background) and
-  save the PNG under `.genex/scratch/`, which Studio never publishes.
+- Render the picture with the game's own code: a square PNG of 1024 × 1024 (at least 768 × 768;
+  Studio refuses a smaller or non-square one) that the item fills edge to edge, lit in the game's
+  own scene, never on an empty black or flat background, because its card shows it edge to edge.
+  Save it under `.genex/scratch/`, which Studio never publishes.
 - Studio's `@genex-ai/embed-sdk` may not export `ItemState` or report `already_owned` yet: compare
   `item.state === "draft"`, and read `getEntitlements()` again after any `buy()`, whatever it said.
 - Studio's preview runs in local test mode with no store: check the cards and the delivery code

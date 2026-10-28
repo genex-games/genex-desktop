@@ -118,7 +118,7 @@ import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { limitResetMs } from "./limit-reset.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
-import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
+import { EngineKind, EngineStatusCode, EngineStatusReason, LoginSource } from "../../shared/engine-descriptor.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
 import { EngineFailureKind, isInterview, StopReason } from "../../shared/engine-requests.ts";
@@ -736,7 +736,12 @@ export class ClaudeCodeEngine implements Engine {
     try {
       await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
     } catch (error) {
-      return { code: EngineStatusCode.NotInstalled, detail: errorMessage(error), remedy: MESSAGE.InstallRemedy() };
+      return {
+        code: EngineStatusCode.NotInstalled,
+        detail: errorMessage(error),
+        remedy: MESSAGE.InstallRemedy(),
+        reason: EngineStatusReason.CliMissing,
+      };
     }
     try {
       await import("@anthropic-ai/claude-agent-sdk");
@@ -749,7 +754,12 @@ export class ClaudeCodeEngine implements Engine {
       return { code: EngineStatusCode.Ready, detail: MESSAGE.FromEnvironment() };
     }
     if (rememberFailure && this.#authFailure) {
-      return { code: EngineStatusCode.NeedsLogin, detail: this.#authFailure, remedy: this.loginHint() };
+      return {
+        code: EngineStatusCode.NeedsLogin,
+        detail: this.#authFailure,
+        remedy: this.loginHint(),
+        reason: EngineStatusReason.AuthFailed,
+      };
     }
     const login = await this.resolveLogin();
     switch (login.source) {
@@ -760,7 +770,12 @@ export class ClaudeCodeEngine implements Engine {
       case LoginSource.Isolated:
         return { code: EngineStatusCode.Ready, detail: MESSAGE.IsolatedLogin() };
       default:
-        return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NotSignedIn(), remedy: this.loginHint() };
+        return {
+          code: EngineStatusCode.NeedsLogin,
+          detail: MESSAGE.NotSignedIn(),
+          remedy: this.loginHint(),
+          reason: EngineStatusReason.NotSignedIn,
+        };
     }
   }
 
@@ -797,7 +812,12 @@ export class ClaudeCodeEngine implements Engine {
       ((home) => claudeAuthStatus(home, { findBinary: async () => installation.path, env: installation.env }))
     )(cliHome);
     if (cli.loggedIn === null)
-      return { code: EngineStatusCode.Error, detail: cli.detail, remedy: MESSAGE.RecheckRemedy() };
+      return {
+        code: EngineStatusCode.Error,
+        detail: cli.detail,
+        remedy: MESSAGE.RecheckRemedy(),
+        reason: EngineStatusReason.CheckFailed,
+      };
     this.#authFailure = cli.loggedIn ? null : cli.detail || MESSAGE.CliNotSignedIn();
     return this.status();
   }

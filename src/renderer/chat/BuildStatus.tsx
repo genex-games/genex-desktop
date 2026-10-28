@@ -73,7 +73,8 @@ export function BuildStatus({
           : {})}
         {...(!list && onOpenBuilds ? { open: { onClick: onOpenBuilds } } : {})}
         line={
-          <p role="status" title={caption} className="m-0 truncate text-status text-ink-3">
+          // The lead's own words about what it does on its screen.
+          <p role="status" title={caption} data-analytics-mask className="m-0 truncate text-status text-ink-3">
             {caption}
           </p>
         }

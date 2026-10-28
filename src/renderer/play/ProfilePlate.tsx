@@ -17,7 +17,7 @@ import { useEffect, useState } from "react";
 import { intlLocale } from "../../shared/i18n.ts";
 import type { PlayMe } from "../../shared/play-people.ts";
 import { GenexTab, openGenexPage } from "../panels/plugins/genex/genex-tab.ts";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { usePeople } from "../state/hooks.ts";
 import { waitingRequests } from "../state/people.ts";
 import { PlayPage } from "../state/play.ts";
@@ -57,7 +57,8 @@ export const joinedWhen = (iso: string | null): string | null =>
   iso ? new Intl.DateTimeFormat(intlLocale(), { month: "long", year: "numeric" }).format(new Date(iso)) : null;
 
 /** Settings › Genex account, where the account's avatar, name and balance are. */
-const openAccountSettings = (): void => openSettings(SettingsSection.Account);
+const openAccountSettings = (): void =>
+  openSettings(SettingsSection.Account, undefined, SettingsOpenedFrom.ProfilePlate);
 
 /** The menu's balances in the reader's own digit grouping: whole, never shortened. */
 const CREDITS_NUMBER = new Intl.NumberFormat(intlLocale());
@@ -131,7 +132,7 @@ function PlateMenu({
   const joined = joinedWhen(me.joinedAt);
   return (
     <DropdownMenuContent side="top" align="start" sideOffset={8} className="profile-menu" aria-label={WORDS.menuLabel}>
-      <div className="profile-menu-head">
+      <div className="profile-menu-head" data-analytics-mask>
         <PersonAvatar person={me} size={36} />
         <div className="min-w-0">
           <div className="truncate">{me.name}</div>
@@ -284,7 +285,14 @@ function AccountPlate({
         }}
       >
         <DropdownMenuTrigger asChild>
-          <button type="button" className="profile-plate-main" aria-label={WORDS.plateLabel(me.name)} data-avatar-host>
+          <button
+            type="button"
+            className="profile-plate-main"
+            aria-label={WORDS.plateLabel(me.name)}
+            data-avatar-host
+            // The person's own name.
+            data-analytics-mask
+          >
             <PersonAvatar person={me} size={PLATE_FACE} />
             <span className="profile-plate-name">
               <span className="profile-plate-name-text">{me.name}</span>

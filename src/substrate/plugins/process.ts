@@ -1,6 +1,6 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { outlivesHarness } from "../../shared/plugin-hooks.ts";
-import { CallCutOff, type PluginBinding } from "../../shared/plugins.ts";
+import { CallCutOff, type PluginBinding, PluginFailure } from "../../shared/plugins.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { activeCatalog, currentLocale } from "../../shared/i18n.ts";
 import type { Locale } from "../../shared/locale.ts";
@@ -215,7 +215,8 @@ export class PluginProcess {
     context: PluginBinding | undefined,
     invocation: PluginInvocation,
   ) => Promise<unknown>;
-  readonly failed: (error: string) => void;
+  /** Hears the backend end: its words, and whether it exited or could not be run (`PluginFailure`). */
+  readonly failed: (error: string, failure: PluginFailure) => void;
   /** Developer debug sink for backend stderr lines; default discards. Never a source of user-facing status. */
   readonly onStderr: ((line: string) => void) | undefined;
   /** The PATH the backend starts with; absent or failing, the app's own. */
@@ -235,7 +236,7 @@ export class PluginProcess {
       context: PluginBinding | undefined,
       invocation: PluginInvocation,
     ) => Promise<unknown>,
-    failed: (error: string) => void,
+    failed: (error: string, failure: PluginFailure) => void,
     options?: {
       onStderr?: (line: string) => void;
       toolPath?: () => Promise<string>;
@@ -319,7 +320,7 @@ export class PluginProcess {
       if (m?.kind === MessageKind.Result) this.#settle(m);
       else if (m?.kind === MessageKind.Host) await this.#answerHost(child, m);
     });
-    const fail = (error: string) => {
+    const fail = (error: string, failure: PluginFailure) => {
       if (this.#child !== child) return;
       this.#child = undefined;
       for (const p of this.#pending.values()) {
@@ -327,10 +328,12 @@ export class PluginProcess {
         p.reject(new PluginCallCutOff(CallCutOff.PluginEnded, error));
       }
       this.#pending.clear();
-      this.failed(error);
+      this.failed(error, failure);
     };
-    child.on("error", (e) => fail(e.message));
-    child.on("exit", (code) => fail(`Plugin process exited (${code}); accepted remote jobs may still continue. `));
+    child.on("error", (e) => fail(e.message, PluginFailure.BackendError));
+    child.on("exit", (code) =>
+      fail(`Plugin process exited (${code}); accepted remote jobs may still continue. `, PluginFailure.BackendExited),
+    );
     return child;
   }
   async call(

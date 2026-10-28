@@ -4,6 +4,8 @@
  */
 import { type JSX, useEffect, useState } from "react";
 import { type AppAbout, UpdateAction, type UpdateCheckResult, UpdateCheckStatus } from "../../shared/app-update.ts";
+import { track } from "../analytics/client.ts";
+import { LaunchEvent, trackedRestart, updateCheckProperties, UpdateSurface } from "../analytics/events/launch.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { ABOUT_WORDS, LICENSE_WORDS, problemWords } from "../words.ts";
@@ -38,7 +40,10 @@ function NextStep({ result }: { result: UpdateCheckResult }): JSX.Element | null
       </Button>
     );
   return (
-    <Button data-about-restart onClick={() => void window.studio.restartToUpdate()}>
+    <Button
+      data-about-restart
+      onClick={() => void trackedRestart(UpdateSurface.About, () => window.studio.restartToUpdate())}
+    >
       {ABOUT_WORDS.restart}
     </Button>
   );
@@ -61,9 +66,13 @@ function Updates(): JSX.Element {
   const check = async () => {
     setChecking(true);
     setError(null);
+    const started = performance.now();
     try {
-      setResult(await window.studio.checkForUpdates());
+      const found = await window.studio.checkForUpdates();
+      track(LaunchEvent.UpdateCheckFinished, updateCheckProperties(found, performance.now() - started));
+      setResult(found);
     } catch (cause) {
+      track(LaunchEvent.UpdateCheckFinished, updateCheckProperties(null, performance.now() - started));
       setError(problemWords(cause));
     } finally {
       setChecking(false);

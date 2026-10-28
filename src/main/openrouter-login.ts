@@ -12,7 +12,11 @@ import type { AddressInfo } from "node:net";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { currentLocale, t } from "../shared/i18n.ts";
 import { type EngineStatus, EngineStatusCode } from "../shared/engine-descriptor.ts";
-import { OpenRouterSignInOutcome, type OpenRouterSignInResult } from "../shared/openrouter-login.ts";
+import {
+  OpenRouterSignInOutcome,
+  OpenRouterSignInProblem,
+  type OpenRouterSignInResult,
+} from "../shared/openrouter-login.ts";
 import { OPENROUTER_API } from "../substrate/engines/openrouter.ts";
 
 /** OpenRouter's authorization page. */
@@ -88,7 +92,20 @@ interface Pending {
   settle(result: OpenRouterSignInResult): void;
 }
 
-const failed = (error: string): OpenRouterSignInResult => ({ outcome: OpenRouterSignInOutcome.Failed, error });
+const failed = (error: string, problem: OpenRouterSignInProblem): OpenRouterSignInResult => ({
+  outcome: OpenRouterSignInOutcome.Failed,
+  error,
+  problem,
+});
+
+/** A code that could not be redeemed for a key: the words for the person, and why. */
+class RedeemFailed extends Error {
+  readonly problem: OpenRouterSignInProblem;
+  constructor(problem: OpenRouterSignInProblem, message: string) {
+    super(message);
+    this.problem = problem;
+  }
+}
 
 /** The S256 challenge of a PKCE verifier. */
 const challengeOf = (verifier: string): string => createHash("sha256").update(verifier).digest("base64url");
@@ -180,14 +197,15 @@ async function redeem(exchange: Exchange, sign: Pending, code: string): Promise<
       signal: AbortSignal.any([sign.abort.signal, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS)]),
     });
   } catch {
-    throw new Error(MESSAGE.unreachable());
+    throw new RedeemFailed(OpenRouterSignInProblem.Unreachable, MESSAGE.unreachable());
   }
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
-    throw new Error(MESSAGE.noKey());
+    throw new RedeemFailed(OpenRouterSignInProblem.NoKey, MESSAGE.noKey());
   }
   const body = (await response.json().catch(() => null)) as { key?: unknown } | null;
-  if (typeof body?.key !== "string" || !body.key) throw new Error(MESSAGE.noKey());
+  if (typeof body?.key !== "string" || !body.key)
+    throw new RedeemFailed(OpenRouterSignInProblem.NoKey, MESSAGE.noKey());
   return body.key;
 }
 
@@ -198,12 +216,19 @@ async function connectWithCode(
   code: string,
   saveKey: SaveKey,
 ): Promise<OpenRouterSignInResult> {
+  let key: string;
   try {
-    const status = await saveKey(await redeem(exchange, sign, code));
-    if (status.code === EngineStatusCode.Ready) return { outcome: OpenRouterSignInOutcome.Connected };
-    return failed(status.detail);
+    key = await redeem(exchange, sign, code);
   } catch (error) {
-    return failed(error instanceof Error ? error.message : MESSAGE.noKey());
+    if (error instanceof RedeemFailed) return failed(error.message, error.problem);
+    return failed(MESSAGE.noKey(), OpenRouterSignInProblem.NoKey);
+  }
+  try {
+    const status = await saveKey(key);
+    if (status.code === EngineStatusCode.Ready) return { outcome: OpenRouterSignInOutcome.Connected };
+    return failed(status.detail, OpenRouterSignInProblem.KeyRefused);
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : MESSAGE.noKey(), OpenRouterSignInProblem.KeyNotSaved);
   }
 }
 
@@ -242,7 +267,7 @@ async function answerCallback(
   answering.onReturn?.();
   const result = code
     ? await connectWithCode(answering.exchange, sign, code, answering.saveKey)
-    : failed(MESSAGE.denied());
+    : failed(MESSAGE.denied(), OpenRouterSignInProblem.Denied);
   if (result.outcome === OpenRouterSignInOutcome.Failed)
     page(response, 200, MESSAGE.failedTitle(), MESSAGE.failedLine(result.error));
   else page(response, 200, MESSAGE.connectedTitle(), MESSAGE.connectedLine());
@@ -303,7 +328,7 @@ export function createOpenRouterLogin(deps: OpenRouterLoginDeps): OpenRouterLogi
     async start(saveKey) {
       if (pending) finish(pending, { outcome: OpenRouterSignInOutcome.Cancelled });
       const { sign, ended } = newSignIn(deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS, (late) =>
-        finish(late, failed(MESSAGE.expired())),
+        finish(late, failed(MESSAGE.expired(), OpenRouterSignInProblem.Expired)),
       );
       pending = sign;
       const answering: Answering = { exchange, saveKey, onReturn: deps.onReturn, finish };
@@ -317,11 +342,13 @@ export function createOpenRouterLogin(deps: OpenRouterLoginDeps): OpenRouterLogi
         if (pending !== sign) closeAll(sign.servers);
         sign.authUrl = authorizationUrl(authBase, loopback.port, challengeOf(sign.verifier), sign.state);
       } catch {
-        finish(sign, failed(MESSAGE.noCallback()));
+        finish(sign, failed(MESSAGE.noCallback(), OpenRouterSignInProblem.NoCallback));
         return ended;
       }
       if (pending === sign)
-        await deps.openExternal(sign.authUrl).catch(() => finish(sign, failed(MESSAGE.noBrowser())));
+        await deps
+          .openExternal(sign.authUrl)
+          .catch(() => finish(sign, failed(MESSAGE.noBrowser(), OpenRouterSignInProblem.NoBrowser)));
       return ended;
     },
     async reopen() {

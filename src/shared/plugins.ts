@@ -700,6 +700,64 @@ export const PluginChangeReason = {
   Settings: "settings",
 } as const;
 export type PluginChangeReason = (typeof PluginChangeReason)[keyof typeof PluginChangeReason];
+
+/**
+ * Why installing, updating or reinstalling a plugin was refused: the code that crosses IPC beside
+ * main's own words (`shared/error-codes.ts`).
+ */
+export const PluginInstallProblem = {
+  /** Not in the catalog or the index, or no longer installed or listed under that id. */
+  NotFound: "plugin_not_found",
+  /** The index offers no compatible newer release of the installed plugin. */
+  NoNewerRelease: "plugin_no_newer_release",
+  /** The marketplace is not up in this session yet. */
+  NotReady: "plugins_not_ready",
+  /** This profile reaches no network (every fixture profile). */
+  Offline: "plugins_offline",
+  /** A GitHub spec or repository that does not read as `owner/repo[/subdir]@<sha>`. */
+  InvalidSpec: "plugin_invalid_spec",
+  DownloadFailed: "plugin_download_failed",
+  /** A file, a tree or the whole package past its cap. */
+  TooLarge: "plugin_too_large",
+  /** A file or artifact that does not hash to what its pin says. */
+  IntegrityMismatch: "plugin_integrity_mismatch",
+  /** The catalog's or index's entry is broken or does not describe the code at its pin. */
+  CatalogMismatch: "plugin_catalog_mismatch",
+  /** A link, a special file, an unusual file mode or a name that leaves the package. */
+  UnsafePackage: "plugin_unsafe_package",
+  /** No plugin.json, an invalid one, a file it names missing, or an envelope that does not read. */
+  PackageInvalid: "plugin_package_invalid",
+  NeedsNewerStudio: "plugin_needs_newer_studio",
+  /** A bundled plugin's id, or one a connector already answers for. */
+  IdTaken: "plugin_id_taken",
+  /** It would replace another plugin or widen what it may do without the person's fresh review. */
+  NeedsReview: "plugin_needs_review",
+  /** Its backend did not load and answer. */
+  BackendFailed: "plugin_backend_failed",
+  /** The folder or record it is reinstalled from is gone, or holds another plugin now. */
+  SourceGone: "plugin_source_gone",
+} as const;
+export type PluginInstallProblem = (typeof PluginInstallProblem)[keyof typeof PluginInstallProblem];
+
+/** Why a plugin could not be turned on, off or removed: the code that crosses IPC beside main's words. */
+export const PluginStateRefusal = {
+  /** It is not installed (or was removed): install it first. */
+  InstallFirst: "plugin_install_first",
+  /** It holds the app's account, so it can be turned off but not removed. */
+  KeepsAccount: "plugin_keeps_account",
+} as const;
+export type PluginStateRefusal = (typeof PluginStateRefusal)[keyof typeof PluginStateRefusal];
+
+/** Why a plugin failed while it ran (`PluginChange.failure` with reason `failed`). */
+export const PluginFailure = {
+  /** Its backend process exited. */
+  BackendExited: "plugin_backend_exited",
+  /** Its backend process could not be started or signalled. */
+  BackendError: "plugin_backend_error",
+  /** A watched folder's edit was refused, so the running copy stays. */
+  ReloadRefused: "plugin_reload_refused",
+} as const;
+export type PluginFailure = (typeof PluginFailure)[keyof typeof PluginFailure];
 export interface PluginSource {
   kind: PluginSourceKind;
   directory?: string;
@@ -807,6 +865,8 @@ export interface PluginChange {
   reason: PluginChangeReason;
   /** Set when an update or reload changed the plugin's skills. */
   skills?: PluginSkillChange;
+  /** Why it failed, when `reason` is `failed`. */
+  failure?: PluginFailure;
 }
 /** How a consent question ended; `mode`: the person switched the chat to a mode that asks nothing first for it. */
 /**

@@ -8,6 +8,9 @@
  */
 import { type RefObject, useEffect, useRef, useState } from "react";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
+import { SendSource } from "../analytics/chat-vocabulary.ts";
+import { type HeldTimes, trackFirstMessageAction, trackFirstMessageSettled } from "../analytics/workspace-track.ts";
+import { FirstMessageAction, FirstMessageOutcome } from "../analytics/workspace-vocabulary.ts";
 import { useLaunch } from "../state/hooks.ts";
 import { LaunchPhase } from "../state/launch.ts";
 import { studio } from "../state/studio.ts";
@@ -62,6 +65,8 @@ export interface HeldFirstSend {
 
 interface Held extends HeldFirstSend {
   extras: ComposerExtras | undefined;
+  /** When the launch left home and when this chat began holding it, for usage analytics. */
+  times: HeldTimes;
 }
 
 /** How a held message's send ended: sent, not sent (a sign-in came first, or nothing to send with), or failed. */
@@ -87,6 +92,17 @@ export interface LaunchHandover {
   held: HeldFirstSend | null;
   /** The held block's one action: Sign in again, or Try again. */
   act(): void;
+}
+
+/** The held block's one action, counted: Try again puts a failed send back to wait; Sign in starts the sign-in again. */
+function actOnHeld(held: Held, retry: () => void, signIn: () => Promise<void>): void {
+  if (held.state === HeldState.Failed) {
+    retry();
+    trackFirstMessageAction(FirstMessageAction.Retry, held.state);
+  } else if (held.state === HeldState.SignedOut) {
+    void signIn().catch(() => {});
+    trackFirstMessageAction(FirstMessageAction.SignIn, held.state);
+  }
 }
 
 /**
@@ -136,6 +152,7 @@ export function useLaunchHandover({
       ...(frames?.length ? { frames } : {}),
       extras: launch.extras,
       state: HeldState.Waiting,
+      times: { launchedAt: launch.at, heldAt: Date.now() },
     });
     studio().launchHanded(launch.id);
   }, [launch, threadId, loading]);
@@ -153,6 +170,7 @@ export function useLaunchHandover({
     if (step === HandoverStep.ToComposer) {
       put(chat, null);
       latest.current.composer.current?.compose(held.text);
+      trackFirstMessageSettled(FirstMessageOutcome.ToComposer, { state: held.state, step }, held.times);
       return;
     }
     if (step !== HandoverStep.Send) return;
@@ -163,17 +181,17 @@ export function useLaunchHandover({
       const next = heldAfterSend(outcome, { here, needsSignIn: latest.current.ready.needsSignIn });
       if (next === "composer") latest.current.composer.current?.compose(held.text);
       else if (next) put(chat, { ...held, state: next });
+      trackFirstMessageSettled(outcome, { state: held.state, step: HandoverStep.Send }, held.times);
     };
     latest.current
-      .send(held.text, held.extras)
+      .send(held.text, held.extras, false, SendSource.FirstMessage)
       .then((sent) => settle(sent ? SendOutcome.Sent : SendOutcome.NotSent))
       .catch(() => settle(SendOutcome.Failed));
   }, [step, threadId, loading]);
 
   const act = (): void => {
     if (!held || !threadId) return;
-    if (held.state === HeldState.Failed) put(threadId, { ...held, state: HeldState.Waiting });
-    else if (held.state === HeldState.SignedOut) void signIn().catch(() => {});
+    actOnHeld(held, () => put(threadId, { ...held, state: HeldState.Waiting }), signIn);
   };
   const shown = held ? { text: held.text, ...(held.frames ? { frames: held.frames } : {}), state: held.state } : null;
   return { held: shown, act };

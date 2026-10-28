@@ -4564,6 +4564,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Что Claude делает, не спрашивая. Если выбрать в чате «Всегда разрешать», действие появится здесь — для этой игры.",
   "What Harness has learned": "Чему научился Harness",
+  "What changed": "Что изменилось",
   "What changes": "Что изменится",
   "What credits pay for": "На что тратятся кредиты",
   "What do you want to make?": "Что хочешь создать?",
@@ -5496,6 +5497,8 @@ export default {
     "{count, plural, one {Его собственная история сохранена рядом под именем .git.studio-backup.} few {Их собственные истории сохранены рядом под именем .git.studio-backup.} many {Их собственные истории сохранены рядом под именем .git.studio-backup.} other {Их собственные истории сохранены рядом под именем .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {Восстановлен # файл игры.} few {Восстановлено # файла игры.} many {Восстановлено # файлов игры.} other {Восстановлено # файла игры.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, one {Откат не сможет вернуть # файл из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.} few {Откат не сможет вернуть # файла из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.} many {Откат не сможет вернуть # файлов из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.} other {Откат не сможет вернуть # файла из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, one {Откат не сможет вернуть # файл, слишком большой для сохранения: {files}.} few {Откат не сможет вернуть # файла, слишком больших для сохранения: {files}.} many {Откат не сможет вернуть # файлов, слишком больших для сохранения: {files}.} other {Откат не сможет вернуть # файла, слишком больших для сохранения: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -6198,4 +6201,21 @@ export default {
   "Allow in this chat": "Разрешить в этом чате",
   "Allowed in this chat": "Разрешено в этом чате",
   "Don't ask again for this action in this chat.": "Больше не спрашивать об этом действии в этом чате.",
+  "A replay of your first week": "Запись твоей первой недели",
+  "Change it anytime in Settings.": "Это можно поменять в любой момент в настройках.",
+  "Don't share": "Не делиться",
+  "Help improve Genex?": "Помочь улучшить Genex?",
+  "How you move through the app, with your work blanked out": "Как ты ходишь по приложению, а твоя работа закрыта",
+  "Never your work or name": "Ни твоей работы, ни имени",
+  "Prompts, code, files, game names and accounts are left out":
+    "Промпты, код, файлы, названия игр и аккаунты не попадают",
+  "Screens, clicks and errors": "Экраны, клики и ошибки",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "Экраны, клики, ошибки и время ожидания, а до {date} — запись того, как ты ходишь по приложению, где твоя работа закрыта. Уходит в PostHog в ЕС под случайным id.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "Экраны, клики, ошибки и время ожидания. Уходит в PostHog в ЕС под случайным id.",
+  "Share usage data": "Делиться данными об использовании",
+  "Show us where Genex gets in your way.": "Покажи, где Genex тебе мешает.",
+  "Where you go, what fails and how long it takes": "Куда ты заходишь, что ломается и сколько всё длится",
+  "usage data\u0004Share": "Делиться",
 } satisfies LocaleCatalog;

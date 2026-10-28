@@ -170,6 +170,56 @@ export function previewGone(reason: string): PreviewGone {
   return RENDER_GONE_REASONS.get(reason) ?? PreviewGone.Crashed;
 }
 
+/**
+ * Why Live's page did not load, as one typed code beside the words (`PreviewLiveStatus.loadFailure`):
+ * Chromium's load error read by kind, or the game's own build, which failed with nothing to serve
+ * (`BuildFailed`) or with the last build that worked served instead (`StaleBuild`). A load the
+ * renderer asked for that Electron refused also crosses IPC with it (`shared/error-codes.ts`).
+ */
+export const LiveLoadFailure = {
+  NotFound: "live_not_found",
+  Blocked: "live_blocked",
+  ServerDown: "live_server_down",
+  /** Another navigation took the load's place (Chromium's `ERR_ABORTED`): that load reports itself. */
+  Aborted: "live_load_aborted",
+  BuildFailed: "live_build_failed",
+  StaleBuild: "live_stale_build",
+  Other: "live_load_other",
+} as const;
+export type LiveLoadFailure = (typeof LiveLoadFailure)[keyof typeof LiveLoadFailure];
+
+/** Chromium's net error numbers (`net_error_list.h`), each read as a {@link LiveLoadFailure}. */
+const LOAD_ERRORS: ReadonlyMap<number, LiveLoadFailure> = new Map([
+  [-3, LiveLoadFailure.Aborted], // ERR_ABORTED
+  [-6, LiveLoadFailure.NotFound], // ERR_FILE_NOT_FOUND
+  [-379, LiveLoadFailure.NotFound], // ERR_HTTP_RESPONSE_CODE_FAILURE: the game protocol's 404 for a missing file
+  [-10, LiveLoadFailure.Blocked], // ERR_ACCESS_DENIED
+  [-20, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_CLIENT
+  [-22, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_ADMINISTRATOR
+  [-27, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_RESPONSE
+  [-30, LiveLoadFailure.Blocked], // ERR_BLOCKED_BY_CSP
+  [-301, LiveLoadFailure.Blocked], // ERR_DISALLOWED_URL_SCHEME
+  [-302, LiveLoadFailure.Blocked], // ERR_UNKNOWN_URL_SCHEME
+  [-7, LiveLoadFailure.ServerDown], // ERR_TIMED_OUT
+  [-100, LiveLoadFailure.ServerDown], // ERR_CONNECTION_CLOSED
+  [-101, LiveLoadFailure.ServerDown], // ERR_CONNECTION_RESET
+  [-102, LiveLoadFailure.ServerDown], // ERR_CONNECTION_REFUSED
+  [-104, LiveLoadFailure.ServerDown], // ERR_CONNECTION_FAILED
+  [-105, LiveLoadFailure.ServerDown], // ERR_NAME_NOT_RESOLVED
+  [-109, LiveLoadFailure.ServerDown], // ERR_ADDRESS_UNREACHABLE
+  [-118, LiveLoadFailure.ServerDown], // ERR_CONNECTION_TIMED_OUT
+  [-324, LiveLoadFailure.ServerDown], // ERR_EMPTY_RESPONSE
+]);
+
+/** Read Chromium's load error number (`did-fail-load`, a refused `loadURL`'s `errno`); any other value is `Other`. */
+export function liveLoadFailure(errno: unknown): LiveLoadFailure {
+  return (typeof errno === "number" ? LOAD_ERRORS.get(errno) : undefined) ?? LiveLoadFailure.Other;
+}
+
+/** Did the page fail because the game's own build did, rather than its load? */
+export const isBuildLoadFailure = (failure: LiveLoadFailure | null): boolean =>
+  failure === LiveLoadFailure.BuildFailed || failure === LiveLoadFailure.StaleBuild;
+
 /** What `PreviewPort.status()` and the `preview.status` RPC answer. */
 export interface PreviewPortStatus {
   project: string | null;

@@ -75,6 +75,8 @@ content and resizing checks remain part of every applicable UI change without in
    [buttons](../../src/renderer/ui/Button.tsx) and [icons](../../src/renderer/ui/icons.tsx).
    The [design system](../../design/genex/README.md) owns fonts, icons, motion and accepted surface
    specifications.
+   A component that shows a person's work or a name they chose inside a control marks its wrapper
+   `data-analytics-mask`, so replays hide it ([usage analytics](../usage-analytics.md#replays-show-the-app-not-the-work)).
 3. Apply the removal pass and choose only relevant skills. Record substantial system decisions
    in the local task note; a small edit needs no separate proposal. Keep exploration pages out
    of shipping code. Retain a requested stress-test page; remove discarded variants after selection.

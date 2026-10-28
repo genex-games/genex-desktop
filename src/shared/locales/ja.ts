@@ -4593,6 +4593,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Claudeが確認せずに行う操作です。チャットで「常に許可」を選ぶと、そのゲーム用にここへ追加されます。",
   "What Harness has learned": "Harnessが学んだこと",
+  "What changed": "変わったところ",
   "What changes": "変わる内容",
   "What credits pay for": "クレジットの使い道",
   "What do you want to make?": "何をつくりますか？",
@@ -5488,6 +5489,8 @@ export default {
     "{count, plural, other {元の履歴は.git.studio-backupという名前に変えて、すぐ横に保存してあります。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {ゲームのファイルを#個復元しました。}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, other {この変更は一度に{size}を超えたため、大きいファイル#件が保存されず、巻き戻しで元に戻せません：{files}。}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, other {保存するには大きすぎるファイル#件は、巻き戻しで元に戻せません：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -6147,4 +6150,21 @@ export default {
   "Allow in this chat": "このチャットで許可",
   "Allowed in this chat": "このチャットで許可済み",
   "Don't ask again for this action in this chat.": "このチャットでは今後この操作を確認しません。",
+  "A replay of your first week": "最初の1週間の記録",
+  "Change it anytime in Settings.": "設定でいつでも変更できます。",
+  "Don't share": "共有しない",
+  "Help improve Genex?": "Genexの改善に協力しますか？",
+  "How you move through the app, with your work blanked out": "アプリ内での動き方。作品の中身は隠されます",
+  "Never your work or name": "作品や名前は送りません",
+  "Prompts, code, files, game names and accounts are left out":
+    "プロンプト、コード、ファイル、ゲーム名、アカウントは含みません",
+  "Screens, clicks and errors": "画面、クリック、エラー",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "画面、クリック、エラー、待ち時間。{date}までは、作品の中身を隠したうえでアプリ内での動き方も記録します。ランダムなIDでEUのPostHogに送られます。",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "画面、クリック、エラー、待ち時間。ランダムなIDでEUのPostHogに送られます。",
+  "Share usage data": "使用データを共有",
+  "Show us where Genex gets in your way.": "Genexで困っているところを教えてください。",
+  "Where you go, what fails and how long it takes": "どこへ行き、何が失敗し、どれだけ時間がかかったか",
+  "usage data\u0004Share": "共有する",
 } satisfies LocaleCatalog;

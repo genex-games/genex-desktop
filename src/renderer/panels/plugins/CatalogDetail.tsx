@@ -19,7 +19,8 @@ import {
   type SetupStep,
 } from "./labels.ts";
 import type { PluginsPage } from "./page.ts";
-import { Section } from "./rows.tsx";
+import { installListed, Section } from "./rows.tsx";
+import { PluginInstallOrigin, PluginInstallSurface } from "../../analytics/plugins-page.ts";
 
 const WORDS = PLUGINS_WORDS.listing;
 /** How much of a source commit the page shows. */
@@ -62,7 +63,9 @@ export function CatalogInstall({
       variant="default"
       disabled={page.busy}
       aria-label={WORDS.installLabel(entry.name)}
-      onClick={() => void page.act(() => window.studio.pluginInstall(entry.id))}
+      onClick={() =>
+        void page.act(() => installListed(entry.id, PluginInstallOrigin.Index, PluginInstallSurface.ListingPage))
+      }
     >
       {WORDS.install}
     </Button>

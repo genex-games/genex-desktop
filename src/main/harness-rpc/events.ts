@@ -81,7 +81,10 @@ export function eventsRpc(core: StudioCore, x: CoreInternals) {
     [HostMethod.TurnEnd]: async (p) => {
       const turn = x.openTurns.get(p.turnId);
       if (!turn) return null;
-      const head = await turn.end(p.status ?? "ok", p.outcome ? { outcome: p.outcome } : undefined);
+      // How the chat's engine failed reaches the record from main: the harness knows only the words.
+      const failed = core.turns.takeFailure(turn.threadId);
+      const metadata = { ...(p.outcome ? { outcome: p.outcome } : {}), ...failed };
+      const head = await turn.end(p.status ?? "ok", Object.keys(metadata).length ? metadata : undefined);
       x.openTurns.delete(p.turnId);
       return head;
     },

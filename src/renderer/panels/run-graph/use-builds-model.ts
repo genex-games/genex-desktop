@@ -17,7 +17,7 @@ import {
   runIdOf,
   RunStillStage,
   runStillPath,
-  thumbShot,
+  roundShot,
 } from "../../run-graph.ts";
 import { leadWorking, partRows, resultStatus, StepState } from "../../run-steps.ts";
 import { buildsLayout, graphLoaded, leadFace, leadNodeOf, readingNodes, readingOrder } from "../../run-tree.ts";
@@ -184,7 +184,7 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
   const finalSrc = useStill(
     finalStillPath ? { run: finalStillPath, maxPx: 640, retry: `${graph.runId}:${outcome?.head}` } : null,
   );
-  const mergedShot = lastMergedRound ? thumbShot(lastMergedRound) : null;
+  const mergedShot = lastMergedRound ? roundShot(lastMergedRound) : null;
   const mergedPath = finalSrc ? null : (mergedShot?.path ?? null);
   const mergedSrc = useStill(mergedPath ? { run: mergedPath, maxPx: 640 } : null);
   const newestPart = useMemo(() => newestMergedPart(graph), [graph]);

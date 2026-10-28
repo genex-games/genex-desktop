@@ -8,7 +8,7 @@ import type {
   StudioPushChannel,
   StudioPushPayload,
 } from "../shared/ipc-channels.ts";
-import { errorMessage } from "../shared/errors.ts";
+import { errorCode, errorMessage } from "../shared/errors.ts";
 
 /** Why an IPC call is refused before its handler runs. */
 const MESSAGE = {
@@ -107,7 +107,8 @@ export function createIpcHandle(
         // still check the fields they act on, because the sender is a browser.
         return { ok: true, value: await fn(payload as StudioInvokePayload<C>) };
       } catch (err) {
-        return { ok: false, error: errorMessage(err) };
+        const code = errorCode(err);
+        return code ? { ok: false, error: errorMessage(err), code } : { ok: false, error: errorMessage(err) };
       } finally {
         if (options.performance) options.performance.record(`invoke:${channel}`, options.performance.now() - started);
       }

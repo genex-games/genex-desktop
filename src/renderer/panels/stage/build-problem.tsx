@@ -11,16 +11,29 @@ import { Button } from "../../ui/Button.tsx";
 import { ConfirmSheet } from "../../ui/Confirm.tsx";
 import { SETUP_SCRIPTS_WORDS, TOAST_WORDS } from "../../words.ts";
 import { type Notify, notifyProblem, ToastTone } from "../../state/toasts.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { type BuildPolls, buildBroke, LiveTrigger } from "../../analytics/events/builds.ts";
+import { elapsedMs } from "../../analytics/properties.ts";
 
 /** How often the stage asks whether the game's own build is broken. */
 const BUILD_TICK_MS = 2_500;
 
 const SCRIPTS = SETUP_SCRIPTS_WORDS;
 
+/** What the stage's polls last found per game, for as long as the window lives: a reopened game is not news. */
+const buildPolls: BuildPolls = new Map();
+
+/** A build that just broke, as an event says it: what the stage offers, never the command or its lines. */
+function noteBroken(project: string, problem: BuildProblem | null): void {
+  const broke = buildBroke(buildPolls, project, problem);
+  if (broke) track(AnalyticsEvent.GameBuildFailed, broke);
+}
+
 /** The game's build problem, polled while a game is open, and installing its packages when that is the fix. */
 export function useBuildProblem(
   project: string | null,
-  loadLive: (target: string, load: () => Promise<unknown>) => Promise<unknown>,
+  loadLive: (target: string, load: () => Promise<unknown>, trigger: LiveTrigger) => Promise<unknown>,
   onNotice: Notify,
 ) {
   const [buildProblem, setBuildProblem] = useState<BuildProblem | null>(null);
@@ -42,6 +55,7 @@ export function useBuildProblem(
         .buildProblem(project)
         .then((problem) => {
           if (cancelled) return;
+          noteBroken(project, problem);
           setBuildProblem((current) => (sameSnapshot(current, problem) ? current : problem));
           // Once the game builds, the install that failed is history: it must not come back above
           // the next build that breaks. (A build still failing keeps it — it is why it fails.)
@@ -65,9 +79,15 @@ export function useBuildProblem(
       if (!project || installing) return;
       setInstalling(true);
       setInstallLines(null);
+      const startedAt = Date.now();
       void window.studio
         .installPackages(project, { scripts })
         .then((result) => {
+          track(AnalyticsEvent.PackagesInstallFinished, {
+            ok: result.ok,
+            scripts,
+            ms: elapsedMs(startedAt, Date.now()),
+          });
           if (!result.ok) {
             setInstallLines(result.lines);
             onNotice(TOAST_WORDS.packagesFailed, ToastTone.Error);
@@ -75,7 +95,7 @@ export function useBuildProblem(
           }
           setInstallLines(null);
           onNotice(TOAST_WORDS.packagesInstalled, ToastTone.Ok);
-          void loadLive(project, () => window.studio.reloadPreview()).catch(() => {});
+          void loadLive(project, () => window.studio.reloadPreview(), LiveTrigger.Install).catch(() => {});
         })
         .catch(notifyProblem(onNotice))
         .finally(() => setInstalling(false));

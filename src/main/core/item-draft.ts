@@ -16,7 +16,7 @@ import {
   type ListingRecord,
   localDraftOf,
 } from "../../shared/item-draft.ts";
-import { isItemId, type StoreRefusal, storeRefusalOf } from "../../shared/store-items.ts";
+import { isItemId, type StoreRefusal, storeRefusalOf, unwordedRefusalCode } from "../../shared/store-items.ts";
 import { creatorItemOf } from "../play/store.ts";
 import { GenexCliCommand } from "./genex-cli-policy.ts";
 
@@ -80,6 +80,8 @@ export interface SyncedItem {
   skuId: string | null;
   refusal: StoreRefusal | null;
   field: string | null;
+  /** The code it was refused with when Studio has no words for it (`unwordedRefusalCode`). */
+  code: string | null;
 }
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
@@ -92,9 +94,16 @@ function syncedItemOf(value: unknown): SyncedItem | null {
   if (!isLocalItemId(localId) || !isContentHash(contentHash)) return null;
   const named = typeof field === "string" && FIELD.test(field) ? field : null;
   if (typeof error === "string")
-    return { localId, contentHash, skuId: null, refusal: storeRefusalOf(error), field: named };
+    return {
+      localId,
+      contentHash,
+      skuId: null,
+      refusal: storeRefusalOf(error),
+      field: named,
+      code: unwordedRefusalCode(error),
+    };
   if (!isItemId(skuId)) return null;
-  return { localId, contentHash, skuId, refusal: null, field: null };
+  return { localId, contentHash, skuId, refusal: null, field: null, code: null };
 }
 
 /**

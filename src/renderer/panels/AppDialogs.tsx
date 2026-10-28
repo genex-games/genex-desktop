@@ -4,11 +4,19 @@
  * not studio state: they live here, not in a store. App opens them through `useAppDialogs()`.
  */
 import type { JSX, RefObject } from "react";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { lazy, Suspense, useCallback, useEffect, useReducer, useRef } from "react";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { type SheetFacts, sheetClosedProperties } from "../analytics/workspace-properties.ts";
+import { noteNav, settingsVisit } from "../analytics/workspace-trackers.ts";
+import { trackGameCreated } from "../analytics/workspace-track.ts";
+import { type DismissVia, GameCreatedFrom, NavVia, SheetOutcome } from "../analytics/workspace-vocabulary.ts";
 import { adoptPickedFolder } from "../open-folder.ts";
 import {
+  isSettingsOpenedFrom,
   isSettingsSection,
   OPEN_SETTINGS_EVENT,
+  SettingsOpenedFrom,
   type SettingsRequest,
   SettingsSection,
 } from "../settings-navigation.ts";
@@ -25,7 +33,11 @@ import { FeedbackDialog } from "./FeedbackDialog.tsx";
 import { DeleteGameDialog, RenameGameDialog } from "./GameDialogs.tsx";
 import { GameSearchDialog } from "./GameSearchDialog.tsx";
 import { OpenGameSheet } from "./OpenGameSheet.tsx";
-import { SettingsDialog } from "./SettingsDialog.tsx";
+
+/** Settings: loaded the first time it opens, as a window's first screen never shows it. */
+const SettingsDialog = lazy(() =>
+  import("./SettingsDialog.tsx").then((dialog) => ({ default: dialog.SettingsDialog })),
+);
 
 export interface DialogsState {
   searching: boolean;
@@ -104,48 +116,116 @@ export interface AppDialogs {
   dispatch: (action: DialogAction) => void;
   /** Where focus returns when Settings closes. */
   settingsReturnFocus: RefObject<HTMLElement | null>;
-  openSettings(section?: SettingsSection, returnFocus?: HTMLElement | null): void;
+  openSettings(section?: SettingsSection, returnFocus?: HTMLElement | null, from?: SettingsOpenedFrom): void;
+}
+
+/**
+ * Settings' visits for usage analytics: opened (from where), the sections it went through, and
+ * closed however it closed. `from` is what the last request named.
+ */
+function useSettingsVisit(
+  { settingsOpen: open, settingsSection: section }: DialogsState,
+  from: RefObject<SettingsOpenedFrom>,
+) {
+  useEffect(() => {
+    const at = Date.now();
+    if (!open) {
+      from.current = SettingsOpenedFrom.Other;
+      const closed = settingsVisit.closed(at);
+      if (closed) track(AnalyticsEvent.SettingsClosed, closed);
+      return;
+    }
+    if (settingsVisit.opened(section, at)) track(AnalyticsEvent.SettingsOpened, { section, from: from.current });
+    else settingsVisit.section(section);
+    from.current = SettingsOpenedFrom.Other;
+  }, [open, section, from]);
 }
 
 /** The dialogs' state, plus the two ways into Settings from anywhere (the `openSettings` window event). */
 export function useAppDialogs(): AppDialogs {
   const [state, dispatch] = useReducer(dialogsReducer, initialDialogs);
   const settingsReturnFocus = useRef<HTMLElement | null>(null);
-  const openSettings = useCallback((section?: SettingsSection, returnFocus: HTMLElement | null = null) => {
-    settingsReturnFocus.current = returnFocus;
-    dispatch({ type: "settings", ...(section ? { section } : {}) });
-  }, []);
+  const settingsFrom = useRef<SettingsOpenedFrom>(SettingsOpenedFrom.Other);
+  const openSettings = useCallback(
+    (
+      section?: SettingsSection,
+      returnFocus: HTMLElement | null = null,
+      from: SettingsOpenedFrom = SettingsOpenedFrom.Other,
+    ) => {
+      settingsReturnFocus.current = returnFocus;
+      settingsFrom.current = from;
+      dispatch({ type: "settings", ...(section ? { section } : {}) });
+    },
+    [],
+  );
   useEffect(() => {
     const open = (event: Event) => {
-      const { section, returnFocus } = (event as CustomEvent<SettingsRequest>).detail ?? {};
-      openSettings(settingsSection(section), returnFocus ?? null);
+      const { section, returnFocus, from } = (event as CustomEvent<SettingsRequest>).detail ?? {};
+      openSettings(settingsSection(section), returnFocus ?? null, isSettingsOpenedFrom(from) ? from : undefined);
     };
     window.addEventListener(OPEN_SETTINGS_EVENT, open);
     return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
   }, [openSettings]);
+  useSettingsVisit(state, settingsFrom);
   return { state, dispatch, settingsReturnFocus, openSettings };
+}
+
+/** A folder adopted from the sheet: the sheet's end, and the game it made. */
+function folderAdopted(app: Studio, opened: GameProject, facts: SheetFacts, startedAt: number): void {
+  const at = Date.now();
+  const sheet = { ...facts, kind: opened.shape.kind };
+  track(
+    AnalyticsEvent.OpenFolderSheetClosed,
+    sheetClosedProperties(sheet, { outcome: SheetOutcome.Adopted, at, adoptStartedAt: startedAt }),
+  );
+  const { games } = app.library.getState();
+  const known = games.some((game) => game.name === opened.name);
+  trackGameCreated({
+    from: GameCreatedFrom.OpenFolder,
+    name: opened.name,
+    startedAt,
+    customLocation: !opened.library,
+    provisional: false,
+    games: games.length + (known ? 0 : 1),
+  });
 }
 
 /** Carry out the open sheet's answer: adopt the folder and open the game. */
 function openPickedFolder(
   app: Studio,
   { state, dispatch }: AppDialogs,
-  choice: OpenChoice,
+  answer: { choice: OpenChoice; facts: SheetFacts },
   onEnterProject: (name: string) => void,
 ): void {
   const { picked, opening } = state;
   if (!picked || opening) return;
   dispatch({ type: "opening", opening: true });
-  void adoptPickedFolder(app.api, picked.dir, choice)
+  const startedAt = Date.now();
+  void adoptPickedFolder(app.api, picked.dir, answer.choice)
     .then((opened) => {
       dispatch({ type: "opened" });
       void app.library.refreshGames();
+      folderAdopted(app, opened, answer.facts, startedAt);
       // A folder with a game of its own is told what the studio found and that it kept it.
       if (opened.built) app.notify(openedWords(opened.title, opened.shape));
+      noteNav(NavVia.OpenFolder);
       onEnterProject(opened.name);
     })
-    .catch(notifyProblem(app.notify))
+    .catch((error: unknown) => {
+      const end = { outcome: SheetOutcome.Failed, at: Date.now(), adoptStartedAt: startedAt, failure: error };
+      track(AnalyticsEvent.OpenFolderSheetClosed, sheetClosedProperties(answer.facts, end));
+      notifyProblem(app.notify)(error);
+    })
     .finally(() => dispatch({ type: "opening", opening: false }));
+}
+
+/** The sheet put away without its answer; nothing is counted while its answer is being carried out. */
+function dismissPicked({ state, dispatch }: AppDialogs, via: DismissVia, facts: SheetFacts): void {
+  if (!state.opening) {
+    const end = { outcome: SheetOutcome.Dismissed, at: Date.now(), via };
+    track(AnalyticsEvent.OpenFolderSheetClosed, sheetClosedProperties(facts, end));
+  }
+  dispatch({ type: "dismiss-picked" });
 }
 
 export function AppDialogs({
@@ -171,24 +251,34 @@ export function AppDialogs({
   const threads = useThreads((s) => s.records);
   const engines = useEngines((s) => s.list);
   const app = studio();
-  const openPicked = (choice: OpenChoice): void => openPickedFolder(app, dialogs, choice, onEnterProject);
+  const openPicked = (choice: OpenChoice, facts: SheetFacts): void =>
+    openPickedFolder(app, dialogs, { choice, facts }, onEnterProject);
+  // A result opened from search: home or the game comes up by way of it.
+  const fromSearch =
+    (open: (id: string) => void) =>
+    (id: string): void => {
+      noteNav(NavVia.Search);
+      open(id);
+    };
 
   const dialogGame = state.game;
   return (
     <>
       {state.settingsOpen && (
-        <SettingsDialog
-          returnFocus={dialogs.settingsReturnFocus}
-          section={state.settingsSection}
-          onSection={(section) => dispatch({ type: "section", section })}
-          onDismiss={() => dispatch({ type: "close-settings" })}
-          engines={engines}
-          // The store's own refresh: one function for the app's life. Settings keys an effect on it,
-          // so a new closure per render would re-read the engines on every update while it is open.
-          onEnginesRefresh={app.engines.refresh}
-          gamesRootLabel={rootLabel}
-          onGamesRoot={(label) => app.library.setState((s) => rootLabelChanged(s, label), true)}
-        />
+        <Suspense fallback={null}>
+          <SettingsDialog
+            returnFocus={dialogs.settingsReturnFocus}
+            section={state.settingsSection}
+            onSection={(section) => dispatch({ type: "section", section })}
+            onDismiss={() => dispatch({ type: "close-settings" })}
+            engines={engines}
+            // The store's own refresh: one function for the app's life. Settings keys an effect on it,
+            // so a new closure per render would re-read the engines on every update while it is open.
+            onEnginesRefresh={app.engines.refresh}
+            gamesRootLabel={rootLabel}
+            onGamesRoot={(label) => app.library.setState((s) => rootLabelChanged(s, label), true)}
+          />
+        </Suspense>
       )}
       {state.searching && (
         <GameSearchDialog
@@ -196,8 +286,8 @@ export function AppDialogs({
           threads={threads}
           firstAsks={firstAsks}
           onDismiss={() => dispatch({ type: "close-search" })}
-          onSelectGame={onSelectGame}
-          onSelectThread={onSelectThread}
+          onSelectGame={fromSearch(onSelectGame)}
+          onSelectThread={fromSearch(onSelectThread)}
         />
       )}
       {dialogGame?.kind === "rename" && (
@@ -236,7 +326,7 @@ export function AppDialogs({
           inspection={state.picked}
           busy={state.opening}
           onOpen={openPicked}
-          onDismiss={() => dispatch({ type: "dismiss-picked" })}
+          onDismiss={(via, facts) => dismissPicked(dialogs, via, facts)}
         />
       ) : null}
     </>

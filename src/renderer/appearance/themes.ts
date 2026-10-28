@@ -523,6 +523,31 @@ const MESSAGE = {
   notJson: t("Use a valid JSON or JSONC theme file."),
   noColors: t("No supported UI colors found. Choose a Genex token file or a VS Code color theme."),
 } as const;
+/** Why a theme could not be imported: a wire value usage analytics sends, never renamed. */
+export const ThemeImportProblem = {
+  TooLarge: "too_large",
+  NotJson: "not_json",
+  NewerFormat: "newer_format",
+  NotOpaqueToken: "not_opaque_token",
+  IncludesFile: "includes_file",
+  NotHex: "not_hex",
+  NoColors: "no_colors",
+} as const;
+export type ThemeImportProblem = (typeof ThemeImportProblem)[keyof typeof ThemeImportProblem];
+
+/** A theme import that failed: its message for the person, its problem for the app. */
+export class ThemeImportError extends Error {
+  readonly problem: ThemeImportProblem;
+  constructor(problem: ThemeImportProblem, message: string) {
+    super(message);
+    this.name = "ThemeImportError";
+    this.problem = problem;
+  }
+}
+
+/** The problem an import failed with, or null for any other failure. */
+export const themeImportProblem = (error: unknown): ThemeImportProblem | null =>
+  error instanceof ThemeImportError ? error.problem : null;
 /** The contrast a theme starts at: its palette as designed. */
 export const DEFAULT_CONTRAST = 50;
 /** The contrast slider's range. */
@@ -1062,12 +1087,14 @@ function isOpaqueColorToken(token: Record<string, unknown>): boolean {
 
 /** The colours of a Genex design-token file, each an opaque sRGB token. */
 function tokenColors(metadata: Record<string, unknown>, data: Record<string, unknown>): Partial<Palette> {
-  if (metadata.version !== undefined && metadata.version !== 1) throw new Error(MESSAGE.newerFormat);
+  if (metadata.version !== undefined && metadata.version !== 1)
+    throw new ThemeImportError(ThemeImportProblem.NewerFormat, MESSAGE.newerFormat);
   const result: Partial<Palette> = {};
   for (const role of ALL_ROLES) {
     if (data[role] === undefined) continue;
     const token = object(data[role]);
-    if (!isOpaqueColorToken(token)) throw new Error(MESSAGE.notOpaqueToken(role));
+    if (!isOpaqueColorToken(token))
+      throw new ThemeImportError(ThemeImportProblem.NotOpaqueToken, MESSAGE.notOpaqueToken(role));
     result[role] = rgbHex(object(token.$value).components as number[]);
   }
   return result;
@@ -1093,7 +1120,7 @@ const VSCODE_KEYS: Record<ColorRole, string[]> = {
 
 /** The colours of a VS Code colour theme, translucent ones blended onto its editor background (written into `base`). */
 function vscodeColors(raw: Record<string, unknown>, data: Record<string, unknown>, base: Palette): Partial<Palette> {
-  if (raw.include !== undefined) throw new Error(MESSAGE.includesFile);
+  if (raw.include !== undefined) throw new ThemeImportError(ThemeImportProblem.IncludesFile, MESSAGE.includesFile);
   const background = importHex(data["editor.background"], base.background);
   if (background) base.background = background;
   const result: Partial<Palette> = {};
@@ -1101,7 +1128,7 @@ function vscodeColors(raw: Record<string, unknown>, data: Record<string, unknown
     const key = VSCODE_KEYS[role].find((candidate) => data[candidate] !== undefined);
     if (key === undefined) continue;
     const value = importHex(data[key], base.background);
-    if (!value) throw new Error(MESSAGE.notHex(key));
+    if (!value) throw new ThemeImportError(ThemeImportProblem.NotHex, MESSAGE.notHex(key));
     result[role] = value;
   }
   return result;
@@ -1111,12 +1138,12 @@ export function importTheme(
   text: string,
   target: Scheme,
 ): { name: string; scheme: Scheme; colors: Palette; contrast: number; source: string } {
-  if (text.length > THEME_FILE_MAX_BYTES) throw new Error(MESSAGE.tooLarge);
+  if (text.length > THEME_FILE_MAX_BYTES) throw new ThemeImportError(ThemeImportProblem.TooLarge, MESSAGE.tooLarge);
   let raw: Record<string, unknown>;
   try {
     raw = object(parseJsonc(text.replace(/^\uFEFF/, "")));
   } catch {
-    throw new Error(MESSAGE.notJson);
+    throw new ThemeImportError(ThemeImportProblem.NotJson, MESSAGE.notJson);
   }
   const metadata = object(object(raw.$extensions)["app.genex.studio"]);
   const scheme = importedScheme(metadata, raw, target);
@@ -1124,7 +1151,7 @@ export function importTheme(
   const data = object(raw.colors);
   const tokens = Object.keys(metadata).length > 0 || COLOR_ROLES.some((role) => object(data[role]).$type === "color");
   const result = tokens ? tokenColors(metadata, data) : vscodeColors(raw, data, base);
-  if (!Object.keys(result).length) throw new Error(MESSAGE.noColors);
+  if (!Object.keys(result).length) throw new ThemeImportError(ThemeImportProblem.NoColors, MESSAGE.noColors);
   const shadows = shadowsOf(metadata.shadows);
   const name = String(metadata.name ?? raw.name ?? t("Imported theme"))
     .trim()
