@@ -413,6 +413,7 @@ const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
   UiEvent.LiveBehind,
   UiEvent.ItemDrafted,
   UiEvent.ItemsLocal,
+  UiEvent.GameAi,
 ]);
 
 /** Whether a harness notification names an event only the host sends. */

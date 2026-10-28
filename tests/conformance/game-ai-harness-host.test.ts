@@ -46,6 +46,7 @@ import {
 } from "../../src/shared/game-ai-tape.ts";
 import { heldClock, LOCAL_QWEN, scriptedDoor, type ScriptedRun } from "../helpers/game-ai-fakes.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { isHostOnlyUiEvent, UiEvent } from "../../src/shared/ui-events.ts";
 
 const PROJECT = "Crowns";
 const DEMO = "turn-three";
@@ -447,5 +448,11 @@ describe("the harness's bench and model check", () => {
     const result = await h.host.modelCheck(PROJECT, { localOnly: true, budget: createRunBudget(4).budget });
     assert.equal(result.state, AiCheckState.Checking);
     assert.deepEqual(h.checks, []);
+  });
+});
+
+describe("the harness and play-time AI's notices", () => {
+  it("keeps a harness notification from standing in for a play-time AI notice", () => {
+    assert.equal(isHostOnlyUiEvent(UiEvent.GameAi), true);
   });
 });
