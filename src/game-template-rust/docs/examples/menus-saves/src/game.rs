@@ -1,3 +1,6 @@
+//! GREYBOX: the courtyard and its markings are boxes to show the menus over; replace
+//! them with the game's own world. Copy the menus, slots, settings and toasts.
+//!
 //! Menus and saves, distilled from the engine's menus-saves example: a courtyard where coins
 //! respawn and health drains, under a title menu (Continue, New game, Load, Settings), a pause menu
 //! (Resume, Save, Load, Settings, Quit to title behind a confirm), slot lists for saving and loading,

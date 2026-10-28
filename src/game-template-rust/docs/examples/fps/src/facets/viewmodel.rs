@@ -1,3 +1,5 @@
+//! GREYBOX: replace before done with the arms kit (`docs/examples/fps-arms/`) or a generated model.
+//!
 //! The view model: two forearms in jacket sleeves, two gloved hands and a pistol, built from
 //! boxes in the camera's frame and drawn under the `hands` tag. Nothing here is a model file, so
 //! it reads at every preset and never comes out as a dark slab; swap any part for a GLB later

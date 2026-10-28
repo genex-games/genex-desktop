@@ -3,7 +3,7 @@
 This index and its topic pages are the contract a game's Rust code is written against. Studio
 copies them read-only into every Rust game folder as `docs/GENEX_API.md` and `docs/api/`. The
 facade crate is `genex`; everything they teach comes from `use genex::prelude::*;`, except
-where a page names its own `use genex::…;` line.
+where a page names its own `use genex::…;` line. Each scene type's look is `docs/look-recipes.md`.
 
 ## A game
 
@@ -60,6 +60,7 @@ change touches (nearly every game needs Ctx and Drawing).
 | Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
 | Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
 | Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
+| Performance and budgets | `docs/api/performance.md` | Per-class and per-preset budgets, hard caps, content costs. |
 | genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: the game, physics, crates, WGSL sources, native features and the web. |
 
 ## Hooks
@@ -134,15 +135,14 @@ The studio and its checks drive a running game through a fixed set of verbs; the
 calls them and cannot add one. `seed(n)`, `start`, `pause` and `step(ms)` control time;
 `state` reads the probes and runtime keys; `input` injects keys, pointer, look, wheel, text,
 pads and touches; `capture` renders a view; `renderSettings` reads or changes the renderer's
-quality for this session (see Rendering); `cameras`, `eyes`, `debugCamera`, `demos` and `demo`
+quality for this session (`docs/api/rendering.md`); `cameras`, `eyes`, `debugCamera`, `demos` and `demo`
 reach what the game registered. `docs/CONTRACT.md` lists each verb and the refusals a run can
 answer.
 
 ## Determinism
 
-A simulation replays bit for bit from its seed on every destination, or two builds cannot be
-compared. The studio's build lints every game with a file of refused paths, and a refused path is
-a build failure, not a warning.
+A simulation replays bit for bit from its seed on every destination. The studio's build lints
+every game with a file of refused paths; a refused path fails the build.
 
 - Use `genex::math` (`sin`, `cos`, `atan2`, `exp`, `pow`, `sqrt`, ...) for transcendental math:
   it is libm on every target. The lane refuses std's `f32::sin`, `f32::powf`, `f32::powi` and
@@ -172,8 +172,8 @@ shop::wire(&mut game);
 // ── END FACET WIRING ──
 ```
 
-Both lines of each facet live inside the block in `main`, so workers that add facets in
-parallel merge by keeping every line. Facets reach the entry file's types as `super::World`.
+Parallel workers merge the block by keeping every line. A facet reaches the entry's types as
+`super::World`.
 
 ## Extension ladder
 

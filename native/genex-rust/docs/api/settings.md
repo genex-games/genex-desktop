@@ -69,5 +69,5 @@ with `settings-value-invalid`. A Genex run never reads the saved file, so judged
 defaults. Nothing here enters the checksum: anything that changes play, such as difficulty, belongs
 in the world and its save, not in settings.
 
-`native/genex-rust/examples/menus-saves` opens the menu from its title and pause menus and
-closes it on `menu_answer(ui).back`.
+`docs/examples/menus-saves/` opens the menu from its title and pause menus and closes it on
+`menu_answer(ui).back`.
