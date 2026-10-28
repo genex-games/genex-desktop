@@ -145,14 +145,40 @@ const NEVER_WORDS: Readonly<Record<AssetNever, string>> = {
   [AssetNever.OverBudget]: "left over budget",
 };
 
-/** The routing table as one paragraph, the line every asset tool's instructions carry verbatim. */
-export function assetRoutingText(): string {
-  const lines = Object.values(AssetClass).map((kind) => {
+/** The plugin a source belongs to: a session sees only the plugins it may call, so a skill names only its own. */
+export const AssetPlugin = { Genex: "genex", Cc0: "cc0", Blender: "blender" } as const;
+export type AssetPlugin = (typeof AssetPlugin)[keyof typeof AssetPlugin];
+
+const SOURCE_PLUGIN: Readonly<Record<AssetSource, AssetPlugin>> = {
+  [AssetSource.Cc0Model]: AssetPlugin.Cc0,
+  [AssetSource.GenexModel]: AssetPlugin.Genex,
+  [AssetSource.GenexCharacter]: AssetPlugin.Genex,
+  [AssetSource.Cc0Texture]: AssetPlugin.Cc0,
+  [AssetSource.GenexTexture]: AssetPlugin.Genex,
+  [AssetSource.GenexImageTransparent]: AssetPlugin.Genex,
+  [AssetSource.Cc0Hdri]: AssetPlugin.Cc0,
+  [AssetSource.BlenderKit]: AssetPlugin.Blender,
+  [AssetSource.BlenderFinish]: AssetPlugin.Blender,
+};
+
+/**
+ * The routing table as one paragraph. Without a plugin it is the whole table (the Genex plugin's
+ * skill, which sits beside every asset lane); with one, only the rows that plugin can serve, naming
+ * only its own tools, so a sub-agent allowed one plugin never reads guidance for tools it cannot call.
+ */
+export function assetRoutingText(plugin?: AssetPlugin): string {
+  const mine = (source: AssetSource) => plugin === undefined || SOURCE_PLUGIN[source] === plugin;
+  const lines = Object.values(AssetClass).flatMap((kind) => {
     const route: AssetRoute = ASSET_ROUTES[kind];
-    const use = route.use.map((source) => SOURCE_WORDS[source]).join(", else ");
+    const sources = route.use.filter(mine);
+    if (!sources.length) return [];
     const never = route.never.map((each) => NEVER_WORDS[each]).join(", ");
-    return `${CLASS_WORDS[kind]}: ${use}; never ${never}.`;
+    return [`${CLASS_WORDS[kind]}: ${sources.map((source) => SOURCE_WORDS[source]).join(", else ")}; never ${never}.`];
   });
+  const elsewhere =
+    plugin === undefined
+      ? ""
+      : " Every other class comes from the other asset plugins when they are on: never from a script of stacked primitives or flat colour.";
   return [
     "Asset routing (search and fetch before you generate, generate before you model):",
     ...lines,
@@ -160,6 +186,6 @@ export function assetRoutingText(): string {
       .map((tier) => `${tier} ${triangles(tier)}`)
       .join(
         ", ",
-      )}; cc0__fetch decimates a heavier model to its tier, and the import step any static model past ${triangles(ModelTier.Hero)}.`,
+      )}; a model heavier than its tier is decimated, and the import step decimates any static model past ${triangles(ModelTier.Hero)}.${elsewhere}`,
   ].join(" ");
 }
