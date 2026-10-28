@@ -135,7 +135,7 @@ export function pendingKindRule(
   if (asked && offered.length > 0) return [engineChoiceRule(engine, unreal, offered)];
   const start = toolCall(engine, ProjectTool.StartWebGame);
   return [
-    `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build on its starter.`,
+    `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build the game in the page it writes.`,
     ...offered.map((kind) => {
       const name = offerName(kind);
       return `When the request names ${name}, call ${toolCall(engine, kind.tool)}: it makes the game's ${name} project in this folder; then build it with that plugin's tools.`;

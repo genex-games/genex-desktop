@@ -207,7 +207,7 @@ export const tools: HarnessTool[] = [
       });
       if ("blocker" in started) return started.message;
       await ctx.call(HostMethod.PreviewLoad, { project });
-      return "The web starter is in the folder; build on it.";
+      return "Genex wrote the game's page: index.html, with three.js in its import map, and src/main.js. Both are yours to rewrite from scratch, as plain as the game wants. The rest of src/ and docs/ is Genex's own instrumentation for its Loop builds: you need none of it.";
     },
   },
 

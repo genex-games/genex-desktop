@@ -406,7 +406,7 @@ describe("new projects start empty", () => {
     const held = { blocker: PluginCallBlocker.PlanMode, message: PROJECT_TOOL_ANSWER.inPlan };
     for (const [answer, says] of [
       [held, PROJECT_TOOL_ANSWER.inPlan],
-      [{ name: "kite" }, "The web starter is in the folder; build on it."],
+      [{ name: "kite" }, PROJECT_TOOL_ANSWER.webStarted],
     ] as const) {
       const host = ctxRecorder({
         threadId: "chat-1",
