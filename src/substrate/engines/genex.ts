@@ -31,26 +31,28 @@ const STATUS_FRESH_MS = 5 * SECOND_MS;
 const STATUS_TIMEOUT_MS = 10 * SECOND_MS;
 /** How long a credits read is reused for the usage popover. */
 const USAGE_FRESH_MS = MINUTE_MS;
-/** The credits route the usage popover reads (the account's balance and monthly refill). */
+/** The routes the usage popover reads: the membership (its monthly allowance and renewal) and the balance. */
+const PLAN_ROUTE = "/api/plans/me";
 const CREDITS_ROUTE = "/api/credits/me";
 /** The context and answer every Genex model is offered with; genex.games bounds the real call. */
 const CONTEXT_WINDOW = 200_000;
 const MAX_TOKENS = 64_000;
-/** The longest model id and name taken from genex.games. */
+/** The longest model id, model name and plan name taken from genex.games. */
 const MODEL_ID_MAX = 80;
 const MODEL_NAME_MAX = 60;
+const PLAN_NAME_MAX = 40;
 /** The usage window's id: the account's monthly credits. */
 const CREDITS_WINDOW = "credits";
 
 const MESSAGE = {
-  Ready: () => t("Building with Genex credits."),
-  SignIn: () => t("Sign in to Genex to build with credits."),
-  VerifyEmail: () => t("Verify your email on genex.games to build with credits."),
-  NeedsPlan: () => t("Building with Genex needs Pro or a credit pack."),
-  OutOfCredits: () => t("You're out of Genex credits."),
-  Paused: () => t("Building with Genex is paused for now. Your work so far is saved."),
-  NotOffered: () => t("Building with Genex isn't available yet."),
-  Unreachable: () => t("genex.games couldn't be reached."),
+  Ready: () => t("Builds with your Genex credits."),
+  SignIn: () => t("Sign in to Genex and pick Pro or a credit pack to start building."),
+  VerifyEmail: () => t("Verify your email on genex.games to start building."),
+  NeedsPlan: () => t("Pick Pro or a credit pack on genex.games to start building."),
+  OutOfCredits: () => t("You’re out of Genex credits."),
+  Paused: () => t("Building with Genex is paused for now."),
+  NotOffered: () => t("Building with Genex isn’t available yet."),
+  Unreachable: () => t("genex.games couldn’t be reached."),
   MonthlyCredits: () => t("Monthly credits"),
 } as const;
 
@@ -116,18 +118,45 @@ function modelsOf(value: unknown): GenexModel[] | null {
   return models.length ? models : null;
 }
 
-/** The account's monthly credits as one usage window, or null when it has no monthly refill. */
-export function creditsUsage(body: unknown, measuredAt: string): ProviderUsage | null {
-  if (!body || typeof body !== "object") return null;
-  const { spendable, balance, refillTo, refillAt } = body as Record<string, unknown>;
-  const left = typeof spendable === "number" ? spendable : balance;
-  if (typeof left !== "number" || typeof refillTo !== "number" || refillTo <= 0) return null;
-  const used = Math.round(100 * (1 - left / refillTo));
-  const resets = typeof refillAt === "string" && Number.isFinite(Date.parse(refillAt)) ? { resetsAt: refillAt } : {};
+/** A plain object read from a JSON answer, or null. */
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/** A Pro member's monthly allowance, its renewal and the plan's name; null for anyone else. */
+function memberAllowance(body: unknown): { allowance: number; name?: string; resetsAt?: string } | null {
+  const plan = recordOf(body);
+  const allowance = plan?.member === true ? plan.allowance : null;
+  if (!plan || typeof allowance !== "number" || allowance <= 0) return null;
+  const { name, resetsAt } = plan;
+  return {
+    allowance,
+    ...(typeof name === "string" && name.trim() ? { name: name.trim().slice(0, PLAN_NAME_MAX) } : {}),
+    ...(typeof resetsAt === "string" && Number.isFinite(Date.parse(resetsAt)) ? { resetsAt } : {}),
+  };
+}
+
+/**
+ * A Pro member's monthly credits as one usage window under the plan's name, or null without Pro:
+ * a pack's credits and the weekly free ones are not a month's. Credits held for a call under way
+ * count as used, and bought credits on top of the allowance leave it at none used.
+ */
+export function creditsUsage(plan: unknown, credits: unknown, measuredAt: string): ProviderUsage | null {
+  const member = memberAllowance(plan);
+  const balance = recordOf(credits);
+  const left = typeof balance?.spendable === "number" ? balance.spendable : balance?.balance;
+  if (!member || typeof left !== "number") return null;
+  const used = Math.round(100 * (1 - left / member.allowance));
   return {
     measuredAt,
+    ...(member.name ? { plan: member.name } : {}),
     windows: [
-      { id: CREDITS_WINDOW, label: MESSAGE.MonthlyCredits(), percent: Math.max(0, Math.min(100, used)), ...resets },
+      {
+        id: CREDITS_WINDOW,
+        label: MESSAGE.MonthlyCredits(),
+        percent: Math.max(0, Math.min(100, used)),
+        ...(member.resetsAt ? { resetsAt: member.resetsAt } : {}),
+      },
     ],
   };
 }
@@ -165,6 +194,17 @@ export function createGenexLane(deps: GenexLaneDeps) {
       return { code: EngineStatusCode.Error, detail: MESSAGE.Unreachable(), reason: EngineStatusReason.CheckFailed };
     models = modelsOf(body.models) ?? models;
     return genexStatus(body.access);
+  };
+
+  /** One of the account's own reads, as JSON; null where genex.games does not serve it (404). */
+  const readAccount = async (route: string, token: string): Promise<unknown> => {
+    const res = await doFetch(new URL(route, deps.api), {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(MESSAGE.Unreachable());
+    return res.json();
   };
 
   const relay: GenexRelay = createGenexRelay({
@@ -211,17 +251,13 @@ export function createGenexLane(deps: GenexLaneDeps) {
     open(chat: string): Promise<GenexLease> {
       return relay.open({ chat });
     },
-    /** The account's monthly credits; null while signed out or with no monthly refill. */
+    /** A Pro member's monthly credits; null while signed out, without Pro, or where genex.games has no plans. */
     async readUsage(): Promise<ProviderUsage | null> {
       if (usage && now() - usage.at < USAGE_FRESH_MS) return usage.value;
       const token = await deps.token();
       if (!token) return null;
-      const res = await doFetch(new URL(CREDITS_ROUTE, deps.api), {
-        headers: { authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
-      });
-      if (!res.ok) throw new Error(MESSAGE.Unreachable());
-      const value = creditsUsage(await res.json(), new Date(now()).toISOString());
+      const [plan, credits] = await Promise.all([readAccount(PLAN_ROUTE, token), readAccount(CREDITS_ROUTE, token)]);
+      const value = creditsUsage(plan, credits, new Date(now()).toISOString());
       usage = { value, at: now() };
       return value;
     },

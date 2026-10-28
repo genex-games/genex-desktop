@@ -23,7 +23,7 @@ nickname (kept offline), **Friends** with invites, profiles and **Stats** ([Play
 ## First launch
 
 An empty, never-welcomed profile opens a full-window welcome connecting Claude Code, ChatGPT, local
-models, OpenRouter, OpenCode, Grok Build or Cursor; Skip or Start building opens home, keeping a
+models, OpenRouter, OpenCode, Grok Build, Cursor or Genex credits; Skip or Start building opens home, keeping a
 typed idea. [Usage analytics](../usage-analytics.md) ask first, once.
 
 A Genex card then offers **Connect Genex plugin** once.

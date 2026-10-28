@@ -301,7 +301,7 @@ import { errorMessage } from "../shared/errors.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { CustomEvent, customEventData } from "../shared/custom-events.ts";
 import { EVAL_LANE_EXIT } from "../shared/eval-lane.ts";
-import { EngineId, SUBSCRIPTION_ENGINES } from "../shared/providers.ts";
+import { EngineId, providerInfo, SUBSCRIPTION_ENGINES } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
 import {
   flagValue,
@@ -777,16 +777,23 @@ function reviveCrashedWindow(): void {
   if (window && !window.isDestroyed() && window.webContents.isCrashed()) window.webContents.reload();
 }
 
+/**
+ * A subscription's engine: Claude Code's or Codex's. Genex runs Claude Code's engine too, but on
+ * genex.games's sign-in, not a plan's.
+ */
 function subscription(id: string): SubscriptionEngine | null {
-  if (!core?.engines.has(id)) return null;
+  if (providerInfo(id)?.subscription !== true || !core?.engines.has(id)) return null;
   const engine = core.engines.get(id);
   if (engine instanceof ClaudeCodeEngine || engine instanceof CodexEngine) return engine;
   return null;
 }
 
-/** The subscriptions' plan limits, one live state the renderer is pushed (`core/provider-usage.ts`). */
+/**
+ * The subscriptions' plan limits and a Genex Pro member's monthly credits, one live state the
+ * renderer is pushed (`core/provider-usage.ts`).
+ */
 const providerUsage = createProviderUsage({
-  engines: SUBSCRIPTION_ENGINES,
+  engines: [...SUBSCRIPTION_ENGINES, EngineId.Genex],
   source: (id) => {
     if (!core?.engines.has(id)) return null;
     return engineUsageSource(core.engines.get(id), subscription(id)?.accounts ?? null);

@@ -30,6 +30,7 @@ import { t } from "../../shared/i18n.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { GENEX_HELPER_MODEL } from "../../shared/genex-build.ts";
+import { offersGenex } from "../genex-build.ts";
 import { type ModelInstallJob, ModelPullStatus } from "../../shared/model-install.ts";
 import { errorCode } from "../../shared/errors.ts";
 import { EngineId } from "../../shared/providers.ts";
@@ -111,7 +112,6 @@ import {
   genexChoiceView,
   installsCli,
   markState,
-  offersGenex,
   startTrouble,
   type ConnectView,
   type Subscription,

@@ -157,19 +157,54 @@ describe("Genex lane reads", () => {
     await lane.close();
   });
 
-  it("reads the monthly credits as one usage window, and none without a monthly refill", () => {
+  it("reads a Pro member's monthly credits as one usage window under the plan's name", () => {
     const at = "2026-10-28T12:00:00.000Z";
-    assert.deepEqual(creditsUsage({ spendable: 250, refillTo: 1000, refillAt: "2026-11-01T00:00:00.000Z" }, at), {
+    const member = { member: true, name: "Genex Pro", allowance: 1000, resetsAt: "2026-11-12T00:00:00.000Z" };
+    assert.deepEqual(creditsUsage(member, { balance: 300, spendable: 250 }, at), {
       measuredAt: at,
-      windows: [{ id: "credits", label: "Monthly credits", percent: 75, resetsAt: "2026-11-01T00:00:00.000Z" }],
+      plan: "Genex Pro",
+      windows: [{ id: "credits", label: "Monthly credits", percent: 75, resetsAt: "2026-11-12T00:00:00.000Z" }],
     });
     assert.equal(
-      creditsUsage({ spendable: 5000, refillTo: 1000 }, at)?.windows[0]?.percent,
+      creditsUsage(member, { balance: 5000, spendable: 5000 }, at)?.windows[0]?.percent,
       0,
       "bought credits on top",
     );
-    assert.equal(creditsUsage({ spendable: 250, refillTo: null }, at), null);
-    assert.equal(creditsUsage(null, at), null);
+    const { resetsAt: _first, ...beforeFirstGrant } = member;
+    assert.equal(
+      creditsUsage({ ...beforeFirstGrant, resetsAt: null }, { balance: 1000 }, at)?.windows[0]?.resetsAt,
+      undefined,
+    );
+  });
+
+  it("shows no monthly credits without Pro: a pack's credits and the weekly free ones are not a month's", () => {
+    const at = "2026-10-28T12:00:00.000Z";
+    const weekly = { balance: 40, spendable: 40, refillTo: 50, refillAt: "2026-11-01T00:00:00.000Z" };
+    assert.equal(creditsUsage({ member: false, boughtCredits: 500 }, weekly, at), null);
+    assert.equal(creditsUsage({ member: true, allowance: 0 }, weekly, at), null);
+    assert.equal(creditsUsage(null, weekly, at), null);
+    assert.equal(creditsUsage({ member: true, allowance: 1000 }, null, at), null);
+  });
+
+  it("reads the membership and the balance with the person's token, and nothing while signed out", async () => {
+    const member = { member: true, name: "Genex Pro", allowance: 1000, resetsAt: "2026-11-12T00:00:00.000Z" };
+    const { lane, asked } = laneOver([
+      { status: 200, body: member },
+      { status: 200, body: { balance: 400, spendable: 400 } },
+    ]);
+    assert.equal((await lane.readUsage())?.windows[0]?.percent, 60);
+    assert.deepEqual(
+      asked.map((call) => [new URL(call.url).pathname, call.auth]),
+      [
+        ["/api/plans/me", `Bearer ${TOKEN}`],
+        ["/api/credits/me", `Bearer ${TOKEN}`],
+      ],
+    );
+    const signedOut = laneOver([{ status: 200, body: member }], null);
+    assert.equal(await signedOut.lane.readUsage(), null);
+    assert.equal(signedOut.asked.length, 0);
+    const off = laneOver([{ status: 404, body: { error: "not_found" } }]);
+    assert.equal(await off.lane.readUsage(), null, "no plans on this stand: no monthly credits");
   });
 });
 

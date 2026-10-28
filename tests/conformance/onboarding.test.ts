@@ -9,13 +9,13 @@ import {
   connectView,
   genexChoiceView,
   markState,
-  offersGenex,
   shouldWelcome,
   startTrouble,
   WELCOMED_KEY,
   type ConnectInput,
 } from "../../src/renderer/onboarding/state.ts";
 import { composerOpening } from "../../src/renderer/chat/use-composer-model.ts";
+import { offersGenex } from "../../src/renderer/genex-build.ts";
 import { resolveChoice, toChoices } from "../../src/renderer/model-choices.ts";
 import { rememberWelcomeModel } from "../../src/renderer/stored-model.ts";
 import type { EngineDescriptor } from "../../src/renderer/types.ts";

@@ -54,6 +54,11 @@ export function genexNeed(engine: Pick<EngineDescriptor, "id" | "status"> | unde
   return code === EngineStatusCode.NeedsLogin ? GenexNeed.SignIn : GenexNeed.Unreachable;
 }
 
+/** Does genex.games offer building with Genex here? Not while it says it does not, or Genex is not read yet. */
+export function offersGenex(engine: Pick<EngineDescriptor, "status"> | undefined): boolean {
+  return engine !== undefined && engine.status.reason !== EngineStatusReason.NotOffered;
+}
+
 /** The needs genex.games's build page answers: a sign-in, a plan or credits, a verified email. */
 const IN_BROWSER: ReadonlySet<GenexNeed> = new Set([GenexNeed.SignIn, GenexNeed.Plan, GenexNeed.VerifyEmail]);
 /** The needs that stop a chat already under way: its work so far is kept. */

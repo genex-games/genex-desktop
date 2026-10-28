@@ -952,7 +952,7 @@ export type EngineKind = 'direct' | 'delegated';
 export type EngineStatusCode = 'ready' | 'not_installed' | 'not_running' | 'needs_login' | 'error';
 // ↑ src/shared/engine-descriptor.ts
 
-export type EngineStatusReason = 'not_signed_in' | 'api_key_login' | 'auth_failed' | 'check_failed' | 'cli_missing';
+export type EngineStatusReason = 'not_signed_in' | 'api_key_login' | 'auth_failed' | 'check_failed' | 'cli_missing' | 'verify_email' | 'needs_plan' | 'out_of_credits' | 'paused' | 'not_offered';
 // ↑ src/shared/engine-descriptor.ts
 
 export interface EngineStatus {

@@ -6,7 +6,7 @@
 import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
-import { EngineStatusCode, EngineStatusReason } from "../../shared/engine-descriptor.ts";
+import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineId, type SubscriptionId } from "../../shared/providers.ts";
@@ -215,11 +215,6 @@ export function genexChoiceView(choice: {
   if (!choice.picked) return { kind: ConnectViewKind.Action, action: ConnectAction.Connect, label: t("Use Genex") };
   if (choice.installing) return { kind: ConnectViewKind.Busy, label: t("Getting Genex ready…"), cancel: false };
   return { kind: ConnectViewKind.On, label: t("Genex ready") };
-}
-
-/** Does genex.games offer building with Genex here? Not while it says it does not, or Genex is not read yet. */
-export function offersGenex(engine: Pick<EngineDescriptor, "status"> | undefined): boolean {
-  return engine !== undefined && engine.status.reason !== EngineStatusReason.NotOffered;
 }
 
 /** Ollama names an untagged pull `:latest`; installed models are compared the same way. */
