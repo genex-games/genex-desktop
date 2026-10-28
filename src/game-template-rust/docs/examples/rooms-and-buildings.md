@@ -7,17 +7,21 @@ after each step.
 
 1. **Greybox in code.** Boxes from `frame.cube_with`, sized in metres, with Rapier colliders from
    the same numbers. Play it until the layout works. Spend minutes here, not the run.
-2. **Fetch the surfaces.** `cc0__search` then `cc0__fetch` at `1k` for each surface: plaster or
-   paint, floor, concrete, wood, metal. Note each scan's real size (Poly Haven's pages give it;
-   about 2 m for walls and floors). A scan stretched over a 6 m wall reads as noise.
+2. **Fetch the surfaces.** `cc0__search` then `cc0__fetch` for each surface: plaster or paint,
+   floor, concrete, wood, metal; `2k` for walls and floors, which fill the screen, `1k` for the
+   rest. Pick scans that read as the place (a Soviet school: whitewash, chipped oil paint, quarry
+   tiles, parquet), a dado and a floor per room. Note each scan's real size (Poly Haven's pages
+   give it; 2 to 4 m for walls and floors). A scan stretched over a 6 m wall reads as noise.
 3. **Build the shell from the interior kit.** Copy `docs/examples/interior-kit/assets/kit/` to
    `assets/kit/` and lay the level out in 2 m modules as `docs/examples/interior-kit/src/game.rs`
    does: each module a shell piece (`wall`, `wall-window`, `wall-door`, the opening's sides its
    reveals) with its dado coat and trims on each painted face; windows dressed with frame, sill,
-   sashes, glass and a grille; then beams, fittings, radiators, desks, lockers and rubble. Every GLB
+   sashes, glass and a grille; then beams, fittings, radiators, desks and rubble. Every piece's GLB
    has one material named for its role (`plaster`, `paint`, `concrete`, `trim`, `props`, `glass`,
    `tube`): draw it with `frame.model_with` and that role's material, a scan with `.with_world_uv`
-   for the shell and coat, the kit's trim sheet for trims and its props atlas for props. For
+   for the shell and coat, the kit's trim sheet for trims and its props atlas for props. The
+   generated hero models in `hero/` (lockers, a wrecked car) bring their own materials: draw them
+   with `frame.model`. For
    another module width, storey height or a piece the kit lacks (pipes, cornices, stairs), copy
    `interior_kit.py` to `assets/src/`, change or add a piece and run
    `blender__model {name: "<piece>", script: "assets/src/interior_kit.py"}`. Blender is +Z up: its
@@ -34,8 +38,9 @@ after each step.
    through its walls and its floor mirrors the sky.
 7. **Decals for wear.** `Decal::on_wall` and `Decal::on_ground`, never thin boxes. The kit's
    `decals/` hold peeling paint along an edge (`peel_edge`, under the dado rail and over the
-   skirting) and in a patch, a crack, a leak for under a sill and grime for along a floor; posters
-   and puddles are your own.
+   skirting) and in a patch, a crack, a leak for under a sill, grime for along a floor, a water
+   stain for a ceiling, a lesson in chalk for the blackboard and four school posters; puddles and
+   other posters are your own (`genex__asset` image, keyed as `kit_sheets.py` keys these).
 8. **Fog thin, grade last.** Fog takes the sky's light, so indoors a dense fog glows milky in every
    corner; about `0.01` per metre still draws the sun's shafts at `high`. Then exposure, then the
    grade.

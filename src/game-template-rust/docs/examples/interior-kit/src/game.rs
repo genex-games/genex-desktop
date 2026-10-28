@@ -1,10 +1,13 @@
 //! A school corridor and the classroom off it, assembled from the interior kit (`assets/kit/`,
 //! made by `interior_kit.py`): every wall a 2 m module (plain, window or door) with its dado coat
 //! and trims, windows dressed with frames, sashes, broken glass and grilles, beams and fittings
-//! overhead, desks, lockers and rubble on the floor. The shell takes CC0 scans projected from the
-//! world (`with_world_uv`, stochastic tiling), trims and props take the kit's trim sheet and props
-//! atlas, and the wear is the kit's decals: peeling paint along the dado line, leaks under the
-//! sills, grime along the floor. Each room has a probe and a volume, every wall a collider.
+//! overhead, desks, lockers and rubble on the floor, a wrecked car in the yard. The shell takes 2k
+//! CC0 scans projected from the world (`with_world_uv`, stochastic tiling), a dado colour and a
+//! floor of its own per room; trims and props take the kit's trim sheet and props atlas; the lockers
+//! and the car are the kit's generated hero models with their own materials. The wear is the kit's
+//! decals: peeling paint along the dado line, leaks under the sills, grime along the floor, water
+//! stains overhead, posters on the walls and a lesson in chalk. Each room has a probe and a volume,
+//! every wall a collider.
 //!
 //! The level is data (`plan`): change the modules, and the draw, the colliders and the decals follow.
 
@@ -28,13 +31,13 @@ const TUBE: Color = Color::rgb(220, 235, 255);
 /// The seed of every dressing choice (broken panes, open doors, tipped chairs, wear).
 const LAYOUT_SEED: u64 = 0x5c40_0001;
 /// The pieces with a coarser level (`<name>-lod1.glb`) and how far away it takes over (metres).
-const LODS: [(&str, f32); 5] = [("radiator", 8.0), ("desk", 12.0), ("chair", 10.0), ("lockers", 12.0), ("window-grille-sunburst", 14.0)];
-/// Every piece the level draws, under `assets/kit/`.
-const PIECES: [&str; 32] = [
+const LODS: [(&str, f32); 4] = [("radiator", 8.0), ("desk", 12.0), ("chair", 10.0), ("window-grille-sunburst", 14.0)];
+/// Every piece the level draws, under `assets/kit/`: the hero models (`hero/`) bring their own materials.
+const PIECES: [&str; 33] = [
     "wall", "wall-window", "wall-door", "wall-paint", "wall-window-paint", "wall-door-paint", "wall-trims", "wall-window-trims",
     "wall-door-trims", "pilaster", "pilaster-paint", "pilaster-trims", "window-frame", "window-sash", "window-glass", "window-glass-broken",
     "window-grille-bars", "window-grille-sunburst", "window-sill", "door-frame", "door", "beam", "light-fitting", "light-tube", "radiator",
-    "desk", "desk-broken", "chair", "chair-broken", "lockers", "teacher-desk", "blackboard",
+    "desk", "desk-broken", "chair", "chair-broken", "teacher-desk", "blackboard", "hero/lockers", "hero/car-shell",
 ];
 /// Rubble, litter and the yard's bench, each placed once.
 const SCATTER: [(&str, f32, f32, f32); 7] = [
@@ -47,8 +50,8 @@ const SCATTER: [(&str, f32, f32, f32); 7] = [
     ("bench", 7.0, -3.0, PI),
 ];
 
-/// A Poly Haven scan as `cc0__fetch {source: "polyhaven", id, resolution: "1k"}` delivers it, the
-/// metres one copy covers and its colour until its maps load (or when they are missing).
+/// A Poly Haven scan as `cc0__fetch {source: "polyhaven", id, resolution: "2k"}` delivers it, the
+/// metres one copy covers (its real size) and its colour until its maps load (or when they are missing).
 struct Scan {
     folder: &'static str,
     id: &'static str,
@@ -56,17 +59,23 @@ struct Scan {
     stand_in: Color,
 }
 
-const PLASTER: Scan = Scan { folder: "cc0/57973f46-efe4-5584-8ecc-c8335e641d32", id: "painted_plaster_wall", tile: 2.5, stand_in: Color::rgb(190, 186, 178) };
-const DADO_PAINT: Scan = Scan { folder: "cc0/c2536c59-bceb-ebba-aced-d476539274ad", id: "blue_plaster_wall", tile: 2.0, stand_in: Color::rgb(90, 130, 150) };
-const CONCRETE: Scan = Scan { folder: "cc0/69d58cd7-d02f-5f73-c20b-748197b36df8", id: "concrete_wall_003", tile: 2.5, stand_in: Color::rgb(150, 146, 136) };
-const TILES: Scan = Scan { folder: "cc0/e6657b6b-b54c-49ce-7af8-709354a34ed0", id: "floor_tiles_06", tile: 2.0, stand_in: Color::rgb(120, 112, 104) };
+/// Cracked whitewash above the dado, both rooms.
+const WHITEWASH: Scan = Scan { folder: "cc0/0f2152c5-2349-0ec7-e27b-29a825486708", id: "preconcrete_wall_001", tile: 4.0, stand_in: Color::rgb(200, 190, 172) };
+/// The corridor's chipped blue oil paint, and the classroom's green.
+const HALL_DADO: Scan = Scan { folder: "cc0/d530892c-a587-f2a4-688a-6fc405504b5e", id: "blue_plaster_weathered", tile: 2.0, stand_in: Color::rgb(110, 160, 165) };
+const ROOM_DADO: Scan = Scan { folder: "cc0/c0b5f99c-8391-f384-c420-d697188f5092", id: "painted_concrete", tile: 2.0, stand_in: Color::rgb(40, 110, 70) };
+/// Water-stained concrete: the ceilings, beams and sills.
+const CONCRETE: Scan = Scan { folder: "cc0/7073a9f7-c940-c428-16db-d20088a08b10", id: "concrete_wall_003", tile: 3.0, stand_in: Color::rgb(150, 146, 136) };
+/// The corridor's red quarry tiles and the classroom's herringbone parquet.
+const HALL_FLOOR: Scan = Scan { folder: "cc0/f282de59-61cb-5c95-7311-db397ff43586", id: "dirty_tiles", tile: 2.26, stand_in: Color::rgb(110, 50, 35) };
+const ROOM_FLOOR: Scan = Scan { folder: "cc0/abd40a48-d24b-7a5f-c2cf-5bd680eb17ad", id: "herringbone_parquet", tile: 3.4, stand_in: Color::rgb(120, 85, 55) };
 
 impl Scan {
     /// The scan projected from the world at its real size on any piece at any scale, stochastic
     /// tiling and a macro variation keeping a 16 m corridor from showing a tile twice; `roughness`
     /// scales the scan's own.
     fn material(&self, roughness: f32) -> Material {
-        let map = |kind: &str| format!("{}/{}_{kind}_1k.jpg", self.folder, self.id);
+        let map = |kind: &str| format!("{}/{}_{kind}_2k.jpg", self.folder, self.id);
         Material::color(Color::WHITE)
             .with_untextured_color(self.stand_in)
             .with_roughness(roughness)
@@ -91,12 +100,14 @@ fn sheet(name: &str, stand_in: Color) -> Material {
         .with_orm_texture(&map("orm"))
 }
 
-/// The material of each role the kit's pieces are named for.
+/// The material of each role the kit's pieces are named for, the paint and the floor per room.
 pub struct Looks {
     plaster: Material,
-    paint: Material,
+    hall_paint: Material,
+    room_paint: Material,
     concrete: Material,
-    tiles: Material,
+    hall_floor: Material,
+    room_floor: Material,
     trim: Material,
     props: Material,
     glass: Material,
@@ -106,11 +117,13 @@ pub struct Looks {
 impl Default for Looks {
     fn default() -> Looks {
         Looks {
-            plaster: PLASTER.material(1.0),
-            // Oil paint is glossier than the distemper above it.
-            paint: DADO_PAINT.material(0.6),
+            plaster: WHITEWASH.material(1.0),
+            // Oil paint is glossier than the whitewash above it.
+            hall_paint: HALL_DADO.material(0.7),
+            room_paint: ROOM_DADO.material(0.7),
             concrete: CONCRETE.material(1.0),
-            tiles: TILES.material(0.7),
+            hall_floor: HALL_FLOOR.material(0.8),
+            room_floor: ROOM_FLOOR.material(0.9),
             trim: sheet("trim", Color::rgb(110, 60, 40)),
             props: sheet("props", Color::rgb(120, 100, 80)),
             glass: Material::color(Color::rgba(170, 190, 195, 60)).with_roughness(0.05),
@@ -134,6 +147,20 @@ impl World {
         if let Some(model) = self.kit.get(name) {
             frame.model_with(model, at, material);
         }
+    }
+
+    /// Draw a hero model (`hero/<name>`) at `at` in its own materials.
+    fn hero(&self, frame: &mut Frame, name: &str, at: Transform) {
+        if let Some(model) = self.kit.get(name) {
+            frame.model(model, at);
+        }
+    }
+
+    /// The dado paint of the room a face looks into.
+    fn paint(&self, face: At) -> &Material {
+        let inside = face.pos + face.facing() * 0.5;
+        let classroom = inside.z > ROOM[0].z && (ROOM[0].x..ROOM[1].x).contains(&inside.x);
+        if classroom { &self.looks.room_paint } else { &self.looks.hall_paint }
     }
 }
 
@@ -271,7 +298,7 @@ fn colliders(physics: &mut PhysicsWorld) {
         }
     }
     for x in [7.0, 9.0] {
-        fixed(vec3(x, 0.93, HALL[1].z - FACE - 0.23), vec3(0.45, 0.93, 0.23));
+        fixed(vec3(x, 0.925, HALL[1].z - FACE - 0.245), vec3(0.43, 0.925, 0.245));
     }
 }
 
@@ -284,17 +311,18 @@ fn draw(world: &World, frame: &mut Frame) {
     let ground = Transform::from_translation(vec3(8.0, -0.17, 5.0)).with_scale(vec3(120.0, 0.3, 120.0));
     frame.cube_with(ground, &looks.ground);
     frame.cube_with(Transform::from_translation(vec3(8.0, 4.0, -40.0)).with_scale(vec3(40.0, 8.0, 1.0)), &looks.concrete);
+    world.hero(frame, "hero/car-shell", At::new(10.5, -6.0, 1.2).transform());
     frame.tag("shell");
-    for [lo, hi] in [HALL, ROOM] {
+    for ([lo, hi], floor) in [(HALL, &looks.hall_floor), (ROOM, &looks.room_floor)] {
         let pad = vec3(FACE, 0.0, FACE);
-        frame.cube_with(Transform::from_translation((lo + hi) * 0.5 - Vec3::Y * (CEILING * 0.5 + 0.1)).with_scale(vec3(hi.x - lo.x, 0.2, hi.z - lo.z) + pad * 2.0), &looks.tiles);
+        frame.cube_with(Transform::from_translation((lo + hi) * 0.5 - Vec3::Y * (CEILING * 0.5 + 0.1)).with_scale(vec3(hi.x - lo.x, 0.2, hi.z - lo.z) + pad * 2.0), floor);
         frame.cube_with(Transform::from_translation((lo + hi) * 0.5 + Vec3::Y * (CEILING * 0.5 + 0.1)).with_scale(vec3(hi.x - lo.x, 0.2, hi.z - lo.z) + pad * 2.0), &looks.concrete);
     }
     for (i, wall) in plan().iter().enumerate() {
         let [shell, paint, trims] = wall.pieces();
         world.put(frame, shell, wall.at.transform(), &looks.plaster);
         for face in wall.faces() {
-            world.put(frame, paint, face.transform(), &looks.paint);
+            world.put(frame, paint, face.transform(), world.paint(face));
             world.put(frame, trims, face.transform(), &looks.trim);
         }
         let mut rng = Pcg32::seeded(LAYOUT_SEED ^ i as u64);
@@ -310,7 +338,7 @@ fn draw(world: &World, frame: &mut Frame) {
     }
     // Pilasters between the corridor's windows, and the concrete beams they carry.
     for x in [4.0, 8.0, 12.0] {
-        for (name, look) in [("pilaster", &looks.plaster), ("pilaster-paint", &looks.paint), ("pilaster-trims", &looks.trim)] {
+        for (name, look) in [("pilaster", &looks.plaster), ("pilaster-paint", &looks.hall_paint), ("pilaster-trims", &looks.trim)] {
             world.put(frame, name, At::new(x, HALL[0].z, 0.0).transform(), look);
         }
         let beam = At::new(x, 2.0, FRAC_PI_2).transform();
@@ -361,7 +389,7 @@ fn furniture(world: &World, frame: &mut Frame) {
     world.put(frame, "teacher-desk", At::new(5.1, 7.3, FRAC_PI_2).transform(), props);
     world.put(frame, "blackboard", At::new(ROOM[0].x, 7.0, FRAC_PI_2).then(vec3(0.0, 0.0, FACE), 0.0).transform(), props);
     for x in [7.0, 9.0] {
-        world.put(frame, "lockers", At::new(x, HALL[1].z, PI).then(vec3(0.0, 0.0, FACE), 0.0).transform(), props);
+        world.hero(frame, "hero/lockers", At::new(x, HALL[1].z, PI).then(vec3(0.0, 0.0, FACE), 0.0).transform());
     }
     for (name, x, z, yaw) in SCATTER {
         world.put(frame, name, At::new(x, z, yaw).transform(), props);
@@ -384,9 +412,9 @@ fn lamps(world: &World, frame: &mut Frame) {
     }
 }
 
-/// The kit's decals, from the layout seed: grime along the floor and peeling paint under the dado
-/// rail on half the faces, a patch or a crack higher up, a leak under each sill, and the ceiling's
-/// skim coat come away over the fallen plaster.
+/// The kit's decals, from the layout seed: grime along the floor on a third of the faces and
+/// peeling paint under the dado rail on half, a patch or a crack higher up, a leak under each sill;
+/// water stains and the skim coat come away overhead; posters on the walls and a lesson in chalk.
 fn wear(frame: &mut Frame) {
     let mut rng = Pcg32::seeded(LAYOUT_SEED ^ 0xdeca1);
     // Each decal's shape is a PNG's alpha; its normal map, where it has one, a JPEG.
@@ -396,15 +424,16 @@ fn wear(frame: &mut Frame) {
         for face in wall.faces() {
             let (out, along) = (face.facing(), Quat::from_rotation_y(face.yaw) * Vec3::X);
             let on = |up: f32, shift: f32| face.pos + out * (FACE + 0.003) + Vec3::Y * up + along * shift;
-            if rng.below(2) == 0 {
-                frame.decal(&Decal::on_wall(on(0.16, 0.0), out, 2.0, 0.32).with_base_texture(&decal("grime_base")).with_opacity(0.8));
+            if rng.below(3) == 0 {
+                frame.decal(&Decal::on_wall(on(0.18, 0.0), out, 2.0, 0.36).with_base_texture(&decal("grime_base")).with_opacity(0.85));
             }
             if rng.below(2) == 0 {
-                let edge = Decal::on_wall(on(DADO - 0.2, rng.range_f32(-0.3, 0.3)), out, rng.range_f32(1.0, 1.8), 0.34);
+                let size = rng.range_f32(0.8, 1.25);
+                let edge = Decal::on_wall(on(DADO - 0.2, rng.range_f32(-0.3, 0.3)), out, 1.36 * size, 0.34 * size);
                 frame.decal(&edge.with_base_texture(&decal("peel_edge")).with_normal_texture(&normal("peel_edge"), 1.0));
             }
             if wall.kind == Kind::Window {
-                frame.decal(&Decal::on_wall(on(0.45, 0.0), out, 1.4, 0.9).with_base_texture(&decal("leak")).with_opacity(0.7));
+                frame.decal(&Decal::on_wall(on(0.47, rng.range_f32(-0.4, 0.4)), out, 0.6, 0.95).with_base_texture(&decal("leak")).with_opacity(0.8));
             } else if rng.below(3) == 0 {
                 let size = rng.range_f32(0.7, 1.3);
                 let patch = Decal::on_wall(on(rng.range_f32(1.8, 2.7), rng.range_f32(-0.5, 0.5)), out, size, size).rotated(rng.range_f32(-0.4, 0.4));
@@ -413,8 +442,22 @@ fn wear(frame: &mut Frame) {
             }
         }
     }
-    for (x, z, size) in [(13.0, 2.2, 1.6), (5.5, 1.4, 1.0), (8.4, 7.4, 1.3)] {
-        let ceiling = Decal::on_wall(vec3(x, CEILING, z), Vec3::NEG_Y, size, size).with_base_texture(&decal("peel_patch"));
-        frame.decal(&ceiling.with_normal_texture(&normal("peel_patch"), 1.0));
+    let overhead = |x: f32, z: f32, size: f32| Decal::on_wall(vec3(x, CEILING, z), Vec3::NEG_Y, size, size);
+    frame.decal(&overhead(13.0, 2.2, 1.6).with_base_texture(&decal("peel_patch")).with_normal_texture(&normal("peel_patch"), 1.0));
+    for (x, z, size) in [(5.5, 1.4, 1.4), (8.4, 7.4, 1.8)] {
+        frame.decal(&overhead(x, z, size).with_base_texture(&decal("ceiling_stain")).with_opacity(0.9));
     }
+    // Posters above the dado: two in the corridor, two in the classroom; the lesson on the slate.
+    let posters = [
+        ("poster_defence", At::new(3.0, HALL[1].z, PI), 0.6, 1.07),
+        ("poster_space", At::new(13.0, HALL[1].z, PI), 0.6, 1.07),
+        ("poster_table", At::new(ROOM[1].x, 7.0, -FRAC_PI_2), 1.3, 0.73),
+        ("poster_study", At::new(ROOM[0].x, 9.2, FRAC_PI_2), 0.6, 1.07),
+    ];
+    for (name, at, width, height) in posters {
+        let centre = at.pos + at.facing() * (FACE + 0.004) + Vec3::Y * (DADO + 0.25 + height * 0.5);
+        frame.decal(&Decal::on_wall(centre, at.facing(), width, height).with_base_texture(&decal(name)));
+    }
+    let board = At::new(ROOM[0].x, 7.0, FRAC_PI_2);
+    frame.decal(&Decal::on_wall(board.pos + board.facing() * (FACE + 0.023) + Vec3::Y * 1.5, board.facing(), 2.2, 1.03).with_base_texture(&decal("chalk")));
 }

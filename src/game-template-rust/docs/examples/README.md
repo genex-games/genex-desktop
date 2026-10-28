@@ -7,7 +7,7 @@ where yours go. Keep your own title, and merge `genex.toml` switches rather than
 | Example | What it shows | Read it for |
 | --- | --- | --- |
 | `docs/examples/interior-room/` | A classroom and a corridor: walls with window and door openings, CC0 scans at their real size in uneven, seeded panels of close variants (whitewash over a painted dado), a probe and a volume per room, fluorescent tubes paired with lights, decals, the low sun's shafts through the windows, fog and a grade last | any indoor scene, any "photoreal" brief |
-| `docs/examples/interior-kit/` | A school corridor and classroom built from a modular interior kit: 2 m wall modules with real reveals, their dado coat and trims, windows with frames, sashes, broken glass and sunburst or barred grilles, doors, beams, fluorescent fittings, radiators, desks, chairs, lockers, a blackboard and rubble, each piece a small GLB drawn with a CC0 scan at its real size or the kit's trim sheet and props atlas, peeling-paint decals, a collider per solid part | the shell and dressing of a finished level (`docs/examples/rooms-and-buildings.md`) |
+| `docs/examples/interior-kit/` | A school corridor and classroom built from a modular interior kit: 2 m wall modules with real reveals, their dado coat and trims, windows with frames, sashes, broken glass and sunburst or barred grilles, doors, beams, fluorescent fittings, radiators, desks, chairs, a blackboard and rubble, each piece a small GLB drawn with a CC0 scan at its real size or the kit's trim sheet and props atlas, 2k scans per room, generated hero lockers and a wrecked car, photographic decals (peeling paint, leaks, posters, chalk), a collider per solid part | the shell and dressing of a finished level (`docs/examples/rooms-and-buildings.md`) |
 | `docs/examples/fps/` | An FPS facet set: mouse look, a chest camera with bob, a view model of forearms, gloves and a pistol built from parts, hitscan against Rapier colliders, recoil, and a rigged enemy with idle, walk, fire, hit and death | any first-person game (`docs/examples/fps.md` explains each part) |
 | `docs/examples/fps-arms/` | The first-person arms kit: gloved arms on an AK-pattern rifle as one rigged GLB (`fps-arms.glb`, made by `fps_arms.py`), whose magazine, charging handle and trigger are bones, played by an animator from the rifle's rules: hip, walk, sprint, sights, fire, dry fire, a reload that takes the magazine out, inspect | the arms and gun of any first-person shooter (`docs/examples/fps-arms/README.md`) |
 
@@ -21,12 +21,15 @@ The interior kit and the arms kit ship their own GLBs.
   `blue_plaster_wall` (the dado), `floor_tiles_06`, `concrete_wall_003`, `wood_table_worn`,
   `rusty_metal_02`. Three RGBA decals: `decals/grime-streaks.png`, `decals/poster.png`,
   `decals/stain.png` (an alpha shape on transparency; a decal without its texture is not drawn).
-- **interior-kit**: copy its `assets/kit/` (1.4 MB: 42 GLBs of a few kilobytes each, the trim
-  sheet, the props atlas and the decals, all made from CC0 scans) to your `assets/kit/`, and fetch
-  the shell's scans at `1k` from Poly Haven: `painted_plaster_wall`, `blue_plaster_wall`,
-  `concrete_wall_003`, `floor_tiles_06`. The kit ships ready because making it needs Local Blender
-  and the scans its sheets are cut from; `interior_kit.py` remakes or adds a piece when the level
-  needs one.
+- **interior-kit**: copy its `assets/kit/` (15 MB: 42 GLBs of a few kilobytes each, 2k trim and
+  props sheets cut from CC0 scans, photographic decals for wear, posters and chalk, and two
+  generated hero models, `hero/lockers.glb` and `hero/car-shell.glb`) to your `assets/kit/`, and
+  fetch the shell's scans at `2k` from Poly Haven (walls and floors fill the screen):
+  `preconcrete_wall_001` (whitewash), `blue_plaster_weathered` and `painted_concrete` (the two
+  dados), `concrete_wall_003`, `dirty_tiles` and `herringbone_parquet`. The kit ships ready because
+  making it needs Local Blender, the scans its sheets are cut from and the generations its decals
+  and heroes come from; `interior_kit.py` remakes or adds a piece when the level needs one. Studio's
+  import compresses every texture when the folder lands.
 - **fps-arms**: `fps-arms.glb` from this folder copied to `kits/fps-arms.glb`; without it the view
   model is left out and its probe says `"kit": false`. Its `studio.json` declares the same traits
   as the FPS set's.

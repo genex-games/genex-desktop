@@ -170,8 +170,8 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the order. Greybox in code
 with Rapier colliders, fetch a CC0 scan per surface, then build the shell and its dressing from the
 interior kit: copy `docs/examples/interior-kit/assets/kit/` to `assets/kit/` and place its 2 m
-modules, windows, doors, trims and props with `frame.model_with` as that example does (a piece it
-lacks: its `interior_kit.py` with `blender__model`). Neither stretch a scan nor tile it in a
+modules, windows, doors, trims and props with `frame.model_with` and its `hero/` models with
+`frame.model`, as that example does (a piece it lacks: its `interior_kit.py` with `blender__model`). Neither stretch a scan nor tile it in a
 grid: `.with_world_uv(metres)` at the scan's real size, `.with_stochastic_tiling(true)` and a macro
 variation, uneven patches each jittered from a seed, close tints of one scan, a second scan only in
 a zone of its own, decals over the rest. Then light it as World look says: a sun that falls in at the windows, every glowing

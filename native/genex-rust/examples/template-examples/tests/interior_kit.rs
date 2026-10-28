@@ -1,8 +1,8 @@
 //! The interior-kit example (`src/game-template-rust/docs/examples/interior-kit`) as a game gets it:
 //! its shipped `assets/kit/` (the GLBs, sheets and decals `interior_kit.py` and `kit/build_kit.py`
-//! make), its genex.toml admitted, a probe and a volume per room, colliders where the walls are
-//! solid and none in their openings, and (on the host GPU) a capture of the corridor and the
-//! classroom per preset:
+//! make, and the hero models `kit/hero.py` fits), its genex.toml admitted, a probe and a volume per
+//! room, colliders where the walls are solid and none in their openings, and (on the host GPU) a
+//! capture of the corridor and the classroom per preset:
 //!
 //!   GENEX_REQUIRE_METAL=1 GENEX_EXAMPLES_ASSETS=<scans> node scripts/toolchains/rust-env.ts -- \
 //!     cargo test -p template-examples --release --offline --locked --test interior_kit -- --ignored metal --nocapture
@@ -50,14 +50,14 @@ fn started() -> Runtime<World> {
 #[test]
 fn the_level_draws_every_part_from_the_kit_with_a_probe_and_volume_per_room() {
     let mut runtime = started();
-    assert_eq!(runtime.state()["kit"]["pieces"], 36, "every piece the level names is loaded");
+    assert_eq!(runtime.state()["kit"]["pieces"], 37, "every piece the level names is loaded");
     let frame = runtime.frame(View::Game).expect("a frame");
     let tags: Vec<&str> = frame.draws().iter().map(|draw| draw.tag.as_str()).collect();
     for tag in ["outside", "shell", "windows", "props", "lamps"] {
         assert!(tags.contains(&tag), "the level draws {tag}");
     }
     let shapes: Vec<String> = frame.draws().iter().map(|draw| format!("{:?}", draw.shape)).collect();
-    for piece in ["kit/wall-window.glb", "kit/window-grille-sunburst.glb", "kit/desk.glb", "kit/lockers.glb", "kit/debris-pile.glb"] {
+    for piece in ["kit/wall-window.glb", "kit/window-grille-sunburst.glb", "kit/desk.glb", "kit/hero/lockers.glb", "kit/hero/car-shell.glb", "kit/debris-pile.glb"] {
         assert!(shapes.iter().any(|shape| shape.contains(piece)), "the level draws {piece}");
     }
     assert_eq!(frame.lights().reflection_probes.len(), 2, "a probe for the corridor and one for the classroom");
@@ -70,7 +70,7 @@ fn the_wear_is_the_kits_decals_and_every_one_is_drawn() {
     let decals = frame.decals();
     assert!((30..=DESKTOP_DECALS).contains(&decals.len()), "enough wear to read, within what a desktop draws: {}", decals.len());
     let textures: Vec<String> = decals.iter().map(|decal| format!("{decal:?}")).collect();
-    for name in ["grime_base", "peel_edge", "leak", "peel_patch"] {
+    for name in ["grime_base", "peel_edge", "leak", "peel_patch", "ceiling_stain", "chalk", "poster_space", "poster_study", "poster_table", "poster_defence"] {
         assert!(textures.iter().any(|decal| decal.contains(&format!("kit/decals/{name}.png"))), "the wear includes {name}");
     }
     let again = runtime.frame(View::Game).expect("a frame").decals().to_vec();
@@ -120,12 +120,14 @@ fn metal_the_corridor_and_classroom_capture_at_low_and_high() {
     }
     let state = runtime.state();
     assert!(state["__render"].get("missingModels").is_none(), "every kit GLB loads: {:?}", state["__render"]);
-    // The scans arrive here as their raw JPEGs, which Studio's import compresses; nothing else may complain.
+    // The scans and the heroes' textures arrive here as raw JPEGs, which Studio's import compresses;
+    // nothing else may complain.
     let issues = state["__render"]["assetIssues"].as_array().cloned().unwrap_or_default();
     let refused: Vec<_> = issues.iter().filter(|issue| issue["code"] != "texture-uncompressed").collect();
     assert!(refused.is_empty(), "every sheet and decal loads: {refused:?}");
     let bound = state["__render"]["textures"].as_object().cloned().unwrap_or_default();
-    for sheet in ["kit/trim_color.jpg", "kit/props_color.jpg", "kit/decals/peel_edge.png", "kit/decals/grime_base.png"] {
+    let scans = ["cc0/0f2152c5-2349-0ec7-e27b-29a825486708/preconcrete_wall_001_diff_2k.jpg", "cc0/f282de59-61cb-5c95-7311-db397ff43586/dirty_tiles_diff_2k.jpg"];
+    for sheet in ["kit/trim_color.jpg", "kit/props_color.jpg", "kit/decals/peel_edge.png", "kit/decals/chalk.png", "kit/decals/poster_space.png"].into_iter().chain(scans) {
         assert!(bound.contains_key(sheet), "{sheet} is bound: {:?}", bound.keys().collect::<Vec<_>>());
     }
 }

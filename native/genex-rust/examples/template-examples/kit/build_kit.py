@@ -1,11 +1,14 @@
 """Rebuild the interior kit the Rust template ships (`docs/examples/interior-kit/assets/kit/`): every
 piece of `interior_kit.py` exported as `blender__model` exports it (one GLB each, +Y up, the same
-glTF flags), then its trim sheet, props atlas and decals made from CC0 scans by `kit_sheets.py`.
+glTF flags), then its trim sheet, props atlas and decals made by `kit_sheets.py` from CC0 scans and
+the images `generated.json` lists.
 
-  blender --background --factory-startup --python build_kit.py -- <scans folder> [<out folder>]
+  blender --background --factory-startup --python build_kit.py -- <scans> <generated> [<out folder>]
 
-`<scans folder>` is laid out as a game's `assets/` after the `cc0__fetch` calls `kit_sheets.py`
-names; `<out folder>` defaults to the template's `assets/kit/`. Blender 4.2 or later.
+`<scans>` is laid out as a game's `assets/` after the `cc0__fetch` calls `kit_sheets.py` names;
+`<generated>` holds each of `generated.json`'s images as `<name>.png` (download its `url`);
+`<out folder>` defaults to the template's `assets/kit/`. Blender 4.2 or later. The hero models
+(`assets/kit/hero/`) are not rebuilt here: `generated.json` says how each was made.
 """
 
 import math
@@ -43,8 +46,8 @@ def export(name, out):
 
 def main():
     args = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
-    scans = args[0] if args else None
-    out = os.path.abspath(args[1] if len(args) > 1 else os.path.join(TEMPLATE_KIT, "assets/kit"))
+    scans, generated = (args[0], args[1]) if len(args) > 1 else (None, None)
+    out = os.path.abspath(args[2] if len(args) > 2 else os.path.join(TEMPLATE_KIT, "assets/kit"))
     os.makedirs(out, exist_ok=True)
     names = {"__name__": "kit", "bpy": bpy, "math": math}
     exec(compile(open(SCRIPT, encoding="utf-8").read(), SCRIPT, "exec"), names)
@@ -53,9 +56,11 @@ def main():
     print("KIT", len(names["PIECES"]), "pieces into", out)
     if scans:
         sys.path.insert(0, HERE)
+        # No __pycache__ beside the script in the repository.
+        sys.dont_write_bytecode = True
         import kit_sheets
 
-        kit_sheets.make(scans, out, names["STRIPS"], names["REGIONS"])
+        kit_sheets.make(scans, out, names["STRIPS"], names["REGIONS"], generated)
 
 
 main()
