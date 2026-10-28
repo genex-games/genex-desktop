@@ -450,16 +450,17 @@ pub fn adapt_ev(ev: f32, target: f32, params: &GpuExposureParams) -> f32 {
 }
 
 /// One simulated tick's step from `ev` towards `target`: linear (`speed` EV a tick) beyond the
-/// transition, `distance × speed / transition` within it, snapped onto the target within
-/// [`ADAPT_SNAP_EV`].
+/// transition, `distance × speed / transition` within it, never past the target (a speed boosted
+/// past the transition, the doorway's, would otherwise overshoot and ring), snapped onto the
+/// target within [`ADAPT_SNAP_EV`].
 pub fn adapt_tick(ev: f32, target: f32, params: &GpuExposureParams) -> f32 {
     let (up, down) = (params.speed[0], params.speed[1]);
     let delta = target - ev;
     let transition = params.speed[2];
     let step = match (transition > 0.0, delta > 0.0) {
         (false, _) => delta.max(-up).min(down),
-        (true, true) => down.min(delta * down / transition),
-        (true, false) => (-up).max(delta * up / transition),
+        (true, true) => down.min(delta * down / transition).min(delta),
+        (true, false) => (-up).max(delta * up / transition).max(delta),
     };
     let next = ev + step;
     if (target - next).abs() < ADAPT_SNAP_EV { target } else { next }
