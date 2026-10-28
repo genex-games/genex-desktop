@@ -1048,18 +1048,6 @@ function imagesForCandidate(
 }
 
 /**
- * How many frames of one build a judge could be shown over `cameras` (null: every camera). None is
- * a blind pass: gen3 judged five rounds with no image at all and kept four of them.
- */
-export function framesOfBuild(
-  candidate: Candidate | null | undefined,
-  cameras: readonly string[] | null = null,
-): number {
-  if (!candidate) return 0;
-  return imagesForCandidate(candidate, "BUILD", cameras, { motion: true }).length;
-}
-
-/**
  * The reference stills as image blocks. With `limit`, the stills nearest (by style distance)
  * to the given shots come first, so a capped call still sees the ones that matter.
  */

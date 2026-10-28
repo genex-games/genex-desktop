@@ -18813,27 +18813,28 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     );
   });
 
-  it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's per-tick exposure trace is held to at most 1 EV per half second and no overshoot past where it settles", async () => {
+  it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's exposure trace must be within 1 EV of where it settles a second after the crossing, and never pass it by more than 0.25 EV", async () => {
     const { doorwayDefect } = await import("../../src/harness-seed/loop/temporal-checks.ts");
     const trace = (ev: (t: number) => number) => ({
       __render: {
         exposureTrace: Array.from({ length: 121 }, (_, i) => ({
-          t: i / 60,
-          appliedEv: ev(i / 60),
-          meteredEv: ev(i / 60),
+          t: i / 30,
+          appliedEv: ev(i / 30),
+          meteredEv: ev(i / 30),
         })),
       },
     });
-    // A cut from EV 2 to EV -1 the frame the player crosses, and a smooth 1.5 s ramp.
+    // The engine's own doorway: 3 EV down in about a third of a second, from the crossing at 0.5 s.
+    assert.equal(doorwayDefect(trace((t) => (t < 0.5 ? 2 : Math.max(-1, 2 - 9 * (t - 0.5))))), null);
+    // A slow drift: still well over one EV bright a second after the crossing.
     assert.match(
-      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : -1)))),
-      /^\[exposure-pump\] demo:doorway: .*EV moves 3\.0 inside 0\.5 s/,
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : Math.max(-1, 2 - 0.8 * (t - 0.5)))))),
+      /^\[exposure-pump\] demo:doorway: .*is still \d\.\d EV from where it settles 1 s after the crossing/,
     );
-    assert.equal(doorwayDefect(trace((t) => 2 - 1.5 * Math.min(1, t / 1.5))), null);
     // Over-darkening and coming back: it passes the settled EV.
     assert.match(
-      String(doorwayDefect(trace((t) => (t < 1 ? 2 - 1.6 * t : -0.4 + 0.4 * (t - 1))))),
-      /passes its settled EV by/,
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : t < 1 ? 2 - 7 * (t - 0.5) : -1.5 + 0.5 * Math.min(1, t - 1))))),
+      /passes its settled EV by 0\.\d\d/,
     );
     assert.equal(doorwayDefect({ __render: {} }), null, "a game with no trace is not judged on one");
   });

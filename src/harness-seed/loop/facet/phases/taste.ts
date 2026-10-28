@@ -15,12 +15,11 @@ import { roundFields } from "../record.ts";
 import { roundStage } from "../stage.ts";
 import { keptByBlock } from "../build-block.ts";
 import { blockReason } from "../build-block-prompts.ts";
+import { tasteCamerasOf } from "../taste-cameras.ts";
 import { asksForLook } from "../../look-bar.ts";
 import { auditProvenance } from "../../provenance.ts";
 import { addedMeasured, measuredBlockers, presentOnly } from "../../temporal-checks.ts";
 
-/** The harness's eyes the taste judge looks through beside the facet's own cameras. */
-const TASTE_EYES = ["eye:spawn", "eye:here", "eye:down"];
 /** How much of the move a verdict's reason quotes. */
 const MOVE_QUOTED = 120;
 /** How much of THE FIX a verdict's reason quotes. */
@@ -34,12 +33,6 @@ interface Decision {
   /** Only the judge's own grown questions flipped. */
   weakOnly: boolean;
   moveNow: ReturnType<typeof moveVerdict>;
-}
-
-/** The cameras the taste judge is shown: the facet's own and the harness's eyes the evidence has. */
-export function tasteCamerasOf(loop: FacetLoop, round: FacetRound): string[] {
-  const eyes = (round.evidence.eyes ?? []).filter((e: string) => TASTE_EYES.includes(e));
-  return [...new Set([...loop.spec.cameras, ...eyes])];
 }
 
 /** Ask the taste judge, apply the acceptance rule, hold THE FIX to account, and grow the judge's own new check. */

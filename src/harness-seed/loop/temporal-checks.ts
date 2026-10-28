@@ -24,10 +24,16 @@ import { DEFAULT_CAMERA } from "./cameras.ts";
 export const DOORWAY_DEMO = "doorway";
 /** The demo that sprints the player straight ahead for a few seconds. */
 export const SPRINT_DEMO = "sprint-run";
-/** The window an exposure change is measured over, in seconds. */
-const EXPOSURE_WINDOW_S = 0.5;
-/** The most EV the exposure may move inside that window (review WP-5, proposed). */
-export const MAX_EV_PER_WINDOW = 1;
+/**
+ * How long after the crossing the exposure must be near where it settles, in seconds. The engine
+ * adapts at 3-4 EV/s and eight times that for half a second at a doorway (what fixed gen3's dark
+ * rooms), so the gate is how soon it gets there, not how fast it moves.
+ */
+export const SETTLE_AFTER_S = 1;
+/** How far from its settled EV the exposure may still be `SETTLE_AFTER_S` after the crossing. */
+export const MAX_UNSETTLED_EV = 1;
+/** How far the exposure must move from where it started for the crossing to have begun. */
+const CROSSING_EV = 0.25;
 /** The most EV the exposure may pass its settled value by on the way there. */
 export const MAX_OVERSHOOT_EV = 0.25;
 /** The share of a trace's end that counts as settled. */
@@ -103,36 +109,42 @@ function evOf(entry: unknown): AnyRecord | null {
   return { t: raw.t, ev: num(raw.appliedEv) ?? num(raw.meteredEv) ?? num(raw.ev) };
 }
 
-/** The fastest EV move inside any `EXPOSURE_WINDOW_S`, and how far the trace passed its settled EV. */
-export function exposureMotion(trace: unknown): { maxStep: number; overshoot: number; span: number } | null {
+/** A doorway's exposure: how far from settled it still is a second after the crossing, and how far it passed settled. */
+export interface ExposureMotion {
+  unsettled: number;
+  overshoot: number;
+  span: number;
+}
+
+/** The exposure trace's settling and overshoot, or null when it is too short or never crosses. */
+export function exposureMotion(trace: unknown): ExposureMotion | null {
   const samples = samplesOf(Array.isArray(trace) ? trace.map(evOf) : null, ["ev"]);
   const span = spanOf(samples);
   if (span < MIN_TRACE_S) return null;
-  let maxStep = 0;
-  for (const [i, from] of samples.entries()) {
-    for (const to of samples.slice(i + 1)) {
-      if ((to.t ?? 0) - (from.t ?? 0) > EXPOSURE_WINDOW_S) break;
-      maxStep = Math.max(maxStep, Math.abs((to.ev ?? 0) - (from.ev ?? 0)));
-    }
-  }
   const tail = samples.slice(Math.floor(samples.length * (1 - SETTLED_TAIL)));
   const settled = tail.reduce((sum, sample) => sum + (sample.ev ?? 0), 0) / Math.max(1, tail.length);
   const start = samples[0]?.ev ?? settled;
+  const crossing = samples.find((sample) => Math.abs((sample.ev ?? 0) - start) > CROSSING_EV);
+  if (!crossing) return { unsettled: 0, overshoot: 0, span };
+  const due = (crossing.t ?? 0) + SETTLE_AFTER_S;
+  const then = samples.find((sample) => (sample.t ?? 0) >= due) ?? samples.at(-1);
   const rising = settled >= start;
   const passed = samples.map((sample) => ((sample.ev ?? 0) - settled) * (rising ? 1 : -1));
-  return { maxStep, overshoot: Math.max(0, ...passed), span };
+  return { unsettled: Math.abs((then?.ev ?? settled) - settled), overshoot: Math.max(0, ...passed), span };
 }
 
-/** `demo:doorway`'s exposure trace as a blocking defect, or null when it is smooth (or there is none). */
+/** `demo:doorway`'s exposure trace as a blocking defect, or null when it settles cleanly (or there is none). */
 export function doorwayDefect(state: AnyRecord | null | undefined): string | null {
   const render = state?.__render as AnyRecord | undefined;
   const motion = exposureMotion(render ? field(render, "exposureTrace") : null);
   if (!motion) return null;
-  const jumps = motion.maxStep > MAX_EV_PER_WINDOW;
+  const slow = motion.unsettled > MAX_UNSETTLED_EV;
   const overshoots = motion.overshoot > MAX_OVERSHOOT_EV;
-  if (!jumps && !overshoots) return null;
+  if (!slow && !overshoots) return null;
   const what = [
-    jumps ? `EV moves ${fixed(motion.maxStep)} inside ${EXPOSURE_WINDOW_S} s (at most ${MAX_EV_PER_WINDOW})` : "",
+    slow
+      ? `is still ${fixed(motion.unsettled)} EV from where it settles ${SETTLE_AFTER_S} s after the crossing (at most ${MAX_UNSETTLED_EV})`
+      : "",
     overshoots ? `passes its settled EV by ${fixed(motion.overshoot, 2)} (at most ${MAX_OVERSHOOT_EV})` : "",
   ]
     .filter(Boolean)
@@ -337,7 +349,7 @@ export function measuredBlockers(
   const sprintText = comfortDefect(states[SPRINT_DEMO], results[SPRINT_DEMO] ?? null);
   return [
     ...(lookBar ? lumaBandDefects(evidence, declaresNight(run)) : []),
-    ...(doorwayText && doorway ? [{ ...flat(doorwayText), severity: doorway.maxStep + doorway.overshoot }] : []),
+    ...(doorwayText && doorway ? [{ ...flat(doorwayText), severity: doorway.unsettled + doorway.overshoot }] : []),
     ...(sprintText ? [{ ...flat(sprintText), severity: sprint ? comfortSeverity(sprint) : 1 }] : []),
   ];
 }
