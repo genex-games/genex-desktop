@@ -51,15 +51,16 @@ same as the keys.
 The mean Rec. 709 luma (0 to 255) of a settled 1280x720 `ultra` capture of the main camera, lens
 off, that each recipe is captured inside (`docs/examples/looks/`).
 
-| Scene | Band |
-| --- | --- |
-| Interior day | 90 to 130 |
-| Interior night | 45 to 85 |
-| Exterior day, forest | 95 to 140 |
-| Overcast and snow | 125 to 175 |
-| Rain | 70 to 110 |
-| Night street | 25 to 65 |
-| Desert and sunny | 115 to 160 |
+| Scene | Band | The `looks` stage at `ultra` (`low`) |
+| --- | --- | --- |
+| Interior day | 90 to 130 | 124 (126) |
+| Interior night | 45 to 85 | 72 (58) |
+| Exterior day | 95 to 140 | 135 (140) |
+| Forest | 95 to 140 | 136 (141) |
+| Overcast and snow | 125 to 175 | 155 (169) |
+| Rain | 70 to 110 | 103 (100) |
+| Night street | 25 to 65 | 37 (23) |
+| Desert and sunny | 115 to 160 | 122 (127) |
 
 A playable camera darker than its band needs more light (a lamp, a window, a volume), not a grade.
 
