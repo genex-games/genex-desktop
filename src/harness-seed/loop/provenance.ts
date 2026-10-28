@@ -154,22 +154,26 @@ export interface ProvenanceInput {
  * The tags delivered from a lesser source than the art pass planned, as `[art-source-mismatch]`
  * defects. A planned tag the frame does not draw, or draws with no model named, is not judged here.
  */
-export function provenanceMismatches({ assets, drawn, lock, models }: ProvenanceInput): string[] {
+export function provenanceMismatches(input: ProvenanceInput): string[] {
+  return input.assets.flatMap((asset) => assetMismatches(asset, input));
+}
+
+/** One planned asset's tags drawn from a lesser source than it names. */
+function assetMismatches(asset: ArtAsset, { drawn, lock, models }: ProvenanceInput): string[] {
+  const planned = PLANNED_RANK[asset.source];
+  const followed = planned !== null && planned !== SourceRank.Code && MODEL_KINDS.has(asset.kind ?? "");
+  if (!followed) return [];
   const out: string[] = [];
-  for (const asset of assets) {
-    const planned = PLANNED_RANK[asset.source];
-    if (planned === null || planned === SourceRank.Code || !MODEL_KINDS.has(asset.kind ?? "")) continue;
-    for (const tag of asset.tags ?? []) {
-      const draw = drawn.get(tag);
-      if (!draw?.model) continue;
-      const delivered: Delivered = {
-        model: draw.model,
-        origin: lock.get(draw.model)?.origin ?? null,
-        facts: models.get(draw.model) ?? null,
-        primitiveOnly: draw.primitiveOnly,
-      };
-      if (deliveredRank(delivered) < planned) out.push(mismatchText(asset, tag, delivered));
-    }
+  for (const tag of asset.tags ?? []) {
+    const draw = drawn.get(tag);
+    if (!draw?.model) continue;
+    const delivered: Delivered = {
+      model: draw.model,
+      origin: lock.get(draw.model)?.origin ?? null,
+      facts: models.get(draw.model) ?? null,
+      primitiveOnly: draw.primitiveOnly,
+    };
+    if (deliveredRank(delivered) < planned) out.push(mismatchText(asset, tag, delivered));
   }
   return out;
 }
