@@ -114,6 +114,9 @@
     ],
     "refusals": ["terrain-heights-invalid", "terrain-layers-invalid", "terrain-control-invalid"]
   },
+  "vegetation": {
+    "calls": ["PlantSpec::new", ".seed", ".height", ".texture_size", "gfx.plant", ".with_wind", "WindResponse::tree", "WindResponse::shrub", "WindResponse::grass", ".with_strength", "plant_glb"]
+  },
   "particles": {
     "calls": [
       "Particles::steam",

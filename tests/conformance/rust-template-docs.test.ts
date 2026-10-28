@@ -554,6 +554,11 @@ describe("GENEX_API.md is the facade's reference", () => {
     for (const refusal of FACADE.terrain.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
   });
 
+  it("the Vegetation page teaches every plant and wind call the fixture pins", () => {
+    const page = read("docs/api/vegetation.md");
+    for (const call of FACADE.vegetation.calls) assert.ok(page.includes(`${call}(`), `vegetation.md teaches ${call}(..)`);
+  });
+
   it("teaches every particle call and refusal", () => {
     const text = api();
     for (const call of FACADE.particles.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);

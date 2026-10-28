@@ -249,6 +249,11 @@ write your own system around it.
   `sim.physics`, built in `on_reset` and stepped by the runtime after `on_update`; never step it
   yourself. Draw each moving body in `on_draw` under its own `frame.id(..)`, save each body's pose
   and velocities in a section of its own, and probe each mechanic (`docs/api/physics.md`).
+- **Plants**: trees, shrubs and grass come from
+  `gfx.plant(&PlantSpec::new(Species::Birch, Season::Winter).seed(n))`, which builds in bark PBR,
+  twig and leaf cards, levels, an impostor and wind. Use 2 to 4 seeds a species, scattered as
+  instance groups; never cones, spheres or crossed quads. `model.with_wind(WindResponse::tree())`
+  sways any other tree (`docs/api/vegetation.md`, `docs/examples/forest/`).
 - **Far things**: imported models already have levels; `gfx.assets().compound(..)` keeps a
   tree's parts together and `.with_impostor(Impostor::hemi())` draws trees and buildings as
   cards past their last level, declared once in `on_reset`. A model only streamed cells draw

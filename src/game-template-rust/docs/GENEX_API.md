@@ -44,8 +44,9 @@ change touches (nearly every game needs Ctx and Drawing).
 | Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
-| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
-| Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
+| Streaming a large world | `docs/api/streaming.md` | Cells, anchors, builders, holds, terrain tiles. |
+| Terrain | `docs/api/terrain.md` | Heightmap ground across the world. |
+| Vegetation | `docs/api/vegetation.md` | `gfx.plant` trees and grass, `Model::with_wind`. |
 | Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
@@ -60,7 +61,7 @@ change touches (nearly every game needs Ctx and Drawing).
 | Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
 | Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
 | Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
-| genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: the game, physics, crates, WGSL sources, native features and the web. |
+| genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input. |
 
 ## Hooks
 
