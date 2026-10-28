@@ -5,6 +5,7 @@
  * first byte is fetched.
  */
 import { Cc0Error, Cc0Refusal, CC0, checkedName } from "../../substrate/cc0-fetch.ts";
+import { isModelTier, ModelTier } from "../../shared/model-budget.ts";
 import { CURATED, type CuratedManifest } from "./curated.ts";
 import { type Cc0Net, checkedHost, DOWNLOAD_HOSTS, FETCH_HOSTS } from "./net.ts";
 
@@ -95,6 +96,8 @@ export interface Cc0Request {
   resolution: string | null;
   /** The maps named, or null for the source's default. */
   maps: Cc0Map[] | null;
+  /** A model's role: past its tier's budget the fetch decimates it; null for the import cap. */
+  tier: ModelTier | null;
 }
 
 /** One download: its plain name, URL, size, published md5 and sha256 pin (null: pinned on first fetch). */
@@ -146,12 +149,14 @@ export function checkedRequest(args: Record<string, unknown>): Cc0Request {
   if (typeof args.id !== "string") throw invalid("id is the asset's id");
   const id = checkedName(args.id);
   const maps = mapsOf(args.maps);
-  if (source === Cc0Source.Curated) return { source, id, resolution: null, maps };
+  const tier = args.tier ?? null;
+  if (tier !== null && !isModelTier(tier)) throw invalid(`tier: one of ${Object.values(ModelTier).join(", ")}`);
+  if (source === Cc0Source.Curated) return { source, id, resolution: null, maps, tier };
   const resolution = args.resolution ?? RESOLUTIONS[0];
   if (typeof resolution !== "string" || !RESOLUTIONS.includes(resolution)) {
     throw invalid(`resolution: one of ${RESOLUTIONS.join(", ")}`);
   }
-  return { source: source as Cc0Source, id, resolution, maps };
+  return { source: source as Cc0Source, id, resolution, maps, tier };
 }
 
 /** A JSON object's field as an object, else null. */
