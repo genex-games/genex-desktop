@@ -18,6 +18,7 @@
 import type { AnyRecord } from "../types/harness.d.ts";
 import { LookBlocker, runArtPass, ArtTier } from "./look-bar.ts";
 import { lumaBandDefect } from "./look-facts.ts";
+import { DEFAULT_CAMERA } from "./cameras.ts";
 
 /** The demo that walks the player through a doorway from a lit room into a dark one, or back. */
 export const DOORWAY_DEMO = "doorway";
@@ -58,9 +59,12 @@ export const HIGH_HZ = 6;
 /** Frequencies below this are drift, not a bob. */
 const MIN_BOB_HZ = 0.3;
 
+/** The harness's own eye cameras (`eye:spawn`, `eye:here`, …). */
+const EYE_PREFIX = "eye:";
+
 /** The cameras a player plays through: the default and the harness's eyes. Demos, crops and the page are not. */
 const isPlayable = (camera: unknown): boolean =>
-  camera === "default" || (typeof camera === "string" && camera.startsWith("eye:"));
+  camera === DEFAULT_CAMERA || (typeof camera === "string" && camera.startsWith(EYE_PREFIX));
 
 /** A field under its snake_case or camelCase name. */
 function field(raw: AnyRecord, camel: string): unknown {
