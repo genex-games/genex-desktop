@@ -3,7 +3,31 @@
 `sim.net` is the room the game plays in, read like input: the runtime cuts one frame of it before
 the update hooks, and the writes a tick queues leave after the tick, so their effects arrive in a
 later frame. Reads take `&self` and writes `&mut self`, so `on_draw` can draw remote players and can
-never send. The types live in `genex::net`: `use genex::net::{NetConfig, NetEvent, NetStatus};`.
+never send. The types live in `genex::net`, not the prelude. Every type and call in one line:
+
+```rust
+use genex::net::{NetConfig, NetError, NetEvent, NetStatus, PlayerId};
+game.net(NetConfig::new().publish_hz(15).decimals(3).interp_delay_ticks(6));
+sim.net.status();                                              // -> NetStatus
+sim.net.connect(); sim.net.matchmake(); sim.net.cancel(); sim.net.leave();
+sim.net.me(); sim.net.host();                                  // -> Option<&PlayerId> (`player.as_str()`)
+sim.net.players(); sim.net.remotes();                          // -> impl Iterator<Item = &NetPlayer>
+sim.net.connected(); sim.net.is_host();                        // -> usize, bool
+sim.net.object(id); sim.net.shared(key);                       // -> Option<&NetObject>, Option<&Value>
+sim.net.set_me(state); sim.net.snap_me(state);                 // -> Result<(), NetError>
+sim.net.set_object(id, state); sim.net.set_shared(key, value); // -> Result<(), NetError>
+sim.net.claim(id); sim.net.claim_as_host(id);                  // -> Result<NetTicket, NetError>
+sim.net.send(kind, payload); sim.net.send_to_host(payload); sim.net.chat(text); // -> Result<(), NetError>
+sim.net.events();                                              // -> &[NetEvent]
+```
+
+A `NetPlayer` reads `id`, `name`, `is_me`, `state` and `state_raw`. `NetEvent` is
+`#[non_exhaustive]`, so every `match` on it ends with `_ => {}`. Its variants: `Joined`, `Left`,
+`Dropped` and `Returned` `{ player }`, `Host { player: Option<PlayerId> }`,
+`Owner { object, owner }`, `Shared { key }`, `Message { from, kind, payload }`,
+`HostInput { from, payload }`, `Chat { from, name, text }`,
+`Control { ticket, result, retry_at_tick }`, `RoomOpen { open }`, `Reconnecting { attempt }`,
+`Reconnected`, `Closed { reason }`, `Match { status }` and `Warning { code }`.
 
 ## In Studio
 

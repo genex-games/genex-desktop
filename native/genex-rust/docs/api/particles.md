@@ -5,6 +5,22 @@ frame with `frame.particles(&emitter)`, one logical draw. A particle is a pure f
 emitter and the tick the frame is drawn at, never of earlier frames, so Live and a capture of the
 same tick draw the same particles; nothing is read back and the simulation never sees them.
 
+`Particles` is at the crate root: not in the prelude, and not under `genex::render`. Every call
+in one line (each `with_*` takes `&self` and answers a new emitter):
+
+```rust
+use genex::{Particles, ParticlesError};                       // and PARTICLES_MAX, ParticleFlipbook
+Particles::steam(origin);                                      // -> Particles; ::rain(top, half_extent), ::fountain(origin)
+emitter.with_rate(per_tick, lifetime_ticks);                   // -> Result<Particles, ParticlesError>
+emitter.with_flipbook(atlas, columns, rows, frames, cycles, blend); // -> Result<Particles, ParticlesError>
+emitter.with_origin(origin, half_extent);                      // -> Particles, like every with_* below
+emitter.with_motion(velocity, spread, gravity);                // all Vec3 but spread: f32
+emitter.with_look(size, end_scale, start, end);                // two f32 and two Colors
+emitter.with_soft(metres).with_sorted(true).with_collision(thickness, rest_ticks);
+emitter.with_shape(stretch_ticks, rotation_jitter, spin).with_seed(seed); // seed: u32
+frame.particles(&emitter);                                     // -> &mut Frame
+```
+
 ```rust
 // on_reset: kept in the world.
 sim.world.steam = Particles::steam(vec3(4.0, 0.0, -2.0));
