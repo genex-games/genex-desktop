@@ -294,7 +294,7 @@ pub const LAYER_ROWS_NONE: [[f32; 4]; LAYER_ROW_COUNT] = {
 
 /// Which layered parts a preset draws (WP-7: the web and phones keep a cheaper path); the
 /// pipelines' `GX_MATERIAL_LAYERS` constant.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LayerTier {
     /// Cover only, without its noise: no extra texture fetch (the low presets).
     #[default]
