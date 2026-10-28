@@ -64,6 +64,8 @@ const ASSET_ISSUES_KEY: &str = "assetIssues";
 const LOOK_KEY: &str = "look";
 /// `state().__render.exposure`: the exposure's telemetry (`src/shared/render-look.ts`).
 const EXPOSURE_KEY: &str = "exposure";
+/// `state().__render.exposureTrace`: the Live exposure's last seconds.
+const EXPOSURE_TRACE_KEY: &str = "exposureTrace";
 /// `state().volatile`'s streaming counters, while streaming is registered (STR-9): the runtime
 /// key's name, so no volatile probe can take it.
 const STREAM_VOLATILE_KEY: &str = "__stream";
@@ -338,6 +340,8 @@ struct Tally {
     look: Option<crate::look_facts::LookFacts>,
     /// What the exposure metered and drew (`__render.exposure`, AAA review WP-5).
     exposure: Option<genex_render::post::exposure::ExposureTelemetry>,
+    /// The Live exposure's last seconds (`__render.exposureTrace`, AAA review WP-5).
+    exposure_trace: Option<CoreValue>,
 }
 
 /// The simulation and clock state the hooks run against.
@@ -1135,6 +1139,9 @@ impl<W> Runtime<W> {
         if let Some(exposure) = &tally.exposure {
             render.set(EXPOSURE_KEY, crate::look_facts::exposure_value(exposure));
         }
+        if let Some(trace) = &tally.exposure_trace {
+            render.set(EXPOSURE_TRACE_KEY, trace.clone());
+        }
         render
     }
 
@@ -1169,6 +1176,11 @@ impl<W> Runtime<W> {
     /// `state().__render.exposure`. Display only.
     pub fn note_exposure(&mut self, exposure: genex_render::post::exposure::ExposureTelemetry) {
         self.core.tally.exposure = Some(exposure);
+    }
+
+    /// The Live exposure's last seconds (`state().__render.exposureTrace`), absent while empty.
+    pub fn note_exposure_trace(&mut self, trace: &crate::look_facts::ExposureTrace) {
+        self.core.tally.exposure_trace = trace.to_value();
     }
 
     /// The textures the renderer bound in the frame last drawn and the issues they raise (C-11):

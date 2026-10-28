@@ -36,6 +36,10 @@ export interface LookTagFacts {
   alphaCardShare: number;
   /** Meshes the tag handed the renderer this frame, seen or not (a model's parts each count). */
   draws: number;
+  /** Model paths drawn under the tag, as the game named them to `gfx.assets().model`, first-draw order, at most 64. */
+  models: string[];
+  /** Every draw under the tag is an engine primitive (a cube, a sphere, a group of them): no imported or built model. */
+  primitiveOnly: boolean;
 }
 
 /** `state().__render.look`: the frame's look facts. */
@@ -69,6 +73,17 @@ export const ExposureWarning = {
   DoorwayAdaptationUnderManual: "doorway-adaptation-under-manual",
 } as const;
 export type ExposureWarning = (typeof ExposureWarning)[keyof typeof ExposureWarning];
+
+/** One point of `state().__render.exposureTrace`: a Live read-back of the exposure. */
+export interface ExposureTracePoint {
+  /** Simulated seconds of the frame it describes. */
+  t: number;
+  appliedEv: number;
+  meteredEv: number | null;
+}
+
+/** The longest `__render.exposureTrace` (ten seconds of read-backs every fourth frame, with room). */
+export const EXPOSURE_TRACE_MAX = 600;
 
 /** Bins of `__render.exposure.histogram` (the GPU's 128 summed down, a fixed count on every preset). */
 export const EXPOSURE_TELEMETRY_BINS = 16;
@@ -115,19 +130,26 @@ const isMode = (value: unknown): value is ExposureModeWire =>
 
 /** The most tags `__render.look` lists (the renderer's tag cap). */
 const LOOK_TAGS_MAX = 256;
+/** The most model paths one tag lists. */
+const MODELS_PER_TAG_MAX = 64;
 
 /** Whether `value` is one tag's facts in its shape. */
 function isLookTagFacts(value: unknown): value is LookTagFacts {
   if (!isRecord(value)) return false;
   const shares = [value.coverage, value.flatCoverage, value.normalMapShare, value.ormShare, value.alphaCardShare];
   const densities = [value.texelsPerMetre, value.pixelsPerMetre, value.trianglesPerSquareMetre];
-  return shares.every(isShare) && densities.every(isPositiveOrNull) && isCount(value.draws);
+  const models =
+    Array.isArray(value.models) &&
+    value.models.length <= MODELS_PER_TAG_MAX &&
+    value.models.every((path) => typeof path === "string");
+  const listed = models && typeof value.primitiveOnly === "boolean";
+  return shares.every(isShare) && densities.every(isPositiveOrNull) && isCount(value.draws) && listed;
 }
 
 /** One tag's facts copied with only its fields. */
 function lookTagCopy(facts: LookTagFacts): LookTagFacts {
   const { coverage, flatCoverage, texelsPerMetre, pixelsPerMetre, trianglesPerSquareMetre } = facts;
-  const { normalMapShare, ormShare, alphaCardShare, draws } = facts;
+  const { normalMapShare, ormShare, alphaCardShare, draws, models, primitiveOnly } = facts;
   return {
     coverage,
     flatCoverage,
@@ -138,6 +160,8 @@ function lookTagCopy(facts: LookTagFacts): LookTagFacts {
     ormShare,
     alphaCardShare,
     draws,
+    models: [...models],
+    primitiveOnly,
   };
 }
 
@@ -196,4 +220,21 @@ export function parseExposureTelemetry(value: unknown): ExposureTelemetry | null
     ageFrames,
     warnings: [...warnings],
   };
+}
+
+/** A checked `__render.exposureTrace` copied point by point, or null outside its shape. */
+export function parseExposureTrace(value: unknown): ExposureTracePoint[] | null {
+  if (!Array.isArray(value) || value.length > EXPOSURE_TRACE_MAX) return null;
+  const points: ExposureTracePoint[] = [];
+  for (const point of value) {
+    if (
+      !isRecord(point) ||
+      !isFiniteNumber(point.t) ||
+      !isFiniteNumber(point.appliedEv) ||
+      !isEvOrNull(point.meteredEv)
+    )
+      return null;
+    points.push({ t: point.t, appliedEv: point.appliedEv, meteredEv: point.meteredEv });
+  }
+  return points;
 }

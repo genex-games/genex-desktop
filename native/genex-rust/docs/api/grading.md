@@ -36,6 +36,27 @@ that keep the brightness), never with `fog_color`. Keep a dusk dark under auto e
 `.exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)])` (metered EV, EV added; at most 8 points). The grade,
 white balance and curve are the look: the same on every preset and device.
 
+Expose before you grade. Calibration (`[render.look]`; scene EV 0 is EV100 12, `genex::render::units`):
+
+| scene | `exposure` | `metering` | `ev_compensation` | `ev_min` | settled `meanLuma` |
+| --- | --- | --- | --- | --- | --- |
+| sunlit exterior | `auto` | `ground` | 0.5 | default | 110-140 |
+| lit interior with windows (a classroom, an office) | `auto` | `center` or `ground` | 0 to 0.5 | default (-8) or lower | 90-130 |
+| night or horror interior (declared as such) | `auto` | `center` | -0.5 to -1 | -10 | 50-80 |
+| stylized, flat colour | `manual` | - | 0 | - | the palette's |
+
+In a lit interior keep the darkest tenth of the histogram below 15 % of the frame: light the room
+with its fixtures at their real flux and give it a volume; never raise `ev_min`, never push
+`ev_compensation` below 0, never pair a negative lift with contrast above 1.15 (Grading).
+`state().__render.exposure` reports what the exposure did on the last frame read back, a few frames
+late: `mode`, `meteredEv` and `targetEv` (null under manual), `appliedEv` (the frame is drawn at
+`2^(compensation - appliedEv)`), `evMin`, `evMax`, a 16-bin `histogram` of the metered scene EV
+over `histogramEv` (shares summing to 1), `doorwayBoost`, `ageFrames` and `warnings`
+(`ev-min-raised-with-doorway-adaptation`, `doorway-adaptation-under-manual`). A `meteredEv` at
+`evMin` means the room is darker than the exposure may follow: light it. `__render.exposureTrace`
+holds `{t, appliedEv, meteredEv}` for each read-back of the last 10 simulated seconds, so a
+doorway walk's state carries its transition.
+
 The lens is off by default and is the look's too:
 `.depth_of_field(DepthOfField::focused(3.0, 2.0))` keeps three metres sharp at f/2 (a cutscene, a
 photo mode, an inspected object), and `.motion_blur(MotionBlur::shutter(0.5))` blurs what moved by

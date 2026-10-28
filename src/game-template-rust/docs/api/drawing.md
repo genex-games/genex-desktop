@@ -84,6 +84,18 @@ camera draws a coarser one, in its shadows too. A GLB that reaches the game with
 skipped the import step) gets them at load the same way, up to 100,000 triangles; a bigger one
 draws whole and the load's log says so.
 
+`state().__render.look` says how the last frame looks, per tag (`frame.tag(name)`), from a coarse
+raster of the world draws (160 cells across, after occlusion; the same on every device):
+`coverage` and `flatCoverage` (its share of the screen, and the share drawn with neither a base
+colour nor an emissive map: a coloured box), `texelsPerMetre` (the median base-colour texels a
+metre of its visible surface gets), `pixelsPerMetre` (the screen pixels a metre of it covers),
+`trianglesPerSquareMetre`, `normalMapShare`, `ormShare`, `alphaCardShare` (shares of its visible
+cells), `draws`, `models` (the model paths it drew) and `primitiveOnly` (cubes and spheres alone);
+the top level adds `coverage` and `flatCoverage` over every draw, tagged or not. Live measures it
+every 15 frames, a capture every time; custom materials, characters, terrain, grass, water and
+particles are not rasterised. A look-bar pass reads it: keep total `flatCoverage` under 0.02,
+near surfaces at 512 texels a metre or more, and textured tags at `normalMapShare` 1.
+
 A game names its own levels with `model.with_levels(&[(lod1, 24.0), (lod2, 58.0)])` (each level a
 GLB with the model's part count, its parts drawn with the model's parts' materials, at most
 `LOD_LEVELS_MAX` = 3): a copy of scale 1 switches to `lod1` 24 m from the camera (to the nearest

@@ -35,6 +35,8 @@ pub const PROXY_TRIANGLES_MAX: usize = 2048;
 pub const RASTER_TRIANGLES_MAX: usize = 400_000;
 /// The most tags `__render.look` lists (the rest count only in the totals).
 pub const TAGS_MAX: usize = 256;
+/// The most model paths one tag lists (`models`).
+pub const MODELS_PER_TAG_MAX: usize = 64;
 /// The near plane the raster clips at, in world units (the presenter's).
 const NEAR: f32 = 0.1;
 /// Decimals the shares and densities are written with (display figures, stable to read).
@@ -454,6 +456,8 @@ impl TagTally {
             orm_share: share(self.orm),
             alpha_card_share: share(self.card),
             draws: self.draws,
+            models: Vec::new(),
+            primitive_only: true,
         }
     }
 }
@@ -479,6 +483,26 @@ pub struct TagFacts {
     pub orm_share: f64,
     pub alpha_card_share: f64,
     pub draws: u32,
+    /// The model paths drawn under the tag (as the game named them to `gfx.assets().model`), in
+    /// first-draw order, at most [`MODELS_PER_TAG_MAX`]: the harness follows them to their lock rows.
+    pub models: Vec<String>,
+    /// Every draw under the tag is an engine primitive (a cube, a sphere, a group of them): no
+    /// imported or built model.
+    pub primitive_only: bool,
+}
+
+impl LookFacts {
+    /// Note that tag `tag` drew model `path` (`None`: a primitive); a tag the raster never saw is
+    /// left out.
+    pub fn note_shape(&mut self, tag: &str, path: Option<Option<&str>>) {
+        let Some(facts) = self.tags.iter_mut().find(|facts| facts.name == tag) else { return };
+        let Some(model) = path else { return };
+        facts.primitive_only = false;
+        let fresh = model.is_some_and(|path| !facts.models.iter().any(|known| known == path));
+        if let Some(path) = model.filter(|_| fresh && facts.models.len() < MODELS_PER_TAG_MAX) {
+            facts.models.push(path.to_owned());
+        }
+    }
 }
 
 /// The frame's look facts (`__render.look`; `RenderLookFacts` in the contract).
@@ -514,6 +538,8 @@ impl LookFacts {
             entry.set("ormShare", rounded(tag.orm_share, SHARE_SCALE));
             entry.set("alphaCardShare", rounded(tag.alpha_card_share, SHARE_SCALE));
             entry.set("draws", CoreValue::from(tag.draws));
+            entry.set("models", CoreValue::Array(tag.models.iter().map(|path| CoreValue::from(path.as_str())).collect()));
+            entry.set("primitiveOnly", CoreValue::Bool(tag.primitive_only));
             tags.set(tag.name.as_str(), entry);
         }
         let mut look = CoreValue::object();
@@ -545,6 +571,64 @@ pub fn exposure_value(telemetry: &genex_render::post::exposure::ExposureTelemetr
     exposure.set("ageFrames", CoreValue::from(telemetry.age_frames as f64));
     exposure.set("warnings", CoreValue::Array(telemetry.warnings.iter().map(|warning| CoreValue::from(warning.wire())).collect()));
     exposure
+}
+
+/// How much simulated time `__render.exposureTrace` keeps, in seconds.
+pub const EXPOSURE_TRACE_SECONDS: f64 = 10.0;
+
+/// One read-back in the exposure trace.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TracePoint {
+    /// Simulated seconds of the frame it describes.
+    pub t: f64,
+    pub applied_ev: f32,
+    pub metered_ev: Option<f32>,
+}
+
+/// `__render.exposureTrace` (AAA review WP-5): the exposure of each Live read-back over the last
+/// [`EXPOSURE_TRACE_SECONDS`] of simulated time, so a doorway demo's end state carries the
+/// transition it walked through.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ExposureTrace {
+    points: std::collections::VecDeque<TracePoint>,
+    last_reading: Option<u64>,
+}
+
+impl ExposureTrace {
+    /// Note a Live frame at simulated second `t`: a new reading in `telemetry` adds a point, and
+    /// points older than the window go.
+    pub fn note(&mut self, t: f64, telemetry: &genex_render::post::exposure::ExposureTelemetry) {
+        let Some(reading) = telemetry.reading.filter(|reading| self.last_reading != Some(*reading)) else { return };
+        self.last_reading = Some(reading);
+        if self.points.back().is_some_and(|last| last.t > t) {
+            self.points.clear();
+        }
+        self.points.push_back(TracePoint { t, applied_ev: telemetry.applied_ev, metered_ev: telemetry.metered_ev });
+        while self.points.front().is_some_and(|first| t - first.t > EXPOSURE_TRACE_SECONDS) {
+            self.points.pop_front();
+        }
+    }
+
+    /// The points, oldest first.
+    pub fn points(&self) -> impl Iterator<Item = &TracePoint> {
+        self.points.iter()
+    }
+
+    /// `__render.exposureTrace` as `state()` writes it; `None` while it is empty.
+    pub fn to_value(&self) -> Option<CoreValue> {
+        if self.points.is_empty() {
+            return None;
+        }
+        let ev = |value: f32| rounded(f64::from(value), EV_SCALE);
+        let points = self.points.iter().map(|point| {
+            let mut entry = CoreValue::object();
+            entry.set("t", rounded(point.t, EV_SCALE));
+            entry.set("appliedEv", ev(point.applied_ev));
+            entry.set("meteredEv", point.metered_ev.map_or(CoreValue::Null, ev));
+            entry
+        });
+        Some(CoreValue::Array(points.collect()))
+    }
 }
 
 /// The geometry of every mesh a frame can draw: the built-in cube and sphere and each loaded
@@ -682,6 +766,57 @@ mod tests {
     }
 
     #[test]
+    fn the_exposure_trace_keeps_one_point_a_reading_for_ten_seconds() {
+        let reading = |frame: u64, applied_ev: f32| genex_render::post::exposure::ExposureTelemetry {
+            auto: true,
+            metered_ev: Some(applied_ev),
+            target_ev: Some(applied_ev),
+            applied_ev,
+            compensation: 0.0,
+            ev_min: -8.0,
+            ev_max: 8.0,
+            histogram: Vec::new(),
+            doorway_boost: false,
+            age_frames: 0,
+            reading: Some(frame),
+            warnings: Vec::new(),
+        };
+        let mut trace = ExposureTrace::default();
+        assert_eq!(trace.to_value(), None);
+        for frame in 0..1000u64 {
+            // A read-back every seventh frame, seen on each frame until the next.
+            trace.note(frame as f64 / 60.0, &reading(frame / 7 * 7, frame as f32));
+        }
+        let points: Vec<&TracePoint> = trace.points().collect();
+        // The last reading at frame 994 keeps the ones from frame 399 on (ten seconds back is 394).
+        assert_eq!(points.len(), 86, "one a reading over ten seconds");
+        assert!(points.windows(2).all(|pair| pair[1].t > pair[0].t));
+        trace.note(0.5, &reading(2000, 0.0));
+        assert_eq!(trace.points().count(), 1, "a reset clock starts the trace over");
+        let manual = genex_render::post::exposure::ExposureTelemetry { reading: None, ..reading(0, 0.0) };
+        trace.note(0.6, &manual);
+        assert_eq!(trace.points().count(), 1, "no reading, no point");
+    }
+
+    #[test]
+    fn a_tag_lists_its_models_once_and_is_primitive_only_without_any() {
+        let index = MeshIndex::with_builtins();
+        let mut raster = LookRaster::new(&camera(), OUTPUT);
+        for name in ["bench", "tree"] {
+            raster.tag(name);
+            raster.mesh(index.get(MeshId::CUBE), &cube_at(Vec3::new(0.0, 1.5, 0.0), Vec3::ONE), &Material::color([1; 4]));
+        }
+        let mut facts = raster.facts().expect("drew");
+        facts.note_shape("bench", None);
+        facts.note_shape("tree", Some(Some("models/birch.glb")));
+        facts.note_shape("tree", Some(Some("models/birch.glb")));
+        facts.note_shape("tree", Some(None));
+        facts.note_shape("unseen", Some(Some("x.glb")));
+        assert_eq!((tag(&facts, "bench").primitive_only, tag(&facts, "bench").models.len()), (true, 0));
+        assert_eq!((tag(&facts, "tree").primitive_only, tag(&facts, "tree").models.clone()), (false, vec!["models/birch.glb".to_owned()]));
+    }
+
+    #[test]
     fn the_value_is_the_contract_s_shape() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../../../tests/fixtures/render-look-v1.json")).expect("fixture");
         let facts = LookFacts {
@@ -689,8 +824,8 @@ mod tests {
             coverage: 0.82,
             flat_coverage: 0.031,
             tags: vec![
-                TagFacts { name: "bench".into(), coverage: 0.04, flat_coverage: 0.031, texels_per_metre: None, pixels_per_metre: Some(640.0), triangles_per_square_metre: Some(2.5), normal_map_share: 0.0, orm_share: 0.0, alpha_card_share: 0.0, draws: 12 },
-                TagFacts { name: "walls".into(), coverage: 0.61, flat_coverage: 0.0, texels_per_metre: Some(1365.3), pixels_per_metre: Some(212.4), triangles_per_square_metre: Some(0.5), normal_map_share: 1.0, orm_share: 1.0, alpha_card_share: 0.0, draws: 40 },
+                TagFacts { name: "bench".into(), coverage: 0.04, flat_coverage: 0.031, texels_per_metre: None, pixels_per_metre: Some(640.0), triangles_per_square_metre: Some(2.5), normal_map_share: 0.0, orm_share: 0.0, alpha_card_share: 0.0, draws: 12, models: Vec::new(), primitive_only: true },
+                TagFacts { name: "walls".into(), coverage: 0.61, flat_coverage: 0.0, texels_per_metre: Some(1365.3), pixels_per_metre: Some(212.4), triangles_per_square_metre: Some(0.5), normal_map_share: 1.0, orm_share: 1.0, alpha_card_share: 0.0, draws: 40, models: vec!["models/wall_kit.glb".into()], primitive_only: false },
             ],
         };
         let written: serde_json::Value = serde_json::from_slice(&facts.to_value().dump()).expect("JSON");
@@ -710,8 +845,13 @@ mod tests {
             histogram,
             doorway_boost: false,
             age_frames: 2,
+            reading: Some(5),
             warnings: Vec::new(),
         };
+        let mut trace = ExposureTrace::default();
+        trace.note(1.0, &telemetry);
+        let written: serde_json::Value = serde_json::from_slice(&trace.to_value().expect("a point").dump()).expect("JSON");
+        assert_eq!(written, fixture["exposureTrace"]);
         let written: serde_json::Value = serde_json::from_slice(&exposure_value(&telemetry).dump()).expect("JSON");
         assert_eq!(written, fixture["exposure"]);
     }

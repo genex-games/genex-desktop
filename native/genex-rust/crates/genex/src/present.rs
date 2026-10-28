@@ -1478,6 +1478,8 @@ pub struct Presenter {
     /// The last look facts measured (`__render.look`): Live measures every
     /// [`LOOK_FACTS_LIVE_EVERY`] frames, a capture every time.
     look: LookCache,
+    /// The Live exposure's last seconds (`__render.exposureTrace`).
+    exposure_trace: crate::look_facts::ExposureTrace,
     /// The game's custom GPU passes (M2.19), registered at install.
     pub passes: CustomPasses,
     hud: HudPainter,
@@ -1696,6 +1698,7 @@ impl Presenter {
             capture_lens: crate::render::CaptureLens::default(),
             last_output: None,
             look: LookCache::default(),
+            exposure_trace: crate::look_facts::ExposureTrace::default(),
             source,
             assets: AssetCache::default(),
             reloading: Vec::new(),
@@ -2317,7 +2320,12 @@ impl Presenter {
             runtime.note_lod_refused(&drawn.lod_refused);
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
             runtime.note_look_facts(self.look.measure(&frame, &camera, &self.assets, output, live).cloned());
-            runtime.note_exposure(self.resilient.renderer().exposure_telemetry());
+            let exposure = self.resilient.renderer().exposure_telemetry();
+            if live {
+                self.exposure_trace.note(runtime.tick() as f64 * FIXED_STEP_MS / 1000.0, &exposure);
+            }
+            runtime.note_exposure(exposure);
+            runtime.note_exposure_trace(&self.exposure_trace);
         }
         Some(drawn)
     }
@@ -3350,7 +3358,29 @@ pub fn look_facts(frame: &Frame, camera: &Camera, assets: &AssetCache, output: (
     let index = assets.mesh_index();
     let mut sink = LookSink { raster: LookRaster::new(camera, output), index: &index, lighting: Lighting::default() };
     write_world(&mut sink, frame, assets, &mut Drawn::default());
-    sink.raster.facts()
+    let mut facts = sink.raster.facts()?;
+    for draw in frame.draws() {
+        for path in shape_models(&draw.shape) {
+            facts.note_shape(&draw.tag, path);
+        }
+    }
+    Some(facts)
+}
+
+/// What `shape` draws for the look facts' provenance: `None` for a primitive (a cube, a sphere, a
+/// group of them), else each model's path (`Some(None)`: a model with no path); nothing for lines.
+fn shape_models(shape: &Shape) -> Vec<Option<Option<&str>>> {
+    let model_paths = |model: &Model| model.drawn_members().iter().map(|member| Some(member.path())).collect::<Vec<_>>();
+    match shape {
+        Shape::Cube { .. } | Shape::Sphere { .. } => vec![None],
+        Shape::Line { .. } | Shape::Lines { .. } => Vec::new(),
+        Shape::Model { model, .. } | Shape::Posed { model, .. } => model_paths(model),
+        Shape::Group { group } => match group.shape() {
+            crate::GroupShape::Model(model) => model_paths(model),
+            _ => vec![None],
+        },
+        Shape::Character { .. } => vec![Some(None)],
+    }
 }
 
 /// A sink that feeds every world mesh to a [`LookRaster`] and keeps nothing else.

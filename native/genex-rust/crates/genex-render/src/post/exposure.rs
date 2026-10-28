@@ -538,6 +538,9 @@ pub struct ExposureTelemetry {
     pub doorway_boost: bool,
     /// Frames between the read-back and the frame described.
     pub age_frames: u64,
+    /// The frame the read-back was taken after (`None` before the first, or under a fixed
+    /// exposure): a new value is a new reading.
+    pub reading: Option<u64>,
     pub warnings: Vec<ExposureWarning>,
 }
 
@@ -556,6 +559,7 @@ pub fn exposure_telemetry(look: &Look, source: ExposureSource, reading: Option<&
         histogram: Vec::new(),
         doorway_boost: false,
         age_frames: 0,
+        reading: None,
         warnings: exposure_warnings(look),
     };
     let reading = match source {
@@ -572,6 +576,7 @@ pub fn exposure_telemetry(look: &Look, source: ExposureSource, reading: Option<&
         histogram: telemetry_bins(&reading.bins),
         doorway_boost: reading.boost > 1.0,
         age_frames: frame.saturating_sub(reading.frame),
+        reading: Some(reading.frame),
         ..base
     }
 }
