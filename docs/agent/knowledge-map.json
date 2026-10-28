@@ -607,7 +607,10 @@
         "tests/conformance/rust-netcode-conformance.test.ts",
         "tests/fixtures/rust-protocol-game/**",
         "tests/conformance/rust-performance.test.ts",
-        "tests/fixtures/bench-scene/**"
+        "tests/fixtures/bench-scene/**",
+        "src/shared/render-look.ts",
+        "tests/conformance/render-look.test.ts",
+        "tests/fixtures/render-look-v1.json"
       ],
       "documents": [
         "native/genex-rust/README.md",
