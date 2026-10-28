@@ -15,7 +15,7 @@ export const START_WEB_GAME_TOOL: LiveToolSpec = {
 /** What a project tool answers. */
 export const PROJECT_TOOL_ANSWER = {
   webStarted:
-    "Genex wrote the game's page: index.html, with three.js in its import map, and src/main.js. Both are yours to rewrite from scratch, as plain as the game wants. The rest of src/ and docs/ is Genex's own instrumentation for its Loop builds: you need none of it.",
+    "Genex wrote the game's page: index.html and src/main.js, both yours to rewrite from scratch, as plain as the game wants. Its import map serves three.js r185 (`three`, `three/addons/`, `three/webgpu`) from Genex's own copy at /vendor/, not from this folder: import it, never search the disk for it. The rest of src/ and docs/ is Genex's own instrumentation for its Loop builds: you need none of it.",
   inPlan:
     "The chat is in Plan mode, so the web starter was not written: it waits until the plan is approved. Put it in your plan instead.",
 } as const;

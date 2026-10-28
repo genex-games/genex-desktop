@@ -1750,7 +1750,7 @@ describe("an Unreal game with a web site: two facts, two views", () => {
       registry.cancel();
     }
     const lines = buildContractorBrief({ ask: ASK, engine: CLAUDE, facts }).split("\n");
-    const web = lines.filter((line) => line.includes("window.__studio"));
+    const web = lines.filter((line) => line.includes("serves its index.html"));
     assert.ok(web.length > 0 && web.every((line) => line.startsWith("For the web game in `site/`: ")));
     const unreal = lines.filter((line) => line.includes("the Unreal editor connector's tools"));
     assert.ok(unreal.length > 0 && unreal.every((line) => !line.startsWith("For the ")));
