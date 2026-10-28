@@ -53,7 +53,7 @@ export const SETUP_PROMPTS = {
   SetupStopped: (words: string) => `Set up wrote nothing: ${words}`,
   Restarted: (words: string) => `${words} Once Studio has started, retry.`,
   StillOpen:
-    "Roblox Studio is still open: it may be asking the person to save their place, which is theirs to answer. Ask them to answer Studio, then call this again.",
+    "Roblox Studio is still open. Genex brought its window to the front, where it is most likely asking the person whether to save their place, which is theirs to answer. Tell them to answer it in Studio's window (Save keeps their changes), then call this again. Never restore, click or close Studio's windows yourself.",
   Opened: (words: string) => words,
   Quit: "Roblox Studio closed; it asked to save anything unsaved first.",
   QuitInUse: (title: string) => `A build of ${title} is using Roblox Studio, so Genex leaves it open.`,

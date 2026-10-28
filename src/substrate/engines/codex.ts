@@ -126,7 +126,7 @@ import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
+import { EngineKind, EngineStatusCode, EngineStatusReason, LoginSource } from "../../shared/engine-descriptor.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
@@ -507,7 +507,12 @@ export class CodexEngine implements Engine {
   /** Cached native status, never inferred from files or a successful process spawn. */
   async status(): Promise<EngineStatus> {
     if (this.#authFailure) {
-      return { code: EngineStatusCode.NeedsLogin, detail: this.#authFailure, remedy: this.loginHint() };
+      return {
+        code: EngineStatusCode.NeedsLogin,
+        detail: this.#authFailure,
+        remedy: this.loginHint(),
+        reason: EngineStatusReason.AuthFailed,
+      };
     }
     if (this.#authCache && Date.now() - this.#authCache.at < AUTH_CACHE_MS) return this.#authCache.status;
     return this.probeAuth();
@@ -530,15 +535,21 @@ export class CodexEngine implements Engine {
   async #readAuth(): Promise<EngineStatus> {
     const installation = this.#findBinaryFn ? null : await this.#resolveCli(EngineId.Codex, this.#executable);
     if (installation && installation.status.state !== CodingCliState.Ready) {
+      const missing = installation.status.state === CodingCliState.Missing;
       return {
-        code:
-          installation.status.state === CodingCliState.Missing ? EngineStatusCode.NotInstalled : EngineStatusCode.Error,
+        code: missing ? EngineStatusCode.NotInstalled : EngineStatusCode.Error,
         detail: installation.status.detail,
+        ...(missing ? { reason: EngineStatusReason.CliMissing } : {}),
       };
     }
     const binary = installation?.status.path ?? (await this.#resolveBinary());
     if (!binary) {
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.CliRequired(), remedy: MESSAGE.InstallRemedy() };
+      return {
+        code: EngineStatusCode.NotInstalled,
+        detail: MESSAGE.CliRequired(),
+        remedy: MESSAGE.InstallRemedy(),
+        reason: EngineStatusReason.CliMissing,
+      };
     }
     const login = await this.resolveLogin();
     const home = login.home ?? this.systemHome;
@@ -1260,7 +1271,9 @@ export class CodexEngine implements Engine {
     // id survives for "Continue". A user stop that raced the deadline still reads as the user's.
     const aborted = request.signal?.aborted;
     if (aborted || run.deadlineHit) return partialDelegateResult(this.id, interruption(aborted), partialState());
-    const classified = this.#classify(err as Error, run.stderrTail);
+    // The CLI names a limit in its stream and then exits non-zero with an empty stderr: read the
+    // stream's own failure too, or a 429 reads as a crash and the run ends instead of waiting.
+    const classified = this.#classify(err as Error, [run.failure, run.stderrTail].filter(Boolean).join("\n"));
     if (classified.kind === EngineFailureKind.Auth) this.#authFailure = classified.message;
     throw classified;
   }
@@ -1692,7 +1705,13 @@ function notConnectedStatus(cli: CodexAuthStatus, remedy: string): EngineStatus 
     code: cli.loggedIn === null ? EngineStatusCode.Error : EngineStatusCode.NeedsLogin,
     detail: notConnectedDetail(cli),
     remedy,
+    reason: notConnectedReason(cli),
   };
+}
+
+function notConnectedReason(cli: CodexAuthStatus): EngineStatusReason {
+  if (cli.method === "api_key") return EngineStatusReason.ApiKeyLogin;
+  return cli.loggedIn === false ? EngineStatusReason.NotSignedIn : EngineStatusReason.CheckFailed;
 }
 
 function notConnectedDetail(cli: CodexAuthStatus): string {

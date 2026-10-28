@@ -110,7 +110,7 @@ function Balance({ credits }: { credits: CreditsView }): JSX.Element | null {
   const value = creditsValue(credits);
   if (!value) return null;
   return (
-    <div className="genex-connect-credits" data-warn={outOfCredits(credits) || undefined}>
+    <div className="genex-connect-credits">
       <CreditsShard size={18} />
       <span className="genex-connect-balance">{value}</span>
       {credits.kind === CreditsKind.Count && (

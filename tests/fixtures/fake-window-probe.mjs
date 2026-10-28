@@ -3,7 +3,8 @@
  * A stand-in for Genex's Windows window probe (`src/substrate/windows-window-probe.ts`): it reports its
  * start in stages, says it is ready with its view of the primary screen (half the driver's physical
  * pixels, as Windows scaling a process's points at 200% would), and answers one JSON line per request
- * line from a fixed desktop. `--log <file>` appends each start and each request; `--hang <request>`
+ * line from a fixed desktop (`raise <exe>` brings Notepad forward, nothing else; `running <exe>` finds
+ * Notepad and a windowless Roblox Studio). `--log <file>` appends each start and each request; `--hang <request>`
  * never answers that request; `--fail-start` exits before it is ready, saying why on stderr;
  * `--stall` stops after loading and never says it is ready; `--chatter` says a warning, and puts a
  * byte-order mark before its first line, as Windows PowerShell can; `--exit-after-one` exits once it
@@ -27,6 +28,12 @@ const ANSWERS = {
       ? '{"pid":40,"exe":"Notepad.exe","name":"Notepad","window":4001}'
       : '{"pid":41,"exe":"1Password.exe","name":"1Password","window":4101}',
   pid: (pid) => (pid === "40" ? '{"pid":40,"exe":"Notepad.exe","name":"Notepad","window":4001}' : '{"pid":0}'),
+  running: (exe) => {
+    if (exe === "notepad.exe") return '{"pid":40,"exe":"Notepad.exe","name":"Notepad","window":4001}';
+    if (exe === "robloxstudiobeta.exe") return '{"pid":50,"exe":"RobloxStudioBeta.exe","name":"Roblox Studio"}';
+    return '{"pid":0}';
+  },
+  raise: (exe) => (exe === "notepad.exe" ? '{"pid":40,"exe":"Notepad.exe","name":"Notepad","window":4001}' : '{"pid":0}'),
 };
 
 function serve() {

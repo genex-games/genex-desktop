@@ -22,6 +22,11 @@ import {
 import { type Notify, ToastTone } from "../../state/toasts.ts";
 import { problemWords, TOAST_WORDS } from "../../words.ts";
 import { webBuildShown } from "../../web-build-shown.ts";
+import { reloadPressed } from "../../analytics/builds-stage.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { type BuildSurface, LiveTrigger } from "../../analytics/events/builds.ts";
+import { errorCode } from "../../../shared/errors.ts";
 
 /** The run's build Live shows, as main says it (`live.behind` `shows`). */
 type ShownBuild = { head: string };
@@ -35,7 +40,7 @@ export interface LiveBehindInput extends StageWatch {
   selectedRun: string | null;
   /** The person stopped the game: nothing waiting goes in on its own, which would start it again. */
   stopped: boolean;
-  loadLive: (target: string, load: () => Promise<unknown>) => Promise<unknown>;
+  loadLive: (target: string, load: () => Promise<unknown>, trigger: LiveTrigger) => Promise<unknown>;
   onView: (view: StageView) => void;
   onNotice: Notify;
 }
@@ -79,7 +84,7 @@ function useLiveState(project: string | null): LiveBehindEvent | null {
 export function useLiveBehind(input: LiveBehindInput): {
   shownBuild: ShownBuild | null;
   behind: LiveBehind | null;
-  showBuild: (head: string) => Promise<void>;
+  showBuild: (head: string, surface: BuildSurface) => Promise<void>;
   reload: () => void;
 } {
   const { project, threadId, graph, selectedRun, loadLive, onView, onNotice } = input;
@@ -99,15 +104,22 @@ export function useLiveBehind(input: LiveBehindInput): {
 
   /** Load into Live for this game, once at a time; `after` runs when this game is still the one on the stage. */
   const intoLive = useCallback(
-    async (load: () => Promise<unknown>, after: () => void, onError: (err: unknown) => void): Promise<void> => {
-      if (!project || pending.current) return;
+    async (
+      load: () => Promise<unknown>,
+      after: () => void,
+      onError: (err: unknown) => void,
+      trigger: LiveTrigger,
+    ): Promise<boolean> => {
+      if (!project || pending.current) return false;
       pending.current = true;
-      await loadLive(project, load)
+      return loadLive(project, load, trigger)
         .then(() => {
           if (currentProject.current === project) after();
+          return true;
         })
         .catch((err: unknown) => {
           if (currentProject.current === project) onError(err);
+          return false;
         })
         .finally(() => {
           pending.current = false;
@@ -115,14 +127,18 @@ export function useLiveBehind(input: LiveBehindInput): {
     },
     [project, loadLive],
   );
-  const failed = useCallback((err: unknown) => onNotice(problemWords(err), ToastTone.Error), [onNotice]);
+  const failed = useCallback(
+    (err: unknown) => onNotice(problemWords(err), ToastTone.Error, errorCode(err)),
+    [onNotice],
+  );
 
+  /** Swap a run's build into Live; `trigger` says who asked: the person's Play brings Live forward. True once it loaded. */
   const showMergedBuild = useCallback(
-    (head: string, asked: boolean): Promise<void> =>
+    (head: string, trigger: LiveTrigger): Promise<boolean> =>
       intoLive(
         () => window.studio.showBuild(project ?? "", head),
         () => {
-          if (!asked || !project) return;
+          if (trigger !== LiveTrigger.ShowBuild || !project) return;
           webBuildShown(project);
           onView(StageView.Live);
         },
@@ -130,6 +146,7 @@ export function useLiveBehind(input: LiveBehindInput): {
           failedHead.current = head;
           failed(err);
         },
+        trigger,
       ),
     [project, intoLive, onView, failed],
   );
@@ -146,45 +163,65 @@ export function useLiveBehind(input: LiveBehindInput): {
   const shownBroken = Boolean(
     shownBuild && graph?.mergedHead?.head === shownBuild.head && graph.mergedHead.healthy === false,
   );
-  useEffect(() => {
-    if (shownBroken) onNotice(TOAST_WORDS.shownBuildBroken, ToastTone.Info);
-  }, [shownBroken, onNotice]);
+  useShownBroken(shownBroken, Boolean(graph?.active), onNotice);
   const behind = useMemo(() => liveBehindOf({ waiting: held, offer, shownBroken }), [held, offer, shownBroken]);
 
   /** Bring in what waits (or reload what is there), exactly as Reload does. */
   const apply = useCallback(
-    (what: LiveBehind | null): Promise<void> => {
-      if (what?.held)
-        return intoLive(
-          () => window.studio.reloadPreview(),
-          () => {},
-          failed,
-        );
-      if (what?.head) return showMergedBuild(what.head, false);
-      if (what)
-        return intoLive(
-          () => window.studio.loadPreview(project ?? ""),
-          () => {},
-          failed,
-        );
-      return intoLive(
-        () => window.studio.reloadPreview(),
-        () => {},
-        () => {},
-      );
+    (what: LiveBehind | null, trigger: LiveTrigger): Promise<boolean> => {
+      // What main holds is reloaded; a run's build is swapped in; a changed folder is loaded again.
+      if (what?.head && !what.held) return showMergedBuild(what.head, trigger);
+      const folder = what && !what.held;
+      const load = folder ? () => window.studio.loadPreview(project ?? "") : () => window.studio.reloadPreview();
+      // A plain reload with nothing waiting says nothing when it fails.
+      return intoLive(load, () => {}, what ? failed : () => {}, trigger);
     },
     [project, intoLive, showMergedBuild, failed],
   );
-  const behindRef = useRef(behind);
-  behindRef.current = behind;
-  const reload = useCallback(() => void apply(behindRef.current), [apply]);
+  const reload = useReload(behind, apply, project);
 
   const stage = stageWatchOf(input);
   useUnseenChanges(appliesUnseen(behind, stage) && !input.stopped ? behind : null, apply);
   useFirstBuild(firstBuildShows(offer, stage) ? (offer?.head ?? null) : null, failedHead, showMergedBuild);
 
-  const showBuild = useCallback((head: string): Promise<void> => showMergedBuild(head, true), [showMergedBuild]);
+  const runActive = runBuilding(graph);
+  const showBuild = useCallback(
+    async (head: string, surface: BuildSurface): Promise<void> => {
+      const ok = await showMergedBuild(head, LiveTrigger.ShowBuild);
+      track(AnalyticsEvent.BuildPlayed, { surface, run_active: runActive, ok });
+    },
+    [showMergedBuild, runActive],
+  );
   return { shownBuild, behind, showBuild, reload };
+}
+
+/** A build the stage swapped in was found broken: say so, once each time it is. */
+function useShownBroken(shownBroken: boolean, runActive: boolean, onNotice: Notify): void {
+  const active = useRef(runActive);
+  active.current = runActive;
+  useEffect(() => {
+    if (!shownBroken) return;
+    onNotice(TOAST_WORDS.shownBuildBroken, ToastTone.Info);
+    track(AnalyticsEvent.LiveShownBuildBroken, { run_active: active.current });
+  }, [shownBroken, onNotice]);
+}
+
+/** Reload: bring in what waits now, noting what waited and how soon after this game's last Reload it came. */
+function useReload(
+  behind: LiveBehind | null,
+  apply: (what: LiveBehind | null, trigger: LiveTrigger) => Promise<boolean>,
+  project: string | null,
+): () => void {
+  const behindRef = useRef(behind);
+  behindRef.current = behind;
+  const last = useRef<{ project: string | null; at: number } | null>(null);
+  return useCallback(() => {
+    const now = Date.now();
+    const before = last.current?.project === project ? last.current.at : null;
+    track(AnalyticsEvent.LiveReloadPressed, reloadPressed(behindRef.current?.reason ?? null, before, now));
+    last.current = { project, at: now };
+    void apply(behindRef.current, LiveTrigger.Reload);
+  }, [apply, project]);
 }
 
 /** What of the input says whether someone watches the web game in Live. */
@@ -196,13 +233,16 @@ const stageWatchOf = ({ view, visible, showEmpty, preview }: StageWatch): StageW
 });
 
 /** Nobody is watching a game in Live: what waits goes in now, so Live is current when they come back. */
-function useUnseenChanges(unseen: LiveBehind | null, apply: (what: LiveBehind) => Promise<void>): void {
+function useUnseenChanges(
+  unseen: LiveBehind | null,
+  apply: (what: LiveBehind, trigger: LiveTrigger) => Promise<boolean>,
+): void {
   const key = unseen ? `${unseen.reason}:${unseen.head ?? ""}:${unseen.note ?? ""}` : null;
   const latest = useRef(unseen);
   latest.current = unseen;
   // biome-ignore lint/correctness/useExhaustiveDependencies: one application per waiting change, named by its key
   useEffect(() => {
-    if (latest.current) void apply(latest.current);
+    if (latest.current) void apply(latest.current, LiveTrigger.UnseenChange);
   }, [key]);
 }
 
@@ -210,9 +250,12 @@ function useUnseenChanges(unseen: LiveBehind | null, apply: (what: LiveBehind) =
 function useFirstBuild(
   head: string | null,
   failedHead: { current: string | null },
-  showMergedBuild: (head: string, asked: boolean) => Promise<void>,
+  showMergedBuild: (head: string, trigger: LiveTrigger) => Promise<boolean>,
 ): void {
   useEffect(() => {
-    if (head && failedHead.current !== head) void showMergedBuild(head, false);
+    if (!head || failedHead.current === head) return;
+    void showMergedBuild(head, LiveTrigger.FirstBuildAuto).then((ok) =>
+      track(AnalyticsEvent.LiveFirstBuildAutoShown, { ok }),
+    );
   }, [head, failedHead, showMergedBuild]);
 }

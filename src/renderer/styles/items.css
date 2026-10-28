@@ -10,7 +10,20 @@
   background: var(--canvas);
   container-type: inline-size;
 }
-/* The head is the window's drag line: the title, the tabs, then the search or New item. */
+/* One frame for both tabs, so nothing moves when the tab changes. */
+.items-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.items-frame {
+  width: 100%;
+  max-width: 1160px;
+  margin-inline: auto;
+  padding: 0 40px 48px;
+}
+/* The head is the window's drag line: the title, the tabs, then Browse's search. */
 .items-head {
   display: flex;
   align-items: center;
@@ -81,18 +94,13 @@
 
 /* ── Browse: the list, and the item on show beside it ───────────────────────────────────── */
 .items-browse {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+.items-browse-list {
   flex: 1;
   min-width: 0;
-  height: 100%;
-}
-.items-browse-main {
-  min-width: 0;
-  overflow-y: auto;
-  padding-inline: 40px;
-  padding-block-end: 48px;
-  scrollbar-gutter: stable;
 }
 .items-intro {
   max-width: 500px;
@@ -129,18 +137,21 @@
   margin-block-start: 24px;
 }
 .items-detail {
+  position: sticky;
+  inset-block-start: 16px;
   display: flex;
+  flex: none;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
+  width: 340px;
   min-width: 0;
-  overflow-y: auto;
-  padding: 30px 28px 40px;
-  border-inline-start: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 18px;
   background: var(--page);
 }
 .items-detail-render {
-  aspect-ratio: 5 / 4;
-  border-radius: 12px;
+  height: 220px;
+  border-radius: 14px;
   box-shadow: inset 0 0 0 1px var(--item-edge);
 }
 .items-detail-words {
@@ -195,40 +206,67 @@
   flex-direction: column;
   gap: 12px;
 }
-.items-split {
+/* For <game ▾>: the game the item goes in. */
+.items-for {
   display: flex;
-  gap: 1px;
+  flex-direction: column;
+  gap: 6px;
 }
-.items-split > button {
-  height: 40px;
+.items-for-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
 }
-.items-split-main {
-  flex: 1;
-  min-width: 0;
-  border-start-end-radius: 0;
-  border-end-end-radius: 0;
-}
-.items-split-more {
-  flex: none;
-  width: 36px;
-  padding: 0;
-  border-start-start-radius: 0;
-  border-end-start-radius: 0;
-}
-/* Added to <game>: where Add to was, a quiet fill that says so, beside the game picker. */
-.items-added {
+.items-for-pick {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 8px;
   height: 40px;
   padding-inline: 12px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-button);
-  color: var(--ink-2);
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
 }
-.items-remove {
-  align-self: center;
-  max-width: 100%;
+.items-for-pick > .truncate {
+  flex: 1;
+  min-width: 0;
+}
+.items-for-pick:hover:enabled {
+  background: var(--control-hover, var(--hover));
+}
+.items-for-pick:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.items-for-pick:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* Added to your game: where it stands there, in place of Add to game. */
+.items-added {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--soft);
+  color: var(--purchase-paid-ink);
+}
+.items-added-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+}
+.items-added-sub {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
 }
 .items-detail-note {
   color: var(--ink-3);
@@ -242,19 +280,17 @@
   line-height: 18px;
 }
 /* A narrow room: the item on show goes above the list. */
-@container (max-width: 760px) {
-  .items-browse {
-    display: flex;
-    flex-direction: column-reverse;
-    overflow-y: auto;
+@container (max-width: 860px) {
+  .items-frame {
+    padding-inline: 20px;
   }
-  .items-browse-main {
-    overflow: visible;
+  .items-browse {
+    flex-direction: column-reverse;
+    align-items: stretch;
   }
   .items-detail {
-    overflow: visible;
-    border-inline-start: 0;
-    border-block-start: 1px solid var(--line);
+    position: static;
+    width: auto;
   }
   .items-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -262,18 +298,6 @@
 }
 
 /* ── Selling: the strip, then the table ─────────────────────────────────────────────────── */
-.items-scroll {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-.items-selling {
-  width: 100%;
-  max-width: 1000px;
-  margin-inline: auto;
-  padding: 0 40px 64px;
-}
 .items-strip {
   display: flex;
   align-items: center;
@@ -289,6 +313,14 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  border-radius: 8px;
+  text-align: start;
+  cursor: pointer;
+}
+.items-strip-figure:focus-visible,
+.items-strip-about:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 4px;
 }
 .items-strip-label {
   color: var(--ink-3);
@@ -306,11 +338,22 @@
 .items-strip-figure[data-items-held] .items-coin {
   color: var(--ink-2);
 }
-.items-strip-note {
+.items-strip-about {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
   margin-inline-start: auto;
-  color: var(--ink-2);
+  padding-inline: 14px;
+  border-radius: 11px;
+  background: var(--soft);
+  color: var(--ink);
   font-size: 13px;
-  line-height: 18px;
+  cursor: pointer;
+  transition: background-color var(--dur) ease-out;
+}
+.items-strip-about:hover {
+  background: var(--control-hover, var(--hover));
 }
 .items-table {
   width: 100%;
@@ -438,15 +481,31 @@
   opacity: 0.5;
 }
 @container (max-width: 720px) {
-  .items-selling {
-    padding-inline: 20px;
-  }
   .items-table .items-num:nth-child(4) {
     display: none;
   }
 }
 
 /* ── The chat's Listing draft card ──────────────────────────────────────────────────────── */
+/* The stage's Shop tab: the game's item tiles, as many to a row as the stage's width holds. */
+.shop-stage {
+  padding: 20px;
+}
+.shop-note {
+  margin-block-end: 14px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+.shop-grid .listing-card {
+  max-width: none;
+}
 .listing-card {
   display: flex;
   flex-direction: column;
@@ -469,6 +528,12 @@
   border-radius: 12px;
   box-shadow: inset 0 0 0 1px var(--item-edge);
 }
+/* A store item's picture is square and fills its card edge to edge (Studio refuses a smaller one). */
+.listing-render .item-render-picture {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .listing-words {
   display: flex;
   flex-direction: column;
@@ -484,10 +549,14 @@
   overflow-wrap: anywhere;
 }
 .listing-description {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--ink-2);
   font-size: 13px;
   line-height: 19px;
   white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .listing-chips {
   display: flex;
@@ -542,4 +611,92 @@
   color: var(--ink-2);
   font-size: 13px;
   line-height: 18px;
+}
+
+/* The Shop's tile: the picture on top, its status and pencil over it, then the name beside the price. */
+.listing-tile {
+  gap: 10px;
+  padding: 10px;
+}
+.listing-picture {
+  position: relative;
+}
+.listing-tile .listing-render {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 11px;
+}
+.listing-pill {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--page) 72%, transparent);
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+.listing-pill[data-listing-on-sale] {
+  color: var(--purchase-paid-ink);
+}
+.listing-ask {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 6px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--page) 72%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background-color var(--dur) ease-out;
+}
+.listing-ask:hover {
+  background: var(--control-hover, var(--hover));
+}
+.listing-ask:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.listing-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding-inline: 4px;
+}
+.listing-tile .listing-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.listing-title .listing-chip {
+  height: auto;
+  padding: 0;
+  background: none;
+}
+.listing-tile .listing-description {
+  padding-inline: 4px;
+}
+.listing-tile .listing-share {
+  align-self: flex-start;
+}
+.listing-tile > :last-child:not(.listing-picture) {
+  margin-block-end: 4px;
+}
+/* The code genex.games refused with, when Studio has no words of its own for it. */
+.listing-refusal-code {
+  margin-inline-start: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  opacity: 0.85;
 }

@@ -48,8 +48,8 @@ export default {
   "A comet herding game where you guide ice rocks into orbit": "引导冰岩进入轨道的彗星放牧游戏",
   "A command is already running for this game. Wait for it to finish or stop it.":
     "此游戏已有命令在运行。请等待它完成或将其停止。",
-  "A command on this Mac, or a URL with browser sign-in. Agents in every game can use its tools.":
-    "这台 Mac 上的命令，或通过浏览器登录的 URL。所有游戏中的智能体都能使用它的工具。",
+  "A command on this computer, or a URL with browser sign-in. Agents in every game can use its tools.":
+    "这台电脑上的命令，或通过浏览器登录的 URL。所有游戏中的智能体都能使用它的工具。",
   'A connector already uses the id "{id}"; remove or rename that connector before installing this plugin':
     "已有连接器使用 ID“{id}”；请先移除或重命名该连接器，再安装此插件",
   "A connector id is lowercase letters, digits and dashes, up to 32 characters":
@@ -128,8 +128,6 @@ export default {
     "Genex 新版本已下载。点击立即重启，否则会在你下次退出时安装。",
   "A new version of Genex is downloading.": "正在下载 Genex 新版本。",
   "A new version of Genex is ready and may fix this.": "新版 Genex 已就绪，可能会修复这个问题。",
-  "A newer Genex helper is already in Studio's Plugins folder, so Genex left it.":
-    "Studio 的 Plugins 文件夹里已有更新版本的 Genex 辅助插件，所以 Genex 保留了它。",
   "A night-vision security camera, its timestamp burned in": "夜视监控摄像头画面，烙着时间戳",
   "A ninja who can only move when the music plays": "只有音乐响起时才能移动的忍者",
   "A note for every part": "给所有部分的备注",
@@ -281,8 +279,6 @@ export default {
   "Agents build in it in your Studio, and its scripts are files in this game's folder.":
     "智能体在你的 Studio 里用这个地点制作，它的脚本是这个游戏文件夹里的文件。",
   "Agents can edit and play it from this chat.": "智能体可以在这个对话中编辑和游玩它。",
-  "Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.":
-    "即使不开启，智能体也能查看应用窗口，但绝不会查看密码管理器、系统设置、密码弹窗或 Genex。",
   "Agents didn’t start": "智能体未能启动",
   "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.":
     "智能体只在受保护的空间中运行，这需要 Windows 允许一次。如果你不是这台电脑的管理员，请在 Windows 询问时让管理员输入密码，然后点击“设置”。",
@@ -297,7 +293,6 @@ export default {
   "All done": "全部完成",
   "All done.": "全部完成。",
   "All games": "所有游戏",
-  Allow: "允许",
   "Allow all edits in this chat": "允许此对话中的所有编辑",
   "Allow calls without asking, including changes this tool can make": "允许无需询问即可调用，包括此工具可能做出的更改",
   "Allow it for Studio in a terminal, then quit and reopen Studio:":
@@ -511,6 +506,8 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "重新构建 {title} 的 {players} 应用，这样我就能发布它。",
   "Build updated": "构建已更新",
+  "Build with the Cursor plan you already have.": "用你已有的 Cursor 套餐来制作。",
+  "Build with the Grok account you already have.": "用你已有的 Grok 账号来制作。",
   "Build with workers": "与助手一起制作",
   Building: "制作中",
   "Building the game": "正在构建游戏",
@@ -525,8 +522,6 @@ export default {
   "Built in one session and merged into your build.": "在一次会话中完成，并已合入你的构建。",
   "Built in one session. Its work wasn't merged into your build.": "在一次会话中完成。它的工作没有合入你的构建。",
   Bundled: "内置",
-  "Buy credits": "购买积分",
-  "Buy credits on genex.games": "在 genex.games 购买积分",
   "By <maker>{name}</maker>": "作者：<maker>{name}</maker>",
   "By {author}": "作者：{author}",
   "Bypass permissions": "绕过权限",
@@ -579,7 +574,6 @@ export default {
   "Character approval no longer available": "角色批准已不可用",
   Characters: "字符",
   Chat: "对话",
-  "Chat about this": "聊聊这个",
   "Chat actions": "对话操作",
   "Chat name": "对话名称",
   "Chat turn from {day}": "{day}的对话",
@@ -652,7 +646,6 @@ export default {
   "Choose a provider below and finish signing in. OpenCode keeps the sign-in.":
     "在下方选择提供方并完成登录。OpenCode 会保存登录状态。",
   "Choose a theme smaller than 128 KB.": "请选择小于 128 KB 的主题。",
-  "Choose an answer": "选择一个答案",
   "Choose an auto-compaction threshold between 5% and 95%.": "请选择 5% 到 95% 之间的自动压缩阈值。",
   "Choose an empty folder, or create one. Games you already have stay where they are.":
     "选择一个空文件夹，或新建一个。已有的游戏会留在原处。",
@@ -748,9 +741,12 @@ export default {
   "Codex sign-in output": "Codex 登录输出",
   "Codex skill discovery closed. Refresh to retry.": "Codex 技能发现已关闭。刷新以重试。",
   "Codex skill discovery timed out. Refresh to retry.": "Codex 技能发现超时。刷新以重试。",
+  "Connect Cursor": "连接 Cursor",
+  "Connect Grok Build": "连接 Grok Build",
   "Cursor didn't answer. Check the installation, then try again.": "Cursor 没有响应。请检查安装后重试。",
   "Cursor is unavailable": "Cursor 不可用",
   "Cursor isn't installed on this computer.": "这台电脑上没有安装 Cursor。",
+  "Cursor ready": "Cursor 已就绪",
   "Cursor sign-in": "Cursor 登录",
   "Cursor {version}, {count, plural, other {# model(s)}}": "Cursor {version}，{count, plural, other {# 个模型}}",
   "Cursor's CLI forgets this computer's sign-in": "Cursor CLI 会忘记这台电脑上的登录",
@@ -762,6 +758,7 @@ export default {
   "Grok Build didn't answer. Check the installation, then try again.": "Grok Build 没有响应。请检查安装后再试一次。",
   "Grok Build isn't installed on this Mac.": "这台 Mac 上没有安装 Grok Build。",
   "Grok Build isn't signed in.": "Grok Build 尚未登录。",
+  "Grok Build ready": "Grok Build 已就绪",
   "Grok Build sign-in": "Grok Build 登录",
   "Grok Build {version}, {count, plural, one {# model} other {# models}}":
     "Grok Build {version}，{count, plural, other {# 个模型}}",
@@ -1178,7 +1175,6 @@ export default {
   "Drop to add {count, plural, one {# file} other {# files}}": "松开以添加 {count, plural, other {# 个文件}}",
   "Drop to add {count, plural, one {# picture} other {# pictures}}": "松开以添加 {count, plural, other {# 张图片}}",
   "Drove the route": "已沿路线行驶",
-  "Each chat session asks you first, and {keys} stops it.": "每个对话会话都会先问你，按 {keys} 即可停止。",
   Earlier: "更早",
   "Earlier builds": "更早的构建",
   "Earlier conversation · no folder": "之前的对话 · 无文件夹",
@@ -1555,6 +1551,8 @@ export default {
   Nex: "Nex",
   "Not signed in to Cursor.": "未登录 Cursor。",
   "Runs on your Grok account": "使用你的 Grok 账号运行",
+  "Setting up Cursor…": "正在安装 Cursor…",
+  "Setting up Grok Build…": "正在安装 Grok Build…",
   "Sign in again…": "重新登录…",
   "Sign in to Cursor from Settings › Model Providers.": "请在“设置 › 模型提供方”中登录 Cursor。",
   "Sign in to Grok from Settings › Model Providers.": "请在“设置 › 模型提供方”中登录 Grok。",
@@ -1570,7 +1568,6 @@ export default {
   "xAI blocked this Grok account: {reason}": "xAI 已封禁这个 Grok 账号：{reason}",
   "xAI no longer accepts this Grok Build.": "xAI 不再接受这个版本的 Grok Build。",
   "xAI no longer accepts this version. Update it to keep building.": "xAI 不再接受这个版本。更新后即可继续制作。",
-  "{amount} Nex, get Nex": "{amount} Nex，获取 Nex",
   "Get credits": "获取积分",
   "Get the Epic Games Launcher": "获取 Epic Games Launcher",
   "Getting Roblox Studio": "正在获取 Roblox Studio",
@@ -1641,6 +1638,7 @@ export default {
   Help: "帮助",
   Hide: "隐藏",
   "Hide Others": "隐藏其他",
+  "Hide friends": "隐藏好友",
   "Hide sidebar": "隐藏侧边栏",
   "Hide terminal": "隐藏终端",
   "Hide terminal · keeps running": "隐藏终端 · 仍在运行",
@@ -1839,7 +1837,6 @@ export default {
     "它会在 Genex 的这些时刻运行：{steps}；这些步骤不会事先询问你。",
   "It runs with your access: Genex doesn't sandbox its code.": "它以你的权限运行：Genex 不会把它的代码放进沙盒。",
   "It runs, but no reviewer compared it with the game you had.": "可以运行，但没有审查员把它和你之前的游戏比较过。",
-  "It shows in the game after its next release.": "它会在游戏下次发布后出现。",
   "It shows up here as soon as it runs.": "游戏一运行就会显示在这里。",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "它默认关闭：请在“插件”中启用；它的每个工具在运行前都会询问你。",
@@ -1884,7 +1881,6 @@ export default {
   "Judge who played it": "亲自游玩的评审",
   "Jump to latest": "跳到最新",
   "Jump to now": "回到当前",
-  "Just this once.": "仅此一次。",
   Keep: "保留",
   "Keep building": "继续制作",
   "Keep building where you left off.": "从上次停下的地方继续制作。",
@@ -1937,19 +1933,10 @@ export default {
   "Left {count, plural, one {# game} other {# games}} alone while they work.":
     "{count, plural, other {# 个游戏}}正在制作中，已跳过。",
   "Left {game} alone while it works.": "{game} 正在制作中，已跳过。",
-  "Let agents control your computer": "允许智能体控制你的电脑",
   "Let go of every input": "已松开所有输入",
   "Let it see this game's folder": "允许它查看此游戏的文件夹",
   "Let the agent use {name}?": "允许智能体使用 {name} 吗？",
   "Let the game settle": "已等待游戏稳定",
-  "Let this chat's agent do this for you with computer control? {plugin} asks: {task}":
-    "允许这个对话的智能体通过电脑控制替你完成这件事吗？{plugin} 请求：{task}",
-  "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or {shortcut}.":
-    "允许这个对话的智能体在本次会话中查看你的屏幕并使用你的电脑吗？它每用到一个应用都会先征求你的同意。随时可以用“停止”或 {shortcut} 让它停下。",
-  "Let this chat's agent use this app? It can click, type and read what this app shows.":
-    "允许这个对话的智能体使用这个应用吗？它可以点击、输入，并读取这个应用显示的内容。",
-  "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
-    "允许这个对话的智能体使用 {app} 吗？它可以点击、输入，并读取 {app} 显示的内容。",
   "Letters a–z, digits and dashes.": "字母 a–z、数字和短横线。",
   "Letting go of every input": "正在松开所有输入",
   "Letting the game settle": "正在等待游戏稳定",
@@ -2919,7 +2906,6 @@ export default {
   "Repository tree is truncated; point the spec at a smaller subdirectory":
     "仓库目录树被截断；请把标识指向更小的子目录",
   "Repository tree is unreadable": "无法读取仓库目录树",
-  "Request details": "请求详情",
   "Request sent": "请求已发送",
   Requests: "请求",
   Reset: "重置",
@@ -3165,7 +3151,6 @@ export default {
     "自我改进已关闭。在 Studio 顶部打开它即可寻找改进。",
   Send: "发送",
   "Send a report": "发送报告",
-  "Send answer": "发送回答",
   "Send feedback": "发送反馈",
   "Send idea": "发送想法",
   "Send report": "发送报告",
@@ -3248,6 +3233,7 @@ export default {
   "Show earlier runs": "显示更早的构建",
   "Show earlier updates": "显示更早的更新",
   "Show fewer": "收起",
+  "Show friends": "显示好友",
   "Show friends what I’m playing": "向好友显示我在玩什么",
   "Show game": "显示游戏",
   "Show in Explorer": "在资源管理器中显示",
@@ -3951,7 +3937,7 @@ export default {
   "This plan is no longer waiting for approval.": "该计划已不再等待批准。",
   "This plugin has no releases, so Studio takes the newest code. It stays as installed until you update it.":
     "此插件没有发布版本，所以 Studio 会获取最新代码。在你更新之前，它会保持安装时的状态。",
-  "This plugin runs trusted code on your Mac.": "此插件会在你的 Mac 上运行受信任的代码。",
+  "This plugin runs trusted code on your computer.": "此插件会在你的电脑上运行受信任的代码。",
   "This plugin's package is missing; remove the plugin and install it again":
     "这个插件的包不见了；请移除插件后重新安装",
   "This plugin’s plugin.json can’t be used.": "此插件的 plugin.json 无法使用。",
@@ -4068,8 +4054,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "在 Windows 服务中开启 Secondary Logon（启动类型：手动），然后重试。",
   "Turn on Studio's MCP server": "开启 Studio 的 MCP 服务器",
-  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
-    "要开启电脑控制吗？开启后，每个对话里的智能体都可以请求使用这台电脑上的应用，一次一个。",
   "Turn on mic": "打开麦克风",
   "Turn on microphone": "打开麦克风",
   "Turn on {name}": "开启 {name}",
@@ -4331,6 +4315,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Claude 无需询问就会执行的操作。在对话中选择“始终允许”，该操作就会添加到这里，仅对那个游戏生效。",
   "What Harness has learned": "Harness 学到了什么",
+  "What changed": "改了什么",
   "What changes": "更改内容",
   "What credits pay for": "积分可用于",
   "What do you want to make?": "你想做什么？",
@@ -4372,11 +4357,11 @@ export default {
     "Windows 没有获得安装许可。请再按一次“帮我完成”，并在 Windows 询问时选“是”。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows 需要一次性设置受保护的工作区，并由管理员批准。",
+  "Windows will ask you to allow it once.": "Windows 会请你允许一次。",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
     "Windows 会请你允许一次。如果要求输入密码，这台电脑的管理员可以输入自己的密码。智能体在自己的受保护空间里工作，远离你的文件。",
   "Windows wouldn’t start Genex’s protected space.": "Windows 未能启动 Genex 的受保护空间。",
   "Wireframe terrain flying by at dusk": "黄昏中飞掠而过的线框地形",
-  "With this on, an agent can click and type in the apps you allow.": "开启后，智能体可以在你允许的应用中点击和输入。",
   "Withdrawn by a restart": "因重启已撤回",
   "Withdrawn when the studio restarted": "Studio 重启，已撤回",
   "Withdrawn when the turn ended": "回复已结束，已撤回",
@@ -4497,7 +4482,6 @@ export default {
   "Your open Unity editor, where agents build Unity games.": "你打开的 Unity 编辑器，智能体在这里制作 Unity 游戏。",
   "Your open Roblox Studio, where agents build Roblox games.": "你打开的 Roblox Studio，智能体在这里制作 Roblox 游戏。",
   "Your open Unreal Editor, where agents build Unreal games.": "你打开的 Unreal 编辑器，智能体在这里制作 Unreal 游戏。",
-  "Your own answer": "你自己的回答",
   "Your profile link": "你的主页链接",
   "Your profile link.": "你的个人主页链接。",
   "Your profile, friends and Publish stay.": "你的个人主页、好友和发布功能都会保留。",
@@ -5082,7 +5066,6 @@ export default {
   "{added} of {total} parts added": "已添加 {added}/{total} 个部分",
   "{added} of {total} parts added · {working} working": "已添加 {added}/{total} 个部分 · {working} 个进行中",
   "{amount} Nex": "{amount} Nex",
-  "{amount} credits, open Credits": "{amount} 积分，打开“积分”",
   "{amount} more needed": "还需 {amount}",
   "{app} settings": "{app} 设置",
   "{brand} doesn’t share limits for this plan": "{brand} 不提供此方案的额度",
@@ -5201,6 +5184,8 @@ export default {
     "{count, plural, other {原有的历史记录已改名为 .git.studio-backup，保存在旁边。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {已恢复 # 个游戏文件。}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, other {这次更改一次超过了 {size}，最大的 # 个文件未保存，回退时无法恢复：{files}。}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, other {有 # 个文件过大，无法保存，回退时无法恢复：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -5616,7 +5601,6 @@ export default {
   "It isn’t on this computer any more. Install it again.": "它已不在这台电脑上。请重新安装。",
   "It couldn’t start on this computer.": "它无法在这台电脑上启动。",
   "Remove from this computer": "从这台电脑移除",
-  "Remove from {game}": "从 {game} 移除",
   "{title} is removed from this computer. Its saves stay.": "{title} 已从这台电脑移除。存档仍会保留。",
   "Ready to play on this computer.": "可以在这台电脑上游玩了。",
   "Can’t play on {platform}": "无法在 {platform} 上玩",
@@ -5643,7 +5627,8 @@ export default {
   "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
     "Genex 无法在这台电脑上点击 Roblox Studio。请在 Studio 中自己发布：",
   "Handing it to the agent…": "正在交给智能体…",
-  "If the chat asks to use computer control, answer it there.": "如果聊天中询问是否使用电脑控制，请在那里回答。",
+  "If the chat or macOS asks for permission, allow it: publishing goes on by itself.":
+    "如果聊天或 macOS 请求权限，请允许：发布会自动继续。",
   "In Roblox Studio": "在 Roblox Studio 中",
   "Name on Roblox": "在 Roblox 上的名称",
   "On Roblox": "在 Roblox 上",
@@ -5669,6 +5654,7 @@ export default {
   "Drag to turn": "拖动旋转",
   "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
     "Genex 还没确认。确认后会显示在“我的物品”中。不会重复扣费。",
+  "Genex’s protected space needs an update": "Genex 的受保护空间需要更新",
   Get: "领取",
   "Get in {game}": "在 {game} 中获取",
   Inappropriate: "不当内容",
@@ -5703,14 +5689,12 @@ export default {
   "+{amount}": "+{amount}",
   Actions: "操作",
   "Actions for {name}": "{name} 的操作",
-  "Add to {game}": "添加到 {game}",
   "Ask for an item or a change…": "请求一个物品或修改…",
   "Ask the agent to change it": "让智能体修改",
   Browse: "浏览",
   "Browse and selling": "浏览和出售",
   "By {name}": "作者：{name}",
   "Choose a game": "选择游戏",
-  "Nex you earn is spent in games, like any Nex.": "赚到的 Nex 和其他 Nex 一样，可以在游戏中使用。",
   "Draft, put on sale": "草稿，上架出售",
   Earned: "收入",
   "Genex can’t sell it under that name. Ask the agent for another.": "Genex 无法用这个名称出售。请让智能体换一个名称。",
@@ -5735,15 +5719,33 @@ export default {
   "It’s already this game’s own item.": "它已经是这个游戏自己的物品。",
   "Listing draft: {name}": "上架草稿：{name}",
   "Draft · goes on sale when you publish": "草稿 · 发布后开始销售",
-  "Sell when published": "发布时开售",
-  "Will go on sale when you publish": "发布后将开始销售",
-  "It changed since you approved it.": "在你批准之后它被修改了。",
+  Draft: "草稿",
+  "Drafts go on sale when you publish.": "草稿会在发布后开始销售。",
+  For: "用于",
+  "Add to game": "添加到游戏",
+  "Players see it after your next publish.": "下次发布后玩家即可看到。",
+  "On sale in your game": "正在你的游戏中销售",
+  "Players can buy it there now.": "玩家现在就能在那里购买。",
+  "Remove from game": "从游戏中移除",
+  "What is Nex?": "什么是 Nex？",
+  "{amount} Nex, about Nex": "{amount} Nex，了解 Nex",
+  "Nex is the money of games on Genex. Players buy it, then spend it on items inside any game.":
+    "Nex 是 Genex 上游戏的货币。玩家购买 Nex，然后在任何游戏中用它购买物品。",
+  "Your Nex": "你的 Nex",
+  "Buy Nex in packs. One balance works in every game.": "按套餐购买 Nex。一个余额适用于所有游戏。",
+  Spend: "花费",
+  "Buy items in a game’s store: characters, skins, upgrades. What you buy stays yours.":
+    "在游戏商店购买物品：角色、皮肤、升级。买到的东西一直归你。",
+  Earn: "赚取",
+  "Players pay Nex for your items. After a short hold, you spend it like any Nex.":
+    "玩家用 Nex 购买你的物品。短暂冻结后，你可以像其他 Nex 一样使用。",
+  "Credits are separate: they pay for making games. Nex pays for what games sell.":
+    "积分是另一回事：用于制作游戏。Nex 用于支付游戏出售的东西。",
   "This item changed after this card. See it in Items › Selling before you put it on sale.":
     "此物品在这张卡片之后被修改了。上架前请先在 物品 › 出售 中查看。",
   "It changed since you approved it, so it stayed a draft.": "在你批准之后它被修改了，所以仍是草稿。",
   "Removed from this game": "已从此游戏移除",
   "Genex couldn’t change this draft. Try again.": "Genex 无法更改这个草稿。请重试。",
-  "New item": "新物品",
   "No items match.": "没有匹配的物品。",
   "No one has shared an item yet.": "还没有人分享物品。",
   "Off sale": "已下架",
@@ -5772,8 +5774,61 @@ export default {
   "You get per sale ({share})": "每笔销售你获得（{share}）",
   "Your agent puts it in the game.": "智能体会把它加入游戏。",
   "You’ve put a lot on sale today. Try again tomorrow.": "你今天已上架了很多物品。请明天再试。",
-  "or ask for changes below": "或在下方请求修改",
   "{count, plural, one {in # game} other {in # games}}": "{count, plural, other {用于 # 个游戏}}",
   "{days, plural, one {On hold for # day} other {On hold for # days}}": "{days, plural, other {冻结 # 天}}",
   "{game} · {games}": "{game} · {games}",
+  "Ask for changes": "请求修改",
+  "Ask for changes below": "在下方请求修改",
+  Shop: "商店",
+  "Character preview": "角色预览",
+  "Finished character": "完成的角色",
+  "Get Genex credits on genex.games": "在 genex.games 获取 Genex 积分",
+  "Make the {kind} with Genex now.": "现在用 Genex 制作：{kind}。",
+  "Make the {kind} with Genex now: {prompt}": "现在用 Genex 制作：{kind} — {prompt}",
+  "Not enough credits": "积分不足",
+  "{count, plural, other {# need credits}}": "{count, plural, other {# 个需要积分}}",
+  "Agents in any chat can then ask to use your apps.": "开启后，任何对话里的智能体都可以请求使用你的应用。",
+  "It asks before each app.": "每个应用都会先问你。",
+  "It can click and type there.": "它可以在里面点击和输入。",
+  "It never uses password managers, System Settings, password prompts or Genex.":
+    "它绝不会使用密码管理器、系统设置、密码弹窗或 Genex。",
+  "Let agents use your computer": "允许智能体使用你的电脑",
+  "Let the agent do this with computer control?": "允许智能体通过电脑控制完成这件事吗？",
+  "Let the agent see your screen in this chat?": "允许智能体在这个对话里查看你的屏幕吗？",
+  "Let the agent use this app?": "允许智能体使用这个应用吗？",
+  "Let the agent use {app}?": "允许智能体使用 {app} 吗？",
+  "They ask before each app.": "它们会在每个应用前先问你。",
+  "Turn on computer control?": "要开启电脑控制吗？",
+  "{plugin} asks: {task}": "{plugin} 请求：{task}",
+  "Add an icon and a thumbnail, or Roblox shows a grey square.": "添加图标和缩略图，否则 Roblox 会显示灰色方块。",
+  "Answer Roblox's questions about what's in the game, so it gets an age rating.":
+    "回答 Roblox 关于游戏内容的问题，游戏才能获得年龄分级。",
+  "Make the game public, so anyone can play it.": "把游戏设为公开，所有人就都能玩了。",
+  "Only you can open it for now. Roblox keeps a new game private until you finish these in Creator Hub:":
+    "现在只有你能打开它。在 Creator Hub 完成这些之前，Roblox 会让新游戏保持私密：",
+  "Open Creator Hub": "打开 Creator Hub",
+  "Studio hasn't loaded the Genex helper": "Studio 还没有加载 Genex 辅助插件",
+  "Studio was open before the helper was added, so your scripts don't reach it yet. Restart Studio loads the helper.":
+    "添加辅助插件前 Studio 就已经打开了，所以你的脚本还到不了它那里。「重启 Studio」会加载辅助插件。",
+  "The Genex helper was already in Studio's Plugins folder, so Genex left it as it is.":
+    "Genex 辅助插件已经在 Studio 的 Plugins 文件夹里了，所以 Genex 没有动它。",
+  "Allow in this chat": "在此对话中允许",
+  "Allowed in this chat": "已在此对话中允许",
+  "Don't ask again for this action in this chat.": "在此对话中不再询问此操作。",
+  "A replay of your first week": "你第一周的录屏",
+  "Change it anytime in Settings.": "随时可以在设置里更改。",
+  "Don't share": "不分享",
+  "Help improve Genex?": "帮助改进 Genex？",
+  "How you move through the app, with your work blanked out": "你在应用里怎么操作，你的作品会被遮住",
+  "Never your work or name": "绝不包括你的作品和名字",
+  "Prompts, code, files, game names and accounts are left out": "提示词、代码、文件、游戏名称和账号都不包括",
+  "Screens, clicks and errors": "页面、点击和错误",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "页面、点击、错误和等待时长，{date}前还会录下你在应用里怎么操作，作品内容会被遮住。以随机 ID 发送到欧盟的 PostHog。",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "页面、点击、错误和等待时长。以随机 ID 发送到欧盟的 PostHog。",
+  "Share usage data": "分享使用数据",
+  "Show us where Genex gets in your way.": "告诉我们 Genex 哪里碍事了。",
+  "Where you go, what fails and how long it takes": "你去了哪里、什么出错了、花了多久",
+  "usage data\u0004Share": "分享",
 } satisfies LocaleCatalog;

@@ -22,10 +22,11 @@ const INTENT_ID_MAX = 64;
 const BIDI_CONTROLS = /\p{Bidi_Control}/gu;
 
 /**
- * Where genex.games sells coin: its Buy coin dialog opens from the inventory page. UNCONFIRMED until
- * genex.games names a page for it; read from its web app's source, not from a published route.
+ * Where genex.games sells Nex: its coin page, opened on its Buy Nex picker (`buy=nex`, its web app's
+ * `COIN_PAGE_PATH`), so a player short of Nex lands on the packs rather than on their inventory. A
+ * website without that door shows the inventory, whose Buy Nex opens the same picker.
  */
-const COIN_PAGE_PATH = "/inventory";
+const COIN_PAGE_PATH = "/inventory?buy=nex";
 
 /** Where the sheet stands: one artboard each. Values are `data-play-purchase` selectors: never rename one. */
 export const PurchaseStep = {

@@ -3,7 +3,7 @@
  * build's coordinator), the coordinator's tools, wrapping up a run, and Stop. Composed by
  * `StudioCore`; its state stays in the core.
  */
-import { PlanReviewState, type ComposerSendOptions, type PlanReview } from "../../shared/composer.ts";
+import { PlanReviewState, type ComposerSendOptions, type PlanReview, SendRefusal } from "../../shared/composer.ts";
 import path from "node:path";
 import {
   CoordinatorTool,
@@ -42,6 +42,7 @@ import { settleWithin } from "../app-lifecycle.ts";
 import { threadOr } from "./main-thread.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
 import { isQueueMessageId } from "./rewind.ts";
+import { forgetChatComputerYes } from "./desktop-session.ts";
 import {
   type MentionSources,
   type MentionTarget,
@@ -106,6 +107,10 @@ const BUILD_CHANGES: ReadonlySet<CoordinatorTool> = new Set<CoordinatorTool>([
   CoordinatorTool.ResumeRun,
   CoordinatorTool.LandBuild,
 ]);
+/** May continue_build go on after a run in this state: a finished one, or a paused one for a contained change? */
+function continuesAfter(state: string, contained: boolean): boolean {
+  return state === RunState.Finished || (contained && state === RunState.Paused);
+}
 /** Titles a thread has before its first message names it. */
 const PLACEHOLDER_TITLES: readonly string[] = [NEW_GAME_TITLE, NEW_CHAT_TITLE];
 /** Characters of a first message kept as the thread's title. */
@@ -136,7 +141,8 @@ const MESSAGE = {
     "The chat is in Plan mode, so this did not run: starting, continuing, resuming or landing a build waits until the plan is approved. Put it in your plan instead.",
   runChanged: "The run changed. This message cannot control another run; read the current state.",
   onlyPausedResumes: "Only a paused run from this conversation can be resumed. No new run was started.",
-  continueWhichRun: "Continue the active run with steer_run, or a paused run with resume_run.",
+  continueWhichRun:
+    "Continue the active run with steer_run. A paused run goes on with resume_run; a contained change after it is continue_build with build false.",
   continueNeedsText: "Continued work needs a message and an instruction.",
   noProjectFolder: "This run has no project folder to show.",
   noIntegrationToShow: "This run has no integration branch to show yet.",
@@ -150,7 +156,18 @@ const MESSAGE = {
   unknownFacet: (facetId: string) => `Unknown facet: ${facetId}`,
   nothingToFinish: (known: boolean) =>
     `That build is ${known ? "no longer running" : "not in this conversation"}; nothing was asked to finish.`,
+  nothingToStop: (state: string) => `That build is ${state}, not running; nothing was stopped.`,
+  stops: "The build stops when your reply ends: its workers stop, what it built is kept, and it pauses.",
+  stopsThenRestarts:
+    "The build stops when your reply ends, what it built is kept, and it goes on again as soon as it has stopped, with the instruction you gave.",
 } as const;
+
+/** What the chat says for each commission refusal. */
+const REFUSAL_WORDS: Record<SendRefusal, () => string> = {
+  [SendRefusal.AutopilotOutdated]: MESSAGE.autopilotOutdated,
+  [SendRefusal.LoopOutdated]: MESSAGE.loopOutdated,
+  [SendRefusal.LocalRolesOutdated]: MESSAGE.localRolesOutdated,
+};
 
 type ThreadMeta = { kind?: string; project?: string | null } | undefined;
 
@@ -322,16 +339,17 @@ export class ConversationService {
     });
     const refusal = this.#commissionRefusal(sendOptions);
     if (refusal) {
+      const message = REFUSAL_WORDS[refusal]();
       // The renderer already cleared the composer — the brief must survive in the log, ahead of
       // the refusal that explains it.
       await this.#core.append(
         [
           { type: EventKind.Messages, messages: [{ role: "user", content: text }] },
-          { type: EventKind.Error, message: refusal },
+          { type: EventKind.Error, message },
         ],
         target.threadId,
       );
-      this.#core.emit(UiEvent.ChatError, { threadId: target.threadId, message: refusal });
+      this.#core.emit(UiEvent.ChatError, { threadId: target.threadId, message, refusal });
       return;
     }
     // The person sent this, on this thread: a session answering it answers them (chat-permissions.ts).
@@ -621,13 +639,13 @@ export class ConversationService {
    * promise of an unattended run, and the user would wake to nothing. Gated on "ready" only: a
    * starting/restarting harness has not claimed anything yet.
    */
-  #commissionRefusal(options: ComposerSendOptions): string | null {
+  #commissionRefusal(options: ComposerSendOptions): SendRefusal | null {
     const host = this.#core.host;
     if (host.state !== HarnessState.Ready) return null;
-    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return MESSAGE.autopilotOutdated();
-    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return MESSAGE.loopOutdated();
+    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return SendRefusal.AutopilotOutdated;
+    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return SendRefusal.LoopOutdated;
     const localRoles = crossesCompletionEngine(options.engine ?? "", options.autopilot?.roles);
-    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return MESSAGE.localRolesOutdated();
+    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return SendRefusal.LocalRolesOutdated;
     return null;
   }
 
@@ -711,6 +729,8 @@ export class ConversationService {
       case CoordinatorTool.FinishRun:
         this.#assertSteerable(call);
         return this.#core.requestRunFinish(threadId, runId);
+      case CoordinatorTool.StopRun:
+        return this.#stopRun(call);
       case CoordinatorTool.SteerRun:
         this.#assertSteerable(call);
         return this.#steerRun(call);
@@ -766,13 +786,15 @@ export class ConversationService {
   }
 
   async #continueBuild({ threadId, runId, args, messageId, events, run }: CoordinatorCall): Promise<string> {
-    // A finished run is over for the chat, though the harness holds it through the learning pass
-    // that follows (it stays in `activeRunIds` until `run.settled`): that pass never holds the chat.
-    if (run.state !== RunState.Finished) throw new Error(MESSAGE.continueWhichRun);
-    const text = textArg(args.text);
-    if (!text || !messageId) throw new Error(MESSAGE.continueNeedsText);
     // A contained change goes to one builder turn even when a Loop came with the message.
     const contained = args.build === false;
+    // A finished run is over for the chat, though the harness holds it through the learning pass
+    // that follows (it stays in `activeRunIds` until `run.settled`): that pass never holds the chat.
+    // After a paused one, a contained change is made in the chat and the build stays paused: other
+    // work is not that build's to resume.
+    if (!continuesAfter(run.state, contained)) throw new Error(MESSAGE.continueWhichRun);
+    const text = textArg(args.text);
+    if (!text || !messageId) throw new Error(MESSAGE.continueNeedsText);
     // Once per message, unless the request changed (a message steered into this turn restated it):
     // the builder takes the latest.
     const previous = payloadsOf(events, CustomEvent.RunFollowupRequested)
@@ -884,6 +906,31 @@ export class ConversationService {
     throw new Error(MESSAGE.notSteerable(state));
   }
 
+  /**
+   * The coordinator's stop, recorded for its message: the harness does it once the reply has ended
+   * (stopping now would cut that reply short) and, with `restart`, resumes the build once it has
+   * stopped, with the instruction given (`loop/chat-stop.ts`).
+   */
+  async #stopRun({ threadId, runId, args, messageId, run }: CoordinatorCall): Promise<string> {
+    if (run.state !== RunState.Running) throw new Error(MESSAGE.nothingToStop(run.state));
+    const restart = args.restart === true;
+    const text = restart ? textArg(args.text) : "";
+    await this.#core.append(
+      [
+        customEventData(CustomEvent.RunControl, {
+          runId,
+          action: RunControlAction.Stop,
+          ...(messageId ? { sourceMessageId: messageId } : {}),
+          ...(restart ? { restart: true } : {}),
+          ...(text ? { text } : {}),
+          at: new Date().toISOString(),
+        }),
+      ],
+      threadId,
+    );
+    return restart ? MESSAGE.stopsThenRestarts : MESSAGE.stops;
+  }
+
   async #steerRun({ threadId, runId, args, messageId, events }: CoordinatorCall): Promise<string> {
     const text = textArg(args.text);
     if (!text) throw new Error(MESSAGE.emptyGuidance);
@@ -983,6 +1030,8 @@ export class ConversationService {
     // unbound), and nothing the chat was answering is the person's to answer any more. A message
     // still queued behind it is: the queue answers it next, and its session asks.
     this.#x.consent.cancel(project ? { project } : { threadId }, "stop");
+    // Stop also ends the chat's yes to computer control: its next turn asks again.
+    forgetChatComputerYes(this.#core, threadId);
     this.#x.permissions.cancel(project ? { project } : { threadId }, ToolPermissionBy.Stop);
     this.#x.permissions.stopPersonMessages(threadId);
     await cancelling;

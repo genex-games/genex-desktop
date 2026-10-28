@@ -6,8 +6,8 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - Genex's currency is Nex; the card below calls it coin. Anything with a fixed price in Nex (a
   class or level unlock, a skin, an item), or anything the person wants to sell for real money
   without naming a currency, is a Genex store item: follow the `genex-items` skill
-  (`genex__skill {"name":"genex-items"}`) and list it with `shop add` by default, so its card shows
-  in the chat. That is the default in Studio, whatever the card below says about catalogs. A price
+  (`genex__skill {"name":"genex-items"}`) and list it with `shop add` and its picture by default,
+  at any time, so its card shows in the chat. That is the default in Studio, whatever the card below says about catalogs. A price
   in coins, gold or gems is the game's own currency, unless the person says it is for real money:
   then ask once whether they mean Nex.
 - The card's dynamic payment requests (`requestPayment`, `getPayment`, `getPayments`) are only for
@@ -27,8 +27,9 @@ unchanged. Where it disagrees with this preface, this preface wins.
 - The card's "Existing catalog items" commands are how every store item is listed in Studio:
   `npx genex shop list` is `genex__cli {"command":"shop list"}`, `npx genex shop add` is
   `genex__cli` with the item name in `args` and the flags by name in `options` (a draft, which asks
-  nobody), and `npx genex shop set|remove|test` is `genex__cli-paid` with the sku in `args`. The
+  nobody), and `npx genex shop set|remove|test` on an item in the store is `genex__cli-paid` with the sku in
+  `args` (on a local draft, `genex__cli`). The
   user approves each paid call, because it changes what the game sells. `genex shop publish` is not
-  available: the person puts an item on sale.
+  available: Studio puts the game's items on sale when it is published.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).

@@ -21,7 +21,7 @@ import { PlayShelf } from "../../src/shared/play.ts";
 import type { StudioApi } from "../../src/shared/studio-api.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
 import { type HandleSave, HandleSaveOutcome, HandleState } from "../../src/shared/handle.ts";
-import type { PlayCredits } from "../../src/shared/play-credits.ts";
+import { CreditKind, type PlayCredits } from "../../src/shared/play-credits.ts";
 import { type KeyValueStorage, STORAGE_KEYS } from "../../src/renderer/storage.ts";
 import {
   createPeopleStore,
@@ -559,6 +559,20 @@ describe("the account across sign-in, offline and a sign-in that ended", () => {
     assert.equal(store.getState().credits?.balance, 1700);
     await store.signOut();
     assert.equal(store.getState().credits, null);
+  });
+
+  it("keeps the price list read with the balance, for the prices shown where credits are spent", async () => {
+    let reachable = true;
+    const priced = { ...credits(1700), prices: { [CreditKind.Model]: 35 } };
+    const { api } = fakeApi({ playCredits: async () => (reachable ? priced : offline()) });
+    const store = createPeopleStore(api, memoryStorage());
+    assert.deepEqual(store.getState().creditPrices, {}, "none before a read");
+    await store.loadMe();
+    await store.loadCredits();
+    assert.deepEqual(store.getState().creditPrices, { [CreditKind.Model]: 35 });
+    reachable = false;
+    await store.loadCredits();
+    assert.deepEqual(store.getState().creditPrices, { [CreditKind.Model]: 35 }, "an unreachable read keeps them");
   });
 });
 

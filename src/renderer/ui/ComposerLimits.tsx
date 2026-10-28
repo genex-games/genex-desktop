@@ -20,7 +20,7 @@ import { type ProviderUsage, type ProviderUsageReport, UsageState } from "../../
 import type { ContextUsage } from "../../shared/context.ts";
 import { selectedCompact } from "../chat/compact-control.ts";
 import { COMPACT_WORDS, PROVIDER_ACCOUNT_WORDS } from "../words.ts";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import type { SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
 import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
 import { useEngines, useProviderUsage } from "../state/hooks.ts";
@@ -123,7 +123,7 @@ function PlanAccounts({
 /** Start an account's web sign-in and open Model Providers, where that sign-in shows. */
 async function signInAgain(engine: string, account: string | null): Promise<void> {
   await window.studio.subscriptionSignIn({ engine, ...(account ? { account } : {}) });
-  openSettings(SettingsSection.Providers);
+  openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.ComposerLimits);
 }
 
 /** A plan's one problem line and its one action: Try again, or Sign in again (the accent's). */
@@ -458,7 +458,7 @@ export function ComposerLimits({
           data-usage-providers
           onClick={() => {
             setOpen(false);
-            openSettings(SettingsSection.Providers);
+            openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.ComposerLimits);
           }}
         >
           {PROVIDER_ACCOUNT_WORDS.modelProviders}

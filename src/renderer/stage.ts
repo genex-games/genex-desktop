@@ -17,11 +17,13 @@ export const StageView = {
   Live: "live",
   Builds: "builds",
   Assets: "assets",
+  /** The game's store items, once it sells any. */
+  Shop: "shop",
   File: "file",
 } as const;
 export type StageView = (typeof StageView)[keyof typeof StageView];
 
-const VIEWS: readonly StageView[] = [StageView.Live, StageView.Builds, StageView.Assets];
+const VIEWS: readonly StageView[] = [StageView.Live, StageView.Builds, StageView.Assets, StageView.Shop];
 
 /**
  * A remembered view name this build still has (the layout store reads and writes

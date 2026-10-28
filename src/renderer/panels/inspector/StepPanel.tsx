@@ -1,9 +1,10 @@
 /** The card of one step: its picture before and after, its tries, what the judges said and their notes, and its checks. */
 import type { JSX } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import {
   type AdviceInfo,
+  cameraWords,
   checkWords,
   type IterationNode,
   IterationStatus,
@@ -13,9 +14,8 @@ import {
   type RunGraph as RunGraphModel,
   type RunNode,
   runIdOf,
-  type Shot,
-  thumbShot,
 } from "../../run-graph.ts";
+import { openingView, type ShotView, shotViews, viewBefore } from "../../run-graph-pictures.ts";
 import {
   isJudgedTry,
   isLiveStep,
@@ -29,7 +29,7 @@ import {
 import { useStill } from "../../stills.ts";
 import { Icon, type IconName } from "../../ui/icons.tsx";
 import { checkCounts, undoneBecause } from "../../words.ts";
-import { useRoundStill } from "../run-stills.ts";
+import { useRoundStill, useSavePointShot } from "../run-stills.ts";
 import { Details, NotesSection, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise, listOrNull, modelLine } from "./format.ts";
 import { JudgesNotes } from "./JudgesNotes.tsx";
@@ -37,13 +37,6 @@ import { Cameras, Compare, Single, TryThumb } from "./pictures.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
 import { Status } from "./tone.tsx";
 import type { StepPanelProps } from "./types.ts";
-
-/** The demo cameras record play, not the scene: the panel never shows them as stills. */
-const sceneShots = (node: IterationNode): Shot[] => node.shots.filter((shot) => !shot.camera.startsWith("demo"));
-
-/** A try's shot through one camera, or its thumbnail shot when it has none from there. */
-const shotThrough = (node: IterationNode, camera: string | null): Shot | null =>
-  node.shots.find((shot) => shot.camera === camera) ?? thumbShot(node);
 
 /** What the build looked like before this step: the step it follows on the line, or the start. */
 const stepBefore = (row: PartRow, step: Step): Step | null =>
@@ -71,20 +64,33 @@ const outageLine = (outage: OutageInfo | null): string | null => {
   return `×${outage.count}`;
 };
 
-/** The before and after of the try on show through one camera, and everything the camera switch needs. */
+/** A picture's name on the camera switch and in the viewer: the lead's named one says what it is for. */
+const viewLabel = (view: ShotView): string => (view.changed ? t("What changed") : cameraWords(view.shot.camera));
+
+/**
+ * The before and after of the try on show, and everything the picture switch needs: it opens on the
+ * picture the step's card wears, and compares each camera only with that camera before it.
+ */
 function useStepPicture(props: StepPanelProps, node: IterationNode) {
   const { graph, row, step, baseSrc } = props;
-  const cameras = useMemo(() => [...new Set(sceneShots(node).map((shot) => shot.camera))], [node]);
-  const [camera, setCamera] = useState<string | null>(thumbShot(node)?.camera ?? null);
-  useEffect(() => setCamera(thumbShot(node)?.camera ?? null), [node]);
+  const views = useMemo(() => shotViews(node), [node]);
+  const card = useSavePointShot(node, node === step.shown ? step.earlier : null);
+  // A picture picked by hand holds for the try it was picked on; another try opens on its card's again.
+  const [picked, setPicked] = useState<{ node: string; key: string } | null>(null);
+  const pickedKey = picked?.node === node.id ? picked.key : null;
+  const view = views.find((item) => item.key === pickedKey) ?? openingView(views, card);
   const live = graph.active && node.status === IterationStatus.Building;
-  const rightShot = shotThrough(node, camera);
+  const rightShot = view?.shot ?? null;
   const right = useRoundStill(graph, node.facetId, node.iteration, rightShot?.path ?? null, live);
   const beforeNode = stepBefore(row, step)?.shown ?? null;
-  const leftShot = beforeNode ? shotThrough(beforeNode, camera) : null;
-  const leftStill = useStill(leftShot?.path ? { run: leftShot.path } : null);
-  const left = beforeNode ? leftStill : baseSrc;
-  return { cameras, camera, setCamera, rightShot, right, left, compare: Boolean(left || beforeNode) };
+  const leftShot = beforeNode && view ? viewBefore(view, beforeNode) : null;
+  const leftStill = useStill(leftShot ? { run: leftShot.path } : null);
+  // The start's picture is the default camera's: the lead's named picture is framed its own way.
+  const baseLeft = view?.changed ? null : baseSrc;
+  const left = beforeNode ? leftStill : baseLeft;
+  const compare = beforeNode ? Boolean(leftShot) : Boolean(baseLeft);
+  const pick = (key: string): void => setPicked({ node: node.id, key });
+  return { views, view, pick, right, left, compare };
 }
 
 const PASS_MARK: Record<"pass" | "fail" | "unknown", { color: string; icon: IconName }> = {
@@ -248,7 +254,7 @@ function StepRows({
             [t("round"), String(node.iteration)],
             [t("verdict by"), node.verdictSource],
             [t("merged"), mergeLine(node.merge)],
-            [t("cameras"), listOrNull(node.shots.map((shot) => shot.camera))],
+            [t("cameras"), listOrNull(node.shots.map((shot) => cameraWords(shot.camera)))],
             [t("model"), modelLine(run.engine, run.model)],
             [t("flags"), listOrNull(node.flags.map((flag) => flag.what))],
             [t("outage"), outageLine(node.outage)],
@@ -290,7 +296,11 @@ function TryStills({
       ) : (
         <Single src={picture.right} label={label} onOpen={onOpen} />
       )}
-      <Cameras names={picture.cameras} value={picture.camera} onChange={picture.setCamera} />
+      <Cameras
+        views={picture.views.map((view) => ({ key: view.key, label: viewLabel(view) }))}
+        value={picture.view?.key ?? null}
+        onChange={picture.pick}
+      />
     </>
   );
 }
@@ -315,19 +325,19 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
   const rightLabel = rightLabelOf(step, n);
   const tryTitle = t("{name} · try {number}", { name: step.name, number: n });
   const open = (): void => {
-    const shots = sceneShots(node);
-    if (!shots.length) return;
-    const items = shots.map((shot) => ({
-      path: shot.path,
+    const views = picture.views;
+    if (!views.length) return;
+    const items = views.map((view) => ({
+      path: view.shot.path,
       src: null,
       title: tryTitle,
-      caption: t("camera: {camera}", { camera: shot.camera }),
+      caption: view.changed ? viewLabel(view) : t("camera: {camera}", { camera: viewLabel(view) }),
     }));
     props.onLight(
       items,
       Math.max(
         0,
-        shots.findIndex((shot) => shot.camera === picture.rightShot?.camera),
+        views.findIndex((view) => view.key === picture.view?.key),
       ),
     );
   };
@@ -338,7 +348,8 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
     target: {
       facetId: node.facetId,
       iteration: node.iteration,
-      ...(picture.rightShot ? { camera: picture.rightShot.camera } : {}),
+      // A note names a real camera: the lead's named picture is no camera of the game's.
+      ...(picture.view && !picture.view.changed ? { camera: picture.view.shot.camera } : {}),
     },
   };
   return (

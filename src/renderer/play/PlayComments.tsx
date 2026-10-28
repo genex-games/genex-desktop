@@ -296,6 +296,8 @@ export function PlayComments({
           className="play-comments"
           aria-describedby={undefined}
           data-play-comments-dialog
+          // People's comments and names.
+          data-analytics-mask
           onOpenAutoFocus={(event) => {
             if (!field.current) return;
             event.preventDefault();

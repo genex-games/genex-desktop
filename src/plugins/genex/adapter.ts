@@ -8,7 +8,7 @@ import { SecretStore } from "../../substrate/secrets.ts";
 import { deliverGenexFiles } from "../../substrate/genex-delivery.ts";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, lstat, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, lstat, rename, rm } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { atomicWriteJson } from "../../substrate/fsx.ts";
 import { writeFile } from "node:fs/promises";
@@ -169,6 +169,7 @@ import {
   readLedger,
   RECONCILE_BATCH,
   settledFailureStatus,
+  shortOfCredits,
   siblingWithFiles,
   type LedgerRow,
   type ReviewAnswer,
@@ -188,6 +189,7 @@ import {
   isOpen,
   markUnknownAfterRestart,
   MAX_UPLOADS,
+  linkedElsewhere,
   mergeMeta,
   MESSAGE as PUBLISH_MESSAGE,
   needsRelisting,
@@ -321,6 +323,8 @@ async function readJsonOr<T>(file: string, fallback: T | null = null): Promise<T
 
 /** The CLI's record of a publish workspace's hosted project. */
 const metaFile = (dir: string) => path.join(dir, ".genex/project.json");
+/** A link set aside once its game was gone: `.genex/project.unlinked-<ms>.json`, beside the new one. */
+const UNLINKED_PREFIX = "project.unlinked-";
 /** The installed SDK's browser files, where a run from source (no build beside the backend) finds them. */
 const installedEmbedSdk = () => path.dirname(fileURLToPath(import.meta.resolve("@genex-ai/embed-sdk")));
 
@@ -1254,7 +1258,12 @@ export class GenexTools {
     signal: AbortSignal,
   ): Promise<HostedMeta> {
     const existing = await readJsonOr<HostedMeta>(metaFile(dir));
-    if (existing?.slug) return existing;
+    if (existing?.slug && !(await this.#linkGone(existing, signal))) return existing;
+    // A deleted game, or one this account doesn't own, refuses every upload: this account's own
+    // game set aside earlier (another sign-in's publish) comes back, else a new game is made.
+    if (existing?.slug) await this.#unlink(dir);
+    const restored = await this.#relinkOwn(dir, signal);
+    if (restored) return restored;
     job.phase = GenexPublishPhase.CreatingProject;
     await this.#persistJob(project, job);
     // Without `--no-auth` the fd-3 token satisfies the CLI, so the hosted project is created here
@@ -1263,6 +1272,55 @@ export class GenexTools {
     const created = await readJsonOr<HostedMeta>(metaFile(dir));
     if (!created?.slug) throw new Error(PUBLISH_MESSAGE.NoHostedProject);
     return created;
+  }
+  /**
+   * Whether the game this workspace is linked to is gone or not this account's: Genex knows no such
+   * game for this signed-in account (it answers a stranger's game as unknown too), or
+   * {@link linkedElsewhere}. False when Genex can't be asked, or the sign-in no longer holds (a dead
+   * sign-in reads every game as unknown): no answer is evidence of nothing.
+   */
+  async #linkGone(meta: HostedMeta, signal: AbortSignal): Promise<boolean> {
+    const session = await this.#session(signal).catch(() => null);
+    if (!session?.user) return false;
+    try {
+      const answer = await this.#fetch(GenexRoute.projectBySlug(String(meta.slug)), withSignal(signal));
+      const project = answer?.project;
+      return linkedElsewhere(meta, { id: project?.id, ownerId: project?.owner?.id }, session.user.id);
+    } catch (error) {
+      return statusOf(error) === HTTP_NOT_FOUND;
+    }
+  }
+  /** Sets a stale link aside, never deleting it, so `genex init` makes a new hosted project. */
+  async #unlink(dir: string): Promise<void> {
+    await rename(metaFile(dir), path.join(dir, ".genex", `${UNLINKED_PREFIX}${Date.now()}.json`));
+  }
+  /**
+   * Whether Genex says the game `meta` links to is this signed-in account's: it answered, and
+   * names the same project and no other owner. Not knowing is no.
+   */
+  async #linkOwned(meta: HostedMeta, signal: AbortSignal): Promise<boolean> {
+    const session = await this.#session(signal).catch(() => null);
+    if (!session?.user) return false;
+    const answer = await this.#fetch(GenexRoute.projectBySlug(String(meta.slug)), withSignal(signal)).catch(() => null);
+    const project = answer?.project;
+    if (!project) return false;
+    return !linkedElsewhere(meta, { id: project.id, ownerId: project.owner?.id }, session.user.id);
+  }
+  /** The newest link set aside that Genex says is this account's game, put back; null when none is. */
+  async #relinkOwn(dir: string, signal: AbortSignal): Promise<HostedMeta | null> {
+    const folder = path.join(dir, ".genex");
+    const names = await readdir(folder).catch(() => []);
+    const aside = names
+      .filter((name) => name.startsWith(UNLINKED_PREFIX))
+      .sort()
+      .reverse();
+    for (const name of aside) {
+      const meta = await readJsonOr<HostedMeta>(path.join(folder, name));
+      if (!meta?.slug || !(await this.#linkOwned(meta, signal))) continue;
+      await rename(path.join(folder, name), metaFile(dir));
+      return meta;
+    }
+    return null;
   }
   /**
    * Finished CLI runs, one output per step: record the pages they printed, then verify the draft
@@ -2020,6 +2078,20 @@ export class GenexTools {
     const ca = this.#ca ? { ca: this.#ca } : {};
     return runGenexCli({ cli, preload: this.#preload, api: this.api, token, cwd, args, signal, ...ca, ...options });
   }
+  /**
+   * Mark a job Genex refused before starting it because the account had too few credits for it
+   * (`blocked: credits`), read from the balance and the price list: its card then offers credits.
+   * Only a submit that reached Genex can be refused so. Never throws; an unread balance never holds
+   * a job on credits.
+   */
+  async #markShortOfCredits(job: GenexJob, submitted: boolean, signal: AbortSignal): Promise<void> {
+    const refused = job.status === GenexJobStatus.Failed && !job.generationId && !READ_OPERATIONS.has(job.operation);
+    if (!submitted || !refused || job.blocked || signal.aborted) return;
+    try {
+      const [account, prices] = await Promise.all([this.#fetch(GenexRoute.Credits), this.#fetch(GenexRoute.Prices)]);
+      if (shortOfCredits(account, prices, job.operation)) job.blocked = GenexBlocked.Credits;
+    } catch {} // An unread balance or price list leaves the job as it failed.
+  }
   /** Read Genex's durable admission evidence; never change its credit ledger. */
   async #reconcileJob(cwd: string, job: GenexJob, read: RemoteRead = RemoteRead.None, signal?: AbortSignal) {
     const reservation = await readLedger(cwd, job);
@@ -2282,6 +2354,8 @@ export class GenexTools {
     const save = () => atomicWriteJson(path.join(dir, "job.json"), job);
     await atomicWriteJson(path.join(dir, "request.json"), { root, request });
     await save();
+    // Only a submit that reached Genex can be refused for credits; terms, time and arguments fail first.
+    let submitted = false;
     try {
       if (!READ_OPERATIONS.has(request.operation)) await this.#waitForTerms(signal, hooks);
       const cliMs = assetCliTimeoutMs(this.#now() - startedAt);
@@ -2295,6 +2369,7 @@ export class GenexTools {
       const { args, output } = await cliArgsFor(request, root, dir, approved);
       job.status = GenexJobStatus.Submitting;
       await save();
+      submitted = true;
       const response = await this.#cli(cwd, args, signal, cliMs);
       await this.#recordAnswer(cwd, dir, root, job, response, output, signal);
       await save();
@@ -2305,6 +2380,7 @@ export class GenexTools {
       if (e instanceof GenexTermsPending) job.blocked = GenexBlocked.Terms;
       await this.#reconcileJob(cwd, job);
       job.status = settledFailureStatus(job, READ_OPERATIONS.has(request.operation), () => signal.aborted);
+      await this.#markShortOfCredits(job, submitted, signal);
       await save();
       return job;
     }

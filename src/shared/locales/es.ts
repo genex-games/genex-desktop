@@ -63,8 +63,8 @@ export default {
     "Un juego de pastorear cometas donde guías rocas de hielo hasta su órbita",
   "A command is already running for this game. Wait for it to finish or stop it.":
     "Ya hay un comando en marcha para este juego. Espera a que termine o detenlo.",
-  "A command on this Mac, or a URL with browser sign-in. Agents in every game can use its tools.":
-    "Un comando en este Mac o una URL con inicio de sesión en el navegador. Los agentes de todos tus juegos pueden usar sus herramientas.",
+  "A command on this computer, or a URL with browser sign-in. Agents in every game can use its tools.":
+    "Un comando en este ordenador o una URL con inicio de sesión en el navegador. Los agentes de todos tus juegos pueden usar sus herramientas.",
   'A connector already uses the id "{id}"; remove or rename that connector before installing this plugin':
     "Un conector ya usa el id “{id}”; quita o cambia el nombre de ese conector antes de instalar este plugin",
   "A connector id is lowercase letters, digits and dashes, up to 32 characters":
@@ -169,8 +169,6 @@ export default {
     "Ya se descargó una nueva versión de Genex. Haz clic para reiniciar ahora, o se instalará la próxima vez que salgas.",
   "A new version of Genex is downloading.": "Se está descargando una nueva versión de Genex.",
   "A new version of Genex is ready and may fix this.": "Hay una nueva versión de Genex lista que puede solucionarlo.",
-  "A newer Genex helper is already in Studio's Plugins folder, so Genex left it.":
-    "Ya hay un complemento de Genex más nuevo en la carpeta Plugins de Studio, así que Genex lo dejó.",
   "A night-vision security camera, its timestamp burned in":
     "Una cámara de seguridad con visión nocturna y la hora grabada encima",
   "A ninja who can only move when the music plays": "Un ninja que solo puede moverse cuando suena la música",
@@ -360,8 +358,6 @@ export default {
   "Agents build in it in your Studio, and its scripts are files in this game's folder.":
     "Los agentes crean en él desde tu Studio, y sus scripts son archivos en la carpeta de este juego.",
   "Agents can edit and play it from this chat.": "Los agentes pueden editarlo y jugarlo desde este chat.",
-  "Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.":
-    "Sin esto, los agentes pueden ver la ventana de una app, pero nunca gestores de contraseñas, Ajustes del Sistema, solicitudes de contraseña ni Genex.",
   "Agents didn’t start": "Los agentes no se iniciaron",
   "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.":
     "Los agentes solo se ejecutan en un espacio protegido que Windows tiene que permitir una vez. Si no eres administrador de este PC, pídele a uno que escriba su contraseña cuando Windows la pida y luego pulsa Configurar.",
@@ -376,7 +372,6 @@ export default {
   "All done": "Todo listo",
   "All done.": "Todo listo.",
   "All games": "En todos los juegos",
-  Allow: "Permitir",
   "Allow all edits in this chat": "Permitir todos los cambios en este chat",
   "Allow calls without asking, including changes this tool can make":
     "Permitir llamadas sin preguntar, incluidos los cambios que puede hacer esta herramienta",
@@ -598,6 +593,8 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "Vuelve a crear la app para {players} de {title}, así podré publicarla.",
   "Build updated": "Build actualizado",
+  "Build with the Cursor plan you already have.": "Crea con el plan de Cursor que ya tienes.",
+  "Build with the Grok account you already have.": "Crea con la cuenta de Grok que ya tienes.",
   "Build with workers": "Crea con ayudantes",
   Building: "Creando",
   "Building the game": "Creando el juego",
@@ -613,8 +610,6 @@ export default {
   "Built in one session. Its work wasn't merged into your build.":
     "Creado en una sesión. Su trabajo no se añadió a tu build.",
   Bundled: "Incluido",
-  "Buy credits": "Comprar créditos",
-  "Buy credits on genex.games": "Comprar créditos en genex.games",
   "By <maker>{name}</maker>": "Por <maker>{name}</maker>",
   "By {author}": "De {author}",
   "Bypass permissions": "Omitir permisos",
@@ -668,7 +663,6 @@ export default {
   "Character approval no longer available": "La aprobación del personaje ya no está disponible",
   Characters: "Caracteres",
   Chat: "Chat",
-  "Chat about this": "Hablar de esto",
   "Chat actions": "Acciones del chat",
   "Chat name": "Nombre del chat",
   "Chat turn from {day}": "Turno del chat, {day}",
@@ -747,7 +741,6 @@ export default {
   "Choose a provider below and finish signing in. OpenCode keeps the sign-in.":
     "Elige un proveedor abajo y termina de iniciar sesión. OpenCode guarda la sesión.",
   "Choose a theme smaller than 128 KB.": "Elige un tema de menos de 128 KB.",
-  "Choose an answer": "Elige una respuesta",
   "Choose an auto-compaction threshold between 5% and 95%.":
     "Elige un umbral de compactación automática entre 5% y 95%.",
   "Choose an empty folder, or create one. Games you already have stay where they are.":
@@ -854,10 +847,13 @@ export default {
     "La búsqueda de habilidades de Codex se cerró. Actualiza para reintentar.",
   "Codex skill discovery timed out. Refresh to retry.":
     "La búsqueda de habilidades de Codex tardó demasiado. Actualiza para reintentar.",
+  "Connect Cursor": "Conectar Cursor",
+  "Connect Grok Build": "Conectar Grok Build",
   "Cursor didn't answer. Check the installation, then try again.":
     "Cursor no respondió. Revisa la instalación y vuelve a intentarlo.",
   "Cursor is unavailable": "Cursor no está disponible",
   "Cursor isn't installed on this computer.": "Cursor no está instalado en este equipo.",
+  "Cursor ready": "Cursor listo",
   "Cursor sign-in": "Inicio de sesión de Cursor",
   "Cursor {version}, {count, plural, other {# model(s)}}":
     "Cursor {version}, {count, plural, one {# modelo} other {# modelos}}",
@@ -871,6 +867,7 @@ export default {
     "Grok Build no respondió. Revisa la instalación y vuelve a intentarlo.",
   "Grok Build isn't installed on this Mac.": "Grok Build no está instalado en este Mac.",
   "Grok Build isn't signed in.": "Grok Build no ha iniciado sesión.",
+  "Grok Build ready": "Grok Build listo",
   "Grok Build sign-in": "Inicio de sesión de Grok Build",
   "Grok Build {version}, {count, plural, one {# model} other {# models}}":
     "Grok Build {version}, {count, plural, one {# modelo} other {# modelos}}",
@@ -1316,8 +1313,6 @@ export default {
   "Drop to add {count, plural, one {# picture} other {# pictures}}":
     "Suelta para añadir {count, plural, one {# imagen} other {# imágenes}}",
   "Drove the route": "Recorrió la ruta",
-  "Each chat session asks you first, and {keys} stops it.":
-    "Cada sesión de chat te pregunta primero, y {keys} la detiene.",
   Earlier: "Antes",
   "Earlier builds": "Builds anteriores",
   "Earlier conversation · no folder": "Conversación anterior · sin carpeta",
@@ -1714,6 +1709,8 @@ export default {
   Nex: "Nex",
   "Not signed in to Cursor.": "No has iniciado sesión en Cursor.",
   "Runs on your Grok account": "Funciona con tu cuenta de Grok",
+  "Setting up Cursor…": "Instalando Cursor…",
+  "Setting up Grok Build…": "Instalando Grok Build…",
   "Sign in again…": "Volver a iniciar sesión…",
   "Sign in to Cursor from Settings › Model Providers.":
     "Inicia sesión en Cursor desde Ajustes › Proveedores de modelos.",
@@ -1733,7 +1730,6 @@ export default {
   "xAI no longer accepts this Grok Build.": "xAI ya no acepta esta versión de Grok Build.",
   "xAI no longer accepts this version. Update it to keep building.":
     "xAI ya no acepta esta versión. Actualízala para seguir creando.",
-  "{amount} Nex, get Nex": "{amount} Nex, conseguir Nex",
   "Get credits": "Conseguir créditos",
   "Get the Epic Games Launcher": "Descargar Epic Games Launcher",
   "Getting Roblox Studio": "Obteniendo Roblox Studio",
@@ -1809,6 +1805,7 @@ export default {
   Help: "Ayuda",
   Hide: "Ocultar",
   "Hide Others": "Ocultar otros",
+  "Hide friends": "Ocultar amigos",
   "Hide sidebar": "Ocultar barra lateral",
   "Hide terminal": "Ocultar terminal",
   "Hide terminal · keeps running": "Ocultar terminal · sigue en marcha",
@@ -2021,7 +2018,6 @@ export default {
   "It runs with your access: Genex doesn't sandbox its code.": "Se ejecuta con tus permisos: Genex no aísla su código.",
   "It runs, but no reviewer compared it with the game you had.":
     "Funciona, pero ningún revisor lo comparó con el juego que tenías.",
-  "It shows in the game after its next release.": "Aparece en el juego tras su próximo lanzamiento.",
   "It shows up here as soon as it runs.": "Aparecerá aquí en cuanto arranque.",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "Empieza desactivado: actívalo en Plugins; cada una de sus herramientas te preguntará antes de ejecutarse.",
@@ -2069,7 +2065,6 @@ export default {
   "Judge who played it": "Juez que lo jugó",
   "Jump to latest": "Ir a lo último",
   "Jump to now": "Ir al presente",
-  "Just this once.": "Solo esta vez.",
   Keep: "Conservar",
   "Keep building": "Seguir creando",
   "Keep building where you left off.": "Sigue creando desde donde lo dejaste.",
@@ -2123,19 +2118,10 @@ export default {
   "Left {count, plural, one {# game} other {# games}} alone while they work.":
     "No se {count, plural, one {tocó # juego porque se está trabajando en él} other {tocaron # juegos porque se está trabajando en ellos}}.",
   "Left {game} alone while it works.": "No se tocó {game} porque se está trabajando en él.",
-  "Let agents control your computer": "Permitir que los agentes controlen tu equipo",
   "Let go of every input": "Soltó todos los controles",
   "Let it see this game's folder": "Dejar que vea la carpeta de este juego",
   "Let the agent use {name}?": "¿Dejas que el agente use {name}?",
   "Let the game settle": "Esperó a que el juego se estabilizara",
-  "Let this chat's agent do this for you with computer control? {plugin} asks: {task}":
-    "¿Dejas que el agente de este chat lo haga por ti con el control del equipo? {plugin} pide: {task}",
-  "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or {shortcut}.":
-    "¿Dejas que el agente de este chat vea tu pantalla y use tu equipo durante esta sesión? Cada app a la que llegue te preguntará primero. Detenlo cuando quieras con Detener o {shortcut}.",
-  "Let this chat's agent use this app? It can click, type and read what this app shows.":
-    "¿Dejas que el agente de este chat use esta app? Puede hacer clic, escribir y leer lo que muestra esta app.",
-  "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
-    "¿Dejas que el agente de este chat use {app}? Puede hacer clic, escribir y leer lo que muestra {app}.",
   "Letters a–z, digits and dashes.": "Letras a–z, números y guiones.",
   "Letting go of every input": "Soltando todos los controles",
   "Letting the game settle": "Esperando a que el juego se estabilice",
@@ -3146,7 +3132,6 @@ export default {
   "Repository tree is truncated; point the spec at a smaller subdirectory":
     "El árbol del repositorio está truncado; apunta la especificación a una subcarpeta más pequeña",
   "Repository tree is unreadable": "No se puede leer el árbol del repositorio",
-  "Request details": "Detalles de la solicitud",
   "Request sent": "Solicitud enviada",
   Requests: "Solicitudes",
   Reset: "Restablecer",
@@ -3409,7 +3394,6 @@ export default {
     "La automejora está desactivada. Actívala arriba en Studio para buscar mejoras.",
   Send: "Enviar",
   "Send a report": "Enviar un informe",
-  "Send answer": "Enviar respuesta",
   "Send feedback": "Enviar comentarios",
   "Send idea": "Enviar idea",
   "Send report": "Enviar informe",
@@ -3495,6 +3479,7 @@ export default {
   "Show earlier runs": "Mostrar builds anteriores",
   "Show earlier updates": "Ver actualizaciones anteriores",
   "Show fewer": "Ver menos",
+  "Show friends": "Mostrar amigos",
   "Show friends what I’m playing": "Mostrar a mis amigos a qué juego",
   "Show game": "Mostrar juego",
   "Show in Explorer": "Mostrar en el Explorador",
@@ -4271,7 +4256,7 @@ export default {
   "This plan is no longer waiting for approval.": "Este plan ya no espera aprobación.",
   "This plugin has no releases, so Studio takes the newest code. It stays as installed until you update it.":
     "Este plugin no tiene versiones publicadas, así que Studio toma el código más reciente. Se queda así hasta que lo actualices.",
-  "This plugin runs trusted code on your Mac.": "Este plugin ejecuta código de confianza en tu Mac.",
+  "This plugin runs trusted code on your computer.": "Este plugin ejecuta código de confianza en tu ordenador.",
   "This plugin's package is missing; remove the plugin and install it again":
     "Falta el paquete de este plugin; quita el plugin e instálalo de nuevo",
   "This plugin’s plugin.json can’t be used.": "El plugin.json de este plugin no se puede usar.",
@@ -4394,8 +4379,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "Activa Inicio de sesión secundario en Servicios de Windows (Tipo de inicio: Manual) y vuelve a intentarlo.",
   "Turn on Studio's MCP server": "Activar el servidor MCP de Studio",
-  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
-    "¿Activar el control del equipo? Los agentes de cualquier chat podrán pedir usar apps de este equipo, de una en una.",
   "Turn on mic": "Activar micro",
   "Turn on microphone": "Activar micrófono",
   "Turn on {name}": "Activar {name}",
@@ -4672,6 +4655,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Lo que Claude hace sin preguntar. Si eliges Permitir siempre en un chat, la acción se añade aquí para ese juego.",
   "What Harness has learned": "Lo que Harness ha aprendido",
+  "What changed": "Qué cambió",
   "What changes": "Qué cambia",
   "What credits pay for": "Para qué sirven los créditos",
   "What do you want to make?": "¿Qué quieres crear?",
@@ -4714,12 +4698,11 @@ export default {
     "Windows no obtuvo permiso para instalar. Pulsa «Hazlo por mí» otra vez y elige Sí cuando Windows lo pregunte.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows necesita configurar una vez el espacio de trabajo protegido, con la aprobación de un administrador.",
+  "Windows will ask you to allow it once.": "Windows te pedirá permiso una sola vez.",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
     "Windows te pedirá permiso una sola vez. Si pide una contraseña, un administrador de este PC puede escribir la suya. Los agentes trabajan en su propio espacio protegido, lejos de tus archivos.",
   "Windows wouldn’t start Genex’s protected space.": "Windows no quiso iniciar el espacio protegido de Genex.",
   "Wireframe terrain flying by at dusk": "Terreno en malla de alambre que pasa volando al atardecer",
-  "With this on, an agent can click and type in the apps you allow.":
-    "Con esto activado, un agente puede hacer clic y escribir en las apps que permitas.",
   "Withdrawn by a restart": "Se retiró por un reinicio",
   "Withdrawn when the studio restarted": "Se retiró al reiniciarse la app",
   "Withdrawn when the turn ended": "Se retiró al terminar la respuesta",
@@ -4846,7 +4829,6 @@ export default {
     "Tu Roblox Studio abierto, donde los agentes crean juegos de Roblox.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "Tu Unreal Editor abierto, donde los agentes crean juegos de Unreal.",
-  "Your own answer": "Tu propia respuesta",
   "Your profile link": "Enlace de tu perfil",
   "Your profile link.": "El enlace a tu perfil.",
   "Your profile, friends and Publish stay.": "Tu perfil, tus amigos y Publicar siguen disponibles.",
@@ -5455,7 +5437,6 @@ export default {
   "{added} of {total} parts added": "{added} de {total} partes añadidas",
   "{added} of {total} parts added · {working} working": "{added} de {total} partes añadidas · {working} en curso",
   "{amount} Nex": "{amount} Nex",
-  "{amount} credits, open Credits": "{amount} créditos, abrir Créditos",
   "{amount} more needed": "Te faltan {amount}",
   "{app} settings": "Ajustes de {app}",
   "{brand} doesn’t share limits for this plan": "{brand} no comparte los límites de este plan",
@@ -5594,6 +5575,8 @@ export default {
     "{count, plural, one {Su propio historial se guarda al lado, renombrado como .git.studio-backup.} other {Sus propios historiales se guardan al lado, renombrados como .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {Se restauró # archivo del juego.} other {Se restauraron # archivos del juego.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, one {Retroceder no puede recuperar # archivo de este cambio: superó {size} de una vez, así que los más grandes quedaron fuera: {files}.} other {Retroceder no puede recuperar # archivos de este cambio: superó {size} de una vez, así que los más grandes quedaron fuera: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, one {Retroceder no puede recuperar # archivo demasiado grande para guardarse: {files}.} other {Retroceder no puede recuperar # archivos demasiado grandes para guardarse: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -6035,7 +6018,6 @@ export default {
   "It isn’t on this computer any more. Install it again.": "Ya no está en este equipo. Vuelve a instalarlo.",
   "It couldn’t start on this computer.": "No pudo iniciarse en este equipo.",
   "Remove from this computer": "Quitar de este equipo",
-  "Remove from {game}": "Quitar de {game}",
   "{title} is removed from this computer. Its saves stay.":
     "{title} se quitó de este equipo. Sus partidas guardadas se conservan.",
   "Ready to play on this computer.": "Listo para jugar en este equipo.",
@@ -6063,8 +6045,8 @@ export default {
   "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
     "Genex no puede hacer clic en Roblox Studio en este equipo. Publícalo tú en Studio:",
   "Handing it to the agent…": "Pasándoselo al agente…",
-  "If the chat asks to use computer control, answer it there.":
-    "Si el chat pide usar el control del equipo, responde ahí.",
+  "If the chat or macOS asks for permission, allow it: publishing goes on by itself.":
+    "Si el chat o macOS pide permiso, permítelo: la publicación sigue sola.",
   "In Roblox Studio": "En Roblox Studio",
   "Name on Roblox": "Nombre en Roblox",
   "On Roblox": "En Roblox",
@@ -6091,6 +6073,7 @@ export default {
   "Drag to turn": "Arrastra para girar",
   "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
     "Genex aún no lo ha confirmado. Aparecerá en Mis objetos cuando lo haga. No se te cobrará dos veces.",
+  "Genex’s protected space needs an update": "El espacio protegido de Genex necesita una actualización",
   Get: "Obtener",
   "Get in {game}": "Obtener en {game}",
   Inappropriate: "Inapropiado",
@@ -6126,14 +6109,12 @@ export default {
   "+{amount}": "+{amount}",
   Actions: "Acciones",
   "Actions for {name}": "Acciones de {name}",
-  "Add to {game}": "Añadir a {game}",
   "Ask for an item or a change…": "Pide un objeto o un cambio…",
   "Ask the agent to change it": "Pedir al agente que lo cambie",
   Browse: "Explorar",
   "Browse and selling": "Explorar y ventas",
   "By {name}": "De {name}",
   "Choose a game": "Elegir un juego",
-  "Nex you earn is spent in games, like any Nex.": "Los Nex que ganas se gastan en juegos, como cualquier Nex.",
   "Draft, put on sale": "Borrador, poner a la venta",
   Earned: "Ganado",
   "Genex can’t sell it under that name. Ask the agent for another.":
@@ -6164,16 +6145,35 @@ export default {
   "It’s already this game’s own item.": "Ya es un objeto propio de este juego.",
   "Listing draft: {name}": "Borrador de venta: {name}",
   "Draft · goes on sale when you publish": "Borrador · sale a la venta cuando publiques",
-  "Sell when published": "Vender al publicar",
-  "Will go on sale when you publish": "Saldrá a la venta cuando publiques",
-  "It changed since you approved it.": "Cambió desde que lo aprobaste.",
+  Draft: "Borrador",
+  "Drafts go on sale when you publish.": "Los borradores salen a la venta cuando publiques.",
+  For: "Para",
+  "Add to game": "Añadir al juego",
+  "Players see it after your next publish.": "Los jugadores lo verán después de tu próxima publicación.",
+  "On sale in your game": "A la venta en tu juego",
+  "Players can buy it there now.": "Los jugadores ya pueden comprarlo allí.",
+  "Remove from game": "Quitar del juego",
+  "What is Nex?": "¿Qué es Nex?",
+  "{amount} Nex, about Nex": "{amount} Nex, sobre Nex",
+  "Nex is the money of games on Genex. Players buy it, then spend it on items inside any game.":
+    "Nex es el dinero de los juegos en Genex. Los jugadores lo compran y luego lo gastan en objetos dentro de cualquier juego.",
+  "Your Nex": "Tu Nex",
+  "Buy Nex in packs. One balance works in every game.":
+    "Compra Nex en paquetes. Un mismo saldo sirve en todos los juegos.",
+  Spend: "Gastar",
+  "Buy items in a game’s store: characters, skins, upgrades. What you buy stays yours.":
+    "Compra objetos en la tienda de un juego: personajes, skins, mejoras. Lo que compras es tuyo.",
+  Earn: "Ganar",
+  "Players pay Nex for your items. After a short hold, you spend it like any Nex.":
+    "Los jugadores pagan Nex por tus objetos. Tras una breve retención, lo gastas como cualquier Nex.",
+  "Credits are separate: they pay for making games. Nex pays for what games sell.":
+    "Los créditos son aparte: pagan la creación de juegos. Nex paga lo que venden los juegos.",
   "This item changed after this card. See it in Items › Selling before you put it on sale.":
     "Este objeto cambió después de esta tarjeta. Míralo en Objetos › Ventas antes de ponerlo a la venta.",
   "It changed since you approved it, so it stayed a draft.":
     "Cambió desde que lo aprobaste, así que sigue como borrador.",
   "Removed from this game": "Quitado de este juego",
   "Genex couldn’t change this draft. Try again.": "Genex no pudo cambiar este borrador. Inténtalo de nuevo.",
-  "New item": "Nuevo objeto",
   "No items match.": "No hay objetos que coincidan.",
   "No one has shared an item yet.": "Nadie ha compartido un objeto todavía.",
   "Off sale": "Retirado",
@@ -6205,9 +6205,64 @@ export default {
   "You get per sale ({share})": "Recibes por venta ({share})",
   "Your agent puts it in the game.": "Tu agente lo pone en el juego.",
   "You’ve put a lot on sale today. Try again tomorrow.": "Hoy has puesto mucho a la venta. Inténtalo mañana.",
-  "or ask for changes below": "o pide cambios abajo",
   "{count, plural, one {in # game} other {in # games}}": "{count, plural, one {en # juego} other {en # juegos}}",
   "{days, plural, one {On hold for # day} other {On hold for # days}}":
     "{days, plural, one {Retenidas # día} other {Retenidas # días}}",
   "{game} · {games}": "{game} · {games}",
+  "Ask for changes": "Pedir cambios",
+  "Ask for changes below": "Pide cambios abajo",
+  Shop: "Tienda",
+  "Character preview": "Vista previa del personaje",
+  "Finished character": "Personaje terminado",
+  "Get Genex credits on genex.games": "Conseguir créditos de Genex en genex.games",
+  "Make the {kind} with Genex now.": "Haz ahora con Genex: {kind}.",
+  "Make the {kind} with Genex now: {prompt}": "Haz ahora con Genex: {kind} — {prompt}",
+  "Not enough credits": "No hay créditos suficientes",
+  "{count, plural, other {# need credits}}": "{count, plural, one {# necesita créditos} other {# necesitan créditos}}",
+  "Agents in any chat can then ask to use your apps.": "Los agentes de cualquier chat podrán pedir usar tus apps.",
+  "It asks before each app.": "Pregunta antes de cada app.",
+  "It can click and type there.": "Puede hacer clic y escribir ahí.",
+  "It never uses password managers, System Settings, password prompts or Genex.":
+    "Nunca usa gestores de contraseñas, Ajustes del Sistema, solicitudes de contraseña ni Genex.",
+  "Let agents use your computer": "Permitir que los agentes usen tu equipo",
+  "Let the agent do this with computer control?": "¿Dejas que el agente lo haga con el control del equipo?",
+  "Let the agent see your screen in this chat?": "¿Dejas que el agente vea tu pantalla en este chat?",
+  "Let the agent use this app?": "¿Dejas que el agente use esta app?",
+  "Let the agent use {app}?": "¿Dejas que el agente use {app}?",
+  "They ask before each app.": "Preguntan antes de cada app.",
+  "Turn on computer control?": "¿Activar el control del equipo?",
+  "{plugin} asks: {task}": "{plugin} pide: {task}",
+  "Add an icon and a thumbnail, or Roblox shows a grey square.":
+    "Añade un icono y una miniatura, o Roblox mostrará un cuadro gris.",
+  "Answer Roblox's questions about what's in the game, so it gets an age rating.":
+    "Responde las preguntas de Roblox sobre lo que hay en el juego para que reciba una clasificación por edad.",
+  "Make the game public, so anyone can play it.": "Haz público el juego para que cualquiera pueda jugarlo.",
+  "Only you can open it for now. Roblox keeps a new game private until you finish these in Creator Hub:":
+    "Por ahora solo tú puedes abrirlo. Roblox mantiene privado un juego nuevo hasta que termines esto en Creator Hub:",
+  "Open Creator Hub": "Abrir Creator Hub",
+  "Studio hasn't loaded the Genex helper": "Studio no ha cargado el complemento de Genex",
+  "Studio was open before the helper was added, so your scripts don't reach it yet. Restart Studio loads the helper.":
+    "Studio ya estaba abierto antes de añadir el complemento, así que tus scripts todavía no le llegan. «Reiniciar Studio» lo carga.",
+  "The Genex helper was already in Studio's Plugins folder, so Genex left it as it is.":
+    "El complemento de Genex ya estaba en la carpeta Plugins de Studio, así que Genex lo dejó como estaba.",
+  "Allow in this chat": "Permitir en este chat",
+  "Allowed in this chat": "Permitido en este chat",
+  "Don't ask again for this action in this chat.": "No volver a preguntar por esta acción en este chat.",
+  "A replay of your first week": "Una grabación de tu primera semana",
+  "Change it anytime in Settings.": "Puedes cambiarlo cuando quieras en Ajustes.",
+  "Don't share": "No compartir",
+  "Help improve Genex?": "¿Ayudas a mejorar Genex?",
+  "How you move through the app, with your work blanked out": "Cómo te mueves por la app, con tu trabajo tapado",
+  "Never your work or name": "Nunca tu trabajo ni tu nombre",
+  "Prompts, code, files, game names and accounts are left out":
+    "Quedan fuera los mensajes, el código, los archivos, los nombres de juegos y las cuentas",
+  "Screens, clicks and errors": "Pantallas, clics y errores",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "Pantallas, clics, errores y tiempos de espera, y hasta el {date} una grabación de cómo te mueves por la app con tu trabajo tapado. Se envía a PostHog en la UE con un id aleatorio.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "Pantallas, clics, errores y tiempos de espera. Se envía a PostHog en la UE con un id aleatorio.",
+  "Share usage data": "Compartir datos de uso",
+  "Show us where Genex gets in your way.": "Muéstranos dónde Genex te estorba.",
+  "Where you go, what fails and how long it takes": "Adónde vas, qué falla y cuánto tarda",
+  "usage data\u0004Share": "Compartir",
 } satisfies LocaleCatalog;

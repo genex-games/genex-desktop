@@ -24,11 +24,11 @@ resumes a build. A reply may start workers in the chat's mode (Plan holds writer
 with it; each is one line opening its work on Builds. Background work is one line with Stop until Genex
 quits; agents may [look at apps](projects-engines.md#plugins-on-or-off) in any mode.
 
-- An `ask_user` question opens the question panel: options and a typed-answer row; Send answer
-  confirms a choice. Chat about this puts it aside for the composer; any reply settles it.
+- An `ask_user` question shows above the composer with up to three answers; ⌘↩ presses the
+  first, and typed words answer too.
   Progress is never a question; an unsaid game, look or engine before a build is.
 - Permission requests wait above the composer; a worker's plugin
-  questions appear in its run, cancelled with it. Plugins ask Approve or Decline; Claude asks **Allow**, the grant it offers
+  questions appear in its run, cancelled with it. Plugins ask Allow once or Don't allow; Claude asks **Allow once**, the grant it offers
   (**Always allow …**) or **Deny**, or takes words instead; a plan leaving Plan is approved
   into a mode. Stop, the turn's end or a restart withdraws one; answered ones collapse.
 - Settings → Permissions lets cua-driver drive the Mac or PC

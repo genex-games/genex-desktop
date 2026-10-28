@@ -61,6 +61,8 @@ const EXPECTED_FUSES = {
 };
 /** sandbox-runtime helpers by the platform that runs them (scripts/package-prune.cjs). */
 const SANDBOX_HELPERS = { seccomp: "linux", "srt-win": "win32" };
+/** sandbox-runtime's JVM proxy agent, every platform's: only its jar is packaged. */
+const SANDBOX_JAVA_AGENT = { folder: "java-proxy-agent", jar: "srt-proxy-agent.jar" };
 
 const server = await startFakeOllama({
   models: [{ name: "qwen3.6:27b", size: 17_000_000_000, capabilities: ["completion", "tools"] }],
@@ -179,6 +181,7 @@ const foreignHelpers = unpacked.filter((entry) => {
   const match = /node_modules\/@anthropic-ai\/sandbox-runtime\/vendor\/([^/]+)(?:\/([^/]+))?/.exec(entry);
   if (!match) return false;
   const [, helper, arch] = match;
+  if (helper === SANDBOX_JAVA_AGENT.folder) return arch !== undefined && arch !== SANDBOX_JAVA_AGENT.jar;
   return SANDBOX_HELPERS[helper] !== process.platform || (arch !== undefined && arch !== process.arch);
 });
 addCheck(

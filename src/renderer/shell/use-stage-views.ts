@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { recheckChatFiles } from "../chat-files.ts";
 import { OPEN_BESIDE_EVENT, OPEN_FILE_EVENT, type BesideTarget, type OpenFileRequest } from "../open-beside.ts";
 import { hostPlatform } from "../platform.ts";
+import { noteStageSwitch } from "../analytics/workspace-trackers.ts";
+import { StageSwitchVia } from "../analytics/workspace-vocabulary.ts";
 import { StageView } from "../stage.ts";
 import { stageViewChosen } from "../state/layout.ts";
 import type { Studio } from "../state/studio.ts";
 import { ToastTone } from "../state/toasts.ts";
 import { chatFileWords, problemWords } from "../words.ts";
+import { errorCode } from "../../shared/errors.ts";
 
 type Beside = { threadId: string; target: BesideTarget; returnTo: StageView };
 
@@ -28,6 +31,7 @@ function useBeside(app: Studio, chooseStageView: (view: StageView) => void) {
         target,
         returnTo: current?.threadId === threadId ? current.returnTo : from,
       }));
+      noteStageSwitch(StageSwitchVia.FileBeside);
       app.layout.setState((s) => stageViewChosen(s, StageView.File), true);
     };
     window.addEventListener(OPEN_BESIDE_EVENT, open);
@@ -38,6 +42,7 @@ function useBeside(app: Studio, chooseStageView: (view: StageView) => void) {
   const closeBeside = useCallback(() => {
     const returnTo = besideNow.current?.returnTo ?? StageView.Live;
     setBeside(null);
+    noteStageSwitch(StageSwitchVia.FileClosed);
     chooseStageView(returnTo);
   }, [chooseStageView]);
   return { beside, closeBeside };
@@ -57,7 +62,7 @@ function useOpenChatFiles(app: Studio): void {
           if (result.problem) app.notify(chatFileWords(hostPlatform()).noApp(request.label));
         },
         (error: unknown) => {
-          app.notify(problemWords(error), ToastTone.Error);
+          app.notify(problemWords(error), ToastTone.Error, errorCode(error));
           recheckChatFiles(request.threadId, [request.ref]);
         },
       );

@@ -11,7 +11,7 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
-import { isUserCancelled } from "../../../shared/errors.ts";
+import { isUserCancelled, errorCode } from "../../../shared/errors.ts";
 import { projectName } from "../../../shared/game-engine.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import { runPluginAction } from "../../plugin-actions.ts";
@@ -41,6 +41,9 @@ import {
   type StageView,
   stageView,
 } from "./unreal-stage-view.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { elapsedMs } from "../../analytics/properties.ts";
 
 /** How often the card asks where the project stands; the panel asks as often. */
 const STATUS_POLL_MS = 3 * SECOND_MS;
@@ -157,7 +160,7 @@ async function press(deps: PressDeps, which: StageAct): Promise<boolean> {
 
 /** Shows a press's failure, unless the person cancelled it in a confirmation. */
 const failed = (deps: PressDeps) => (err: unknown) => {
-  if (!isUserCancelled(err)) deps.onNotice(problemWords(err), ToastTone.Error);
+  if (!isUserCancelled(err)) deps.onNotice(problemWords(err), ToastTone.Error, errorCode(err));
 };
 
 /**
@@ -181,11 +184,14 @@ function usePress(deps: PressDeps, status: UnrealStageStatus | null) {
   const run = async (which: StageAct) => {
     const mine = ++presses.current;
     setBusy(true);
+    let ok = false;
     try {
       if (await press(deps, which)) reopen.current = { game, until: Date.now() + QUIT_WAIT_MS };
+      ok = true;
     } catch (err) {
       failed(deps)(err);
     } finally {
+      track(AnalyticsEvent.UnrealStageActionPressed, { act: which, step: status?.next ?? null, ok });
       if (presses.current === mine) setBusy(false);
       await deps.refresh();
     }
@@ -204,12 +210,32 @@ function usePress(deps: PressDeps, status: UnrealStageStatus | null) {
   return { busy, run };
 }
 
+/** Each move of the card's step, with how long the step before it lasted; another game starts over. */
+function useStepMoves(game: string, status: UnrealStageStatus | null): void {
+  const last = useRef<{ game: string; step: UnrealStageStatus["next"]; since: number } | null>(null);
+  useEffect(() => {
+    if (!status) return;
+    const now = Date.now();
+    const before = last.current?.game === game ? last.current : null;
+    if (before?.step === status.next) return;
+    last.current = { game, step: status.next, since: now };
+    if (!before) return;
+    track(AnalyticsEvent.UnrealStageStepChanged, {
+      from: before.step,
+      to: status.next,
+      ms_in_from: elapsedMs(before.since, now),
+      editors: status.editors,
+    });
+  }, [game, status]);
+}
+
 /** The card's line, with its timer while the project opens, and its quieter second line when it has one. */
 function StageLine({ view, timer }: { view: StageView; timer: string }): JSX.Element {
   return (
     <>
       {/* One line tall even before the first answer, so the line arriving moves nothing. */}
-      <p className="empty-state-subtitle min-h-lh max-w-full" role="status">
+      {/* The line can name another open project, or the app that holds Unreal. */}
+      <p data-analytics-mask className="empty-state-subtitle min-h-lh max-w-full" role="status">
         {view.line}
         {view.timer && timer ? <span className="tabular-nums"> {timer}</span> : null}
       </p>
@@ -238,6 +264,7 @@ export function UnrealStage({
   const status = received.status;
   const timer = useOpeningTimer(received);
   const { busy, run } = usePress({ plugin, game: game.name, project, refresh, onNotice }, status);
+  useStepMoves(game.name, status);
   const name = project ? projectName(project) : game.title;
   const view = stageView(status, name, { linked: project !== null, answered: received.at > 0 });
   const button = view.button;
@@ -256,7 +283,7 @@ export function UnrealStage({
             className="aspect-video w-full rounded-lg border border-line object-cover"
           />
         ) : null}
-        <h2 className="empty-state-title max-w-full" title={name}>
+        <h2 data-analytics-mask className="empty-state-title max-w-full" title={name}>
           {name}
         </h2>
         <StageLine view={view} timer={timer} />

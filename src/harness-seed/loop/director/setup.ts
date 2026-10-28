@@ -23,7 +23,7 @@ import { runRef } from "../repo.ts";
 import { EventKind, JournalPhase, RunEvent, RunMode } from "../run-events.ts";
 import { createRunInbox } from "../run-inbox.ts";
 import { isCommit } from "../shell.ts";
-import { MINUTE_MS } from "../time.ts";
+import { CANCEL_POLL_MS, MINUTE_MS, sleep } from "../time.ts";
 import { bindLoopRun, BuildTarget, WindowLease } from "./loop-run.ts";
 import path from "node:path";
 import { preparationBudgetMs } from "./budgets.ts";
@@ -295,20 +295,25 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
  * the exemption to `scaffold` at iterationId "base", and a conformance test keeps that lock
  * double), so it is asked that way before deciding this run cannot see where it starts.
  */
-async function observeStart(loopRun: LoopRun): Promise<Evidence | null> {
+export async function observeStart(loopRun: LoopRun): Promise<Evidence | null> {
   const { ctx, lookAtStart, run } = loopRun;
   const seen = await lookAtStart(undefined);
   if (seen) return seen;
-  const asBase = await gatherEvidence(ctx, {
-    run,
-    iterationId: "base",
-    labelPrefix: "iter_000_base",
-    seed: PAGE_SEED,
-    eyes: true,
-    motion: 0,
-    audio: false,
-    scaffold: true,
-  }).catch(() => null);
+  // A stopped run asks the page nothing more: it closes as the user's stop (director.ts `leadTheRun`).
+  if (ctx.cancelled) return null;
+  const asBase = await unlessCancelled(
+    ctx,
+    gatherEvidence(ctx, {
+      run,
+      iterationId: "base",
+      labelPrefix: "iter_000_base",
+      seed: PAGE_SEED,
+      eyes: true,
+      motion: 0,
+      audio: false,
+      scaffold: true,
+    }).catch(() => null),
+  );
   return asBase?.ok === true && asBase.emptyScene === true ? asBase : null;
 }
 
@@ -802,8 +807,37 @@ async function prepareOpenLoopRun(
   return loopRun;
 }
 
-/** One look at the live game folder, as the run's "before". Null unless it can be observed. */
+/**
+ * One look at the live game folder, as the run's "before". Null unless it can be observed, and
+ * null at once on a Stop: a page that never answers holds each of the look's calls for the host's
+ * whole deadline, and the run closes as the user's stop instead of waiting them out.
+ */
 export async function lookAtStart(loopRun: LoopRun, labelPrefix?: string) {
+  const { ctx } = loopRun;
+  if (ctx.cancelled) return null;
+  return unlessCancelled(ctx, lookOnce(loopRun, labelPrefix));
+}
+
+/**
+ * `work`'s answer, or null as soon as the run is cancelled (checked every `CANCEL_POLL_MS`). The
+ * work goes on unwatched, and its late answer or failure is dropped.
+ */
+async function unlessCancelled<T>(ctx: { readonly cancelled?: boolean }, work: Promise<T>): Promise<T | null> {
+  let settled = false;
+  const watched = work.finally(() => {
+    settled = true;
+  });
+  // Once dropped, a late failure has nobody to tell.
+  watched.catch(() => {});
+  const stopped = async (): Promise<null> => {
+    while (!settled && !ctx.cancelled) await sleep(CANCEL_POLL_MS);
+    return null;
+  };
+  return Promise.race([watched, stopped()]);
+}
+
+/** The look itself (`lookAtStart`): load the game folder, then one evidence pass over it. */
+async function lookOnce(loopRun: LoopRun, labelPrefix: string | undefined): Promise<Evidence | null> {
   const { ctx, run } = loopRun;
   try {
     await ctx.call(HostMethod.PreviewLoad, { project: run.project });

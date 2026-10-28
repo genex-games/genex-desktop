@@ -137,7 +137,7 @@ export const MESSAGE = {
     Done: () => t("The Genex helper is in Studio's Plugins folder and Studio's MCP server is on."),
     DoneNoSettings: () =>
       t("The Genex helper is in Studio's Plugins folder. Turn Studio's MCP server on in Studio: {clicks}.", mcpClicks),
-    NewerHelper: () => t("A newer Genex helper is already in Studio's Plugins folder, so Genex left it."),
+    HelperAlreadyThere: () => t("The Genex helper was already in Studio's Plugins folder, so Genex left it as it is."),
     Undone: () => t("Genex took back what it set up in Roblox Studio."),
     UndoneKept: (count: number) =>
       t(
@@ -299,6 +299,11 @@ export const MESSAGE = {
     HelperStudioOpen: () =>
       t(
         "Roblox Studio is open, and Genex adds its helper only while Studio is closed. Restart Studio closes it, sets it up and opens it again.",
+      ),
+    HelperAway: () => t("Studio hasn't loaded the Genex helper"),
+    HelperAwayDetail: () =>
+      t(
+        "Studio was open before the helper was added, so your scripts don't reach it yet. Restart Studio loads the helper.",
       ),
     HelperDone: () => t("The Genex helper is in Studio"),
     HelperDoneDetail: () =>

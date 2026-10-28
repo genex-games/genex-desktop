@@ -5,6 +5,10 @@ import { type Notify, notifyProblem } from "../state/toasts.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { CHAT_WORDS } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
+import { chatMemory } from "../analytics/chat-memory.ts";
+import { elapsedMs } from "../analytics/properties.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** The line under a follow-up until the work reads it: Sending…, always 24px tall (Remove's height), so nothing moves. */
 function SendingLine({ children }: { children?: ReactNode }) {
@@ -54,6 +58,8 @@ export function QueuedMessage({
     setRemoving(true);
     try {
       await window.studio.changeQueuedMessage(threadId, messageId, "remove");
+      const sent = chatMemory.sends.get(messageId);
+      track(AnalyticsEvent.QueuedMessageRemoved, sent ? { waited_ms: elapsedMs(sent.at, Date.now()) } : {});
     } catch (error) {
       notifyProblem(onNotice)(error);
       setRemoving(false);

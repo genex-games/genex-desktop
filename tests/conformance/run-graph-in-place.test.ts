@@ -18,7 +18,13 @@ import {
   type RunGraph,
 } from "../../src/renderer/run-graph.ts";
 import { AssetCardState, assetCounts } from "../../src/renderer/run-graph-assets.ts";
-import { frameDifference, savePointShot } from "../../src/renderer/run-graph-pictures.ts";
+import {
+  frameDifference,
+  openingView,
+  savePointShot,
+  shotViews,
+  viewBefore,
+} from "../../src/renderer/run-graph-pictures.ts";
 import {
   lastSavePoint,
   PictureSource,
@@ -306,6 +312,45 @@ describe("a save point's picture", () => {
     );
     assert.equal(savePointShot(round(["Overview", "Pier"]), earlier, new Map())?.camera, "Overview", "unmeasured");
     assert.equal(savePointShot(round(["Overview", "Pier"]), null, changed)?.camera, "Overview", "the first save point");
+  });
+
+  it("opens a step on its card's picture: the lead's named picture first, then each scene camera once", () => {
+    const earlier = round(["GX_Shot_Arena", "GX_Shot_CorrCeiling"]);
+    const named = round(["GX_Shot_Arena", "demo:walk", "GX_Shot_CorrCeiling", "GX_Shot_Arena"], {
+      shown: shot("shows"),
+    });
+    const views = shotViews(named);
+    assert.deepEqual(
+      views.map((view) => [view.changed, view.shot.camera]),
+      [
+        [true, "shows"],
+        [false, "GX_Shot_Arena"],
+        [false, "GX_Shot_CorrCeiling"],
+      ],
+    );
+    assert.equal(openingView(views, savePointShot(named, earlier, new Map())), views[0], "the card's own picture");
+    const plain = round(["Overview", "Pier"]);
+    const changed = new Map([
+      ["Overview", 0.004],
+      ["Pier", 0.21],
+    ]);
+    const card = savePointShot(plain, round(["Overview", "Pier"]), changed);
+    assert.equal(openingView(shotViews(plain), card)?.shot.camera, "Pier", "the camera that changed most");
+    assert.equal(openingView(shotViews(plain), null)?.shot.camera, "Overview", "no card picture: the first");
+    assert.equal(openingView([], null), null);
+  });
+
+  it("compares a camera only with that camera's picture before it", () => {
+    const earlier = round(["Arena", "Corridor"], { shown: shot("shows") });
+    const views = shotViews(round(["Arena", "Corridor", "Lockers"], { shown: shot("shows") }));
+    const before = (key: string) => {
+      const view = views.find((item) => item.key === key);
+      assert.ok(view, key);
+      return viewBefore(view, earlier)?.camera ?? null;
+    };
+    assert.equal(before(views[2]?.key ?? ""), "Corridor");
+    assert.equal(before(views[3]?.key ?? ""), null, "a camera new in this step has no before");
+    assert.equal(before(views[0]?.key ?? ""), null, "the lead's named picture is its own, not a camera's");
   });
 
   it("measures a change as the mean colour difference, alpha aside", () => {

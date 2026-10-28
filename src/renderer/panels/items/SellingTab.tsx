@@ -1,16 +1,18 @@
 /**
  * Create › Items › Selling (marketplace P10–P13, screen 08): the strip with the coin ready to use and
- * the coin on hold ("Nex you earn is spent in games, like any Nex."; there is no exchange to
- * credits, P16), then the account's items, newest first: each with its game, "in N games" and its
+ * the coin on hold, each of which, like its What is Nex?, opens the Nex sheet (there is no exchange
+ * to credits, P16), then the account's items, newest first: each with its game, "in N games" and its
  * status (Draft, put on sale; Report under review; Off sale, dimmed), its price, how many sold and
  * what it earned, and a ⋯ menu: Put on sale, Take off sale, Other games can use it, and Ask the agent
  * to change it, which opens the item's game's chat with words to finish. Every number is
  * genex.games' own; every press is carried out by main.
  */
 import type { JSX, ReactNode } from "react";
+import { useState } from "react";
 import { isStoreRefused, ItemState, type SellingRow } from "../../../shared/store-items.ts";
 import { CoinMark } from "../../play/CoinMark.tsx";
 import { ItemRender } from "../../play/ItemRender.tsx";
+import { NexSheet } from "../../play/NexSheet.tsx";
 import { coinNumber, coinText, gameText } from "../../play/purchase-model.ts";
 import { useItems } from "../../state/hooks.ts";
 import { ItemAction, type ItemChange } from "../../state/items.ts";
@@ -51,23 +53,29 @@ function Coin({ coins, size }: { coins: number; size: number }): JSX.Element {
   );
 }
 
-/** The strip: the coin ready to use, the coin on hold (when there is a hold), and the note. */
+/** The strip: the coin ready to use, the coin on hold (when there is a hold), and What is Nex?; each opens the Nex sheet. */
 function Strip(): JSX.Element | null {
   const selling = useItems((s) => s.selling.selling);
+  const [about, setAbout] = useState(false);
   if (!selling) return null;
+  const open = () => setAbout(true);
   return (
     <section className="items-strip">
-      <div className="items-strip-figure">
+      <button type="button" className="items-strip-figure" onClick={open}>
         <span className="items-strip-label">{WORDS.readyToUse}</span>
         <Coin coins={selling.earnedReady} size={20} />
-      </div>
+      </button>
       {selling.holdDays > 0 && (
-        <div className="items-strip-figure" data-items-held>
+        <button type="button" className="items-strip-figure" data-items-held onClick={open}>
           <span className="items-strip-label">{WORDS.onHold(selling.holdDays)}</span>
           <Coin coins={selling.earnedHeld} size={20} />
-        </div>
+        </button>
       )}
-      <p className="items-strip-note">{WORDS.coinNote}</p>
+      <button type="button" className="items-strip-about" data-items-about-nex onClick={open}>
+        <Icon name="info" size={15} />
+        {WORDS.whatIsNex}
+      </button>
+      {about && <NexSheet onDismiss={() => setAbout(false)} />}
     </section>
   );
 }
@@ -221,7 +229,7 @@ export function SellingTab({
   const rows = useItems((s) => s.selling.selling?.items ?? null);
   return (
     <div className="items-scroll">
-      <div className="items-selling" data-items-selling>
+      <div className="items-frame" data-items-selling>
         {head}
         <div id={panel} role="tabpanel" className="items-selling-body">
           {rows ? (

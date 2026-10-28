@@ -167,7 +167,8 @@ export interface SteerFeed {
 /**
  * The input a steerable session is fed through, held open by the delegation: a string prompt
  * has the SDK close stdin at the first result, which would cut off a message taken during the
- * final answer before the CLI started it. `sessionId` names the session each message goes to;
+ * final answer before the CLI started it, and a resumed session's brief behind a queued notice.
+ * `sessionId` names the session each message goes to;
  * `schedule` is the clock the stall runs on.
  */
 export function steerFeed(
@@ -177,7 +178,12 @@ export function steerFeed(
   sessionId: () => string | undefined,
   schedule: StallSchedule = realSchedule,
 ): SteerFeed {
-  const input = steerInput(brief, signal);
+  // The brief carries a uuid so the session says when it reads it: a resumed session first
+  // answers what it had queued (a background task's notice), and that result is not the brief's.
+  const briefUuid = randomUUID();
+  const input = steerInput({ ...brief, uuid: briefUuid }, signal);
+  let briefUnread = false;
+  let briefTaken = false;
   // Steers the CLI took and has not yet read, by frame uuid → the queue's message id. Read is
   // `started`, never `completed`: an abort after `queued` means the session never saw it.
   const pending = new Map<string, string>();
@@ -193,6 +199,16 @@ export function steerFeed(
     if (!resultSinceSteer) return;
     if (!pending.size) input.end();
     else cancelStall = schedule(() => input.end(), STEER_STALL_MS);
+  };
+  // The brief read (or dropped): only a result after it answers it.
+  const briefTook = (state: string): void => {
+    if (state !== LifecycleState.Started && !DROPPED.has(state)) return;
+    briefTaken = true;
+    briefUnread = false;
+    resultSinceSteer = false;
+    cancelStall?.();
+    cancelStall = null;
+    if (DROPPED.has(state)) input.end();
   };
   const send: SteerSend = (message) => {
     if (input.ended || signal.aborted) return false;
@@ -214,10 +230,17 @@ export function steerFeed(
     prompt: input.messages,
     initialized(message, interview) {
       const capabilities = Array.isArray(message.capabilities) ? message.capabilities : [];
-      steer.tell(capabilities.includes(MESSAGE_LIFECYCLES) && !interview ? send : null);
+      const lifecycles = capabilities.includes(MESSAGE_LIFECYCLES);
+      // Only a CLI that reports lifecycles says when it read the brief; an older one answers it first.
+      briefUnread = lifecycles && !briefTaken;
+      steer.tell(lifecycles && !interview ? send : null);
     },
     lifecycle(message, onEvent) {
       const uuid = String(message.command_uuid ?? "");
+      if (uuid === briefUuid) {
+        briefTook(String(message.state ?? ""));
+        return;
+      }
       const id = pending.get(uuid);
       if (id === undefined) return;
       const state = String(message.state ?? "");
@@ -230,6 +253,12 @@ export function steerFeed(
       settleInput();
     },
     answered() {
+      if (briefUnread) {
+        // What it answered was queued before the brief; one that never starts must not hold it open.
+        cancelStall?.();
+        cancelStall = schedule(() => input.end(), STEER_STALL_MS);
+        return;
+      }
       resultSinceSteer = true;
       settleInput();
     },

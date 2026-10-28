@@ -23,7 +23,7 @@ import {
 import type { MomentServices } from "../../src/plugins/roblox/moment-ops.ts";
 import { createStudioWatch } from "../../src/plugins/roblox/studio-moments.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
-import { ConsentChoice, consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
+import { consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
@@ -334,9 +334,9 @@ describe("the card in a chat, through a real core", () => {
     assert.ok(card);
     assert.equal(consentTitle(card), manifest.tools.find((tool) => tool.name === "import-model")?.confirmation);
     assert.deepEqual(
-      consentChoices(card).map((choice) => choice.id),
-      [ConsentChoice.Once, ConsentChoice.Decline],
-      "no Always allow",
+      consentChoices(card).map((choice) => choice.label),
+      ["Allow once", "Allow in this chat", "Don't allow"],
+      "a yes for this chat, never Always allow",
     );
   });
 });

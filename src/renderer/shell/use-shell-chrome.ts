@@ -3,8 +3,11 @@
  * toggle and the chat's width as a CSS variable.
  */
 import type { RefObject } from "react";
-import { useCallback, useEffect, useMemo, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { PlayMode, PlayModeVia, SidebarVia } from "../analytics/workspace-vocabulary.ts";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { chatWidthOf, sidebarToggled } from "../state/layout.ts";
 import type { Studio } from "../state/studio.ts";
@@ -82,6 +85,79 @@ function usePluginsRoom(dialogs: Dialogs, setDrawerOpen: (open: boolean) => void
 }
 
 /**
+ * The sidebar's toggle, which puts focus on the toggle that replaces the one pressed, and Escape
+ * closing the compact drawer. A button press is `toggleSidebar`; ⌘B says so with `toggleSidebarFrom`.
+ */
+function useSidebarToggle(
+  app: Studio,
+  {
+    compactWindow,
+    drawerOpen,
+    setDrawerOpen,
+    sidebarVisible,
+  }: {
+    compactWindow: boolean;
+    drawerOpen: boolean;
+    setDrawerOpen: (update: boolean | ((open: boolean) => boolean)) => void;
+    sidebarVisible: boolean;
+  },
+) {
+  const toggleSidebarFrom = useCallback(
+    (via: SidebarVia) => {
+      if (compactWindow) setDrawerOpen((open) => !open);
+      else app.layout.setState((s) => sidebarToggled(s), true);
+      track(AnalyticsEvent.SidebarToggled, { visible: !sidebarVisible, via, compact: compactWindow });
+      focusSidebarToggle(sidebarVisible ? SidebarToggle.Show : SidebarToggle.Hide);
+    },
+    [app, compactWindow, sidebarVisible, setDrawerOpen],
+  );
+  const toggleSidebar = useCallback(() => toggleSidebarFrom(SidebarVia.Button), [toggleSidebarFrom]);
+  /** Escape in a compact window: close the drawer; false when it was not open. */
+  const closeDrawer = useCallback((): boolean => {
+    if (!compactWindow || !drawerOpen) return false;
+    setDrawerOpen(false);
+    focusSidebarToggle(SidebarToggle.Show);
+    return true;
+  }, [compactWindow, drawerOpen, setDrawerOpen]);
+  return { toggleSidebar, toggleSidebarFrom, closeDrawer };
+}
+
+/** The setters Play's switch closes and opens rooms with. */
+interface RoomSetters {
+  setPlayOpen: (open: boolean) => void;
+  setPluginsOpen: (open: boolean) => void;
+  setItemsOpen: (open: boolean) => void;
+}
+
+/**
+ * Play or Create, from the sidebar's switch. Play closes Plugins and Items; the drawer stays. A
+ * switch the person asked for names its `via`, and counts when it changes the side. Another place
+ * asking for Play (the Credits tab's invite) brings it up over Plugins.
+ */
+function useChoosePlay(playOpen: boolean, { setPlayOpen, setPluginsOpen, setItemsOpen }: RoomSetters) {
+  const playNow = useRef(playOpen);
+  playNow.current = playOpen;
+  const choosePlay = useCallback(
+    (play: boolean, via?: PlayModeVia) => {
+      if (play) {
+        setPluginsOpen(false);
+        setItemsOpen(false);
+      }
+      if (via && play !== playNow.current)
+        track(AnalyticsEvent.PlayModeSwitched, { to: play ? PlayMode.Play : PlayMode.Create, via });
+      setPlayOpen(play);
+    },
+    [setPlayOpen, setPluginsOpen, setItemsOpen],
+  );
+  useEffect(() => {
+    const open = () => choosePlay(true, PlayModeVia.OpenPlayEvent);
+    window.addEventListener(OPEN_PLAY_EVENT, open);
+    return () => window.removeEventListener(OPEN_PLAY_EVENT, open);
+  }, [choosePlay]);
+  return choosePlay;
+}
+
+/**
  * The shell's chrome: the compact drawer, Plugins or Play over the workspace, and the sidebar toggle,
  * which puts focus on the toggle that replaces the one pressed.
  */
@@ -115,35 +191,13 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
     setItemsOpen(true);
     setDrawerOpen(false);
   }, [app, itemsOpen, setPluginsOpen, setDrawerOpen]);
-  /** Play or Create, from the sidebar's switch. Play closes Plugins and Items; the drawer stays. */
-  const choosePlay = useCallback(
-    (play: boolean) => {
-      if (play) {
-        setPluginsOpen(false);
-        setItemsOpen(false);
-      }
-      setPlayOpen(play);
-    },
-    [setPluginsOpen],
-  );
-  // Another place asked for Play (the Credits tab's invite): it comes up over Plugins.
-  useEffect(() => {
-    const open = () => choosePlay(true);
-    window.addEventListener(OPEN_PLAY_EVENT, open);
-    return () => window.removeEventListener(OPEN_PLAY_EVENT, open);
-  }, [choosePlay]);
-  const toggleSidebar = useCallback(() => {
-    if (compactWindow) setDrawerOpen((open) => !open);
-    else app.layout.setState((s) => sidebarToggled(s), true);
-    focusSidebarToggle(sidebarVisible ? SidebarToggle.Show : SidebarToggle.Hide);
-  }, [app, compactWindow, sidebarVisible, setDrawerOpen]);
-  /** Escape in a compact window: close the drawer; false when it was not open. */
-  const closeDrawer = useCallback((): boolean => {
-    if (!compactWindow || !drawerOpen) return false;
-    setDrawerOpen(false);
-    focusSidebarToggle(SidebarToggle.Show);
-    return true;
-  }, [compactWindow, drawerOpen, setDrawerOpen]);
+  const choosePlay = useChoosePlay(playOpen, { setPlayOpen, setPluginsOpen, setItemsOpen });
+  const { toggleSidebar, toggleSidebarFrom, closeDrawer } = useSidebarToggle(app, {
+    compactWindow,
+    drawerOpen,
+    setDrawerOpen,
+    sidebarVisible,
+  });
   const { pluginsOpen, setupPlugin, openPlugins } = plugins;
   return useMemo(
     () => ({
@@ -169,6 +223,8 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       sidebarHidden: !sidebarVisible || compactWindow,
       closeOverlays,
       toggleSidebar,
+      /** The sidebar toggled by something other than its buttons (⌘B). */
+      toggleSidebarFrom,
       closeDrawer,
     }),
     [
@@ -186,6 +242,7 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       drawerOpen,
       closeOverlays,
       toggleSidebar,
+      toggleSidebarFrom,
       closeDrawer,
     ],
   );

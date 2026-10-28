@@ -24,7 +24,8 @@ import { PLUGINS_WORDS, ROBLOX_WORDS, UNITY_WORDS, UNREAL_WORDS, consentToolWord
 import { isActive, pluginAccount, pluginIconUrl } from "./labels.ts";
 import { type PluginsPage, usePluginServers } from "./page.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
-import { Section } from "./rows.tsx";
+import { pagePress, Section } from "./rows.tsx";
+import { PluginAction, trackedPluginAction } from "../../analytics/plugins-page.ts";
 
 const WORDS = PLUGINS_WORDS.page;
 
@@ -135,11 +136,15 @@ function SettingEditor({
   return (
     <form
       className="extension-connection-setting"
+      // The address or path the person gives the server is theirs.
+      data-analytics-mask
       onSubmit={(event) => {
         event.preventDefault();
         const next = draft.trim();
         void page.act(async () => {
-          await window.studio.pluginSetSetting(plugin.manifest.id, settingKey, next);
+          await trackedPluginAction(pagePress(PluginAction.SettingSaved, plugin), () =>
+            window.studio.pluginSetSetting(plugin.manifest.id, settingKey, next),
+          );
           onSaved(next);
           setOpen(false);
         });
@@ -162,7 +167,15 @@ function SettingEditor({
 }
 
 /** The tools a person always allowed for this server, and the button that makes each ask again. */
-function AlwaysAllowed({ page, view }: { page: PluginsPage; view: McpConnectorView | undefined }): JSX.Element | null {
+function AlwaysAllowed({
+  plugin,
+  page,
+  view,
+}: {
+  plugin: PluginInfo;
+  page: PluginsPage;
+  view: McpConnectorView | undefined;
+}): JSX.Element | null {
   const tools = view?.connector.toolPolicy.autoApprove ?? [];
   if (!view || !tools.length) return null;
   return (
@@ -171,7 +184,13 @@ function AlwaysAllowed({ page, view }: { page: PluginsPage; view: McpConnectorVi
       <Button
         variant="ghost"
         disabled={page.busy}
-        onClick={() => void page.act(() => window.studio.mcpForgetAlwaysAllowed(view.connector.id))}
+        onClick={() =>
+          void page.act(() =>
+            trackedPluginAction(pagePress(PluginAction.ForgetAllowed, plugin), () =>
+              window.studio.mcpForgetAlwaysAllowed(view.connector.id),
+            ),
+          )
+        }
       >
         {WORDS.askEveryTime}
       </Button>
@@ -227,7 +246,7 @@ function ConnectionRow({
           {editorWord ?? STATE_WORDS[state]}
         </span>
       )}
-      <AlwaysAllowed page={page} view={view} />
+      <AlwaysAllowed plugin={plugin} page={page} view={view} />
       {editable && settingKey && (
         <SettingEditor
           plugin={plugin}

@@ -2058,6 +2058,25 @@ export function checkWords(id: string): string {
     .trim();
 }
 
+/** The start of the Unreal plugin's hero cameras' labels (`GX_Shot_Corridor`); their files are saved with dashes. */
+const HERO_CAMERA_PREFIX = /^GX[-_]Shot[-_]/i;
+
+/** A camera's name in plain words: `GX_Shot_CorrHangDoor` → `Corr hang door`, `camLane` → `Cam lane`. */
+export function cameraWords(camera: string): string {
+  const name = camera.replace(HERO_CAMERA_PREFIX, "") || camera;
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s_-]+/)
+    .filter(Boolean);
+  // A capitalised word reads lower case after the first; an all-capitals one (HUD) keeps its capitals.
+  const said = words.map((word, at) => (at > 0 && /^[A-Z][a-z]/.test(word) ? word.toLowerCase() : word));
+  const sentence = said.join(" ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** The picture a round is known by: the one the lead named as showing its change, else `thumbShot`'s. */
+export const roundShot = (node: IterationNode): Shot | null => node.shown ?? thumbShot(node);
+
 /** The still a card shows for a round: the default camera when it exists, else the first shot. */
 export function thumbShot(node: IterationNode): Shot | null {
   const [first] = node.shots;

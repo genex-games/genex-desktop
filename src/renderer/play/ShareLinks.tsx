@@ -34,7 +34,8 @@ export function LinkCopy({
 }): JSX.Element {
   const [copied, copy] = useCopy();
   return (
-    <div className="people-invite-link">
+    // A link that names the person.
+    <div className="people-invite-link" data-analytics-mask>
       <input
         readOnly
         value={linkWithoutScheme(link)}
@@ -70,7 +71,7 @@ function shareFrom(event: MouseEvent<HTMLButtonElement>, link: string): void {
 export function ShareRow({ link, xText }: { link: string; xText: string }): JSX.Element {
   const mac = hostPlatform() === StudioPlatform.Mac;
   return (
-    <div className="share-row" data-share-row>
+    <div className="share-row" data-share-row data-analytics-mask>
       <button
         type="button"
         className="people-button share-row-button"

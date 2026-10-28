@@ -318,6 +318,11 @@ export function StartFailed({
   );
 }
 
+/** What the card says at `step`: an update of an earlier install has words of its own until it fails. */
+function windowsCardWords(step: WindowsStep, reinstall: boolean): { title: string; line: string } {
+  return reinstall && step !== WindowsStep.Failed ? WORDS.windows.reinstall : WINDOWS_CARD[step];
+}
+
 function windowsStep(settingUp: boolean, error: string | null): WindowsStep {
   if (settingUp) return WindowsStep.SettingUp;
   return error === null ? WindowsStep.NeedsOk : WindowsStep.Failed;
@@ -327,7 +332,8 @@ function windowsStep(settingUp: boolean, error: string | null): WindowsStep {
  * Windows' first start: the installer's ripple animation fills the window and a card at the bottom
  * left says what is happening. Set up starts by itself (`Boot.start`), so the card first waits on
  * Windows' approval prompt; a declined prompt asks again with Set up, and a failure offers Try
- * again, a report to the team and the raw error under Details.
+ * again, a report to the team and the raw error under Details. A sandbox an earlier Genex set up
+ * for another release waits for its one Update button instead.
  */
 export function WindowsSetup({
   problem,
@@ -347,7 +353,8 @@ export function WindowsSetup({
   onReport: () => void;
 } & UpdateOffer): JSX.Element {
   const step = windowsStep(settingUp, error);
-  const words = WINDOWS_CARD[step];
+  const reinstall = problem.windowsNeeds?.includes(WindowsSetupNeed.Reinstall) === true;
+  const words = windowsCardWords(step, reinstall);
   return (
     <AnimationCard
       selector={{ "data-sandbox-setup": problem.code, "data-windows-setup": step }}
@@ -357,11 +364,13 @@ export function WindowsSetup({
       <p className={step === WindowsStep.Failed ? "text-orange" : "text-ink-2"}>{words.line}</p>
       {problem.windowsNeeds?.includes(WindowsSetupNeed.LogonService) && <LogonServiceLine step={step} />}
       <BootUpdate update={update} onUpdate={onUpdate} />
-      {step === WindowsStep.SettingUp && <WorkingLine text={WORDS.windows.settingUp.step} />}
+      {step === WindowsStep.SettingUp && (
+        <WorkingLine text={reinstall ? WORDS.windows.reinstall.updating : WORDS.windows.settingUp.step} />
+      )}
       {step === WindowsStep.NeedsOk && (
         <div className="pt-2">
           <Button variant="default" data-sandbox-set-up onClick={onSetUp}>
-            {WORDS.windows.needsOk.setUp}
+            {reinstall ? WORDS.windows.reinstall.update : WORDS.windows.needsOk.setUp}
           </Button>
         </div>
       )}

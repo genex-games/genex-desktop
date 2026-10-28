@@ -539,7 +539,10 @@ the last no's `done` and `notDone`, why it stopped (`StopWhy`: its time, the no'
 its hours (`loopHoursOf`); a time-out with no no lists nothing and still has the card. The chat's card
 reads only that, so a page that lost the run's start still shows it. A Stop pauses every Loop (a web
 finish whose landing it refused too; one after the landing ends nothing more), and a pause keeps its
-own reason and Resume. Keep building is offered on the
+own reason and Resume. A Stop while a web Loop first looks at the game ends that look at once
+(`director/setup.ts` `lookAtStart`, `observeStart`): a page that never answers holds each call for
+the host's whole deadline, and the run closes as the user's stop instead of waiting it out. Keep
+building is offered on the
 chat's newest card until the person writes again, and on Builds' newest ended build, while nothing runs
 or waits paused. It sends through the composer's Loop (`loopOn`) marked `keepBuilding`, and goes once
 it went out. That mark reopens the finished build, or launches the next Loop as the launch tool would (an
@@ -832,7 +835,11 @@ user's scope.
 
 What a run builds. Its scope (`loop/scope.ts`, `run.scope`) is the user's own words from the
 chat's log since the last run, stamped at launch with what is in scope and what is cut; a Resume or
-a reopen reads it back, and a run without one behaves as before. Every agent that reads the goal
+a reopen reads it back, and a run without one behaves as before. What the user sells for Nex is the
+launch's `store_items` (`loop/store-items.ts`): the chat's promise says each goes on the Shop tab
+with its picture, and the scope's GENEX STORE line names each item as sold whatever the cut list
+says; the build draws its picture and lists it with `genex__cli shop add`, which refuses an item
+without one. Store items are never tied to a launch: any agent adds or changes one at any time. Every agent that reads the goal
 reads `scopeLines(run)` beside it (`loop/scope-prompts.ts`: judges add `SCOPE_RULE`, the lead's
 rules `DIRECTOR_SCOPE_RULE`), and every proposal — a taste judge's or player's `bigMove`, the
 planner's move, a liveness fix (`adds`) — carries a typed `scope`, `deepens` or `adds`: a vista,
@@ -1161,6 +1168,9 @@ the `src/page/*.ts` file it is built from, so the page world cannot reach main, 
 `node tests/e2e/run-preview-visibility.mjs` exercises real Electron windows with forced
 capture failures: hidden/minimized windows remain hidden, failed evidence stays unavailable,
 and parallel private previews retain input, capture and reload without show/focus/restore events.
+A window nothing was loaded into (the stand-in of a game whose build failed is served no page)
+refuses every script, capture and input call at once with its load error: Electron holds a
+script until a load stops, and none is coming, so each call would wait out its whole deadline.
 Reports include timestamped native events under `.studio-dev/evidence/preview-visibility`.
 `STUDIO_PACKAGE_DIR="out/Genex-darwin-arm64" node tests/e2e/run-computer-smoke.mjs`
 runs the existing scripted worker/playtester checks against the packaged application.
@@ -1439,6 +1449,16 @@ outage wait or rollback, its goal attempt given back), a pool worker ends with
 `WorkerStopCode.SandboxUnavailable`, and every later `worker_start` on that engine starts nothing and
 tells the lead to do the work itself, naming the other workers' engine when the host reports it
 signed in. A Loop's person is told once on a decision card, with that engine offered for Workers.
+
+### A Loop held back at its start
+
+A new open Loop a plugin's step held back before its first turn (Unreal wouldn't reopen, the
+game's code didn't build) closes with `run_finished.startHeld`; Genex's own holds (the person
+using the app, Plan mode) and a resumed Loop's never set it. The host (`main/core/held-start.ts`)
+then sends the chat's agent why, as the person's last message was sent (engine, model, effort,
+Loop) and marked `MessageOrigin.LoopHeld` so the transcript leaves it out: the agent fixes what
+stopped it and starts the Loop again. Once per message of the person's: a Loop it starts again that
+is held too, or one the person wrote after, waits for them.
 
 ### Automatic resume
 

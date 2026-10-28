@@ -1,8 +1,16 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import type { PluginCategory, PluginIndexEntry, PluginManifest, PluginTier } from "../../shared/plugins.ts";
+import { CodedError } from "../../shared/errors.ts";
+import {
+  type PluginCategory,
+  type PluginIndexEntry,
+  PluginInstallProblem,
+  type PluginManifest,
+  type PluginTier,
+} from "../../shared/plugins.ts";
 import { assertRelativePath } from "../paths.ts";
+import { refusedNowAs } from "./install-problem.ts";
 import { inspectPackage } from "./manifest.ts";
 
 /** The publisher `plugin:new` writes until the author names themselves; never a catalog owner. */
@@ -127,18 +135,22 @@ export function catalogEntry(packed: PackedPlugin, source: CatalogSource, artifa
   return entry;
 }
 
-/** An envelope's files, every name checked and every value decoded before any of them is written. */
+/**
+ * An envelope's files, every name checked and every value decoded before any of them is written.
+ * One that does not read is `PackageInvalid`; a name that would leave the folder, `UnsafePackage`.
+ */
 function envelopeFiles(bytes: Buffer): Array<[string, Buffer]> {
+  const invalid = (words: string) => new CodedError(PluginInstallProblem.PackageInvalid, words);
   let parsed: unknown;
   try {
     parsed = JSON.parse(bytes.toString("utf8"));
   } catch {
-    throw new Error(MESSAGE.InvalidEnvelope);
+    throw invalid(MESSAGE.InvalidEnvelope);
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(MESSAGE.InvalidEnvelope);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw invalid(MESSAGE.InvalidEnvelope);
   return Object.entries(parsed).map(([file, base64]): [string, Buffer] => {
-    assertRelativePath(file);
-    if (typeof base64 !== "string") throw new Error(MESSAGE.InvalidEnvelopeFile(file));
+    refusedNowAs(PluginInstallProblem.UnsafePackage, () => assertRelativePath(file));
+    if (typeof base64 !== "string") throw invalid(MESSAGE.InvalidEnvelopeFile(file));
     return [file, Buffer.from(base64, "base64")];
   });
 }

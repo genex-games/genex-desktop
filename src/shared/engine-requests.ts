@@ -228,6 +228,34 @@ export const EngineFailureKind = {
 } as const;
 export type EngineFailureKind = (typeof EngineFailureKind)[keyof typeof EngineFailureKind];
 
+/** A provider's limit a turn can end on. */
+export type LimitKind = typeof EngineFailureKind.RateLimit | typeof EngineFailureKind.UsageLimit;
+
+/** The limit a chat turn ended on, and when the provider said to try again. */
+export interface TurnLimit {
+  kind: LimitKind;
+  retryAfterMs?: number;
+}
+
+/**
+ * How a chat turn's delegated engine failed, as main adds it to the turn's `turn_ended` metadata:
+ * the harness ends the turn and knows only the words. Persisted in the log: never rename a field.
+ */
+export interface TurnFailure {
+  failure: EngineFailureKind;
+  limit?: TurnLimit;
+}
+
+/** Is `kind` a provider's limit? */
+export const isLimitKind = (kind: string): kind is LimitKind =>
+  kind === EngineFailureKind.RateLimit || kind === EngineFailureKind.UsageLimit;
+
+/** The failure a turn records for an engine failure of `kind`, with its limit when it was one. */
+export function turnFailure(kind: EngineFailureKind, retryAfterMs?: number): TurnFailure {
+  if (!isLimitKind(kind)) return { failure: kind };
+  return { failure: kind, limit: { kind, ...(retryAfterMs === undefined ? {} : { retryAfterMs }) } };
+}
+
 /** Did the call fail because the session's context is full (or past its compaction threshold)? */
 export function isContextFailure(kind: string): boolean {
   return kind === EngineFailureKind.ContextThreshold || kind === EngineFailureKind.ContextOverflow;

@@ -54,8 +54,8 @@ export default {
   "A comet herding game where you guide ice rocks into orbit": "Пастух комет: направляй ледяные глыбы на орбиту",
   "A command is already running for this game. Wait for it to finish or stop it.":
     "Для этой игры уже выполняется команда. Дождись её завершения или останови её.",
-  "A command on this Mac, or a URL with browser sign-in. Agents in every game can use its tools.":
-    "Команда на этом Mac или URL со входом через браузер. Агенты в любой игре смогут пользоваться его инструментами.",
+  "A command on this computer, or a URL with browser sign-in. Agents in every game can use its tools.":
+    "Команда на этом компьютере или URL со входом через браузер. Агенты в любой игре смогут пользоваться его инструментами.",
   'A connector already uses the id "{id}"; remove or rename that connector before installing this plugin':
     "ID «{id}» уже занят коннектором — удали или переименуй этот коннектор, прежде чем устанавливать плагин",
   "A connector id is lowercase letters, digits and dashes, up to 32 characters":
@@ -147,8 +147,6 @@ export default {
     "Новая версия Genex скачана. Нажми, чтобы перезапустить сейчас, или она установится при следующем выходе.",
   "A new version of Genex is downloading.": "Скачивается новая версия Genex.",
   "A new version of Genex is ready and may fix this.": "Новая версия Genex готова и, возможно, это исправит.",
-  "A newer Genex helper is already in Studio's Plugins folder, so Genex left it.":
-    "В папке Plugins в Studio уже есть более новый плагин Genex, поэтому Genex его оставил.",
   "A night-vision security camera, its timestamp burned in":
     "Камера наблюдения в ночном режиме, с впечатанным временем",
   "A ninja who can only move when the music plays": "Ниндзя, который может двигаться только под музыку",
@@ -326,8 +324,6 @@ export default {
   "Agents build in it in your Studio, and its scripts are files in this game's folder.":
     "Агенты собирают в нём игру в твоём Studio, а его скрипты — это файлы в папке этой игры.",
   "Agents can edit and play it from this chat.": "Агенты могут менять и запускать игру прямо из этого чата.",
-  "Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.":
-    "Без этого агенты могут смотреть на окно приложения, но никогда — на менеджеры паролей, «Системные настройки», окна ввода пароля и Genex.",
   "Agents didn’t start": "Агенты не запустились",
   "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.":
     "Агенты работают только в защищённом пространстве, которое Windows должна один раз разрешить. Если ты не администратор этого компьютера, попроси администратора ввести пароль, когда Windows спросит, затем нажми «Настроить».",
@@ -342,7 +338,6 @@ export default {
   "All done": "Всё готово",
   "All done.": "Всё готово.",
   "All games": "Во всех играх",
-  Allow: "Разрешить",
   "Allow all edits in this chat": "Разрешить все правки в этом чате",
   "Allow calls without asking, including changes this tool can make":
     "Разрешить вызовы без спроса, включая изменения, которые может внести этот инструмент",
@@ -563,6 +558,8 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "Пересобери приложение «{title}» для {players}, чтобы его можно было опубликовать.",
   "Build updated": "Сборка обновлена",
+  "Build with the Cursor plan you already have.": "Собирай на тарифе Cursor, который у тебя уже есть.",
+  "Build with the Grok account you already have.": "Собирай на аккаунте Grok, который у тебя уже есть.",
   "Build with workers": "Собирай с помощниками",
   Building: "Собирает",
   "Building the game": "Собираем игру",
@@ -578,8 +575,6 @@ export default {
   "Built in one session. Its work wasn't merged into your build.":
     "Собрано за одну сессию. Работа не попала в твою сборку.",
   Bundled: "Встроенный",
-  "Buy credits": "Купить кредиты",
-  "Buy credits on genex.games": "Купить кредиты на genex.games",
   "By <maker>{name}</maker>": "Автор: <maker>{name}</maker>",
   "By {author}": "Автор: {author}",
   "Bypass permissions": "Обойти разрешения",
@@ -632,7 +627,6 @@ export default {
   "Character approval no longer available": "Одобрение персонажа больше недоступно",
   Characters: "Символы",
   Chat: "Чат",
-  "Chat about this": "Обсудить в чате",
   "Chat actions": "Действия с чатом",
   "Chat name": "Название чата",
   "Chat turn from {day}": "Запрос в чате, {day}",
@@ -708,7 +702,6 @@ export default {
   "Choose a provider below and finish signing in. OpenCode keeps the sign-in.":
     "Выбери провайдера ниже и заверши вход. OpenCode запомнит вход.",
   "Choose a theme smaller than 128 KB.": "Выбери тему меньше 128 КБ.",
-  "Choose an answer": "Выбери ответ",
   "Choose an auto-compaction threshold between 5% and 95%.": "Выбери порог автосжатия от 5% до 95%.",
   "Choose an empty folder, or create one. Games you already have stay where they are.":
     "Выбери пустую папку или создай новую. Твои игры останутся там, где они есть.",
@@ -811,10 +804,13 @@ export default {
   "Codex skill discovery closed. Refresh to retry.": "Поиск навыков Codex прервался. Обнови, чтобы попробовать снова.",
   "Codex skill discovery timed out. Refresh to retry.":
     "Поиск навыков Codex не уложился во время. Обнови, чтобы попробовать снова.",
+  "Connect Cursor": "Подключить Cursor",
+  "Connect Grok Build": "Подключить Grok Build",
   "Cursor didn't answer. Check the installation, then try again.":
     "Cursor не ответил. Проверь установку и попробуй снова.",
   "Cursor is unavailable": "Cursor недоступен",
   "Cursor isn't installed on this computer.": "Cursor не установлен на этом компьютере.",
+  "Cursor ready": "Cursor готов",
   "Cursor sign-in": "Вход в Cursor",
   "Cursor {version}, {count, plural, other {# model(s)}}":
     "Cursor {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
@@ -828,6 +824,7 @@ export default {
     "Grok Build не ответил. Проверь установку и попробуй ещё раз.",
   "Grok Build isn't installed on this Mac.": "Grok Build не установлен на этом Mac.",
   "Grok Build isn't signed in.": "Grok Build не выполнил вход.",
+  "Grok Build ready": "Grok Build готов",
   "Grok Build sign-in": "Вход в Grok Build",
   "Grok Build {version}, {count, plural, one {# model} other {# models}}":
     "Grok Build {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",
@@ -1272,8 +1269,6 @@ export default {
   "Drop to add {count, plural, one {# picture} other {# pictures}}":
     "Отпусти, чтобы добавить {count, plural, one {# картинку} few {# картинки} many {# картинок} other {# картинки}}",
   "Drove the route": "Маршрут пройден",
-  "Each chat session asks you first, and {keys} stops it.":
-    "Каждая сессия чата сначала спрашивает тебя, а {keys} её останавливает.",
   Earlier: "Раньше",
   "Earlier builds": "Прошлые сборки",
   "Earlier conversation · no folder": "Прошлый чат · без папки",
@@ -1669,6 +1664,8 @@ export default {
   Nex: "Nex",
   "Not signed in to Cursor.": "Вход в Cursor не выполнен.",
   "Runs on your Grok account": "Работает на твоём аккаунте Grok",
+  "Setting up Cursor…": "Устанавливаем Cursor…",
+  "Setting up Grok Build…": "Устанавливаем Grok Build…",
   "Sign in again…": "Войти заново…",
   "Sign in to Cursor from Settings › Model Providers.": "Войди в Cursor в разделе «Настройки › Провайдеры моделей».",
   "Sign in to Grok from Settings › Model Providers.": "Войди в Grok в разделе «Настройки › Провайдеры моделей».",
@@ -1687,7 +1684,6 @@ export default {
   "xAI no longer accepts this Grok Build.": "xAI больше не принимает эту версию Grok Build.",
   "xAI no longer accepts this version. Update it to keep building.":
     "xAI больше не принимает эту версию. Обнови её, чтобы продолжить.",
-  "{amount} Nex, get Nex": "{amount} Nex, получить Nex",
   "Get credits": "Получить кредиты",
   "Get the Epic Games Launcher": "Скачать Epic Games Launcher",
   "Getting Roblox Studio": "Roblox Studio устанавливается",
@@ -1762,6 +1758,7 @@ export default {
   Help: "Справка",
   Hide: "Скрыть",
   "Hide Others": "Скрыть остальные",
+  "Hide friends": "Скрыть друзей",
   "Hide sidebar": "Скрыть боковую панель",
   "Hide terminal": "Скрыть терминал",
   "Hide terminal · keeps running": "Скрыть терминал · продолжит работать",
@@ -1973,7 +1970,6 @@ export default {
     "Он работает с твоими правами: Genex не изолирует его код.",
   "It runs, but no reviewer compared it with the game you had.":
     "Эта версия работает, но проверяющие не сравнивали её с прежней игрой.",
-  "It shows in the game after its next release.": "Он появится в игре после её следующего релиза.",
   "It shows up here as soon as it runs.": "Она появится здесь, как только запустится.",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "Сначала он выключен: включи его в «Плагинах»; каждый его инструмент спросит тебя перед запуском.",
@@ -2019,7 +2015,6 @@ export default {
   "Judge who played it": "Судья, который играл",
   "Jump to latest": "К последним",
   "Jump to now": "К текущему моменту",
-  "Just this once.": "Только в этот раз.",
   Keep: "Оставить",
   "Keep building": "Собирать дальше",
   "Keep building where you left off.": "Собирай дальше с того же места.",
@@ -2074,19 +2069,10 @@ export default {
   "Left {count, plural, one {# game} other {# games}} alone while they work.":
     "{count, plural, one {# игру не трогали} few {# игры не трогали} many {# игр не трогали} other {# игры не трогали}}: в них идёт работа.",
   "Left {game} alone while it works.": "Игру «{game}» не трогали: в ней идёт работа.",
-  "Let agents control your computer": "Разрешить агентам управлять компьютером",
   "Let go of every input": "Все кнопки отпущены",
   "Let it see this game's folder": "Дать доступ к папке этой игры",
   "Let the agent use {name}?": "Разрешить агенту использовать {name}?",
   "Let the game settle": "Игра стабилизировалась",
-  "Let this chat's agent do this for you with computer control? {plugin} asks: {task}":
-    "Разрешить агенту этого чата сделать это за тебя через управление компьютером? {plugin} просит: {task}",
-  "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or {shortcut}.":
-    "Разрешить агенту этого чата видеть экран и пользоваться компьютером в этой сессии? Перед каждым новым приложением тебя спросят. Останови его в любой момент кнопкой «Остановить» или {shortcut}.",
-  "Let this chat's agent use this app? It can click, type and read what this app shows.":
-    "Разрешить агенту этого чата работать в этом приложении? Он сможет нажимать, печатать и читать то, что в нём видно.",
-  "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
-    "Разрешить агенту этого чата работать в {app}? Он сможет нажимать, печатать и читать то, что показывает {app}.",
   "Letters a–z, digits and dashes.": "Буквы a–z, цифры и дефисы.",
   "Letting go of every input": "Отпускает все кнопки",
   "Letting the game settle": "Ждёт, пока игра стабилизируется",
@@ -3081,7 +3067,6 @@ export default {
   "Repository tree is truncated; point the spec at a smaller subdirectory":
     "Дерево репозитория обрезано; укажи подпапку поменьше",
   "Repository tree is unreadable": "Дерево репозитория не читается",
-  "Request details": "Подробности запроса",
   "Request sent": "Заявка отправлена",
   Requests: "Заявки",
   Reset: "Сбросить",
@@ -3341,7 +3326,6 @@ export default {
     "Самоулучшение выключено. Включи его вверху Studio, чтобы искать улучшения.",
   Send: "Отправить",
   "Send a report": "Отправить отчёт",
-  "Send answer": "Отправить ответ",
   "Send feedback": "Отправить отзыв",
   "Send idea": "Отправить идею",
   "Send report": "Отправить отчёт",
@@ -3427,6 +3411,7 @@ export default {
   "Show earlier runs": "Показать более ранние сборки",
   "Show earlier updates": "Показать более ранние",
   "Show fewer": "Показать меньше",
+  "Show friends": "Показать друзей",
   "Show friends what I’m playing": "Показывать друзьям, во что я играю",
   "Show game": "Показать игру",
   "Show in Explorer": "Показать в Проводнике",
@@ -4186,7 +4171,7 @@ export default {
   "This plan is no longer waiting for approval.": "Этот план больше не ждёт одобрения.",
   "This plugin has no releases, so Studio takes the newest code. It stays as installed until you update it.":
     "У этого плагина нет релизов, поэтому Studio берёт самый свежий код. Он останется таким, пока ты его не обновишь.",
-  "This plugin runs trusted code on your Mac.": "Этот плагин запускает доверенный код на твоём Mac.",
+  "This plugin runs trusted code on your computer.": "Этот плагин запускает доверенный код на твоём компьютере.",
   "This plugin's package is missing; remove the plugin and install it again":
     "Пакет этого плагина пропал; удали плагин и установи его снова",
   "This plugin’s plugin.json can’t be used.": "plugin.json этого плагина не подходит.",
@@ -4307,8 +4292,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "Включи «Вторичный вход в систему» в службах Windows (тип запуска: «Вручную») и попробуй снова.",
   "Turn on Studio's MCP server": "Включить MCP-сервер Studio",
-  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
-    "Включить управление компьютером? Тогда агенты в любом чате смогут просить доступ к приложениям на этом компьютере — по одному за раз.",
   "Turn on mic": "Включить микрофон",
   "Turn on microphone": "Включить микрофон",
   "Turn on {name}": "Включить {name}",
@@ -4582,6 +4565,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Что Claude делает, не спрашивая. Если выбрать в чате «Всегда разрешать», действие появится здесь — для этой игры.",
   "What Harness has learned": "Чему научился Harness",
+  "What changed": "Что изменилось",
   "What changes": "Что изменится",
   "What credits pay for": "На что тратятся кредиты",
   "What do you want to make?": "Что хочешь создать?",
@@ -4624,12 +4608,11 @@ export default {
     "Windows не получил разрешения на установку. Нажми «Сделать за меня» ещё раз и выбери «Да», когда Windows спросит.",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windows нужно один раз настроить защищённое рабочее пространство с разрешения администратора.",
+  "Windows will ask you to allow it once.": "Windows один раз попросит это разрешить.",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
     "Windows один раз попросит это разрешить. Если спросит пароль, его может ввести администратор этого компьютера. Агенты работают в своём защищённом пространстве, вдали от твоих файлов.",
   "Windows wouldn’t start Genex’s protected space.": "Windows не запустила защищённое пространство Genex.",
   "Wireframe terrain flying by at dusk": "Каркасный рельеф проносится мимо в сумерках",
-  "With this on, an agent can click and type in the apps you allow.":
-    "Когда это включено, агент может нажимать и печатать в приложениях, которые ты разрешишь.",
   "Withdrawn by a restart": "Отозвано из-за перезапуска",
   "Withdrawn when the studio restarted": "Отозвано: Studio перезапустилась",
   "Withdrawn when the turn ended": "Отозвано: ответ закончился",
@@ -4757,7 +4740,6 @@ export default {
     "Твой открытый Roblox Studio, где агенты собирают игры на Roblox.",
   "Your open Unreal Editor, where agents build Unreal games.":
     "Твой открытый Unreal Editor, где агенты собирают игры на Unreal.",
-  "Your own answer": "Свой ответ",
   "Your profile link": "Ссылка на твой профиль",
   "Your profile link.": "Ссылка на твой профиль.",
   "Your profile, friends and Publish stay.": "Профиль, друзья и публикация остаются.",
@@ -5362,7 +5344,6 @@ export default {
   "{added} of {total} parts added": "Добавлено частей: {added} из {total}",
   "{added} of {total} parts added · {working} working": "Добавлено частей: {added} из {total} · в работе: {working}",
   "{amount} Nex": "{amount} Nex",
-  "{amount} credits, open Credits": "Кредиты: {amount}, открыть «Кредиты»",
   "{amount} more needed": "Не хватает: {amount}",
   "{app} settings": "Настройки {app}",
   "{brand} doesn’t share limits for this plan": "{brand} не показывает лимиты для этого плана",
@@ -5517,6 +5498,8 @@ export default {
     "{count, plural, one {Его собственная история сохранена рядом под именем .git.studio-backup.} few {Их собственные истории сохранены рядом под именем .git.studio-backup.} many {Их собственные истории сохранены рядом под именем .git.studio-backup.} other {Их собственные истории сохранены рядом под именем .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {Восстановлен # файл игры.} few {Восстановлено # файла игры.} many {Восстановлено # файлов игры.} other {Восстановлено # файла игры.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, one {Откат не сможет вернуть # файл из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.} few {Откат не сможет вернуть # файла из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.} many {Откат не сможет вернуть # файлов из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.} other {Откат не сможет вернуть # файла из этого изменения: оно было больше {size} за раз, поэтому самые большие не сохранились: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, one {Откат не сможет вернуть # файл, слишком большой для сохранения: {files}.} few {Откат не сможет вернуть # файла, слишком больших для сохранения: {files}.} many {Откат не сможет вернуть # файлов, слишком больших для сохранения: {files}.} other {Откат не сможет вернуть # файла, слишком больших для сохранения: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -5987,7 +5970,6 @@ export default {
   "It isn’t on this computer any more. Install it again.": "Игры больше нет на этом компьютере. Установи её снова.",
   "It couldn’t start on this computer.": "Не удалось запустить игру на этом компьютере.",
   "Remove from this computer": "Удалить с этого компьютера",
-  "Remove from {game}": "Убрать из «{game}»",
   "{title} is removed from this computer. Its saves stay.":
     "Игра «{title}» удалена с этого компьютера. Сохранения остались.",
   "Ready to play on this computer.": "Можно играть на этом компьютере.",
@@ -6015,8 +5997,8 @@ export default {
   "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
     "Genex не может нажимать в Roblox Studio на этом компьютере. Опубликуй сам в Studio:",
   "Handing it to the agent…": "Передаём агенту…",
-  "If the chat asks to use computer control, answer it there.":
-    "Если чат спросит про управление компьютером, ответь там.",
+  "If the chat or macOS asks for permission, allow it: publishing goes on by itself.":
+    "Если чат или macOS попросит разрешение, разреши: публикация продолжится сама.",
   "In Roblox Studio": "В Roblox Studio",
   "Name on Roblox": "Название на Roblox",
   "On Roblox": "На Roblox",
@@ -6043,6 +6025,7 @@ export default {
   "Drag to turn": "Потяни, чтобы повернуть",
   "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
     "Genex ещё не подтвердил оплату. Предмет появится в «Мои предметы», как только это случится. Дважды не спишем.",
+  "Genex’s protected space needs an update": "Защищённому пространству Genex нужно обновление",
   Get: "Получить",
   "Get in {game}": "Получить в {game}",
   Inappropriate: "Неприемлемо",
@@ -6078,14 +6061,12 @@ export default {
   "+{amount}": "+{amount}",
   Actions: "Действия",
   "Actions for {name}": "Действия: {name}",
-  "Add to {game}": "Добавить в {game}",
   "Ask for an item or a change…": "Попроси предмет или изменение…",
   "Ask the agent to change it": "Попросить агента изменить",
   Browse: "Обзор",
   "Browse and selling": "Обзор и продажи",
   "By {name}": "Автор: {name}",
   "Choose a game": "Выбрать игру",
-  "Nex you earn is spent in games, like any Nex.": "Заработанные Nex тратятся в играх, как и любые другие.",
   "Draft, put on sale": "Черновик, выставить на продажу",
   Earned: "Заработано",
   "Genex can’t sell it under that name. Ask the agent for another.":
@@ -6116,16 +6097,34 @@ export default {
   "It’s already this game’s own item.": "Это уже собственный предмет этой игры.",
   "Listing draft: {name}": "Черновик товара: {name}",
   "Draft · goes on sale when you publish": "Черновик · поступит в продажу, когда опубликуешь",
-  "Sell when published": "Продавать после публикации",
-  "Will go on sale when you publish": "Поступит в продажу после публикации",
-  "It changed since you approved it.": "Он изменился после твоего одобрения.",
+  Draft: "Черновик",
+  "Drafts go on sale when you publish.": "Черновики поступят в продажу, когда опубликуешь.",
+  For: "Для",
+  "Add to game": "Добавить в игру",
+  "Players see it after your next publish.": "Игроки увидят его после следующей публикации.",
+  "On sale in your game": "Продаётся в твоей игре",
+  "Players can buy it there now.": "Игроки уже могут купить его там.",
+  "Remove from game": "Убрать из игры",
+  "What is Nex?": "Что такое Nex?",
+  "{amount} Nex, about Nex": "{amount} Nex, о Nex",
+  "Nex is the money of games on Genex. Players buy it, then spend it on items inside any game.":
+    "Nex — это деньги игр на Genex. Игроки покупают его и тратят на предметы в любой игре.",
+  "Your Nex": "Твои Nex",
+  "Buy Nex in packs. One balance works in every game.": "Покупай Nex пакетами. Один баланс работает во всех играх.",
+  Spend: "Тратить",
+  "Buy items in a game’s store: characters, skins, upgrades. What you buy stays yours.":
+    "Покупай предметы в магазине игры: персонажей, скины, улучшения. Купленное остаётся твоим.",
+  Earn: "Зарабатывать",
+  "Players pay Nex for your items. After a short hold, you spend it like any Nex.":
+    "Игроки платят Nex за твои предметы. После короткой заморозки ты тратишь их как обычные Nex.",
+  "Credits are separate: they pay for making games. Nex pays for what games sell.":
+    "Кредиты — это другое: ими платят за создание игр. Nex платят за то, что игры продают.",
   "This item changed after this card. See it in Items › Selling before you put it on sale.":
     "Этот предмет изменился после этой карточки. Посмотри его в разделе Предметы › Продажи, прежде чем выставлять на продажу.",
   "It changed since you approved it, so it stayed a draft.":
     "Он изменился после твоего одобрения, поэтому остался черновиком.",
   "Removed from this game": "Удалён из этой игры",
   "Genex couldn’t change this draft. Try again.": "Genex не смог изменить этот черновик. Попробуй ещё раз.",
-  "New item": "Новый предмет",
   "No items match.": "Ничего не найдено.",
   "No one has shared an item yet.": "Пока никто не поделился предметами.",
   "Off sale": "Снят с продажи",
@@ -6157,10 +6156,67 @@ export default {
   "You get per sale ({share})": "Ты получаешь с продажи ({share})",
   "Your agent puts it in the game.": "Агент добавит его в игру.",
   "You’ve put a lot on sale today. Try again tomorrow.": "Ты сегодня выставил много предметов. Попробуй завтра.",
-  "or ask for changes below": "или попроси изменения ниже",
   "{count, plural, one {in # game} other {in # games}}":
     "{count, plural, one {в # игре} few {в # играх} many {в # играх} other {в # игры}}",
   "{days, plural, one {On hold for # day} other {On hold for # days}}":
     "{days, plural, one {Удерживается # день} few {Удерживается # дня} many {Удерживается # дней} other {Удерживается # дня}}",
   "{game} · {games}": "{game} · {games}",
+  "Ask for changes": "Попросить изменения",
+  "Ask for changes below": "Попроси изменения ниже",
+  Shop: "Магазин",
+  "Character preview": "Превью персонажа",
+  "Finished character": "Готовый персонаж",
+  "Get Genex credits on genex.games": "Получить кредиты Genex на genex.games",
+  "Make the {kind} with Genex now.": "Сделай с Genex сейчас: {kind}.",
+  "Make the {kind} with Genex now: {prompt}": "Сделай с Genex сейчас: {kind} — {prompt}",
+  "Not enough credits": "Не хватает кредитов",
+  "{count, plural, other {# need credits}}":
+    "{count, plural, one {Ждут кредитов: #} few {Ждут кредитов: #} many {Ждут кредитов: #} other {Ждут кредитов: #}}",
+  "Agents in any chat can then ask to use your apps.":
+    "Тогда агенты в любом чате смогут просить доступ к твоим приложениям.",
+  "It asks before each app.": "Он спросит перед каждым приложением.",
+  "It can click and type there.": "Он сможет нажимать и печатать в нём.",
+  "It never uses password managers, System Settings, password prompts or Genex.":
+    "Агент никогда не трогает менеджеры паролей, «Системные настройки», окна ввода пароля и Genex.",
+  "Let agents use your computer": "Разрешить агентам пользоваться компьютером",
+  "Let the agent do this with computer control?": "Разрешить агенту сделать это через управление компьютером?",
+  "Let the agent see your screen in this chat?": "Разрешить агенту видеть экран в этом чате?",
+  "Let the agent use this app?": "Разрешить агенту работать в этом приложении?",
+  "Let the agent use {app}?": "Разрешить агенту работать в {app}?",
+  "They ask before each app.": "Они спрашивают перед каждым приложением.",
+  "Turn on computer control?": "Включить управление компьютером?",
+  "{plugin} asks: {task}": "{plugin} просит: {task}",
+  "Add an icon and a thumbnail, or Roblox shows a grey square.":
+    "Добавь иконку и превью, иначе Roblox покажет серый квадрат.",
+  "Answer Roblox's questions about what's in the game, so it gets an age rating.":
+    "Ответь на вопросы Roblox о том, что есть в игре, чтобы она получила возрастной рейтинг.",
+  "Make the game public, so anyone can play it.": "Сделай игру публичной, чтобы в неё мог играть кто угодно.",
+  "Only you can open it for now. Roblox keeps a new game private until you finish these in Creator Hub:":
+    "Пока открыть её можешь только ты. Roblox держит новую игру закрытой, пока ты не сделаешь это в Creator Hub:",
+  "Open Creator Hub": "Открыть Creator Hub",
+  "Studio hasn't loaded the Genex helper": "Studio не загрузил плагин Genex",
+  "Studio was open before the helper was added, so your scripts don't reach it yet. Restart Studio loads the helper.":
+    "Studio был открыт до того, как плагин добавили, поэтому твои скрипты в него пока не попадают. «Перезапустить Studio» загрузит плагин.",
+  "The Genex helper was already in Studio's Plugins folder, so Genex left it as it is.":
+    "Плагин Genex уже был в папке Plugins в Studio, поэтому Genex оставил его как есть.",
+  "Allow in this chat": "Разрешить в этом чате",
+  "Allowed in this chat": "Разрешено в этом чате",
+  "Don't ask again for this action in this chat.": "Больше не спрашивать об этом действии в этом чате.",
+  "A replay of your first week": "Запись твоей первой недели",
+  "Change it anytime in Settings.": "Это можно поменять в любой момент в настройках.",
+  "Don't share": "Не делиться",
+  "Help improve Genex?": "Помочь улучшить Genex?",
+  "How you move through the app, with your work blanked out": "Как ты ходишь по приложению, а твоя работа закрыта",
+  "Never your work or name": "Ни твоей работы, ни имени",
+  "Prompts, code, files, game names and accounts are left out":
+    "Промпты, код, файлы, названия игр и аккаунты не попадают",
+  "Screens, clicks and errors": "Экраны, клики и ошибки",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "Экраны, клики, ошибки и время ожидания, а до {date} — запись того, как ты ходишь по приложению, где твоя работа закрыта. Уходит в PostHog в ЕС под случайным id.",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "Экраны, клики, ошибки и время ожидания. Уходит в PostHog в ЕС под случайным id.",
+  "Share usage data": "Делиться данными об использовании",
+  "Show us where Genex gets in your way.": "Покажи, где Genex тебе мешает.",
+  "Where you go, what fails and how long it takes": "Куда ты заходишь, что ломается и сколько всё длится",
+  "usage data\u0004Share": "Делиться",
 } satisfies LocaleCatalog;

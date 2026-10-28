@@ -240,7 +240,8 @@ delegated engine, metered like OpenCode (`billing: "metered"`): it runs on whate
 is, so only the person's pick runs it. Grok keeps its sign-in in its home (`$GROK_HOME`, default
 `~/.grok`); Sign in runs `grok login` in a terminal inside its Settings row (Open sign-in page,
 as for OpenCode), which signs in to the person's Grok account in the browser, and Genex never reads
-it. An xAI key the person's shell exports never reaches the CLI (`childEnv` vendor `grok`), so a
+it. First launch offers it in its "or use" row, with the same Install and Sign in on its own screen
+(`CliScreen.tsx`); signed in, it counts as something to build with. An xAI key the person's shell exports never reaches the CLI (`childEnv` vendor `grok`), so a
 session never turns into a per-token bill behind their back; a key put in Grok's own config still
 runs, and a result is then billed `api` (`_x.ai/auth/info` says `xai.api_key`), else `subscription`.
 
@@ -296,7 +297,8 @@ Beta tag beside its name in Settings and its group in the picker). Settings show
 OpenCode and Grok Build: Install, Sign in (`cursor-agent login` in a terminal inside the row, which
 opens the browser and prints the page for Open sign-in page; `studio:cursor.signin`, native), and
 once connected Check connection, Sign in again, Sign out (`cursor-agent logout`,
-`studio:cursor.signout`, native) and Update. The engine is Ready once `cursor-agent status --format json` says `isAuthenticated` and
+`studio:cursor.signout`, native) and Update. First launch's "or use" row offers it with its Beta
+tag, as Grok Build: Install and Sign in on its own screen. The engine is Ready once `cursor-agent status --format json` says `isAuthenticated` and
 `cursor-agent models` lists a model; the picker shows the CLI's default (`auto`) and the first three
 it lists, the rest under Older models.
 
@@ -395,6 +397,10 @@ saved is that Connect's failure. Studio resolves its launch environment through 
 login-shell PATH. A changed launch command requires renewed user trust.
 Connect completes setup in one Studio flow. A connected row shows its tool count;
 Connect is offered for recovery, not as an extra required step after a successful connection.
+Each agent session asks every in-scope connector for its tools as it starts
+(`McpRegistry.toolsReport`); one that fails, or lists none (an editor's connection whose editor isn't
+there yet), is logged with why and named in the session's brief as missing this turn, so the agent
+doesn't search for the tools its plugin's guidance names.
 
 Folder roots are opt-in. A server receives only the host-bound project's root when the user
 enabled sharing. Roots describe relevant files; they are not an OS filesystem sandbox. Agent
@@ -782,13 +788,14 @@ Package inspection checks both ASAR and unpacked resources for Codex/Claude nati
 The packaged smoke matrix uses isolated discovery roots for neither/one/both providers and scripted
 status/structured execution. Live subscription execution is separate: explicitly select GPT-5.6-Sol,
 never Astra. A fixture or successful version probe is not live Claude SDK compatibility evidence.
-The version-guarded `scripts/patch-sandbox-runtime.mjs` fixes SRT 0.0.73 at install/build time.
+The version-guarded `scripts/patch-sandbox-runtime.mjs` fixes SRT 0.0.81 at install/build time.
 Absolute-path lookup checks filesystem executability without a one-second `which` subprocess.
-Windows `initialize()` runs srt-win's egress check, folder grants and deny stamps through SRT's own
-async runner instead of `spawnSync`, which froze the start window ("Not Responding") on Electron's
-main thread; `sandbox-windows-start.test.ts` fails on Windows CI when the start holds the event loop.
-Those steps report their times (`setStudioStepLog`); with the session's own steps and the core's
-boot marks they land in `studio.log`, so a slow start names its slow step. The core's Windows
+SRT 0.0.81 runs Windows `initialize()` (its one `acl grant --persistent` and the egress check)
+off the event loop itself; the patch moves the session release (`acl revoke`, `acl restore`) there
+too, which `spawnSync` ran on Electron's main thread and froze the window ("Not Responding");
+`sandbox-windows-start.test.ts` fails on Windows CI when the start holds the event loop.
+The grant and the egress check report their times (`setStudioStepLog`); with the session's own
+steps and the core's boot marks they land in `studio.log`, so a slow start names its slow step. The core's Windows
 sandbox starts in the background (`startInBackground`): `create` refuses only what Set up fixes,
 the window opens on the games, and every launch waits for the rest or retries a failed start.
 The patch changes neither sandbox policy nor command execution. Re-review on dependency changes.

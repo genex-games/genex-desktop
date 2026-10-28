@@ -14,7 +14,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { PickerLabel, PickerSeparator, pickerRow } from "./PickerPanel.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 import { Icon } from "./icons.tsx";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { MODEL_PICKER_WORDS } from "../words.ts";
 import { autoChoice, findChoice, roleChoices, withoutFreeWord } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
@@ -24,6 +24,11 @@ import type { RunRoles } from "../../shared/protocol.ts";
 import type { ModelCapabilities } from "../../shared/model-preferences.ts";
 
 import type { RoleKey, RoleRow } from "../../shared/model-roles.ts";
+import { namesOwnModel } from "../analytics/chat-properties.ts";
+import { ModelMenuFrom } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { elapsedMs } from "../analytics/properties.ts";
 export type { RoleKey, RoleRow };
 export type RoleRecord = RunRoles;
 export interface RoleGroup {
@@ -221,6 +226,7 @@ function ModelList({
                 disabled={choice.disabled}
                 title={choice.title ?? choice.name}
                 className={pickerRow}
+                {...ownModelName(choice.key)}
                 aria-pressed={current === choice.key}
                 onClick={() => {
                   picks.choose(role, choice);
@@ -261,12 +267,15 @@ function ModelList({
 function JobRow({
   role,
   name,
+  modelKey,
   expanded,
   onToggle,
   onOpen,
 }: {
   role: RoleKey;
   name: string;
+  /** The job's model, whose name a replay leaves out when the person named it. */
+  modelKey: string | undefined;
   expanded: boolean;
   onToggle: () => void;
   onOpen: () => void;
@@ -283,6 +292,7 @@ function JobRow({
       aria-expanded={expanded}
       aria-label={ROLE_ROW_LABEL[role](name)}
       {...(info ? { "aria-description": info } : {})}
+      {...ownModelName(modelKey)}
       onClick={onToggle}
       onKeyDown={(event) => {
         if (event.key === "ArrowRight") {
@@ -325,6 +335,7 @@ function RolesView({
       key={role}
       role={role}
       name={picks.roleName(role)}
+      modelKey={picks.roleChoice(role)?.key}
       expanded={listRole === role}
       onToggle={() => onListRole(listRole === role ? null : role)}
       onOpen={() => onListRole(role)}
@@ -402,6 +413,48 @@ function JobList({
   );
 }
 
+/** A model the person or their own server named: replays leave its name out (`analytics/masking.ts`). */
+const ownModelName = (key: string | null | undefined) => (namesOwnModel(key) ? { "data-analytics-mask": "" } : {});
+
+/**
+ * One visit to the menu, for usage analytics: where it was opened from (the composer's handle is
+ * the plan card's Choose model), whether a model was picked, and how long it stayed open.
+ */
+function useMenuVisit(ref: Ref<ModelMenuHandle> | undefined, trigger: RefObject<HTMLButtonElement | null>) {
+  const visit = useRef<{ from: ModelMenuFrom; at: number; picked: boolean } | null>(null);
+  const asked = useRef<ModelMenuFrom | null>(null);
+  // Opening is its own button's click, so the popover opens exactly as a press would open it.
+  useImperativeHandle(
+    ref,
+    () => ({
+      open: () => {
+        asked.current = ModelMenuFrom.PlanRecovery;
+        trigger.current?.click();
+      },
+    }),
+    [],
+  );
+  return {
+    opened: () => {
+      visit.current = { from: asked.current ?? ModelMenuFrom.Composer, at: Date.now(), picked: false };
+      asked.current = null;
+    },
+    picked: () => {
+      if (visit.current) visit.current.picked = true;
+    },
+    closed: () => {
+      const done = visit.current;
+      visit.current = null;
+      if (done)
+        track(AnalyticsEvent.ModelMenuClosed, {
+          from: done.from,
+          picked: done.picked,
+          open_ms: elapsedMs(done.at, Date.now()),
+        });
+    },
+  };
+}
+
 /**
  * Where the menu stands: open or not, which job's list is out, and the steps back. Returning from
  * a list puts focus on the job it came from; one Escape is one step.
@@ -467,24 +520,31 @@ export function ModelMenu({
 }): JSX.Element {
   const trigger = useRef<HTMLButtonElement>(null);
   const listFocus = useRef<HTMLButtonElement>(null);
-  // Opening is its own button's click, so the popover opens exactly as a press would open it.
-  useImperativeHandle(ref, () => ({ open: () => trigger.current?.click() }), []);
+  const visit = useMenuVisit(ref, trigger);
   const picks = useRolePicks({ choices, modelKey, roles, onModel, onRoles });
   const { selected } = picks;
   const withRoles = Boolean(onRoles);
+  const closed = (): void => {
+    visit.closed();
+    onClosed?.();
+  };
   const { open, setOpen, listRole, setListRole, panel, setPanel, close, closeList, escape } = useMenuSteps(
     withRoles,
-    onClosed,
+    closed,
   );
   const modelList = (role: RoleKey) => (
     <ModelList
       role={role}
       picks={picks}
       listFocus={listFocus}
-      onPicked={withRoles ? closeList : close}
+      onPicked={() => {
+        visit.picked();
+        if (withRoles) closeList();
+        else close();
+      }}
       onAddModels={() => {
         close();
-        openSettings(SettingsSection.Providers, trigger.current);
+        openSettings(SettingsSection.Providers, trigger.current, SettingsOpenedFrom.ModelMenu);
       }}
     />
   );
@@ -498,11 +558,14 @@ export function ModelMenu({
             escape(details.event);
             return;
           }
-          if (next) setListRole(null);
+          if (next) {
+            setListRole(null);
+            visit.opened();
+          }
           setOpen(next);
           if (!next) {
             setListRole(null);
-            onClosed?.();
+            closed();
           }
         }}
       >
@@ -514,7 +577,7 @@ export function ModelMenu({
           title={selected?.name ?? CHOOSE_MODEL}
           className="composer-model composer-text-button min-w-0"
         >
-          <span data-fit className="truncate">
+          <span data-fit className="truncate" {...ownModelName(selected?.key)}>
             {shortModelName(selected?.name ?? CHOOSE_MODEL)}
           </span>
         </PopoverTrigger>

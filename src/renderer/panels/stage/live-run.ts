@@ -5,11 +5,15 @@
  * game that waits for Play (Live holds another game's page, or none) loads on Play (`loadPreview`).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { LiveTrigger } from "../../analytics/events/builds.ts";
 import { type Notify, ToastTone } from "../../state/toasts.ts";
 import { problemWords } from "../../words.ts";
 import { useGameSound } from "./game-sound.ts";
 import type { useLiveLoad } from "./live-load.ts";
 import { useLoaderPresence } from "./loader-presence.ts";
+import { errorCode } from "../../../shared/errors.ts";
 
 /** Where the Live game is, as the Play/Stop button shows it. */
 export const LiveRun = {
@@ -62,8 +66,14 @@ export function useLiveRun(
       setStopping(true);
       window.studio
         .stopPreview()
-        .then(() => setStopped(true))
-        .catch((err: unknown) => onNotice(problemWords(err), ToastTone.Error))
+        .then(() => {
+          setStopped(true);
+          track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Stopped, ok: true });
+        })
+        .catch((err: unknown) => {
+          track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Stopped, ok: false });
+          onNotice(problemWords(err), ToastTone.Error, errorCode(err));
+        })
         .finally(() => setStopping(false));
       return;
     }
@@ -71,11 +81,15 @@ export function useLiveRun(
     setStarting(true);
     setStopped(false);
     const start = idle ? () => window.studio.loadPreview(project) : () => window.studio.playPreview();
-    loadLive(project, start).catch((err: unknown) => {
-      if (!idle) setStopped(true);
-      setStarting(false);
-      onNotice(problemWords(err), ToastTone.Error);
-    });
+    loadLive(project, start, LiveTrigger.Play).then(
+      () => track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Running, ok: true }),
+      (err: unknown) => {
+        track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Running, ok: false });
+        if (!idle) setStopped(true);
+        setStarting(false);
+        onNotice(problemWords(err), ToastTone.Error, errorCode(err));
+      },
+    );
   }, [project, run, idle, setStopped, loadLive, onNotice]);
   return { run, toggle };
 }

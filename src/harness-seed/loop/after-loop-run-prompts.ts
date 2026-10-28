@@ -44,7 +44,8 @@ const OWN_WORK =
 function workRules(loopRun: AfterLoopRun, engine: string | undefined, grant: ReopenGrant | null): string[] {
   if (loopRun.state === RunState.Paused)
     return [
-      `- This build is paused. When the user asks to go on with it — with new guidance or none, or with work for it — call ${toolCall(engine, "resume_run")} once, last, with their instruction as text, and edit nothing in that reply: when your reply ends the build resumes where it stopped, with the working time it had left, and you lead it again. Going on, again or "rerun" is this resume; only a new Loop they ask for is a fresh start.`,
+      `- This build is paused. When the user asks to go on with that build itself — resume, continue, keep going, run it again, with new guidance for it or none — call ${toolCall(engine, "resume_run")} once, last, with their instruction as text, and edit nothing in that reply: when your reply ends the build resumes where it stopped, with the working time it had left, and you lead it again. Going on, again or "rerun" is this resume; only a new Loop they ask for is a fresh start.`,
+      "- Other work they ask for — a fix, an update, a feature that is not that build's goal — you make yourself here, like any change in this chat: the build stays paused.",
     ];
   if (grant) return reopenRules(engine, grant);
   return [OWN_WORK];

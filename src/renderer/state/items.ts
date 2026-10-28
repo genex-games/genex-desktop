@@ -4,7 +4,7 @@
  * account's own items and the ready / on-hold strip. Both are read from genex.games through main,
  * which signs in as the app's Genex account: every price, share and count here is genex.games' own,
  * never computed. The store also keeps which of the account's local games are on Genex (each game's
- * Genex project, from its publish record), the game Add to and New item act on, and the item actions
+ * Genex project, from its publish record), the game Add to acts on, and the item actions
  * Selling and the chat's Listing draft card share: Put on sale, Take off sale and Other games can
  * use it, each pressed by the person and carried out by main (D40). Browse's detail says which of the
  * account's games each item was added to, for Added and Remove from. A tab chosen and the window
@@ -119,7 +119,7 @@ export interface ItemsState {
   selling: SellingView;
   /** Each local game's Genex project id by its name; null when the game is not on Genex. Absent: not read yet. */
   hosted: Record<string, string | null>;
-  /** The local game Add to and New item act on; null takes the default. */
+  /** The local game Add to acts on; null takes the default. */
   target: string | null;
   /** A press under way, by item id. */
   busy: Record<string, ItemAction>;
@@ -127,8 +127,6 @@ export interface ItemsState {
   changed: Record<string, CreatorItem>;
   /** Why genex.games refused the last press on an item, by item id. */
   refused: Record<string, StoreRefusal>;
-  /** New item opened this game's chat: its composer asks for an item until the person sends. */
-  askingIn: string | null;
   /** Each game's local drafts as main last answered, by game. */
   local: Record<string, LocalItemsView>;
   /** A press on a local draft under way, by local id. */
@@ -155,7 +153,6 @@ export const initialItems = (): ItemsState => ({
   busy: {},
   changed: {},
   refused: {},
-  askingIn: null,
   local: {},
   localBusy: {},
   localFailed: {},
@@ -262,7 +259,7 @@ export const hostedRead = (state: ItemsState, hosted: Record<string, string | nu
   hosted: { ...state.hosted, ...hosted },
 });
 
-/** The game Add to and New item act on. */
+/** The game Add to acts on. */
 export const targetChosen = (state: ItemsState, game: string): ItemsState => ({ ...state, target: game });
 
 /** A press on an item starts: its last refusal goes. */
@@ -315,10 +312,6 @@ export function localEnded(state: ItemsState, localId: string, failed: boolean):
   if (!failed) return { ...state, localBusy };
   return { ...state, localBusy, localFailed: { ...state.localFailed, [localId]: true } };
 }
-
-/** New item opened `game`'s chat (or, null, the person sent from it): its composer asks for an item meanwhile. */
-export const askedForItem = (state: ItemsState, game: string | null): ItemsState =>
-  state.askingIn === game ? state : { ...state, askingIn: game };
 
 /** The local game an item's Genex project is, when it is on this computer. */
 export function localGameOf(hosted: Record<string, string | null>, projectId: string | undefined): string | null {
@@ -515,6 +508,16 @@ const LOCAL_CALL: Record<
 /** Whether main's answer is a game's local drafts (an approval or its undo), not a sharing result. */
 const isLocalView = (answer: LocalItemsView | LocalShareResult): answer is LocalItemsView => "approvals" in answer;
 
+/**
+ * Whether `view` names an item uploaded since `before`: a draft with a SKU it had not, a refused
+ * one included. Selling names the uploaded item's picture, so it is read again.
+ */
+function wentUpSince(before: LocalItemsView | undefined, view: LocalItemsView): boolean {
+  return Object.entries(view.outcomes).some(
+    ([localId, outcome]) => outcome.skuId !== null && before?.outcomes[localId]?.skuId !== outcome.skuId,
+  );
+}
+
 /** The local-draft presses, each carried out by main; a sharing press reads the game's drafts again. */
 function localPresses(ctx: ItemsContext, readSelling: () => Promise<void>) {
   const { set, api } = ctx;
@@ -534,9 +537,10 @@ function localPresses(ctx: ItemsContext, readSelling: () => Promise<void>) {
     if (!view) return;
     const before = ctx.store.getState().local[project];
     set((state) => localRead(state, view));
-    const uploaded = Object.keys(view.outcomes).some((localId) => !before?.outcomes[localId]);
-    // An item that went up is the account's on genex.games now: Selling, once shown, reads it again.
-    if (uploaded && ctx.store.getState().selling.read !== ItemsRead.Idle) await readSelling();
+    const uploaded = wentUpSince(before, view);
+    // An item that went up, or a publish that put the game's drafts on sale, changed the account's
+    // items on genex.games: Selling, once read, reads them again.
+    if ((uploaded || force) && ctx.store.getState().selling.read !== ItemsRead.Idle) await readSelling();
   };
   return { readLocal, pressLocal, settleLocal };
 }

@@ -3,6 +3,8 @@
  * paused builds resume on their own, and Copy diagnostics.
  */
 import { useEffect, useState, type JSX } from "react";
+import { trackSettingChanged } from "../analytics/workspace-track.ts";
+import { SettingKey } from "../analytics/workspace-vocabulary.ts";
 import type { StudioSettingsView } from "../../shared/studio-api.ts";
 import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
 import { Button } from "../ui/Button.tsx";
@@ -21,6 +23,16 @@ function applyWords(learning: boolean, selfImproving: boolean): string {
     : t("Harness asks before changing how it builds. You can undo any change in Harness.");
 }
 
+/** One of the section's settings, as its patch names it. */
+type HarnessPatch = { selfImproving?: boolean; buildersMax?: number; autoResume?: boolean };
+
+/** Count a change of the section's settings (usage analytics): each key it changed, with its new value. */
+function trackHarnessChange(patch: HarnessPatch, failed: boolean): void {
+  if (patch.selfImproving !== undefined) trackSettingChanged(SettingKey.SelfImproving, patch.selfImproving, failed);
+  if (patch.buildersMax !== undefined) trackSettingChanged(SettingKey.BuildersMax, patch.buildersMax, failed);
+  if (patch.autoResume !== undefined) trackSettingChanged(SettingKey.AutoResume, patch.autoResume, failed);
+}
+
 export function HarnessSection(): JSX.Element {
   const [settings, setSettings] = useState<StudioSettingsView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -31,13 +43,15 @@ export function HarnessSection(): JSX.Element {
       .then(setSettings)
       .catch((cause) => setError(problemWords(cause)));
   }, []);
-  const change = async (patch: { selfImproving?: boolean; buildersMax?: number; autoResume?: boolean }) => {
+  const change = async (patch: HarnessPatch) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       setSettings(await window.studio.setSettings(patch));
+      trackHarnessChange(patch, false);
     } catch (cause) {
+      trackHarnessChange(patch, true);
       setError(problemWords(cause));
     } finally {
       setBusy(false);

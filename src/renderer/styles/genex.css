@@ -185,9 +185,6 @@
   font: 500 15px / 1 var(--font-family-mono);
   font-variant-numeric: tabular-nums;
 }
-.genex-connect-credits[data-warn] .genex-connect-balance {
-  color: var(--orange);
-}
 .genex-connect-credits > button {
   margin-inline-start: 4px;
 }
@@ -747,6 +744,8 @@
 /* Publish to the web, drawn by Studio over the stage: the game, one main button, its progress. */
 .genex-publish-body {
   display: grid;
+  /* One column no wider than the card: a long link shortens with an ellipsis instead of widening it. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   min-width: 0;
 }
@@ -1382,6 +1381,25 @@ button.genex-publish-banner-name:hover {
 }
 .genex-publish-progress[data-slow] .step-bar span[data-state="current"]::after {
   background: linear-gradient(90deg, transparent, var(--orange), transparent);
+}
+/* What a new Roblox game still needs before others can open it: a line, a short list, Creator Hub. */
+.genex-publish-next {
+  display: grid;
+  gap: 12px;
+}
+/* Its line leads the list, so it starts where the list does. */
+.genex-publish-next > .genex-publish-hint {
+  text-align: left;
+}
+.genex-publish-next-steps {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 20px;
+  list-style: decimal;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 20px;
 }
 /* The link anyone can play, in a field with Copy and Open. */
 .genex-publish-link-field {

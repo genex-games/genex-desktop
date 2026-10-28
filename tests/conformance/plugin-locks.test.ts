@@ -1186,6 +1186,17 @@ describe("locks in a real core", () => {
   it("an agent's call holds no lock while its card waits for the person, and a declined card takes nothing", async () => {
     await reset();
     const asking = await lite.core.createGameThread(PROJECT);
+    // A chat that asks: Bypass would answer the card itself (an empty chat may come back as the suite's).
+    await lite.core.setPermissionMode(asking, PermissionMode.Manual);
+    try {
+      await cardWaitsUnlocked(asking);
+    } finally {
+      await lite.core.setPermissionMode(asking, PermissionMode.Bypass);
+    }
+  });
+
+  /** A varnish call in chat `asking`: no lock is held while its card waits, and the card's no takes nothing. */
+  async function cardWaitsUnlocked(asking: string): Promise<void> {
     const cards = async () =>
       (await lite.core.listAllEvents()).flatMap((event) =>
         event.data.type === EventKind.Custom && event.data.event_type === CustomEvent.PluginConsent
@@ -1217,7 +1228,7 @@ describe("locks in a real core", () => {
     assert.equal(((await varnish) as { consent?: string }).consent, "declined");
     assert.deepEqual(lite.core.locks.holders(), [], "a declined call took nothing");
     assert.deepEqual(await paintLog(), [], "and never ran");
-  });
+  }
 
   it("a plugin turned off while its call waits its turn is refused once granted: its backend never runs", async () => {
     await reset();

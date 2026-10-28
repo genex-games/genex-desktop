@@ -1,27 +1,30 @@
-/** Local, version-guarded fixes to SRT 0.0.73, applied at install and build time.
+/** Local, version-guarded fixes to SRT 0.0.81, applied at install and build time.
  *
  * 1. An absolute executable needs no subprocess PATH lookup. SRT otherwise runs `which /bin/bash`
  *    with a one-second timeout and reports a present shell as missing under load.
- * 2. Windows `initialize()` runs srt-win without holding the event loop. SRT spawns its egress
- *    check (seconds on a fresh process) and the folder grants and deny stamps (which scale with
- *    the folders) with `spawnSync`; on Electron's main thread that froze the start window into
- *    "Not Responding". The same srt-win calls run through SRT's own `runSrtWinAsync` instead.
- * 3. Those steps report how long they took (`setStudioStepLog`), so Genex's log shows which part
- *    of a slow start the time went to.
- * 4. Rollback and reset also yield during ACL cleanup (two srt-win commands). Only the actual
- *    process exit event keeps synchronous cleanup, including partially applied initialization.
- * 5. Every srt-win ACL call (grant, stamp, revoke and restore, each sync and async) and the egress
- *    check wait {@link SRT_WIN_TIMEOUT_MS} instead of SRT's 60 and 30 seconds.
- * 6. The Windows proxies try the next port of srt-win's loopback range when Windows refuses one
+ * 2. The Windows session start reports how long its folder grants and its egress check took
+ *    (`setStudioStepLog`), so Genex's log shows which part of a slow start the time went to.
+ * 3. Rollback and reset release the session's Windows grants and denies without holding the event
+ *    loop: SRT runs those two srt-win commands with `spawnSync`, which froze Electron's main thread
+ *    into "Not Responding". Only the actual process exit event keeps the synchronous release, and it
+ *    also releases a session whose grant srt-win is still writing.
+ * 4. The release and the egress check wait {@link SRT_WIN_TIMEOUT_MS} instead of SRT's 60 and 30
+ *    seconds.
+ * 5. The Windows proxies try the next port of srt-win's loopback range when Windows refuses one
  *    (EACCES), as when another program holds it (EADDRINUSE). Hyper-V, WSL, Docker and
  *    administrators reserve ports in that range (`netsh int ipv4 show excludedportrange
  *    protocol=tcp`), and SRT gave up on the first, so the agents never started.
  *
- * Policy generation, arguments and outcomes are untouched. */
+ * SRT 0.0.81 starts a Windows session off the event loop itself (its one `acl grant --persistent`
+ * and the egress check are async, with ten minutes for a root's first walk), so 0.0.73's async
+ * initialize patch is gone. Policy generation, arguments and outcomes are untouched. */
 import { createRequire } from "node:module";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 const require = createRequire(import.meta.url);
+
+/** The sandbox-runtime release these patches were written against. */
+const SRT_VERSION = "0.0.81";
 
 /** `original` with each [from, to] replaced once; a `from` found other than once means SRT changed. */
 function replaceOnce(original, edits, what) {
@@ -42,140 +45,111 @@ async function patchFile(dist, file, marker, patch) {
 }
 
 const WHICH_MARKER = "// Studio: absolute executable lookup";
-const ASYNC_MARKER = "// Studio: srt-win off the event loop";
+const STEP_MARKER = "// Studio: srt-win step times";
 const CLEANUP_MARKER = "// Studio: async ACL cleanup with synchronous exit fallback";
 const DEADLINE_MARKER = "// Studio: srt-win deadlines";
 const PORT_MARKER = "// Studio: refused proxy ports";
 
 /**
- * How long srt-win may take over an ACL call or the egress check. A grant or stamp passes an entry
- * down through everything under a folder, so a slow disk or an antivirus scanning each file it
- * touches can take a large folder past SRT's 60 seconds; the egress check, the first start as the
- * sandbox user after a cold boot, past its 30. Either running out of time fails the start.
+ * How long srt-win may take over releasing a session's grants and denies or the egress check. A
+ * release takes entries back from every folder under a large grant, which a slow disk or an
+ * antivirus scanning each file can take past SRT's 60 seconds; the egress check, the first start
+ * as the sandbox user after a cold boot, past its 30. Either running out of time fails the start.
  */
 const SRT_WIN_TIMEOUT_MS = 120_000;
 /**
  * The srt-win calls {@link patchDeadlines} gives {@link SRT_WIN_TIMEOUT_MS}, each with SRT's own
- * deadline: the ACL calls (SRT's synchronous ones and the async twins the patches above add) and
+ * deadline: the release (SRT's synchronous calls and the async twins the cleanup patch adds) and
  * the egress check.
  */
 const SRT_DEADLINES = [
-  ...["grant", "stamp", "revoke", "restore"].flatMap((verb) => [
-    [`${verb}WindowsAcl`, 60_000],
-    [`${verb}WindowsAclAsync`, 60_000],
+  ...["revokeWindowsAclChecked", "restoreWindowsAcl"].flatMap((name) => [
+    [name, 60_000],
+    [`${name}Async`, 60_000],
   ]),
   ["verifyWindowsWfpEgress", 30_000],
 ];
 
-/** Derive an async twin from the pinned implementation, retaining its arguments, parsing and errors. */
-function asyncTwin(original, name, from, to) {
+/** The function `name` declares in `original`, from its `function` keyword to its closing brace. */
+function functionSource(original, name, what) {
   const signature = `function ${name}(`;
-  if (original.split(signature).length !== 2) throw new Error(`SRT ${name} changed; review the cleanup patch`);
-  const start = original.indexOf(signature);
+  if (original.split(signature).length !== 2) throw new Error(`SRT ${name} changed; review the ${what} patch`);
+  const start = original.lastIndexOf("\n", original.indexOf(signature)) + 1;
   const end = original.indexOf("\n}", start);
-  if (end < 0) throw new Error(`SRT ${name} has no function boundary; review the cleanup patch`);
-  return replaceOnce(
-    original.slice(start, end + 2),
-    [
-      [signature, `async function ${name}Async(`],
-      [from, to],
-    ],
-    name,
-  );
+  if (end < 0) throw new Error(`SRT ${name} has no function boundary; review the ${what} patch`);
+  return original.slice(start, end + 2);
+}
+
+/** Derive an async twin from the pinned implementation, retaining its arguments, parsing and errors. */
+function asyncTwin(original, name, edits) {
+  const source = functionSource(original, name, "cleanup").replace(/^export /, "");
+  return replaceOnce(source, [[`function ${name}(`, `async function ${name}Async(`], ...edits], name);
 }
 
 function patchManagerCleanup(original) {
-  return replaceOnce(
+  const release = asyncTwin(original, "releaseWindowsSessionAcls", [
+    [
+      "windowsAclRestoreAllowed(revokeWindowsAclChecked(o))",
+      "windowsAclRestoreAllowed(await revokeWindowsAclCheckedAsync(o))",
+    ],
+    ["restoreWindowsAcl(o));", "await restoreWindowsAclAsync(o));"],
+  ]);
+  const fixed = replaceOnce(
     original,
     [
       [
-        "grantWindowsAclAsync, stampWindowsAclAsync,",
-        "grantWindowsAclAsync, stampWindowsAclAsync, revokeWindowsAclAsync, restoreWindowsAclAsync,",
+        "revokeWindowsAclChecked, getWindowsSandboxUserStatusAsync,",
+        "revokeWindowsAclChecked, revokeWindowsAclCheckedAsync, restoreWindowsAclAsync, getWindowsSandboxUserStatusAsync,",
       ],
-      ["let windowsFsStampedSet;", `${CLEANUP_MARKER}\nlet studioWindowsAclPending = false;\nlet windowsFsStampedSet;`],
       [
         "const cleanupHandler = () => reset().catch(e => {",
         "const cleanupHandler = (exiting = false) => reset(exiting).catch(e => {",
       ],
-      ["process.once('exit', cleanupHandler);", "process.once('exit', () => cleanupHandler(true));"],
+      [
+        "        void cleanupHandler();",
+        "        // Promises cannot finish in process's exit event: only here is the release synchronous.\n        void cleanupHandler(true);",
+      ],
       ["process.once('SIGINT', cleanupHandler);", "process.once('SIGINT', () => cleanupHandler());"],
       ["process.once('SIGTERM', cleanupHandler);", "process.once('SIGTERM', () => cleanupHandler());"],
       [
-        "windowsFsSbUserSid = sb;",
-        `windowsFsSbUserSid = sb;
-            // Exit must release partial grants too, including while rollback is awaiting srt-win.
-            studioWindowsAclPending = [acc.grantRead, acc.grantWrite, acc.denyRead, acc.denyWrite].some(paths => paths.length > 0);`,
-      ],
-      [
-        "                revokeWindowsAcl({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
-        "                await revokeWindowsAclAsync({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
-      ],
-      [
-        "                restoreWindowsAcl({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
-        "                await restoreWindowsAclAsync({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
-      ],
-      [
-        "            windowsFsSbUserSid = undefined;",
-        "            studioWindowsAclPending = false;\n            windowsFsSbUserSid = undefined;",
+        "                releaseWindowsSessionAcls(windowsFsSbUserSid, srtWin);",
+        "                await releaseWindowsSessionAclsAsync(windowsFsSbUserSid, srtWin);",
       ],
       ["async function reset() {", "async function reset(synchronousWindowsAcl = false) {"],
       [
-        "if (windowsFsStampedSet && windowsFsSbUserSid) {",
-        "if ((windowsFsStampedSet || studioWindowsAclPending) && windowsFsSbUserSid) {",
+        "    if (windowsFsStampedSet && windowsFsSbUserSid) {",
+        "    // Exit must release a grant still being written too, and one a rollback is still releasing.\n    if (windowsFsSbUserSid) {",
       ],
       [
-        "        for (const e of revokeWindowsAcl({ sandboxUserSid: sb, srtWin }) ?? []) {",
-        `        // Promises cannot finish in process's exit event; all live teardown yields instead.
-        const revoked = synchronousWindowsAcl
-            ? revokeWindowsAcl({ sandboxUserSid: sb, srtWin })
-            : await revokeWindowsAclAsync({ sandboxUserSid: sb, srtWin });
-        for (const e of revoked ?? []) {`,
-      ],
-      [
-        "        for (const e of restoreWindowsAcl({ sandboxUserSid: sb, srtWin }) ?? []) {",
-        `        const restored = synchronousWindowsAcl
-            ? restoreWindowsAcl({ sandboxUserSid: sb, srtWin })
-            : await restoreWindowsAclAsync({ sandboxUserSid: sb, srtWin });
-        for (const e of restored ?? []) {`,
-      ],
-      [
-        "    windowsFsStampedSet = undefined;",
-        "    studioWindowsAclPending = false;\n    windowsFsStampedSet = undefined;",
+        "        releaseWindowsSessionAcls(sb, srtWin);",
+        `        if (synchronousWindowsAcl)
+            releaseWindowsSessionAcls(sb, srtWin);
+        else
+            await releaseWindowsSessionAclsAsync(sb, srtWin);`,
       ],
     ],
     "SandboxManager's Windows cleanup",
   );
+  return `${fixed}\n${CLEANUP_MARKER}.\n${release}\n`;
 }
 
 async function patchCleanup(dist) {
   await patchFile(dist, "sandbox/windows-sandbox-utils.js", CLEANUP_MARKER, (original) => {
-    const parser = asyncTwin(
-      original,
-      "runSrtWinJsonAllowFail",
-      "runSrtWin(args, opts)",
-      "await runSrtWinAsync(args, opts)",
-    );
-    const twins = ["revokeWindowsAcl", "restoreWindowsAcl"].map(
-      (name) => `export ${asyncTwin(original, name, "runSrtWinJsonAllowFail(", "await runSrtWinJsonAllowFailAsync(")}`,
+    const parser = asyncTwin(original, "runSrtWinJsonAllowFail", [
+      ["runSrtWin(args, opts)", "await runSrtWinAsync(args, opts)"],
+    ]);
+    const twins = ["revokeWindowsAclChecked", "restoreWindowsAcl"].map(
+      (name) =>
+        `export ${asyncTwin(original, name, [["runSrtWinJsonAllowFail(", "await runSrtWinJsonAllowFailAsync("]])}`,
     );
     return `${original}\n${CLEANUP_MARKER}.\n${parser}\n${twins.join("\n")}\n`;
   });
   await patchFile(dist, "sandbox/sandbox-manager.js", CLEANUP_MARKER, patchManagerCleanup);
-  await patchFile(
-    dist,
-    "index.js",
-    CLEANUP_MARKER,
-    (original) =>
-      `${original}\n${CLEANUP_MARKER}.\nexport { revokeWindowsAclAsync, restoreWindowsAclAsync } from './sandbox/windows-sandbox-utils.js';\n`,
-  );
 }
 
-/**
- * The async twins of SRT's `grantWindowsAcl` and `stampWindowsAcl` (same arguments, same errors,
- * SRT's deadline until {@link patchDeadlines}), and the step log they and the egress check report to.
- */
-const ACL_ASYNC = `
-${ASYNC_MARKER}: initialize() grants and stamps through these.
+/** The step log the session start's grant and egress check report to. */
+const STEP_LOG = `
+${STEP_MARKER}: the session start's grant and egress check report here.
 let studioStepLog;
 /** Genex's log of how long each srt-win step of initialize took: \`(step, ms)\`. */
 export function setStudioStepLog(log) {
@@ -184,49 +158,45 @@ export function setStudioStepLog(log) {
 function studioStep(step, started) {
     studioStepLog?.(step, Date.now() - started);
 }
-export async function grantWindowsAclAsync(opts) {
-    const holder = opts.holderPid ?? process.pid;
-    const stdin = JSON.stringify({ read: opts.read, write: opts.write });
-    const started = Date.now();
-    const r = await runSrtWinAsync(['acl', 'grant', '--holder-pid', \`\${holder}\`, '--sandbox-user-sid', opts.sandboxUserSid], { timeoutMs: 60000, stdin, srtWin: opts.srtWin });
-    studioStep('acl grant', started);
-    logForDebugging(\`[Sandbox Windows] acl grant exit=\${r.status}: \${r.stderr || r.stdout}\`);
-    if (r.status !== 0) {
-        throw new WindowsSandboxError('acl_grant_failed', \`srt-win acl grant exited \${r.status}: \${r.stderr || r.stdout}\`);
-    }
-}
-export async function stampWindowsAclAsync(opts) {
-    const holder = opts.holderPid ?? process.pid;
-    const stdin = JSON.stringify({ denyRead: opts.denyRead, denyWrite: opts.denyWrite });
-    const started = Date.now();
-    const r = await runSrtWinAsync(['acl', 'stamp', '--holder-pid', \`\${holder}\`, '--sandbox-user-sid', opts.sandboxUserSid], { timeoutMs: 60000, stdin, srtWin: opts.srtWin });
-    studioStep('acl stamp', started);
-    logForDebugging(\`[Sandbox Windows] acl stamp exit=\${r.status}: \${r.stderr || r.stdout}\`);
-    if (r.status !== 0) {
-        throw new WindowsSandboxError('acl_stamp_failed', \`srt-win acl stamp exited \${r.status} \` +
-            (r.status === 2 ? '(partial — some inputs skipped)' : '(failed)') +
-            \`: \${r.stderr || r.stdout}\`);
-    }
-}
 `;
+
+/** `grantWindowsAclPersistent` and `verifyWindowsWfpEgress` timing their srt-win call. */
+function patchSteps(original) {
+  const fixed = replaceOnce(
+    original,
+    [
+      [
+        "export async function grantWindowsAclPersistent(opts) {",
+        `export async function grantWindowsAclPersistent(opts) {\n    ${STEP_MARKER}.\n    const started = Date.now();`,
+      ],
+      [
+        "    logForDebugging(`[Sandbox Windows] acl grant --persistent exit=",
+        "    studioStep('acl grant', started);\n    logForDebugging(`[Sandbox Windows] acl grant --persistent exit=",
+      ],
+      [
+        "        const r = await runSrtWinAsync(args, {\n            timeoutMs: 30000,",
+        "        const started = Date.now();\n        const r = await runSrtWinAsync(args, {\n            timeoutMs: 30000,",
+      ],
+      [
+        "        logForDebugging(`[Sandbox Windows] wfp verify exit=",
+        "        studioStep('wfp verify', started);\n        logForDebugging(`[Sandbox Windows] wfp verify exit=",
+      ],
+    ],
+    "srt-win's session start",
+  );
+  return `${fixed}${STEP_LOG}`;
+}
 
 /** `original` with SRT's deadline replaced inside each of {@link SRT_DEADLINES}; a call found other than once means SRT changed. */
 function patchDeadlines(original) {
   let fixed = original;
   for (const [name, srtMs] of SRT_DEADLINES) {
-    const signature = `function ${name}(`;
-    if (fixed.split(signature).length !== 2) throw new Error(`SRT ${name} changed; review the srt-win deadline patch`);
-    const start = fixed.indexOf(signature);
-    const end = fixed.indexOf("\n}", start);
-    if (end < 0) throw new Error(`SRT ${name} has no function boundary; review the srt-win deadline patch`);
-    const body = replaceOnce(
-      fixed.slice(start, end),
-      [[`timeoutMs: ${srtMs}`, `timeoutMs: ${SRT_WIN_TIMEOUT_MS}`]],
-      name,
-    );
-    fixed = fixed.slice(0, start) + body + fixed.slice(end);
+    const source = functionSource(fixed, name, "srt-win deadline");
+    const start = fixed.indexOf(source);
+    const body = replaceOnce(source, [[`timeoutMs: ${srtMs}`, `timeoutMs: ${SRT_WIN_TIMEOUT_MS}`]], name);
+    fixed = fixed.slice(0, start) + body + fixed.slice(start + source.length);
   }
-  return `${fixed}\n${DEADLINE_MARKER}: ${SRT_WIN_TIMEOUT_MS} ms for each ACL call and the egress check.\n`;
+  return `${fixed}\n${DEADLINE_MARKER}: ${SRT_WIN_TIMEOUT_MS} ms for the session release and the egress check.\n`;
 }
 
 /** `listenInRange` moving past a port Windows refuses as well as one in use. */
@@ -247,7 +217,7 @@ function patchProxyPorts(original) {
 export async function patchSandboxRuntime() {
   const pkg = require.resolve("@anthropic-ai/sandbox-runtime/package.json");
   const metadata = JSON.parse(await readFile(pkg, "utf8"));
-  if (metadata.version !== "0.0.73")
+  if (metadata.version !== SRT_VERSION)
     throw new Error("Review the sandbox-runtime patches before changing sandbox-runtime version");
   const dist = path.join(path.dirname(pkg), "dist");
   await patchFile(dist, "utils/which.js", WHICH_MARKER, (original) => {
@@ -271,47 +241,13 @@ export async function patchSandboxRuntime() {
       )
     );
   });
-  await patchFile(dist, "sandbox/windows-sandbox-utils.js", ASYNC_MARKER, (original) => {
-    const verify = "const r = runSrtWin(['wfp', 'verify', '--target', target], {";
-    const fixed = replaceOnce(
-      original,
-      [
-        [
-          verify,
-          `${ASYNC_MARKER}: the egress check.\n        const started = Date.now();\n        const r = await runSrtWinAsync(['wfp', 'verify', '--target', target], {`,
-        ],
-        [
-          "logForDebugging(`[Sandbox Windows] wfp verify exit=",
-          "studioStep('wfp verify', started);\n        logForDebugging(`[Sandbox Windows] wfp verify exit=",
-        ],
-      ],
-      "srt-win's egress check",
-    );
-    return `${fixed}${ACL_ASYNC}`;
-  });
-  await patchFile(dist, "sandbox/sandbox-manager.js", ASYNC_MARKER, (original) =>
-    replaceOnce(
-      original,
-      [
-        [
-          "stampWindowsAcl, restoreWindowsAcl, grantWindowsAcl, revokeWindowsAcl,",
-          "stampWindowsAcl, restoreWindowsAcl, grantWindowsAcl, revokeWindowsAcl, grantWindowsAclAsync, stampWindowsAclAsync,",
-        ],
-        [
-          "                grantWindowsAcl({",
-          `                ${ASYNC_MARKER}.\n                await grantWindowsAclAsync({`,
-        ],
-        ["                stampWindowsAcl({", "                await stampWindowsAclAsync({"],
-      ],
-      "SandboxManager's Windows initialize",
-    ),
-  );
+  await patchFile(dist, "sandbox/windows-sandbox-utils.js", STEP_MARKER, patchSteps);
   await patchFile(
     dist,
     "index.js",
-    ASYNC_MARKER,
+    STEP_MARKER,
     (original) =>
-      `${original}\n${ASYNC_MARKER}.\nexport { grantWindowsAclAsync, stampWindowsAclAsync, setStudioStepLog } from './sandbox/windows-sandbox-utils.js';\n`,
+      `${original}\n${STEP_MARKER}.\nexport { setStudioStepLog } from './sandbox/windows-sandbox-utils.js';\n`,
   );
   await patchCleanup(dist);
   await patchFile(dist, "sandbox/listen-in-range.js", PORT_MARKER, patchProxyPorts);

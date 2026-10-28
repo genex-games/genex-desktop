@@ -191,7 +191,7 @@ is in Bypass (any connector) or in Auto (a plugin's connector, which works on th
 person's own may reach services beyond it), as `PluginToolService#unaskedIn` reads the chat's mode
 (`chatMode`). A card those modes would not have asked is answered when the person switches the chat
 to one (`PluginConsent.approveForMode`, `by: mode`). A connector's card ("Let the agent use
-<name>?", the tool and its arguments under Request details) offers Allow once, Always allow ("Don't
+<name>?", the tool and its arguments under Details) offers Allow once, Always allow ("Don't
 ask again for this action in <name>") and Don't allow; Always allow saves that exact tool (`McpRegistry.alwaysAllow`): the person's own connector
 in connectors.json, where its card's checkbox shows it, and a plugin's in `always-allowed.json`
 beside it, listed on the plugin's page under Connections with **Ask every time** to take it back.

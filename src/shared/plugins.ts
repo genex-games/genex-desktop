@@ -269,6 +269,12 @@ export interface PluginManifestTool extends PluginTool {
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
   /**
+   * API 3, with `confirmation`: the call acts on the person's account with another service (an
+   * upload it moderates, a generation that counts against its limits). Its card asks in every chat
+   * mode, Bypass included, and offers Allow in this chat, which covers the tool for that chat.
+   */
+  onAccount?: true;
+  /**
    * API 3: the longest one call may run in the backend when that is longer than the host's ceiling
    * (a game engine's import or export), at most {@link PLUGIN_TOOL_MAX_TIMEOUT_MS}.
    */
@@ -694,6 +700,64 @@ export const PluginChangeReason = {
   Settings: "settings",
 } as const;
 export type PluginChangeReason = (typeof PluginChangeReason)[keyof typeof PluginChangeReason];
+
+/**
+ * Why installing, updating or reinstalling a plugin was refused: the code that crosses IPC beside
+ * main's own words (`shared/error-codes.ts`).
+ */
+export const PluginInstallProblem = {
+  /** Not in the catalog or the index, or no longer installed or listed under that id. */
+  NotFound: "plugin_not_found",
+  /** The index offers no compatible newer release of the installed plugin. */
+  NoNewerRelease: "plugin_no_newer_release",
+  /** The marketplace is not up in this session yet. */
+  NotReady: "plugins_not_ready",
+  /** This profile reaches no network (every fixture profile). */
+  Offline: "plugins_offline",
+  /** A GitHub spec or repository that does not read as `owner/repo[/subdir]@<sha>`. */
+  InvalidSpec: "plugin_invalid_spec",
+  DownloadFailed: "plugin_download_failed",
+  /** A file, a tree or the whole package past its cap. */
+  TooLarge: "plugin_too_large",
+  /** A file or artifact that does not hash to what its pin says. */
+  IntegrityMismatch: "plugin_integrity_mismatch",
+  /** The catalog's or index's entry is broken or does not describe the code at its pin. */
+  CatalogMismatch: "plugin_catalog_mismatch",
+  /** A link, a special file, an unusual file mode or a name that leaves the package. */
+  UnsafePackage: "plugin_unsafe_package",
+  /** No plugin.json, an invalid one, a file it names missing, or an envelope that does not read. */
+  PackageInvalid: "plugin_package_invalid",
+  NeedsNewerStudio: "plugin_needs_newer_studio",
+  /** A bundled plugin's id, or one a connector already answers for. */
+  IdTaken: "plugin_id_taken",
+  /** It would replace another plugin or widen what it may do without the person's fresh review. */
+  NeedsReview: "plugin_needs_review",
+  /** Its backend did not load and answer. */
+  BackendFailed: "plugin_backend_failed",
+  /** The folder or record it is reinstalled from is gone, or holds another plugin now. */
+  SourceGone: "plugin_source_gone",
+} as const;
+export type PluginInstallProblem = (typeof PluginInstallProblem)[keyof typeof PluginInstallProblem];
+
+/** Why a plugin could not be turned on, off or removed: the code that crosses IPC beside main's words. */
+export const PluginStateRefusal = {
+  /** It is not installed (or was removed): install it first. */
+  InstallFirst: "plugin_install_first",
+  /** It holds the app's account, so it can be turned off but not removed. */
+  KeepsAccount: "plugin_keeps_account",
+} as const;
+export type PluginStateRefusal = (typeof PluginStateRefusal)[keyof typeof PluginStateRefusal];
+
+/** Why a plugin failed while it ran (`PluginChange.failure` with reason `failed`). */
+export const PluginFailure = {
+  /** Its backend process exited. */
+  BackendExited: "plugin_backend_exited",
+  /** Its backend process could not be started or signalled. */
+  BackendError: "plugin_backend_error",
+  /** A watched folder's edit was refused, so the running copy stays. */
+  ReloadRefused: "plugin_reload_refused",
+} as const;
+export type PluginFailure = (typeof PluginFailure)[keyof typeof PluginFailure];
 export interface PluginSource {
   kind: PluginSourceKind;
   directory?: string;
@@ -801,9 +865,15 @@ export interface PluginChange {
   reason: PluginChangeReason;
   /** Set when an update or reload changed the plugin's skills. */
   skills?: PluginSkillChange;
+  /** Why it failed, when `reason` is `failed`. */
+  failure?: PluginFailure;
 }
 /** How a consent question ended; `mode`: the person switched the chat to a mode that asks nothing first for it. */
-export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode";
+/**
+ * Who settled a consent card: the person, the timeout, a stop, the turn's end, a restart, the chat's
+ * mode (Bypass), or the person's earlier Allow in this chat (`chat`).
+ */
+export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode" | "chat";
 /** Host-generated paths in the staged public copy, shown before upload approval. */
 export interface ExportReview {
   included: string[];
@@ -826,8 +896,15 @@ export interface PluginConsentEvent {
   project: string;
   threadId?: string;
   prompt: string;
+  /** One line the card shows under its question: what a yes lets the agent do. */
+  note?: string;
   /** A connector's card: the person may also allow this exact tool from now on. */
   alwaysOffered?: boolean;
+  /**
+   * An `onAccount` tool's card: the person may also allow this tool for the rest of the chat
+   * (answered with `always`).
+   */
+  chatOffered?: boolean;
   /** Approved with Always allow: the tool runs without asking from now on. */
   always?: boolean;
   /**
@@ -1012,9 +1089,12 @@ export type StudioConsentSource = (typeof StudioConsentSource)[keyof typeof Stud
  * consent record keeps it as the prompt, so both say the same words.
  */
 export function computerSettingQuestion(): string {
-  return t(
-    "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.",
-  );
+  return t("Turn on computer control?");
+}
+
+/** The line under that question: the setting is one for every chat. */
+export function computerSettingNote(): string {
+  return t("Agents in any chat can then ask to use your apps.");
 }
 
 /** The name a studio consent card shows; getters, as main reads it in the language it sets after loading. */
@@ -1093,6 +1173,11 @@ export const PluginService = {
    * has a desktop and its driver, and the plugin's engine declares apps here. Asks the person nothing.
    */
   GameEngineCanAssist: "game.engine.canAssist",
+  /**
+   * `game-engine`: whether the bound game's chat still runs the turn this plugin's Do it for me
+   * started: false once that turn has ended (answered, failed or taken back) or its time is up.
+   */
+  GameEngineAssisting: "game.engine.assisting",
   /**
    * `game-engine`: a long job of the plugin's (an engine's build or package) started in Genex's
    * process sandbox, writing only folders inside the bound game; answers its id at once, and the

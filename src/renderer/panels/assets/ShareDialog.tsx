@@ -168,7 +168,8 @@ function OneAsset({
 }): JSX.Element | null {
   if (!asset) return null;
   return (
-    <div className="flex min-w-0 items-center gap-3">
+    // The name fields name the person's assets.
+    <div data-analytics-mask className="flex min-w-0 items-center gap-3">
       <SharePicture project={project} asset={asset} companions={companions} className="h-[58px] w-16 flex-none" />
       <label className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span className="text-xs text-ink-3">{WORDS.nameLabel}</span>

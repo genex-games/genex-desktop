@@ -13,7 +13,8 @@ import { FixtureAccount, fixtureAccountToken } from "../../src/main/dev/fixture-
 import { CreatorRoute, creatorStats, toCreators, toStats } from "../../src/main/play/creator-stats.ts";
 import { CreditsRoute, genexCredits, toPlan, toPrices, toRecent } from "../../src/main/play/credits.ts";
 import { type GalleryAnswer, type GalleryRequest, PlayRoute, SignInNeeded } from "../../src/main/play/gallery.ts";
-import { CreditKind } from "../../src/shared/play-credits.ts";
+import { GenexOperation } from "../../src/shared/genex.ts";
+import { canAfford, CreditKind, operationPrice } from "../../src/shared/play-credits.ts";
 import { creatorScore } from "../../src/shared/play-people.ts";
 import { statsTotals } from "../../src/shared/play-stats.ts";
 
@@ -260,5 +261,59 @@ describe("the fixture account's numbers", () => {
     assert.equal(fixtureCreatorAnswer(CreatorRoute.TopCreators, {}, catalog)?.status, 200);
     assert.equal(fixtureCreatorAnswer(CreditsRoute.Prices, {}, catalog)?.status, 200);
     assert.equal(fixtureCreatorAnswer(PlayRoute.Feed, {}, catalog), null, "the gallery's routes are not its");
+  });
+});
+
+describe("prices where credits are spent", () => {
+  const prices = { [CreditKind.Model]: 35, [CreditKind.Sound]: 2, [CreditKind.CharacterFinalize]: 29 };
+
+  it("prices an operation from the list by its kind, and nothing it cannot name exactly", () => {
+    assert.equal(operationPrice(GenexOperation.Model, prices), 35);
+    assert.equal(operationPrice(GenexOperation.Sfx, prices), 2);
+    assert.equal(operationPrice(GenexOperation.CharacterFinalize, prices), 29);
+    assert.equal(operationPrice(GenexOperation.Character, prices), null, "concept or one-shot: priced apart");
+    assert.equal(operationPrice(GenexOperation.Image, prices), null, "a kind the list left out");
+    assert.equal(operationPrice("constructor", prices), null, "never an inherited name");
+    assert.equal(operationPrice(GenexOperation.Model, null), null);
+    assert.equal(operationPrice(undefined, prices), null);
+  });
+
+  it("pays for a price from the balance; an unlimited account and an unread balance always do", () => {
+    assert.equal(canAfford({ balance: 35, unlimited: false }, 35), true);
+    assert.equal(canAfford({ balance: 18, unlimited: false }, 35), false);
+    assert.equal(canAfford({ balance: 0, unlimited: true }, 35), true);
+    assert.equal(canAfford({ balance: null, unlimited: false }, 35), true);
+    assert.equal(canAfford({ balance: 0, unlimited: false }, null), false, "no price: only an empty balance is short");
+    assert.equal(canAfford({ balance: 1, unlimited: false }, null), true);
+  });
+
+  it("gives the fixture account the balance a launch names, and the character steps' prices", () => {
+    const me = () =>
+      fixtureCreatorAnswer(
+        CreditsRoute.Me,
+        { token: fixtureAccountToken(FixtureAccount.Full) },
+        {
+          games: () => [],
+        },
+      )?.body as { spendable: number; unlimited: boolean };
+    const before = process.env.STUDIO_FIXTURE_CREDITS;
+    try {
+      delete process.env.STUDIO_FIXTURE_CREDITS;
+      assert.deepEqual([me().spendable, me().unlimited], [1240, false]);
+      for (const [named, left] of [
+        ["low", 18],
+        ["zero", 0],
+      ] as const) {
+        process.env.STUDIO_FIXTURE_CREDITS = named;
+        assert.deepEqual([me().spendable, me().unlimited], [left, false], named);
+      }
+      process.env.STUDIO_FIXTURE_CREDITS = "unlimited";
+      assert.equal(me().unlimited, true);
+    } finally {
+      if (before === undefined) delete process.env.STUDIO_FIXTURE_CREDITS;
+      else process.env.STUDIO_FIXTURE_CREDITS = before;
+    }
+    const listed = toPrices(fixtureCreatorAnswer(CreditsRoute.Prices, {}, { games: () => [] })?.body);
+    assert.deepEqual([listed[CreditKind.CharacterPreview], listed[CreditKind.CharacterFinalize]], [41, 29]);
   });
 });

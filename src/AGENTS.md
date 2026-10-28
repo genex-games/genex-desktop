@@ -24,8 +24,8 @@ every user's workspace, where in-app engines read them.
   `loop/host-methods.ts` (`HostMethod`), both generated from `shared/harness-api.ts`
   (`node scripts/gen-harness-types.ts` after changing the contract). Its other copies of shared
   vocabularies (`RunEvent`, `ExecutionStatus`, `EngineId`, `EngineFailure`, `VerdictPass` and
-  `VerdictRule` in `loop/verdict.ts`, `loop/time.ts`) are held to the app's by
-  `seed-contracts.test.ts`.
+  `VerdictRule` in `loop/verdict.ts`, `loop/time.ts`, `RunStartRefusal` in `loop/run-dispatch.ts`)
+  are held to the app's by `seed-contracts.test.ts`.
   `harness-boot/bootstrap.mjs` stays plain JavaScript and falls back to a legacy `loop/main.mjs`;
   a workspace still on `.mjs` is moved to `.ts` by `migrateHarnessLayout` (seed manifest
   `layoutVersion`), never by leaving new files beside old ones. The agent's own code edits pass the

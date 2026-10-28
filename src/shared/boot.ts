@@ -62,6 +62,49 @@ export const SandboxProblemCode = {
 } as const;
 export type SandboxProblemCode = (typeof SandboxProblemCode)[keyof typeof SandboxProblemCode];
 
+/** Why startup is held on a failure (`BootState.failureCode`), beside the words the window shows. */
+export const BootFailure = {
+  /** A watched start still running at its limit (Windows). */
+  StartOverdue: "start_overdue",
+  /** The studio's core would not start, for a reason other than the sandbox. */
+  CoreFailed: "core_failed",
+  /** A move of Genex's data stopped part-way and could not be put back. */
+  MoveStopped: "move_stopped",
+  /** The folder Genex keeps its data in is not there. */
+  DataMissing: "data_missing",
+  /** The studio opened, but its harness would not start. */
+  HarnessFailed: "harness_failed",
+} as const;
+export type BootFailure = (typeof BootFailure)[keyof typeof BootFailure];
+
+/** A held start's code: the boot's own, or the sandbox's when the sandbox is what stopped it. */
+export type BootFailureCode = BootFailure | SandboxProblemCode;
+
+/** A step a launch's start passed through before the studio opened (`StartFacts.passed`). */
+export const StartPassage = {
+  /** It waited on "Set up the protected workspace". */
+  SandboxSetup: "sandbox_setup",
+  /** It showed a failure, and Try again went on from there. */
+  FailureRetried: "failure_retried",
+  /** The launch before it moved Genex's data, then started Genex again. */
+  DataMoved: "data_moved",
+  /** The launch before it waited for a missing data folder, then started Genex again. */
+  DataMissing: "data_missing",
+  /** The data folder could not be used, so Electron kept its default one. */
+  DataFallback: "data_fallback",
+} as const;
+export type StartPassage = (typeof StartPassage)[keyof typeof StartPassage];
+
+/** How one launch started, computed once by main (`BootGate.started`) and sent with the first screen. */
+export interface StartFacts {
+  /** Each step it passed through, once, in the order first seen. */
+  passed: StartPassage[];
+  /** The last failure it showed before the studio opened; null when it showed none. */
+  failure: BootFailureCode | null;
+  /** How many times Retry or Try again ran an attempt. */
+  retries: number;
+}
+
 /** Windows, not provisioned: what Set up does about it. */
 export const WindowsSetupNeed = {
   /** Install the `srt-sandbox` user, its credential and its network filters (srt-win's install). */
@@ -71,6 +114,11 @@ export const WindowsSetupNeed = {
    * sandbox user through it, so with it disabled Windows refuses each one.
    */
   LogonService: "logon-service",
+  /**
+   * Run srt-win's install again: an earlier Genex set the sandbox up for another release of it, and
+   * this one starts nothing on that install until it is upgraded in place.
+   */
+  Reinstall: "reinstall",
 } as const;
 export type WindowsSetupNeed = (typeof WindowsSetupNeed)[keyof typeof WindowsSetupNeed];
 
@@ -141,6 +189,8 @@ export interface BootState {
    * is Ready; why a move of Genex's data stopped, while the phase is Moving.
    */
   failure?: string;
+  /** What `failure` (or the missing data folder) is, as a code: never its words. */
+  failureCode?: BootFailureCode;
   /** How far the move is, while the phase is Moving. */
   move?: DataMoveProgress;
   /** The folder that is not there, while the phase is DataMissing. */

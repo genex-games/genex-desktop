@@ -643,7 +643,7 @@ test("onChange reports install, update (including a leased update), enable, disa
     await f.registry.setEnabled("crash", true);
     changes.length = 0;
     await assert.rejects(f.registry.tool("crash__greet", { name: "Ada" }, f.binding), /exited/);
-    assert.deepEqual(changes, [{ id: "crash", reason: "failed" }]);
+    assert.deepEqual(changes, [{ id: "crash", reason: "failed", failure: "plugin_backend_exited" }]);
     f.registry.onChange = () => {
       throw new Error("listener bug");
     };

@@ -4,6 +4,7 @@
  * The provider's default model is always listed.
  */
 import { type JSX, useId, useState } from "react";
+import { EngineId } from "../../shared/providers.ts";
 import { latestModels, modelName, offersLineup, runnableModels, shownModels } from "../model-lineup.ts";
 import { matchingModels, offersSearch } from "./picker-search.ts";
 import { useEngines, useModelPicker } from "../state/hooks.ts";
@@ -17,6 +18,8 @@ import { PICKER_MODELS_WORDS } from "../words.ts";
 
 /** The model id that means "whatever the CLI is set to"; it is no model of its own. */
 const DEFAULT_MODEL = "default";
+/** Engines whose models a person named themselves (their own server, Ollama tags): a replay shows them masked. */
+const NAMED_BY_PERSON: ReadonlySet<string> = new Set([EngineId.LocalServer, EngineId.Ollama]);
 /** One empty object, so the selector returns the same reference while an engine has no choices. */
 const NO_CHOICES: Readonly<Record<string, boolean>> = {};
 
@@ -128,6 +131,7 @@ export function PickerModels({ engine, name }: { engine: EngineDescriptor; name:
       role="group"
       aria-label={PICKER_MODELS_WORDS.group(name)}
       data-picker-models={engine.id}
+      {...(NAMED_BY_PERSON.has(engine.id) ? { "data-analytics-mask": "" } : {})}
       // Inside its provider's card: a hairline under the account, not a second card.
       className="mt-1 -mx-2.5 flex flex-col border-t border-line pt-2"
     >

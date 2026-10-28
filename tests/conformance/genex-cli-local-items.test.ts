@@ -12,13 +12,15 @@ import { mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node
 import path from "node:path";
 import { describe, it } from "node:test";
 import { boundGameFolder } from "../../src/main/core/genex-bound-game.ts";
-import { GenexCliService } from "../../src/main/core/genex-cli.ts";
+import { type GenexCliDeps, GenexCliService } from "../../src/main/core/genex-cli.ts";
 import { GenexCliRefusal, GenexCliRefusalCode, genexCliRequest } from "../../src/main/core/genex-cli-policy.ts";
+import { readItemPicture } from "../../src/main/core/item-pictures.ts";
 import { hasLocalDrafts, localDraftFingerprint } from "../../src/main/core/local-item-files.ts";
 import { ITEM_DRAFT_KIND, ITEM_DRAFT_VERSION, type ListingRecord } from "../../src/shared/item-draft.ts";
 import type { PluginBinding } from "../../src/shared/plugins.ts";
 import { StoreRefusal } from "../../src/shared/store-items.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
+import { pngPicture } from "../helpers/picture.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ICE = "local_ab12cd34ef56";
@@ -37,7 +39,7 @@ async function profile(options: { linked?: boolean } = {}) {
   const outside = path.join(root, "elsewhere");
   for (const dir of [path.join(game, ".genex", "scratch"), outside, path.join(root, "resources")])
     await mkdir(dir, { recursive: true });
-  await writeFile(path.join(game, ".genex", "scratch", "ice.png"), "PNG-ice");
+  await writeFile(path.join(game, ".genex", "scratch", "ice.png"), pngPicture(1024, 1024, "ice"));
   await writeFile(path.join(outside, "secret.png"), "SECRET");
   if (options.linked) {
     const hosted = path.join(genexStorage, "publish", "space-race", ".genex");
@@ -131,6 +133,7 @@ function service(
   sandbox: { run: (r: RunRequest) => Promise<RunResult> },
   drafts: Array<{ draft: ListingRecord; fingerprint: string | null }> = [],
   removed: string[][] = [],
+  deps: Partial<GenexCliDeps> = {},
 ) {
   return new GenexCliService({
     run: sandbox.run,
@@ -149,6 +152,7 @@ function service(
     onLocalDraftsRemoved: async (_project, localIds) => {
       removed.push([...localIds]);
     },
+    ...deps,
   });
 }
 
@@ -191,7 +195,7 @@ describe("a local `shop add` in a game that is not on Genex yet", () => {
     const sandbox = fakeSandbox({ stdout: localLine() });
     await assert.rejects(
       service(p, sandbox).run(
-        { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+        { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
         bound(p, p.outside),
         {
           paid: false,
@@ -211,12 +215,96 @@ describe("a local `shop add` in a game that is not on Genex yet", () => {
       act: (cwd) => writeDraft(path.join(cwd, ...ITEMS), ICE),
     });
     const answer = await service(p, sandbox).run(
-      { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+      { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
       bound(p),
       { paid: false },
     );
     assert.equal(answer.ok, false);
     assert.deepEqual(await tree(gameItems(p)), {});
+  });
+});
+
+/** A real one-pixel PNG: the card reads only what sniffs as an image. */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+const PICTURE = `.genex/items/${ICE}/picture.png`;
+
+/**
+ * A Loop's builder works in its build's copy of the game, under Studio's scratch, and lists its
+ * items there: the copy reaches the game's own folder only when the build lands. A Medieval arena's
+ * four classes went into its store with their portraits, yet each card showed an empty box.
+ */
+describe("a draft a Loop's builder makes in its build's copy of the game", () => {
+  /** The profile, its build's copy with the picture the builder rendered, and Studio's kept pictures. */
+  async function building() {
+    const p = await profile();
+    const build = path.join(p.scratch, "autopilot", "run_1", "arena");
+    await mkdir(path.join(build, ".genex", "scratch"), { recursive: true });
+    await writeFile(path.join(build, ".genex", "scratch", "ice.png"), pngPicture(1024, 1024, "ice"));
+    return { p, build, root: path.join(p.userData, "item-pictures") };
+  }
+
+  /** `shop add` bound to the build's copy, with the CLI writing `picture` as the draft's picture. */
+  async function addInBuild(at: Awaited<ReturnType<typeof building>>, picture: (cwd: string) => Promise<void>) {
+    const sandbox = fakeSandbox({
+      stdout: localLine({ picture: PICTURE }),
+      act: async (cwd) => {
+        await writeDraft(path.join(cwd, ...ITEMS), ICE);
+        await picture(cwd);
+      },
+    });
+    const deps = { boundGame: async () => at.build, picturesRoot: at.root };
+    return service(at.p, sandbox, [], [], deps).run(
+      { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
+      bound(at.p, at.build),
+      { paid: false },
+    );
+  }
+
+  it("shows its picture on the card at once, though the game's own folder has no draft yet", async () => {
+    const at = await building();
+    const answer = await addInBuild(at, (cwd) => writeFile(path.join(cwd, ...PICTURE.split("/")), PNG));
+    assert.equal(answer.ok, true);
+    assert.equal(await hasLocalDrafts(at.p.game), false, "the build has not landed");
+    const shown = await readItemPicture({ root: at.root, game: at.p.game }, "space-race", PICTURE);
+    assert.equal(shown?.data, PNG.toString("base64"));
+  });
+
+  for (const [name, picture] of [
+    [
+      "a picture that links out of the run folder",
+      async (cwd: string) => {
+        const file = path.join(cwd, ...PICTURE.split("/"));
+        await rm(file);
+        await symlink(path.join(cwd, "..", "..", "elsewhere", "secret.png"), file);
+      },
+    ],
+    [
+      "a picture that is a folder",
+      async (cwd: string) => {
+        const file = path.join(cwd, ...PICTURE.split("/"));
+        await rm(file);
+        await mkdir(file);
+      },
+    ],
+  ] as const) {
+    it(`keeps nothing for ${name}`, async () => {
+      const at = await building();
+      await addInBuild(at, picture);
+      assert.deepEqual(await tree(at.root), {}, "no copy");
+      assert.equal(await readItemPicture({ root: at.root, game: at.p.game }, "space-race", PICTURE), null);
+    });
+  }
+
+  it("reads no picture for a game name or a file that is not a draft's picture", async () => {
+    const at = await building();
+    await addInBuild(at, (cwd) => writeFile(path.join(cwd, ...PICTURE.split("/")), PNG));
+    const where = { root: at.root, game: at.p.game };
+    for (const file of ["../secret.png", ".genex/scratch/ice.png", `.genex/items/${ICE}/../../x.png`])
+      assert.equal(await readItemPicture(where, "space-race", file), null, file);
+    await assert.rejects(readItemPicture(where, "../space-race", PICTURE));
   });
 });
 
@@ -239,7 +327,7 @@ describe("a local `shop set` and `shop remove`", () => {
     const answer = await service(p, sandbox, drafts).run(
       { command: "shop set", args: ICE, options: { price: 250 } },
       bound(p),
-      { paid: true },
+      { paid: false },
     );
     assert.equal(answer.ok, true);
     const [run] = sandbox.seen;
@@ -272,7 +360,7 @@ describe("a local `shop set` and `shop remove`", () => {
       },
     });
     const answer = await service(p, sandbox, [], removed).run({ command: "shop remove", args: ICE }, bound(p), {
-      paid: true,
+      paid: false,
     });
     assert.equal(answer.ok, true);
     assert.deepEqual(Object.keys(await tree(gameItems(p))).sort(), [`${SLED}.json`, path.join(SLED, "picture.png")]);
@@ -304,7 +392,7 @@ describe("a `shop add` in a game that is on Genex", () => {
     const before = await tree(gameItems(p));
     const sandbox = fakeSandbox({ stdout: "{}" });
     const answer = await service(p, sandbox).run(
-      { command: "shop add", args: "Frost Axe", options: { price: 1200 } },
+      { command: "shop add", args: "Frost Axe", options: { price: 1200, image: ".genex/scratch/ice.png" } },
       bound(p),
       { paid: false },
     );
@@ -462,11 +550,13 @@ describe("what the CLI leaves in the run folder, carried into a hostile game", (
     it(`refuses ${name}, telling the agent, and changes nothing outside the game`, async () => {
       const p = await profile();
       await arrange(p);
+      // The picture sits outside .genex, which some of these games break.
+      await writeFile(path.join(p.game, "ice.png"), pngPicture(1024, 1024, "ice"));
       const outside = await tree(p.outside);
       const sandbox = fakeSandbox({ stdout: localLine(), act: (cwd) => act(cwd, p) });
       const drafts: Array<{ draft: ListingRecord; fingerprint: string | null }> = [];
       const answer = await service(p, sandbox, drafts).run(
-        { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+        { command: "shop add", args: "Ice Shield", options: { price: 300, image: "ice.png" } },
         bound(p),
         { paid: false },
       );
@@ -489,7 +579,7 @@ describe("what the CLI leaves in the run folder, carried into a hostile game", (
       },
     });
     const answer = await service(p, sandbox).run(
-      { command: "shop add", args: "Ice Shield", options: { price: 300 } },
+      { command: "shop add", args: "Ice Shield", options: { price: 300, image: ".genex/scratch/ice.png" } },
       bound(p),
       { paid: false },
     );
@@ -550,8 +640,15 @@ describe("Studio's own `shop sync` after a publish", () => {
     });
     const synced = await service(p, sandbox).syncLocalItems("space-race");
     assert.deepEqual(synced, [
-      { localId: ICE, contentHash: HASH, skuId: "sku_ice", refusal: null, field: null },
-      { localId: SLED, contentHash: NEW_HASH, skuId: null, refusal: StoreRefusal.PriceOffGrid, field: "price" },
+      { localId: ICE, contentHash: HASH, skuId: "sku_ice", refusal: null, field: null, code: null },
+      {
+        localId: SLED,
+        contentHash: NEW_HASH,
+        skuId: null,
+        refusal: StoreRefusal.PriceOffGrid,
+        field: "price",
+        code: null,
+      },
     ]);
     const [run] = sandbox.seen;
     assert.ok(run);
@@ -686,7 +783,7 @@ describe("the person's Other games can use it on a local draft", () => {
     });
 });
 
-describe("only Studio uploads local drafts, and only the person puts one on sale (D40)", () => {
+describe("only Studio uploads local drafts and puts them on sale", () => {
   it("never runs `genex shop sync` for an agent, through either tool", () => {
     for (const paid of [true, false])
       assert.throws(

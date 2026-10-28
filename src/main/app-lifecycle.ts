@@ -5,7 +5,9 @@
  * app always exits). `main/index.ts` wires them to `process`, `webContents` and `before-quit`.
  */
 import { errorMessage } from "../shared/errors.ts";
+import { MainDiagnostic, RendererGone } from "../shared/app-session.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import type { MainFault } from "./app-diagnostics.ts";
 import { quitsWhenLastWindowCloses } from "./dev/launch-flags.ts";
 
 /** Where a line goes: the studio log's `write`. */
@@ -24,25 +26,33 @@ function describe(reason: unknown): string {
  * Log an uncaught exception or unhandled rejection instead of letting it end the process (or
  * Electron's modal error box). None is treated as fatal: a failure at startup already has its own
  * error box in `main()`, and one in a background task should not take the open window with it.
+ * `fault` hears each one's kind after the log (`app-diagnostics.ts`); it failing changes nothing.
  */
-export function installProcessHandlers(target: ProcessEvents, log: LogLine): void {
-  const record = (kind: string) => (reason: unknown) => {
+export function installProcessHandlers(
+  target: ProcessEvents,
+  log: LogLine,
+  fault: (kind: MainFault, reason: unknown) => void = () => undefined,
+): void {
+  const record = (kind: MainFault, words: string) => (reason: unknown) => {
     try {
-      log("main", `${kind}: ${describe(reason)}`);
+      log("main", `${words}: ${describe(reason)}`);
     } catch {
       /* the log itself failed; nothing is left to tell */
     }
+    try {
+      fault(kind, reason);
+    } catch {
+      /* nothing may hear it yet (main is still starting); the log has it */
+    }
   };
-  target.on("uncaughtException", record("uncaught exception"));
-  target.on("unhandledRejection", record("unhandled rejection"));
+  target.on("uncaughtException", record(MainDiagnostic.Uncaught, "uncaught exception"));
+  target.on("unhandledRejection", record(MainDiagnostic.Rejection, "unhandled rejection"));
 }
 
 /** What to do after `render-process-gone`: reload, leave a clean exit alone, or stop retrying. */
 export const ReloadDecision = { Reload: "reload", CleanExit: "clean-exit", GiveUp: "give-up" } as const;
 export type ReloadDecision = (typeof ReloadDecision)[keyof typeof ReloadDecision];
 
-/** Electron's `render-process-gone` reason for a renderer that exited normally. */
-const CLEAN_EXIT_REASON = "clean-exit";
 /** How many crash reloads a renderer gets within one window, by default. */
 const RELOADS_PER_WINDOW = 2;
 
@@ -62,7 +72,7 @@ export function createReloadPolicy({
   const reloads: number[] = [];
   return {
     decide(reason: string): ReloadDecision {
-      if (reason === CLEAN_EXIT_REASON) return ReloadDecision.CleanExit;
+      if (reason === RendererGone.CleanExit) return ReloadDecision.CleanExit;
       const at = now();
       const expired = (): boolean => {
         const oldest = reloads[0];

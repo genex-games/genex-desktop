@@ -1,4 +1,6 @@
 import { useCallback } from "react";
+import { noteNav } from "../analytics/workspace-trackers.ts";
+import { NavVia } from "../analytics/workspace-vocabulary.ts";
 import { queueGenexPromo } from "../genex-promo.ts";
 import type { Studio } from "../state/studio.ts";
 import type { ComposerHandoff } from "./use-composer-handoff.ts";
@@ -12,6 +14,7 @@ export function useWelcomeExit(app: Studio, handoff: ComposerHandoff) {
   const readyAfterWelcome = useCallback(
     async (idea: string | null) => {
       holdIdea(idea);
+      noteNav(NavVia.AfterWelcome);
       app.goHome();
     },
     [app, holdIdea],

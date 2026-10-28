@@ -18,6 +18,9 @@ import { ASSET_WORDS, fileManagerWords } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
 import { Pending } from "../ui/Pending.tsx";
 import { Skeleton } from "../ui/Skeleton.tsx";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { PreviewFailure } from "../analytics/events/builds.ts";
 
 /** How much of a text file the preview decodes. */
 const TEXT_PREVIEW_BYTES = 256 * 1024;
@@ -27,6 +30,10 @@ const ZOOM_MIN_SCALE = 2;
 const SPEEDS = [1, 2, 0.5] as const;
 
 type Mode = ReturnType<typeof assetPreviewMode>;
+
+/** A preview that could not show, by the step that failed. */
+const previewFailed = (mode: Mode, stage: PreviewFailure): void =>
+  track(AnalyticsEvent.AssetPreviewFailed, { mode, stage });
 type Viewer = ReturnType<typeof createAssetViewer>;
 type Clip = { name: string; duration: number };
 
@@ -77,7 +84,9 @@ function useAssetSource(
     let cancelled = false;
     let objectURL: string | null = null;
     const fail = (error: unknown) => {
-      if (!cancelled) setError(error instanceof Error ? error.message : String(error));
+      if (cancelled) return;
+      previewFailed(mode, model ? PreviewFailure.Viewer : PreviewFailure.Read);
+      setError(error instanceof Error ? error.message : String(error));
     };
     const read = (file: string) => window.studio.previewProjectAsset({ project, file });
     if (model && host) {
@@ -156,7 +165,10 @@ function ImageStage({ url, name, source }: { url: string; name: string; source: 
       alt={name}
       draggable={false}
       onLoad={() => source.setReady(true)}
-      onError={() => source.setError(MESSAGE.image)}
+      onError={() => {
+        previewFailed(source.mode, PreviewFailure.Decode);
+        source.setError(MESSAGE.image);
+      }}
       style={style}
       className={`lightbox-media block ${style ? "max-w-none" : "max-h-[calc(100vh-160px)] max-w-[calc(100vw-160px)] object-contain"}`}
     />
@@ -210,7 +222,10 @@ function MediaBody({ source, asset }: { source: Source; asset: ProjectAsset }): 
         src={url}
         className="lightbox-media max-h-[calc(100vh-160px)] max-w-[calc(100vw-160px)]"
         onLoadedMetadata={() => setReady(true)}
-        onError={() => setError(MESSAGE.video)}
+        onError={() => {
+          previewFailed(mode, PreviewFailure.Codec);
+          setError(MESSAGE.video);
+        }}
       />
     );
   if (mode === "audio" && url)
@@ -223,7 +238,10 @@ function MediaBody({ source, asset }: { source: Source; asset: ProjectAsset }): 
           src={url}
           className="w-full"
           onLoadedMetadata={() => setReady(true)}
-          onError={() => setError(MESSAGE.audio)}
+          onError={() => {
+            previewFailed(mode, PreviewFailure.Codec);
+            setError(MESSAGE.audio);
+          }}
         />
       </div>
     );
@@ -265,7 +283,8 @@ function AnimationBar({ source }: { source: Source }): JSX.Element {
   };
   const clipName = animations[Math.max(clip, 0)]?.name ?? "";
   return (
-    <div role="group" aria-label={ASSET_WORDS.animations} className="lightbox-bar">
+    // The clips are named in the person's model, and its buttons say them.
+    <div role="group" aria-label={ASSET_WORDS.animations} data-analytics-mask className="lightbox-bar">
       <button
         type="button"
         aria-label={playing ? t("Pause {clip}", { clip: clipName }) : t("Play {clip}", { clip: clipName })}

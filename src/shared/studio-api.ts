@@ -1,3 +1,4 @@
+import type { AnalyticsConfig } from "./analytics.ts";
 import type {
   PlayControl,
   PlayFeedPage,
@@ -92,7 +93,8 @@ import type { ChatFileLink, ChatFileOpenOutside, ChatFileRef } from "./chat-file
 import type { ReferenceFrame } from "./protocol.ts";
 import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { BootState, SandboxSetupResult } from "./boot.ts";
-import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
+import type { AppAbout, ReadyUpdate, RestartAnswer, UpdateCheckResult } from "./app-update.ts";
+import type { LaunchFacts } from "./app-session.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
 import type { LiveBehindEvent, WebBuildLoad } from "./live-behind.ts";
 import type { FieldRow, RunSharingDeleteResult, RunSharingStatus } from "./run-sharing.ts";
@@ -125,6 +127,13 @@ export interface Bootstrap {
   developer?: boolean;
   /** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
   playWebOrigin?: string;
+  /** Usage analytics this session may offer; null in builds without a key and in launches that never send. */
+  analytics?: AnalyticsConfig | null;
+  /**
+   * How this launch started and how the session before it ended, for usage analytics: only in a
+   * launch that keeps them, and only in its first bootstrap (a reload or Retry gets none).
+   */
+  launch?: LaunchFacts | null;
 }
 
 /** The window-control overlay's background and glyph colours, as `#rrggbb`. */
@@ -321,10 +330,10 @@ export interface StudioApi {
   /** The new version of the app downloaded in the background, or null; `onEvent` announces later ones. */
   readyUpdate(): Promise<ReadyUpdate | null>;
   /**
-   * Quit and relaunch into the downloaded version. Asks first while a run is active; false when
-   * there is nothing to install or the person kept the run going.
+   * Quit and relaunch into the downloaded version. Asks first while a run is active; says why it
+   * did not relaunch: nothing to install, a Relaunch already asking, or the person kept the run going.
    */
-  restartToUpdate(): Promise<boolean>;
+  restartToUpdate(): Promise<RestartAnswer>;
   /** Check for a newer version now (Settings → About, the app menu); a found one also announces itself. */
   checkForUpdates(): Promise<UpdateCheckResult>;
   /** Open the waiting downloadable release's page in the browser; false when none waits. */
@@ -807,7 +816,13 @@ export interface StudioApi {
     /** The person stopped the game (`stopPreview`): Live holds no page until Play. */
     stopped: boolean;
     loadError: string | null;
+    /** What kind of failure `loadError` is (Chromium's, or the game's own build); null while there is none. */
+    loadFailure: import("./preview-contract.ts").LiveLoadFailure | null;
     crashed: boolean;
+    /** Why the page's renderer went away while `crashed`; null while it runs. */
+    gone: import("./preview-contract.ts").PreviewGone | null;
+    /** The page's loop stopped answering and has not answered since. */
+    unresponsive: boolean;
     page: { complete: boolean; resources: number; state: Record<string, unknown> | null } | null;
   }>;
   /** Why the stage cannot show this game's own build; null when the last build was fine. */

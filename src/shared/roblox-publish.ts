@@ -57,6 +57,8 @@ export interface RobloxPublishState {
   name?: string;
   /** The published place's id, for its page on Roblox. */
   placeId?: string;
+  /** The published game's (its universe's) id, for its page in Creator Hub. */
+  universeId?: string;
   attempt?: RobloxPublishAttempt;
 }
 
@@ -69,6 +71,15 @@ export interface RobloxPublishAnswer {
 }
 
 const PLACE_ID = /^\d{1,20}$/;
+
+/**
+ * A published game's overview in Creator Hub, where its owner answers Roblox's content questions,
+ * makes it public and gives it an icon; undefined for anything but a universe id.
+ */
+export function robloxCreatorHubUrl(universeId: string | undefined): string | undefined {
+  if (!universeId || !PLACE_ID.test(universeId)) return undefined;
+  return `https://create.roblox.com/dashboard/creations/experiences/${universeId}/overview`;
+}
 
 /** A published place's page on Roblox; undefined for anything but a place id. */
 export function robloxGameUrl(placeId: string | undefined): string | undefined {

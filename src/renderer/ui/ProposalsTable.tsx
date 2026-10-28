@@ -137,8 +137,9 @@ export function SuggestionReview({
 }: {
   proposals: StagedProposal[];
   busy: boolean;
-  onApply: (indices: number[]) => void;
-  onDiscard: (indices: number[]) => void;
+  /** Apply the ones ticked; `opened` says whether the person opened any suggestion's details first. */
+  onApply: (indices: number[], opened: boolean) => void;
+  onDiscard: (indices: number[], opened: boolean) => void;
 }): JSX.Element {
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -172,6 +173,8 @@ export function SuggestionReview({
           <div
             key={`${proposal.skill}-${proposal.at}-${index}`}
             data-suggestion
+            // A suggestion is the agent's words about the person's builds, in its title, its box and its edit.
+            data-analytics-mask
             className="border-b border-line transition-[background-color] duration-200 motion-reduce:transition-none"
             style={{ background: on ? "color-mix(in srgb, var(--green) 8%, transparent)" : undefined }}
           >
@@ -234,10 +237,18 @@ export function SuggestionReview({
       <footer className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
         <span className="text-chat-sub text-ink-3">{SUGGESTION_WORDS.selected(included.length, proposals.length)}</span>
         <span className="flex items-center gap-1.5">
-          <Button variant="ghost" disabled={busy || included.length === 0} onClick={() => onDiscard(included)}>
+          <Button
+            variant="ghost"
+            disabled={busy || included.length === 0}
+            onClick={() => onDiscard(included, expanded.size > 0)}
+          >
             {SUGGESTION_WORDS.discard}
           </Button>
-          <Button variant="default" disabled={busy || included.length === 0} onClick={() => onApply(included)}>
+          <Button
+            variant="default"
+            disabled={busy || included.length === 0}
+            onClick={() => onApply(included, expanded.size > 0)}
+          >
             {SUGGESTION_WORDS.apply(included.length)}
           </Button>
         </span>

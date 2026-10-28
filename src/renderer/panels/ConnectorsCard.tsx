@@ -13,10 +13,22 @@
  * `connectors/` holds the parts: the form's state and save rules, one connector's entry, and the form.
  */
 import type { JSX, Ref } from "react";
-import { useCallback, useEffect, useImperativeHandle, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
-import type { McpConnectorView, McpToolSummary } from "../../shared/mcp.ts";
+import type { McpConnectorView, McpToolSummary, McpTransport } from "../../shared/mcp.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import {
+  connectorFormClosedProperties,
+  connectorFormOpened,
+  ConnectorFormMode,
+  ConnectorFormOutcome,
+  type ConnectorFormVisit,
+  connectorHealthChanges,
+  connectorPasted,
+  connectorSaveFailed,
+} from "../analytics/plugins-page.ts";
 import { type McpConnectorDraft, type McpDraft, parseMcpInput } from "../../shared/mcp-import.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { Button } from "../ui/Button.tsx";
@@ -43,16 +55,24 @@ export interface ConnectorActions {
   add: () => void;
 }
 
-/** The connectors as the host lists them, re-read whenever the host says they changed. */
+/** The connectors as the host lists them, re-read whenever the host says they changed; health that moved is reported. */
 function useConnectorViews(project: string | null | undefined, setError: (error: string) => void) {
-  const [views, setViews] = useState<McpConnectorView[] | null>(null);
+  const [views, setShown] = useState<McpConnectorView[] | null>(null);
+  const shown = useRef<McpConnectorView[] | null>(null);
+  const setViews = useCallback((list: McpConnectorView[]): void => {
+    const before = shown.current;
+    if (before)
+      for (const change of connectorHealthChanges(before, list)) track(AnalyticsEvent.ConnectorHealthChanged, change);
+    shown.current = list;
+    setShown(list);
+  }, []);
   const refresh = useCallback(async (): Promise<void> => {
     try {
       setViews(await window.studio.mcpList(project ?? null));
     } catch (err) {
       setError(errorMessage(err));
     }
-  }, [project, setError]);
+  }, [project, setError, setViews]);
 
   // One subscription, one first read, both cancelled on unmount: StrictMode mounts this twice.
   useEffect(() => {
@@ -72,7 +92,7 @@ function useConnectorViews(project: string | null | undefined, setError: (error:
       disposed = true;
       off();
     };
-  }, [refresh, project, setError]);
+  }, [refresh, project, setError, setViews]);
   return { views, refresh };
 }
 
@@ -94,7 +114,8 @@ function ImportChoices({
 }): JSX.Element | null {
   if (!imports.length) return null;
   return (
-    <div className="flex flex-col gap-2" aria-label={t("Imported connectors")}>
+    // The servers a pasted snippet named, by the person's names for them.
+    <div className="flex flex-col gap-2" data-analytics-mask aria-label={t("Imported connectors")}>
       <p className="text-sm text-ink-3">
         {t("Choose a connector to review and connect. Existing configurations stay unchanged.")}
       </p>
@@ -229,8 +250,36 @@ function CardNotices({
 /** A paste box that has read nothing yet. */
 const NO_PASTE: PasteState = { filled: false, warnings: [], choices: [] };
 
+/**
+ * One opening of the form, for usage analytics: opened as Add or Edit, what was pasted, saves that
+ * failed, and how it closed.
+ */
+function useFormReport(error: string) {
+  const visit = useRef<ConnectorFormVisit | null>(null);
+  const problem = useRef(error);
+  problem.current = error;
+  const change = (next: (current: ConnectorFormVisit) => ConnectorFormVisit): void => {
+    if (visit.current) visit.current = next(visit.current);
+  };
+  return {
+    opened: (mode: ConnectorFormMode): void => {
+      visit.current = connectorFormOpened(mode);
+    },
+    pasted: (drafts: number, warnings: number): void => change((v) => connectorPasted(v, drafts, warnings)),
+    saveFailed: (cause: unknown): void => change((v) => connectorSaveFailed(v, cause)),
+    closed: (outcome: ConnectorFormOutcome, transport: McpTransport): void => {
+      const ended = visit.current;
+      visit.current = null;
+      if (!ended) return;
+      const closed = { outcome, transport, problemShown: Boolean(problem.current) };
+      track(AnalyticsEvent.ConnectorFormClosed, connectorFormClosedProperties(ended, closed));
+    },
+  };
+}
+type FormReport = ReturnType<typeof useFormReport>;
+
 /** The form's state: the draft, the server's tools, and what a paste filled in or held. */
-function useConnectorDraft() {
+function useConnectorDraft(report: FormReport) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [tools, setTools] = useState<McpToolSummary[]>([]);
   const [paste, setPaste] = useState<{ filled: boolean; warnings: string[] }>(NO_PASTE);
@@ -247,6 +296,7 @@ function useConnectorDraft() {
   };
   const readPaste = (text: string): void => {
     const parsed = parseMcpInput(text);
+    report.pasted(parsed.drafts.length, parsed.warnings.length);
     setPaste({ filled: false, warnings: parsed.warnings });
     setImports(parsed.drafts.length > 1 ? parsed.drafts : []);
     const only = parsed.drafts.length === 1 ? parsed.drafts[0] : undefined;
@@ -284,8 +334,10 @@ function useFormOpener(
   ref: Ref<ConnectorActions> | undefined,
   d: ReturnType<typeof useConnectorDraft>,
   setError: (error: string) => void,
+  report: FormReport,
 ) {
   const addConnector = () => {
+    report.opened(ConnectorFormMode.Add);
     setError("");
     d.clearPaste();
     d.setTools([]);
@@ -299,7 +351,9 @@ function editConnector(
   view: McpConnectorView,
   d: ReturnType<typeof useConnectorDraft>,
   setError: (error: string) => void,
+  report: FormReport,
 ): void {
+  report.opened(ConnectorFormMode.Edit);
   d.setDraft(draftFrom(view));
   d.setTools([]);
   setError("");
@@ -340,11 +394,18 @@ async function saveDraft(
   d: ReturnType<typeof useConnectorDraft>,
   act: EntryActions["act"],
   project: string | null | undefined,
+  report: FormReport,
 ): Promise<void> {
   const connector = connectorToSave(draft, taken);
   const secrets = secretsToSave(draft);
   await act(async () => {
-    const saved = await window.studio.mcpSave(connector, Object.keys(secrets).length ? secrets : undefined);
+    const saved = await window.studio
+      .mcpSave(connector, Object.keys(secrets).length ? secrets : undefined)
+      .catch((cause: unknown) => {
+        report.saveFailed(cause);
+        throw cause;
+      });
+    report.closed(ConnectorFormOutcome.Saved, connector.transport);
     d.close();
     if (saved.connector.enabled && !saved.pending) {
       // Connection/authentication progress belongs to the live host view. OAuth can
@@ -363,6 +424,7 @@ function CardDialog({
   setError,
   busy,
   act,
+  report,
 }: {
   d: ReturnType<typeof useConnectorDraft>;
   views: McpConnectorView[] | null;
@@ -371,6 +433,7 @@ function CardDialog({
   setError: (error: string) => void;
   busy: boolean;
   act: EntryActions["act"];
+  report: FormReport;
 }): JSX.Element | null {
   const { draft } = d;
   if (!draft) return null;
@@ -397,8 +460,9 @@ function CardDialog({
       onToolAutoApproved={(name, approved) =>
         d.patch({ toolPolicy: withToolAutoApproved(draft.connector.toolPolicy, name, approved) })
       }
-      onSave={() => void saveDraft(draft, taken, d, act, project)}
+      onSave={() => void saveDraft(draft, taken, d, act, project, report)}
       onCancel={() => {
+        report.closed(ConnectorFormOutcome.Abandoned, draft.connector.transport);
         d.close();
         setError("");
       }}
@@ -422,11 +486,12 @@ export function ConnectorsCard({
 }): JSX.Element {
   const [error, setError] = useState("");
   const { views, refresh } = useConnectorViews(project, setError);
-  const d = useConnectorDraft();
+  const report = useFormReport(error);
+  const d = useConnectorDraft(report);
   const { busy, act } = useConnectorAct(refresh, setError);
   const [tested, setTested] = useState<Record<string, string>>({});
-  const addConnector = useFormOpener(ref, d, setError);
-  const edit = (view: McpConnectorView): void => editConnector(view, d, setError);
+  const addConnector = useFormOpener(ref, d, setError, report);
+  const edit = (view: McpConnectorView): void => editConnector(view, d, setError, report);
   const ownCount = (views ?? []).filter((view) => !isPluginServer(view)).length;
   const actions: EntryActions = { busy, act, project, tested, setTested, onEdit: edit, onOpenPlugin };
 
@@ -450,7 +515,16 @@ export function ConnectorsCard({
         onDismiss={() => d.setImports([])}
       />
       <ConnectorList views={views} query={query} actions={actions} pluginName={pluginName} />
-      <CardDialog d={d} views={views} project={project} error={error} setError={setError} busy={busy} act={act} />
+      <CardDialog
+        d={d}
+        views={views}
+        project={project}
+        error={error}
+        setError={setError}
+        busy={busy}
+        act={act}
+        report={report}
+      />
     </section>
   );
 }

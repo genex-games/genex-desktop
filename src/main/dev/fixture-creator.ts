@@ -1,7 +1,8 @@
 /**
  * A fixture account's numbers: its stats for a period (a believable week of plays for the full
  * account; honest zeros, or a game two days old, for the quiet and fresh ones), Play's Top creators
- * from the fixture catalog, and the Credits tab's balance, plan, prices and recent spends. Made in
+ * from the fixture catalog, and the Credits tab's balance (`STUDIO_FIXTURE_CREDITS=low|zero|unlimited`
+ * names another), plan, prices and recent spends. Made in
  * the API's shapes, deterministic for a day, so the strip, the stats page, the row and the tab can be
  * checked with no socket.
  */
@@ -32,7 +33,23 @@ const LANES = [
   ["music", 27],
   ["voice", 2],
   ["character", 64],
+  ["character_preview", 41],
+  ["character_finalize", 29],
 ] as const;
+
+/** The balances a launch may name with `STUDIO_FIXTURE_CREDITS`; anything else is the full balance. */
+const FixtureCredits = { Low: "low", Zero: "zero", Unlimited: "unlimited" } as const;
+/** The fixture account's balance, and the few credits of a low one: less than a 3D model costs. */
+const FULL_BALANCE = 1240;
+const LOW_BALANCE = 18;
+
+/** The fixture account's balance as `/api/credits/me` answers it, by `STUDIO_FIXTURE_CREDITS`. */
+function fixtureBalance(): { balance: number; reserved: number; spendable: number; unlimited: boolean } {
+  const named = process.env.STUDIO_FIXTURE_CREDITS;
+  if (named === FixtureCredits.Unlimited) return { balance: 0, reserved: 0, spendable: 0, unlimited: true };
+  const left = { [FixtureCredits.Low]: LOW_BALANCE, [FixtureCredits.Zero]: 0 }[named ?? ""] ?? FULL_BALANCE;
+  return { balance: left, reserved: 0, spendable: left, unlimited: false };
+}
 
 const ok = (body: unknown): GalleryAnswer => ({ status: 200, body });
 const SIGNED_OUT: GalleryAnswer = { status: 401, body: null };
@@ -124,7 +141,7 @@ function nextMonth(): string {
 
 /** The Credits tab's reads for the fixture account. */
 function credits(pathname: string): GalleryAnswer | null {
-  if (pathname === CreditsRoute.Me) return ok({ balance: 1240, reserved: 0, spendable: 1240, unlimited: false });
+  if (pathname === CreditsRoute.Me) return ok(fixtureBalance());
   if (pathname === CreditsRoute.Plan)
     return ok({ member: true, plan: { name: "Pro" }, status: "active", allowance: 2000, resetsAt: nextMonth() });
   if (pathname === CreditsRoute.Ledger) {

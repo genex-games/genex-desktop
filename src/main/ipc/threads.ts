@@ -4,8 +4,11 @@ import { MentionRetry, readMentionRefs } from "../../shared/prompt-mention.ts";
 import type { SmokeReadGates } from "../smoke/read-gates.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
-import { errorMessage } from "../../shared/errors.ts";
+import { CodedError, errorCodeIn, errorMessage } from "../../shared/errors.ts";
+import { SendFailure } from "../../shared/composer.ts";
 import type { EngineBoot } from "../engine-boot.ts";
+import type { AnalyticsConfig } from "../../shared/analytics.ts";
+import type { LaunchFacts } from "../../shared/app-session.ts";
 
 /** Why a thread read (or a tag's retry) from the renderer is refused. */
 const MESSAGE = {
@@ -33,6 +36,10 @@ export interface ThreadsIpcDeps {
   developer: boolean;
   /** The website Play links to (`play/origins.ts`). */
   playWeb: string;
+  /** Usage analytics the renderer may offer (`shared/analytics.ts`); the person still decides. */
+  analytics: AnalyticsConfig | null;
+  /** How this launch started and the session before it ended: answered once, then null (`session-marker.ts`). */
+  launchFacts?(): Promise<LaunchFacts | null>;
 }
 
 /** A sent message's failed @ tag tried again or taken off: the renderer names the tag, main re-checks it as a send does. */
@@ -47,19 +54,20 @@ export function registerMentionRetry(handle: IpcHandle, core: StudioCore): void 
   });
 }
 
-export function registerThreadsIpc(
+/** The bootstrap: everything a window (or a reload) opens on, read in one go. */
+function registerBootstrap(
   handle: IpcHandle,
   {
     core,
     engines: engineList,
     gamesRootLabel,
     threadStatus,
-    pushUiEvent,
-    appendErrorDurably,
     smokeReads,
     welcome,
     developer,
     playWeb,
+    analytics,
+    launchFacts,
   }: ThreadsIpcDeps,
 ): void {
   handle("studio:bootstrap", async () => {
@@ -78,6 +86,8 @@ export function registerThreadsIpc(
       core.games.list(),
       engineList.bootstrap(),
     ]);
+    // Taken last, once the reads it rides with have answered: a bootstrap that fails hands none.
+    const launch = launchFacts ? await launchFacts() : null;
     return {
       threadId: core.mainThread,
       layout: core.layout,
@@ -93,8 +103,15 @@ export function registerThreadsIpc(
       welcome,
       developer,
       playWebOrigin: playWeb,
+      analytics,
+      launch,
     };
   });
+}
+
+export function registerThreadsIpc(handle: IpcHandle, deps: ThreadsIpcDeps): void {
+  const { core, pushUiEvent, appendErrorDurably, smokeReads } = deps;
+  registerBootstrap(handle, deps);
 
   handle("studio:send", async (payload) => {
     try {
@@ -104,9 +121,13 @@ export function registerThreadsIpc(
       // The composer already cleared the draft, and the renderer's send is fire-and-forget —
       // a swallowed rejection here would leave no trace of the ask ever failing.
       const message = String(errorMessage(err));
+      const failure = errorCodeIn(SendFailure, err) ?? SendFailure.Other;
       await appendErrorDurably(payload.thread, `The message could not be sent: ${message}`);
-      pushUiEvent({ type: UiEvent.ChatError, payload: { threadId: payload.thread ?? core.mainThread, message } });
-      throw err;
+      pushUiEvent({
+        type: UiEvent.ChatError,
+        payload: { threadId: payload.thread ?? core.mainThread, message, failure },
+      });
+      throw new CodedError(failure, message);
     }
     return true;
   });

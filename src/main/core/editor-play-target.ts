@@ -255,16 +255,23 @@ export function editorPlaySource(options: {
   const players = caps.players ?? 1;
   let open: EditorPlayTarget | null = null;
   let afterOpen = options.afterOpen;
+  // A play that ended under the session (the person stopped it, or it finished) is let go, so the
+  // next load opens a fresh one instead of every call answering that none runs.
+  const call: EnginePlayCall = async (tool, args) => {
+    const answer = await options.call(tool, args);
+    if (isEnginePlayRefused(answer) && answer.refused === EnginePlayRefusal.NotPlaying) open = null;
+    return answer;
+  };
   const load = async (_root: string, force: boolean): Promise<TargetLoad<EditorPlayTarget> & { fresh: boolean }> => {
     if (open && !force) return { target: open, problem: null, note: null, fresh: false };
     try {
       const asked = { ...(players > 1 ? { players } : {}), ...(options.fresh ? { fresh: true } : {}) };
-      const opened = await answered(options.call, EnginePlayTool.Open, asked);
+      const opened = await answered(call, EnginePlayTool.Open, asked);
       const view = { width: sizeOf(opened, "width"), height: sizeOf(opened, "height") };
       // The play's own word on what it can do, and how many players joined: it only ever narrows.
       const joined = { players: field(opened, "players") };
       const played = narrowCapabilities(narrowCapabilities(caps, field(opened, "capabilities")), joined);
-      open = editorPlayTarget(options.call, view, played);
+      open = editorPlayTarget(call, view, played);
       const after = afterOpen;
       afterOpen = undefined;
       await after?.(opened);

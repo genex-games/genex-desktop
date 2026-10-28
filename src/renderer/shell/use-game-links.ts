@@ -6,6 +6,7 @@
 import { useEffect } from "react";
 import type { StudioApi } from "../../shared/studio-api.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { PlayModeVia } from "../analytics/workspace-vocabulary.ts";
 import type { Studio } from "../state/studio.ts";
 
 /** Open the game a link waits on now, and each one main announces; answers the unsubscribe. */
@@ -28,11 +29,11 @@ export function followGameLinks(
 }
 
 /** Open each linked game's page in Play once the shell is `ready`. */
-export function useGameLinks(app: Studio, ready: boolean, openPlay: (play: boolean) => void): void {
+export function useGameLinks(app: Studio, ready: boolean, openPlay: (play: boolean, via?: PlayModeVia) => void): void {
   useEffect(() => {
     if (!ready) return undefined;
     return followGameLinks(window.studio, (slug) => {
-      openPlay(true);
+      openPlay(true, PlayModeVia.GameLink);
       app.play.showGame(slug);
     });
   }, [app, ready, openPlay]);

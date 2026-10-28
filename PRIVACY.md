@@ -215,8 +215,32 @@ deletion are governed by the service, not by deletion of the desktop profile.
 
 ## Analytics and shared build metrics
 
-Apart from a downloaded game's play report (see Play), Studio itself sends no usage analytics,
-session recordings or crash reports.
+Apart from a downloaded game's play report (see Play) and the two consents below, Studio sends
+no usage analytics, session recordings or crash reports.
+
+**Share usage data** is asked once, before anything is sent: over the first launch's welcome,
+or at the first launch of a version that has it. **Don't share** and **Share** weigh the same;
+the answer can change at any time in Settings → Privacy, and a later version that collects
+more asks again. Only after Share does the app send, to PostHog in the EU, which screen you
+are on (as `/game/live`, `/settings/privacy` and the like), clicks without their text or
+attributes, heatmaps, and events that describe what happened as codes, switches, counts,
+size buckets and durations: a provider connected or failed, a game made, a message sent, a
+question or permission waiting and how long, a build finished, a game shown in Live, why
+something was refused (as a code, never its message), and how the last session ended (quit,
+updated, or closed unexpectedly, with counts of crashed pages and hangs). For that last one, a
+build that can share keeps a small file of those counts and codes in Genex's data folder; it
+leaves this computer only after Share. Events
+carry the app version, platform, language, the ready engines and whether a Genex account is
+signed in (never which), under a random id kept on this computer; they are never linked to a
+Genex account, and turning sharing off ends the id, so a later yes starts a new one.
+
+One new install in five, drawn once at its first launch, also records a **replay of its first
+week**: the app's window as a page of shapes, with the words of its own buttons and menus
+shown and every other text, typed input, picture, canvas, terminal, file view and game hidden.
+Other installs, and any profile that existed before, never record one and are not asked about
+it. Analytics never carries prompts, chats, answers, code, files, file or game names, paths,
+accounts, models you typed, server addresses or error messages, and its last step rewrites any
+local path it finds. Developer, test and eval launches never send.
 
 **Share build metrics** (Settings → Privacy) is off by default and is a consent of its own.
 When it is on, each finished build becomes one row of anonymous numbers sent to the Genex API

@@ -13,6 +13,7 @@ import {
   addCppModule,
   CppModuleError,
   CppModuleErrorCode,
+  editorTarget,
   GAME_LIBRARY,
   hotLibraryLoaded,
   isModuleName,
@@ -587,6 +588,81 @@ async function writeModules(project: Planted, text: string) {
   await mkdir(path.join(project.dir, "Binaries", "Mac"), { recursive: true });
   await writeFile(path.join(project.dir, "Binaries", "Mac", "UnrealEditor.modules"), text);
 }
+
+describe("the project's editor target", () => {
+  /** A target file whose class is `<name>Target` of `type`, as Unreal writes one. */
+  const targetFile = (name: string, type: "Game" | "Editor") =>
+    UNREAL_EDITOR_TARGET.replaceAll("GxCppEditorTarget", `${name}Target`).replace(
+      "TargetType.Editor",
+      `TargetType.${type}`,
+    );
+
+  /** A C++ project named `project` whose Source holds `targets` (file name to its text). */
+  async function withTargets(project: string, targets: Record<string, string>) {
+    const { dir, file } = await blueprintProject(project);
+    await mkdir(path.join(dir, "Source", "GxCpp"), { recursive: true });
+    for (const [name, text] of Object.entries(targets)) await writeFile(path.join(dir, "Source", name), text);
+    return { dir, file };
+  }
+
+  it("is <Module>Editor when the project has it, as Unreal makes a C++ project", async () => {
+    const { file } = await withTargets("GxCpp", {
+      "GxCpp.Target.cs": UNREAL_GAME_TARGET,
+      "GxCppEditor.Target.cs": UNREAL_EDITOR_TARGET,
+    });
+    assert.equal(await editorTarget(file, "GxCpp"), "GxCppEditor");
+  });
+
+  it("is the project's own editor target when it was renamed away from the module's name", async () => {
+    const { file } = await withTargets("Bodycam", {
+      "Bodycam.Target.cs": targetFile("Bodycam", "Game"),
+      "BodycamEditor.Target.cs": targetFile("BodycamEditor", "Editor"),
+    });
+    assert.equal(await editorTarget(file, "GxCpp"), "BodycamEditor");
+  });
+
+  it("prefers the project's name among several editor targets, then the first by name", async () => {
+    const both = await withTargets("Bodycam", {
+      "AlphaEditor.Target.cs": targetFile("AlphaEditor", "Editor"),
+      "BodycamEditor.Target.cs": targetFile("BodycamEditor", "Editor"),
+    });
+    assert.equal(await editorTarget(both.file, "GxCpp"), "BodycamEditor");
+    const neither = await withTargets("Bodycam", {
+      "ZuluEditor.Target.cs": targetFile("ZuluEditor", "Editor"),
+      "AlphaEditor.Target.cs": targetFile("AlphaEditor", "Editor"),
+    });
+    assert.equal(await editorTarget(neither.file, "GxCpp"), "AlphaEditor");
+  });
+
+  it("never takes a game target, a link, a folder or a name UBT can't build for the editor", async () => {
+    const { dir, file } = await withTargets("Bodycam", {
+      "BodycamEditor.Target.cs": targetFile("BodycamEditor", "Game"),
+      "Not-A-Name.Target.cs": targetFile("NotAName", "Editor"),
+    });
+    const elsewhere = path.join(dir, "elsewhere.cs");
+    await writeFile(elsewhere, targetFile("LinkedEditor", "Editor"));
+    await symlink(elsewhere, path.join(dir, "Source", "LinkedEditor.Target.cs"));
+    await mkdir(path.join(dir, "Source", "FolderEditor.Target.cs"));
+    const before = await snapshot(dir);
+    assert.equal(await editorTarget(file, "GxCpp"), "GxCppEditor");
+    assert.deepEqual(await snapshot(dir), before, "reading the targets changes nothing");
+  });
+
+  it("reads nothing through a linked Source folder", async () => {
+    const outside = await withTargets("Elsewhere", {
+      "ElsewhereEditor.Target.cs": targetFile("ElsewhereEditor", "Editor"),
+    });
+    const { dir, file } = await blueprintProject("Elsewhere");
+    await symlink(path.join(outside.dir, "Source"), path.join(dir, "Source"));
+    assert.equal(await editorTarget(file, "GxCpp"), "GxCppEditor");
+  });
+
+  it("is <Module>Editor when the project's Source can't be read, so UBT says what is missing", async () => {
+    const { file } = await blueprintProject("GxCpp");
+    assert.equal(await editorTarget(file, "GxCpp"), "GxCppEditor");
+    assert.equal(await editorTarget("/nowhere/GxCpp.uproject", "GxCpp"), "GxCppEditor");
+  });
+});
 
 describe("a hot-reloaded library of the game's module", () => {
   it("is loaded when the project's UnrealEditor.modules names the module's library with a hot reload's suffix", async () => {

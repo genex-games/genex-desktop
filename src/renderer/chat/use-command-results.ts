@@ -11,6 +11,9 @@ import { studio } from "../state/studio.ts";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import { commandResultWords } from "../words.ts";
 import { MessageOrigin } from "../../shared/protocol.ts";
+import { commandState } from "../state/command-runs.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 export function useCommandResults(
   threadId: string | null,
@@ -37,11 +40,14 @@ export function useCommandResults(
           ),
         true,
       );
-      for (const { run, session } of ended)
-        if (reportsResult(session))
+      for (const { run, session } of ended) {
+        const reported = reportsResult(session);
+        track(AnalyticsEvent.ChatCommandRun, { state: commandState(session), reported });
+        if (reported)
           void send
             .current(commandResultWords(run.command, session), MessageOrigin.CommandResult)
             .catch(notifyProblem(notice.current));
+      }
     };
     report();
     return store.subscribe(report);

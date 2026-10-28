@@ -17,7 +17,7 @@ import { tmpDir } from "../helpers/tmp.ts";
 const { copyVcRuntime, crtFolder, missingVcRuntime, peImage } = vcRuntime;
 
 const SRT_WIN = "node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win";
-/** srt-win.exe's imports, as sandbox-runtime 0.0.73 links it (a shortened list). */
+/** srt-win.exe's imports, as sandbox-runtime 0.0.81 links it (a shortened list). */
 const SRT_WIN_IMPORTS = ["kernel32.dll", "advapi32.dll", "VCRUNTIME140.dll", "api-ms-win-crt-runtime-l1-1-0.dll"];
 
 async function put(root: string, file: string, bytes: Buffer | string = ""): Promise<void> {

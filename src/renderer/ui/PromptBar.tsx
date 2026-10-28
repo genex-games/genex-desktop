@@ -56,6 +56,11 @@ import {
   storedChatLoop,
 } from "../loop-setting.ts";
 import { parseModelKey } from "../model-key.ts";
+import { chatMemory, noteComposed } from "../analytics/chat-memory.ts";
+import { hoursBucket, sendBlockedProperties, stopRequestedProperties } from "../analytics/chat-properties.ts";
+import { ComposerRoom, LoopVia, PlanModeVia, SendBlock, StopIgnored, StopVia } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 import {
   atomicBackspaceRange,
   splitMentions,
@@ -176,12 +181,14 @@ function useLoopSettings(props: PromptBarProps) {
   }, [conversationKey, coordinating]);
   const build = props.build ?? (coordinating ? RUNNING_BUILD : null);
   const view = composerLoopView({ own: setting, build, loopAvailable: props.loopAvailable });
-  const chooseLoop = (next: LoopSetting): void => {
+  const chooseLoop = (next: LoopSetting, via: LoopVia = LoopVia.ModeMenu): void => {
     setPick({ thread: conversationKey, setting: next });
     rememberChatLoop(browserStorage(), conversationKey, next);
+    track(AnalyticsEvent.LoopModeChanged, { on: next.on, hours_bucket: hoursBucket(next), via });
   };
-  // As Mode is: a build that owns the chat keeps its own plan, so its follow-ups get no review.
-  const planAvailable = view.editable && !coordinating;
+  // As Mode is: a build that owns the chat keeps its own plan, so its follow-ups get no review; nor
+  // do a paused build's, whose Loop is kept for later.
+  const planAvailable = view.editable && view.forLater !== true && !coordinating;
   // What the bulb, Add's row and the box show: plan review that this chat's next send will carry.
   const planOn = reviewPlan && planAvailable;
   return { setting, view, chooseLoop, reviewPlan, setReviewPlan, planAvailable, planOn, gate: props.loopGate };
@@ -376,7 +383,14 @@ function useBoardFrames(conversationKey: string | undefined) {
         overFiles: attached.overLimit,
         unlinked: read.unlinked,
       };
-      setLeftOut(leftOutLine(left) ? left : null);
+      const leftOut = leftOutLine(left) !== null;
+      setLeftOut(leftOut ? left : null);
+      if (leftOut)
+        track(AnalyticsEvent.ComposerAttachmentsRejected, {
+          over_pictures: left.overPictures,
+          over_files: left.overFiles,
+          unlinked: left.unlinked.length,
+        });
       now.current = { frames: board.frames, files: attached.files };
       setFrames(board.frames);
       setFiles(attached.files);
@@ -466,7 +480,7 @@ function FrameBoard({
       aria-label={gameMode ? t("Mood board") : t("Attached images")}
     >
       {frames.map((frame, index) => (
-        <div key={`${frame.label}-${index}`} className="group relative">
+        <div key={`${frame.label}-${index}`} data-analytics-mask className="group relative">
           <img
             src={`data:${frame.mimeType};base64,${frame.data}`}
             alt={frame.label}
@@ -497,6 +511,7 @@ function ReplyAboutTag({ about }: { about: ReplyAboutChip }): JSX.Element {
     <div className="flex min-w-0 px-1 pt-1 pb-0.5">
       <span
         data-reply-about
+        data-analytics-mask
         className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-[9px] bg-inset pr-1 pl-2 text-body-sm text-ink-2"
         title={t("Your next message goes to the build as a note about {about}", { about: about.label })}
       >
@@ -520,11 +535,14 @@ function SendControl({
   action,
   onSend,
   onStop,
+  onStopIgnored,
   ignoreStopUntil,
 }: {
   action: SendAction;
   onSend: () => void;
   onStop: () => void;
+  /** A Stop press the pad after Send swallowed. */
+  onStopIgnored?: () => void;
   ignoreStopUntil: RefObject<number>;
 }): JSX.Element {
   const stopping = action === SendAction.Stop;
@@ -558,7 +576,10 @@ function SendControl({
           event.stopPropagation();
           // The send control morphs into Stop on the same click; the pad keeps that click from
           // cancelling the turn it just started.
-          if (Date.now() < ignoreStopUntil.current) return;
+          if (Date.now() < ignoreStopUntil.current) {
+            onStopIgnored?.();
+            return;
+          }
           onStop();
         }}
         onKeyDown={(event) => {
@@ -625,6 +646,14 @@ interface PromptBarProps {
   /** Composer stays usable, but Enter/send starts sign-in instead of a turn. */
   blockSend?: boolean;
   onBlockedSend?: () => void;
+  /** Where this composer sits, as usage analytics names it (a dead Send says where). */
+  room?: ComposerRoom;
+}
+
+/** A Stop press the send pad swallowed, right after Send. */
+function trackPaddedStop(thread: string | undefined, buildRunning: boolean): void {
+  const stop = { thread, via: StopVia.Button, ignored: StopIgnored.SendPad, buildRunning };
+  track(AnalyticsEvent.ChatStopRequested, stopRequestedProperties(chatMemory, stop, Date.now()));
 }
 
 /** The draft: the chat's own when it controls it, else the composer's. */
@@ -663,6 +692,8 @@ function useComposerSend(
   const send = (): void => {
     if (writable && noModel) {
       modelNudge.nudge();
+      const blocked = { reason: SendBlock.NoModel, room: props.room ?? ComposerRoom.Other, key: null };
+      track(AnalyticsEvent.MessageSendBlocked, sendBlockedProperties(chatMemory, blocked));
       return;
     }
     if (props.blockSend) {
@@ -692,6 +723,7 @@ function useComposerSend(
       ...(tags.length ? { mentions: tags } : {}),
     };
     loop.setReviewPlan(false);
+    noteComposed(chatMemory, props.conversationKey, sent.files.length);
     void Promise.resolve(props.onSend(text, Object.keys(extras).length ? extras : undefined)).catch(() => {
       if (extras.reviewPlan) loop.setReviewPlan(true);
       if (!inputRef.current?.value) setDraft(words);
@@ -768,7 +800,7 @@ function PaintedDraft({
   mirrorRef: RefObject<HTMLDivElement | null>;
 }): JSX.Element {
   return (
-    <div ref={mirrorRef} aria-hidden className={`${PROMPT_INPUT_CLASS} composer-input-paint`}>
+    <div ref={mirrorRef} aria-hidden data-analytics-mask className={`${PROMPT_INPUT_CLASS} composer-input-paint`}>
       {runs.map((run, index) =>
         run.handle ? (
           // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the draft.
@@ -1043,6 +1075,7 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
               action={composer.action}
               onSend={composer.send}
               onStop={() => props.onStop?.()}
+              onStopIgnored={() => trackPaddedStop(props.conversationKey, props.coordinating === true)}
               ignoreStopUntil={composer.ignoreStopUntil}
             />
           }
@@ -1092,7 +1125,7 @@ function usePromptHandle(
         const { loop, gameMode } = loopNow.current;
         const on = { on: true, hours: loop.setting.hours };
         const turnsOn = gameMode && loop.view.editable && !loop.view.loopUnavailable;
-        if (turnsOn) loop.chooseLoop(on);
+        if (turnsOn) loop.chooseLoop(on, LoopVia.KeepBuilding);
         const view = turnsOn ? { ...loop.view, shown: on } : loop.view;
         return composerExtras({ gameMode, view, reviewPlan: false, frames: [] });
       },
@@ -1173,7 +1206,15 @@ function ComposerToolbar(props: ComposerToolbarProps): JSX.Element {
           disabled={props.disabled}
         />
       )}
-      {gameMode && loop.planOn && <PlanModeOff onOff={() => loop.setReviewPlan(false)} disabled={props.disabled} />}
+      {gameMode && loop.planOn && (
+        <PlanModeOff
+          onOff={() => {
+            track(AnalyticsEvent.PlanModeToggled, { on: false, via: PlanModeVia.BulbOff });
+            loop.setReviewPlan(false);
+          }}
+          disabled={props.disabled}
+        />
+      )}
       {/* The flexible space: its margin takes back its own gap, so at no width it costs the name nothing. */}
       <div className="-ms-1 min-w-0 flex-1" />
       <ModelControls {...props} />
@@ -1201,7 +1242,14 @@ function AttachControl({
         project={project}
         anchor={panelRef}
         disabled={disabled}
-        plan={{ on: loop.planOn, available: loop.planAvailable, onChange: loop.setReviewPlan }}
+        plan={{
+          on: loop.planOn,
+          available: loop.planAvailable,
+          onChange: (on) => {
+            track(AnalyticsEvent.PlanModeToggled, { on, via: PlanModeVia.AddMenu });
+            loop.setReviewPlan(on);
+          },
+        }}
         onReferences={onPickImages}
         mention={mentions.mention?.query ?? null}
         listId={mentions.mentionListId}

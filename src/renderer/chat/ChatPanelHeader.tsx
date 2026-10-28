@@ -1,4 +1,6 @@
 import type { JSX } from "react";
+import { trackGameManaged } from "../analytics/workspace-track.ts";
+import { ActionOutcome, GameAction, ManageVia } from "../analytics/workspace-vocabulary.ts";
 import { ChatHeader } from "../panels/ChatHeader.tsx";
 import type { ChatExport } from "./use-chat-export.ts";
 import { useGameStorage } from "./use-game-storage.ts";
@@ -16,6 +18,11 @@ export function ChatPanelHeader({
 }: ChatParts & { chatExport: ChatExport }): JSX.Element {
   const { project, threadId } = chat;
   const storage = useGameStorage(project, chat.working, props.onNotice);
+  const reveal = (name: string): void => {
+    const game = props.games.find((known) => known.name === name) ?? null;
+    trackGameManaged(GameAction.Revealed, ManageVia.ChatHeader, ActionOutcome.Ok, game);
+    void window.studio.revealProject(name);
+  };
   return (
     <ChatHeader
       key={threadId}
@@ -36,7 +43,7 @@ export function ChatPanelHeader({
         if (project && props.onRenameGame) props.onRenameGame(project, title);
         else if (threadId) props.onRename(threadId, title);
       }}
-      onReveal={project ? () => void window.studio.revealProject(project) : undefined}
+      onReveal={project ? () => reveal(project) : undefined}
     />
   );
 }

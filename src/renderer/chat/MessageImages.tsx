@@ -101,7 +101,11 @@ export function MessageImages({
   const shown = frames ?? images ?? Array.from({ length: Math.min(count, 12) }, () => null);
   if (!shown.length) return null;
   return (
-    <div data-message-images className={`flex flex-wrap justify-end gap-1.5 ${placed ? "" : "ms-auto max-w-[88%]"}`}>
+    <div
+      data-message-images
+      data-analytics-mask
+      className={`flex flex-wrap justify-end gap-1.5 ${placed ? "" : "ms-auto max-w-[88%]"}`}
+    >
       {shown.map((image, index) =>
         image ? (
           <button

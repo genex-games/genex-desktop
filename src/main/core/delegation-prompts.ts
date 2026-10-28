@@ -3,12 +3,15 @@ import { sizeWordsInEnglish } from "../../shared/byte-size.ts";
 import { CallCutOff, PluginAccountState, type PluginAppliedSet } from "../../shared/plugins.ts";
 import type { CutOffCall } from "./cut-off-calls.ts";
 import type { UnsavedFile } from "./unsaved-files.ts";
+import type { SilentConnector } from "../../substrate/mcp/registry.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { type JobRecord, JobState, JobStopper } from "../../shared/jobs.ts";
 
 /** How long a plugin's name and its description may run in a brief before each is cut at a word. */
 const PLUGIN_NAME_CHARS = 80;
 const PLUGIN_DESCRIPTION_CHARS = 200;
+/** The most of a silent connector's error a notice repeats. */
+const SILENT_WHY_CHARS = 200;
 
 /** A skill's plugin: its `<plugin>/<skill>` name up to the slash. */
 const skillPlugin = (skill: string): string => skill.split("/")[0] ?? skill;
@@ -82,6 +85,26 @@ export function withdrawnNotice(withdrawn: PluginAppliedSet): string {
     outOfProject.length ? MESSAGE.withdrawnOutOfProject(outOfProject) : "",
   ].filter(Boolean);
   return `Studio notice: since this session last ran, ${parts.join(" Also, ")}`;
+}
+
+/** A connector that gave a session no tools, as the studio's log says it. */
+export function silentConnectorLog(connector: SilentConnector): string {
+  return `connector ${connector.name} gave no tools: ${connector.why ?? "it listed none"}`;
+}
+
+/**
+ * A notice per connector that gave this session no tools: its plugin's guidance may still name
+ * them, so the agent is told they are missing this turn and not to look for them.
+ */
+export function silentConnectorsNotice(silent: readonly SilentConnector[]): string {
+  return silent
+    .map((connector) => {
+      const what = connector.why
+        ? `did not answer this turn (${oneLine(connector.why, SILENT_WHY_CHARS)})`
+        : "answered with no tools this turn";
+      return `Studio notice: the ${connector.name} connection ${what}, so its tools are missing, whatever its guidance below says: don't search for them. If the work needs them, say so; its plugin's own setup tools may bring it back.`;
+    })
+    .join("\n\n");
 }
 
 /** A plugin author's text on one line: each run of whitespace one space, cut at a word past `max` characters. */

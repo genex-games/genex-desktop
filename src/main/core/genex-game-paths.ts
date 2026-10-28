@@ -12,8 +12,15 @@ import { lstat, mkdir, open, readdir, realpath, rename, rm } from "node:fs/promi
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { containedReal, isBelow } from "../../substrate/paths.ts";
-import { type GamePathArg, GamePathTarget, GenexCliRefusal, GenexCliRefusalCode } from "./genex-cli-policy.ts";
+import {
+  type GamePathArg,
+  GamePathTarget,
+  GenexCliRefusal,
+  GenexCliRefusalCode,
+  PICTURE_OPTION,
+} from "./genex-cli-policy.ts";
 import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
+import { fitsItemCard, readPictureSize } from "./item-pictures.ts";
 
 const MIB = 1024 * 1024;
 /** The most files of a package folder Studio copies: Genex refuses an item package with more (D47). */
@@ -62,7 +69,15 @@ export async function resolveGamePath(
     throw refuse(GENEX_CLI_PROMPT.GamePathNotFile(arg.option, arg.path));
   if (arg.target === GamePathTarget.Folder && !stats.isDirectory())
     throw refuse(GENEX_CLI_PROMPT.GamePathNotFolder(arg.option, arg.path));
+  if (arg.option === PICTURE_OPTION) await checkPicture(real, arg.path);
   return real;
+}
+
+/** A store item's picture fills its card: a square PNG or WebP big enough to stay sharp there. */
+async function checkPicture(real: string, given: string): Promise<void> {
+  const size = await readPictureSize(real);
+  if (!size) throw refuse(GENEX_CLI_PROMPT.PictureNotImage(given));
+  if (!fitsItemCard(size)) throw refuse(GENEX_CLI_PROMPT.PictureShape(given, size.width, size.height));
 }
 
 /** Copy one regular file, never through a link put in its place since it was checked. */

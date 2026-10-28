@@ -1,5 +1,5 @@
-import { rendererBuildOptions, rendererBundleReport } from "./renderer-build.mjs";
-import { mainStartupReport } from "./main-build.mjs";
+import { rendererBuildOptions, rendererBundleReport, studioRendererBuild } from "./renderer-build.mjs";
+import { MAIN_CATALOG_DIR, mainCatalogEntries, mainCatalogs, mainStartupReport } from "./main-build.mjs";
 import { buildPlugins, vendorEmbedSdk } from "./build-plugins.mjs";
 import { assertThreeLibsListed, stylesheetPackages, writeBundledNotices } from "./third-party-notices.mjs";
 import { patchSandboxRuntime } from "./patch-sandbox-runtime.mjs";
@@ -16,11 +16,13 @@ import { MAC_GIT_DIR } from "../src/substrate/git-policy.ts";
 import { VENDORED_GIT } from "./package-git.cjs";
 import { vendorTsc } from "./vendor-tsc.ts";
 import { vendorGenexMultiplayer } from "./vendor-genex-multiplayer.ts";
+import { analyticsFromEnv, analyticsOrigins, withAnalyticsCsp } from "../src/shared/analytics.ts";
 /**
  * Build — assembles `dist/` for Electron.
  *
  *   dist/main/main.mjs        Electron's entry: turns on V8's compile cache, imports app.mjs
  *   dist/main/app.mjs         substrate + app shell (ESM, Electron 43 supports ESM main)
+ *   dist/main/locales/*.mjs   main's language catalogs, each read when its language is chosen
  *   dist/preload/preload.cjs  renderer bridge (sandboxed preloads must be CommonJS)
  *   dist/preload/play-mic.cjs Play game view's microphone (the app's mic in a published game's page)
  *   dist/renderer/*           React UI
@@ -57,6 +59,8 @@ if (release && (watch || devId)) throw new Error("Release builds cannot watch or
 // owned build timed for docs/performance.md asks for production React (`STUDIO_REACT=production`):
 // development React times every render and overstates what a packaged app costs.
 const timedBuild = Boolean(devId) && process.env.STUDIO_REACT === "production";
+// Usage analytics ship only in a build made with STUDIO_POSTHOG_KEY; see src/shared/analytics.ts.
+const analytics = analyticsFromEnv(process.env, Boolean(devId));
 // An owned fixture profile's checks read React commit counts (`renderer/performance.tsx`); a timed
 // build's production React has no Profiler to count them.
 if (process.argv.includes("--commit-counts") && !devId) throw new Error("--commit-counts needs --dev-build");
@@ -89,6 +93,7 @@ const shared = {
   define: {
     __STUDIO_REACT__: JSON.stringify(rendererMode.development ? "development" : "production"),
     __STUDIO_DEV_BUILD__: JSON.stringify(devId ? { checkout: fsSync.realpathSync(root), buildId: devId } : null),
+    __STUDIO_ANALYTICS__: JSON.stringify(analytics),
   },
 };
 
@@ -113,6 +118,7 @@ async function nodeContexts() {
       entryPoints: [path.join(root, "src/main/index.ts")],
       outfile: path.join(dist, "main/app.mjs"),
       format: "esm",
+      plugins: [mainCatalogs()],
       // ESM output in a CJS-ish host: give bundled deps their expected globals.
       banner: {
         js: [
@@ -124,6 +130,15 @@ async function nodeContexts() {
           "const __dirname = __dirname_fn(__filename);",
         ].join("\n"),
       },
+    }),
+    // Main's language catalogs beside app.mjs, each read only when its language is chosen.
+    await esbuild.context({
+      ...shared,
+      entryPoints: mainCatalogEntries(root),
+      outdir: path.join(dist, "main", MAIN_CATALOG_DIR),
+      outExtension: { ".js": ".mjs" },
+      format: "esm",
+      charset: "utf8",
     }),
     await esbuild.context({
       ...shared,
@@ -149,27 +164,14 @@ async function nodeContexts() {
 /** The renderer, its Basis decoder worker and the startup loader's scripts: browser bundles. */
 async function rendererContexts() {
   return [
-    await esbuild.context({
-      ...rendererBuildOptions(rendererMode),
-      define: {
-        ...rendererBuildOptions(rendererMode).define,
-        __STUDIO_PERFORMANCE__: JSON.stringify(Boolean(devId)),
-      },
-      bundle: true,
-      platform: "browser",
-      metafile: true,
-      target: "chrome130",
-      sourcemap: true,
-      logLevel: "info",
-      format: "esm",
-      jsx: "automatic",
-      entryPoints: [path.join(root, "src/renderer/main.tsx")],
-      outdir: path.join(dist, "renderer"),
-      entryNames: "renderer",
-      chunkNames: "chunks/[name]-[hash]",
-      splitting: true,
-      loader: { ".css": "css" },
-    }),
+    await esbuild.context(
+      studioRendererBuild({
+        root,
+        outdir: path.join(dist, "renderer"),
+        mode: rendererMode,
+        performance: Boolean(devId),
+      }),
+    ),
     // Play's bar layer (`play-bar.html`): a page of its own over the game's view, with only the bar and Comments.
     await esbuild.context({
       ...rendererBuildOptions(rendererMode),
@@ -371,8 +373,10 @@ async function copyResources() {
       .join(", ")}`,
   );
   // Computer control's driver ships with every macOS and Windows release, so it works once the app is
-  // installed (scripts/vendor-cua-driver.ts); a development build takes it only when asked to.
-  const vendorCua = release || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
+  // installed (scripts/vendor-cua-driver.ts); a development build takes it only when asked to
+  // (`--vendor-cua-driver`, which every live studio:dev profile passes).
+  const vendorCua =
+    release || process.argv.includes("--vendor-cua-driver") || process.env.GENEX_VENDOR_CUA_DRIVER === "1";
   const driverShipsHere = process.platform === "darwin" || process.platform === "win32";
   if (driverShipsHere && vendorCua) {
     const cua = await vendorCuaDriver(root, resources);
@@ -446,8 +450,11 @@ async function copyResources() {
     )}\n`,
   );
 
-  // Renderer shell + vendored fonts (offline app; the CSP admits no font host).
-  await cp(path.join(root, "src/renderer/index.html"), path.join(dist, "renderer/index.html"));
+  // Renderer shell + vendored fonts (offline app; the CSP admits no font host). A build with
+  // analytics lets the renderer reach PostHog's hosts and nothing else; scripts stay 'self'.
+  const shell = await readFile(path.join(root, "src/renderer/index.html"), "utf8");
+  const page = analytics ? withAnalyticsCsp(shell, analyticsOrigins(analytics.host)) : shell;
+  await writeFile(path.join(dist, "renderer/index.html"), page);
   await cp(path.join(root, "src/renderer/play-bar.html"), path.join(dist, "renderer/play-bar.html"));
   await cp(path.join(root, "src/renderer/fonts"), path.join(dist, "renderer/fonts"), {
     recursive: true,

@@ -4,7 +4,8 @@
 // it only calls out.
 //
 //   node scripts/canary/azure.ts run --machine windows-11 --image <urn> --tag v0.1.11 \
-//     --source <zip> --evidence <dir> [--size <vm size>] [--location <region>[,<region>…]]
+//     --source <zip> --evidence <dir> [--size <vm size>] [--location <region>[,<region>…]] \
+//     [--upgrade-from <release tag>]
 //   node scripts/canary/azure.ts sweep     delete canary resource groups past their expiry
 //
 // The phases on the VM are scripts/canary/windows/azure-vm.ps1.
@@ -32,6 +33,11 @@ const CANARY_TAG = "genex-canary";
 const GROUP_LIFETIME_MS = 3 * HOUR_MS;
 const PHASE_TIMEOUT_MS = 90 * MINUTE_MS;
 const OWNER_NAME = "genexowner";
+/**
+ * The owner of an upgrade run: an ordinary administrator Prepare makes, as a person's own PC has.
+ * Azure's account is the built-in Administrator, which runs elevated and is never asked to approve.
+ */
+const UPGRADE_OWNER_NAME = "canary-owner";
 /**
  * Files in each Azure account's lived-in profile, fewer than the GitHub runner's 150,000: two cores
  * with Defender scanning every write take about seven seconds per thousand files.
@@ -313,6 +319,8 @@ interface RunOptions {
   machine: string;
   image: string;
   tag: string;
+  /** Upgrade mode: the release the owner installs before the build (canary.yml `upgrade_from`). */
+  upgradeFrom?: string;
   source: string;
   evidence: string;
   size: string;
@@ -449,22 +457,24 @@ async function runMachine(
     const placed = await createSomewhere(options, sizeAsked, locations, ownerPassword);
     group = placed.group;
     const { storage } = placed;
+    const owner = options.upgradeFrom ? UPGRADE_OWNER_NAME : OWNER_NAME;
     const common = {
       Machine: options.machine,
       Tag: options.tag,
       UserName: USER_NAME,
       UserPassword: userPassword,
       Files: String(AZURE_PROFILE_FILES),
+      ...(options.upgradeFrom ? { UpgradeFrom: options.upgradeFrom } : {}),
     };
     await phase(group, "Prepare", {
       ...common,
       SourceUrl: await blobUrl(storage, "src.zip", "r"),
       NodeVersion: options.nodeVersion,
-      OwnerName: OWNER_NAME,
+      OwnerName: owner,
       OwnerPassword: ownerPassword,
     });
     await restart(group);
-    await phase(group, "Owner", { ...common, OwnerName: OWNER_NAME });
+    await phase(group, "Owner", { ...common, OwnerName: owner });
     await restart(group);
     await phase(group, "Standard", common);
     await phase(group, "Collect", { UploadUrl: await blobUrl(storage, "evidence.zip", "cw") });
@@ -549,6 +559,7 @@ async function main(): Promise<void> {
       evidence: { type: "string" },
       size: { type: "string", default: "" },
       location: { type: "string", default: "" },
+      "upgrade-from": { type: "string", default: "" },
     },
   });
   if (positionals[0] === "sweep") return sweep();
@@ -557,7 +568,8 @@ async function main(): Promise<void> {
     throw new Error("usage: azure.ts run --machine --image --tag --source --evidence | azure.ts sweep");
   const nodeVersion = process.version.replace(/^v/, "");
   const locations = values.location ? values.location.split(",").map((name) => name.trim()) : DEFAULT_LOCATIONS;
-  await runMachine({ machine, image, tag, source, evidence, nodeVersion }, values.size, locations);
+  const upgradeFrom = values["upgrade-from"] ? { upgradeFrom: values["upgrade-from"] } : {};
+  await runMachine({ machine, image, tag, source, evidence, nodeVersion, ...upgradeFrom }, values.size, locations);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

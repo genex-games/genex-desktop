@@ -24,7 +24,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
-import type { CuaCommand } from "./cua-driver-client.ts";
+import { type CuaCommand, DEFAULT_HOST_APP } from "./cua-driver-client.ts";
 
 /** The folder in the app's resources the bundled driver lives in. */
 export const CUA_DRIVER_DIR = "cua-driver";
@@ -58,6 +58,22 @@ const MESSAGE = {
  * driver as a label it echoes back. macOS decides whose grants count from the process chain, not this.
  */
 export const HOST_BUNDLE_ID = "games.genex.desktop";
+
+/** An app bundle's folder: the app's name, then `.app`. */
+const APP_BUNDLE = /^(.+)\.app$/;
+
+/**
+ * The app macOS lists the studio's Accessibility and Screen Recording grants under: the outermost
+ * `.app` folder `execPath` runs from (Genex once installed, Electron in a development build), or
+ * Genex when it runs from none.
+ */
+export function hostAppName(execPath: string): string {
+  for (const segment of execPath.split("/")) {
+    const name = APP_BUNDLE.exec(segment)?.[1];
+    if (name) return name;
+  }
+  return DEFAULT_HOST_APP;
+}
 
 /** Where the app's own driver is: `<resources>/cua-driver/cua-driver` (`cua-driver.exe` on Windows). */
 export function bundledCuaDriver(resources: string, platform: NodeJS.Platform = process.platform): string {

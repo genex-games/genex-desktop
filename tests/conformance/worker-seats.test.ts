@@ -188,10 +188,10 @@ describe("the host's worker seat", () => {
   }, async () => {
     const { core, delegate, runWorker, personSays } = await workerChat();
     const asked: Array<{ kindServers?: boolean }> = [];
-    const toolsFor = core.mcp.toolsFor.bind(core.mcp);
-    core.mcp.toolsFor = async (project, options = {}) => {
+    const toolsReport = core.mcp.toolsReport.bind(core.mcp);
+    core.mcp.toolsReport = async (project, options = {}) => {
       asked.push(options);
-      return toolsFor(project, options);
+      return toolsReport(project, options);
     };
     await delegate(runWorker());
     await delegate({ chatTurn: { messageId: await personSays() } });

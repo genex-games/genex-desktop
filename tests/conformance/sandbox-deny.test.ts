@@ -19,16 +19,18 @@ const HOME = "/home/player";
  * Seatbelt matches bytes, not UTF-16 units, so a multi-byte case belongs in `sandbox.test.ts`.
  */
 async function macDeny(denies: readonly string[]): Promise<(target: string) => boolean> {
-  const { containsGlobChars, globToRegex, normalizePathForSandbox } = (await import(
+  const { containsGlobChars, normalizePathForSandbox } = (await import(
     "@anthropic-ai/sandbox-runtime/dist/sandbox/sandbox-utils.js"
   )) as {
     containsGlobChars: (p: string) => boolean;
-    globToRegex: (glob: string) => string;
     normalizePathForSandbox: (p: string) => string;
+  };
+  const { denyGlobRegex } = (await import("@anthropic-ai/sandbox-runtime/dist/sandbox/glob-pattern.js")) as {
+    denyGlobRegex: (glob: string) => string;
   };
   const rules = denies.map((deny) => {
     const normalized = normalizePathForSandbox(deny);
-    if (containsGlobChars(normalized)) return new RegExp(`${globToRegex(normalized).slice(0, -1)}(/.*)?$`);
+    if (containsGlobChars(normalized)) return new RegExp(denyGlobRegex(normalized));
     return { test: (target: string) => target === normalized || target.startsWith(`${normalized}/`) };
   });
   return (target) => rules.some((rule) => rule.test(target));

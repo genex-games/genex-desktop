@@ -277,6 +277,8 @@ function preset(id: string, name: string, scheme: Scheme, values: string[], deta
 // Dark palettes share one OKLCH lightness ramp from the canvas: sidebar -2.6, surface +3, menu +4.8,
 // field +6, hover +8.5, divider +5.6, control edge +11.2. Each family keeps its own hue, text and accent.
 // Order: canvas, text, surface, sidebar, menu, field, hover, muted text, divider, control edge, accent, success, warning, error.
+// Genex's own pair paints one blue, genex.games' own: Play's selection and buttons, the Builds graph and the
+// selected icon set none of their own, so each takes the accent (design/genex/README.md, Appearance).
 export const PRESETS: ThemePreset[] = [
   preset(
     "genex",
@@ -293,22 +295,18 @@ export const PRESETS: ThemePreset[] = [
       "#a8a9ac",
       "#1b1b1b",
       "#333336",
-      "#4759c2",
+      "#2454d2",
       "#7cd194",
       "#efbe72",
       "#f08287",
     ],
     {
       icon: "#939393",
-      iconSelected: "#5474d0",
       logo: "#ffffff",
       logoShade: "#efefef",
-      graph: "#4d7fd6",
       art: "#6c80be",
       artPaper: "#1b1a1b",
       promptEdge: "#292929",
-      playSelected: "#2454d2",
-      playSelectedEdge: "#24304e",
       playTrack: "#141417",
       playTrackEdge: "#1f2021",
       playTab: "#0d0d0e",
@@ -317,7 +315,6 @@ export const PRESETS: ThemePreset[] = [
       inviteCard: "#4160b1",
       peopleChipText: "#e3e6f4",
       peopleChipNumber: "#d8ddf4",
-      peoplePrimaryShade: "#1a34b5",
     },
   ),
   preset(
@@ -335,20 +332,15 @@ export const PRESETS: ThemePreset[] = [
       "#8d8e8e",
       "#eaeaea",
       "#c6c7c9",
-      "#3f61f5",
+      "#1661d9",
       "#249f56",
       "#dfa04a",
       "#ba3441",
     ],
     {
-      accentFill: "#3f61f5",
-      accentHover: "#3c70e9",
-      accentText: "#ffffff",
       icon: "#5e75d7",
-      iconSelected: "#2a49d2",
       logo: "#0c0c0c",
       logoShade: "#12295d",
-      graph: "#738cf6",
       art: "#91a1e7",
       artPaper: "#f6f6f6",
       artMark: "#fefeff",
@@ -366,21 +358,16 @@ export const PRESETS: ThemePreset[] = [
       meterHigh: "#f1cb46",
       meterFull: "#d13c4a",
       promptEdge: "#e9e9ea",
-      playSelected: "#1661d9",
-      playSelectedEdge: "#cadbf6",
       playTrack: "#ffffff",
       playTrackEdge: "#ebebeb",
       playTab: "#ffffff",
       playTabEdge: "#f1f1f1",
       wireArt: "#a2abd5",
       peopleChip: "#bfbfbf",
-      peopleTint: "#c3d5ff",
       creditsCard: "#b1c3e6",
       inviteCard: "#a9b8d9",
       peopleChipText: "#3f61b2",
       peopleChipNumber: "#3a5ace",
-      peoplePrimary: "#5b84e3",
-      peoplePrimaryShade: "#4561e4",
       shadows: {
         panel: { y: 17, blur: 40, spread: -10, color: "#000000", alpha: 0 },
         promptBar: { y: 3, blur: 8, spread: 0, color: "#000000", alpha: 3 },
@@ -536,6 +523,31 @@ const MESSAGE = {
   notJson: t("Use a valid JSON or JSONC theme file."),
   noColors: t("No supported UI colors found. Choose a Genex token file or a VS Code color theme."),
 } as const;
+/** Why a theme could not be imported: a wire value usage analytics sends, never renamed. */
+export const ThemeImportProblem = {
+  TooLarge: "too_large",
+  NotJson: "not_json",
+  NewerFormat: "newer_format",
+  NotOpaqueToken: "not_opaque_token",
+  IncludesFile: "includes_file",
+  NotHex: "not_hex",
+  NoColors: "no_colors",
+} as const;
+export type ThemeImportProblem = (typeof ThemeImportProblem)[keyof typeof ThemeImportProblem];
+
+/** A theme import that failed: its message for the person, its problem for the app. */
+export class ThemeImportError extends Error {
+  readonly problem: ThemeImportProblem;
+  constructor(problem: ThemeImportProblem, message: string) {
+    super(message);
+    this.name = "ThemeImportError";
+    this.problem = problem;
+  }
+}
+
+/** The problem an import failed with, or null for any other failure. */
+export const themeImportProblem = (error: unknown): ThemeImportProblem | null =>
+  error instanceof ThemeImportError ? error.problem : null;
 /** The contrast a theme starts at: its palette as designed. */
 export const DEFAULT_CONTRAST = 50;
 /** The contrast slider's range. */
@@ -1075,12 +1087,14 @@ function isOpaqueColorToken(token: Record<string, unknown>): boolean {
 
 /** The colours of a Genex design-token file, each an opaque sRGB token. */
 function tokenColors(metadata: Record<string, unknown>, data: Record<string, unknown>): Partial<Palette> {
-  if (metadata.version !== undefined && metadata.version !== 1) throw new Error(MESSAGE.newerFormat);
+  if (metadata.version !== undefined && metadata.version !== 1)
+    throw new ThemeImportError(ThemeImportProblem.NewerFormat, MESSAGE.newerFormat);
   const result: Partial<Palette> = {};
   for (const role of ALL_ROLES) {
     if (data[role] === undefined) continue;
     const token = object(data[role]);
-    if (!isOpaqueColorToken(token)) throw new Error(MESSAGE.notOpaqueToken(role));
+    if (!isOpaqueColorToken(token))
+      throw new ThemeImportError(ThemeImportProblem.NotOpaqueToken, MESSAGE.notOpaqueToken(role));
     result[role] = rgbHex(object(token.$value).components as number[]);
   }
   return result;
@@ -1106,7 +1120,7 @@ const VSCODE_KEYS: Record<ColorRole, string[]> = {
 
 /** The colours of a VS Code colour theme, translucent ones blended onto its editor background (written into `base`). */
 function vscodeColors(raw: Record<string, unknown>, data: Record<string, unknown>, base: Palette): Partial<Palette> {
-  if (raw.include !== undefined) throw new Error(MESSAGE.includesFile);
+  if (raw.include !== undefined) throw new ThemeImportError(ThemeImportProblem.IncludesFile, MESSAGE.includesFile);
   const background = importHex(data["editor.background"], base.background);
   if (background) base.background = background;
   const result: Partial<Palette> = {};
@@ -1114,7 +1128,7 @@ function vscodeColors(raw: Record<string, unknown>, data: Record<string, unknown
     const key = VSCODE_KEYS[role].find((candidate) => data[candidate] !== undefined);
     if (key === undefined) continue;
     const value = importHex(data[key], base.background);
-    if (!value) throw new Error(MESSAGE.notHex(key));
+    if (!value) throw new ThemeImportError(ThemeImportProblem.NotHex, MESSAGE.notHex(key));
     result[role] = value;
   }
   return result;
@@ -1124,12 +1138,12 @@ export function importTheme(
   text: string,
   target: Scheme,
 ): { name: string; scheme: Scheme; colors: Palette; contrast: number; source: string } {
-  if (text.length > THEME_FILE_MAX_BYTES) throw new Error(MESSAGE.tooLarge);
+  if (text.length > THEME_FILE_MAX_BYTES) throw new ThemeImportError(ThemeImportProblem.TooLarge, MESSAGE.tooLarge);
   let raw: Record<string, unknown>;
   try {
     raw = object(parseJsonc(text.replace(/^\uFEFF/, "")));
   } catch {
-    throw new Error(MESSAGE.notJson);
+    throw new ThemeImportError(ThemeImportProblem.NotJson, MESSAGE.notJson);
   }
   const metadata = object(object(raw.$extensions)["app.genex.studio"]);
   const scheme = importedScheme(metadata, raw, target);
@@ -1137,7 +1151,7 @@ export function importTheme(
   const data = object(raw.colors);
   const tokens = Object.keys(metadata).length > 0 || COLOR_ROLES.some((role) => object(data[role]).$type === "color");
   const result = tokens ? tokenColors(metadata, data) : vscodeColors(raw, data, base);
-  if (!Object.keys(result).length) throw new Error(MESSAGE.noColors);
+  if (!Object.keys(result).length) throw new ThemeImportError(ThemeImportProblem.NoColors, MESSAGE.noColors);
   const shadows = shadowsOf(metadata.shadows);
   const name = String(metadata.name ?? raw.name ?? t("Imported theme"))
     .trim()

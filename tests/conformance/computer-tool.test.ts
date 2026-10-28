@@ -303,15 +303,41 @@ describe("computer tool — built from what the target can do", () => {
     reload: false,
   };
 
+  /** The verbs only a desktop offers: an app brought forward, a page opened in the person's browser. */
+  const DESKTOP_ONLY: ReadonlySet<string> = new Set(["bring_to_front", "open_page"]);
+
   it("offers a browser game every verb but named game actions, which only a Play Protocol game declares", () => {
     assert.deepEqual(
       computerActionsFor(BROWSER_CAPABILITIES),
-      // Flipped on purpose (web pages): the web verbs are the desktop's, never a game window's.
-      COMPUTER_ACTIONS.filter((action) => action !== "act" && !action.startsWith("web_")),
+      // Flipped on purpose (web pages, then bringing an app forward, then opening a page): the web
+      // verbs, bring_to_front and open_page are the desktop's, never a game window's.
+      COMPUTER_ACTIONS.filter((action) => action !== "act" && !action.startsWith("web_") && !DESKTOP_ONLY.has(action)),
     );
     const browser = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES });
     assert.deepEqual(browser, computerToolDefinition({ role: "builder" }));
     assert.ok("surface" in browser.parameters.properties);
+  });
+
+  it("offers the desktop open_page, says what it takes, and asks for the address", () => {
+    assert.ok(computerActionsFor(DESKTOP_CAPABILITIES).includes("open_page"));
+    const description = computerToolDefinition({ role: "operator", capabilities: DESKTOP_CAPABILITIES }).description;
+    assert.match(description, /open_page text=<https:\/\/ address>/);
+    assert.deepEqual(parseComputerArgs({ action: "open_page" }), {
+      ok: false,
+      error: "open_page needs text=<an https:// address> of the page the task names",
+    });
+  });
+
+  it("offers the desktop bring_to_front, says what it takes, and asks for the app it names", () => {
+    assert.ok(computerActionsFor(DESKTOP_CAPABILITIES).includes("bring_to_front"));
+    const description = computerToolDefinition({ role: "operator", capabilities: DESKTOP_CAPABILITIES }).description;
+    assert.match(description, /bring_to_front text=<app>/);
+    assert.match(description, /msedge\.exe/);
+    const missing = parseComputerArgs({ action: "bring_to_front" });
+    assert.deepEqual(missing, {
+      ok: false,
+      error: "bring_to_front needs text=<app>: its executable on Windows (msedge.exe) or bundle id on a Mac",
+    });
   });
 
   it("never offers a verb the target lacks, and says so instead of failing silently", () => {

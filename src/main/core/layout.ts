@@ -35,6 +35,12 @@ export type StudioLayout = {
    * (`main/play/native-installs.ts`). Outside every agent-writable root, like `jobs`.
    */
   installedGames: string;
+  /**
+   * Studio's own copy of each local draft's picture, one folder per game (`core/item-pictures.ts`),
+   * which a store item's card reads while the draft lives only in a build's copy of the game.
+   * Outside every agent-writable root, like `jobs`.
+   */
+  itemPictures: string;
 };
 
 export function layoutFor(userData: string): StudioLayout {
@@ -54,5 +60,6 @@ export function layoutFor(userData: string): StudioLayout {
     nativeWork: path.join(userData, "native-work"),
     nativeRuntimes: path.join(userData, "native-runtimes"),
     installedGames: path.join(userData, "installed-games"),
+    itemPictures: path.join(userData, "item-pictures"),
   };
 }

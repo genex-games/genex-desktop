@@ -11,6 +11,22 @@ import { type JSX, lazy, Suspense, useState } from "react";
 import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId, isBeta } from "../../shared/providers.ts";
+import {
+  reportAccountChanged,
+  reportClock,
+  reportKeyChecked,
+  reportProviderPress,
+  reportSignInHelper,
+  settled,
+  useRowViewed,
+} from "../analytics/welcome-report.ts";
+import {
+  AccountAction,
+  ProviderAction,
+  ProviderSurface,
+  SignInHelper,
+  SubscriptionRowFace,
+} from "../analytics/welcome-vocabulary.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
 import {
@@ -166,10 +182,15 @@ function KeyEntry({
     setKey("");
     await onSave(pasted);
   };
+  const getKey = (): void => {
+    reportSignInHelper(EngineId.OpenRouter, SignInHelper.GetKeyClicked, { surface: ProviderSurface.Settings });
+    void window.studio.openUrl(WORDS.openRouter.keysUrl);
+  };
   return (
     <div className="flex flex-wrap items-center gap-2">
       <input
         type="password"
+        data-analytics-mask
         aria-label={WORDS.openRouter.keyLabel}
         placeholder={WORDS.openRouter.keyPlaceholder}
         autoComplete="off"
@@ -185,7 +206,7 @@ function KeyEntry({
       <Button variant="default" disabled={saving || !key.trim()} onClick={() => void save()}>
         {saving ? WORDS.saving : WORDS.openRouter.save}
       </Button>
-      <Button onClick={() => void window.studio.openUrl(WORDS.openRouter.keysUrl)}>{WORDS.openRouter.getKey}</Button>
+      <Button onClick={getKey}>{WORDS.openRouter.getKey}</Button>
       {onCancel && <Button onClick={onCancel}>{WORDS.openRouter.cancel}</Button>}
     </div>
   );
@@ -194,7 +215,7 @@ function KeyEntry({
 /** OpenRouter's row by its state: connected, waiting for a key, or unable to check. */
 function openRouterView(
   status: EngineStatus,
-  act: { recheck: () => void; replace: () => void; remove: () => void },
+  act: { recheck: (pressed: ProviderAction) => void; replace: () => void; remove: () => void },
 ): RowView {
   if (status.code === EngineStatusCode.Ready)
     return {
@@ -202,7 +223,7 @@ function openRouterView(
       status: WORDS.connected,
       line: WORDS.openRouter.connectedLine,
       actions: (
-        <AccountMenu name={WORDS.openRouter.name} onCheck={act.recheck}>
+        <AccountMenu name={WORDS.openRouter.name} onCheck={() => act.recheck(ProviderAction.CheckConnection)}>
           <>
             <DropdownMenuItem onSelect={act.replace}>
               <ItemWords title={WORDS.openRouter.replace} line={WORDS.openRouter.replaceLine} />
@@ -211,14 +232,22 @@ function openRouterView(
           </>
         </AccountMenu>
       ),
+      face: SubscriptionRowFace.Connected,
     };
   if (status.code === EngineStatusCode.NeedsLogin)
-    return { tone: RowTone.Off, status: WORDS.notConnected, line: WORDS.openRouter.notConnectedLine, actions: null };
+    return {
+      tone: RowTone.Off,
+      status: WORDS.notConnected,
+      line: WORDS.openRouter.notConnectedLine,
+      actions: null,
+      face: SubscriptionRowFace.NotConnected,
+    };
   return {
     tone: RowTone.Danger,
     status: WORDS.couldNotCheck,
     line: status.detail,
-    actions: <Button onClick={act.recheck}>{WORDS.tryAgain}</Button>,
+    actions: <Button onClick={() => act.recheck(ProviderAction.TryAgain)}>{WORDS.tryAgain}</Button>,
+    face: SubscriptionRowFace.CouldntCheck,
   };
 }
 
@@ -235,8 +264,15 @@ function OpenRouterRow({
   const save = (key: string): Promise<void> =>
     run(async () => {
       setSaving(true);
+      const startedAt = reportClock();
+      const checked = (code: EngineStatusCode | null) =>
+        reportKeyChecked(EngineId.OpenRouter, ProviderSurface.Settings, code, startedAt);
       try {
-        const status = await window.studio.openRouterKeySave(key);
+        const status = await window.studio.openRouterKeySave(key).catch((err: unknown) => {
+          checked(null);
+          throw err;
+        });
+        checked(status.code);
         const accepted = status.code === EngineStatusCode.Ready;
         setRefused(!accepted);
         if (accepted) setReplacing(false);
@@ -245,15 +281,23 @@ function OpenRouterRow({
         setSaving(false);
       }
     });
+  const removed = (ok: boolean) => reportAccountChanged(EngineId.OpenRouter, AccountAction.KeyRemoved, ok);
   const view = openRouterView(engine.status, {
-    recheck: () => void run(recheck),
-    replace: () => setReplacing(true),
+    recheck: (pressed) => {
+      reportProviderPress(EngineId.OpenRouter, pressed, ProviderSurface.Settings);
+      void run(recheck);
+    },
+    replace: () => {
+      reportSignInHelper(EngineId.OpenRouter, SignInHelper.KeyBoxOpened, { surface: ProviderSurface.Settings });
+      setReplacing(true);
+    },
     remove: () =>
       void run(async () => {
-        await window.studio.openRouterKeyClear();
+        await settled(() => window.studio.openRouterKeyClear(), removed);
         await onEnginesRefresh();
       }),
   });
+  useRowViewed(EngineId.OpenRouter, view.face, ProviderSurface.Settings, null);
   const asksForKey = replacing || engine.status.code === EngineStatusCode.NeedsLogin;
   return (
     <ProviderCard

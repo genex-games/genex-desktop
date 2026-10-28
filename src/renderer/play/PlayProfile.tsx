@@ -17,7 +17,7 @@ import {
   type PlayProfileFriend,
 } from "../../shared/play-people.ts";
 import { AvatarMotion } from "../avatars/GeneratedAvatar.tsx";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { usePeople } from "../state/hooks.ts";
 import { LoadStatus } from "../state/people.ts";
 import { studio } from "../state/studio.ts";
@@ -91,7 +91,7 @@ function ProfileHead({ profile, me }: { profile: Profile; me: PlayMe | null }): 
             aria-label={WORDS.editProfile}
             title={WORDS.editProfile}
             data-profile-edit
-            onClick={() => openSettings(SettingsSection.Account)}
+            onClick={() => openSettings(SettingsSection.Account, undefined, SettingsOpenedFrom.PlayProfile)}
           >
             <Icon name="rename" size={15} />
           </button>

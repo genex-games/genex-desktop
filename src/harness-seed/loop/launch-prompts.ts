@@ -52,6 +52,14 @@ const SMALL_TALK =
 
 /** A hurry changes how long a build runs, never whether a new game is one. */
 const QUICK_IS_A_BUILD = "also when they want it fast: a quick build is still a build, and its judges still check it";
+
+/**
+ * What a launch sells for Nex: a store item the build lists with its picture, never a cut
+ * (loop/store-items.ts). Nex is Genex's own currency; any other currency is the game's. Store items
+ * are never tied to a launch: genex__cli lists or changes one at any time.
+ */
+const STORE_ITEMS_RULE =
+  "Whatever the user sells for Nex (Genex's currency: a class, a character, a skin, an item) goes in the launch's store_items with its name and price (100 Nex when they named none), never in cut: the build draws each item's picture and lists it in the game's store. Ask nothing more about them (sharing with other games, resale, type, picture): each item's card leaves those to the person. Store items never need a launch: add, change or remove one at any time, with or without a build running, with genex__cli shop add, shop set and shop remove, and every item needs its picture (the image option). Coins, gold, gems or a shop in the game are the game's own currency and store: never store_items, and no question about them.";
 /** The same for an Unreal game, whose Loop has no judges: its lead checks its own captures. */
 const QUICK_IS_AN_UNREAL_BUILD = "also when they want it fast: a quick build is still a build";
 /**
@@ -127,6 +135,7 @@ export function launchRules(
     `- Building the game or changing it substantially (a new game from a pitch, several systems at once, the look of the whole game, hours of work): call ${launch} with the goal in the user's words, what it delivers in in_scope and what it leaves out in cut — ${build.quick}. Reading and research first are fine; do not build the game yourself.`,
     `- If it is unclear whether they want a build, or a build would take hours they may not expect, ask with ${ask} (recommended choice first) and end your reply. Never call ${launch} in the same reply as a question, and never recommend what the user ruled out.`,
     askFirst(ask),
+    STORE_ITEMS_RULE,
     gameEngine === GameEngine.Unreal ? UNREAL_GOAL_LOOK_FIRST : "",
     `A build starts when your reply ends, from this folder exactly as you leave it: call ${launch} last, then recap in one short paragraph.`,
     stillsWords(grant.frameCount ?? 0, loop),
@@ -141,5 +150,6 @@ export function launchDecision(tool: string): string[] {
     "Questions, research, plans, design documents and contained changes: do them yourself with your tools and answer here (put plans and documents in docs/ when asked). A request for research or a plan is not a request to build — deliver it, then offer to build from it.",
     `When the ask is to build the game or change it substantially, call ${tool} once, the goal in the user's words, what it delivers in in_scope and what it leaves out in cut — ${QUICK_IS_A_BUILD}; it starts from this folder as you leave it. If it is unclear whether they want a build, ask first.`,
     askFirst(askUser.name),
+    STORE_ITEMS_RULE,
   ];
 }

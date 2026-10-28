@@ -476,6 +476,7 @@ const rectsOverlap = (a: Rect, b: Rect): boolean =>
 // ── the Builds tab: notes, plain words, timeline ─────────────────────────────────────────
 
 import {
+  cameraWords,
   checkWords,
   digestField,
   plainDefect,
@@ -571,6 +572,13 @@ describe("notes and plain words", () => {
     assert.equal(plainDefect("no prefix here"), "no prefix here");
     assert.equal(checkWords("defect-the-dog-is-a-boxy-loaf"), "the dog is a boxy loaf");
     assert.equal(checkWords("roof_strips-layered"), "roof strips layered");
+    assert.equal(cameraWords("GX_Shot_CorrHangDoor"), "Corr hang door");
+    assert.equal(cameraWords("GX-Shot-Arena"), "Arena");
+    assert.equal(cameraWords("camLane"), "Cam lane");
+    assert.equal(cameraWords("cam_bridge"), "Cam bridge");
+    assert.equal(cameraWords("HUD_close"), "HUD close");
+    assert.equal(cameraWords("default"), "Default");
+    assert.equal(cameraWords("GX_Shot_"), "GX shot", "a prefix with no name keeps its words");
   });
 
   it("finds the run folder from a still and prefers the default camera for a thumbnail", () => {

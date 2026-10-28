@@ -9,8 +9,10 @@
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { HOUR_MS } from "../../shared/duration.ts";
+import { isUserCancelled } from "../../shared/errors.ts";
 import type { PluginIndexView, PluginInfo } from "../../shared/plugins.ts";
 import type { StudioApi } from "../../shared/studio-api.ts";
+import { problemWords } from "../words.ts";
 import { createRefresher } from "./refresher.ts";
 
 /** How often the index is asked for again. Main keeps its own copy for hours, so most asks cost no download. */
@@ -32,15 +34,28 @@ export interface PluginUpdate {
   source: PluginUpdateSource;
 }
 
+/** How the last run of Update plugins ended: the updates that failed, and the ones turned down in a trust dialog. */
+export interface UpdatesRunEnd {
+  failed: number;
+  declined: number;
+}
+
 export interface PluginsState {
   list: PluginInfo[];
   /** The plugin index as main last answered it, or null before the first answer. */
   index: PluginIndexView | null;
   /** Update plugins is installing every waiting update. */
   updating: boolean;
+  /** How the last run of Update plugins ended; set as `updating` turns false. */
+  lastRun: UpdatesRunEnd;
 }
 
-export const initialPlugins = (): PluginsState => ({ list: [], index: null, updating: false });
+export const initialPlugins = (): PluginsState => ({
+  list: [],
+  index: null,
+  updating: false,
+  lastRun: { failed: 0, declined: 0 },
+});
 
 export function pluginsLoaded(state: PluginsState, list: PluginInfo[]): PluginsState {
   return state.list === list ? state : { ...state, list };
@@ -54,6 +69,13 @@ export function indexLoaded(state: PluginsState, index: PluginIndexView): Plugin
 export function updatingChanged(state: PluginsState, updating: boolean): PluginsState {
   return state.updating === updating ? state : { ...state, updating };
 }
+
+/** Update plugins installed its last update: how many failed and how many the person turned down. */
+export const updatesRunEnded = (state: PluginsState, lastRun: UpdatesRunEnd): PluginsState => ({
+  ...state,
+  updating: false,
+  lastRun,
+});
 
 /** The update one installed plugin can take: its newer seed, else the index's newer release. */
 function updateOf(plugin: PluginInfo, releases: ReadonlyMap<string, string>): PluginUpdate | null {
@@ -81,7 +103,7 @@ export function chosenUpdates(updates: readonly PluginUpdate[], skipped: Readonl
 
 /**
  * Install one update. For an index release main shows the plugin's trust dialog first, and a "no"
- * there resolves like a "yes": the plugin list says which it was. A seed installs without asking.
+ * there rejects as the person's (`isUserCancelled`). A seed installs without asking.
  */
 export function installPluginUpdate(
   api: Pick<StudioApi, "pluginInstall" | "pluginUpdate">,
@@ -92,13 +114,28 @@ export function installPluginUpdate(
   return update.source === PluginUpdateSource.Seed ? api.pluginInstall(id) : api.pluginUpdate(id);
 }
 
+/**
+ * The failures of a run, the first of each distinct words, each with its own code: one cause (no
+ * connection) refuses every update alike, and is said once.
+ */
+export function distinctFailures(failures: readonly unknown[]): unknown[] {
+  const said = new Set<string>();
+  return failures.filter((failure) => {
+    const words = problemWords(failure);
+    if (said.has(words)) return false;
+    said.add(words);
+    return true;
+  });
+}
+
 export interface PluginsStore extends StoreApi<PluginsState> {
   refresh(): Promise<void>;
   /** Read the plugin index again: what it offers, and the newer releases of installed plugins. */
   refreshIndex(): Promise<void>;
   /**
    * Install every waiting update but the `skipped` ones (`updateKey`), one after another, then read
-   * the plugins and the index again. Resolves with the failures; a press while one runs starts nothing.
+   * the plugins and the index again. Resolves with the failures, never the person's no (counted in
+   * `lastRun`); a press while one runs starts nothing.
    */
   updateAll(skipped?: ReadonlySet<string>): Promise<unknown[]>;
 }
@@ -121,14 +158,19 @@ export function createPluginsStore(
     if (state.updating) return [];
     store.setState((current) => updatingChanged(current, true), true);
     const failures: unknown[] = [];
+    let declined = 0;
     try {
       for (const update of chosenUpdates(pluginUpdates(state.list, state.index), skipped)) {
         // One refusal (a release withdrawn since the index was read) leaves the others to install.
-        await installPluginUpdate(api, update).catch((error: unknown) => failures.push(error));
+        await installPluginUpdate(api, update).catch((error: unknown) => {
+          if (isUserCancelled(error)) declined += 1;
+          else failures.push(error);
+        });
       }
       await Promise.all([refresh(), refreshIndex()]);
     } finally {
-      store.setState((current) => updatingChanged(current, false), true);
+      const ended = { failed: failures.length, declined };
+      store.setState((current) => updatesRunEnded(current, ended), true);
     }
     return failures;
   };

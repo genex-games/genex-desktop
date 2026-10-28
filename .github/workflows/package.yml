@@ -21,6 +21,10 @@ on:
         description: Sign the Windows build through SignPath with its test certificate
         type: boolean
         default: false
+      version:
+        description: The version the packages carry instead of package.json's (e.g. 0.1.99, for the canary's upgrade mode)
+        required: false
+        default: ""
 permissions:
   contents: read
 concurrency:
@@ -65,6 +69,14 @@ jobs:
         run: npm ci --ignore-scripts
       - if: runner.os != 'Linux'
         run: npm ci
+      # A dispatch's own version: a build Squirrel installs as an update over a release (canary.yml).
+      - name: The version the packages carry
+        if: ${{ inputs.version }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Not a version: $VERSION"; exit 1; }
+          npm version --no-git-tag-version --allow-same-version "$VERSION"
       - name: Install the pinned Linux Electron runtime
         if: runner.os == 'Linux'
         run: node node_modules/electron/install.js

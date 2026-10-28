@@ -26,6 +26,7 @@ import {
   type SandboxSetupResult,
   type StartStep,
   StudioPlatform,
+  WindowsSetupNeed,
 } from "../../shared/boot.ts";
 import type { DataMoveProgress } from "../../shared/data-folder.ts";
 import { type ReadyUpdate, UpdateAction } from "../../shared/app-update.ts";
@@ -162,6 +163,14 @@ export function reportChanged(state: BootStoreState, report: SetupReport): BootS
 /** Whether the setup screen offers Set up: a Windows sandbox that has not been installed yet. */
 export function canSetUp(state: Pick<BootStoreState, "platform" | "problem">): boolean {
   return state.platform === StudioPlatform.Windows && state.problem?.code === SandboxProblemCode.NotProvisioned;
+}
+
+/**
+ * Whether the window starts Set up by itself: a first install, whose prompt the person expects
+ * right after installing Genex. An update of an earlier install waits for its button.
+ */
+export function setsUpUnasked(state: Pick<BootStoreState, "platform" | "problem">): boolean {
+  return canSetUp(state) && state.problem?.windowsNeeds?.includes(WindowsSetupNeed.Reinstall) !== true;
 }
 
 /** The screen the state calls for. */
@@ -319,7 +328,7 @@ export function createBoot(
   const setUp = shared(runSetUp);
   const start = async (): Promise<void> => {
     const boot = await followStart(await ask());
-    if (boot && canSetUp(store.getState()) && !boot.setupTried) await setUp();
+    if (boot && setsUpUnasked(store.getState()) && !boot.setupTried) await setUp();
   };
   const quit = (): Promise<void> => api.quitFromBoot();
   const studioUp = (): boolean => bootView(store.getState()) === BootView.Studio;

@@ -39,9 +39,12 @@ import {
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
+  PluginInstallProblem,
   PluginToolAudience,
   TOOLBAR_ICON_NAMES,
 } from "../../shared/plugins.ts";
+import { CodedError } from "../../shared/errors.ts";
+import { refusedAs } from "./install-problem.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
 import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
 import { MCP_ID, McpTransport } from "../../shared/mcp.ts";
@@ -196,6 +199,7 @@ const MESSAGE = {
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
   InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
+  InvalidOnAccount: "Invalid tools[].onAccount (API 3, with a confirmation: true or absent)",
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
   InvalidAction: "Invalid action",
@@ -359,6 +363,13 @@ function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConf
   return { parameter: parameter as string, label: label as string };
 }
 
+/** A tool that acts on the person's account elsewhere (API 3): only `true`, on a tool with a card. */
+function onAccount(t: PluginManifestTool, m: PluginManifest): true {
+  const value: unknown = t.onAccount;
+  if (m.apiVersion < 3 || t.confirmation === undefined || value !== true) throw new Error(MESSAGE.InvalidOnAccount);
+  return true;
+}
+
 /** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
 function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.confirmation !== undefined) {
@@ -403,6 +414,7 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.onAccount !== undefined) tool.onAccount = onAccount(t, m);
   if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
@@ -1002,6 +1014,14 @@ export async function inspectPackage(root: string): Promise<PluginManifest> {
 }
 
 /**
+ * `inspectPackage` for an install, update or reinstall: a refusal carries its code beside the same
+ * words (a link or special file `UnsafePackage`, anything else `PackageInvalid`). A check outside an
+ * install (`plugin-check`) reads `inspectPackage`'s own errors, a Node `ENOENT` or a `SyntaxError`.
+ */
+export const inspectForInstall = (root: string): Promise<PluginManifest> =>
+  refusedAs(PluginInstallProblem.PackageInvalid, () => inspectPackage(root));
+
+/**
  * Every entry below `root` must be a plain file or folder: a link or special file anywhere refuses
  * the package. A bundled package holds thousands of files and is inspected at every launch, so the
  * walk takes each entry's type from its folder's listing and reads several folders at once;
@@ -1023,7 +1043,7 @@ async function plainFolderEntries(dir: string): Promise<string[]> {
     // A file system that does not say what an entry is gets it asked of the entry itself.
     const kind = typeKnown(entry) ? entry : await lstat(file);
     const linkOrSpecial = kind.isSymbolicLink() || (!kind.isDirectory() && !kind.isFile());
-    if (linkOrSpecial) throw new Error(MESSAGE.LinksInPackage);
+    if (linkOrSpecial) throw new CodedError(PluginInstallProblem.UnsafePackage, MESSAGE.LinksInPackage);
     if (kind.isDirectory()) folders.push(file);
   }
   return folders;

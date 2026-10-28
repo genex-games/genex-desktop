@@ -28,6 +28,7 @@ import type { PluginBinding } from "../../src/shared/plugins.ts";
 import { ItemState, ItemType } from "../../src/shared/store-items.ts";
 import { isHostOnlyUiEvent, UiEvent } from "../../src/shared/ui-events.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
+import { pngPicture } from "../helpers/picture.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const HOSTED = "proj_1";
@@ -173,6 +174,7 @@ const ICE_SHIELD: LocalListingDraft = {
   tags: ["shield"],
   shareable: false,
   contentHash: HASH,
+  picture: `.genex/items/${LOCAL_ID}/picture.png`,
 };
 
 describe("a local draft in a Genex CLI answer", () => {
@@ -300,7 +302,11 @@ async function profile() {
   await mkdir(project, { recursive: true });
   await mkdir(path.join(root, "resources"), { recursive: true });
   await writeFile(path.join(project, "project.json"), JSON.stringify({ id: HOSTED, slug: "space-race-x1" }));
-  return { root, genexStorage };
+  // The game the call is bound to, with the item's picture a shop add names.
+  const game = path.join(root, "games", "space-race");
+  await mkdir(path.join(game, ".genex", "scratch"), { recursive: true });
+  await writeFile(path.join(game, ".genex", "scratch", "frost-axe.png"), pngPicture(1024, 1024, "frost"));
+  return { root, genexStorage, game };
 }
 
 /** A sandbox that runs nothing and prints `stdout` with exit `code`. */
@@ -333,12 +339,17 @@ async function cliService(
     resources: path.join(p.root, "resources"),
     genexStorage: p.genexStorage,
     protectedWrites: () => [],
+    boundGame: async () => p.game,
     onListingDraft: onDraft,
   });
 }
 
 const BINDING: PluginBinding = { project: "space-race", directory: "/games/space-race", threadId: "t1" };
-const SHOP_ADD = { command: "shop add", args: "Frost Axe", options: { price: 1200 } };
+const SHOP_ADD = {
+  command: "shop add",
+  args: "Frost Axe",
+  options: { price: 1200, image: ".genex/scratch/frost-axe.png" },
+};
 
 describe("a Studio-run CLI command and the Listing draft card", () => {
   it("hands the host the draft of a `shop add` run, with the call's binding, and answers the agent as before", async () => {
@@ -373,7 +384,7 @@ describe("a Studio-run CLI command and the Listing draft card", () => {
   });
 });
 
-describe("only the person puts an item on sale (D40)", () => {
+describe("no agent puts an item on sale: Studio does after a publish", () => {
   it("never runs `genex shop publish` or `unpublish` for an agent, through either tool", () => {
     for (const command of ["shop publish", "shop unpublish"])
       for (const paid of [true, false])

@@ -459,6 +459,7 @@ function interviewReply(id: EngineId, request: DelegateRequest) {
   const question = {
     name: "ask_user",
     args: {
+      recap: "A night scene needs a place first.",
       question: "Where should the scene take place?",
       options: "Ashlands (Recommended) | Open terrain and mushroom trees\nTown street | Buildings and lanterns",
     },

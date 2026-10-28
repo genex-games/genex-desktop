@@ -87,7 +87,7 @@ For example: `genex__skill {"name":"genex-threejs-multiplayer","file":"skills/ge
 available in Studio: build chat, voice and the character from the SDK calls the card shows.
 Commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.15 sha256 64fc5498203e6d99244781f39237ddc22b83d5fb70932c23cec2d07eb553b7a7 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.17 sha256 64fc5498203e6d99244781f39237ddc22b83d5fb70932c23cec2d07eb553b7a7 -->
 ---
 name: genex-threejs-multiplayer
 description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence. MANDATORY for any multiplayer game — load before writing networking code.

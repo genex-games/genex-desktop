@@ -17,10 +17,11 @@ import { GenexPackageService } from "../../src/main/core/genex-package.ts";
 import type { PluginBinding } from "../../src/shared/plugins.ts";
 import { PluginHostTool } from "../../src/shared/plugins.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
+import { pngPicture, webpPicture } from "../helpers/picture.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ITEM = "sku_phoenix";
-const PICTURE = "PNG-frost-axe";
+const PICTURE = pngPicture(1024, 1024, "frost-axe");
 const MODEL = "glTF-frost-axe";
 
 /** A profile with the game `space-race` published as a draft, its files, and a folder beside the games. */
@@ -127,13 +128,44 @@ const bound = (p: Profile, directory = p.game): PluginBinding => ({ project: "sp
 const shopAdd = (options: Record<string, unknown>) => ({
   command: "shop add",
   args: "Frost Axe",
-  options: { price: 1200, ...options },
+  options: { price: 1200, image: ".genex/scratch/frost-axe.png", ...options },
 });
 /** A change to a listed item takes the same files, and the person approves it on a card. */
 const shopSet = (options: Record<string, unknown>) => ({ command: "shop set", args: ITEM, options });
 // A new item's draft runs through the free tool: it asks nobody (`genex-cli-policy.ts`).
 const FREE = { paid: false };
 const PAID = { paid: true };
+
+/**
+ * A store item's picture fills its card edge to edge, so it is square and big enough to stay sharp
+ * there: an arena's classes went up as 768-pixel portraits on black that sat small in the card's
+ * placeholder. A picture that is not one is refused before anything runs.
+ */
+describe("a store item's picture, sized for its card", () => {
+  for (const [name, bytes, why] of [
+    ["too small", pngPicture(256, 256), /256 × 256.*square, at least 768 × 768/],
+    ["not square", pngPicture(1024, 768), /1024 × 768.*square, at least 768 × 768/],
+    ["not a PNG or WebP", Buffer.from("GIF89a-frost"), /not a PNG or WebP/],
+  ] as const) {
+    it(`refuses a picture that is ${name}, and nothing runs`, async () => {
+      const p = await profile();
+      await writeFile(path.join(p.game, ".genex", "scratch", "frost-axe.png"), bytes);
+      const sandbox = fakeSandbox();
+      await assert.rejects(service(p, sandbox).run(shopAdd({}), bound(p), FREE), why);
+      assert.equal(sandbox.seen.length, 0);
+    });
+  }
+
+  it("takes a square PNG or WebP of 768 or more", async () => {
+    for (const bytes of [pngPicture(768, 768), pngPicture(2048, 2048), webpPicture(1024, 1024)]) {
+      const p = await profile();
+      await writeFile(path.join(p.game, ".genex", "scratch", "frost-axe.png"), bytes);
+      const sandbox = fakeSandbox();
+      const answer = await service(p, sandbox).run(shopAdd({}), bound(p), FREE);
+      assert.equal(answer.ok, true);
+    }
+  });
+});
 
 describe("a store item's files, from the game into the run folder", () => {
   it("copies the picture, model and package and points the CLI at the copies, leaving the game as it was", async () => {
@@ -148,7 +180,7 @@ describe("a store item's files, from the game into the run folder", () => {
     assert.equal(answer.ok, true);
     const [run] = sandbox.seen;
     assert.ok(run, "the CLI ran");
-    assert.equal(run.named.image, PICTURE);
+    assert.equal(run.named.image, PICTURE.toString());
     assert.equal(run.named.model, MODEL);
     assert.deepEqual(
       run.named.package,
@@ -397,7 +429,6 @@ describe("the network a run that moves an item's files opens", () => {
       WITH_STORAGE,
     ],
     ["items add", itemsAdd, WITH_STORAGE],
-    ["shop add without files", shopAdd({}), API_ONLY],
     ["shop set without files", { command: "shop set", args: ITEM, options: { price: 300 } }, API_ONLY],
     ["items remove", { command: "items remove", args: ITEM }, API_ONLY],
   ];

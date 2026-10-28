@@ -9,6 +9,10 @@ import { t } from "../../shared/i18n.ts";
 import type { EventEnvelope } from "../types.ts";
 import { type Notify, ToastTone } from "../state/toasts.ts";
 import { COMPOSE_FRAMES_EVENT } from "../ui/PromptBar.tsx";
+import { chatMemory, noteRewound } from "../analytics/chat-memory.ts";
+import { messagesBack, rewindCompletedProperties } from "../analytics/chat-properties.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** The event a user bubble was written in: its entry id is `<event id>-<message index>:user` (chat-entries.ts). */
 export const bubbleEvent = (entryId: string): string => entryId.replace(/-\d+:user(?::\d+)?$/, "");
@@ -76,12 +80,16 @@ export function useChatRewind(input: {
     const eventId = bubbleEvent(entryId);
     const messageId = rewindable.get(eventId);
     returnFocus.current = null;
-    if (threadId && messageId) setTarget({ threadId, eventId, messageId });
+    if (!threadId || !messageId) return;
+    setTarget({ threadId, eventId, messageId });
+    track(AnalyticsEvent.RewindOpened, { messages_back: messagesBack(threadEvents, eventId) });
   };
   const open = useCallback((entryId: string) => openNow.current(entryId), []);
   const rewound = (done: RewindTarget, result: RewindResult): void => {
     // The message comes back to be changed and sent again; a draft already there stays after it.
     input.putBack(done.threadId, result.text);
+    noteRewound(chatMemory, done.threadId);
+    track(AnalyticsEvent.RewindCompleted, rewindCompletedProperties(result));
     restorePictures(done.threadId, result);
     returnFocus.current = promptInput();
     if (result.files) input.onNotice(restoredWords(result.files), ToastTone.Ok);

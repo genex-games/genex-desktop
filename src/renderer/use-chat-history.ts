@@ -12,6 +12,9 @@ import { chatContext, mergeChatEvents, type ChatPage } from "../shared/chat-hist
 import { CustomEvent, customRecord } from "../shared/custom-events.ts";
 import type { EventEnvelope } from "./types.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { elapsedMs } from "./analytics/properties.ts";
+import { track } from "./analytics/client.ts";
+import { AnalyticsEvent } from "./analytics/events.ts";
 
 /** A live event of this thread that arrived after the loaded tail. */
 const freshFor =
@@ -105,18 +108,33 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
   const [history, setHistory] = useState<History>(empty);
   const generation = useRef(0);
   const pageRequest = useRef(false);
+  // Earlier pages read in this chat, for `chat_history_paged`.
+  const pages = useRef(0);
   useEffect(() => {
     const version = ++generation.current;
+    pages.current = 0;
     pageRequest.current = false;
     setHistory(empty(threadId ?? ""));
     if (!threadId) return;
+    const startedAt = Date.now();
+    const opened = (failed: boolean, hasMore: boolean): void =>
+      track(AnalyticsEvent.ChatOpened, {
+        load_ms: elapsedMs(startedAt, Date.now()),
+        has_more_history: hasMore,
+        attempt,
+        failed,
+      });
     void window.studio
       .chatPage(threadId)
       .then((page) => {
-        if (generation.current === version) setHistory({ ...page, threadId, loading: false, paging: false });
+        if (generation.current !== version) return;
+        setHistory({ ...page, threadId, loading: false, paging: false });
+        opened(false, page.hasMore);
       })
       .catch((error) => {
-        if (generation.current === version) setHistory({ ...empty(threadId), error: String(error.message ?? error) });
+        if (generation.current !== version) return;
+        setHistory({ ...empty(threadId), error: String(error.message ?? error) });
+        opened(true, false);
       });
     return () => {
       ++generation.current;
@@ -130,8 +148,17 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
     pageRequest.current = true;
     const version = generation.current;
     setHistory((current) => ({ ...current, paging: true, pageError: undefined }));
+    const startedAt = Date.now();
+    const paged = (failed: boolean): void =>
+      track(AnalyticsEvent.ChatHistoryPaged, {
+        page_index: pages.current,
+        ms: elapsedMs(startedAt, Date.now()),
+        failed,
+      });
     try {
       const page = await window.studio.chatPage(older.threadId, older.before);
+      pages.current += 1;
+      paged(false);
       if (version === generation.current)
         setHistory((current) => ({
           ...current,
@@ -141,6 +168,7 @@ export function useChatHistory(threadId: string | null, live: EventEnvelope[], a
           paging: false,
         }));
     } catch (error) {
+      paged(true);
       if (version === generation.current)
         setHistory((current) => ({ ...current, paging: false, pageError: String(errorMessage(error)) }));
     } finally {

@@ -491,9 +491,15 @@ function afterDeps(timeline: Timeline, setUpStep: (running: boolean) => Promise<
     const inReopened = reopened !== undefined && clock >= reopened.from && clock < reopened.to;
     return inFirst || inReopened;
   };
-  const run: Run = async (file) => {
+  const raises: number[] = [];
+  const run: Run = async (file, args) => {
     if (file === "/usr/bin/plutil") return { code: 0, stdout: "0.743.0.7431133\n" };
     if (file === "/usr/bin/pgrep") return running() ? { code: 0, stdout: "4530\n" } : { code: 1, stdout: "" };
+    // Bringing Studio to the front, so its save question shows, is no quit.
+    if (file === "/usr/bin/osascript" && args.join(" ").includes("activateWithOptions")) {
+      raises.push(clock);
+      return { code: 0, stdout: "raised" };
+    }
     if (file === "/usr/bin/osascript") {
       quits.push(clock);
       const first = timeline.firstStudio;
@@ -535,7 +541,7 @@ function afterDeps(timeline: Timeline, setUpStep: (running: boolean) => Promise<
     setUpAlready: async () => reached(timeline.setUpAt),
     signedIn: async () => reached(timeline.signedInAt),
   };
-  return { deps, opened, setUps, quits, clock: () => clock };
+  return { deps, opened, setUps, quits, raises, clock: () => clock };
 }
 
 describe("after Roblox's installer: sign-in, Set up while Studio is closed, Studio opened again", () => {
@@ -655,6 +661,7 @@ describe("after Roblox's installer: sign-in, Set up while Studio is closed, Stud
     );
     await afterInstall(after.deps, { signal: signal() });
     assert.equal(after.quits.length, 1, "quit once, never again");
+    assert.equal(after.raises.length, 1, "and Studio was brought forward once, so its save question shows");
     assert.ok(after.clock() >= 400_000);
     assert.deepEqual(after.setUps, [false]);
     assert.equal(after.opened.length, 1);

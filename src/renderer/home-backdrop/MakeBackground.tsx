@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { BackdropShaderKind, SHADER_PROMPT_MAX_CHARS } from "../../shared/backdrop-shader.ts";
 import { t } from "../../shared/i18n.ts";
 import { useAppearance } from "../appearance/store.ts";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { StatusOrb } from "../ui/StatusOrb.tsx";
@@ -185,7 +185,10 @@ export function MakeBackground({ model, onClose }: { model: GenerationModel; onC
       <div className="backdrop-make-actions">
         <span className="backdrop-make-model">{MESSAGE.model(model.name)}</span>
         {problem === MakeProblem.NoModel ? (
-          <Button variant="ghost" onClick={() => openSettings(SettingsSection.Providers)}>
+          <Button
+            variant="ghost"
+            onClick={() => openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.Backdrop)}
+          >
             {MESSAGE.connect}
           </Button>
         ) : (

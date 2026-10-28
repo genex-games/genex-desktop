@@ -28,7 +28,12 @@ async function main() {
   const srt = await import("@anthropic-ai/sandbox-runtime");
   const srtWin = srt.resolveSrtWin({ path: srt.VENDORED_SRT_WIN_EXE });
   const started = performance.now();
-  const result = await srt.installWindowsSandboxAsync({ srtWin, timeoutMs: INSTALL_TIMEOUT_MS });
+  // As Genex's own Set up installs it (`srtInstallOptions`): without srt-win's profile read grant.
+  const result = await srt.installWindowsSandboxAsync({
+    srtWin,
+    timeoutMs: INSTALL_TIMEOUT_MS,
+    skipProfileGrant: true,
+  });
   const installMs = Math.round(performance.now() - started);
   const provisioned = result.user?.provisioned === true && !result.cancelled;
   if (!provisioned) fail("the srt-sandbox user was not provisioned", redacted(result));

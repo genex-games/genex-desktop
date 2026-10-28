@@ -113,7 +113,7 @@ function merge(lead: LeadRun, facetId: string, round: number, snapshot: string):
   });
 }
 
-/** One save point: its round (the lead kept it itself), its hero shots and its merge. */
+/** One save point: its round (the lead kept it itself), its hero shots, the picture it names and its merge. */
 async function savePoint(
   lead: LeadRun,
   part: { id: string; title: string },
@@ -133,6 +133,7 @@ async function savePoint(
       label: spec.label,
       snapshot,
       shots: await heroShots(lead, part.id, spec.round, spec.from, spec.to),
+      shown: await shownShot(lead, part.id, spec.round, spec.to),
       logErrors: [],
       auto: false,
       move: { what: `${spec.label}: ${spec.summary}`, delivered: true },
@@ -153,6 +154,15 @@ async function heroShots(lead: LeadRun, facetId: string, round: number, from: Rg
     { camera: "GX_Shot_Vista", path: vista, tone: null },
     { camera: "GX_Shot_Hero", path: hero, tone: null },
   ];
+}
+
+/** The picture the lead named as showing a save point's change (the open Loop's `shows`), framed apart from the hero cameras. */
+async function shownShot(lead: LeadRun, facetId: string, round: number, to: Rgb) {
+  const dir = roundShotDir(lead.runsRoot, lead.runId, facetId, round);
+  await fs.mkdir(dir, { recursive: true });
+  const shows = path.join(dir, "shows.jpg");
+  await fs.writeFile(shows, gradientShot(EMBER, to));
+  return { camera: "shows", path: shows };
 }
 
 /** A sub-agent's plugin job, as the host records a call attributed to the agent's part. */

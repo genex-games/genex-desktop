@@ -259,3 +259,22 @@ describe("a launch's lists as engines send them", () => {
     });
   }
 });
+
+describe("a launch's folder name", () => {
+  it("keeps no dash that the user's non-Latin words left at an edge", async () => {
+    const tool = gameTools.find((t) => t.name === "start_autopilot");
+    assert.ok(tool);
+    const ctx = { autopilot: { hours: 1 }, engine: "vendor" };
+    const rows: Array<[string, string]> = [
+      ["game-магазин", "game"],
+      ["космо-race", "race"],
+      ["neon-runner", "neon-runner"],
+    ];
+    for (const [project, expected] of rows) {
+      const result = (await tool.execute({ goal: ASK, direction: "d", project }, ctx as never)) as {
+        details?: { run?: Record<string, unknown> };
+      };
+      assert.equal(result.details?.run?.project, expected, project);
+    }
+  });
+});

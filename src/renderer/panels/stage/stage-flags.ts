@@ -24,12 +24,30 @@ export interface LiveFlagsInput {
  */
 export function resolveStageView(
   view: StageView,
-  has: { beside: boolean; builds: boolean; project: boolean },
+  has: { beside: boolean; builds: boolean; project: boolean; shop?: boolean },
 ): StageView {
   if (view === StageView.File && has.beside) return StageView.File;
   if (view === StageView.Builds && has.builds) return StageView.Builds;
+  if (view === StageView.Shop && has.shop && has.project) return StageView.Shop;
   if (view === StageView.Assets && has.project) return StageView.Assets;
   return StageView.Live;
+}
+
+/** What the stage can show besides Live: a file beside, a build, the game's own views and its Shop. */
+export function stageHas({
+  beside,
+  graph,
+  planning,
+  project,
+  shop,
+}: {
+  beside: BesideTarget | null;
+  graph: RunGraphModel | null;
+  planning: boolean;
+  project: string | null;
+  shop: boolean;
+}): { beside: boolean; builds: boolean; project: boolean; shop: boolean } {
+  return { beside: Boolean(beside), builds: graph !== null || planning, project: Boolean(project), shop };
 }
 
 /**
@@ -47,22 +65,21 @@ export function stageFlags({
   liveView,
   pending,
   live,
+  shop = false,
 }: {
   view: StageView;
   beside: BesideTarget | null;
   graph: RunGraphModel | null;
   planning: boolean;
   project: string | null;
+  /** The game sells something: Shop can be shown. */
+  shop?: boolean;
   /** The view Live shows for this game (`liveViewFor`). */
   liveView: ObserverLive;
   pending: boolean;
   live: LiveFlagsInput;
 }) {
-  const stageView = resolveStageView(view, {
-    beside: Boolean(beside),
-    builds: graph !== null || planning,
-    project: Boolean(project),
-  });
+  const stageView = resolveStageView(view, stageHas({ beside, graph, planning, project, shop }));
   const onLive = Boolean(project) && stageView === StageView.Live;
   const previewOnStage = onLive && liveView === ObserverLive.Preview;
   const emptyScene = live.state?.phase === "empty" && live.state?.drawCalls === 0;
@@ -92,6 +109,8 @@ export function stageFlags({
     buildsOpen: stageView === StageView.Builds,
     /** Assets is a full-stage surface like Builds: the native game view has to give the rectangle back. */
     assetsOpen: stageView === StageView.Assets,
+    /** Shop is a full-stage surface too. */
+    shopOpen: stageView === StageView.Shop,
     fileOpen: stageView === StageView.File,
   };
 }

@@ -84,6 +84,7 @@ import type {
   DelegateImage,
   DelegateResult,
   Message,
+  MessageOrigin,
   PluginKindOffer,
   StudioToolSpec,
 } from "../types/host-api.d.ts";
@@ -852,10 +853,17 @@ function autoLaunchFor(options: DelegatedOptions, launchTool: HarnessTool | null
   return launch?.parameters?.properties?.hours ? launch : null;
 }
 
+/**
+ * Genex's word after a Loop the person started was held back before its first turn (the app's
+ * `MessageOrigin.LoopHeld`): it asks for the person's own Loop again, so it may launch one.
+ */
+const RETRIES_PERSONS_LOOP: MessageOrigin = "loop-held";
+
 /** Is the message this turn answers one the chat wrote itself (its `origin`: a command's result), not the person's? */
 function chatWroteIt(options: DelegatedOptions): boolean {
   const asked = options.asked;
-  return typeof asked === "object" && asked !== null && (asked as AnyRecord).origin != null;
+  const origin = typeof asked === "object" && asked !== null ? (asked as AnyRecord).origin : undefined;
+  return origin != null && origin !== RETRIES_PERSONS_LOOP;
 }
 
 /**

@@ -35,6 +35,11 @@ export const STUDIO_MAC_BUNDLE = "com.Roblox.RobloxStudio";
 export const QUIT_WAIT_MS = 2 * MINUTE_MS;
 /** How often a quit looks whether Studio has closed. */
 const QUIT_POLL_MS = SECOND_MS;
+/**
+ * How long a quit lets Studio close by itself before bringing it to the front: still open then, it
+ * waits on its save question, which the person can't answer while Studio sits minimized or behind Genex.
+ */
+export const QUIT_RAISE_MS = 3 * SECOND_MS;
 const OSASCRIPT = "/usr/bin/osascript";
 const MAC_OPEN = "/usr/bin/open";
 const WINDOWS_ROOT = "C:\\Windows";
@@ -107,18 +112,72 @@ const MAC_QUIT_SCRIPT = [
   "}",
 ].join("\n");
 
+/** Windows' own folder, from SystemRoot when that is a full Windows path. */
+function windowsRoot(env: NodeJS.ProcessEnv): string {
+  const root = envValue(env, "SystemRoot");
+  return root && isWindowsPath(root) ? root : WINDOWS_ROOT;
+}
+
 /**
  * The normal quit for this system; never a forced one. On a Mac it is for one Studio process,
  * `pid`; on Windows taskkill without /F asks every Studio window at once.
  */
 export function quitLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, pid?: number): Launch {
-  if (platform === "win32") {
-    const root = envValue(env, "SystemRoot");
-    const system = root && isWindowsPath(root) ? root : WINDOWS_ROOT;
-    return { file: path.win32.join(system, "System32", "taskkill.exe"), args: ["/IM", STUDIO_WINDOWS_EXE] };
-  }
+  if (platform === "win32")
+    return { file: path.win32.join(windowsRoot(env), "System32", "taskkill.exe"), args: ["/IM", STUDIO_WINDOWS_EXE] };
   // Asking a running app to quit never starts one; Studio's save question stays the person's.
   return { file: OSASCRIPT, args: ["-l", "JavaScript", "-e", MAC_QUIT_SCRIPT, String(pid ?? 0)] };
+}
+
+/**
+ * The Mac's raise for one Studio process: it is brought in front, never started, and only when it
+ * is Studio.
+ */
+const MAC_RAISE_SCRIPT = [
+  "function run(argv) {",
+  '  ObjC.import("AppKit");',
+  "  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(argv[0]));",
+  `  if (app.isNil() || app.bundleIdentifier.js !== "${STUDIO_MAC_BUNDLE}") return "not-studio";`,
+  "  app.unhide;",
+  '  return app.activateWithOptions($.NSApplicationActivateAllWindows) ? "raised" : "refused";',
+  "}",
+].join("\n");
+
+/**
+ * The PC's raise: every Studio process's main window restored if it is minimized, then brought to
+ * the front. It shows windows and nothing else; Studio's own process name is the only one it reads.
+ */
+const WINDOWS_RAISE_SCRIPT = [
+  "$ErrorActionPreference = 'SilentlyContinue'",
+  "$api = Add-Type -PassThru -Namespace GenexRoblox -Name Windows -MemberDefinition @'",
+  '[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);',
+  '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int show);',
+  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);',
+  "'@",
+  `foreach ($studio in Get-Process -Name '${STUDIO_WINDOWS_EXE.replace(/\.exe$/i, "")}') {`,
+  "  $window = $studio.MainWindowHandle",
+  "  if ($window -eq [IntPtr]::Zero) { continue }",
+  "  if ($api::IsIconic($window)) { [void]$api::ShowWindow($window, 9) }",
+  "  [void]$api::SetForegroundWindow($window)",
+  "}",
+  // No Studio is no failure: Get-Process's not-found error must not become the exit code.
+  "exit 0",
+].join("\n");
+
+/**
+ * Brings every open Studio to the front, where its save question shows; none when none runs. On a
+ * Mac one per process, on Windows one Windows PowerShell run for all, its script encoded.
+ */
+export async function raiseLaunches(deps: LaunchDeps): Promise<Launch[]> {
+  if (deps.platform === "darwin")
+    return (await studioPids(deps)).map((pid) => ({
+      file: OSASCRIPT,
+      args: ["-l", "JavaScript", "-e", MAC_RAISE_SCRIPT, String(pid)],
+    }));
+  if (deps.platform !== "win32") return [];
+  const encoded = Buffer.from(WINDOWS_RAISE_SCRIPT, "utf16le").toString("base64");
+  const powerShell = path.win32.join(windowsRoot(deps.env), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return [{ file: powerShell, args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded] }];
 }
 
 /** The quits that reach every open Studio: one per process on a Mac, one for all on Windows. */
@@ -182,15 +241,21 @@ export function openLaunch(platform: NodeJS.Platform, install: StudioInstall): L
 
 /**
  * Asks Studio to quit normally and waits until it has closed; false when it is still open at the
- * end of the wait (the person kept it open, or is still answering its save question).
+ * end of the wait (the person kept it open, or is still answering its save question). Still open
+ * after {@link QUIT_RAISE_MS}, Studio is brought to the front once, so its save question shows.
  */
 export async function quitStudio(deps: LaunchDeps, waitMs = QUIT_WAIT_MS): Promise<boolean> {
   if (!(await studioRunning(deps))) return true;
   for (const quit of await quitLaunches(deps)) await deps.run(quit.file, quit.args).catch(() => undefined);
-  const until = deps.now() + waitMs;
+  const asked = deps.now();
+  const until = asked + waitMs;
+  let raised = false;
   while (deps.now() < until) {
     await deps.sleep(QUIT_POLL_MS);
     if (!(await studioRunning(deps))) return true;
+    if (raised || deps.now() - asked < QUIT_RAISE_MS) continue;
+    raised = true;
+    for (const raise of await raiseLaunches(deps)) await deps.run(raise.file, raise.args).catch(() => undefined);
   }
   return false;
 }

@@ -25,12 +25,15 @@ import { type CoverLook, firstCoverRecipe, rollCoverRecipe } from "../shared/cov
 import { assetFormat } from "../shared/game-assets.ts";
 import { t } from "../shared/i18n.ts";
 import { folderNameFromTitle, MAX_SLUG_LENGTH, PROJECT_NAME_RE, slugFromName } from "../shared/game-folder-name.ts";
+import { CodedError } from "../shared/errors.ts";
 import {
   displayCover,
+  ExportRefusal,
   validateGameCover,
   validateGameTitle,
   type GameLibraryEntry,
   type GameUpdate,
+  WorkspaceRefusal,
 } from "../shared/game-library.ts";
 import type {
   FolderInspection,
@@ -318,7 +321,8 @@ async function assertNoOtherFolders(target: string, known: ReadonlySet<string>):
   });
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || !PROJECT_NAME_RE.test(entry.name)) continue;
-    if (!known.has(await realpath(path.join(target, entry.name)))) throw new Error(MESSAGE.RootNotEmpty());
+    if (!known.has(await realpath(path.join(target, entry.name))))
+      throw new CodedError(WorkspaceRefusal.RootNotEmpty, MESSAGE.RootNotEmpty());
   }
 }
 
@@ -326,7 +330,7 @@ export { slugFromName };
 
 export function assertProjectName(name: string): void {
   if (!PROJECT_NAME_RE.test(name)) {
-    throw new Error(MESSAGE.InvalidName(name));
+    throw new CodedError(WorkspaceRefusal.InvalidName, MESSAGE.InvalidName(name));
   }
 }
 
@@ -681,7 +685,8 @@ export class GameWorkspaces {
     await this.loadIndex();
     if (!isProjectStarter(starter)) throw new Error(MESSAGE.UnknownStarter);
     const dir = this.dirFor(name);
-    if (!(await pathExists(path.join(dir, "studio.json")))) throw new Error(MESSAGE.FolderGone());
+    if (!(await pathExists(path.join(dir, "studio.json"))))
+      throw new CodedError(WorkspaceRefusal.FolderGone, MESSAGE.FolderGone());
     const kind = await this.kindOf(name);
     if (kind.facts.length > 0) throw new Error(MESSAGE.AlreadyKind(kind.facts));
     if (!kindPending(kind)) throw new Error(MESSAGE.OwnKind);
@@ -764,17 +769,19 @@ export class GameWorkspaces {
   async location(dir: string, allowed?: LocationCheck): Promise<string> {
     await this.loadIndex();
     await ensureDir(this.root);
-    if (!path.isAbsolute(dir)) throw new Error(MESSAGE.LocationRefused());
+    if (!path.isAbsolute(dir)) throw new CodedError(WorkspaceRefusal.LocationRefused, MESSAGE.LocationRefused());
     const real = await realpath(dir).catch(() => null);
-    if (!real) throw new Error(MESSAGE.LocationGone());
-    if (!(await stat(real)).isDirectory()) throw new Error(MESSAGE.LocationNotFolder());
+    if (!real) throw new CodedError(WorkspaceRefusal.LocationGone, MESSAGE.LocationGone());
+    if (!(await stat(real)).isDirectory())
+      throw new CodedError(WorkspaceRefusal.LocationNotFolder, MESSAGE.LocationNotFolder());
     const root = await realpath(this.root);
     if (real === root) return real;
     const appData = isInside(await presentationPath(this.userData), real) && !isInside(root, real);
     const refused = real === path.parse(real).root || appData || throughClaudeFolder(real);
-    if (refused) throw new Error(MESSAGE.LocationRefused());
+    if (refused) throw new CodedError(WorkspaceRefusal.LocationRefused, MESSAGE.LocationRefused());
     const games = await this.#knownGameFolders(await this.list(), real);
-    if ([...games].some((game) => isInside(game, real))) throw new Error(MESSAGE.InsideGame());
+    if ([...games].some((game) => isInside(game, real)))
+      throw new CodedError(WorkspaceRefusal.InsideGame, MESSAGE.InsideGame());
     await allowed?.(real);
     return real;
   }
@@ -790,7 +797,7 @@ export class GameWorkspaces {
     // would have put it somewhere else. It is empty, so it goes again, and nothing is recorded.
     if ((await realpath(dir)) !== dir) {
       await rmdir(dir).catch(() => {});
-      throw new Error(MESSAGE.LocationRefused());
+      throw new CodedError(WorkspaceRefusal.LocationRefused, MESSAGE.LocationRefused());
     }
     const inRoot = new Set(await readdir(this.root));
     const name = uniqueName(slugFromName(title), { has: (taken) => this.#aliases.has(taken) || inRoot.has(taken) });
@@ -829,7 +836,7 @@ export class GameWorkspaces {
     const newRoot = await presentationPath(target);
     for (const game of games) {
       const dir = await realpath(game.dir);
-      if (isInside(dir, newRoot)) throw new Error(MESSAGE.InsideGame());
+      if (isInside(dir, newRoot)) throw new CodedError(WorkspaceRefusal.InsideGame, MESSAGE.InsideGame());
       known.add(dir);
     }
     return known;
@@ -908,12 +915,13 @@ export class GameWorkspaces {
 
   async update(name: string, patch: GameUpdate): Promise<GameProject> {
     await this.loadIndex();
-    const dir = await realpath(this.dirFor(name));
-    if (!(await pathExists(dir))) throw new Error(MESSAGE.FolderGone());
+    // A folder that is gone is refused as gone, never with realpath's ENOENT naming its path.
+    const dir = await realpath(this.dirFor(name)).catch(() => null);
+    if (!dir) throw new CodedError(WorkspaceRefusal.FolderGone, MESSAGE.FolderGone());
     const changes: GameUpdate = {};
     if (patch.title !== undefined) changes.title = validateGameTitle(patch.title);
     if (patch.pinned !== undefined) {
-      if (typeof patch.pinned !== "boolean") throw new Error(MESSAGE.InvalidPin);
+      if (typeof patch.pinned !== "boolean") throw new CodedError(WorkspaceRefusal.InvalidPin, MESSAGE.InvalidPin);
       changes.pinned = patch.pinned;
     }
     if (patch.cover !== undefined) {
@@ -1271,11 +1279,11 @@ export class GameWorkspaces {
     const child = (subdir ?? ".").trim();
     if (child === "" || child === ".") return resolved;
     if (child !== path.basename(child) || child.startsWith(".")) {
-      throw new Error(MESSAGE.SubdirIsPath());
+      throw new CodedError(WorkspaceRefusal.SubdirIsPath, MESSAGE.SubdirIsPath());
     }
     const target = await realpath(path.join(resolved, child)).catch(() => null);
     if (!target || !isInside(resolved, target)) {
-      throw new Error(MESSAGE.NoSuchSubdir(child, this.pathLabel(resolved)));
+      throw new CodedError(WorkspaceRefusal.NoSuchSubdir, MESSAGE.NoSuchSubdir(child, this.pathLabel(resolved)));
     }
     this.#assertAdoptable(target);
     return target;
@@ -1290,10 +1298,10 @@ export class GameWorkspaces {
       this.root,
     ];
     if (banned.some((item) => path.resolve(item) === resolved)) {
-      throw new Error(MESSAGE.BannedFolder());
+      throw new CodedError(WorkspaceRefusal.BannedFolder, MESSAGE.BannedFolder());
     }
     if (isInside(this.userData, resolved) && !isInside(this.root, resolved)) {
-      throw new Error(MESSAGE.AppFolder());
+      throw new CodedError(WorkspaceRefusal.AppFolder, MESSAGE.AppFolder());
     }
   }
 
@@ -1595,10 +1603,11 @@ export class GameWorkspaces {
     const shape = await detectProjectShape(dir);
     const config = await readJsonIfExists<{ exportFiles?: string[] }>(path.join(dir, "studio.json"));
     if (builtOutput) return exportPublicGame(builtOutput, targetDir, await readdir(builtOutput), undefined, options);
-    if (shape?.build) throw new Error(MESSAGE.BuildBeforeExport());
-    if (shape && !config?.exportFiles) throw new Error(MESSAGE.DeclareExportFiles());
+    if (shape?.build) throw new CodedError(ExportRefusal.NeedsBuild, MESSAGE.BuildBeforeExport());
+    if (shape && !config?.exportFiles)
+      throw new CodedError(ExportRefusal.FilesUndeclared, MESSAGE.DeclareExportFiles());
     const roots = config?.exportFiles ?? (await defaultExportRoots(dir));
-    if (!isExportList(roots)) throw new Error(MESSAGE.BadExportFiles());
+    if (!isExportList(roots)) throw new CodedError(ExportRefusal.FilesInvalid, MESSAGE.BadExportFiles());
     return exportPublicGame(dir, targetDir, roots, shape ? undefined : this.vendorDir, options);
   }
 }

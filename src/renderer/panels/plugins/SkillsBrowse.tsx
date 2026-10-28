@@ -27,6 +27,7 @@ function SkillButton({
   name,
   line,
   hook,
+  own = false,
   onOpen,
   children,
 }: {
@@ -34,11 +35,19 @@ function SkillButton({
   line: string;
   /** The row's `data-skill-row` value, for smoke checks. */
   hook?: string;
+  /** The person's own skill: kept out of usage recordings. */
+  own?: boolean;
   onOpen: () => void;
   children?: JSX.Element | false;
 }): JSX.Element {
   return (
-    <button type="button" className="extension-open" data-skill-row={hook} onClick={onOpen}>
+    <button
+      type="button"
+      className="extension-open"
+      data-skill-row={hook}
+      {...(own ? { "data-analytics-mask": "" } : {})}
+      onClick={onOpen}
+    >
       <Mark kind="box" />
       <span className="extension-copy">
         <span className="extension-name">{name}</span>
@@ -92,6 +101,7 @@ function ProviderSkills({
             key={s.path}
             name={s.name}
             line={s.description || s.scope}
+            own
             onOpen={() =>
               onSkill({ plugin: "", provider: provider.label, name: s.name, text: providerSkillText(provider, s) })
             }
@@ -142,7 +152,14 @@ function RowsSection({
       ))}
       <div className="extensions-grid">
         {shown.map((row) => (
-          <SkillButton key={row.key} name={row.name} line={row.line} hook={row.key} onOpen={() => onSkill(row.skill)}>
+          <SkillButton
+            key={row.key}
+            name={row.name}
+            line={row.line}
+            hook={row.key}
+            own={row.own}
+            onOpen={() => onSkill(row.skill)}
+          >
             <RowTag row={row} />
           </SkillButton>
         ))}

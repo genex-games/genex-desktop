@@ -29,7 +29,7 @@ import { createStudioMcp } from "../../src/plugins/roblox/studio-mcp.ts";
 import { createStudioWatch } from "../../src/plugins/roblox/studio-moments.ts";
 import { ASK_FIRST_STUDIO_TOOL, AskFirstTool } from "../../src/plugins/roblox/studio-tools.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
-import { ConsentChoice, consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
+import { consentChoices, consentTitle } from "../../src/renderer/chat/consent-card.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import type { PluginManifest } from "../../src/shared/plugins.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
@@ -631,9 +631,9 @@ describe("each card in a chat, through a real core", () => {
       assert.ok(card);
       assert.equal(consentTitle(card), tools.find((one) => one.name === tool)?.confirmation, tool);
       assert.deepEqual(
-        consentChoices(card).map((choice) => choice.id),
-        [ConsentChoice.Once, ConsentChoice.Decline],
-        `${tool}: no Always allow`,
+        consentChoices(card).map((choice) => choice.label),
+        ["Allow once", "Allow in this chat", "Don't allow"],
+        `${tool}: a yes for this chat, never Always allow`,
       );
       assert.equal(card.pending, false, `${tool}: answered`);
     }

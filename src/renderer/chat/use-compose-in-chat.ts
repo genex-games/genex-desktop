@@ -5,6 +5,7 @@
  */
 import { type RefObject, useEffect, useRef } from "react";
 import { COMPOSE_IN_CHAT_EVENT, type ComposeInChat, composedInChat, takeWaitingCompose } from "../compose-in-chat.ts";
+import { SendSource } from "../analytics/chat-vocabulary.ts";
 import type { PromptBarHandle } from "../ui/PromptBar.tsx";
 import type { SendAnswered } from "./use-submit.ts";
 import type { ThreadDrafts } from "./use-thread-drafts.ts";
@@ -47,7 +48,7 @@ export function useComposeInChat(
         // A draft the person was typing stays theirs: the send leaves it as it is.
         const typing = chat.drafts.draft.trim() !== "";
         composer.current?.compose(request.text);
-        send.current(request.text, undefined, typing).then(
+        send.current(request.text, undefined, typing, SendSource.Handoff).then(
           (went) => {
             if (went) request.sent?.();
           },

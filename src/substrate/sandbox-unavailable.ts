@@ -16,11 +16,19 @@ import {
   linuxInstallCommands,
   type SandboxProblem,
   type SandboxTool,
-  type WindowsSetupNeed,
+  WindowsSetupNeed,
 } from "../shared/boot.ts";
 
-/** sandbox-runtime's Windows error codes that mean "not set up yet", not "broken". */
-const WINDOWS_SETUP_CODES: ReadonlySet<string> = new Set(["not_provisioned", "wfp_fence_inactive"]);
+/**
+ * sandbox-runtime's Windows error codes that mean "not set up yet", not "broken", and what Set up
+ * does about each; null is the sandbox install, which the problem then leaves unsaid.
+ */
+const WINDOWS_SETUP_CODES: ReadonlyMap<string, WindowsSetupNeed | null> = new Map([
+  ["not_provisioned", null],
+  ["wfp_fence_inactive", null],
+  ["reinstall_required", WindowsSetupNeed.Reinstall],
+  ["seclogon_disabled", WindowsSetupNeed.LogonService],
+]);
 
 /** Why a sandboxed command could not start, when the sandbox itself is set up. */
 export const SandboxLaunchCode = {
@@ -61,7 +69,8 @@ const MESSAGE = {
   Launch: {
     [SandboxLaunchCode.ArgvTooLong]:
       "The command is too long for Windows to start (over 32,767 characters). Put it in a script file and run that.",
-    [SandboxLaunchCode.SrtWinTimeout]: "The Windows sandbox did not answer in time. Try again in a moment.",
+    [SandboxLaunchCode.SrtWinTimeout]:
+      "The Windows sandbox did not answer in time. An antivirus that scans every file can slow it this much: add Genex's folders to its exclusions, then try again.",
     [SandboxLaunchCode.NetworkDrive]:
       "Commands cannot run in a folder on a mapped or network drive. Move the game to a local drive.",
     [SandboxLaunchCode.NotGranted]:
@@ -146,12 +155,14 @@ export function sandboxProblem(check: SandboxCheck): SandboxProblem | null {
 export function windowsSetupProblem(error: unknown, details: string[] = []): SandboxProblem | null {
   const code = error instanceof Error && "code" in error ? error.code : undefined;
   if (typeof code !== "string" || !WINDOWS_SETUP_CODES.has(code)) return null;
+  const need = WINDOWS_SETUP_CODES.get(code);
   return {
     code: SandboxProblemCode.NotProvisioned,
     platform: StudioPlatform.Windows,
     missingTools: [],
     installCommands: [],
     details,
+    ...(need ? { windowsNeeds: [need] } : {}),
   };
 }
 

@@ -139,7 +139,7 @@ const MESSAGE = {
     "This game's Unreal still answers after Genex ended every editor of its project it found (another Unreal may have it open), so it didn't end. Ask the user to quit that Unreal, then try again.",
   NoProjectToEnd: "This game isn't linked to an Unreal project, so there is no Unreal to end.",
   Reopening: "Genex is reopening this game's Unreal; wait until it answers (editor-status), then try again.",
-  NotBuilt: (why: string) => `The game's C++ module didn't build, so Genex didn't reopen Unreal: ${why}`,
+  NotBuilt: (why: string) => `The game's code didn't build, so Genex didn't reopen Unreal: ${why}`,
   NotAnswering: `Genex reopened the game's project, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes. Call unreal__editor-status to see whether it answers now; if it still doesn't, call unreal__open-editor with restart: true.`,
 } as const;
 

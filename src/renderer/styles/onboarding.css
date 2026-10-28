@@ -463,7 +463,7 @@
 .onboarding-code [data-slot="button"] {
   height: 40px;
 }
-/* "or use" and the three other ways: quiet buttons, a fill only under the pointer or focus, and
+/* "or use" and the other ways: quiet buttons, a fill only under the pointer or focus, and
    one line under them about the button pointed at. */
 .onboarding-ways {
   display: flex;
@@ -508,6 +508,11 @@
 }
 .onboarding-way[data-state="on"] {
   color: var(--ink);
+}
+/* A beta provider's tag beside its name on its own screen's title. */
+.onboarding-title .beta-tag {
+  margin-left: 10px;
+  vertical-align: middle;
 }
 .onboarding-ways-hint {
   min-height: 20px;

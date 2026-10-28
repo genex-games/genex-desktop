@@ -494,7 +494,7 @@ export function MentionPanel(props: MentionPanelProps): JSX.Element {
   );
   let index = pluginsFirst ? lead.length + rows.length : lead.length;
   return (
-    <div className="mention-panel" style={{ "--mention-columns": props.columns } as CSSProperties}>
+    <div className="mention-panel" data-analytics-mask style={{ "--mention-columns": props.columns } as CSSProperties}>
       <MentionHeader
         query={props.query}
         filter={props.filter}

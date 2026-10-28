@@ -8,7 +8,18 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { TerminalKind, type TerminalSession } from "../../shared/terminal.ts";
+import type { TerminalSession } from "../../shared/terminal.ts";
+import { cliInstallAction, cliRecheckAction } from "../analytics/welcome-providers.ts";
+import {
+  reportAccountChanged,
+  reportProviderPress,
+  reportSignInHelper,
+  reportSignInStarted,
+  reportTerminalSignInCancelled,
+  settled,
+  useRowViewed,
+} from "../analytics/welcome-report.ts";
+import { AccountAction, ProviderAction, ProviderSurface, SignInHelper } from "../analytics/welcome-vocabulary.ts";
 import { useCliInstall } from "../cli-install.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
@@ -24,6 +35,7 @@ import {
   useRecheck,
   useRun,
 } from "./MeteredProviders.tsx";
+import { CLI_SIGN_IN, type CliProvider } from "./cli-sign-in.ts";
 import { OpenCodeRowState, openCodeRowState } from "./opencode-row.ts";
 import { type ProviderWords, RowTone, type RowView } from "./provider-row.tsx";
 import { useSignInTerminal } from "./use-sign-in-terminal.ts";
@@ -318,32 +330,12 @@ function connectedView(act: CliRowActions, words: CliRowWords): RowView {
   };
 }
 
-/** The CLIs whose row this is. */
-type CliProvider = typeof EngineId.OpenCode | typeof EngineId.Pi | typeof EngineId.Grok | typeof EngineId.Cursor;
-
-/** Each CLI's sign-in terminal, its sign-in call (and sign-out, for Cursor) and its words. */
-const CLI_ROWS: Record<
-  CliProvider,
-  {
-    terminal: TerminalKind;
-    signIn: () => Promise<{ started: boolean }>;
-    signOut?: () => Promise<unknown>;
-    words: CliRowWords;
-  }
-> = {
-  [EngineId.OpenCode]: {
-    terminal: TerminalKind.OpenCodeLogin,
-    signIn: () => window.studio.openCodeSignIn(),
-    words: OPEN_CODE_ROW,
-  },
-  [EngineId.Pi]: { terminal: TerminalKind.PiLogin, signIn: () => window.studio.piSignIn(), words: PI_ROW },
-  [EngineId.Grok]: { terminal: TerminalKind.GrokLogin, signIn: () => window.studio.grokSignIn(), words: GROK_ROW },
-  [EngineId.Cursor]: {
-    terminal: TerminalKind.CursorLogin,
-    signIn: () => window.studio.cursorSignIn(),
-    signOut: () => window.studio.cursorSignOut(),
-    words: CURSOR_ROW,
-  },
+/** Each CLI's words. */
+const CLI_WORDS: Record<CliProvider, CliRowWords> = {
+  [EngineId.OpenCode]: OPEN_CODE_ROW,
+  [EngineId.Pi]: PI_ROW,
+  [EngineId.Grok]: GROK_ROW,
+  [EngineId.Cursor]: CURSOR_ROW,
 };
 
 /** The row of one CLI that signs in in its own terminal. */
@@ -352,7 +344,8 @@ export default function CliSignInRow({
   onEnginesRefresh,
   provider,
 }: { engine: EngineDescriptor; provider: CliProvider } & Pick<MeteredProviderProps, "onEnginesRefresh">) {
-  const { terminal: terminalKind, signIn: startSignIn, signOut: forgetSignIn, words } = CLI_ROWS[provider];
+  const { terminal: terminalKind, signIn: startSignIn, signOut: forgetSignIn } = CLI_SIGN_IN[provider];
+  const words = CLI_WORDS[provider];
   const install = useCliInstall(provider);
   const { run, error } = useRun();
   const { checking, recheck } = useRecheck(provider, onEnginesRefresh);
@@ -361,31 +354,53 @@ export default function CliSignInRow({
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const ready = engine.status.code === EngineStatusCode.Ready;
   const state = openCodeRowState(engine, { installing: install.installing, signingIn: Boolean(terminal) });
-  const signIn = (): void =>
+  useRowViewed(provider, state, ProviderSurface.Settings, engine.account?.cli.state);
+  const press = (action: ProviderAction) => reportProviderPress(provider, action, ProviderSurface.Settings);
+  const signIn = (): void => {
+    press(ProviderAction.SignIn);
     void run(async () => {
       setTerminalError(null);
       const started = await startSignIn();
+      reportSignInStarted(provider, started.started);
       if (!started.started) await recheck();
     });
-  const cancelSignIn = (): void => {
-    if (terminal) void run(() => window.studio.terminalStop(terminal.id));
   };
+  const cancelSignIn = (): void => {
+    if (!terminal) return;
+    reportTerminalSignInCancelled(provider);
+    void run(() => window.studio.terminalStop(terminal.id));
+  };
+  const openSignInPage = (session: TerminalSession) => (): void => {
+    reportSignInHelper(provider, SignInHelper.PageReopened, { surface: ProviderSurface.Settings });
+    void run(() => window.studio.terminalOpenLink(session.id));
+  };
+  const signedOut = (ok: boolean) => reportAccountChanged(provider, AccountAction.SignedOut, ok);
   const view = cliRowView(
     state,
     {
-      install: words.guideOnly ? () => void window.studio.openUrl(words.card.guide) : () => void install.install(),
-      recheck: () => void run(recheck),
+      install: () => {
+        press(cliInstallAction(state));
+        if (words.guideOnly) void window.studio.openUrl(words.card.guide);
+        else void install.install();
+      },
+      recheck: () => {
+        press(cliRecheckAction(state));
+        void run(recheck);
+      },
       signIn,
       cancelSignIn,
-      openSignInPage: terminal?.signInPage ? () => void run(() => window.studio.terminalOpenLink(terminal.id)) : null,
+      openSignInPage: terminal?.signInPage ? openSignInPage(terminal) : null,
       signOut: forgetSignIn
         ? () =>
             void run(async () => {
-              await forgetSignIn();
+              await settled(forgetSignIn, signedOut);
               await onEnginesRefresh();
             })
         : null,
-      update: () => void install.update(),
+      update: () => {
+        press(ProviderAction.Update);
+        void install.update();
+      },
     },
     words,
   );

@@ -177,6 +177,11 @@ export interface EventLogStore extends StoreApi<EventLogState> {
   watchThread(threadId: string): () => void;
   /** Drop a deleted or archived conversation. */
   forgetThread(threadId: string): void;
+  /**
+   * Hear every record as it arrives from the feed: the bootstrap's tail, then each read after it.
+   * A record can arrive again after a new bootstrap; the listener tells them apart. Returns the stop.
+   */
+  onArrived(listener: (events: readonly EventEnvelope[]) => void): () => void;
 }
 
 export function createEventLogStore(
@@ -184,9 +189,17 @@ export function createEventLogStore(
   publish?: (apply: () => void) => void,
 ): EventLogStore {
   const store = createStore<EventLogState>()(() => initialEventLog());
+  const listeners = new Set<(events: readonly EventEnvelope[]) => void>();
+  const arrived = (events: readonly EventEnvelope[]): void => {
+    if (events.length === 0) return;
+    for (const listener of listeners) listener(events);
+  };
   const refresher = createRefresher(
     () => api.events(store.getState().cursor),
-    (read) => store.setState((state) => eventsArrived(state, read), true),
+    (read) => {
+      store.setState((state) => eventsArrived(state, read), true);
+      arrived(read.events);
+    },
     { publish },
   );
   const generations = new Map<string, object>();
@@ -223,6 +236,7 @@ export function createEventLogStore(
     bootstrap(boot: { events: EventEnvelope[]; eventsCursor?: string | null }): void {
       const deferred = store.getState().deferred;
       store.setState((state) => ({ ...eventLogBootstrapped(state, boot), deferred: false }), true);
+      arrived(boot.events);
       for (const id of Object.keys(store.getState().pins)) backfill(id);
       if (deferred) void refresher.request();
     },
@@ -246,6 +260,10 @@ export function createEventLogStore(
     forgetThread(threadId: string): void {
       generations.delete(threadId);
       store.setState((state) => threadForgotten(state, threadId), true);
+    },
+    onArrived(listener: (events: readonly EventEnvelope[]) => void): () => void {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   });
 }

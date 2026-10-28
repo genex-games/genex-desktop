@@ -46,6 +46,7 @@ import * as seedInteractionWords from "../../src/harness-seed/loop/interaction-w
 import * as seedComputerLoop from "../../src/harness-seed/loop/computer-loop.ts";
 import { ScreenRole } from "../../src/shared/agent-screen.ts";
 import { ComputerPacing } from "../../src/shared/computer-target.ts";
+import * as seedRunDispatch from "../../src/harness-seed/loop/run-dispatch.ts";
 import * as seedRunEvents from "../../src/harness-seed/loop/run-events.ts";
 import * as seedSkills from "../../src/harness-seed/loop/skills.ts";
 import * as seedStateShape from "../../src/harness-seed/loop/state-shape.ts";
@@ -73,6 +74,7 @@ import {
   CUSTOM_EVENT_TYPES,
   CompletionRole,
   CustomEvent,
+  RunStartRefusal,
   StopCode,
   customPayload,
 } from "../../src/shared/custom-events.ts";
@@ -297,8 +299,8 @@ describe("a compaction's end of the chat's sessions (shared/chat-rewind.ts ↔ l
 });
 
 describe("the run inbox's wrap-up (shared/coordinator.ts ↔ loop/run-inbox.ts)", () => {
-  it("names the wrap-up the same way, in its persisted spelling", () => {
-    assert.deepEqual(coordinator.RunControlAction, { Finish: "finish" });
+  it("names the wrap-up and the chat's stop the same way, in their persisted spelling", () => {
+    assert.deepEqual(coordinator.RunControlAction, { Finish: "finish", Stop: "stop" });
     assert.deepEqual(seedInbox.RunControlAction, coordinator.RunControlAction);
   });
 
@@ -514,6 +516,10 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("has the same run execution statuses", () => {
     assert.deepEqual(seedRunEvents.ExecutionStatus, ExecutionStatus);
+  });
+
+  it("names why a run's start was refused as the app reads it", () => {
+    assert.deepEqual(seedRunDispatch.RunStartRefusal, RunStartRefusal);
   });
 
   it("names the same game engines as the app's engine record", () => {

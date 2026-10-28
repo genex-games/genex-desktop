@@ -85,6 +85,15 @@ describe("after a first publish, Genex links the game to the published place by 
     await backend.tool?.(RobloxTool.TeamNote, {}, { ...host.context, hook: { on: HookEvent.TurnStart } });
     assert.deepEqual((await linkOf(mac.storage, game)).remote, PUBLISHED);
   });
+
+  it("publish-result links it while Studio is still open, so closing Studio after the publish loses nothing", async () => {
+    const { mac, game, host, backend } = await linkedGame();
+    await backend.tool?.(RobloxTool.FirstPublish, { name: "Sky Racers" }, host.context);
+    mac.state.studios = [reopened("Sky Racers")];
+    await backend.tool?.(RobloxTool.PublishResult, { published: true }, host.context);
+    mac.state.studios = [];
+    assert.deepEqual((await linkOf(mac.storage, game)).remote, PUBLISHED);
+  });
 });
 
 describe("an automatic link that is undone or refused", onMacWorld, () => {

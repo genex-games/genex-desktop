@@ -21,10 +21,12 @@ import {
   freeModelOptions,
   pickedFreeModel,
   picksFreeModel,
+  cliMark,
+  cliWay,
   localWay,
-  openCodeMark,
   openCodeWay,
   openRouterWay,
+  OTHER_WAYS,
   routerMark,
   routerStep,
 } from "../../src/renderer/onboarding/ways.ts";
@@ -225,6 +227,40 @@ describe("first launch's other ways", () => {
       assert.equal(openCodeWay(row).state, "idle", row);
   });
 
+  it("offers Grok Build and Cursor after OpenCode, ready once installed and signed in, Cursor in beta", () => {
+    assert.deepEqual(OTHER_WAYS, ["local", "openrouter", "opencode", "grok", "cursor"]);
+    assert.deepEqual(cliWay("grok", "not_installed"), {
+      state: "idle",
+      label: "Grok Build",
+      hint: "Runs on your Grok account",
+    });
+    assert.deepEqual(cliWay("cursor", "not_installed"), {
+      state: "idle",
+      label: "Cursor",
+      hint: "Uses your Cursor plan",
+      beta: true,
+    });
+    assert.deepEqual(
+      [cliWay("grok", "installing").state, cliWay("grok", "installing").label],
+      ["busy", "Setting up Grok Build…"],
+    );
+    assert.equal(cliWay("cursor", "installing").label, "Setting up Cursor…");
+    assert.deepEqual(
+      [cliWay("grok", "connected").state, cliWay("grok", "connected").label],
+      ["on", "Grok Build ready"],
+    );
+    assert.deepEqual(
+      [cliWay("cursor", "connected").state, cliWay("cursor", "connected").label],
+      ["on", "Cursor ready"],
+    );
+    assert.equal(cliWay("cursor", "connected").beta, true, "Cursor stays in beta once ready");
+    for (const provider of ["grok", "cursor"] as const) {
+      assert.equal(cliWay(provider, "free_only").state, "on", `${provider}: ready with no account named is signed in`);
+      for (const row of ["signed_out", "signing_in", "outdated", "unreachable"] as const)
+        assert.equal(cliWay(provider, row).state, "idle", `${provider} ${row}`);
+    }
+  });
+
   it("puts OpenRouter's screen at one step, a connected engine before anything left under way", () => {
     const local = { signingIn: false, pasting: false, saving: false };
     assert.equal(routerStep("needs_login", local), "offer");
@@ -243,15 +279,15 @@ describe("first launch's other ways", () => {
     ]);
   });
 
-  it("shows OpenCode's mark missing until installed and lit once any of its models run", () => {
-    assert.equal(openCodeMark("not_installed", false), "missing");
-    assert.equal(openCodeMark("installing", false), "busy");
-    assert.equal(openCodeMark("not_installed", true), "busy", "a recheck is under way");
-    assert.equal(openCodeMark("free_only", false), "on");
-    assert.equal(openCodeMark("connected", true), "on");
-    assert.equal(openCodeMark("signing_in", false), "busy");
-    assert.equal(openCodeMark("signed_out", false), "idle");
-    assert.equal(openCodeMark("unreachable", false), "idle");
+  it("shows a CLI's mark missing until installed and lit once any of its models run", () => {
+    assert.equal(cliMark("not_installed", false), "missing");
+    assert.equal(cliMark("installing", false), "busy");
+    assert.equal(cliMark("not_installed", true), "busy", "a recheck is under way");
+    assert.equal(cliMark("free_only", false), "on");
+    assert.equal(cliMark("connected", true), "on");
+    assert.equal(cliMark("signing_in", false), "busy");
+    assert.equal(cliMark("signed_out", false), "idle");
+    assert.equal(cliMark("unreachable", false), "idle");
   });
 });
 
@@ -429,7 +465,7 @@ describe("first-launch art", () => {
           palette,
         );
       }
-    for (const id of ["openrouter", "opencode"] as const)
+    for (const id of ["openrouter", "opencode", "grok", "cursor"] as const)
       for (const state of ["idle", "busy", "on", "missing"] as const)
         for (const tg of [0, 0.3, 2, 7.5]) drawMeteredMark(recorder().ctx, id, state, tg, tg < 1 ? tg : -1, palette);
     for (const state of ["idle", "downloading", "ready"] as const) drawChip(recorder().ctx, state, 40, 1.5, palette);

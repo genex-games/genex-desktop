@@ -1,9 +1,16 @@
 import { Fragment } from "react";
 import { t } from "../../shared/i18n.ts";
+import { HarnessOpenedVia, noteHarnessOpening } from "../analytics/plugins-harness.ts";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { learningParts } from "./learning-parts.ts";
 import { Icon } from "../ui/icons.tsx";
 import { FileText } from "../ui/FileText.tsx";
+
+/** Open the Harness room from a chat, saying (for usage analytics) which line led there. */
+const openFrom = (via: HarnessOpenedVia, open: () => void) => (): void => {
+  noteHarnessOpening(via);
+  open();
+};
 
 export function LearningSummary({ text, onOpenStudio }: { text: string; onOpenStudio?: () => void }) {
   const parts = learningParts(text);
@@ -17,7 +24,9 @@ export function LearningSummary({ text, onOpenStudio }: { text: string; onOpenSt
             {part.link && onOpenStudio ? (
               <button
                 type="button"
-                onClick={onOpenStudio}
+                onClick={openFrom(HarnessOpenedVia.ChatLink, onOpenStudio)}
+                // The words of what was learned, about the person's build.
+                data-analytics-mask
                 title={t("Open Studio Activity")}
                 className="rounded-sm underline underline-offset-4 hover:text-control-text-hover"
               >
@@ -53,7 +62,7 @@ export function StudioLearningLine({
         {onOpenStudio && (
           <button
             type="button"
-            onClick={onOpenStudio}
+            onClick={openFrom(HarnessOpenedVia.LearningLine, onOpenStudio)}
             className="cursor-pointer rounded-sm text-accent-ink underline underline-offset-4 hover:text-control-text-hover"
           >
             {link}

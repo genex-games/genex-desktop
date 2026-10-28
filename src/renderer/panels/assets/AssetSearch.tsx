@@ -16,6 +16,9 @@ import { type Notify, notifyProblem, ToastTone } from "../../state/toasts.ts";
 import { Icon } from "../../ui/icons.tsx";
 import { useMoreBelow } from "../../ui/scroll-fade.ts";
 import { ASSET_LIBRARY_WORDS as WORDS } from "../../words.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { FoundIn } from "../../analytics/events/builds.ts";
 
 /** How long typing rests before the library and the community are asked. */
 const SEARCH_DEBOUNCE_MS = 200;
@@ -167,8 +170,10 @@ function AddTile({
     void onAdd().finally(() => setBusy(false));
   };
   return (
+    // A library generation or a community game, named by whoever made it.
     <div
       data-search-tile={id}
+      data-analytics-mask
       title={title}
       className="asset-tile asset-search-tile"
       style={{ width: CARD_W, height: CARD_IMAGE_H }}
@@ -206,14 +211,20 @@ export interface SearchResultsProps {
 /** Bring a found asset into the game, say so, and read the game's files again. */
 function useAdd(project: string, onNotice: Notify) {
   const title = useLibrary((s) => s.games.find((game) => game.name === project)?.title ?? project);
-  return (source: AddSource): Promise<void> =>
-    studio()
+  return (source: AddSource): Promise<void> => {
+    const from = "slug" in source ? FoundIn.Community : FoundIn.Library;
+    return studio()
       .api.assetAdd(project, source)
       .then(() => {
+        track(AnalyticsEvent.AssetSearchAdded, { from, ok: true });
         onNotice(WORDS.added(title), ToastTone.Ok);
         studio().library.refreshAssets(project);
       })
-      .catch(notifyProblem(onNotice));
+      .catch((error: unknown) => {
+        track(AnalyticsEvent.AssetSearchAdded, { from, ok: false });
+        notifyProblem(onNotice)(error);
+      });
+  };
 }
 
 /** The matches over the dot grid: This game, My library (signed in), Community. */

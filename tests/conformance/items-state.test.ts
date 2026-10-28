@@ -8,7 +8,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   addTarget,
-  askedForItem,
   BROWSE_TYPING_MS,
   browseAnswered,
   browseAsked,
@@ -202,12 +201,6 @@ describe("a press on an item", () => {
     assert.equal(row?.state, ItemState.OnSale);
     assert.equal(row?.shareable, true);
     assert.equal(changed.changed.sku_frost?.state, ItemState.OnSale);
-  });
-
-  it("New item's ask lasts until it is cleared, one game at a time", () => {
-    const asking = askedForItem(initialItems(), "snowball");
-    assert.equal(asking.askingIn, "snowball");
-    assert.equal(askedForItem(asking, null).askingIn, null);
   });
 });
 

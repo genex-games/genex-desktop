@@ -25,6 +25,7 @@ import { ignoreLine, type PlacedRule, ruleGlob, ruleMatches } from "../shared/pr
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { REWIND_REFS } from "../shared/game-history.ts";
 import { isRewindId, UndoRewindRefusal, undoRewindRefusalWords } from "../shared/chat-rewind.ts";
+import { CodedError } from "../shared/errors.ts";
 import { t } from "../shared/i18n.ts";
 
 /** Files the rewind never puts back: the game's shape and consent belong to now, not then. */
@@ -513,7 +514,7 @@ export class ChatCheckpoints {
    * moved since the rewind, as a restore is; a restore that fails partway is undone the same way.
    */
   restoreSaved(dir: string, threadId: string, rewindId: string): Promise<RestoredCheckpoint> {
-    const refused = (reason: UndoRewindRefusal) => new Error(undoRewindRefusalWords(reason));
+    const refused = (reason: UndoRewindRefusal) => new CodedError(reason, undoRewindRefusalWords(reason));
     if (!isRewindId(rewindId)) return Promise.reject(refused(UndoRewindRefusal.Gone));
     return this.#serial(dir, async () => {
       const saved = await commitAt(dir, rewoundRef(threadId, rewindId));

@@ -2,7 +2,8 @@
  * Create › Items › Browse (marketplace P10, screen 07): other creators' shared items, free to add to
  * the account's games. The intro, then a grid of cards (the render on its gradient, the name, the
  * price and "in N games"); pressing one shows it in the detail panel beside the grid
- * (`ItemDetail.tsx`). The search lives in the page's head (`ItemsPage.tsx`).
+ * (`ItemDetail.tsx`). The search lives in the page's head (`ItemsPage.tsx`). Its frame is Selling's,
+ * so the page keeps one width whichever tab is open.
  */
 import type { JSX, ReactNode } from "react";
 import type { BrowseItem } from "../../../shared/store-items.ts";
@@ -80,48 +81,50 @@ export function BrowseTab({
   const added = shown ? addedIn(browse.details[shown.id], targetProject) : null;
   const listed = browse.read === ItemsRead.Ready || browse.items.length > 0;
   return (
-    <div className="items-browse" data-items-browse>
-      <div className="items-browse-main">
+    <div className="items-scroll" data-items-browse>
+      <div className="items-frame">
         {head}
-        <div id={panel} role="tabpanel" className="items-browse-list">
-          <p className="items-intro">{browseIntro(browse.sellerShareBps)}</p>
-          {!listed && <ReadNote read={browse.read} onRetry={onRetry} />}
-          {listed && browse.items.length === 0 && (
-            <p className="items-note">{browse.query ? WORDS.noMatch : WORDS.noneShared}</p>
-          )}
-          {browse.items.length > 0 && (
-            <div className="items-grid" data-items-grid>
-              {browse.items.map((item) => (
-                <Card key={item.id} item={item} selected={item.id === browse.selectedId} />
-              ))}
-            </div>
-          )}
-          {browse.nextCursor && (
-            <Button
-              variant="secondary"
-              className="items-more"
-              busy={browse.more}
-              onClick={() => void studio().items.more()}
-            >
-              {WORDS.more}
-            </Button>
+        <div id={panel} role="tabpanel" className="items-browse">
+          <div className="items-browse-list">
+            <p className="items-intro">{browseIntro(browse.sellerShareBps)}</p>
+            {!listed && <ReadNote read={browse.read} onRetry={onRetry} />}
+            {listed && browse.items.length === 0 && (
+              <p className="items-note">{browse.query ? WORDS.noMatch : WORDS.noneShared}</p>
+            )}
+            {browse.items.length > 0 && (
+              <div className="items-grid" data-items-grid>
+                {browse.items.map((item) => (
+                  <Card key={item.id} item={item} selected={item.id === browse.selectedId} />
+                ))}
+              </div>
+            )}
+            {browse.nextCursor && (
+              <Button
+                variant="secondary"
+                className="items-more"
+                busy={browse.more}
+                onClick={() => void studio().items.more()}
+              >
+                {WORDS.more}
+              </Button>
+            )}
+          </div>
+          {shown && (
+            <ItemDetail
+              item={shown}
+              games={add.games}
+              target={add.target}
+              added={added}
+              busy={{ add: busy === ItemAction.Add, remove: busy === ItemAction.Remove }}
+              sellerShareBps={browse.sellerShareBps}
+              refusal={refused ? itemRefusalWords(refused) : null}
+              onChoose={add.onChoose}
+              onAdd={add.onAdd}
+              onRemove={add.onRemove}
+            />
           )}
         </div>
       </div>
-      {shown && (
-        <ItemDetail
-          item={shown}
-          games={add.games}
-          target={add.target}
-          added={added}
-          busy={{ add: busy === ItemAction.Add, remove: busy === ItemAction.Remove }}
-          sellerShareBps={browse.sellerShareBps}
-          refusal={refused ? itemRefusalWords(refused) : null}
-          onChoose={add.onChoose}
-          onAdd={add.onAdd}
-          onRemove={add.onRemove}
-        />
-      )}
     </div>
   );
 }

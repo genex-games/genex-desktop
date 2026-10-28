@@ -3,6 +3,7 @@ import { isCodexLoginActive } from "../shared/codex-login.ts";
 import { updateCodingCli } from "../substrate/cli-update.ts";
 import { HarnessLogBatch } from "./harness-log-batch.ts";
 import { createDesktopControl } from "./desktop-control-host.ts";
+import { assistGrants } from "./core/desktop-assist.ts";
 import type { DesktopControl } from "./core/desktop-control.ts";
 import { showAfterPaint } from "./window-ready.ts";
 import { PerformanceRecorder, watchEventLoop } from "./performance.ts";
@@ -62,11 +63,23 @@ import {
   QuitQuestion,
   quitQuestion,
   runShutdown,
+  settleWithin,
   shutdownSteps,
   type ShutdownStep,
   WindowClose,
   windowClose,
 } from "./app-lifecycle.ts";
+import { createAppDiagnostics } from "./app-diagnostics.ts";
+import {
+  createSessionMarker,
+  handOnce,
+  launchFacts,
+  markerFileIo,
+  noteNextStart,
+  SESSION_HEARTBEAT_MS,
+  SESSION_MARKER_WAIT_MS,
+  type SessionBegun,
+} from "./session-marker.ts";
 import { createBootGate, startStepAfter } from "./boot-gate.ts";
 import {
   activateChatFixture,
@@ -97,7 +110,7 @@ import {
   watchInstaller,
 } from "./auto-update.ts";
 import { RELEASE_CHECK_INTERVAL_MS, latestRelease } from "./release-check.ts";
-import { UpdateAction } from "../shared/app-update.ts";
+import { UpdateAction, UpdateCheckStatus, UpdateFailure } from "../shared/app-update.ts";
 import { gatedHostTool, type GenexStand, launchStand } from "./core/genex-cli.ts";
 import { normalGamesElsewhere, normalGamesFolder } from "./core/never-touch-list.ts";
 import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
@@ -210,7 +223,7 @@ import { registerSettingsIpc } from "./ipc/settings.ts";
 import { readLicenseTexts } from "./licenses.ts";
 import { registerSkillsIpc } from "./ipc/skills.ts";
 import { registerTerminalIpc } from "./ipc/terminal.ts";
-import { registerMentionRetry, registerThreadsIpc } from "./ipc/threads.ts";
+import { registerMentionRetry, registerThreadsIpc, type ThreadsIpcDeps } from "./ipc/threads.ts";
 import { engineBoot, type EngineBoot } from "./engine-boot.ts";
 import { KeepAwake } from "./keep-awake.ts";
 import { routeStudioLink } from "./link-policy.ts";
@@ -243,6 +256,7 @@ import { GamePreview, registerGameScheme } from "./preview.ts";
 import { RunSummaryReader } from "./run-summary-reader.ts";
 import { registerRunSharingIpc } from "./ipc/run-sharing.ts";
 import { createRunSharing, finishedBuildRef, launchSends, runsOrigin } from "./run-sharing.ts";
+import { type AnalyticsConfig, sessionAnalytics } from "../shared/analytics.ts";
 import { readFinishedFacts } from "./run-sharing-facts.ts";
 import { fieldPlatform } from "../shared/run-sharing.ts";
 import type { SmokeReadGates } from "./smoke/read-gates.ts";
@@ -262,10 +276,24 @@ import {
   squirrelStartup,
 } from "./windows-install.ts";
 import { samePath } from "../substrate/paths.ts";
-import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
+import {
+  BootFailure,
+  type BootFailureCode,
+  BootPhase,
+  type SandboxProblem,
+  StartPassage,
+  StartStep,
+  StudioPlatform,
+} from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
-import { ensureHostGit, longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
+import {
+  type DetachedSpawn,
+  ensureHostGit,
+  forgetKeptGrants,
+  longPath,
+  takeBackSandboxEntries,
+} from "../substrate/windows-sandbox.ts";
 import { ensureMacGit } from "../substrate/git-policy.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
@@ -393,12 +421,14 @@ app.on("open-url", (event, url) => {
 // anything else runs: no profile, no window (main/windows-install.ts).
 const squirrelStep = squirrelStartup(process.platform, process.argv, process.execPath);
 if (squirrelStep) {
-  // The sandbox's grants and denies outlive each launch; an uninstall takes them back.
-  if (squirrelStep.takeBackSandbox)
-    takeBackSandboxEntries(
-      (file, args, env) => spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true }),
-      os.homedir(),
-    );
+  // The sandbox's grants and denies outlive each launch; an uninstall takes them back: Genex's own,
+  // and the write grants srt-win keeps.
+  if (squirrelStep.takeBackSandbox) {
+    const detached: DetachedSpawn = (file, args, env) =>
+      spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true });
+    takeBackSandboxEntries(detached, os.homedir());
+    forgetKeptGrants(detached);
+  }
   await runSquirrelStep(squirrelStep, (file, args) =>
     spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true }),
   );
@@ -413,6 +443,8 @@ const userModelId = appUserModelId(process.platform, process.execPath, existsSyn
 if (userModelId) app.setAppUserModelId(userModelId);
 
 declare const __STUDIO_DEV_BUILD__: { checkout: string; buildId: string } | null;
+/** The build's usage analytics, from `STUDIO_POSTHOG_KEY` at build time (scripts/build.mjs); null without it. */
+declare const __STUDIO_ANALYTICS__: AnalyticsConfig | null;
 const devLaunchConfig = flagValue(StudioFlag.DevLaunch);
 const asksForDeveloper = process.argv.some((arg) => arg.startsWith(StudioFlag.Dev));
 const developerBuildUnlaunched = Boolean(__STUDIO_DEV_BUILD__) && devLaunchConfig === undefined;
@@ -487,11 +519,16 @@ const studioLog = openStudioLog(path.join(userDataRoot, "logs"), { home: app.get
 const userDataMigrationLog = userDataMigrationLine(userDataMigration);
 if (userDataMigrationLog) studioLog.write("main", userDataMigrationLog);
 // An error nothing caught is logged, never a quit or Electron's modal box; developer and smoke
-// launches also print it, where their runners read stderr.
-installProcessHandlers(process, (source, line) => {
-  studioLog.write(source, line);
-  if (dev || isSmoke) console.error(`[${source}] ${line}`);
-});
+// launches also print it, where their runners read stderr. Its kind is then told to the window
+// (`appDiagnostics`, made below: one thrown while main still loads is only logged).
+installProcessHandlers(
+  process,
+  (source, line) => {
+    studioLog.write(source, line);
+    if (dev || isSmoke) console.error(`[${source}] ${line}`);
+  },
+  (kind, reason) => appDiagnostics.fault(kind, reason),
+);
 // Native crash dumps stay on this Mac, beside the log in this launch's own data; nothing is uploaded.
 app.setPath("crashDumps", path.join(userDataRoot, "Crashpad"));
 crashReporter.start({ uploadToServer: false });
@@ -535,6 +572,42 @@ const interactiveFixture = process.env.STUDIO_FIXTURE_INTERACTIVE === "1";
 const parkedFixtureWindow = isSmoke || (fixtureProviders && !interactiveFixture);
 const rendererConsole: Array<{ level: string; message: string; source?: string; line?: number; at?: string }> = [];
 let core: StudioCore | null = null;
+/** Whether this launch may ever send: share build metrics and usage analytics both ask it. */
+const launchMaySend = launchSends({
+  packaged: app.isPackaged,
+  argv: process.argv,
+  developerProfile: dev !== null,
+  testData: testUserData !== null,
+});
+/** Usage analytics the renderer may offer; the person still decides (src/renderer/analytics/). */
+const analytics = sessionAnalytics(__STUDIO_ANALYTICS__, {
+  sends: launchMaySend,
+  env: process.env,
+  version: app.getVersion(),
+});
+/**
+ * How this session ends, kept for the next launch's usage analytics (`session-marker.ts`): only in
+ * a launch that may offer analytics, and only in Genex's own data folder, never the stand-in a move
+ * or a missing folder starts in.
+ */
+const sessionMarker =
+  analytics && (dataLaunch.kind === DataLaunchKind.Default || dataLaunch.kind === DataLaunchKind.Moved)
+    ? createSessionMarker({ io: markerFileIo(userDataRoot), version: app.getVersion(), now: Date.now })
+    : null;
+/** Main's own uncaught errors and window hangs: told to the window, counted in the marker (`app-diagnostics.ts`). */
+const appDiagnostics = createAppDiagnostics({
+  push: (payload) => pushUiEvent({ type: UiEvent.AppDiagnostic, payload }),
+  marker: sessionMarker,
+  now: Date.now,
+});
+/** What the previous session's marker said, once this launch has read it (`beginSession`). */
+let sessionBegun: Promise<SessionBegun> | null = null;
+/** How this launch started and the session before it ended: the first bootstrap's alone. */
+const handLaunchFacts = handOnce(async () => {
+  if (!sessionBegun) return null;
+  const fellBack = dataLaunch.kind === DataLaunchKind.Default && dataLaunch.fellBack === true;
+  return launchFacts(await sessionBegun, bootGate.started(), fellBack);
+});
 /**
  * Share build metrics (Settings → Privacy): off by default, and silent in every developer and test
  * launch. Node's own fetch carries no cookies; Electron's session fetch would carry the profile's.
@@ -542,12 +615,7 @@ let core: StudioCore | null = null;
 const runSharing = createRunSharing({
   dir: path.join(userDataRoot, "run-sharing"),
   origin: runsOrigin(process.env),
-  sends: launchSends({
-    packaged: app.isPackaged,
-    argv: process.argv,
-    developerProfile: dev !== null,
-    testData: testUserData !== null,
-  }),
+  sends: launchMaySend,
   fetch: (url, init) => globalThis.fetch(url, init),
   app: { version: app.getVersion(), platform: fieldPlatform(process.platform) },
   readFacts: async (ref) => (core ? readFinishedFacts(core.store, ref) : null),
@@ -608,7 +676,7 @@ const updates = createUpdateAnnouncer({
   announce: (update) => pushUiEvent({ type: UiEvent.UpdateReady, payload: update }),
   notify: showUpdateNote,
   confirmRestart: confirmUpdateRestart,
-  quitAndInstall: () => autoUpdater.quitAndInstall(),
+  quitAndInstall: relaunchIntoUpdate,
   openRelease: (url) => void shell.openExternal(url),
 });
 /** Whether and how this launch updates: only a released build checks (./auto-update.ts). */
@@ -622,7 +690,7 @@ const updateDecision = autoUpdateDecision({
   systemPackages: process.platform === "linux" && installedFromGenexRepository(process.execPath, existsSync),
 });
 /** The installer's checks, watched from launch so Check for Updates never collides with one (./auto-update.ts). */
-const installer = watchInstaller(autoUpdater);
+const installer = watchInstaller(autoUpdater, { failed: updateFailed });
 /** Check for Updates, from Settings and the app menu; Linux's periodic check runs it too. */
 const updateChecker = createUpdateChecker({
   decision: updateDecision,
@@ -865,6 +933,16 @@ function appLookOptions(userData: string): Pick<StudioCoreOptions, "appLook" | "
   return { appLook: macAppLook({ run: appLookRun, scratchDir: scratch, access: access.status }), screenAccess: access };
 }
 
+/** The studio's window back in front of other apps, as an assist's turn ends. */
+function bringStudioForward(): void {
+  const win = window;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  app.focus({ steal: true });
+  win.focus();
+}
+
 /** The core's stand option, when this launch has one. */
 const optionalStand = (genexStand: GenexStand | undefined): Pick<StudioCoreOptions, "genexStand"> =>
   genexStand ? { genexStand } : {};
@@ -893,6 +971,7 @@ async function createCore(userData: string): Promise<StudioCore> {
     // launch uploads them to its own store in place of the CLI.
     localItems: {
       putOnSale: (skuId) => storeFor(studio).store.putOnSale(skuId),
+      selling: () => storeFor(studio).store.selling(),
       ...(fixtureNativePolicy
         ? {
             runs: fixtureLocalRuns({
@@ -1023,7 +1102,7 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
 async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   const win = new BrowserWindow(studioWindowOptions());
   performanceRecorder.mark("window-created");
-  win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
+  watchHangs(win);
   attachPreviews(studio, win);
   attachPlay(studio, win);
   collectRendererConsole(win);
@@ -1042,6 +1121,16 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   return win;
 }
 
+/** A window that stops answering is logged and counted, and how long it hung is told once it answers again. */
+function watchHangs(win: BrowserWindow): void {
+  const hang = appDiagnostics.hangWatch();
+  win.on("unresponsive", () => {
+    studioLog.write("main", "studio window unresponsive");
+    hang.unresponsive();
+  });
+  win.on("responsive", () => hang.responsive());
+}
+
 /**
  * The window a launch opens when the sandbox cannot start: the same renderer, which asks
  * `studio:boot` first and shows "Set up the protected workspace" with Retry. There is no core
@@ -1053,7 +1142,7 @@ async function createSetupWindow(): Promise<BrowserWindow> {
   // question can be before it has loaded.
   window = win;
   performanceRecorder.mark("window-created");
-  win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
+  watchHangs(win);
   collectRendererConsole(win);
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1813,6 +1902,7 @@ function watchWindowLifecycle(win: BrowserWindow): void {
     const decision = shutdownInProgress ? QUITTING : reloads.decide(details.reason);
     studioLog.write("main", `renderer gone: ${details.reason} (exit ${details.exitCode}); ${decision}`);
     if (decision === QUITTING) return;
+    sessionMarker?.rendererGone(details.reason);
     const step = pageRecovery(decision, { quitting: win.isDestroyed(), unattended: fixtureNativePolicy });
     recoverPage(win, `${details.reason}, exit code ${details.exitCode}`, step);
   });
@@ -2045,6 +2135,24 @@ function playIpcDeps(studio: StudioCore): PlayIpcDeps {
   };
 }
 
+/** The bootstrap's and the chats' channels: what a window opens on, and the sends behind it. */
+function threadsIpcDeps(studio: StudioCore, engines: EngineBoot): ThreadsIpcDeps {
+  return {
+    core: studio,
+    engines,
+    gamesRootLabel,
+    threadStatus: () => liveThreadStatus,
+    pushUiEvent,
+    appendErrorDurably,
+    smokeReads: isSmoke ? smokeReads : null,
+    welcome: showsWelcome,
+    developer: !app.isPackaged,
+    playWeb: playOrigin.web,
+    analytics,
+    launchFacts: handLaunchFacts,
+  };
+}
+
 function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   const handle = createIpcHandle(ipcMain, {
     fixture: fixtureNativePolicy,
@@ -2063,18 +2171,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     shellPath: async () => (await toolchain()).path,
     openExternal: (url) => shell.openExternal(url),
   });
-  registerThreadsIpc(handle, {
-    core: studio,
-    engines,
-    gamesRootLabel,
-    threadStatus: () => liveThreadStatus,
-    pushUiEvent,
-    appendErrorDurably,
-    smokeReads: isSmoke ? smokeReads : null,
-    welcome: showsWelcome,
-    developer: !app.isPackaged,
-    playWeb: playOrigin.web,
-  });
+  registerThreadsIpc(handle, threadsIpcDeps(studio, engines));
   registerMentionRetry(handle, studio);
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
@@ -2180,6 +2277,7 @@ async function main(): Promise<void> {
   });
   setAppMenu();
   if (await settleDataFolder()) return;
+  beginSession();
   // Before the core: a start that fails, waits on Set up or never ends (a Windows start can take
   // minutes) still finds the release that fixes it, and its screen offers the relaunch.
   setTimeout(checkForUpdates, firstCheckDelay(process.argv)).unref();
@@ -2266,8 +2364,18 @@ async function moveDataAndRestart(from: string, to: string): Promise<void> {
   };
   // Part of the data in each folder, or a move that ended without saying: no restart into it on
   // its own (that could repeat for ever); the window offers Try again, which carries it on, and Quit.
-  if (!outcome.moved && outcome.stranded) bootGate.moveStopped(to, MESSAGE.moveStopped(), restart);
-  else await restart();
+  if (!outcome.moved && outcome.stranded) {
+    bootGate.moveStopped(to, MESSAGE.moveStopped(), restart);
+    return;
+  }
+  if (outcome.moved) await noteNextLaunch(to, StartPassage.DataMoved);
+  await restart();
+}
+
+/** Leave `passage` in the data folder `dir` for the launch this one starts next, for its usage analytics. */
+async function noteNextLaunch(dir: string, passage: StartPassage): Promise<void> {
+  if (!analytics) return;
+  await settleWithin(noteNextStart(markerFileIo(dir), passage), SESSION_MARKER_WAIT_MS, undefined);
 }
 
 /** The data folder a moving launch's log lines go to: the one Genex starts from, or none while the move is unfinished. */
@@ -2287,6 +2395,7 @@ async function waitForDataFolder(dir: string): Promise<void> {
 function holdOnMissingData(dir: string): void {
   bootGate.dataMissing(dir, async () => {
     if (!existsSync(dir)) throw new Error(MESSAGE.dataFolderStillMissing(dir));
+    await noteNextLaunch(dir, StartPassage.DataMissing);
     app.relaunch();
     app.exit(0);
   });
@@ -2329,14 +2438,44 @@ function checkForUpdates(): void {
   }
   if (updateDecision.mode === UpdateMode.Notify) {
     // Linux: ask GitHub now and every few hours; a newer release announces itself.
-    const ask = () => void updateChecker.check().then((result) => log(`release check: ${result.status}`));
+    const ask = () =>
+      void updateChecker.check().then((result) => {
+        log(`release check: ${result.status}`);
+        if (result.status === UpdateCheckStatus.Failed) updateFailed(UpdateFailure.Check);
+      });
     ask();
     setInterval(ask, RELEASE_CHECK_INTERVAL_MS).unref();
     return;
   }
-  startAutoUpdate({ log, downloaded: (releaseName) => updates.downloaded(releaseName) }).catch((err) =>
-    log(errorMessage(err)),
-  );
+  startAutoUpdate({ log, downloaded: (releaseName) => updates.downloaded(releaseName) }).catch((err) => {
+    log(errorMessage(err));
+    updateFailed(UpdateFailure.Check);
+  });
+}
+
+/** An update this launch looked for on its own failed at `stage`: counted for the next launch, and told to the window. */
+function updateFailed(stage: UpdateFailure): void {
+  sessionMarker?.updateFailed();
+  pushUiEvent({ type: UiEvent.UpdateFailed, payload: { stage } });
+}
+
+/** Relaunch into the downloaded update once the marker says so, so the next launch knows it was one. */
+async function relaunchIntoUpdate(): Promise<void> {
+  await settleWithin(sessionMarker?.updating() ?? Promise.resolve(), SESSION_MARKER_WAIT_MS, undefined);
+  autoUpdater.quitAndInstall();
+}
+
+/** The session ends by Genex's own hand: said in the marker before a quit, or a relaunch that skips it. */
+function sessionQuits(): Promise<void> {
+  return settleWithin(sessionMarker?.quitting() ?? Promise.resolve(), SESSION_MARKER_WAIT_MS, undefined);
+}
+
+/** Read how the previous session ended, once, and keep this one's marker, alive while it runs. */
+function beginSession(): void {
+  if (!sessionMarker) return;
+  const marker = sessionMarker;
+  sessionBegun = marker.begin();
+  setInterval(() => marker.heartbeat(), SESSION_HEARTBEAT_MS).unref();
 }
 
 /**
@@ -2545,6 +2684,7 @@ function openStartWindow(): void {
 function startTookTooLong(): void {
   const { step } = bootGate.state();
   const shown = bootGate.overdue(MESSAGE.startTookTooLong(START_TIMEOUT_MS / MINUTE_MS), async () => {
+    await sessionQuits();
     app.relaunch();
     app.exit(0);
   });
@@ -2650,6 +2790,9 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     const win = await createWindow(studio);
     studio.options.markBoot?.("window");
     window = win;
+    // A turn that clicked in another app (a publish in Studio) ends with Genex in front again, so
+    // the person sees it is done and can come back.
+    assistGrants(studio).onEnded(() => bringStudioForward());
     // The start or setup window this launch opened first gives way to the studio's.
     if (before && before !== win && !before.isDestroyed()) before.destroy();
     // First launch opens on an empty library, with no game chat to select.
@@ -2774,10 +2917,15 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    showAgentsFailure(errorMessage(err), async () => {
-      await studio.start();
-      announceReady(userDataRoot);
-    });
+    const code = err instanceof SandboxUnavailableError ? err.problem.code : BootFailure.HarnessFailed;
+    showAgentsFailure(
+      errorMessage(err),
+      async () => {
+        await studio.start();
+        announceReady(userDataRoot);
+      },
+      code,
+    );
     return false;
   }
 }
@@ -2788,10 +2936,14 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
  * harness waits on a sandbox that starts behind the open window, so this can come a minute after
  * the window opened. A Try again that fails shows its own words.
  */
-function showAgentsFailure(failure: string, retry: () => Promise<void>): void {
+function showAgentsFailure(
+  failure: string,
+  retry: () => Promise<void>,
+  failureCode: BootFailureCode = BootFailure.HarnessFailed,
+): void {
   studioLog.write("main", `harness would not start: ${failure}`);
-  bootGate.agentsFailed(failure, retry);
-  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure } });
+  bootGate.agentsFailed(failure, retry, failureCode);
+  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure, failureCode } });
 }
 
 /** The developer runtime, once the renderer shows its threads. */
@@ -2954,10 +3106,13 @@ app.on("before-quit", async (event) => {
   event.preventDefault();
   if (shutdownInProgress) return;
   shutdownInProgress = true;
+  // The next launch reads this session as one that quit (or relaunched into an update).
+  const marked = sessionQuits();
   // Every later Cmd+Q returns above, so this exit must be reached whatever a step does.
   try {
     await runShutdown(quitSteps(), { log: studioLog.write });
   } finally {
+    await marked;
     studioLog.close();
     app.exit(0);
   }

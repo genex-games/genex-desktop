@@ -6,8 +6,8 @@
  * for a paid command the user has just approved. A store item's picture, model and package name
  * paths inside the bound game (`gamePaths`), which the host checks by real path and copies into the
  * run folder; `items add` names the shared item whose folder the host moves into the game
- * (`delivers`). `shop publish` and `shop unpublish` are never in the table: only the person puts an
- * item on sale, from the Listing draft card (D40). The shop's commands also work on the game's local
+ * (`delivers`). `shop publish` and `shop unpublish` are never in the table: Studio puts a game's
+ * items on sale itself after its publish (`local-items.ts`), never an agent. The shop's commands also work on the game's local
  * drafts (`.genex/items/`, made before the game is on Genex): Studio copies them into the run folder
  * and carries a change back (`localItems`). `shop sync`, which uploads them, is Studio's own run after
  * a publish ({@link localSyncRequest}), never the agent's.
@@ -167,6 +167,11 @@ interface CommandRow {
   /** It writes the item its positional names into the game (`items add`). */
   delivers?: boolean;
   /**
+   * Free when its positional is a local draft's id: a draft in the game's `.genex/items/` that
+   * nobody can buy, so changing or removing it spends and sells nothing.
+   */
+  freeOnLocalDraft?: boolean;
+  /**
    * It works on the game's local drafts too: Studio copies them into the run folder (and carries a
    * change back), and it runs without a hosted project while the game has none.
    */
@@ -193,7 +198,7 @@ const shopItem = (
   positional: Positional.Text,
   options,
   ...(required ? { required } : {}),
-  ...(localItems ? { localItems } : {}),
+  ...(localItems ? { localItems, freeOnLocalDraft: true } : {}),
 });
 /** A change to which other creators' items this game sells: the person approves it. */
 const sharedItem = (delivers: boolean): CommandRow => ({
@@ -203,6 +208,9 @@ const sharedItem = (delivers: boolean): CommandRow => ({
   options: {},
   ...(delivers ? { delivers } : {}),
 });
+
+/** The option naming a store item's picture: `shop add` needs it, since no item is listed without one. */
+export const PICTURE_OPTION = "image";
 
 /**
  * Every command Studio runs. `budget` only reads: its `--assets` allowance lives in the run folder,
@@ -246,7 +254,7 @@ const GENEX_CLI_COMMANDS: Readonly<Record<GenexCliCommand, CommandRow>> = {
         model: gamePath(GamePathTarget.File),
         package: gamePath(GamePathTarget.Folder),
       },
-      ["price"],
+      ["price", PICTURE_OPTION],
       LocalItemsUse.Change,
     ),
     paid: false,
@@ -442,7 +450,10 @@ function optionsArgv(
   }
   for (const name of row.required ?? [])
     if (options[name] === undefined)
-      throw refuse(GenexCliRefusalCode.InvalidValue, GENEX_CLI_PROMPT.NeedsOption(command, name));
+      throw refuse(
+        GenexCliRefusalCode.InvalidValue,
+        name === PICTURE_OPTION ? GENEX_CLI_PROMPT.NeedsPicture : GENEX_CLI_PROMPT.NeedsOption(command, name),
+      );
   return { argv, gamePaths };
 }
 
@@ -475,16 +486,17 @@ export function genexCliRequest(
   const row = GENEX_CLI_COMMANDS[command];
   const setsAllowance = command === GenexCliCommand.Budget && Object.hasOwn(options, BUDGET_ALLOWANCE_OPTION);
   if (setsAllowance) throw refuse(GenexCliRefusalCode.UnknownOption, GENEX_CLI_PROMPT.BudgetAllowance);
-  if (row.paid && !tool.paid) throw refuse(GenexCliRefusalCode.PaidTool, GENEX_CLI_PROMPT.PaidTool(command));
-  if (!row.paid && tool.paid) throw refuse(GenexCliRefusalCode.FreeTool, GENEX_CLI_PROMPT.FreeTool(command));
+  const paid = row.paid && !(row.freeOnLocalDraft && isLocalItemId(args.args));
+  if (paid && !tool.paid) throw refuse(GenexCliRefusalCode.PaidTool, GENEX_CLI_PROMPT.PaidTool(command));
+  if (!paid && tool.paid) throw refuse(GenexCliRefusalCode.FreeTool, GENEX_CLI_PROMPT.FreeTool(command));
   const head = [...command.split(" "), ...positionalArgv(command, row, args.args)];
   const flags = optionsArgv(command, row, options, head.length);
-  const argv = [...head, ...flags.argv, ...(row.paid && row.approval ? [USER_APPROVED_FLAG] : [])];
+  const argv = [...head, ...flags.argv, ...(paid && row.approval ? [USER_APPROVED_FLAG] : [])];
   return {
     command,
     argv,
     project: row.project,
-    paid: row.paid,
+    paid,
     ...(flags.gamePaths.length > 0 ? { gamePaths: flags.gamePaths } : {}),
     ...(row.delivers ? { delivers: String(args.args) } : {}),
     ...(row.localItems ? { localItems: row.localItems } : {}),

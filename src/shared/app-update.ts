@@ -14,6 +14,30 @@ export const UpdateAction = {
 } as const;
 export type UpdateAction = (typeof UpdateAction)[keyof typeof UpdateAction];
 
+/** What Relaunch to update came to (`StudioApi.restartToUpdate`). */
+export const RestartAnswer = {
+  /** Genex quits and relaunches into the downloaded version. */
+  Relaunching: "relaunching",
+  /** Nothing downloaded waits to be installed. */
+  NoUpdate: "no_update",
+  /** An earlier Relaunch still asks the person; this one asks nothing. */
+  AlreadyAsking: "already_asking",
+  /** The person kept the running build (or the paused one's resume) going. */
+  Declined: "declined",
+} as const;
+export type RestartAnswer = (typeof RestartAnswer)[keyof typeof RestartAnswer];
+
+/** Where an update the app looks for on its own failed (`UiEvent.UpdateFailed`). */
+export const UpdateFailure = {
+  /** Asking the feed for a newer version. */
+  Check: "check",
+  /** Downloading the newer version it found. */
+  Download: "download",
+  /** Installing a downloaded version. */
+  Install: "install",
+} as const;
+export type UpdateFailure = (typeof UpdateFailure)[keyof typeof UpdateFailure];
+
 /** What is running, for Settings → About: the version (null in an unpackaged build), platform and architecture. */
 export interface AppAbout {
   version: string | null;

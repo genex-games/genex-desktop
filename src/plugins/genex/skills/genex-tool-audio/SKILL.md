@@ -12,7 +12,7 @@ unchanged. Where it disagrees with this preface, this preface wins.
   `out-dir`, `no-wait` or `no-download`. Pick it up with operation `wait` and its generationId.
 - The audio-context troubleshooting line is about browsers; it does not apply to an Unreal game.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-audio/SKILL.md v1.36.15 sha256 3cea90b64ee9b92cc67f3b82b85198427654b492d5823002faa9f05d7e13cab3 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-audio/SKILL.md v1.36.17 sha256 3cea90b64ee9b92cc67f3b82b85198427654b492d5823002faa9f05d7e13cab3 -->
 ---
 name: genex-tool-audio
 description: Generate game audio as mp3 files with `npx genex sfx` (sound effects — impacts, pickups, UI clicks, weapons, ambience), `npx genex music` (one looping instrumental track) and `npx genex voice` (a short spoken line from a cast of archetypes). Files download to ./assets and are yours to ship.

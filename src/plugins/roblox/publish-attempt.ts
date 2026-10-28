@@ -2,8 +2,9 @@
  * The game's latest publish, as the publishing card follows it (`publish-attempts/<game>.json` in the
  * plugin's storage): written when the game's chat takes a publish, ended by the agent's
  * `publish-result` once Studio has published or the turn stopped for the person, and for a first
- * publish also by Genex seeing the game's place on Roblox. One the agent never ends stops on its
- * own once the turn that clicks it can no longer hold computer control.
+ * publish also by Genex seeing the game's place on Roblox. One the agent never ends stops once the
+ * chat's turn that clicks it has ended, or on its own once that turn could no longer hold computer
+ * control.
  */
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +18,9 @@ export const PUBLISH_ATTEMPT_MS = 20 * MINUTE_MS;
 /** The longest note the agent leaves on an ended publish. */
 export const MAX_DETAIL_CHARS = 300;
 const ATTEMPTS_FOLDER = "publish-attempts";
+const MESSAGE = {
+  TurnEnded: "The chat stopped before saying the game was published. Its last message says why.",
+} as const;
 const MAX_ATTEMPT_BYTES = 4 * 1024;
 
 const attemptFile = (storage: string, game: string) => path.join(storage, ATTEMPTS_FOLDER, `${game}.json`);
@@ -63,11 +67,18 @@ export async function readAttempt(storage: string, game: string): Promise<Roblox
 
 /**
  * A publish as it stands at `now`: a first publish still under way is published once Roblox has the
- * game's place; one under way past {@link PUBLISH_ATTEMPT_MS} has stopped.
+ * game's place; one whose chat turn ended (`assisting` false) without the agent's word, or under way
+ * past {@link PUBLISH_ATTEMPT_MS}, has stopped.
  */
-export function attemptNow(attempt: RobloxPublishAttempt, onRoblox: boolean, now: number): RobloxPublishAttempt {
+export function attemptNow(
+  attempt: RobloxPublishAttempt,
+  onRoblox: boolean,
+  now: number,
+  assisting = true,
+): RobloxPublishAttempt {
   if (attempt.phase !== RobloxPublishPhase.Publishing) return attempt;
   if (attempt.kind === RobloxPublishKind.First && onRoblox) return { ...attempt, phase: RobloxPublishPhase.Published };
+  if (!assisting) return { ...attempt, phase: RobloxPublishPhase.Stopped, detail: MESSAGE.TurnEnded };
   if (now - attempt.at > PUBLISH_ATTEMPT_MS) return { ...attempt, phase: RobloxPublishPhase.Stopped };
   return attempt;
 }

@@ -221,7 +221,7 @@ function NameplateRow({ me }: { me: PlayMe }): JSX.Element {
     <div className="account-row" data-account-nameplate>
       <span className="account-row-label">{WORDS.nameplate}</span>
       <div className="account-row-body">
-        <div className="account-nameplate">
+        <div className="account-nameplate" data-analytics-mask>
           <Nameplate recipe={plate}>
             <span className="account-nameplate-row" data-avatar-host>
               <PersonAvatar person={me} size={PLATE_FACE} />
@@ -374,7 +374,12 @@ function NicknameRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Eleme
           <NicknameEditor me={me} online={online} onClose={close} />
         ) : (
           <span className="account-nickname-line">
-            <span className="account-handle" data-account-handle data-none={!me.handle || undefined}>
+            <span
+              className="account-handle"
+              data-account-handle
+              data-none={!me.handle || undefined}
+              data-analytics-mask
+            >
               {me.handle ? `@${me.handle}` : NICKNAME_WORDS.none}
             </span>
             <button
@@ -425,7 +430,7 @@ function CreditsRow(): JSX.Element {
       <div className="account-row-body">
         <div className="account-credits">
           <CreditsShard size={16} />
-          {amount !== null && <span>{amount}</span>}
+          {amount !== null && <span data-analytics-mask>{amount}</span>}
           <button type="button" className="people-button" aria-label={WORDS.buyCreditsLabel} onClick={buy}>
             {WORDS.buyCredits}
             <Icon name="arrow-up-right" size={14} />
@@ -494,7 +499,10 @@ function SignInStage(): JSX.Element {
           </div>
           {code && (
             <p className="account-note" role="status">
-              {WORDS.browserShows} <code className="account-code">{code}</code>
+              {WORDS.browserShows}{" "}
+              <code className="account-code" data-analytics-mask>
+                {code}
+              </code>
             </p>
           )}
         </>

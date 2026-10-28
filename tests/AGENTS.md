@@ -132,6 +132,9 @@ through the JS API imports `@typescript/typescript6`.
 - `leftover-children.ts`: the runners' per-file check for child processes left running (above).
 - `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
   tables, a machine type), for the package's Visual C++ runtime checks.
+- `failure-codes.ts`: the analytics failure-code suites' hostile inputs (words, paths, Node codes
+  and ids that must never reach an event property, thrown values that must read as no code) and
+  `crossed`, a failure carried across IPC as the app carries it (main's `handle`, then the preload).
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.

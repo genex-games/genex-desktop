@@ -24,7 +24,14 @@
  */
 import { SECOND_MS } from "../shared/duration.ts";
 import { t } from "../shared/i18n.ts";
-import { type ReadyUpdate, UpdateAction, type UpdateCheckResult, UpdateCheckStatus } from "../shared/app-update.ts";
+import {
+  type ReadyUpdate,
+  RestartAnswer,
+  UpdateAction,
+  type UpdateCheckResult,
+  UpdateCheckStatus,
+  UpdateFailure,
+} from "../shared/app-update.ts";
 import type { PublishedRelease, ReleaseCheck } from "./release-check.ts";
 import { ReleaseCheckKind } from "./release-check.ts";
 
@@ -184,8 +191,8 @@ export interface UpdateAnnouncerDeps {
   notify(note: { title: string; body: string }, onClick: () => void): void;
   /** Asks before a restart would end an active run; resolves true when nothing runs. */
   confirmRestart(): Promise<boolean>;
-  /** Quits and relaunches into the downloaded version (`autoUpdater.quitAndInstall`). */
-  quitAndInstall(): void;
+  /** Quits and relaunches into the downloaded version (`autoUpdater.quitAndInstall`), once main is ready to. */
+  quitAndInstall(): void | Promise<void>;
   /** Opens a release page (already checked by `releasePageUrl`) in the browser. */
   openRelease(url: string): void;
 }
@@ -198,8 +205,8 @@ export interface UpdateAnnouncer {
   downloaded(releaseName: string): void;
   /** A newer release this copy cannot install in place: remember it and tell the person once. */
   available(release: PublishedRelease): void;
-  /** Restart into the downloaded update; false when there is none, one is already asking, or a run is kept. */
-  restart(): Promise<boolean>;
+  /** Restart into the downloaded update, or say why not: none waits, one is already asking, or a run is kept. */
+  restart(): Promise<RestartAnswer>;
   /** Open the waiting release's download page; false when no downloadable release waits. */
   download(): boolean;
 }
@@ -208,13 +215,14 @@ export function createUpdateAnnouncer(deps: UpdateAnnouncerDeps): UpdateAnnounce
   let ready: ReadyUpdate | null = null;
   let releaseUrl: string | null = null;
   let asking = false;
-  const restart = async (): Promise<boolean> => {
-    if (ready?.action !== UpdateAction.Restart || asking) return false;
+  const restart = async (): Promise<RestartAnswer> => {
+    if (ready?.action !== UpdateAction.Restart) return RestartAnswer.NoUpdate;
+    if (asking) return RestartAnswer.AlreadyAsking;
     asking = true;
     try {
-      if (!(await deps.confirmRestart())) return false;
-      deps.quitAndInstall();
-      return true;
+      if (!(await deps.confirmRestart())) return RestartAnswer.Declined;
+      await deps.quitAndInstall();
+      return RestartAnswer.Relaunching;
     } finally {
       asking = false;
     }
@@ -342,22 +350,42 @@ export function askUpdater(
   });
 }
 
+/** The stage an autoUpdater error during `phase` failed at. */
+const FAILED_STAGE = {
+  [InstallerPhase.Idle]: UpdateFailure.Check,
+  [InstallerPhase.Checking]: UpdateFailure.Check,
+  [InstallerPhase.Downloading]: UpdateFailure.Download,
+  [InstallerPhase.Downloaded]: UpdateFailure.Install,
+} as const satisfies Record<InstallerPhase, UpdateFailure>;
+
 /**
  * Electron's autoUpdater, watched from launch, so Check for Updates knows the periodic check it
  * would collide with. A refused check changes nothing, and a downloaded version stays downloaded.
+ * An error the app's own checks meet (the periodic ones) is told to `failed` with its stage; one
+ * that answers a Check for Updates the person asked for is that check's answer instead.
  */
 export function watchInstaller(
   updater: WatchableUpdater,
-  options: { timeoutMs?: number } = {},
+  { failed, ...options }: { timeoutMs?: number; failed?: (stage: UpdateFailure) => void } = {},
 ): { ask(): Promise<InstallCheck> } {
   let phase: InstallerPhase = InstallerPhase.Idle;
+  let asking = 0;
+  updater.on(UpdaterEvent.Error, (error) => {
+    if (asking === 0 && !refusedAsBusy(error)) failed?.(FAILED_STAGE[phase]);
+  });
   for (const [event, next] of INSTALLER_PHASES) {
     updater.on(event, (error) => {
       if (phase === InstallerPhase.Downloaded || refusedAsBusy(error)) return;
       phase = next;
     });
   }
-  return { ask: () => askUpdater(updater, { ...options, phase: () => phase }) };
+  const ask = (): Promise<InstallCheck> => {
+    asking++;
+    return askUpdater(updater, { ...options, phase: () => phase }).finally(() => {
+      asking--;
+    });
+  };
+  return { ask };
 }
 
 /** What Check for Updates needs: this launch's decision, the announcer, and the two ways to ask. */

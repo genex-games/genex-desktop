@@ -48,8 +48,8 @@ export default {
   "A comet herding game where you guide ice rocks into orbit": "氷の岩を軌道へ導く彗星の群れ追いゲーム",
   "A command is already running for this game. Wait for it to finish or stop it.":
     "このゲームではすでにコマンドが実行中です。終わるのを待つか、停止してください。",
-  "A command on this Mac, or a URL with browser sign-in. Agents in every game can use its tools.":
-    "このMac上のコマンドか、ブラウザでサインインするURL。すべてのゲームのエージェントがそのツールを使えます。",
+  "A command on this computer, or a URL with browser sign-in. Agents in every game can use its tools.":
+    "このコンピュータ上のコマンドか、ブラウザでサインインするURL。すべてのゲームのエージェントがそのツールを使えます。",
   'A connector already uses the id "{id}"; remove or rename that connector before installing this plugin':
     "ID「{id}」はすでにコネクタが使っています。このプラグインをインストールする前に、そのコネクタを削除するか名前を変えてください",
   "A connector id is lowercase letters, digits and dashes, up to 32 characters":
@@ -134,8 +134,6 @@ export default {
   "A new version of Genex is downloading.": "Genexの新しいバージョンをダウンロードしています。",
   "A new version of Genex is ready and may fix this.":
     "Genexの新しいバージョンの準備ができました。これで直るかもしれません。",
-  "A newer Genex helper is already in Studio's Plugins folder, so Genex left it.":
-    "StudioのPluginsフォルダーにはもっと新しいGenexヘルパーがあるので、Genexはそのままにしました。",
   "A night-vision security camera, its timestamp burned in": "タイムスタンプが焼き付いた、暗視モードの防犯カメラ",
   "A ninja who can only move when the music plays": "音楽が鳴っているときだけ動ける忍者",
   "A note for every part": "すべてのパートへのメモ",
@@ -298,8 +296,6 @@ export default {
   "Agents build in it in your Studio, and its scripts are files in this game's folder.":
     "エージェントはあなたのStudioでこのプレイスを使ってつくり、スクリプトはこのゲームのフォルダーにファイルとして入ります。",
   "Agents can edit and play it from this chat.": "エージェントがこのチャットから編集もプレイもできます。",
-  "Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex.":
-    "オフでもエージェントはアプリのウィンドウを見られますが、パスワードマネージャー、システム設定、パスワード入力画面、Genexは決して見ません。",
   "Agents didn’t start": "エージェントが起動しませんでした",
   "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.":
     "エージェントは、Windowsで一度だけ許可が必要な保護スペースの中でだけ動きます。このPCの管理者でない場合は、Windowsに聞かれたときに管理者にパスワードを入力してもらい、それから「セットアップ」を押してください。",
@@ -314,7 +310,6 @@ export default {
   "All done": "すべて完了",
   "All done.": "すべて完了しました。",
   "All games": "すべてのゲーム",
-  Allow: "許可",
   "Allow all edits in this chat": "このチャットのすべての編集を許可",
   "Allow calls without asking, including changes this tool can make":
     "確認なしでの呼び出しを許可（このツールによる変更も含む）",
@@ -537,6 +532,8 @@ export default {
   "Build the {players} app of {title} again so I can publish it.":
     "{title}の{players}アプリをもう一度ビルドしてください。公開したいです。",
   "Build updated": "ビルドを更新しました",
+  "Build with the Cursor plan you already have.": "すでに契約しているCursorのプランでつくります。",
+  "Build with the Grok account you already have.": "すでに持っているGrokアカウントでつくります。",
   "Build with workers": "ワーカーとつくる",
   Building: "制作中",
   "Building the game": "ゲームをビルド中",
@@ -552,8 +549,6 @@ export default {
   "Built in one session. Its work wasn't merged into your build.":
     "1回のセッションでつくられました。作業はビルドに追加されませんでした。",
   Bundled: "同梱",
-  "Buy credits": "クレジットを購入",
-  "Buy credits on genex.games": "genex.gamesでクレジットを購入",
   "By <maker>{name}</maker>": "作者：<maker>{name}</maker>",
   "By {author}": "作者：{author}",
   "Bypass permissions": "権限をバイパス",
@@ -606,7 +601,6 @@ export default {
   "Character approval no longer available": "キャラクターの承認はもう利用できません",
   Characters: "文字",
   Chat: "チャット",
-  "Chat about this": "これについてチャット",
   "Chat actions": "チャットの操作",
   "Chat name": "チャット名",
   "Chat turn from {day}": "{day}のチャット",
@@ -683,7 +677,6 @@ export default {
   "Choose a provider below and finish signing in. OpenCode keeps the sign-in.":
     "下でプロバイダーを選んでサインインを完了してください。サインイン情報はOpenCodeが保持します。",
   "Choose a theme smaller than 128 KB.": "128 KB未満のテーマを選んでください。",
-  "Choose an answer": "答えを選んでください",
   "Choose an auto-compaction threshold between 5% and 95%.": "自動圧縮のしきい値は5%〜95%の間で選んでください。",
   "Choose an empty folder, or create one. Games you already have stay where they are.":
     "空のフォルダーを選ぶか、新しく作ってください。今あるゲームは今の場所に残ります。",
@@ -789,10 +782,13 @@ export default {
     "Codexのスキル検出が終了しました。更新して、もう一度試してください。",
   "Codex skill discovery timed out. Refresh to retry.":
     "Codexのスキル検出がタイムアウトしました。更新して、もう一度試してください。",
+  "Connect Cursor": "Cursorを接続",
+  "Connect Grok Build": "Grok Buildを接続",
   "Cursor didn't answer. Check the installation, then try again.":
     "Cursorが応答しませんでした。インストールを確認して、もう一度試してください。",
   "Cursor is unavailable": "Cursorを利用できません",
   "Cursor isn't installed on this computer.": "このコンピューターにCursorがインストールされていません。",
+  "Cursor ready": "Cursor準備完了",
   "Cursor sign-in": "Cursorへのサインイン",
   "Cursor {version}, {count, plural, other {# model(s)}}": "Cursor {version}、モデル{count, plural, other {#個}}",
   "Cursor's CLI forgets this computer's sign-in": "CursorのCLIがこのコンピューターのサインインを忘れます",
@@ -805,6 +801,7 @@ export default {
     "Grok Buildが応答しませんでした。インストールを確認してから、もう一度お試しください。",
   "Grok Build isn't installed on this Mac.": "このMacにGrok Buildがインストールされていません。",
   "Grok Build isn't signed in.": "Grok Buildにサインインしていません。",
+  "Grok Build ready": "Grok Build準備完了",
   "Grok Build sign-in": "Grok Buildのサインイン",
   "Grok Build {version}, {count, plural, one {# model} other {# models}}":
     "Grok Build {version}、モデル{count, plural, other {#個}}",
@@ -1254,8 +1251,6 @@ export default {
   "Drop to add {count, plural, one {# picture} other {# pictures}}":
     "ドロップして{count, plural, other {#枚の画像}}を追加",
   "Drove the route": "ルートを走りました",
-  "Each chat session asks you first, and {keys} stops it.":
-    "チャットのセッションごとに最初に確認があり、{keys}で止められます。",
   Earlier: "それ以前",
   "Earlier builds": "以前のビルド",
   "Earlier conversation · no folder": "以前の会話 · フォルダーなし",
@@ -1655,6 +1650,8 @@ export default {
   Nex: "Nex",
   "Not signed in to Cursor.": "Cursorにサインインしていません。",
   "Runs on your Grok account": "Grokアカウントで動作",
+  "Setting up Cursor…": "Cursorをセットアップ中…",
+  "Setting up Grok Build…": "Grok Buildをセットアップ中…",
   "Sign in again…": "もう一度サインイン…",
   "Sign in to Cursor from Settings › Model Providers.": "設定 › モデルプロバイダーからCursorにサインインしてください。",
   "Sign in to Grok from Settings › Model Providers.": "設定 › モデルプロバイダーからGrokにサインインしてください。",
@@ -1674,7 +1671,6 @@ export default {
   "xAI no longer accepts this Grok Build.": "xAIはこのGrok Buildを受け付けなくなりました。",
   "xAI no longer accepts this version. Update it to keep building.":
     "xAIはこのバージョンを受け付けなくなりました。アップデートして続けましょう。",
-  "{amount} Nex, get Nex": "{amount} Nex、Nexを入手",
   "Get credits": "クレジットを入手",
   "Get the Epic Games Launcher": "Epic Games Launcherを入手",
   "Getting Roblox Studio": "Roblox Studioを入手中",
@@ -1747,6 +1743,7 @@ export default {
   Help: "ヘルプ",
   Hide: "隠す",
   "Hide Others": "ほかを隠す",
+  "Hide friends": "フレンドを隠す",
   "Hide sidebar": "サイドバーを隠す",
   "Hide terminal": "ターミナルを隠す",
   "Hide terminal · keeps running": "ターミナルを隠す · 実行は続きます",
@@ -1963,7 +1960,6 @@ export default {
     "あなたの権限で動作します。Genexはこのコードをサンドボックス化しません。",
   "It runs, but no reviewer compared it with the game you had.":
     "動作はしますが、レビュアーは前のゲームと比較していません。",
-  "It shows in the game after its next release.": "次のリリース後にゲームに表示されます。",
   "It shows up here as soon as it runs.": "動くようになったら、すぐここに表示されます。",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "最初はオフです。「プラグイン」でオンにしてください。各ツールは実行前に確認します。",
@@ -2011,7 +2007,6 @@ export default {
   "Judge who played it": "プレイした審査員",
   "Jump to latest": "最新へ移動",
   "Jump to now": "現在に移動",
-  "Just this once.": "今回だけ。",
   Keep: "残す",
   "Keep building": "続きをつくる",
   "Keep building where you left off.": "中断したところから続きをつくってください。",
@@ -2064,19 +2059,10 @@ export default {
   "Left {count, plural, one {# game} other {# games}} alone while they work.":
     "作業中の{count, plural, other {ゲーム#本}}はそのままにしました。",
   "Left {game} alone while it works.": "作業中の{game}はそのままにしました。",
-  "Let agents control your computer": "エージェントにコンピューターの操作を許可",
   "Let go of every input": "すべての入力を離しました",
   "Let it see this game's folder": "このゲームのフォルダーへのアクセスを許可",
   "Let the agent use {name}?": "エージェントに{name}を使わせますか？",
   "Let the game settle": "ゲームが落ち着くのを待ちました",
-  "Let this chat's agent do this for you with computer control? {plugin} asks: {task}":
-    "このチャットのエージェントに、コンピューター操作でこれを代わりにやってもらいますか？{plugin}からの依頼：{task}",
-  "Let this chat's agent see your screen and use your computer during this session? Each app it reaches asks you first. Stop it any time with Stop, or {shortcut}.":
-    "このセッション中、このチャットのエージェントに画面を見てコンピューターを使ってもらいますか？アプリごとに、まずあなたに確認します。「停止」または{shortcut}でいつでも止められます。",
-  "Let this chat's agent use this app? It can click, type and read what this app shows.":
-    "このチャットのエージェントにこのアプリを使わせますか？このアプリに表示される内容を読み、クリックや入力ができます。",
-  "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
-    "このチャットのエージェントに{app}を使わせますか？{app}に表示される内容を読み、クリックや入力ができます。",
   "Letters a–z, digits and dashes.": "a–zの英字、数字、ハイフンが使えます。",
   "Letting go of every input": "すべての入力を離しています",
   "Letting the game settle": "ゲームが落ち着くのを待っています",
@@ -3090,7 +3076,6 @@ export default {
   "Repository tree is truncated; point the spec at a smaller subdirectory":
     "リポジトリのツリーが途中で切れています。もっと小さいサブディレクトリを指定してください",
   "Repository tree is unreadable": "リポジトリのツリーを読み取れません",
-  "Request details": "リクエストの詳細",
   "Request sent": "リクエスト送信済み",
   Requests: "リクエスト",
   Reset: "リセット",
@@ -3348,7 +3333,6 @@ export default {
     "自己改善はオフです。改善点を探すには、Studioの上部でオンにしてください。",
   Send: "送信",
   "Send a report": "レポートを送信",
-  "Send answer": "回答を送信",
   "Send feedback": "フィードバックを送信",
   "Send idea": "アイデアを送信",
   "Send report": "レポートを送信",
@@ -3432,6 +3416,7 @@ export default {
   "Show earlier runs": "以前のビルドを表示",
   "Show earlier updates": "以前の更新を表示",
   "Show fewer": "表示を減らす",
+  "Show friends": "フレンドを表示",
   "Show friends what I’m playing": "プレイ中のゲームをフレンドに見せる",
   "Show game": "ゲームを表示",
   "Show in Explorer": "エクスプローラーで表示",
@@ -4209,7 +4194,8 @@ export default {
   "This plan is no longer waiting for approval.": "このプランはもう承認を待っていません。",
   "This plugin has no releases, so Studio takes the newest code. It stays as installed until you update it.":
     "このプラグインにはリリースがないため、Studioは最新のコードを使います。アップデートするまでインストール時のままです。",
-  "This plugin runs trusted code on your Mac.": "このプラグインは、このMacで信頼済みのコードを実行します。",
+  "This plugin runs trusted code on your computer.":
+    "このプラグインは、このコンピュータで信頼済みのコードを実行します。",
   "This plugin's package is missing; remove the plugin and install it again":
     "このプラグインのパッケージが見つかりません。プラグインを削除して、もう一度インストールしてください",
   "This plugin’s plugin.json can’t be used.": "このプラグインのplugin.jsonは使えません。",
@@ -4331,8 +4317,6 @@ export default {
   "Turn on Secondary Logon in Windows Services (Startup type: Manual), then try again.":
     "WindowsのサービスでSecondary Logonをオンにして（スタートアップの種類：手動）、もう一度試してください。",
   "Turn on Studio's MCP server": "StudioのMCPサーバーをオンにする",
-  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.":
-    "コンピューター操作をオンにしますか？オンにすると、どのチャットのエージェントも、このコンピューターのアプリを使わせてほしいと頼めるようになります（一度に1つのアプリずつ）。",
   "Turn on mic": "マイクをオン",
   "Turn on microphone": "マイクをオン",
   "Turn on {name}": "{name}をオンにする",
@@ -4610,6 +4594,7 @@ export default {
   "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.":
     "Claudeが確認せずに行う操作です。チャットで「常に許可」を選ぶと、そのゲーム用にここへ追加されます。",
   "What Harness has learned": "Harnessが学んだこと",
+  "What changed": "変わったところ",
   "What changes": "変わる内容",
   "What credits pay for": "クレジットの使い道",
   "What do you want to make?": "何をつくりますか？",
@@ -4652,12 +4637,11 @@ export default {
     "Windowsでインストールが許可されませんでした。もう一度「おまかせ」を押して、Windowsに聞かれたら「はい」を選んでください。",
   "Windows needs a one-time setup of the protected workspace, approved by an administrator.":
     "Windowsでは、保護されたワークスペースの初回セットアップに管理者の承認が必要です。",
+  "Windows will ask you to allow it once.": "Windowsから一度だけ許可を求められます。",
   "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.":
     "Windowsから一度だけ許可を求められます。パスワードを求められたら、このPCの管理者が自分のパスワードを入力できます。エージェントは、あなたのファイルから離れた専用の保護スペースで作業します。",
   "Windows wouldn’t start Genex’s protected space.": "WindowsでGenexの保護スペースを起動できませんでした。",
   "Wireframe terrain flying by at dusk": "夕暮れに流れていくワイヤーフレームの地形",
-  "With this on, an agent can click and type in the apps you allow.":
-    "オンにすると、許可したアプリでエージェントがクリックや入力をできます。",
   "Withdrawn by a restart": "再起動で取り下げ",
   "Withdrawn when the studio restarted": "アプリの再起動で取り下げ",
   "Withdrawn when the turn ended": "応答の終了で取り下げ",
@@ -4785,7 +4769,6 @@ export default {
     "開いているRoblox Studioです。エージェントはここでRobloxのゲームをつくります。",
   "Your open Unreal Editor, where agents build Unreal games.":
     "開いているUnreal Editorです。エージェントはここでUnrealのゲームをつくります。",
-  "Your own answer": "自分の答え",
   "Your profile link": "あなたのプロフィールリンク",
   "Your profile link.": "プロフィールのリンクです。",
   "Your profile, friends and Publish stay.": "プロフィール、フレンド、公開はそのまま使えます。",
@@ -5385,7 +5368,6 @@ export default {
   "{added} of {total} parts added": "{total}個中{added}個のパートを追加",
   "{added} of {total} parts added · {working} working": "{total}個中{added}個のパートを追加 · {working}個作業中",
   "{amount} Nex": "{amount} Nex",
-  "{amount} credits, open Credits": "{amount}クレジット、クレジットを開く",
   "{amount} more needed": "あと{amount}必要",
   "{app} settings": "{app}の設定",
   "{brand} doesn’t share limits for this plan": "{brand} はこのプランの上限を公開していません",
@@ -5508,6 +5490,8 @@ export default {
     "{count, plural, other {元の履歴は.git.studio-backupという名前に変えて、すぐ横に保存してあります。}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, other {ゲームのファイルを#個復元しました。}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, other {この変更は一度に{size}を超えたため、大きいファイル#件が保存されず、巻き戻しで元に戻せません：{files}。}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, other {保存するには大きすぎるファイル#件は、巻き戻しで元に戻せません：{files}。}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":
@@ -5939,7 +5923,6 @@ export default {
     "このコンピューターにはもうありません。もう一度インストールしてください。",
   "It couldn’t start on this computer.": "このコンピューターで起動できませんでした。",
   "Remove from this computer": "このコンピューターから削除",
-  "Remove from {game}": "{game}から外す",
   "{title} is removed from this computer. Its saves stay.":
     "{title}をこのコンピューターから削除しました。セーブデータは残ります。",
   "Ready to play on this computer.": "このコンピューターでプレイできます。",
@@ -5968,8 +5951,8 @@ export default {
   "Genex can't click in Roblox Studio on this computer. Publish it yourself in Studio:":
     "このコンピューターではGenexがRoblox Studioをクリックできません。Studioで自分で公開してください：",
   "Handing it to the agent…": "エージェントに渡しています…",
-  "If the chat asks to use computer control, answer it there.":
-    "チャットでコンピューター操作の使用を聞かれたら、そこで答えてください。",
+  "If the chat or macOS asks for permission, allow it: publishing goes on by itself.":
+    "チャットや macOS で許可を求められたら、許可してください。公開はそのまま自動で進みます。",
   "In Roblox Studio": "Roblox Studioで",
   "Name on Roblox": "Robloxでの名前",
   "On Roblox": "Robloxに",
@@ -5996,6 +5979,7 @@ export default {
   "Drag to turn": "ドラッグで回転",
   "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
     "Genexでまだ確認できていません。確認されるとマイアイテムに表示されます。二重に請求されることはありません。",
+  "Genex’s protected space needs an update": "Genexの保護スペースを更新する必要があります",
   Get: "入手",
   "Get in {game}": "{game}で入手",
   Inappropriate: "不適切",
@@ -6030,14 +6014,12 @@ export default {
   "+{amount}": "+{amount}",
   Actions: "操作",
   "Actions for {name}": "{name}の操作",
-  "Add to {game}": "{game}に追加",
   "Ask for an item or a change…": "アイテムや変更を頼む…",
   "Ask the agent to change it": "エージェントに変更を頼む",
   Browse: "さがす",
   "Browse and selling": "さがす・販売",
   "By {name}": "作者: {name}",
   "Choose a game": "ゲームを選ぶ",
-  "Nex you earn is spent in games, like any Nex.": "稼いだNexは、ほかのNexと同じようにゲームで使えます。",
   "Draft, put on sale": "下書き、販売する",
   Earned: "収益",
   "Genex can’t sell it under that name. Ask the agent for another.":
@@ -6068,15 +6050,33 @@ export default {
   "It’s already this game’s own item.": "すでにこのゲームのアイテムです。",
   "Listing draft: {name}": "出品の下書き: {name}",
   "Draft · goes on sale when you publish": "下書き · 公開すると販売開始",
-  "Sell when published": "公開時に販売する",
-  "Will go on sale when you publish": "公開すると販売が始まります",
-  "It changed since you approved it.": "承認した後に変更されました。",
+  Draft: "下書き",
+  "Drafts go on sale when you publish.": "下書きは公開すると販売開始されます。",
+  For: "対象",
+  "Add to game": "ゲームに追加",
+  "Players see it after your next publish.": "次回の公開後にプレイヤーに表示されます。",
+  "On sale in your game": "ゲームで販売中",
+  "Players can buy it there now.": "プレイヤーは今そこで購入できます。",
+  "Remove from game": "ゲームから削除",
+  "What is Nex?": "Nexとは？",
+  "{amount} Nex, about Nex": "{amount} Nex、Nexについて",
+  "Nex is the money of games on Genex. Players buy it, then spend it on items inside any game.":
+    "NexはGenexのゲームで使うお金です。プレイヤーはNexを購入し、どのゲームでもアイテムに使えます。",
+  "Your Nex": "あなたのNex",
+  "Buy Nex in packs. One balance works in every game.": "Nexはパックで購入できます。残高はすべてのゲームで共通です。",
+  Spend: "使う",
+  "Buy items in a game’s store: characters, skins, upgrades. What you buy stays yours.":
+    "ゲームのストアでアイテムを購入できます：キャラクター、スキン、アップグレード。購入したものはずっとあなたのものです。",
+  Earn: "稼ぐ",
+  "Players pay Nex for your items. After a short hold, you spend it like any Nex.":
+    "プレイヤーはあなたのアイテムにNexを支払います。短い保留期間の後、ほかのNexと同じように使えます。",
+  "Credits are separate: they pay for making games. Nex pays for what games sell.":
+    "クレジットは別物です：ゲーム作りの支払いに使います。Nexはゲームが販売するものの支払いに使います。",
   "This item changed after this card. See it in Items › Selling before you put it on sale.":
     "このアイテムはこのカードの後に変更されました。販売する前に アイテム › 販売 で確認してください。",
   "It changed since you approved it, so it stayed a draft.": "承認した後に変更されたため、下書きのままです。",
   "Removed from this game": "このゲームから削除しました",
   "Genex couldn’t change this draft. Try again.": "Genexでこの下書きを変更できませんでした。もう一度試してください。",
-  "New item": "新しいアイテム",
   "No items match.": "一致するアイテムはありません。",
   "No one has shared an item yet.": "まだ誰もアイテムを共有していません。",
   "Off sale": "販売停止中",
@@ -6108,8 +6108,64 @@ export default {
   "You get per sale ({share})": "1回の売上での受け取り（{share}）",
   "Your agent puts it in the game.": "エージェントがゲームに組み込みます。",
   "You’ve put a lot on sale today. Try again tomorrow.": "今日はたくさん出品しました。明日また試してください。",
-  "or ask for changes below": "または下で変更を頼む",
   "{count, plural, one {in # game} other {in # games}}": "{count, plural, other {#ゲームで使用}}",
   "{days, plural, one {On hold for # day} other {On hold for # days}}": "{days, plural, other {#日間保留中}}",
   "{game} · {games}": "{game} · {games}",
+  "Ask for changes": "変更を依頼",
+  "Ask for changes below": "下で変更を依頼してください",
+  Shop: "ショップ",
+  "Character preview": "キャラクターのプレビュー",
+  "Finished character": "完成したキャラクター",
+  "Get Genex credits on genex.games": "genex.gamesでGenexクレジットを入手",
+  "Make the {kind} with Genex now.": "Genexで今すぐつくって：{kind}",
+  "Make the {kind} with Genex now: {prompt}": "Genexで今すぐつくって：{kind} — {prompt}",
+  "Not enough credits": "クレジットが足りません",
+  "{count, plural, other {# need credits}}": "{count, plural, other {#件クレジット不足}}",
+  "Agents in any chat can then ask to use your apps.":
+    "オンにすると、どのチャットのエージェントもアプリを使わせてほしいと頼めます。",
+  "It asks before each app.": "アプリごとに先に確認します。",
+  "It can click and type there.": "そのアプリでクリックや入力ができます。",
+  "It never uses password managers, System Settings, password prompts or Genex.":
+    "パスワードマネージャー、システム設定、パスワード入力画面、Genexは決して操作しません。",
+  "Let agents use your computer": "エージェントにコンピューターの使用を許可",
+  "Let the agent do this with computer control?": "コンピューター操作でエージェントにこれをやってもらいますか？",
+  "Let the agent see your screen in this chat?": "このチャットでエージェントに画面を見せますか？",
+  "Let the agent use this app?": "エージェントにこのアプリを使わせますか？",
+  "Let the agent use {app}?": "エージェントに{app}を使わせますか？",
+  "They ask before each app.": "エージェントはアプリごとに先に確認します。",
+  "Turn on computer control?": "コンピューター操作をオンにしますか？",
+  "{plugin} asks: {task}": "{plugin}からの依頼：{task}",
+  "Add an icon and a thumbnail, or Roblox shows a grey square.":
+    "アイコンとサムネイルを追加しよう。ないとRobloxは灰色の四角を表示するよ。",
+  "Answer Roblox's questions about what's in the game, so it gets an age rating.":
+    "ゲームの内容についてのRobloxの質問に答えると、年齢区分がつくよ。",
+  "Make the game public, so anyone can play it.": "ゲームを公開すると、だれでも遊べるようになるよ。",
+  "Only you can open it for now. Roblox keeps a new game private until you finish these in Creator Hub:":
+    "今はあなただけが開けるよ。Creator Hubでこれを終えるまで、Robloxは新しいゲームを非公開にしておくよ：",
+  "Open Creator Hub": "Creator Hubを開く",
+  "Studio hasn't loaded the Genex helper": "StudioがGenexヘルパーを読み込んでいません",
+  "Studio was open before the helper was added, so your scripts don't reach it yet. Restart Studio loads the helper.":
+    "ヘルパーを追加する前からStudioが開いていたので、スクリプトがまだ届いていないよ。「Studioを再起動」でヘルパーを読み込むよ。",
+  "The Genex helper was already in Studio's Plugins folder, so Genex left it as it is.":
+    "GenexヘルパーはすでにStudioのPluginsフォルダーにあったので、Genexはそのままにしたよ。",
+  "Allow in this chat": "このチャットで許可",
+  "Allowed in this chat": "このチャットで許可済み",
+  "Don't ask again for this action in this chat.": "このチャットでは今後この操作を確認しません。",
+  "A replay of your first week": "最初の1週間の記録",
+  "Change it anytime in Settings.": "設定でいつでも変更できます。",
+  "Don't share": "共有しない",
+  "Help improve Genex?": "Genexの改善に協力しますか？",
+  "How you move through the app, with your work blanked out": "アプリ内での動き方。作品の中身は隠されます",
+  "Never your work or name": "作品や名前は送りません",
+  "Prompts, code, files, game names and accounts are left out":
+    "プロンプト、コード、ファイル、ゲーム名、アカウントは含みません",
+  "Screens, clicks and errors": "画面、クリック、エラー",
+  "Screens, clicks, errors and wait times, and until {date} a replay of how you move through the app with your work blanked out. Sent to PostHog in the EU under a random id.":
+    "画面、クリック、エラー、待ち時間。{date}までは、作品の中身を隠したうえでアプリ内での動き方も記録します。ランダムなIDでEUのPostHogに送られます。",
+  "Screens, clicks, errors and wait times. Sent to PostHog in the EU under a random id.":
+    "画面、クリック、エラー、待ち時間。ランダムなIDでEUのPostHogに送られます。",
+  "Share usage data": "使用データを共有",
+  "Show us where Genex gets in your way.": "Genexで困っているところを教えてください。",
+  "Where you go, what fails and how long it takes": "どこへ行き、何が失敗し、どれだけ時間がかかったか",
+  "usage data\u0004Share": "共有する",
 } satisfies LocaleCatalog;

@@ -28,6 +28,31 @@ import { Presence, type PresenceChild } from "../ui/Presence.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
 import { type StillToFix, stopWhyLine } from "../chat-entries.ts";
 import { StillToFixCard } from "../chat/StillToFixCard.tsx";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { BuildSurface } from "../analytics/events/builds.ts";
+import { errorCode } from "../../shared/errors.ts";
+
+/** A build played from the card, and whether it played. */
+const playedHere = (ok: boolean): void =>
+  track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.MorningCard, run_active: false, ok });
+
+/** Play a run's build from the card: `played` once it is on the stage, `failed` when it could not be. */
+function playFromCard(
+  build: { project: string; head: string },
+  after: { played?: () => void; failed: (error: unknown) => void },
+): Promise<void> {
+  return window.studio
+    .showBuild(build.project, build.head)
+    .then(() => {
+      playedHere(true);
+      after.played?.();
+    })
+    .catch((error: unknown) => {
+      playedHere(false);
+      after.failed(error);
+    });
+}
 
 /** How long a finished build's card keeps the place of a result that has not come yet. */
 const RESULT_WAIT_MS = 3 * SECOND_MS;
@@ -156,6 +181,7 @@ export function MorningCard({
 }: MorningCardProps): JSX.Element {
   const outcome = useRunSummary(project, runId);
   const waiting = useResultWait(outcome !== null);
+  const noticeFailure = (err: unknown): void => onNotice?.(problemWords(err), ToastTone.Error, errorCode(err));
   const words = morningWords({
     rounds,
     kept,
@@ -190,7 +216,7 @@ export function MorningCard({
     // thing after a run in which a merged build may have been shown from a worktree.
     if (project) {
       webBuildShown(project);
-      void window.studio.loadPreview(project).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
+      void window.studio.loadPreview(project).catch(noticeFailure);
     }
     onShowLive?.();
   };
@@ -201,7 +227,10 @@ export function MorningCard({
           key={action}
           title={t("Pick the build up where it left off")}
           data-run-resume={runId ?? undefined}
-          onClick={() => onResume?.()}
+          onClick={() => {
+            track(AnalyticsEvent.RunResumePressed, { surface: BuildSurface.MorningCard });
+            onResume?.();
+          }}
         >
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
@@ -227,7 +256,7 @@ export function MorningCard({
         title={t("Load this build in the Live tab from a copy; your game folder stays as it is")}
         onClick={() => {
           webBuildShown(project);
-          void window.studio.showBuild(project, commit).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
+          void playFromCard({ project, head: commit }, { failed: noticeFailure });
           onShowLive?.();
         }}
       >
@@ -253,13 +282,16 @@ export function MorningCard({
             summary={summary}
             onPlay={() => {
               if (project && summary.head)
-                return window.studio
-                  .showBuild(project, summary.head)
-                  .then(() => {
-                    webBuildShown(project);
-                    onShowLive?.();
-                  })
-                  .catch((error) => onNotice?.(String(error), ToastTone.Error));
+                return playFromCard(
+                  { project, head: summary.head },
+                  {
+                    played: () => {
+                      webBuildShown(project);
+                      onShowLive?.();
+                    },
+                    failed: (error) => onNotice?.(String(error), ToastTone.Error),
+                  },
+                );
             }}
           />
         ))}

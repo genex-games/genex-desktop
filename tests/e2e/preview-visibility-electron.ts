@@ -164,6 +164,7 @@ async function main() {
     await checkStandIn();
     await checkMutedAgentWindow();
     await checkClosedStaysClosed();
+    await checkUnloadedRefusesAtOnce();
     await checkRendererGone();
   } catch (error) {
     mark("error", { error: String(error) });
@@ -356,6 +357,73 @@ async function checkClosedStaysClosed(): Promise<void> {
       !session.fromPartition(partition).protocol.isProtocolHandled("game"),
     );
   } finally {
+    win.destroy();
+  }
+}
+
+/** How long a page call on a window that holds no page may take before it counts as waiting forever. */
+const NO_PAGE_ANSWER_MS = 3_000;
+
+/**
+ * A pooled window nothing was loaded into (the stand-in of a game whose build failed: the studio
+ * serves it no page) refuses every page call at once and says why. Electron holds a script until
+ * a load stops, and none is coming: otherwise each call holds the harness for its whole RPC
+ * deadline. The same window answers once a page is loaded, a call made during that load included.
+ */
+async function checkUnloadedRefusesAtOnce(): Promise<void> {
+  const win = new BrowserWindow({
+    width: 320,
+    height: 240,
+    show: false,
+    focusable: false,
+    skipTaskbar: true,
+    webPreferences: { offscreen: true },
+  });
+  const port = new GamePreview({
+    gamesRoot: root,
+    vendorDir: path.join(process.cwd(), "dist/resources/vendor"),
+    partition: "visibility-unloaded",
+    offscreen: true,
+    muted: true,
+  });
+  try {
+    port.attachTo(win, { x: 0, y: 0, width: 320, height: 200 });
+    const why = "the game's build failed (npm run build, exit 127)";
+    port.note("error", why, { loadError: true });
+    const calls = [
+      () => port.evaluate("1"),
+      () => port.studioCall("step", 16),
+      () => port.studioState(),
+      () => port.screenshotWithStats(),
+      () => port.input([{ type: "press", combo: "w" }]),
+      () => port.still({ width: 320, height: 240, maxBytes: 1024 * 1024, previewMaxPx: 320 }),
+    ];
+    const outcomes = await Promise.all(
+      calls.map((call) =>
+        Promise.race([
+          call().then(
+            () => "answered",
+            (error: unknown) => `refused: ${String(error)}`,
+          ),
+          pause(NO_PAGE_ANSWER_MS).then(() => "waited"),
+        ]),
+      ),
+    );
+    mark("unloaded-port", { outcomes });
+    check(
+      "unloaded: every page call is refused at once",
+      outcomes.every((outcome) => outcome.startsWith("refused")),
+    );
+    check(
+      "unloaded: the refusal says why the window holds no page",
+      outcomes.every((outcome) => outcome.includes(why)),
+    );
+    const loading = port.load("fixture");
+    const duringLoad = port.evaluate("1 + 1");
+    await loading;
+    check("unloaded: a call made while its first page loads waits for that page", (await duringLoad) === 2);
+  } finally {
+    port.destroy();
     win.destroy();
   }
 }

@@ -22,9 +22,9 @@ nickname (kept offline), **Friends** with invites, profiles and **Stats** ([Play
 
 ## First launch
 
-An empty, never-welcomed profile opens a full-window welcome that ends connecting Claude Code,
-ChatGPT, a local model, OpenRouter or OpenCode; Skip or Start building opens home, keeping a typed
-idea.
+An empty, never-welcomed profile opens a full-window welcome connecting Claude Code, ChatGPT, local
+models, OpenRouter, OpenCode, Grok Build or Cursor; Skip or Start building opens home, keeping a
+typed idea. [Usage analytics](../usage-analytics.md) ask first, once.
 
 A Genex card then offers **Connect Genex plugin** once.
 
@@ -37,14 +37,14 @@ administrator prompt, two if Secondary Logon is off).
   ([its kind](projects-engines.md)). Duplicates never overwrite; a greeting stays **Untitled game** until an idea. **New game**, Games **+** and Command-N open home.
 - **Settings → Games** moves new games to an empty folder (default `~/AI Games`);
   **Storage** frees older builds (keeps paused, latest) and [moves data](../windows-sandbox.md#data-folder-on-another-drive) (Windows).
-- **Settings → Privacy**: Share build metrics (off by default) with preview and delete, and
-  policy links ([PRIVACY](../../PRIVACY.md)).
+- **Settings → Privacy**: Share usage data, Share build metrics (off by default) with preview
+  and delete, policy links ([PRIVACY](../../PRIVACY.md)).
 - Home's **Open a folder…** inspects before writing (Claude settings and hooks trusted unless
   switched off); only a web folder gets starter files.
 - A game's menu: Rename (same folder), Pin/Unpin, Change image, Delete (only the library
   entry; active work blocks it; reopening restores it).
 - The chat header: title, Show in Finder, Terminal, ⋯ (Export game…, Rename), **Free N GB**
-  past 1 GB; Harness and unbound drafts have none. Search reaches older and unbound chats.
+  past 1 GB (not Harness or unbound drafts). Search reaches older and unbound chats.
 - Command-B toggles navigation, Command-K searches, Command-2 Harness, Command-1 the last chat.
 
 ## State and appearance

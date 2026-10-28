@@ -56,7 +56,8 @@
         "docs/connections-and-context.md",
         "docs/tool-permissions.md",
         "docs/performance.md",
-        "docs/play.md"
+        "docs/play.md",
+        "docs/usage-analytics.md"
       ],
       "commands": ["typecheck", "test:build-ui"]
     },

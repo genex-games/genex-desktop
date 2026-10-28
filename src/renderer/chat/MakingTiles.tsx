@@ -49,8 +49,10 @@ export const MakingTiles = memo(function MakingTiles({
   if (!shown.length) return null;
   const choosing = shown.some((job) => isGenexSource(job.source) && job.phase === MakingPhase.Review);
   return (
+    // The cards say what the person asked for.
     <section
       data-chat-making
+      data-analytics-mask
       aria-label={MAKING_WORDS.inChat}
       className="grid gap-2"
       style={{ gridTemplateColumns: `repeat(auto-fill, ${CARD_W}px)` }}
@@ -65,6 +67,7 @@ export const MakingTiles = memo(function MakingTiles({
             <MakingCard
               job={job}
               plugin={plugins.get(job.source) ?? (job.sourceName ? { name: job.sourceName } : undefined)}
+              project={project}
             />
           </div>
         ))}

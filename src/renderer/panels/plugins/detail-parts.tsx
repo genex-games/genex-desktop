@@ -4,7 +4,7 @@ import { useState } from "react";
 import { GENEX_PLUGIN_ID } from "../../../shared/genex.ts";
 import { t } from "../../../shared/i18n.ts";
 import { PluginSourceKind, type PluginInfo, type PluginManifest } from "../../../shared/plugins.ts";
-import { installPluginUpdate } from "../../state/plugins.ts";
+import { PluginAction, trackedPluginAction } from "../../analytics/plugins-page.ts";
 import { Button } from "../../ui/Button.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../ui/dropdown-menu.tsx";
 import { Icon } from "../../ui/icons.tsx";
@@ -15,7 +15,7 @@ import { capabilityLine, foldersLine, localAccessNote, shownName, sourceWords } 
 
 const PAGE = PLUGINS_WORDS.page;
 import type { OpenPanel, PluginsPage } from "./page.ts";
-import { Mark, Section } from "./rows.tsx";
+import { Mark, pagePress, Section, updatePlugin } from "./rows.tsx";
 import { type ShownSkill, shownPluginSkill, skillChangeWords } from "./skills-sections.ts";
 
 /** A plugin's saved setting values, by setting key. */
@@ -56,7 +56,14 @@ export function MoreActions({ detail, page }: { detail: PluginInfo; page: Plugin
         {watchable && (
           <DropdownMenuItem
             aria-label={watchLabel}
-            onSelect={() => void page.act(() => window.studio.pluginWatch(manifest.id, !detail.watching))}
+            onSelect={() =>
+              void page.act(() =>
+                trackedPluginAction(
+                  pagePress(detail.watching ? PluginAction.WatchOff : PluginAction.WatchOn, detail),
+                  () => window.studio.pluginWatch(manifest.id, !detail.watching),
+                ),
+              )
+            }
           >
             {watchWords}
           </DropdownMenuItem>
@@ -66,7 +73,9 @@ export function MoreActions({ detail, page }: { detail: PluginInfo; page: Plugin
             onSelect={() =>
               void page.act(async () => {
                 page.setSelected(null);
-                await window.studio.pluginRemove(manifest.id);
+                await trackedPluginAction(pagePress(PluginAction.Remove, detail), () =>
+                  window.studio.pluginRemove(manifest.id),
+                );
               })
             }
           >
@@ -109,7 +118,9 @@ export function SettingsFields({
               onChange={(e) => {
                 const value = settingValue(s, e.target);
                 void page.act(async () => {
-                  await window.studio.pluginSetSetting(manifest.id, s.key, value);
+                  await trackedPluginAction(pagePress(PluginAction.SettingSaved, detail), () =>
+                    window.studio.pluginSetSetting(manifest.id, s.key, value),
+                  );
                   onSaved(s.key, value);
                 });
               }}
@@ -202,7 +213,13 @@ function AllowedTools({ detail, page }: { detail: PluginInfo; page: PluginsPage 
       <Button
         variant="ghost"
         disabled={page.busy}
-        onClick={() => void page.act(() => window.studio.pluginForgetAllowed(detail.manifest.id))}
+        onClick={() =>
+          void page.act(() =>
+            trackedPluginAction(pagePress(PluginAction.ForgetAllowed, detail), () =>
+              window.studio.pluginForgetAllowed(detail.manifest.id),
+            ),
+          )
+        }
       >
         {PAGE.askEveryTime}
       </Button>
@@ -272,7 +289,7 @@ export function UpdateButton({ detail, page }: { detail: PluginInfo; page: Plugi
   const update = page.updates.get(detail.manifest.id);
   if (!update) return null;
   return (
-    <Button disabled={page.busy} onClick={() => void page.act(() => installPluginUpdate(window.studio, update))}>
+    <Button disabled={page.busy} onClick={() => void page.act(() => updatePlugin(detail, update))}>
       {t("Update to {version}", { version: update.version })}
     </Button>
   );
