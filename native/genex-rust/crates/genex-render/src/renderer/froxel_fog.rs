@@ -56,6 +56,8 @@ impl Renderer {
             environment_lights: self.environment_choice.lights_scene(),
             binned: self.quality.lights.clustered && prep.plan.binned.is_some(),
             fog,
+            // The volumes' rows follow the probes' (`probes::ENV_PROBE_ROWS`).
+            rooms: prep.plan.binned.as_ref().map_or((0, 0), |binned| (binned.reflection_probes.len() as u32, binned.irradiance_volumes.len() as u32)),
         };
         let (device, queue) = (frame.device().clone(), frame.queue().clone());
         sky.encode_froxels(&device, &queue, frame.encoder(), (grid, &inputs, &froxel_frame))

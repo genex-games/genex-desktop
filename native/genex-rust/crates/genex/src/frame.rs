@@ -763,6 +763,8 @@ pub struct Draw {
     pub tag: String,
     /// The draw id current when it was drawn ([`Frame::id`]), if any.
     pub id: Option<DrawId>,
+    /// Whether it is part of the first-person view model ([`Frame::view_model`]).
+    pub view_model: bool,
     /// What to draw.
     pub shape: Shape,
 }
@@ -772,6 +774,7 @@ pub struct Draw {
 pub struct Frame {
     tag: String,
     id: Option<DrawId>,
+    view_model: bool,
     camera_cut: bool,
     draws: Vec<Draw>,
     custom: Vec<CustomDraw>,
@@ -825,6 +828,7 @@ impl Default for Frame {
         Frame {
             tag: DEFAULT_TAG.to_owned(),
             id: None,
+            view_model: false,
             camera_cut: false,
             draws: Vec::new(),
             custom: Vec::new(),
@@ -868,6 +872,22 @@ impl Frame {
     /// End the current [`Frame::id`]: the following draws are unnamed again.
     pub fn end_id(&mut self) -> &mut Self {
         self.id = None;
+        self
+    }
+
+    /// Draw the following models, characters and shapes as the first-person view model (the arms
+    /// and the weapon at the lens) until [`Frame::end_view_model`]: screen-space ambient occlusion
+    /// and contact shadows, made for the world, leave them alone, and a soft fill from over the
+    /// camera's shoulder, at the frame's exposure, keeps them from going black against a bright sky
+    /// with the sun in front. The world's sun, shadows and lights still light them. Not a draw.
+    pub fn view_model(&mut self) -> &mut Self {
+        self.view_model = true;
+        self
+    }
+
+    /// End [`Frame::view_model`]: the following draws are the world's again.
+    pub fn end_view_model(&mut self) -> &mut Self {
+        self.view_model = false;
         self
     }
 
@@ -1199,7 +1219,7 @@ impl Frame {
 
     fn push(&mut self, shape: Shape) -> &mut Self {
         let tag = self.count();
-        self.draws.push(Draw { tag, id: self.id, shape });
+        self.draws.push(Draw { tag, id: self.id, view_model: self.view_model, shape });
         self
     }
 

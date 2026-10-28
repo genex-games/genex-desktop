@@ -173,9 +173,11 @@ pub struct GpuFroxelParams {
     pub prev_camera: [f32; 4],
     /// x, y, z: froxels across, down and slices; w: 1 when the frame's lights are binned.
     pub grid: [u32; 4],
-    /// xyz: this frame's jitter inside a froxel (0..1); w: 0.
+    /// xyz: this frame's jitter inside a froxel (0..1); w: the first irradiance volume's row in
+    /// the probes' table ([`FroxelFrame::rooms`]).
     pub jitter: [f32; 4],
-    /// x, y: the render size in pixels; z: 1 when the environment lights the scene; w: 0.
+    /// x, y: the render size in pixels; z: 1 when the environment lights the scene; w: the
+    /// irradiance volumes' rows the inject reads from there (0: none).
     pub screen: [f32; 4],
     /// The fog row's colour lane (`GpuFog::color`).
     pub fog_color: [f32; 4],
@@ -235,6 +237,9 @@ pub struct FroxelFrame {
     pub binned: bool,
     /// The fog row the frame draws with.
     pub fog: GpuFog,
+    /// The irradiance volumes' rows in the probes' table: the first and how many (they follow
+    /// the reflection probes'; (0, 0): none, the horizon lights the fog everywhere).
+    pub rooms: (u32, u32),
 }
 
 /// The frame the history holds.
@@ -417,8 +422,8 @@ impl FroxelFog {
             camera: [x, y, z, weight],
             prev_camera: [prev[0], prev[1], prev[2], near],
             grid: [u32::from(self.grid.width), u32::from(self.grid.height), u32::from(self.grid.slices), u32::from(frame.binned)],
-            jitter: [jitter[0], jitter[1], jitter[2], 0.0],
-            screen: [frame.render_size.0 as f32, frame.render_size.1 as f32, if frame.environment_lights { 1.0 } else { 0.0 }, 0.0],
+            jitter: [jitter[0], jitter[1], jitter[2], frame.rooms.0 as f32],
+            screen: [frame.render_size.0 as f32, frame.render_size.1 as f32, if frame.environment_lights { 1.0 } else { 0.0 }, frame.rooms.1 as f32],
             fog_color: frame.fog.color,
             fog_params: frame.fog.params,
         }
@@ -503,6 +508,7 @@ mod tests {
             environment_lights: true,
             binned: true,
             fog: GpuFog::default(),
+            rooms: (0, 0),
         }
     }
 

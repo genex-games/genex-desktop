@@ -74,7 +74,7 @@
 //! bloom_intensity = 0.04    # 0..=1
 //! ev_min = -6               # auto exposure's metered EV range, within ±16 (default -8..=8)
 //! ev_max = 8
-//! adaptation_speed_up = 3   # EV per second, 0 < speed <= 20 (defaults 3 and 1)
+//! adaptation_speed_up = 4   # EV per second, 0 < speed <= 20 (defaults 4 and 3)
 //! adaptation_speed_down = 1
 //! bloom_threshold = 0       # 0..=16, 0 = threshold-free (default)
 //! bloom_radius = 1.0        # the spread, 0.25..=4

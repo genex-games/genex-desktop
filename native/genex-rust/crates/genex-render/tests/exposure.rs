@@ -205,13 +205,14 @@ fn ticks_to_settle(look: &Look, target: f32) -> u32 {
 const SUN_SETTLE_EV: f32 = 1.0 / 32.0;
 
 #[test]
-fn by_default_the_image_darkens_fast_and_brightens_slowly() {
-    // Walking out of a dark interior into sunlight (+8 EV) must not leave the picture blown out
-    // for long; walking into the dark (-8 EV) may take its time, as an eye does.
+fn by_default_the_image_brightens_faster_than_it_darkens_and_neither_lingers() {
+    // Flipped by the Bodycam light fix (was "darkens fast and brightens slowly"): walking from a
+    // sunlit yard into a room (-8 EV) left the picture dark for seconds, so the image now brightens
+    // at 4 EV/s; walking out into sunlight (+8 EV) still leaves it bright for under 3 s.
     let look = auto_look();
     let into_the_sun = ticks_to_settle(&look, 8.0);
     let into_the_dark = ticks_to_settle(&look, -8.0);
-    assert!(into_the_sun < into_the_dark, "+8 EV settles in {into_the_sun} ticks, -8 EV in {into_the_dark}");
+    assert!(into_the_dark < into_the_sun, "-8 EV settles in {into_the_dark} ticks, +8 EV in {into_the_sun}");
     let tick = GpuExposureParams::new(&look, 8, 1, false);
     let after_3_s = (0..3 * 60).fold(0.0, |ev, _| adapt_ev(ev, 8.0, &tick));
     assert!(8.0 - after_3_s <= SUN_SETTLE_EV, "+8 EV is within {SUN_SETTLE_EV} EV after 3 s ({after_3_s})");
@@ -514,7 +515,7 @@ impl Rig {
         let texels = self.write_scene(radiance, pre_exposure);
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
         let input =
-            ExposureInput { scene: &self.view, scene_size: self.size, look, quality, ticks, instant, timestamp_writes: None };
+            ExposureInput { scene: &self.view, scene_size: self.size, look, quality, ticks, instant, boost: 1.0, timestamp_writes: None };
         let run = self.pass.encode(&self.gpu.device, &self.gpu.queue, &mut encoder, history, input);
         self.gpu.queue.submit([encoder.finish()]);
         Frame { run, pre_exposure, texels, state: self.state(history) }
@@ -775,7 +776,7 @@ fn metal_auto_exposure_gpu_time_at_1080p() {
                 end_of_pass_write_index: Some(frame * 2 + 1),
             };
             let input =
-                ExposureInput { scene: &rig.view, scene_size: size, look: &look, quality: &quality, ticks: 1, instant: false, timestamp_writes: Some(writes) };
+                ExposureInput { scene: &rig.view, scene_size: size, look: &look, quality: &quality, ticks: 1, instant: false, boost: 1.0, timestamp_writes: Some(writes) };
             rig.pass.encode(&rig.gpu.device, &rig.gpu.queue, &mut encoder, &mut history, input);
             rig.gpu.queue.submit([encoder.finish()]);
         }

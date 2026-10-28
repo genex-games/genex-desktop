@@ -444,6 +444,7 @@ fn module_frame(gpu: &Gpu, froxels: &mut genex_render::froxel::FroxelFog, eye: [
         environment_lights: false,
         binned: false,
         fog: MODULE_FOG,
+        rooms: (0, 0),
     };
     let froxel_inputs = FroxelInputs {
         frame_uniforms: &inputs.frame,
@@ -617,6 +618,7 @@ fn pass_time(gpu: &Gpu, grid: genex_render::froxel::FroxelGrid, runs: u64) -> f6
             environment_lights: true,
             binned: false,
             fog: MODULE_FOG,
+            rooms: (0, 0),
         };
         let froxel_inputs = FroxelInputs {
             frame_uniforms: &inputs.frame,

@@ -341,11 +341,31 @@ struct ReactiveParticleOut {
     @location(1) alpha: f32,
 }
 
+// Ticks of its motion the coverage sweeps back over (Bodycam light fix): where a small falling
+// particle (a snowflake) was a frame or two ago is marked too, so TAA drops the history it left
+// there instead of holding it as noise and drawing the flake as a streak.
+const GX_REACTIVE_TRAIL_TICKS: f32 = 3.0;
+
+// A corner of the billboard's coverage: the billboard as drawn (`particle_corner_world`), swept
+// back along its motion across the view over at least GX_REACTIVE_TRAIL_TICKS.
+fn reactive_corner_world(p: Particle, shape: ParticleShape, corner: vec2<f32>) -> vec3<f32> {
+    let forward = frame.camera_forward.xyz;
+    let across = shape.motion.xyz - forward * dot(shape.motion.xyz, forward);
+    let trail = length(across) * max(particle_emitter.shape.w, GX_REACTIVE_TRAIL_TICKS);
+    if trail <= 1e-6 {
+        return particle_corner_world(p, shape, corner);
+    }
+    let half = p.position_size.w * 0.5;
+    let along = across / length(across);
+    let side = normalize(cross(along, forward));
+    return p.position_size.xyz + side * (corner.x * half) + along * (corner.y * (half + 0.5 * trail) - 0.5 * trail);
+}
+
 @vertex
 fn vs_reactive_particle(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> ReactiveParticleOut {
     let p = particles_drawn[instance];
     let corner = particle_quad_corner(vertex);
-    let world = particle_corner_world(p, particle_shapes_drawn[instance], corner);
+    let world = reactive_corner_world(p, particle_shapes_drawn[instance], corner);
     let clip = gx_clip_position(frame.view_proj, vec4<f32>(world, 1.0), gx_reactive_jitter.ndc.xy);
     return ReactiveParticleOut(clip, corner, p.color.a);
 }

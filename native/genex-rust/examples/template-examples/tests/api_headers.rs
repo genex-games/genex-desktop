@@ -22,6 +22,8 @@ const HOP: ControlId = ControlId::new("hop");
 fn particles(frame: &mut Frame) -> Result<Particles, ParticlesError> {
     let steam: Particles = Particles::steam(vec3(0.0, 0.0, 0.0));
     let _: Particles = Particles::rain(vec3(0.0, 9.0, 0.0), vec3(6.0, 0.0, 6.0));
+    let _: Particles = Particles::snow(vec3(0.0, 9.0, 0.0), vec3(6.0, 0.0, 6.0));
+    let _: Particles = Particles::dust(vec3(0.0, 1.5, 0.0), vec3(2.0, 1.5, 2.0));
     let _: Particles = Particles::fountain(Vec3::ZERO);
     let rain = steam.with_rate(60, 90)?.with_flipbook("fx/smoke.png", 4, 4, 16, 1.0, true)?;
     let shaped = rain

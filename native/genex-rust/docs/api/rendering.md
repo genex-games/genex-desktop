@@ -51,7 +51,7 @@ authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx
 `aces` punchier; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
 meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max`,
-adds the compensation and adapts at `adaptation_speed_up` (default 1) and `adaptation_speed_down`
+adds the compensation and adapts at `adaptation_speed_up` (default 4) and `adaptation_speed_down`
 (3) EV per simulated second. Use `auto` where light meets shade (`ev_compensation = 0.5` when
 sunlit), `manual` for flat, stylized colour. The rest of
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
