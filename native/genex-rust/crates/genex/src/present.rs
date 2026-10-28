@@ -3370,7 +3370,6 @@ pub fn look_facts(frame: &Frame, camera: &Camera, assets: &AssetCache, output: (
 /// What `shape` draws for the look facts' provenance: `None` for a primitive (a cube, a sphere, a
 /// group of them), else each model's path (`Some(None)`: a model with no path); nothing for lines.
 fn shape_models(shape: &Shape) -> Vec<Option<Option<&str>>> {
-    let model_paths = |model: &Model| model.drawn_members().iter().map(|member| Some(member.path())).collect::<Vec<_>>();
     match shape {
         Shape::Cube { .. } | Shape::Sphere { .. } => vec![None],
         Shape::Line { .. } | Shape::Lines { .. } => Vec::new(),
@@ -3381,6 +3380,11 @@ fn shape_models(shape: &Shape) -> Vec<Option<Option<&str>>> {
         },
         Shape::Character { .. } => vec![Some(None)],
     }
+}
+
+/// Each drawn member's path of `model`, as [`shape_models`] lists it.
+fn model_paths(model: &Model) -> Vec<Option<Option<&str>>> {
+    model.drawn_members().iter().map(|member| Some(member.path())).collect()
 }
 
 /// A sink that feeds every world mesh to a [`LookRaster`] and keeps nothing else.
