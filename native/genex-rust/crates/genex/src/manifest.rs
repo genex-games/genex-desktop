@@ -217,7 +217,7 @@ pub const FOG_CALLS: [&str; 8] =
 /// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
 /// a ragdoll view's `.apply`, pinned at gate GI; the planted feet, release R-22; clip files on one
 /// rig and the armature's frame, B8).
-pub const ANIMATION_CALLS: [&str; 90] = [
+pub const ANIMATION_CALLS: [&str; 95] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
@@ -230,6 +230,7 @@ pub const ANIMATION_CALLS: [&str; 90] = [
     ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
     ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips", ".plant_feet",
     "animation::height_ground", ".with_clip_files", ".mesh_frame",
+    "Motion::blend1d", "Motion::blend2d", "Motion::directional", ".speed_by", ".clip_ground_speed",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
@@ -288,11 +289,15 @@ pub const LOD_CALLS: [&str; 12] = [
 ];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
 pub const LOD_REFUSALS: [&str; 5] = ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid", "impostor-not-baked"];
+/// The camera rig's calls (WP-3, `docs/api/camera.md`).
+pub const CAMERA_CALLS: [&str; 14] = [
+    "FirstPersonRig::new", ".with_speeds", ".update", "RigStep::from", ".recoil", ".impulse", ".camera", ".camera_with", ".pose", ".cadence", ".probe", "Comfort::current", ".bob_share", ".shake_share",
+];
 /// The settings menu's calls (UIS-11).
-pub const SETTINGS_CALLS: [&str; 12] = [
+pub const SETTINGS_CALLS: [&str; 13] = [
     "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",
     "SettingDef::choice", "genex::settings::menu", "genex::settings::menu_answer", "genex::settings::value",
-    "genex::settings::number", "genex::settings::flag",
+    "genex::settings::number", "genex::settings::flag", "genex::settings::comfort",
 ];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).

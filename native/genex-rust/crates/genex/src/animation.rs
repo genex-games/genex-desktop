@@ -50,7 +50,7 @@ use crate::math::{Mat4, Vec3};
 pub use genex_anim::animator::{AnimEvent, AnimatorStep, Limb, LimbTarget, LookTarget};
 pub use genex_anim::events::EventFilter;
 pub use genex_anim::foot::{Foot, FootGoal, FootPlan, height_ground};
-pub use genex_anim::graph::{AnimGraph, AnimGraphBuilder, ClipMotion, DEFAULT_BLEND_SECONDS, Motion, TransitionBlend, TransitionBuilder};
+pub use genex_anim::graph::{AnimGraph, AnimGraphBuilder, BlendMotion, ClipMotion, DEFAULT_BLEND_SECONDS, Motion, TransitionBlend, TransitionBuilder};
 pub use genex_anim::ids::{ClipId, EventId, JointId, LayerId, StateId};
 pub use genex_anim::mask::{BodyPart, Mask};
 pub use genex_anim::params::{BoolParam, Condition, FloatParam, TriggerParam, Vec2Param};
@@ -82,6 +82,18 @@ impl CharacterAsset {
     /// The clip named `name` in the file (its glTF animation name), or None.
     pub fn clip(&self, name: &str) -> Option<ClipId> {
         self.graph().clip(name)
+    }
+
+    /// How fast `clip` carries the character over the ground, metres per second: its root
+    /// motion's net horizontal travel over its length. None for a clip the character lacks or
+    /// before [`CharacterAsset::with_root_motion`] extracted it. Put each clip of a speed blend
+    /// at its own ground speed (`Motion::blend1d(speed, &[(walk_speed, walk), (run_speed, run)])`)
+    /// and feed the body's speed, so the feet move with the ground.
+    pub fn clip_ground_speed(&self, clip: ClipId) -> Option<f32> {
+        let track = self.set().motion(clip)?;
+        let travel = track.displacement();
+        let duration = track.duration();
+        (duration > 0.0).then(|| (travel.x * travel.x + travel.z * travel.z).sqrt() / duration)
     }
 
     /// The file's clip names, in file order (a [`ClipId`] is the index).

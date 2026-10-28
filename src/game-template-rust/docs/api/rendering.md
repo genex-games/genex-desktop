@@ -104,8 +104,8 @@ lod_threshold_px = 3.0      # with lod_fade_band, far_density: see Drawing
 ```
 
 The build lane compiles `[render]` into every destination; `game.render_settings(..)` replaces
-it, and `RenderConfig::from_build()` starts from it. Give the person the last word: call
-`settings_panel(ui)` from `on_ui`; it shows the detected class, presets (none
+it, and `RenderConfig::from_build()` starts from it. Give the person the last word:
+`genex::settings::menu(ui)` holds `settings_panel(ui)`; it shows the detected class, presets (none
 drawing less than the one below; Max is `ultra` at Native), Upscaling, Frame rate, Dynamic
 resolution, the render scale, Detail distance and feature switches. A preset change
 rebuilds the renderer; a mode change only resizes the next frame. A switch this

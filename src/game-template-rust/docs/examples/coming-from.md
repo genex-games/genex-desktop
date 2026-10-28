@@ -158,6 +158,8 @@ the reset's `Pcg32`.
 | `OnComponentHit` | `physics.contact_pair(a, b)` polled in `on_update` | `docs/api/physics.md` |
 | `ACharacter`, `JumpZVelocity`, `Jump()` | `Character::spawn(..)`, `CharacterParams { jump_speed, .. }`, `CharacterMotion::Velocity { wish, jump: true }` | `docs/api/characters.md` |
 | Animation Blueprint, `Montage_Play` | `hero.graph()` with `g.float(..)`, `g.trigger(..)`, `g.state(..)`; `.play_once(clip)` | `docs/api/animation.md` |
+| Blend Space, Blend Space 1D | `Motion::blend1d(speed, &[(walk_speed, walk), (run_speed, run)])`, `Motion::directional(..)` | `docs/api/animation.md` |
+| Camera Shake, head bob, `CameraManager` | `genex::camera::FirstPersonRig`: `rig.update(..)`, `rig.recoil(..)`, `rig.camera(..)` | `docs/api/camera.md` |
 | `AAIController::MoveToLocation` | `sim.nav.move_to(agent, target)` | `docs/api/navigation.md` |
 | `UGameplayStatics::PlaySoundAtLocation` | `ctx.audio.play_at(&sound, position)` | `docs/api/audio.md` |
 | UMG widgets | egui in `game.on_ui`; the kit's `Menu`, `Dialog`, `Bar` in `genex::ui`; the settings menu `genex::settings::menu(ui)` | `docs/api/ui.md` |

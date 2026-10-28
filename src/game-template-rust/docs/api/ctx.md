@@ -21,7 +21,9 @@ Input::key_tap(Key::Space).and(Input::click_at(x, y));      // also key_down, ke
 Input::touch_start(id, x, y); Input::touch_move(id, x, y); Input::touch_end(id, x, y);
 ```
 
-`ctx.actions` is `docs/api/input.md` and `ctx.audio` is `docs/api/audio.md`.
+`ctx.actions` is `docs/api/input.md` and `ctx.audio` is `docs/api/audio.md`. A read hook has no
+`ctx`, but `genex::settings::value(..)` and `genex::settings::comfort()` answer there too, for what
+only the view shows (`docs/api/camera.md`).
 
 `ctx.keys` (`down`, `pressed`, `released` by `Key`, the DOM code names), `ctx.touches`,
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,

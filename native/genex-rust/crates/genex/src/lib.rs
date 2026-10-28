@@ -50,7 +50,7 @@ pub mod ui;
 /// Animation (AN-15): a character's graph and animators over genex-anim, advanced in `on_update`
 /// and drawn with `frame.character`.
 pub mod animation;
-mod camera;
+pub mod camera;
 mod character;
 mod ctx;
 mod decal;

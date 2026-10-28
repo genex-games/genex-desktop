@@ -31,12 +31,56 @@ The player is a `Character` capsule (`docs/api/characters.md`) driven with
 turned by the yaw. The level's boxes are fixed Rapier cuboids from the same numbers that draw
 them, so what the player bumps, what a shot hits and what the picture shows agree.
 
-## The camera: chest-cam bob
+## The camera: `FirstPersonRig`
 
-A bodycam rides on the chest (about 1.4 m) with a wide lens (`fovy` about 72). Keep the metres
-walked in the world (`stride += speed * dt`) and derive the bob from it in the camera hook: a
-sway at the step's rate, a lift at twice it, a slight roll through `Camera::up`, all scaled by the
-speed. A draw or camera hook has no `ctx`, so every motion comes from world state.
+Never write your own head-bob, roll or shake: `genex::camera::FirstPersonRig` moves the eye, and
+its caps hold whatever a brief or a critic asks for ("heavy bob", "a sprint that shakes the
+view"). Keep it in the world, feed it what the body did in `on_update`, and make the camera from
+it in the camera hook, where the person's head-bob, screen-shake, reduced-motion and field of view
+settings scale it (`docs/api/settings.md`). A shot calls `world.rig.recoil(degrees)`; an
+explosion nearby `world.rig.impulse(strength)`.
+
+```rust
+use genex::camera::{FirstPersonRig, RigStep};
+// on_reset: the game's own walk and sprint speeds (m/s), for the sprint's field of view kick.
+world.rig = FirstPersonRig::new().with_speeds(WALK, SPRINT);
+// on_update, after the drive: turn.x is this tick's yaw change, + to the right.
+let step = player.drive(physics, CharacterMotion::Velocity { wish, jump }, ctx.dt);
+world.rig.update(ctx.dt, RigStep { velocity: player.velocity(), turn: turn.x, ..RigStep::from(&step) });
+// the camera hook: eye before any bob (the hitscan starts there), look direction, vertical fovy.
+game.camera(|sim| sim.world.rig.camera(sim.world.eye(), sim.world.forward(), FOVY));
+// a comfort check reads it per tick, outside the checksum.
+game.probe_volatile("camera", |sim| sim.world.rig.probe());
+```
+
+`fovy` is the **vertical** field of view in degrees. Keep a first-person game between 60 and 80
+(72 vertical is about 104° horizontal at 16:9; 100 vertical is about 130°, and every bob reads a
+third larger). A bodycam rides on the chest at about 1.4 m with 72; an eye-height camera sits at
+1.6 m with 65-75. Narrow it while aiming (52-60) with `rig.camera_with(.., &Comfort { head_bob:
+comfort.head_bob * (1.0 - aim), ..comfort })`, as `docs/examples/fps-arms/` does. The person's
+field of view offset (-10 to +20) is added on top.
+
+What the rig does at 3 m/s (walk) and 5.5 m/s (sprint), and the cap no game can pass:
+
+| Motion | Walk | Sprint | Cap |
+|-|-|-|-|
+| Step rate (vertical bob frequency) | 2.3 Hz | 2.8 Hz | 2.8 Hz (the stride grows with speed) |
+| Bob, peak to peak | 1.5 cm | 2.8 cm | 2.8 cm |
+| Sway, either way | 1.1 cm | 1.8 cm | 1.8 cm |
+| Walk roll, either way | 0.7° | 1.2° | 1.2° |
+| All roll (walk, turn lean), either way | | | 2° |
+| Field of view kick | 0° | 4° | 4° |
+| Drift and shake terms | | | 8 Hz, 1.5° |
+| Under reduced motion | | | 10% of all of it |
+
+Every term is a smooth sine of one continuous phase, and its size follows a smoothed speed, so a
+sprint grows the bob over about a third of a second and no footfall makes a cusp. A step up a
+stair is eased over a few ticks, and a landing dips the eye at most 6 cm. Never build a bob from
+`|sin|` or `|cos|`, a fixed step length, or a per-tick random jolt; never multiply the rig's
+numbers to make it "heavier".
+
+The view model follows the camera; let it lag at most a quarter of the bob
+(`world.rig.pose().bob` times `Comfort::current().bob_share()`), never more than half.
 
 ## Hitscan against Rapier colliders
 
