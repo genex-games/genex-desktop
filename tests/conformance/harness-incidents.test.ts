@@ -10974,7 +10974,8 @@ describe("a Hello in a brand-new game", () => {
     assert.doesNotMatch(brief, /Continue from the existing code/);
     assert.match(brief, /nothing has been built/i);
     const talk = brief.search(/greeting/i);
-    assert.ok(talk >= 0 && talk < brief.search(/CLAUDE\.md/), "how to answer a greeting comes before how to build");
+    const building = brief.search(/start_web_game|serves its index\.html|checkpoint/);
+    assert.ok(talk >= 0 && talk < building, "how to answer a greeting comes before how to build");
   });
 });
 

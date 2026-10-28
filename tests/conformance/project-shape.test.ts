@@ -808,7 +808,7 @@ describe("a project's own shape", () => {
     // The studio's own scaffold still gets the template's pages, and never the sources they
     // are written from.
     const fresh = await games.scaffold("fresh-template");
-    assert.match(await readFile(path.join(fresh.dir, "CLAUDE.md"), "utf8"), /This project starts empty/);
+    assert.match(await readFile(path.join(fresh.dir, "CLAUDE.md"), "utf8"), /`index\.html` at its root is the game/);
     assert.match(await readFile(path.join(fresh.dir, "NOTES.md"), "utf8"), /Nothing built yet/);
     for (const source of ["CLAUDE.own.md", "NOTES.own.md"]) {
       assert.equal(
@@ -835,7 +835,6 @@ describe("a project's own shape", () => {
     assert.match(own, /entry is src\/main\.ts/);
     assert.match(own, /Run `npm run build` before you finish/);
     assert.match(own, /dist\/index\.html/);
-    assert.match(own, /src\/studio\.d\.ts/);
     assert.ok(
       !/assets come from procedural code/.test(own),
       "the template's asset guidance is not imposed on a custom game's architecture",
@@ -848,35 +847,24 @@ describe("a project's own shape", () => {
     const unbuilt = buildContractorBrief({ ask: "make it darker", shape: { ...shape, build: null }, ownShape: true });
     assert.ok(!/before you finish/.test(unbuilt), unbuilt);
     assert.match(unbuilt, /runs as written/);
-    // The studio's own scaffold keeps the rules that describe it.
+    // Flipped: the studio's own scaffold is the game's page to build, with no harness rules to keep.
     const template = buildContractorBrief({ ask: "a pong game", scaffolded: true });
-    assert.match(template, /When you build, follow CLAUDE\.md in the workspace root/);
-    assert.match(template, /assets come from procedural code, imports, or the currently enabled plugin tools/);
+    assert.match(template, /Genex serves its index\.html in the Live view/);
+    assert.doesNotMatch(template, /follow CLAUDE\.md|assets come from procedural code/);
     // The brief names Genex, the app it runs in (its identity line); never a disabled plugin's tools.
     assert.doesNotMatch(template, /genex__|blender__/, "disabled plugin tools are not injected by core briefs");
     assert.ok(!/entry is/.test(template), template.slice(0, 400));
-    // Both keep the rules that are about the studio, not about the game.
-    for (const brief of [own, template]) assert.match(brief, /\.studio\/ \(gitignored\)/);
-    // A game whose page never loads the contract cannot be judged by anyone (M2.6): a chat build
-    // is the fastest way it gets wired, so its brief asks for that before the ask itself.
-    // The wording of the ask itself belongs to the brief (loop/chat-session.ts) and moved to
-    // the two-line install when the studio learned to attach on its own; what this asserts is
-    // that it comes first, names the contract, and names this game's entry and build.
+    // Flipped: a chat build once had to wire the studio contract into the person's own game before
+    // doing what they asked. The studio attaches to every page it serves, and a Loop installs the
+    // contract as its own first step (director/setup.ts `installContract`): the chat does the ask.
     const unjudgeable = buildContractorBrief({
       ask: "make the cars heavier",
       shape,
       ownShape: true,
       contractMissing: true,
     });
-    assert.match(unjudgeable, /FIRST, BEFORE THE ASK:/);
-    assert.match(unjudgeable, /studio contract/);
-    assert.match(unjudgeable, /src\/main\.ts/);
-    assert.match(unjudgeable, /npm run build/);
-    assert.ok(
-      unjudgeable.indexOf("FIRST, BEFORE THE ASK") < unjudgeable.indexOf("This game came with its own shape"),
-      "before the rest of the rules",
-    );
-    assert.doesNotMatch(own, /FIRST, BEFORE THE ASK/, "a game that already loads it is asked for nothing");
+    assert.doesNotMatch(unjudgeable, /FIRST, BEFORE THE ASK|installStudio/);
+    assert.match(unjudgeable, /This game came with its own shape/);
   });
 
   it("ships types with the contract, so a strict TypeScript build can import it", async () => {

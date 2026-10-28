@@ -444,6 +444,7 @@ function contractorRules(engine: string | undefined, game: GameBuild, app: AppLa
   return [
     languageRule(app),
     workspaceRule(game),
+    "When the user named a tool, app or plugin to use (Blender, an engine, a package) and its status or a call says it can't run here, never carry on without it in silence: say so in your reply, in plain words, with the fix its answer names, before a long build starts. A plugin's own install tool (its name ends in __install) asks the user on a card: call it when its status says to.",
     `When a sandbox blocks a step only the user's own computer can do (an install that needs the network, a system tool, a sign-in), end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why: the chat shows it with a Run button. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
     // The Reload a checkpoint lights is the web preview's: any other kind is seen in its own app.
     ...(servedAsWeb(game)
