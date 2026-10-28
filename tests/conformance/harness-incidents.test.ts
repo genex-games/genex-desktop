@@ -18869,7 +18869,10 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     assert.match(defect, /bob \d\.\d cm peak to peak.*bob at 7\.5 Hz.*above 6 Hz/);
     // A rig inside the caps: 1° roll and a 2.4 cm bob at 2.2 Hz, the slope of a ramp removed.
     assert.equal(comfortDefect(pose(1, 1.1, 0.024, 2.2)), null);
-    assert.ok(COMFORT_CAPS.rollDeg <= 1.5 && COMFORT_CAPS.bobHz < 7.5);
+    assert.ok(
+      COMFORT_CAPS.rollDeg <= 1.5 && COMFORT_CAPS.bobHz < 3,
+      "the caps are the engine rig's, inside the review's proposal",
+    );
   });
 
   it("G3-4d. the light facet's darker classroom and the gunplay facet's heavier sprint were kept: a harness-measured blocker the accepted build did not have is one the round added, compared by what it is about, not its numbers", async () => {

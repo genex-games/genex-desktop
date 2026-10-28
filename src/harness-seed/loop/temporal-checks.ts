@@ -33,17 +33,25 @@ const SETTLED_TAIL = 0.15;
 /** The least trace a check reads, in seconds: less says nothing about a transition or a gait. */
 const MIN_TRACE_S = 1;
 
-/** The comfort caps of a sprint (review WP-3, proposed; the engine rig's numbers win). */
+/**
+ * The comfort caps of a sprint: the engine's first-person rig's own (`genex::camera` rig.rs
+ * `BOB_ROLL_MAX_DEG`, `ROLL_TOTAL_MAX_DEG`, `BOB_PEAK_TO_PEAK_MAX`, `CADENCE_MAX_HZ`), so a game on
+ * the rig passes and a hand-rolled camera is held to the same numbers. Keep them equal.
+ */
 export const COMFORT_CAPS = {
   /** Peak roll away from its mean, in degrees. */
-  rollDeg: 1.5,
+  rollDeg: 1.2,
+  /** Peak roll from level, the steady lean included, in degrees. */
+  rollTotalDeg: 2,
   /** Vertical bob, peak to peak, in metres, after the slope is removed. */
-  bobM: 0.03,
-  /** The bob's dominant frequency, in Hz. */
-  bobHz: 3,
-  /** The share of bob or roll energy above `HIGH_HZ`. */
+  bobM: 0.028,
+  /** The bob's dominant frequency, in Hz: one bob per step at the rig's highest cadence. */
+  bobHz: 2.8,
+  /** The share of bob or roll energy above `HIGH_HZ` (review WP-3, proposed). */
   highShare: 0.05,
 } as const;
+/** How far past a cap a measured trace may sit before it is a finding: sampling, not the rig. */
+const MEASURE_SLACK = 1.05;
 /** Above this frequency camera motion reads as shake, not gait. */
 export const HIGH_HZ = 6;
 /** Frequencies below this are drift, not a bob. */
@@ -155,6 +163,7 @@ function highShareOf(bins: ReadonlyArray<{ hz: number; power: number }>): number
 /** A sprint's camera motion, as the comfort caps read it. */
 export interface ComfortReading {
   rollDeg: number;
+  rollTotalDeg: number;
   bobM: number;
   bobHz: number;
   highShare: number;
@@ -193,6 +202,7 @@ export function comfortReading(trace: unknown): ComfortReading | null {
   const dominant = bobBins.reduce((best, bin) => (bin.power > best.power ? bin : best), { hz: 0, power: 0 });
   return {
     rollDeg: Math.max(...rolls.map((roll) => Math.abs(roll - rollMean))),
+    rollTotalDeg: Math.max(...rolls.map((roll) => Math.abs(roll))),
     bobM: Math.max(...bob) - Math.min(...bob),
     bobHz: dominant.hz,
     highShare: Math.max(highShareOf(bobBins), highShareOf(rollBins)),
@@ -204,13 +214,19 @@ export function comfortDefect(state: AnyRecord | null | undefined): string | nul
   const camera = state?.__camera as AnyRecord | undefined;
   const reading = comfortReading(camera ? field(camera, "trace") : null);
   if (!reading) return null;
+  const past = (value: number, cap: number) => value > cap * MEASURE_SLACK;
   const over = [
-    reading.rollDeg > COMFORT_CAPS.rollDeg ? `roll ±${fixed(reading.rollDeg)}° (cap ${COMFORT_CAPS.rollDeg}°)` : "",
-    reading.bobM > COMFORT_CAPS.bobM
-      ? `bob ${fixed(reading.bobM * 100)} cm peak to peak (cap ${COMFORT_CAPS.bobM * 100} cm)`
+    past(reading.rollDeg, COMFORT_CAPS.rollDeg)
+      ? `roll ±${fixed(reading.rollDeg)}° (cap ${COMFORT_CAPS.rollDeg}°)`
       : "",
-    reading.bobHz > COMFORT_CAPS.bobHz ? `bob at ${fixed(reading.bobHz)} Hz (cap ${COMFORT_CAPS.bobHz} Hz)` : "",
-    reading.highShare > COMFORT_CAPS.highShare
+    past(reading.rollTotalDeg, COMFORT_CAPS.rollTotalDeg)
+      ? `rolls ${fixed(reading.rollTotalDeg)}° from level (cap ${COMFORT_CAPS.rollTotalDeg}°)`
+      : "",
+    past(reading.bobM, COMFORT_CAPS.bobM)
+      ? `bob ${fixed(reading.bobM * 100)} cm peak to peak (cap ${fixed(COMFORT_CAPS.bobM * 100)} cm)`
+      : "",
+    past(reading.bobHz, COMFORT_CAPS.bobHz) ? `bob at ${fixed(reading.bobHz)} Hz (cap ${COMFORT_CAPS.bobHz} Hz)` : "",
+    past(reading.highShare, COMFORT_CAPS.highShare)
       ? `${Math.round(reading.highShare * 100)}% of the motion above ${HIGH_HZ} Hz (cap ${COMFORT_CAPS.highShare * 100}%)`
       : "",
   ].filter(Boolean);
@@ -296,6 +312,7 @@ const fieldOf = (raw: unknown, camel: string): unknown =>
 const comfortSeverity = (reading: ComfortReading): number =>
   Math.max(
     reading.rollDeg / COMFORT_CAPS.rollDeg,
+    reading.rollTotalDeg / COMFORT_CAPS.rollTotalDeg,
     reading.bobM / COMFORT_CAPS.bobM,
     reading.bobHz / COMFORT_CAPS.bobHz,
     reading.highShare / COMFORT_CAPS.highShare,
