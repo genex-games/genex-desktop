@@ -18,13 +18,13 @@ export const LOOK_BAR_BOOT_MS = 45 * SECOND_MS;
 export const BOOT_MS_MAX = MINUTE_MS;
 
 /** The destinations a run's game ships to, when it names any. */
-const targetsOf = (run: Pick<Run, "destinations"> | null | undefined): string[] => {
+const targetsOf = (run: { readonly destinations?: unknown } | null | undefined): string[] => {
   const targets = (run?.destinations as { targets?: unknown } | undefined)?.targets;
   return Array.isArray(targets) ? targets.map(String) : [];
 };
 
 /** Is the web build only how Genex looks at this game: it names destinations, and the browser is not one. */
-export function webJudgesOnly(run: Pick<Run, "destinations"> | null | undefined): boolean {
+export function webJudgesOnly(run: { readonly destinations?: unknown } | null | undefined): boolean {
   const targets = targetsOf(run);
   return targets.length > 0 && !targets.includes(BuildTarget.Web);
 }
@@ -37,7 +37,7 @@ export const BUDGETS_NEVER_CUT_MAPS =
  * The slow-boot warning for a look that took `ms` to report itself ready, worded for the game's
  * destinations: a native game's web preview boot is the preview's, not the player's.
  */
-export function slowBootWarning(ms: number, run: Pick<Run, "destinations"> | null | undefined): string {
+export function slowBootWarning(ms: number, run: { readonly destinations?: unknown } | null | undefined): string {
   const seconds = (ms / SECOND_MS).toFixed(1);
   if (webJudgesOnly(run))
     return `the web preview Genex judges this native game through took ${seconds} s to report itself ready — that is the preview's boot, not the desktop build's budget: keep full-resolution maps and stream what the first playable frame does not need in [[asset_group]]s`;
