@@ -494,7 +494,7 @@ describe("the CC0 plugin's network and package", () => {
     assert.ok(CC0_USER_AGENT.startsWith(`Genex-CC0/${manifest.version} `));
     assert.deepEqual(
       manifest.tools.map((tool) => tool.name),
-      [Cc0Tool.Search, Cc0Tool.Fetch],
+      [Cc0Tool.Search, Cc0Tool.Fetch, Cc0Tool.TerrainLayer],
     );
     assert.ok(
       manifest.tools.every((tool) => tool.confirmation === undefined),

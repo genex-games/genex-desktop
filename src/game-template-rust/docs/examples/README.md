@@ -45,7 +45,7 @@ The examples ship no scans; without them they draw stand-in colours, so they run
 are copied. Each `Scan` names the folder `cc0__fetch` lands in; if yours answers another path, use it.
 The interior kit and the arms kit ship their own GLBs.
 
-- **exterior-snow**: two Terrain layers packed with `cc0__terrain_layer` from CC0 textures
+- **exterior-snow**: two Terrain layers packed with `cc0__terrain-layer` from CC0 textures
   fetched at `2k` (the ground fills the screen): a snow texture (Poly Haven `snow_02`) packed as
   `terrain/snow`, and a slush or wet asphalt one (`asphalt_01`) as `terrain/slush`, so the files
   are `terrain/snow_albedo.png`, `terrain/snow_data.png`, `terrain/slush_albedo.png` and

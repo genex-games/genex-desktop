@@ -8,7 +8,7 @@
 //!
 //! Without `GENEX_EXAMPLES_ASSETS` the GPU row packs its two Terrain layers from a generated
 //! height field (base colour with height in alpha, and normal, roughness and occlusion), the layout
-//! `cc0__terrain_layer` writes from a CC0 scan.
+//! `cc0__terrain-layer` writes from a CC0 scan.
 
 #[path = "../../../../../src/game-template-rust/docs/examples/exterior-snow/src/game.rs"]
 mod game;

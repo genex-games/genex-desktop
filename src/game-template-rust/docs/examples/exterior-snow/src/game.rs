@@ -6,7 +6,7 @@
 //!
 //! What it teaches:
 //! - **The ground is one Terrain**, never a scaled cube: its layers come from CC0 scans packed by
-//!   `cc0__terrain_layer` (`terrain/<name>_albedo.png` and `terrain/<name>_data.png`). Without the
+//!   `cc0__terrain-layer` (`terrain/<name>_albedo.png` and `terrain/<name>_data.png`). Without the
 //!   packs each layer draws its fallback colour.
 //! - **Snow is a material cover**, never a white slab: `frame.weather(&snow, seconds)` lays the
 //!   weather's cover on every draw (`Frame::cover_world`), a material's own `with_cover` wins, and
@@ -28,7 +28,7 @@ const GROUND_ORIGIN: Vec2 = vec2(-48.0, -48.0);
 /// The trodden path: its half width (m) and the band it fades into the snow over.
 const PATH_HALF: f32 = 1.4;
 const PATH_FADE: f32 = 1.2;
-/// The packed Terrain layers (`cc0__terrain_layer` output) and how many metres one tile covers.
+/// The packed Terrain layers (`cc0__terrain-layer` output) and how many metres one tile covers.
 const SNOW_PACK: (&str, &str) = ("terrain/snow_albedo.png", "terrain/snow_data.png");
 const SLUSH_PACK: (&str, &str) = ("terrain/slush_albedo.png", "terrain/slush_data.png");
 const SNOW_TILE: f32 = 3.0;

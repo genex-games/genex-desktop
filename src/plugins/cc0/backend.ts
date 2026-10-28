@@ -5,7 +5,8 @@
  * checked before anything is written), packs a Poly Haven model into one self-contained GLB, and
  * hands the files to `assets.deliver`, which lands them in `assets/cc0/<job>/` and records the
  * delivery. The plugin keeps a provenance record per delivery folder (`jobs.write`) from which the
- * host builds the CC0 rows of `genex-assets.lock` (`provenance.ts`).
+ * host builds the CC0 rows of `genex-assets.lock` (`provenance.ts`). `cc0__terrain-layer` packs a
+ * scan already in the game into a Rust Terrain layer's two textures (`terrain-layer.ts`).
  */
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -29,9 +30,10 @@ import { type Cc0Net, createCc0Net } from "./net.ts";
 import type { Cc0DeliveredFile, Cc0Delivery } from "./provenance.ts";
 import { createSearch, POLYHAVEN_CREDIT } from "./search.ts";
 import { type Cc0Request, Cc0Source, checkedRequest, type FetchPlan, type PlannedFile, planFetch } from "./sources.ts";
+import { terrainLayer } from "./terrain-layer.ts";
 
 /** The plugin's agent tools. Wire values: `plugin.json` names them. */
-export const Cc0Tool = { Search: "search", Fetch: "fetch" } as const;
+export const Cc0Tool = { Search: "search", Fetch: "fetch", TerrainLayer: "terrain-layer" } as const;
 export type Cc0Tool = (typeof Cc0Tool)[keyof typeof Cc0Tool];
 
 /** The plugin's panel actions. Wire values: `plugin.json` names them. */
@@ -229,6 +231,8 @@ export function createCc0Plugin(deps: Cc0Deps): Promise<PluginActivation> {
       try {
         if (name === Cc0Tool.Search) return await search(args);
         if (name === Cc0Tool.Fetch) return await fetchAsset(args, ctx, deps);
+        if (name === Cc0Tool.TerrainLayer)
+          return await terrainLayer(args, ctx.directory, (id) => ctx.host(HostService.JobsRead, { id }));
       } catch (error) {
         throw refusal(error);
       }

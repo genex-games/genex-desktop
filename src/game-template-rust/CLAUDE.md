@@ -91,7 +91,7 @@ is judged on captures against it, and a box, capsule or flat-coloured shape on s
   `SkyParams::overcast()`. Weather is `frame.weather(&Weather::heavy_snow(), seconds)` (lit layers
   around the camera that also lay the snow); snow, moss, dust and wet on props are material covers
   (`Cover::snow(..)`), never white boxes; a winter ground is a Terrain layer packed by
-  `cc0__terrain_layer` (`docs/examples/exterior-snow/`).
+  `cc0__terrain-layer` (`docs/examples/exterior-snow/`).
 
 ## Assets
 
