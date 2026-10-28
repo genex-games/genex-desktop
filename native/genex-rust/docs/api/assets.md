@@ -2,7 +2,16 @@
 
 A reset may read the game's own files while it builds the world: a level's JSON, a table of
 waves, the triangles of a model for a navmesh or a collider. The bytes are part of the build, so
-the same seed gives the same checksum on every destination.
+the same seed gives the same checksum on every destination. Every type and call in one line:
+
+```rust
+use genex::{AssetBytes, AssetError, AssetInfo, ModelTriangles}; // the crate root; Assets and Model are in the prelude
+gfx.assets().bytes(path);                  // -> Result<AssetBytes, AssetError>
+bytes.json(); bytes.as_str(); bytes.digest(); // -> Result<Value, AssetError>, Option<&str>, u64
+gfx.assets().triangles(&model);            // -> Result<Arc<ModelTriangles>, AssetError>
+gfx.assets().info(path);                   // -> Option<AssetInfo> { bytes, group }
+error.code().wire(); error.detail();       // an AssetError's code and detail are calls
+```
 
 ```rust
 game.on_reset(|sim, _seed, _rng, gfx| {

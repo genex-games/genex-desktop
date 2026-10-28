@@ -4,7 +4,26 @@ A rigged GLB animates in three steps. `on_reset` makes the character's animator,
 advances it by `ctx.dt`, and `on_draw` draws it. Start with the simple animator; move to a graph
 when you need parameters, layers or blend spaces. The types are in `genex::animation`, and
 `Animator` is also in the prelude. Animation needs no physics: a game with physics off keeps
-all of it.
+all of it. Every type and call in one line:
+
+```rust
+use genex::animation::{BodyPart, ClipId, EventId, FloatParam, Mask, Motion, TriggerParam};
+use genex::{AnimationError, CharacterAsset, CharacterDraw, Skeleton}; // the crate root
+gfx.character("characters/hero.glb");      // -> Result<CharacterAsset, AnimationError>
+hero.clip("Walk"); hero.clip_names();      // -> Option<ClipId>, the names in file order
+hero.path(); hero.joint_count(); hero.skeleton(); // -> &str, usize, &Skeleton
+Animator::simple(&hero); hero.animator(&graph); // -> Result<Animator, AnimationError>
+let mut g = hero.graph();                  // the builder; g.build() -> Result<AnimGraph, AnimationError>
+g.float("speed", 0.0); g.trigger("attack"); // -> FloatParam, TriggerParam: keep them in the world
+g.layer("base"); g.state(base, "idle", Motion::clip(idle)); // -> LayerId, StateId
+g.event(clip, 0.3, "hit");                  // -> EventId
+animator.update(ctx.dt);                    // -> AnimatorStep { root_motion, events }
+frame.character_with(&animator, at, &CharacterDraw::new().tint(Color::RED));
+```
+
+A `CharacterAsset` keeps its fields private: read it through the calls above. An
+`AnimationError`'s `code` and `detail` are fields. The prelude's `Condition` is the input page's;
+a graph's conditions come from its parameters (`speed.above(0.1)`, `attack.fired()`).
 
 ## The simple animator (start here)
 
