@@ -5063,6 +5063,7 @@ export const MESSAGES = [
   "{count, plural, one {Including # file changed outside this chat: {names}.} other {Including # files changed outside this chat: {names}.}}",
   "{count, plural, one {Its own history is kept beside it, renamed to .git.studio-backup.} other {Their own histories are kept beside them, renamed to .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}",
   "{count, plural, one {Working on # task} other {Working on # tasks}}",

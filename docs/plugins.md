@@ -953,7 +953,8 @@ without a ready Xcode, for a listed class whose `UCLASS()` declaration (`class <
 or `U<Name>`) no header has, for C++ files `cpp` doesn't list, for a class another part defines, and
 for anything else UnrealBuildTool reads that the copy added, changed or lost against the game: its
 Source (outside `Parts/`, a part that landed later is no change), `.uproject` and `Plugins/`.
-Then it compiles the copy with UnrealBuildTool (`ubt.ts`, at most two at once) and names each error
+Then it compiles the copy with UnrealBuildTool (`ubt.ts`, at most two at once; the editor target is
+`<Module>Editor`, else the Source's editor target named for the project, else its first) and names each error
 as `<file>:<line>: <message>`; an error in a file outside the game and the engine names only where
 it is. UBT runs under `sandbox-exec` (`ubt-sandbox.ts`): of the home folder it reads only the copy,
 the engine, Xcode and its own folders (its configuration read-only), it writes only the copy's

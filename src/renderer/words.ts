@@ -1310,9 +1310,29 @@ function isSkippedFile(entry: unknown): entry is SkippedFile {
 }
 
 /**
+ * The change budget a checkpoint's files were left out by, when each one was under the file limit
+ * (sized as the checkpoint left them out): their change was too large at once, not any of them.
+ * Null when a file was over the limit, or for an older record that doesn't say its limits.
+ */
+function overBudget(skipped: CustomPayload<typeof CustomEvent.CheckpointSkipped>, files: SkippedFile[]): number | null {
+  const { fileLimitBytes, changeLimitBytes } = skipped;
+  if (typeof fileLimitBytes !== "number" || typeof changeLimitBytes !== "number") return null;
+  return files.every((file) => file.bytes <= fileLimitBytes) ? changeLimitBytes : null;
+}
+
+/** A checkpoint's line for files a change too large at once left out, `limit` being its budget. */
+function overBudgetWords(total: number, files: string, limit: number): string {
+  return t(
+    "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}",
+    { count: total, size: sizeWords(limit), files },
+  );
+}
+
+/**
  * Files too large to save, which Rewind cannot bring back, as the chat says it: left out by a
- * message's checkpoint, or left as they were by a rewind. Up to three names with their sizes, then
- * how many more. Null when the record names no file it can read.
+ * message's checkpoint, or left as they were by a rewind; a checkpoint's change too large at once
+ * says so rather than calling each file too large (a rewind sizes its files later, so it can't tell). Up to three names with their sizes, then how many more.
+ * Null when the record names no file it can read.
  */
 export function checkpointSkippedWords(skipped: CustomPayload<typeof CustomEvent.CheckpointSkipped>): string | null {
   const listed: unknown[] = Array.isArray(skipped.files) ? skipped.files : [];
@@ -1323,11 +1343,14 @@ export function checkpointSkippedWords(skipped: CustomPayload<typeof CustomEvent
   const named = shown.map((file) => `${file.file.split("/").pop()} (${sizeWords(file.bytes)})`).join(", ");
   const which =
     total > shown.length ? t("{files} and {count} more", { files: named, count: total - shown.length }) : named;
-  if (skipped.by !== SkippedBy.Rewind)
+  if (skipped.by !== SkippedBy.Rewind) {
+    const budget = overBudget(skipped, files);
+    if (budget !== null) return overBudgetWords(total, which, budget);
     return t(
       "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}",
       { count: total, files: which },
     );
+  }
   if (total === 1)
     return t("This file was too large to save, so the rewind left it as it is: {files}.", { files: which });
   return t("These files were too large to save, so the rewind left them as they are: {files}.", { files: which });

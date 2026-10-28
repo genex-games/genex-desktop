@@ -47,7 +47,7 @@ import { MIN_DELEGATE_TIMEOUT_MS, PLAN_REVIEW_WAIT_MS } from "./config.ts";
 import { FINISH_REPORT, notDoneOf } from "./finish-check.ts";
 import { StopWhy } from "./finish-contract.ts";
 import { closeSettled, closeUnderWay, latchClose } from "./director/close-latch.ts";
-import { fireHooks, HookEvent, notesText, runScope } from "./hooks.ts";
+import { fireHooks, HookEvent, holdOf, notesText, runScope } from "./hooks.ts";
 import { type HeldBack, heldTurnEnding, runHeldWords } from "./director/held-words.ts";
 import { LoopProfile } from "./folder-facts.ts";
 import { judgedInEditor, loopJudges } from "./director/open/judge-rounds.ts";
@@ -1008,7 +1008,9 @@ async function closeHeldStart(loopRun: LoopRun, start: StartOfRun): Promise<void
   // A resumed Loop held back stays paused with the working time it had: Resume picks it up once the cause is fixed.
   if (leadsOpenLoop(loopRun) && start.blocked) {
     const because = openStartHeld(start.blocked, loopRun.resume);
-    const end = { victory: false, because, keepNothing: true, unworked: true, paused: loopRun.resume };
+    // A plugin's own block on a new Loop is the chat's agent's to fix; Genex's holds wait for the person.
+    const startHeld = !loopRun.resume && !holdOf(start.blocked);
+    const end = { victory: false, because, keepNothing: true, unworked: true, paused: loopRun.resume, startHeld };
     return closeInPlace(loopRun, end);
   }
   await loopRun.closeTheLoopRun({

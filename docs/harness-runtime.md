@@ -1486,6 +1486,16 @@ outage wait or rollback, its goal attempt given back), a pool worker ends with
 tells the lead to do the work itself, naming the other workers' engine when the host reports it
 signed in. A Loop's person is told once on a decision card, with that engine offered for Workers.
 
+### A Loop held back at its start
+
+A new open Loop a plugin's step held back before its first turn (Unreal wouldn't reopen, the
+game's code didn't build) closes with `run_finished.startHeld`; Genex's own holds (the person
+using the app, Plan mode) and a resumed Loop's never set it. The host (`main/core/held-start.ts`)
+then sends the chat's agent why, as the person's last message was sent (engine, model, effort,
+Loop) and marked `MessageOrigin.LoopHeld` so the transcript leaves it out: the agent fixes what
+stopped it and starts the Loop again. Once per message of the person's: a Loop it starts again that
+is held too, or one the person wrote after, waits for them.
+
 ### Automatic resume
 
 A paused build is the user's to resume, with three exceptions the host takes itself

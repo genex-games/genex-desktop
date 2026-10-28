@@ -355,6 +355,11 @@ export interface RunFinishedPayload extends RunScope {
   limit?: RunLimit | null;
   /** Older closes marked a pause with this flag instead of `executionStatus`. */
   paused?: boolean;
+  /**
+   * A new Loop a plugin's step held back before its first turn (not Genex's own hold, not a resume):
+   * the chat's agent is told why, to fix it and start the Loop again (`core/held-start.ts`).
+   */
+  startHeld?: boolean;
   integrationHead?: string;
   baseCommit?: string;
   landingResult?: { line?: string };

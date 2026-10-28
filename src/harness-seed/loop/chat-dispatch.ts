@@ -64,7 +64,7 @@ import { createScope, userWordsInLog } from "./scope.ts";
 import { type StoreItem, storeItemsOf, storeLaunchWords, storeScopeItems } from "./store-items.ts";
 import { closeCarriedPool } from "./workers/carry.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
-import type { ModelPreferences, RunSpec } from "../types/host-api.d.ts";
+import type { MessageOrigin, ModelPreferences, RunSpec } from "../types/host-api.d.ts";
 import { messageQueueState, type QueueAction, type SteerHandle } from "./message-queue.ts";
 
 /** The run an interview commissions when it names no length, in hours. */
@@ -242,7 +242,7 @@ async function answersInSession(host: Host, engine: string): Promise<boolean> {
 async function loopRunsFor(host: Host, action: QueueAction, existing: RunRecord | null): Promise<RoutedLoopRuns> {
   if (!existing) return { after: null, coordinated: null, loopUnused: false };
   // Words the chat wrote itself are never the person asking for more: whatever Loop they came with.
-  if (chatWrote(action)) dropCommission(action);
+  if (chatWroteOwn(action)) dropCommission(action);
   const after = await afterLoopRunFor(host, action, existing);
   const coordinated = after ? null : await coordinatorLoopRun(host, action, existing);
   const kept = keepsCommission(existing, after ?? coordinated);
@@ -306,7 +306,7 @@ async function routeMessage(studio: Studio, action: QueueAction): Promise<RunRec
  * build. Exported for its tests.
  */
 export async function startsNextOpenLoop(host: Host, action: QueueAction, run: RunRecord | null): Promise<boolean> {
-  if (run?.state !== RunState.Finished || chatWrote(action)) return false;
+  if (run?.state !== RunState.Finished || chatWroteOwn(action)) return false;
   if (!(action.autopilot ?? action.loop)) return false;
   // The finished run's own journal says what it was, whatever its folder reads as now.
   const inPlace = await finishedInPlace(host, action.threadId, run);
@@ -340,6 +340,16 @@ async function finishedInPlace(host: Host, threadId: string, run: RunRecord): Pr
 function chatWrote(action: QueueAction): boolean {
   return action.origin !== undefined && action.origin !== null;
 }
+
+/**
+ * Genex's word to the chat's agent after a Loop the person started was held back before its first
+ * turn (the app's `MessageOrigin.LoopHeld`, main/core/held-start.ts): it carries the person's own
+ * Loop, so the agent may start it again once it fixed what stopped it.
+ */
+const RETRIES_PERSONS_LOOP: MessageOrigin = "loop-held";
+
+/** Did the chat write this message itself, and not to start the person's own Loop again? */
+const chatWroteOwn = (action: QueueAction): boolean => chatWrote(action) && action.origin !== RETRIES_PERSONS_LOOP;
 
 /** A routed message's Loop or Autopilot commission, dropped. */
 function dropCommission(action: QueueAction): void {

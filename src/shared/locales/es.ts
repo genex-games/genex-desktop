@@ -5574,6 +5574,8 @@ export default {
     "{count, plural, one {Su propio historial se guarda al lado, renombrado como .git.studio-backup.} other {Sus propios historiales se guardan al lado, renombrados como .git.studio-backup.}}",
   "{count, plural, one {Restored # game file.} other {Restored # game files.}}":
     "{count, plural, one {Se restauró # archivo del juego.} other {Se restauraron # archivos del juego.}}",
+  "{count, plural, one {Rewind can’t bring back # file from this change: it was over {size} at once, so the largest stayed out: {files}.} other {Rewind can’t bring back # files from this change: it was over {size} at once, so the largest stayed out: {files}.}}":
+    "{count, plural, one {Retroceder no puede recuperar # archivo de este cambio: superó {size} de una vez, así que los más grandes quedaron fuera: {files}.} other {Retroceder no puede recuperar # archivos de este cambio: superó {size} de una vez, así que los más grandes quedaron fuera: {files}.}}",
   "{count, plural, one {Rewind can’t bring back # file that is too large to save: {files}.} other {Rewind can’t bring back # files that are too large to save: {files}.}}":
     "{count, plural, one {Retroceder no puede recuperar # archivo demasiado grande para guardarse: {files}.} other {Retroceder no puede recuperar # archivos demasiado grandes para guardarse: {files}.}}",
   "{count, plural, one {The chat went back, and # game file with it.} other {The chat went back, and # game files with it.}}":

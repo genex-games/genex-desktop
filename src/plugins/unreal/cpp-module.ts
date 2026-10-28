@@ -60,6 +60,10 @@ export const GAME_LIBRARY = /^(?:lib)?UnrealEditor-([A-Za-z_][A-Za-z0-9_]*?)(-\d
 const MAC_MODULES_FILE = ["Binaries", "Mac", "UnrealEditor.modules"] as const;
 /** A modules file names a handful of libraries. */
 const MODULES_MAX_BYTES = 64 * 1024;
+/** The most of a target file read to tell its kind: Unreal's own are under 1 KB. */
+const TARGET_MAX_BYTES = 64 * 1024;
+/** How a target file says it builds the editor. */
+const EDITOR_TYPE = /\bType\s*=\s*TargetType\.Editor\b/;
 /** The longest module name Genex picks; Unreal's New Project dialog keeps names far shorter. */
 const MAX_MODULE_CHARS = 32;
 /** A module name Genex accepts from a .uproject or a caller: a C++ identifier. */
@@ -314,6 +318,38 @@ export async function projectModule(projectFile: string): Promise<string | undef
   const runtime = listOf(json?.[MODULES_KEY]).find((entry) => isJsonObject(entry) && entry.Type === RUNTIME_TYPE);
   const name = isJsonObject(runtime) ? runtime.Name : undefined;
   return typeof name === "string" && isModuleName(name) ? name : undefined;
+}
+
+/** Whether `file` in the project's Source is a target file that builds the editor: a regular file, never a link. */
+async function buildsEditor(file: string): Promise<boolean> {
+  const text = await readRegularFile(file, TARGET_MAX_BYTES).then(
+    (bytes) => bytes.toString("utf8"),
+    () => "",
+  );
+  return EDITOR_TYPE.test(text);
+}
+
+/**
+ * The editor target UnrealBuildTool builds for the project: `<Module>Editor` when its Source has
+ * that editor target, else the one named after the project, else the first by name. A project can
+ * name its targets as it likes (an agent renames a copied game's), and UBT finds a target only by
+ * its file's name. `<Module>Editor` when the Source names none, or is a link, so UBT says what is missing.
+ */
+export async function editorTarget(projectFile: string, module: string): Promise<string> {
+  const fallback = `${module}${EDITOR_SUFFIX}`;
+  const source = path.join(path.dirname(projectFile), SOURCE_FOLDER);
+  // A linked Source is the project's no more: nothing through it is read.
+  if ((await kindOf(source)) !== PathKind.Folder) return fallback;
+  const entries = await readdir(source, { withFileTypes: true }).catch(() => []);
+  const named = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(TARGET_SUFFIX))
+    .map((entry) => entry.name.slice(0, -TARGET_SUFFIX.length))
+    .filter(isModuleName)
+    .sort();
+  const editors: string[] = [];
+  for (const name of named) if (await buildsEditor(path.join(source, `${name}${TARGET_SUFFIX}`))) editors.push(name);
+  const preferred = [fallback, `${projectName(projectFile)}${EDITOR_SUFFIX}`].find((name) => editors.includes(name));
+  return preferred ?? editors[0] ?? fallback;
 }
 
 /**

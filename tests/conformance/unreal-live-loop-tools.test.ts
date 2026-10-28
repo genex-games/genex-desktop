@@ -1153,7 +1153,7 @@ describe("open-for-run", () => {
     // The reopen job gives up after its own five minutes, before the step's six-minute wait would.
     assert.match(
       answer.block ?? "",
-      /^Unreal couldn't be reopened \(reopening Unreal failed: Genex reopened the game's project, but Unreal didn't answer within 5 minutes/,
+      /^Unreal couldn't be reopened \(Genex reopened the game's project, but Unreal didn't answer within 5 minutes/,
     );
     assert.deepEqual(w.events, ["open"]);
     assert.ok(w.editor.deps.now() >= 5 * 60_000, "it waited minutes on the stand-in's clock");
@@ -1385,7 +1385,7 @@ describe("open-for-run's own wait for a reopened Unreal (editor-moments.ts)", ()
       () => ({ state: ReopenState.Failed, error: "the project is locked" }),
     );
     const answer = await openForRun(ops);
-    assert.equal(answer.block, MOMENT_WORDS.NotOpened(MOMENT_WORDS.ReopenFailed("the project is locked")));
+    assert.equal(answer.block, MOMENT_WORDS.NotOpened("the project is locked"));
   });
 
   it("a Stop during the wait for a gone Unreal opens nothing after it", async () => {

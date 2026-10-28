@@ -27,6 +27,24 @@ const lines = (events: EventEnvelope[]) =>
 const files = (...sizes: Array<[string, number]>) => sizes.map(([file, bytes]) => ({ file, bytes }));
 
 describe("files too large to save, in the chat", () => {
+  it("says a checkpoint's change was too large at once, not its files, when each was under the file limit", () => {
+    const limits = { fileLimitBytes: 50 * MB, changeLimitBytes: 1024 * MB };
+    const big = files(["a.glb", 34.8 * MB], ["b.glb", 34 * MB], ["c.glb", 33 * MB]);
+    const [line] = lines([skipped(1, { files: big, total: 50, ...limits })]);
+    assert.equal(
+      line?.text,
+      "Rewind can’t bring back 50 files from this change: it was over 1 GB at once, so the largest stayed out: a.glb (34.8 MB), b.glb (34 MB), c.glb (33 MB) and 47 more.",
+    );
+    const [rewound] = lines([skipped(1, { by: SkippedBy.Rewind, files: big, ...limits })]);
+    assert.equal(
+      rewound?.text,
+      "These files were too large to save, so the rewind left them as they are: a.glb (34.8 MB), b.glb (34 MB), c.glb (33 MB).",
+      "a rewind sizes its files later, so it never names the change",
+    );
+    const [oversized] = lines([skipped(1, { files: files(["Hero.uasset", 120 * MB]), ...limits })]);
+    assert.equal(oversized?.text, "Rewind can’t bring back 1 file that is too large to save: Hero.uasset (120 MB).");
+  });
+
   it("names a checkpoint's files with their sizes, and stands on its own", () => {
     const [line] = lines([
       skipped(1, {

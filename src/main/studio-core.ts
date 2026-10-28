@@ -197,6 +197,7 @@ import { ObserverService, type ObserverServiceOptions } from "./core/observers.t
 import { FinishReviews, finishHistory } from "./core/finish-review.ts";
 import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
+import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
@@ -1854,9 +1855,23 @@ export class StudioCore {
     }
     for (const runId of changedRuns) this.emit(UiEvent.RunSummaryChanged, { runId });
     this.#autoResume.observe(threadId, result.events);
+    for (const runId of heldStartRuns(result.events)) void this.#askAfterHeldStart(threadId, runId);
     // Off the append's path: reading the game's folder never holds up the log.
     void noteBuildEnd(this.#buildEnds, threadId, result.events).catch(() => {});
     return result.latestEventId;
+  }
+
+  /** A Loop a plugin held back at its start: the chat's agent is told why, to fix it (`core/held-start.ts`). */
+  async #askAfterHeldStart(threadId: string, runId: string): Promise<void> {
+    try {
+      const ask = heldStartAsk(threadId, await this.store.listEvents(threadId), runId);
+      if (ask) await this.sendUserMessage(ask.text, ask.options);
+    } catch (err) {
+      this.options.onLog?.(
+        `[core] the agent wasn't told why the Loop didn't start in ${threadId}: ${errorMessage(err)}`,
+        "stderr",
+      );
+    }
   }
 
   /** How `append` tells the game list what a build's end changed (`core/build-ends.ts`). */

@@ -34,6 +34,8 @@ export const SendSource = {
   SetupCard: "setup_card",
   TagRetry: "tag_retry",
   PluginTurnedOn: "plugin_turned_on",
+  /** Genex telling the agent why the Loop it started didn't start (never sent from the renderer). */
+  LoopHeld: "loop_held",
   /** Words another surface left for this chat and asked it to send. */
   Handoff: "handoff",
 } as const;

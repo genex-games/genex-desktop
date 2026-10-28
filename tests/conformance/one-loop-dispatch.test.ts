@@ -698,6 +698,21 @@ describe("after a Loop in place", () => {
     );
   });
 
+  it("Genex's word after a Loop held back at its start carries the person's Loop; words the chat wrote otherwise never do", async () => {
+    const host = { call: async () => ({ director: { open: { version: 1, savePoints: [] } } }) };
+    const run = { runId: "run-held", state: "finished", project: "lantern" };
+    const outcomes: Array<[string, boolean]> = [];
+    for (const origin of ["loop-held", "command-result", "plugin-turned-on"]) {
+      const message = { threadId: "t1", project: "lantern", loop: true, origin } as never;
+      outcomes.push([origin, await startsNextOpenLoop(host as never, message, run as never)]);
+    }
+    assert.deepEqual(outcomes, [
+      ["loop-held", true],
+      ["command-result", false],
+      ["plugin-turned-on", false],
+    ]);
+  });
+
   it(
     "Keep building after a finished Loop in place really launches the next Loop, on Godot and on Unreal: on its base goal and what is left, never refused",
     TEST_TIMEOUT,

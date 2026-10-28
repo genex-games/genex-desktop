@@ -2796,7 +2796,7 @@ export interface AutopilotCommission {
 }
 // ↑ src/shared/protocol.ts
 
-export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry';
+export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry' | 'loop-held';
 // ↑ src/shared/protocol.ts
 
 export interface RunReference {
