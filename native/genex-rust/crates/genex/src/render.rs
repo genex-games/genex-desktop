@@ -133,6 +133,10 @@ pub use genex_render::settings::Fog;
 /// ([`crate::Frame::reflection_probe`], A.3) and an irradiance volume
 /// ([`crate::Frame::irradiance_volume`], A.4).
 pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
+/// Physical light units: lux, candela, lumens, nits and EV100 in the renderer's scene units
+/// (`genex::render::units::lumens(800.0)`; docs/api/lighting.md, "Physical units").
+#[path = "light_units.rs"]
+pub mod units;
 /// A projected decal ([`crate::Frame::decal`], renderer pass 2 A.10) and its boxes' default depths.
 pub use crate::decal::{DEFAULT_GROUND_DEPTH, DEFAULT_WALL_DEPTH, Decal};
 /// Lake water (renderer pass 2 B.3): a water rectangle drawn with [`crate::Frame::water`].

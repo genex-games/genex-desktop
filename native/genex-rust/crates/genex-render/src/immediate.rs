@@ -1037,6 +1037,11 @@ pub struct FrameRenderer {
     room_adaptation: crate::post::exposure::RoomAdaptation,
     /// Settled captures begun since this renderer was made.
     settled: u32,
+    /// The exposure state and histogram read back for `state().__render.exposure` (AAA review
+    /// WP-5), made with the exposure node.
+    exposure_readback: Option<crate::post::exposure::ExposureReadback>,
+    /// Frames drawn, the read-back's clock.
+    exposure_frames: u64,
 }
 
 /// Bytes of the exposure copied into the frame uniforms' pre-exposure lane.
@@ -1072,6 +1077,8 @@ impl FrameRenderer {
             paced_ticks: None,
             exposure: None,
             room_adaptation: crate::post::exposure::RoomAdaptation::default(),
+            exposure_readback: None,
+            exposure_frames: 0,
         })
     }
 
@@ -1366,7 +1373,9 @@ impl FrameRenderer {
         let done = nodes.world.finish();
         self.renderer.end_frame(prep, done);
         let steps = ran?;
+        let (set, settle) = (history.set, history.settle);
         self.commit_history(history, live);
+        self.read_exposure(gpu, set, settle, boost)?;
         let encoded: usize = steps.iter().map(|step| step.nodes().len()).sum();
         self.nodes_encoded = self.nodes_encoded.saturating_add(encoded as u64);
         Ok(self.report(frame, path, quad_draws, custom.custom_draws(), hud))
@@ -1545,6 +1554,36 @@ impl FrameRenderer {
     }
 
     /// The settle re-render the next frame draws (None: a Live frame).
+    /// What the exposure metered and drew for the last frame read back (`state().__render.exposure`,
+    /// AAA review WP-5): Live's a few frames late, a settled capture's own once it is drawn.
+    pub fn exposure_telemetry(&self) -> crate::post::exposure::ExposureTelemetry {
+        let (look, quality) = (self.renderer.look(), self.renderer.quality());
+        let source = crate::post::exposure::exposure_source(look, quality);
+        let latest = self.exposure_readback.as_ref().and_then(|readback| readback.latest());
+        crate::post::exposure::exposure_telemetry(look, source, latest, self.exposure_frames)
+    }
+
+    /// After a frame of history `set` adapted at `boost`: Live copies the exposure back every
+    /// [`crate::post::exposure::READBACK_EVERY`] frames without waiting; a settled capture waits
+    /// for its last frame's.
+    fn read_exposure(&mut self, gpu: &Gpu, set: HistorySet, settle: Option<SettleFrame>, boost: f32) -> Result<(), RenderError> {
+        self.exposure_frames += 1;
+        let Some(node) = self.exposure.as_ref() else { return Ok(()) };
+        let capture = set == HistorySet::Capture;
+        let due = if capture { settle.is_none_or(|settle| settle.is_last()) } else { self.exposure_frames % u64::from(crate::post::exposure::READBACK_EVERY) == 0 };
+        if self.exposure_readback.is_none() {
+            self.exposure_readback = Some(crate::post::exposure::ExposureReadback::new(&gpu.device)?);
+        }
+        let Some(readback) = self.exposure_readback.as_mut() else { return Ok(()) };
+        if !due {
+            readback.take(&gpu.device);
+            return Ok(());
+        }
+        let history = if capture { &node.capture } else { &node.live };
+        readback.read_back(&gpu.device, &gpu.queue, history, boost, self.exposure_frames, capture);
+        Ok(())
+    }
+
     pub fn settling(&self) -> Option<SettleFrame> {
         self.settle
     }

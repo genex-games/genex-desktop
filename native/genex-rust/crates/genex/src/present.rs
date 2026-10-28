@@ -118,6 +118,7 @@ use genex_render::motion::DrawId;
 use genex_render::letterbox::{Fit, letterbox, output_for};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
+use crate::look_facts::{LookFacts, LookRaster, MeshIndex, MeshStats};
 use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
 use genex_render::lod_rows::DrawLod;
 use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
@@ -324,6 +325,9 @@ pub struct LoadedModel {
     /// The model-space sphere around every part's mesh (centre xyz, radius; 0 when unknown): a
     /// compound's parts measure their levels from its members' spheres together (LOD-07).
     pub sphere: [f32; 4],
+    /// Each part's geometry as the look facts read it (`__render.look`, AAA review WP-2), in
+    /// `parts` order; empty when it was not measured (a shell that loads meshes itself).
+    pub stats: Vec<Arc<MeshStats>>,
 }
 
 /// One GLB image a [`LoadedModel`] uploaded (C-11, C-14).
@@ -672,6 +676,18 @@ impl AssetCache {
         self.models.iter().find(|(known, _)| known == path).and_then(|(_, loaded)| loaded.as_ref())
     }
 
+    /// The geometry of every mesh a frame can draw from this cache: the built-in cube and sphere
+    /// and each loaded model's measured parts (`__render.look`).
+    pub fn mesh_index(&self) -> MeshIndex {
+        let mut index = MeshIndex::with_builtins();
+        for loaded in self.models.iter().filter_map(|(_, loaded)| loaded.as_ref()) {
+            for (part, stats) in loaded.parts.iter().zip(&loaded.stats) {
+                index.insert(part.mesh, Arc::clone(stats));
+            }
+        }
+        index
+    }
+
     /// Whether `path` was tried (loaded or refused).
     pub fn tried(&self, path: &str) -> bool {
         self.models.iter().any(|(known, _)| known == path)
@@ -686,7 +702,7 @@ impl AssetCache {
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4] });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4], stats: Vec::new() });
             self.models.push((path.to_owned(), loaded));
         }
     }
@@ -1342,7 +1358,8 @@ fn load_model_levels(
     }
     let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
     let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
-    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere }), refused))
+    let stats = glb.parts().iter().map(|part| Arc::new(MeshStats::of(&part.mesh))).collect();
+    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere, stats }), refused))
 }
 
 /// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
@@ -1458,6 +1475,9 @@ pub type PassStatus = (String, PassStage, Option<RenderCode>);
 pub struct Presenter {
     /// The renderer on its device, re-created after a device loss.
     pub resilient: Resilient,
+    /// The last look facts measured (`__render.look`): Live measures every
+    /// [`LOOK_FACTS_LIVE_EVERY`] frames, a capture every time.
+    look: LookCache,
     /// The game's custom GPU passes (M2.19), registered at install.
     pub passes: CustomPasses,
     hud: HudPainter,
@@ -1675,6 +1695,7 @@ impl Presenter {
             capture_size: None,
             capture_lens: crate::render::CaptureLens::default(),
             last_output: None,
+            look: LookCache::default(),
             source,
             assets: AssetCache::default(),
             reloading: Vec::new(),
@@ -2295,6 +2316,8 @@ impl Presenter {
             runtime.note_missing_models(&drawn.missing_models);
             runtime.note_lod_refused(&drawn.lod_refused);
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
+            runtime.note_look_facts(self.look.measure(&frame, &camera, &self.assets, output, live).cloned());
+            runtime.note_exposure(self.resilient.renderer().exposure_telemetry());
         }
         Some(drawn)
     }
@@ -3292,6 +3315,86 @@ impl<S: WorldSink> WorldSink for ViewModelSink<'_, S> {
 
     fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
         self.0.far_rule(rule)
+    }
+}
+
+/// Live frames between two look-fact measurements (a capture measures every time): the raster is a
+/// few hundred thousand triangles at most, too much to pay every frame for a display figure.
+pub const LOOK_FACTS_LIVE_EVERY: u32 = 15;
+
+/// The presenter's last look facts and the Live frames since they were measured.
+#[derive(Debug, Default)]
+struct LookCache {
+    facts: Option<LookFacts>,
+    age: Option<u32>,
+}
+
+impl LookCache {
+    /// The look facts of `frame` from `camera` at `output`: measured on a capture, on the first
+    /// Live frame and every [`LOOK_FACTS_LIVE_EVERY`] after it, otherwise the last ones.
+    fn measure(&mut self, frame: &Frame, camera: &Camera, assets: &AssetCache, output: (u32, u32), live: bool) -> Option<&LookFacts> {
+        let due = !live || self.age.is_none_or(|age| age + 1 >= LOOK_FACTS_LIVE_EVERY);
+        if due {
+            self.facts = look_facts(frame, camera, assets, output);
+            self.age = Some(0);
+        } else {
+            self.age = self.age.map(|age| age + 1);
+        }
+        self.facts.as_ref()
+    }
+}
+
+/// The look facts of `frame`'s world drawn from `camera` at `output` (`__render.look`): the same
+/// writer as the renderer's frame, into a coverage raster instead.
+pub fn look_facts(frame: &Frame, camera: &Camera, assets: &AssetCache, output: (u32, u32)) -> Option<LookFacts> {
+    let index = assets.mesh_index();
+    let mut sink = LookSink { raster: LookRaster::new(camera, output), index: &index, lighting: Lighting::default() };
+    write_world(&mut sink, frame, assets, &mut Drawn::default());
+    sink.raster.facts()
+}
+
+/// A sink that feeds every world mesh to a [`LookRaster`] and keeps nothing else.
+struct LookSink<'a> {
+    raster: LookRaster,
+    index: &'a MeshIndex,
+    lighting: Lighting,
+}
+
+impl characters::SkinSink for LookSink<'_> {
+    // Skinned characters are not rasterised (their pose is the GPU's).
+    fn skinned(&mut self, _skin: genex_render::skin::SkinId, _model: [f32; 16], _joints: Vec<[f32; 16]>, _materials: Vec<Material>) {}
+}
+
+impl WorldSink for LookSink<'_> {
+    fn tag(&mut self, name: &str) {
+        self.raster.tag(name);
+    }
+
+    fn id(&mut self, _id: Option<DrawId>) {}
+
+    fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
+        self.raster.mesh(self.index.get(mesh), &model, &material);
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        let stats = self.index.get(group.mesh());
+        for model in group.models() {
+            self.raster.mesh(stats, model, &material);
+        }
+    }
+
+    fn line(&mut self, _from: [f32; 3], _to: [f32; 3], _color: [u8; 4]) {}
+
+    fn lines(&mut self, _vertices: &[LineVertex]) {}
+
+    fn lighting(&mut self) -> &mut Lighting {
+        &mut self.lighting
+    }
+
+    fn lod(&mut self, _lod: DrawLod) {}
+
+    fn far_rule(&mut self, _rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        genex_render::lod_rows::FAR_RULE_NONE
     }
 }
 

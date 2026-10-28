@@ -60,6 +60,10 @@ const LOD_REFUSED_KEY: &str = "lodRefused";
 const TEXTURES_KEY: &str = "textures";
 /// `state().__render`'s asset issues of the last frame (C-11).
 const ASSET_ISSUES_KEY: &str = "assetIssues";
+/// `state().__render.look`: the frame's look facts (`src/shared/render-look.ts`).
+const LOOK_KEY: &str = "look";
+/// `state().__render.exposure`: the exposure's telemetry (`src/shared/render-look.ts`).
+const EXPOSURE_KEY: &str = "exposure";
 /// `state().volatile`'s streaming counters, while streaming is registered (STR-9): the runtime
 /// key's name, so no volatile probe can take it.
 const STREAM_VOLATILE_KEY: &str = "__stream";
@@ -330,6 +334,10 @@ struct Tally {
     asset_issues: Vec<AssetIssue>,
     /// Models drawn whole because a level-of-detail option was refused (LOD-07).
     lod_refused: Vec<crate::present::LodRefused>,
+    /// What the frame showed of each tag (`__render.look`, AAA review WP-2).
+    look: Option<crate::look_facts::LookFacts>,
+    /// What the exposure metered and drew (`__render.exposure`, AAA review WP-5).
+    exposure: Option<genex_render::post::exposure::ExposureTelemetry>,
 }
 
 /// The simulation and clock state the hooks run against.
@@ -1121,6 +1129,12 @@ impl<W> Runtime<W> {
         if !issues.is_empty() {
             render.set(ASSET_ISSUES_KEY, CoreValue::Array(issues));
         }
+        if let Some(look) = &tally.look {
+            render.set(LOOK_KEY, look.to_value());
+        }
+        if let Some(exposure) = &tally.exposure {
+            render.set(EXPOSURE_KEY, crate::look_facts::exposure_value(exposure));
+        }
         render
     }
 
@@ -1143,6 +1157,18 @@ impl<W> Runtime<W> {
     /// (LOD-07): `state().__render.lodRefused` (`[{model, code}]`), absent when empty.
     pub fn note_lod_refused(&mut self, refused: &[crate::present::LodRefused]) {
         self.core.tally.lod_refused = refused.to_vec();
+    }
+
+    /// What the frame last drawn showed of each tag (AAA review WP-2): `state().__render.look`,
+    /// absent when it drew no world mesh. Display only.
+    pub fn note_look_facts(&mut self, look: Option<crate::look_facts::LookFacts>) {
+        self.core.tally.look = look;
+    }
+
+    /// What the exposure metered and drew for the frame last drawn (AAA review WP-5):
+    /// `state().__render.exposure`. Display only.
+    pub fn note_exposure(&mut self, exposure: genex_render::post::exposure::ExposureTelemetry) {
+        self.core.tally.exposure = Some(exposure);
     }
 
     /// The textures the renderer bound in the frame last drawn and the issues they raise (C-11):

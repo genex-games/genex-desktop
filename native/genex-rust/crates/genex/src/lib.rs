@@ -92,6 +92,9 @@ mod studio;
 /// The one presenter every shell draws with (native and web): host glue, not game API.
 #[doc(hidden)]
 pub mod present;
+/// The look facts the presenter measures for `state().__render.look` (display only).
+#[doc(hidden)]
+pub mod look_facts;
 /// The presenter's streamed view set (display state only).
 mod present_stream;
 /// The native presenter's headless device and model files.

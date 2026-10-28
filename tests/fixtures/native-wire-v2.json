@@ -166,7 +166,8 @@
       "fog_aerial_perspective",
       "contact_shadow_length",
       "local_exposure_highlights",
-      "local_exposure_shadows"
+      "local_exposure_shadows",
+      "doorway_adaptation"
     ],
     "qualityKeys": ["preset", "render_scale", "fps", "lod_threshold_px", "lod_fade_band", "far_density"],
     "renderKeys": ["form_factors", "preset", "look", "class", "shadows", "loading"],

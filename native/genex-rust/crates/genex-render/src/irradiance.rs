@@ -670,12 +670,128 @@ pub fn cell_work() -> u64 {
     2 * u64::from(FACES) * u64::from(CAPTURE_SIDE) * u64::from(CAPTURE_SIDE)
 }
 
+// --- Rooms the renderer adds (AAA review WP-12) ---
+
+/// The rooms the renderer lights without the game declaring them, so an agent never fakes bounce
+/// with spot lights or leaves a room on the sky's light: `paired` gives each declared reflection
+/// probe that no declared volume covers a volume over its box, and each declared volume that no
+/// probe covers a probe over its; `camera` adds a volume around the camera
+/// ([`CAMERA_VOLUME_EXTENT`], snapped to [`CAMERA_VOLUME_SNAP`]) wherever no room (declared or
+/// paired) holds it. The added ones come after the declared ones, so a quality's cap keeps the
+/// game's own first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AutoRooms {
+    pub paired: bool,
+    pub camera: bool,
+}
+
+impl AutoRooms {
+    /// None added (low, and every quality before AAA review WP-12).
+    pub const OFF: AutoRooms = AutoRooms { paired: false, camera: false };
+    /// Declared rooms paired (desktop `medium`, phones).
+    pub const PAIRED: AutoRooms = AutoRooms { paired: true, camera: false };
+    /// Paired, and the camera's own volume (desktop `high` and `ultra`).
+    pub const ALL: AutoRooms = AutoRooms { paired: true, camera: true };
+}
+
+/// The camera volume's box size, world units: a floor and the rooms or street around it.
+pub const CAMERA_VOLUME_EXTENT: [f32; 3] = [24.0, 8.0, 24.0];
+/// Its cells (two metres apart): 576, a few seconds of Live bake at the high slice.
+pub const CAMERA_VOLUME_CELLS: [u32; 3] = [12, 4, 12];
+/// Its centre snaps to this grid across x and z (the camera is always at least this far inside its
+/// sides), and its floor to [`CAMERA_VOLUME_FLOOR_SNAP`] below the eye: the same camera gives the
+/// same box in every frame and capture, and walking moves it a few times a minute.
+pub const CAMERA_VOLUME_SNAP: f32 = 8.0;
+/// How far below the eye the camera volume's floor sits, at least.
+pub const CAMERA_VOLUME_BELOW: f32 = 2.0;
+/// The grid its floor snaps to, world units.
+pub const CAMERA_VOLUME_FLOOR_SNAP: f32 = 2.0;
+/// How far past its faces the camera volume fades into the sky's light.
+pub const CAMERA_VOLUME_BLEND: f32 = 4.0;
+/// A declared probe and volume are one room when their boxes share at least this much of the
+/// smaller one.
+pub const PAIRED_OVERLAP_SHARE: f32 = 0.5;
+/// Eye height a paired probe captures from, above its box's floor (held inside the box).
+pub const PAIRED_PROBE_EYE: f32 = 1.6;
+
+/// The box of the camera volume around `eye`.
+pub fn camera_volume(eye: [f32; 3]) -> IrradianceVolume {
+    let snap = |value: f32, grid: f32| libm::floorf(value / grid + 0.5) * grid;
+    let centre = [snap(eye[0], CAMERA_VOLUME_SNAP), 0.0, snap(eye[2], CAMERA_VOLUME_SNAP)];
+    let floor = libm::floorf((eye[1] - CAMERA_VOLUME_BELOW) / CAMERA_VOLUME_FLOOR_SNAP) * CAMERA_VOLUME_FLOOR_SNAP;
+    let half = [CAMERA_VOLUME_EXTENT[0] * 0.5, 0.0, CAMERA_VOLUME_EXTENT[2] * 0.5];
+    let min = [centre[0] - half[0], floor, centre[2] - half[2]];
+    let max = [centre[0] + half[0], floor + CAMERA_VOLUME_EXTENT[1], centre[2] + half[2]];
+    IrradianceVolume::new(min, max).with_cells(CAMERA_VOLUME_CELLS).with_blend(CAMERA_VOLUME_BLEND)
+}
+
+/// The share of the smaller of two boxes the two share (0 when apart).
+fn overlap_share(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> f32 {
+    let size = |(min, max): ([f32; 3], [f32; 3])| (0..3).map(|axis| (max[axis] - min[axis]).max(0.0)).product::<f32>();
+    let shared = (0..3).map(|axis| (a.1[axis].min(b.1[axis]) - a.0[axis].max(b.0[axis])).max(0.0)).product::<f32>();
+    let smaller = size(a).min(size(b));
+    if smaller > 0.0 { shared / smaller } else { 0.0 }
+}
+
+fn contains(volume: &IrradianceVolume, eye: [f32; 3]) -> bool {
+    (0..3).all(|axis| eye[axis] >= volume.min[axis] && eye[axis] <= volume.max[axis])
+}
+
+/// The volumes and probes a frame lights with under `rooms`: the declared ones (held) and, after
+/// them, the ones [`AutoRooms`] adds for the camera at `eye`.
+pub fn auto_rooms(volumes: &[IrradianceVolume], probes: &[ReflectionProbe], eye: [f32; 3], rooms: AutoRooms) -> (Vec<IrradianceVolume>, Vec<ReflectionProbe>) {
+    let mut held_v = held_volumes(volumes);
+    let mut held_p = crate::probes::held_probes(probes);
+    if rooms.paired {
+        let declared_v = held_v.clone();
+        let declared_p = held_p.clone();
+        let paired = |a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])| overlap_share(a, b) >= PAIRED_OVERLAP_SHARE;
+        for probe in declared_p.iter().filter(|probe| !declared_v.iter().any(|volume| paired((probe.min, probe.max), (volume.min, volume.max)))) {
+            held_v.extend(IrradianceVolume::new(probe.min, probe.max).with_blend(probe.blend).held());
+        }
+        for volume in declared_v.iter().filter(|volume| !declared_p.iter().any(|probe| paired((probe.min, probe.max), (volume.min, volume.max)))) {
+            let eye_height = (volume.min[1] + PAIRED_PROBE_EYE).min(volume.max[1]);
+            let capture = [(volume.min[0] + volume.max[0]) * 0.5, eye_height, (volume.min[2] + volume.max[2]) * 0.5];
+            held_p.extend(ReflectionProbe::new(volume.min, volume.max).with_capture(capture).with_blend(volume.blend).held());
+        }
+    }
+    if rooms.camera && !held_v.iter().any(|volume| contains(volume, eye)) {
+        held_v.extend(camera_volume(eye).held());
+    }
+    (held_v, held_p)
+}
+
+/// `lighting` with the rooms `quality` adds for the camera at `eye`; borrowed as it is when it adds
+/// none (no environment light, no volumes baked, or nothing to add).
+pub fn with_auto_rooms<'a>(lighting: &'a crate::lights::Lighting, quality: &EnvironmentQuality, eye: [f32; 3]) -> std::borrow::Cow<'a, crate::lights::Lighting> {
+    let rooms = quality.auto_rooms;
+    let off = rooms == AutoRooms::OFF || !quality.ibl || quality.irradiance_volumes == 0;
+    if off {
+        return std::borrow::Cow::Borrowed(lighting);
+    }
+    let (volumes, probes) = auto_rooms(&lighting.irradiance_volumes, &lighting.reflection_probes, eye, rooms);
+    let unchanged = volumes.len() == lighting.irradiance_volumes.len() && probes.len() == lighting.reflection_probes.len();
+    if unchanged {
+        return std::borrow::Cow::Borrowed(lighting);
+    }
+    let mut owned = lighting.clone();
+    owned.irradiance_volumes = volumes;
+    owned.reflection_probes = probes;
+    std::borrow::Cow::Owned(owned)
+}
+
 // --- The bake schedule ---
 
 /// One held volume's bake state.
 #[derive(Clone, Debug, PartialEq)]
 struct VolumeSlot {
     volume: IrradianceVolume,
+    /// The box and cells its published bake was drawn for: a volume that moves keeps showing its
+    /// last bake where it was baked until the bake at its new place is published.
+    baked: IrradianceVolume,
+    /// Whether the bake in progress is a relight of a current bake (dynamic GI), not a first bake
+    /// or a stale one's.
+    relighting: bool,
     /// Whether its atlas block holds a published bake (the row weighs it).
     published: bool,
     /// Whether the published bake no longer matches what a bake would draw now.
@@ -714,6 +830,12 @@ pub struct GridFrame<'a> {
     pub cadence: u8,
     /// A settled capture's frame: bake whole whatever differs.
     pub settle: bool,
+    /// Cells a Live frame bakes (`EnvironmentQuality::irradiance_cells_per_frame`, at most
+    /// [`BATCH_CELLS`]).
+    pub cells_per_frame: usize,
+    /// Whether current bakes are baked again, one volume after another
+    /// (`EnvironmentQuality::irradiance_relight`).
+    pub relight: bool,
 }
 
 /// The volumes' bake schedule: which volumes are published, which are stale, the bake in progress
@@ -725,12 +847,15 @@ pub struct GridSchedule {
     lit_by: u64,
     /// The volume whose bake is in progress (its staging block holds its cells so far).
     job: Option<usize>,
+    /// The volume the next relight bakes (round robin).
+    relight_next: usize,
 }
 
 impl GridSchedule {
     /// Whether every held volume has a published, current bake.
     pub fn settled(&self) -> bool {
-        self.job.is_none() && self.slots.iter().all(|slot| slot.published && !slot.stale)
+        let relight_only = self.job.is_none_or(|job| self.slots.get(job).is_some_and(|slot| slot.relighting));
+        relight_only && self.slots.iter().all(|slot| slot.published && !slot.stale)
     }
 
     /// Whether volume `slot` has a published bake.
@@ -744,16 +869,28 @@ impl GridSchedule {
         self.slots.get(slot).filter(|slot| slot.published).map_or(0.0, |slot| (slot.shown + 1).min(FADE_IN_FRAMES) as f32 / FADE_IN_FRAMES as f32)
     }
 
-    /// Advance to `frame`: a new set of volumes (a box or its cells changed, one added or removed)
-    /// starts over (every block is made again); a new light makes every bake stale (a bake in
-    /// progress starts again). Returns the batches due this frame in encode order.
+    /// Advance to `frame`: a volume added or removed starts every slot over; a volume whose box or
+    /// cells changed is baked again at its new place while its last bake stays shown where it was
+    /// baked; a new light makes every bake stale (a bake in progress starts again). Returns the
+    /// batches due this frame in encode order.
     pub fn advance(&mut self, frame: &GridFrame<'_>) -> GridWork {
         let keys: Vec<[u32; 10]> = frame.volumes.iter().map(IrradianceVolume::bake_key).collect();
-        if keys != self.keys {
-            self.keys = keys;
-            self.slots = frame.volumes.iter().map(|volume| VolumeSlot { volume: *volume, published: false, stale: true, next: 0, shown: 0 }).collect();
+        if keys.len() != self.keys.len() {
+            self.slots = frame
+                .volumes
+                .iter()
+                .map(|volume| VolumeSlot { volume: *volume, baked: *volume, relighting: false, published: false, stale: true, next: 0, shown: 0 })
+                .collect();
             self.job = None;
+        } else if keys != self.keys {
+            for (index, slot) in self.slots.iter_mut().enumerate().filter(|(index, _)| keys[*index] != self.keys[*index]) {
+                *slot = VolumeSlot { stale: true, next: 0, relighting: false, ..slot.clone() };
+                if self.job == Some(index) {
+                    self.job = None;
+                }
+            }
         }
+        self.keys = keys;
         for (slot, volume) in self.slots.iter_mut().zip(frame.volumes) {
             // Same bake; its fade and multiplier may change freely.
             slot.volume = *volume;
@@ -787,16 +924,24 @@ impl GridSchedule {
             let cells: Vec<[u32; 3]> = (0..slot.volume.cell_count()).map(|cell| slot.volume.cell_at(cell)).collect();
             let batches = cells.len().div_ceil(BATCH_CELLS);
             work.extend(cells.chunks(BATCH_CELLS).enumerate().map(|(batch, chunk)| GridBatch { slot: index, cells: chunk.to_vec(), publish: batch + 1 == batches }));
-            *slot = VolumeSlot { published: true, stale: false, next: 0, shown: FADE_IN_FRAMES, ..*slot };
+            *slot = VolumeSlot { baked: slot.volume, relighting: false, published: true, stale: false, next: 0, shown: FADE_IN_FRAMES, ..*slot };
         }
         work
     }
 
-    /// A Live frame's slice: [`CELLS_PER_FRAME`] cells of the bake in progress, or of the first
-    /// volume never published (every frame), or of the first stale one (on the cadence).
+    /// A Live frame's slice: the frame's `cells_per_frame` cells of the bake in progress, or of
+    /// the first volume never published (every frame), or of the first stale one (on the
+    /// cadence), or with relight on of the next current one (round robin, on the cadence).
     fn bake_slice(&mut self, frame: &GridFrame<'_>) -> GridWork {
         if self.job.is_none() {
             self.job = self.slots.iter().position(|slot| !slot.published).or_else(|| self.slots.iter().position(|slot| slot.stale));
+        }
+        if self.job.is_none() && frame.relight && !self.slots.is_empty() {
+            let index = self.relight_next % self.slots.len();
+            self.relight_next = index + 1;
+            self.slots[index].relighting = true;
+            self.slots[index].next = 0;
+            self.job = Some(index);
         }
         let Some(index) = self.job else { return GridWork::new() };
         let slot = &mut self.slots[index];
@@ -804,7 +949,8 @@ impl GridSchedule {
             return GridWork::new();
         }
         let count = slot.volume.cell_count();
-        let end = (slot.next + CELLS_PER_FRAME as u32).min(count);
+        let slice = frame.cells_per_frame.clamp(1, BATCH_CELLS) as u32;
+        let end = (slot.next + slice).min(count);
         let cells: Vec<[u32; 3]> = (slot.next..end).map(|cell| slot.volume.cell_at(cell)).collect();
         let publish = end == count;
         slot.next = end;
@@ -814,6 +960,8 @@ impl GridSchedule {
             }
             slot.published = true;
             slot.stale = false;
+            slot.relighting = false;
+            slot.baked = slot.volume;
             slot.next = 0;
             self.job = None;
         }
@@ -834,7 +982,9 @@ impl GridSchedule {
             .enumerate()
             .map(|(index, slot)| {
                 let origin = layout.origins.get(index).copied().filter(|_| slot.published);
-                volume_row(&slot.volume, origin, self.presence(index), leak_control)
+                // The published bake where it was baked; its fade and multiplier as declared now.
+                let shown = IrradianceVolume { min: slot.baked.min, max: slot.baked.max, cells: slot.baked.cells, ..slot.volume };
+                volume_row(&shown, origin, self.presence(index), leak_control)
             })
             .collect()
     }
@@ -1076,7 +1226,15 @@ impl IrradianceMaps {
             self.generation += 1;
         }
         self.volumes = volumes;
-        let frame = GridFrame { volumes: &self.volumes, lit_by, frame_index: prep.frame_index, cadence: prep.quality.rebake_cadence, settle: prep.settle };
+        let frame = GridFrame {
+            volumes: &self.volumes,
+            lit_by,
+            frame_index: prep.frame_index,
+            cadence: prep.quality.rebake_cadence,
+            settle: prep.settle,
+            cells_per_frame: usize::from(prep.quality.irradiance_cells_per_frame),
+            relight: prep.quality.irradiance_relight,
+        };
         self.work = self.schedule.advance(&frame);
         self.rows = self.schedule.rows(&self.layout, prep.quality.irradiance_leak_control);
         Ok(self.work.clone())
@@ -1442,8 +1600,34 @@ mod tests {
         assert_eq!(blend(&[probe], [0.0; 3]), (vec![0.0], 1.0), "a reflection probe's row lends no diffuse light");
     }
 
+    /// AAA review WP-12: a declared probe without a volume gets one over its box, a declared volume
+    /// without a probe gets one, the camera gets its own volume where no room holds it, and the
+    /// same camera always gets the same box.
+    #[test]
+    fn auto_rooms_pair_declared_rooms_and_follow_the_camera_outside_them() {
+        let classroom = ReflectionProbe::new([0.0, 0.0, 0.0], [8.0, 3.0, 6.0]);
+        let corridor = IrradianceVolume::new([8.0, 0.0, 0.0], [10.0, 3.0, 20.0]);
+        let (volumes, probes) = auto_rooms(&[corridor], &[classroom], [4.0, 1.6, 3.0], AutoRooms::ALL);
+        assert_eq!(volumes.len(), 2, "the corridor, then the classroom's own; the camera is in a room");
+        assert_eq!((volumes[1].min, volumes[1].max), (classroom.min, classroom.max));
+        assert_eq!(probes.len(), 2);
+        assert_eq!((probes[1].min, probes[1].max, probes[1].capture), (corridor.min, corridor.max, [9.0, 1.6, 10.0]));
+        let (paired_only, _) = auto_rooms(&[corridor], &[classroom], [40.0, 1.6, 3.0], AutoRooms::PAIRED);
+        assert_eq!(paired_only.len(), 2, "no camera volume without `camera`");
+        let (outside, _) = auto_rooms(&[corridor], &[classroom], [40.0, 1.6, 3.0], AutoRooms::ALL);
+        assert_eq!(outside.len(), 3);
+        let own = outside[2];
+        assert_eq!((own.min, own.max, own.cells), ([28.0, -2.0, -12.0], [52.0, 6.0, 12.0], CAMERA_VOLUME_CELLS));
+        assert_eq!(camera_volume([41.0, 1.7, 3.5]), camera_volume([40.0, 1.6, 3.0]), "a step keeps the box");
+        assert!(contains(&camera_volume([43.9, 1.6, 3.0]), [43.9, 1.6, 3.0]));
+        let same_room = IrradianceVolume::new([0.5, 0.0, 0.0], [8.0, 3.0, 6.0]);
+        let (none_added, probes) = auto_rooms(&[same_room], &[classroom], [4.0, 1.6, 3.0], AutoRooms::ALL);
+        assert_eq!((none_added.len(), probes.len()), (1, 1), "a probe and a volume over one room pair");
+        assert_eq!(auto_rooms(&[], &[], [0.0; 3], AutoRooms::OFF), (Vec::new(), Vec::new()));
+    }
+
     fn frame(volumes: &[IrradianceVolume], frame_index: u64, lit_by: u64, settle: bool) -> GridFrame<'_> {
-        GridFrame { volumes, lit_by, frame_index, cadence: 1, settle }
+        GridFrame { volumes, lit_by, frame_index, cadence: 1, settle, cells_per_frame: CELLS_PER_FRAME, relight: false }
     }
 
     #[test]
@@ -1484,10 +1668,57 @@ mod tests {
         assert_eq!(settle.iter().filter(|batch| batch.publish).count(), 2);
         assert!(schedule.settled());
         assert!(schedule.advance(&frame(&volumes, 502, 3, true)).is_empty(), "and nothing after");
-        // A moved volume starts over.
-        let moved = [small, IrradianceVolume::new([0.0; 3], [3.0, 3.0, 3.0])];
-        schedule.advance(&frame(&moved, 503, 3, false));
+        // A moved volume (AAA review WP-12: the camera's own) is baked again at its new place
+        // while its last bake stays shown where it was baked; its neighbour is untouched. Flipped
+        // from "a moved volume starts over", which sent every volume back to the sky's light.
+        let moved_room = IrradianceVolume { min: [8.0, 0.0, 0.0], max: [16.0, 3.0, 8.0], ..room() };
+        let moved = [small, moved_room];
+        let work = schedule.advance(&frame(&moved, 503, 3, false));
+        assert!(schedule.published(0) && schedule.published(1), "both still shown");
+        assert_eq!(work.first().map(|batch| batch.slot), Some(1), "the moved one bakes");
+        let rows = schedule.rows(&layout, true);
+        assert_eq!(rows[1].min_blend[0], room().min[0], "shown where it was baked until its new bake publishes");
+        let mut frames = 504;
+        while !schedule.settled() {
+            schedule.advance(&frame(&moved, frames, 3, false));
+            frames += 1;
+        }
+        assert_eq!(schedule.rows(&layout, true)[1].min_blend[0], 8.0, "then at its new place");
+        // A volume added starts every slot over.
+        schedule.advance(&frame(&[small, moved_room, room()], frames, 3, false));
         assert!(!schedule.published(0) && !schedule.published(1));
+    }
+
+    /// Dynamic probe GI (AAA review WP-12): with relight on, current volumes are baked again one
+    /// after another for as long as they are held, at the quality's slice, while the schedule
+    /// still reads as settled (a capture compared with Live does not wait forever).
+    #[test]
+    fn relight_bakes_current_volumes_again_round_robin_at_the_quality_slice() {
+        let small = IrradianceVolume::new([0.0; 3], [2.0, 1.0, 2.0]);
+        let volumes = [small, room()];
+        let relit = |index: u64| GridFrame { cells_per_frame: 4, relight: true, ..frame(&volumes, index, 1, false) };
+        let mut schedule = GridSchedule::default();
+        let first = schedule.advance(&relit(0));
+        assert_eq!(first[0].cells.len(), 4, "the quality's slice");
+        let mut index = 1;
+        while !schedule.settled() {
+            schedule.advance(&relit(index));
+            index += 1;
+        }
+        assert_eq!(index, 1 + u64::from(room().cell_count()).div_ceil(4));
+        let mut relit_slots = Vec::new();
+        for _ in 0..(small.cell_count() + room().cell_count()) {
+            let work = schedule.advance(&relit(index));
+            index += 1;
+            relit_slots.extend(work.iter().filter(|batch| batch.publish).map(|batch| batch.slot));
+            assert!(schedule.settled(), "a relight never reads as unsettled");
+            assert!(schedule.published(0) && schedule.published(1));
+        }
+        assert_eq!(&relit_slots[..2], [0, 1], "round robin");
+        let still = GridFrame { relight: false, ..relit(index) };
+        let mut idle = GridSchedule::default();
+        idle.advance(&GridFrame { settle: true, ..still });
+        assert!(idle.advance(&still).is_empty(), "without relight a current bake is left alone");
     }
 
     #[test]

@@ -77,7 +77,15 @@
       "SpotLight::new",
       "Material::emissive",
       ".with_emissive",
-      ".with_emissive_texture"
+      ".with_emissive_texture",
+      "units::lux",
+      "units::candela",
+      "units::lumens",
+      "units::spot_lumens",
+      "units::ambient_lux",
+      "units::nits",
+      "units::ev_from_ev100",
+      "units::kelvin"
     ]
   },
   "instanceGroups": {
@@ -257,7 +265,8 @@
     "stemMaxChars": 200
   },
   "runtimeRender": {
-    "keys": ["textures", "assetIssues"],
+    "keys": ["textures", "assetIssues", "look", "exposure"],
+    "exposureWarnings": ["ev-min-raised-with-doorway-adaptation", "doorway-adaptation-under-manual"],
     "families": ["bc", "astc", "etc2", "rgba8", "source"],
     "issueCodes": ["texture-uncompressed", "texture-family-refused", "tangents-runtime"]
   },
