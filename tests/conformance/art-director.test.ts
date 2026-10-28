@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
-import { blindCompare, tasteVeto } from "../../src/harness-seed/loop/judge.ts";
+import { ARTEFACT_MARKER, blindCompare, filterArtefactClasses, tasteVeto } from "../../src/harness-seed/loop/judge.ts";
 import { renderBrief } from "../../src/harness-seed/loop/library.ts";
 import { createGoals, GoalStatus } from "../../src/harness-seed/loop/director/goals.ts";
 import { createScope } from "../../src/harness-seed/loop/scope.ts";
@@ -429,7 +429,11 @@ describe("the art director's question (loop/ship-review.ts)", () => {
       parts: PARTS,
     });
     const request = recorder.paramsOf("engine.complete")[0] as Record<string, any>;
-    assert.equal(request.systemPrompt, await readFile(path.join(SEED, "judge", "ship-review.md"), "utf8"));
+    // Flipped (Bodycam look blockers): the rubric now carries the shared artefact classes, expanded
+    // in place of its marker as the taste judges' are.
+    const rubric = await readFile(path.join(SEED, "judge", "ship-review.md"), "utf8");
+    const classes = (await readFile(path.join(SEED, "judge", "artefact-classes.md"), "utf8")).replace(/\n+$/, "");
+    assert.equal(request.systemPrompt, rubric.replaceAll(ARTEFACT_MARKER, filterArtefactClasses(classes, [])));
   });
 
   it("AD-1c. the art director reads the HUD's coverage against the kind's budget, as the taste judges do", async () => {

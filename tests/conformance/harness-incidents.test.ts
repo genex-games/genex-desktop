@@ -17885,6 +17885,15 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
     "arena.no-haze-planes",
   ];
   const SEED = path.join(process.cwd(), "src", "harness-seed");
+  /** The art pass a photoreal brief's plan carries (look-bar.ts). */
+  const SCHOOL_ART = JSON.stringify(
+    [
+      ["hero", "gloved hands and pistol", "genex-model"],
+      ["mid", "peeling-paint windows with sunburst grilles", "genex-model"],
+      ["scatter", "plaster debris and dust", "scan"],
+      ["sky", "hard sun through dusty air", "blender"],
+    ].map(([tier, asset, source]) => ({ area: "the corridor", tier, asset, source })),
+  );
   /** A three.js recipe's Rust port: `fps.hands-in-frame` is `rust.fps-hands-in-frame` (no id holds another's). */
   const rustPortOf = (id: string) => `rust.${id.replace(".", "-")}`;
 
@@ -17949,6 +17958,7 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
       summary: "A playable bodycam shooter in an abandoned school wing.",
       kind: "first-person",
       start: '["Enter"]',
+      art: SCHOOL_ART,
       workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
     });
     assert.match(answer, /CRAFT FOR A FIRST-PERSON GAME/);
@@ -17961,6 +17971,7 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
       summary: "A playable bodycam shooter in an abandoned school wing.",
       kind: "first-person",
       start: '["Enter"]',
+      art: SCHOOL_ART,
       workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
     });
     assert.doesNotMatch(again, /CRAFT FOR/);
@@ -18179,5 +18190,196 @@ describe("Bodycam rerun: judges that could not drive the game", () => {
     const none = compilePlan({ summary: "a chess board", workers: one, kind: "static-board", start: "none" });
     assert.deepEqual(none.plan?.game?.start, { keys: [] }, "a game that boots into play says so");
     assert.equal(compilePlan({ summary: "a sketch", workers: one }).error, undefined, "no kind, nothing to drive");
+  });
+});
+
+describe("Bodycam rerun: greybox nobody had to replace", () => {
+  // The rerun's judges named [primitive] about nineteen times and none of it held anything back:
+  // the owner's Live window showed stick trees, untextured poles, a box car, cube snow, a black
+  // viewmodel, crushed shadows and a bright blue sky while it snowed.
+  const yard: Run = {
+    runId: "bc-yard",
+    project: "body-cam",
+    goal: "Make the photorealistic bodycam fps shooter in a snowy post-soviet yard.",
+    reference: { name: "a photoreal bodycam shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const facet = { id: "yard-look", title: "The yard", intent: "a snowy panel-block yard at dusk" };
+  const sides = {
+    run: yard,
+    challenger: { state: { phase: "playing" } },
+    incumbentEvidence: { state: { phase: "playing" } },
+  };
+  /** A taste judge that answers this JSON. */
+  const judging = (answer: Record<string, unknown>) =>
+    ctxRecorder({ handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(answer) } }) } });
+  const askedOf = (recorder: ReturnType<typeof judging>): string => {
+    const messages = recorder.paramsOf("engine.complete")[0]?.messages;
+    return Array.isArray(messages) ? String(messages[0]?.content) : "";
+  };
+  const satisfiedWith = (extra: Record<string, unknown>) => ({
+    pick: "A",
+    satisfied: true,
+    regression: null,
+    newCheck: null,
+    defects: [],
+    polish: [],
+    scale: "polish",
+    reason: "the yard reads",
+    ...extra,
+  });
+
+  it("BC5a. a taste judge called the yard satisfied while naming [primitive]: a look blocker holds the facet open", async () => {
+    const primitive = "[primitive] the car by the gate is a grey box with no wheels — eye:spawn";
+    const taste = await tasteVeto(judging(satisfiedWith({ defects: [primitive] })).ctx, {
+      ...sides,
+      facet,
+      random: () => 0.1,
+    });
+    assert.equal(taste.satisfied, false, "never satisfied while a look blocker is on screen");
+    assert.deepEqual(taste.lookBlockers, [primitive]);
+    const clean = await tasteVeto(judging(satisfiedWith({ defects: ["the snow could fall slower"] })).ctx, {
+      ...sides,
+      facet,
+      random: () => 0.1,
+    });
+    assert.equal(clean.satisfied, true, "a defect that is no look blocker leaves the judge's word standing");
+  });
+
+  it("BC5b. crushed shadows filed as a polish nit: a look blocker in polish is a defect and still holds the facet", async () => {
+    const crushed = "[crushed-shadow] the stairwell's shadows are pure black — eye:here";
+    const taste = await tasteVeto(judging(satisfiedWith({ polish: [crushed, "a stray stripe on the curb"] })).ctx, {
+      ...sides,
+      facet,
+      random: () => 0.1,
+    });
+    assert.equal(taste.satisfied, false);
+    assert.ok(taste.defects.includes(crushed), "the builder receives it as work");
+    assert.ok(!taste.polish.includes(crushed), "and not as an optional nit");
+    assert.deepEqual(taste.polish, ["a stray stripe on the curb"]);
+  });
+
+  it("BC5c. a finishing worker ended on a preferred polish with a black viewmodel on screen: the finish is not in", async () => {
+    const { finishDone } = await import("../../src/harness-seed/loop/facet/stage.ts");
+    const done = { won: true, summary: { identityAllPass: true } };
+    assert.equal(
+      finishDone({ ...done, lookBlockers: ["[dark-viewmodel] the rifle and glove are a black shape — default"] }),
+      null,
+    );
+    assert.match(String(finishDone({ ...done, lookBlockers: [] })), /finish is in/);
+  });
+
+  it("BC5d. the ship review let a bright blue sky over falling snow through as visible: a look blocker is a blocker and the build does not ship", async () => {
+    const { readShipReview } = await import("../../src/harness-seed/loop/ship-review.ts");
+    const review = readShipReview(
+      {
+        ship: true,
+        defects: [
+          {
+            what: "[sky-contradicts] a bright blue sky while it snows",
+            camera: "default",
+            part: null,
+            severity: "visible",
+          },
+          { what: "the HUD timer is a little small", camera: "default", part: null, severity: "nit" },
+        ],
+        doNotRegress: [],
+        reason: "close",
+      },
+      [],
+    );
+    assert.deepEqual(
+      review.defects.map((defect) => defect.severity),
+      ["blocker", "nit"],
+    );
+    assert.equal(review.ship, false, "a blocker on screen is no ship");
+  });
+
+  it("BC5e. no judge asked whether a frame would pass as a shipped game's: each scene camera is held to the reference, and one that would not is a blocker", async () => {
+    const still = { mimeType: "image/png", data: "iVBORw0KGgo=", label: "bodycam still" };
+    const withStills = { ...yard, reference: { ...yard.reference, frames: [still] } } as Run;
+    const recorder = judging(
+      satisfiedWith({
+        shipped: [
+          { camera: "eye:spawn", passes: false, why: "stick trees and a box car" },
+          { camera: "default", passes: true, why: "" },
+        ],
+      }),
+    );
+    const taste = await tasteVeto(recorder.ctx, { ...sides, run: withStills, facet, random: () => 0.1 });
+    assert.match(askedOf(recorder), /SHIPPED LOOK: .*next to the REFERENCE stills/);
+    assert.deepEqual(taste.lookBlockers, [
+      "[not-shipped] would not pass as a shipped game's screenshot: stick trees and a box car — eye:spawn",
+    ]);
+    assert.equal(taste.satisfied, false);
+    // A run that sets no visual bar is not asked, and an answer it was not asked adds nothing.
+    const plain = { ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run;
+    const unasked = judging(satisfiedWith({ shipped: [{ camera: "eye:spawn", passes: false, why: "flat" }] }));
+    const chess = await tasteVeto(unasked.ctx, { ...sides, run: plain, facet, random: () => 0.1 });
+    assert.doesNotMatch(askedOf(unasked), /SHIPPED LOOK/);
+    assert.equal(chess.satisfied, true);
+  });
+
+  it("BC5f. the director greyboxed a photoreal yard with no asset plan: the plan needs its art pass, sourced per tier, and every builder reads it", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { artPassLines } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");
+    const integration = await tmpDir("art-pass-integration-");
+    const seed = path.join(process.cwd(), "src", "harness-seed");
+    const ctx = {
+      threadId: "t1",
+      cancelled: false,
+      workspace: seed,
+      setStatus: () => {},
+      notify: () => {},
+      call: async () => null,
+    };
+    const loopRun = fakeLoopRun(fakeHost(), {
+      ctx,
+      integrationWorktree: integration,
+      run: { ...yard, engine: "claude" },
+    });
+    const workers = JSON.stringify([{ id: "yard-look", done: ["the yard reads as a real snowy courtyard"] }]);
+    const summary = "A photoreal bodycam yard.";
+    const asset = (tier: string, source: string, extra: Record<string, string> = {}) => ({
+      area: "the yard",
+      tier,
+      asset: `${tier} asset`,
+      source,
+      ...extra,
+    });
+    const full = [
+      asset("hero", "genex-model"),
+      asset("mid", "genex-model"),
+      asset("scatter", "scan"),
+      asset("sky", "blender"),
+    ];
+    assert.match(String(await loopRun.setPlan({ summary, workers })), /plan: the ask sets a visual bar/);
+    assert.match(String(await loopRun.setPlan({ summary, workers, art: "none" })), /needs its art pass/);
+    const noSky = JSON.stringify(full.slice(0, 3));
+    assert.match(String(await loopRun.setPlan({ summary, workers, art: noSky })), /art lists no sky asset/);
+    const boxCar = JSON.stringify([...full, asset("mid", "code")]);
+    assert.match(
+      String(await loopRun.setPlan({ summary, workers, art: boxCar })),
+      /code-built geometry is the last resort/,
+    );
+    assert.equal(loopRun.state.plan, null, "nothing was planned while refused");
+    const kept = await loopRun.setPlan({ summary, workers, art: JSON.stringify(full) });
+    assert.doesNotMatch(String(kept), /^plan:/);
+    assert.equal((loopRun.run.art as { generations: number }).generations, 2, "two Genex generations reserved");
+    // A re-plan keeps the pass it does not repeat.
+    await loopRun.setPlan({ summary, workers });
+    assert.equal((loopRun.run.art as { assets: unknown[] }).assets.length, 4);
+    const brief = artPassLines(loopRun.run);
+    assert.match(brief, /the yard · hero: hero asset ← genex-model/);
+    assert.match(brief, /2 Genex generations are reserved/);
+    assert.match(brief, /Greybox is a step inside a round, never a finish/);
+    // A run that sets no visual bar plans as it did.
+    const chess = fakeLoopRun(fakeHost(), {
+      ctx,
+      integrationWorktree: await tmpDir("art-pass-chess-"),
+      run: { ...yard, goal: "a chess board", reference: { name: "", shots: [] }, engine: "claude" },
+    });
+    assert.doesNotMatch(String(await chess.setPlan({ summary: "Chess.", workers })), /^plan:/);
+    assert.equal(artPassLines(chess.run), "");
   });
 });
