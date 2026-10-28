@@ -4,10 +4,11 @@
  * is dropped (the copy starts its own), and once whole it moves to a free folder of its own and is
  * adopted as a game without trusting the Claude settings or hooks it came with. Nothing of the copy runs while it is made: no hooks, no
  * content filters, and links come out as plain files. Files the game keeps in Git LFS (its models
- * and textures) come next, by the host's git-lfs, from that same repository only. Then its
- * packages are installed the guarded way (no package's scripts, nothing of the copy running while
- * the registry is open), the folder becomes a game, and it is built once so it opens playing.
- * Each step is told as it starts, and the models as they download.
+ * and textures) come next over https from that same repository, each checked against its pointer,
+ * with no git-lfs needed (`lfs.ts`). Then its packages are installed the guarded way (no
+ * package's scripts, nothing of the copy running while the registry is open), the folder becomes a
+ * game, and it is built once so it opens playing. Each step is told as it starts, and the models
+ * as they download; a remix that fails says why in the log.
  */
 import { type ChildProcess, execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -15,9 +16,12 @@ import { mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from "node:fs/
 import path from "node:path";
 import { promisify } from "node:util";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { isPlaySlug, type RemixProgress, RemixStep, remixTitle } from "../../shared/play.ts";
+import { errorMessage } from "../../shared/errors.ts";
+import { isPlaySlug, PlayRemixRefusal, type RemixProgress, RemixStep, remixTitle } from "../../shared/play.ts";
 import { HOST_GIT_CONFIG, hostGitEnv } from "../../substrate/git-policy.ts";
+import { ENGINE_PROJECT_DEPTH, sourceHoldsGame } from "./game-source.ts";
 import type { PlayWorld } from "./gallery.ts";
+import { downloadLfsFiles, type LfsDownloadDeps } from "./lfs.ts";
 
 const exec = promisify(execFile);
 
@@ -26,12 +30,14 @@ const exec = promisify(execFile);
  * up. A download that keeps moving may take as long as it takes: a big game on a slow line too.
  */
 export const DOWNLOAD_STALL_MS = MINUTE_MS;
-/** The longest a git step that downloads nothing (listing the LFS files, its version) may take. */
-const GIT_LOCAL_TIMEOUT_MS = MINUTE_MS;
 /** How many numbered folders are tried before giving up on a free name. */
 const MAX_FOLDER_TRIES = 50;
 /** The most a clone may print before it is cut off. */
 const CLONE_OUTPUT_MAX_BYTES = 1024 * 1024;
+/** The most git may print when it says which files are in Git LFS: a line per pointer. */
+const CHECK_ATTR_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
+/** How long git may take to say which files are in Git LFS. */
+const CHECK_ATTR_TIMEOUT_MS = MINUTE_MS;
 /** The only host a remix clones from. */
 const GIT_HOST = "git.genex.games";
 /**
@@ -42,39 +48,26 @@ const STAGING_PREFIX = ".remix-";
 const STAGING_NAME = /^\.remix-[a-z0-9][a-z0-9-]*-[0-9a-f]{6}$/;
 /** Random bytes in a hidden folder's name: six hex digits. */
 const STAGING_RANDOM_BYTES = 3;
-/** How often the models' download is told while git-lfs works. */
-const LFS_PROGRESS_TICK_MS = 250;
-/** The file in the clone's own `.git` that git-lfs writes its progress to (`GIT_LFS_PROGRESS`). */
-const LFS_PROGRESS_FILE = "genex-lfs-progress";
-/**
- * The host's git-lfs as the LFS filter, for the pull alone. The host's git runs without the
- * person's own git config, where `git lfs install` put it, and without it git-lfs downloads the
- * files and then leaves their pointers in their place ("Git LFS is not installed").
- */
-const LFS_FILTER = [
-  "-c",
-  "filter.lfs.process=git-lfs filter-process",
-  "-c",
-  "filter.lfs.smudge=git-lfs smudge -- %f",
-  "-c",
-  "filter.lfs.clean=git-lfs clean -- %f",
-  "-c",
-  "filter.lfs.required=true",
-] as const;
-/** A `git lfs ls-files` line: the object id, `*` when the file is there or `-` for a pointer, the path. */
-const LFS_LISTED = /^\S+ ([*-]) (.+)$/;
-/** A git-lfs progress line: `download <n>/<of> <bytes>/<size> <name>`. */
-const LFS_PROGRESS_LINE = /^download \d+\/\d+ (\d+)\/\d+ (.+)$/;
+/** The most entries the look for a game's marks reads. */
+const ENGINE_LOOK_ENTRIES_MAX = 5_000;
 
 const MESSAGE = {
   NotRemixable: "This game can’t be remixed",
-  NeedsLfs:
-    "This game keeps its files in Git LFS. Install git-lfs on this Mac (brew install git-lfs), then remix it again.",
   NoFolder: "There is no free folder for the copy",
   Underway: "Another remix is being made",
-  ModelsMissing: (files: number) => `${files} of this game's files didn't download from Git LFS`,
   Stalled: "The download stopped moving",
+  NoProject: "The game's source holds no game: its creator hasn't shared its project",
 } as const;
+
+/** A remix refused before anything was made, with the code the renderer says it by. */
+export class RemixRefusedError extends Error {
+  readonly code: PlayRemixRefusal;
+  constructor(code: PlayRemixRefusal, message: string) {
+    super(message);
+    this.name = "RemixRefusedError";
+    this.code = code;
+  }
+}
 
 /**
  * Settings a clone runs under, after the host's own: https only (no `ext::` or `file://`
@@ -134,39 +127,127 @@ export function cloneArgs(url: string, dest: string): string[] {
   ];
 }
 
-/**
- * The git command line that brings a clone's Git LFS files, run in the clone: from the repository it
- * was cloned from (`lfs.url` set here outranks any `.lfsconfig` in the copy), https only, no hooks.
- */
-export function lfsPullArgs(url: string): string[] {
-  return [
-    ...HOST_GIT_CONFIG,
-    "-c",
-    "protocol.allow=never",
-    "-c",
-    "protocol.https.allow=always",
-    "-c",
-    `lfs.url=${url}/info/lfs`,
-    ...LFS_FILTER,
-    "lfs",
-    "pull",
-  ];
-}
-
-/** The files git-lfs's listing says are still pointers (`-`), not the files themselves (`*`). */
-export function lfsPointers(listing: string): string[] {
-  return listing.split("\n").flatMap((line) => {
-    const match = LFS_LISTED.exec(line.trim());
-    return match?.[1] === "-" && match[2] ? [match[2]] : [];
-  });
-}
-
 /** Whether a clone keeps files in Git LFS: a line of its `.gitattributes` (not a comment) names the lfs filter. */
 export async function tracksLfs(dir: string): Promise<boolean> {
   const attributes = await readFile(path.join(dir, ".gitattributes"), "utf8").catch(() => "");
   return attributes
     .split("\n")
     .some((line) => !line.trimStart().startsWith("#") && line.split(/\s+/).includes("filter=lfs"));
+}
+
+/**
+ * Which of `files` (paths in the clone at `dir`) the clone's attributes route through Git LFS
+ * (`filter=lfs`), as git-lfs reads them: the host's git answers from the clone's own
+ * `.gitattributes` files, nested ones included, never from the person's git config.
+ */
+export function lfsRoutedFiles(dir: string, files: string[]): Promise<Set<string>> {
+  if (files.length === 0) return Promise.resolve(new Set());
+  // Git names paths with `/` on every system; the answer is mapped back to the caller's own.
+  const byGitPath = new Map(files.map((file) => [file.split(path.sep).join("/"), file]));
+  const options = {
+    cwd: dir,
+    env: hostGitEnv(),
+    windowsHide: true,
+    maxBuffer: CHECK_ATTR_OUTPUT_MAX_BYTES,
+    timeout: CHECK_ATTR_TIMEOUT_MS,
+    encoding: "utf8",
+  } as const;
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      "git",
+      [...HOST_GIT_CONFIG, "check-attr", "-z", "--stdin", "filter"],
+      options,
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(routedIn(stdout, byGitPath));
+      },
+    );
+    // Git that exits before reading every path (no repository, a crash) closes its input: the write's
+    // EPIPE is this call's failure, never an uncaught error.
+    child.stdin?.on("error", reject);
+    child.stdin?.end(`${[...byGitPath.keys()].join("\0")}\0`);
+  });
+}
+
+/** The files a `git check-attr -z filter` listing (path, attribute, value, each NUL-ended) names `lfs`. */
+function routedIn(listing: string, byGitPath: Map<string, string>): Set<string> {
+  const fields = listing.split("\0");
+  const routed = new Set<string>();
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const file = byGitPath.get(fields[index] ?? "");
+    if (file && fields[index + 2] === "lfs") routed.add(file);
+  }
+  return routed;
+}
+
+/** Folders never looked in for a game's marks: hidden ones and installed packages. */
+const passedOver = (name: string): boolean => name.startsWith(".") || name === "node_modules";
+
+/** One folder's files (relative, `/` between parts) and the folders under it to look in next; links are never followed. */
+async function folderEntries(dir: string, rel: string): Promise<{ files: string[]; folders: string[]; read: number }> {
+  const entries = await readdir(path.join(dir, rel), { withFileTypes: true }).catch(() => []);
+  const at = (name: string) => (rel ? `${rel}/${name}` : name);
+  return {
+    files: entries.filter((entry) => entry.isFile()).map((entry) => at(entry.name)),
+    folders: entries.filter((entry) => entry.isDirectory() && !passedOver(entry.name)).map((entry) => at(entry.name)),
+    read: entries.length,
+  };
+}
+
+/**
+ * The files of `dir` a few folders deep (`ENGINE_PROJECT_DEPTH`), `/` between parts: enough to
+ * find a game's marks. The look reads a bounded number of entries.
+ */
+async function topFiles(dir: string): Promise<string[]> {
+  const files: string[] = [];
+  let seen = 0;
+  let level: string[] = [""];
+  for (let depth = 0; depth <= ENGINE_PROJECT_DEPTH && level.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const rel of level) {
+      const found = await folderEntries(dir, rel);
+      seen += found.read;
+      if (seen > ENGINE_LOOK_ENTRIES_MAX) return files;
+      files.push(...found.files);
+      next.push(...found.folders);
+    }
+    level = next;
+  }
+  return files;
+}
+
+/**
+ * Whether a copy holds a game (`game-source.ts`): a Genex game's record, a page at its root,
+ * packages that build it, or an engine's project. Such a source with none of these is what a game
+ * whose creator never shared its project has on Genex.
+ */
+export async function holdsGame(dir: string): Promise<boolean> {
+  const files = await topFiles(dir);
+  const packageJson = files.includes("package.json")
+    ? await readFile(path.join(dir, "package.json"), "utf8").catch(() => null)
+    : null;
+  return sourceHoldsGame(files, packageJson);
+}
+
+/**
+ * Make the copy's `studio.json` the remix's own: what kind of game it is stays (its scaffold, engine,
+ * shape), under the remix's title and its own date, without the author's name for it; adoption keeps
+ * a record that is there, so the remix would otherwise list under the author's title. A record that
+ * is not a JSON object is left as it is.
+ */
+async function ownRecord(dir: string, title: string): Promise<void> {
+  const file = path.join(dir, "studio.json");
+  const text = await readFile(file, "utf8").catch(() => null);
+  if (text === null) return;
+  let record: unknown;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (typeof record !== "object" || record === null || Array.isArray(record)) return;
+  const { name: _name, title: _title, createdAt: _createdAt, ...kind } = record as Record<string, unknown>;
+  await writeFile(file, `${JSON.stringify({ ...kind, title, createdAt: new Date().toISOString() }, null, 2)}\n`);
 }
 
 /** Hears a clone's models download: bytes so far, and their total when it is known. */
@@ -186,6 +267,8 @@ export interface RemixDeps {
   build(name: string): Promise<void>;
   /** Hear each step as it starts, and the models as they download. */
   progress(progress: Omit<RemixProgress, "slug">): void;
+  /** Write a line to the app's log: why a remix failed, which the person's toast does not say. */
+  log(message: string): void;
 }
 
 /** Whether an error says the folder is there already. */
@@ -227,6 +310,9 @@ export async function remixGame(world: PlayWorld, deps: RemixDeps): Promise<stri
   underway = true;
   try {
     return await makeRemix(world, source, deps);
+  } catch (error) {
+    deps.log(`remix of ${world.slug} failed: ${errorMessage(error)}`);
+    throw error;
   } finally {
     underway = false;
   }
@@ -249,6 +335,8 @@ async function makeRemix(world: PlayWorld, source: string, deps: RemixDeps): Pro
     await deps.clone(source, work, (done, total) => step(RemixStep.Models, done, total));
     // The copy starts its own history; the author's stays theirs.
     await rm(path.join(work, ".git"), { recursive: true, force: true });
+    if (!(await holdsGame(work))) throw new RemixRefusedError(PlayRemixRefusal.NoProject, MESSAGE.NoProject);
+    await ownRecord(work, remixTitle(world.title));
     step(RemixStep.Packages);
     await deps.install(work).catch(() => {});
     dest = await claimFolder(root, world.slug, (dir) => moveInto(work, dir));
@@ -282,8 +370,6 @@ async function moveInto(work: string, dir: string): Promise<void> {
 
 /** How the host runs git for a remix: its policy's environment and bounded output. */
 const GIT_OUTPUT = { windowsHide: true, maxBuffer: CLONE_OUTPUT_MAX_BYTES } as const;
-/** A git step that downloads nothing, under a deadline. */
-const GIT_LOCAL = { ...GIT_OUTPUT, timeout: GIT_LOCAL_TIMEOUT_MS } as const;
 
 /** The timers a stall is measured with. */
 export interface StallClock {
@@ -341,60 +427,26 @@ const onStderr = (moved: () => void, child: ChildProcess) => {
 };
 
 /**
- * The host's git clone under the host's git policy, then its Git LFS files if it has any. Each
- * download may take as long as it keeps moving ({@link DOWNLOAD_STALL_MS}).
+ * The host's git clone under the host's git policy, then its Git LFS files over https if it has
+ * any, with no git-lfs needed. Each download may take as long as it keeps moving
+ * ({@link DOWNLOAD_STALL_MS}).
  */
 export async function gitClone(
   url: string,
   dest: string,
   models: ModelsProgress = () => {},
   clock: StallClock = TIMERS,
+  fetch: LfsDownloadDeps["fetch"] = globalThis.fetch,
 ): Promise<void> {
   if (!isRemixSource(url)) throw new Error(MESSAGE.NotRemixable);
   await download(cloneArgs(url, dest), { env: hostGitEnv({ GIT_LFS_SKIP_SMUDGE: "1" }) }, clock, onStderr);
   if (!(await tracksLfs(dest))) return;
-  const lfs = await exec("git", ["lfs", "version"], { ...GIT_LOCAL, env: hostGitEnv() }).catch(() => null);
-  if (!lfs) throw new Error(MESSAGE.NeedsLfs);
-  const total = await lfsTotal(dest);
-  models(0, total);
-  const file = path.join(dest, ".git", LFS_PROGRESS_FILE);
-  let done = 0;
-  let seen = 0;
-  // A read still under way when the pull ends tells nothing: the next step has begun.
-  let pulled = false;
-  const tell = async (moved: () => void) => {
-    const progress = await readFile(file, "utf8").catch(() => "");
-    if (pulled) return;
-    // Any new line moves the download along: a file's bytes, or one checked out.
-    if (progress.length !== seen) moved();
-    seen = progress.length;
-    const now = lfsDownloaded(progress);
-    if (now === done) return;
-    done = now;
-    models(done, total);
-  };
-  await download(
-    lfsPullArgs(url),
-    { cwd: dest, env: hostGitEnv({ GIT_LFS_PROGRESS: file }) },
-    clock,
-    (moved, child) => {
-      const ticker = setInterval(() => void tell(moved), LFS_PROGRESS_TICK_MS);
-      const unwatch = onStderr(moved, child);
-      return () => {
-        pulled = true;
-        clearInterval(ticker);
-        unwatch();
-      };
-    },
-  );
-  const listed = await exec("git", [...HOST_GIT_CONFIG, "lfs", "ls-files"], {
-    ...GIT_LOCAL,
-    cwd: dest,
-    env: hostGitEnv(),
+  await downloadLfsFiles(dest, url, {
+    fetch,
+    models,
+    guard: () => stallGuard(clock),
+    routed: (files) => lfsRoutedFiles(dest, files),
   });
-  const pointers = lfsPointers(listed.stdout);
-  if (pointers.length) throw new Error(MESSAGE.ModelsMissing(pointers.length));
-  models(total ?? done, total);
 }
 
 /**
@@ -405,32 +457,6 @@ export async function gitClone(
 export async function gitCloneCode(url: string, dest: string, clock: StallClock = TIMERS): Promise<void> {
   if (!isRemixSource(url)) throw new Error(MESSAGE.NotRemixable);
   await download(cloneArgs(url, dest), { env: hostGitEnv({ GIT_LFS_SKIP_SMUDGE: "1" }) }, clock, onStderr);
-}
-
-/** The bytes a clone's Git LFS files come to, from git-lfs's own listing; null when it cannot say. */
-async function lfsTotal(dir: string): Promise<number | null> {
-  const listed = await exec("git", [...HOST_GIT_CONFIG, "lfs", "ls-files", "--json"], {
-    ...GIT_LOCAL,
-    cwd: dir,
-    env: hostGitEnv(),
-  }).catch(() => null);
-  if (!listed) return null;
-  try {
-    const files = (JSON.parse(listed.stdout) as { files?: Array<{ size?: unknown }> }).files ?? [];
-    return files.reduce((sum, file) => sum + (typeof file.size === "number" ? file.size : 0), 0);
-  } catch {
-    return null;
-  }
-}
-
-/** The bytes downloaded so far by git-lfs's progress lines: each file's latest count, summed. */
-export function lfsDownloaded(progress: string): number {
-  const latest = new Map<string, number>();
-  for (const line of progress.split("\n")) {
-    const match = LFS_PROGRESS_LINE.exec(line.trim());
-    if (match?.[1] && match[2]) latest.set(match[2], Number(match[1]));
-  }
-  return [...latest.values()].reduce((sum, bytes) => sum + bytes, 0);
 }
 
 /** A fixture launch's clone: a one-page stand-in game, so a remix can be followed with no network. */

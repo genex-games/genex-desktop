@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { setImmediate } from "node:timers/promises";
 import path from "node:path";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
@@ -14,6 +17,14 @@ import { LineCodec } from "../../src/shared/protocol.ts";
 import { openStudioLog } from "../../src/main/logs.ts";
 import { findGitBash } from "../../src/substrate/windows-sandbox.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+const SCRUB_PROCESS_TIMEOUT_MS = 5_000;
+
+test("log scrubbing handles long non-email words even when another address is present", async () => {
+  // A separate process gives the regex a generous ceiling without hanging the test runner.
+  const fixture = fileURLToPath(new URL("../fixtures/log-scrub-stress.mjs", import.meta.url));
+  await promisify(execFile)(process.execPath, [fixture], { timeout: SCRUB_PROCESS_TIMEOUT_MS, windowsHide: true });
+});
 
 test("warm feed snapshots do not reopen conversation records", async (t) => {
   const store = await EventStore.open(await tmpDir());

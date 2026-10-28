@@ -1,0 +1,1 @@
+{"type":"error","message":"Couldn't set model 'grok-9-does-not-exist': Invalid params: \"unknown model id\". Run 'grok models' to see available models.","cwd":"/Users/me/AI Games/space-shooter"}

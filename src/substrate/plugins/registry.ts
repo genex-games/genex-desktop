@@ -1,5 +1,5 @@
 import path from "node:path";
-import { watch as watchPath } from "node:fs";
+import { constants, watch as watchPath } from "node:fs";
 import { mkdir, readFile, readdir, cp, rm, stat } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { isPluginId } from "../../shared/plugin-id.ts";
@@ -37,9 +37,12 @@ import {
   PluginAccountState,
   PluginCapability,
   PluginChangeReason,
+  PluginFailure,
   PluginHealth,
+  PluginInstallProblem,
   PluginService,
   PluginSourceKind,
+  PluginStateRefusal,
   type CallCutOff,
   type PluginBinding,
   type PluginCatalogEntry,
@@ -68,6 +71,7 @@ import {
 import { atomicWriteJson } from "../fsx.ts";
 import {
   canonicalManifest,
+  inspectForInstall,
   inspectPackage,
   readPluginIcon,
   readSkillFile,
@@ -83,9 +87,14 @@ import type { PluginWorkspace } from "../../shared/project-workspace.ts";
 import { canonicalSourceRepo } from "./marketplace.ts";
 import { containedReal } from "../paths.ts";
 import { SessionCredentials } from "../session-credentials.ts";
-import { PluginCallCutOff, type PluginInvocation, PluginProcess } from "./process.ts";
+import { PluginCallCutOff, type PluginHostEnv, type PluginInvocation, PluginProcess } from "./process.ts";
 import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
+import { asInstallProblem, refusedAs } from "./install-problem.ts";
+import { CodedError } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { currentLocale, t } from "../../shared/i18n.ts";
+import type { Locale } from "../../shared/locale.ts";
+import { ManifestWords } from "./manifest-words.ts";
 
 interface Installed {
   rememberAccount?: boolean;
@@ -102,6 +111,18 @@ interface Installed {
   allowed?: string[];
   /** The person turned it off themselves: only they turn it on again (a sign-in leaves it off). */
   turnedOff?: boolean;
+}
+/** A plugin whose backend talks to another API, as another account (`PluginRegistry.hostAccount`). */
+export interface PluginHostAccount {
+  id: string;
+  /** The API's origin, named to the backend. */
+  api: string;
+  /** That API's own CA file (an absolute PEM path) the backend and its runs trust, when it has one. */
+  ca?: string;
+  /** That API's game host (a bare origin), where its games and drafts play, when it is not genex.games'. */
+  games?: string;
+  /** That account's token, or undefined while it is signed out. */
+  token(): Promise<string | undefined>;
 }
 /**
  * Who a package is, as far as its saved account and data are concerned. The id is only a name: two
@@ -182,41 +203,70 @@ const DEFAULT_ACCOUNT_ACTIONS: NonNullable<PluginManifest["account"]> = {
 type AccountActions = NonNullable<PluginManifest["account"]>;
 const accountActionsOf = (manifest: PluginManifest): AccountActions => manifest.account ?? DEFAULT_ACCOUNT_ACTIONS;
 
+/** What a plugin on another account's backend is told: that API, and its CA and game host when it has them. */
+const hostEnvOf = (account: PluginHostAccount): PluginHostEnv => ({
+  api: account.api,
+  ...(account.ca ? { ca: account.ca } : {}),
+  ...(account.games ? { games: account.games } : {}),
+});
+
+/**
+ * What a plugin's lifecycle and calls say. The words that are functions are the person's, in their
+ * language: refusals of what they did in Plugins (install, update, reload, watch, remove) and the
+ * question a local plugin's tool asks them. The plain strings stay English: a tool call's refusal
+ * is the model's to read, a service's is the plugin backend's, and an unknown id is a caller's bug.
+ */
 const MESSAGE = {
+  /** A backend on another account (a development stand) tried to save a sign-in of its own. */
+  HostAccount: "This plugin uses the development stand's account: sign in to the stand from Play's account instead",
   IdentityMismatch: "Plugin identity mismatch",
   OutsideStorage: "Plugin directory is outside Studio storage",
-  PackageMissing: "This plugin's package is missing; remove the plugin and install it again",
+  PackageMissing: () => t("This plugin's package is missing; remove the plugin and install it again"),
   InvalidProject: "Invalid project",
   Unavailable: (id: string) => `Plugin ${id} is unavailable`,
-  InstallFirst: "Install the plugin first",
+  InstallFirst: () => t("Install the plugin first"),
   UnknownPlugin: "Unknown plugin",
-  FolderGone: "The folder this plugin was loaded from is gone; load it again",
-  OriginUnknown: "Studio does not know where this plugin came from; load it again",
-  NeedsMarketplace: "Reinstalling this plugin needs the marketplace, which is unavailable in this session",
-  NotReinstalled: "The plugin was not reinstalled",
+  FolderGone: () => t("The folder this plugin was loaded from is gone; load it again"),
+  OriginUnknown: () => t("Studio does not know where this plugin came from; load it again"),
+  NeedsMarketplace: () => t("Reinstalling this plugin needs the marketplace, which is unavailable in this session"),
+  NotReinstalled: () => t("The plugin was not reinstalled"),
   ConfirmReplacement: (next: PluginManifest, previous: PluginManifest) =>
-    `${next.name} by ${next.publisher} would replace ${previous.name} by ${previous.publisher}, erasing its saved account and data; confirm "Replace and erase data" first`,
-  PermissionExpansion: "Permission expansion requires confirmation",
-  ServersChanged: "MCP servers changed; load the folder again to review",
-  StepsChanged:
-    "Its steps at Genex's moments changed (hooks, observers, locks, folders or harness tools), so it wasn't reloaded: load it again with Load local plugin… to review them",
-  WatchAgentFolder:
-    "Watch folder is off for a plugin in a folder agents write in (a game's folder, a worker's copy): load it again with Load local plugin… after each change instead",
+    t(
+      '{name} by {publisher} would replace {previousName} by {previousPublisher}, erasing its saved account and data; confirm "Replace and erase data" first',
+      {
+        name: next.name,
+        publisher: next.publisher,
+        previousName: previous.name,
+        previousPublisher: previous.publisher,
+      },
+    ),
+  PermissionExpansion: () => t("Permission expansion requires confirmation"),
+  ServersChanged: () => t("MCP servers changed; load the folder again to review"),
+  StepsChanged: () =>
+    t(
+      "Its steps at Genex's moments changed (hooks, observers, locks, folders or harness tools), so it wasn't reloaded: load it again with Load local plugin… to review them",
+    ),
+  WatchAgentFolder: () =>
+    t(
+      "Watch folder is off for a plugin in a folder agents write in (a game's folder, a worker's copy): load it again with Load local plugin… after each change instead",
+    ),
   NoHostServices: "Host services unavailable during installation",
-  NotInCatalog: "Plugin is not in the curated catalog",
-  InvalidCatalogArtifact: "Invalid catalog artifact",
-  DownloadFailed: (status: number) => `Plugin download failed (${status})`,
-  ArtifactTooLarge: "Plugin artifact exceeds 256 MiB",
-  DigestMismatch: "Plugin artifact digest mismatch",
-  CatalogMismatch: "Catalog manifest mismatch",
-  EnableFirst: "Enable the plugin first",
-  AccountPlugin: (name: string) => `${name} holds your account, so it can't be removed: turn it off instead`,
-  OnlyLocalWatch: "Only plugins loaded from a local folder can be watched",
+  NotInCatalog: () => t("Plugin is not in the curated catalog"),
+  InvalidCatalogArtifact: () => t("Invalid catalog artifact"),
+  DownloadFailed: (status: number) => t("Plugin download failed ({status})", { status }),
+  ArtifactTooLarge: () => t("Plugin artifact exceeds 256 MiB"),
+  DigestMismatch: () => t("Plugin artifact digest mismatch"),
+  CatalogMismatch: () => t("Catalog manifest mismatch"),
+  EnableFirst: () => t("Enable the plugin first"),
+  AccountPlugin: (name: string) =>
+    t("{name} holds your account, so it can't be removed: turn it off instead", { name }),
+  OnlyLocalWatch: () => t("Only plugins loaded from a local folder can be watched"),
   UnlockRequired: "Explicit account unlock required",
   ConnectionRequired: "Explicit account connection required",
   DisconnectRequired: "Explicit disconnect required",
   NativeUnavailable: "Native runtime service unavailable",
   CapabilityDenied: "Plugin service capability denied",
+  SandboxUnavailable: "Sandbox jobs unavailable",
   UnknownTool: "Unknown plugin tool",
   UnknownSkill: (id: string, name: string) => `Plugin ${id} has no skill named ${JSON.stringify(name)}`,
   UnknownJudge: (id: string, judge: string) => `Plugin ${id} has no judge named ${JSON.stringify(judge)}`,
@@ -227,14 +277,17 @@ const MESSAGE = {
   ConsentUnavailable: "This tool requires user consent, which is unavailable in this session",
   AskAgain: (plugin: string) =>
     `${plugin} was loaded again or turned off while you were asked, so the tool didn't run. Call it again to be asked about the plugin as it is now.`,
-  LocalAccess: (plugin: string) => `${plugin} was loaded from a folder on this Mac and runs with your access.`,
+  LocalAccess: (plugin: string, question: string) =>
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. {question}", { plugin, question }),
   LocalTool: (plugin: string, tool: string) =>
-    `${plugin} was loaded from a folder on this Mac and runs with your access. Let it run ${tool}?`,
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. Let it run {tool}?", { plugin, tool }),
   UnknownAction: "Unknown plugin action",
   UnknownPanel: "Unknown panel",
   InvalidSetting: "Invalid plugin setting",
   BundledId: (id: string, fromLocal: boolean) =>
-    `"${id}" is a plugin that ships with Studio; a package from ${fromLocal ? "a local folder" : "GitHub"} cannot use its id`,
+    fromLocal
+      ? t('"{id}" is a plugin that ships with Studio; a package from a local folder cannot use its id', { id })
+      : t('"{id}" is a plugin that ships with Studio; a package from GitHub cannot use its id', { id }),
 } as const;
 
 /** One call's card, as `#askFirst` asks it. */
@@ -264,13 +317,13 @@ function capabilityFor(method: string): PluginCapability | undefined {
     return PluginCapability.ProjectWrite;
   if (method.startsWith("jobs.") || method === PluginService.EventsEmit) return PluginCapability.Jobs;
   if (method === PluginService.ExportStage) return PluginCapability.Export;
-  if (ENGINE_SERVICES.has(method)) return PluginCapability.GameEngine;
+  if (ENGINE_SERVICES.has(method) || isSandboxService(method)) return PluginCapability.GameEngine;
   return undefined;
 }
 /**
  * The services that link a game to an engine project, snapshot the game before the plugin changes
  * it, make a game for a project, name the games whose run is going, and hand a setup task to the
- * game's chat (Do it for me) or say whether that can run here.
+ * game's chat (Do it for me), say whether that can run here, or whether the chat still runs it.
  */
 const ENGINE_SERVICES = new Set<string>([
   PluginService.GameEngineLink,
@@ -281,6 +334,7 @@ const ENGINE_SERVICES = new Set<string>([
   PluginService.GameEngineRuns,
   PluginService.GameEngineAssist,
   PluginService.GameEngineCanAssist,
+  PluginService.GameEngineAssisting,
 ]);
 /** The account services the registry answers from the session lease. */
 const CREDENTIAL_SERVICES = new Set<string>([
@@ -290,6 +344,13 @@ const CREDENTIAL_SERVICES = new Set<string>([
   PluginService.CredentialsClear,
 ]);
 const isCredentialService = (method: string) => CREDENTIAL_SERVICES.has(method);
+/** An engine plugin's long jobs in the studio's process sandbox, which the sandbox jobs answer. */
+const SANDBOX_SERVICES = new Set<string>([
+  PluginService.SandboxRun,
+  PluginService.SandboxResult,
+  PluginService.SandboxStop,
+]);
+const isSandboxService = (method: string) => SANDBOX_SERVICES.has(method);
 /** Services the native runtime host answers rather than the plugin services. */
 const isNativeService = (method: string) => method.startsWith("native.") || method.startsWith("runtime.");
 /** An invocation of a user action by one of the given names (never a tool, review or another action). */
@@ -468,18 +529,21 @@ function recordedOrigin(source: PluginSourceKind, directory: string): PluginSour
 }
 /** A catalog artifact's bytes, refused past {@link MAX_ARTIFACT_BYTES}. */
 async function downloadArtifact(url: string): Promise<Buffer> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(CATALOG_DOWNLOAD_TIMEOUT_MS), redirect: "error" });
-  if (!response.ok || !response.body) throw new Error(MESSAGE.DownloadFailed(response.status));
+  const response = await refusedAs(PluginInstallProblem.DownloadFailed, () =>
+    fetch(url, { signal: AbortSignal.timeout(CATALOG_DOWNLOAD_TIMEOUT_MS), redirect: "error" }),
+  );
+  if (!response.ok || !response.body)
+    throw new CodedError(PluginInstallProblem.DownloadFailed, MESSAGE.DownloadFailed(response.status));
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await refusedAs(PluginInstallProblem.DownloadFailed, () => reader.read());
     if (done) break;
     size += value.length;
     if (size > MAX_ARTIFACT_BYTES) {
       await reader.cancel();
-      throw new Error(MESSAGE.ArtifactTooLarge);
+      throw new CodedError(PluginInstallProblem.TooLarge, MESSAGE.ArtifactTooLarge());
     }
     chunks.push(value);
   }
@@ -498,7 +562,7 @@ function assertReplacementConfirmed(
   answer: { key: string; expires: number } | undefined,
 ) {
   const confirmed = answer?.key === identityKey(identity) && answer.expires >= Date.now();
-  if (!confirmed) throw new Error(MESSAGE.ConfirmReplacement(next, previous));
+  if (!confirmed) throw new CodedError(PluginInstallProblem.NeedsReview, MESSAGE.ConfirmReplacement(next, previous));
 }
 /** An update may not gain capabilities, servers or hosts the user was never shown. */
 function assertUpdateReviewed(
@@ -507,18 +571,19 @@ function assertUpdateReviewed(
   approved: string[] | undefined,
   reason: PluginChange["reason"] | undefined,
 ) {
-  if (expandsCapabilities(next, current, approved)) throw new Error(MESSAGE.PermissionExpansion);
+  const needsReview = (words: string) => new CodedError(PluginInstallProblem.NeedsReview, words);
+  if (expandsCapabilities(next, current, approved)) throw needsReview(MESSAGE.PermissionExpansion());
   // An MCP server is native code with an environment of its own: changing what one runs, where
   // it runs or what it is handed is an expansion of the same kind a new capability is, and an
   // update that was never shown to anybody must not quietly acquire it.
-  if (approved === undefined && !sameServers(next, current)) throw new Error(MESSAGE.PermissionExpansion);
+  if (approved === undefined && !sameServers(next, current)) throw needsReview(MESSAGE.PermissionExpansion());
   // A hot reload carries the capabilities the user approved, not a review of new servers or hosts.
   if (reason === PluginChangeReason.Reloaded && reviewedLaunch(next) !== reviewedLaunch(current))
-    throw new Error(MESSAGE.ServersChanged);
+    throw needsReview(MESSAGE.ServersChanged());
   // Nor of the steps Genex runs on its own, with no card: a hook, an observer, a lock's person-first
   // probe, a folder workers may write in, a harness tool or a readiness check.
   if (reason === PluginChangeReason.Reloaded && harnessSteps(next) !== harnessSteps(current))
-    throw new Error(MESSAGE.StepsChanged);
+    throw needsReview(MESSAGE.StepsChanged());
 }
 
 /** What of a plugin Genex runs or widens on its own, without asking, in one comparable form. */
@@ -561,6 +626,8 @@ const newerVersion = (next: string | undefined, current: string) =>
 export interface PluginMcpLaunch {
   /** The installed package, the only place a `node` server's script may live. */
   packageDir: string;
+  /** A bundled plugin's seed folder in the app, which keeps the dependencies its copy leaves out. */
+  seed?: string;
   storageRoot(): Promise<string>;
   projectStorage(project: string): Promise<string>;
   settings(): Promise<Record<string, unknown>>;
@@ -599,6 +666,7 @@ const DECLINED_MESSAGE: Record<PluginConsentBy, (name: string) => string> = {
   restart: (name) => `${name} was declined because the turn ended`,
   // A mode answers only with a yes; listed so every ending has its words.
   mode: (name) => `${name} was answered by the chat's mode`,
+  chat: (name) => `${name} was answered by the user's Allow in this chat`,
 };
 /** Rejects with the reason `signal` is aborted with, once it is: a host tool call's cut-off. */
 function cutOffOf(signal: AbortSignal): Promise<never> {
@@ -614,10 +682,41 @@ export class PluginConsentDeclined extends Error {
     this.by = by;
   }
 }
+
+/** A bundled seed's dependencies stay in the app: its copy in the profile leaves them out. */
+const SEED_DEPENDENCIES = "node_modules";
+
+/** A copy filter for seed `seed`: everything but its top-level dependencies folder. */
+function withoutSeedDependencies(seed: string): (source: string) => boolean {
+  const dependencies = path.join(path.resolve(seed), SEED_DEPENDENCIES);
+  return (source) => path.resolve(source) !== dependencies;
+}
+
+/** The parts of `PluginRegistry.init`, in order, as `onInitStep` names them when each finishes. */
+export const PluginInitStep = {
+  /** The saved install records read and checked. */
+  Records: "records",
+  /** One bundled seed copied into the profile (a first launch, or a lost copy); named with its plugin. */
+  Seed: "seed",
+  /** Updates that waited for a lease applied. */
+  Pending: "pending",
+  /** The records written back. */
+  Saved: "saved",
+  /** Copies no record names removed. */
+  Swept: "swept",
+  /** Packages with no record listed. */
+  Unlisted: "unlisted",
+  /** Saved accounts unlocked again. */
+  Accounts: "accounts",
+} as const;
+export type PluginInitStep = (typeof PluginInitStep)[keyof typeof PluginInitStep];
+
 export class PluginRegistry {
   #installed = new Map<string, Installed>();
   #seedManifests = new Map<string, PluginManifest>();
   #unlisted = new Map<string, Unlisted>();
+  /** Each package's manifest words in Genex's language, from its own `locales/` (`manifest-words.ts`). */
+  #words = new ManifestWords();
   /** Where each bundled seed lives, by plugin id: its picture outlives an installed copy made before it had one. */
   #seedDirectories = new Map<string, string>();
   #processes = new Map<string, PluginProcess>();
@@ -724,6 +823,17 @@ export class PluginRegistry {
   #tail: Promise<unknown> = Promise.resolve();
   readonly root: string;
   readonly seeds: string;
+  /**
+   * The `game-engine` plugins' long jobs in the studio's process sandbox (`sandbox.run`). The host
+   * owns them past the call that started them, and a plugin's end with its backend ends them too.
+   * Absent, those services fail closed.
+   */
+  sandboxJobs:
+    | {
+        call(id: string, method: string, args: unknown, binding: PluginBinding | undefined): Promise<unknown>;
+        stopAll(id?: string): Promise<void>;
+      }
+    | undefined;
   nativeService:
     | ((
         manifest: PluginManifest,
@@ -768,6 +878,13 @@ export class PluginRegistry {
    * it can't be removed. The host sets it.
    */
   appAccount: { id: string; actions: readonly string[] } | undefined;
+  /**
+   * A plugin whose backend talks to another API than its own default, as another account: a
+   * development profile's stand (`main/play/origins.ts`). Its backend is told the API
+   * (`PLUGIN_API_ENV`) and holds that account's token as its session lease; its own saved account
+   * is neither read nor written while it is set. The host sets it once, before any backend starts.
+   */
+  hostAccount: PluginHostAccount | undefined;
   readonly bootstrap: string;
   /** The host services, told which call each request is made on behalf of (absent for the host's own). */
   readonly service: (
@@ -802,6 +919,11 @@ export class PluginRegistry {
    * that has since changed on disk. Bundled seeds stay `not scanned`, as they always were.
    */
   scan: ((directory: string, manifest: PluginManifest) => Promise<PluginScan>) | undefined;
+  /**
+   * Hears each part of `init` as it finishes, and each seed a first launch copies (`plugin`), for the
+   * start's log: on a fresh Windows 11 the plugin setup outlasted the whole start budget.
+   */
+  onInitStep: ((step: PluginInitStep, plugin?: string) => void) | undefined;
   /** Developer sink for backend stderr lines. Never user-facing status: a backend may print provider output. */
   debug: ((id: string, line: string) => void) | undefined;
   /** The user's login PATH for backends to start with; the host sets it. Absent → the app's own. */
@@ -835,12 +957,23 @@ export class PluginRegistry {
     return next;
   }
   #fire(change: PluginChange) {
+    // Its package may be another copy now, or gone: its words are read again when next shown.
+    this.#words.forget();
     try {
       this.onChange?.(change);
     } catch {}
   }
   #packages() {
     return path.join(this.root, PACKAGES_DIR);
+  }
+  /** Whether `directory` is one of the app's bundled seeds. */
+  #isSeed(directory: string): boolean {
+    return path.dirname(path.resolve(directory)) === path.resolve(this.seeds);
+  }
+  /** A bundled install's seed folder, where its dependencies stay (`PLUGIN_SEED_ENV`); nothing for any other. */
+  #seedOption(p: Installed): { seed?: string } {
+    if (p.source !== PluginSourceKind.Bundled) return {};
+    return { seed: this.#seedDirectories.get(p.manifest.id) ?? path.join(this.seeds, p.manifest.id) };
   }
   #owned(directory: string) {
     return path.resolve(directory).startsWith(path.resolve(this.#packages()) + path.sep);
@@ -878,7 +1011,7 @@ export class PluginRegistry {
         if (!this.#owned(record.directory)) throw new Error(MESSAGE.OutsideStorage);
         if (!(await isDirectory(record.directory))) {
           // Older builds refused such a record, then swept the copy it named; a seed can be copied again.
-          if (record.source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.PackageMissing);
+          if (record.source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.PackageMissing());
           this.#lostSeedCopies.set(id, record);
           return;
         }
@@ -901,7 +1034,13 @@ export class PluginRegistry {
       await inspectPackage(directory);
       const installed = path.join(this.#packages(), manifest.id, `${manifest.version}-${randomUUID()}`);
       await mkdir(path.dirname(installed), { recursive: true });
-      await cp(directory, installed, { recursive: true });
+      // A clone where the disk can (APFS): every profile installs every seed, and a copy is written only once edited.
+      await cp(directory, installed, {
+        recursive: true,
+        filter: withoutSeedDependencies(directory),
+        mode: constants.COPYFILE_FICLONE,
+      });
+      this.onInitStep?.(PluginInitStep.Seed, manifest.id);
       const lost = this.#lostSeedCopies.get(manifest.id);
       this.#lostSeedCopies.delete(manifest.id);
       this.#installed.set(manifest.id, {
@@ -916,7 +1055,7 @@ export class PluginRegistry {
       });
     }
     // A lost copy of a plugin Studio no longer ships has nothing to be copied from.
-    for (const [id, p] of this.#lostSeedCopies) this.#refuse(id, p, new Error(MESSAGE.PackageMissing));
+    for (const [id, p] of this.#lostSeedCopies) this.#refuse(id, p, new Error(MESSAGE.PackageMissing()));
     this.#lostSeedCopies.clear();
   }
   /**
@@ -938,17 +1077,24 @@ export class PluginRegistry {
     }
   }
   async init() {
+    const step = (name: PluginInitStep) => this.onInitStep?.(name);
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     for (const [id, p] of Object.entries(await this.#readRecords("installed.json"))) await this.#loadInstalled(id, p);
+    step(PluginInitStep.Records);
     await this.#installSeeds();
     await this.#applyPending();
     await atomicWriteJson(path.join(this.root, "pending.json"), {});
+    step(PluginInitStep.Pending);
     await this.#save();
+    step(PluginInitStep.Saved);
     await this.#sweep();
+    step(PluginInitStep.Swept);
     await this.#discoverUnlisted();
+    step(PluginInitStep.Unlisted);
     // A previous successful user connection grants restoration, not a new browser sign-in.
     // One attempt per launch; a refused OS unlock remains actionable, never retried by polling.
     for (const id of this.#installed.keys()) await this.#restoreSavedAccount(id);
+    step(PluginInitStep.Accounts);
   }
   /** A lifecycle transition can restore previous consent; it never starts browser sign-in. */
   async #restoreSavedAccount(id: string) {
@@ -1002,7 +1148,10 @@ export class PluginRegistry {
   assertInstallable(manifest: Pick<PluginManifest, "id">, origin: PluginSource) {
     const fromStudio = origin.kind === PluginSourceKind.Bundled || origin.kind === PluginSourceKind.Catalog;
     if (fromStudio || !this.#seedManifests.has(manifest.id)) return;
-    throw new Error(MESSAGE.BundledId(manifest.id, origin.kind === PluginSourceKind.Local));
+    throw new CodedError(
+      PluginInstallProblem.IdTaken,
+      MESSAGE.BundledId(manifest.id, origin.kind === PluginSourceKind.Local),
+    );
   }
   /**
    * The installed (or removed) plugin this package would replace, when it is not the same identity:
@@ -1101,6 +1250,24 @@ export class PluginRegistry {
     );
     return [...installed, ...unlisted];
   }
+  /**
+   * The plugins as {@link list} gives them, each manifest's texts a person reads in `locale` (the
+   * app's language by default) from the plugin's own catalog: what the window shows. Every other
+   * field, of the manifest too, is the one `list` gives; the manifests the registry runs on stay English.
+   */
+  async displayList(locale: Locale = currentLocale()): Promise<PluginInfo[]> {
+    return Promise.all(
+      this.list().map(async (info) => {
+        const found = info.unlisted ? this.#unlisted.get(info.manifest.id) : this.#installed.get(info.manifest.id);
+        return found ? { ...info, manifest: await this.#words.manifest(info.manifest, found.directory, locale) } : info;
+      }),
+    );
+  }
+  /** Plugin `id`'s manifest with its texts a person reads in `locale` (the app's by default); undefined for no plugin. */
+  async displayManifest(id: string, locale: Locale = currentLocale()): Promise<PluginManifest | undefined> {
+    const found = this.#installed.get(id) ?? this.#unlisted.get(id);
+    return found ? this.#words.manifest(found.manifest, found.directory, locale) : undefined;
+  }
   /** Publish every enabled plugin's servers once, after the host has set `mcpHost`. */
   async syncMcpServers() {
     for (const id of [...this.#installed.keys()]) await this.#mcpSync(id);
@@ -1127,6 +1294,7 @@ export class PluginRegistry {
     const storageRoot = () => this.service(id, PluginService.StorageRoot, {}) as Promise<string>;
     return {
       packageDir: p.directory,
+      ...this.#seedOption(p),
       storageRoot,
       projectStorage: async (project) => {
         if (!MCP_PROJECT.test(project)) throw new Error(MESSAGE.InvalidProject);
@@ -1356,13 +1524,15 @@ export class PluginRegistry {
   }
   /**
    * The longest one call of a plugin tool (by agent name) may run in its backend: the host's
-   * ceiling, or its plugin's longest native job and a margin. The ceiling for an unknown name.
+   * ceiling, the tool's own (`timeoutMs`), or its plugin's longest native job and a margin. The
+   * ceiling for an unknown name.
    */
   callCeilingOf(agentName: string): number {
-    const [id = ""] = agentName.split("__");
+    const [id = "", tool = ""] = agentName.split("__");
     const p = this.#installed.get(id);
     const nativeJobTimeouts = (p?.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    return Math.max(PLUGIN_CALL_TIMEOUT_MS, ...nativeJobTimeouts);
+    const declared = p?.manifest.tools.find((t) => t.name === tool)?.timeoutMs ?? 0;
+    return Math.max(PLUGIN_CALL_TIMEOUT_MS, declared, ...nativeJobTimeouts);
   }
   /**
    * The `project` locks of the enabled plugins that one of their agent tools or connectors reaching
@@ -1419,8 +1589,7 @@ export class PluginRegistry {
     // An update or a hot reload says which skills it touched: their text reaches every later brief.
     const skills = previous && !previous.removed ? pluginSkillChange(previous, p) : undefined;
     p.lastSkillChange = skills;
-    this.#processes.get(id)?.stop();
-    this.#processes.delete(id);
+    this.#stopBackend(id);
     if (previous && identityKey(this.#identity(previous)) !== identityKey(this.#identity(p)))
       await this.#erase(id, previous);
     this.#installed.set(id, p);
@@ -1466,7 +1635,7 @@ export class PluginRegistry {
   async setEnabled(id: string, enabled: boolean) {
     return this.#serial(async () => {
       const p = this.#installed.get(id);
-      if (!p || p.removed) throw new Error(MESSAGE.InstallFirst);
+      if (!p || p.removed) throw new CodedError(PluginStateRefusal.InstallFirst, MESSAGE.InstallFirst());
       const wasEnabled = p.enabled;
       // A local plugin loaded off ran none of its code: its backend is proven as the person turns it on.
       if (enabled && !wasEnabled && p.source === PluginSourceKind.Local) await this.#probe(p.directory, p.manifest);
@@ -1493,8 +1662,13 @@ export class PluginRegistry {
     if (this.#keepsAccount(p)) return;
     this.#lockAccount(id);
     this.#unwatch(id);
+    this.#stopBackend(id);
+  }
+  /** Stops the plugin's backend and ends its sandbox jobs with their process trees. */
+  #stopBackend(id: string) {
     this.#processes.get(id)?.stop();
     this.#processes.delete(id);
+    void this.sandboxJobs?.stopAll(id).catch(() => {});
   }
   /**
    * A sign-in to the app's account finished: its plugin turns on, unless the person turned it off
@@ -1509,16 +1683,16 @@ export class PluginRegistry {
   async remove(id: string) {
     return this.#serial(async () => {
       const p = this.#installed.get(id);
-      if (!p) throw new Error(MESSAGE.UnknownPlugin);
-      if (this.#keepsAccount(p)) throw new Error(MESSAGE.AccountPlugin(p.manifest.name));
+      if (!p) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.UnknownPlugin);
+      if (this.#keepsAccount(p))
+        throw new CodedError(PluginStateRefusal.KeepsAccount, MESSAGE.AccountPlugin(p.manifest.name));
       p.enabled = false;
       p.removed = true;
       this.#lockAccount(id);
       this.#unwatch(id);
       this.#pending.delete(id);
       this.#pendingReason.delete(id);
-      this.#processes.get(id)?.stop();
-      this.#processes.delete(id);
+      this.#stopBackend(id);
       await this.#save();
       await this.#mcpSync(id);
       const owned = path.join(this.#packages(), id);
@@ -1540,16 +1714,17 @@ export class PluginRegistry {
         p?.scan,
       );
     if (origin?.kind === PluginSourceKind.Local) {
-      if (!origin.directory || !(await isDirectory(origin.directory))) throw new Error(MESSAGE.FolderGone);
+      if (!origin.directory || !(await isDirectory(origin.directory)))
+        throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.FolderGone());
       // No `scan` argument: the folder is read again, so the verdict is recomputed rather than inherited.
       return this.installLocal(origin.directory, PluginSourceKind.Local, p?.manifest.capabilities, origin);
     }
-    if (!origin) throw new Error(MESSAGE.OriginUnknown);
+    if (!origin) throw new CodedError(PluginInstallProblem.SourceGone, MESSAGE.OriginUnknown());
     const info = this.list().find((x) => x.manifest.id === id);
-    if (!this.reacquire || !info) throw new Error(MESSAGE.NeedsMarketplace);
+    if (!this.reacquire || !info) throw new CodedError(PluginInstallProblem.NotReady, MESSAGE.NeedsMarketplace());
     await this.reacquire(info);
     const after = this.#installed.get(id);
-    if (!after || after.removed) throw new Error(MESSAGE.NotReinstalled);
+    if (!after || after.removed) throw new Error(MESSAGE.NotReinstalled());
     return after.manifest;
   }
   async installLocal(
@@ -1569,7 +1744,7 @@ export class PluginRegistry {
     scan?: PluginScan,
     reason?: PluginChange["reason"],
   ) {
-    const manifest = await inspectPackage(directory),
+    const manifest = await inspectForInstall(directory),
       previous = this.#installed.get(manifest.id);
     const recorded = origin ?? recordedOrigin(source, directory);
     // An answer is spent by the next install of that id, whatever becomes of it.
@@ -1616,28 +1791,35 @@ export class PluginRegistry {
     const destination = path.join(this.#packages(), manifest.id, `${manifest.version}-${randomUUID()}`);
     await mkdir(path.dirname(destination), { recursive: true });
     try {
+      const packaged = packageCopyFilter(directory);
+      // A bundled plugin restored from its seed leaves its dependencies there, as a first launch does.
+      const fromSeed = this.#isSeed(directory) ? withoutSeedDependencies(directory) : () => true;
       await cp(directory, destination, {
         recursive: true,
         errorOnExist: true,
         force: false,
-        filter: packageCopyFilter(directory),
+        filter: (source) => packaged(source) && fromSeed(source),
+        mode: constants.COPYFILE_FICLONE,
       });
-      await inspectPackage(destination);
+      await inspectForInstall(destination);
     } catch (e) {
       await rm(destination, { recursive: true, force: true });
       throw e;
     }
     if (!probe) return destination;
     try {
-      await this.#probe(destination, manifest);
+      await this.#probe(destination, manifest, this.#isSeed(directory) ? directory : undefined);
     } catch (e) {
       await rm(destination, { recursive: true, force: true });
       throw e;
     }
     return destination;
   }
-  /** Prove a staged package's backend starts: it loads and answers a ping, with no host services. */
-  async #probe(directory: string, manifest: PluginManifest): Promise<void> {
+  /**
+   * Prove a staged package's backend starts: it loads and answers a ping, with no host services.
+   * Whatever stops it (it exits, throws, never answers) is refused as `BackendFailed`.
+   */
+  async #probe(directory: string, manifest: PluginManifest, seed?: string): Promise<void> {
     const probe = new PluginProcess(
       this.bootstrap,
       path.join(directory, manifest.backend),
@@ -1645,9 +1827,12 @@ export class PluginRegistry {
         throw new Error(MESSAGE.NoHostServices);
       },
       () => {},
+      seed ? { seed } : {},
     );
     try {
       await probe.call("ping", "", {});
+    } catch (error) {
+      throw asInstallProblem(PluginInstallProblem.BackendFailed, error);
     } finally {
       probe.stop();
     }
@@ -1670,7 +1855,7 @@ export class PluginRegistry {
   async allowUnlisted(id: string, approvedCapabilities?: string[], scan?: PluginScan) {
     return this.#serial(async () => {
       const u = this.#unlisted.get(id);
-      if (!u) throw new Error(MESSAGE.UnknownPlugin);
+      if (!u) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.UnknownPlugin);
       const manifest = await this.#installLocal(
         u.directory,
         PluginSourceKind.Local,
@@ -1688,18 +1873,20 @@ export class PluginRegistry {
   }
   async installCatalog(id: string, approvedCapabilities: string[]) {
     const entry = (await this.catalog()).find((p) => p.manifest.id === id);
-    if (!entry) throw new Error(MESSAGE.NotInCatalog);
+    if (!entry) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.NotInCatalog());
     if (!entry.url.startsWith("https://") || !SHA256_HEX.test(entry.sha256))
-      throw new Error(MESSAGE.InvalidCatalogArtifact);
+      throw new CodedError(PluginInstallProblem.CatalogMismatch, MESSAGE.InvalidCatalogArtifact());
     const bytes = await downloadArtifact(entry.url);
-    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error(MESSAGE.DigestMismatch);
+    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256)
+      throw new CodedError(PluginInstallProblem.IntegrityMismatch, MESSAGE.DigestMismatch());
     return this.installEnvelope(
       bytes,
       PluginSourceKind.Catalog,
       approvedCapabilities,
       { kind: PluginSourceKind.Catalog, url: entry.url, sha256: entry.sha256 },
       async (manifest) => {
-        if (canonicalManifest(manifest) !== canonicalManifest(entry.manifest)) throw new Error(MESSAGE.CatalogMismatch);
+        if (canonicalManifest(manifest) !== canonicalManifest(entry.manifest))
+          throw new CodedError(PluginInstallProblem.CatalogMismatch, MESSAGE.CatalogMismatch());
         return undefined;
       },
     );
@@ -1720,7 +1907,7 @@ export class PluginRegistry {
     await mkdir(stage, { recursive: true, mode: 0o700 });
     try {
       await unpackEnvelope(bytes, stage);
-      const manifest = await inspectPackage(stage);
+      const manifest = await inspectForInstall(stage);
       const scan = verify ? await verify(manifest, stage) : undefined;
       return await this.installLocal(stage, source, approvedCapabilities, origin, scan);
     } finally {
@@ -1746,12 +1933,12 @@ export class PluginRegistry {
     this.#unwatch(id);
     if (!enabled) return;
     const p = this.#installed.get(id);
-    if (!p || !isLive(p)) throw new Error(MESSAGE.EnableFirst);
+    if (!p || !isLive(p)) throw new Error(MESSAGE.EnableFirst());
     const directory = p.origin?.kind === PluginSourceKind.Local ? p.origin.directory : undefined;
-    if (!directory) throw new Error(MESSAGE.OnlyLocalWatch);
-    if (!(await isDirectory(directory))) throw new Error(MESSAGE.FolderGone);
+    if (!directory) throw new Error(MESSAGE.OnlyLocalWatch());
+    if (!(await isDirectory(directory))) throw new Error(MESSAGE.FolderGone());
     // An agent's edit there would run as soon as it reloads, with no card: such a folder is loaded again by hand.
-    if (await this.agentWritable(directory)) throw new Error(MESSAGE.WatchAgentFolder);
+    if (await this.agentWritable(directory)) throw new Error(MESSAGE.WatchAgentFolder());
     const entry: { watcher: { close(): void }; timer: ReturnType<typeof setTimeout> | undefined } = {
       watcher: this.watchFolder(directory, () => {
         if (this.#watchers.get(id) !== entry) return;
@@ -1789,7 +1976,7 @@ export class PluginRegistry {
     } catch (e) {
       this.#errors.set(id, String(e));
       this.debug?.(id, `reload failed: ${String(e)}`);
-      this.#fire({ id, reason: PluginChangeReason.Failed });
+      this.#fire({ id, reason: PluginChangeReason.Failed, failure: PluginFailure.ReloadRefused });
     }
   }
   /**
@@ -1805,8 +1992,18 @@ export class PluginRegistry {
     if (method === PluginService.CredentialsClear && !isActionAmong(invocation, [actions.disconnect]))
       throw new Error(MESSAGE.DisconnectRequired);
   }
+  /**
+   * The account services of a plugin on another account (`hostAccount`): its token is the lease and
+   * what an unlock reads; nothing is saved, and signing out is that account's own (Play's).
+   */
+  async #hostAccountService(account: PluginHostAccount, method: string): Promise<unknown> {
+    if (method === PluginService.CredentialsWrite) throw new Error(MESSAGE.HostAccount);
+    if (method === PluginService.CredentialsClear) return undefined;
+    return (await account.token().catch(() => undefined)) ?? null;
+  }
   /** The account services, answered from the session lease rather than the plugin services. */
   async #credentialService(id: string, p: Installed, method: string, args: any): Promise<unknown> {
+    if (this.hostAccount?.id === id) return this.#hostAccountService(this.hostAccount, method);
     if (method === PluginService.CredentialsSession) return this.#account(id).get();
     if (method === PluginService.CredentialsRead) {
       await this.#account(id).unlock();
@@ -1848,8 +2045,14 @@ export class PluginRegistry {
       if (!capability || !hasCapability(p, capability)) throw new Error(MESSAGE.CapabilityDenied);
       if (capability === PluginCapability.Credentials && isCredentialService(method))
         return this.#credentialService(id, p, method, args);
-      return this.service(id, method, args, binding, invocation);
+      return this.#answer(id, method, args, binding, invocation);
     };
+  }
+  /** A gated host service: an engine plugin's sandbox job, or one the plugin services answer. */
+  #answer(id: string, method: string, args: unknown, binding?: PluginBinding, invocation?: PluginInvocation) {
+    if (!isSandboxService(method)) return this.service(id, method, args, binding, invocation);
+    if (!this.sandboxJobs) throw new Error(MESSAGE.SandboxUnavailable);
+    return this.sandboxJobs.call(id, method, args, binding);
   }
   /** The plugin's backend child, started on first use: an agent's tool reaches it only while the plugin is on. */
   #process(id: string) {
@@ -1860,11 +2063,13 @@ export class PluginRegistry {
         this.bootstrap,
         path.join(p.directory, p.manifest.backend),
         this.#hostService(id, p),
-        (error) => {
+        (error, failure) => {
           if (this.#processes.get(id) === process) {
             this.#errors.set(id, error);
             this.#processes.delete(id);
-            this.#fire({ id, reason: PluginChangeReason.Failed });
+            // A backend that ended takes its jobs with it: nobody is left to read or stop them.
+            void this.sandboxJobs?.stopAll(id).catch(() => {});
+            this.#fire({ id, reason: PluginChangeReason.Failed, failure });
           }
         },
         {
@@ -1874,6 +2079,8 @@ export class PluginRegistry {
             } catch {}
           },
           ...(this.toolPath ? { toolPath: this.toolPath } : {}),
+          ...this.#seedOption(p),
+          ...(this.hostAccount?.id === id ? { host: hostEnvOf(this.hostAccount) } : {}),
         },
       );
       this.#processes.set(id, process);
@@ -1935,7 +2142,7 @@ export class PluginRegistry {
         return this.#runHostTool(id, host, args, binding, signal);
       };
     const nativeJobTimeouts = (p.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, ...nativeJobTimeouts);
+    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, declaration.timeoutMs ?? 0, ...nativeJobTimeouts);
     // The person's edit on the card (`confirmationInput`) is the call's value for that parameter.
     const parameter = declaration.confirmationInput?.parameter;
     const callArgs = parameter && input !== undefined ? { ...args, [parameter]: input } : args;
@@ -1996,7 +2203,7 @@ export class PluginRegistry {
     if (!this.consent) throw new Error(MESSAGE.ConsentUnavailable);
     const own = declaration.confirmation;
     const confirmation = own
-      ? `${MESSAGE.LocalAccess(p.manifest.name)} ${own}`
+      ? MESSAGE.LocalAccess(p.manifest.name, own)
       : MESSAGE.LocalTool(p.manifest.name, declaration.name);
     const asking = { ...declaration, confirmation };
     const options = own ? {} : { offerAlways: true };
@@ -2263,7 +2470,9 @@ export class PluginRegistry {
     const p = this.#active(id),
       panel = p.manifest.panels.find((x) => x.id === panelId);
     if (!panel) throw new Error(MESSAGE.UnknownPanel);
-    return { title: panel.title, html: await readFile(await containedReal(p.directory, panel.file), "utf8") };
+    // The title as the plugin list shows it, so the page knows which panel is open.
+    const say = await this.#words.say(p.directory, currentLocale());
+    return { title: say(panel.title), html: await readFile(await containedReal(p.directory, panel.file), "utf8") };
   }
   /**
    * The declared settings, each the stored value when it still has the declared type, otherwise
@@ -2312,6 +2521,7 @@ export class PluginRegistry {
     for (const id of [...this.#watchers.keys()]) this.#unwatch(id);
     for (const process of this.#processes.values()) process.stop();
     this.#processes.clear();
+    void this.sandboxJobs?.stopAll().catch(() => {});
     // A stopped plugin has no servers: the last stop point is one of them too.
     for (const id of this.#accounts.keys()) this.#lockAccount(id);
     this.#mcpAuthorized.clear();

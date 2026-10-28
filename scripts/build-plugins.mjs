@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { cp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { bridgeLicenses } from "./vendor-genex-multiplayer.ts";
 import { inlinePanelFonts, inlinePanelSdk } from "../src/plugin-sdk/inline-panel-sdk.mjs";
 const require = createRequire(import.meta.url);
 
@@ -97,11 +98,20 @@ export async function vendorEmbedSdk(root, vendor) {
   await writeFile(path.join(vendor, "genex/connect.js"), previewConnectScript());
 }
 
+/**
+ * A bundled plugin's translations (`locales/`), beside its plugin.json: Genex reads the words of its
+ * manifest there in the app's language (`substrate/plugins/manifest-words.ts`).
+ */
+async function copyLocales(source, target) {
+  await cp(path.join(source, "locales"), path.join(target, "locales"), { recursive: true });
+}
+
 async function buildGenex(root, resources, { dependencies }) {
   const target = path.join(resources, "plugins/genex");
   await mkdir(target, { recursive: true });
   for (const file of ["plugin.json", "icon.png", "publish.html"])
     await cp(path.join(root, "src/plugins/genex", file), path.join(target, file));
+  await copyLocales(path.join(root, "src/plugins/genex"), target);
   await cp(path.join(root, "src/genex-host/preload.mjs"), path.join(target, "preload.mjs"));
   // The vendored skills ship even in a dependency-free build: each SKILL.md already holds its preface.
   await cp(path.join(root, "src/plugins/genex/skills"), path.join(target, "skills"), {
@@ -131,9 +141,14 @@ async function buildBlender(root, resources, sdk) {
   await mkdir(blender, { recursive: true });
   for (const file of ["plugin.json", "icon.png"])
     await cp(path.join(root, "src/plugins/blender", file), path.join(blender, file));
+  await copyLocales(path.join(root, "src/plugins/blender"), blender);
   await writeFile(
     path.join(blender, "panel.html"),
-    await inlinePanelSdk(await readFile(path.join(root, "src/plugins/blender/panel.html"), "utf8"), sdk),
+    await inlinePanelSdk(
+      await readFile(path.join(root, "src/plugins/blender/panel.html"), "utf8"),
+      sdk,
+      path.join(root, "src/plugins/blender/locales"),
+    ),
   );
   // A file URL: a bare Windows path (D:\...) is not an import specifier.
   const { BLENDER_WRAPPER_PY } = await import(pathToFileURL(path.join(root, "src/plugins/blender/wrapper.ts")).href);
@@ -150,8 +165,13 @@ async function buildUnreal(root, resources, sdk) {
   await mkdir(unreal, { recursive: true });
   for (const file of ["plugin.json", "icon.svg"])
     await cp(path.join(root, "src/plugins/unreal", file), path.join(unreal, file));
+  await copyLocales(path.join(root, "src/plugins/unreal"), unreal);
   // Genex's own type goes in as data: a panel can load no font from anywhere else.
-  const panel = await inlinePanelSdk(await readFile(path.join(root, "src/plugins/unreal/panel.html"), "utf8"), sdk);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(root, "src/plugins/unreal/panel.html"), "utf8"),
+    sdk,
+    path.join(root, "src/plugins/unreal/locales"),
+  );
   await writeFile(
     path.join(unreal, "panel.html"),
     await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
@@ -308,6 +328,7 @@ async function buildRoblox(root, resources, sdk) {
   await mkdir(roblox, { recursive: true });
   for (const file of ["plugin.json", "icon.svg"])
     await cp(path.join(root, "src/plugins/roblox", file), path.join(roblox, file));
+  await copyLocales(path.join(root, "src/plugins/roblox"), roblox);
   await cp(path.join(root, "src/plugins/roblox/skills"), path.join(roblox, "skills"), { recursive: true });
   // The judges' briefs, and their probes' Luau beside the backend that sends it to Studio.
   await cp(path.join(root, "src/plugins/roblox/judges"), path.join(roblox, "judges"), { recursive: true });
@@ -317,7 +338,11 @@ async function buildRoblox(root, resources, sdk) {
   await cp(path.join(root, "src/plugins/roblox/templates"), path.join(roblox, "templates"), { recursive: true });
   // The Genex helper Set up copies into Studio's Plugins folder.
   await buildRobloxHelper(root, roblox);
-  const panel = await inlinePanelSdk(await readFile(path.join(root, "src/plugins/roblox/panel.html"), "utf8"), sdk);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(root, "src/plugins/roblox/panel.html"), "utf8"),
+    sdk,
+    path.join(root, "src/plugins/roblox/locales"),
+  );
   await writeFile(
     path.join(roblox, "panel.html"),
     await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
@@ -342,12 +367,24 @@ async function buildGodot(root, resources, sdk) {
   const godot = path.join(resources, "plugins/godot");
   await mkdir(godot, { recursive: true });
   for (const file of ["plugin.json", "icon.svg"]) await cp(path.join(source, file), path.join(godot, file));
-  const panel = await inlinePanelSdk(await readFile(path.join(source, "panel.html"), "utf8"), sdk);
+  await copyLocales(source, godot);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(source, "panel.html"), "utf8"),
+    sdk,
+    path.join(source, "locales"),
+  );
   await writeFile(path.join(godot, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));
   // Genex's own GDScript (the check and the plays), the new-game templates and the addon a set-up
   // game carries (the Play Protocol autoload), read beside the backend.
-  for (const folder of ["scripts", "templates", "addon"])
+  for (const folder of ["scripts", "templates", "addon", "skills", "multiplayer"])
     await cp(path.join(source, folder), path.join(godot, folder), { recursive: true });
+  // Genex's multiplayer SDK bridge (the SDK and its embed SDK in one script), which a multiplayer
+  // game's web export loads beside its page: the pinned version Studio installs.
+  await cp(
+    path.join(root, "node_modules/@genex-ai/multiplayer/dist/bridge.global.js"),
+    path.join(godot, "multiplayer/genex-multiplayer-bridge.js"),
+  );
+  await writeFile(path.join(godot, "multiplayer/genex-multiplayer-bridge.LICENSES.md"), await bridgeLicenses(root));
   await build({
     ...NODE_BACKEND,
     entryPoints: [path.join(source, "backend.ts")],
@@ -360,10 +397,18 @@ async function buildUnity(root, resources, sdk) {
   await mkdir(unity, { recursive: true });
   for (const file of ["plugin.json", "icon.svg"])
     await cp(path.join(root, "src/plugins/unity", file), path.join(unity, file));
+  await copyLocales(path.join(root, "src/plugins/unity"), unity);
+  // Genex's Unity multiplayer package a game embeds, and the skill that explains it.
+  for (const folder of ["multiplayer", "skills"])
+    await cp(path.join(root, "src/plugins/unity", folder), path.join(unity, folder), { recursive: true });
   // Genex's play-time AI package, embedded in a game's project by unity__add-ai, read beside the backend.
   await cp(path.join(root, "src/plugins/unity/packages"), path.join(unity, "packages"), { recursive: true });
   // Genex's own type goes in as data: a panel can load no font from anywhere else.
-  const panel = await inlinePanelSdk(await readFile(path.join(root, "src/plugins/unity/panel.html"), "utf8"), sdk);
+  const panel = await inlinePanelSdk(
+    await readFile(path.join(root, "src/plugins/unity/panel.html"), "utf8"),
+    sdk,
+    path.join(root, "src/plugins/unity/locales"),
+  );
   await writeFile(path.join(unity, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));
   await build({
     ...NODE_BACKEND,

@@ -4,11 +4,14 @@ import { z } from "zod";
 import { normalizeClaudeUsage, type ProviderUsage } from "../../shared/provider-usage.ts";
 import { type EngineModel, ModelContextSource } from "./types.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** How long a running session's telemetry waits on each optional control before it gives up. */
 const TELEMETRY_DEADLINE_MS = 1.5 * SECOND_MS;
 /** How long the idle session opened only to ask waits for the plan's usage. */
 const USAGE_DEADLINE_MS = 10 * SECOND_MS;
+/** Why a usage read failed: Claude Code did not answer its usage control in time (or it threw). */
+const USAGE_UNANSWERED = "Claude Code did not report plan usage";
 
 export interface ClaudeModelInfo {
   value: string;
@@ -70,12 +73,18 @@ async function bounded<T>(read: () => Promise<T> | undefined, deadlineMs: number
     clearTimeout(timer);
   }
 }
-/** Plan limits alone, from a session opened only to ask: nothing is sent, so no turn is spent. */
+/**
+ * Plan limits alone, from a session opened only to ask: nothing is sent, so no turn is spent. Null
+ * when the CLI has no usage control or the plan shares no limits; a throw when it did not answer in
+ * time, so a slow read is never shown as a plan without limits.
+ */
 export async function readClaudeUsage(stream: unknown, deadlineMs = USAGE_DEADLINE_MS): Promise<ProviderUsage | null> {
   const query = stream as TelemetryQuery;
-  return normalizeClaudeUsage(
-    await bounded(() => query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?.(), deadlineMs),
-  );
+  const ask = query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+  if (typeof ask !== "function") return null;
+  const answer = await bounded(() => ask.call(query), deadlineMs);
+  if (answer === undefined) throw new Error(USAGE_UNANSWERED);
+  return normalizeClaudeUsage(answer);
 }
 
 /** What a running session's telemetry reading waits for and asks for. */
@@ -134,6 +143,6 @@ const claudeModels = z
 export function validateClaudeModels(value: unknown): ClaudeModelInfo[] {
   const result = claudeModels.safeParse(value);
   if (!result.success)
-    throw new CatalogError(ModelCatalogProblemCode.Malformed, "Claude returned an invalid model list.");
+    throw new CatalogError(ModelCatalogProblemCode.Malformed, t("Claude returned an invalid model list."));
   return result.data;
 }

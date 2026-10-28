@@ -238,6 +238,7 @@ describe("the people store's numbers", () => {
         return (answers.creators ?? (async () => null))();
       },
       playCredits: async () => assert.fail("not read"),
+      storeCoins: async () => assert.fail("not read"),
       playSetHandle: async () => assert.fail("no nickname saved"),
       genexAccount: async () => ({ status: GenexAccountStatus.SignedIn }),
       genexSignIn: async () => assert.fail("not signed in"),

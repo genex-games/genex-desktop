@@ -41,6 +41,7 @@ export const DELEGATED_ENGINES: readonly string[] = [EngineId.ClaudeCode, Engine
 export const ENGINE_LABELS: Readonly<Record<string, string>> = {
   [EngineId.ClaudeCode]: "Claude Code",
   [EngineId.Codex]: "Codex",
+  [EngineId.Cursor]: "Cursor",
 };
 
 /** The three jobs, in the order the roles page shows them. */
@@ -71,6 +72,8 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.OpenCode,
   EngineId.OpenRouter,
   EngineId.LocalServer,
+  EngineId.Grok,
+  EngineId.Cursor,
 ];
 
 /** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */

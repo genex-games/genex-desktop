@@ -17,6 +17,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   APP_COPY_MS,
   AppInstallError,
@@ -61,21 +62,30 @@ const GIGABYTE = 1024 * 1024 * 1024;
 const PS = "/bin/ps";
 const PS_MS = 10 * SECOND_MS;
 
+/** What the card and its buttons say to the person, in the language of the moment they say it. */
 const MESSAGE = {
-  Download: (why: string) => `Couldn't download Unity Hub (${why}). Check your connection, then try again.`,
-  NotUnity: "This Unity Hub isn't signed by Unity, so Genex didn't install it.",
-  Copy: (why: string) => `Couldn't put Unity Hub in Applications (${why}).`,
-  NoHub: "Get Unity Hub first.",
-  List: (why: string) => `Unity Hub couldn't list the Unity versions to install (${why}).`,
-  NoRelease: "Unity Hub listed no Unity 6 to install. Open Unity Hub and install Unity 6 from Installs.",
+  Download: (why: string) => t("Couldn't download Unity Hub ({why}). Check your connection, then try again.", { why }),
+  NotUnity: () => t("This Unity Hub isn't signed by Unity, so Genex didn't install it."),
+  Copy: (why: string) => t("Couldn't put Unity Hub in Applications ({why}).", { why }),
+  NoHub: () => t("Get Unity Hub first."),
+  List: (why: string) => t("Unity Hub couldn't list the Unity versions to install ({why}).", { why }),
+  NoRelease: () => t("Unity Hub listed no Unity 6 to install. Open Unity Hub and install Unity 6 from Installs."),
   Space: (free: number) =>
-    `Unity 6 needs about ${UNITY_SIZE_GB} GB; ${free.toFixed(1)} GB is free. Free up space, then try again.`,
-  YouStopped: "You stopped it. Try again when you want Unity.",
+    t("Unity 6 needs about {size} GB; {free} GB is free. Free up space, then try again.", {
+      size: UNITY_SIZE_GB,
+      free: free.toFixed(1),
+    }),
+  YouStopped: () => t("You stopped it. Try again when you want Unity."),
   Elsewhere: (version: string) =>
-    `Unity Hub says it installed Unity ${version}, but not where Genex looks for editors. Open Unity Hub, Installs, and check where it went.`,
+    t(
+      "Unity Hub says it installed Unity {version}, but not where Genex looks for editors. Open Unity Hub, Installs, and check where it went.",
+      { version },
+    ),
   Stopped: (line: string) =>
-    `Unity's install stopped${line ? `: ${line}` : ""}. Try again, or install it in Unity Hub.`,
-  OnlyMac: "Genex installs Unity Hub on a Mac only: get it from Unity's page.",
+    line
+      ? t("Unity's install stopped: {line}. Try again, or install it in Unity Hub.", { line })
+      : t("Unity's install stopped. Try again, or install it in Unity Hub."),
+  OnlyMac: () => t("Genex installs Unity Hub on a Mac only: get it from Unity's page."),
 } as const;
 
 /**
@@ -215,7 +225,7 @@ async function copyIn(deps: InstallDeps, image: string, mount: string, signal: A
     const place = { applications: deps.env.applications, name: HUB_APP, team: UNITY_TEAM_ID, trash };
     await placeApp(deps.run, path.join(mount, HUB_APP), place, signal).catch((error: unknown) => {
       const notSigned = error instanceof AppInstallError && error.problem === AppInstallProblem.NotSigned;
-      throw new Error(notSigned ? MESSAGE.NotUnity : MESSAGE.Copy(errorMessage(error)));
+      throw new Error(notSigned ? MESSAGE.NotUnity() : MESSAGE.Copy(errorMessage(error)));
     });
   } finally {
     await deps.run("/usr/bin/hdiutil", ["detach", "-quiet", mount], APP_COPY_MS).catch(() => undefined);
@@ -228,7 +238,7 @@ async function getHub(state: Installing): Promise<void> {
   if (await findHub(deps.env)) return;
   if (deps.env.platform !== "darwin") {
     await deps.open(getUnityLaunch(deps.env.platform, undefined));
-    throw new Error(MESSAGE.OnlyMac);
+    throw new Error(MESSAGE.OnlyMac());
   }
   const folder = folderIn(await state.storage());
   await mkdir(folder, { recursive: true });
@@ -272,7 +282,7 @@ async function editorJob(state: Installing): Promise<InstallJob | null> {
     ...(percent !== undefined ? { percent } : {}),
     ...(phase ? { phase } : {}),
   };
-  if (record.stopped) return { ...job, state: JobState.Failed, why: MESSAGE.YouStopped, stopped: true };
+  if (record.stopped) return { ...job, state: JobState.Failed, why: MESSAGE.YouStopped(), stopped: true };
   if (await installRuns(state.deps, record)) return { ...job, state: JobState.Running };
   if (record.pid > 0 && !record.ended) await atomicWriteJson(file, { ...record, ended: true }).catch(() => undefined);
   if ((await readFacts(state.deps.env, null)).editor) {
@@ -295,7 +305,7 @@ async function failEditor(deps: InstallDeps, folder: string, why: string, inHub 
 
 /** Refuses with Stop's own words once the person pressed Stop. */
 function unlessStopped(signal: AbortSignal): void {
-  if (signal.aborted) throw new Error(MESSAGE.YouStopped);
+  if (signal.aborted) throw new Error(MESSAGE.YouStopped());
 }
 
 /**
@@ -311,7 +321,7 @@ async function startEditor(deps: InstallDeps, hub: string, folder: string, signa
   });
   unlessStopped(signal);
   const version = chooseRelease(releasesIn(listed.out));
-  if (!version) return failEditor(deps, folder, MESSAGE.NoRelease, true);
+  if (!version) return failEditor(deps, folder, MESSAGE.NoRelease(), true);
   const args = ["--", "--headless", "install", "--version", version, "--architecture", arch];
   const pid = await deps.start(hubProgram(hub), args, path.join(folder, EDITOR_LOG));
   const record: EditorRecord = { version, pid, startedAt: deps.now().toISOString() };
@@ -328,7 +338,7 @@ async function startEditor(deps: InstallDeps, hub: string, folder: string, signa
 async function installEditor(state: Installing): Promise<void> {
   const { deps } = state;
   const hub = await findHub(deps.env);
-  if (!hub) throw new Error(MESSAGE.NoHub);
+  if (!hub) throw new Error(MESSAGE.NoHub());
   if ((await editorJob(state))?.state === JobState.Running) return;
   const folder = folderIn(await state.storage());
   await mkdir(folder, { recursive: true });
@@ -355,7 +365,7 @@ async function signedIn(deps: InstallDeps, stop: AbortSignal): Promise<boolean> 
 /** Opens Unity Hub for the person, where they sign in. */
 async function openHub(deps: InstallDeps): Promise<void> {
   const hub = await findHub(deps.env);
-  if (!hub) throw new Error(MESSAGE.NoHub);
+  if (!hub) throw new Error(MESSAGE.NoHub());
   await deps.open(getUnityLaunch(deps.env.platform, hub));
 }
 
@@ -382,7 +392,12 @@ async function drive(state: Installing): Promise<void> {
  */
 async function stopAll(state: Installing): Promise<void> {
   state.stop.abort();
-  const stopped: InstallJob = { kind: JobKind.Editor, state: JobState.Failed, why: MESSAGE.YouStopped, stopped: true };
+  const stopped: InstallJob = {
+    kind: JobKind.Editor,
+    state: JobState.Failed,
+    why: MESSAGE.YouStopped(),
+    stopped: true,
+  };
   const folder = folderIn(await state.storage());
   const file = path.join(folder, EDITOR_RECORD);
   const record = await readJsonIfExists<EditorRecord>(file).catch(() => null);

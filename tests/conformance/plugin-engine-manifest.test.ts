@@ -97,6 +97,17 @@ const refused: Array<[name: string, value: unknown, header: Record<string, unkno
   ["the same Windows app twice", engine({ apps: { windows: ["Kiln.exe", "Kiln.exe"] } }), {}, /apps/],
   ["player apps that are not an object", engine({ playerApps: ["com.kiln.Player"] }), {}, /playerApps/],
   ["a player app that is a path", engine({ playerApps: { mac: ["/Applications/Kiln Player.app"] } }), {}, /playerApps/],
+  ["pages that are not a list", engine({ pages: "create.kiln.dev" }), {}, /pages/],
+  ["no pages in a page list", engine({ pages: [] }), {}, /pages/],
+  ["a page that is an address", engine({ pages: ["https://create.kiln.dev/"] }), {}, /pages/],
+  ["a page with a path", engine({ pages: ["create.kiln.dev/dashboard"] }), {}, /pages/],
+  ["a page with a port", engine({ pages: ["create.kiln.dev:8443"] }), {}, /pages/],
+  ["a page in capitals", engine({ pages: ["Create.Kiln.dev"] }), {}, /pages/],
+  ["a page of one part", engine({ pages: ["localhost"] }), {}, /pages/],
+  ["a page that is an IP", engine({ pages: ["127.0.0.1"] }), {}, /pages/],
+  ["a wildcard page", engine({ pages: ["*.kiln.dev"] }), {}, /pages/],
+  ["5 pages", engine({ pages: ["a.dev", "b.dev", "c.dev", "d.dev", "e.dev"] }), {}, /pages/],
+  ["the same page twice", engine({ pages: ["create.kiln.dev", "create.kiln.dev"] }), {}, /pages/],
   [
     "a Windows player app that is a path",
     engine({ playerApps: { windows: ["C:\\Kiln\\Player.exe"] } }),
@@ -124,6 +135,8 @@ describe("a plugin's engine declaration", () => {
       projectFiles: [".uproject"],
       fact: "unreal-project",
       projectInFolder: true,
+      // Epic's launcher, which Do it for me installs Unreal in: never Unreal's editor.
+      apps: { mac: ["com.epicgames.EpicGamesLauncher"], windows: ["EpicGamesLauncher.exe", "EpicWebHelper.exe"] },
     });
   });
 
@@ -164,6 +177,13 @@ describe("a plugin's engine declaration", () => {
     assert.deepEqual(kept?.playerApps, { mac: ["com.kiln.Player"], windows: ["KilnPlayer.exe"] });
     const roblox = validateManifest(read(path.join("src", "plugins", "roblox", "plugin.json"))).engine;
     assert.deepEqual(roblox?.playerApps, { mac: ["com.roblox.RobloxPlayer"], windows: ["RobloxPlayerBeta.exe"] });
+  });
+
+  it("keeps the web hosts an engine's assist may open in the person's browser, and Roblox's names Creator Hub", () => {
+    const kept = validateManifest(manifest(engine({ pages: ["create.kiln.dev", "www.kiln.dev"] }))).engine;
+    assert.deepEqual(kept?.pages, ["create.kiln.dev", "www.kiln.dev"]);
+    const roblox = validateManifest(read(path.join("src", "plugins", "roblox", "plugin.json"))).engine;
+    assert.deepEqual(roblox?.pages, ["create.roblox.com"]);
   });
 
   it("leaves a game-engine plugin without a declaration as it was", () => {

@@ -127,14 +127,14 @@ export async function luauStatus(home: ToolHome, luau: LuauDeps, context: Plugin
 export async function reviewAddLuau(home: ToolHome, luau: LuauDeps, context: PluginContext): Promise<PluginReview> {
   const here = await missingHere(home, luau, context).catch(() => undefined);
   if (!here || here.missing.length === 0) return {};
-  return { message: MESSAGE.Luau.Confirm(downloadMegabytes(here.missing)), detail: MESSAGE.Luau.Plan };
+  return { message: MESSAGE.Luau.Confirm(downloadMegabytes(here.missing)), detail: MESSAGE.Luau.Plan() };
 }
 
 /** Add Luau checks: downloads what this computer lacks into the plugin's storage, all or nothing. */
 export async function addLuauAction(home: ToolHome, luau: LuauDeps, context: PluginContext): Promise<AddLuauAnswer> {
   const here = await missingHere(home, luau, context);
-  if (!here) return { added: false, message: MESSAGE.Luau.Refused.unsupported, reason: LuauAddRefusal.Unsupported };
-  if (here.missing.length === 0) return { added: true, message: MESSAGE.Luau.AlreadyAdded };
+  if (!here) return { added: false, message: MESSAGE.Luau.Refused.unsupported(), reason: LuauAddRefusal.Unsupported };
+  if (here.missing.length === 0) return { added: true, message: MESSAGE.Luau.AlreadyAdded() };
   const deps = {
     platform: home.platform,
     arch: luau.arch,
@@ -147,7 +147,7 @@ export async function addLuauAction(home: ToolHome, luau: LuauDeps, context: Plu
   };
   try {
     const added = await addLuauChecks(deps, here.missing);
-    return { added: true, message: MESSAGE.Luau.Added, assets: added.assets };
+    return { added: true, message: MESSAGE.Luau.Added(), assets: added.assets };
   } catch (error) {
     if (!(error instanceof LuauAddError)) throw error;
     return { added: false, message: error.message, reason: error.code };

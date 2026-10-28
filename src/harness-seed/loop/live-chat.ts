@@ -12,6 +12,7 @@
  * classic pipeline, a kept director.ts from before live chat — keeps its messages waiting.
  */
 import { leadLineOf, leadLinesChanged, type LeadLine } from "./director/lead-line.ts";
+import * as leadLines from "./director/lead-line.ts";
 import { attachedPicturesLine } from "./live-chat-prompts.ts";
 import { WRAPPING_UP_NOTE } from "./steer-switch-prompts.ts";
 import { RunEvent } from "./run-events.ts";
@@ -153,6 +154,8 @@ export async function chatWaitsFor(
     if (!build) return undefined;
     const door = next ? leadDoor(studio, threadId, next) : null;
     if (door) return door;
+    // Its lead is still preparing the start: the chat answers now (a stop, a question), not once it is ready.
+    if (next && preparingLead(build.run.runId)) return undefined;
     const closes = build.closed ?? build.settled;
     if (!next) {
       await closes;
@@ -161,6 +164,11 @@ export async function chatWaitsFor(
     const lines = leadLinesChanged().then(() => LINES_CHANGED);
     if ((await Promise.race([closes, lines])) === LINES_CHANGED) return null;
   }
+}
+
+/** Is this run's lead preparing its start? A kept older lead-line.ts never says so: its messages wait. */
+function preparingLead(runId: string): boolean {
+  return typeof leadLines.leadPreparing === "function" && leadLines.leadPreparing(runId);
 }
 
 /** Does an open build hold this chat or its game (a legacy second chat of a game answers for its build too)? */

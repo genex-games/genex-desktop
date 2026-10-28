@@ -24,6 +24,7 @@ import type { StudioCore } from "../studio-core.ts";
 import type { DelegateRequest, DelegateResult, Engine } from "../../substrate/engines/types.ts";
 import { COMPUTER_SMOKE_GAME, COMPUTER_SMOKE_WEBGPU_GAME } from "./fixture-games.ts";
 import type { SmokeReadGates } from "./read-gates.ts";
+import { pressStageView, stageCurrent, stageOffers } from "./stage-views.ts";
 import { sleep, waitFor as waitUntil } from "./wait.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { expectedStatusFlag, flagValue, hasFlag, StudioFlag } from "../dev/launch-flags.ts";
@@ -1310,7 +1311,7 @@ async function checkEmptyScaffoldEvidence(buildSmoke: BuildSmoke): Promise<void>
   check(
     "a running build opens its Builds panel",
     await waitFor(
-      `document.querySelector('[data-stage-view]')?.dataset.stageView === 'builds' && !!document.querySelector('[data-stage-action="builds"]')`,
+      `document.querySelector('[data-stage-view]')?.dataset.stageView === 'builds' && ${stageOffers("builds")}`,
     ),
     await wc.executeJavaScript(
       `JSON.stringify({state:document.querySelector('[data-studio-state]')?.dataset,stage:document.querySelector('[data-stage-view]')?.dataset,actions:[...document.querySelectorAll('[data-stage-action]')].map(e=>e.dataset.stageAction)})`,
@@ -1355,10 +1356,7 @@ async function deliverFixtureAsset(buildSmoke: BuildSmoke): Promise<{ assetJobId
     { output: path.join(assetJobDir, "output"), jobId: assetJobId },
     { project: project.name, directory: project.dir, threadId },
   )) as string[];
-  check(
-    "Assets tab is offered for a loaded game",
-    await waitFor(`!!document.querySelector('[data-stage-action="assets"]')`),
-  );
+  check("Assets tab is offered for a loaded game", await waitFor(stageOffers("assets")));
   return { assetJobId, delivered };
 }
 
@@ -1369,7 +1367,7 @@ async function checkAssetsView(buildSmoke: BuildSmoke, delivered: string[]): Pro
   // Forget the last rectangle so the next one is the answer to this click, not the one the
   // empty-scene copy already asked for.
   previewBoundsSeen.last = null;
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="assets"]').click()`);
+  await pressStageView(wc, "assets");
   await checkAsync(
     "Assets view takes the stage and hides the native game",
     async () => {
@@ -1420,12 +1418,12 @@ async function checkStartNodes(buildSmoke: BuildSmoke): Promise<string> {
   const { wc, check, runId, append, waitFor } = buildSmoke;
   const { core, pushUiEvent } = buildSmoke.ctx;
   // The stage goes back to the game before the Builds checks below, which start from Live.
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="live"]').click()`);
+  await pressStageView(wc, "live");
   check(
     "leaving Assets gives the stage back to the game",
     await waitFor(`document.querySelector('[data-stage-view]')?.dataset.stageView === 'live'`),
   );
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]').click()`);
+  await pressStageView(wc, "builds");
   check(
     "the status line says the starting point is being built",
     await waitFor(
@@ -1965,7 +1963,7 @@ async function checkLiveRevisions(buildSmoke: BuildSmoke, { followRun, followEve
   await followShot(buildSmoke, "follow-checking");
   await followEvent(CustomEvent.IntegrationHealth, { head: firstPlayable, ok: true, problems: [] });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="live"]').click()`);
+  await pressStageView(wc, "live");
   check(
     "first healthy integrated revision automatically becomes playable",
     await waitFor(
@@ -1990,7 +1988,7 @@ async function checkLiveRevisions(buildSmoke: BuildSmoke, { followRun, followEve
   await followEvent(CustomEvent.IntegrationHealth, { head: nextPlayable, ok: true, problems: [] });
   pushUiEvent({ type: UiEvent.AutopilotFacet, payload: { runId: followRun } });
   await checkLiveStaysStill(buildSmoke, { firstPlayable, nextPlayable, liveMain });
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]').click()`);
+  await pressStageView(wc, "builds");
   await followEvent(CustomEvent.RunFinished, { stoppedBecause: "UI acceptance complete" });
 }
 
@@ -2073,7 +2071,7 @@ async function checkLiveStaysStill(
   );
   // Out of sight, what waits goes in, so Live is current when the person comes back. Live then
   // shows the game folder, so Reload may offer the run's newest build again, never the change.
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]').click()`);
+  await pressStageView(wc, "builds");
   const changedGone = `!document.querySelector('[data-behind-reason="changed"]')`;
   check(
     "leaving Live for Builds brings the changed game in",
@@ -2364,9 +2362,8 @@ async function captureBuildShot(buildSmoke: BuildSmoke): Promise<void> {
 async function checkSharedDesign(buildSmoke: BuildSmoke): Promise<void> {
   const { wc, threadId } = buildSmoke;
   // Shared design acceptance runs on this real fixture, not just the specimen gallery.
-  await wc.executeJavaScript(
-    `document.querySelector('nav [data-thread="${threadId}"]')?.click(); document.querySelector('[data-stage-action="live"]')?.click()`,
-  );
+  await wc.executeJavaScript(`document.querySelector('nav [data-thread="${threadId}"]')?.click()`);
+  await pressStageView(wc, "live");
   for (const [width, height, zoom] of [
     [1440, 900, 1],
     [1080, 680, 1],
@@ -2542,7 +2539,7 @@ async function checkOverlayFixture(buildSmoke: BuildSmoke): Promise<void> {
   // hides native bounds. Give overlay acceptance a genuinely rendered game.
   await fs.writeFile(path.join(project.dir, "src", "main.js"), COMPUTER_SMOKE_GAME);
   await wc.executeJavaScript(`window.studio.loadPreview(${JSON.stringify(project.name)})`);
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="live"]')?.click()`);
+  await pressStageView(wc, "live");
   check(
     "overlay fixture has loaded its scene",
     await waitFor(`window.studio.previewState().then(s=>s.phase==='playing')`),
@@ -2559,10 +2556,7 @@ async function checkOverlayFixture(buildSmoke: BuildSmoke): Promise<void> {
       contrast: overlayCapture.stats.contrast,
     }),
   );
-  check(
-    "overlay checks select Live first",
-    await waitFor(`document.querySelector('[data-stage-action="live"]')?.getAttribute('aria-selected')==='true'`),
-  );
+  check("overlay checks select Live first", await waitFor(stageCurrent("live")));
   await wc.capturePage();
   await sleep(SETTLE_MS);
   check(
@@ -2756,8 +2750,8 @@ async function openOnBuilds(
   const row = `nav [data-thread="${threadId}"]`;
   await waitFor(`!!document.querySelector('${row}')`, BUILD_WAIT_MS);
   await wc.executeJavaScript(`document.querySelector('${row}')?.click()`);
-  await waitFor(`!!document.querySelector('[data-stage-action="builds"]')`);
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]')?.click()`);
+  await waitFor(stageOffers("builds"));
+  await pressStageView(wc, "builds");
 }
 
 /**
@@ -3193,7 +3187,7 @@ async function directLoopRun(
   dir.chatFrame = await waitFor(`!!document.querySelector('[data-build-status] img')?.naturalWidth`);
   if (dir.chatFrame !== true) dir.chatFrameReport = await agentScreenReport(wc);
   // No part works yet, so the lead has the run: its node in Builds is its own screen.
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="builds"]')?.click()`);
+  await pressStageView(wc, "builds");
   dir.uiCard = await waitFor(`!!document.querySelector('[data-graph-node="lead"][data-agent-screen] img')`);
   if (dir.uiCard !== true) dir.uiCardReport = await agentScreenReport(wc);
   // The run says what it is for before a builder starts (M3.8): worker_start refuses until plan has been called.

@@ -4,6 +4,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { request } from "../../scripts/studio-dev/client.ts";
+import { pressStageView } from "./stage-views.mjs";
 import { sourceIdentity } from "../../scripts/studio-dev/files.mjs";
 
 const root = process.cwd(),
@@ -336,7 +337,7 @@ try {
   await capture(i, "settings");
   await op(i, "key", { surface: "desktop", key: "Escape", code: "Escape" });
   const history = await start("history", "build-history");
-  await op(history, "click", { selector: 'button[data-stage-action="builds"]' });
+  await pressStageView((selector) => op(history, "click", { selector }), "builds");
   await until(async () => (await snap(history)).stage.stageView === "builds", "Builds");
   await check("build revision details open and close independently", async () => {
     await until(async () => {

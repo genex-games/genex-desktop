@@ -630,6 +630,9 @@ test("a message joins the running turn as words, as a switch of its settings, or
   assert.equal(kind({ ...same, text: "/review", autopilot: { hours: 8 } }), "switch", "a slash command");
   assert.equal(kind({ ...same, newRun: true, autopilot: { hours: 8 } }), "own", "a fresh build asked for");
   assert.equal(kind(same, { ...same, studioThread: true }), "own", "Studio's own chat");
+  const keep = { ...same, autopilot: { hours: 8, keepBuilding: true } };
+  assert.equal(kind(keep), "own", "a Keep building tap, even with the turn's own hours: its mark needs its own turn");
+  assert.equal(steersInto({ text: "Keep building", ...keep }, turn), false, "never folded into the turn as words");
   assert.equal(joinKindOf({ text: "x" }, null), "own", "no turn");
   // `steersInto` keeps its meaning for older callers: joins as words.
   assert.equal(steersInto({ text: "more trees", ...same, autopilot: { hours: 8 } }, turn), true);

@@ -3,27 +3,45 @@ import type { FormEvent, JSX } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import type { LocalModelChoice } from "../../shared/studio-api.ts";
 import { UiEvent, type UiEventMap } from "../../shared/ui-events.ts";
 import type { EngineDescriptor } from "../types.ts";
+import { downloadSource } from "../analytics/welcome-providers.ts";
+import {
+  downloadReported,
+  reportClock,
+  reportDownloadStarted,
+  reportDownloadsLeft,
+  reportHardwareChecked,
+  reportModelDeleted,
+  reportOllamaInstall,
+  reportOllamaLookup,
+  settled,
+} from "../analytics/welcome-report.ts";
+import { ProviderSurface } from "../analytics/welcome-vocabulary.ts";
 import { needsOllama, ollamaDownloadPage, stoppedDownload, type StoppedDownload } from "../model-download.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import type { ModelSettingsProps } from "./ModelsSection.tsx";
 import { Pending } from "../ui/Pending.tsx";
 import { LOCAL_SERVER_WORDS } from "../words.ts";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
+import { ModelPullStatus } from "../../shared/model-install.ts";
 
 /** Where the Add from Ollama hint sends the user to find a model's name. */
 const OLLAMA_LIBRARY_URL = "https://ollama.com/search";
 
-/** What deleting an installed model says. */
+/** What deleting an installed model says, and where Ollama keeps its models. */
 const WORDS = {
-  delete: "Delete",
-  deleteModel: (title: string) => `Delete ${title}`,
-  deleteAsk: "Delete it from this Mac? You can download it again.",
-  deleteCancel: "Cancel",
-  deleting: "Deleting…",
+  /** Ollama stores what it downloads itself; its own Settings moves it to another drive. */
+  ollamaModelsFolder: t("Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location."),
+  delete: t("Delete"),
+  deleteModel: (title: string) => t("Delete {model}", { model: title }),
+  deleteAsk: t("Delete it from this Mac? You can download it again."),
+  deleteCancel: t("Cancel"),
+  deleting: t("Deleting…"),
 } as const;
 
 type Hardware = Awaited<ReturnType<typeof window.studio.hardware>>;
@@ -33,8 +51,10 @@ type Lookup = Awaited<ReturnType<typeof window.studio.lookupModel>>;
 const canonical = (id: string): string => (id.includes(":") ? id : `${id}:latest`);
 
 /** Opens Ollama's download page for the platform main runs on; the person installs it there. */
-const openOllamaDownload = (): void =>
+const openOllamaDownload = (): void => {
+  reportOllamaInstall(ProviderSurface.Settings);
   void window.studio.bootState().then(({ platform }) => window.studio.openUrl(ollamaDownloadPage(platform)));
+};
 
 /** "uses ~22 of 23 GB" with a small meter, or the Mac it needs. */
 function Fit({
@@ -50,7 +70,9 @@ function Fit({
 }): JSX.Element {
   if (!fits) {
     return (
-      <span className="text-orange">{needsRamGb ? `Needs a ${needsRamGb} GB Mac` : "Too large to run locally"}</span>
+      <span className="text-orange">
+        {needsRamGb ? t("Needs a {ram} GB Mac", { ram: needsRamGb }) : t("Too large to run locally")}
+      </span>
     );
   }
   return (
@@ -61,9 +83,7 @@ function Fit({
           style={{ width: `${Math.min(100, Math.round((needGb / usable) * 100))}%` }}
         />
       </span>
-      <span>
-        uses ~{Math.round(needGb)} of {Math.round(usable)} GB
-      </span>
+      <span>{t("uses ~{need} of {usable} GB", { need: Math.round(needGb), usable: Math.round(usable) })}</span>
     </>
   );
 }
@@ -96,7 +116,7 @@ function InstalledBadge(): JSX.Element {
   return (
     <Button disabled className="bg-transparent text-muted-foreground">
       <Icon name="check" size={14} />
-      Installed
+      {t("Installed")}
     </Button>
   );
 }
@@ -186,9 +206,9 @@ function ResumeAction({
         variant={best ? "default" : "secondary"}
         disabled={busy}
         onClick={onResume}
-        aria-label={`Resume downloading ${title}`}
+        aria-label={t("Resume downloading {model}", { model: title })}
       >
-        Resume
+        {t("Resume")}
       </Button>
     </div>
   );
@@ -213,15 +233,15 @@ function DownloadAction({
       variant={best ? "default" : "secondary"}
       disabled={busy}
       onClick={onDownload}
-      aria-label={`Download ${title}`}
+      aria-label={t("Download {model}", { model: title })}
     >
-      Download
+      {t("Download")}
     </Button>
   );
   if (!onInstallOllama) return download;
   return (
     <div className="flex shrink-0 items-center gap-2">
-      <Button onClick={onInstallOllama}>Install Ollama</Button>
+      <Button onClick={onInstallOllama}>{t("Install Ollama")}</Button>
       {download}
     </div>
   );
@@ -265,8 +285,8 @@ function ModelAction({
       >
         <span>{percent}%</span>
         {cancellable && (
-          <Button onClick={onCancel} aria-label={`Cancel downloading ${title}`}>
-            Cancel
+          <Button onClick={onCancel} aria-label={t("Cancel downloading {model}", { model: title })}>
+            {t("Cancel")}
           </Button>
         )}
       </div>
@@ -323,21 +343,25 @@ function ModelRow(props: {
           <span className="break-all font-mono text-xs text-muted-foreground">{pick.variant ?? pick.model}</span>
           {best && (
             <span className="inline-flex h-5 items-center self-center rounded-[6px] bg-accent-tint px-1.5 font-mono text-micro text-accent-ink">
-              Best fit
+              {t("Best fit")}
             </span>
           )}
         </div>
         <p className="text-body-sm text-muted-foreground">{pick.about}</p>
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
-          <span>{pick.vision ? "Vision" : "Text only"}</span>
+          <span>{pick.vision ? t("Vision") : t("Text only")}</span>
           <span aria-hidden="true">·</span>
-          <span className="tabular-nums">{pick.sizeGb} GB</span>
+          <span className="tabular-nums">{t("{size} GB", { size: pick.sizeGb })}</span>
           <span aria-hidden="true">·</span>
           <Fit fits={pick.fits} needGb={pick.needGb} needsRamGb={pick.needsRamGb} usable={usable} />
         </div>
-        {pulling && <ProgressBar label={`Downloading ${title}`} percent={percent} animated />}
+        {pulling && <ProgressBar label={t("Downloading {model}", { model: title })} percent={percent} animated />}
         {saved?.resumable && (
-          <ProgressBar label={`Downloaded part of ${title}`} percent={saved.percent} animated={false} />
+          <ProgressBar
+            label={t("Downloaded part of {model}", { model: title })}
+            percent={saved.percent}
+            animated={false}
+          />
         )}
         {props.installed && props.deletion.asking && <DeleteQuestion />}
         {reason && <StopReason reason={reason} cancelled={Boolean(stopped?.cancelled)} />}
@@ -349,10 +373,26 @@ function ModelRow(props: {
 
 type InstallJob = Awaited<ReturnType<typeof window.studio.modelInstallStatus>>;
 type PullEvent = UiEventMap[typeof UiEvent.ModelPull];
+/** What usage analytics hears about a download as it is pressed: its engine, size, and Ollama as it stands. */
+interface PullStart {
+  engine: string | undefined;
+  sizeGb: number;
+  ollama: () => EngineDescriptor | undefined;
+}
 /** What last went wrong, and the model it went wrong for (none when the status itself is unreadable). */
 interface DownloadFailure {
   model: string | null;
   message: string;
+}
+
+/**
+ * Report this section's hardware check once per mount (usage analytics): the read is asked again
+ * whenever its effect runs again, and only the answer the section shows first is counted.
+ */
+function reportHardwareOnce(reported: { current: boolean }, value: Hardware | null, askedAt: number): void {
+  if (reported.current) return;
+  reported.current = true;
+  reportHardwareChecked(ProviderSurface.Settings, value, askedAt);
 }
 
 /** This Mac's hardware and the model download in progress: read once, then followed by the host's events. */
@@ -363,17 +403,23 @@ function useModelInstalls(onEnginesRefresh: () => void) {
   const [progress, setProgress] = useState(0);
   const [job, setJob] = useState<InstallJob>(null);
   const [failure, setFailure] = useState<DownloadFailure | null>(null);
+  const hardwareReported = useRef(false);
   useEffect(() => {
     onEnginesRefresh();
     let alive = true;
     let revision = 0;
+    const askedAt = reportClock();
     void window.studio
       .hardware()
       .then((value) => {
-        if (alive) setHardware(value);
+        if (!alive) return;
+        reportHardwareOnce(hardwareReported, value, askedAt);
+        setHardware(value);
       })
       .catch((error) => {
-        if (alive) setHardwareError(String(error));
+        if (!alive) return;
+        reportHardwareOnce(hardwareReported, null, askedAt);
+        setHardwareError(String(error));
       });
     const apply = (next: InstallJob) => {
       if (!next) return;
@@ -383,12 +429,12 @@ function useModelInstalls(onEnginesRefresh: () => void) {
       if (next.total) setProgress(next.completed / next.total);
     };
     const applyPull = ({ model, progress }: PullEvent): void => {
-      if (progress.status === "error") {
+      if (progress.status === ModelPullStatus.Error) {
         setPulling(null);
-        setFailure({ model, message: progress.error ?? "Download failed" });
+        setFailure({ model, message: progress.error ?? t("Download failed") });
         return;
       }
-      if (progress.status === "success") {
+      if (progress.status === ModelPullStatus.Success) {
         setPulling(null);
         onEnginesRefresh();
       } else {
@@ -420,14 +466,23 @@ function useModelInstalls(onEnginesRefresh: () => void) {
     };
   }, [onEnginesRefresh]);
 
-  const pull = async (model: string): Promise<void> => {
+  const pull = async (model: string, start: PullStart): Promise<void> => {
+    reportDownloadStarted({
+      model,
+      surface: ProviderSurface.Settings,
+      engine: start.engine,
+      source: downloadSource(hardware, model),
+      resumed: Boolean(stoppedDownload(job, model)?.resumable),
+      sizeGb: start.sizeGb,
+      ollama: start.ollama(),
+    });
     setPulling(model);
     setProgress(0);
     setFailure(null);
     // This model's new job replaces the stopped one; until it reports, an early refusal shows instead.
     setJob((current) => (current?.model === model ? null : current));
     try {
-      await window.studio.pullModel(model);
+      await downloadReported(model, start.ollama, () => window.studio.pullModel(model));
       onEnginesRefresh();
     } catch (err) {
       setFailure({ model, message: errorMessage(err) });
@@ -446,7 +501,7 @@ function useModelInstalls(onEnginesRefresh: () => void) {
 }
 
 /** Deleting installed models: the row asking to confirm, the one being deleted, and what went wrong. */
-function useModelRemoval(onRemoved: (model: string) => Promise<void> | void) {
+function useModelRemoval(onRemoved: (model: string) => Promise<void> | void, engineOf: (model: string) => string) {
   const [asking, setAsking] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [failure, setFailure] = useState<DownloadFailure | null>(null);
@@ -454,7 +509,10 @@ function useModelRemoval(onRemoved: (model: string) => Promise<void> | void) {
     setRemoving(model);
     setFailure(null);
     try {
-      await window.studio.removeModel(model);
+      await settled(
+        () => window.studio.removeModel(model),
+        (ok) => reportModelDeleted(engineOf(model), ok),
+      );
       // The row keeps saying Deleting… until the refreshed list no longer has the model.
       await onRemoved(model);
     } catch (err) {
@@ -484,9 +542,11 @@ function lookupWords(lookup: Lookup | null, lookupError: string | null): string 
   if (lookupError) return lookupError;
   if (!lookup || lookup.ok) return null;
   if (lookup.reason === "not_found")
-    return `Couldn't find ${lookup.id} in the Ollama library. Check the name and the tag after the colon.`;
-  if (lookup.reason === "invalid") return "Enter a model name like qwen3.5:9b.";
-  return lookup.error ?? "Could not reach the Ollama library.";
+    return t("Couldn't find {model} in the Ollama library. Check the name and the tag after the colon.", {
+      model: lookup.id ?? "",
+    });
+  if (lookup.reason === "invalid") return t("Enter a model name like qwen3.5:9b.");
+  return lookup.error ?? t("Could not reach the Ollama library.");
 }
 
 function HardwareLine({
@@ -501,14 +561,22 @@ function HardwareLine({
   if (hardwareError)
     return (
       <p role="alert" className="py-3 text-body-sm text-red">
-        Could not load local models. Reopen Settings to try again. {hardwareError}
+        {t("Could not load local models. Reopen Settings to try again. {error}", { error: hardwareError })}
       </p>
     );
-  if (!hardware) return <Pending label="Detecting this Mac…" className="py-3 text-body-sm" />;
+  if (!hardware)
+    return (
+      <Pending label={t("Detecting this Mac…")} className="py-1.5">
+        <SkeletonLines widths={["56%"]} />
+      </Pending>
+    );
   return (
     <p className="text-body-sm text-muted-foreground">
-      {hardware.hardware.cpu} · {Math.round(hardware.hardware.ramGb)} GB memory · about {Math.round(usable)} GB
-      available for models
+      {t("{cpu} · {memory} GB memory · about {usable} GB available for models", {
+        cpu: hardware.hardware.cpu,
+        memory: Math.round(hardware.hardware.ramGb),
+        usable: Math.round(usable),
+      })}
     </p>
   );
 }
@@ -520,12 +588,15 @@ function FoundModel({
   installed,
   usable,
   onInstallOllama,
+  ollama,
 }: {
   found: Extract<Lookup, { ok: true }>;
   installs: ReturnType<typeof useModelInstalls>;
   installed: boolean;
   usable: number;
   onInstallOllama: (() => void) | null;
+  /** Ollama's engine as it stands, for usage analytics. */
+  ollama: () => EngineDescriptor | undefined;
 }): JSX.Element {
   const { pulling, pull } = installs;
   const percent = Math.round(installs.progress * 100);
@@ -544,21 +615,24 @@ function FoundModel({
         title={found.id}
         best={false}
         busy={pulling !== null}
-        onDownload={() => void pull(found.id)}
+        onDownload={() => void pull(found.id, { engine: EngineId.Ollama, sizeGb: found.sizeGb, ollama })}
         onInstallOllama={onInstallOllama}
       />
     );
   };
   return (
-    <div className="mt-1 flex items-center gap-4 rounded-card bg-surface px-3.5 py-3">
+    // The model the person looked up by name.
+    <div data-analytics-mask className="mt-1 flex items-center gap-4 rounded-card bg-surface px-3.5 py-3">
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="break-all font-mono text-sm text-ink">{found.id}</span>
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs text-muted-foreground">
-          <span className="tabular-nums">{found.sizeGb} GB</span>
+          <span className="tabular-nums">{t("{size} GB", { size: found.sizeGb })}</span>
           <span aria-hidden="true">·</span>
           <Fit fits={found.fits} needGb={found.needGb} needsRamGb={found.needsRamGb} usable={usable} />
         </div>
-        {downloading && <ProgressBar label={`Downloading ${found.id}`} percent={percent} animated={false} />}
+        {downloading && (
+          <ProgressBar label={t("Downloading {model}", { model: found.id })} percent={percent} animated={false} />
+        )}
       </div>
       {action()}
     </div>
@@ -591,8 +665,11 @@ function AddFromOllama({
     setLookup(null);
     setLookupError(null);
     try {
-      setLookup(await window.studio.lookupModel(tag.trim()));
+      const answer = await window.studio.lookupModel(tag.trim());
+      reportOllamaLookup(answer);
+      setLookup(answer);
     } catch (err) {
+      reportOllamaLookup(null);
       setLookupError(errorMessage(err));
     } finally {
       setChecking(false);
@@ -600,10 +677,14 @@ function AddFromOllama({
   };
   const found = lookup?.ok ? lookup : null;
   const lookupMessage = lookupWords(lookup, lookupError);
+  // One sentence around the library's link: the translation decides where the link sits.
+  const [libraryBefore, libraryAfter = ""] = t(
+    "Enter any model name from the {link}. Studio checks its size before downloading.",
+  ).split("{link}");
   return (
     <form onSubmit={(event) => void check(event)} className="flex flex-col gap-2 pt-6">
       <label htmlFor={tagId} className="text-sm font-medium text-ink">
-        Add from Ollama
+        {t("Add from Ollama")}
       </label>
       <div className="flex gap-2">
         <input
@@ -620,19 +701,22 @@ function AddFromOllama({
           className="h-8 min-w-0 flex-1 rounded-control border border-input bg-field px-2.5 font-mono text-sm text-ink outline-none placeholder:text-muted-foreground focus:border-accent-primary"
         />
         <Button type="submit" disabled={!tag.trim() || checking}>
-          {checking ? "Checking…" : "Check"}
+          {checking ? t("Checking…") : t("Check")}
         </Button>
       </div>
       <p className="text-body-sm text-muted-foreground">
-        Enter any model name from the{" "}
+        {libraryBefore}
         <button
           type="button"
           onClick={() => void window.studio.openUrl(OLLAMA_LIBRARY_URL)}
           className="cursor-pointer text-accent-ink underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
         >
-          Ollama library ↗
+          {t("Ollama library ↗")}
         </button>
-        . Studio checks its size before downloading.
+        {libraryAfter}
+      </p>
+      <p data-ollama-models-folder className="text-body-sm text-muted-foreground">
+        {WORDS.ollamaModelsFolder}
       </p>
       {ollama && ollama.status.code !== EngineStatusCode.Ready && (
         <p className="text-body-sm text-muted-foreground">
@@ -641,7 +725,8 @@ function AddFromOllama({
         </p>
       )}
       {lookupMessage && (
-        <p role="alert" className="text-body-sm text-red">
+        // It can repeat the name the person typed: a replay shows it masked.
+        <p role="alert" className="text-body-sm text-red" data-analytics-mask>
           {lookupMessage}
         </p>
       )}
@@ -652,6 +737,7 @@ function AddFromOllama({
           installed={installed.has(canonical(found.id))}
           usable={usable}
           onInstallOllama={installOllamaFor(found.id)}
+          ollama={() => ollama}
         />
       )}
     </form>
@@ -674,10 +760,11 @@ function ExtraModels({
         const rowDeletion = deletion(model.id);
         const reason = failure(model.id);
         return (
-          <div key={model.id} className="flex items-center gap-4 border-b border-border py-3.5">
+          // A model the person added by name, which its Delete names too: a replay shows the row masked.
+          <div key={model.id} className="flex items-center gap-4 border-b border-border py-3.5" data-analytics-mask>
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <span className="break-all font-mono text-sm text-ink">{model.id}</span>
-              <span className="text-body-sm text-muted-foreground">Added from Ollama</span>
+              <span className="text-body-sm text-muted-foreground">{t("Added from Ollama")}</span>
               {rowDeletion.asking && <DeleteQuestion />}
               {reason && <StopReason reason={reason} cancelled={false} />}
             </div>
@@ -715,11 +802,23 @@ function MoreModels({
           size={14}
           className={`transition-transform duration-(--duration-quick) motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
         />
-        More models
+        {t("More models")}
         <span className="font-mono text-xs font-normal text-muted-foreground">{more.length}</span>
       </button>
       {open && more.map((pick) => row(pick, false))}
     </>
+  );
+}
+
+/** Leaving Settings while a download runs leaves it running: usage analytics notes the screen was left. */
+function useLeftWhileDownloading(downloading: boolean): void {
+  const now = useRef(downloading);
+  now.current = downloading;
+  useEffect(
+    () => () => {
+      if (now.current) reportDownloadsLeft(ProviderSurface.Settings);
+    },
+    [],
   );
 }
 
@@ -746,10 +845,14 @@ export function LocalModelsSection({
 }: ModelSettingsProps & { onOpenProviders?: () => void }): JSX.Element {
   const installs = useModelInstalls(onEnginesRefresh);
   const { hardware, pulling, progress, failure } = installs;
+  const engineOf = (model: string): string =>
+    engines.find((engine) => engine.models.some((listed) => canonical(listed.id) === canonical(model)))?.id ??
+    EngineId.Ollama;
   const removal = useModelRemoval((model) => {
     installs.forget(model);
     return onEnginesRefresh();
-  });
+  }, engineOf);
+  useLeftWhileDownloading(pulling !== null);
   const deletion = (model: string): RowDeletion => removal.forRow(model, pulling !== null);
   /** What last went wrong on `model`'s row: its download, or its deletion. */
   const failureFor = (model: string): string | null => {
@@ -788,7 +891,9 @@ export function LocalModelsSection({
       cancellable={pick.engine === EngineId.Bonsai}
       busy={pulling !== null}
       deletion={deletion(pick.model)}
-      onDownload={() => void installs.pull(pick.model)}
+      onDownload={() =>
+        void installs.pull(pick.model, { engine: pick.engine, sizeGb: pick.sizeGb, ollama: () => ollama })
+      }
       onInstallOllama={pick.engine === EngineId.Bonsai ? null : installOllamaFor(pick.model)}
       onCancel={() => void window.studio.cancelModelDownload()}
     />
@@ -800,7 +905,7 @@ export function LocalModelsSection({
 
       {recommendation && recommendation.picks.length === 0 && (
         <p className="py-3 text-body-sm text-muted-foreground">
-          No recommended model fits this Mac. More models lists what bigger Macs can run.
+          {t("No recommended model fits this Mac. More models lists what bigger Macs can run.")}
         </p>
       )}
       {recommendation?.picks.map((pick) => row(pick, pick.model === recommendation.defaultModel))}

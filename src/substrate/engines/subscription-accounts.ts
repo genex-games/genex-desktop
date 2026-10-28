@@ -8,6 +8,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteText, ensureDir, readJsonIfExists } from "../fsx.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The two accounts every subscription can have, by their fixed ids; added ones are `account-N`. */
 export const AccountId = {
@@ -27,9 +28,10 @@ const FIRST_ADDED = 2;
 const MAX_ADDED = 999;
 const CHOICE_FILE = "accounts.json";
 
+/** Why Settings' account change is refused, in the person's language. */
 const MESSAGE = {
-  unknown: (id: string) => `No such account: ${JSON.stringify(id.slice(0, 40))}`,
-  full: "Too many accounts.",
+  unknown: (id: string) => t("No such account: {account}", { account: JSON.stringify(id.slice(0, 40)) }),
+  full: () => t("Too many accounts."),
 } as const;
 
 /** What the choice file keeps: the account in use and the accounts added, with their emails. */
@@ -72,6 +74,11 @@ function isAccountId(id: unknown): id is string {
 
 export class SubscriptionAccounts {
   readonly #options: SubscriptionAccountsOptions;
+  /**
+   * The last change to the choice file. Each change reads the file and writes it whole, so two at
+   * once would lose one: an email kept while the account is forgotten brought the account back.
+   */
+  #changes: Promise<unknown> = Promise.resolve();
 
   constructor(options: SubscriptionAccountsOptions) {
     this.#options = options;
@@ -134,16 +141,22 @@ export class SubscriptionAccounts {
   /** Run on `id` from now on. Refused for an id no account stands behind. */
   async choose(id: string): Promise<void> {
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
-    const known = (await this.list()).some((entry) => entry.id === id);
-    if (!known) throw new Error(MESSAGE.unknown(id));
-    await this.#write({ ...(await this.#read()), chosen: id });
+    await this.#change(async () => {
+      const known = (await this.list()).some((entry) => entry.id === id);
+      if (!known) throw new Error(MESSAGE.unknown(id));
+      await this.#write({ ...(await this.#read()), chosen: id });
+    });
   }
 
   /**
    * A home for one more account, not yet listed: the first added id nobody remembers. A home left
    * by a sign-in that never finished is emptied, so its leftovers never sign anybody in.
    */
-  async newAccount(): Promise<{ id: string; home: string }> {
+  newAccount(): Promise<{ id: string; home: string }> {
+    return this.#change(() => this.#newAccount());
+  }
+
+  async #newAccount(): Promise<{ id: string; home: string }> {
     const remembered = new Set((await this.#read()).accounts?.map((account) => account.id));
     for (let n = FIRST_ADDED; n <= MAX_ADDED; n++) {
       const id = `${ADDED_PREFIX}${n}`;
@@ -153,7 +166,7 @@ export class SubscriptionAccounts {
       await ensureDir(home);
       return { id, home };
     }
-    throw new Error(MESSAGE.full);
+    throw new Error(MESSAGE.full());
   }
 
   /**
@@ -164,19 +177,30 @@ export class SubscriptionAccounts {
     // The Terminal login is the CLI's own: Studio lists it whenever it holds a sign-in.
     if (id === AccountId.Terminal) return;
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
-    const file = await this.#read();
-    const others = (file.accounts ?? []).filter((account) => account.id !== id);
     const { email } = details;
-    await this.#write({ ...file, accounts: [...others, { id, ...(email ? { email } : {}) }] });
+    await this.#change(async () => {
+      const file = await this.#read();
+      const others = (file.accounts ?? []).filter((account) => account.id !== id);
+      await this.#write({ ...file, accounts: [...others, { id, ...(email ? { email } : {}) }] });
+    });
   }
 
   /** Drop an account from the list; a choice of it goes too. Its home is the caller's to clear. */
   async forget(id: string): Promise<void> {
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
-    const file = await this.#read();
-    const accounts = (file.accounts ?? []).filter((account) => account.id !== id);
-    const { chosen, ...rest } = file;
-    await this.#write({ ...rest, accounts, ...(chosen && chosen !== id ? { chosen } : {}) });
+    await this.#change(async () => {
+      const file = await this.#read();
+      const accounts = (file.accounts ?? []).filter((account) => account.id !== id);
+      const { chosen, ...rest } = file;
+      await this.#write({ ...rest, accounts, ...(chosen && chosen !== id ? { chosen } : {}) });
+    });
+  }
+
+  /** Run `change` once every change asked before it has finished, whether or not those failed. */
+  #change<T>(change: () => Promise<T>): Promise<T> {
+    const next = this.#changes.then(change, change);
+    this.#changes = next.catch(() => {});
+    return next;
   }
 
   async #read(): Promise<AccountsFile> {

@@ -13,7 +13,7 @@ import {
   CORE_FACT_RULES,
   CoreFact,
   FactSource,
-  factsOfFiles,
+  foundFacts,
   hasFact,
   NOT_WALKED,
   type ProjectFact,
@@ -121,13 +121,19 @@ async function recordsWebStarter(dir: string): Promise<boolean> {
 }
 
 /**
- * The facts a folder holds by its files: the core table, then `pluginRules` (the enabled plugins'
- * `detect`). A web starter recorded in studio.json counts as a web game at the root even while its
- * page is missing. Throws when the folder can't be read.
+ * The facts a folder's files give before they are settled (`foundFacts`): the core table, then
+ * `pluginRules` (the enabled plugins' `detect`), so a web game below another is still there. A web
+ * starter recorded in studio.json counts as a web game at the root even while its page is missing.
+ * Throws when the folder can't be read.
  */
-export async function detectFacts(dir: string, pluginRules: readonly SourcedFactRule[]): Promise<ProjectFact[]> {
+export async function detectFoundFacts(dir: string, pluginRules: readonly SourcedFactRule[]): Promise<ProjectFact[]> {
   const rules = [...CORE_RULES, ...pluginRules];
-  const facts = factsOfFiles(await ruleFiles(dir, rules), rules);
-  if (hasFact(facts, CoreFact.WebGame, ".") || !(await recordsWebStarter(dir))) return facts;
-  return settleFacts([{ id: CoreFact.WebGame, path: ".", source: FactSource.Core }, ...facts]);
+  const found = foundFacts(await ruleFiles(dir, rules), rules);
+  if (hasFact(found, CoreFact.WebGame, ".") || !(await recordsWebStarter(dir))) return found;
+  return [{ id: CoreFact.WebGame, path: ".", source: FactSource.Core }, ...found];
+}
+
+/** The facts a folder holds by its files (`detectFoundFacts`), settled. Throws when the folder can't be read. */
+export async function detectFacts(dir: string, pluginRules: readonly SourcedFactRule[]): Promise<ProjectFact[]> {
+  return settleFacts(await detectFoundFacts(dir, pluginRules));
 }

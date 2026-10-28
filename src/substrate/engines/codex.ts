@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import { ModelCatalog, CatalogError, CATALOG_DEADLINE_MS } from "./model-catalog.ts";
 import { ModelCatalogSource, ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
+import { t } from "../../shared/i18n.ts";
 import { readCodexModels } from "./codex-models.ts";
 import { ReasoningEffort, supportedPreferences, type ModelPreferences } from "../../shared/model-preferences.ts";
 import { cliVersion, requireCodingCli, resolveCodingCli, invalidateCodingCli } from "./external-cli.ts";
@@ -126,7 +127,7 @@ import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
+import { EngineKind, EngineStatusCode, EngineStatusReason, LoginSource } from "../../shared/engine-descriptor.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
@@ -194,6 +195,8 @@ export interface CodexEngineOptions {
   findBinaryFn?: () => Promise<string | null>;
   /** Injected in tests: the plan's rate limits for the account in `home`, as Codex's app server answers. */
   readRateLimits?: (home: string) => Promise<unknown>;
+  /** The OS Codex runs on (default: this process's); a test picks one to see its flags. */
+  platform?: NodeJS.Platform;
 }
 
 /** One `codex exec` invocation, as an async stream of the CLI's own JSONL events. */
@@ -283,6 +286,10 @@ const CodexWebSearch = {
   Live: "live",
   Disabled: "disabled",
 } as const;
+/** Codex's `windows.sandbox` setting, as the CLI spells it. */
+const CodexWindowsSandbox = {
+  Unelevated: "unelevated",
+} as const;
 /** The kind of one change in a `file_change` item that creates a file (the rest edit one). */
 const FILE_CHANGE_ADD = "add";
 
@@ -295,16 +302,27 @@ const TOOL_ITEMS = new Set<string>([
   CodexItem.FileChange,
 ]);
 
-/** What this engine says to the user: statuses, remedies and errors. */
+/**
+ * What this engine says: statuses and remedies for Settings in the person's language (functions,
+ * since main sets its language after it starts), and errors in English, since the harness and the
+ * chat's model read them too.
+ */
 const MESSAGE = {
+  /** A sign-in error ends with it; Settings shows `SignInRemedy`, the same words translated. */
   LoginHint: "Connect your ChatGPT subscription in the studio.",
-  CliRequired: "An external Codex CLI is required.",
-  InstallRemedy: "Install Codex, then check again.",
-  IsolatedLogin: "ChatGPT connected for this studio",
-  SystemLogin: "Using your existing ChatGPT sign-in on this Mac",
+  SignInRemedy: () => t("Connect your ChatGPT subscription in the studio."),
+  CliRequired: () => t("An external Codex CLI is required."),
+  InstallRemedy: () => t("Install Codex, then check again."),
+  IsolatedLogin: () => t("ChatGPT connected for this studio"),
+  SystemLogin: () => t("Using your existing ChatGPT sign-in on this Mac"),
+  /** English: Settings tells an API-key sign-in by these words (`renderer/panels/ModelsSection.tsx`). */
   ApiKeyLogin: "Codex is signed in with an API key. Connect your ChatGPT subscription instead.",
-  NotConnected: "ChatGPT is not connected. Sign in to start building.",
-  CheckFailed: "Could not check the Codex connection. Try again.",
+  NotConnected: () => t("ChatGPT is not connected. Sign in to start building."),
+  CheckFailed: () => t("Could not check the Codex connection. Try again."),
+  /** The picker's row for whatever model the user's Codex is configured for. */
+  DefaultModel: () => t("{engine} default", { engine: "Codex" }),
+  DefaultModelNote: () => t("Uses whatever model your Codex is configured for."),
+  NoCache: () => t("The CLI model cache is unavailable."),
   NoToolLoop: "Codex has no tool-loop completion; use engine.delegate to build",
   CliMissing: "An external Codex CLI is required. Install or select an external Codex CLI, then Recheck.",
   NotCompacted: "Codex did not compact the session",
@@ -340,12 +358,9 @@ interface CatalogueRow {
 }
 
 /** The first row of every catalogue: whatever model the user's Codex is configured for. */
-const DEFAULT_ROW: CatalogueRow = {
-  id: DEFAULT_MODEL,
-  label: "Codex default",
-  note: "Uses whatever model your Codex is configured for.",
-  efforts: [],
-};
+function defaultRow(): CatalogueRow {
+  return { id: DEFAULT_MODEL, label: MESSAGE.DefaultModel(), note: MESSAGE.DefaultModelNote(), efforts: [] };
+}
 
 function codexEngineModel(row: CatalogueRow): EngineModel {
   return {
@@ -404,8 +419,10 @@ export class CodexEngine implements Engine {
    * engine's whole life.
    */
   #dynamicToolsRefusedAt: number | null = null;
+  readonly #platform: NodeJS.Platform;
 
   constructor(options: CodexEngineOptions) {
+    this.#platform = options.platform ?? process.platform;
     this.#dynamicTools = options.codexDynamicTools === true;
     this.#suppressedSkillsDir =
       options.hostSkills === HostSkills.Suppress
@@ -491,14 +508,19 @@ export class CodexEngine implements Engine {
   /** Cached native status, never inferred from files or a successful process spawn. */
   async status(): Promise<EngineStatus> {
     if (this.#authFailure) {
-      return { code: EngineStatusCode.NeedsLogin, detail: this.#authFailure, remedy: this.loginHint() };
+      return {
+        code: EngineStatusCode.NeedsLogin,
+        detail: this.#authFailure,
+        remedy: this.loginHint(),
+        reason: EngineStatusReason.AuthFailed,
+      };
     }
     if (this.#authCache && Date.now() - this.#authCache.at < AUTH_CACHE_MS) return this.#authCache.status;
     return this.probeAuth();
   }
 
   loginHint(): string {
-    return MESSAGE.LoginHint;
+    return MESSAGE.SignInRemedy();
   }
 
   async probeAuth(): Promise<EngineStatus> {
@@ -514,15 +536,21 @@ export class CodexEngine implements Engine {
   async #readAuth(): Promise<EngineStatus> {
     const installation = this.#findBinaryFn ? null : await this.#resolveCli(EngineId.Codex, this.#executable);
     if (installation && installation.status.state !== CodingCliState.Ready) {
+      const missing = installation.status.state === CodingCliState.Missing;
       return {
-        code:
-          installation.status.state === CodingCliState.Missing ? EngineStatusCode.NotInstalled : EngineStatusCode.Error,
+        code: missing ? EngineStatusCode.NotInstalled : EngineStatusCode.Error,
         detail: installation.status.detail,
+        ...(missing ? { reason: EngineStatusReason.CliMissing } : {}),
       };
     }
     const binary = installation?.status.path ?? (await this.#resolveBinary());
     if (!binary) {
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.CliRequired, remedy: MESSAGE.InstallRemedy };
+      return {
+        code: EngineStatusCode.NotInstalled,
+        detail: MESSAGE.CliRequired(),
+        remedy: MESSAGE.InstallRemedy(),
+        reason: EngineStatusReason.CliMissing,
+      };
     }
     const login = await this.resolveLogin();
     const home = login.home ?? this.systemHome;
@@ -576,9 +604,9 @@ export class CodexEngine implements Engine {
   }
 
   /**
-   * The plan's limits for the composer, read at most once a minute from the account itself. A read
-   * that a login recheck overtook is dropped, and its callers wait for a read of the account
-   * signed in now.
+   * The plan's limits for the composer, read at most once a minute from the account itself. Null
+   * when the plan shares none; a throw when they could not be read. A read that a login recheck
+   * overtook is dropped, and its callers wait for a read of the account signed in now.
    */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
@@ -588,10 +616,13 @@ export class CodexEngine implements Engine {
     const read: Promise<ProviderUsage | null> = this.#askUsage()
       .then((usage) => {
         if (!current()) return this.readUsage();
-        if (usage) this.#usage = usage;
-        return usage ?? this.#usage;
+        this.#usage = usage;
+        return usage;
       })
-      .catch(() => (current() ? this.#usage : this.readUsage()))
+      .catch((error: unknown) => {
+        if (current()) throw error;
+        return this.readUsage();
+      })
       .finally(() => {
         if (this.#usageRead === read) this.#usageRead = null;
       });
@@ -629,7 +660,7 @@ export class CodexEngine implements Engine {
 
   async models(): Promise<EngineModel[]> {
     void this.refreshModels().catch(() => {});
-    return [codexEngineModel(DEFAULT_ROW), ...this.#catalog.models()];
+    return [codexEngineModel(defaultRow()), ...this.#catalog.models()];
   }
 
   async refreshModels(force = false): Promise<void> {
@@ -668,7 +699,7 @@ export class CodexEngine implements Engine {
           () => {},
         );
         const rows = await readCodexCatalogue(home);
-        if (!rows) throw new CatalogError(ModelCatalogProblemCode.Malformed, "The CLI model cache is unavailable.");
+        if (!rows) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.NoCache());
         return {
           models: rows.filter((row) => row.id !== DEFAULT_MODEL).map(codexEngineModel),
           source: ModelCatalogSource.Cache,
@@ -744,6 +775,7 @@ export class CodexEngine implements Engine {
     try {
       const argv = [
         ...JUDGE_EXEC_ARGS,
+        ...windowsSandboxArgs(this.#platform),
         ...(model ? ["-m", model] : []),
         ...effortArgs(request.effort),
         ...(await this.preferenceArgs(request.model, request.preferences)),
@@ -822,7 +854,7 @@ export class CodexEngine implements Engine {
       : null;
     const metadata = this.#watchSessionMetadata(request, run, startedAt, model);
     try {
-      const argv = await this.#delegateArgv(request, model, runDir, stills.paths);
+      const argv = await this.#delegateArgv(request, model, runDir, stills.paths, bridgeRoots(this.#platform, bridge));
       const signal = controller.signal;
       const delivery = toolDelivery(dir);
       const source = { argv, runDir, prompt, turn, images: stills.paths, delivery };
@@ -917,7 +949,9 @@ export class CodexEngine implements Engine {
     let scratch: string | null = null;
     let turn: CodexDynamicTurn | null = null;
     try {
-      if (startsElsewhere(request)) scratch = await mkdtemp(path.join(os.tmpdir(), "studio-playtest-"));
+      // Its real path: on Windows the temp folder is often an 8.3 short name (`RUNNER~1`), and
+      // Codex's Windows sandbox refuses a writable root it spells two ways ("split writable root sets").
+      if (startsElsewhere(request)) scratch = await realpath(await mkdtemp(path.join(os.tmpdir(), "studio-playtest-")));
       turn = await this.#openDynamicTurn(request, scratch ?? ctx.cwd, ctx);
       const bridge = turn ? null : await this.#openBridge(request, scratch ?? ctx.cwd);
       return { scratch, bridge, turn };
@@ -980,6 +1014,7 @@ export class CodexEngine implements Engine {
     const { env, installation } = await this.#cli(signal, Boolean(this.#appServerFn));
     return [
       ...(chatMode(request) === PermissionMode.Bypass ? BYPASS_CONFIG_ARGS : sandboxArgs(runDir)),
+      ...windowsSandboxArgs(this.#platform),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
       ...(await hostSkillArgs(this.#suppressedSkillsDir)),
@@ -1059,13 +1094,15 @@ export class CodexEngine implements Engine {
     model: string | undefined,
     runDir: string,
     imagePaths: string[],
+    bridge: string[],
   ): Promise<string[]> {
     return [
       "exec",
       ...(request.resume ? ["resume", request.resume] : []),
       ...CODEX_EXEC_FLAGS,
       ...(model ? ["-m", model] : []),
-      ...sessionBox(request, runDir),
+      ...sessionBox(request, runDir, bridge),
+      ...windowsSandboxArgs(this.#platform),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
       ...imageArgs(imagePaths),
@@ -1238,7 +1275,9 @@ export class CodexEngine implements Engine {
     // id survives for "Continue". A user stop that raced the deadline still reads as the user's.
     const aborted = request.signal?.aborted;
     if (aborted || run.deadlineHit) return partialDelegateResult(this.id, interruption(aborted), partialState());
-    const classified = this.#classify(err as Error, run.stderrTail);
+    // The CLI names a limit in its stream and then exits non-zero with an empty stderr: read the
+    // stream's own failure too, or a 429 reads as a crash and the run ends instead of waiting.
+    const classified = this.#classify(err as Error, [run.failure, run.stderrTail].filter(Boolean).join("\n"));
     if (classified.kind === EngineFailureKind.Auth) this.#authFailure = classified.message;
     throw classified;
   }
@@ -1361,7 +1400,7 @@ export class CodexEngine implements Engine {
     }
     // A sign-in gone stale, or the account's access taken away (the table both engines share).
     if (AUTH_PATTERNS.some((re) => re.test(text)) || isAccessLost(text)) {
-      return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${this.loginHint()}`);
+      return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${MESSAGE.LoginHint}`);
     }
     if (UNAVAILABLE_PATTERN.test(text)) return new EngineError(EngineFailureKind.Unavailable, this.id, text);
     return new EngineError(EngineFailureKind.Other, this.id, text);
@@ -1660,7 +1699,7 @@ function cliState(
 function connectedStatus(login: CodexLogin): EngineStatus {
   return {
     code: EngineStatusCode.Ready,
-    detail: login.source === LoginSource.Isolated ? MESSAGE.IsolatedLogin : MESSAGE.SystemLogin,
+    detail: login.source === LoginSource.Isolated ? MESSAGE.IsolatedLogin() : MESSAGE.SystemLogin(),
   };
 }
 
@@ -1670,13 +1709,19 @@ function notConnectedStatus(cli: CodexAuthStatus, remedy: string): EngineStatus 
     code: cli.loggedIn === null ? EngineStatusCode.Error : EngineStatusCode.NeedsLogin,
     detail: notConnectedDetail(cli),
     remedy,
+    reason: notConnectedReason(cli),
   };
+}
+
+function notConnectedReason(cli: CodexAuthStatus): EngineStatusReason {
+  if (cli.method === "api_key") return EngineStatusReason.ApiKeyLogin;
+  return cli.loggedIn === false ? EngineStatusReason.NotSignedIn : EngineStatusReason.CheckFailed;
 }
 
 function notConnectedDetail(cli: CodexAuthStatus): string {
   if (cli.method === "api_key") return MESSAGE.ApiKeyLogin;
-  if (cli.loggedIn === false) return MESSAGE.NotConnected;
-  return MESSAGE.CheckFailed;
+  if (cli.loggedIn === false) return MESSAGE.NotConnected();
+  return MESSAGE.CheckFailed();
 }
 
 /** Stills written to files for `-i`: Codex takes pictures as paths. */
@@ -2079,10 +2124,26 @@ function startsElsewhere(request: DelegateRequest): boolean {
   return readOnly || chatMode(request) === PermissionMode.Plan || request.worker?.mode === PermissionMode.Plan;
 }
 
-/** The session's box: the bypass flag only for the chat's own session in Bypass; a worker's own box; else one root. */
-function sessionBox(request: DelegateRequest, runDir: string): string[] {
-  if (request.worker) return [...workerBox(request, runDir), ...workerWebSearch(request)];
-  return chatMode(request) === PermissionMode.Bypass ? BYPASS_ARGS : sandboxArgs(runDir);
+/**
+ * The session's box: the bypass flag only for the chat's own session in Bypass; a worker's own
+ * box; else its folder. `bridge` is the bridge's own roots (`bridgeRoots`).
+ */
+function sessionBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
+  if (request.worker) return [...workerBox(request, runDir, bridge), ...workerWebSearch(request)];
+  return chatMode(request) === PermissionMode.Bypass ? BYPASS_ARGS : sandboxArgs(runDir, [runDir, ...bridge]);
+}
+
+/**
+ * The bridge's request folder as a writable root of its own, on Windows (#351). Codex's Windows
+ * sandbox grants a root by adding its ACEs there and rewriting them down the tree, which needs
+ * WRITE_DAC on every folder below. A `.studio` the harness made runs as another Windows user
+ * (ProcessSandbox's), so the grant stops there and every bridge call failed EPERM. The request
+ * folder is the host's, made just before the session starts, so Codex grants it directly; the
+ * rest of `.studio` keeps whatever the session could already write. Elsewhere the folder's own
+ * grant reaches the bridge.
+ */
+function bridgeRoots(platform: NodeJS.Platform, bridge: StudioBridge | null): string[] {
+  return platform === "win32" && bridge ? [bridge.requests] : [];
 }
 
 /**
@@ -2101,15 +2162,15 @@ function workerWebSearch(request: DelegateRequest): string[] {
  * Bypass chat. Its box never stops reads, so the never-touch list holds for its writes (and is
  * named in its brief). Plan and a reader start elsewhere and write only the studio's bridge.
  */
-function workerBox(request: DelegateRequest, runDir: string): string[] {
+function workerBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
   const seat = request.worker;
-  if (!seat || startsElsewhere(request)) return sandboxArgs(runDir);
+  if (!seat || startsElsewhere(request)) return sandboxArgs(runDir, [runDir, ...bridge]);
   // Its box cannot deny inside a writable folder: none that is, holds or sits in a never-touch root.
   const writes = writableRoots(
     seat.writeRoots.map((dir) => path.resolve(dir)),
     seat.neverTouch,
   );
-  const roots = [...new Set([path.resolve(runDir), ...writes])];
+  const roots = [...new Set([path.resolve(runDir), ...bridge, ...writes])];
   return sandboxArgs(runDir, roots, seat.mode === PermissionMode.Bypass);
 }
 
@@ -2157,6 +2218,18 @@ function sandboxArgs(runDir: string, roots: string[] = [runDir], network = false
     "-c",
     `sandbox_workspace_write.network_access=${network}`,
   ];
+}
+
+/**
+ * Codex's own sandbox on Windows, which is off unless config turns it on, and Genex runs Codex
+ * without the person's config (`--ignore-user-config`). Off, Codex has nothing to enforce a
+ * `workspace-write` or `read-only` box with, so under `approval_policy=never` it refuses every
+ * command it does not know to be safe ("blocked by policy"): no `node`, no `npm`, no studio
+ * bridge, and no build. `unelevated` is its restricted-token sandbox, which needs no
+ * administrator setup (`elevated` asks for one through UAC on first use, with nobody to answer).
+ */
+export function windowsSandboxArgs(platform: NodeJS.Platform): string[] {
+  return platform === "win32" ? ["-c", `windows.sandbox="${CodexWindowsSandbox.Unelevated}"`] : [];
 }
 
 /** `undefined`/"auto" = the model's own default. Anything above this CLI's ceiling is clamped. */
@@ -2292,7 +2365,7 @@ export async function readCodexCatalogue(home: string): Promise<CatalogueRow[] |
       .filter((model) => model.slug && model.visibility === "list")
       .sort((a, b) => (a.priority ?? UNRANKED) - (b.priority ?? UNRANKED));
 
-    return [{ ...DEFAULT_ROW, efforts: [...CODEX_EFFORTS] }, ...listed.map(catalogueRow)];
+    return [{ ...defaultRow(), efforts: [...CODEX_EFFORTS] }, ...listed.map(catalogueRow)];
   } catch {
     return null;
   }

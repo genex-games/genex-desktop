@@ -5,7 +5,7 @@
   /* Genex's engine panels group what belongs together in outlined blocks: an edge, a fill one step above the page, a foot a half step, and the tiles and row hovers inside them. */
   --edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));--tile:color-mix(in srgb,var(--fg) 8%,var(--bg));--row-hover:color-mix(in srgb,var(--fg) 7%,var(--bg));
   /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
-  --sans:"Zalando Sans SemiExpanded",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
   /* A mark drawn in the current colour: the arrow of a button that opens another app or page, and a warning's sign. */
   --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17L17 7M9 7h8v8'/%3E%3C/svg%3E");
   --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E");
@@ -211,37 +211,37 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
 [hidden]{display:none}
 </style></head><body>
 <main id="app" aria-busy="true">
-  <p id="checking" class="quiet" role="status">Checking Unreal…</p>
+  <p id="checking" class="quiet" role="status" data-t>Checking Unreal…</p>
 
   <section id="get" hidden aria-labelledby="get-title">
-    <div class="intro" data-panel-head><h2 id="get-title" class="title">Get Unreal Engine 5.8</h2><p id="get-text" class="quiet"></p></div>
+    <div class="intro" data-panel-head><h2 id="get-title" class="title" data-t>Get Unreal Engine 5.8</h2><p id="get-text" class="quiet"></p></div>
     <div class="group">
       <div id="get-block" class="block">
         <ol id="get-steps" class="steps">
           <li id="step-launcher" class="step"><span class="mark"><span id="launcher-done" class="sr-only"></span></span><div class="step-body"><span class="step-name">Epic Games Launcher</span><span id="step-launcher-text" class="quiet small"></span></div></li>
           <li id="step-unreal" class="step"><span class="mark"></span><div class="step-body"><span class="step-name">Unreal Engine 5.8</span><span id="step-install" class="quiet small">In the Launcher: Unreal Engine, then Library. Click + beside Engine Versions and pick 5.8, not a newer one. About 45 GB.</span></div><button type="button" id="get-unreal" class="primary external">Open Launcher</button></li>
         </ol>
-        <p class="foot-line"><span class="orb" aria-hidden="true"></span>Waiting for Unreal 5.8. This page moves on by itself.</p>
+        <p class="foot-line"><span class="orb" aria-hidden="true"></span><span data-t>Waiting for Unreal 5.8. This page moves on by itself.</span></p>
       </div>
       <p id="get-opened" class="quiet small" role="status"></p>
     </div>
   </section>
 
   <section id="pick" hidden aria-labelledby="pick-title">
-    <div class="view-head" data-panel-head><button type="button" id="back" class="icon" aria-label="Back" data-panel-back hidden><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button><h2 id="pick-title" class="title">Choose a project</h2></div>
+    <div class="view-head" data-panel-head><button type="button" id="back" class="icon" aria-label="Back" data-t="aria-label" data-panel-back hidden><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button><h2 id="pick-title" class="title">Choose a project</h2></div>
     <div id="pick-new" class="block"><div class="new-row">
       <span class="tile small new" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
-      <div class="row-text"><span class="row-name">New Unreal project</span><span id="pick-new-text" class="quiet small"></span></div>
-      <button type="button" id="new-here" class="primary">New project</button>
+      <div class="row-text"><span class="row-name" data-t>New Unreal project</span><span id="pick-new-text" class="quiet small"></span></div>
+      <button type="button" id="new-here" class="primary" data-t>New project</button>
     </div></div>
     <div class="group">
       <div id="pick-have-row" class="label-row">
-        <h3 id="pick-have" class="label">On this computer<span id="pick-count" class="count"></span></h3>
-        <label id="filter-field" class="filter" hidden><svg width="14" height="14" viewBox="0 0 24 24" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><span class="sr-only">Filter projects</span><input id="filter" type="text" placeholder="Filter" autocomplete="off" spellcheck="false"></label>
+        <h3 id="pick-have" class="label"><span data-t>On this computer</span><span id="pick-count" class="count"></span></h3>
+        <label id="filter-field" class="filter" hidden><svg width="14" height="14" viewBox="0 0 24 24" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><span class="sr-only" data-t>Filter projects</span><input id="filter" type="text" placeholder="Filter" data-t="placeholder" autocomplete="off" spellcheck="false"></label>
       </div>
       <ul id="projects" class="block list" aria-labelledby="pick-have"></ul>
       <p id="no-match" class="quiet small" hidden></p>
-      <div class="actions"><button type="button" id="choose"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>Choose a project file…</button><p id="outside-note" class="quiet small" hidden></p></div>
+      <div class="actions"><button type="button" id="choose"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg><span data-t>Choose a project file…</span></button><p id="outside-note" class="quiet small" hidden></p></div>
     </div>
   </section>
 
@@ -249,20 +249,20 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
     <div class="intro" data-panel-head><h2 id="new-title" class="title">New Unreal project</h2><p id="new-note" class="quiet" hidden></p></div>
     <div id="unverified" class="block" hidden>
       <div class="pad intro"><p id="unverified-text"></p><p id="unverified-opened" class="quiet" role="status" hidden></p><p id="unverified-hint" class="quiet small"></p></div>
-      <div class="foot actions"><button type="button" id="unverified-get" class="primary external">Open the Epic Games Launcher</button><button type="button" id="choose-unverified">Choose a project…</button></div>
+      <div class="foot actions"><button type="button" id="unverified-get" class="primary external">Open the Epic Games Launcher</button><button type="button" id="choose-unverified" data-t>Choose a project…</button></div>
     </div>
     <div class="group">
-      <fieldset id="cards" class="cards"><legend id="cards-legend" class="sr-only">Template</legend></fieldset>
+      <fieldset id="cards" class="cards"><legend id="cards-legend" class="sr-only" data-t>Template</legend></fieldset>
       <p id="about" class="quiet about"></p>
     </div>
     <div id="name-block" class="block">
       <div id="name-field" class="field pad">
-        <label class="label-name" for="name">Name</label>
+        <label class="label-name" for="name" data-t>Name</label>
         <input id="name" type="text" spellcheck="false" autocomplete="off" maxlength="20" aria-describedby="name-hint name-error">
         <p id="name-hint" class="quiet small"></p>
         <p id="name-error" class="error small" role="alert"></p>
       </div>
-      <div id="new-actions" class="foot actions"><button type="button" id="create" class="primary"></button><button type="button" id="cancel-new">Cancel</button><button type="button" id="choose-new">Choose a project…</button></div>
+      <div id="new-actions" class="foot actions"><button type="button" id="create" class="primary"></button><button type="button" id="cancel-new" data-t>Cancel</button><button type="button" id="choose-new" data-t>Choose a project…</button></div>
     </div>
     <p id="creating" class="waiting" role="status" tabindex="-1" hidden><span class="orb" aria-hidden="true"></span><span id="creating-text"></span></p>
   </section>
@@ -273,32 +273,32 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
       <div class="block">
         <div class="head">
           <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9 7.75v5a3 3 0 0 0 6 0v-5"/></svg></span>
-          <div class="who"><h2 id="project-name" tabindex="-1">Your project</h2><p id="project-path" class="path"></p></div>
+          <div class="who"><h2 id="project-name" tabindex="-1" data-t>Your project</h2><p id="project-path" class="path"></p></div>
           <span id="state" class="state" role="status"><span id="state-word"></span></span>
         </div>
         <div id="message" class="msg">
           <p id="headline" class="status"></p>
           <p id="say"></p>
           <p id="say-more" hidden></p>
-          <p id="try" class="try" hidden><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M20 11.5c0 4.1-3.6 7.5-8 7.5-1.2 0-2.3-.2-3.3-.7L4.5 19.5l1.2-3.6A7.2 7.2 0 0 1 4 11.5C4 7.4 7.6 4 12 4s8 3.4 8 7.5z"/></svg><span><span class="quiet">Try </span><q id="try-text"></q></span></p>
+          <p id="try" class="try" hidden><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M20 11.5c0 4.1-3.6 7.5-8 7.5-1.2 0-2.3-.2-3.3-.7L4.5 19.5l1.2-3.6A7.2 7.2 0 0 1 4 11.5C4 7.4 7.6 4 12 4s8 3.4 8 7.5z"/></svg><span><span class="quiet" data-t>Try</span> <q id="try-text"></q></span></p>
           <p id="hint" class="quiet small"></p>
           <p id="in-game" class="quiet small" hidden></p>
           <div id="use-row" class="actions" hidden><button type="button" id="use-here"></button></div>
           <p id="kept" class="quiet small" role="status"></p>
         </div>
-        <div id="fact-engine" class="fact" hidden><span class="k">Engine</span><span id="project-engine" class="v"></span></div>
-        <div id="fact-reach" class="fact" hidden><span class="k">Rewind and Loops</span><span id="project-reach" class="v"></span></div>
-        <section id="ray-tracing" class="xcode" hidden aria-label="Ray tracing">
+        <div id="fact-engine" class="fact" hidden><span class="k" data-t>Engine</span><span id="project-engine" class="v"></span></div>
+        <div id="fact-reach" class="fact" hidden><span class="k" data-t>Rewind and Loops</span><span id="project-reach" class="v"></span></div>
+        <section id="ray-tracing" class="xcode" hidden aria-label="Ray tracing" data-t="aria-label">
           <div class="xcode-row"><p id="ray-tracing-text"></p><div class="actions"><button type="button" id="ray-tracing-off"></button></div></div>
         </section>
         <div class="foot">
           <div id="primary-row" class="actions"><button type="button" id="primary" class="primary"></button><button type="button" id="secondary" hidden></button></div>
           <div class="end">
-            <button type="button" id="change">Change project</button>
+            <button type="button" id="change" data-t>Change project</button>
             <details id="more" class="menu">
-              <summary aria-label="More"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
+              <summary aria-label="More" data-t="aria-label"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
               <div class="menu-body">
-                <div class="actions"><button type="button" id="undo">Undo setup</button><button type="button" id="quit">Quit Unreal</button></div>
+                <div class="actions"><button type="button" id="undo" data-t>Undo setup</button><button type="button" id="quit" data-t>Quit Unreal</button></div>
                 <p id="more-hint" class="quiet small"></p>
               </div>
             </details>
@@ -308,26 +308,26 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
     </div>
 
     <div id="agents" class="group" hidden>
-      <p class="label">Agents</p>
+      <p class="label" data-t>Agents</p>
       <div class="block">
         <label class="choice" for="while-playing">
           <input type="checkbox" id="while-playing">
           <span class="words">
-            <span>Agents may use Unreal while you play</span>
-            <span class="quiet small">They go ahead even in a play session, and may stop your play. Turn off to have them wait until you stop.</span>
+            <span data-t>Agents may use Unreal while you play</span>
+            <span class="quiet small" data-t>They go ahead even in a play session, and may stop your play. Turn off to have them wait until you stop.</span>
           </span>
         </label>
       </div>
     </div>
 
     <div id="facts" class="group mac">
-      <p id="facts-label" class="label">This computer</p>
+      <p id="facts-label" class="label" data-t>This computer</p>
       <div class="block">
         <div id="engine-row" class="fact" hidden><span class="ticked" aria-hidden="true"></span><span class="k">Unreal Engine</span><span id="engine" class="v"></span></div>
         <div id="xcode-ready" class="fact" hidden><span class="ticked" aria-hidden="true"></span><span class="k">Xcode</span><span id="xcode-version" class="v"></span></div>
         <section id="xcode" class="xcode" hidden aria-label="Xcode">
           <div class="xcode-row"><p id="xcode-text"></p><div id="xcode-row" class="actions" hidden><button type="button" id="xcode-act" class="external"></button></div></div>
-          <div id="xcode-command-row" class="command" hidden><code id="xcode-command"></code><button type="button" id="xcode-copy">Copy</button></div>
+          <div id="xcode-command-row" class="command" hidden><code id="xcode-command"></code><button type="button" id="xcode-copy" data-t>Copy</button></div>
         </section>
         <span id="facts-end" hidden></span>
       </div>
@@ -338,8 +338,12 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
   <p id="error" class="error" role="alert"></p>
 </main>
 <!-- STUDIO_PANEL_SDK -->
-<script>
-const api = window.studioPlugin, $ = (id) => document.getElementById(id);
+<script type="module">
+const api = window.studioPlugin;
+// The panel's words are in Genex's language once the host has named it (plugin-sdk/words.js).
+await api.ready;
+const { t } = api;
+const $ = (id) => document.getElementById(id);
 const GIB = 1024 ** 3;
 const REFRESH_MS = 3000;
 const SECOND_MS = 1000;
@@ -423,138 +427,194 @@ const ICON = {
   chevron: '<svg width="16" height="16" viewBox="0 0 16 16" stroke-width="1.6" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>',
 };
 const WORDS = {
-  needUnreal: "Unreal games are built in Epic's free editor, on this computer. Web games don't need it.",
+  needUnreal: t("Unreal games are built in Epic's free editor, on this computer. Web games don't need it."),
   oldUnreal: (builds, version) =>
-    `This computer has Unreal ${builds}. Genex needs ${version} beside it; setting up an older project moves it to ${version}.`,
+    t(
+      "This computer has Unreal {builds}. Genex needs {version} beside it; setting up an older project moves it to {version}.",
+      { builds, version },
+    ),
   opened: {
-    [UnrealSource.Launcher]: "The Epic Games Launcher is opening.",
-    [UnrealSource.Download]: "Epic's download page is opening in your browser.",
+    [UnrealSource.Launcher]: t("The Epic Games Launcher is opening."),
+    [UnrealSource.Download]: t("Epic's download page is opening in your browser."),
   },
-  getUnreal: "Open the Epic Games Launcher",
-  getLauncher: "Download",
-  openLauncher: "Open Launcher",
-  stepLauncher: "Download it from Epic's page, open it and sign in. An Epic account is free.",
+  getUnreal: t("Open the Epic Games Launcher"),
+  getLauncher: t("Download"),
+  openLauncher: t("Open Launcher"),
+  stepLauncher: t("Download it from Epic's page, open it and sign in. An Epic account is free."),
   stepInstall: (gb) =>
-    `In the Launcher: Unreal Engine, then Library. Click + beside Engine Versions and pick 5.8, not a newer one. About ${gb} GB.`,
-  done: "Done: ",
+    t(
+      "In the Launcher: Unreal Engine, then Library. Click + beside Engine Versions and pick 5.8, not a newer one. About {gb} GB.",
+      { gb },
+    ),
+  /** Read before the step's name by a screen reader, a space between them. */
+  done: `${t("Done:")} `,
   version: (v) => `Unreal ${v}`,
-  pickerTitle: "Choose a project",
-  pickTitle: "Choose a project",
+  pickerTitle: t("Choose a project"),
+  pickTitle: t("Choose a project"),
   /** The New project row's line: in a game, its folder; with none open, the game Genex makes for it. */
-  newInGame: "From Epic's template, in this game's folder.",
-  newAnywhere: "From Epic's template. Genex makes a game for it too.",
-  inUse: "In use",
-  outside: "Outside game",
-  outsideWhy: "Outside game: chats use it, Rewind and Loops can't reach it.",
-  noMatch: "No project has that in its name.",
+  newInGame: t("From Epic's template, in this game's folder."),
+  newAnywhere: t("From Epic's template. Genex makes a game for it too."),
+  inUse: t("In use"),
+  outside: t("Outside game"),
+  outsideWhy: t("Outside game: chats use it, Rewind and Loops can't reach it."),
+  noMatch: t("No project has that in its name."),
   /** The project block's label: the open game's own project, or any other one shown. */
-  projectHere: "This game's project",
-  project: "Project",
+  projectHere: t("This game's project"),
+  project: t("Project"),
   /** Whether Rewind and Loops reach the shown project, in an open game. */
-  reachInside: "Yes, in this game's folder",
-  reachOutside: "No, outside this game's folder",
+  reachInside: t("Yes, in this game's folder"),
+  reachOutside: t("No, outside this game's folder"),
   /** How a project in a temporary folder is named instead of its system path. */
-  temporary: "Temporary folder",
-  newProject: "New Unreal project",
-  newProjectInGame: "Make this game in Unreal",
-  startsOver: "A new Unreal project in this game's folder. What you made for the web stays, and Undo in the chat switches back.",
-  nameHint: (place) => `Saved in ${place}.`,
-  nameHintNewGame: "Genex makes a game for it too, so agents can build it in Loops.",
-  madeGame: (name) => `Genex made the game ${name} for it too. Open it from the sidebar to build it with agents.`,
-  noTemplates: "Unreal 5.8's templates are missing. In the Epic Games Launcher, open Library, click ⋯ next to 5.8, then Verify.",
+  temporary: t("Temporary folder"),
+  newProject: t("New Unreal project"),
+  newProjectInGame: t("Make this game in Unreal"),
+  startsOver: t(
+    "A new Unreal project in this game's folder. What you made for the web stays, and Undo in the chat switches back.",
+  ),
+  nameHint: (folder) => t("Saved in {folder}.", { folder }),
+  nameHintNewGame: t("Genex makes a game for it too, so agents can build it in Loops."),
+  madeGame: (name) =>
+    t("Genex made the game {name} for it too. Open it from the sidebar to build it with agents.", { name }),
+  noTemplates: t(
+    "Unreal 5.8's templates are missing. In the Epic Games Launcher, open Library, click ⋯ next to 5.8, then Verify.",
+  ),
   unverifiedEngine: (version, gb) =>
-    `Genex makes Unreal projects with 5.8; this computer has ${version}. Install 5.8 beside it: in Library, click + next to Engine Versions and choose 5.8. About ${gb} GB.`,
-  unverifiedHint: (version) => `A project made in Unreal ${version}'s New Project dialog works in chats, not in Loops.`,
-  create: "Create and open",
-  creating: (name) => `Creating ${name}…`,
-  setUpText: "Genex turns on Epic's plugins for agents and adds a small helper so they can work in it. Undo setup takes it back.",
-  setUp: (name) => `Set up ${name}`,
-  setUpAndOpen: (name) => `Set up and open ${name}`,
-  switchEngine: (name, made, target) =>
-    `${name} was made with Unreal ${made}. Setting it up switches it to Unreal ${target}; work saved in ${target} won't open in ${made}. To keep a ${made} copy, duplicate the project folder first.`,
-  setUpOnly: "Set it up now; open it once Unreal is free.",
-  setUpOnlyAfterLoop: "Set it up now; open it after the Loop ends.",
-  openWhenFree: (name) => `Open ${name} once Unreal is free.`,
-  anotherOpen: "Unreal has another project open.",
-  helperOnOpen: "A newer Genex editor helper is ready. Open in Unreal updates it first.",
-  helperOld: "A newer Genex editor helper is ready. It updates the next time Genex opens this project.",
-  helperFromGame: "A newer Genex editor helper is ready. Opening it from its Genex game updates it.",
-  helperNewer: "This project's Genex editor helper is newer than this Genex's, so Genex leaves it as it is.",
-  quitFirst: (name) => `${name} is open in Unreal. Quit Unreal to set it up; Unreal asks you to save first.`,
-  busyRun: (game) => `A Loop in ${game} is using Unreal.`,
-  busyHere: "This game's Loop is using Unreal.",
-  setUpAfter: (name) => `Set up ${name} after it ends.`,
-  openAfter: (name) => `Open ${name} after it ends.`,
-  leaveOpen: "Genex leaves it open until the Loop ends.",
-  undoAfterRun: "Undo setup after the Loop ends.",
-  quit: "Quit Unreal",
-  restart: "Restart Unreal",
-  quitting: "Unreal is quitting. If it asks, save your work.",
-  open: "Open in Unreal",
-  openHint: "The first start takes a few minutes while Unreal prepares its shaders.",
-  starting: "Opening in Unreal",
-  startingHint: "The first start takes a few minutes, longer for big projects.",
-  closeHint: "You can close this. The Unreal button says Ready when it's done.",
-  connectedHere: (name) => `Agents in this game's chat can now build and play ${name}.`,
+    t(
+      "Genex makes Unreal projects with 5.8; this computer has {version}. Install 5.8 beside it: in Library, click + next to Engine Versions and choose 5.8. About {gb} GB.",
+      { version, gb },
+    ),
+  unverifiedHint: (version) =>
+    t("A project made in Unreal {version}'s New Project dialog works in chats, not in Loops.", { version }),
+  create: t("Create and open"),
+  creating: (name) => t("Creating {name}…", { name }),
+  setUpText: t(
+    "Genex turns on Epic's plugins for agents and adds a small helper so they can work in it. Undo setup takes it back.",
+  ),
+  setUp: (name) => t("Set up {name}", { name }),
+  setUpAndOpen: (name) => t("Set up and open {name}", { name }),
+  switchEngine: (name, oldVersion, newVersion) =>
+    t(
+      "{name} was made with Unreal {oldVersion}. Setting it up switches it to Unreal {newVersion}; work saved in {newVersion} won't open in {oldVersion}. To keep a {oldVersion} copy, duplicate the project folder first.",
+      { name, oldVersion, newVersion },
+    ),
+  setUpOnly: t("Set it up now; open it once Unreal is free."),
+  setUpOnlyAfterLoop: t("Set it up now; open it after the Loop ends."),
+  openWhenFree: (name) => t("Open {name} once Unreal is free.", { name }),
+  anotherOpen: t("Unreal has another project open."),
+  helperOnOpen: t("A newer Genex editor helper is ready. Open in Unreal updates it first."),
+  helperOld: t("A newer Genex editor helper is ready. It updates the next time Genex opens this project."),
+  helperFromGame: t("A newer Genex editor helper is ready. Opening it from its Genex game updates it."),
+  helperNewer: t("This project's Genex editor helper is newer than this Genex's, so Genex leaves it as it is."),
+  quitFirst: (name) =>
+    t("{name} is open in Unreal. Quit Unreal to set it up; Unreal asks you to save first.", { name }),
+  busyRun: (game) => t("A Loop in {game} is using Unreal.", { game }),
+  busyHere: t("This game's Loop is using Unreal."),
+  setUpAfter: (name) => t("Set up {name} after it ends.", { name }),
+  openAfter: (name) => t("Open {name} after it ends.", { name }),
+  leaveOpen: t("Genex leaves it open until the Loop ends."),
+  undoAfterRun: t("Undo setup after the Loop ends."),
+  quit: t("Quit Unreal"),
+  restart: t("Restart Unreal"),
+  quitting: t("Unreal is quitting. If it asks, save your work."),
+  open: t("Open in Unreal"),
+  openHint: t("The first start takes a few minutes while Unreal prepares its shaders."),
+  starting: t("Opening in Unreal"),
+  startingHint: t("The first start takes a few minutes, longer for big projects."),
+  closeHint: t("You can close this. The Unreal button says Ready when it's done."),
+  connectedHere: (name) => t("Agents in this game's chat can now build and play {name}.", { name }),
   connectedOwned: (name) =>
-    `Agents can now build and play ${name}. Open the Genex game that builds in it from the sidebar to talk to them.`,
+    t(
+      "Agents can now build and play {name}. Open the Genex game that builds in it from the sidebar to talk to them.",
+      { name },
+    ),
   connectedAny: (name) =>
-    `Agents can now build and play ${name}. Open the Genex game that should build in it from the sidebar to talk to them.`,
-  tryPrompt: (name) => `Play ${name} in Unreal and tell me how it feels`,
+    t(
+      "Agents can now build and play {name}. Open the Genex game that should build in it from the sidebar to talk to them.",
+      { name },
+    ),
+  tryPrompt: (name) => t("Play {name} in Unreal and tell me how it feels", { name }),
   /** Where the shown project stands, in the Unreal toolbar button's own words. */
   state: {
-    notSetUp: "Not set up",
-    notOpen: "Not open",
-    starting: "Starting",
-    ready: "Ready",
-    notAnswering: "Not answering",
-    notConnected: "Not connected",
-    busy: "Unreal busy",
+    notSetUp: t("Not set up"),
+    notOpen: t("Not open"),
+    starting: t("Starting"),
+    ready: t("Ready"),
+    notAnswering: t("Not answering"),
+    notConnected: t("Not connected"),
+    busy: t("Unreal busy"),
   },
-  otherOpen: (open) => `Unreal has ${open} open.`,
-  switchTo: (name) => `Switch to ${name}`,
-  notAnswering: (name) => `${name} isn't answering in Unreal.`,
-  portBlocked: (name) => `Unreal couldn't use the port Genex gave ${name}.`,
-  crashed: (name) => `Unreal crashed. Close its crash report window, then open ${name} again.`,
+  otherOpen: (project) => t("Unreal has {project} open.", { project }),
+  switchTo: (name) => t("Switch to {name}", { name }),
+  notAnswering: (name) => t("{name} isn't answering in Unreal.", { name }),
+  portBlocked: (name) => t("Unreal couldn't use the port Genex gave {name}.", { name }),
+  crashed: (name) => t("Unreal crashed. Close its crash report window, then open {name} again.", { name }),
   portBusy: (name) =>
-    `Another app was still using the port Genex gave ${name} as Unreal opened. If it doesn't connect, this panel offers Restart Unreal.`,
-  quitToUndo: "Quit Unreal to undo setup.",
-  missingEngine: (name, made) =>
-    `${name} needs Unreal ${made}, which isn't on this computer. Install it in the Epic Games Launcher to open it.`,
+    t(
+      "Another app was still using the port Genex gave {name} as Unreal opened. If it doesn't connect, this panel offers Restart Unreal.",
+      { name },
+    ),
+  quitToUndo: t("Quit Unreal to undo setup."),
+  missingEngine: (name, version) =>
+    t(
+      "{name} needs Unreal {version}, which isn't on this computer. Install it in the Epic Games Launcher to open it.",
+      { name, version },
+    ),
   xcode: {
     [XcodeState.Missing]: () =>
-      "Xcode lets agents add C++ to this game; without it they build in Blueprints. Free from the App Store.",
-    [XcodeState.FirstLaunch]: () => "Open Xcode once to finish its setup.",
-    [XcodeState.NotSelected]: () => "Xcode is installed but not in use. Run this in Terminal; it asks for your password:",
-    [XcodeState.Unsupported]: (x, engine) =>
-      x.tooNew
-        ? `Unreal ${engine} builds with Xcode ${x.supported.min} to ${x.supported.max}. Keep Xcode ${x.version} and add Xcode ${majorOf(x.supported.max)} from Apple's downloads: put it in Applications beside Xcode ${majorOf(x.version)}; this page then shows the one command to select it.`
-        : `Unreal ${engine} builds with Xcode ${x.supported.min} to ${x.supported.max}; this Mac has Xcode ${x.version}.`,
+      t("Xcode lets agents add C++ to this game; without it they build in Blueprints. Free from the App Store."),
+    [XcodeState.FirstLaunch]: () => t("Open Xcode once to finish its setup."),
+    [XcodeState.NotSelected]: () =>
+      t("Xcode is installed but not in use. Run this in Terminal; it asks for your password:"),
+    [XcodeState.Unsupported]: (x, engine) => {
+      const { min, max } = x.supported;
+      if (!x.tooNew)
+        return t("Unreal {engine} builds with Xcode {min} to {max}; this Mac has Xcode {version}.", {
+          engine,
+          min,
+          max,
+          version: x.version,
+        });
+      return t(
+        "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {newMajor} from Apple's downloads: put it in Applications beside Xcode {major}; this page then shows the one command to select it.",
+        { engine, min, max, version: x.version, newMajor: majorOf(max), major: majorOf(x.version) },
+      );
+    },
   },
   rayTracing: (name) =>
-    `Ray tracing is on in ${name}. On this Mac, Unreal can crash while Genex plays the game in the background. Lighting stays on without it.`,
-  rayTracingOff: "Turn off ray tracing",
-  useHere: "Use in this game",
-  linkHere: (name) => `Use ${name} in this game`,
-  outsideProject: (name) => `${name} is outside this game's folder: Loops and Rewind won't reach it.`,
-  usedHere: (name) => `This game builds in ${name}.`,
-  usedElsewhere: (name) => `This game builds in ${name}. Use this project instead?`,
+    t(
+      "Ray tracing is on in {name}. On this Mac, Unreal can crash while Genex plays the game in the background. Lighting stays on without it.",
+      { name },
+    ),
+  rayTracingOff: t("Turn off ray tracing"),
+  useHere: t("Use in this game"),
+  linkHere: (name) => t("Use {name} in this game", { name }),
+  outsideProject: (name) => t("{name} is outside this game's folder: Loops and Rewind won't reach it.", { name }),
+  usedHere: (name) => t("This game builds in {name}.", { name }),
+  usedElsewhere: (name) => t("This game builds in {name}. Use this project instead?", { name }),
   xcodeButton: {
-    [XcodeState.Missing]: "Get Xcode",
-    [XcodeState.Unsupported]: "Open App Store",
-    [XcodeState.FirstLaunch]: "Open Xcode",
+    [XcodeState.Missing]: t("Get Xcode"),
+    [XcodeState.Unsupported]: t("Open App Store"),
+    [XcodeState.FirstLaunch]: t("Open Xcode"),
   },
-  xcodeDownloads: "Open Apple's downloads",
-  copy: "Copy",
-  copied: "Copied",
-  disk: (free) => `This disk has ${free} GB free; Unreal needs about 20 GB for shaders and builds. Free up space before you open it.`,
+  xcodeDownloads: t("Open Apple's downloads"),
+  copy: t("Copy"),
+  copied: t("Copied"),
+  disk: (free) =>
+    t(
+      "This disk has {free} GB free; Unreal needs about 20 GB for shaders and builds. Free up space before you open it.",
+      { free },
+    ),
   installDisk: (free, need) =>
-    `Unreal 5.8 and a first game need about ${need} GB; this disk has ${free} GB free. Free up space before you install it.`,
-  memory: (gb) => `This computer has ${gb} GB of memory; Unreal needs 16 GB to run well.`,
-  webFine: "Web games run fine.",
-  fixture: "This test profile can't open Unreal, other apps or files on this computer.",
-  severalEditors: "Two Unreal editors are open. Quit the one you want from its own window.",
-  portTaken: (name) => `Another app is using the port Genex gave ${name}. Set it up again to move it to a free one.`,
+    t(
+      "Unreal 5.8 and a first game need about {need} GB; this disk has {free} GB free. Free up space before you install it.",
+      { free, need },
+    ),
+  memory: (gb) => t("This computer has {gb} GB of memory; Unreal needs 16 GB to run well.", { gb }),
+  webFine: t("Web games run fine."),
+  fixture: t("This test profile can't open Unreal, other apps or files on this computer."),
+  severalEditors: t("Two Unreal editors are open. Quit the one you want from its own window."),
+  portTaken: (name) =>
+    t("Another app is using the port Genex gave {name}. Set it up again to move it to a free one.", { name }),
 };
 /** A version's first number, as people name an Xcode: "27.9" is Xcode 27. */
 const majorOf = (version) => String(version).split(".")[0];
@@ -768,7 +828,7 @@ function chosenTemplate() {
 function renderAbout() {
   const offer = ui.offer;
   const { template, variant } = chosenTemplate();
-  const card = offer?.templates.find((t) => t.id === template && (t.variant ?? "") === variant);
+  const card = offer?.templates.find((entry) => entry.id === template && (entry.variant ?? "") === variant);
   setText($("about"), card?.description ?? "");
 }
 

@@ -72,7 +72,7 @@ const capture = (runId: string, observer: string, files: unknown[], extra: Recor
     images: files.map((file, n) => ({ name: `shot ${n + 1}`, file })),
     ...extra,
   });
-const savePoint = (runId: string, round: number, shot: string) =>
+const savePoint = (runId: string, round: number, shot: string, shown?: string) =>
   record(CustomEvent.FacetIteration, {
     runId,
     facetId: "lead",
@@ -85,6 +85,7 @@ const savePoint = (runId: string, round: number, shot: string) =>
       { camera: "hero", path: shot },
       { camera: "default", path: shot },
     ],
+    ...(shown ? { shown: { camera: "shows", path: shown } } : {}),
   });
 
 describe("Live's view, from the folder's observers", () => {
@@ -252,6 +253,14 @@ describe("Live's view, from the folder's observers", () => {
       savePoint("run_u", 2, "/runs/run_u/s2.png"),
     ];
     assert.equal(latestShot(buildRunGraph(saves), VIEWPORT), "/runs/run_u/s2.png", "the newest save point's still");
+    assert.equal(
+      latestShot(
+        buildRunGraph([...saves, savePoint("run_u", 3, "/runs/run_u/s3.png", "/runs/run_u/shows3.png")]),
+        VIEWPORT,
+      ),
+      "/runs/run_u/shows3.png",
+      "the picture the lead named as showing the save point's change",
+    );
     const captured = [
       ...saves,
       capture("run_u", VIEWPORT, ["/runs/run_u/v1.png"]),

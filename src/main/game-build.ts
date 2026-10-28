@@ -38,6 +38,7 @@ import { type RunConfinement, type RunRequest, type RunResult, shellQuote } from
 import type { BuildProblem, InstallResult, SetupScripts } from "../shared/build-problem.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { GENEX_GAME_PACKAGES, isGenexGamePackage } from "../shared/genex.ts";
+import { t } from "../shared/i18n.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -79,10 +80,17 @@ const GUARDED_NPM_ENV = {
   npm_config_fund: "false",
 } as const;
 
+/**
+ * The sentences a build or an install adds to its output. The package refusals answer the agent's
+ * `genex__package` (English); the rest show in the stage's details, in the app's language.
+ */
 const MESSAGE = {
   UnknownPackage: (name: string) =>
     `${name || "nothing"} is not a package Studio adds: only ${Object.keys(GENEX_GAME_PACKAGES).join(" and ")}`,
   NoPackageJson: "this game has no package.json, so it has no package manager to add packages with",
+  NothingToInstall: () => t("this game declares no packages to install"),
+  WroteNothing: (folder: string) => t("the build finished but wrote nothing to {folder}/", { folder }),
+  OutputNotKept: () => t("the build finished but its output could not be kept"),
 } as const;
 
 export interface BuildSource {
@@ -322,7 +330,7 @@ export class GameBuilds {
    * the whole build ran again on the next look.
    */
   async #keepOutput(produced: string, output: string, serve: string): Promise<string | null> {
-    if (!(await pathExists(produced))) return `the build finished but wrote nothing to ${serve}/`;
+    if (!(await pathExists(produced))) return MESSAGE.WroteNothing(serve);
     try {
       await rm(output, { recursive: true, force: true });
       await cp(produced, output, { recursive: true, force: true, mode: constants.COPYFILE_FICLONE });
@@ -330,7 +338,7 @@ export class GameBuilds {
     } catch {
       // No path in the sentence: where the studio keeps its shadow is not the user's business,
       // and a raw ENOENT with one in it was exactly what the stage used to show.
-      return "the build finished but its output could not be kept";
+      return MESSAGE.OutputNotKept();
     }
   }
 
@@ -358,7 +366,7 @@ export class GameBuilds {
    * sheet and the button still name the command that runs.
    */
   async install(source: BuildSource): Promise<InstallResult> {
-    if (!source.shape.install) return { ok: false, lines: ["this game declares no packages to install"] };
+    if (!source.shape.install) return { ok: false, lines: [MESSAGE.NothingToInstall()] };
     const dir = path.resolve(source.dir);
     return await this.#holdingBuilds(dir, async () => {
       const command = (await packageCommandsIn(dir)).install;

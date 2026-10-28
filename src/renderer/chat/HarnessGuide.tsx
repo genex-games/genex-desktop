@@ -7,7 +7,7 @@ import { type JSX, useRef, useState } from "react";
 import { Button } from "../ui/Button.tsx";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { HARNESS_GUIDE_WORDS } from "../words.ts";
 
 /** The guide's body: the four steps of the loop, two honest limits, and its two ways out. */
@@ -76,7 +76,9 @@ export function HarnessGuideButton(): JSX.Element {
           returnFocus={trigger}
           onDismiss={() => setOpen(false)}
         >
-          <HarnessGuideBody onSettings={() => openSettings(SettingsSection.Harness, trigger.current)} />
+          <HarnessGuideBody
+            onSettings={() => openSettings(SettingsSection.Harness, trigger.current, SettingsOpenedFrom.HarnessGuide)}
+          />
         </DialogSurface>
       )}
     </>

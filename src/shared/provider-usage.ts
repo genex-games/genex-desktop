@@ -1,12 +1,34 @@
+import { t } from "./i18n.ts";
+
 /** Sanitized account usage. It never contains account identifiers or credentials. */
 export interface ProviderUsage {
   measuredAt: string;
   plan?: string;
   windows: Array<{ id: string; label: string; percent: number | null; resetsAt?: string }>;
 }
-/** One signed-in subscription and its plan limits; `usage` is null when the provider reports none. */
+/** Where a subscription's plan limits stand: the one answer the panel, the picker and Settings show. */
+export const UsageState = {
+  /** A reading is on its way; `usage` is the last one of this same account, if any. */
+  Checking: "checking",
+  Ready: "ready",
+  /** The provider answered and shares no limits for this plan. */
+  NotShared: "not_shared",
+  /** The read failed or ran out of time; Try again asks once more. */
+  Failed: "failed",
+  /** The account in use is signed out; Sign in again brings it back. */
+  SignedOut: "signed_out",
+} as const;
+export type UsageState = (typeof UsageState)[keyof typeof UsageState];
+
+/**
+ * One subscription and where its plan limits stand. `usage` always belongs to `account`, the
+ * account in use: a switch never shows the last account's numbers.
+ */
 export interface ProviderUsageReport {
   engine: string;
+  state: UsageState;
+  /** The account in use (`terminal`, `studio`, `account-N`), or null when the engine names none. */
+  account: string | null;
   usage: ProviderUsage | null;
 }
 
@@ -33,11 +55,11 @@ export function normalizeClaudeUsage(value: unknown, measuredAt = new Date().toI
   };
   if (!data.rate_limits_available || !data.rate_limits) return null;
   const names: Record<string, string> = {
-    five_hour: "5-hour limit",
-    seven_day: "Weekly · all models",
-    seven_day_opus: "Weekly · Opus",
-    seven_day_sonnet: "Weekly · Sonnet",
-    seven_day_oauth_apps: "Weekly · connected apps",
+    five_hour: t("5-hour limit"),
+    seven_day: t("Weekly · all models"),
+    seven_day_opus: t("Weekly · {model}", { model: "Opus" }),
+    seven_day_sonnet: t("Weekly · {model}", { model: "Sonnet" }),
+    seven_day_oauth_apps: t("Weekly · connected apps"),
   };
   const windows: ProviderUsage["windows"] = Object.entries(data.rate_limits).flatMap(([id, raw]) => {
     const window = raw as Window | null;
@@ -50,7 +72,7 @@ export function normalizeClaudeUsage(value: unknown, measuredAt = new Date().toI
     : [];
   for (const window of scoped) {
     const name = typeof window?.display_name === "string" ? window.display_name.trim() : "";
-    const label = `Weekly · ${name}`;
+    const label = t("Weekly · {model}", { model: name });
     if (!name || windows.some((row) => row.label === label)) continue;
     windows.push({
       id: `${MODEL_LIMIT_PREFIX}${name.toLowerCase()}`,
@@ -67,11 +89,11 @@ export function normalizeClaudeUsage(value: unknown, measuredAt = new Date().toI
 }
 
 function windowName(minutes: number | null | undefined): string {
-  if (!minutes || minutes <= 0) return "Usage limit";
-  if (minutes === 10_080) return "Weekly limit";
-  if (minutes % 1_440 === 0) return `${minutes / 1_440}-day limit`;
-  if (minutes % 60 === 0) return `${minutes / 60}-hour limit`;
-  return `${minutes}-minute limit`;
+  if (!minutes || minutes <= 0) return t("Usage limit");
+  if (minutes === 10_080) return t("Weekly limit");
+  if (minutes % 1_440 === 0) return t("{count, plural, other {#-day limit}}", { count: minutes / 1_440 });
+  if (minutes % 60 === 0) return t("{count, plural, other {#-hour limit}}", { count: minutes / 60 });
+  return t("{count, plural, other {#-minute limit}}", { count: minutes });
 }
 
 /** Codex app-server `account/rateLimits/read`: one bucket per metered limit, each with up to two windows. */

@@ -98,6 +98,11 @@ export interface EngineDeclaration {
   apps?: EngineApps;
   /** The apps the engine's games are played in by everyone (a live server): computer use never drives them, not even in a setup assist. */
   playerApps?: EngineApps;
+  /**
+   * The web hosts the engine's own assist may open in the person's browser (`open_page`, https only):
+   * its creator pages, such as Roblox's Creator Hub, where Studio itself has no setting.
+   */
+  pages?: string[];
 }
 
 /** The engines installed plugins declare, by id. */

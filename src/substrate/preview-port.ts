@@ -11,6 +11,7 @@ import type {
   CaptureSource,
   CaptureSurface,
   CropRect,
+  LiveLoadFailure,
   PreviewConsoleEntry,
   PreviewPixelStats,
   PreviewPortStatus,
@@ -149,13 +150,18 @@ export interface PreviewPort {
   stop?(): Promise<void>;
   /** Optional: the person's Play on a stopped page — the same page again, from the top. */
   resume?(): Promise<void>;
-  /** Optional: a line the studio itself puts on the game's console — e.g. a build that failed before the page could load. */
-  note?(level: string, message: string, options?: { loadError?: boolean }): void;
+  /**
+   * Optional: a line the studio itself puts on the game's console — e.g. a build that failed before
+   * the page could load. With `loadError` it is the page's load error, of the kind `failure` names.
+   */
+  note?(level: string, message: string, options?: { loadError?: boolean; failure?: LiveLoadFailure }): void;
   screenshot(quality?: number): Promise<Buffer>;
   /** A thumbnail capture with bounded statistics, never used as judged evidence. */
   screenshotCard?(quality: number, maxPx: number): Promise<Buffer | null>;
   /** Whether the stage is showing this view. */
   setVisible?(visible: boolean): void;
+  /** Pace the page's frames to at most this many a second; 0 for the display's own rate. */
+  setMaxFps?(fps: number): void;
   /** Keep simulation alive while an agent observes the hidden stage. */
   setObserved?(observed: boolean): void;
   /** Silence the page's speakers; its own audio graph keeps running, so `__studio.audio()` still measures. */

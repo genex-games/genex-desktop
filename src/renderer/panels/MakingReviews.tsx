@@ -17,6 +17,8 @@ import { PluginApproval } from "./PluginApproval.tsx";
 import { genexJobRows } from "./plugins/genex/genex-view.ts";
 import { useGenexStatus } from "./plugins/genex/use-genex-status.ts";
 import { isActive } from "./plugins/labels.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** The Genex job a card stands for: the card is keyed by the generation once there is one. */
 const jobFor = (jobs: readonly GenexJob[], jobId: string): GenexJob | undefined =>
@@ -46,12 +48,16 @@ function GenexReviews({ plugin, project, onNotice, onReviews }: SourceProps): JS
   const approve = useCallback(
     async (job: GenexJob, candidate: number | null): Promise<void> => {
       setApproving(true);
+      const picked = candidate !== null;
       try {
         const args = { id: job.id, ...(candidate === null ? {} : { candidate }) };
         await runPluginAction({ plugin, name: GenexAction.Approve, args, project, review: setReview });
+        track(AnalyticsEvent.AssetCandidateApproved, { ok: true, cancelled: false, picked });
       } catch (error) {
+        const cancelled = isUserCancelled(error);
+        track(AnalyticsEvent.AssetCandidateApproved, { ok: false, cancelled, picked });
         // Declining a review or the native dialog is the person's choice, not a problem to show.
-        if (!isUserCancelled(error)) notifyProblem(onNotice)(error);
+        if (!cancelled) notifyProblem(onNotice)(error);
       } finally {
         setApproving(false);
         await refresh();

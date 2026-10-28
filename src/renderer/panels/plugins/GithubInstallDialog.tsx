@@ -11,8 +11,18 @@ import {
   type GithubPluginFound,
   type GithubVersion,
   GithubVersionKind,
+  type PluginInfo,
+  PluginSourceKind,
 } from "../../../shared/plugins.ts";
 import { parseGithubLink } from "../../../shared/github-link.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import {
+  githubLookupProperties,
+  PluginInstallOrigin,
+  PluginInstallSurface,
+  trackedPluginInstall,
+} from "../../analytics/plugins-page.ts";
 import { Button } from "../../ui/Button.tsx";
 import { DialogSurface } from "../../ui/dialog.tsx";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../ui/dropdown-menu.tsx";
@@ -30,6 +40,7 @@ import {
 } from "./github-install.ts";
 import { PLUGIN_GUIDE_URL } from "./labels.ts";
 import { PluginIcon } from "../../ui/PluginIcon.tsx";
+import { SkeletonLines } from "../../ui/Skeleton.tsx";
 
 const WORDS = PLUGINS_WORDS.github;
 
@@ -38,6 +49,20 @@ const Busy = { Looking: "looking", Installing: "installing" } as const;
 type Busy = (typeof Busy)[keyof typeof Busy];
 
 const words = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** This window's Install, as usage analytics names it. */
+const githubPress = (found: GithubPluginFound) => ({
+  origin: PluginInstallOrigin.Github,
+  surface: PluginInstallSurface.GithubDialog,
+  id: found.plugin.id,
+  source: PluginSourceKind.Github,
+});
+
+/** The plugin an install of `found` left in main's list, at the commit found: read for usage analytics only. */
+const installedFromGithub = (found: GithubPluginFound) => async (): Promise<PluginInfo | null> =>
+  (await window.studio.pluginsList()).find(
+    (p) => p.manifest.id === found.plugin.id && !p.removed && p.origin?.sha === found.sha,
+  ) ?? null;
 
 /** The window's state and the two things it does: look a link (or another version) up, and install. */
 function useGithubInstall(onInstalled: (id: string) => void) {
@@ -58,11 +83,20 @@ function useGithubInstall(onInstalled: (id: string) => void) {
       return;
     }
     setBusy(Busy.Looking);
+    const started = performance.now();
     try {
       const lookup = await window.studio.pluginLookupGithub(text, version);
+      track(
+        AnalyticsEvent.GithubLinkLookedUp,
+        githubLookupProperties(lookup, Boolean(version), performance.now() - started),
+      );
       setAnswer({ lookup, link: text, ...(version ? { picked: version } : {}) });
       setChosen(keptChoice(lookup, plugin?.subdir));
     } catch (e) {
+      track(
+        AnalyticsEvent.GithubLinkLookedUp,
+        githubLookupProperties(null, Boolean(version), performance.now() - started),
+      );
       setError(words(e));
     } finally {
       setBusy(null);
@@ -73,7 +107,11 @@ function useGithubInstall(onInstalled: (id: string) => void) {
     setBusy(Busy.Installing);
     setError("");
     try {
-      await window.studio.pluginInstallGithub(found.spec);
+      await trackedPluginInstall(
+        githubPress(found),
+        () => window.studio.pluginInstallGithub(found.spec),
+        installedFromGithub(found),
+      );
       // Declining the trust dialog installs nothing and keeps this window open.
       const installed = (await window.studio.pluginsList()).some(
         (p) => p.manifest.id === found.plugin.id && !p.removed && p.origin?.sha === found.sha,
@@ -110,7 +148,8 @@ function VersionRow({
     window.studio.pluginGithubVersions(found.repo).then(setVersions, () => setFailed(true));
   };
   return (
-    <div className="github-install-version">
+    // The release names and dates of the repository the person pasted.
+    <div className="github-install-version" data-analytics-mask>
       <span className="github-install-version-label">{WORDS.version}</span>
       <span className="github-install-version-name">
         {name}
@@ -123,8 +162,12 @@ function VersionRow({
             <Icon name="chevron-down" size={12} />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64">
-          {!versions && !failed && <DropdownMenuItem disabled>{WORDS.versionsLoading}</DropdownMenuItem>}
+        <DropdownMenuContent align="end" className="w-64" data-analytics-mask>
+          {!versions && !failed && (
+            <DropdownMenuItem disabled aria-label={WORDS.versionsLoading} className="block py-2.5">
+              <SkeletonLines widths={["70%", "55%", "62%"]} />
+            </DropdownMenuItem>
+          )}
           {failed && <DropdownMenuItem disabled>{WORDS.versionsFailed}</DropdownMenuItem>}
           {versions?.map((version) => (
             <DropdownMenuItem key={`${version.kind}:${version.label}`} onSelect={() => onPick(version)}>
@@ -145,7 +188,8 @@ function VersionRow({
 function PluginSummary({ found }: { found: GithubPluginFound }): JSX.Element {
   const { plugin } = found;
   return (
-    <div className="github-install-plugin">
+    // A plugin from the person's own repository, often their own name.
+    <div className="github-install-plugin" data-analytics-mask>
       <PluginIcon name={plugin.name} />
       <span className="extension-copy">
         <span className="extension-name">
@@ -195,7 +239,8 @@ function Choices({
   onChoose: (spec: string) => void;
 }): JSX.Element {
   return (
-    <div className="github-install-choices">
+    // The plugins in the repository the person pasted, and its folders.
+    <div className="github-install-choices" data-analytics-mask>
       <p className="text-ink-3">{WORDS.choose(lookup.plugins.length)}</p>
       <div role="radiogroup" aria-label={WORDS.choose(lookup.plugins.length)}>
         {lookup.plugins.map((found) => (

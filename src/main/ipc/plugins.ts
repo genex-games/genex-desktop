@@ -1,14 +1,23 @@
 /** Plugins: the trust dialogs, reviewed actions, consent answers, and installing from any origin. */
+import { publishPlatforms } from "../core/publish-platforms.ts";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { type BrowserWindow, dialog } from "electron";
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { isUserCancelled, UserCancelledError } from "../../shared/errors.ts";
+import { CodedError, isUserCancelled, UserCancelledError } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
-import { isGithubVersion, PluginCapability, type PluginSource, PluginSourceKind } from "../../shared/plugins.ts";
+import {
+  isGithubVersion,
+  PluginCapability,
+  PluginInstallProblem,
+  type PluginManifest,
+  type PluginSource,
+  PluginSourceKind,
+} from "../../shared/plugins.ts";
 import type { PluginMarketplace } from "../../substrate/plugins/marketplace.ts";
 import { scanPackage } from "../../substrate/plugins/scan.ts";
-import { publishFromDialog, publishReview } from "../core/genex-publish.ts";
+import { publishAppsFromDialog, publishFromDialog, publishReview } from "../core/genex-publish.ts";
 import { createPluginFilePicker } from "../core/plugin-file-picker.ts";
 import { openGenexPage } from "../genex-browser.ts";
 import { assertNativeActionAllowed } from "../dev/native-policy.ts";
@@ -35,18 +44,26 @@ const REVIEW_MESSAGE_MAX_CHARS = 2_000;
 /** The longest text a plugin's review may show under its question. */
 const REVIEW_DETAIL_MAX_CHARS = 4_000;
 
-/** Why a plugin request from the renderer is refused. */
+/**
+ * Why a plugin request from the renderer is refused. The functions are words a person reads in the
+ * plugin's panel or a toast. `invalidConsent` and `invalidState` answer only a malformed call from
+ * our own renderer; `reviewFirst` stays English because the build smoke finds it by its words.
+ */
 const MESSAGE = {
   invalidConsent: "Invalid consent",
   invalidState: "Invalid state",
-  notInIndex: "Plugin is not in the marketplace index",
-  noNewerRelease: "No compatible newer release is available for this installed plugin",
-  actionUnavailable: "Plugin action unavailable",
+  notInIndex: () => t("Plugin is not in the marketplace index"),
+  noNewerRelease: () => t("No compatible newer release is available for this installed plugin"),
+  actionUnavailable: () => t("Plugin action unavailable"),
   reviewFirst: "Review this action in Studio before approving",
-  stillStarting: "Studio is still starting",
-  notFound: "Plugin not found",
-  invalidLink: "Invalid GitHub link",
-  invalidReview: `Invalid plugin review: its message and detail are text of at most ${REVIEW_MESSAGE_MAX_CHARS} and ${REVIEW_DETAIL_MAX_CHARS} characters`,
+  stillStarting: () => t("Studio is still starting"),
+  notFound: () => t("Plugin not found"),
+  invalidLink: () => t("Invalid GitHub link"),
+  invalidReview: () =>
+    t("Invalid plugin review: its message and detail are text of at most {messageMax} and {detailMax} characters", {
+      messageMax: REVIEW_MESSAGE_MAX_CHARS,
+      detailMax: REVIEW_DETAIL_MAX_CHARS,
+    }),
 } as const;
 
 export interface PluginsIpcDeps {
@@ -92,7 +109,8 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
     if (!answer || (input !== undefined && typeof input !== "string")) throw new Error(MESSAGE.invalidConsent);
     return { resolved: core.resolveConsent(p.consentId, p.approved, always, input) };
   });
-  handle("studio:plugins.list", async () => core.plugins.list());
+  // In the app's language: each manifest's texts from the plugin's own catalog.
+  handle("studio:plugins.list", async () => core.plugins.displayList());
   handle("studio:plugins.catalog", async () => core.plugins.catalog());
   handle("studio:plugins.enable", async (p) => {
     if (typeof p.enabled !== "boolean") throw new Error(MESSAGE.invalidState);
@@ -120,26 +138,33 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   handle("studio:plugins.choose-file", async (p) => chooseFile(p?.id, p?.request));
   // Studio's own Publish dialog: its Publish press is the consent to the files it lists, so nothing asks again.
   handle("studio:plugins.genex-publish-review", async (p) => publishReview(core, p?.project));
-  handle("studio:plugins.genex-publish", async (p) => publishFromDialog(core, p?.project, p?.review, p?.title, p?.ai));
+  handle("studio:plugins.genex-publish-platforms", async (p) => publishPlatforms(core, p?.project));
+  handle("studio:plugins.genex-publish", async (p) =>
+    publishFromDialog(core, p?.project, p?.review, p?.title, undefined, p?.remix, p?.ai),
+  );
+  handle("studio:plugins.genex-publish-apps", async (p) =>
+    publishAppsFromDialog(core, p?.project, p?.title, undefined, p?.remix, p?.ai),
+  );
   handle("studio:plugins.install", async (p) => installPlugin(ctx, p.id));
   handle("studio:plugins.index", async (p) => requireMarketplace(ctx).index(p?.refresh === true, core.plugins.list()));
   handle("studio:plugins.install-github", async (p) => installFromGithub(ctx, p.spec));
   handle("studio:plugins.lookup-github", async (p) => {
-    if (typeof p?.link !== "string" || p.link.length > GITHUB_LINK_MAX_CHARS) throw new Error(MESSAGE.invalidLink);
-    if (p.version !== undefined && !isGithubVersion(p.version)) throw new Error(MESSAGE.invalidLink);
+    if (typeof p?.link !== "string" || p.link.length > GITHUB_LINK_MAX_CHARS) throw new Error(MESSAGE.invalidLink());
+    if (p.version !== undefined && !isGithubVersion(p.version)) throw new Error(MESSAGE.invalidLink());
     return requireMarketplace(ctx).lookupGithub(p.link, p.version);
   });
   handle("studio:plugins.github-versions", async (p) => {
-    if (typeof p?.repo !== "string" || p.repo.length > GITHUB_LINK_MAX_CHARS) throw new Error(MESSAGE.invalidLink);
+    if (typeof p?.repo !== "string" || p.repo.length > GITHUB_LINK_MAX_CHARS) throw new Error(MESSAGE.invalidLink());
     return requireMarketplace(ctx).githubVersions(p.repo);
   });
+  // The trust dialog's no rejects as the person's (`UserCancelledError`): a declined update is not one.
   handle("studio:plugins.update", async (p) => {
     const market = requireMarketplace(ctx);
     await market.index(true, core.plugins.list());
     const entry = market.entry(p.id);
-    if (!entry) throw new Error(MESSAGE.notInIndex);
+    if (!entry) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.notInIndex());
     if (!market.updates(core.plugins.list()).some((update) => update.id === p.id))
-      throw new Error(MESSAGE.noNewerRelease);
+      throw new CodedError(PluginInstallProblem.NoNewerRelease, MESSAGE.noNewerRelease());
     await installFromIndex(ctx, p.id, entry.capabilities);
   });
   handle("studio:plugins.watch", async (p) => {
@@ -148,7 +173,7 @@ export function registerPluginsIpc(handle: IpcHandle, deps: PluginsIpcDeps): voi
   });
   // The person's Ask every time on a local plugin's page: its tools ask again before they run.
   handle("studio:plugins.forget-allowed", async (p) => {
-    if (typeof p?.id !== "string") throw new Error(MESSAGE.notFound);
+    if (typeof p?.id !== "string") throw new Error(MESSAGE.notFound());
     await core.plugins.forgetAllowed(p.id);
   });
 }
@@ -169,7 +194,7 @@ function reviewWords(info: unknown): ReviewWords {
   if (!info || typeof info !== "object") return {};
   const { message, detail } = info as Record<string, unknown>;
   const bounded = optionalText(message, REVIEW_MESSAGE_MAX_CHARS) && optionalText(detail, REVIEW_DETAIL_MAX_CHARS);
-  if (!bounded) throw new Error(MESSAGE.invalidReview);
+  if (!bounded) throw new Error(MESSAGE.invalidReview());
   return { ...(message ? { message } : {}), ...(detail ? { detail } : {}) };
 }
 
@@ -196,22 +221,28 @@ async function runPluginAction(ctx: PluginsContext, p: ActionRequest) {
   const serves = core.plugins.servesAction(p.id, p.name);
   const plugin = serves ? core.plugins.list().find((x) => x.manifest.id === p.id) : undefined;
   const action = plugin?.manifest.actions.find((a) => a.name === p.name);
-  if (!plugin || !action) throw new Error(MESSAGE.actionUnavailable);
+  if (!plugin || !action) throw new Error(MESSAGE.actionUnavailable());
   // An action that starts or opens an app or writes outside the plugin's storage never runs in a fixture.
   if (action.native) assertNativeActionAllowed(ctx.fixtureNativePolicy, "studio:plugins.native-action");
   if (action.confirmation) {
     const approval = takeApproval(ctx, p.ticket, actionKey(p.id, p.name, p.args, p.project));
     if (!approval) throw new Error(MESSAGE.reviewFirst);
     assertNativeActionAllowed(ctx.fixtureNativePolicy, "studio:plugins.approval");
-    const approved = await confirmAction(
-      actionApprovalDialog({ plugin: plugin.manifest.name, action, review: approval, args: p.args }),
-    );
+    // The dialog speaks the app's language; whether it asks at all is the manifest's own.
+    const shown = await core.plugins.displayManifest(p.id);
+    const words = { plugin: shown?.name ?? plugin.manifest.name, action: shownAction(shown, action) };
+    const approved = await confirmAction(actionApprovalDialog({ ...words, review: approval, args: p.args }));
     if (!approved) throw new UserCancelledError();
   }
   const result = await core.plugins.action(p.id, p.name, p.args, await core.pluginBinding(p.project));
   // Fixture profiles never open the browser, whichever plugin action asks.
   if (result?.verifyUrl && opensSignIn(plugin, p.name)) await openGenexPage(ctx.fixtureNativePolicy, result.verifyUrl);
   return result;
+}
+
+/** The action's label and confirmation as `shown` (its manifest in the app's language) says them, else as declared. */
+function shownAction(shown: PluginManifest | undefined, action: PluginManifest["actions"][number]) {
+  return shown?.actions.find((a) => a.name === action.name) ?? action;
 }
 
 /** The native dialog in front of a reviewed action, Cancel first and the default; true when confirmed. */
@@ -228,7 +259,7 @@ function opensSignIn(plugin: InstalledPlugin, name: string): boolean {
 
 function requireMarketplace(ctx: PluginsContext): PluginMarketplace {
   const marketplace = ctx.marketplace();
-  if (!marketplace) throw new Error(MESSAGE.stillStarting);
+  if (!marketplace) throw new CodedError(PluginInstallProblem.NotReady, MESSAGE.stillStarting());
   return marketplace;
 }
 
@@ -241,14 +272,15 @@ async function unlessCancelled(step: () => Promise<unknown>): Promise<void> {
   }
 }
 
-/** Cataloged installs and updates: the pinned commit is staged and scanned first, so the dialog describes the real code. */
+/**
+ * Cataloged installs and updates: the pinned commit is staged and scanned first, so the dialog
+ * describes the real code. A no there rejects as the person's (`UserCancelledError`).
+ */
 async function installFromIndex(ctx: PluginsContext, id: string, capabilities: string[]): Promise<void> {
   const known = ctx.core.plugins.list().find((x) => x.manifest.id === id);
   const current = known && !known.removed ? known.manifest : undefined;
-  await unlessCancelled(() =>
-    requireMarketplace(ctx).installIndex(id, ctx.core.plugins, capabilities, (manifest, scan, origin) =>
-      ctx.confirmInstall(manifest, origin, scan, current),
-    ),
+  await requireMarketplace(ctx).installIndex(id, ctx.core.plugins, capabilities, (manifest, scan, origin) =>
+    ctx.confirmInstall(manifest, origin, scan, current),
   );
 }
 
@@ -265,7 +297,7 @@ async function installPlugin(ctx: PluginsContext, id: string | undefined): Promi
   }
   // Nothing installed and nothing curated under that id: it is a marketplace entry, installed from the index.
   const entry = !known && !curated ? ctx.marketplace()?.entry(id) : undefined;
-  if (entry) return installFromIndex(ctx, id, entry.capabilities);
+  if (entry) return unlessCancelled(() => installFromIndex(ctx, id, entry.capabilities));
   // A removed plugin that came from a commit, an index entry or a curated release is re-acquired
   // through `restore`, which stages and scans the real code and asks about that. Asking here first
   // would describe the record's old manifest and a scan nobody ran.
@@ -287,7 +319,7 @@ async function installReviewed(
     known?.source === PluginSourceKind.Bundled
       ? core.plugins.bundledManifest(known.manifest.id)
       : (curated?.manifest ?? known?.manifest);
-  if (!manifest) throw new Error(MESSAGE.notFound);
+  if (!manifest) throw new CodedError(PluginInstallProblem.NotFound, MESSAGE.notFound());
   // Code on disk is read where it lies, so the dialog reports the package the user is about to trust.
   const scanTarget = known?.unlisted ? known.origin?.directory : undefined;
   const scan = scanTarget ? await scanPackage(scanTarget, manifest) : undefined;
@@ -303,7 +335,7 @@ async function installReviewed(
 async function pickLocalPlugin(ctx: PluginsContext): Promise<void> {
   const picked = await dialog.showOpenDialog({
     properties: ["openDirectory"],
-    title: "Load a local plugin package",
+    title: t("Load a local plugin package"),
   });
   const [directory] = picked.filePaths;
   if (picked.canceled || !directory) return;

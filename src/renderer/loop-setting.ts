@@ -42,6 +42,8 @@ export interface ComposerLoopView {
   shown: LoopSetting;
   editable: boolean;
   loopUnavailable?: true;
+  /** The chat's build is paused: the Loop shown is the pick kept for its next build, and a send carries none. */
+  forLater?: true;
 }
 
 /**
@@ -115,10 +117,12 @@ export function loopCommissions(build: Pick<ComposerBuild, "state"> | null | und
 }
 
 /**
- * What Mode shows: the chat's own Loop while no build belongs to it or once its build finished; a
- * running or paused build's own limit, read-only (Stop and the Builds controls halt it). In a game
- * that can't run a Loop yet (`loopAvailableFor`) the chat's own Loop shows Off and commissions
- * nothing, while its kept pick stays for when the Loop can run; plan review still works.
+ * What Mode shows: a running build's own limit, read-only (Stop and the Builds controls halt it);
+ * otherwise the chat's own Loop, which the person may change — with no build, once it finished, and
+ * while it is paused: a paused build goes on with its own time when asked to, and a pick made
+ * meanwhile is kept for the chat's next build (`loopCommissions` still sends none while it is
+ * paused). In a game that can't run a Loop yet (`loopAvailableFor`) the chat's own Loop shows Off
+ * and commissions nothing, while its kept pick stays for when the Loop can run; plan review still works.
  */
 export function composerLoopView(input: {
   own: LoopSetting;
@@ -126,9 +130,10 @@ export function composerLoopView(input: {
   loopAvailable?: boolean;
 }): ComposerLoopView {
   const { own, build, loopAvailable = true } = input;
-  if (!loopCommissions(build)) return { shown: build?.loop ?? UNKNOWN_BUILD_LOOP, editable: false };
-  if (!loopAvailable) return { shown: { ...own, on: false }, editable: true, loopUnavailable: true };
-  return { shown: own, editable: true };
+  if (build?.state === RunState.Running) return { shown: build.loop ?? UNKNOWN_BUILD_LOOP, editable: false };
+  const forLater = loopCommissions(build) ? {} : { forLater: true as const };
+  if (!loopAvailable) return { shown: { ...own, on: false }, editable: true, loopUnavailable: true, ...forLater };
+  return { shown: own, editable: true, ...forLater };
 }
 
 /** How far the person reaches Mode: whether it opens, and whether its Loop can change. */
@@ -154,7 +159,8 @@ export function composerExtras(input: {
   frames: PickedFrame[];
 }): ComposerExtras {
   const { gameMode, view, frames } = input;
-  const editable = gameMode && view.editable;
+  // A paused build's chat keeps its pick for later: no plan review and no commission now.
+  const editable = gameMode && view.editable && view.forLater !== true;
   const reviews = editable && input.reviewPlan;
   const commissions = editable && view.shown.on;
   return {

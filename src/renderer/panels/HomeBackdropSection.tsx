@@ -11,10 +11,11 @@ import { BackdropSource } from "../home-backdrop/settings.ts";
 import { useBackdrop, useBackdropPreview } from "../home-backdrop/store.ts";
 import type { Rect, Size } from "../home-backdrop/view.ts";
 import { Button } from "../ui/Button.tsx";
+import { t } from "../../shared/i18n.ts";
 
 const MESSAGE = {
-  heading: "Home background",
-  reset: "Reset",
+  heading: t("Home background"),
+  reset: t("Reset"),
 } as const;
 
 /** Home's share of the window when it is not on screen to measure: the window less the sidebar. */

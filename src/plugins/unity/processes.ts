@@ -4,7 +4,8 @@
  * its arguments name its project. Unity's lock file says nothing by itself: a killed or crashed
  * editor leaves it behind, and so does its Pipeline descriptor, whose process id another app may
  * have by now. So the process a descriptor names counts only while the list shows it as a Unity
- * editor that names this project or none (Windows' task list names no command line).
+ * editor that names this project or none. On Windows the editors are listed with their command
+ * lines by WMI (`substrate/windows-processes.ts`), else by the task list, which names none.
  *
  * Ending an editor is for one Genex is about to restore files under, or one whose main thread no
  * longer answers: a signal to that project's own editor processes, never to another project's.
@@ -15,7 +16,10 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { killProcessTree } from "../../substrate/process-tree.ts";
+import { windowsProcesses } from "../../substrate/windows-processes.ts";
 
 /** One running process: its id, its program and its whole command line. */
 export interface ProcessRow {
@@ -89,31 +93,52 @@ function tasklistPath(): string {
   return path.win32.join(root && path.win32.isAbsolute(root) ? root : WINDOWS_ROOT, ...TASKLIST);
 }
 
-/** This Windows computer's Unity editors, by its task list. */
-async function windowsEditors(): Promise<ProcessRow[]> {
+/** This Windows computer's Unity editors by its task list: no command lines, so each names no project. */
+async function tasklistUnityEditors(): Promise<ProcessRow[]> {
   const args = ["/FI", `IMAGENAME eq ${WINDOWS_EDITOR}`, "/FO", "CSV", "/NH"];
   const { stdout } = await run(tasklistPath(), args, { timeout: PS_MS, maxBuffer: PS_MAX_BYTES, windowsHide: true });
   return tasklistEditors(stdout);
 }
 
-/** This computer's processes: all of them on a Mac, the Unity editors on Windows, none elsewhere; signals by `process.kill`. */
+/** This Windows computer's Unity editors with their command lines (WMI), else by the task list. */
+export async function windowsEditors(list: typeof windowsProcesses = windowsProcesses): Promise<ProcessRow[]> {
+  return (await list([WINDOWS_EDITOR])) ?? tasklistUnityEditors();
+}
+
+/**
+ * Signals one process: by `process.kill` on a Mac; on Windows, which has no signals, it ends the
+ * editor with everything it started (its shader compilers and asset workers), as `taskkill /T /F`.
+ */
+function signalProcess(platform: NodeJS.Platform, pid: number, signal: NodeJS.Signals): void {
+  if (platform !== StudioPlatform.Windows) {
+    process.kill(pid, signal);
+    return;
+  }
+  process.kill(pid, 0);
+  void killProcessTree(pid, { platform });
+}
+
+/** This computer's processes: all of them on a Mac, the Unity editors on Windows, none elsewhere. */
 export function systemProcesses(platform: NodeJS.Platform = process.platform): ProcessEnv {
   const listed: Partial<Record<NodeJS.Platform, () => Promise<ProcessRow[]>>> = {
     darwin: macProcesses,
-    win32: windowsEditors,
+    win32: () => windowsEditors(),
   };
   return {
     list: async () => (await listed[platform]?.().catch(() => [])) ?? [],
-    signal: (pid, signal) => {
-      process.kill(pid, signal);
-    },
+    signal: (pid, signal) => signalProcess(platform, pid, signal),
     sleep: (ms) => sleep(ms),
   };
 }
 
+/** A Windows editor's program: its paths are case-blind, and Unity Hub may write them with `/`. */
+const isWindowsEditor = (row: ProcessRow): boolean => path.win32.basename(row.exec).toLowerCase() === WINDOWS_EDITOR;
+
 /** Whether a process is a Unity editor: a Mac editor's program, or Windows' `Unity.exe`. */
-const isEditor = (row: ProcessRow): boolean =>
-  row.exec.endsWith(MAC_EDITOR) || path.win32.basename(row.exec).toLowerCase() === WINDOWS_EDITOR;
+const isEditor = (row: ProcessRow): boolean => row.exec.endsWith(MAC_EDITOR) || isWindowsEditor(row);
+
+/** A Windows path as compared: `\\` separators, no trailing one, one case. */
+const windowsPathKey = (value: string): string => value.replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
 
 /** Whether a process is a Unity editor whose command line names the project at `root`. */
 function hasProject(row: ProcessRow, root: string): boolean {
@@ -122,7 +147,8 @@ function hasProject(row: ProcessRow, root: string): boolean {
   if (!flag) return false;
   const named = row.args.slice(flag.index + flag[0].length);
   // The path ends the line, or another flag follows it: a longer path that only starts alike is another project.
-  return named === root || named.startsWith(`${root} -`);
+  const [line, project] = isWindowsEditor(row) ? [windowsPathKey(named), windowsPathKey(root)] : [named, root];
+  return line === project || line.startsWith(`${project} -`);
 }
 
 /** Whether a process may be the editor a descriptor in the project at `root` names: a Unity editor of this project or of none. */

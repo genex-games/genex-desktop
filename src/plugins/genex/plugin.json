@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.15",
+  "version": "1.10.44",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -67,7 +67,7 @@
     },
     {
       "name": "cli",
-      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel or shop list. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend coin or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
+      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, items list (the other creators' items this game added) or items search (Browse, with the words in args and a tag list option). shop add makes a new store item's draft, which spends nothing and asks nobody, at any time: its name in args, its price (0 is Free) and its picture (image, required: no item is listed without one; a square PNG or WebP of at least 768 × 768, 1024 × 1024 best, that the item fills edge to edge), and type, description, tag (a list), shared (true or false), model and package; image, model and package are each a path inside this game that Studio copies in; the answer is the draft, which Studio puts on sale when the game is published (shop publish is not available). It also works before the game is on Genex, as a local draft its publish uploads; shop set and shop remove on such a draft (its local_ id in args) run here too, asking nobody. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend Nex or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -91,7 +91,7 @@
     },
     {
       "name": "cli-paid",
-      "description": "Run a Genex CLI command that spends coin or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop add, shop set, shop remove or shop test. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli; the game needs a published Genex draft first.",
+      "description": "Run a Genex CLI command that spends Nex or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop set or shop remove on an item in the store (a local draft's go through genex__cli), shop test, items add or items remove. A new item's draft is genex__cli shop add, never this tool. shop set takes the item's id in args and genex__cli shop add's options plus rename; the answer is the item's draft. items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli. The commands need a published Genex draft first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -111,12 +111,12 @@
         },
         "required": ["command"]
       },
-      "confirmation": "Run a Genex CLI command that spends coin or credits or changes what this game sells, with your saved Genex account.",
+      "confirmation": "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.",
       "host": "genex-cli-paid"
     },
     {
       "name": "package",
-      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one approved command. A game made from Studio's template (no package.json) gets Studio's copies mapped into its index.html import map instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them.",
+      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one command, with the npm registry open for that command only. It asks nobody. A game made from Studio's template (no package.json) gets Studio's copies mapped into its index.html import map instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -127,7 +127,6 @@
         },
         "required": ["package"]
       },
-      "confirmation": "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.",
       "host": "genex-package"
     },
     {
@@ -167,6 +166,10 @@
       "name": "publishing",
       "text": "When the user wants to publish this game or put it online, call genex__publish with operation 'gallery': Studio exports the game, updates its draft page and makes that same build the public version. Use operation 'draft' only for an unlisted test build, such as trying multiplayer or sign-in, or when the user asks for a private link. Studio asks the user to approve in the chat; that call may wait several minutes for the answer, and a declined or expired request must not be repeated unless the user asks again. The result is a job: call genex__publish-status with operation 'wait' and the jobId until state is done or failed, then give the user galleryUrl, or draftUrl for a draft. Offer publishing once when a milestone works. Publishing, and a draft until the game is first public, also shoots the game's genex-cover demo again and sends that frame as its Genex cover after the upload; publish-status reports how it went. Before any publish, the first or an update, and after one, handle the cover as the cover skill says. Studio runs Genex's CLI for you: use genex__cli for other Genex commands.",
       "engines": ["web"]
+    },
+    {
+      "name": "publishing-apps",
+      "text": "A game made in Unity, Godot or Unreal reaches Genex players as its Mac, Windows and Linux apps, which people install from Play in the Genex desktop app, and a Unity or Godot game also as a web version: Genex publishes them, so never send the person to itch.io or another store for this. To publish an app, build the player app into the game's folder (Unity: a macOS build at unity/Builds/Mac/<Game>.app, a Windows build at unity/Builds/Windows/<Game>.exe, a Linux build at unity/Builds/Linux/<Game>.x86_64; Godot and Unreal: their export into a Builds folder of the project), check that it starts where this computer can run it, then tell the person to press Publish on the stage strip. A web version goes in web/ at the game's root: Godot's web export makes it there; for Unity, build for WebGL into web/ with Compression Format set to Disabled, so the page loads from any host (it needs Unity's WebGL Build Support module; if it is missing, say so), and with a page that fills the window: Unity's own Default and Minimal templates draw the game as a fixed 960x600 box with a Unity logo bar under it. Before building, write a WebGL template at unity/Assets/WebGLTemplates/Genex/index.html whose html, body and canvas take the whole window (width and height 100%, no margin, no scroll bars, black background, no footer or logo) and that starts the build with Unity's template tags ({{{ LOADER_FILENAME }}}, {{{ DATA_FILENAME }}}, {{{ FRAMEWORK_FILENAME }}}, {{{ CODE_FILENAME }}}, {{{ PRODUCT_NAME }}}), then select it with PlayerSettings.WebGL.template = \"PROJECT:Genex\". Unity keeps the game's resolution matched to the canvas, so nothing stretches. Unreal has no web export: say so plainly. For Linux: Unity builds it with its Linux Build Support (Mono) module (if it is missing, say so), as a 64-bit x86_64 player named <Game>.x86_64 beside its <Game>_Data folder. Godot exports it with a Linux preset into its own folder (Builds/Linux/<Game>.x86_64; godot__export-templates with linux gets the template first). Unreal packages it for Linux only on Windows (with Epic's Linux cross-compile toolchain) or on Linux: on a Mac, say plainly it cannot, and keep the whole packaged folder (its <Game>.sh, <Game> and Engine folders) together. A Linux build cannot be started on a Mac or on Windows: check that it was written whole, and say so instead of running it. Publish's window lists the Web, Mac, Windows and Linux builds it found and sends each ready one to genex.games, listing the game in the gallery; you do not run any publish command yourself. An app built before the game's last change is not sent: when the person asks to build it again, rebuild it the same way. Genex opens a Mac app full screen. When the person wants it in a window instead, build it windowed in the engine's own settings, then set GenexWindowed in the app's Info.plist and sign it again ad hoc: plutil -replace GenexWindowed -bool YES \"<Game>.app/Contents/Info.plist\", then codesign --force --deep --sign - \"<Game>.app\". Remove the key the same way to open it full screen again. Say plainly when a build is ready to publish."
     },
     {
       "name": "cover",
@@ -213,8 +216,14 @@
     {
       "name": "genex-monetization",
       "engines": ["web"],
-      "summary": "Build an in-game shop that sells items for Genex coin: the catalog, purchase flow, delivery and the hard rules (no paid randomness, no gambling). Items are listed with genex__cli and changed with genex__cli-paid.",
+      "summary": "Selling for Nex, Genex's currency: purchase flow, delivery and the hard rules (no paid randomness, no gambling). Fixed Nex prices are store items listed with shop add, as genex-items says; dynamic payments only for amounts decided while playing.",
       "file": "skills/genex-monetization/SKILL.md"
+    },
+    {
+      "name": "genex-items",
+      "engines": ["web"],
+      "summary": "Read first when anything is priced in Nex, Genex's currency, or is to be sold for real money: list each such thing with genex__cli shop add first, without asking and before the SDK or publish, so its card shows. Coins or gold are the game's own. Also: getEntitlements(), items add.",
+      "file": "skills/genex-items/SKILL.md"
     },
     {
       "name": "genex-tool-publish",
@@ -329,6 +338,11 @@
       "name": "publish-gallery",
       "label": "Publish",
       "confirmation": "Upload Studio's exported copy of this game to its Genex draft page and make it the public version in the gallery. Everyone can find and play it. The first time, a hosted Genex project is created for this game under your account. Its cover shot also becomes its picture on Genex, unless you chose one there."
+    },
+    {
+      "name": "publish-apps",
+      "label": "Publish apps",
+      "confirmation": "Upload this game's ready Mac, Windows and Linux apps from its folder to Genex and list the game in the gallery, where people playing in the Genex desktop app can install them. The first time, a hosted Genex project is created for this game under your account."
     },
     {
       "name": "publish-allow-upload",

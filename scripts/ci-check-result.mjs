@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 const REQUIRED = {
   gate: ["plan", "static", "unit", "seed"],
   fast: ["plan", "fast-tests"],
-  regression: ["validate", "fast-evidence", "regression-rig", "regression-harness", "regression-e2e"],
+  regression: ["validate", "plan", "fast-evidence", "regression-rig", "regression-harness", "regression-e2e"],
 };
 
 /**

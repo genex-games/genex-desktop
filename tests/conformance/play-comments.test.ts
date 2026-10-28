@@ -10,6 +10,7 @@ import { CommentRoute, playComments, toComment, toCommentsPage } from "../../src
 import { classifyChannel } from "../../src/main/dev/native-policy.ts";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { gameLinks } from "../../src/main/play/game-links.ts";
 import type { PlayViewer } from "../../src/main/play/viewer.ts";
 import { type GalleryAnswer, type GalleryRequest, SignInNeeded } from "../../src/main/play/gallery.ts";
 import {
@@ -27,6 +28,7 @@ import {
 } from "../../src/renderer/play/bar-model.ts";
 import { PLAY_WORDS } from "../../src/renderer/words.ts";
 import { PLAY_ORIGIN, PlayViewerPhase } from "../../src/shared/play.ts";
+import { PlayBarOverlay } from "../../src/shared/play-bar.ts";
 import { PurchaseAnswer } from "../../src/shared/play-purchase.ts";
 import { COMMENT_MAX, COMMENTS_PAGE, commentBody, type PlayComment } from "../../src/shared/play-comments.ts";
 
@@ -225,7 +227,9 @@ describe("Who may answer a purchase sheet", () => {
     const unused = {} as unknown;
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
+      gameLinks: gameLinks(),
       remix: async () => "",
+      remixReady: async () => ({}),
       viewer: () => viewer,
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
@@ -233,6 +237,10 @@ describe("Who may answer a purchase sheet", () => {
       manage: unused as PlayIpcDeps["manage"],
       web: PLAY_ORIGIN.web,
       share: () => {},
+      installs: () => null,
+      here: () => null,
+      sessions: () => null,
+      reveal: () => {},
     });
     const call = (event: IpcSender, payload: unknown) => listeners.get("studio:play.purchase")?.(event, payload);
     return { call, answered, studio, bar };
@@ -291,15 +299,14 @@ describe("Play comments in the bar's layer", () => {
     assert.equal(barNews(next, { slug: "b", openId: 2, phase: PlayViewerPhase.Closed }), null);
   });
 
-  it("tells main what holds the bar only when it changes, asking for the bar again after mounting or a new game", () => {
-    const first = holdToTell(NOTHING_TOLD, { held: false, overlay: null });
-    assert.deepEqual(first?.payload, { held: false, overlay: null, ready: true });
-    assert.equal(holdToTell(first?.key ?? "", { held: false, overlay: null }), null, "nothing new");
-    const hovered = holdToTell(first?.key ?? "", { held: true, overlay: null, ready: true });
-    assert.deepEqual(hovered?.payload, { held: true, overlay: null }, "only the first word asks for the bar");
-    assert.deepEqual(holdToTell(NOTHING_TOLD, { held: true, overlay: null })?.payload, {
-      held: true,
-      overlay: null,
+  it("tells main which overlay is open only when it changes, asking for the bar again after mounting or a new game", () => {
+    const first = holdToTell(NOTHING_TOLD, { overlay: null });
+    assert.deepEqual(first?.payload, { overlay: null, ready: true });
+    assert.equal(holdToTell(first?.key ?? "", { overlay: null }), null, "nothing new");
+    const opened = holdToTell(first?.key ?? "", { overlay: PlayBarOverlay.Comments, ready: true });
+    assert.deepEqual(opened?.payload, { overlay: PlayBarOverlay.Comments }, "only the first word asks for the bar");
+    assert.deepEqual(holdToTell(NOTHING_TOLD, { overlay: PlayBarOverlay.AiMenu })?.payload, {
+      overlay: PlayBarOverlay.AiMenu,
       ready: true,
     });
   });

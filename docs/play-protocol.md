@@ -73,7 +73,8 @@ in `hello` — the studio never sends an op the game did not declare, beyond the
 ## Transport
 
 - Newline-delimited JSON (UTF-8). The studio writes requests to the game's **stdin**; the game
-  writes one reply line per request to **stdout**. Logs go to **stderr**, never stdout.
+  writes one reply line per request to **stdout**. Logs go to **stderr**, never stdout. On Windows
+  the studio delivers stdin through a relay inside the sandbox; the game reads stdin all the same.
 - The studio reads stderr for as long as the game runs, so a game may log freely. It keeps the last
   8 KiB and names the last lines in the problem when a start or a call fails.
 - The first stdout line is `{"event":"ready","protocol":3,...}`, or `{"event":"fatal","error":"..."}`

@@ -1,0 +1,17 @@
+{
+  "Blender": "Blender",
+  "Cancel download": "다운로드 취소",
+  "Checking runtime…": "Blender 확인 중…",
+  "Download Blender 5.2.1": "Blender 5.2.1 다운로드",
+  "Download Blender 5.2.1 (350 to 400 MB) into Genex's Local Blender storage, so agents can model with it. Genex verifies its digest, and your own Blender stays as it is.": "Blender 5.2.1(350~400MB)을 Genex의 Local Blender 저장 공간에 다운로드해 에이전트가 모델링에 쓸 수 있게 해요. Genex가 체크섬을 확인하고, 내 Blender는 그대로 둬요.",
+  "Download pinned Blender": "Genex용 Blender 다운로드",
+  "Download the pinned Blender 5.2.1 runtime (350 to 400 MB) into this plugin’s storage. Studio verifies its digest. Existing external Blender installations stay unchanged.": "고정된 Blender 5.2.1 버전(350~400MB)을 이 플러그인의 저장 공간에 다운로드해요. Studio가 체크섬을 확인해요. 이미 설치된 Blender는 그대로 둬요.",
+  "Download: {phase} · {done} / {total} MiB": "다운로드: {phase} · {done} / {total}MiB",
+  "Download: {phase} · {done} / {total} MiB · {error}": "다운로드: {phase} · {done} / {total}MiB · {error}",
+  "Local Blender": "Local Blender",
+  "Model 3D assets with Blender on this computer. No account or credits.": "이 컴퓨터의 Blender로 3D 에셋을 모델링해요. 계정도 크레딧도 필요 없어요.",
+  "Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.": "이 Mac에서 에셋을 모델링해요. Genex 계정이나 크레딧은 쓰지 않아요. 이 플러그인을 켜면 이 채팅의 다음 응답부터 도구를 쓸 수 있어요.",
+  "Recheck": "다시 확인",
+  "Runtime and jobs": "런타임 및 작업",
+  "The Blender program to use (blender.exe on Windows), when Genex doesn't find yours": "Genex가 내 Blender를 찾지 못할 때 사용할 Blender 프로그램(Windows에서는 blender.exe)"
+}

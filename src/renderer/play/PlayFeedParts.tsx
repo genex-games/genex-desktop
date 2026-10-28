@@ -7,7 +7,7 @@ import type { JSX, RefObject } from "react";
 import { useEffect, useRef } from "react";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { PLAY_WORDS } from "../words.ts";
+import { type FeedThings, PLAY_WORDS } from "../words.ts";
 import { OfflineMark } from "./PlayOffline.tsx";
 
 const WORDS = PLAY_WORDS;
@@ -57,11 +57,11 @@ export function Notice({ text, onRetry }: { text: string; onRetry?: () => void }
 
 /** Under the cards, when their next page could not be read: offline it waits, else Try again. */
 export function MoreFailed({
-  noun,
+  things,
   online,
   onRetry,
 }: {
-  noun: string;
+  things: FeedThings;
   online: boolean;
   onRetry: () => void;
 }): JSX.Element {
@@ -69,12 +69,12 @@ export function MoreFailed({
     return (
       <div className="play-more-failed" role="status">
         <OfflineMark />
-        {WORDS.offline.more(noun)}
+        {WORDS.offline.more(things)}
       </div>
     );
   return (
     <div className="play-more-failed" role="alert">
-      {WORDS.moreFailed(noun)}
+      {WORDS.moreFailed(things)}
       <Button variant="secondary" onClick={onRetry}>
         <Icon name="reload" />
         {WORDS.retry}

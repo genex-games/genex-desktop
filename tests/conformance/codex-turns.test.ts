@@ -381,6 +381,7 @@ async function engineWith(options: {
   execFn: CodexExec;
   dynamicTools?: boolean;
   version?: string;
+  platform?: NodeJS.Platform;
 }): Promise<{ engine: CodexEngine; root: string }> {
   const root = await tmpDir("studio-codex-turns-");
   const home = path.join(root, "codex-home");
@@ -399,6 +400,7 @@ async function engineWith(options: {
     execFn: options.execFn,
     appServerFn: options.appServerFn,
     ...(options.dynamicTools === undefined ? {} : { codexDynamicTools: options.dynamicTools }),
+    ...(options.platform ? { platform: options.platform } : {}),
   });
   return { engine, root };
 }
@@ -502,6 +504,28 @@ describe("codex turns on the app server", () => {
     assert.equal(await pathExists(path.join(root, BRIDGE_DIR)), false, "no file bridge was opened");
     assert.equal(server.closes(), 1, "the app server is closed when the turn ends");
     assert.ok(server.launches[0]?.argv.includes("--disable"), "Codex's own computer use stays off");
+  });
+
+  it("starts the app server with Codex's own Windows sandbox on Windows (#304)", async () => {
+    const launchArgv = async (platform: NodeJS.Platform) => {
+      const record: { start?: Message; turn?: Message; answer?: Message } = {};
+      const server = scriptedAppServer(computerTurnScript(record));
+      const exec = recordingExec();
+      const { engine, root } = await engineWith({
+        appServerFn: server.fn,
+        execFn: exec.fn,
+        dynamicTools: true,
+        platform,
+      });
+      const result = await engine.delegate(computerRequest(root).request);
+      assert.equal(result.ok, true);
+      assert.equal(exec.runs.length, 0, "the turn ran on the app server");
+      return server.launches[0]?.argv ?? [];
+    };
+    const windows = await launchArgv("win32");
+    const at = windows.indexOf('windows.sandbox="unelevated"');
+    assert.ok(at > 0 && windows[at - 1] === "-c", windows.join(" "));
+    assert.ok(!(await launchArgv("darwin")).some((arg) => arg.startsWith("windows.")));
   });
 
   it("falls back to codex exec and the bridge when the app server refuses the tools, and remembers", async () => {

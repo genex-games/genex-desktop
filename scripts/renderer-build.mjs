@@ -2,13 +2,15 @@ import path from "node:path";
 const DEVELOPMENT_ENTRY_MAX_BYTES = 6_000_000;
 const RELEASE_ENTRY_MAX_BYTES = 3_000_000;
 const DEVELOPMENT_REACT = /react.*\/cjs\/.*\.development\.js$/;
+/** The renderer's entry and the studio it loads right after the language: what a window reads before it shows. */
+const EAGER_ENTRIES = ["src/renderer/main.tsx", "src/renderer/studio-entry.tsx"];
 
 /**
  * React build definitions shared by the application and its bundle conformance tests.
  * `npm run build`, `npm start` and packages ship React's production build; `release` (package,
  * make, publish) also minifies. `--watch` and owned `--dev-build` builds keep the development
  * build, whose StrictMode replays and warnings the UI acceptance drivers rely on; those sessions
- * are short, and the UI clears React's timing measures every minute there (`renderer/main.tsx`).
+ * are short, and the UI clears React's timing measures every minute there (`renderer/studio-entry.tsx`).
  *
  * The development build records a User Timing measure, carrying a diff of the props, for every
  * component render inside a `<Profiler>`, and nothing clears them: an hour into a run they fill
@@ -18,6 +20,7 @@ const DEVELOPMENT_REACT = /react.*\/cjs\/.*\.development\.js$/;
  * wrap the app in Profilers (`renderer/performance.tsx`).
  *
  * @param {{ release?: boolean; development?: boolean; commitCounts?: boolean }} [mode]
+ * @returns {{ define: Record<string, string>; minify: boolean; keepNames: boolean; charset: import("esbuild").Charset }}
  */
 export function rendererBuildOptions({ release = false, development = false, commitCounts = false } = {}) {
   if (release && development) throw new Error("A release renderer cannot bundle development React");
@@ -29,6 +32,40 @@ export function rendererBuildOptions({ release = false, development = false, com
     },
     minify: release,
     keepNames: true,
+    // Module scripts are always read as UTF-8, so the language catalogs keep their letters instead
+    // of six-byte `\u` escapes: the Russian catalog a window reads before it shows, 1.1 → 0.56 MB.
+    charset: "utf8",
+  };
+}
+
+/**
+ * The studio window's bundle (`main.tsx` and the chunks it loads), as the build makes it and the
+ * budget test measures it. Owned builds (`performance`) keep the journey marks.
+ *
+ * @param {{ root: string; outdir: string; mode?: { release?: boolean; development?: boolean; commitCounts?: boolean }; performance?: boolean }} build
+ * @returns {import("esbuild").BuildOptions}
+ */
+export function studioRendererBuild({ root, outdir, mode = {}, performance = false }) {
+  const options = rendererBuildOptions(mode);
+  return {
+    ...options,
+    define: { ...options.define, __STUDIO_PERFORMANCE__: JSON.stringify(performance) },
+    // The report finds the eager entries by their paths from here.
+    absWorkingDir: root,
+    bundle: true,
+    platform: "browser",
+    metafile: true,
+    target: "chrome130",
+    sourcemap: true,
+    logLevel: "info",
+    format: "esm",
+    jsx: "automatic",
+    entryPoints: [path.join(root, "src/renderer/main.tsx")],
+    outdir,
+    entryNames: "renderer",
+    chunkNames: "chunks/[name]-[hash]",
+    splitting: true,
+    loader: { ".css": "css" },
   };
 }
 
@@ -36,14 +73,16 @@ export function rendererBuildOptions({ release = false, development = false, com
  * Refuse development React outside a development build; retain provenance for packaged smoke checks.
  *
  * @param {import("esbuild").Metafile} metafile
- * @param {{ release?: boolean; development?: boolean }} [mode]
+ * @param {{ release?: boolean; development?: boolean; commitCounts?: boolean }} [mode] the build's renderer mode
  */
 export function rendererBundleReport(metafile, { release = false, development = false } = {}) {
   const inputs = Object.keys(metafile.inputs);
   const developmentReact = inputs.filter((file) => DEVELOPMENT_REACT.test(file));
   if (!development && developmentReact.length)
     throw new Error(`Development React in a production renderer: ${developmentReact.join(", ")}`);
-  const entry = Object.entries(metafile.outputs).find(([, output]) => output.entryPoint === "src/renderer/main.tsx");
+  // The entry loads the window's language, then the studio as a chunk of its own: both are read
+  // before anything shows, so both count; the language catalogs and later chunks do not.
+  const entries = Object.entries(metafile.outputs).filter(([, output]) => EAGER_ENTRIES.includes(output.entryPoint));
   const reachable = new Set();
   const visit = (file) => {
     if (reachable.has(file)) return;
@@ -55,7 +94,7 @@ export function rendererBundleReport(metafile, { release = false, development = 
       visit(metafile.outputs[imported.path] ? imported.path : path.join(path.dirname(file), imported.path));
     }
   };
-  if (entry) visit(entry[0]);
+  for (const [file] of entries) visit(file);
   const eager = [...reachable].flatMap((file) => Object.keys(metafile.outputs[file].inputs));
   if (eager.some((file) => file.includes("node_modules/three/")))
     throw new Error("three.js must remain outside the eager renderer graph");

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { vendorGenexMultiplayer } from "../../scripts/vendor-genex-multiplayer.ts";
+import { bridgeLicenses, vendorGenexMultiplayer } from "../../scripts/vendor-genex-multiplayer.ts";
 import {
   GENEX_GAME_PACKAGES,
   GENEX_MULTIPLAYER_VENDOR,
@@ -35,6 +35,20 @@ const TEMPLATE_PAGE = `<!doctype html>
 `;
 
 describe("Studio's vendored Genex multiplayer SDK", () => {
+  it("names the license of every package the engine bridge bundles, which a Godot web export carries beside it", async () => {
+    const text = await bridgeLicenses(repo);
+    const headings = text.split("\n").filter((line) => line.startsWith("## "));
+    for (const name of ["@genex-ai/multiplayer", "@genex-ai/embed-sdk", "@colyseus/sdk", "@colyseus/schema"])
+      assert.ok(
+        headings.some((line) => line.startsWith(`## ${name} `)),
+        `${name} is bundled into the bridge: ${headings.join(" | ")}`,
+      );
+    assert.ok(
+      headings.includes(`## @genex-ai/multiplayer ${GENEX_GAME_PACKAGES["@genex-ai/multiplayer"]} (MIT)`),
+      "at Studio's pin",
+    );
+  });
+
   it("builds every file a template game maps, at Studio's pin, licenses beside them", async () => {
     const vendor = await tmpDir("studio-genex-multiplayer-");
     const built = await vendorGenexMultiplayer(repo, vendor);

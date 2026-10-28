@@ -87,6 +87,10 @@ export interface PeopleState {
   ended: PlayMe | null;
   /** The balance as last read, or null before it was. */
   credits: AccountCredits | null;
+  /** What each kind of generation costs, read with the balance (empty before it was): prices where credits are spent. */
+  creditPrices: PlayCredits["prices"];
+  /** The coin the account may spend as last read, for the plate in Play; null before a read or with coin off. */
+  coins: number | null;
   friends: PlayFriendsPage | null;
   friendsStatus: LoadStatus;
   profiles: Record<string, ProfileEntry>;
@@ -109,6 +113,8 @@ export const initialPeople = (): PeopleState => ({
   genexTermsPending: false,
   ended: null,
   credits: null,
+  creditPrices: {},
+  coins: null,
   friends: null,
   friendsStatus: LoadStatus.Idle,
   profiles: {},
@@ -175,7 +181,7 @@ export function accountRead(
     return { ...known, ...stands, ended: null };
   }
   const ended = view.status === GenexAccountStatus.Ended ? (state.me ?? state.ended) : null;
-  return { ...meRead(state, null), ...stands, ended, credits: null };
+  return { ...meRead(state, null), ...stands, ended, credits: null, coins: null };
 }
 
 /**
@@ -326,6 +332,8 @@ export interface PeopleStore extends StoreApi<PeopleState> {
   signOut(): Promise<void>;
   /** Read the account's balance; a failed read keeps the last one. */
   loadCredits(): Promise<void>;
+  /** Read the coin the account may spend; a failed read keeps the last one. */
+  loadCoins(): Promise<void>;
   /** Read the Friends page (signed in only). */
   loadFriends(): Promise<void>;
   /** Read someone's profile; `force` reads again one already read. */
@@ -373,6 +381,7 @@ type PeopleApi = Pick<
   | "playStats"
   | "playCreators"
   | "playCredits"
+  | "storeCoins"
   | "playSetHandle"
   | "genexAccount"
   | "genexSignIn"
@@ -464,7 +473,7 @@ function numberReads(store: StoreApi<PeopleState>, set: PeopleSet, api: Pick<Peo
 function accountCalls(
   store: StoreApi<PeopleState>,
   set: PeopleSet,
-  api: Pick<PeopleApi, "playCredits" | "genexSignIn" | "genexCancelSignIn" | "genexSignOut">,
+  api: Pick<PeopleApi, "playCredits" | "storeCoins" | "genexSignIn" | "genexCancelSignIn" | "genexSignOut">,
 ) {
   const stands = async (call: () => Promise<GenexAccountView>): Promise<void> => {
     const view = await call();
@@ -474,11 +483,24 @@ function accountCalls(
     const asked = store.getState().me?.id;
     if (!asked) return;
     try {
-      const { balance, unlimited } = await api.playCredits();
+      const { balance, unlimited, prices } = await api.playCredits();
       // A balance read for another account lands nowhere.
-      set((state) => (state.me?.id === asked ? { ...state, credits: { balance, unlimited } } : state));
+      set((state) =>
+        state.me?.id === asked ? { ...state, credits: { balance, unlimited }, creditPrices: prices } : state,
+      );
     } catch {
       // Offline or Genex down: the last balance stays.
+    }
+  };
+  const loadCoins = async (): Promise<void> => {
+    const asked = store.getState().me?.id;
+    if (!asked) return;
+    try {
+      const coins = await api.storeCoins();
+      // A balance read for another account, or after a sign-out, lands nowhere.
+      set((state) => (state.me?.id === asked ? { ...state, coins } : state));
+    } catch {
+      // The read never reached main: the last balance stays.
     }
   };
   return {
@@ -486,6 +508,7 @@ function accountCalls(
     cancelSignIn: () => stands(api.genexCancelSignIn),
     signOut: () => stands(api.genexSignOut),
     loadCredits,
+    loadCoins,
   };
 }
 
@@ -606,7 +629,11 @@ export function createPeopleStore(api: PeopleApi, storage: KeyValueStorage | nul
     const me = await api.playMe().catch(() => undefined);
     // Asked after: a refused token reads as a sign-in that ended only once genex.games refused it.
     const view = await api.genexAccount().catch(() => null);
-    set((state) => accountRead(state, view, me));
+    // A sign-in can finish inside that second read (a development stand's does): who it is was read
+    // before there was a token, so it is read again rather than left empty until some other event.
+    const signedInSince = me === null && view?.status === GenexAccountStatus.SignedIn;
+    const who = signedInSince ? await api.playMe().catch(() => undefined) : me;
+    set((state) => accountRead(state, view, who));
   };
 
   /** A write answered with the account, or with none (genex.games refused it): then main says where it stands. */

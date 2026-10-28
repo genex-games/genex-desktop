@@ -3,6 +3,7 @@ import { isCodexLoginActive } from "../shared/codex-login.ts";
 import { updateCodingCli } from "../substrate/cli-update.ts";
 import { HarnessLogBatch } from "./harness-log-batch.ts";
 import { createDesktopControl } from "./desktop-control-host.ts";
+import { assistGrants } from "./core/desktop-assist.ts";
 import type { DesktopControl } from "./core/desktop-control.ts";
 import { showAfterPaint } from "./window-ready.ts";
 import { PerformanceRecorder, watchEventLoop } from "./performance.ts";
@@ -19,7 +20,6 @@ import { registerPerformanceIpc } from "./ipc/performance.ts";
 import {
   BrowserWindow,
   Menu,
-  MenuItem,
   Notification,
   app,
   autoUpdater,
@@ -35,7 +35,7 @@ import {
   utilityProcess,
 } from "electron";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -47,6 +47,7 @@ import { wireGameFullScreen } from "./full-screen-view.ts";
 import { HarnessState } from "../shared/protocol.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
+import { CursorEngine } from "../substrate/engines/cursor.ts";
 import { configureCodingClis, resolveCodingCli } from "../substrate/engines/external-cli.ts";
 import { installCodingCli } from "../substrate/cli-installer.ts";
 import { CodingCliState } from "../shared/coding-cli.ts";
@@ -62,15 +63,31 @@ import {
   QuitQuestion,
   quitQuestion,
   runShutdown,
+  settleWithin,
   shutdownSteps,
   type ShutdownStep,
+  WindowClose,
+  windowClose,
 } from "./app-lifecycle.ts";
+import { createAppDiagnostics } from "./app-diagnostics.ts";
+import {
+  createSessionMarker,
+  handOnce,
+  launchFacts,
+  markerFileIo,
+  noteNextStart,
+  SESSION_HEARTBEAT_MS,
+  SESSION_MARKER_WAIT_MS,
+  type SessionBegun,
+} from "./session-marker.ts";
 import { createBootGate, startStepAfter } from "./boot-gate.ts";
 import {
   activateChatFixture,
   DevProviders,
   FIRST_LAUNCH_STATUS,
+  FIXTURE_GAME,
   FIXTURE_AGENTS_FAILURE,
+  FIXTURE_DATA_FOLDER,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FixtureName,
@@ -84,6 +101,7 @@ import {
   UPDATE_REPO,
   UpdateMode,
   autoUpdateDecision,
+  firstCheckDelay,
   createUpdateAnnouncer,
   createUpdateChecker,
   installedFromGenexRepository,
@@ -92,8 +110,8 @@ import {
   watchInstaller,
 } from "./auto-update.ts";
 import { RELEASE_CHECK_INTERVAL_MS, latestRelease } from "./release-check.ts";
-import { UpdateAction } from "../shared/app-update.ts";
-import { gatedHostTool } from "./core/genex-cli.ts";
+import { UpdateAction, UpdateCheckStatus, UpdateFailure } from "../shared/app-update.ts";
+import { gatedHostTool, type GenexStand, launchStand } from "./core/genex-cli.ts";
 import { normalGamesElsewhere, normalGamesFolder } from "./core/never-touch-list.ts";
 import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
 import { type FeedbackSources, sendFeedback } from "./feedback.ts";
@@ -116,7 +134,8 @@ import { registerPermissionsIpc } from "./ipc/permissions.ts";
 import { registerPluginsIpc } from "./ipc/plugins.ts";
 import { type PreviewBoundsRecord, registerPreviewIpc } from "./ipc/preview.ts";
 import { registerProjectsIpc } from "./ipc/projects.ts";
-import { registerPlayIpc } from "./ipc/play.ts";
+import { type PlayIpcDeps, registerPlayIpc } from "./ipc/play.ts";
+import { registerStoreIpc, type StoreIpcDeps } from "./ipc/store.ts";
 import { registerGenexAccountIpc } from "./ipc/genex-account.ts";
 import { registerGameAiIpc } from "./ipc/game-ai.ts";
 import { registerGameAiInboxIpc } from "./ipc/game-ai-inbox.ts";
@@ -132,7 +151,9 @@ import {
 import { devStandAccountPort } from "./dev/dev-stand-account.ts";
 import { fixtureAccountPort } from "./dev/fixture-genex-account.ts";
 import { openGenexPage } from "./genex-browser.ts";
-import { fixtureGamePage, fixtureGetCoin, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { fixtureGamePage, fixtureGetCoin, fixtureNativeGames, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { createFixtureStore } from "./dev/fixture-store.ts";
+import { fixtureLocalRuns } from "./dev/fixture-items.ts";
 import { FIXTURE_CONFIRM_ORIGIN } from "./dev/fixture-coin.ts";
 import { launchFixtureAccount } from "./dev/fixture-people.ts";
 import {
@@ -158,9 +179,38 @@ import { type LibrarySharing, librarySharing } from "./core/library-sharing.ts";
 import { registerAssetLibraryIpc } from "./ipc/asset-library.ts";
 import { readAssetPreview } from "./asset-preview.ts";
 import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-library.ts";
-import { networkRequest, type PlayGallery, playGallery, type PlayWorld } from "./play/gallery.ts";
+import {
+  buildHostsFor,
+  type GalleryRequest,
+  mintedTicket,
+  networkRequest,
+  type PlayGallery,
+  playGallery,
+  type PlayWorld,
+  TicketDelivery,
+} from "./play/gallery.ts";
+import { relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
+import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
+import { thisComputer } from "./play/native-host.ts";
+import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
+import { checkNativeUpdates } from "./play/native-updates.ts";
+import { runTool } from "./play/native-unpack.ts";
+import { type GameGenex, type NativeSessions, type NativeSessionsDeps, nativeSessions } from "./play/native-launch.ts";
+import { nativePlays } from "./play/native-plays.ts";
+import { hasGameWindow, showGameWindow } from "./play/native-windows.ts";
+import { linuxGameWindows } from "./play/native-windows-linux.ts";
+import { spawnNativeGame } from "../substrate/plugins/native-process.ts";
+import { spawnLinuxGame } from "../substrate/plugins/linux-game.ts";
+import { windowsGames } from "../substrate/plugins/windows-game.ts";
+import { psProbe, SYSTEM_CLOCK } from "../substrate/job-process.ts";
+import { killProcessTree } from "../substrate/process-tree.ts";
+import { prepareNativeGamesFixture } from "./dev/fixture-native-games.ts";
+import { fixtureNativeFetch } from "./dev/fixture-native.ts";
+import { launchesOn, nativeAppOffer, NativePlatform } from "../shared/play-native.ts";
+import type { PlayViewerDeps } from "./play/viewer.ts";
 import { createPlayManage, type PlayManage } from "./play/manage.ts";
 import { fixtureClone, gitClone, gitCloneCode, remixGame } from "./play/remix.ts";
+import { gitRemixReadiness, type RemixReadiness, readyFor, withReadyRemix } from "./play/remix-ready.ts";
 import { type MentionSources, vendorAssetModule } from "./core/mention-tags.ts";
 import type { PlayViewer } from "./play/viewer.ts";
 import { playMicStore } from "./play/mic-store.ts";
@@ -168,28 +218,51 @@ import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
 import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
 import { type PlayCoin, playCoin } from "./play/coin.ts";
-import { playOrigins } from "./play/origins.ts";
+import { playStore } from "./play/store.ts";
+import { followStudioWindow, type StoreSheetControl, storeSheet } from "./play/store-sheet.ts";
+import { devStand, websitePageOpener } from "./play/origins.ts";
+import { devGamesTrust } from "./play/dev-games-trust.ts";
 import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
+import { playCoinPageUrl } from "../shared/play-purchase.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
 import { registerSettingsIpc } from "./ipc/settings.ts";
 import { readLicenseTexts } from "./licenses.ts";
 import { registerSkillsIpc } from "./ipc/skills.ts";
 import { registerTerminalIpc } from "./ipc/terminal.ts";
-import { registerMentionRetry, registerThreadsIpc } from "./ipc/threads.ts";
+import { registerMentionRetry, registerThreadsIpc, type ThreadsIpcDeps } from "./ipc/threads.ts";
 import { engineBoot, type EngineBoot } from "./engine-boot.ts";
 import { KeepAwake } from "./keep-awake.ts";
 import { routeStudioLink } from "./link-policy.ts";
 import { createLoginControllers, type SubscriptionEngine } from "./login-controllers.ts";
 import { createOpenRouterLogin } from "./openrouter-login.ts";
 import { openStudioLog } from "./logs.ts";
+import {
+  DATA_FOLDER_FILE,
+  DataLaunchKind,
+  defaultDataDir,
+  quitsAtOnce,
+  quitTakenLaunch,
+  thisDataLaunch,
+} from "./data-folder.ts";
+import { createDataFolderChoices, type DataFolderChoices } from "./data-folder-choice.ts";
+import { type DataFolderIpcDeps, registerDataFolderIpc } from "./ipc/data-folder.ts";
+import { freeBytes, measureData } from "../substrate/data-move.ts";
+import { lockDownFolder, windowsDriveFacts } from "../substrate/windows-drive.ts";
+import { type DataMoveOutcome, finishMove, removeLeftover, runDataMove } from "./data-move-launch.ts";
+import { DataFolderProblem } from "../shared/data-folder.ts";
 import { migrateLegacyUserData, userDataMigrationLine } from "./user-data-migration.ts";
 import { confirmPluginInstall, reacquirePlugin } from "./plugin-install-dialog.ts";
 import { PLUGIN_PANEL_CSP } from "./plugin-panel-csp.ts";
 import { HttpStatus, textResponse } from "./page-serve.ts";
+import { applyMainLanguage, pageLanguageArguments, systemLanguages } from "./language.ts";
+import { appMenuTemplate } from "./app-menu.ts";
+import { intlLocale, t } from "../shared/i18n.ts";
+import { matchLocale, SYSTEM_LANGUAGE } from "../shared/locale.ts";
 import { GamePreview, registerGameScheme } from "./preview.ts";
 import { RunSummaryReader } from "./run-summary-reader.ts";
 import { registerRunSharingIpc } from "./ipc/run-sharing.ts";
 import { createRunSharing, finishedBuildRef, launchSends, runsOrigin } from "./run-sharing.ts";
+import { type AnalyticsConfig, sessionAnalytics } from "../shared/analytics.ts";
 import { readFinishedFacts } from "./run-sharing-facts.ts";
 import { fieldPlatform } from "../shared/run-sharing.ts";
 import type { SmokeReadGates } from "./smoke/read-gates.ts";
@@ -197,27 +270,53 @@ import type { EvalCoreOptions, EvalLaunch } from "./smoke/eval-lane.ts";
 import { StudioCore, type StudioCoreOptions } from "./studio-core.ts";
 import { appLookAccess } from "./app-look-access.ts";
 import { layoutFor } from "./core/layout.ts";
+import { createProviderUsage, engineUsageSource } from "./core/provider-usage.ts";
 import { appLookRun, macAppLook, stubAppLook, unsupportedAppLook } from "../substrate/app-look.ts";
 import { TerminalService, type TerminalHost } from "./terminal-service.ts";
 import { windowControlsPainter } from "./window-chrome.ts";
-import { appUserModelId, installedWorkingDir, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
-import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
+import {
+  appUserModelId,
+  installedWorkingDir,
+  installRoot,
+  runSquirrelStep,
+  squirrelStartup,
+} from "./windows-install.ts";
+import { samePath } from "../substrate/paths.ts";
+import {
+  BootFailure,
+  type BootFailureCode,
+  BootPhase,
+  type SandboxProblem,
+  StartPassage,
+  StartStep,
+  StudioPlatform,
+} from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
-import { longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
+import {
+  type DetachedSpawn,
+  ensureHostGit,
+  forgetKeptGrants,
+  longPath,
+  takeBackSandboxEntries,
+} from "../substrate/windows-sandbox.ts";
+import { ensureMacGit } from "../substrate/git-policy.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
-import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { CustomEvent, customEventData } from "../shared/custom-events.ts";
 import { EVAL_LANE_EXIT } from "../shared/eval-lane.ts";
-import { EngineId } from "../shared/providers.ts";
+import { EngineId, SUBSCRIPTION_ENGINES } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
 import {
   flagValue,
   hasFlag,
+  isNormalLaunch,
   linuxSecretStorageSwitches,
   quitsWhenLastWindowCloses,
   StudioFlag,
+  testLanguageSwitches,
   testLaunchChromiumSwitches,
 } from "./dev/launch-flags.ts";
 import { EventKind } from "../shared/event-log.ts";
@@ -258,37 +357,46 @@ const DEFAULT_BONSAI_MODEL = "bonsai-2:27b-pq2_0";
 /** A plugin's picture is an image: an SVG among them draws, but runs and fetches nothing. */
 const PLUGIN_ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-/** What the user reads in the app's own dialogs, and why a start-up step refuses. */
+/**
+ * What the user reads in the app's own dialogs (functions: main's language is set after start and
+ * changes at runtime), and why a start-up or developer step refuses (English: logs and developers).
+ */
 const MESSAGE = {
   devLaunchRefused: "Developer launch requires a developer build and owned launch configuration",
-  couldNotStart: "The studio could not start",
-  quit: "Quit",
-  linkNotOpened: "That link could not be opened",
-  pluginUnavailable: "Plugin unavailable",
-  quitDuringRun: "An unattended run is active. Quit and end it?",
-  restartDuringRun: "An unattended run is active. Relaunch to update and end it?",
-  restart: "Relaunch",
-  keepRunning: "Keep running",
-  quitWithResume: (time: string) => `A paused build will resume on its own at ${time}. Quit and cancel the resume?`,
+  couldNotStart: () => t("The studio could not start"),
+  quit: () => t("Quit"),
+  linkNotOpened: () => t("That link could not be opened"),
+  pluginUnavailable: () => t("Plugin unavailable"),
+  quitDuringRun: () => t("An unattended run is active. Quit and end it?"),
+  restartDuringRun: () => t("An unattended run is active. Relaunch to update and end it?"),
+  restart: () => t("Relaunch"),
+  keepRunning: () => t("Keep running"),
+  quitWithResume: (time: string) =>
+    t("A paused build will resume on its own at {time}. Quit and cancel the resume?", { time }),
   restartWithResume: (time: string) =>
-    `A paused build will resume on its own at ${time}. Relaunch to update and cancel the resume?`,
-  cancel: "Cancel",
-  checkForUpdates: "Check for Updates…",
-  download: "Download",
-  later: "Later",
-  ok: "OK",
+    t("A paused build will resume on its own at {time}. Relaunch to update and cancel the resume?", { time }),
+  cancel: () => t("Cancel"),
+  download: () => t("Download"),
+  later: () => t("Later"),
+  ok: () => t("OK"),
   coreNotStarted: "the studio core has not started",
   noGameView: "the studio window has no game view",
   shutdownUnfinished: (steps: string[]) => `shutdown did not finish: ${steps.join(", ")}`,
   hydrationTimeout: "renderer hydration timeout",
   pageGone: (cause: string) => `studio window renderer gone (${cause})`,
+  // Written into the Studio chat's log, which keeps its English.
   pageReloaded: (cause: string) => `The studio window stopped unexpectedly (${cause}) and was reloaded.`,
   pageKeepsStopping: (cause: string) => `The studio window keeps stopping (${cause}); it was not reloaded again.`,
-  keepsCrashing: "The studio window keeps crashing",
-  keepsCrashingDetail: "Work in progress continues in the background.",
-  reload: "Reload",
+  keepsCrashing: () => t("The studio window keeps crashing"),
+  keepsCrashingDetail: () => t("Work in progress continues in the background."),
+  reload: () => t("Reload"),
+  dataFolderStillMissing: (dir: string) => t("{folder} is still not there.", { folder: dir }),
+  moveStopped: () => t("A file was in use, or the drive refused it. Close other apps, then try again."),
   startTookTooLong: (minutes: number) =>
-    `The protected workspace was still starting after ${minutes} minutes. Genex keeps trying and opens by itself if it finishes; Try again restarts Genex.`,
+    t(
+      "The protected workspace was still starting after {minutes, plural, one {# minute} other {# minutes}}. Genex keeps trying and opens by itself if it finishes; Try again restarts Genex.",
+      { minutes },
+    ),
 } as const;
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -307,16 +415,26 @@ function resourcesDir(): string {
 }
 const resources = resourcesDir();
 
+/** `genex://game/<slug>` links (the website's Open in Genex), each held until the studio page takes it. */
+const gameLinkQueue = gameLinks();
+// macOS hands the app a link even as the link starts it, before it is ready: listen from the first moment.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  gameLinkQueue.arrive(url);
+});
+
 // Squirrel's install, update and uninstall launches make or remove the shortcuts and exit before
 // anything else runs: no profile, no window (main/windows-install.ts).
 const squirrelStep = squirrelStartup(process.platform, process.argv, process.execPath);
 if (squirrelStep) {
-  // The sandbox's grants and denies outlive each launch; an uninstall takes them back.
-  if (squirrelStep.takeBackSandbox)
-    takeBackSandboxEntries(
-      (file, args, env) => spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true }),
-      os.homedir(),
-    );
+  // The sandbox's grants and denies outlive each launch; an uninstall takes them back: Genex's own,
+  // and the write grants srt-win keeps.
+  if (squirrelStep.takeBackSandbox) {
+    const detached: DetachedSpawn = (file, args, env) =>
+      spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true });
+    takeBackSandboxEntries(detached, os.homedir());
+    forgetKeptGrants(detached);
+  }
   await runSquirrelStep(squirrelStep, (file, args) =>
     spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true }),
   );
@@ -331,6 +449,8 @@ const userModelId = appUserModelId(process.platform, process.execPath, existsSyn
 if (userModelId) app.setAppUserModelId(userModelId);
 
 declare const __STUDIO_DEV_BUILD__: { checkout: string; buildId: string } | null;
+/** The build's usage analytics, from `STUDIO_POSTHOG_KEY` at build time (scripts/build.mjs); null without it. */
+declare const __STUDIO_ANALYTICS__: AnalyticsConfig | null;
 const devLaunchConfig = flagValue(StudioFlag.DevLaunch);
 const asksForDeveloper = process.argv.some((arg) => arg.startsWith(StudioFlag.Dev));
 const developerBuildUnlaunched = Boolean(__STUDIO_DEV_BUILD__) && devLaunchConfig === undefined;
@@ -342,6 +462,10 @@ if (developerBuildUnlaunched || developerLaunchUnbacked) {
 }
 /** The normal profile's data folder, read before a developer or test launch moves userData. */
 const normalProfileData = app.getPath("userData");
+/** Electron's own default data folder, which holds the record of where the person moved the data. */
+const defaultData = defaultDataDir(app.getPath("appData"), app.getName());
+/** What `boot.ts` decided about this launch's data: in place, moved, to move now, or missing. */
+const dataLaunch = thisDataLaunch(defaultData);
 const dev =
   devLaunchConfig !== undefined && __STUDIO_DEV_BUILD__
     ? (await import("./dev/launch-context.ts")).initializeLaunch(__STUDIO_DEV_BUILD__, devLaunchConfig)
@@ -401,11 +525,16 @@ const studioLog = openStudioLog(path.join(userDataRoot, "logs"), { home: app.get
 const userDataMigrationLog = userDataMigrationLine(userDataMigration);
 if (userDataMigrationLog) studioLog.write("main", userDataMigrationLog);
 // An error nothing caught is logged, never a quit or Electron's modal box; developer and smoke
-// launches also print it, where their runners read stderr.
-installProcessHandlers(process, (source, line) => {
-  studioLog.write(source, line);
-  if (dev || isSmoke) console.error(`[${source}] ${line}`);
-});
+// launches also print it, where their runners read stderr. Its kind is then told to the window
+// (`appDiagnostics`, made below: one thrown while main still loads is only logged).
+installProcessHandlers(
+  process,
+  (source, line) => {
+    studioLog.write(source, line);
+    if (dev || isSmoke) console.error(`[${source}] ${line}`);
+  },
+  (kind, reason) => appDiagnostics.fault(kind, reason),
+);
 // Native crash dumps stay on this Mac, beside the log in this launch's own data; nothing is uploaded.
 app.setPath("crashDumps", path.join(userDataRoot, "Crashpad"));
 crashReporter.start({ uploadToServer: false });
@@ -425,17 +554,66 @@ configureCodingClis(
     : {},
 );
 const fixtureNativePolicy = fixtureProviders || isSmoke;
+// A test or fixture launch reads the English its checks were written in, whatever the Mac speaks,
+// unless a fixture asks to be seen in another of the app's languages.
+for (const [name, value] of testLanguageSwitches(
+  fixtureNativePolicy || isSelfTest,
+  fixtureProviders ? process.env.STUDIO_FIXTURE_LANGUAGE : undefined,
+))
+  app.commandLine.appendSwitch(name, value);
 /**
- * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy that a
- * development profile names (`play/origins.ts`); never in a packaged app, and never in a fixture
- * launch, which answers Play from its own data.
+ * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy (a
+ * stand) that a development profile names (`play/origins.ts`), with its game host, the Genex host
+ * tools' API and its own CA; never in a packaged app, and never in a fixture launch, which answers
+ * Play from its own data.
  */
-const playOrigin = playOrigins(process.env, dev !== null && !app.isPackaged && !fixtureNativePolicy);
+const stand = devStand(process.env, {
+  developerProfile: dev !== null,
+  packaged: app.isPackaged,
+  fixture: fixtureNativePolicy,
+});
+const playOrigin = stand.origins;
 // Human review is an explicit opt-in; automated fixture windows stay parked and unfocusable.
 const interactiveFixture = process.env.STUDIO_FIXTURE_INTERACTIVE === "1";
 const parkedFixtureWindow = isSmoke || (fixtureProviders && !interactiveFixture);
 const rendererConsole: Array<{ level: string; message: string; source?: string; line?: number; at?: string }> = [];
 let core: StudioCore | null = null;
+/** Whether this launch may ever send: share build metrics and usage analytics both ask it. */
+const launchMaySend = launchSends({
+  packaged: app.isPackaged,
+  argv: process.argv,
+  developerProfile: dev !== null,
+  testData: testUserData !== null,
+});
+/** Usage analytics the renderer may offer; the person still decides (src/renderer/analytics/). */
+const analytics = sessionAnalytics(__STUDIO_ANALYTICS__, {
+  sends: launchMaySend,
+  env: process.env,
+  version: app.getVersion(),
+});
+/**
+ * How this session ends, kept for the next launch's usage analytics (`session-marker.ts`): only in
+ * a launch that may offer analytics, and only in Genex's own data folder, never the stand-in a move
+ * or a missing folder starts in.
+ */
+const sessionMarker =
+  analytics && (dataLaunch.kind === DataLaunchKind.Default || dataLaunch.kind === DataLaunchKind.Moved)
+    ? createSessionMarker({ io: markerFileIo(userDataRoot), version: app.getVersion(), now: Date.now })
+    : null;
+/** Main's own uncaught errors and window hangs: told to the window, counted in the marker (`app-diagnostics.ts`). */
+const appDiagnostics = createAppDiagnostics({
+  push: (payload) => pushUiEvent({ type: UiEvent.AppDiagnostic, payload }),
+  marker: sessionMarker,
+  now: Date.now,
+});
+/** What the previous session's marker said, once this launch has read it (`beginSession`). */
+let sessionBegun: Promise<SessionBegun> | null = null;
+/** How this launch started and the session before it ended: the first bootstrap's alone. */
+const handLaunchFacts = handOnce(async () => {
+  if (!sessionBegun) return null;
+  const fellBack = dataLaunch.kind === DataLaunchKind.Default && dataLaunch.fellBack === true;
+  return launchFacts(await sessionBegun, bootGate.started(), fellBack);
+});
 /**
  * Share build metrics (Settings → Privacy): off by default, and silent in every developer and test
  * launch. Node's own fetch carries no cookies; Electron's session fetch would carry the profile's.
@@ -443,12 +621,7 @@ let core: StudioCore | null = null;
 const runSharing = createRunSharing({
   dir: path.join(userDataRoot, "run-sharing"),
   origin: runsOrigin(process.env),
-  sends: launchSends({
-    packaged: app.isPackaged,
-    argv: process.argv,
-    developerProfile: dev !== null,
-    testData: testUserData !== null,
-  }),
+  sends: launchMaySend,
   fetch: (url, init) => globalThis.fetch(url, init),
   app: { version: app.getVersion(), platform: fieldPlatform(process.platform) },
   readFacts: async (ref) => (core ? readFinishedFacts(core.store, ref) : null),
@@ -465,6 +638,11 @@ let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCre
   null;
 let gameLibrary: LibrarySharing | null = null;
 let playManage: PlayManage | null = null;
+/** The store on the Genex account and its purchase sheet in the studio window, made on first use (`storeFor`). */
+let playStoreDeps: PlayStoreParts | null = null;
+/** Play's native installs and the games being played, made on first use (`playInstallsFor`, `playSessionsFor`). */
+let nativeInstaller: NativeInstaller | null = null;
+let nativeLauncher: NativeSessions | null = null;
 /** The app's Genex account, made with the core: Play, Settings and Publish read it. */
 let genexAccount: GenexAccount | null = null;
 /** The fixture account a fixture launch is signed in to Genex as (`dev/fixture-people.ts`), if any. */
@@ -506,7 +684,7 @@ const updates = createUpdateAnnouncer({
   announce: (update) => pushUiEvent({ type: UiEvent.UpdateReady, payload: update }),
   notify: showUpdateNote,
   confirmRestart: confirmUpdateRestart,
-  quitAndInstall: () => autoUpdater.quitAndInstall(),
+  quitAndInstall: relaunchIntoUpdate,
   openRelease: (url) => void shell.openExternal(url),
 });
 /** Whether and how this launch updates: only a released build checks (./auto-update.ts). */
@@ -520,7 +698,7 @@ const updateDecision = autoUpdateDecision({
   systemPackages: process.platform === "linux" && installedFromGenexRepository(process.execPath, existsSync),
 });
 /** The installer's checks, watched from launch so Check for Updates never collides with one (./auto-update.ts). */
-const installer = watchInstaller(autoUpdater);
+const installer = watchInstaller(autoUpdater, { failed: updateFailed });
 /** Check for Updates, from Settings and the app menu; Linux's periodic check runs it too. */
 const updateChecker = createUpdateChecker({
   decision: updateDecision,
@@ -563,7 +741,7 @@ app.on("accessibility-support-changed", (_event, enabled) => {
 let liveThreadStatus: ThreadStatusMap = {};
 /** An eval-lane launch's view of the core's UI events (it digests the game its chat seeds); null otherwise. */
 let evalLaneUiTap: ((event: UiEvent) => void) | null = null;
-const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
+const { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin } = createLoginControllers({
   terminals,
   openExternal: (url) => shell.openExternal(url),
   subscription,
@@ -571,6 +749,14 @@ const { codexLogin, claudeLogin, openCodeLogin } = createLoginControllers({
   onOpenCodeSignedIn: async () => {
     if (core?.engines.has(EngineId.OpenCode)) await core.engines.get(EngineId.OpenCode).refreshModels?.(true);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenCode } });
+  },
+  onGrokSignedIn: async () => {
+    if (core?.engines.has(EngineId.Grok)) await core.engines.get(EngineId.Grok).refreshModels?.(true);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Grok } });
+  },
+  onCursorSignedIn: async () => {
+    if (core?.engines.has(EngineId.Cursor)) await core.engines.get(EngineId.Cursor).refreshModels?.(true);
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
   },
   showCodexState: (state) => {
     preview?.setOccluded(state.visible);
@@ -606,8 +792,26 @@ function subscription(id: string): SubscriptionEngine | null {
   return null;
 }
 
+/** The subscriptions' plan limits, one live state the renderer is pushed (`core/provider-usage.ts`). */
+const providerUsage = createProviderUsage({
+  engines: SUBSCRIPTION_ENGINES,
+  source: (id) => {
+    if (!core?.engines.has(id)) return null;
+    return engineUsageSource(core.engines.get(id), subscription(id)?.accounts ?? null);
+  },
+  push: (reports) => pushUiEvent({ type: UiEvent.ProviderUsage, payload: { reports } }),
+});
+
+/** A sign-in, account switch or recheck may change a plan already shown: read it again. */
+function followEngineChanges(event: UiEvent): void {
+  if (event.type === UiEvent.EnginesChanged) void providerUsage.refreshShown().catch(() => {});
+}
+
 function pushUiEvent(event: UiEvent): void {
   evalLaneUiTap?.(event);
+  followEngineChanges(event);
+  if (event.type === UiEvent.SettingsChanged)
+    void applyMainLanguage(event.payload.language).then((changed) => changed && languageChanged());
   if (event.type !== UiEvent.HarnessLog) harnessLogBatch.flush();
   if (event.type === UiEvent.HarnessStatus) {
     const all = event.payload?.all;
@@ -735,6 +939,20 @@ function appLookOptions(userData: string): Pick<StudioCoreOptions, "appLook" | "
   return { appLook: macAppLook({ run: appLookRun, scratchDir: scratch, access: access.status }), screenAccess: access };
 }
 
+/** The studio's window back in front of other apps, as an assist's turn ends. */
+function bringStudioForward(): void {
+  const win = window;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  app.focus({ steal: true });
+  win.focus();
+}
+
+/** The core's stand option, when this launch has one. */
+const optionalStand = (genexStand: GenexStand | undefined): Pick<StudioCoreOptions, "genexStand"> =>
+  genexStand ? { genexStand } : {};
+
 /** Computer control (cua-driver), made with the first core: one registry, stopped on quit. */
 let desktop: DesktopControl | undefined;
 
@@ -752,6 +970,24 @@ async function createCore(userData: string): Promise<StudioCore> {
     neverTouch: otherProfiles(userData),
     // The normal profile keeps its games outside its data: another launch's workers never reach them.
     neverTouchGames: normalGamesElsewhere(launch.gamesRoot, app.getPath("home")),
+    // A development profile on a stand: the Genex host tools' CLI and the Genex plugin (its publish)
+    // go to the stand as the account it signed in to.
+    ...optionalStand(launchStand(stand, () => genexAccountFor(studio).token())),
+    // A game's local item drafts after its publish: Put on sale as the app's account; a fixture
+    // launch uploads them to its own store in place of the CLI.
+    localItems: {
+      putOnSale: (skuId) => storeFor(studio).store.putOnSale(skuId),
+      selling: () => storeFor(studio).store.selling(),
+      ...(fixtureNativePolicy
+        ? {
+            runs: fixtureLocalRuns({
+              request: (route, init) => storeFor(studio).request(route, init),
+              token: () => genexAccountFor(studio).token(),
+              core: () => studio,
+            }),
+          }
+        : {}),
+    },
     ...launch,
     ...(ollamaHost ? { ollamaHost } : {}),
     // Electron's binary doubles as node for the harness child process.
@@ -782,6 +1018,7 @@ async function createCore(userData: string): Promise<StudioCore> {
   performanceRecorder.mark("core-start");
   await studio.init();
   performanceRecorder.mark("core-ready");
+  if (await applyMainLanguage(studio.settings.language)) languageChanged();
   wirePlugins(studio);
   await ai.start();
   return studio;
@@ -895,6 +1132,7 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
     ...windowTitle(),
     webPreferences: {
       preload: path.join(distRoot, "preload", "preload.cjs"),
+      additionalArguments: pageLanguageArguments(),
       ...(dev ? { backgroundThrottling: false } : {}),
       contextIsolation: true,
       sandbox: true,
@@ -906,7 +1144,7 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
 async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   const win = new BrowserWindow(studioWindowOptions());
   performanceRecorder.mark("window-created");
-  win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
+  watchHangs(win);
   attachPreviews(studio, win);
   attachPlay(studio, win);
   collectRendererConsole(win);
@@ -925,6 +1163,16 @@ async function createWindow(studio: StudioCore): Promise<BrowserWindow> {
   return win;
 }
 
+/** A window that stops answering is logged and counted, and how long it hung is told once it answers again. */
+function watchHangs(win: BrowserWindow): void {
+  const hang = appDiagnostics.hangWatch();
+  win.on("unresponsive", () => {
+    studioLog.write("main", "studio window unresponsive");
+    hang.unresponsive();
+  });
+  win.on("responsive", () => hang.responsive());
+}
+
 /**
  * The window a launch opens when the sandbox cannot start: the same renderer, which asks
  * `studio:boot` first and shows "Set up the protected workspace" with Retry. There is no core
@@ -936,7 +1184,7 @@ async function createSetupWindow(): Promise<BrowserWindow> {
   // question can be before it has loaded.
   window = win;
   performanceRecorder.mark("window-created");
-  win.on("unresponsive", () => studioLog.write("main", "studio window unresponsive"));
+  watchHangs(win);
   collectRendererConsole(win);
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1021,13 +1269,176 @@ function genexAccountPort(studio: StudioCore): GenexAccountPort {
   return pluginAccountPort(studio.plugins);
 }
 
-/** Play's catalog for this core: genex.games over the network, or a fixture launch's own answers. */
+/**
+ * Play's native installs on this computer, or null where Genex launches no native game: genex.games'
+ * build CDN over the network, or a fixture launch's own made-up build host.
+ */
+function playInstallsFor(studio: StudioCore): NativeInstaller | null {
+  const host = thisComputer();
+  if (!host || !launchesOn(host)) return null;
+  nativeInstaller ??= nativeInstalls({
+    root: studio.layout.installedGames,
+    host,
+    hosts: buildHostsFor(fixtureNativePolicy),
+    game: (slug) => playCatalogFor(studio).game(slug),
+    // A fixture launch never reaches the network: its archives are the fixture's own files.
+    fetch: fixtureNativePolicy ? fixtureNativeFetch : globalThis.fetch,
+    run: runTool,
+    now: Date.now,
+    publish: (state) => {
+      pushUiEvent({ type: UiEvent.PlayInstalls, payload: state });
+      // The viewer's native-app pill follows the install.
+      playView?.nativeChanged();
+    },
+    // A game being played keeps its installed version until it quits.
+    inUse: (slug) => nativeLauncher?.playing(slug) ?? false,
+    // The notifications feed reads the log: how an install ended is written there (Studio's thread).
+    outcome: (outcome) => void recordInstall(studio, outcome),
+  });
+  return nativeInstaller;
+}
+
+/** An install's end in the log, for the notifications feed: ready to play, or why it failed. */
+async function recordInstall(studio: StudioCore, outcome: InstallOutcome): Promise<void> {
+  const { slug, title, version, platform, failure, neededBytes } = outcome;
+  const about = { slug, title, version, platform };
+  const event = failure
+    ? customEventData(CustomEvent.PlayInstallFailed, { ...about, failure, neededBytes })
+    : customEventData(CustomEvent.PlayInstallFinished, about);
+  await studio.append([event]).catch((error: unknown) => studioLog.write("main", `play install notice: ${error}`));
+}
+
+/** How often installed games are checked for a newer build, and how long after start the first check waits. */
+const UPDATE_CHECK_EVERY_MS = 6 * HOUR_MS;
+const UPDATE_CHECK_FIRST_MS = 20 * SECOND_MS;
+
+/** Check installed games for newer builds now and then; each newer version is told once, in the log. */
+function watchNativeUpdates(studio: StudioCore): void {
+  const host = thisComputer();
+  const installs = playInstallsFor(studio);
+  if (!host || !installs) return;
+  const check = () =>
+    void checkNativeUpdates({
+      root: studio.layout.installedGames,
+      host,
+      installed: async () => (await installs.state()).installed,
+      game: (slug) => playCatalogFor(studio).game(slug),
+      tell: (update) =>
+        studio.append([customEventData(CustomEvent.PlayUpdateAvailable, { ...update, platform: host.platform })]),
+    }).catch((error: unknown) => studioLog.write("main", `play updates: ${error}`));
+  setTimeout(check, UPDATE_CHECK_FIRST_MS).unref();
+  setInterval(check, UPDATE_CHECK_EVERY_MS).unref();
+}
+
+/**
+ * Native games being played in their own windows, each in the game sandbox, or null where Genex
+ * launches no native game.
+ */
+/** Where Genex keeps its compiled game host on Windows, in its own data. */
+const GAME_HOST_FOLDER = "game-host";
+
+/** How this system starts a native game, sees its window, brings it forward and asks it to quit. */
+function gameLauncher(): Pick<NativeSessionsDeps, "spawn" | "hasWindow" | "show" | "kill"> {
+  // Windows runs a game in an AppContainer through Genex's game host, which says when its window is up.
+  if (process.platform === StudioPlatform.Windows) return windowsGames(path.join(userDataRoot, GAME_HOST_FOLDER));
+  const kill = (pid: number, signal: NodeJS.Signals) => process.kill(pid, signal);
+  // Linux runs a game in bubblewrap and has no window list to read; the Mac in Seatbelt.
+  if (process.platform === StudioPlatform.Linux) return { spawn: spawnLinuxGame, ...linuxGameWindows(), kill };
+  return { spawn: spawnNativeGame, hasWindow: hasGameWindow, show: showGameWindow, kill };
+}
+
+function playSessionsFor(studio: StudioCore): NativeSessions | null {
+  const installs = playInstallsFor(studio);
+  if (!installs) return null;
+  // A Windows game reaches nothing, Genex included: its AppContainer has no loopback (windows-game.ts).
+  const offline = Boolean(fixtureNativePolicy) || process.platform === StudioPlatform.Windows;
+  nativeLauncher ??= nativeSessions({
+    root: studio.layout.installedGames,
+    record: (slug) => installs.record(slug),
+    ...gameLauncher(),
+    killTree: (pid) => killProcessTree(pid),
+    probe: psProbe(),
+    clock: SYSTEM_CLOCK,
+    publish: (sessions) => pushUiEvent({ type: UiEvent.PlaySessions, payload: sessions }),
+    played: (slug) => installs.played(slug),
+    ended: (slug) => installs.sweep(slug),
+    log: (line) => studioLog.write("main", line),
+    // A fixture launch has no Genex to reach: its games stay offline, and their plays uncounted.
+    ...(offline ? {} : { genex: (slug: string) => openGameGenex(studio, slug) }),
+    ...(fixtureNativePolicy ? {} : { presence: playsFor(studio) }),
+  });
+  return nativeLauncher;
+}
+
+/** Where a native game's plays go: genex.games, once its window is on screen (`main/play/native-plays.ts`). */
+function playsFor(studio: StudioCore): NonNullable<NativeSessionsDeps["presence"]> {
+  const account = genexAccountFor(studio);
+  const plays = nativePlays({
+    root: studio.layout.installedGames,
+    request: networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    refused: account.refused,
+    log: (line) => studioLog.write("main", line),
+  });
+  return { started: (slug) => void plays.report(slug), ended: () => undefined };
+}
+
+/**
+ * A native game's way to Genex while it plays: its own gateway to Genex's API and relays, and a
+ * single-use sign-in ticket for it while the person's Genex account is unlocked (a guest otherwise).
+ */
+async function openGameGenex(studio: StudioCore, slug: string): Promise<GameGenex> {
+  const gateway = await startGenexGateway({
+    api: playOrigin.api,
+    relay: relayHostsOf(new URL(playOrigin.api).hostname),
+  });
+  const ticket = mintedTicket(await playCatalogFor(studio).ticket(slug, TicketDelivery.Desktop));
+  const env = { GENEX_API_URL: gateway.apiUrl, ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}) };
+  return { ports: gateway.ports, env, close: gateway.close };
+}
+
+/**
+ * The native-games fixture: its Mac apps built and zipped into the profile, and Frigate and an older
+ * Puck Rush installed in a fresh one. Then the installed-games folder is tidied, in every launch.
+ */
+async function prepareNativeGames(studio: StudioCore): Promise<void> {
+  const host = thisComputer();
+  if (!host || !launchesOn(host)) return;
+  // The fixture's builds are Mac apps, made with the Mac's own tools.
+  const macFixture = host.platform === NativePlatform.Mac && dev?.fixture === FixtureName.NativeGames;
+  if (fixtureProviders && macFixture) {
+    await prepareNativeGamesFixture({
+      dir: path.join(userDataRoot, "fixture-native"),
+      root: studio.layout.installedGames,
+      host,
+      games: fixtureNativeGames(),
+      page: (slug) => playCatalogFor(studio).game(slug),
+      libraryGame: await libraryGameOf(studio),
+    });
+  }
+  await playSessionsFor(studio)?.reconcile();
+  await playInstallsFor(studio)?.reconcile();
+  watchNativeUpdates(studio);
+}
+
+/** The fixture's library game: its folder and title, for its Mac build. */
+async function libraryGameOf(studio: StudioCore): Promise<{ dir: string; title: string } | undefined> {
+  const game = (await studio.games.list()).find((listed) => listed.name === FIXTURE_GAME);
+  return game ? { dir: game.dir, title: game.title || game.name } : undefined;
+}
+
+/**
+ * Play's catalog for this core: genex.games over the network, or a fixture launch's own answers.
+ * It leaves out games this computer cannot play.
+ */
 function playCatalogFor(studio: StudioCore): PlayGallery {
+  const host = thisComputer();
   playCatalog ??= playGallery({
     request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
     token: genexAccountFor(studio).token,
     now: Date.now,
     localImages: fixtureNativePolicy,
+    ...(host ? { host } : {}),
   });
   return playCatalog;
 }
@@ -1122,6 +1533,25 @@ function mentionSourcesFor(core: () => StudioCore): MentionSources {
   };
 }
 
+/** Whether a game's source holds a game, kept across launches; made on first use. */
+let playRemixReadiness: RemixReadiness | undefined;
+
+/**
+ * Whether each named game's source holds a game, so Play shows its card's Remix: genex.games' git
+ * for a real launch, yes for every game of a fixture launch's (its remix is a local stand-in).
+ */
+function playRemixReadyFor(studio: StudioCore): (slugs: readonly unknown[]) => Promise<Record<string, boolean>> {
+  const readiness = playRemixReadinessFor(studio);
+  return (slugs) => readyFor(slugs, readiness, playCatalogFor(studio));
+}
+
+/** Whether one source holds a game: genex.games' git, or yes for a fixture launch's stand-ins. */
+function playRemixReadinessFor(studio: StudioCore): Pick<RemixReadiness, "ready"> {
+  if (fixtureNativePolicy) return { ready: async () => true };
+  playRemixReadiness ??= gitRemixReadiness(path.join(userDataRoot, "play-remix-ready.json"), studio.layout.scratch);
+  return playRemixReadiness;
+}
+
 /** A Play game's public source as a new game of the person's own; answers its library name. */
 function remixPlayGame(studio: StudioCore, world: PlayWorld): Promise<string> {
   return remixGame(world, {
@@ -1139,6 +1569,7 @@ function remixPlayGame(studio: StudioCore, world: PlayWorld): Promise<string> {
       if (game) await studio.builds.ensure({ project: name, dir: game.dir, shape: game.shape, guarded: true });
     },
     progress: (progress) => pushUiEvent({ type: UiEvent.PlayRemix, payload: { slug: world.slug, ...progress } }),
+    log: (message) => studioLog.write("main", message),
   });
 }
 
@@ -1177,6 +1608,73 @@ function playCoinFor(studio: StudioCore): PlayCoin {
   });
 }
 
+/** The store's parts: its client, the purchase sheet, and the requests both make. */
+type PlayStoreParts = Omit<StoreIpcDeps, "local" | "coin"> & { sheet: StoreSheetControl; request: GalleryRequest };
+
+/** The account's coin for the plate in Play, and Get Nex, read as the purchase sheet's is (`playCoinFor`). */
+function plateCoinFor(studio: StudioCore): StoreIpcDeps["coin"] {
+  const coin = playCoinFor(studio);
+  return {
+    spendable: () => coin.spendableOrNone(),
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    getCoin: () => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else if (window) openGenexWebsitePage(studio, window, playCoinPageUrl(playOrigin.web));
+    },
+  };
+}
+
+/**
+ * The store on the Genex account (marketplace plan 10.1): its client, and the purchase sheet a game's
+ * page shows in the studio window, confirmed as the viewer's is. A fixture launch answers both from
+ * its own store over its other fixture answers (`dev/fixture-store.ts`), so no socket opens.
+ */
+function storeFor(studio: StudioCore): PlayStoreParts {
+  if (playStoreDeps) return playStoreDeps;
+  const account = genexAccountFor(studio);
+  const deps = {
+    request: fixtureNativePolicy
+      ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest })
+      : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+    refused: account.refused,
+  };
+  const store = playStore(deps);
+  const sheet = storeSheet({
+    purchase: store.purchase,
+    world: (slug) => playCatalogFor(studio).world(slug),
+    coin: playCoin(deps),
+    account: { signIn: () => signInToGenex(studio) },
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    openPage: (url) => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else if (window) openGenexWebsitePage(studio, window, url);
+    },
+    web: playOrigin.web,
+    clock: SYSTEM_CLOCK,
+    push: (shown) => {
+      const page = livePage();
+      if (page) pushToRenderer(page, "studio:store.sheet", shown);
+    },
+  });
+  playStoreDeps = { store, sheet, request: deps.request };
+  return playStoreDeps;
+}
+
+/**
+ * A genex.games page the app links to (Get Nex): a page of Play's website opens as a sign-in page
+ * does, which takes a development website's plain http; anything else as every other link does.
+ */
+function openGenexWebsitePage(studio: StudioCore, win: BrowserWindow, url: string): void {
+  websitePageOpener(
+    playOrigin.web,
+    (page) => void openGenexPage(fixtureNativePolicy, page, playOrigin.web).catch(() => openOutside(studio, win, page)),
+    (other) => void openOutside(studio, win, other),
+  )(url);
+}
+
 /** The purchase sheet's Sign in: the app's own Genex sign-in in the browser; how it went shows on the sheet's next read. */
 function signInToGenex(studio: StudioCore): void {
   void genexAccountFor(studio)
@@ -1186,31 +1684,78 @@ function signInToGenex(studio: StudioCore): void {
 
 /** Play's full-screen viewer in `win`: a published game, the studio's bar over its top edge. */
 function attachPlay(studio: StudioCore, win: BrowserWindow): void {
+  // The store's purchase sheet is drawn in this window: Pay waits again on focus, and it goes with the page.
+  followStudioWindow(win, storeFor(studio).sheet);
   playView = wirePlayViewer({
     win,
-    gallery: playCatalogFor(studio),
+    // The viewer's Remix shows only for a game whose source holds a game, as a card's does.
+    gallery: withReadyRemix(playCatalogFor(studio), playRemixReadinessFor(studio)),
     emit: (payload) => pushUiEvent({ type: UiEvent.PlayViewer, payload }),
     openExternal: (url) => {
       if (!fixtureNativePolicy) void openOutside(studio, win, url);
     },
     web: playOrigin.web,
+    origins: playOrigin,
+    ...devGamesCertificates(),
     offline: fixtureNativePolicy ? { gamePage: fixtureGamePage } : null,
     micPreload: path.join(distRoot, "preload", "play-mic.cjs"),
     micStore: playMicStore(path.join(userDataRoot, "play-mic.json")),
     barPage: path.join(distRoot, "renderer", "play-bar.html"),
     barPreload: path.join(distRoot, "preload", "play-bar.cjs"),
+    barArguments: pageLanguageArguments,
     comments: playCommentsFor(studio),
     ...(gameAi ? { ai: gameAi.play } : {}),
+    ...(playInstallsFor(studio) ? { nativeApp: nativeAppFor(studio) } : {}),
+    // The bar's Store door: only a game whose Store tab has items (the store off reads as none).
+    storeShown: async (slug) => (await storeFor(studio).store.items(slug)).items.length > 0,
     coin: playCoinFor(studio),
     account: { signIn: () => signInToGenex(studio) },
-    // Get coin: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
     openPage: (url) => {
       if (fixtureNativePolicy) fixtureGetCoin();
-      else void openOutside(studio, win, url);
+      else openGenexWebsitePage(studio, win, url);
     },
     // A fixture launch's stand-in game confirms on a website that resolves nowhere (`fixture-coin.ts`).
     confirmOrigin: fixtureNativePolicy ? FIXTURE_CONFIRM_ORIGIN : purchaseConfirmOrigin(playOrigin),
   });
+}
+
+/**
+ * A development stand's own CA for the viewer, trusted for the stand's game hosts only
+ * (`play/dev-games-trust.ts`); nothing in any other launch, or when the CA file cannot be read.
+ */
+function devGamesCertificates(): Pick<Parameters<typeof wirePlayViewer>[0], "certificates"> {
+  if (!stand.gamesCaFile) return {};
+  let pem: string;
+  try {
+    pem = readFileSync(stand.gamesCaFile, "utf8");
+  } catch (error) {
+    studioLog.write("main", `stand CA not read: ${errorMessage(error)}`);
+    return {};
+  }
+  const trust = devGamesTrust(playOrigin.games, pem, Date.now);
+  if (!trust) studioLog.write("main", "stand CA is not a certificate: nothing is trusted");
+  return trust ? { certificates: trust } : {};
+}
+
+/**
+ * A web game's native app for the viewer's pill: what this computer is offered (install it, its
+ * install's progress, or play it), and a press that installs it or plays it in its own window.
+ */
+function nativeAppFor(studio: StudioCore): NonNullable<PlayViewerDeps["nativeApp"]> {
+  return {
+    offer: async (slug) => {
+      const installs = playInstallsFor(studio);
+      if (!installs) return null;
+      return nativeAppOffer(await playCatalogFor(studio).game(slug), await installs.state());
+    },
+    press: async (slug) => {
+      const installs = playInstallsFor(studio);
+      if (!installs) return;
+      if (await installs.record(slug)) await playSessionsFor(studio)?.launch(slug);
+      else await installs.install(slug);
+    },
+  };
 }
 
 /**
@@ -1328,7 +1873,7 @@ async function openOutside(studio: StudioCore, win: BrowserWindow, raw: string):
   await dialog
     .showMessageBox(win, {
       type: "warning",
-      message: MESSAGE.linkNotOpened,
+      message: MESSAGE.linkNotOpened(),
       detail: `${raw}\n\n${problem}`,
     })
     .catch(() => {});
@@ -1369,13 +1914,21 @@ function showWindow(win: BrowserWindow): void {
 
 function watchWindowLifecycle(win: BrowserWindow): void {
   // The preview's WebContentsView dies with its window — destroying it mid-run would blind (or
-  // kill) every remaining evidence pass. While a run is active, close means hide. A real quit is
-  // unaffected: before-quit releases the blocker before window close events fire. A restart into
-  // an update closes the windows first, so once the person agreed to end the run, close closes.
+  // kill) every remaining evidence pass. While a run is active, close hides on a Mac and asks the
+  // quit question elsewhere (`windowClose`). A real quit is unaffected: before-quit asks first and
+  // its yes sets quitConfirmed before window close events fire. A restart into an update closes
+  // the windows first, so once the person agreed to end the run, close closes.
   win.on("close", (event) => {
-    if (!keepAwake.held || quitConfirmed) return;
+    const action = windowClose({
+      platform: process.platform,
+      runActive: keepAwake.held,
+      quitConfirmed,
+      testLaunch: isSmoke || isSelfTest,
+    });
+    if (action === WindowClose.Close) return;
     event.preventDefault();
-    win.hide();
+    if (action === WindowClose.Hide) win.hide();
+    else app.quit();
   });
   win.on("closed", () => {
     window = null;
@@ -1394,6 +1947,7 @@ function watchWindowLifecycle(win: BrowserWindow): void {
     const decision = shutdownInProgress ? QUITTING : reloads.decide(details.reason);
     studioLog.write("main", `renderer gone: ${details.reason} (exit ${details.exitCode}); ${decision}`);
     if (decision === QUITTING) return;
+    sessionMarker?.rendererGone(details.reason);
     const step = pageRecovery(decision, { quitting: win.isDestroyed(), unattended: fixtureNativePolicy });
     recoverPage(win, `${details.reason}, exit code ${details.exitCode}`, step);
   });
@@ -1433,9 +1987,9 @@ function recoverPage(win: BrowserWindow, cause: string, step: PageRecovery): voi
 async function askAfterCrashes(): Promise<void> {
   const { response } = await dialog.showMessageBox({
     type: "error",
-    message: MESSAGE.keepsCrashing,
-    detail: MESSAGE.keepsCrashingDetail,
-    buttons: [MESSAGE.reload, MESSAGE.quit],
+    message: MESSAGE.keepsCrashing(),
+    detail: MESSAGE.keepsCrashingDetail(),
+    buttons: [MESSAGE.reload(), MESSAGE.quit()],
     defaultId: 0,
     cancelId: 0,
   });
@@ -1514,6 +2068,60 @@ function bootFeedbackSources(): FeedbackSources {
   };
 }
 
+/** The data folder's channels: the real choices, or the data-folder fixture's stand-ins. */
+function dataFolderIpc(studio: StudioCore): DataFolderIpcDeps {
+  if (!fixtureProviders || dev?.fixture !== FixtureName.DataFolder)
+    return { choices: dataFolderChoices(studio), window: () => window };
+  return { choices: fixtureDataFolder(), window: () => window, pick: async () => FIXTURE_DATA_FOLDER.picked };
+}
+
+/**
+ * The data-folder fixture: Storage shows a Windows data folder as movable, a pick finds the
+ * stand-in drive good, and Move and restart shows the start window moving the files. Nothing is
+ * read, written or moved.
+ */
+function fixtureDataFolder(): DataFolderChoices {
+  const { current, to, bytes, done } = FIXTURE_DATA_FOLDER;
+  return {
+    state: () => ({ dir: current, movable: true, failed: null, kept: [] }),
+    choose: async () => ({ ok: true, to, bytes }),
+    move: async () => {
+      bootGate.moving({ to, done, total: bytes });
+      setImmediate(() => void reshowBoot());
+      return { ok: true, to, bytes };
+    },
+  };
+}
+
+/** Settings → Storage's data folder: the person's own launch on Windows may move it, with Genex restarting to do so. */
+function dataFolderChoices(studio: StudioCore) {
+  const windows = process.platform === StudioPlatform.Windows;
+  return createDataFolderChoices({
+    platform: process.platform,
+    normal: isNormalLaunch(process.argv),
+    defaultDir: defaultData,
+    dataDir: userDataRoot,
+    occupied: async () => [
+      studio.layout.gamesRoot,
+      ...(await studio.games.list()).map((game) => game.dir),
+      installRoot(process.execPath),
+    ],
+    // What a quit would ask about (a run, a paused build's planned resume), or a reply under way.
+    busy: () => quitPrompt(true) !== null || studio.budget.userInFlight > 0,
+    drive: windows ? windowsDriveFacts : async () => null,
+    lockDown: windows ? lockDownFolder : async () => {},
+    measure: () => measureData(userDataRoot, samePath(userDataRoot, defaultData) ? [DATA_FOLDER_FILE] : []),
+    free: freeBytes,
+    // After the answer reaches the window: quitting stops the core, the relaunch moves the files.
+    restart: () =>
+      setImmediate(() => {
+        app.relaunch();
+        app.quit();
+      }),
+    log: (line) => studioLog.write("main", line),
+  });
+}
+
 /** The coding-CLI installs Settings offers: busy while a sign-in, a run or a turn is under way. */
 function cliInstalls(studio: StudioCore) {
   return createCliInstalls({
@@ -1553,6 +2161,43 @@ function startEngineBoot(studio: StudioCore): EngineBoot {
   return boot;
 }
 
+/** What Play's channels answer from: the catalog, the viewer, the account and native games. */
+function playIpcDeps(studio: StudioCore): PlayIpcDeps {
+  return {
+    gallery: playCatalogFor(studio),
+    remix: (world) => remixPlayGame(studio, world),
+    remixReady: playRemixReadyFor(studio),
+    viewer: () => playView,
+    ...playAccountFor(studio),
+    manage: playManageFor(studio),
+    web: playOrigin.web,
+    share: popShareMenu,
+    installs: () => playInstallsFor(studio),
+    here: () => thisComputer() ?? null,
+    sessions: () => playSessionsFor(studio),
+    reveal: (file) => shell.showItemInFolder(file),
+    gameLinks: gameLinkQueue,
+  };
+}
+
+/** The bootstrap's and the chats' channels: what a window opens on, and the sends behind it. */
+function threadsIpcDeps(studio: StudioCore, engines: EngineBoot): ThreadsIpcDeps {
+  return {
+    core: studio,
+    engines,
+    gamesRootLabel,
+    threadStatus: () => liveThreadStatus,
+    pushUiEvent,
+    appendErrorDurably,
+    smokeReads: isSmoke ? smokeReads : null,
+    welcome: showsWelcome,
+    developer: !app.isPackaged,
+    playWeb: playOrigin.web,
+    analytics,
+    launchFacts: handLaunchFacts,
+  };
+}
+
 function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   const handle = createIpcHandle(ipcMain, {
     fixture: fixtureNativePolicy,
@@ -1571,18 +2216,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     shellPath: async () => (await toolchain()).path,
     openExternal: (url) => shell.openExternal(url),
   });
-  registerThreadsIpc(handle, {
-    core: studio,
-    engines,
-    gamesRootLabel,
-    threadStatus: () => liveThreadStatus,
-    pushUiEvent,
-    appendErrorDurably,
-    smokeReads: isSmoke ? smokeReads : null,
-    welcome: showsWelcome,
-    developer: !app.isPackaged,
-    playWeb: playOrigin.web,
-  });
+  registerThreadsIpc(handle, threadsIpcDeps(studio, engines));
   registerMentionRetry(handle, studio);
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
@@ -1592,6 +2226,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     subscription,
     pushUiEvent,
     openRouterLogin,
+    usage: providerUsage,
     payerChanged: gameAiPayerChanged,
   });
   registerPreviewIpc(handle, {
@@ -1627,6 +2262,12 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     claudeLogin,
     codexLogin,
     openCodeLogin,
+    grokLogin,
+    cursorLogin,
+    cursor: () => {
+      const engine = core?.engines.has(EngineId.Cursor) ? core.engines.get(EngineId.Cursor) : null;
+      return engine instanceof CursorEngine ? engine : null;
+    },
     subscription,
     pushUiEvent,
     busy: () => keepAwake.held || (core?.budget.userInFlight ?? 0) > 0,
@@ -1634,21 +2275,15 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   });
   registerCliInstallIpc(handle, cliInstalls(studio));
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
+  registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
   registerPlayChannels(handle, studio);
 }
 
-/** Play's channels, the asset library's, notifications' and play-time AI's. */
+/** Play's channels, the Store's, the asset library's, notifications' and play-time AI's. */
 function registerPlayChannels(handle: IpcHandle, studio: StudioCore): void {
-  registerPlayIpc(handle, {
-    gallery: playCatalogFor(studio),
-    remix: (world) => remixPlayGame(studio, world),
-    viewer: () => playView,
-    ...playAccountFor(studio),
-    manage: playManageFor(studio),
-    web: playOrigin.web,
-    share: popShareMenu,
-  });
+  registerPlayIpc(handle, playIpcDeps(studio));
+  registerStoreIpc(handle, { ...storeFor(studio), coin: plateCoinFor(studio), local: studio.localItems });
   const { library } = playAccountFor(studio);
   registerAssetLibraryIpc(handle, { library, sharing: librarySharingFor(studio), pictureFile: pictureFileFor() });
   registerNotificationsIpc(handle, {
@@ -1674,9 +2309,22 @@ async function main(): Promise<void> {
     await runSelfTestAndExit();
     return;
   }
+  if (quitsAtOnce(dataLaunch)) {
+    await quitTakenLaunch({
+      ready: () => app.whenReady(),
+      tell: async (message, button) => {
+        await dialog.showMessageBox({ type: "info", message, buttons: [button] });
+      },
+      exit: (code) => app.exit(code),
+    });
+    return;
+  }
   if (!claimTheMac()) return;
+  answerGameLinks();
   await app.whenReady();
   performanceRecorder.mark("app-ready");
+  // The computer's language until the core reads the saved choice.
+  await applyMainLanguage(SYSTEM_LANGUAGE);
   const bootHandle = createIpcHandle(ipcMain, { fixture: fixtureNativePolicy, isStudioUi: isStudioWindow });
   registerBootIpc(bootHandle, {
     gate: bootGate,
@@ -1694,15 +2342,130 @@ async function main(): Promise<void> {
       arch: process.arch,
     }),
   });
-  addCheckForUpdatesMenuItem();
+  setAppMenu();
+  if (await settleDataFolder()) return;
+  beginSession();
+  // Before the core: a start that fails, waits on Set up or never ends (a Windows start can take
+  // minutes) still finds the release that fixes it, and its screen offers the relaunch.
+  setTimeout(checkForUpdates, firstCheckDelay(process.argv)).unref();
   const started = await startStudio();
   if (isSmoke) {
     if (started) app.exit(await runSmokeLaunch(started));
     return;
   }
-  // The setup screen checks too: a release that fixes the sandbox problem can arrive through it.
-  checkForUpdates();
   if (!dev) app.on("activate", reopenWindow);
+}
+
+/**
+ * A launch that moves Genex's data, or cannot find it, does only that: the start window shows the
+ * move, then Genex starts again; or it names the missing folder, with Try again and Quit. True
+ * when this launch was one of those.
+ */
+async function settleDataFolder(): Promise<boolean> {
+  if (dataLaunch.kind === DataLaunchKind.Move) {
+    await moveDataAndRestart(dataLaunch.from, dataLaunch.to);
+    return true;
+  }
+  if (dataLaunch.kind === DataLaunchKind.Missing) {
+    await waitForDataFolder(dataLaunch.dir);
+    return true;
+  }
+  // Only the person's own launch tends the normal profile's record: a developer, test or smoke
+  // launch runs on a folder of its own and must never repair or clean up the real one.
+  if (!isNormalLaunch(process.argv)) return false;
+  if (dataLaunch.kind === DataLaunchKind.Moved || dataLaunch.kind === DataLaunchKind.Default) {
+    const log = (line: string) => studioLog.write("main", line);
+    // A move Genex closed after recording repairs its links before anything reads them, and only
+    // then may what it left in the old folder go.
+    await finishMove(defaultData, dataLaunch.dir, { log, ...hostGitForMoves() }).catch((error: unknown) =>
+      log(`data folder: finishing the move failed: ${errorMessage(error)}`),
+    );
+    void removeLeftover(defaultData, dataLaunch.dir, log);
+  }
+  return false;
+}
+
+/** The host's own Git for repairing build copies after a move (Windows, a Mac without developer tools); elsewhere the PATH's. */
+function hostGitForMoves(): { hostGit?: () => Promise<boolean> } {
+  if (process.platform === StudioPlatform.Windows) return { hostGit: () => ensureHostGit() };
+  if (process.platform === StudioPlatform.Mac) return { hostGit: () => ensureMacGit(resources) };
+  return {};
+}
+
+/** Move the data with the start window showing how far, then start Genex again; quitting waits for it. */
+async function moveDataAndRestart(from: string, to: string): Promise<void> {
+  bootGate.moving({ to, done: 0, total: 0 });
+  const win = await createSetupWindow();
+  let moving = true;
+  // Closing the window must not stop a copy half-way; once the move is over it may close.
+  win.on("close", (event) => {
+    if (moving) event.preventDefault();
+  });
+  const lines: string[] = [];
+  const log = (line: string) => {
+    lines.push(line);
+    studioLog.write("main", line);
+  };
+  const outcome = await runDataMove({
+    from,
+    to,
+    defaultDir: defaultData,
+    progress: (progress) => bootGate.moving(progress),
+    log,
+    ...hostGitForMoves(),
+  }).catch((error: unknown): DataMoveOutcome => {
+    log(`data folder: the move stopped: ${errorMessage(error)}`);
+    return { moved: false, problem: DataFolderProblem.Failed, stranded: [] };
+  });
+  moving = false;
+  // The lines go in the log of the folder Genex now starts from, where a report reads them. A move
+  // that stopped part-way writes nothing in either folder: the next start carries it on.
+  const logDir = moveLogDir(outcome, from, to);
+  if (logDir) {
+    const kept = openStudioLog(path.join(logDir, "logs"), { home: app.getPath("home") });
+    for (const line of lines) kept.write("main", line);
+  }
+  const restart = async () => {
+    app.relaunch();
+    app.exit(0);
+  };
+  // Part of the data in each folder, or a move that ended without saying: no restart into it on
+  // its own (that could repeat for ever); the window offers Try again, which carries it on, and Quit.
+  if (!outcome.moved && outcome.stranded) {
+    bootGate.moveStopped(to, MESSAGE.moveStopped(), restart);
+    return;
+  }
+  if (outcome.moved) await noteNextLaunch(to, StartPassage.DataMoved);
+  await restart();
+}
+
+/** Leave `passage` in the data folder `dir` for the launch this one starts next, for its usage analytics. */
+async function noteNextLaunch(dir: string, passage: StartPassage): Promise<void> {
+  if (!analytics) return;
+  await settleWithin(noteNextStart(markerFileIo(dir), passage), SESSION_MARKER_WAIT_MS, undefined);
+}
+
+/** The data folder a moving launch's log lines go to: the one Genex starts from, or none while the move is unfinished. */
+function moveLogDir(outcome: DataMoveOutcome, from: string, to: string): string | null {
+  if (outcome.moved) return to;
+  return outcome.stranded ? null : from;
+}
+
+/** Name the missing data folder with Try again (Genex starts again once it is there) and Quit. */
+async function waitForDataFolder(dir: string): Promise<void> {
+  studioLog.write("main", `data folder: ${dir} is not there`);
+  holdOnMissingData(dir);
+  window = await createSetupWindow();
+}
+
+/** The start window names the missing folder; Try again starts Genex again once it is there. */
+function holdOnMissingData(dir: string): void {
+  bootGate.dataMissing(dir, async () => {
+    if (!existsSync(dir)) throw new Error(MESSAGE.dataFolderStillMissing(dir));
+    await noteNextLaunch(dir, StartPassage.DataMissing);
+    app.relaunch();
+    app.exit(0);
+  });
 }
 
 /** Is `event` from the studio window's own top frame (not a plugin page or a game)? */
@@ -1742,35 +2505,74 @@ function checkForUpdates(): void {
   }
   if (updateDecision.mode === UpdateMode.Notify) {
     // Linux: ask GitHub now and every few hours; a newer release announces itself.
-    const ask = () => void updateChecker.check().then((result) => log(`release check: ${result.status}`));
+    const ask = () =>
+      void updateChecker.check().then((result) => {
+        log(`release check: ${result.status}`);
+        if (result.status === UpdateCheckStatus.Failed) updateFailed(UpdateFailure.Check);
+      });
     ask();
     setInterval(ask, RELEASE_CHECK_INTERVAL_MS).unref();
     return;
   }
-  startAutoUpdate({ log, downloaded: (releaseName) => updates.downloaded(releaseName) }).catch((err) =>
-    log(errorMessage(err)),
-  );
+  startAutoUpdate({ log, downloaded: (releaseName) => updates.downloaded(releaseName) }).catch((err) => {
+    log(errorMessage(err));
+    updateFailed(UpdateFailure.Check);
+  });
+}
+
+/** An update this launch looked for on its own failed at `stage`: counted for the next launch, and told to the window. */
+function updateFailed(stage: UpdateFailure): void {
+  sessionMarker?.updateFailed();
+  pushUiEvent({ type: UiEvent.UpdateFailed, payload: { stage } });
+}
+
+/** Relaunch into the downloaded update once the marker says so, so the next launch knows it was one. */
+async function relaunchIntoUpdate(): Promise<void> {
+  await settleWithin(sessionMarker?.updating() ?? Promise.resolve(), SESSION_MARKER_WAIT_MS, undefined);
+  autoUpdater.quitAndInstall();
+}
+
+/** The session ends by Genex's own hand: said in the marker before a quit, or a relaunch that skips it. */
+function sessionQuits(): Promise<void> {
+  return settleWithin(sessionMarker?.quitting() ?? Promise.resolve(), SESSION_MARKER_WAIT_MS, undefined);
+}
+
+/** Read how the previous session ended, once, and keep this one's marker, alive while it runs. */
+function beginSession(): void {
+  if (!sessionMarker) return;
+  const marker = sessionMarker;
+  sessionBegun = marker.begin();
+  setInterval(() => marker.heartbeat(), SESSION_HEARTBEAT_MS).unref();
 }
 
 /**
- * Check for Updates… in the default menu: the app menu after About on macOS, Help elsewhere.
- * Electron's default menu stays as it is otherwise.
+ * Redraw what main drew in the old language: the menu, and the studio pages it keeps loaded (Play's
+ * bar). The studio window reloads itself when it switches.
  */
-function addCheckForUpdatesMenuItem(): void {
-  const menu = Menu.getApplicationMenu();
-  if (!menu) return;
-  const host = process.platform === "darwin" ? menu.items[0] : menu.items.find((item) => item.role === "help");
-  if (!host?.submenu) return;
-  const item = new MenuItem({ label: MESSAGE.checkForUpdates, click: () => void answerUpdateCheck() });
-  host.submenu.insert(process.platform === "darwin" ? 1 : host.submenu.items.length, item);
-  Menu.setApplicationMenu(menu);
+function languageChanged(): void {
+  setAppMenu();
+  playView?.languageChanged();
+}
+
+/**
+ * The application menu in the active language (`app-menu.ts`): Electron's default menu with Check
+ * for Updates… after About on macOS and in Help elsewhere.
+ */
+function setAppMenu(): void {
+  const template = appMenuTemplate({
+    platform: process.platform,
+    appName: app.name,
+    checkForUpdates: () => void answerUpdateCheck(),
+    macLanguage: matchLocale(systemLanguages()),
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 /** The menu's Check for Updates: ask, then say what it found and offer the one next step. */
 async function answerUpdateCheck(): Promise<void> {
   const note = updateCheckNote(await updateChecker.check());
-  const actLabel = note.act === UpdateAction.Download ? MESSAGE.download : MESSAGE.restart;
-  const buttons = note.act ? [actLabel, MESSAGE.later] : [MESSAGE.ok];
+  const actLabel = note.act === UpdateAction.Download ? MESSAGE.download() : MESSAGE.restart();
+  const buttons = note.act ? [actLabel, MESSAGE.later()] : [MESSAGE.ok()];
   const { response } = await dialog.showMessageBox({ message: note.message, detail: note.detail, buttons });
   if (response !== 0 || !note.act) return;
   if (note.act === UpdateAction.Download) updates.download();
@@ -1798,10 +2600,13 @@ function quitPrompt(relaunch: boolean): { message: string; keep: string } | null
   const resumeAt = core?.autoResumeAt ?? null;
   const question = quitQuestion({ runActive: keepAwake.held, resumeAt, confirmed: quitConfirmed });
   if (question === QuitQuestion.RunActive)
-    return { message: relaunch ? MESSAGE.restartDuringRun : MESSAGE.quitDuringRun, keep: MESSAGE.keepRunning };
+    return {
+      message: relaunch ? MESSAGE.restartDuringRun() : MESSAGE.quitDuringRun(),
+      keep: MESSAGE.keepRunning(),
+    };
   if (question !== QuitQuestion.ResumePending || resumeAt === null) return null;
-  const time = new Date(resumeAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return { message: relaunch ? MESSAGE.restartWithResume(time) : MESSAGE.quitWithResume(time), keep: MESSAGE.cancel };
+  const time = new Date(resumeAt).toLocaleTimeString(intlLocale(), { hour: "2-digit", minute: "2-digit" });
+  return { message: relaunch ? MESSAGE.restartWithResume(time) : MESSAGE.quitWithResume(time), keep: MESSAGE.cancel() };
 }
 
 /**
@@ -1818,7 +2623,7 @@ async function confirmUpdateRestart(): Promise<boolean> {
     const { response } = await dialog.showMessageBox({
       type: "warning",
       message: prompt.message,
-      buttons: [MESSAGE.restart, prompt.keep],
+      buttons: [MESSAGE.restart(), prompt.keep],
       defaultId: 1,
       cancelId: 1,
     });
@@ -1851,8 +2656,37 @@ function claimTheMac(): boolean {
     app.exit(0);
     return false;
   }
-  if (!dev) app.on("second-instance", showExistingWindow);
+  if (!dev)
+    app.on("second-instance", (_event, argv) => {
+      showExistingWindow();
+      // Windows and Linux start Genex again with the link as an argument.
+      gameLinkQueue.arrive(gameLinkIn(argv));
+    });
   return true;
+}
+
+/**
+ * The real studio answers `genex://` links: the system starts it, or hands it, each one, and one it
+ * was started with waits for the page. A developer or test launch leaves the system's handler alone.
+ */
+function answerGameLinks(): void {
+  if (isSmoke || dev) return;
+  // An unpackaged Mac build is Electron's own app, which declares no scheme: it would take the
+  // links from an installed Genex, so only Windows and Linux name it with this folder.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(GAME_LINK_SCHEME);
+  else if (process.platform !== "darwin")
+    app.setAsDefaultProtocolClient(GAME_LINK_SCHEME, process.execPath, [path.resolve(process.argv[1] ?? ".")]);
+  gameLinkQueue.arrive(gameLinkIn(process.argv));
+  gameLinkQueue.listen({
+    show: () => void showForLink(),
+    announce: () => pushUiEvent({ type: UiEvent.PlayGameLink, payload: {} }),
+  });
+}
+
+/** A game link arrived: the window comes forward, opened again if it was closed. */
+async function showForLink(): Promise<void> {
+  if (!window && app.isReady()) await reopenWindow();
+  showExistingWindow();
 }
 
 function showExistingWindow(): void {
@@ -1904,7 +2738,7 @@ function opensWhileStarting(): boolean {
  * or turns into the setup screen.
  */
 function openStartWindow(): void {
-  bootGate.starting(StartStep.Games);
+  bootGate.starting(StartStep.Agents);
   createSetupWindow().catch((err) => studioLog.write("main", `start window: ${errorMessage(err)}`));
   setTimeout(startTookTooLong, START_TIMEOUT_MS).unref();
 }
@@ -1917,6 +2751,7 @@ function openStartWindow(): void {
 function startTookTooLong(): void {
   const { step } = bootGate.state();
   const shown = bootGate.overdue(MESSAGE.startTookTooLong(START_TIMEOUT_MS / MINUTE_MS), async () => {
+    await sessionQuits();
     app.relaunch();
     app.exit(0);
   });
@@ -2011,6 +2846,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     protocol.handle("studio-plugin", (request) => servePluginPanel(studio, request));
     serveFixtureLibraryFiles();
     const fixture = fixtureProviders && dev ? await prepareFixture(studio, dev.fixture) : null;
+    await prepareNativeGames(studio).catch((error: unknown) => studioLog.write("main", `native games: ${error}`));
     // The engine checks take seconds: they start now, beside the window, and the window opens on
     // the engines the last launch checked. After a fixture's engines are in place.
     const engines = startEngineBoot(studio);
@@ -2019,7 +2855,11 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     if (!showsFixtureSetup()) bootGate.ready();
     const before = window;
     const win = await createWindow(studio);
+    studio.options.markBoot?.("window");
     window = win;
+    // A turn that clicked in another app (a publish in Studio) ends with Genex in front again, so
+    // the person sees it is done and can come back.
+    assistGrants(studio).onEnded(() => bringStudioForward());
     // The start or setup window this launch opened first gives way to the studio's.
     if (before && before !== win && !before.isDestroyed()) before.destroy();
     // First launch opens on an empty library, with no game chat to select.
@@ -2027,11 +2867,12 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     const booted = await startHarness(studio);
     if (!booted) return null;
     if (fixture) await activateChatFixture(studio, fixture);
-    if (fixture?.project) await openFixtureGame(win, fixture.project);
+    if (fixture?.project) await openFixtureGame(studio, win, fixture.project);
     announceReady(userData);
     showFixtureAgentsFailure(userData);
     const view = requirePreview();
     if (dev && __STUDIO_DEV_BUILD__) devRuntime = await startDevRuntime(dev, studio, win, view);
+    await showFixtureDataMissing();
     return { core: studio, window: win, preview: view };
   } catch (err) {
     failStartup(err);
@@ -2053,6 +2894,13 @@ function showFixtureAgentsFailure(userData: string): void {
   showAgentsFailure(FIXTURE_AGENTS_FAILURE, async () => announceReady(userData));
 }
 
+/** The data-missing fixture: over a started studio, the window shows the stand-in drive's folder as missing. */
+async function showFixtureDataMissing(): Promise<void> {
+  if (!fixtureProviders || dev?.fixture !== FixtureName.DataMissing) return;
+  holdOnMissingData(FIXTURE_DATA_FOLDER.to);
+  await reshowBoot();
+}
+
 /** The game view `createWindow` attached; every started window has one. */
 function requirePreview(): GamePreview {
   if (!preview) throw new Error(MESSAGE.noGameView);
@@ -2071,14 +2919,14 @@ async function servePluginPanel(studio: StudioCore, request: Request): Promise<R
       },
     });
   } catch {
-    return textResponse(HttpStatus.NotFound, MESSAGE.pluginUnavailable);
+    return textResponse(HttpStatus.NotFound, MESSAGE.pluginUnavailable());
   }
 }
 
 /** A plugin's picture, as an image only: navigated to, it runs nothing and is never sniffed as anything else. */
 async function servePluginIcon(studio: StudioCore, id: string): Promise<Response> {
   const icon = await studio.plugins.icon(id);
-  if (!icon) return textResponse(HttpStatus.NotFound, MESSAGE.pluginUnavailable);
+  if (!icon) return textResponse(HttpStatus.NotFound, MESSAGE.pluginUnavailable());
   return new Response(new Uint8Array(icon.bytes), {
     headers: {
       "Content-Type": icon.type,
@@ -2097,13 +2945,14 @@ async function seedFixtureModel(win: BrowserWindow, threadId: string): Promise<v
 }
 
 /**
- * A fixture session begins in its game: every launch opens home, so the fixture opens the game
- * from the sidebar as a person would, and waits until the window shows it (or the sandbox setup,
- * which has no games). A game that never opens fails the launch, as a broken fixture should.
+ * A fixture session begins in its game, running: every launch opens home, so the fixture opens the
+ * game from the sidebar as a person would, and waits until the window shows it (or the sandbox
+ * setup, which has no games); opening a game starts nothing, so it then loads the game into Live as
+ * Play would. A game that never opens fails the launch, as a broken fixture should.
  */
-async function openFixtureGame(win: BrowserWindow, project: string): Promise<void> {
+async function openFixtureGame(studio: StudioCore, win: BrowserWindow, project: string): Promise<void> {
   const row = `nav [data-project=${JSON.stringify(project)}]`;
-  await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+  const opened = await win.webContents.executeJavaScript(`new Promise((resolve, reject) => {
     const until = Date.now() + ${FIXTURE_OPEN_TIMEOUT_MS};
     let clicked = false;
     const tick = () => {
@@ -2121,6 +2970,7 @@ async function openFixtureGame(win: BrowserWindow, project: string): Promise<voi
     };
     tick();
   })`);
+  if (opened === true) void studio.loadPreview({ project }).catch(() => {});
 }
 
 /**
@@ -2134,10 +2984,15 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
     return true;
   } catch (err) {
     if (dev || isSmoke) throw err;
-    showAgentsFailure(errorMessage(err), async () => {
-      await studio.start();
-      announceReady(userDataRoot);
-    });
+    const code = err instanceof SandboxUnavailableError ? err.problem.code : BootFailure.HarnessFailed;
+    showAgentsFailure(
+      errorMessage(err),
+      async () => {
+        await studio.start();
+        announceReady(userDataRoot);
+      },
+      code,
+    );
     return false;
   }
 }
@@ -2148,10 +3003,14 @@ async function startHarness(studio: StudioCore): Promise<boolean> {
  * harness waits on a sandbox that starts behind the open window, so this can come a minute after
  * the window opened. A Try again that fails shows its own words.
  */
-function showAgentsFailure(failure: string, retry: () => Promise<void>): void {
+function showAgentsFailure(
+  failure: string,
+  retry: () => Promise<void>,
+  failureCode: BootFailureCode = BootFailure.HarnessFailed,
+): void {
   studioLog.write("main", `harness would not start: ${failure}`);
-  bootGate.agentsFailed(failure, retry);
-  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure } });
+  bootGate.agentsFailed(failure, retry, failureCode);
+  pushUiEvent({ type: UiEvent.HarnessStartFailed, payload: { failure, failureCode } });
 }
 
 /** The developer runtime, once the renderer shows its threads. */
@@ -2206,7 +3065,7 @@ function reportStartupFailure(err: unknown): void {
     console.error("Renderer startup diagnostics", JSON.stringify(rendererConsole.slice(-20)));
     return;
   }
-  dialog.showErrorBox(MESSAGE.couldNotStart, (err as Error).stack ?? String(err));
+  dialog.showErrorBox(MESSAGE.couldNotStart(), (err as Error).stack ?? String(err));
 }
 
 /** The smoke, or one of the acceptance runs its flags choose; the exit code. */
@@ -2268,7 +3127,7 @@ let shutdownInProgress = false;
  * exits; the harness is stopped first and, failing that, killed last.
  */
 function quitSteps(): ShutdownStep[] {
-  return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core, gameAi });
+  return shutdownSteps({ keepAwake, codexLogin, claudeLogin, terminals, core, games: nativeLauncher, gameAi });
 }
 
 // Nothing drives the person's computer once the studio is going away.
@@ -2298,7 +3157,7 @@ app.on("before-quit", async (event) => {
       const { response } = await dialog.showMessageBox({
         type: "warning",
         message: prompt.message,
-        buttons: [MESSAGE.quit, prompt.keep],
+        buttons: [MESSAGE.quit(), prompt.keep],
         defaultId: 1,
         cancelId: 1,
       });
@@ -2314,10 +3173,13 @@ app.on("before-quit", async (event) => {
   event.preventDefault();
   if (shutdownInProgress) return;
   shutdownInProgress = true;
+  // The next launch reads this session as one that quit (or relaunched into an update).
+  const marked = sessionQuits();
   // Every later Cmd+Q returns above, so this exit must be reached whatever a step does.
   try {
     await runShutdown(quitSteps(), { log: studioLog.write });
   } finally {
+    await marked;
     studioLog.close();
     app.exit(0);
   }

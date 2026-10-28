@@ -122,6 +122,14 @@ test("where a dropped file is on disk is answered by the preload alone, and a fi
   assert.deepEqual(invokes, [], "main is never asked");
 });
 
+test("the computer's languages main handed the page are answered by the preload alone", () => {
+  const { ipc, invokes } = rendererIpc();
+  const api = createStudioBridge(ipc, undefined, ["uk-UA", "ru-RU"]);
+  assert.deepEqual(api.systemLanguages(), ["uk-UA", "ru-RU"]);
+  assert.deepEqual(createStudioBridge(ipc).systemLanguages(), [], "a page main gave none follows Chromium");
+  assert.deepEqual(invokes, [], "main is never asked");
+});
+
 test("the preload unwraps main's envelope: a value resolves, an error rejects with main's message", async () => {
   const { ipc } = rendererIpc((channel) =>
     channel === "studio:games" ? { ok: true, value: [{ name: "pong" }] } : { ok: false, error: "title taken" },

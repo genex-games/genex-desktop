@@ -20,6 +20,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   atomicWriteJson,
   atomicWriteText,
@@ -31,6 +32,7 @@ import { containedReal } from "../../substrate/paths.ts";
 import { envValue } from "../../substrate/toolchain.ts";
 import { crashReporterHolds, editorHoldsLog, heldProjectNames } from "./editor-holds.ts";
 import { type EditorLog, editorLogPath, readEditorLog } from "./editor-log.ts";
+import { loadEpicText } from "./epic-files.ts";
 import { isProjectPath, projectName } from "./project-file.ts";
 import {
   choosePort,
@@ -59,7 +61,10 @@ export const installEngineVersion = () => `${MIN_ENGINE.major}.${MIN_ENGINE.mino
  * it on. Named after the version Genex makes projects with ({@link MIN_ENGINE}).
  */
 export const installEngineText = () =>
-  `Unreal Engine ${installEngineVersion()} isn't on this computer yet. The Unreal button above the game shows how to get it free from Epic, and notices when it's installed.`;
+  t(
+    "Unreal Engine {version} isn't on this computer yet. The Unreal button above the game shows how to get it free from Epic, and notices when it's installed.",
+    { version: installEngineVersion() },
+  );
 /** Epic's plugins the bridge talks to, in the order setup adds them: a project without them on isn't set up. */
 const MCP_PLUGINS = ["ModelContextProtocol", "EditorToolset"] as const;
 /**
@@ -102,6 +107,11 @@ const HELPER_VERSION = /^\d{1,4}(?:\.\d{1,4}){0,3}$/;
 const RECENT_PROJECTS_CAP = 12;
 const RECORD_KEY_CHARS = 16;
 const COMMAND_TIMEOUT_MS = 5 * SECOND_MS;
+/** An install record of Epic's launcher is a few KB; one far bigger isn't one. */
+const LAUNCHER_RECORD_MAX_BYTES = 64 * 1024;
+/** The install records read at most: a launcher with every Epic game and plugin installed keeps a few hundred. */
+const LAUNCHER_RECORDS_CAP = 1000;
+const LAUNCHER_RECORD = ".item";
 const RECENT_LINE = /^RecentlyOpenedProjectFiles=\(ProjectName="([^"]+)",LastOpenTime=([\d.-]+)\)/;
 const ENGINE_APP = /^UE_(\d+)\.(\d+)$/;
 const ENGINE_BUILD = /^\d+\.\d+\.\d+/;
@@ -139,15 +149,21 @@ export const SetupErrorCode = {
 } as const;
 export type SetupErrorCode = (typeof SetupErrorCode)[keyof typeof SetupErrorCode];
 
+/** Setup's refusals, in the person's words: the panel shows them as they are. */
 const MESSAGE = {
-  NotProjectFile: "Choose a project's .uproject file by its full path.",
-  NoProject: "There's no Unreal project file at that path.",
-  BadProjectFile: "This .uproject file isn't valid JSON, so Genex won't change it.",
-  Link: (where: string) => `${where} in this project links somewhere else, so Genex won't write through it.`,
-  EditorRunning: "Quit Unreal Editor first. It rewrites the project's settings when it closes.",
-  NothingToUndo: "Genex hasn't set up this project, so there's nothing to undo.",
-  NoFreePort: `Genex found no free port for Unreal's MCP server: other apps hold every port from ${PROJECT_PORT_RANGE.first} to ${PROJECT_PORT_RANGE.last}. Quit some of them and try again.`,
-  NotSetUp: "Genex hasn't set up this project, so it has no Genex editor helper to update. Set it up first.",
+  NotProjectFile: () => t("Choose a project's .uproject file by its full path."),
+  NoProject: () => t("There's no Unreal project file at that path."),
+  BadProjectFile: () => t("This .uproject file isn't valid JSON, so Genex won't change it."),
+  Link: (where: string) =>
+    t("{where} in this project links somewhere else, so Genex won't write through it.", { where }),
+  EditorRunning: () => t("Quit Unreal Editor first. It rewrites the project's settings when it closes."),
+  NothingToUndo: () => t("Genex hasn't set up this project, so there's nothing to undo."),
+  NoFreePort: () =>
+    t(
+      "Genex found no free port for Unreal's MCP server: other apps hold every port from {first} to {last}. Quit some of them and try again.",
+      { first: PROJECT_PORT_RANGE.first, last: PROJECT_PORT_RANGE.last },
+    ),
+  NotSetUp: () => t("Genex hasn't set up this project, so it has no Genex editor helper to update. Set it up first."),
 } as const;
 
 /** A copy of a helper file the user changed, kept beside it when setup puts the shipped one back. */
@@ -390,9 +406,18 @@ function editorConfigFolder(env: SetupEnv): string {
   return isWindows(env) ? "WindowsEditor" : "MacEditor";
 }
 
+/** Where Epic's launcher keeps its own files: ProgramData on Windows, Application Support on a Mac. */
+function launcherData(env: SetupEnv): string {
+  return isWindows(env) ? path.join(env.programData, "Epic") : epicFolder(env);
+}
+
 function launcherList(env: SetupEnv): string {
-  const root = isWindows(env) ? path.join(env.programData, "Epic") : epicFolder(env);
-  return path.join(root, "UnrealEngineLauncher", "LauncherInstalled.dat");
+  return path.join(launcherData(env), "UnrealEngineLauncher", "LauncherInstalled.dat");
+}
+
+/** The folder of the launcher's install records: one `<id>.item` per install, kept up to date by the launcher. */
+function launcherRecords(env: SetupEnv): string {
+  return path.join(launcherData(env), "EpicGamesLauncher", "Data", "Manifests");
 }
 
 function engineSettings(env: SetupEnv, version: string): string {
@@ -436,31 +461,74 @@ function isSupported(major: number, minor: number): boolean {
   return major > MIN_ENGINE.major || (major === MIN_ENGINE.major && minor >= MIN_ENGINE.minor);
 }
 
+/**
+ * The engine an entry of the launcher's list or one of its install records names; undefined for
+ * anything else (a game, one of Epic's plugins). The list spells the build `AppVersion`, a record
+ * `AppVersionString`.
+ */
 function engineFrom(item: unknown): Engine | undefined {
   if (!isJsonObject(item) || typeof item.InstallLocation !== "string") return undefined;
   const app = ENGINE_APP.exec(String(item.AppName ?? ""));
   if (!app) return undefined;
   const [major, minor] = [Number(app[1]), Number(app[2])];
   const version = `${major}.${minor}`;
-  const build = ENGINE_BUILD.exec(String(item.AppVersion ?? ""))?.[0] ?? version;
+  const build = ENGINE_BUILD.exec(String(item.AppVersion ?? item.AppVersionString ?? ""))?.[0] ?? version;
   return { version, build, directory: item.InstallLocation, supported: isSupported(major, minor) };
 }
 
-function installationList(text: string): unknown[] {
+/** Whether an install record says the launcher is still installing (or updating) what it names. */
+const stillInstalling = (item: unknown) => isJsonObject(item) && item.bIsIncompleteInstall === true;
+
+function parseJson(text: string): unknown {
   try {
-    const parsed: unknown = JSON.parse(text);
-    return isJsonObject(parsed) && Array.isArray(parsed.InstallationList) ? parsed.InstallationList : [];
+    return JSON.parse(text);
   } catch {
-    return [];
+    return undefined;
   }
 }
 
-/** The engines Epic's launcher installed and that are still there, newest first. */
+function installationList(text: string): unknown[] {
+  const parsed = parseJson(text);
+  return isJsonObject(parsed) && Array.isArray(parsed.InstallationList) ? parsed.InstallationList : [];
+}
+
+/**
+ * The launcher's install records, read as Epic writes them (any byte order mark), each a plain file
+ * of a record's size: a link, a folder or anything bigger is skipped unread.
+ */
+async function installRecords(env: SetupEnv): Promise<unknown[]> {
+  const folder = launcherRecords(env);
+  const names = (await readdir(folder).catch(() => [] as string[]))
+    .filter((name) => lower(name).endsWith(LAUNCHER_RECORD))
+    .sort()
+    .slice(0, LAUNCHER_RECORDS_CAP);
+  const records: unknown[] = [];
+  for (const name of names) {
+    const bytes = await readRegularFile(path.join(folder, name), LAUNCHER_RECORD_MAX_BYTES).catch(() => null);
+    if (bytes) records.push(parseJson(loadEpicText(bytes)));
+  }
+  return records;
+}
+
+/** One spelling of an engine's folder: Windows and macOS ignore case in names. */
+const folderKey = (directory: string) => lower(path.resolve(directory));
+
+/**
+ * The engines Epic's launcher installed and that are still there, newest first. They come from its
+ * install records and its list (`LauncherInstalled.dat`): the Windows launcher of 2025 on records
+ * engines only in the first and leaves the list empty, so a freshly installed Unreal is there alone.
+ * A folder both name is listed once, from its record, the launcher's current word; one whose record
+ * says it is still installing or updating is not an engine yet.
+ */
 export async function findEngines(env: SetupEnv): Promise<Engine[]> {
+  const listed = installationList(await readFile(launcherList(env), "utf8").catch(() => ""));
+  const seen = new Set<string>();
   const engines: Engine[] = [];
-  for (const item of installationList(await readFile(launcherList(env), "utf8").catch(() => ""))) {
+  for (const item of [...(await installRecords(env)), ...listed]) {
     const engine = engineFrom(item);
-    if (engine && (await isDirectory(engine.directory))) engines.push(engine);
+    if (!engine || seen.has(folderKey(engine.directory))) continue;
+    seen.add(folderKey(engine.directory));
+    if (!stillInstalling(item) && (await isDirectory(engine.directory))) engines.push(engine);
   }
   return engines.sort((a, b) => compareVersions(b.build, a.build));
 }
@@ -495,12 +563,12 @@ export function engineMatch(association: string, engines: Engine[]): EngineMatch
  * on disk, so another case of the same name (macOS and Windows ignore case) is the same project.
  */
 async function resolveProject(file: string): Promise<Project> {
-  if (!isProjectPath(file)) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile);
-  if (!(await isFile(file))) throw new SetupError(SetupErrorCode.NoProject, MESSAGE.NoProject);
+  if (!isProjectPath(file)) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile());
+  if (!(await isFile(file))) throw new SetupError(SetupErrorCode.NoProject, MESSAGE.NoProject());
   const directory = await realpath(path.dirname(file));
   // A plain file (checked above), so realpath only gives its name the case it has on disk.
   const real = await realpath(file);
-  if (path.dirname(real) !== directory) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile);
+  if (path.dirname(real) !== directory) throw new SetupError(SetupErrorCode.NotProjectFile, MESSAGE.NotProjectFile());
   return { file: real, name: projectName(real), directory };
 }
 
@@ -510,7 +578,7 @@ async function readUProject(project: Project): Promise<{ json: UProject; text: s
     const json: unknown = JSON.parse(text);
     if (isJsonObject(json)) return { json, text };
   } catch {}
-  throw new SetupError(SetupErrorCode.BadProjectFile, MESSAGE.BadProjectFile);
+  throw new SetupError(SetupErrorCode.BadProjectFile, MESSAGE.BadProjectFile());
 }
 
 /** JSON in the layout Unreal writes (tabs), keeping the file's own line endings. */
@@ -804,7 +872,7 @@ async function assertWritable(project: Project, options: SetupOptions): Promise<
 }
 
 async function assertEditorClosed(env: SetupEnv): Promise<void> {
-  if (await env.editorRunning()) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning);
+  if (await env.editorRunning()) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning());
 }
 
 /**
@@ -829,7 +897,7 @@ export async function editorHasProject(
  */
 async function assertProjectClosed(env: SetupEnv, project: Project, port: number | null | undefined): Promise<void> {
   const open = (await env.editorRunning()) && (await editorHasProject(env, project, port));
-  if (open) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning);
+  if (open) throw new SetupError(SetupErrorCode.EditorRunning, MESSAGE.EditorRunning());
 }
 
 const recordFolder = (storage: string, project: Project) =>
@@ -860,7 +928,7 @@ async function projectPort(
     taken: new Set(others.map((p) => p.port)),
     listening: options.env.portListening,
   });
-  if (port === undefined) throw new SetupError(SetupErrorCode.NoFreePort, MESSAGE.NoFreePort);
+  if (port === undefined) throw new SetupError(SetupErrorCode.NoFreePort, MESSAGE.NoFreePort());
   return port;
 }
 
@@ -1007,6 +1075,29 @@ export async function setUpProject(
   return inspectProject(file, options);
 }
 
+/**
+ * Records a project whose files are already set up (another Genex profile on this computer set it
+ * up, and its set-up record stays in that profile's storage) without writing a byte of the project
+ * or asking for Unreal to be closed: Epic's plugins and toolsets on, its server starting on a port
+ * of Genex's block that no other project set up here holds, and a Genex editor helper in it (an
+ * outdated one is updated by the usual Open). The record names what this profile changed: nothing,
+ * so an Undo only forgets it. Answers the project's state once recorded (an already recorded one as
+ * it is), or undefined while it still needs setup's changes.
+ */
+export async function adoptSetUp(file: string, options: SetupOptions): Promise<ProjectState | undefined> {
+  const state = await inspectProject(file, options);
+  if (state.undoable) return state;
+  const { port } = state;
+  const filesSetUp = state.plugins && state.toolsets && state.autoStart && state.helper !== HelperState.Missing;
+  if (!filesSetUp || port === null) return undefined;
+  const others = await listSetUpProjects(options.storage);
+  if (others.some((other) => other.project !== state.real && other.port === port)) return undefined;
+  const project = await resolveProject(file);
+  const record: SetupRecord = { project: project.file, port, uproject: { added: [], enabled: [] } };
+  await atomicWriteJson(path.join(recordFolder(options.storage, project), SetupStorage.Record), record);
+  return inspectProject(file, options);
+}
+
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 /** Each file of the shipped helper with the sha256 of its bytes. */
@@ -1090,7 +1181,7 @@ export async function updateHelper(file: string, options: SetupOptions): Promise
   await assertEditorClosed(options.env);
   const folder = recordFolder(options.storage, project);
   const record = await readRecord(folder);
-  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp);
+  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp());
   const versions = { from: await projectHelperVersion(project), to: (await helperVersion(options.helper)) ?? "" };
   if (!helperNeedsInstall(await helperState(project, options.helper))) return { ...versions, kept: [] };
   // What Genex wrote last time: a file still holding it was never changed by the user.
@@ -1111,7 +1202,7 @@ export async function addToolsetPlugins(file: string, options: SetupOptions): Pr
   await assertEditorClosed(options.env);
   const folder = recordFolder(options.storage, project);
   const record = await readRecord(folder);
-  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp);
+  if (!record) throw new SetupError(SetupErrorCode.NotSetUp, MESSAGE.NotSetUp());
   const { json, text } = await readUProject(project);
   const added = addToolsets(json, record);
   if (added.length === 0) return [];
@@ -1192,7 +1283,7 @@ export async function undoSetup(file: string, options: SetupOptions): Promise<Pr
   const project = await resolveProject(file);
   const folder = recordFolder(options.storage, project);
   const record = await readRecord(folder);
-  if (!record) throw new SetupError(SetupErrorCode.NothingToUndo, MESSAGE.NothingToUndo);
+  if (!record) throw new SetupError(SetupErrorCode.NothingToUndo, MESSAGE.NothingToUndo());
   const { json, text } = await readUProject(project);
   await assertWritable(project, options);
   await assertProjectClosed(options.env, project, record.port);

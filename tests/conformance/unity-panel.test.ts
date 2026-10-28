@@ -9,7 +9,7 @@
  * Playwright Chromium already installed.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -20,7 +20,8 @@ import { PanelStep } from "../../src/plugins/unity/panel-status.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { PLUGIN_CALL_TIMEOUT_MS } from "../../src/substrate/plugins/registry.ts";
 import { backendOn, look, ready, withProject } from "../helpers/unity-backend.ts";
-import { editorRow, type Reply } from "../helpers/unity-editor-stand-in.ts";
+import { editorRow, type Reply, UNITY_PREFERENCES } from "../helpers/unity-editor-stand-in.ts";
+import { panelWordsScripts } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
 
 const PANEL = path.resolve("src/plugins/unity/panel.html");
 const UNITY_6 = "6000.3.10f1";
@@ -119,6 +120,15 @@ const STEPS: Record<
     },
     title: /^Unity is ready$/,
   },
+  [PanelStep.Terms]: {
+    arrange: async () => {
+      const { computer, root } = await setUpGame();
+      await rm(path.join(computer.env.home, ...UNITY_PREFERENCES));
+      computer.table.start(editorRow(55, root));
+      return computer;
+    },
+    title: /^Unity is waiting for you$/,
+  },
   [PanelStep.Stalled]: {
     arrange: async () => {
       const { computer, root } = await setUpGame(looks(() => new Error("no answer")));
@@ -136,7 +146,9 @@ describe("The Unity panel", { skip }, () => {
   let server: http.Server;
   let url = "";
   before(async () => {
-    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", BRIDGE);
+    // The stand-in bridge, then the SDK's own words (in English: the stand-in names no language).
+    const words = await panelWordsScripts();
+    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", () => BRIDGE + words);
     server = http.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page),
     );

@@ -38,13 +38,13 @@ const picture=color=>{const c=document.createElement('canvas');c.width=64;c.heig
 const PICTURES={1:picture('#c0392b'),2:picture('#27ae60'),3:picture('#2980b9')};
 const job=(jobId,operation,pluginStatus,extra={})=>({source:'genex',jobId,operation,pluginStatus,at:ago(42),prompt:operation+' prompt',...extra});
 // As main lists Genex's records: what each makes, its tool and phase; approved reviews and lookups never listed.
-const listed=j=>{const made=genexMaking(j.operation);return {...j,phase:genexPhase(j.pluginStatus,{delivered:j.delivered}),...(made?{kind:made.kind}:{}),...(made?.tool?{tool:made.tool}:{})};};
+const listed=j=>{const made=genexMaking(j.operation);return {...j,phase:genexPhase(j.pluginStatus,{delivered:j.delivered,blocked:j.blocked}),...(made?{kind:made.kind}:{}),...(made?.tool?{tool:made.tool}:{})};};
 const FORGE_ICON=(()=>{const c=document.createElement('canvas');c.width=32;c.height=32;const g=c.getContext('2d');g.fillStyle='#e67e22';g.fillRect(0,0,32,32);return c.toDataURL('image/png');})();
 /** Another plugin's call making an image, as the host lists it while it runs. */
 const FORGE={source:'sprite-forge',sourceName:'Sprite Forge',jobId:'forge-call',kind:'image',tool:'Pixel Lab',phase:'making',at:ago(12),prompt:'A shop sign'};
 let genexRecords=[
   job('character','character','generating',{prompt:${JSON.stringify(LONG_PROMPT)}}),
-  job('model','model','generating',{at:ago(118)}),
+  job('model','model','generating',{at:ago(118),credits:35}),
   job('image','image','accepted'),
   job('texture','texture','generating'),
   job('video','video','generating',{at:ago(3725)}),
@@ -54,11 +54,12 @@ let genexRecords=[
   job('remesh','character.finalize','approval_required'),
   job('failed','image','failed',{generationId:'gen-failed'}),
   job('refused','character','failed'),
+  job('needs','model','failed',{blocked:'credits',prompt:'Dragon boss'}),
   job('gone','model','downloaded',{delivered:true}),
   job('approved','character.preview','approved'),
   job('status-call','status','generating'),
 ];
-const inventory=()=>[...genexRecords.filter(r=>genexJobShown({operation:r.operation,status:r.pluginStatus,generationId:r.generationId})).map(listed),FORGE];
+const inventory=()=>[...genexRecords.filter(r=>genexJobShown({operation:r.operation,status:r.pluginStatus,generationId:r.generationId,blocked:r.blocked})).map(listed),FORGE];
 const approved=[];
 const genexJobs=()=>genexRecords.filter(j=>j.operation.startsWith('character.')).map(j=>({id:j.jobId,project:'fixture',operation:j.operation,status:j.pluginStatus,files:[],createdAt:j.at,...(j.operation==='character.preview'?{approval:{sourceId:'s',images:[1,2,3].map(n=>({label:String(n),dataUrl:PICTURES[n]}))}}:{})}));
 const notices=[];
@@ -78,11 +79,23 @@ window.studio={...fakeStudioApi().api,
   onEvent:()=>()=>{},
 };
 void studio().plugins.refresh();
+// The account's balance and the price list, as the people store holds them once read.
+const setCredits=credits=>studio().people.setState(s=>({...s,credits}));
+studio().people.setState(s=>({...s,credits:{balance:1240,unlimited:false},creditPrices:{model:35,sfx:4,character_preview:41,character_finalize:29}}));
+const composed=[];window.addEventListener('studio:compose-in-chat',e=>composed.push(e.detail.text));
 const card=id=>document.querySelector('[data-assets-canvas] [data-asset-pending="'+id+'"]');
 const chatCard=id=>document.querySelector('[data-chat-making] [data-asset-pending="'+id+'"]');
 const inCard=(id,selector)=>card(id)?.querySelector(selector)??null;
 window.mk={
   approved:()=>JSON.stringify(approved),
+  credits:balance=>{setCredits({balance,unlimited:false});return true;},
+  unlimited:()=>{setCredits({balance:0,unlimited:true});return true;},
+  composed:()=>composed.join('|'),
+  price:id=>inCard(id,'[data-making-price]')?.dataset.makingPrice??null,
+  getCredits:id=>inCard(id,'[data-making-get-credits]')!==null,
+  makeIt:id=>inCard(id,'[data-making-make-it]')!==null,
+  /** The drawing's box ends above the label's, and the label's above the action's. */
+  stacked:id=>{const art=inCard(id,'canvas').getBoundingClientRect(),label=inCard(id,'.making-label').getBoundingClientRect(),act=inCard(id,'.making-actions').getBoundingClientRect();return art.bottom<=label.top+1&&label.bottom<=act.top+1;},
   notices:()=>notices.join('|'),
   count:()=>document.querySelectorAll('[data-assets-canvas] [data-asset-pending]').length,
   groupLabels:()=>[...document.querySelectorAll('[data-assets-canvas] .text-body-sm')].map(n=>n.textContent).join('|'),
@@ -191,7 +204,7 @@ const moves=async id=>{const a=await mk('painted',id);await wait(400);const b=aw
 try{
 await win.loadFile(out+'/index.html');await js('document.fonts.ready');await js('window.setFixtureTheme("dark")');
 check('the cards appear',await until(async()=>(await mk('count'))>0));await wait(600);
-check('a card per job that makes something, none for an approved review, a call that makes nothing or a request refused before it started',(await mk('count'))===12&&!(await mk('has','approved'))&&!(await mk('has','status-call'))&&!(await mk('has','refused')));
+check('a card per job that makes something, one for a request the account had too few credits for, none for an approved review, a call that makes nothing or a request refused before it started',(await mk('count'))===13&&!(await mk('has','approved'))&&!(await mk('has','status-call'))&&!(await mk('has','refused')));
 check('another plugin\'s call is a card in its own group, named by its plugin, showing the tool it names with the plugin\'s icon',(await mk('groupLabels')).split('|').includes('Sprite Forge')&&(await mk('tool','forge-call'))==='Pixel Lab'&&(await until(()=>mk('toolMark','forge-call'))));
 check('the chat shows the cards of what its work is still making, at the canvas\'s size, and none for what landed',await until(async()=>(await mk('chatCards'))==='character:184x168,forge-call:184x168,remesh:376x344'));
 for(const kind of KINDS)check(kind+' draws its own subject',(await mk('art',kind))===kind);
@@ -239,6 +252,21 @@ check('its Approve keeps a canvas card\'s width, at the right: '+chatApprove.w+'
 check('a remesh offers one Approve, with no candidate tabs and no picture',(await mk('tabs','remesh'))===''&&(await mk('picture','remesh'))===null&&(await mk('approveLabel','remesh'))==='Approve the remesh');
 await pointer(card('remesh')+' [data-making-approve]',true);
 check('an approval that fails says why, and the card stays',await until(async()=>(await mk('notices')).includes('Genex could not start the remesh'))&&(await mk('has','remesh')));
+check('a Genex job on its way shows what it costs, and none that stopped short does',(await mk('price','model'))==='35'&&(await mk('price','failed'))===null&&(await mk('price','gone'))===null);
+check('a review shows on Approve what its next step costs',(await mk('price','remesh'))==='29');
+check('a request the account had too few credits for waits on them, still and grey',(await mk('phase','needs'))==='needs-credits'&&(await mk('title','needs'))==='Not enough credits'&&!(await moves('needs')));
+check('its drawing, label and action stack without overlapping',await mk('stacked','needs'));
+await mk('credits',0);
+check('with too few credits, the card offers Get credits, and a review offers it in Approve\'s place',await until(async()=>(await mk('getCredits','needs'))&&(await mk('getCredits','remesh'))&&(await mk('approveLabel','remesh'))===null));
+await capture('credits-short');
+await mk('credits',1240);
+check('once the balance pays for it, the card offers Make it',await until(async()=>(await mk('makeIt','needs'))&&!(await mk('getCredits','needs'))&&(await mk('approveLabel','remesh'))==='Approve the remesh'));
+await pointer(card('needs')+' [data-making-make-it]',true);
+check('Make it asks the game\'s chat to make it now',await until(async()=>(await mk('composed'))==='Make the 3D model with Genex now: Dragon boss'));
+await capture('credits-back');
+await mk('unlimited');
+check('an unlimited account sees no prices and never a Get credits',await until(async()=>(await mk('price','model'))===null&&(await mk('price','remesh'))===null&&!(await mk('getCredits','needs'))));
+await mk('credits',1240);
 const big=await mk('widths');
 await pointer('[aria-label="Zoom into the assets canvas"]',true);await pointer('[aria-label="Zoom into the assets canvas"]',true);await wait(900);
 const zoomed=await mk('widths');

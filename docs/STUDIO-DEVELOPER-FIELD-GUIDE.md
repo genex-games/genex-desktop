@@ -48,6 +48,11 @@ its `npm install -g` stays in the profile. A Claude Code sign-in leaves a
 `Claude Code-credentials-<hash>` item in your login keychain that neither sign-out nor `clean`
 removes; delete it in Keychain Access when you like.
 
+To see [usage analytics](usage-analytics.md) send from an owned profile, set
+`STUDIO_POSTHOG_KEY` to a test PostHog project's key and `STUDIO_ANALYTICS=1` on the start: the
+development build then keeps the key and the launch offers the question. Never use the release
+project's key; releases read it from the repository variable `STUDIO_POSTHOG_KEY`.
+
 A live launch keeps the caller's environment except its agent session's own variables: the
 keys and endpoint it routes model calls through, Claude Code's and the Agent SDK's switches, the
 session's nesting, effort, context, timeout, MCP and OAuth markers, and `ELECTRON_RUN_AS_NODE`
@@ -62,6 +67,31 @@ as in a worktree under `.claude/`, where native Claude Write refuses or asks
 Live profiles isolate Studio data, not all machine accounts, Keychain, quotas, local models
 or compute. They do not copy credentials. Follow the [credential restriction](agent/verification.md#credentials)
 for account-connected checks. Preserve active user work; inspect ownership/status before a restart.
+
+A live profile can run against a local or test genex.games (a stand) instead of genex.games itself
+(`src/main/play/origins.ts`, `devStand`):
+
+```sh
+GENEX_DEV_PLAY_API_ORIGIN=http://localhost:3000 GENEX_DEV_PLAY_WEB_ORIGIN=http://localhost:5173 \
+GENEX_DEV_PLAY_GAMES_ORIGIN=https://localhost:8443 GENEX_DEV_PLAY_GAMES_CA=/abs/path/certs/ca.pem \
+  npm run studio:dev -- start --profile stand-review --providers live
+```
+
+Origins are bare (https, or http on this Mac); the CA is an absolute path to a PEM file. With the stand's
+API the account signs in on the stand's device sign-in, for the launch only; Play, the store,
+`genex__cli`/`genex__cli-paid` (the CLI's `--api-url` and token) and the Genex plugin's backend (Publish,
+its asset tools and its account page) use the stand and that account, never genex.games or the Genex
+plugin's saved account. With a games origin too, the Play viewer plays
+`https://<slug>.localhost:8443/`, trusts that CA for those game hosts only, and catches their purchases
+on the stand's website; the Genex plugin's Publish trusts the CA too (its backend and CLI runs, beside
+the system's), so it can push to a local stand's source host and test its draft on the stand's
+game host. `genex://` links stay on genex.games: a development launch never registers as
+the system's link handler. To tie a local game to a stand
+project, write the stand's `{ "id", "slug" }` to `.studio-dev/profiles/<name>/core/engine-homes/genex/publish/<game>/.genex/project.json`.
+The pinned CLI decides which `genex` commands exist (shop JSON drafts need 1.36.14, local item drafts
+and `shop sync` 1.36.15). A packaged app, a
+fixture launch, smoke and the normal profile ignore every one of these variables, and a malformed value
+leaves that side on genex.games.
 
 The controller builds immutable output under `.studio-dev/builds/<id>` and returns actual
 readiness and profile/build/source/runtime identity. Rebuilding does not update a running app.
@@ -226,7 +256,8 @@ link and pruned in place, so the `prePackage` hook refuses it. On Windows, `node
 tests/e2e/run-squirrel-install.mjs` installs `Genex-Setup.exe` for the current user, checks its
 shortcuts and path lengths, then uninstalls it. CI: `package.yml` makes and smokes unsigned packages on
 PRs into `main` and pushes to `main` (with that install on Windows, and there a packaged fixture chat turn:
-`node tests/e2e/run-electron-e2e.mjs --packaged`), and a dispatch with `only` (`darwin`, `linux` or `win32`)
+`node tests/e2e/run-electron-e2e.mjs --packaged --claude-worker`, the last a Claude Code worker on a
+scripted Anthropic stand-in), and a dispatch with `only` (`darwin`, `linux` or `win32`)
 builds one platform; `release.yml` signs, notarizes, verifies and uploads to a draft release ([release operations](release-operations.md)).
 Optimization UI replay additionally needs prior AG-931 result data; it is conditional, not a
 clean-checkout gate. Seed-upgrade, interrupted, snapshots, sandbox, harness-host and
@@ -385,9 +416,12 @@ stand-in viewport shot from one finished run, and the steps card, whose rows com
 and unreal-chat (a short synthetic Unreal chat, `tests/fixtures/unreal-chat/sample-chat.json`:
 connector rows in words, Worked in Unreal headings, failures, play views and a Blender delivery)
 and roblox-game (the game linked to a stand-in place, `FixtureGame.rbxlx`, at its top with the
-Roblox Studio plugin on: the toolbar's Roblox Studio button, the chat's link line with Undo and the
+Roblox Studio plugin on: the chat header's Roblox button, the chat's link line with Undo and the
 steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|place]`), whose rows come from the real plugin on
-this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them).
+this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them)
+and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
+Genex, so Create › Items' Add to and Ask the agent reach its chat, which ends with Frost Axe's Listing draft
+card; [the item store](play.md#the-item-store)).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,
@@ -446,8 +480,8 @@ opt-in unset for automated acceptance.
 
 `capture --profile ag-933 --surface desktop --name after` writes an owned surface-labelled PNG;
 repeat for game. Renderer captures do not include the native game child. While Play's viewer has a
-game open, `play-bar` is its bar's layer (the bar and Comments) and `play-game` the game's own view;
-the bar comes back for a `move` near the top edge of `play-game`. The capture records
+game open, `play-bar` is its bar's layer (the bar and Comments) and `play-game` the game's own view
+below it. The capture records
 image dimensions, image-pixel/CSS-pixel scale, renderer zoom, visibility, focus and time. For diagnostics use a JSON request
 with `diagnostics --profile ag-933 --request FILE`. Start/stop a matching CPU profile ID; heap
 needs surface/name. Trace needs traceId, durationMs (100–30000) and supported categories from
@@ -560,7 +594,8 @@ establish real browser/Keychain authorization.
 `run-publish-cover-ui.mjs` renders the production Publish dialog beside the production
 ChatPanel of the same game with a fake `window.studio`: with no shot the dialog asks the plugin to
 take one, the arrows pick a recent frame, Another cover sends its request through that chat and
-the banner says one is coming until a new frame arrives, and a kept clip plays behind its switch
+closes the dialog, the banner opened again says one is being made until a new frame arrives (with
+the time left once one was timed, in dark and light), and a kept clip plays behind its switch
 (screenshots in `.studio-dev/evidence/`). A fixture
 profile cannot show this dialog's body, since its Genex account is never connected.
 `run-publish-test-link-ui.mjs` renders the same dialog for its test link: it shows under "Publish

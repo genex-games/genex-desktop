@@ -1,27 +1,32 @@
 /**
  * The bottom of the chat: whatever is waiting on the user sits right above the composer — a
  * sign-in, then one at a time Claude's own permission requests, a plugin's permission request,
- * the plan to approve and the intake's question — and the composer itself (`children`) is last.
+ * the plan to approve and the intake's question — and the composer itself (`children`) is last,
+ * told what the card on show makes of its words.
  */
 import { type ComponentProps, type JSX, type ReactNode, useId, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { CONFIRMATION_INPUT_MAX_CHARS } from "../../shared/plugins.ts";
 import type { PlanReviewRecord } from "../../shared/composer.ts";
-import { openSettings, SettingsSection } from "../settings-navigation.ts";
+import { hostPlatform } from "../platform.ts";
+import { openSettings, SettingsOpenedFrom, SettingsSection } from "../settings-navigation.ts";
 import { Button } from "../ui/Button.tsx";
-import { Icon } from "../ui/icons.tsx";
 import { Input } from "../ui/input.tsx";
 import { AnimateHeight } from "../ui/animate-height.tsx";
 import { Presence } from "../ui/Presence.tsx";
 import { SignInCard } from "../ui/SignInCard.tsx";
-import { CHAT_WORDS } from "../words.ts";
+import { CHAT_WORDS, computerNeverWords } from "../words.ts";
 import type { EntryKind } from "../chat-entries.ts";
 import type { ConversationEntry } from "./conversation-entries.ts";
-import { ChatQuestion } from "./ChatQuestion.tsx";
-import { ConsentChoice, consentChoices, consentTitle } from "./consent-card.ts";
+import { ChatQuestion, choiceLabel } from "./ChatQuestion.tsx";
+import { ConsentChoice, consentChoices, consentIsStudios, consentLine, consentTitle } from "./consent-card.ts";
 import { ExportReview } from "./ExportReview.tsx";
-import { PermissionRequest } from "./PermissionRequest.tsx";
+import { PermissionRequest, permissionOwnAnswer } from "./PermissionRequest.tsx";
 import { PlanQuestion } from "./PlanQuestion.tsx";
-import { type WaitingCard, waitingHead } from "./waiting-cards.ts";
+import { type OwnAnswer, type WaitingCard, waitingHead } from "./waiting-cards.ts";
+import { trackPlanAction } from "./composer-cards.ts";
+import { PlanAction, QuestionVia } from "../analytics/chat-vocabulary.ts";
+import { sendQuestionAnswer } from "../analytics/events/chat.ts";
 import type { PermissionMode, ToolPermissionAnswer } from "../../shared/permissions.ts";
 
 type Question = Extract<ConversationEntry, { kind: typeof EntryKind.Question }>;
@@ -37,8 +42,14 @@ export interface PlanPrompt {
   onRevise: () => void;
 }
 
-/** What answering a consent card sends: approved or not, Always allow, and the edit of its field. */
-type OnConsent = (consentId: string, approved: boolean, always: boolean, input?: string) => Promise<void>;
+/** What answering a consent card sends: approved or not, Always allow, its field's value and whether it was edited. */
+type OnConsent = (
+  consentId: string,
+  approved: boolean,
+  always: boolean,
+  input?: string,
+  inputEdited?: boolean,
+) => Promise<void>;
 
 /** A card's field the person may edit before Allow, filled with what the agent asked for. */
 function ConsentField({
@@ -71,9 +82,10 @@ function ConsentField({
 
 /**
  * A plugin's or connector's permission request: Allow once, Always allow (a connector's only) or
- * Don't allow, with the request itself (the tool and what it was given) under Request details. A
- * connector's question already names it; a plugin tool's own question is subtitled with the plugin.
- * A card with a field shows it under the question, filled, and Allow sends what it holds.
+ * Don't allow, with the request itself (the tool and what it was given) under Details. The studio's
+ * own cards say what a yes lets the agent do in the line under the question; a plugin tool's own
+ * question is subtitled with the plugin. A card with a field shows it under the question, filled,
+ * and Allow sends what it holds.
  */
 function ConsentCard({
   consentId,
@@ -84,14 +96,20 @@ function ConsentCard({
   entry: Omit<Consent, "consentId" | "permission">;
   onConsent: OnConsent;
 }): JSX.Element {
-  const subtitle = entry.consentPrompt && !entry.consentAlwaysOffered ? entry.consentSource : undefined;
   const field = entry.consentInput;
   const [typed, setTyped] = useState(field?.value ?? "");
+  const studio = consentIsStudios(entry);
   return (
     <ChatQuestion
       title={consentTitle(entry)}
-      description={subtitle}
-      reopenLabel="Review permission request"
+      description={consentLine(entry)}
+      details={
+        <>
+          <span className="block [overflow-wrap:anywhere]">{entry.text}</span>
+          {studio && <span className="block">{computerNeverWords(hostPlatform())}</span>}
+        </>
+      }
+      reopenLabel={t("Review permission request")}
       choices={consentChoices(entry)}
       onConfirm={(choice) =>
         onConsent(
@@ -99,18 +117,12 @@ function ConsentCard({
           choice !== ConsentChoice.Decline,
           choice === ConsentChoice.Always,
           field ? typed : undefined,
+          field ? typed !== field.value : false,
         )
       }
     >
       {field && <ConsentField label={field.label} value={typed} onChange={setTyped} />}
       {entry.consentExport && <ExportReview review={entry.consentExport} />}
-      <details className="group/request mt-2">
-        <summary className="chat-disclosure">
-          Request details
-          <Icon name="chevron-right" size={14} className="chat-chevron group-open/request:rotate-90" />
-        </summary>
-        <p className="mt-1 text-chat-sub text-ink-3 [overflow-wrap:anywhere]">{entry.text}</p>
-      </details>
     </ChatQuestion>
   );
 }
@@ -127,10 +139,8 @@ interface ComposerDockProps {
   signIn: ComponentProps<typeof SignInCard> | null;
   /** The intake's questions still waiting for an answer. */
   questions: Question[];
-  /** A picked choice's words, or the person's own typed in the card. */
+  /** A pressed answer's words, sent as the person's next message. */
   onAnswerQuestion: (answer: string) => Promise<void>;
-  /** "Chat about this": the card steps aside and the composer takes the conversation on. */
-  onChatAbout: () => void;
   questionsDisabled: boolean;
   /** A plan that is waiting for approval, or failed to be written. */
   plan: PlanPrompt | null;
@@ -144,11 +154,15 @@ interface ComposerDockProps {
   planModes: readonly PermissionMode[];
   /** A quiet card an engine plugin offers (its steps), shown while nothing else waits on the user. */
   steps?: ReactNode;
-  children: ReactNode;
+  /** The composer, told what the card on show makes of its words (null: nothing, the chat as ever). */
+  children: (own: OwnAnswer | null) => ReactNode;
 }
 
-/** A card waiting on the user, and what it draws. */
-type DockCard = WaitingCard & { node: ReactNode };
+/** A card waiting on the user, what it draws, and what it makes of the composer's words. */
+type DockCard = WaitingCard & { node: ReactNode; own?: OwnAnswer };
+
+/** What the composer invites while an agent's question waits: its words are the answer. */
+const QUESTION_OWN_ANSWER: OwnAnswer = { placeholder: t("Write your own answer…"), answersQuestion: true };
 
 /**
  * Everything waiting on the user, most pressing first: permission requests hold up work already
@@ -156,12 +170,15 @@ type DockCard = WaitingCard & { node: ReactNode };
  * then the intake's questions, which cannot be answered while the chat works.
  */
 function waitingCards(props: ComposerDockProps): DockCard[] {
-  const { questions, questionsDisabled, onAnswerQuestion, onChatAbout, plan, onConsent, onPermission } = props;
+  const { questions, questionsDisabled, onAnswerQuestion, plan, onConsent, onPermission } = props;
   const asks = [...props.consents, ...props.permissions].sort((a, b) => a.id.localeCompare(b.id));
   return [
     ...asks.map(({ permission, consentId, ...entry }) => ({
       key: permission ? `permission:${permission.requestId}` : `consent:${consentId}`,
       blocked: false,
+      ...(permission
+        ? { own: permissionOwnAnswer(permission, (answer) => onPermission(permission.requestId, answer)) }
+        : {}),
       node: permission ? (
         <PermissionRequest
           event={permission}
@@ -185,7 +202,10 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
                 onAnswer={plan.onAnswer}
                 onRetry={plan.onRetry}
                 onChooseModel={plan.onChooseModel}
-                onSettings={() => openSettings(SettingsSection.Providers)}
+                onSettings={() => {
+                  trackPlanAction(plan.review.id, PlanAction.ModelProviders);
+                  openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.PlanCard);
+                }}
                 onRevise={plan.onRevise}
               />
             ),
@@ -195,17 +215,20 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
     ...questions.map((entry) => ({
       key: `question:${entry.id}`,
       blocked: questionsDisabled,
+      own: QUESTION_OWN_ANSWER,
       node: (
         <ChatQuestion
           title={entry.text}
+          {...(entry.recap ? { recap: entry.recap } : {})}
           choices={entry.choices}
-          confirmLabel="Send answer"
           disabled={questionsDisabled}
-          onAnswerText={onAnswerQuestion}
-          onChatAbout={onChatAbout}
           onConfirm={async (choice) => {
-            const answer = entry.choices.find((item) => item.id === choice);
-            if (answer) await onAnswerQuestion(answer.label.replace(/\s*\(Recommended\)\s*$/i, ""));
+            const index = entry.choices.findIndex((item) => item.id === choice);
+            const answer = entry.choices[index];
+            if (!answer) return;
+            await sendQuestionAnswer({ thread: props.conversationKey, via: QuestionVia.Choice, index }, () =>
+              onAnswerQuestion(choiceLabel(answer)),
+            );
           }}
         />
       ),
@@ -213,20 +236,23 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
   ];
 }
 
-/** The card on show, remembered across renders so a card that arrives later does not take its place. */
-function useWaitingHead(cards: readonly WaitingCard[]): string | null {
-  const shown = useRef<string | null>(null);
-  shown.current = waitingHead(cards, shown.current);
-  return shown.current;
+/**
+ * The card on show, remembered across renders so a card that arrives later does not take its
+ * place; another chat starts afresh.
+ */
+function useWaitingHead(cards: readonly WaitingCard[], conversation: string | undefined): string | null {
+  const shown = useRef<{ conversation: string | undefined; head: string | null }>({ conversation, head: null });
+  if (shown.current.conversation !== conversation) shown.current = { conversation, head: null };
+  shown.current.head = waitingHead(cards, shown.current.head);
+  return shown.current.head;
 }
 
 /**
  * One waiting card at a time, and how many more wait behind it. The others stay mounted but
- * hidden, so a choice half made on one survives another taking its place. The cards open above
+ * hidden, so a field half filled on one survives another taking its place. The cards open above
  * the composer and close once answered; the next one fades in as their height glides to its own.
  */
-function WaitingCards({ cards, still }: { cards: DockCard[]; still: boolean }): JSX.Element {
-  const head = useWaitingHead(cards);
+function WaitingCards({ cards, head, still }: { cards: DockCard[]; head: string | null; still: boolean }): JSX.Element {
   const block = (
     <AnimateHeight>
       <div data-pending-questions className="mb-2">
@@ -249,20 +275,25 @@ function WaitingCards({ cards, still }: { cards: DockCard[]; still: boolean }): 
 export function ComposerDock(props: ComposerDockProps): JSX.Element {
   const { connectModel, signIn, children } = props;
   const cards = waitingCards(props);
+  const head = useWaitingHead(cards, props.conversationKey);
+  const own = cards.find((card) => card.key === head)?.own ?? null;
   return (
     <div data-chat-composer className="max-h-full min-w-0 shrink-0 overflow-y-auto px-3.5 pb-3.5">
       {connectModel && (
         <div className="mb-2 text-chat-sub text-ink-3">
-          Connect a model to chat with Studio.
-          <Button variant="ghost" onClick={() => openSettings(SettingsSection.Providers)}>
-            Model Providers
+          {t("Connect a model to chat with Studio.")}
+          <Button
+            variant="ghost"
+            onClick={() => openSettings(SettingsSection.Providers, undefined, SettingsOpenedFrom.ConnectCard)}
+          >
+            {t("Model Providers")}
           </Button>
         </div>
       )}
       {signIn ? <SignInCard {...signIn} /> : null}
-      <WaitingCards key={props.conversationKey} cards={cards} still={Boolean(props.loading)} />
+      <WaitingCards key={props.conversationKey} cards={cards} head={head} still={Boolean(props.loading)} />
       {cards.length === 0 && !signIn ? props.steps : null}
-      {children}
+      {children(own)}
     </div>
   );
 }

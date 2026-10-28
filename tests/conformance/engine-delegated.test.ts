@@ -180,7 +180,7 @@ async function workerRequest() {
 }
 
 describe("claude code delegated engine", () => {
-  it("WIN-275: a worker whose sandbox the CLI cannot run here ends as sandbox_unavailable, its box still required", async () => {
+  it("WIN-275: a worker whose sandbox the CLI cannot run here ends as sandbox_unavailable, its box still required off Windows", async () => {
     const init = { type: "system", subtype: "init", model: "claude-sonnet-5", session_id: "refused", tools: [] };
     for (const platform of ["win32", "darwin"] as const)
       for (const initialized of [false, true])
@@ -193,6 +193,12 @@ describe("claude code delegated engine", () => {
           assert.equal(result.stopReason, StopReason.SandboxUnavailable, label);
           assert.ok(result.errorText?.includes(SANDBOX_REFUSAL), `${label}: the CLI's own reason is kept`);
           const sandbox = sdk.seen[0]?.sandbox as Record<string, unknown>;
+          // Windows: Claude Code's sandbox cannot start there, so Genex's runs the worker's
+          // commands (claude-windows-commands.test.ts) and the CLI has no box of its own to refuse.
+          if (platform === "win32") {
+            assert.equal(sandbox.enabled, false, `${label}: Genex's sandbox holds the commands`);
+            continue;
+          }
           assert.equal(sandbox.enabled, true, label);
           assert.equal(sandbox.failIfUnavailable, true, `${label}: never run without the box`);
         }
@@ -207,6 +213,47 @@ describe("claude code delegated engine", () => {
     await assert.rejects((await engineWithLogin(other.fn)).delegate(await workerRequest()), { kind: "other" });
     const signedOut = fakeQuery([], { throwOn: new Error("not logged in") });
     await assert.rejects((await engineWithLogin(signedOut.fn)).delegate(await workerRequest()), { kind: "auth" });
+  });
+
+  it("preserves a result's auth failure when the SDK only throws its exit code", async () => {
+    for (const platform of ["win32", "darwin"] as const) {
+      const sdk = fakeQuery(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["not logged in"],
+            num_turns: 0,
+          },
+        ],
+        { throwAfter: new Error("Claude Code process exited with code 1") },
+      );
+      await assert.rejects((await engineWithLogin(sdk.fn, platform)).delegate(await workerRequest()), { kind: "auth" });
+    }
+  });
+
+  it("keeps a typed SDK failure ahead of an earlier result's auth text", async () => {
+    for (const kind of ["auth", "rate_limit", "usage_limit", "unavailable", "timeout", "aborted"] as const) {
+      const failure = new EngineError(kind, "claude-code", `fixture ${kind}`);
+      const sdk = fakeQuery(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            is_error: true,
+            errors: ["not logged in"],
+            num_turns: 0,
+          },
+        ],
+        { throwAfter: failure },
+      );
+      await assert.rejects(
+        (await engineWithLogin(sdk.fn)).delegate(await workerRequest()),
+        (error) => error === failure,
+        kind,
+      );
+    }
   });
 
   it("streams only reply text, preserves long completed replies, and retains tool results", async () => {
@@ -879,6 +926,9 @@ describe("claude code delegated engine", () => {
       systemHome: path.join(root, "no-system-login"),
       protectedPaths: [path.join(root, "secrets"), path.join(root, "engine-homes")],
       queryFn: fn,
+      // Claude Code's own sandbox runs the shell here; on Windows Genex's does
+      // (claude-windows-commands.test.ts), so the platform is pinned, not the host's.
+      platform: "darwin",
     });
     let result;
     try {
@@ -1217,8 +1267,9 @@ describe("steering a running Claude Code turn", () => {
 
   it("hands a message into the running turn and reports it read where the session read it", { timeout }, async () => {
     const { fn, seen } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield toolUse("tu_1");
       const steer = (await read())!;
       yield lifecycle(steer, "queued");
@@ -1262,8 +1313,10 @@ describe("steering a running Claude Code turn", () => {
     assert.equal(readies.length, 1, "ready is said exactly once");
     assert.equal(typeof readies[0], "function", "a CLI with msg_lifecycle_v1 takes input mid-turn");
     assert.equal(sent, true);
-    // The brief carries no uuid: lifecycles are tracked only for steers.
-    assert.deepEqual(seen.inputs[0], {
+    // The brief carries a uuid too: the session says when it read it.
+    const { uuid: briefUuid, ...brief } = seen.inputs[0]!;
+    assert.match(briefUuid, /^[0-9a-f]{8}-/);
+    assert.deepEqual(brief, {
       type: "user",
       message: { role: "user", content: [{ type: "text", text: "Run the command" }] },
       parent_tool_use_id: null,
@@ -1295,12 +1348,78 @@ describe("steering a running Claude Code turn", () => {
     assert.equal(readies[0]!({ id: "m2", text: "too late" }), false, "nothing is taken once the input ended");
   });
 
+  it("a resumed session that first answers what it had queued keeps its input open for the brief", {
+    timeout,
+  }, async () => {
+    const { fn } = steerableQuery(async function* ({ read }) {
+      const brief = (await read())!;
+      yield steerInit();
+      // A background task the last process left running: the CLI answers its notice before the brief.
+      yield said("No response requested.");
+      yield { type: "result", subtype: "success", is_error: false, result: "", num_turns: 0, usage: {} };
+      yield { ...steerInit(), uuid: "second-init" };
+      yield lifecycle(brief, "started");
+      // Genex's own tools answer over the input: a call made now needs it open.
+      yield toolUse("tu_1", "mcp__studio__desktop");
+      const steer = (await read())!;
+      yield lifecycle(steer, "queued");
+      yield toolResult("tu_1");
+      yield lifecycle(steer, "started");
+      yield said("Published.");
+      yield { type: "result", subtype: "success", is_error: false, result: "Published.", num_turns: 2, usage: {} };
+      assert.equal(await read(), null);
+    });
+    const engine = await engineWithLogin(fn);
+    const readies: Send[] = [];
+    const sent: boolean[] = [];
+    const result = await engine.delegate({
+      prompt: "Publish the game",
+      cwd: "/tmp/x",
+      resume: "ses_steer",
+      steer: { ready: (send) => readies.push(send) },
+      onEvent: (event) => {
+        if (event.type === "assistant" && (event.payload as any).parts[0].type === "tool_use")
+          sent.push(readies[0]!({ id: "m1", text: "and the cover" }));
+      },
+    });
+
+    assert.deepEqual(sent, [true], "the notice's result is not the brief's: the input is still open");
+    assert.deepEqual(result.steered, ["m1"]);
+    assert.equal(result.summary, "Published.");
+  });
+
+  it("a resumed session nobody steers keeps its input open past a queued notice too", { timeout }, async () => {
+    const { fn } = steerableQuery(async function* ({ read }) {
+      const brief = await read();
+      yield steerInit();
+      yield { type: "result", subtype: "success", is_error: false, result: "", num_turns: 0, usage: {} };
+      let ended = false;
+      const ending = read().then((frame) => {
+        ended = frame === null;
+      });
+      yield lifecycle(brief ?? {}, "started");
+      yield toolUse("tu_1", "mcp__studio__desktop");
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(ended, false, "the brief's Genex tool calls answer over the input");
+      yield toolResult("tu_1");
+      yield said("Published.");
+      yield { type: "result", subtype: "success", is_error: false, result: "Published.", num_turns: 2, usage: {} };
+      await ending;
+      assert.equal(ended, true);
+    });
+    const engine = await engineWithLogin(fn);
+    const result = await engine.delegate({ prompt: "Publish the game", cwd: "/tmp/x", resume: "ses_steer" });
+    assert.equal(result.ok, true);
+    assert.equal(result.summary, "Published.");
+  });
+
   it("keeps the input open for a message taken during the final answer, and reports the last answer", {
     timeout,
   }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield said("First answer.");
       const late = (await read())!;
       yield lifecycle(late, "queued");
@@ -1381,8 +1500,9 @@ describe("steering a running Claude Code turn", () => {
   it("a stop with a message still queued reports it unread, and ends the input", { timeout }, async () => {
     const abort = new AbortController();
     const { fn, seen } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield toolUse("tu_1");
       const steer = (await read())!;
       yield lifecycle(steer, "queued");
@@ -1422,8 +1542,9 @@ describe("steering a running Claude Code turn", () => {
     // Folded in at its question's or launch's tool result, a message would be answered by a turn
     // that had already decided; interrupted, the harness resumes it or lets the message wait.
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield {
         type: "assistant",
         message: {
@@ -1469,8 +1590,9 @@ describe("steering a running Claude Code turn", () => {
     timeout,
   }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield said("Done.");
       yield { type: "result", subtype: "success", is_error: false, result: "Done.", num_turns: 1, usage: {} };
     });
@@ -1499,8 +1621,9 @@ describe("steering a running Claude Code turn", () => {
 
   it("a message the CLI discards is not delivered, and the input still ends", { timeout }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
-      await read();
+      const brief = (await read())!;
       yield steerInit();
+      yield lifecycle(brief, "started");
       yield toolUse("tu_1");
       const steer = (await read())!;
       yield lifecycle(steer, "queued");
@@ -1549,8 +1672,10 @@ describe("steering a running Claude Code turn", () => {
     );
     const input = feed.prompt[Symbol.asyncIterator]();
     const next = async () => (await input.next()) as IteratorResult<Frame>;
-    assert.equal((await next()).value.message.content[0].text, "Run the command");
+    const brief = (await next()).value;
+    assert.equal(brief.message.content[0].text, "Run the command");
     feed.initialized(steerInit(), false);
+    feed.lifecycle(lifecycle(brief, "started"), () => {});
     const send = readies[0]!;
 
     // Read in time: the stall is called off, and the input ends at the result that answers it.
@@ -1581,6 +1706,55 @@ describe("steering a running Claude Code turn", () => {
     assert.deepEqual(steer.steered, ["m1"], "the unread message reports as not delivered");
     assert.equal(send({ id: "m3", text: "too late" }), false);
     feed.dispose();
+  });
+
+  it("a result before the brief is read keeps the input open until the brief's own, or the stall", async () => {
+    const stalls: Array<{ fire: () => void; cancelled: boolean }> = [];
+    const schedule = (fire: () => void) => {
+      const stall = { fire, cancelled: false };
+      stalls.push(stall);
+      return () => {
+        stall.cancelled = true;
+      };
+    };
+    const feedFor = () => {
+      const feed = steerFeed(
+        steerSession(() => {}),
+        userFrame("Publish", []),
+        new AbortController().signal,
+        () => "ses_steer",
+        schedule,
+      );
+      const input = feed.prompt[Symbol.asyncIterator]();
+      return { feed, next: async () => (await input.next()) as IteratorResult<Frame> };
+    };
+
+    // A queued notice answered first: the brief starts after it, and only its result ends the input.
+    const resumed = feedFor();
+    const brief = (await resumed.next()).value;
+    resumed.feed.initialized(steerInit(), false);
+    resumed.feed.answered();
+    assert.equal(resumed.feed.ended, false, "the notice's result is not the brief's");
+    resumed.feed.lifecycle(lifecycle(brief, "started"), () => {});
+    assert.equal(stalls[0]!.cancelled, true);
+    resumed.feed.answered();
+    assert.equal(resumed.feed.ended, true);
+
+    // A brief that never starts holds the input only until the stall passes.
+    const stuck = feedFor();
+    await stuck.next();
+    stuck.feed.initialized(steerInit(), false);
+    stuck.feed.answered();
+    assert.equal(stuck.feed.ended, false);
+    stalls[1]!.fire();
+    assert.equal(stuck.feed.ended, true);
+
+    // An older CLI never says it read the brief: its first result answers it.
+    const old = feedFor();
+    await old.next();
+    old.feed.initialized(steerInit(["interrupt_receipt_v1"]), false);
+    old.feed.answered();
+    assert.equal(old.feed.ended, true);
   });
 
   it("says null to a CLI without message lifecycles, and to a session that never reached its init", {
@@ -1757,7 +1931,8 @@ describe("engine registry & fallback policy", () => {
 describe("the modeller on claude code (AG-930)", () => {
   it("exposes mcp__studio__blender__model only when the studio granted it, inside the one studio server", async () => {
     const plain = fakeQuery(successRun);
-    const engine = await engineWithLogin(plain.fn);
+    // The pinned list names Claude Code's own Bash: off Windows (claude-windows-commands.test.ts).
+    const engine = await engineWithLogin(plain.fn, "darwin");
     await engine.delegate({ prompt: "build", cwd: "/tmp/game-workspace" });
     assert.deepEqual(
       (plain.seen[0] as Record<string, unknown>).allowedTools,
@@ -1767,7 +1942,7 @@ describe("the modeller on claude code (AG-930)", () => {
     );
 
     const granted = fakeQuery(successRun);
-    const withTool = await engineWithLogin(granted.fn);
+    const withTool = await engineWithLogin(granted.fn, "darwin");
 
     await withTool.delegate({
       prompt: "build",

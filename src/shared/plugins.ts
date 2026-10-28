@@ -3,9 +3,11 @@ import type { EngineCatalog, EngineDeclaration, EngineId, GameEngine } from "./g
 import type { RuntimeInstallPhase } from "./model-install.ts";
 import type { ObserveContext, PluginObserver } from "./observers.ts";
 import type { HookContext, PluginHook, PluginLock } from "./plugin-hooks.ts";
-import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches } from "./project-facts.ts";
+import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches, withoutEngineWebVersion } from "./project-facts.ts";
 import type { WorkerIsolation } from "./workers.ts";
 import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
+import { MINUTE_MS } from "./duration.ts";
+import { t } from "./i18n.ts";
 
 /** Where a plugin's native runtime stands on this Mac (`PluginNativeStatus.state`). */
 export const NativeRuntimeState = {
@@ -26,23 +28,55 @@ export const NativeJobState = {
 } as const;
 export type NativeJobState = (typeof NativeJobState)[keyof typeof NativeJobState];
 
+/**
+ * The computers a pinned runtime download is for (`PluginRuntimePin.platform`): operating system and
+ * processor, as Node names them. Published in plugin manifests: never rename a value.
+ */
+export const NativePlatform = {
+  MacArm64: "darwin-arm64",
+  WindowsX64: "win32-x64",
+  WindowsArm64: "win32-arm64",
+} as const;
+export type NativePlatform = (typeof NativePlatform)[keyof typeof NativePlatform];
+
+/** The archive a pinned runtime comes in. Published in plugin manifests: never rename a value. */
+export const RuntimeArchive = { Dmg: "dmg", TarGz: "tar.gz", Zip: "zip" } as const;
+export type RuntimeArchive = (typeof RuntimeArchive)[keyof typeof RuntimeArchive];
+
+/** One pinned runtime download behind a confirmed setup action, for one kind of computer. */
+export interface PluginRuntimePin {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: RuntimeArchive;
+  entry: string;
+  executable: string;
+  notices: string[];
+  /** The computer this download runs on; left out, a Mac with Apple silicon. */
+  platform?: NativePlatform;
+}
+
 /** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
+  install?: PluginRuntimePin;
+  /** Pinned downloads for other computers, one per `platform`. */
+  installs?: PluginRuntimePin[];
+}
+
+/** The pinned download of `runtime` for `platform` (this computer's by default), if it has one. */
+export function runtimePinFor(
+  runtime: Pick<PluginNativeRuntime, "install" | "installs">,
+  platform: string,
+): PluginRuntimePin | undefined {
+  const pins = [...(runtime.install ? [runtime.install] : []), ...(runtime.installs ?? [])];
+  return pins.find((pin) => (pin.platform ?? NativePlatform.MacArm64) === platform);
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
 export interface PluginNativeJob {
@@ -62,6 +96,8 @@ export interface PluginNativeStatus {
   path?: string;
   version?: string;
   detail: string;
+  /** The pinned download for this computer, when the runtime has one: its setup action and size. */
+  download?: { action: string; url: string; bytes: number };
 }
 export interface PluginRuntimeInstall {
   runtime: string;
@@ -232,6 +268,17 @@ export interface PluginManifestTool extends PluginTool {
   asset?: PluginToolAsset;
   /** API 3, with `confirmation`: the text parameter the person may edit on the card. */
   confirmationInput?: PluginConfirmationInput;
+  /**
+   * API 3, with `confirmation`: the call acts on the person's account with another service (an
+   * upload it moderates, a generation that counts against its limits). Its card asks in every chat
+   * mode, Bypass included, and offers Allow in this chat, which covers the tool for that chat.
+   */
+  onAccount?: true;
+  /**
+   * API 3: the longest one call may run in the backend when that is longer than the host's ceiling
+   * (a game engine's import or export), at most {@link PLUGIN_TOOL_MAX_TIMEOUT_MS}.
+   */
+  timeoutMs?: number;
 }
 /** Whether agents are handed a manifest tool: every one but those only the harness calls. */
 export const isAgentTool = (tool: Pick<PluginManifestTool, "audience">): boolean =>
@@ -325,8 +372,8 @@ export interface PluginReach {
 /**
  * What of one plugin reaches a session for a game (`{ facts: [] }`: no kind yet, served as a web
  * game; one of a kind Genex can't name is served by no fact), narrowed to `offered` when the session was: the agent tools whose `facts` reach; the skills
- * whose scope reaches and, when they name tools, one of those reaches too (a skill follows its
- * tools); the skill reader while a file skill reaches. A narrowed session none of whose offered
+ * whose scope reaches, never through a Unity or Godot game's web export, and, when they name tools,
+ * one of those reaches too (a skill follows its tools); the skill reader while a file skill reaches. A narrowed session none of whose offered
  * tools the plugin has gets nothing of it, not even its skills. The registry's snapshot and the
  * capability facts both read this one rule.
  */
@@ -340,8 +387,9 @@ export function pluginReach(
   );
   if (offered && !tools.length) return { tools, skills: [], skillTool: false };
   const reaching = new Set(tools.map((t) => t.name));
+  const known = withoutEngineWebVersion(game);
   const skills = manifest.skills.filter(
-    (s) => scopeReaches(skillScope(s), game) && (!s.tools || s.tools.some((name) => reaching.has(name))),
+    (s) => scopeReaches(skillScope(s), known) && (!s.tools || s.tools.some((name) => reaching.has(name))),
   );
   return { tools, skills, skillTool: skills.some(isFileSkill) };
 }
@@ -403,6 +451,7 @@ export const TOOLBAR_ICON_NAMES = [
   "unreal",
   "godot",
   "unity",
+  "roblox",
 ] as const;
 export type ToolbarIconName = (typeof TOOLBAR_ICON_NAMES)[number];
 export const isToolbarIconName = (value: unknown): value is ToolbarIconName =>
@@ -651,6 +700,64 @@ export const PluginChangeReason = {
   Settings: "settings",
 } as const;
 export type PluginChangeReason = (typeof PluginChangeReason)[keyof typeof PluginChangeReason];
+
+/**
+ * Why installing, updating or reinstalling a plugin was refused: the code that crosses IPC beside
+ * main's own words (`shared/error-codes.ts`).
+ */
+export const PluginInstallProblem = {
+  /** Not in the catalog or the index, or no longer installed or listed under that id. */
+  NotFound: "plugin_not_found",
+  /** The index offers no compatible newer release of the installed plugin. */
+  NoNewerRelease: "plugin_no_newer_release",
+  /** The marketplace is not up in this session yet. */
+  NotReady: "plugins_not_ready",
+  /** This profile reaches no network (every fixture profile). */
+  Offline: "plugins_offline",
+  /** A GitHub spec or repository that does not read as `owner/repo[/subdir]@<sha>`. */
+  InvalidSpec: "plugin_invalid_spec",
+  DownloadFailed: "plugin_download_failed",
+  /** A file, a tree or the whole package past its cap. */
+  TooLarge: "plugin_too_large",
+  /** A file or artifact that does not hash to what its pin says. */
+  IntegrityMismatch: "plugin_integrity_mismatch",
+  /** The catalog's or index's entry is broken or does not describe the code at its pin. */
+  CatalogMismatch: "plugin_catalog_mismatch",
+  /** A link, a special file, an unusual file mode or a name that leaves the package. */
+  UnsafePackage: "plugin_unsafe_package",
+  /** No plugin.json, an invalid one, a file it names missing, or an envelope that does not read. */
+  PackageInvalid: "plugin_package_invalid",
+  NeedsNewerStudio: "plugin_needs_newer_studio",
+  /** A bundled plugin's id, or one a connector already answers for. */
+  IdTaken: "plugin_id_taken",
+  /** It would replace another plugin or widen what it may do without the person's fresh review. */
+  NeedsReview: "plugin_needs_review",
+  /** Its backend did not load and answer. */
+  BackendFailed: "plugin_backend_failed",
+  /** The folder or record it is reinstalled from is gone, or holds another plugin now. */
+  SourceGone: "plugin_source_gone",
+} as const;
+export type PluginInstallProblem = (typeof PluginInstallProblem)[keyof typeof PluginInstallProblem];
+
+/** Why a plugin could not be turned on, off or removed: the code that crosses IPC beside main's words. */
+export const PluginStateRefusal = {
+  /** It is not installed (or was removed): install it first. */
+  InstallFirst: "plugin_install_first",
+  /** It holds the app's account, so it can be turned off but not removed. */
+  KeepsAccount: "plugin_keeps_account",
+} as const;
+export type PluginStateRefusal = (typeof PluginStateRefusal)[keyof typeof PluginStateRefusal];
+
+/** Why a plugin failed while it ran (`PluginChange.failure` with reason `failed`). */
+export const PluginFailure = {
+  /** Its backend process exited. */
+  BackendExited: "plugin_backend_exited",
+  /** Its backend process could not be started or signalled. */
+  BackendError: "plugin_backend_error",
+  /** A watched folder's edit was refused, so the running copy stays. */
+  ReloadRefused: "plugin_reload_refused",
+} as const;
+export type PluginFailure = (typeof PluginFailure)[keyof typeof PluginFailure];
 export interface PluginSource {
   kind: PluginSourceKind;
   directory?: string;
@@ -758,9 +865,15 @@ export interface PluginChange {
   reason: PluginChangeReason;
   /** Set when an update or reload changed the plugin's skills. */
   skills?: PluginSkillChange;
+  /** Why it failed, when `reason` is `failed`. */
+  failure?: PluginFailure;
 }
 /** How a consent question ended; `mode`: the person switched the chat to a mode that asks nothing first for it. */
-export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode";
+/**
+ * Who settled a consent card: the person, the timeout, a stop, the turn's end, a restart, the chat's
+ * mode (Bypass), or the person's earlier Allow in this chat (`chat`).
+ */
+export type PluginConsentBy = "user" | "timeout" | "stop" | "turn" | "restart" | "mode" | "chat";
 /** Host-generated paths in the staged public copy, shown before upload approval. */
 export interface ExportReview {
   included: string[];
@@ -783,8 +896,15 @@ export interface PluginConsentEvent {
   project: string;
   threadId?: string;
   prompt: string;
+  /** One line the card shows under its question: what a yes lets the agent do. */
+  note?: string;
   /** A connector's card: the person may also allow this exact tool from now on. */
   alwaysOffered?: boolean;
+  /**
+   * An `onAccount` tool's card: the person may also allow this tool for the rest of the chat
+   * (answered with `always`).
+   */
+  chatOffered?: boolean;
   /** Approved with Always allow: the tool runs without asking from now on. */
   always?: boolean;
   /**
@@ -968,13 +1088,23 @@ export type StudioConsentSource = (typeof StudioConsentSource)[keyof typeof Stud
  * The question the computer-setting card asks: the chat's card shows it as its title, and the
  * consent record keeps it as the prompt, so both say the same words.
  */
-export const COMPUTER_SETTING_QUESTION =
-  "Turn on computer control? Agents in every chat can then ask to use apps on this computer, one app at a time.";
+export function computerSettingQuestion(): string {
+  return t("Turn on computer control?");
+}
 
-/** The name a studio consent card shows. */
+/** The line under that question: the setting is one for every chat. */
+export function computerSettingNote(): string {
+  return t("Agents in any chat can then ask to use your apps.");
+}
+
+/** The name a studio consent card shows; getters, as main reads it in the language it sets after loading. */
 export const STUDIO_CONSENT_NAMES: Readonly<Record<StudioConsentSource, string>> = {
-  [StudioConsentSource.Desktop]: "Computer control",
-  [StudioConsentSource.ComputerSetting]: "Computer control",
+  get [StudioConsentSource.Desktop]() {
+    return t("Computer control");
+  },
+  get [StudioConsentSource.ComputerSetting]() {
+    return t("Computer control");
+  },
 };
 
 export interface PluginBinding {
@@ -1043,8 +1173,77 @@ export const PluginService = {
    * has a desktop and its driver, and the plugin's engine declares apps here. Asks the person nothing.
    */
   GameEngineCanAssist: "game.engine.canAssist",
+  /**
+   * `game-engine`: whether the bound game's chat still runs the turn this plugin's Do it for me
+   * started: false once that turn has ended (answered, failed or taken back) or its time is up.
+   */
+  GameEngineAssisting: "game.engine.assisting",
+  /**
+   * `game-engine`: a long job of the plugin's (an engine's build or package) started in Genex's
+   * process sandbox, writing only folders inside the bound game; answers its id at once, and the
+   * host owns the job from then on.
+   */
+  SandboxRun: "sandbox.run",
+  /** `game-engine`: how one of the plugin's sandbox jobs stands, or null for one the host doesn't know. */
+  SandboxResult: "sandbox.result",
+  /** `game-engine`: ends one of the plugin's sandbox jobs with its process tree. */
+  SandboxStop: "sandbox.stop",
 } as const;
 export type PluginService = (typeof PluginService)[keyof typeof PluginService];
+
+/** The longest one call of a plugin tool may declare (`timeoutMs`): within an agent's own call deadline. */
+export const PLUGIN_TOOL_MAX_TIMEOUT_MS = 9 * MINUTE_MS;
+/** The longest a plugin's sandbox job may be given: an Unreal plugin's package takes up to 45 minutes. */
+export const PLUGIN_SANDBOX_MAX_TIMEOUT_MS = 60 * MINUTE_MS;
+/** How many of one plugin's sandbox jobs may run at once; another is refused until one ends. */
+export const PLUGIN_SANDBOX_MAX_RUNNING = 2;
+/** The shortest deadline a sandbox job may ask for. */
+export const PLUGIN_SANDBOX_MIN_TIMEOUT_MS = 1000;
+/** How much of each of a sandbox job's stdout and stderr the host keeps, in characters, from its end. */
+export const PLUGIN_SANDBOX_OUTPUT_CHARS = 4 * 1024 * 1024;
+
+/** Where a plugin's sandbox job is (`PluginSandboxJob.state`). Published to plugins: never rename a value. */
+export const SandboxJobState = {
+  Running: "running",
+  /** The program ended by itself: `exitCode` says how. */
+  Exited: "exited",
+  /** Ended at its deadline. */
+  TimedOut: "timed-out",
+  /** Ended by `sandbox.stop`, or because its plugin stopped, turned off or was removed. */
+  Stopped: "stopped",
+  /** Never started: `reason` says why. */
+  Failed: "failed",
+} as const;
+export type SandboxJobState = (typeof SandboxJobState)[keyof typeof SandboxJobState];
+
+/**
+ * `sandbox.run`'s arguments: the program (inside one of `reads`), its arguments, the folders it
+ * reads (the engine, the project), the folders inside the bound game it writes, the variables that
+ * name a scratch folder of the job's own (`scratchEnv`), further variables, and its deadline.
+ * Mirrors `PluginSandboxRunArgs` in `src/plugin-sdk/index.d.ts`.
+ */
+export interface PluginSandboxRunArgs {
+  program: string;
+  args: string[];
+  reads: string[];
+  writes: string[];
+  scratchEnv?: string[];
+  env?: Record<string, string>;
+  timeoutMs: number;
+}
+
+/** One sandbox job as `sandbox.result` answers it. Mirrors `PluginSandboxJob` in the SDK. */
+export interface PluginSandboxJob {
+  id: string;
+  state: SandboxJobState;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  /** Whether either output stream was cut at {@link PLUGIN_SANDBOX_OUTPUT_CHARS}. */
+  truncated?: boolean;
+  seconds?: number;
+  reason?: string;
+}
 
 /** The longest task a plugin may hand to the chat with `game.engine.assist`. */
 export const ENGINE_ASSIST_TASK_MAX_CHARS = 300;

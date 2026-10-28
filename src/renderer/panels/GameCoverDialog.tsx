@@ -6,7 +6,10 @@ import { DialogSurface } from "../ui/dialog.tsx";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
+import { GameAction } from "../analytics/workspace-vocabulary.ts";
+import { useGameManaged } from "./GameDialogs.tsx";
 import { problemWords } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The largest image a cover is read from (20 MB). */
 const COVER_MAX_BYTES = 20 * 1024 * 1024;
@@ -15,9 +18,9 @@ const COVER_PX = 256;
 
 /** What a cover that cannot be read tells the person. */
 const MESSAGE = {
-  tooLarge: "Choose an image smaller than 20 MB.",
-  noPreview: "Image preview is unavailable.",
-} as const;
+  tooLarge: t("Choose an image smaller than 20 MB."),
+  noPreview: t("Image preview is unavailable."),
+};
 
 async function normalizeCover(file: File): Promise<string> {
   if (file.size > COVER_MAX_BYTES) throw new Error(MESSAGE.tooLarge);
@@ -55,6 +58,7 @@ export function GameCoverDialog({
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
+  const managed = useGameManaged(GameAction.CoverChanged, game, onDismiss);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -69,7 +73,7 @@ export function GameCoverDialog({
       const dataUrl = await normalizeCover(file);
       if (mounted.current) setPending({ kind: "image", dataUrl });
     } catch {
-      if (mounted.current) setError("Could not read that image. Try a PNG, JPEG or WebP file.");
+      if (mounted.current) setError(t("Could not read that image. Try a PNG, JPEG or WebP file."));
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -77,13 +81,18 @@ export function GameCoverDialog({
   return (
     <DialogSurface
       dismissible={!busy}
-      title="Change image"
+      title={t("Change image")}
       size="md"
       onDismiss={() => {
-        if (!busy) onDismiss();
+        if (!busy) managed.dismiss();
       }}
     >
-      <div className="game-cover-preview" role="img" aria-label={`${game.title} cover preview`}>
+      <div
+        className="game-cover-preview"
+        data-analytics-block
+        role="img"
+        aria-label={t("{game} cover preview", { game: game.title })}
+      >
         <GameAvatar cover={pending ?? game.cover} gameKey={game.name} />
       </div>
       <input
@@ -91,7 +100,7 @@ export function GameCoverDialog({
         ref={fileRef}
         accept="image/png,image/jpeg,image/webp"
         className="hidden"
-        aria-label="Choose game image"
+        aria-label={t("Choose game image")}
         onChange={(event) => {
           void pick(event.target.files?.[0]);
           event.target.value = "";
@@ -105,11 +114,11 @@ export function GameCoverDialog({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button disabled={busy} onClick={() => fileRef.current?.click()}>
           <Icon name="image" />
-          Choose image…
+          {t("Choose image…")}
         </Button>
         <div className="flex gap-2">
-          <Button variant="ghost" disabled={busy} onClick={onDismiss}>
-            Cancel
+          <Button variant="ghost" disabled={busy} onClick={managed.dismiss}>
+            {t("Cancel")}
           </Button>
           <Button
             variant="default"
@@ -118,12 +127,15 @@ export function GameCoverDialog({
               if (!pending) return;
               setBusy(true);
               void onSave({ cover: pending })
-                .then(onDismiss)
-                .catch((error) => setError(problemWords(error)))
+                .then(managed.done)
+                .catch((error) => {
+                  managed.failed(error);
+                  setError(problemWords(error));
+                })
                 .finally(() => setBusy(false));
             }}
           >
-            {busy ? "Saving…" : "Save image"}
+            {busy ? t("Saving…") : t("Save image")}
           </Button>
         </div>
       </div>

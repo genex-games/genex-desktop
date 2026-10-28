@@ -7,8 +7,21 @@
 import type { JSX, RefObject } from "react";
 import { usePeople } from "../state/hooks.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { LOCAL_BLENDER_PLUGIN_ID } from "../../shared/local-blender.ts";
-import type { PluginIndexEntry, PluginIndexView, PluginInfo } from "../../shared/plugins.ts";
+import {
+  type PluginIndexEntry,
+  type PluginIndexView,
+  type PluginInfo,
+  PluginSourceKind,
+} from "../../shared/plugins.ts";
+import {
+  addedSince,
+  PluginInstallOrigin,
+  PluginInstallSurface,
+  trackedPluginInstall,
+} from "../analytics/plugins-page.ts";
+import { isOwnPlugin } from "../analytics/plugins-ref.ts";
 import { pluginUpdates } from "../state/plugins.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -47,6 +60,9 @@ import type { ShownSkill } from "./plugins/skills-sections.ts";
 import { useAsyncEffect } from "../use-async-effect.ts";
 import { PLUGINS_WORDS, SKILLS_WORDS } from "../words.ts";
 import { GithubInstallDialog } from "./plugins/GithubInstallDialog.tsx";
+import { usePluginsPageAnalytics } from "./plugins/use-page-analytics.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonLines } from "../ui/Skeleton.tsx";
 
 interface Props {
   project?: string | null;
@@ -138,6 +154,18 @@ function useSetupPlugin(
   }, [setupPlugin]);
 }
 
+/**
+ * A page about the person's own plugin or skill (a local or GitHub plugin, a provider's or this
+ * game's skill): kept out of usage recordings.
+ */
+function showsOwn(detail: PluginInfo | undefined, skill: ShownSkill | null, plugins: PluginInfo[]): boolean {
+  if (detail) return isOwnPlugin(detail);
+  if (!skill) return false;
+  if (skill.provider) return true;
+  const plugin = plugins.find((p) => p.manifest.id === skill.plugin);
+  return plugin ? isOwnPlugin(plugin) : false;
+}
+
 /** The line under the page title: the skill's source, the plugin's description, or what the tab is for. */
 function pageIntro(
   nav: Navigation,
@@ -180,15 +208,23 @@ function SkillView({ skill, onViewPlugin }: { skill: ShownSkill; onViewPlugin: (
           {SKILLS_WORDS.onDemand}
         </p>
       )}
-      <Section title={skill.provider ? "Skill details" : "Instructions"}>
+      <Section title={skill.provider ? t("Skill details") : t("Instructions")}>
         {error && (
           <p role="alert" className="extensions-error">
             {error}
           </p>
         )}
-        <pre className="skill-instructions">{text ?? SKILLS_WORDS.loadingFile}</pre>
+        {text !== undefined ? (
+          <pre className="skill-instructions">{text}</pre>
+        ) : (
+          !error && (
+            <Pending label={SKILLS_WORDS.loadingFile}>
+              <SkeletonLines widths={["100%", "94%", "98%", "72%", "88%", "40%"]} />
+            </Pending>
+          )
+        )}
       </Section>
-      {skill.plugin && <Button onClick={() => onViewPlugin(skill.plugin)}>View plugin</Button>}
+      {skill.plugin && <Button onClick={() => onViewPlugin(skill.plugin)}>{t("View plugin")}</Button>}
     </>
   );
 }
@@ -206,7 +242,7 @@ function SearchField({ nav }: { nav: Navigation }): JSX.Element {
         value={nav.query}
         onChange={(e) => nav.setQuery(e.target.value)}
       />
-      {nav.query && <IconButton icon="close" label="Clear search" onClick={() => nav.setQuery("")} />}
+      {nav.query && <IconButton icon="close" label={t("Clear search")} onClick={() => nav.setQuery("")} />}
     </label>
   );
 }
@@ -237,12 +273,14 @@ function toolbarActions({
   nav,
   act,
   skills,
+  plugins,
   connectorActions,
   afterMenu,
 }: {
   nav: Navigation;
   act: PluginsPage["act"];
   skills: ReturnType<typeof useProviderSkills>;
+  plugins: PluginInfo[];
   connectorActions: RefObject<ConnectorActions | null>;
   afterMenu: RefObject<(() => void) | null>;
 }) {
@@ -255,9 +293,52 @@ function toolbarActions({
     installFromGithub: () => nav.setGithub(true),
     addServer: () => toPluginsTab(() => connectorActions.current?.add()),
     createPlugin: () => void window.studio.openUrl(PLUGIN_GUIDE_URL),
-    loadLocal: () => void act(() => window.studio.pluginInstall()),
+    loadLocal: () =>
+      void act(() =>
+        trackedPluginInstall(
+          {
+            origin: PluginInstallOrigin.Local,
+            surface: PluginInstallSurface.MenuLoadLocal,
+            id: null,
+            source: PluginSourceKind.Local,
+          },
+          () => window.studio.pluginInstall(),
+          addedSince(plugins),
+        ),
+      ),
   };
   return { refresh, add };
+}
+
+/** What every part of the page needs to act, from the page's own state. */
+function pluginsPage({
+  action,
+  busy,
+  project,
+  data,
+  updates,
+  nav,
+}: {
+  action: ReturnType<typeof useBusyAction>;
+  busy: boolean;
+  project: string | null | undefined;
+  data: ReturnType<typeof usePluginsPageData>;
+  updates: PluginsPage["updates"];
+  nav: Navigation;
+}): PluginsPage {
+  return {
+    busy,
+    error: action.error,
+    act: action.act,
+    project,
+    connections: data.connections,
+    setConnections: data.setConnections,
+    updates,
+    openPlugin: nav.openPlugin,
+    setSelected: nav.setSelected,
+    matches: (...values: string[]) =>
+      values.join(" ").toLocaleLowerCase().includes(nav.query.trim().toLocaleLowerCase()),
+  };
 }
 
 export function PluginsPanel({
@@ -293,25 +374,15 @@ export function PluginsPanel({
   const ownPage = detail !== undefined && hasOwnPage(detail);
   const selectedPlugin = useOpenPanelPlugin(nav, plugins);
   useSetupPlugin(setupPlugin, plugins, nav, setError);
-  const page: PluginsPage = {
-    busy,
-    error,
-    act,
-    project,
-    connections: data.connections,
-    setConnections: data.setConnections,
-    updates,
-    openPlugin: nav.openPlugin,
-    setSelected: nav.setSelected,
-    matches: (...values: string[]) =>
-      values.join(" ").toLocaleLowerCase().includes(nav.query.trim().toLocaleLowerCase()),
-  };
-  const toolbar = toolbarActions({ nav, act, skills, connectorActions, afterMenu });
+  const page = pluginsPage({ action, busy, project, data, updates, nav });
+  const toolbar = toolbarActions({ nav, act, skills, plugins, connectorActions, afterMenu });
+  const actions = action.actions.current;
+  usePluginsPageAnalytics({ nav, setupPlugin, page, detail, listing, actions, plugins, index, data, skills });
   // TODO(extensions): add marketplace-source management and skill recording only after host APIs
   // exist. The reference's unsupported actions must not become inert controls.
   // Skill discovery is read-only; activation stays with each provider.
   return (
-    <section data-plugins-page aria-label="Studio plugins" className="extensions-page">
+    <section data-plugins-page aria-label={t("Studio plugins")} className="extensions-page">
       <PluginsToolbar
         tab={nav.tab}
         sidebarHidden={sidebarHidden}
@@ -323,7 +394,10 @@ export function PluginsPanel({
         add={toolbar.add}
       />
       <div ref={scroll} className="extensions-scroll">
-        <div className={`extensions-content ${detail || listing || nav.skill ? "extensions-content-detail" : ""}`}>
+        <div
+          className={`extensions-content ${detail || listing || nav.skill ? "extensions-content-detail" : ""}`}
+          {...(showsOwn(detail, nav.skill, plugins) ? { "data-analytics-mask": "" } : {})}
+        >
           <PageHeading
             nav={nav}
             detail={detail}

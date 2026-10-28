@@ -1,9 +1,13 @@
 /**
- * The shell's chrome: the compact drawer, Plugins over the workspace, the sidebar toggle and the
- * chat's width as a CSS variable.
+ * The shell's chrome: the compact drawer, Plugins or Create › Items over the workspace, the sidebar
+ * toggle and the chat's width as a CSS variable.
  */
 import type { RefObject } from "react";
-import { useCallback, useEffect, useMemo, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useLayoutEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { PlayMode, PlayModeVia, SidebarVia } from "../analytics/workspace-vocabulary.ts";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { chatWidthOf, sidebarToggled } from "../state/layout.ts";
 import type { Studio } from "../state/studio.ts";
@@ -11,12 +15,17 @@ import { OPEN_PLAY_EVENT } from "../play/open-play.ts";
 import { OPEN_PLUGINS_EVENT } from "../ui/ComposerAddMenu.tsx";
 
 const COMPACT = "(max-width: 900px)";
-/** The sidebar toggles' labels. Smoke runners and focus moves find the toggles by them. */
-export const SIDEBAR_TOGGLE = { Show: "Show sidebar", Hide: "Hide sidebar" } as const;
+/** The sidebar toggles' labels. */
+export const SIDEBAR_TOGGLE = { Show: t("Show sidebar"), Hide: t("Hide sidebar") } as const;
+/** What a sidebar toggle does, as its `data-sidebar-toggle`: focus moves find the toggles by it. */
+export const SidebarToggle = { Show: "show", Hide: "hide" } as const;
+export type SidebarToggle = (typeof SidebarToggle)[keyof typeof SidebarToggle];
 
-/** Focus the sidebar toggle with this label, once the toggle it replaced is gone. */
-function focusSidebarToggle(label: string): void {
-  requestAnimationFrame(() => (document.querySelector(`[aria-label="${label}"]`) as HTMLElement | null)?.focus());
+/** Focus the sidebar toggle that does `toggle`, once the toggle it replaced is gone. */
+function focusSidebarToggle(toggle: SidebarToggle): void {
+  requestAnimationFrame(() =>
+    (document.querySelector(`[data-sidebar-toggle="${toggle}"]`) as HTMLElement | null)?.focus(),
+  );
 }
 
 /** Whether the window is narrow (the sidebar is a drawer), and whether that drawer is open. */
@@ -48,28 +57,104 @@ export function useChatWidthVariable(shell: RefObject<HTMLDivElement | null>, ap
   }, [app, shell]);
 }
 
-/** Plugins opens over the workspace, from the sidebar or from a window event naming a plugin. */
-function usePluginsRoom(dialogs: Dialogs, setDrawerOpen: (open: boolean) => void, leavePlay: () => void) {
+/**
+ * Plugins opens over the workspace, from the sidebar or from a window event naming a plugin;
+ * `leaveOthers` closes Play and Create › Items on the way.
+ */
+function usePluginsRoom(dialogs: Dialogs, setDrawerOpen: (open: boolean) => void, leaveOthers: () => void) {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [setupPlugin, setSetupPlugin] = useState<string | undefined>();
   useEffect(() => {
     const open = (event: Event) => {
       setSetupPlugin((event as CustomEvent<{ plugin?: string }>).detail?.plugin);
       dialogs.dispatch({ type: "close-settings" });
-      leavePlay();
+      leaveOthers();
       setPluginsOpen(true);
       setDrawerOpen(false);
     };
     window.addEventListener(OPEN_PLUGINS_EVENT, open);
     return () => window.removeEventListener(OPEN_PLUGINS_EVENT, open);
-  }, [dialogs.dispatch, setDrawerOpen, leavePlay]);
+  }, [dialogs.dispatch, setDrawerOpen, leaveOthers]);
   const openPlugins = useCallback(() => {
     setSetupPlugin(undefined);
-    leavePlay();
+    leaveOthers();
     setPluginsOpen(true);
     setDrawerOpen(false);
-  }, [setDrawerOpen, leavePlay]);
+  }, [setDrawerOpen, leaveOthers]);
   return { pluginsOpen, setPluginsOpen, setupPlugin, openPlugins };
+}
+
+/**
+ * The sidebar's toggle, which puts focus on the toggle that replaces the one pressed, and Escape
+ * closing the compact drawer. A button press is `toggleSidebar`; ⌘B says so with `toggleSidebarFrom`.
+ */
+function useSidebarToggle(
+  app: Studio,
+  {
+    compactWindow,
+    drawerOpen,
+    setDrawerOpen,
+    sidebarVisible,
+  }: {
+    compactWindow: boolean;
+    drawerOpen: boolean;
+    setDrawerOpen: (update: boolean | ((open: boolean) => boolean)) => void;
+    sidebarVisible: boolean;
+  },
+) {
+  const toggleSidebarFrom = useCallback(
+    (via: SidebarVia) => {
+      if (compactWindow) setDrawerOpen((open) => !open);
+      else app.layout.setState((s) => sidebarToggled(s), true);
+      track(AnalyticsEvent.SidebarToggled, { visible: !sidebarVisible, via, compact: compactWindow });
+      focusSidebarToggle(sidebarVisible ? SidebarToggle.Show : SidebarToggle.Hide);
+    },
+    [app, compactWindow, sidebarVisible, setDrawerOpen],
+  );
+  const toggleSidebar = useCallback(() => toggleSidebarFrom(SidebarVia.Button), [toggleSidebarFrom]);
+  /** Escape in a compact window: close the drawer; false when it was not open. */
+  const closeDrawer = useCallback((): boolean => {
+    if (!compactWindow || !drawerOpen) return false;
+    setDrawerOpen(false);
+    focusSidebarToggle(SidebarToggle.Show);
+    return true;
+  }, [compactWindow, drawerOpen, setDrawerOpen]);
+  return { toggleSidebar, toggleSidebarFrom, closeDrawer };
+}
+
+/** The setters Play's switch closes and opens rooms with. */
+interface RoomSetters {
+  setPlayOpen: (open: boolean) => void;
+  setPluginsOpen: (open: boolean) => void;
+  setItemsOpen: (open: boolean) => void;
+}
+
+/**
+ * Play or Create, from the sidebar's switch. Play closes Plugins and Items; the drawer stays. A
+ * switch the person asked for names its `via`, and counts when it changes the side. Another place
+ * asking for Play (the Credits tab's invite) brings it up over Plugins.
+ */
+function useChoosePlay(playOpen: boolean, { setPlayOpen, setPluginsOpen, setItemsOpen }: RoomSetters) {
+  const playNow = useRef(playOpen);
+  playNow.current = playOpen;
+  const choosePlay = useCallback(
+    (play: boolean, via?: PlayModeVia) => {
+      if (play) {
+        setPluginsOpen(false);
+        setItemsOpen(false);
+      }
+      if (via && play !== playNow.current)
+        track(AnalyticsEvent.PlayModeSwitched, { to: play ? PlayMode.Play : PlayMode.Create, via });
+      setPlayOpen(play);
+    },
+    [setPlayOpen, setPluginsOpen, setItemsOpen],
+  );
+  useEffect(() => {
+    const open = () => choosePlay(true, PlayModeVia.OpenPlayEvent);
+    window.addEventListener(OPEN_PLAY_EVENT, open);
+    return () => window.removeEventListener(OPEN_PLAY_EVENT, open);
+  }, [choosePlay]);
+  return choosePlay;
 }
 
 /**
@@ -80,41 +165,39 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
   const { compactWindow, drawerOpen, setDrawerOpen } = useCompactWindow();
   // Play is the sidebar's other side: launch opens Create (home), and any way into Create leaves it.
   const [playOpen, setPlayOpen] = useState(false);
-  const leavePlay = useCallback(() => setPlayOpen(false), []);
-  const plugins = usePluginsRoom(dialogs, setDrawerOpen, leavePlay);
+  // Create › Items is a room like Plugins: either one, never both (marketplace plan 10.3).
+  const [itemsOpen, setItemsOpen] = useState(false);
+  const leaveForPlugins = useCallback(() => {
+    setItemsOpen(false);
+    setPlayOpen(false);
+  }, []);
+  const plugins = usePluginsRoom(dialogs, setDrawerOpen, leaveForPlugins);
   const { setPluginsOpen } = plugins;
   const sidebarVisible = compactWindow ? drawerOpen : sidebarOpen;
   const closeOverlays = useCallback(() => {
     setPluginsOpen(false);
+    setItemsOpen(false);
     setPlayOpen(false);
     setDrawerOpen(false);
   }, [setPluginsOpen, setDrawerOpen]);
-  /** Play or Create, from the sidebar's switch. Play closes Plugins; the drawer stays. */
-  const choosePlay = useCallback(
-    (play: boolean) => {
-      if (play) setPluginsOpen(false);
-      setPlayOpen(play);
-    },
-    [setPluginsOpen],
-  );
-  // Another place asked for Play (the Credits tab's invite): it comes up over Plugins.
-  useEffect(() => {
-    const open = () => choosePlay(true);
-    window.addEventListener(OPEN_PLAY_EVENT, open);
-    return () => window.removeEventListener(OPEN_PLAY_EVENT, open);
-  }, [choosePlay]);
-  const toggleSidebar = useCallback(() => {
-    if (compactWindow) setDrawerOpen((open) => !open);
-    else app.layout.setState((s) => sidebarToggled(s), true);
-    focusSidebarToggle(sidebarVisible ? SIDEBAR_TOGGLE.Show : SIDEBAR_TOGGLE.Hide);
-  }, [app, compactWindow, sidebarVisible, setDrawerOpen]);
-  /** Escape in a compact window: close the drawer; false when it was not open. */
-  const closeDrawer = useCallback((): boolean => {
-    if (!compactWindow || !drawerOpen) return false;
+  /**
+   * Create › Items, from its sidebar row: over the workspace, in Plugins' place. Pressed again while it
+   * is open, the tab on show is read again (once its last read is old); opening it reads it anyway.
+   */
+  const openItems = useCallback(() => {
+    if (itemsOpen) void app.items.refresh();
+    setPluginsOpen(false);
+    setPlayOpen(false);
+    setItemsOpen(true);
     setDrawerOpen(false);
-    focusSidebarToggle(SIDEBAR_TOGGLE.Show);
-    return true;
-  }, [compactWindow, drawerOpen, setDrawerOpen]);
+  }, [app, itemsOpen, setPluginsOpen, setDrawerOpen]);
+  const choosePlay = useChoosePlay(playOpen, { setPlayOpen, setPluginsOpen, setItemsOpen });
+  const { toggleSidebar, toggleSidebarFrom, closeDrawer } = useSidebarToggle(app, {
+    compactWindow,
+    drawerOpen,
+    setDrawerOpen,
+    sidebarVisible,
+  });
   const { pluginsOpen, setupPlugin, openPlugins } = plugins;
   return useMemo(
     () => ({
@@ -122,11 +205,15 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       setPluginsOpen,
       setupPlugin,
       openPlugins,
+      /** Create › Items is up in place of the workspace. */
+      itemsOpen,
+      setItemsOpen,
+      openItems,
       /** Play's dashboard is up in place of the workspace. */
       playOpen,
       setPlayOpen: choosePlay,
-      /** Something covers the workspace (Plugins or Play): it is hidden and inert. */
-      workspaceCovered: pluginsOpen || playOpen,
+      /** Something covers the workspace (Plugins, Items or Play): it is hidden and inert. */
+      workspaceCovered: pluginsOpen || itemsOpen || playOpen,
       compactWindow,
       setDrawerOpen,
       sidebarVisible,
@@ -136,6 +223,8 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       sidebarHidden: !sidebarVisible || compactWindow,
       closeOverlays,
       toggleSidebar,
+      /** The sidebar toggled by something other than its buttons (⌘B). */
+      toggleSidebarFrom,
       closeDrawer,
     }),
     [
@@ -143,6 +232,8 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       setPluginsOpen,
       setupPlugin,
       openPlugins,
+      itemsOpen,
+      openItems,
       playOpen,
       choosePlay,
       compactWindow,
@@ -151,6 +242,7 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
       drawerOpen,
       closeOverlays,
       toggleSidebar,
+      toggleSidebarFrom,
       closeDrawer,
     ],
   );

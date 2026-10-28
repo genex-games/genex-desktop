@@ -286,7 +286,7 @@ export function PlayFriends({
   return (
     <PlayPageFrame label={WORDS.friends} sidebarHidden={sidebarHidden} onToggleSidebar={onToggleSidebar}>
       {!signedIn && <SignInNote text={WORDS.signedOut} />}
-      {signedIn && !page && offline && <OfflineNotice text={PLAY_WORDS.offline.shelf(WORDS.friends)} />}
+      {signedIn && !page && offline && <OfflineNotice text={PLAY_WORDS.offline.friends} />}
       {signedIn && !page && !offline && status === LoadStatus.Failed && (
         <div className="people-note">
           {WORDS.friendsFailed}

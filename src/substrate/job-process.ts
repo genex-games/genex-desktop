@@ -4,23 +4,36 @@
  * heard however it comes, its process group signalled, and its start time read so a later app
  * start can tell the same process from a reused id.
  */
-import { type ChildProcess, execFile } from "node:child_process";
+import { type ChildProcess, type ExecFileException, execFile } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { once } from "node:events";
+import type { Writable } from "node:stream";
 import { SECOND_MS } from "../shared/duration.ts";
-import { isWindows } from "./toolchain.ts";
-import { killProcessTree } from "./process-tree.ts";
+import path from "node:path";
+import { envValue, isWindows } from "./toolchain.ts";
+import { windowsPowerShellEnv } from "./child-env.ts";
+import { killProcessTree, type TreeKillCommand } from "./process-tree.ts";
 
 /** How long `ps` may take to tell a process's start time. */
 const PROBE_TIMEOUT_MS = 5 * SECOND_MS;
+/**
+ * Windows PowerShell's own start can take several seconds on a busy PC, most of all while the app
+ * itself is starting, which is when left jobs are checked: a read cut short there left the job running.
+ */
+const WINDOWS_PROBE_TIMEOUT_MS = 20 * SECOND_MS;
 
 const MESSAGE = {
   logCapped: "\n[Genex: the log stopped here at its size cap; the job keeps running]\n",
+  logFailed: "Job log write failed",
 } as const;
 
 /** Reads a process's start time, to tell it from a later process given the same id. */
 export interface JobProbe {
-  /** The start time as `ps -o lstart=` prints it, or null when no such process runs. */
+  /**
+   * The start time as `ps -o lstart=` prints it (Windows: as a round-trip UTC time to the 100 ns
+   * tick), or null when no such process runs. Rejects when the time could not be read at all (the
+   * reader timed out or did not start), which says nothing about the process.
+   */
   startTime(pid: number): Promise<string | null>;
 }
 
@@ -33,6 +46,9 @@ export interface JobClock {
 
 /** Sends a signal to a process or, with a negative id, to a process group (`process.kill`). */
 export type JobKill = (pid: number, signal: NodeJS.Signals) => void;
+
+/** Runs `taskkill` to end a job's tree on Windows (`process-tree.ts`); injectable for tests. */
+export type JobEndTree = (command: TreeKillCommand) => Promise<void>;
 
 /** How a job's process ended. */
 export interface JobExit {
@@ -51,15 +67,41 @@ export const SYSTEM_CLOCK: JobClock = {
   clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
-/** `ps -o lstart= -p <pid>` on macOS and Linux; Windows has no such reading, so nothing ever matches. */
+/**
+ * The command reading `pid`'s start time: `ps -o lstart= -p <pid>` on macOS and Linux; on Windows,
+ * Windows PowerShell by its full path asking for the process's start time.
+ */
+export function startTimeCommand(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): { file: string; args: string[]; env?: NodeJS.ProcessEnv } {
+  if (!isWindows(platform)) return { file: "/bin/ps", args: ["-o", "lstart=", "-p", String(pid)] };
+  const systemRoot = envValue(env, "SystemRoot") || "C:\\Windows";
+  const script = `(Get-Process -Id ${Math.trunc(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`;
+  return {
+    file: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoProfile", "-NonInteractive", "-Command", script],
+    env: windowsPowerShellEnv(env),
+  };
+}
+
+/** Whether the reader ran to its end and answered with a failing exit code: no such process. */
+function exitedWithCode(error: ExecFileException): boolean {
+  return typeof error.code === "number" && !error.killed;
+}
+
+/** Reads a start time by {@link startTimeCommand}; null when the process is gone. */
 export function psProbe(platform: NodeJS.Platform = process.platform): JobProbe {
+  const timeout = isWindows(platform) ? WINDOWS_PROBE_TIMEOUT_MS : PROBE_TIMEOUT_MS;
   return {
     startTime: (pid) =>
-      new Promise((resolve) => {
-        if (isWindows(platform)) return resolve(null);
-        execFile("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { timeout: PROBE_TIMEOUT_MS }, (error, stdout) =>
-          resolve(error ? null : stdout.trim() || null),
-        );
+      new Promise((resolve, reject) => {
+        const { file, args, env } = startTimeCommand(pid, platform);
+        execFile(file, args, { timeout, windowsHide: true, env }, (error, stdout) => {
+          if (error && !exitedWithCode(error)) return reject(error);
+          resolve(error ? null : stdout.trim() || null);
+        });
       }),
   };
 }
@@ -72,7 +114,7 @@ export async function openJobLog(file: string): Promise<WriteStream> {
 }
 
 /** End a job's log and wait until everything written to it is on disk. */
-export async function closeJobLog(log: WriteStream): Promise<void> {
+export async function closeJobLog(log: Writable): Promise<void> {
   if (log.closed) return;
   const closed = once(log, "close").catch(() => {});
   log.end();
@@ -82,38 +124,81 @@ export async function closeJobLog(log: WriteStream): Promise<void> {
 /**
  * Pipe a job's stdout and stderr into its log until `maxBytes`, then write one line saying the
  * log stopped and keep reading (a pipe nobody reads would stall the job). `onBytes` hears the
- * bytes written so far and whether the cap was reached.
+ * bytes written so far and whether the cap was reached. A slow disk pauses both pipes until
+ * the writer drains; after the cap, output is discarded without pausing the job. The returned
+ * predicate tells the exit watcher when a slow writer still owns buffered output.
  */
 export function pipeJobOutput(
   child: ChildProcess,
-  log: WriteStream,
+  log: Writable,
   maxBytes: number,
   onBytes: (bytes: number, capped: boolean) => void,
-): void {
+): () => boolean {
   let bytes = 0;
   let capped = false;
+  let paused = false;
+  const streams = [child.stdout, child.stderr];
+  const resume = () => {
+    if (!paused) return;
+    paused = false;
+    for (const stream of streams) stream?.resume();
+  };
+  const detach = () => {
+    log.off("drain", resume);
+    log.off("finish", detach);
+    log.off("close", detach);
+    log.off("error", failed);
+    for (const stream of streams) stream?.off("data", take);
+    resume();
+  };
+  const failed = (error: Error) => {
+    detach();
+    console.error(MESSAGE.logFailed, error);
+  };
   const take = (chunk: Buffer) => {
-    if (capped) return;
+    const unavailable = capped || log.destroyed || log.writableEnded;
+    if (unavailable) return;
     const room = maxBytes - bytes;
     const part = chunk.length > room ? chunk.subarray(0, room) : chunk;
-    if (part.length > 0) log.write(part);
+    const writable = part.length === 0 || log.write(part);
     bytes += part.length;
     if (chunk.length > room) {
       capped = true;
       log.write(MESSAGE.logCapped);
     }
+    const needsPause = !writable && !capped && !paused;
+    if (needsPause) {
+      paused = true;
+      for (const stream of streams) stream?.pause();
+      log.once("drain", resume);
+    }
     onBytes(bytes, capped);
   };
   child.stdout?.on("data", take);
   child.stderr?.on("data", take);
+  log.once("finish", detach);
+  log.once("close", detach);
+  log.once("error", failed);
+  return () => {
+    const finished = capped || log.destroyed || log.writableEnded;
+    if (finished) return false;
+    return paused || log.writableLength > 0 || streams.some((stream) => (stream?.readableLength ?? 0) > 0);
+  };
 }
 
 /**
  * How the job's process ended: when its output closes, or when it fails to start. `onExit` runs
  * as soon as the process itself exits, before its output closes; a process it left that holds
- * the output open past `drainMs` (on `clock`) does not keep the job from ending.
+ * the output open past `drainMs` (on `clock`) does not keep the job from ending. Output still
+ * waiting for the log's writer is drained first, rather than mistaken for an idle orphan pipe.
  */
-export function jobEnd(child: ChildProcess, onExit: () => void, clock: JobClock, drainMs: number): Promise<JobExit> {
+export function jobEnd(
+  child: ChildProcess,
+  onExit: () => void,
+  clock: JobClock,
+  drainMs: number,
+  isDraining?: () => boolean,
+): Promise<JobExit> {
   return new Promise((resolve) => {
     let done = false;
     let drain: unknown;
@@ -123,9 +208,17 @@ export function jobEnd(child: ChildProcess, onExit: () => void, clock: JobClock,
       if (drain !== undefined) clock.clearTimeout(drain);
       resolve(exit);
     };
+    const finishOrWait = (exit: JobExit) => {
+      if (done) return;
+      if (isDraining?.()) {
+        drain = clock.setTimeout(() => finishOrWait(exit), drainMs);
+        return;
+      }
+      finish(exit);
+    };
     child.once("exit", (code, signal) => {
       onExit();
-      drain = clock.setTimeout(() => finish({ exitCode: code, signal }), drainMs);
+      drain = clock.setTimeout(() => finishOrWait({ exitCode: code, signal }), drainMs);
     });
     child.once("close", (code, signal) => finish({ exitCode: code, signal }));
     child.once("error", () => finish({ exitCode: child.exitCode, signal: child.signalCode }));
@@ -136,9 +229,9 @@ export function jobEnd(child: ChildProcess, onExit: () => void, clock: JobClock,
 export function signalJob(
   pid: number | undefined,
   signal: NodeJS.Signals,
-  options: { kill?: JobKill; platform: NodeJS.Platform },
+  options: { kill?: JobKill; endTree?: JobEndTree; platform: NodeJS.Platform },
 ): Promise<void> {
-  return killProcessTree(pid, { signal, kill: options.kill, platform: options.platform });
+  return killProcessTree(pid, { signal, kill: options.kill, run: options.endTree, platform: options.platform });
 }
 
 /**

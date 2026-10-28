@@ -11,6 +11,7 @@ import { EngineKind, EngineStatusCode, type EngineDescriptor } from "../../share
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { isMetered, providerInfo } from "../../shared/providers.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** What the UI reads about an engine is a contract; it lives in `shared/engine-descriptor.ts`. */
 export type { EngineDescriptor } from "../../shared/engine-descriptor.ts";
@@ -90,7 +91,7 @@ export class EngineRegistry {
   /** Updates cannot overlap a provider operation or admit new work while running. */
   async maintain<T>(id: string, operation: () => Promise<T>): Promise<T> {
     if (this.#updating.has(id) || this.#active.get(id))
-      throw new Error("Wait for active provider work to finish before updating.");
+      throw new Error(t("Wait for active provider work to finish before updating."));
     this.#updating.add(id);
     try {
       return await operation();

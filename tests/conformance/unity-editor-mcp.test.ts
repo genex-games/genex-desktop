@@ -7,6 +7,7 @@ import { type AgentPlayMarker, NO_AGENT_PLAY } from "../../src/plugins/unity/age
 import { createEditorMcp, EditorTool } from "../../src/plugins/unity/editor-mcp.ts";
 import type { GatePlace } from "../../src/plugins/unity/pipeline-gate.ts";
 import type { PipelineDeps } from "../../src/plugins/unity/pipeline.ts";
+import { ENGINE_PLAY_VIEW } from "../../src/shared/engine-play.ts";
 import { CONNECTOR_OUTCOME_META } from "../../src/shared/mcp.ts";
 import {
   droppedConnection,
@@ -389,6 +390,73 @@ describe("the Unity editor connector", () => {
       ["text", "image"],
     );
     assert.match(textOf(batched), /\[image 1 attached\]/);
+    await close();
+  });
+
+  it("sizes a capture that names no size as Genex's own looks at the game, keeping a size the agent names", async () => {
+    const sizedCatalogue = (...sizes: string[]) =>
+      json(200, {
+        commands: [
+          {
+            name: "batch",
+            description: "Run several",
+            tags: ["batch"],
+            parameters: [parameter("operations", "List`1", true)],
+          },
+          {
+            name: "capture_game_view",
+            description: "Capture",
+            tags: ["capture"],
+            parameters: [parameter("source", "String"), ...sizes.map((size) => parameter(size, "Int32"))],
+          },
+        ],
+      });
+    const done = () => json(200, { success: true, result: {} });
+    const { call, seen, close } = await openEditor([
+      sizedCatalogue("width", "height"),
+      look(),
+      done(),
+      sizedCatalogue("width", "height"),
+      look(),
+      done(),
+      sizedCatalogue("width", "height"),
+      look(),
+      done(),
+      sizedCatalogue("width"),
+      look(),
+      done(),
+      sizedCatalogue(),
+      look(),
+      done(),
+    ]);
+    const capture = (parameters?: Record<string, unknown>) =>
+      call(EditorTool.RunCommand, { command: "capture_game_view", ...(parameters ? { parameters } : {}) });
+    await capture({ source: "camera:Main Camera" });
+    await capture({ width: 640 });
+    await call(EditorTool.RunCommand, {
+      command: "batch",
+      parameters: {
+        operations: [{ command: "capture_game_view" }, { command: "capture_game_view", params: { height: 90 } }],
+      },
+    });
+    await capture();
+    await capture();
+    const exec = seen.filter((request) => request.url.endsWith("/api/exec")).map((request) => request.body);
+    assert.deepEqual(exec, [
+      { command: "capture_game_view", parameters: { ...ENGINE_PLAY_VIEW, source: "camera:Main Camera" } },
+      { command: "capture_game_view", parameters: { width: 640 } },
+      {
+        command: "batch",
+        parameters: {
+          operations: [
+            { command: "capture_game_view", params: { ...ENGINE_PLAY_VIEW } },
+            { command: "capture_game_view", params: { height: 90 } },
+          ],
+        },
+      },
+      { command: "capture_game_view", parameters: { width: ENGINE_PLAY_VIEW.width } },
+      { command: "capture_game_view", parameters: {} },
+    ]);
     await close();
   });
 

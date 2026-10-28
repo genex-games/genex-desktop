@@ -74,6 +74,14 @@ export function appUserModelId(platform: string, execPath: string, exists: (file
 }
 
 /**
+ * The folder Genex is installed in, for keeping its data out of it: Squirrel's root, one folder
+ * above the versioned `app-<version>` folder (Setup empties it when it runs again).
+ */
+export function installRoot(execPath: string): string {
+  return path.win32.dirname(path.win32.dirname(execPath));
+}
+
+/**
  * The folder a packaged Windows app works from: its own install folder, or null to keep the launch's.
  * The sandbox starts srt-win as its own user from the app's working folder, which Windows opens as
  * that user; a shortcut or Explorer can start Genex anywhere in the profile, where that user may

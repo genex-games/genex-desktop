@@ -1,6 +1,6 @@
 /**
- * One game, one row. The chrome and navigation stay put; the game list scrolls, and under it the
- * friends scroll on their own.
+ * One game, one row. The chrome and navigation stay put; the game list takes the room and scrolls,
+ * and the friends stand at its foot on the account plate, folding to one line.
  */
 import type { ComponentPropsWithRef, CSSProperties, JSX, ReactNode, RefObject } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +44,10 @@ import { besideRemix, remixCovers, remixShare } from "../play/remix-model.ts";
 import { remixTitle } from "../../shared/play.ts";
 import { studio as studioApp } from "../state/studio.ts";
 import { PLAY_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
+import { SidebarToggle } from "../shell/use-shell-chrome.ts";
+import { HarnessOpenedVia, noteHarnessOpening } from "../analytics/plugins-harness.ts";
+import { NavItem, PlayModeVia } from "../analytics/workspace-vocabulary.ts";
 
 interface Props {
   threads: ConversationRecord[];
@@ -69,10 +73,15 @@ interface Props {
   onSettings: () => void;
   pluginsOpen: boolean;
   onPlugins: () => void;
+  /** Create › Items is up (marketplace plan 10.3): its row is the selected one. */
+  itemsOpen: boolean;
+  onItems: () => void;
   /** Play is up: the rooms fold away and the list is the games played last. */
   playOpen: boolean;
-  /** Play or Create, from the switch under the wordmark. */
-  onPlayMode: (play: boolean) => void;
+  /** Play or Create, from the switch under the wordmark (or the plate, or a friend), which `via` names. */
+  onPlayMode: (play: boolean, via?: PlayModeVia) => void;
+  /** A row or button of the sidebar was pressed, before it does what it does (usage analytics). */
+  onNav: (item: NavItem) => void;
   stagedCount: number;
   onNewGame: () => void;
   onSelectThread: (threadId: string) => void;
@@ -173,7 +182,7 @@ export function Sidebar(props: Props): JSX.Element {
       ref={nav}
       data-pane="rail"
       id="studio-sidebar"
-      aria-label="Main navigation"
+      aria-label={t("Main navigation")}
       className="game-sidebar"
       data-scrolled={scrolled}
       data-play={playOpen}
@@ -208,12 +217,12 @@ export function Sidebar(props: Props): JSX.Element {
           </div>
           <span className="sidebar-fade" aria-hidden="true" />
         </div>
-        <SidebarFriends onPlayMode={props.onPlayMode} />
         <SidebarFooter {...props} />
+        <SidebarFriends onPlayMode={(play) => props.onPlayMode(play, PlayModeVia.Friends)} />
       </div>
       {/* Shown once, until the first sign-in: the account plate stays under it. */}
       {playOpen && <PlayPromo />}
-      <ProfilePlate onPlayMode={props.onPlayMode} />
+      <ProfilePlate playOpen={playOpen} onPlayMode={(play) => props.onPlayMode(play, PlayModeVia.ProfilePlate)} />
     </nav>
   );
 }
@@ -239,8 +248,9 @@ function RemixRow({ onShow }: { onShow: () => void }): JSX.Element | null {
   if (!making) return null;
   const shown = remixCovers(making);
   const share = { "--remix-share": remixShare(making) } as CSSProperties;
+  // Its title names the game being copied.
   return (
-    <div className="sidebar-game" data-remixing={making.step} data-active={shown} data-busy="true">
+    <div className="sidebar-game" data-remixing={making.step} data-active={shown} data-busy="true" data-analytics-mask>
       <button type="button" className="sidebar-game-select" aria-current={shown ? "page" : undefined} onClick={onShow}>
         <span className="remix-avatar" style={share} aria-hidden="true">
           {making.coverUrl ? <img src={making.coverUrl} alt="" /> : <span />}
@@ -256,11 +266,11 @@ function RemixRow({ onShow }: { onShow: () => void }): JSX.Element | null {
 /** The game home is starting, selected and working, until it is made and has its own row. */
 function LaunchRow({ title }: { title: string | null }): JSX.Element {
   return (
-    <div className="sidebar-game" data-launching data-active="true" data-busy="true">
+    <div className="sidebar-game" data-launching data-active="true" data-busy="true" data-analytics-mask>
       <div className="sidebar-game-select" aria-current="page">
         <span className="game-avatar game-avatar-pending" aria-hidden="true" />
-        <span className={`min-w-0 flex-1 truncate ${title ? "" : "text-ink-3"}`}>{title ?? "Naming…"}</span>
-        <span className="sr-only">Working</span>
+        <span className={`min-w-0 flex-1 truncate ${title ? "" : "text-ink-3"}`}>{title ?? t("Naming…")}</span>
+        <span className="sr-only">{t("Working")}</span>
       </div>
       <GameRowEnd busy pinned={false} />
     </div>
@@ -380,17 +390,16 @@ function SidebarGame({
   );
 }
 
-/**
- * The fixed top: the toggle with search, notifications and Send feedback; the brand with the Play /
- * Create switch; the rooms in Create or the shelves in Play; the games or Recent heading.
- */
-function SidebarTop({
-  studio,
-  harnessOpen,
+/** A press that is counted (`onNav`) before it does what it does. */
+const counted = (onNav: (item: NavItem) => void) => (item: NavItem, run: () => void) => (): void => {
+  onNav(item);
+  run();
+};
+
+/** The top line: the toggle with search, notifications and Send feedback. */
+function SidebarTitlebar({
   games,
   threads,
-  busyThreads,
-  threadStatus,
   onSearch,
   notices,
   onOpenNotice,
@@ -398,89 +407,129 @@ function SidebarTop({
   onClearNotices,
   onToggle,
   onFeedback,
-  onSettings,
-  pluginsOpen,
-  onPlugins,
-  stagedCount,
-  onNewGame,
-  onSelectThread,
-  atHome,
-  onHome,
-  playOpen,
-  onPlayMode,
-}: Props & { studio: ConversationRecord | undefined; harnessOpen: boolean }): JSX.Element {
+  onNav,
+}: Props): JSX.Element {
+  const press = counted(onNav);
+  return (
+    <div className="titlebar-drag sidebar-titlebar">
+      <Hint label={t("Hide sidebar")} shortcut="⌘B">
+        <button
+          type="button"
+          className="no-drag sidebar-toggle"
+          data-sidebar-toggle={SidebarToggle.Hide}
+          aria-label={t("Hide sidebar")}
+          aria-controls="studio-sidebar"
+          aria-expanded="true"
+          onClick={onToggle}
+        >
+          <Icon name="sidebar" />
+        </button>
+      </Hint>
+      <div className="no-drag sidebar-brand-actions">
+        <IconButton
+          icon="search"
+          label={t("Search games")}
+          title={t("Search games · {shortcut}", { shortcut: "⌘K" })}
+          className="sidebar-icon"
+          onClick={press(NavItem.Search, onSearch)}
+        />
+        <NotificationsMenu
+          items={notices}
+          games={games}
+          threads={threads}
+          onOpen={onOpenNotice}
+          onRead={onReadNotices}
+          onClear={onClearNotices}
+        />
+        <Hint label={FEEDBACK_WORDS.title}>
+          <button
+            type="button"
+            className="sidebar-toggle sidebar-feedback"
+            data-feedback-open
+            aria-label={FEEDBACK_WORDS.title}
+            aria-haspopup="dialog"
+            onClick={press(NavItem.Feedback, onFeedback)}
+          >
+            <Icon name="bug" />
+          </button>
+        </Hint>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The fixed top: the toggle with search, notifications and Send feedback; the brand with the Play /
+ * Create switch; the rooms in Create or the shelves in Play; the games or Recent heading.
+ */
+function SidebarTop(props: Props & { studio: ConversationRecord | undefined; harnessOpen: boolean }): JSX.Element {
+  const {
+    studio,
+    harnessOpen,
+    busyThreads,
+    threadStatus,
+    onSettings,
+    pluginsOpen,
+    onPlugins,
+    itemsOpen,
+    onItems,
+    stagedCount,
+    onNewGame: newGame,
+    onSelectThread,
+    atHome,
+    onHome,
+    playOpen,
+    onPlayMode,
+    onNav,
+  } = props;
   const studioStatus = studio ? threadStatus[studio.id]?.status : undefined;
   const studioBusy = Boolean(studio && busyThreads.has(studio.id));
   const hasRecent = usePlay((s) => s.recent.length > 0);
+  const press = counted(onNav);
+  // The Games heading's +; the New game row counts as its own.
+  const onNewGame = press(NavItem.GamesPlus, newGame);
   return (
     <div className="sidebar-fixed">
-      <div className="titlebar-drag sidebar-titlebar">
-        <Hint label="Hide sidebar" shortcut="⌘B">
-          <button
-            type="button"
-            className="no-drag sidebar-toggle"
-            aria-label="Hide sidebar"
-            aria-controls="studio-sidebar"
-            aria-expanded="true"
-            onClick={onToggle}
-          >
-            <Icon name="sidebar" />
-          </button>
-        </Hint>
-        <div className="no-drag sidebar-brand-actions">
-          <IconButton
-            icon="search"
-            label="Search games"
-            title="Search games · ⌘K"
-            className="sidebar-icon"
-            onClick={onSearch}
-          />
-          <NotificationsMenu
-            items={notices}
-            games={games}
-            threads={threads}
-            onOpen={onOpenNotice}
-            onRead={onReadNotices}
-            onClear={onClearNotices}
-          />
-          <Hint label={FEEDBACK_WORDS.title}>
-            <button
-              type="button"
-              className="sidebar-toggle sidebar-feedback"
-              data-feedback-open
-              aria-label={FEEDBACK_WORDS.title}
-              aria-haspopup="dialog"
-              onClick={onFeedback}
-            >
-              <Icon name="bug" />
-            </button>
-          </Hint>
-        </div>
-      </div>
+      <SidebarTitlebar {...props} />
       <div className="sidebar-brand-row">
         <button
           type="button"
           className="sidebar-home"
-          aria-label="Home"
+          aria-label={t("Home")}
           aria-current={atHome && !playOpen ? "page" : undefined}
-          onClick={onHome}
+          onClick={press(NavItem.Home, onHome)}
         >
           <GenexLogo className="brand sidebar-wordmark" />
         </button>
-        <PlaySwitch playing={playOpen} onChange={onPlayMode} />
+        <PlaySwitch playing={playOpen} onChange={(play) => onPlayMode(play, PlayModeVia.Switch)} />
       </div>
       <div className="sidebar-fold" data-folded={!playOpen} inert={!playOpen}>
-        <PlayShelfRows />
+        <PlayShelfRows onPick={() => onNav(NavItem.PlayShelf)} />
       </div>
       <div className="sidebar-fold" data-folded={playOpen} inert={playOpen}>
         <div className="sidebar-nav">
-          <Hint label="New game" shortcut="⌘N">
-            <NavRow icon="new-game" aria-keyshortcuts="Meta+N Control+N" onClick={onNewGame}>
-              New game
+          <Hint label={t("New game")} shortcut="⌘N">
+            <NavRow icon="new-game" aria-keyshortcuts="Meta+N Control+N" onClick={press(NavItem.NewGame, newGame)}>
+              {t("New game")}
             </NavRow>
           </Hint>
-          <NavRow icon="plugins" aria-label="Plugins" current={pluginsOpen} onClick={onPlugins}>
-            Plugins
+          <NavRow
+            icon="plugins"
+            aria-label={t("Plugins")}
+            current={pluginsOpen}
+            onClick={press(NavItem.Plugins, onPlugins)}
+          >
+            {t("Plugins")}
+          </NavRow>
+          {/* Create › Items: Browse other creators' items, and Selling your own (P9: Play has none). */}
+          <NavRow
+            icon="layers"
+            aria-label={t("Items")}
+            data-sidebar-room="items"
+            current={itemsOpen}
+            onClick={press(NavItem.Items, onItems)}
+          >
+            {t("Items")}
           </NavRow>
           {studio && (
             <Hint label="Harness" shortcut="⌘2">
@@ -489,11 +538,21 @@ function SidebarTop({
                 data-thread="studio"
                 current={harnessOpen}
                 busy={studioBusy}
-                onClick={() => onSelectThread(studio.id)}
+                onClick={press(NavItem.Harness, () => {
+                  // Only a room that comes up reads the note; the one already up would keep it.
+                  if (!harnessOpen) noteHarnessOpening(HarnessOpenedVia.Sidebar);
+                  onSelectThread(studio.id);
+                })}
               >
                 <span className="min-w-0 flex-1 truncate">Harness</span>
                 {stagedCount > 0 && (
-                  <span className="sidebar-badge" aria-label={`${stagedCount} skill improvements to review`}>
+                  <span
+                    className="sidebar-badge"
+                    aria-label={t(
+                      "{count, plural, one {# skill improvement to review} other {# skill improvements to review}}",
+                      { count: stagedCount },
+                    )}
+                  >
                     {stagedCount}
                   </span>
                 )}
@@ -505,8 +564,13 @@ function SidebarTop({
       </div>
       {/* Settings is in both Create and Play: under whichever rows are up. */}
       <div className="sidebar-nav sidebar-nav-shared">
-        <NavRow icon="settings" aria-label="Settings" aria-haspopup="dialog" onClick={onSettings}>
-          Settings
+        <NavRow
+          icon="settings"
+          aria-label={t("Settings")}
+          aria-haspopup="dialog"
+          onClick={press(NavItem.Settings, onSettings)}
+        >
+          {t("Settings")}
         </NavRow>
       </div>
       {playOpen ? (
@@ -518,11 +582,11 @@ function SidebarTop({
         )
       ) : (
         <div className="sidebar-games-heading" key="games">
-          <span>Games</span>
+          <span>{t("Games")}</span>
           <IconButton
             icon="plus"
-            label="Create game"
-            title="Create game · ⌘N"
+            label={t("Create game")}
+            title={`${t("Create game")} · ⌘N`}
             className="sidebar-icon"
             onClick={onNewGame}
           />
@@ -543,7 +607,7 @@ const SHELF_ICONS = {
  * Play's shelves in the rooms' place: Games, Tools and Assets, each with its count, as genex.games
  * lists them. Friends are under the games (`SidebarFriends`), not a row here.
  */
-function PlayShelfRows(): JSX.Element {
+function PlayShelfRows({ onPick }: { onPick: () => void }): JSX.Element {
   const onShelf = usePlay((s) => s.view.page === PlayPage.Shelf);
   const shown = usePlay((s) => s.shelf);
   const counts = usePlay(useShallow((s) => s.counts));
@@ -557,7 +621,10 @@ function PlayShelfRows(): JSX.Element {
             icon={SHELF_ICONS[shelf]}
             current={onShelf && shelf === shown}
             data-play-shelf={shelf}
-            onClick={() => studioApp().play.chooseShelf(shelf)}
+            onClick={() => {
+              onPick();
+              studioApp().play.chooseShelf(shelf);
+            }}
           >
             <span className="min-w-0 flex-1 truncate">{PLAY_WORDS.shelves[shelf]}</span>
             {count !== null && <span className="sidebar-count">{formatCount(count)}</span>}
@@ -602,7 +669,7 @@ function GameRowEnd({ busy, pinned }: { busy: boolean; pinned: boolean | undefin
   }
   if (!pinned) return null;
   return (
-    <span className="sidebar-pin" aria-label="Pinned">
+    <span className="sidebar-pin" aria-label={t("Pinned")}>
       <Icon name="pin" size={13} />
     </span>
   );
@@ -633,8 +700,16 @@ function GameRow({
   // A project that isn't a game says what it is beside its name.
   const kind = projectKindLabel(game);
   // The row's end is one slot: the working dot, else the pin — and ⋯ in their place on hover.
+  // Its name, path and menu label are the person's game.
   return (
-    <div className="sidebar-game" data-game={game.name} data-active={active} data-busy={busy} data-menu-open={open}>
+    <div
+      className="sidebar-game"
+      data-analytics-mask
+      data-game={game.name}
+      data-active={active}
+      data-busy={busy}
+      data-menu-open={open}
+    >
       <button
         type="button"
         data-project={game.name}
@@ -649,37 +724,41 @@ function GameRow({
             row narrower than that shortens the label too. */}
         <span className="min-w-8 flex-1 truncate">{game.title}</span>
         {kind && <span className="ms-1.5 min-w-0 truncate text-ink-3">{kind}</span>}
-        {busy && <span className="sr-only">Working</span>}
+        {busy && <span className="sr-only">{t("Working")}</span>}
       </button>
       <GameRowEnd busy={busy} pinned={game.pinned} />
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
-              <button type="button" className="sidebar-game-menu" aria-label={`Actions for ${game.title}`}>
+              <button
+                type="button"
+                className="sidebar-game-menu"
+                aria-label={t("Actions for {game}", { game: game.title })}
+              >
                 <Icon name="more" />
               </button>
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right">Game actions</TooltipContent>
+          <TooltipContent side="right">{t("Game actions")}</TooltipContent>
         </Tooltip>
         <DropdownMenuContent align="start" side="right" className="w-48">
           <DropdownMenuItem data-game-action="rename" onSelect={onRename}>
             <Icon name="rename" />
-            Rename
+            {t("Rename")}
           </DropdownMenuItem>
           <DropdownMenuItem data-game-action="pin" onSelect={onPin}>
             <Icon name="pin" />
-            {game.pinned ? "Unpin" : "Pin"}
+            {game.pinned ? t("Unpin") : t("Pin")}
           </DropdownMenuItem>
           <DropdownMenuItem data-game-action="cover" onSelect={onCover}>
             <Icon name="image" />
-            Change image…
+            {t("Change image…")}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem data-game-action="delete" disabled={busy} onSelect={onDelete} className="text-red">
             <Icon name="trash" />
-            Delete…
+            {t("Delete…")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

@@ -328,7 +328,7 @@ describe("the engine-app guard", () => {
   const declared = new Set(["com.example.toy"]);
 
   /** A target whose guard reads the declared apps and the chat's live assist grant (null: none). */
-  async function guarded(under: DesktopApp, granted: ReadonlySet<string> | null) {
+  async function guarded(under: DesktopApp, granted: ReadonlySet<string> | null, others = false) {
     const fake = fakeDriver({ under });
     const asked: string[] = [];
     const target = desktopTarget({
@@ -338,7 +338,7 @@ describe("the engine-app guard", () => {
         return true;
       },
       ownApp: (app) => app.bundleId === STUDIO.bundleId,
-      engineApps: (app) => engineAppRefusal(app, { declared, granted }),
+      engineApps: (app) => engineAppRefusal(app, { declared, granted, others }),
     });
     await target.screenshot({ quality: 80, surface: "auto" as never });
     const done = await target.input([{ type: "click", x: 10, y: 10, px: true }]);
@@ -361,11 +361,22 @@ describe("the engine-app guard", () => {
     assert.deepEqual(asked, ["Toy Editor"], "the person's per-app card still asks");
   });
 
-  it("refuses every app outside the grant while an assist runs", async () => {
-    const { done, calls, refused } = await guarded(EDITOR, new Set(["com.example.toy"]));
-    assert.equal(done.applied, 0);
-    assert.deepEqual(calls, []);
-    assert.match(refused[0]!.message, /TextEdit is not one of the apps this setup step may use/);
+  it("leaves an app outside the grant to the person's card while an assist whose engine opens pages runs", async () => {
+    const { done, calls, asked } = await guarded(EDITOR, new Set(["com.example.toy"]), true);
+    assert.equal(done.applied, 1);
+    assert.deepEqual(calls, ["click 5,5 left×1"]);
+    assert.deepEqual(asked, ["TextEdit"], "the person is asked about it, as outside an assist");
+    const strict = await guarded(EDITOR, new Set(["com.example.toy"]));
+    assert.equal(strict.done.applied, 0, "an assist whose engine opens no pages refuses it");
+    assert.match(strict.refused[0]?.message ?? "", /not one of the apps this setup step may use/);
+  });
+
+  it("refuses an engine's editor the assist was not granted, and an app it cannot name", async () => {
+    const other: DesktopApp = { name: "Other Editor", bundleId: "com.example.other", pid: 12 };
+    const rule = { declared: new Set([...declared, "com.example.other"]), granted: new Set(["com.example.toy"]) };
+    assert.match(String(engineAppRefusal(other, rule)), /Other Editor is not one of the apps this setup step may use/);
+    const unnamed: DesktopApp = { name: "Unknown", bundleId: null, pid: 13 };
+    assert.match(String(engineAppRefusal(unnamed, rule)), /not one of the apps this setup step may use/);
   });
 
   it("still never drives the studio or system settings, even when a grant names them", async () => {
@@ -397,4 +408,255 @@ describe("the engine-app guard", () => {
       "an app with no bundle id is never inside a grant",
     );
   });
+});
+
+/**
+ * Bringing an app to the front by name: how the agent reaches the person's browser behind a
+ * full-screen editor, since the taskbar is the shell and never driven. The app is held to a click's
+ * rules: the apps the studio never drives and an engine's editor outside its assist are refused
+ * before the person is asked, and an app they decline is never raised.
+ */
+describe("bringing an app to the front", () => {
+  const EDGE: DesktopApp = { name: "Microsoft Edge", bundleId: "msedge.exe", pid: 51 };
+  const ROBLOX_STUDIO = "robloxstudiobeta.exe";
+
+  /** A driver whose raise puts a running app in front, and records it. */
+  function raisingDriver(running: DesktopApp[]) {
+    const fake = fakeDriver();
+    let front: DesktopApp | null = EDITOR;
+    fake.driver.focus = async () => ({ app: front, secure: false });
+    fake.driver.bringToFront = async (id) => {
+      fake.calls.push(`raise ${id}`);
+      front = running.find((app) => app.bundleId === id) ?? front;
+    };
+    return fake;
+  }
+
+  /** A target over a raising driver, with the engine guard reading Roblox Studio as declared. */
+  async function fronting(allowed: string[], granted: ReadonlySet<string> | null = null) {
+    const fake = raisingDriver([EDGE]);
+    const asked: string[] = [];
+    const target = desktopTarget({
+      driver: fake.driver,
+      allowApp: async (app) => {
+        asked.push(app.bundleId ?? app.name);
+        return allowed.includes(app.bundleId ?? "");
+      },
+      ownApp: (app) => app.bundleId === STUDIO.bundleId,
+      engineApps: (app) => engineAppRefusal(app, { declared: new Set([ROBLOX_STUDIO]), granted }),
+      frontSettleMs: 0,
+    });
+    return { target, calls: fake.calls, asked };
+  }
+
+  it("brings an app the person allows in front of the others", async () => {
+    const { target, calls, asked } = await fronting(["msedge.exe"]);
+    assert.equal(await target.front?.("msedge.exe"), null);
+    assert.deepEqual(calls, ["raise msedge.exe"]);
+    assert.deepEqual(asked, ["msedge.exe"], "the person is asked about the app before it moves");
+  });
+
+  it("reads a Windows executable in any case, as Windows does", async () => {
+    const { target, calls } = await fronting(["msedge.exe"]);
+    assert.equal(await target.front?.("MSEdge.EXE"), null);
+    assert.deepEqual(calls, ["raise msedge.exe"]);
+  });
+
+  it("says when the app did not come forward (it is not running), and opens nothing", async () => {
+    const { target, calls } = await fronting(["chrome.exe"]);
+    assert.match(String(await target.front?.("chrome.exe")), /chrome\.exe did not come to the front/);
+    assert.deepEqual(calls, ["raise chrome.exe"]);
+  });
+
+  const refusedApps: Array<{ name: string; app: string; why: RegExp; asked?: string[] }> = [
+    { name: "the shell (Explorer, the taskbar)", app: "explorer.exe", why: /never driven/ },
+    { name: "the shell in capitals", app: "EXPLORER.EXE", why: /never driven/ },
+    { name: "a password manager", app: "1password.exe", why: /never driven/ },
+    { name: "the studio itself", app: STUDIO.bundleId ?? "", why: /never driven/ },
+    { name: "system settings on a Mac", app: "com.apple.systempreferences", why: /never driven/ },
+    { name: "an engine's editor outside its assist", app: ROBLOX_STUDIO, why: /game engine's editor/ },
+    { name: "a path instead of an app", app: "C:\\Windows\\explorer.exe", why: /names no app/ },
+    { name: "a relative path", app: "../../tools/evil.exe", why: /names no app/ },
+    { name: "nothing at all", app: "  ", why: /names no app/ },
+    { name: "an app the person declines", app: "msedge.exe", why: /did not allow/, asked: ["msedge.exe"] },
+  ];
+  for (const row of refusedApps) {
+    it(`refuses ${row.name}, and nothing is raised`, async () => {
+      const { target, calls, asked } = await fronting([]);
+      assert.match(String(await target.front?.(row.app)), row.why);
+      assert.deepEqual(calls, [], "the driver raised nothing");
+      assert.deepEqual(asked, row.asked ?? [], "a refused app is never put to the person");
+    });
+  }
+
+  describe("on a Mac, where bundle ids are read in any case", () => {
+    const SAFARI: DesktopApp = { name: "Safari", bundleId: "com.apple.Safari", pid: 61 };
+    const MAC_STUDIO: DesktopApp = { name: "Roblox Studio", bundleId: "com.Roblox.RobloxStudio", pid: 62 };
+    const SETTINGS: DesktopApp = { name: "System Settings", bundleId: "com.apple.systempreferences", pid: 63 };
+    const RUNNING = [SAFARI, MAC_STUDIO, SETTINGS];
+
+    /** A Mac target: the driver names a running app by its own id, whatever case it was asked in. */
+    function macFronting(allowed: string[], granted: ReadonlySet<string> | null = null) {
+      const fake = raisingDriver(RUNNING);
+      fake.driver.runningApp = async (name) =>
+        RUNNING.find((app) => app.bundleId?.toLowerCase() === name.toLowerCase() || app.name === name) ?? null;
+      const asked: string[] = [];
+      const target = desktopTarget({
+        driver: fake.driver,
+        allowApp: async (app) => {
+          asked.push(app.bundleId ?? app.name);
+          return allowed.includes(app.bundleId ?? "");
+        },
+        ownApp: (app) => app.bundleId === STUDIO.bundleId,
+        engineApps: (app) => engineAppRefusal(app, { declared: new Set([MAC_STUDIO.bundleId ?? ""]), granted }),
+        frontSettleMs: 0,
+      });
+      return { target, calls: fake.calls, asked };
+    }
+
+    it("raises the running app under its own id, asked in another case", async () => {
+      const studio = new Set([MAC_STUDIO.bundleId ?? ""]);
+      const { target, calls } = macFronting([MAC_STUDIO.bundleId ?? ""], studio);
+      assert.equal(await target.front?.("com.roblox.RobloxStudio"), null);
+      assert.deepEqual(calls, ["raise com.Roblox.RobloxStudio"]);
+    });
+
+    it("asks the person about the app under its own id", async () => {
+      const { target, asked } = macFronting(["com.apple.Safari"]);
+      assert.equal(await target.front?.("com.apple.safari"), null);
+      assert.deepEqual(asked, ["com.apple.Safari"]);
+    });
+
+    const macRefused: Array<{ name: string; app: string; why: RegExp }> = [
+      { name: "system settings in another case", app: "com.apple.SystemPreferences", why: /never driven/ },
+      {
+        name: "an engine's editor in another case, outside its assist",
+        app: "com.roblox.robloxstudio",
+        why: /game engine's editor/,
+      },
+      { name: "an app that is not running", app: "com.google.Chrome", why: /is not running.*opens nothing/ },
+    ];
+    for (const row of macRefused) {
+      it(`refuses ${row.name}, and nothing is raised`, async () => {
+        const { target, calls, asked } = macFronting(["com.google.Chrome", "com.apple.systempreferences"]);
+        assert.match(String(await target.front?.(row.app)), row.why);
+        assert.deepEqual(calls, [], "the driver raised nothing");
+        assert.deepEqual(asked, [], "a refused app is never put to the person");
+      });
+    }
+
+    describe("picking one of an app's windows by its title", () => {
+      const JUMP = { pid: 62, windowId: 620, title: "Jump on Platforms - Roblox Studio" };
+      const BLOCK = { pid: 64, windowId: 640, title: "/Users/x/games/spinning-colored-block.rbxlx - Roblox Studio" };
+
+      /** Two Studios, one per place as a Mac runs them, Jump on Platforms in front; a raise of a pid fronts it. */
+      function twoStudios(raises = true, doubts = false) {
+        const fake = raisingDriver(RUNNING);
+        let front: DesktopApp = { ...MAC_STUDIO, pid: JUMP.pid };
+        fake.driver.focus = async () => ({ app: front, secure: false });
+        fake.driver.runningApp = async () => MAC_STUDIO;
+        fake.driver.appWindows = async () => [JUMP, BLOCK];
+        fake.driver.bringToFront = async (id, window) => {
+          fake.calls.push(`raise ${id} ${window?.pid} ${window?.windowId}`);
+          if (raises && window) front = { ...MAC_STUDIO, pid: window.pid };
+          if (doubts) throw new Error("exact window was not verified as the frontmost process's focused window");
+        };
+        const target = desktopTarget({ driver: fake.driver, allowApp: async () => true, frontSettleMs: 0 });
+        return { target, calls: fake.calls, fake };
+      }
+
+      it("raises the window whose title names the place, though another of the app's is in front", async () => {
+        const { target, calls } = twoStudios();
+        assert.equal(await target.front?.("com.Roblox.RobloxStudio", "Spinning-Colored-Block"), null);
+        assert.deepEqual(calls, [`raise com.Roblox.RobloxStudio ${BLOCK.pid} ${BLOCK.windowId}`]);
+      });
+
+      it("names the app's windows when none has that title, and raises nothing", async () => {
+        const { target, calls } = twoStudios();
+        const why = String(await target.front?.("com.Roblox.RobloxStudio", "Sky Race"));
+        assert.match(why, /Jump on Platforms - Roblox Studio/);
+        assert.match(why, /spinning-colored-block\.rbxlx - Roblox Studio/);
+        assert.deepEqual(calls, []);
+      });
+
+      it("goes by what is in front when the driver doubts a raise that worked", async () => {
+        const { target, fake } = twoStudios(true, true);
+        assert.equal(await target.front?.("com.Roblox.RobloxStudio", "spinning-colored-block"), null);
+        assert.ok(fake.calls.length > 0);
+      });
+
+      it("says so when the app came forward on another of its windows", async () => {
+        const { target } = twoStudios(false);
+        assert.match(
+          String(await target.front?.("com.Roblox.RobloxStudio", "spinning-colored-block")),
+          /did not come to the front/,
+        );
+      });
+    });
+
+    it("never says Windows on a Mac when an app stays behind", async () => {
+      const fake = raisingDriver([]);
+      fake.driver.runningApp = async () => SAFARI;
+      const target = desktopTarget({ driver: fake.driver, allowApp: async () => true, frontSettleMs: 0 });
+      const why = String(await target.front?.("com.apple.Safari"));
+      assert.match(why, /did not come to the front/);
+      assert.doesNotMatch(why, /Windows/);
+    });
+  });
+
+  it("brings an engine's editor forward inside an assist that was granted it", async () => {
+    const { target, calls } = await fronting([ROBLOX_STUDIO], new Set([ROBLOX_STUDIO]));
+    assert.match(String(await target.front?.(ROBLOX_STUDIO)), /did not come to the front/);
+    assert.deepEqual(calls, [`raise ${ROBLOX_STUDIO}`], "the grant lets the raise through");
+  });
+});
+
+describe("opening a page in the person's browser", () => {
+  /** A target whose host opens what it is handed, and refuses what the test says. */
+  function opening(refuse: (address: string) => string | null = () => null) {
+    const fake = fakeDriver();
+    const opened: string[] = [];
+    const target = desktopTarget({
+      driver: fake.driver,
+      allowApp: async () => true,
+      openPage: async (address) => {
+        const why = refuse(address.href);
+        if (!why) opened.push(address.href);
+        return why;
+      },
+      frontSettleMs: 0,
+    });
+    return { target, opened, calls: fake.calls };
+  }
+
+  it("hands the host an https address to open, and clicks nothing itself", async () => {
+    const { target, opened, calls } = opening();
+    assert.equal(await target.openPage?.("https://create.example.com/dashboard/creations"), null);
+    assert.deepEqual(opened, ["https://create.example.com/dashboard/creations"]);
+    assert.deepEqual(calls, [], "no input reached the driver");
+  });
+
+  it("says why when the host refuses it", async () => {
+    const { target, opened } = opening(() => "that page is not this task's");
+    assert.equal(await target.openPage?.("https://elsewhere.example/"), "that page is not this task's");
+    assert.deepEqual(opened, []);
+  });
+
+  const refusedAddresses: Array<[string, string]> = [
+    ["plain http", "http://create.example.com/"],
+    ["a file", "file:///etc/passwd"],
+    ["a script", "javascript:alert(1)"],
+    ["a custom scheme that opens an app", "roblox-studio:1+launchmode:edit"],
+    ["credentials in the address", "https://user:pass@create.example.com/"],
+    ["a port", "https://create.example.com:8443/"],
+    ["an address that does not parse", "https://"],
+    ["no address", "   "],
+  ];
+  for (const [name, address] of refusedAddresses) {
+    it(`refuses ${name}, and nothing is opened`, async () => {
+      const { target, opened } = opening();
+      assert.match(String(await target.openPage?.(address)), /https:\/\//);
+      assert.deepEqual(opened, []);
+    });
+  }
 });

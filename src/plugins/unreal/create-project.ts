@@ -16,6 +16,7 @@ import { copyFile, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises
 import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { currentLocale, t } from "../../shared/i18n.ts";
 import { isInside } from "../../substrate/paths.ts";
 import { isJsonObject, type RenameFolderOptions, readRegularFile, renameFolder } from "../../substrate/fsx.ts";
 import {
@@ -65,8 +66,8 @@ const OFFERED_VARIANTS: Readonly<Record<BlueprintTemplate, readonly TemplateVari
 
 /** Genex's own line for each variant card. */
 const VARIANT_LINE = {
-  [TemplateVariant.Combat]: "Over-the-shoulder melee: combo attacks and enemies that fight back.",
-} as const satisfies Record<TemplateVariant, string>;
+  [TemplateVariant.Combat]: () => t("Over-the-shoulder melee: combo attacks and enemies that fight back."),
+} as const satisfies Record<TemplateVariant, () => string>;
 
 /** How a variant card is named: its template's name, then the variant's, as Epic's dialog shows both. */
 const variantName = (template: string, variant: string) => `${template} · ${variant}`;
@@ -76,12 +77,12 @@ const variantName = (template: string, variant: string) => `${template} · ${var
  * C++ version, and Genex offers neither (the default variant, Blueprint only).
  */
 const TEMPLATE_LINE = {
-  [BlueprintTemplate.ThirdPerson]: "Over-the-shoulder camera; walk, run and jump.",
-  [BlueprintTemplate.FirstPerson]: "Look and move from the player's eyes.",
-  [BlueprintTemplate.TopDown]: "Camera high above; click where to go.",
-  [BlueprintTemplate.Vehicle]: "A sports car and an off-road buggy with gears and a speedometer.",
-  [BlueprintTemplate.Blank]: "An empty level to build from scratch.",
-} as const satisfies Record<BlueprintTemplate, string>;
+  [BlueprintTemplate.ThirdPerson]: () => t("Over-the-shoulder camera; walk, run and jump."),
+  [BlueprintTemplate.FirstPerson]: () => t("Look and move from the player's eyes."),
+  [BlueprintTemplate.TopDown]: () => t("Camera high above; click where to go."),
+  [BlueprintTemplate.Vehicle]: () => t("A sports car and an off-road buggy with gears and a speedometer."),
+  [BlueprintTemplate.Blank]: () => t("An empty level to build from scratch."),
+} as const satisfies Record<BlueprintTemplate, () => string>;
 
 /** Why a new game was refused; the message says it in words the panel shows as they are. */
 export const CreateErrorCode = {
@@ -114,39 +115,66 @@ const NameProblem = {
 } as const;
 type NameProblem = (typeof NameProblem)[keyof typeof NameProblem];
 
+/** Where Epic's launcher adds an engine version, as its own English menus name the steps. */
+const LAUNCHER_ADD_ENGINE = "Library, then + next to Engine Versions";
+
+/** New game's refusals, in the person's words: the panel shows them as they are. */
 const MESSAGE = {
   [CreateErrorCode.BadName]: {
-    [NameProblem.Empty]: "Type a name.",
-    [NameProblem.FirstNotLetter]: "Start the name with a letter.",
-    [NameProblem.Space]: "Use no spaces; try MyGame or My_Game.",
-    [NameProblem.OtherCharacter]: "Use only letters, digits and underscores.",
-    [NameProblem.TooLong]: `Use ${PROJECT_NAME_MAX} characters or fewer.`,
-  } satisfies Record<NameProblem, string>,
+    [NameProblem.Empty]: () => t("Type a name."),
+    [NameProblem.FirstNotLetter]: () => t("Start the name with a letter."),
+    [NameProblem.Space]: () => t("Use no spaces; try MyGame or My_Game."),
+    [NameProblem.OtherCharacter]: () => t("Use only letters, digits and underscores."),
+    [NameProblem.TooLong]: () =>
+      t("{max, plural, one {Use # character or fewer.} other {Use # characters or fewer.}}", {
+        max: PROJECT_NAME_MAX,
+      }),
+  } satisfies Record<NameProblem, () => string>,
   [CreateErrorCode.ReservedName]: (name: string) =>
-    `${name} is a name Unreal or Windows keeps for itself. Choose another name.`,
+    t("{name} is a name Unreal or Windows keeps for itself. Choose another name.", { name }),
   [CreateErrorCode.NameTaken]: (name: string, place: string) =>
-    `There's already something called ${name} in ${place}. Choose another name.`,
-  [CreateErrorCode.UnknownTemplate]: "Choose one of the templates Genex shows.",
-  [CreateErrorCode.UnknownVariant]: "Choose one of the templates Genex shows.",
-  [CreateErrorCode.BadTemplate]: (why: string) => `This Unreal template can't be used: ${why}`,
-  [CreateErrorCode.Link]: (what: string) => `${what} links somewhere else, so Genex won't use it.`,
-  [CreateErrorCode.BadParent]: "Genex can't save a new project in that folder.",
+    t("There's already something called {name} in {place}. Choose another name.", { name, place }),
+  [CreateErrorCode.UnknownTemplate]: () => t("Choose one of the templates Genex shows."),
+  [CreateErrorCode.UnknownVariant]: () => t("Choose one of the templates Genex shows."),
+  [CreateErrorCode.Link]: (what: string) => t("{what} links somewhere else, so Genex won't use it.", { what }),
+  [CreateErrorCode.BadParent]: () => t("Genex can't save a new project in that folder."),
   [CreateErrorCode.PathTooLong]: (longest: number) =>
-    `The path to this project would be too long for Unreal. Use a name of up to ${longest} characters here.`,
-  [CreateErrorCode.FolderTooLong]:
-    "The Unreal Projects folder's path is too long for Unreal on Windows, whatever the game's name. Move your Documents folder to a shorter path.",
-  [CreateErrorCode.NoEngine]: installEngineText(),
-  [CreateErrorCode.Busy]:
-    "Another app, such as OneDrive or an antivirus, is still reading the new project's files. Try Create and open again in a moment.",
+    t(
+      "{longest, plural, one {The path to this project would be too long for Unreal. Use a name of up to # character here.} other {The path to this project would be too long for Unreal. Use a name of up to # characters here.}}",
+      { longest },
+    ),
+  [CreateErrorCode.FolderTooLong]: () =>
+    t(
+      "The Unreal Projects folder's path is too long for Unreal on Windows, whatever the game's name. Move your Documents folder to a shorter path.",
+    ),
+  [CreateErrorCode.NoEngine]: installEngineText,
+  [CreateErrorCode.Busy]: () =>
+    t(
+      "Another app, such as OneDrive or an antivirus, is still reading the new project's files. Try Create and open again in a moment.",
+    ),
   [CreateErrorCode.UnverifiedEngine]: (version: string) =>
-    `Genex makes new Unreal projects with Unreal ${VERIFIED_CREATE_ENGINES.join(" or ")}, and this computer has Unreal ${version}. Install ${VERIFIED_CREATE_ENGINES[0]} beside it in the Epic Games Launcher (Library, then + next to Engine Versions), or make the project in Unreal's own New Project dialog and choose it from the Unreal button.`,
-  NoDefs: "it has no Config/TemplateDefs.ini.",
-  CustomDefs: "it needs its own C++ setup code.",
-  HasCode: "it brings C++ code.",
-  NoProjectFile: "its .uproject is missing.",
-  MissingPack: (pack: string) => `its shared pack ${pack} is missing.`,
-  BadPackList: (pack: string) => `its shared pack ${pack} names files outside the engine.`,
+    t(
+      "Genex makes new Unreal projects with Unreal {versions}, and this computer has Unreal {version}. Install {wanted} beside it in the Epic Games Launcher ({clickPath}), or make the project in Unreal's own New Project dialog and choose it from the Unreal button.",
+      {
+        versions: orList(VERIFIED_CREATE_ENGINES),
+        version,
+        wanted: VERIFIED_CREATE_ENGINES[0],
+        clickPath: LAUNCHER_ADD_ENGINE,
+      },
+    ),
+  // A template Genex can't replicate, each reason its own sentence.
+  NoDefs: () => t("This Unreal template can't be used: it has no Config/TemplateDefs.ini."),
+  CustomDefs: () => t("This Unreal template can't be used: it needs its own C++ setup code."),
+  HasCode: () => t("This Unreal template can't be used: it brings C++ code."),
+  NoProjectFile: () => t("This Unreal template can't be used: its .uproject is missing."),
+  MissingPack: (pack: string) => t("This Unreal template can't be used: its shared pack {pack} is missing.", { pack }),
+  BadPackList: (pack: string) =>
+    t("This Unreal template can't be used: its shared pack {pack} names files outside the engine.", { pack }),
 } as const;
+
+/** "a or b" in the language the app speaks: the versions Genex makes projects with. */
+const orList = (items: readonly string[]): string =>
+  new Intl.ListFormat(currentLocale(), { style: "long", type: "disjunction" }).format(items);
 
 /** A refusal with a code for the panel and a message it shows as it is. */
 export class CreateError extends Error {
@@ -158,7 +186,7 @@ export class CreateError extends Error {
 }
 
 /** The refusal when no supported engine is installed. */
-export const noEngineError = () => new CreateError(CreateErrorCode.NoEngine, MESSAGE[CreateErrorCode.NoEngine]);
+export const noEngineError = () => new CreateError(CreateErrorCode.NoEngine, MESSAGE[CreateErrorCode.NoEngine]());
 
 /**
  * The engine versions whose CreateProjectFromTemplate was compared step by step with Epic's own
@@ -377,22 +405,22 @@ async function readJsonValue(file: string): Promise<unknown> {
   }
 }
 
-const badTemplate = (why: string) =>
-  new CreateError(CreateErrorCode.BadTemplate, MESSAGE[CreateErrorCode.BadTemplate](why));
+/** A template Genex can't replicate; `message` says why, whole. */
+const badTemplate = (message: string) => new CreateError(CreateErrorCode.BadTemplate, message);
 
 /** A template's folder and defs, refusing what Genex cannot replicate (the template's .uproject and TemplateDefs.ini; C++ build-settings rules are refused). */
 async function loadTemplate(engine: Engine, template: BlueprintTemplate) {
   const folder = path.join(templatesFolder(engine), template);
-  if (!(await assertNoLinkBelow(engine.directory, folder, template))) throw badTemplate(MESSAGE.NoDefs);
+  if (!(await assertNoLinkBelow(engine.directory, folder, template))) throw badTemplate(MESSAGE.NoDefs());
   const defsText = await readText(path.join(folder, "Config", "TemplateDefs.ini")).catch(() => null);
-  if (defsText === null) throw badTemplate(MESSAGE.NoDefs);
+  if (defsText === null) throw badTemplate(MESSAGE.NoDefs());
   const defs = parseTemplateDefs(defsText);
-  if (defs.customClass !== "") throw badTemplate(MESSAGE.CustomDefs);
+  if (defs.customClass !== "") throw badTemplate(MESSAGE.CustomDefs());
   // UDefaultTemplateProjectDefs::GeneratesCode: a Source folder makes it a C++ template.
-  if (await lstatOrNull(path.join(folder, "Source"))) throw badTemplate(MESSAGE.HasCode);
+  if (await lstatOrNull(path.join(folder, "Source"))) throw badTemplate(MESSAGE.HasCode());
   const descriptor = await readJsonValue(path.join(folder, `${template}${UPROJECT_EXTENSION}`));
-  if (!isJsonObject(descriptor)) throw badTemplate(MESSAGE.NoProjectFile);
-  if (Array.isArray(descriptor.Modules) && descriptor.Modules.length > 0) throw badTemplate(MESSAGE.HasCode);
+  if (!isJsonObject(descriptor)) throw badTemplate(MESSAGE.NoProjectFile());
+  if (Array.isArray(descriptor.Modules) && descriptor.Modules.length > 0) throw badTemplate(MESSAGE.HasCode());
   return { folder, defs, descriptor };
 }
 
@@ -406,7 +434,7 @@ async function thumbnailOf(file: string): Promise<string | null> {
 function offeredVariant(template: BlueprintTemplate, defs: TemplateDefs, variant: string): TemplateVariantDefs {
   const offered: readonly string[] = OFFERED_VARIANTS[template];
   const found = offered.includes(variant) ? defs.variants.find((v) => v.name === variant) : undefined;
-  if (!found) throw new CreateError(CreateErrorCode.UnknownVariant, MESSAGE[CreateErrorCode.UnknownVariant]);
+  if (!found) throw new CreateError(CreateErrorCode.UnknownVariant, MESSAGE[CreateErrorCode.UnknownVariant]());
   return found;
 }
 
@@ -428,7 +456,7 @@ async function variantCards(
     const packs = defs ? await planPacks(engine, defs.sharedContentPacks).catch(() => null) : null;
     if (!defs || !packs) continue;
     const name = variantName(loaded.defs.displayName, defs.displayName || variant);
-    cards.push({ id: template, variant, name, description: VARIANT_LINE[variant], thumbnail });
+    cards.push({ id: template, variant, name, description: VARIANT_LINE[variant](), thumbnail });
   }
   return cards;
 }
@@ -440,7 +468,7 @@ export async function listTemplates(engine: Engine): Promise<TemplateCard[]> {
     const loaded = await loadTemplate(engine, id).catch(() => null);
     if (!loaded) continue;
     const thumbnail = await thumbnailOf(path.join(loaded.folder, "Media", `${id}.png`));
-    cards.push({ id, name: loaded.defs.displayName, description: TEMPLATE_LINE[id], thumbnail });
+    cards.push({ id, name: loaded.defs.displayName, description: TEMPLATE_LINE[id](), thumbnail });
     cards.push(...(await variantCards(engine, id, loaded, thumbnail)));
   }
   return cards;
@@ -489,7 +517,7 @@ function nameProblem(name: string): NameProblem {
 /** Epic's name rules (IsValidProjectFileForCreation). */
 async function assertName(name: string, engine: Engine): Promise<void> {
   if (!PROJECT_NAME.test(name))
-    throw new CreateError(CreateErrorCode.BadName, MESSAGE[CreateErrorCode.BadName][nameProblem(name)]);
+    throw new CreateError(CreateErrorCode.BadName, MESSAGE[CreateErrorCode.BadName][nameProblem(name)]());
   const reserved = (await platformNames(engine)).flatMap((p) => [lower(p), lower(p + PLATFORM_MODULE_SUFFIX)]);
   if (reserved.includes(lower(name)) || WINDOWS_DEVICE_NAME.test(name))
     throw new CreateError(CreateErrorCode.ReservedName, MESSAGE[CreateErrorCode.ReservedName](name));
@@ -499,10 +527,10 @@ async function assertName(name: string, engine: Engine): Promise<void> {
 async function assertParent(request: CreateRequest, platform: NodeJS.Platform): Promise<void> {
   const { parent, name, engine } = request;
   if (!path.isAbsolute(parent) || isInside(engine.directory, parent))
-    throw new CreateError(CreateErrorCode.BadParent, MESSAGE[CreateErrorCode.BadParent]);
+    throw new CreateError(CreateErrorCode.BadParent, MESSAGE[CreateErrorCode.BadParent]());
   const limit = pathLimit(platform);
   if (!fits(parent, "A", limit))
-    throw new CreateError(CreateErrorCode.FolderTooLong, MESSAGE[CreateErrorCode.FolderTooLong]);
+    throw new CreateError(CreateErrorCode.FolderTooLong, MESSAGE[CreateErrorCode.FolderTooLong]());
   if (!fits(parent, name, limit))
     throw new CreateError(
       CreateErrorCode.PathTooLong,
@@ -782,7 +810,7 @@ async function assertMakeable(request: Omit<CreateRequest, "parent">): Promise<B
   const { template, name } = request;
   if (!canCreateWith(request.engine)) throw unverifiedEngineError(request.engine.version);
   if (!isAllowed(template))
-    throw new CreateError(CreateErrorCode.UnknownTemplate, MESSAGE[CreateErrorCode.UnknownTemplate]);
+    throw new CreateError(CreateErrorCode.UnknownTemplate, MESSAGE[CreateErrorCode.UnknownTemplate]());
   await assertName(name, request.engine);
   return template;
 }
@@ -856,7 +884,7 @@ async function moveIntoPlace(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code ?? "";
     if (platform === "win32" && BUSY_CODES.has(code))
-      throw new CreateError(CreateErrorCode.Busy, MESSAGE[CreateErrorCode.Busy]);
+      throw new CreateError(CreateErrorCode.Busy, MESSAGE[CreateErrorCode.Busy]());
     throw error;
   }
 }

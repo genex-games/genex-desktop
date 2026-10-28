@@ -16,7 +16,7 @@ import {
 import { isInside } from "../../substrate/paths.ts";
 import type { GodotInstall } from "./find-godot.ts";
 import { type SavedShot, savedShots } from "./godot-output.ts";
-import { type GodotRunner, type PlayRequest, playCall } from "./godot-run.ts";
+import { type GodotJobScope, type GodotRunner, type PlayRequest, playCall } from "./godot-run.ts";
 import { type KeyPress, keysEnd, PLAY_FPS, ShotCameras, type ShotAt } from "./play-input.ts";
 
 /** The most stills one capture takes: a moment's pictures are capped at Genex's, and an agent needs few. */
@@ -82,14 +82,14 @@ export async function takeStills(
   install: GodotInstall,
   project: string,
   request: StillsRequest,
-  signal: AbortSignal,
+  job: GodotJobScope,
 ): Promise<Taken> {
   const parent = path.join(deps.storage, STILLS_FOLDER);
   await mkdir(parent, { recursive: true });
   const folder = await realpath(await mkdtemp(path.join(parent, `${SHOT_PREFIX}-`)));
   try {
     const play = playOf(request, path.join(folder, SHOT_PREFIX));
-    const { output } = await deps.run(install.binary, playCall(project, deps.scripts, play), signal);
+    const { output } = await deps.run(install.binary, playCall(project, deps.scripts, play), job);
     // Only the recording's own frames: one that fell on the stills' moment was dropped, and that moment's pictures are stills.
     const recordedFrames = new Set(
       play.shots.filter((shot) => shot.cameras === ShotCameras.First).map((shot) => shot.frame),

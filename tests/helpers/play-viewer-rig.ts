@@ -102,9 +102,12 @@ export const saved = (body: string): PlayComment => ({
 export type RigOverrides = Partial<PlayViewerDeps["gallery"]> & {
   web?: string;
   comments?: Partial<PlayViewerDeps["comments"]>;
-  barFades?: boolean;
   barFocused?: () => boolean;
   coin?: Partial<ViewerCoin>;
+  /** A web game's native app on this computer, for the bar's pill. */
+  nativeApp?: PlayViewerDeps["nativeApp"];
+  /** Whether a game sells items, for the bar's Store door; the app's page takes the keyboard as `page.focus`. */
+  storeShown?: (slug: string) => Promise<boolean>;
 };
 
 /**
@@ -163,16 +166,16 @@ export function rig(overrides: RigOverrides = {}) {
     window: {
       contentSize: () => WINDOW,
       buttons: (visible) => log.push(`buttons ${visible ? "shown" : "hidden"}`),
-      barFades: overrides.barFades ?? true,
     },
     game: {
-      open: (url) => {
+      open: (url, _slug, bounds) => {
         opened.push(url);
-        log.push("game.open");
+        log.push(`game.open ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`);
       },
       show: (bounds) => log.push(`game.show ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`),
       hide: () => log.push("game.hide"),
       focus: () => log.push("game.focus"),
+      fullScreen: () => log.push("game.fullScreen"),
       close: () => log.push("game.close"),
     },
     bar: {
@@ -181,6 +184,7 @@ export function rig(overrides: RigOverrides = {}) {
       focus: () => log.push("bar.focus"),
       focused: overrides.barFocused ?? (() => false),
       warm: () => log.push("bar.warm"),
+      reload: () => log.push("bar.reload"),
     },
     comments: {
       list: async (id, cursor) => {
@@ -209,6 +213,10 @@ export function rig(overrides: RigOverrides = {}) {
       openSettings: () => {},
       store: { on: () => false, setOn: () => {}, device: () => null, setDevice: () => {} },
     },
+    ...(overrides.nativeApp ? { nativeApp: overrides.nativeApp } : {}),
+    ...(overrides.storeShown
+      ? { store: { shown: overrides.storeShown, focusPage: () => log.push("page.focus") } }
+      : {}),
   };
   const viewer = playViewer(deps);
   /** The header as last drawn. */

@@ -413,12 +413,11 @@ test("the prompt bar's edge, the empty-state cube and the Live / Assets switch t
     );
 });
 
-test("the Live / Assets switch is read as the button text on its fill, the cube as a graphic on the canvas", () => {
+test("the Live / Assets switch is read as the text on its tint, the cube as a graphic on the canvas", () => {
   const plain = genexDark.colors;
-  assert.deepEqual(readability({ ...plain, accentText: "#ffffff", viewSwitch: "#ffffff" }, "viewSwitch"), {
-    ratio: 1,
-    minimum: 4.5,
-  });
+  const flat = { ...plain, foreground: plain.popover, viewSwitch: plain.popover };
+  assert.deepEqual(readability(flat, "viewSwitch"), { ratio: 1, minimum: 4.5 });
+  assert.ok((readability(plain, "viewSwitch")?.ratio ?? 0) >= 4.5, "Genex's own reads");
   assert.deepEqual(readability({ ...plain, wireArt: plain.background }, "wireArt"), { ratio: 1, minimum: 3 });
 });
 
@@ -533,13 +532,9 @@ test("Play's people, stats and credits colours are the stylesheet's own until se
   for (const [role, variable, onDark, onLight] of [
     ["peopleChipText", "--people-chip-ink", "#9fb0ff", "#3d58d8"],
     ["peopleChipNumber", "--people-chip-number", "#d3dbff", "#1e33b4"],
-    ["playBlue", "--play-blue", "#4b60bf", "#4b60bf"],
-    ["peoplePrimary", "--people-primary-top", "#4b60bf", "#4b60bf"],
-    ["peoplePrimaryShade", "--people-primary-bottom", "#3f51a8", "#3f51a8"],
     ["peopleLive", "--people-live", "#22a55b", "#22a55b"],
     ["peopleLiveText", "--people-live-ink", "#5fd18b", "#16803f"],
     ["peoplePro", "--people-pro", "#8d9bff", "#4353d9"],
-    ["peopleRequest", "--people-request", "#3f61f5", "#3f61f5"],
     ["statsLine", "--stats-line", "#7d8ff0", "#4b60bf"],
     ["statsUp", "--stats-up", "#5fd18b", "#16803f"],
     ["statsDown", "--stats-down", "#ff8a7a", "#b42318"],
@@ -556,6 +551,23 @@ test("Play's people, stats and credits colours are the stylesheet's own until se
       ROLE_GROUPS.some((group) => group.roles.includes(role)),
       `the panel offers ${role}`,
     );
+  }
+});
+
+test("Play's blue, its main button and the requests count are the palette's accent until set, then their own", () => {
+  for (const colors of [withoutPlayColours(genexDark.colors), withoutPlayColours(preset("genex-light").colors)]) {
+    const fill = themeVariables(colors, DEFAULT_CONTRAST)["--accent-fill"];
+    for (const [role, variable, shown] of [
+      ["playBlue", "--play-blue", colors.accent],
+      ["peoplePrimary", "--people-primary-top", fill],
+      ["peoplePrimaryShade", "--people-primary-bottom", fill],
+      ["peopleRequest", "--people-request", colors.accent],
+      ["playSelected", "--play-selected", colors.accent],
+    ] as const) {
+      assert.equal(themeVariables(colors, DEFAULT_CONTRAST)[variable], undefined, `${role} unset`);
+      assert.equal(shownColor(colors, role), shown, `${role} shows the accent while unset`);
+      assert.equal(shownColor({ ...colors, [role]: "#2f6bff" }, role), "#2f6bff");
+    }
   }
 });
 

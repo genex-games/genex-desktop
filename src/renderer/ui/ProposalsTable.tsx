@@ -10,7 +10,7 @@ import { type DiffLine, DiffTone, editDiff } from "../edit-diff.ts";
 import { SUGGESTION_WORDS } from "../words.ts";
 import { Button } from "./Button.tsx";
 import { Icon } from "./icons.tsx";
-import { plural, proposalTitle } from "../../shared/skill-words.ts";
+import { proposalTitle } from "../../shared/skill-words.ts";
 
 /** A suggestion's include box: filled, with a check, while the suggestion is included. */
 function IncludedMark({ included }: { included: boolean }): JSX.Element {
@@ -137,8 +137,9 @@ export function SuggestionReview({
 }: {
   proposals: StagedProposal[];
   busy: boolean;
-  onApply: (indices: number[]) => void;
-  onDiscard: (indices: number[]) => void;
+  /** Apply the ones ticked; `opened` says whether the person opened any suggestion's details first. */
+  onApply: (indices: number[], opened: boolean) => void;
+  onDiscard: (indices: number[], opened: boolean) => void;
 }): JSX.Element {
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -159,7 +160,7 @@ export function SuggestionReview({
     >
       <header className="flex flex-col gap-0.5 border-b border-line px-4 py-3">
         <h2 id={`${id}-title`} className="font-medium text-ink">
-          {SUGGESTION_WORDS.title(plural(proposals.length, "change"))}
+          {SUGGESTION_WORDS.title(proposals.length)}
         </h2>
         <p className="text-chat-sub text-ink-3">{SUGGESTION_WORDS.subtitle}</p>
       </header>
@@ -172,6 +173,8 @@ export function SuggestionReview({
           <div
             key={`${proposal.skill}-${proposal.at}-${index}`}
             data-suggestion
+            // A suggestion is the agent's words about the person's builds, in its title, its box and its edit.
+            data-analytics-mask
             className="border-b border-line transition-[background-color] duration-200 motion-reduce:transition-none"
             style={{ background: on ? "color-mix(in srgb, var(--green) 8%, transparent)" : undefined }}
           >
@@ -234,11 +237,19 @@ export function SuggestionReview({
       <footer className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
         <span className="text-chat-sub text-ink-3">{SUGGESTION_WORDS.selected(included.length, proposals.length)}</span>
         <span className="flex items-center gap-1.5">
-          <Button variant="ghost" disabled={busy || included.length === 0} onClick={() => onDiscard(included)}>
+          <Button
+            variant="ghost"
+            disabled={busy || included.length === 0}
+            onClick={() => onDiscard(included, expanded.size > 0)}
+          >
             {SUGGESTION_WORDS.discard}
           </Button>
-          <Button variant="default" disabled={busy || included.length === 0} onClick={() => onApply(included)}>
-            {SUGGESTION_WORDS.apply(plural(included.length, "change"))}
+          <Button
+            variant="default"
+            disabled={busy || included.length === 0}
+            onClick={() => onApply(included, expanded.size > 0)}
+          >
+            {SUGGESTION_WORDS.apply(included.length)}
           </Button>
         </span>
       </footer>

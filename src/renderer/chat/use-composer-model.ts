@@ -8,10 +8,12 @@ import { MODEL_PICKER_WORDS } from "../words.ts";
  * `pinComposerOpening`, `effortOnModelPick`, `rememberEffortPick`) so they are tested in Node; the
  * hook keeps the picks a chat has made in this session and writes them back.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { crossesTo, normalizeRoles, takesRoles } from "../../shared/model-roles.ts";
 import { supportedPreferences, type ModelPreferences } from "../../shared/model-preferences.ts";
 import {
+  autoChoice,
   effortScale,
   findChoice,
   nearestEffort,
@@ -27,10 +29,16 @@ import { useModelPicker } from "../state/hooks.ts";
 import { rememberChatEffort, rememberChatModel, storedChatEffort, storedChatModel } from "../stored-model.ts";
 import type { EngineDescriptor, ThreadMeta } from "../types.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
+import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineKind, EngineStatusCode, splitsRoles } from "../../shared/engine-descriptor.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import type { ComposerSendOptions } from "../../shared/composer.ts";
 import type { ComposerExtras, ComposerModelProps, ModelChoice, RoleGroup, RoleRecord } from "../ui/PromptBar.tsx";
+import { EffortRefOther, ModelReplaced, ModelSetting, SendBlock } from "../analytics/chat-vocabulary.ts";
+import { chatMemory } from "../analytics/chat-memory.ts";
+import { effortRef, engineRef, modelPickedProperties } from "../analytics/chat-properties.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /**
  * What a chat opens with: its own remembered model (a fresh game chat inherits the last pick, and
@@ -120,7 +128,10 @@ export interface ComposerModelView {
   roles: RoleRecord | null;
 }
 
-const modelRow = (m: { id: string; label: string }) => ({ id: m.id, label: m.id === "default" ? "Default" : m.label });
+const modelRow = (m: { id: string; label: string }) => ({
+  id: m.id,
+  label: m.id === "default" ? t("Default") : m.label,
+});
 /**
  * Another engine can take the builder or judge role: it takes roles (a session engine, or a
  * completion-only local one), is ready, and has models.
@@ -156,6 +167,73 @@ export function effectiveRoles(
     : null;
 }
 
+/**
+ * A saved pick its provider no longer offers (a model the plan dropped, a provider gone), known for
+ * sure: the provider is ready with a fresh model list, or not there at all. The chat then opens on a
+ * model that runs instead, and the picker, the panel and the send all name that one. A pick whose
+ * provider is still reading its models, or is signed out (the sign-in is asked for), stays.
+ */
+function noLongerOffered(
+  choice: ModelChoice | undefined,
+  choices: readonly ModelChoice[],
+  engines: readonly EngineDescriptor[],
+): boolean {
+  if (!choice || choices.includes(choice) || !engines.length) return false;
+  const engine = engines.find((candidate) => candidate.id === parseModelKey(choice.key).engine);
+  if (!engine) return true;
+  if (engine.status.code !== EngineStatusCode.Ready) return false;
+  // Only a fresh, complete list proves a model gone; a loading, stale or failed one may still name it.
+  const catalog = engine.catalog;
+  return !catalog || (catalog.state === ModelCatalogState.Ready && !catalog.refreshing);
+}
+
+/**
+ * Why the chat's saved pick was swapped for another model it can run on (`resolveComposerModel`):
+ * its provider is gone, or the provider dropped the model; null when the pick stands.
+ */
+export function pickReplaced(input: {
+  engines: EngineDescriptor[];
+  choices: ModelChoice[];
+  modelKey: string | null;
+  selected: string | null;
+}): ModelReplaced | null {
+  const { engines, choices, modelKey, selected } = input;
+  if (!modelKey || selected === null) return null;
+  const resolved = resolveChoice(choices, modelKey);
+  if (!noLongerOffered(resolved, choices, engines) || resolved?.key === selected) return null;
+  const engine = parseModelKey(modelKey).engine;
+  return engines.some((candidate) => candidate.id === engine) ? ModelReplaced.ModelDropped : ModelReplaced.ProviderGone;
+}
+
+/** A model picked in the composer, with the one before it. */
+function trackModelPick(pick: {
+  key: string;
+  previousKey: string | null;
+  choices: readonly ModelChoice[];
+  engines: readonly EngineDescriptor[];
+}): void {
+  const engine = parseModelKey(pick.key).engine;
+  const picked = {
+    key: pick.key,
+    previousKey: pick.previousKey,
+    free: pick.choices.some((choice) => choice.key === pick.key && choice.free === true),
+    engineKind: pick.engines.find((candidate) => candidate.id === engine)?.kind,
+  };
+  track(AnalyticsEvent.ModelPicked, modelPickedProperties(chatMemory, picked, Date.now()));
+}
+
+/** A saved pick swapped without a word to the person, counted once per chat and pick. */
+function useReplacedPick(threadId: string | undefined, modelKey: string | null, replaced: ModelReplaced | null): void {
+  const counted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!replaced || !modelKey) return;
+    const mark = `${threadId}\n${modelKey}`;
+    if (counted.current === mark) return;
+    counted.current = mark;
+    track(AnalyticsEvent.ModelPickReplaced, { engine: engineRef(parseModelKey(modelKey).engine), reason: replaced });
+  }, [threadId, modelKey, replaced]);
+}
+
 /** Everything the composer derives from the engines and the chat's own picks (roles and effort). */
 export function resolveComposerModel(input: {
   studio: boolean;
@@ -166,7 +244,8 @@ export function resolveComposerModel(input: {
   roles?: RoleRecord | null;
 }): ComposerModelView {
   const choices = [...(input.choices ?? toChoices(input.engines))];
-  const choice = resolveChoice(choices, input.modelKey);
+  const resolved = resolveChoice(choices, input.modelKey);
+  const choice = noLongerOffered(resolved, choices, input.engines) ? (autoChoice(choices) ?? resolved) : resolved;
   if (choice && !choices.some((row) => row.key === choice.key)) choices.push(choice);
   const selected = choice?.key ?? null;
   const selectedChoice = choices.find((choice) => choice.key === selected);
@@ -217,10 +296,8 @@ export function composerSendOptions(
   input: { autopilot: boolean; extras?: ComposerExtras },
 ): ComposerSendOptions {
   const { engine, model: pickedModel } = parseModelKey(key);
-  const roles = model.roles && engine === model.selectedEngine?.id ? model.roles : null;
-  requireAvailableChoice(model.choices, key);
-  const commission = input.autopilot && input.extras?.autopilot;
-  if (commission) requireAvailableRoles(model, engine, roles);
+  const roles = sendRoles(model, engine);
+  if (sendBlockOf(model, key, input)) throw new Error(MODEL_PICKER_WORDS.unavailable);
   const sendModel = !model.studio && roles ? (roles.planner ?? "") : pickedModel;
   const extras = input.extras;
   const explicitModel = isExplicitModel(sendModel);
@@ -240,25 +317,49 @@ function isExplicitModel(model: string | undefined): boolean {
   return Boolean(model) && model !== "default";
 }
 
-function requireAvailableRoles(
+/** The roles a send on this engine carries: the chat's own, when the send goes with its selected engine. */
+function sendRoles(model: Pick<ComposerModelView, "selectedEngine"> & { roles: RoleRecord | null }, engine: string) {
+  return model.roles && engine === model.selectedEngine?.id ? model.roles : null;
+}
+
+/** The jobs whose models a commissioned build checks. */
+const CHECKED_ROLES = ["builder", "judge"] as const;
+
+/** Every job's model is offered: its provider is the chat's, or a ready one it crosses to, and its model is listed. */
+function rolesAvailable(
   model: Pick<ComposerModelView, "choices" | "roleOthers">,
   engine: string,
   roles: RoleRecord | null,
-): void {
-  if (!roles) return;
-  for (const role of ["builder", "judge"] as const) {
+): boolean {
+  if (!roles) return true;
+  return CHECKED_ROLES.every((role) => {
     const provider = roles.engines?.[role] ?? engine;
     const ready = model.roleOthers.some((group) => group.engine === provider);
     const available = provider === engine || (ready && crossesTo(engine, role, provider));
-    if (!available) throw new Error(MODEL_PICKER_WORDS.unavailable);
-    requireAvailableChoice(model.choices, keyOf(provider, roles[role] ?? ""));
-  }
+    return available && choiceAvailable(model.choices, keyOf(provider, roles[role] ?? ""));
+  });
 }
 
-function requireAvailableChoice(choices: ModelChoice[], key: string | null): void {
-  if (!key) return;
+/** The model is offered and can be picked (no key asks for nothing). */
+function choiceAvailable(choices: ModelChoice[], key: string | null): boolean {
+  if (!key) return true;
   const choice = resolveChoice(choices, key);
-  if (!choice || choice.disabled) throw new Error(MODEL_PICKER_WORDS.unavailable);
+  return Boolean(choice && !choice.disabled);
+}
+
+/**
+ * Why a send on this model cannot go: the model is no longer offered, or a commissioned build's job
+ * has no model to run on; null when it can. `composerSendOptions` refuses exactly these.
+ */
+export function sendBlockOf(
+  model: Pick<ComposerModelView, "selectedEngine" | "choices" | "roleOthers"> & { roles: RoleRecord | null },
+  key: string | null,
+  input: { autopilot: boolean; extras?: ComposerExtras },
+): SendBlock | null {
+  if (!choiceAvailable(model.choices, key)) return SendBlock.ModelUnavailable;
+  const { engine } = parseModelKey(key);
+  const commission = input.autopilot && input.extras?.autopilot;
+  return commission && !rolesAvailable(model, engine, sendRoles(model, engine)) ? SendBlock.RoleUnavailable : null;
 }
 
 /** The model a chat shows: its pick made this session, else the one it remembers. */
@@ -307,6 +408,7 @@ export function useComposerModel({
     [studio, engines, choices, modelKey, effort, roles],
   );
   const { selected, selectedEngine, rolesApply } = view;
+  useReplacedPick(threadId, modelKey, pickReplaced({ engines, choices, modelKey, selected }));
 
   // A chat opens on its own pick, and a game chat keeps the model and effort it opened with.
   // Keyed on the chat alone: a pick made in it must not be re-read.
@@ -342,6 +444,7 @@ export function useComposerModel({
   const sendRoles = view.roles;
 
   const pickModel = (key: string): void => {
+    trackModelPick({ key, previousKey: selected, choices, engines });
     setModelKey(key);
     setEffort((current) => effortOnModelPick(storage, studio, key, current));
     if (thread) rememberChatModel(storage, thread.id, key, studio);
@@ -366,6 +469,7 @@ export function useComposerModel({
 
   const pickRoles = (next: RoleRecord): void => {
     if (!selectedEngine) return;
+    track(AnalyticsEvent.ModelSettingsChanged, { setting: ModelSetting.Roles });
     setRoles(next);
     storeRoles(storage, selectedEngine.id, next);
     // The trigger names the orchestrator: the model the chat itself runs on.
@@ -375,6 +479,10 @@ export function useComposerModel({
   };
 
   const pickEffort = (value: string | null): void => {
+    track(AnalyticsEvent.ModelSettingsChanged, {
+      setting: ModelSetting.Effort,
+      effort: effortRef(value) ?? EffortRefOther.Default,
+    });
     setEffort(value);
     rememberEffortPick(storage, { threadId, studio, modelKey: selected }, value);
   };
@@ -385,7 +493,9 @@ export function useComposerModel({
     setModelKey,
     remember: (id, key) => rememberChatModel(storage, id, key, studio),
     bar: {
-      choices,
+      // The resolved list: a saved pick that is no longer listed stays in it, so the picker names
+      // the model the chat really sends with instead of falling back to another row.
+      choices: view.choices,
       selected,
       onPick: pickModel,
       roles: sendRoles,

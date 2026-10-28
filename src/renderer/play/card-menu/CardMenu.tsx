@@ -21,7 +21,10 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu.tsx";
 import { Icon, type IconName } from "../../ui/icons.tsx";
-import { PLAY_CARD_MENU_WORDS } from "../../words.ts";
+import { fileManagerWords, NATIVE_WORDS, nativeHereWords, PLAY_CARD_MENU_WORDS } from "../../words.ts";
+import { hostPlatform } from "../../platform.ts";
+import { sizeWords } from "../../../shared/byte-size.ts";
+import type { InstalledGame } from "../../../shared/play-native.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import type { CardDialogProps } from "./DialogFoot.tsx";
 import { CoverDialog } from "./CoverDialog.tsx";
@@ -117,15 +120,74 @@ async function toggleRemixing(game: PlayGame): Promise<void> {
   }
 }
 
+/** What an installed game's own rows do on this computer: never `studio:play.manage`. */
+const LocalAction = { Reveal: "reveal", Remove: "remove" } as const;
+type LocalAction = (typeof LocalAction)[keyof typeof LocalAction];
+
+/** Remove a game from this computer, and say how it went; its saves stay. */
+async function removeInstalled(game: PlayGame, installed: InstalledGame): Promise<void> {
+  try {
+    await studio().play.uninstall(game.slug);
+    studio().notify(nativeHereWords(installed.platform).removed(game.title), ToastTone.Ok);
+  } catch {
+    studio().notify(NATIVE_WORDS.removeFailed, ToastTone.Error);
+  }
+}
+
+/** An installed game's rows: Show in Finder (or the folder), and Remove from this Mac (or computer) with the space it takes. */
+function LocalRows({
+  game,
+  installed,
+  separated,
+}: {
+  game: PlayGame;
+  installed: InstalledGame;
+  separated: boolean;
+}): JSX.Element {
+  const select = (action: LocalAction) => {
+    if (action === LocalAction.Reveal)
+      void studio()
+        .api.playRevealInstall(game.slug)
+        .catch(() => undefined);
+    else void removeInstalled(game, installed);
+  };
+  return (
+    <>
+      {separated && <DropdownMenuSeparator />}
+      <DropdownMenuItem
+        data-play-card-local={LocalAction.Reveal}
+        className="play-card-menu-row"
+        onSelect={() => select(LocalAction.Reveal)}
+      >
+        <Icon name="folder-open" />
+        <span className="min-w-0 flex-1 truncate">{fileManagerWords(hostPlatform()).show}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        data-play-card-local={LocalAction.Remove}
+        className="play-card-menu-row"
+        onSelect={() => select(LocalAction.Remove)}
+      >
+        <Icon name="trash" />
+        <span className="min-w-0 flex-1 truncate">{nativeHereWords(installed.platform).removeFrom}</span>
+        <span className="play-card-menu-state">{sizeWords(installed.bytes)}</span>
+      </DropdownMenuItem>
+    </>
+  );
+}
+
 /** The ⋯ on a card and its menu; `open` is the card's, so a right-click anywhere on it opens the menu too. */
 export function CardMenu({
   game,
   menu,
+  installed = null,
   open,
   onOpenChange,
 }: {
   game: PlayGame;
-  menu: PlayCardMenu;
+  /** The owner's and an admin's items; null for anyone else. */
+  menu: PlayCardMenu | null;
+  /** The game as installed on this computer: its local items show, with its size. */
+  installed?: InstalledGame | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }): JSX.Element {
@@ -166,22 +228,23 @@ export function CardMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="end"
-          className="w-64"
+          className={installed ? "w-72" : "w-64"}
           onCloseAutoFocus={(event) => {
             // A dialog this menu opened takes the focus; the ⋯ gets it back when the dialog closes.
             if (dialog) event.preventDefault();
           }}
         >
-          {rows(menu.game)}
-          {menu.admin.length > 0 && (
+          {menu && rows(menu.game)}
+          {installed && <LocalRows game={game} installed={installed} separated={menu !== null} />}
+          {menu && menu.admin.length > 0 && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="play-card-menu-label">{WORDS.adminLabel}</DropdownMenuLabel>
               {rows(menu.admin)}
             </>
           )}
-          <DropdownMenuSeparator />
-          {rows(menu.end)}
+          {menu && <DropdownMenuSeparator />}
+          {menu && rows(menu.end)}
         </DropdownMenuContent>
       </DropdownMenu>
       {dialog && <ActionDialog action={dialog} game={game} onClose={close} returnFocus={trigger} />}

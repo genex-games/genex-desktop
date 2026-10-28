@@ -36,11 +36,15 @@ import {
   isPluginSetup,
   PLUGIN_SETUP_STEP_CHARS,
   PLUGIN_SETUP_STEPS,
+  PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PluginCapability,
   PluginHostTool,
+  PluginInstallProblem,
   PluginToolAudience,
   TOOLBAR_ICON_NAMES,
 } from "../../shared/plugins.ts";
+import { CodedError } from "../../shared/errors.ts";
+import { refusedAs } from "./install-problem.ts";
 import { PLUGIN_ID } from "../../shared/plugin-id.ts";
 import { GameEngine, isGameEngine } from "../../shared/game-engine.ts";
 import { MCP_ID, McpTransport } from "../../shared/mcp.ts";
@@ -59,14 +63,19 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
  * whose CLI Studio already spawns for asset work, may ask for it.
  */
 const HOST_CLI_PLUGIN = "genex";
-/** Host tools that spend credits or change the game: each needs the user's consent every time. */
-const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid, PluginHostTool.GenexPackage]);
+/**
+ * Host tools that spend Nex or credits or change what a game sells: each needs the user's consent
+ * every time. Genex's own pinned packages spend nothing, so `genex-package` asks nobody.
+ */
+const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid]);
 const HOST_TOOLS: ReadonlySet<unknown> = new Set(Object.values(PluginHostTool));
 const TOOL_AUDIENCES: ReadonlySet<unknown> = new Set(Object.values(PluginToolAudience));
 const KIB = 1024;
 /** The Genex blender server's own per-call ceiling is 15 minutes; 30 is the outer bound. */
 const MAX_CALL_TIMEOUT_MS = 1_800_000;
 const MIN_CALL_TIMEOUT_MS = 1_000;
+/** The shortest deadline a tool may declare for one call. */
+const MIN_TOOL_TIMEOUT_MS = 1_000;
 /** How many folders a package inspection lists at once. */
 const PACKAGE_WALK_FOLDERS = 16;
 const hostname = /^(\*\.)?[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)*$/i;
@@ -86,6 +95,10 @@ const SENSITIVE_ACTIONS = new Set([
 ]);
 const reservedLower = new Set([...RESERVED_TOOLBAR_LABELS].map((l) => l.toLowerCase()));
 const SUPPORTED_API_VERSIONS = [1, 2, 3];
+/** The longest label a toolbar button shows on the stage strip, in characters. */
+export const TOOLBAR_LABEL_CHARS = 24;
+/** The longest aria label a toolbar button has, in characters. */
+export const TOOLBAR_ARIA_CHARS = 60;
 /** Declared limits, each the largest a manifest field may be. */
 const LIMIT = {
   NameChars: 200,
@@ -106,8 +119,8 @@ const LIMIT = {
   /** The longest raw tool name a server's `reads` may name. */
   McpToolNameChars: 128,
   ToolbarItems: 4,
-  ToolbarLabelChars: 24,
-  ToolbarAriaChars: 60,
+  ToolbarLabelChars: TOOLBAR_LABEL_CHARS,
+  ToolbarAriaChars: TOOLBAR_ARIA_CHARS,
   ToolbarGlyphChars: 4,
   TargetArgs: 16,
   ToolInputChars: 100000,
@@ -180,11 +193,13 @@ const MESSAGE = {
   HostToolReserved:
     "tools[].host runs a program Studio ships and is reserved for the bundled Genex plugin on apiVersion 3",
   InvalidHostTool: `Invalid tools[].host (${[...HOST_TOOLS].join(", ")})`,
-  HostToolNeedsConfirmation: "A host tool that spends credits or installs packages needs a confirmation",
+  HostToolNeedsConfirmation: "A host tool that spends Nex or credits or changes what a game sells needs a confirmation",
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",
+  InvalidToolTimeout: `Invalid tools[].timeoutMs (API 3: whole milliseconds from 1000 to ${PLUGIN_TOOL_MAX_TIMEOUT_MS})`,
   InvalidConfirmationInput: `Invalid tools[].confirmationInput (API 3, with a confirmation: { parameter: one of the tool's string parameters, label: one plain line of 1-${CONFIRMATION_INPUT_LABEL_MAX_CHARS} characters })`,
+  InvalidOnAccount: "Invalid tools[].onAccount (API 3, with a confirmation: true or absent)",
   InvalidToolAsset: `Invalid tools[].asset (an agent tool's { kind: ${Object.values(MakingKind).join("|")}, prompt?: one of its parameters, tool?: a short name })`,
   InvalidPanel: "Invalid panel",
   InvalidAction: "Invalid action",
@@ -348,6 +363,13 @@ function confirmationInput(t: PluginManifestTool, m: PluginManifest): PluginConf
   return { parameter: parameter as string, label: label as string };
 }
 
+/** A tool that acts on the person's account elsewhere (API 3): only `true`, on a tool with a card. */
+function onAccount(t: PluginManifestTool, m: PluginManifest): true {
+  const value: unknown = t.onAccount;
+  if (m.apiVersion < 3 || t.confirmation === undefined || value !== true) throw new Error(MESSAGE.InvalidOnAccount);
+  return true;
+}
+
 /** A tool's optional declarations: its consent question (API 2), its host program and its audience. */
 function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   if (t.confirmation !== undefined) {
@@ -356,6 +378,19 @@ function validateToolOptions(t: PluginManifestTool, m: PluginManifest): void {
   }
   if (t.host !== undefined) validateHost(t, m);
   if (t.audience !== undefined) validateAudience(t, m);
+}
+
+/** A tool's own call deadline (API 3): whole milliseconds, from a second to the most a tool may declare. */
+function toolTimeout(t: PluginManifestTool, m: PluginManifest): number {
+  const value = t.timeoutMs;
+  const valid =
+    m.apiVersion === 3 &&
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= MIN_TOOL_TIMEOUT_MS &&
+    value <= PLUGIN_TOOL_MAX_TIMEOUT_MS;
+  if (!valid) throw new Error(MESSAGE.InvalidToolTimeout);
+  return value as number;
 }
 
 /** One tool in canonical form; `names` holds the tool names already declared. */
@@ -379,6 +414,8 @@ function validateTool(t: PluginManifestTool, m: PluginManifest, names: Set<strin
   };
   if (t.confirmation !== undefined) tool.confirmation = t.confirmation;
   if (t.confirmationInput !== undefined) tool.confirmationInput = confirmationInput(t, m);
+  if (t.onAccount !== undefined) tool.onAccount = onAccount(t, m);
+  if (t.timeoutMs !== undefined) tool.timeoutMs = toolTimeout(t, m);
   if (t.host !== undefined) tool.host = t.host;
   // Agents are the default audience, so only the harness is written.
   if (t.audience === PluginToolAudience.Harness) tool.audience = t.audience;
@@ -977,6 +1014,14 @@ export async function inspectPackage(root: string): Promise<PluginManifest> {
 }
 
 /**
+ * `inspectPackage` for an install, update or reinstall: a refusal carries its code beside the same
+ * words (a link or special file `UnsafePackage`, anything else `PackageInvalid`). A check outside an
+ * install (`plugin-check`) reads `inspectPackage`'s own errors, a Node `ENOENT` or a `SyntaxError`.
+ */
+export const inspectForInstall = (root: string): Promise<PluginManifest> =>
+  refusedAs(PluginInstallProblem.PackageInvalid, () => inspectPackage(root));
+
+/**
  * Every entry below `root` must be a plain file or folder: a link or special file anywhere refuses
  * the package. A bundled package holds thousands of files and is inspected at every launch, so the
  * walk takes each entry's type from its folder's listing and reads several folders at once;
@@ -998,7 +1043,7 @@ async function plainFolderEntries(dir: string): Promise<string[]> {
     // A file system that does not say what an entry is gets it asked of the entry itself.
     const kind = typeKnown(entry) ? entry : await lstat(file);
     const linkOrSpecial = kind.isSymbolicLink() || (!kind.isDirectory() && !kind.isFile());
-    if (linkOrSpecial) throw new Error(MESSAGE.LinksInPackage);
+    if (linkOrSpecial) throw new CodedError(PluginInstallProblem.UnsafePackage, MESSAGE.LinksInPackage);
     if (kind.isDirectory()) folders.push(file);
   }
   return folders;

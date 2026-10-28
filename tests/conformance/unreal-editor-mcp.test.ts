@@ -323,7 +323,7 @@ for (const tool of [SET_LABEL, LIST_TOOLSETS])
       assert.equal(toolCalls(beta).length, 0, "the open project gets nothing");
       assert.match(textOf(result), /Alpha/, "names the chosen project");
       assert.match(textOf(result), /Beta is open/, "names the project that is open instead");
-      assert.match(textOf(result), /Unreal button/);
+      assert.match(textOf(result), /Call unreal__open-editor to open Alpha/, "the agent opens it itself");
     } finally {
       await close();
     }
@@ -369,7 +369,7 @@ test("another project's editor on the chosen project's port gets no call", async
       const result: any = await client.callTool(tool);
       assert.equal(result.isError, true);
       assert.match(textOf(result), /Alpha/);
-      assert.match(textOf(result), /Unreal button/);
+      assert.match(textOf(result), /Call unreal__open-editor/);
     }
     assert.equal(toolCalls(impostor).length, 0, "only the check of which project is open reached it");
   } finally {
@@ -388,7 +388,7 @@ test("another app on a project's port is never taken for Unreal", async () => {
       const result: any = await client.callTool({ name: EditorTool.ListToolsets, arguments: {} });
       assert.equal(result.isError, true, mode);
       assert.match(textOf(result), /Alpha/, "the message names the chosen project");
-      assert.match(textOf(result), /Unreal button/, "and where the user opens it");
+      assert.match(textOf(result), /Call unreal__open-editor/, "and the tool that opens it");
       assert.deepEqual([toolCalls(alpha).length, toolCalls(beta).length], [0, 0], mode);
     } finally {
       await close();
@@ -622,7 +622,7 @@ const CRASH = [
   "",
 ].join("\n");
 const CRASHED =
-  "Unreal crashed while this call ran (Assertion failed: GameViewport.IsUnique()), so whether it took effect is unknown. Ask the user to reopen it from the Unreal button; once it answers, look before you repeat the call.";
+  "Unreal crashed while this call ran (Assertion failed: GameViewport.IsUnique()), so whether it took effect is unknown. Call unreal__open-editor to reopen it; once it answers, look before you repeat the call.";
 
 /** `project`'s editor log (none when `text` is null) in a home of its own, and a watch of it. */
 async function projectLog(project: Project = DRIFT, text: string | null = unrealLog(project.project)) {
@@ -914,7 +914,7 @@ for (const after of ["closed", "held"] as const)
       const next: any = await client.callTool(SET_LABEL);
       assert.equal(next.isError, true);
       assert.match(textOf(next), /open Alpha/, "the chosen project is the one to reopen");
-      assert.match(textOf(next), /Unreal button/);
+      assert.match(textOf(next), /Call unreal__open-editor/);
       assert.equal(toolCalls(beta).length, 0, "the open project gets nothing");
       assert.equal(toolCalls(alpha).length, 1, "nothing was sent twice");
     } finally {
@@ -1030,7 +1030,7 @@ test("a call whose editor nothing is starting fails at once with how to open it"
   try {
     const result: any = await client.callTool(LIST_TOOLSETS);
     assert.equal(result.isError, true);
-    assert.match(textOf(result), /Ask the user to open Drift in Unreal from the Unreal button/);
+    assert.match(textOf(result), /Call unreal__open-editor to open it/);
     assert.equal(start.seen.polls, 0, "no wait");
   } finally {
     await close();
@@ -1045,7 +1045,7 @@ test("an editor that stops starting without answering gets a few seconds more, t
   try {
     const result: any = await client.callTool(LIST_TOOLSETS);
     assert.equal(result.isError, true);
-    assert.match(textOf(result), /Ask the user to open Drift in Unreal from the Unreal button/);
+    assert.match(textOf(result), /Call unreal__open-editor to open it/);
     assert.ok(start.elapsed() > START_POLL, "Epic's server answers about a second after the editor says it loaded");
     assert.ok(start.elapsed() <= 15 * SECOND, `not the whole wait (${start.elapsed()} ms)`);
   } finally {

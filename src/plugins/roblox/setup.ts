@@ -154,16 +154,7 @@ export function setupPaths(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, ho
     const settings = path.win32.join(roblox, "AssistantSettings");
     return { guarded: [local, roblox], roblox, plugins: path.win32.join(roblox, "Plugins"), settings };
   }
-  throw refuse(SetupRefusal.OtherSystem, MESSAGE.Setup.OtherSystem);
-}
-
-/** What Set up will do, in plain words, for its confirmation: no folder is read for it. */
-export function planSetup(plan: { platform: NodeJS.Platform; paths: SetupPaths; settings: number }): string[] {
-  const lines: string[] = plan.platform === "darwin" ? [MESSAGE.Setup.DocumentsNote] : [];
-  lines.push(MESSAGE.Setup.PlanHelper(plan.paths.plugins));
-  lines.push(plan.settings > 0 ? MESSAGE.Setup.PlanSwitch(plan.settings) : MESSAGE.Setup.PlanNoSettings);
-  lines.push(MESSAGE.Setup.PlanUndo);
-  return lines;
+  throw refuse(SetupRefusal.OtherSystem, MESSAGE.Setup.OtherSystem());
 }
 
 /**
@@ -384,7 +375,7 @@ async function writeSetup(
  * checked first: a refusal writes nothing.
  */
 export async function setUp(options: SetupOptions): Promise<SetupDone> {
-  if (await options.running()) throw refuse(SetupRefusal.StudioRunning, MESSAGE.Setup.StudioRunning);
+  if (await options.running()) throw refuse(SetupRefusal.StudioRunning, MESSAGE.Setup.StudioRunning());
   const pluginsFolder = await checkFolders(options.paths);
   const helper = await installedHelper(options);
   const switches = await planSwitches(options.paths.settings);
@@ -459,9 +450,9 @@ async function undoPluginsFolder(options: SetupOptions, record: SetupRecord, don
  * Genex's; anything changed since is kept and named. The record and its copies go last.
  */
 export async function undoSetup(options: SetupOptions): Promise<UndoDone> {
-  if (await options.running()) throw refuse(SetupRefusal.StudioRunning, MESSAGE.Setup.StudioRunning);
+  if (await options.running()) throw refuse(SetupRefusal.StudioRunning, MESSAGE.Setup.StudioRunning());
   const record = await readRecord(options.storage);
-  if (!record) throw refuse(SetupRefusal.NotSetUp, MESSAGE.Setup.NotSetUp);
+  if (!record) throw refuse(SetupRefusal.NotSetUp, MESSAGE.Setup.NotSetUp());
   const done: UndoDone = { removed: [], kept: [] };
   await undoHelper(options, record.helper, done);
   for (const entry of record.switches) await undoSwitch(options, entry, done);

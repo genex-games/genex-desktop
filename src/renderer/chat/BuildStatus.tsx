@@ -1,5 +1,6 @@
 import { type JSX, useId, useMemo, useState } from "react";
 import type { AgentScreenFrame } from "../../shared/agent-screen.ts";
+import { t } from "../../shared/i18n.ts";
 import { useNow } from "../panels/run-graph/use-builds-model.ts";
 import { capWords } from "../run-steps.ts";
 import { Elapsed, useStartedAt } from "../ui/LoadingState.tsx";
@@ -45,9 +46,9 @@ export function BuildStatus({
   const now = useNow(expanded);
   const list = useMemo(() => (parts ? buildChecklist({ ...parts, now }) : null), [parts, now]);
   return (
-    <section data-build-status aria-label="Build running" className="min-w-0">
+    <section data-build-status aria-label={t("Build running")} className="min-w-0">
       <BuildCard
-        title="Building"
+        title={t("Building")}
         {...(frame
           ? {
               picture: (
@@ -72,7 +73,8 @@ export function BuildStatus({
           : {})}
         {...(!list && onOpenBuilds ? { open: { onClick: onOpenBuilds } } : {})}
         line={
-          <p role="status" title={caption} className="m-0 truncate text-status text-ink-3">
+          // The lead's own words about what it does on its screen.
+          <p role="status" title={caption} data-analytics-mask className="m-0 truncate text-status text-ink-3">
             {caption}
           </p>
         }

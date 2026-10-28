@@ -7,7 +7,8 @@
  * finished build with Loop on, a reopen (reopen-run.ts) — is handed back for the chat to do once the
  * reply ends.
  */
-import { GIT_TIMEOUT_MS, MIN_DELEGATE_TIMEOUT_MS } from "./config.ts";
+import { appLanguage } from "./app-language.ts";
+import { GIT_TIMEOUT_MS, hoursNamed, MIN_DELEGATE_TIMEOUT_MS } from "./config.ts";
 import { GIT, gitAt } from "./git.ts";
 import {
   buildContractorBrief,
@@ -74,6 +75,7 @@ import { compactedSummary, endedByCompaction } from "./compaction-log.ts";
 import { TurnStop, sayInTurn } from "./turn-record.ts";
 import { type ChatWorkersSeat, chatWorkersGrant, withChatWorkers } from "./workers/chat-workers.ts";
 import type { TurnOptions, TurnOutcome } from "./turn-loop.ts";
+import { folderLabelOf } from "./workers/identity.ts";
 import type { AnyRecord, CallResult, HarnessCtx, HarnessTool, ToolCtx, ToolOutcome } from "../types/harness.d.ts";
 import type {
   BuildObservation,
@@ -188,6 +190,11 @@ interface Handoff {
    * question card bridged in (unreal-prompts.ts `engineChoiceRule`).
    */
   engineChoice: boolean;
+  /**
+   * The question card is bridged in: whenever the brief asks the engine question, and on a resumed
+   * session of a folder that still has no kind, whose first brief named the card (`offersCard`).
+   */
+  questionCard: boolean;
   /** The kinds the plugins on offer this game (`plugins.tools`'s `kinds`): the question card's options. */
   kinds: PluginKindOffer[];
   /** The folder holds an Unreal project and the Unreal plugin is off: its brief says it has no Unreal tools. */
@@ -561,7 +568,7 @@ async function finishTurn(
   const resume = options.afterLoopRun ? resumeAsked(options.afterLoopRun, recorded) : null;
   if (resume) return handBack(ctx, options, result, MESSAGE.resumedAnyway, { resumeRun: resume });
   // A Loop chat may ask or launch; any chat asked to choose its engine may ask.
-  const calls = launchTool || handoff.engineChoice ? recorded : [];
+  const calls = launchTool || handoff.questionCard ? recorded : [];
   const question = calls.find((c) => c.name === askUser.name);
   const launch = calls.find((c) => c.name === launchTool?.name);
   // A question is not approval to start. Even if the model also recorded a launch, wait for
@@ -659,7 +666,15 @@ async function waitUntilReady(ctx: HarnessCtx, options: DelegatedOptions, handof
  */
 async function withFactsNow(ctx: HarnessCtx, handoff: Handoff, game: Handoff["descriptor"]): Promise<Handoff> {
   const offer = await pluginOffer(ctx, handoff.project, game);
-  return { ...handoff, descriptor: game, scaffolded: false, fresh: false, engineChoice: false, ...offer };
+  return {
+    ...handoff,
+    descriptor: game,
+    scaffolded: false,
+    fresh: false,
+    engineChoice: false,
+    questionCard: false,
+    ...offer,
+  };
 }
 
 /**
@@ -746,6 +761,7 @@ type ChatReading = Omit<
   | "scaffolded"
   | "fresh"
   | "engineChoice"
+  | "questionCard"
   | "kinds"
   | "pluginsOff"
   | "folderLabel"
@@ -822,34 +838,40 @@ function launchToolFor(options: DelegatedOptions, reopening: boolean): HarnessTo
 }
 
 /**
- * Auto (Loop off): Autopilot's launch, for a Loop the user asks for in words. Only in the chat's own
- * turn: never beside a Loop's own launch, after a run the chat led, in a run's turn or in the build
- * a finished run's coordinator handed on. An Auto chat once asked for a Loop said it had started
- * one, with no way to start it.
+ * Autopilot's launch, for a Loop the user asks for in words, whenever the turn has no Loop launch of
+ * its own: Loop off, or after a run the chat led (finished or paused), with the Loop switch on or off.
+ * Only in the chat's own turn: never in a run's turn or in the build a finished run's coordinator
+ * handed on, and never for words the chat wrote itself (a command's result): only the person asks.
+ * A chat asked for a Loop always has a way to start it.
  */
 function autoLaunchFor(options: DelegatedOptions, launchTool: HarnessTool | null): HarnessTool | null {
-  const loopOff = !launchTool && !options.autopilot && !options.loop;
-  const chatsOwnTurn = !options.afterLoopRun && !options.runId && !options.followupOf;
-  if (!loopOff || !chatsOwnTurn) return null;
+  const chatsOwnTurn = !options.runId && !options.followupOf;
+  if (launchTool || !chatsOwnTurn || chatWroteIt(options)) return null;
   const launch = launchToolset.find((t) => t.name === "start_autopilot");
   // A launch kept from before hours could reach it would turn every "3h Loop" into one until done.
   return launch?.parameters?.properties?.hours ? launch : null;
 }
 
-/** Auto: the Loop the user asked for in words, for the hours they named (none: until done), on this message's pictures. */
-function loopAskedInWords(hours: unknown, stills: readonly DelegateImage[]): AnyRecord {
-  const named = hoursNamed(hours);
-  return { ...(named > 0 ? { hours: named } : {}), ...(stills.length ? { frames: [...stills] } : {}) };
+/** Is the message this turn answers one the chat wrote itself (its `origin`: a command's result), not the person's? */
+function chatWroteIt(options: DelegatedOptions): boolean {
+  const asked = options.asked;
+  return typeof asked === "object" && asked !== null && (asked as AnyRecord).origin != null;
 }
 
-/** A number of hours, or minutes when it says so; NaN when it names none. */
-const HOURS_TEXT = /^\s*(\d*\.?\d+)\s*(m\b|mins?\b|minutes?)?/i;
+/**
+ * The Loop the user asked for in words, for the hours they named (0: until done), else the hours the
+ * message's Loop switch holds (none: until done), on this message's pictures.
+ */
+function loopAskedInWords(hours: unknown, options: DelegatedOptions): AnyRecord {
+  const chosen = hoursChosen(hoursNamed(hours), Number((options.autopilot ?? options.loop)?.hours));
+  const stills = messageStills(options);
+  return { ...(chosen > 0 ? { hours: chosen } : {}), ...(stills.length ? { frames: [...stills] } : {}) };
+}
 
-/** The hours an engine sent, as a number: 3, "3", "3h" or "2.5 hours"; "30m" is half an hour. */
-function hoursNamed(hours: unknown): number {
-  const match = HOURS_TEXT.exec(String(hours ?? ""));
-  if (!match) return Number.NaN;
-  return Number(match[1]) / (match[2] ? 60 : 1);
+/** The hours named win, 0 meaning until done; with none named, the switch's. */
+function hoursChosen(named: number, switched: number): number {
+  if (named >= 0) return named;
+  return switched;
 }
 
 function launchToolName(options: DelegatedOptions): string | null {
@@ -896,8 +918,9 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
       scaffolded: false,
       fresh: await isFreshGame(ctx, chat, descriptor),
       engineChoice: asksKind(options, chat, descriptor, offer.kinds),
+      questionCard: offersCard(options, descriptor, offer.kinds),
       ...offer,
-      folderLabel: folderLabel(projectDir, chat.project),
+      folderLabel: folderLabelOf(projectDir, chat.project),
       extraReads,
       startedAt: Date.now(),
     };
@@ -922,8 +945,9 @@ async function placeHandoff(ctx: HarnessCtx, options: DelegatedOptions, chat: Ch
     fresh: true,
     // A game the studio just made has no kind yet: with an engine plugin on, the user picks first.
     engineChoice: offer.kinds.length > 0,
+    questionCard: offer.kinds.length > 0,
     ...offer,
-    folderLabel: folderLabel(created.dir, project),
+    folderLabel: folderLabelOf(created.dir, project),
     extraReads,
     startedAt: Date.now(),
   };
@@ -960,8 +984,21 @@ function asksKind(
   descriptor: GameProject | null,
   kinds: readonly PluginKindOffer[],
 ): boolean {
-  if (!kindPending(descriptor) || chat.resume || options.runId) return false;
-  return kinds.length > 0;
+  if (chat.resume) return false;
+  return offersCard(options, descriptor, kinds);
+}
+
+/**
+ * Whether the question card is bridged in: on a folder that still has no kind while an engine plugin
+ * offers one, outside a run's own turn. A resumed session keeps it: its first brief named the card,
+ * and a session that remembers it would otherwise call a tool it no longer has.
+ */
+function offersCard(
+  options: DelegatedOptions,
+  descriptor: GameProject | null,
+  kinds: readonly PluginKindOffer[],
+): boolean {
+  return kindPending(descriptor) && !options.runId && kinds.length > 0;
 }
 
 /** What the plugins on offer a game's session: the kinds their tools make, and whether its Unreal project has no plugin on for it. */
@@ -983,11 +1020,6 @@ async function pluginOffer(ctx: HarnessCtx, project: string, descriptor: GamePro
   return { kinds, pluginsOff };
 }
 
-/** "folder AI Games/rift", never an absolute path — the last two segments say it all. */
-function folderLabel(projectDir: string | null | undefined, project: string): string {
-  return projectDir ? projectDir.split("/").slice(-2).join("/") : project;
-}
-
 /**
  * The contractor's brief, for the session this chat resumes or for a new one (a session that
  * cannot be resumed is started afresh): a build's, with a Loop chat's launch rules.
@@ -1002,8 +1034,10 @@ async function briefWriter(
   // A reopen's rules live in the after-run note: a change goes to the build, not to a launch.
   const launch = handoff.reopening ? null : launchGrant(handoff);
   const workers = Object.keys(chatWorkersGrant(options.threadId, options.steer?.messageId));
+  const language = await appLanguage(ctx);
   return (resumed) =>
     buildContractorBrief({
+      appLanguage: language,
       ask,
       messages,
       resume: resumed,
@@ -1211,7 +1245,7 @@ const autoLaunchSpec = (tool: HarnessTool): StudioToolSpec => ({
 
 /** The question card alone, for an Auto chat asked to choose its new game's engine. */
 function questionCard(handoff: Handoff): StudioToolSpec[] {
-  return handoff.engineChoice ? [bridged(askUser)] : [];
+  return handoff.questionCard ? [bridged(askUser)] : [];
 }
 
 /**
@@ -1538,7 +1572,21 @@ async function launchFromChat(
   const summary = result.summary?.trim();
   if (summary) await sayInTurn(ctx, turnId, summary);
   if (!result.ok) await sayInTurn(ctx, turnId, MESSAGE.launchedAnyway(endingOf(result)));
-  return executeLaunch(ctx, options, handoff.project, launchTool, intakeId, args ?? {});
+  const inWords = launchTool === handoff.autoLaunch;
+  return executeLaunch(ctx, options, handoff.project, { tool: launchTool, inWords }, intakeId, args ?? {});
+}
+
+/** The launch a turn executes, and whether it is the one for a Loop asked for in words (`autoLaunchFor`). */
+type Launch = { tool: HarnessTool; inWords: boolean };
+
+/** The commission a launch reads: the words' for a Loop asked in words, else the message's Loop switch. */
+function launchCommission(options: DelegatedOptions, launch: Launch, args: AnyRecord): AnyRecord {
+  // The switch's own picks (its roles) go with it; the words' hours and the message's pictures win.
+  // Its hours are the words' (or the switch's, `loopAskedInWords`): none left means until done.
+  if (launch.inWords)
+    return { autopilot: { ...(options.autopilot ?? {}), hours: null, ...loopAskedInWords(args.hours, options) } };
+  if (options.loop) return { loop: options.loop, ...(options.autopilot ? { autopilot: options.autopilot } : {}) };
+  return { autopilot: options.autopilot ?? loopAskedInWords(args.hours, options) };
 }
 
 /** Execute the launch the chat recorded, logged as its own tool call. */
@@ -1546,11 +1594,12 @@ async function executeLaunch(
   ctx: HarnessCtx,
   options: DelegatedOptions,
   project: string,
-  launchTool: HarnessTool,
+  launch: Launch,
   intakeId: string,
   args: AnyRecord,
 ): Promise<TurnOutcome> {
   const { turnId, engine, model } = options;
+  const launchTool = launch.tool;
   await ctx.call(HostMethod.TurnAppend, {
     turnId,
     batch: [
@@ -1561,8 +1610,7 @@ async function executeLaunch(
   const toolResult = (await launchTool.execute(args, {
     engine,
     model,
-    ...(options.loop ? { loop: options.loop } : {}),
-    autopilot: options.autopilot ?? (options.loop ? undefined : loopAskedInWords(args.hours, messageStills(options))),
+    ...launchCommission(options, launch, args),
   } as ToolCtx)) as ToolOutcome;
   const content = toolResult.content ?? "";
   await ctx.call(HostMethod.TurnAppend, {

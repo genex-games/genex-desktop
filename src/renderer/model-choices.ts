@@ -4,9 +4,10 @@ import { ModelCatalogState } from "../shared/model-catalog.ts";
  * effort each role runs at once a model is picked.
  */
 import { EngineKind, isEngineReady, needsSignIn } from "../shared/engine-descriptor.ts";
+import { t } from "../shared/i18n.ts";
 import { ReasoningEffort } from "../shared/model-preferences.ts";
 import { crossesTo, resolveRoles, roleEffortCap } from "../shared/model-roles.ts";
-import { EngineId, isMetered } from "../shared/providers.ts";
+import { EngineId, isBeta, isMetered } from "../shared/providers.ts";
 import { modelKey, parseModelKey } from "./model-key.ts";
 import { modelBase, modelName, offersLineup, runnableModels, shownModels } from "./model-lineup.ts";
 import type { EngineDescriptor } from "./types.ts";
@@ -17,10 +18,10 @@ type EngineModel = EngineDescriptor["models"][number];
 
 /** What the provider-default row says while there is no catalog naming the default model. */
 const CATALOG_LABEL = {
-  [ModelCatalogState.Loading]: "Loading models…",
-  [ModelCatalogState.Ready]: "CLI default",
-  [ModelCatalogState.Stale]: "Saved model list",
-  [ModelCatalogState.Unavailable]: "Model list unavailable",
+  [ModelCatalogState.Loading]: t("Loading models…"),
+  [ModelCatalogState.Ready]: t("CLI default"),
+  [ModelCatalogState.Stale]: t("Saved model list"),
+  [ModelCatalogState.Unavailable]: t("Model list unavailable"),
 } as const;
 
 /** The model id that means "whatever the engine itself is set to". */
@@ -138,7 +139,7 @@ function defaultRow(engine: EngineDescriptor): EngineModel {
   return (
     engine.models.find((model) => model.id === DEFAULT_MODEL) ?? {
       id: DEFAULT_MODEL,
-      label: `${engine.label} default`,
+      label: t("{engine} default", { engine: engine.label }),
       contextWindow: 0,
       supportsTools: true,
       supportsVision: true,
@@ -161,6 +162,7 @@ function subscriptionChoice(engine: EngineDescriptor, model: EngineModel, shown:
     ...(model.providerDefault ? { providerDefault: true } : {}),
     ...(model.resolvedModel ? { resolvedModel: model.resolvedModel } : {}),
     ...(model.free ? { free: true } : {}),
+    ...(isBeta(engine.id) ? { beta: true } : {}),
     // Each vendor publishes its own reasoning dial; the effort page offers exactly what
     // the picked model accepts, so a run never dies on a value its CLI refuses.
     contextWindow: model.contextWindow,
@@ -198,6 +200,7 @@ function subscriptionRow(engine: EngineDescriptor, ready: boolean): ModelChoice 
     tag: subscriptionTag(engine, ready, signIn),
     disabled: !ready && !signIn,
     ...(engine.status.remedy ? { title: engine.status.remedy } : {}),
+    ...(isBeta(engine.id) ? { beta: true } : {}),
   };
 }
 

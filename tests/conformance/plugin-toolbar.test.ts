@@ -1,13 +1,17 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { build } from "esbuild";
+import { rendererBuildOptions } from "../../scripts/renderer-build.mjs";
 import {
   MultiplayerPress,
   multiplayerPress,
   showsMultiplayer,
+  takesEngineMultiplayer,
   shownToolbarStatus,
-  toolbarGlyph,
+  ToolbarPlace,
   toolbarItems,
+  toolbarPlace,
   toolbarReaction,
   toolbarStatusFrom,
   toolbarTip,
@@ -16,7 +20,7 @@ import {
 } from "../../src/shared/plugin-toolbar.ts";
 import { PLUGIN_TOOLBAR_WORDS } from "../../src/renderer/words.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
-import type { PluginInfo, PluginManifest, PluginToolbarItem } from "../../src/shared/plugins.ts";
+import type { PluginInfo, PluginManifest, PluginToolbarItem, PluginToolbarStatus } from "../../src/shared/plugins.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import type { GameKind } from "../../src/shared/project-facts.ts";
 
@@ -52,6 +56,117 @@ const plugin = (id: string, toolbar: PluginToolbarItem[] | undefined, over: Part
   ...over,
 });
 
+async function compiledStatusWatcher() {
+  const result = await build({
+    stdin: {
+      contents: 'export { watchToolbarStatus } from "./src/renderer/panels/PluginToolbar.tsx";',
+      resolveDir: process.cwd(),
+      loader: "tsx",
+    },
+    bundle: true,
+    write: false,
+    format: "esm",
+    jsx: "automatic",
+    logLevel: "silent",
+    platform: "browser",
+    ...rendererBuildOptions(),
+  });
+  const code = result.outputFiles[0]?.text ?? "";
+  return import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+}
+
+function deferredStatus() {
+  let resolve: (value: unknown) => void = () => {};
+  const promise = new Promise<unknown>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function heldToolbar(t: TestContext) {
+  const { watchToolbarStatus } = await compiledStatusWatcher();
+  const pending: Array<ReturnType<typeof deferredStatus>> = [];
+  const received: Array<Array<readonly [string, PluginToolbarStatus | null]>> = [];
+  let live = 0;
+  let peak = 0;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      studio: {
+        pluginAction() {
+          live++;
+          peak = Math.max(peak, live);
+          const answer = deferredStatus();
+          pending.push(answer);
+          return answer.promise.finally(() => live--);
+        },
+      },
+    },
+  });
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  const entries = toolbarItems([plugin("a", [item({ status: "read-status" })])], "game");
+  const watcher = watchToolbarStatus({ current: entries }, "game", (results: (typeof received)[number]) =>
+    received.push(results),
+  );
+  t.after(async () => {
+    watcher.stop();
+    for (const answer of pending) answer.resolve(null);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  return { ...watcher, pending, received, peak: () => peak };
+}
+
+test("toolbar status reads serialize slow batches and coalesce events into one follow-up", async (t) => {
+  const toolbar = await heldToolbar(t);
+  toolbar.refresh();
+  toolbar.refresh();
+  t.mock.timers.tick(1000);
+  assert.equal(toolbar.pending.length, 1, "the initial event burst shares its debounce");
+  for (let index = 0; index < 3; index++) {
+    toolbar.refresh();
+    t.mock.timers.tick(1000);
+  }
+  assert.equal(toolbar.peak(), 1, "a slow plugin never has overlapping status batches");
+  assert.equal(toolbar.pending.length, 1, "events during a read queue one follow-up");
+  toolbar.pending[0]?.resolve({ badge: "Old" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(toolbar.pending.length, 2, "the queued read runs once the previous batch settles");
+  toolbar.pending[1]?.resolve({ badge: "Current" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    toolbar.received.map((batch: Array<readonly [string, PluginToolbarStatus | null]>) => batch[0]?.[1]?.badge),
+    ["Old", "Current"],
+  );
+  t.mock.timers.tick(1000);
+  assert.equal(toolbar.pending.length, 2, "the burst leaves no extra read behind");
+});
+
+test("toolbar teardown drops a slow result and every queued or future refresh", async (t) => {
+  const toolbar = await heldToolbar(t);
+  t.mock.timers.tick(1000);
+  toolbar.refresh();
+  t.mock.timers.tick(1000);
+  toolbar.stop();
+  for (const answer of toolbar.pending) answer.resolve({ badge: "Stale" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  toolbar.refresh();
+  t.mock.timers.tick(120_000);
+  assert.equal(toolbar.pending.length, 1, "neither queued work nor the periodic tick survives teardown");
+  assert.deepEqual(toolbar.received, [], "a reply after unmount cannot change the toolbar");
+});
+
+test("toolbar teardown cancels the initial debounce before any plugin is called", async (t) => {
+  const toolbar = await heldToolbar(t);
+  toolbar.stop();
+  toolbar.refresh();
+  t.mock.timers.tick(120_000);
+  assert.equal(toolbar.pending.length, 0);
+  assert.deepEqual(toolbar.received, []);
+});
+
 test("toolbarItems keeps enabled installed plugins only and honours requiresProject", () => {
   const plugins = [
     plugin("a", [
@@ -85,6 +200,18 @@ test("toolbarItems keeps enabled installed plugins only and honours requiresProj
   assert.deepEqual(first!.item, item());
   assert.deepEqual(toolbarItems([], "game"), []);
 });
+test("an engine's button, scoped to the games it builds, stands in the chat header; every other on the stage strip", () => {
+  const engine = plugin("roblox", [item({ id: "studio", facts: ["roblox-project"] })]);
+  const other = plugin("tools", [item()]);
+  const game: GameKind = { facts: [{ id: "roblox-project", path: "." }] };
+  const places = Object.fromEntries(toolbarItems([engine, other], "game", game).map((e) => [e.key, toolbarPlace(e)]));
+  assert.deepEqual(places, { "roblox:studio": ToolbarPlace.Header, "tools:demo": ToolbarPlace.Strip });
+  // A game of another kind still asks the engine's button (it may say `shown`), and draws it in the header.
+  const [away] = toolbarItems([engine], "game", { facts: [] });
+  assert.equal(away?.outOfScope, true);
+  assert.equal(toolbarPlace(away!), ToolbarPlace.Header);
+});
+
 test("toolbarStatusFrom sanitizes badge, title, disabled and tone and rejects non-objects", () => {
   for (const value of [null, undefined, "Draft", 3, true, ["Draft"]]) assert.equal(toolbarStatusFrom(value), null);
   assert.deepEqual(toolbarStatusFrom({}), {});
@@ -176,7 +303,14 @@ test("Multiplayer brings Genex in, updates an older Genex first, and otherwise a
   assert.equal(multiplayerPress(plugin("genex", [item()])), MultiplayerPress.Ask);
 });
 test("Multiplayer stands beside Publish only on a built single-player game with something in it, whose page is its own", () => {
-  const game = { publish: true, builtOnce: true, multiplayer: false, emptyGame: false, webExport: false };
+  const game = {
+    publish: true,
+    builtOnce: true,
+    multiplayer: false,
+    emptyGame: false,
+    webExport: false,
+    engineMultiplayer: false,
+  };
   assert.equal(showsMultiplayer(game), true);
   assert.equal(showsMultiplayer({ ...game, builtOnce: false }), false, "a game never built has nothing to share yet");
   assert.equal(showsMultiplayer({ ...game, multiplayer: true }), false, "a multiplayer game is multiplayer already");
@@ -187,6 +321,25 @@ test("Multiplayer stands beside Publish only on a built single-player game with 
     false,
     "an engine's web export is a build, never edited",
   );
+  assert.equal(
+    showsMultiplayer({ ...game, webExport: true, engineMultiplayer: true }),
+    true,
+    "a Godot game takes Genex's multiplayer in its project, and its build is made again from it",
+  );
+  assert.equal(
+    showsMultiplayer({ ...game, webExport: true, engineMultiplayer: true, multiplayer: true }),
+    false,
+    "a Godot game with Genex's addon is multiplayer already",
+  );
+});
+
+test("a Godot or Unity game's project takes Genex's multiplayer; another engine's export does not", () => {
+  const godot = { facts: [{ id: "godot-project", path: "godot", source: "core" as const }] };
+  const unity = { facts: [{ id: "unity-project", path: ".", source: "core" as const }] };
+  const unreal = { facts: [{ id: "unreal-project", path: ".", source: "core" as const }] };
+  assert.equal(takesEngineMultiplayer(godot), true);
+  assert.equal(takesEngineMultiplayer(unity), true);
+  assert.equal(takesEngineMultiplayer(unreal), false);
 });
 test("toolbarStatusFrom keeps attention as a boolean", () => {
   assert.deepEqual(toolbarStatusFrom({ attention: true }), { attention: true });
@@ -229,18 +382,25 @@ test("every bundled plugin that makes a kind of project keeps its buttons off a 
     for (const button of manifest.toolbar ?? []) {
       const own: GameKind = { facts: (button.facts ?? []).map((id) => ({ id, path: "." })) };
       assert.ok(button.facts?.length, `${manifest.id}:${button.id} names the facts of its games`);
-      assert.ok(button.icon, `${manifest.id}:${button.id} has an icon to fold into`);
+      assert.ok(button.icon, `${manifest.id}:${button.id} has an icon beside its name`);
       const keys = visibleToolbarEntries(toolbarItems(plugins, "game", own), {}).map((entry) => entry.key);
       assert.ok(keys.includes(`${manifest.id}:${button.id}`), `${manifest.id}:${button.id} on its own game`);
     }
   }
 });
 
-test("a folded button is never blank: its icon, else its label's first letter; unfolded, an icon-less button has none", () => {
-  assert.equal(toolbarGlyph(item({ icon: "box" }), true), "box");
-  assert.equal(toolbarGlyph(item({ icon: "box" }), false), "box");
-  assert.equal(toolbarGlyph(item({ label: "example" }), true), "E");
-  assert.equal(toolbarGlyph(item({ label: "example" }), false), undefined);
+test("each bundled engine's editor button wears its engine's own mark", () => {
+  const marks: Array<[string, string]> = [
+    ["unreal", "unreal"],
+    ["unity", "unity"],
+    ["godot", "godot"],
+    ["roblox", "roblox"],
+  ];
+  for (const [id, mark] of marks) {
+    const raw = JSON.parse(readFileSync(`src/plugins/${id}/plugin.json`, "utf8")) as PluginManifest;
+    const icons = (validateManifest(raw).toolbar ?? []).map((button) => button.icon);
+    assert.deepEqual(icons, [mark], `${id}'s button`);
+  }
 });
 
 test("toolbarStatusFrom keeps shown as a boolean", () => {

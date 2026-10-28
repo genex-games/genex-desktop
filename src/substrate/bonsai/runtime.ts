@@ -1,4 +1,4 @@
-import { InstallPhase, type ModelInstallJob } from "../../shared/model-install.ts";
+import { InstallPhase, type ModelInstallJob, ModelInstallProblem } from "../../shared/model-install.ts";
 import { atomicWriteJson, pathExists, readJsonIfExists } from "../fsx.ts";
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, writeFile, readdir, rm, rename, stat, statfs } from "node:fs/promises";
@@ -18,8 +18,9 @@ import {
   type DownloadFile,
 } from "./manifest.ts";
 import { download, DownloadStatus, type DownloadProgress } from "./download.ts";
-import { errorMessage } from "../../shared/errors.ts";
+import { CodedError, errorCodeIn, errorMessage } from "../../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { setTimeout as delay } from "node:timers/promises";
 
 const GIB = 1024 ** 3;
@@ -45,25 +46,50 @@ const BINARY_SEARCH_DEPTH = 3;
 const LOOPBACK_HOST = "127.0.0.1";
 const JOB_FILE = "install-job.json";
 
+/**
+ * What the runtime says: Model setup's download and delete refusals in the person's language
+ * (functions, since main sets its language after it starts), and the startup failures a chat's run
+ * reads in English, since the harness and the model read them too. A download's reason is also kept
+ * in the job file, only for Model setup to show again.
+ */
 const MESSAGE = {
-  Interrupted: "Studio closed before this operation finished. Resume verifies existing bytes before continuing.",
-  StatusUnreadable: "Cannot read model installation status.",
-  AnotherInstall: "Another model installation is running.",
-  NeedsAppleSilicon: "Bonsai currently requires an Apple Silicon Mac",
-  AnotherDownload: "Another Bonsai download is running",
-  NeedsMemory: "Bonsai requires at least 16 GiB of memory.",
+  Interrupted: () =>
+    t("Studio closed before this operation finished. Resume verifies existing bytes before continuing."),
+  StatusUnreadable: () => t("Cannot read model installation status."),
+  AnotherInstall: () => t("Another model installation is running."),
+  NeedsAppleSilicon: () => t("Bonsai currently requires an Apple Silicon Mac"),
+  AnotherDownload: () => t("Another Bonsai download is running"),
+  NeedsMemory: () => t("Bonsai requires at least 16 GiB of memory."),
   NotEnoughSpace: (required: number, available: number) =>
-    `Not enough space: ${required} bytes needed for remaining downloads, temporary extraction and reserve; ${available} available.`,
-  UnsafeArchive: "Unsafe runtime archive",
-  DownloadCancelled: "Download cancelled. Verified files and resumable partials are retained.",
+    t(
+      "Not enough space: {required, plural, other {# bytes}} needed for remaining downloads, temporary extraction and reserve; {available} available.",
+      { required, available },
+    ),
+  UnsafeArchive: () => t("Unsafe runtime archive"),
+  DownloadCancelled: () => t("Download cancelled. Verified files and resumable partials are retained."),
   RuntimeClosed: "Bonsai runtime is closed",
   StartupCancelled: "Bonsai startup cancelled",
   NotDownloaded: "Download this Bonsai model in Model setup first",
-  RemoveWhileDownloading: "A model is downloading. Delete this one when the download finishes.",
-  RemoveWhileAnswering: "Bonsai is answering a chat or build. Delete the model when it finishes.",
+  RemoveWhileDownloading: () => t("A model is downloading. Delete this one when the download finishes."),
+  RemoveWhileAnswering: () => t("Bonsai is answering a chat or build. Delete the model when it finishes."),
   StoppedDuringStartup: (stderr: string) => `Bonsai stopped during startup: ${stderr}`,
   StartupTimedOut: (stderr: string) => `Bonsai startup timed out: ${stderr}`,
 } as const;
+
+/** What a failure in each phase of an install is, when nothing more exact was said. */
+const PHASE_PROBLEMS: Partial<Record<InstallPhase, ModelInstallProblem>> = {
+  [InstallPhase.Downloading]: ModelInstallProblem.Download,
+  [InstallPhase.Verifying]: ModelInstallProblem.Download,
+  [InstallPhase.Extracting]: ModelInstallProblem.Extract,
+  [InstallPhase.Starting]: ModelInstallProblem.Startup,
+};
+
+/** Why an install failed in `phase`: the refusal's own code, else what failing in that phase means. */
+export function installProblem(err: unknown, phase: InstallPhase | undefined): ModelInstallProblem {
+  const coded = errorCodeIn(ModelInstallProblem, err);
+  if (coded) return coded;
+  return (phase && PHASE_PROBLEMS[phase]) || ModelInstallProblem.Other;
+}
 
 /** The llama-server flags Studio pins for Bonsai, after the per-launch model, port and context. */
 const LLAMA_SERVER_TUNING = [
@@ -262,13 +288,13 @@ export class BonsaiRuntime {
     try {
       job = await readJsonIfExists<ModelInstallJob>(this.#jobFile);
     } catch {
-      throw new Error(MESSAGE.StatusUnreadable);
+      throw new Error(MESSAGE.StatusUnreadable());
     }
     if (!job) return null;
     if (job.active) {
       job.active = false;
       job.phase = InstallPhase.Interrupted;
-      job.error = MESSAGE.Interrupted;
+      job.error = MESSAGE.Interrupted();
     }
     this.#job = job;
     return { ...job };
@@ -354,8 +380,8 @@ export class BonsaiRuntime {
    */
   async remove(id: string): Promise<void> {
     const spec = bonsaiModel(id);
-    if (this.#installPromise) throw new Error(MESSAGE.RemoveWhileDownloading);
-    if (this.#leases || this.#starting) throw new Error(MESSAGE.RemoveWhileAnswering);
+    if (this.#installPromise) throw new Error(MESSAGE.RemoveWhileDownloading());
+    if (this.#leases || this.#starting) throw new Error(MESSAGE.RemoveWhileAnswering());
     await rm(this.#receiptFile(id), { force: true });
     if (this.#model === id) await this.#stopProcess();
     await this.#removeDownload(spec.file);
@@ -391,7 +417,8 @@ export class BonsaiRuntime {
   }
   install(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
     if (this.#installPromise) {
-      if (this.#job?.model !== id) return Promise.reject(new Error(MESSAGE.AnotherInstall));
+      if (this.#job?.model !== id)
+        return Promise.reject(new CodedError(ModelInstallProblem.AnotherDownload, MESSAGE.AnotherInstall()));
       return this.#installPromise;
     }
     this.#installPromise = this.#performInstall(id, progress).finally(() => {
@@ -400,8 +427,9 @@ export class BonsaiRuntime {
     return this.#installPromise;
   }
   async #performInstall(id: string, progress: (p: DownloadProgress) => void): Promise<void> {
-    if (!this.#machine.appleSilicon) throw new Error(MESSAGE.NeedsAppleSilicon);
-    if (this.#install) throw new Error(MESSAGE.AnotherDownload);
+    if (!this.#machine.appleSilicon)
+      throw new CodedError(ModelInstallProblem.NeedsAppleSilicon, MESSAGE.NeedsAppleSilicon());
+    if (this.#install) throw new CodedError(ModelInstallProblem.AnotherDownload, MESSAGE.AnotherDownload());
     const controller = new AbortController();
     this.#install = controller;
     try {
@@ -425,13 +453,20 @@ export class BonsaiRuntime {
       await this.#updateJob({ phase: InstallPhase.Ready, active: false });
       progress({ status: DownloadStatus.Success, completed: total, total });
     } catch (err) {
-      const cancelled = controller.signal.aborted;
+      if (controller.signal.aborted) {
+        await this.#updateJob({ phase: InstallPhase.Cancelled, error: MESSAGE.DownloadCancelled(), active: false });
+        throw err;
+      }
+      const failedPhase = this.#job?.phase;
+      const problem = installProblem(err, failedPhase);
       await this.#updateJob({
-        phase: cancelled ? InstallPhase.Cancelled : InstallPhase.Failed,
-        error: cancelled ? MESSAGE.DownloadCancelled : errorMessage(err),
+        phase: InstallPhase.Failed,
+        error: errorMessage(err),
+        problem,
+        ...(failedPhase ? { failedPhase } : {}),
         active: false,
       });
-      throw err;
+      throw new CodedError(problem, errorMessage(err));
     } finally {
       this.#install = null;
     }
@@ -466,9 +501,13 @@ export class BonsaiRuntime {
       active: true,
     };
     await this.#updateJob({});
-    if (this.#machine.memoryBytes < MIN_MEMORY_BYTES) throw new Error(MESSAGE.NeedsMemory);
+    if (this.#machine.memoryBytes < MIN_MEMORY_BYTES)
+      throw new CodedError(ModelInstallProblem.NeedsMemory, MESSAGE.NeedsMemory());
     if (requiredBytes > availableBytes(disk))
-      throw new Error(MESSAGE.NotEnoughSpace(requiredBytes, availableBytes(disk)));
+      throw new CodedError(
+        ModelInstallProblem.NotEnoughSpace,
+        MESSAGE.NotEnoughSpace(requiredBytes, availableBytes(disk)),
+      );
   }
   async #downloadAll(
     files: DownloadFile[],
@@ -496,7 +535,8 @@ export class BonsaiRuntime {
     await rm(stage, { recursive: true, force: true });
     await mkdir(stage, { recursive: true });
     const listing = await exec("/usr/bin/tar", ["-tzf", archive], { signal, timeout: TAR_LIST_TIMEOUT_MS });
-    if (listing.stdout.split("\n").some(isUnsafeArchiveEntry)) throw new Error(MESSAGE.UnsafeArchive);
+    if (listing.stdout.split("\n").some(isUnsafeArchiveEntry))
+      throw new CodedError(ModelInstallProblem.UnsafeArchive, MESSAGE.UnsafeArchive());
     // This exact publisher archive was verified above before any native code is extracted.
     await exec("/usr/bin/tar", ["-xzf", archive, "-C", stage], { signal, timeout: TAR_EXTRACT_TIMEOUT_MS });
     await rm(path.join(this.root, BONSAI_RUNTIME), { recursive: true, force: true });

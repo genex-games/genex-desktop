@@ -5,6 +5,9 @@
  * to `studio.log`.
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { t } from "../shared/i18n.ts";
+import { track } from "./analytics/client.ts";
+import { ErrorKind, ErrorScreenAction, LaunchEvent, reportError } from "./analytics/events/launch.ts";
 import { Button } from "./ui/Button.tsx";
 import { dismissAppLoader } from "./app-loader.ts";
 import { errorReport } from "./error-report.ts";
@@ -22,8 +25,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     return { error: error ?? new Error("Unknown error") };
   }
 
-  override componentDidCatch(_error: unknown, info: ErrorInfo): void {
+  override componentDidCatch(error: unknown, info: ErrorInfo): void {
     this.setState({ componentStack: info.componentStack ?? null });
+    // Its type and where it was thrown, never its message (`analytics/events/launch.ts`).
+    reportError(error, ErrorKind.Render);
     // A crash before the first screen must not stay hidden behind the startup loader.
     dismissAppLoader();
     // The native game view sits above the page; it must not cover this screen.
@@ -31,6 +36,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   }
 
   #copy = async (): Promise<void> => {
+    track(LaunchEvent.ErrorScreenAction, { action: ErrorScreenAction.Copy });
     try {
       await navigator.clipboard.writeText(errorReport(this.state.error, this.state.componentStack));
       this.setState({ copied: true });
@@ -48,17 +54,24 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
         role="alert"
         className="flex h-full flex-col items-center justify-center gap-3 bg-base p-6 text-center"
       >
-        <p className="text-ink">Studio hit a problem.</p>
-        <p className="text-ink-3">Your games and any running build are safe. Reload to continue.</p>
+        <p className="text-ink">{t("Studio hit a problem.")}</p>
+        <p className="text-ink-3">{t("Your games and any running build are safe. Reload to continue.")}</p>
         <div className="flex gap-2">
-          <Button onClick={() => window.location.reload()}>Reload</Button>
+          <Button
+            onClick={() => {
+              track(LaunchEvent.ErrorScreenAction, { action: ErrorScreenAction.Reload });
+              window.location.reload();
+            }}
+          >
+            {t("Reload")}
+          </Button>
           <Button variant="secondary" onClick={() => void this.#copy()}>
-            Copy error
+            {t("Copy error")}
           </Button>
         </div>
         {copied !== null && (
           <p role="status" className="text-ink-3">
-            {copied ? "Error copied." : "Could not copy the error."}
+            {copied ? t("Error copied.") : t("Could not copy the error.")}
           </p>
         )}
       </div>

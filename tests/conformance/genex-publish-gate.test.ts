@@ -29,7 +29,11 @@ import {
   type GenexGameManifest,
   studioSdkImports,
 } from "../../src/shared/genex.ts";
-import { genexGameManifest, readGenexGameManifest } from "../../src/substrate/genex-game-manifest.ts";
+import {
+  genexGameManifest,
+  readGenexGameManifest,
+  usesGenexMultiplayer,
+} from "../../src/substrate/genex-game-manifest.ts";
 import { startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -197,7 +201,15 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
     page?: string,
     ai?: unknown,
   ) => {
-    const started = await genex.publishGallery(PROJECT, exportStage(manifest ?? undefined, page), title, undefined, ai);
+    const started = await genex.publishGallery(
+      PROJECT,
+      exportStage(manifest ?? undefined, page),
+      title,
+      undefined,
+      [],
+      {},
+      ai,
+    );
     return genex.publishWait(PROJECT, started.job?.id);
   };
   /** Put the game on its draft page only, and wait until that draft passes its test or fails it. */
@@ -349,7 +361,7 @@ describe("a published game connects to Genex as it boots", () => {
       assert.ok(connectAt > importMapEnd, "connected after the import map, which must come before any module");
       assert.ok(connectAt < page.indexOf('src="./src/main.js"'), "and before the game's own code runs");
       const script = fx.hosted.get(connect) ?? "";
-      assert.match(script, /import \{ initEmbed \} from "\.\/embed-sdk\/index\.js"/);
+      assert.match(script, /import \{ [^}]*\binitEmbed\b[^}]* \} from "\.\/embed-sdk\/index\.js"/);
       assert.match(script, new RegExp(`slug: "${SLUG}"`), "the project the first publish created");
       const sdk = moduleGraph(fx.hosted, `vendor/${GENEX_EMBED_VENDOR.Entry}`);
       for (const file of sdk) assert.ok(fx.hosted.has(file), `${file} is uploaded`);
@@ -505,6 +517,51 @@ describe("what a game's package.json tells Genex", () => {
     );
   });
 
+  it("tells Genex the multiplayer a Godot game's project carries, at Studio's pin, with its genex.json settings", async () => {
+    const root = await tmpDir("studio-genex-godot-manifest-");
+    const game = path.join(root, "godot-game");
+    const addon = path.join(game, "godot/addons/genex_multiplayer");
+    await mkdir(path.join(game, "godot"), { recursive: true });
+    await writeFile(path.join(game, "godot/project.godot"), "config_version=5\n");
+    assert.equal(await readGenexGameManifest(game), undefined, "a single-player Godot game");
+    await mkdir(addon, { recursive: true });
+    await writeFile(path.join(addon, "plugin.cfg"), '[plugin]\nname="Genex Multiplayer"\n');
+    const multiplayer = { "@genex-ai/multiplayer": GENEX_GAME_PACKAGES["@genex-ai/multiplayer"] };
+    assert.deepEqual(await readGenexGameManifest(game), { dependencies: multiplayer });
+    await writeFile(path.join(game, "genex.json"), JSON.stringify({ matchmaking: { preset: "open" } }));
+    assert.deepEqual(await readGenexGameManifest(game), {
+      dependencies: multiplayer,
+      genex: { matchmaking: { preset: "open" } },
+    });
+    assert.equal(await usesGenexMultiplayer(game), true);
+    // An addon linked in from outside the game is not the game's to vouch for.
+    const linked = path.join(root, "linked-game");
+    await mkdir(path.join(linked, "godot/addons"), { recursive: true });
+    await symlink(addon, path.join(linked, "godot/addons/genex_multiplayer"));
+    assert.equal(await readGenexGameManifest(linked), undefined, "a linked addon");
+  });
+
+  it("tells Genex the multiplayer a Unity game's project embeds, at its root or in unity/, with its genex.json", async () => {
+    const root = await tmpDir("studio-genex-unity-manifest-");
+    const multiplayer = { "@genex-ai/multiplayer": GENEX_GAME_PACKAGES["@genex-ai/multiplayer"] };
+    for (const place of [".", "unity"]) {
+      const game = path.join(root, `game-${place === "." ? "root" : place}`);
+      const project = path.join(game, place);
+      await mkdir(path.join(project, "ProjectSettings"), { recursive: true });
+      assert.equal(await readGenexGameManifest(game), undefined, `${place}: a single-player Unity game`);
+      const pkg = path.join(project, "Packages/com.genex.multiplayer");
+      await mkdir(pkg, { recursive: true });
+      await writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "com.genex.multiplayer" }));
+      assert.deepEqual(await readGenexGameManifest(game), { dependencies: multiplayer }, place);
+      await writeFile(path.join(game, "genex.json"), JSON.stringify({ matchmaking: { preset: "duel" } }));
+      assert.deepEqual(
+        await readGenexGameManifest(game),
+        { dependencies: multiplayer, genex: { matchmaking: { preset: "duel" } } },
+        place,
+      );
+    }
+  });
+
   it("connects a template game that maps Studio's multiplayer, and leaves a game with its own SDK alone", () => {
     assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/multiplayer": "0.17.0" } }), false);
     assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/embed-sdk": "0.30.0" } }), true);
@@ -583,7 +640,7 @@ describe("a game's play-time AI at Publish", () => {
       ];
       for (const ai of hostile)
         await assert.rejects(
-          fx.genex.publishGallery(PROJECT, async () => assert.fail("no export"), "X", undefined, ai),
+          fx.genex.publishGallery(PROJECT, async () => assert.fail("no export"), "X", undefined, [], {}, ai),
         );
       assert.deepEqual(fx.seen.audiences, []);
       assert.deepEqual(fx.seen.deploys, []);

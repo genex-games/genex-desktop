@@ -83,6 +83,7 @@ export const RPC_CLASSES = {
   "run.exec": RpcClass.Work,
   "engine.describe": RpcClass.Work,
   "studio.context": RpcClass.Record,
+  "studio.language": RpcClass.Record,
   "context.policy": RpcClass.Record,
   "learning.enabled": RpcClass.Record,
   "engine.complete": RpcClass.Work,

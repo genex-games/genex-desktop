@@ -21,6 +21,7 @@ import {
 } from "../../shared/asset-library.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { ASSET_FORMATS, type AssetFormat, type AssetPreviewMode } from "../../shared/game-assets.ts";
+import { t } from "../../shared/i18n.ts";
 import { isPlaySlug } from "../../shared/play.ts";
 import { GalleryError, type GalleryRequest, imageUrl, isRecord, SignInNeeded, text } from "./gallery.ts";
 import type { PeopleDeps } from "./people.ts";
@@ -340,14 +341,14 @@ function projectIdOf(page: unknown): string {
 /** A download of a library file: its bytes, at most `maxBytes`. */
 export type LibraryDownload = (url: string, maxBytes: number) => Promise<Uint8Array>;
 
-/** Why a download was refused. */
+/** Why a download was refused, as the person reads it when Add fails. */
 const DOWNLOAD_MESSAGE = {
-  notOurs: "That file isn't on genex.games.",
-  tooLarge: "That file is too large to add.",
-  failed: (status: number) => `genex.games answered ${status} for that file.`,
+  notOurs: () => t("That file isn't on genex.games."),
+  tooLarge: () => t("That file is too large to add."),
+  failed: (status: number) => t("genex.games answered {status} for that file.", { status }),
 } as const;
 
-/** A download refused for the file itself or by genex.games, and why; its words are the reason in English. */
+/** A download refused for the file itself or by genex.games, and why; its words are the reason a person reads. */
 export class DownloadRefused extends Error {
   readonly miss: LibraryFileMiss;
   constructor(miss: LibraryFileMiss, message: string) {
@@ -385,7 +386,7 @@ export function networkDownload(
 ): LibraryDownload {
   return async (url, maxBytes) => {
     const checked = libraryFileUrl(url);
-    if (!checked) throw new DownloadRefused(LibraryFileMiss.Refused, DOWNLOAD_MESSAGE.notOurs);
+    if (!checked) throw new DownloadRefused(LibraryFileMiss.Refused, DOWNLOAD_MESSAGE.notOurs());
     // A redirect is answered, not followed: it could lead off genex.games' hosts.
     const res = await fetchImpl(checked, { redirect: "manual", signal: timeout(timeoutMs) });
     // A body refused unread is cancelled, so its connection is let go of rather than left open.
@@ -396,7 +397,7 @@ export function networkDownload(
     const declared = Number(res.headers.get("content-length") ?? "0");
     if (declared > maxBytes) {
       await res.body.cancel();
-      throw new DownloadRefused(LibraryFileMiss.TooLarge, DOWNLOAD_MESSAGE.tooLarge);
+      throw new DownloadRefused(LibraryFileMiss.TooLarge, DOWNLOAD_MESSAGE.tooLarge());
     }
     return readCapped(res.body, maxBytes);
   };
@@ -441,7 +442,7 @@ async function readCapped(body: ReadableStream<Uint8Array>, maxBytes: number): P
     total += value.byteLength;
     if (total > maxBytes) {
       await reader.cancel();
-      throw new DownloadRefused(LibraryFileMiss.TooLarge, DOWNLOAD_MESSAGE.tooLarge);
+      throw new DownloadRefused(LibraryFileMiss.TooLarge, DOWNLOAD_MESSAGE.tooLarge());
     }
     chunks.push(value);
   }

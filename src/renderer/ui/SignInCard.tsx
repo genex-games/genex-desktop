@@ -1,11 +1,15 @@
 import { useEffect, useState, type JSX } from "react";
+import { reportProviderPress, reportSignInHelper, settled } from "../analytics/welcome-report.ts";
+import { ProviderAction, ProviderSurface, SignInHelper } from "../analytics/welcome-vocabulary.ts";
 import { Button } from "./Button.tsx";
 import { problemWords } from "../words.ts";
 import type { ClaudeLoginState } from "../../shared/claude-login.ts";
+import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { signInVendor, useClaudeLogin } from "../subscription-auth.ts";
 import { useCliInstall } from "../cli-install.ts";
 import { SHOW_TERMINAL_EVENT } from "../panels/terminal-events.ts";
+import { errorCode } from "../../shared/errors.ts";
 
 const CODE_FIELD =
   "h-7 w-44 rounded-control bg-field px-2.5 text-xs text-ink shadow-hairline outline-none placeholder:text-ink-3";
@@ -17,7 +21,7 @@ type Vendor = ReturnType<typeof signInVendor>;
  * code the browser shows, which is the one step this card has to be able to take.
  */
 /** What asks for the code box while Claude Code waits beside the browser sign-in. */
-export const CODE_FALLBACK_LABEL = "Browser showed a code?";
+export const CODE_FALLBACK_LABEL = t("Browser showed a code?");
 
 /**
  * Whether the person asked for the code box. Claude Code offers one beside its browser sign-in,
@@ -47,52 +51,78 @@ interface CardState {
   installing?: boolean;
 }
 
-const capitalise = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
-
 /** The card's one line: the step the user is on, else why a sign-in is needed. */
-function cardMessage({ engine, vendor, login, busy, flat, missingCli, installing }: CardState): string {
+function cardMessage({ vendor, login, busy, flat, missingCli, installing }: CardState): string {
   if (login?.phase === "code")
-    return "Finish signing in in the browser window that opened. This card goes away on its own when you're in.";
-  if (login?.phase === "terminal") return "Finish signing in in the terminal below.";
-  if (busy) return "Finish in the browser window that just opened. This card goes away on its own when you're in.";
-  if (installing) return `Installing ${vendor.name}. This can take a minute.`;
-  if (missingCli) return `${vendor.name} isn't installed on this computer yet.`;
-  if (flat) return `Use ${vendor.product} to build games.`;
-  if (engine === EngineId.Codex)
-    return "Connect your ChatGPT subscription to build games. Codex handles sign-in in your browser.";
-  return `${capitalise(vendor.product)} expired or isn't signed in. The studio never sees your password — ${vendor.who}.`;
+    return t("Finish signing in in the browser window that opened. This card goes away on its own when you're in.");
+  if (login?.phase === "terminal") return t("Finish signing in in the terminal below.");
+  if (busy) return t("Finish in the browser window that just opened. This card goes away on its own when you're in.");
+  if (installing) return t("Installing {name}. This can take a minute.", { name: vendor.name });
+  if (missingCli) return t("{name} isn't installed on this computer yet.", { name: vendor.name });
+  return flat ? vendor.useLine : vendor.signInLine;
 }
 
 /** The sign-in button's label. */
 function signInLabel({ engine, busy, stalled, flat }: CardState): string {
-  if (busy) return "Waiting…";
-  if (stalled) return "Try again";
-  if (flat) return "Connect";
-  return engine === EngineId.Codex ? "Connect ChatGPT" : "Sign in";
+  if (busy) return t("Waiting…");
+  if (stalled) return t("Try again");
+  if (flat) return t("Connect");
+  return engine === EngineId.Codex ? t("Connect ChatGPT") : t("Sign in");
 }
 
 /** Stop the sign-in under way for `engine`. */
 const cancelSignIn = (engine: string): Promise<unknown> =>
   engine === EngineId.Codex ? window.studio.codexLoginCancel() : window.studio.claudeLoginCancel();
 
+/** A help beside the card's sign-in was used (usage analytics); a refused code says why. */
+const helped = (engine: string, helper: SignInHelper, accepted?: boolean, error?: unknown): void =>
+  reportSignInHelper(engine, helper, {
+    surface: ProviderSurface.ChatCard,
+    ...(accepted === undefined ? {} : { accepted }),
+    code: errorCode(error),
+  });
+
 /** The Claude sign-in's own steps: its page again, the code box on request, and its terminal. */
 function ClaudeSignInSteps({
+  engine,
   login,
   codeFallback,
 }: {
+  engine: string;
   login: ClaudeLoginState | null;
   codeFallback: ReturnType<typeof useCodeFallback>;
 }): JSX.Element {
   return (
     <>
       {login?.hasBrowserUrl ? (
-        <Button onClick={() => void window.studio.claudeLoginOpenBrowser()}>Open the sign-in page</Button>
+        <Button
+          onClick={() => {
+            helped(engine, SignInHelper.PageReopened);
+            void window.studio.claudeLoginOpenBrowser();
+          }}
+        >
+          {t("Open the sign-in page")}
+        </Button>
       ) : null}
       {login?.phase === "code" && !codeFallback.pasting && (
-        <Button onClick={codeFallback.pasteCode}>{CODE_FALLBACK_LABEL}</Button>
+        <Button
+          onClick={() => {
+            helped(engine, SignInHelper.CodeBoxOpened);
+            codeFallback.pasteCode();
+          }}
+        >
+          {CODE_FALLBACK_LABEL}
+        </Button>
       )}
       {login?.phase === "terminal" && (
-        <Button onClick={() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT))}>Show terminal</Button>
+        <Button
+          onClick={() => {
+            helped(engine, SignInHelper.TerminalShown);
+            window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT));
+          }}
+        >
+          {t("Show terminal")}
+        </Button>
       )}
     </>
   );
@@ -141,10 +171,16 @@ export function SignInCard({
   const trouble = codeError ?? login?.error ?? (missingCli ? cliInstall.problem : null) ?? error;
   const submitCode = (): void => {
     setCodeError(null);
-    void window.studio
-      .claudeLoginCode(code)
+    void settled(
+      () => window.studio.claudeLoginCode(code),
+      (accepted, error) => helped(engine, SignInHelper.CodeSubmitted, accepted, error),
+    )
       .then(() => setCode(""))
       .catch((err: Error) => setCodeError(err.message));
+  };
+  const press = (action: ProviderAction, then: () => void) => () => {
+    reportProviderPress(engine, action, ProviderSurface.ChatCard);
+    then();
   };
   const primary = (): JSX.Element => {
     if (wantsCode)
@@ -154,8 +190,8 @@ export function SignInCard({
             className={CODE_FIELD}
             // The user has just come back from the browser holding a code; the box takes it.
             autoFocus
-            aria-label="Code from the sign-in page"
-            placeholder="Paste the code"
+            aria-label={t("Code from the sign-in page")}
+            placeholder={t("Paste the code")}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             onKeyDown={(e) => {
@@ -163,35 +199,48 @@ export function SignInCard({
             }}
           />
           <Button variant="default" onClick={submitCode} disabled={!code.trim()}>
-            Continue
+            {t("Continue")}
           </Button>
         </>
       );
     return missingCli ? (
-      <Button variant="default" onClick={() => void cliInstall.install()} disabled={cliInstall.installing}>
+      <Button
+        variant="default"
+        onClick={press(ProviderAction.Install, () => void cliInstall.install())}
+        disabled={cliInstall.installing}
+      >
         {vendor.get}
       </Button>
     ) : (
-      <Button variant="default" onClick={onSignIn} disabled={busy}>
+      <Button
+        variant="default"
+        onClick={press(stalled ? ProviderAction.TryAgain : ProviderAction.SignIn, onSignIn)}
+        disabled={busy}
+      >
         {signInLabel(card)}
       </Button>
     );
   };
   return (
     <div className={flat ? "mb-1.5" : "mb-1.5 rounded-card bg-surface px-3 py-2.5 shadow-card"}>
-      {!flat && <div className="text-body-sm font-medium text-ink">{vendor.name} needs a sign-in</div>}
+      {!flat && (
+        <div className="text-body-sm font-medium text-ink">{t("{name} needs a sign-in", { name: vendor.name })}</div>
+      )}
       <p className="mt-1 text-xs leading-relaxed text-ink-2">{cardMessage(card)}</p>
       {trouble ? <p className="mt-1 text-xs text-orange">{problemWords(trouble)}</p> : null}
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {primary()}
-        <ClaudeSignInSteps login={login} codeFallback={codeFallback} />
-        {busy && <Button onClick={() => void cancelSignIn(engine)}>Cancel sign-in</Button>}
+        <ClaudeSignInSteps engine={engine} login={login} codeFallback={codeFallback} />
+        {busy && <Button onClick={() => void cancelSignIn(engine)}>{t("Cancel sign-in")}</Button>}
         {onRecheck ? (
-          <Button onClick={onRecheck} disabled={busy}>
-            {flat ? "Check connection" : "I'm signed in"}
+          <Button
+            onClick={press(flat ? ProviderAction.CheckConnection : ProviderAction.Recheck, onRecheck)}
+            disabled={busy}
+          >
+            {flat ? t("Check connection") : t("I'm signed in")}
           </Button>
         ) : null}
-        {allowLocal && onContinueLocal ? <Button onClick={onContinueLocal}>Continue on this Mac</Button> : null}
+        {allowLocal && onContinueLocal ? <Button onClick={onContinueLocal}>{t("Continue on this Mac")}</Button> : null}
       </div>
     </div>
   );

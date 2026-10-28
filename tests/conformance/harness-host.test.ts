@@ -8,10 +8,11 @@
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { after, before, describe, it } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { after, afterEach, before, describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
 import { HarnessHost, UpdateJournal } from "../../src/substrate/harness-host.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
@@ -36,6 +37,27 @@ interface Rig {
 
 let sandbox: ProcessSandbox;
 let root: string;
+/** Every rig a test made, so one whose assertion failed still stops its harness. */
+const rigs: Rig[] = [];
+/** How long a rig's harness gets to stop when its test is over. */
+const RIG_STOP_GRACE_MS = 200;
+/** How often, and at most how long, a test looks for what the host should have done by itself. */
+const UNTIL_POLL_MS = 50;
+const UNTIL_LIMIT_MS = 60_000;
+/** How long the slow-boot fixture waits before it loads. */
+const SLOW_BOOT_MS = 2_000;
+
+/**
+ * Wait until `done` holds, failing with `what` if it never does. The host's background work
+ * includes sandboxed boots, which take seconds on a Windows runner, so a fixed pause is a race.
+ */
+async function until(done: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + UNTIL_LIMIT_MS;
+  while (!done()) {
+    assert.ok(Date.now() < deadline, what);
+    await delay(UNTIL_POLL_MS);
+  }
+}
 
 before(async () => {
   root = await tmpDir("studio-host-");
@@ -44,6 +66,12 @@ before(async () => {
     scratchDir: path.join(root, "scratch"),
     secretPaths: [path.join(root, "secrets")],
   });
+});
+
+// A harness left running holds its folders open (Windows refuses to remove them) and keeps this
+// file's process alive.
+afterEach(async () => {
+  for (const r of rigs.splice(0)) await r.host.stop(RIG_STOP_GRACE_MS).catch(() => {});
 });
 
 // The last sandbox out releases sandbox-runtime, whose Linux bridges would keep this file running.
@@ -106,6 +134,7 @@ async function rig(
     },
     ...(now ? { now } : {}),
   });
+  rigs.push(state);
   return state;
 }
 
@@ -125,6 +154,24 @@ describe("harness host: boot & RPC", () => {
     assert.ok(r.notifications.some((n) => n.type === "chat.delta"));
     await r.host.stop();
     assert.equal(r.host.state, "stopped");
+  });
+
+  it("gives the first boot longer to report ready than a later one", async () => {
+    // A Windows 11 first start: the sandboxed harness read every module for the first time while
+    // Defender scanned them, missed the fixed 20 s, and the first chat message found no harness.
+    const r = await rig("slow-first-boot");
+    const slow = new HarnessHost({ ...r.host.options, readyTimeoutMs: { first: 60_000, later: SLOW_BOOT_MS / 4 } });
+    const main = path.join(r.workspace, "loop", "main.mjs");
+    const original = await readFile(main, "utf8");
+    await writeFile(
+      main,
+      `import { setTimeout as wait } from "node:timers/promises";\nawait wait(${SLOW_BOOT_MS});\n${original}`,
+    );
+    await slow.start();
+    assert.equal(slow.state, "ready", "the first boot had time");
+    await slow.stop();
+    await assert.rejects(() => slow.start(undefined, { callerRecovers: true }), /did not report ready/);
+    await slow.stop();
   });
 
   it("passes substrate errors back to the harness instead of killing it", async () => {
@@ -257,9 +304,8 @@ describe("harness host: self-modification", () => {
     await r.host.stop();
 
     await assert.rejects(() => rebuilt.start(), /exited during boot|did not report ready/);
-    // The host retries, hits the crash-loop threshold, and the watchdog rewinds.
-    await new Promise((resolve) => setTimeout(resolve, 3_000));
-    assert.equal(restored, true, "watchdog must have restored the healthy snapshot");
+    // The host retries in the background, hits the crash-loop threshold, and the watchdog rewinds.
+    await until(() => restored, "watchdog must have restored the healthy snapshot");
     const events = await r.store.listEvents(r.thread);
     assert.ok(events.some((e) => e.data.type === "workspace_restored"));
 
@@ -310,8 +356,7 @@ describe("harness host: self-modification", () => {
         },
       })
       .catch(() => {});
-    await new Promise((resolve) => setTimeout(resolve, 8_000));
-    assert.ok(r.wedges >= 1, "a harness that stops beating must be reported as wedged");
+    await until(() => r.wedges >= 1, "a harness that stops beating must be reported as wedged");
     await r.host.stop(200);
   });
 
@@ -405,13 +450,11 @@ describe("harness host: crash handling", () => {
         .catch(() => {});
 
     crash();
-    await new Promise((resolve) => setTimeout(resolve, 2_500));
-    assert.equal(r.host.state, "ready", "first crash is simply restarted");
+    await until(() => r.host.exits.length === 1 && r.host.state === "ready", "first crash is simply restarted");
     assert.equal(r.crashLoops, 0);
 
     crash();
-    await new Promise((resolve) => setTimeout(resolve, 2_500));
-    assert.equal(r.crashLoops, 1, "the second crash inside the window escalates to the watchdog");
+    await until(() => r.crashLoops === 1, "the second crash inside the window escalates to the watchdog");
     await r.host.stop(200);
   });
 });
@@ -478,6 +521,17 @@ export async function createStudio(host: Host): Promise<object> {
     await r.host.start();
     assert.ok(r.host.capabilities.includes("loop"), r.logs.join("\n"));
     assert.equal(await r.host.healthcheck(), true, r.logs.join("\n"));
+    await r.host.stop();
+  });
+
+  it("keeps the compiled seed in the compile cache it is given, so the next boot skips type stripping", async () => {
+    const r = await seedHost("seed-compile-cache", process.execPath, false);
+    const cache = path.join(root, "seed-compile-cache", "compile-cache");
+    r.host = new HarnessHost({ ...r.host.options, compileCache: cache });
+    await r.host.start();
+    assert.ok(r.host.capabilities.includes("loop"), r.logs.join("\n"));
+    const entries = existsSync(cache) ? await readdir(cache, { recursive: true }) : [];
+    assert.ok(entries.length > 0, "the cache holds the harness's compiled modules once it is ready");
     await r.host.stop();
   });
 

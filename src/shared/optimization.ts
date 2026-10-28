@@ -1,3 +1,5 @@
+import { t } from "./i18n.ts";
+
 /** How much of a stage result the renderer keeps: the result is the harness's, so it is bounded. */
 const MAX_SCENARIOS = 2;
 const MAX_SAMPLES = 8;
@@ -184,7 +186,7 @@ export function normalizeOptimization(value: unknown): OptimizationResultV1 | nu
         comparison: {
           comparable: s.comparison?.comparable === true,
           improved: s.comparison?.improved === true,
-          reason: typeof s.comparison?.reason === "string" ? s.comparison.reason : "Not measured",
+          reason: typeof s.comparison?.reason === "string" ? s.comparison.reason : t("Not measured"),
           gains: Array.isArray(s.comparison?.gains) ? s.comparison.gains.filter((g) => typeof g === "string") : [],
         },
       })),

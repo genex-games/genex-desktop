@@ -21,6 +21,8 @@ export const WRAP_UP_WORDS = {
     "Recorded: the user asked to finish, and no worker is running. Integrate what is ready, look at the integrated build and call finish; when this turn ends the studio starts the wrap-up. Tell the user this in a sentence.",
   openLoop:
     "Recorded: the user asked to finish. No worker starts from now; when this turn ends the studio starts the wrap-up. Tell the user this in a sentence.",
+  /** The new Loop the user asked for is on record with the ask (next-loop.ts). */
+  nextLoop: "Their new Loop starts by itself once this run has closed: tell them so, in the same sentence.",
   /** Why an open Loop's `worker_start` refuses once the user asked to finish. */
   openNoWorkers: "the user asked to finish: no new workers. The wrap-up starts when this turn ends.",
 } as const;

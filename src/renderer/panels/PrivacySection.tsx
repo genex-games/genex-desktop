@@ -1,12 +1,20 @@
 /**
- * Settings → Privacy: Share build metrics (off by default), See what would be sent, Delete what I
- * shared, and Genex's privacy policy and terms at the bottom of the tab.
+ * Settings → Privacy: Share usage data (where the build offers it; the one-time question records the
+ * first answer), Share build metrics (off by default), See what would be sent, Delete what I shared,
+ * and Genex's privacy policy and terms at the bottom of the tab.
  */
 import { type JSX, useEffect, useState } from "react";
 import type { FieldRow, RunSharingStatus } from "../../shared/run-sharing.ts";
+import { AnalyticsChoice } from "../analytics/consent.ts";
+import { ConsentSurface } from "../analytics/events/core.ts";
+import { chooseUsageAnalytics } from "../analytics/start.ts";
+import { useSession, useShallow } from "../state/hooks.ts";
+import { studio } from "../state/studio.ts";
 import { Button } from "../ui/Button.tsx";
 import { Switch } from "../ui/switch.tsx";
-import { PRIVACY_WORDS, privacyDeleteWords, problemWords } from "../words.ts";
+import { ANALYTICS_WORDS, PRIVACY_WORDS, privacyDeleteWords, problemWords } from "../words.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** Where Privacy's links go, in the order the line shows them. */
 const POLICY_LINKS = [
@@ -67,6 +75,35 @@ function ShareRow({
       </label>
       <Switch id="privacy-share-builds" checked={status.on} disabled={busy} onCheckedChange={onChange} />
     </div>
+  );
+}
+
+/** Share usage data: the answer the question recorded, in a card of its own; nothing where the build offers none. */
+function UsageAnalyticsRow(): JSX.Element | null {
+  const { offered, choice, replayUntil } = useSession(
+    useShallow((s) => ({ offered: s.analytics !== null, choice: s.analyticsChoice, replayUntil: s.replayUntil })),
+  );
+  if (!offered) return null;
+  const now = Date.now();
+  const what =
+    replayUntil !== null && now < replayUntil
+      ? ANALYTICS_WORDS.switchWhatReplay(replayUntil)
+      : ANALYTICS_WORDS.switchWhat;
+  const change = (on: boolean) =>
+    chooseUsageAnalytics(studio(), on ? AnalyticsChoice.On : AnalyticsChoice.Off, {
+      surface: ConsentSurface.Settings,
+      now: Date.now(),
+    });
+  return (
+    <section data-usage-analytics className="appearance-theme settings-rows mb-4">
+      <div className="appearance-row">
+        <label htmlFor="privacy-usage-analytics" className="flex min-w-0 flex-col">
+          <span className="text-ink">{ANALYTICS_WORDS.switchLabel}</span>
+          <span className="text-ink-3">{what}</span>
+        </label>
+        <Switch id="privacy-usage-analytics" checked={choice === AnalyticsChoice.On} onCheckedChange={change} />
+      </div>
+    </section>
   );
 }
 
@@ -192,10 +229,11 @@ export function PrivacySection(): JSX.Element {
   if (!status)
     return (
       <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
+        <UsageAnalyticsRow />
         {alert || (
-          <p role="status" className="text-ink-3">
-            {PRIVACY_WORDS.loading}
-          </p>
+          <Pending label={PRIVACY_WORDS.loading}>
+            <SkeletonRows control={SkeletonControl.Button} />
+          </Pending>
         )}
         <PolicyLinks />
       </div>
@@ -203,12 +241,14 @@ export function PrivacySection(): JSX.Element {
   if (!status.available)
     return (
       <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
+        <UsageAnalyticsRow />
         <p className="mb-4 text-ink-3">{PRIVACY_WORDS.removed}</p>
         <PolicyLinks />
       </div>
     );
   return (
     <div data-privacy-settings className="appearance-section flex min-h-full flex-col">
+      <UsageAnalyticsRow />
       <section className="appearance-theme settings-rows">
         <ShareRow status={status} busy={busy} onChange={(on) => void change(on)} />
         <PreviewRow />

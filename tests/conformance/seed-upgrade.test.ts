@@ -31,6 +31,8 @@ import {
 import { atomicWriteJson, pathExists } from "../../src/substrate/fsx.ts";
 import { StudioCore } from "../../src/main/studio-core.ts";
 import { makeResources } from "../helpers/resources.ts";
+import { coreLite } from "../helpers/core-lite.ts";
+import { git, STUDIO_COMMITTER } from "../../src/substrate/snapshots.ts";
 import { cloneSeededWorkspace } from "../helpers/seed-upgrade-fixture.ts";
 import { closeBeforeCleanup, removeTree, tmpDir } from "../helpers/tmp.ts";
 import { readFileSync } from "node:fs";
@@ -259,6 +261,37 @@ describe("manifest reconcile after a harness restore", () => {
       updatesDir: path.join(path.dirname(ws), "still-no-updates"),
     });
     assert.deepEqual(reconciled, []);
+  });
+});
+
+describe("the first launch's harness repository", () => {
+  it("is written by git from the shipped seed, so no file the launch just wrote is read back", async () => {
+    // Windows scans a file the first time it is read after being written: committing the copied
+    // seed made git read back all of it, and a first start on Windows 11 waited minutes on that.
+    const { core, resources } = await coreLite();
+    const ws = core.layout.harnessWs;
+    const shipped = (
+      await readdir(path.join(resources, "harness-seed"), { recursive: true, withFileTypes: true })
+    ).filter((entry) => entry.isFile()).length;
+    const counts = Object.fromEntries(
+      (await git(ws, ["count-objects", "-v"]))
+        .trim()
+        .split("\n")
+        .map((line) => line.split(": ") as [string, string]),
+    );
+    assert.equal(Number(counts.count), 0, "no loose object: the commit went into one pack");
+    assert.ok(Number(counts["in-pack"]) > shipped, "every file, tree and the commit are packed");
+    assert.equal((await git(ws, ["ls-files"])).trim().split("\n").length, shipped);
+    assert.equal((await git(ws, ["status", "--porcelain"])).trim(), "");
+    assert.equal(
+      (await git(ws, ["log", "--format=%an <%ae>|%s"])).trim(),
+      `${STUDIO_COMMITTER.name} <${STUDIO_COMMITTER.email}>|substrate: initial`,
+    );
+    for (const rel of ["loop/main.ts", "package.json"])
+      assert.equal(
+        await readFile(path.join(ws, rel), "utf8"),
+        await readFile(path.join(resources, "harness-seed", rel), "utf8"),
+      );
   });
 });
 

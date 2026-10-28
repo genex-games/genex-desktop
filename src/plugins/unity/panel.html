@@ -5,7 +5,7 @@
   /* Genex's engine panels group what belongs together in outlined blocks: an edge, a fill one step above the page, a foot a half step, and the tile inside them. */
   --edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));--tile:color-mix(in srgb,var(--fg) 8%,var(--bg));
   /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
-  --sans:"Zalando Sans SemiExpanded",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
   /* A mark drawn in the current colour: the arrow of a button that opens another app or page, a warning's sign, and a tick. */
   --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17L17 7M9 7h8v8'/%3E%3C/svg%3E");
   --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0zM12 10v4M12 17.2v.1'/%3E%3C/svg%3E");
@@ -107,20 +107,20 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
 </style></head><body>
 <main id="app" aria-busy="true">
   <div class="group">
-    <p id="label" class="label" hidden>This game's project</p>
+    <p id="label" class="label" data-t hidden>This game's project</p>
     <div class="block">
       <div id="head" class="head" hidden>
         <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(3.6 3.6) scale(.7)" d="m12.9288 4.2939 3.7997 2.1929c.1366.077.1415.2905 0 .3675l-4.515 2.6076a.4192.4192 0 0 1-.4246 0L7.274 6.8543c-.139-.0745-.1415-.293 0-.3675l3.7972-2.193V0L1.3758 5.5977V16.793l3.7177-2.1456v-4.3858c-.0025-.1565.1813-.2682.318-.1838l4.5148 2.6076a.4252.4252 0 0 1 .2136.3676v5.2127c.0025.1565-.1813.2682-.3179.1838l-3.7996-2.1929-3.7178 2.1457L12 24l9.6954-5.5977-3.7178-2.1457-3.7996 2.1929c-.1341.082-.3229-.0248-.3179-.1838V13.053c0-.1565.087-.2956.2136-.3676l4.5149-2.6076c.134-.082.3228.0224.3179.1838v4.3858l3.7177 2.1456V5.5977L12.9288 0Z" fill="currentColor" stroke="none"/></svg></span>
-        <div class="who"><h2 id="name">Unity project</h2><p id="where" class="path"></p></div>
+        <div class="who"><h2 id="name" data-t>Unity project</h2><p id="where" class="path"></p></div>
         <span id="state" class="state"><span id="state-word"></span></span>
       </div>
       <div class="msg">
         <div class="status"><span id="orb" class="orb" aria-hidden="true" hidden></span><h3 id="title" tabindex="-1">Unity</h3></div>
-        <p id="text" class="quiet" role="status">Checking Unity…</p>
+        <p id="text" class="quiet" role="status" data-t>Checking Unity…</p>
         <p id="working" class="waiting" role="status" hidden><span class="orb" aria-hidden="true"></span><span id="working-text"></span></p>
         <p id="done" class="quiet small" role="status"></p>
       </div>
-      <div id="fact-engine" class="fact" hidden><span class="k">Engine</span><span id="version" class="v"></span></div>
+      <div id="fact-engine" class="fact" hidden><span class="k" data-t>Engine</span><span id="version" class="v"></span></div>
       <p id="note" class="note" role="status" hidden></p>
       <div id="foot" class="foot" hidden>
         <button type="button" id="primary" class="primary" hidden></button>
@@ -129,28 +129,31 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
     </div>
   </div>
   <div id="agents" class="group" hidden>
-    <p class="label">Agents</p>
+    <p class="label" data-t>Agents</p>
     <div class="block">
       <label class="choice" for="while-playing">
         <input type="checkbox" id="while-playing">
         <span class="words">
-          <span>Agents may use Unity while you play</span>
-          <span class="quiet small">They go ahead even in Play mode, and may stop your play. Turn off to have them wait until you stop.</span>
+          <span data-t>Agents may use Unity while you play</span>
+          <span class="quiet small" data-t>They go ahead even in Play mode, and may stop your play. Turn off to have them wait until you stop.</span>
         </span>
       </label>
     </div>
   </div>
   <p id="error" class="error" role="alert"></p>
   <div id="computer" class="group mac" hidden>
-    <p class="label">This computer</p>
+    <p class="label" data-t>This computer</p>
     <div class="block">
       <div class="fact"><span id="unity-mark" class="ticked" aria-hidden="true"></span><span class="k">Unity</span><span id="installed" class="v"></span></div>
     </div>
   </div>
 </main>
 <!-- STUDIO_PANEL_SDK -->
-<script>
+<script type="module">
 const api = window.studioPlugin;
+// The panel's words are in Genex's language once the host has named it (plugin-sdk/words.js).
+await api.ready;
+const { t } = api;
 const $ = (id) => document.getElementById(id);
 
 /** How often the panel asks where Unity stands while it is in view. */
@@ -175,6 +178,7 @@ const Step = {
   Opening: "opening",
   Ready: "ready",
   Stalled: "stalled",
+  Terms: "terms",
 };
 const Action = {
   Status: "status",
@@ -191,84 +195,115 @@ const Action = {
 const Opened = { Answers: "answers", SeemsOpen: "seems-open", NoEditor: "no-editor", Failed: "failed" };
 const Source = { Hub: "hub" };
 
-const HUB_INSTALL = "Install it in Unity Hub: Installs, then Install Editor.";
 const WORDS = {
   ready: {
-    playing: "It is playing the game.",
-    compiling: "It is compiling scripts.",
-    idle: "Agents can work in it.",
+    playing: t("It is playing the game."),
+    compiling: t("It is compiling scripts."),
+    idle: t("Agents can work in it."),
   },
-  gameFolder: "This game's folder",
+  gameFolder: t("This game's folder"),
   engine: (version) => `Unity ${version}`,
   /** The installed Unity that leads This computer, and how many more there are. */
   installed: (newest, more) => (more > 0 ? `${newest} +${more}` : newest),
-  openedHub: "Opened Unity Hub.",
-  openedDownload: "Opened Unity's download page in your browser.",
-  undone: "Took Unity's Pipeline package back out of this project.",
-  nothingToUndo: "Nothing of Genex's was left to take back.",
-  loadsWhenForward: "Unity has this project open: bring Unity to the front so it loads the package.",
-  notEnded: "Unity could not be ended. Quit it yourself, then open the project again.",
-  noEditor: (version) => `Unity ${version} isn't installed, so the project was not opened.`,
-  failed: (why) => `Unity didn't open: ${why}`,
+  openedHub: t("Opened Unity Hub."),
+  openedDownload: t("Opened Unity's download page in your browser."),
+  undone: t("Took Unity's Pipeline package back out of this project."),
+  nothingToUndo: t("Nothing of Genex's was left to take back."),
+  loadsWhenForward: t("Unity has this project open: bring Unity to the front so it loads the package."),
+  notEnded: t("Unity could not be ended. Quit it yourself, then open the project again."),
+  noEditor: (version) => t("Unity {version} isn't installed, so the project was not opened.", { version }),
+  failed: (why) => t("Unity didn't open: {why}", { why }),
   setAside: (folder) =>
-    `Unity had kept backups of scenes that were unsaved when it last ended. So that it opens without asking, Genex moved them to ${folder}.`,
+    t(
+      "Unity had kept backups of scenes that were unsaved when it last ended. So that it opens without asking, Genex moved them to {folder}.",
+      { folder },
+    ),
 };
 
 /** Each step's headline, its words, and its one main and one quiet action. */
 const STEPS = {
   [Step.GetUnity]: {
-    title: "Get Unity 6",
+    title: t("Get Unity 6"),
     text: (s) =>
       s.installed.length > 0
-        ? `This computer has Unity ${s.installed[0]}, and Genex builds Unity games in Unity 6 or later. ${HUB_INSTALL}`
-        : `Genex builds Unity games in the Unity 6 editor on this computer. ${HUB_INSTALL}`,
-    primary: { action: Action.GetUnity, label: "Get Unity" },
+        ? t(
+            "This computer has Unity {version}, and Genex builds Unity games in Unity 6 or later. Install it in Unity Hub: Installs, then Install Editor.",
+            { version: s.installed[0] },
+          )
+        : t(
+            "Genex builds Unity games in the Unity 6 editor on this computer. Install it in Unity Hub: Installs, then Install Editor.",
+          ),
+    primary: { action: Action.GetUnity, label: t("Get Unity") },
   },
-  [Step.NoGame]: { title: "No game open", text: () => "Open a game to see its Unity project." },
+  [Step.NoGame]: { title: t("No game open"), text: () => t("Open a game to see its Unity project.") },
   [Step.NoProject]: {
-    title: "No Unity project in this game",
+    title: t("No Unity project in this game"),
     text: () =>
-      "Ask for a Unity game in the chat and Genex makes its project here. To work on a project you already have, choose Open a folder… on Home.",
+      t(
+        "Ask for a Unity game in the chat and Genex makes its project here. To work on a project you already have, choose Open a folder… on Home.",
+      ),
   },
   [Step.OldProject]: {
-    title: "This project needs Unity 6",
+    title: t("This project needs Unity 6"),
     text: (s) =>
-      `It was saved with Unity ${s.version ?? "an older version"}, and Genex works with Unity 6 or later. Upgrade the project in Unity Hub.`,
-    primary: { action: Action.GetUnity, label: "Open Unity Hub" },
+      s.version
+        ? t(
+            "It was saved with Unity {version}, and Genex works with Unity 6 or later. Upgrade the project in Unity Hub.",
+            { version: s.version },
+          )
+        : t(
+            "It was saved with Unity an older version, and Genex works with Unity 6 or later. Upgrade the project in Unity Hub.",
+          ),
+    primary: { action: Action.GetUnity, label: t("Open Unity Hub") },
   },
   [Step.NotSetUp]: {
-    title: "Set up this project",
+    title: t("Set up this project"),
     text: () =>
-      "Agents reach the editor through Unity's Pipeline package. Set up adds it to Packages/manifest.json and keeps a copy of the file first.",
-    primary: { action: Action.Setup, label: "Set up" },
+      t(
+        "Agents reach the editor through Unity's Pipeline package. Set up adds it to Packages/manifest.json and keeps a copy of the file first.",
+      ),
+    primary: { action: Action.Setup, label: t("Set up") },
   },
   [Step.NoEditor]: {
-    title: (s) => (s.version ? `Unity ${s.version} isn't installed` : "This project's Unity isn't installed"),
+    title: (s) =>
+      s.version ? t("Unity {version} isn't installed", { version: s.version }) : t("This project's Unity isn't installed"),
     text: () =>
-      "This project was saved with it. Install that version in Unity Hub, or open the project from Hub to move it to a Unity you have.",
-    primary: { action: Action.GetUnity, label: "Open Unity Hub" },
+      t(
+        "This project was saved with it. Install that version in Unity Hub, or open the project from Hub to move it to a Unity you have.",
+      ),
+    primary: { action: Action.GetUnity, label: t("Open Unity Hub") },
   },
   [Step.NotOpen]: {
-    title: "Unity isn't open",
-    text: () => "Genex opens it when an agent needs it.",
-    primary: { action: Action.OpenEditor, label: "Open in Unity" },
-    quiet: { action: Action.UndoSetup, label: "Undo setup" },
+    title: t("Unity isn't open"),
+    text: () => t("Genex opens it when an agent needs it."),
+    primary: { action: Action.OpenEditor, label: t("Open in Unity") },
+    quiet: { action: Action.UndoSetup, label: t("Undo setup") },
   },
   [Step.Opening]: {
-    title: "Unity is starting",
-    text: () => "A first start imports the project and downloads its packages. If it stays here, bring Unity to the front.",
-    quiet: { action: Action.RestartEditor, label: "Restart Unity" },
+    title: t("Unity is starting"),
+    text: () =>
+      t("A first start imports the project and downloads its packages. If it stays here, bring Unity to the front."),
+    quiet: { action: Action.RestartEditor, label: t("Restart Unity") },
   },
   [Step.Ready]: {
-    title: "Unity is ready",
+    title: t("Unity is ready"),
     text: (s) => readyWords(s),
-    quiet: { action: Action.RestartEditor, label: "Restart Unity" },
+    quiet: { action: Action.RestartEditor, label: t("Restart Unity") },
+  },
+  [Step.Terms]: {
+    title: t("Unity is waiting for you"),
+    text: () =>
+      t(
+        "The first time it starts, Unity shows its Software Terms in a window of its own. Bring Unity to the front and accept them; Genex goes on once Unity answers.",
+      ),
   },
   [Step.Stalled]: {
-    title: "Unity isn't answering",
+    title: t("Unity isn't answering"),
     text: () =>
-      "A dialog may be waiting in Unity: bring it to the front and answer it. If nothing is there, restart Unity. Work not saved in the editor is lost.",
-    primary: { action: Action.RestartEditor, label: "Restart Unity" },
+      t(
+        "A dialog may be waiting in Unity: bring it to the front and answer it. If nothing is there, restart Unity. Work not saved in the editor is lost.",
+      ),
+    primary: { action: Action.RestartEditor, label: t("Restart Unity") },
   },
 };
 
@@ -276,13 +311,14 @@ const STEPS = {
 const Tone = { Unset: "unset", Quiet: "quiet", Starting: "starting", Ok: "ok", Warn: "warn" };
 /** Each project step's state word beside the project, in the toolbar button's own words (`panel-status.ts`). */
 const STATE = {
-  [Step.OldProject]: ["Not set up", Tone.Unset],
-  [Step.NotSetUp]: ["Not set up", Tone.Unset],
-  [Step.NoEditor]: ["Not open", Tone.Quiet],
-  [Step.NotOpen]: ["Not open", Tone.Quiet],
-  [Step.Opening]: ["Starting", Tone.Starting],
-  [Step.Ready]: ["Ready", Tone.Ok],
-  [Step.Stalled]: ["Stalled", Tone.Warn],
+  [Step.OldProject]: [t("Not set up"), Tone.Unset],
+  [Step.NotSetUp]: [t("Not set up"), Tone.Unset],
+  [Step.NoEditor]: [t("Not open"), Tone.Quiet],
+  [Step.NotOpen]: [t("Not open"), Tone.Quiet],
+  [Step.Opening]: [t("Starting"), Tone.Starting],
+  [Step.Ready]: [t("Ready"), Tone.Ok],
+  [Step.Stalled]: [t("Stalled"), Tone.Warn],
+  [Step.Terms]: [t("Waiting for you"), Tone.Warn],
 };
 /** The first Unity that Genex builds with: 6, numbered 6000 by Unity. */
 const UNITY_6_MAJOR = 6000;
@@ -290,9 +326,9 @@ const UNITY_6_MAJOR = 6000;
 /** What an action shows while it runs, how long the panel waits for it, and whether it leaves Genex. */
 const ACTIONS = {
   [Action.GetUnity]: { external: true },
-  [Action.OpenEditor]: { external: true, working: "Opening Unity…", waitMs: OPEN_WAIT_MS },
-  [Action.Setup]: { working: "Setting up and opening Unity…", waitMs: OPEN_WAIT_MS },
-  [Action.RestartEditor]: { working: "Restarting Unity…", waitMs: OPEN_WAIT_MS },
+  [Action.OpenEditor]: { external: true, working: t("Opening Unity…"), waitMs: OPEN_WAIT_MS },
+  [Action.Setup]: { working: t("Setting up and opening Unity…"), waitMs: OPEN_WAIT_MS },
+  [Action.RestartEditor]: { working: t("Restarting Unity…"), waitMs: OPEN_WAIT_MS },
   [Action.UndoSetup]: {},
 };
 

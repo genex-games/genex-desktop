@@ -1,10 +1,26 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { AGENT_CHECKS, agentChecksDone, agentVerdict, readSelfTest } from "../../scripts/canary/agent-command.ts";
-import { sizesWithRoom } from "../../scripts/canary/azure.ts";
+import {
+  AGENT_CHECKS,
+  agentChecksDone,
+  agentChecksFor,
+  agentVerdict,
+  CLAUDE_WORKER_CHECKS,
+  readSelfTest,
+} from "../../scripts/canary/agent-command.ts";
+import { CLAUDE_WORKER_CHECK } from "../../src/main/smoke/claude-worker-check.ts";
+import {
+  gitHubSignIn,
+  gitHubToken,
+  ownerResult,
+  signInCommands,
+  signInDue,
+  sizesWithRoom,
+  triesElsewhere,
+} from "../../scripts/canary/azure.ts";
 import { readStart } from "../../scripts/canary/first-start.ts";
 import {
   assetTag,
@@ -17,15 +33,29 @@ import {
 } from "../../scripts/canary/links.ts";
 import { IssueAction, issueAction, summaryMarkdown, withMissing } from "../../scripts/canary/report.ts";
 import { aptVersions, isRelease } from "../../scripts/canary/repository.ts";
+import { QUIET_SAMPLES, SAMPLE_MS, settledLine, waitForIdle } from "../../scripts/canary/settle.ts";
 import {
   CanaryStep,
   type MachineResult,
   machinePassed,
   mergeMachines,
   Persona,
+  RESULT_FILE,
+  readResult,
   StepOutcome,
 } from "../../scripts/canary/results.ts";
+import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { newestSquirrelApp } from "../../scripts/canary/platforms.ts";
+import {
+  approvalsBetween,
+  approvalVerdict,
+  readApprovals,
+  SEEDED_GAME,
+  seedGame,
+  upgradeCardLine,
+} from "../../scripts/canary/upgrade.ts";
+import { setupGaps } from "../../src/substrate/windows-sandbox.ts";
 
 const ASSETS = "https://github.com/genex-games/genex-desktop/releases/download";
 const DMG = PUBLIC_LINKS[PackageKind.Dmg];
@@ -238,6 +268,23 @@ describe("release canary agent command", () => {
     const missing = agentVerdict(readSelfTest(""), "runner exited 1");
     assert.match(missing.detail, /never reported: a chat turn completes end to end/);
   });
+
+  test("on Windows a release whose runner has the Claude worker stage also waits for that worker's checks", () => {
+    const runner = 'const claudeWorker = process.argv.includes("--claude-worker");';
+    const checks = agentChecksFor("win32", runner);
+    assert.deepEqual(checks, [...AGENT_CHECKS, ...CLAUDE_WORKER_CHECKS]);
+    assert.deepEqual(agentChecksFor("win32", "// an older runner"), AGENT_CHECKS, "an older release never had it");
+    assert.deepEqual(agentChecksFor("darwin", runner), AGENT_CHECKS, "Claude Code's own sandbox runs elsewhere");
+    assert.equal(agentChecksDone(readSelfTest(passed), checks), false, "the worker has not reported yet");
+    const refused = `${passed}\n[selftest] PASS ${CLAUDE_WORKER_CHECKS[0]}: claude.exe\n[selftest] FAIL ${CLAUDE_WORKER_CHECKS[1]}: sandbox_unavailable\n[selftest] FAIL ${CLAUDE_WORKER_CHECKS[2]}: file missing`;
+    const verdict = agentVerdict(readSelfTest(refused), "stopped", checks);
+    assert.equal(verdict.outcome, StepOutcome.Fail);
+    assert.match(verdict.detail, /failed: a Claude worker ran its turn without being refused: sandbox_unavailable/);
+  });
+
+  test("the canary waits for the Claude worker checks by the names the self test prints", () => {
+    assert.deepEqual([...CLAUDE_WORKER_CHECKS], Object.values(CLAUDE_WORKER_CHECK));
+  });
 });
 
 describe("release canary Azure size", () => {
@@ -257,6 +304,137 @@ describe("release canary Azure size", () => {
     assert.deepEqual(sizesWithRoom([usage("cores", 8, 10), usage("standardDASv5Family", 0, 10)]), ["Standard_D2as_v5"]);
     assert.deepEqual(sizesWithRoom([usage("cores", 10, 10), usage("standardDASv5Family", 0, 10)]), []);
     assert.deepEqual(sizesWithRoom([]), []);
+  });
+
+  test("a region whose quota another machine of the run took meanwhile is passed over, not the run's end", () => {
+    // v0.1.13's Windows 10 job: both Azure machines read room in westus3, Windows 11 took it first.
+    const quota =
+      "(QuotaExceeded) Operation could not be completed as it results in exceeding approved Total Regional Cores quota. Location: westus3, Current Limit: 10, Current Usage: 10, Additional Required: 2";
+    assert.equal(triesElsewhere(quota), true);
+    assert.equal(triesElsewhere("(SkuNotAvailable) The requested VM size is not available"), true);
+    assert.equal(triesElsewhere("(AuthorizationFailed) The client does not have authorization"), false);
+  });
+});
+
+describe("release canary Azure owner run", () => {
+  const standardUser: MachineResult = {
+    machine: "windows-10",
+    kind: PackageKind.Exe,
+    tag: "v0.1.12",
+    steps: [
+      {
+        step: CanaryStep.AgentCommand,
+        outcome: StepOutcome.Fail,
+        persona: Persona.StandardUser,
+        detail: "never reported: harness boots inside the sandbox",
+      },
+    ],
+  };
+
+  /** A VM's evidence as azure.ts unzips it: one folder per persona that wrote a result. */
+  async function evidence(results: Partial<Record<Persona, MachineResult>>): Promise<string> {
+    const dir = await tmpDir("canary-azure-");
+    for (const [persona, result] of Object.entries(results)) {
+      await mkdir(path.join(dir, persona), { recursive: true });
+      await writeFile(path.join(dir, persona, RESULT_FILE), JSON.stringify(result));
+    }
+    return dir;
+  }
+
+  test("an owner run that left no result fails the machine as the owner's, not as Genex's", async () => {
+    const dir = await evidence({ [Persona.StandardUser]: standardUser });
+    const owner = await ownerResult(dir, "windows-10", "v0.1.12");
+    assert.equal(machinePassed(owner), false);
+    assert.deepEqual(
+      owner.steps.map((step) => [step.persona, step.step, step.outcome]),
+      [[Persona.Owner, CanaryStep.Link, StepOutcome.Fail]],
+    );
+    assert.match(owner.steps[0]?.detail ?? "", /owner run did not start/);
+    assert.deepEqual(await readResult(path.join(dir, Persona.Owner, RESULT_FILE)), owner, "the report reads it");
+  });
+
+  test("an owner run that wrote its result is left as it was, passing or not", async () => {
+    const passed: MachineResult = {
+      ...standardUser,
+      steps: [{ step: CanaryStep.FirstStart, outcome: StepOutcome.Pass, persona: Persona.Owner, detail: "ok" }],
+    };
+    const dir = await evidence({ [Persona.Owner]: passed });
+    assert.deepEqual(await ownerResult(dir, "windows-10", "v0.1.12"), passed);
+    assert.deepEqual(await readResult(path.join(dir, Persona.Owner, RESULT_FILE)), passed);
+  });
+});
+
+describe("release canary Azure sign-in", () => {
+  const actions = {
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.example/id?api-version=2.0",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
+    AZURE_CLIENT_ID: "client",
+    AZURE_TENANT_ID: "tenant",
+    AZURE_SUBSCRIPTION_ID: "subscription",
+  };
+
+  test("a job signs in again with a token of its own; outside Actions or without the IDs, nothing does", () => {
+    assert.deepEqual(gitHubSignIn(actions), {
+      requestUrl: actions.ACTIONS_ID_TOKEN_REQUEST_URL,
+      requestToken: "request-token",
+      clientId: "client",
+      tenantId: "tenant",
+      subscriptionId: "subscription",
+    });
+    assert.equal(gitHubSignIn({}), null);
+    assert.equal(gitHubSignIn({ ...actions, AZURE_CLIENT_ID: "" }), null);
+    assert.equal(gitHubSignIn({ ...actions, ACTIONS_ID_TOKEN_REQUEST_TOKEN: undefined }), null);
+  });
+
+  test("the fresh token is asked for Azure's audience with the job's request token", async () => {
+    const asked: Array<{ url: string; authorization: string | null }> = [];
+    const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+      asked.push({ url: String(url), authorization: new Headers(init?.headers).get("authorization") });
+      return Response.json({ value: "oidc-token" });
+    };
+    const signIn = gitHubSignIn(actions);
+    assert.ok(signIn);
+    assert.equal(await gitHubToken(signIn, fetchImpl), "oidc-token");
+    const url = new URL(asked[0]?.url ?? "");
+    assert.equal(url.searchParams.get("api-version"), "2.0");
+    assert.equal(url.searchParams.get("audience"), "api://AzureADTokenExchange");
+    assert.equal(asked[0]?.authorization, "bearer request-token");
+  });
+
+  test("a refused or empty answer is an error, never a sign-in with no token", async () => {
+    const signIn = gitHubSignIn(actions);
+    assert.ok(signIn);
+    await assert.rejects(
+      gitHubToken(signIn, async () => new Response("no", { status: 403 })),
+      /HTTP 403/,
+    );
+    await assert.rejects(
+      gitHubToken(signIn, async () => Response.json({ value: "" })),
+      /no token/,
+    );
+    await assert.rejects(
+      gitHubToken(signIn, async () => Response.json({})),
+      /no token/,
+    );
+  });
+
+  test("az signs in again once the last sign-in is a few minutes old, the first time always", () => {
+    assert.equal(signInDue(null, 0), true);
+    assert.equal(signInDue(0, 4 * MINUTE_MS), false);
+    assert.equal(signInDue(0, 5 * MINUTE_MS), true);
+  });
+
+  test("a new sign-in drops the cached Azure token first, so az never renews it with a stale OIDC token", () => {
+    // Run 39448423868: a run-command call 55 minutes into the job failed AADSTS700024. az had kept
+    // azure/login's first Azure token and, renewing it near its expiry, used the latest OIDC token,
+    // which had expired 12 minutes earlier.
+    const signIn = { requestUrl: "u", requestToken: "r", clientId: "c", tenantId: "t", subscriptionId: "s" };
+    const commands = signInCommands(signIn, "oidc");
+    assert.deepEqual(commands[0], ["account", "clear"]);
+    const login = commands.findIndex((args) => args[0] === "login");
+    assert.ok(login > 0, "the sign-in comes after the cache is cleared");
+    assert.ok(commands[login]?.includes("oidc"));
+    assert.deepEqual(commands.at(-1), ["account", "set", "-s", "s"]);
   });
 });
 
@@ -350,12 +528,107 @@ describe("release canary lived-in profile", () => {
   test("it fills a canary home with the folders a person's has", async () => {
     const home = await tmpDir("canary-home-");
     const script = path.join(import.meta.dirname, "..", "..", "scripts", "canary", "lived-in-profile.ts");
-    const ran = spawnSync(process.execPath, [script, "--home", home, "--files", "200", "--large-files", "0"], {
-      encoding: "utf8",
-    });
+    const args = [script, "--home", home, "--files", "200", "--large-files", "0", "--settle-minutes", "0"];
+    const ran = spawnSync(process.execPath, args, { encoding: "utf8" });
     assert.equal(ran.status, 0, ran.stderr);
     const top = await readdir(home);
     for (const folder of ["Documents", "Downloads", "Pictures", "source", "SteamLibrary", ".ssh", ".claude", ".codex"])
       assert.ok(top.includes(folder), `${folder} in ${top.join(", ")}`);
+  });
+});
+
+describe("release canary settle", () => {
+  /** A sampler answering `shares` in turn (the last one again once they run out), each taking a sample's time. */
+  function samples(clock: WaitClock, shares: number[]): () => Promise<number> {
+    let index = 0;
+    return async () => {
+      await clock.sleep(SAMPLE_MS);
+      return shares[Math.min(index++, shares.length - 1)] ?? 0;
+    };
+  }
+
+  test("a machine still scanning a fresh profile is waited on until it has been quiet for a while", async () => {
+    const clock = heldClock();
+    const busy = [1, 1, 0.95, 0.1, 0.1, 0.8, ...Array(QUIET_SAMPLES).fill(0.1)];
+    const settled = await waitForIdle(samples(clock, busy), clock, { capMs: 10 * MINUTE_MS });
+    assert.equal(settled.idle, true);
+    // The quiet run that a busy sample broke does not count: six busy-or-broken samples, then six quiet.
+    assert.equal(settled.waitedMs, (6 + QUIET_SAMPLES) * SAMPLE_MS);
+    assert.match(settledLine(settled), /^machine settled: idle after 60 s$/);
+  });
+
+  test("a machine that never goes quiet is timed anyway once the cap has passed, and the line says so", async () => {
+    const clock = heldClock();
+    const settled = await waitForIdle(samples(clock, [1]), clock, { capMs: MINUTE_MS });
+    assert.equal(settled.idle, false);
+    assert.equal(settled.waitedMs, MINUTE_MS);
+    assert.equal(settledLine(settled), "machine still busy after 60 s (100% CPU); the start is timed anyway");
+  });
+
+  test("an idle machine is settled after one quiet run of samples", async () => {
+    const clock = heldClock();
+    const settled = await waitForIdle(samples(clock, [0]), clock);
+    assert.deepEqual(settled, { idle: true, waitedMs: QUIET_SAMPLES * SAMPLE_MS, lastBusy: 0 });
+  });
+});
+
+describe("release canary upgrade", () => {
+  test("finds the update card's problem in main's log, in the setup check's words or srt-win's", () => {
+    const user = { provisioned: true, credPresent: true, markerVersion: 2, setupVersion: 3 };
+    const [gap] = setupGaps({ user, wfp: { state: "installed" }, logonService: null });
+    assert.ok(gap, "the setup check names the earlier release's install");
+    const line = `2026-10-26T10:00:00.000Z [main] sandbox unavailable: not-provisioned ${gap.detail}`;
+    assert.equal(upgradeCardLine(`${line}\n`), `[main] sandbox unavailable: not-provisioned ${gap.detail}`);
+    const srt =
+      "[main] sandbox unavailable: not-provisioned The Windows sandbox on this machine was set up by a different release";
+    assert.ok(upgradeCardLine(srt));
+    // A first install's card, or a studio that came up, is no update card.
+    assert.equal(upgradeCardLine("[main] sandbox unavailable: not-provisioned Sandbox user is not provisioned"), null);
+    assert.equal(upgradeCardLine("[main] studio ready at 9000 ms"), null);
+  });
+
+  test("counts the approval prompts the Update button raised, and only one passes", () => {
+    const text = [
+      '\uFEFF{"n":1,"at":"2026-10-26T10:00:00.000Z","pid":10,"approved":"pressed Yes","shot":"uac-1.png"}',
+      "not a line",
+      '{"n":2,"at":"2026-10-26T10:05:00.000Z","pid":11,"approved":"pressed Yes","shot":"uac-2.png"}',
+      '{"n":3,"at":"2026-10-26T10:06',
+    ].join("\r\n");
+    const prompts = readApprovals(text);
+    assert.deepEqual(
+      prompts.map((prompt) => prompt.n),
+      [1, 2],
+    );
+    const pressed = Date.parse("2026-10-26T10:04:00.000Z");
+    const ready = Date.parse("2026-10-26T10:08:00.000Z");
+    const update = approvalsBetween(prompts, pressed, ready);
+    assert.deepEqual(
+      update.map((prompt) => prompt.n),
+      [2],
+      "the earlier release's own setup prompt is not the update's",
+    );
+    assert.equal(approvalVerdict(update).outcome, StepOutcome.Pass);
+    assert.equal(approvalVerdict([]).outcome, StepOutcome.Fail);
+    assert.equal(approvalVerdict(prompts).outcome, StepOutcome.Fail, "two prompts for one update");
+    // Without the helper Windows elevated without asking: no prompt is no proof.
+    const unasked = approvalVerdict(update, false);
+    assert.equal(unasked.outcome, StepOutcome.Fail);
+    assert.match(unasked.detail, /without asking/);
+  });
+
+  test("takes Squirrel's newest app folder, never the one its update replaces", () => {
+    assert.equal(newestSquirrelApp(["app-0.1.23", "packages", "app-0.1.99"]), "app-0.1.99");
+    assert.equal(newestSquirrelApp(["app-0.1.9", "app-0.1.23"]), "app-0.1.23", "by number, not by text");
+    assert.equal(newestSquirrelApp(["app-0.1.23"], "app-0.1.23"), null, "the update's folder is not there yet");
+    assert.equal(newestSquirrelApp(["app-0.1.23", "app-0.1.99"], "app-0.1.23"), "app-0.1.99");
+  });
+
+  test("seeds a game with a Claude Code folder and a dependency tree in the earlier release's library", async () => {
+    const userData = await tmpDir("canary-seed-");
+    const game = await seedGame(userData);
+    assert.equal(game, path.join(userData, "workspaces", "games", SEEDED_GAME));
+    const files = await readdir(game, { recursive: true });
+    assert.ok(files.includes(path.join(".claude", "settings.json")));
+    assert.ok(files.filter((file) => file.endsWith(".js")).length >= 1000);
   });
 });

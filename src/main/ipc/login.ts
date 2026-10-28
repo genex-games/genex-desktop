@@ -4,12 +4,13 @@
  */
 import fs from "node:fs/promises";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { t } from "../../shared/i18n.ts";
 import { runCommand } from "../../substrate/engines/claude-cli.ts";
 import { CODEX_STUDIO_AUTH_ARGS, codexSubscriptionEnv } from "../../substrate/engines/codex-cli.ts";
 import { requireCodingCli } from "../../substrate/engines/external-cli.ts";
 import type { ClaudeLoginController } from "../claude-login.ts";
 import type { CodexLoginController } from "../codex-login.ts";
-import type { OpenCodeLogin, SubscriptionEngine } from "../login-controllers.ts";
+import type { CliLogin, OpenCodeLogin, SubscriptionEngine } from "../login-controllers.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { LoginSource } from "../../shared/engine-descriptor.ts";
@@ -20,22 +21,37 @@ import { AccountId } from "../../substrate/engines/subscription-accounts.ts";
 /** How long `codex logout` may take before forgetting the studio's sign-in gives up. */
 const CODEX_LOGOUT_TIMEOUT_MS = 8 * SECOND_MS;
 
-/** Why a sign-in or connection change from the renderer is refused. */
+/**
+ * Why a sign-in or connection change from the renderer is refused. The functions are words the
+ * person reads on the sign-in card; `unknownEngine` and `unknownMethod` answer only a malformed call
+ * from our own renderer.
+ */
 const MESSAGE = {
-  busy: "Finish or stop the active work before changing the ChatGPT connection.",
-  changeInProgress: "A ChatGPT connection change is already in progress.",
+  busy: () => t("Finish or stop the active work before changing the ChatGPT connection."),
+  changeInProgress: () => t("A ChatGPT connection change is already in progress."),
   unknownEngine: (id: string) => `unknown subscription engine: ${id}`,
   unknownMethod: "Unknown sign-in method",
-  codexUnavailable: "Codex is unavailable",
-  disconnectFailed: "Codex could not disconnect. Please try again.",
-  unknownAccount: "Unknown account",
-  terminalSignOut: "Sign out of the Terminal login in Terminal.",
+  codexUnavailable: () => t("Codex is unavailable"),
+  disconnectFailed: () => t("Codex could not disconnect. Please try again."),
+  unknownAccount: () => t("Unknown account"),
+  terminalSignOut: () => t("Sign out of the Terminal login in Terminal."),
+  cursorUnavailable: () => t("Cursor is unavailable"),
 } as const;
+
+/** What signing Cursor out needs from its engine. */
+export interface CursorAccount {
+  signOut(): Promise<void>;
+  status(): Promise<import("../../shared/engine-descriptor.ts").EngineStatus>;
+}
 
 export interface LoginIpcDeps {
   claudeLogin: Pick<ClaudeLoginController, "start" | "snapshot" | "submitCode" | "openBrowser" | "cancel">;
   codexLogin: Pick<CodexLoginController, "start" | "snapshot" | "cancel" | "dismiss" | "openBrowser">;
   openCodeLogin: OpenCodeLogin;
+  grokLogin: CliLogin;
+  cursorLogin: CliLogin;
+  /** The Cursor engine, to sign it out; null while none is registered. */
+  cursor(): CursorAccount | null;
   subscription(id: string): SubscriptionEngine | null;
   /** A run is being held awake for, or a user turn is in flight: the ChatGPT account must not change under it. */
   busy(): boolean;
@@ -52,6 +68,9 @@ export function registerLoginIpc(
     claudeLogin,
     codexLogin,
     openCodeLogin,
+    grokLogin,
+    cursorLogin,
+    cursor,
     subscription,
     busy,
     pushUiEvent,
@@ -63,9 +82,9 @@ export function registerLoginIpc(
   let changingCodexAccount = false;
   async function changeCodexAccount<T>(change: () => Promise<T>): Promise<T> {
     if (busy()) {
-      throw new Error(MESSAGE.busy);
+      throw new Error(MESSAGE.busy());
     }
-    if (changingCodexAccount) throw new Error(MESSAGE.changeInProgress);
+    if (changingCodexAccount) throw new Error(MESSAGE.changeInProgress());
     changingCodexAccount = true;
     try {
       return await change();
@@ -113,6 +132,19 @@ export function registerLoginIpc(
     payerChanged(EngineId.OpenCode);
     return started;
   });
+  // Grok Build's own `grok login` in the terminal: the next session reads it, so it is never refused either.
+  handle("studio:grok.signin", async () => grokLogin.start());
+
+  // Cursor's own sign-in in its Settings row's terminal, and its sign-out: the CLI forgets the
+  // account it keeps, which a turn already running keeps until it ends.
+  handle("studio:cursor.signin", async () => cursorLogin.start());
+  handle("studio:cursor.signout", async () => {
+    const engine = cursor();
+    if (!engine) throw new Error(MESSAGE.cursorUnavailable());
+    await engine.signOut();
+    pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.Cursor } });
+    return engine.status();
+  });
 
   handle("studio:codex-login.state", async () => codexLogin.snapshot());
   handle("studio:codex-login.cancel", async () => {
@@ -133,7 +165,7 @@ export function registerLoginIpc(
     return changeCodexAccount(async () => {
       await codexLogin.cancel();
       const engine = subscription(EngineId.Codex);
-      if (!engine) throw new Error(MESSAGE.codexUnavailable);
+      if (!engine) throw new Error(MESSAGE.codexUnavailable());
       return codexLogin.start(await codexSignInHome(engine, undefined), method);
     });
   });
@@ -223,9 +255,9 @@ function registerAccountIpc(
     const engine = subscription(engineId);
     if (!engine) return true;
     const account = payload?.account ?? AccountId.Studio;
-    if (account === AccountId.Terminal) throw new Error(MESSAGE.terminalSignOut);
+    if (account === AccountId.Terminal) throw new Error(MESSAGE.terminalSignOut());
     const home = engine.accounts.homeFor(account);
-    if (!home) throw new Error(MESSAGE.unknownAccount);
+    if (!home) throw new Error(MESSAGE.unknownAccount());
     if (payload?.engine === EngineId.Codex) {
       return changeCodexAccount(async () => {
         await codexLogin.dismiss();
@@ -235,7 +267,7 @@ function registerAccountIpc(
           env: codexSubscriptionEnv({ ...installation.env, CODEX_HOME: home }),
           timeoutMs: CODEX_LOGOUT_TIMEOUT_MS,
         });
-        if (result.code !== 0) throw new Error(MESSAGE.disconnectFailed);
+        if (result.code !== 0) throw new Error(MESSAGE.disconnectFailed());
         // Studio's first profile keeps its folder and native session history: deleting a directory
         // does not remove keychain credentials. An added account goes whole.
         if (account !== AccountId.Studio) await fs.rm(home, { recursive: true, force: true });
@@ -283,7 +315,7 @@ function registerAccountIpc(
 async function accountSignInHome(engine: SubscriptionEngine, account: string): Promise<string> {
   if (account === NEW_ACCOUNT) return (await engine.accounts.newAccount()).home;
   const home = engine.accounts.homeFor(account);
-  if (!home) throw new Error(MESSAGE.unknownAccount);
+  if (!home) throw new Error(MESSAGE.unknownAccount());
   return home;
 }
 

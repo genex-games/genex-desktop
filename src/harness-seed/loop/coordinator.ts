@@ -8,6 +8,7 @@
  * in a session, its continue_build reopens that run with the Loop's time and the build's models
  * (reopen-run.ts `finishedLoopRun`), if its parts serve it (chat-dispatch.ts `coordinatorReopens`).
  */
+import { appLanguage } from "./app-language.ts";
 import { EngineId, plannerModel, roleEffort, RoleKey, supportsSessions } from "./model-roles.ts";
 import { coordinatorTools, conversationThrough } from "./run-inbox.ts";
 import { steeredCall } from "./chat-steer.ts";
@@ -89,7 +90,9 @@ export async function runCoordinatorTurn(ctx: HarnessCtx, options: CoordinatorTu
     .catch(() => null)) as AnyRecord | null;
   const journal = await readJournal(ctx, threadId, run.runId);
   const described = await ctx.call(HostMethod.EngineDescribe);
+  const language = await appLanguage(ctx);
   const prompt = coordinatorPrompt({
+    appLanguage: language,
     events,
     run,
     text,

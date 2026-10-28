@@ -7,7 +7,7 @@ import { takeVerified } from "./verified-traces.ts";
 
 const MESSAGE = {
   hostOnly:
-    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume, finish check, chat judge and tag result rows are written by the studio only",
+    "permission, consent, recovery, self-change, plugin suggestion, don't-wait, unsaved-file, job, app access, automatic resume, finish check, chat judge, tag result and listing draft rows are written by the studio only",
 } as const;
 const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.ToolPermission,
@@ -40,6 +40,9 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   // The reviewer's verdict is the app's, from the session it seated (`core/finish-review.ts`): the
   // harness asks for a check and settles it, but a yes it wrote itself would read as Done.
   CustomEvent.FinishCheck,
+  // A Listing draft card puts an item on sale from its button: only a real `genex shop add` result
+  // that main read (`core/item-draft.ts`) draws one, never the harness or what an agent wrote.
+  CustomEvent.ItemDrafted,
 ]);
 
 /** Refuse the entire batch before writing any row or updating the recovery index. */

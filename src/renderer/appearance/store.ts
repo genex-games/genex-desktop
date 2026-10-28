@@ -8,6 +8,7 @@ import {
   type Scheme,
 } from "./themes.ts";
 import { paintAppearance, savedAppearance } from "./paint.ts";
+import { t } from "../../shared/i18n.ts";
 import { STORAGE_KEYS, writeText } from "../storage.ts";
 import { DARK_SCHEME_QUERY } from "../ui/media-queries.ts";
 
@@ -47,7 +48,7 @@ export function initializeAppearance(): void {
   if (media) return;
   const saved = savedAppearance();
   current = saved.appearance;
-  if (saved.unreadable) saveError = "Saved appearance could not be read. Default themes are active.";
+  if (saved.unreadable) saveError = t("Saved appearance could not be read. Default themes are active.");
   media = window.matchMedia(DARK_SCHEME_QUERY);
   media.addEventListener("change", refresh);
   window.addEventListener("storage", (event) => {
@@ -62,12 +63,26 @@ export function initializeAppearance(): void {
   });
   applyAppearance();
 }
+/** Who hears each change made here, with the appearance before and after it. */
+const changeListeners = new Set<(previous: Appearance, next: Appearance) => void>();
 export function updateAppearance(update: (previous: Appearance) => Appearance): void {
+  const previous = current;
   current = normalizeAppearance(update(current));
   saveError = writeText(APPEARANCE_KEY, JSON.stringify(current))
     ? ""
-    : "Changes are visible, but could not be saved. Free some disk space and try again.";
+    : t("Changes are visible, but could not be saved. Free some disk space and try again.");
   refresh();
+  for (const listener of changeListeners) listener(previous, current);
+}
+/**
+ * Hear each change the person makes here (not another window's), with the appearance before and
+ * after it, for usage analytics; returns the unsubscribe.
+ */
+export function watchAppearanceChanges(listener: (previous: Appearance, next: Appearance) => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
 }
 /** Show `next` instead of the saved appearance, without saving it; null returns to the saved one. */
 export function previewPalette(next: PalettePreview | null): void {

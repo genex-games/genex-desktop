@@ -2,6 +2,7 @@
 import type { ConnectionSnapshot } from "../../../shared/connections.ts";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import { GENEX_PLUGIN_ID } from "../../../shared/genex.ts";
+import { formatList, t } from "../../../shared/i18n.ts";
 import { GENEX_WORDS, PLUGINS_WORDS } from "../../words.ts";
 import {
   type PluginIndexEntry,
@@ -31,36 +32,36 @@ export type ExtensionsTab = (typeof ExtensionsTab)[keyof typeof ExtensionsTab];
 export const EXTENSIONS_TABS: readonly ExtensionsTab[] = [ExtensionsTab.Plugins, ExtensionsTab.Skills];
 
 /** Each tab's name, as its button and the page title say it. */
-export const TAB_LABEL: Record<ExtensionsTab, string> = { plugins: "Plugins", skills: "Skills" };
+export const TAB_LABEL: Record<ExtensionsTab, string> = { plugins: t("Plugins"), skills: t("Skills") };
 
 /** Each tab's search field label and placeholder. */
 export const SEARCH_LABEL: Record<ExtensionsTab, string> = {
-  plugins: "Search plugins and MCP servers",
-  skills: "Search skills",
+  plugins: t("Search plugins and MCP servers"),
+  skills: t("Search skills"),
 };
 
 /** The refresh button's label on each tab. */
 export const REFRESH_LABEL: Record<ExtensionsTab, string> = {
-  plugins: "Refresh marketplace index",
-  skills: "Refresh skills",
+  plugins: t("Refresh marketplace index"),
+  skills: t("Refresh skills"),
 };
 
 /** What each tab is for, under its title. */
 export const TAB_INTRO: Record<ExtensionsTab, string> = {
-  plugins: "Tools and connections for all your games.",
-  skills: "Guidance available to your agents. Availability depends on the source and selected provider.",
+  plugins: t("Tools and connections for all your games."),
+  skills: t("Guidance available to your agents. Availability depends on the source and selected provider."),
 };
 
 const SOURCE_LABEL: Record<PluginSourceKind, string> = {
-  [PluginSourceKind.Bundled]: "Bundled",
-  [PluginSourceKind.Catalog]: "Curated release",
-  [PluginSourceKind.Local]: "Local folder",
+  [PluginSourceKind.Bundled]: t("Bundled"),
+  [PluginSourceKind.Catalog]: t("Curated release"),
+  [PluginSourceKind.Local]: t("Local folder"),
   [PluginSourceKind.Github]: "GitHub",
-  [PluginSourceKind.Index]: "Marketplace",
+  [PluginSourceKind.Index]: t("Marketplace"),
 };
 
 /** Where an installed plugin came from, in words. */
-export const sourceWords = (p: PluginInfo): string => SOURCE_LABEL[p.source] ?? "Marketplace";
+export const sourceWords = (p: PluginInfo): string => SOURCE_LABEL[p.source] ?? t("Marketplace");
 
 /** Between two folders in a line. */
 const FOLDER_SEPARATOR = "; ";
@@ -82,10 +83,10 @@ export function capabilityLine(
   manifest: Pick<PluginManifest, "capabilities" | "publisher" | "nativeRuntimes">,
 ): string {
   const has = new Set(manifest.capabilities);
-  const runtimes = (manifest.nativeRuntimes ?? []).map((r) => r.label).join(" and ");
+  const runtimes = formatList((manifest.nativeRuntimes ?? []).map((r) => r.label));
   const phrase: Array<[string, string]> = [
     [PluginCapability.Credentials, CAN.credentials(manifest.publisher)],
-    [PluginCapability.NativeRuntime, CAN["native-runtime"](runtimes || "programs on this Mac")],
+    [PluginCapability.NativeRuntime, CAN["native-runtime"](runtimes || t("programs on this Mac"))],
     [PluginCapability.Observe, CAN.observe],
     [PluginCapability.Network, CAN.network],
     [PluginCapability.ExternalAuth, CAN["external-auth"]],

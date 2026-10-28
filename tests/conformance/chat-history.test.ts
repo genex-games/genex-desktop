@@ -762,7 +762,11 @@ test("another delegation's end does not end the reply in progress", () => {
   assert.equal(chatActivity([replying, leadDone], true, "Building").phase, "responding");
   // The reply's own end still hands the line back to the work in progress.
   const replyDone = activity(3, { role: "planner", phase: "completed", delegationId: "chat" });
-  assert.deepEqual(chatActivity([replying, replyDone], true, "Building"), { phase: "working", label: "Building" });
+  assert.deepEqual(chatActivity([replying, replyDone], true, "Building"), {
+    phase: "working",
+    label: "Building",
+    named: true,
+  });
 });
 
 test("the live tail keeps the loaded array when nothing new arrived for this thread", () => {

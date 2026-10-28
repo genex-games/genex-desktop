@@ -21,6 +21,7 @@ import { graphKeyOf, type RunGraphEvent, turnOfGraphKey, workerKeyOf } from "../
 import { CustomEvent } from "../shared/custom-events.ts";
 import { finishRecordOf } from "../shared/finish-check.ts";
 import { HOUR_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 import { type EventEnvelope, EventKind } from "../shared/event-log.ts";
 import type { MakingPhase } from "../shared/asset-making.ts";
 import type { ProjectAsset, ProjectAssets } from "../shared/game-assets.ts";
@@ -1968,7 +1969,7 @@ export function runStillPath(runDir: string, stage: RunStillStage, camera = "def
 
 // ── plain words ───────────────────────────────────────────────────────────────────────────
 
-/** What a round is for, in the words the Builds tab uses. */
+/** What a round is for, as a code; `roundStep` says it in the Builds tab's words. */
 export const RoundKind = {
   FirstBuild: "first build",
   NextStep: "next step",
@@ -2011,14 +2012,23 @@ export function roundWhy(node: IterationNode): string {
   if (node.fix) return node.fix.what;
   if (node.move) return node.move.what;
   return node.iteration === 1
-    ? "The first build of this part — everything the plan asks for, in one pass."
-    : "Small fixes across the part, no named step.";
+    ? t("The first build of this part — everything the plan asks for, in one pass.")
+    : t("Small fixes across the part, no named step.");
 }
+
+/** A round of each kind as a step, its task after its kind's words. */
+const ROUND_STEP_WORDS: Record<RoundKind, (task: string) => string> = {
+  [RoundKind.FirstBuild]: (task) => t("First build: {task}", { task }),
+  [RoundKind.NextStep]: (task) => t("Next step: {task}", { task }),
+  [RoundKind.MustFix]: (task) => t("Must fix: {task}", { task }),
+  [RoundKind.WhatsMissing]: (task) => t("What's missing: {task}", { task }),
+  [RoundKind.Fixes]: (task) => t("Fixes: {task}", { task }),
+  [RoundKind.Polish]: (task) => t("Polish: {task}", { task }),
+};
 
 /** One round as a step: "Next step: Chapel tower with a bell". The judges' sheet and the outcome card both read this. */
 export function roundStep(node: IterationNode): string {
-  const kind = roundKind(node);
-  return `${kind.charAt(0).toUpperCase()}${kind.slice(1)}: ${roundWhy(node)}`;
+  return ROUND_STEP_WORDS[roundKind(node)](roundWhy(node));
 }
 
 /**
@@ -2032,7 +2042,7 @@ export function nextStep(graph: RunGraph): string | null {
     (node): node is IterationNode => node.kind === GraphNodeKind.Iteration && node.status === IterationStatus.Building,
   );
   const node = underway.at(-1);
-  return node ? `${node.facetTitle} — ${roundStep(node)}` : null;
+  return node ? t("{part} — {step}", { part: node.facetTitle, step: roundStep(node) }) : null;
 }
 
 /** Strip the `[check-id] ` prefix the judge puts on defects and gaps. */
@@ -2047,6 +2057,25 @@ export function checkWords(id: string): string {
     .replace(/[-_]+/g, " ")
     .trim();
 }
+
+/** The start of the Unreal plugin's hero cameras' labels (`GX_Shot_Corridor`); their files are saved with dashes. */
+const HERO_CAMERA_PREFIX = /^GX[-_]Shot[-_]/i;
+
+/** A camera's name in plain words: `GX_Shot_CorrHangDoor` → `Corr hang door`, `camLane` → `Cam lane`. */
+export function cameraWords(camera: string): string {
+  const name = camera.replace(HERO_CAMERA_PREFIX, "") || camera;
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s_-]+/)
+    .filter(Boolean);
+  // A capitalised word reads lower case after the first; an all-capitals one (HUD) keeps its capitals.
+  const said = words.map((word, at) => (at > 0 && /^[A-Z][a-z]/.test(word) ? word.toLowerCase() : word));
+  const sentence = said.join(" ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/** The picture a round is known by: the one the lead named as showing its change, else `thumbShot`'s. */
+export const roundShot = (node: IterationNode): Shot | null => node.shown ?? thumbShot(node);
 
 /** The still a card shows for a round: the default camera when it exists, else the first shot. */
 export function thumbShot(node: IterationNode): Shot | null {

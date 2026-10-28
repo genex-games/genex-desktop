@@ -20,6 +20,9 @@ licenses and terms of included third-party software.
 - On Windows, Git for Windows (GPL-2.0 and its components' licenses) keeps its `LICENSE.txt` and
   `usr/share/licenses` under `resources/git`
   ([Bundled Git for Windows](#bundled-git-for-windows)).
+- On macOS, git (GPL-2.0, with parts under LGPL-2.1, BSD-3-Clause and MIT) keeps its `COPYING`, `LGPL-2.1`,
+  `licenses/` and a `SOURCE.txt` naming its source under `dist/resources/git`
+  ([Bundled git (macOS)](#bundled-git-macos)).
 - On Windows, Microsoft's Visual C++ runtime DLL ships beside sandbox-runtime's `srt-win.exe`
   ([Visual C++ runtime](#visual-c-runtime-windows)).
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
@@ -48,6 +51,10 @@ licenses and terms of included third-party software.
   13.21.0, CC0-1.0), only to identify Unity, which the Unity plugin runs. Unity and the Unity logo
   are trademarks or registered trademarks of Unity Technologies or its affiliates in the U.S. and
   elsewhere. Genex is not affiliated with or endorsed by Unity Technologies.
+- The `linux` glyph in `src/renderer/ui/icons.tsx` draws Tux, Linux's penguin (its path from
+  Simple Icons 16.35.0, CC0-1.0, without the feet lines), only to show that a game has a
+  Linux version. Tux was drawn by Larry Ewing with The GIMP. Linux is a registered trademark of
+  Linus Torvalds.
 
 ## Routed tool marks
 
@@ -65,9 +72,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.36.9 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  `@genex-ai/cli-demo` 1.36.17 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.9), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.17), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -130,6 +137,18 @@ Credential Manager left out (`scripts/vendor-git-for-windows.ts`); nothing in it
 source of every part is published with that release on GitHub and in the MSYS2 and Git for Windows
 package repositories it names.
 
+## Bundled git (macOS)
+
+The macOS app ships git 2.56.0 as `dist/resources/git`, compiled by the release build from the
+unmodified source tarball <https://www.kernel.org/pub/software/scm/git/git-2.56.0.tar.xz>
+(SHA-256 `26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3`), with only the
+programs Genex reaches kept (`scripts/vendor-git-for-mac.ts`, [why](docs/mac-bundled-git.md)).
+Git is under the GNU General Public License version 2 (`COPYING`); parts are under the GNU Lesser
+General Public License 2.1 (`LGPL-2.1`), and its reftable library (BSD-3-Clause,
+`licenses/reftable/LICENSE`) and SHA-1 collision detection (MIT, `licenses/sha1dc/LICENSE.txt`)
+keep their own. All ship beside it unchanged, with `SOURCE.txt` naming the tarball and the build's
+settings; the source is the tarball above.
+
 ## Visual C++ runtime (Windows)
 
 The Windows app ships Microsoft's Visual C++ 2015-2022 runtime library `vcruntime140.dll`
@@ -184,9 +203,13 @@ SOFTWARE.
 
 ## Fonts
 
-Zalando Sans SemiExpanded, Geist and Geist Mono are used as published under the SIL Open Font
-License 1.1 (Geist Mono as its Google Fonts Latin subset). Their OFL texts ship beside them in
-`dist/renderer/fonts`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
+Zalando Sans SemiExpanded, Geist Mono, LINE Seed JP, TikTok Sans, Pretendard and Noto Sans SC
+are licensed under the SIL Open Font License 1.1; their OFL texts ship beside them in
+`dist/renderer/fonts`. Zalando Sans SemiExpanded, Geist Mono and LINE Seed JP are as published.
+TikTok Sans is cut to its Cyrillic and Greek at one width as "TikTok Sans Genex"; Pretendard
+(Reserved Font Name "Pretendard") is cut to its Hangul as "Genex Hangul"; Noto Sans SC is cut to
+the characters of GB 2312 ([sources](src/renderer/ui/GENEX-SOURCES.md#font-licenses)). Geist, as
+published, renders design studies in `design/`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
 `design/play-publish-video/public/fonts` render the promo films.
 
 ## Promo films
@@ -340,10 +363,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-### @genex-ai/multiplayer 0.17.0
+### @genex-ai/multiplayer 0.17.1
 
 Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
-map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
+map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer
+Godot game's web export. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
 without a license file. The MIT terms:
 
 Copyright (c) 2026 Genex
@@ -473,11 +497,11 @@ SOFTWARE.
 
 ## Provider marks from lobe-icons
 
-The Claude Code, Codex, OpenRouter and OpenCode marks in `src/renderer/ui/provider-marks.ts` are
-copied unaltered from @lobehub/icons-static-svg 1.95.1 (claudecode.svg, codex.svg,
-openrouter-color.svg, opencode.svg). Claude Code is a trademark of Anthropic, Codex of OpenAI,
-OpenRouter of OpenRouter, Inc. and OpenCode of its owners; the marks only name the providers
-Studio connects to.
+The Claude Code, Codex, OpenRouter, OpenCode, Grok and Cursor marks in
+`src/renderer/ui/provider-marks.ts` are copied unaltered from @lobehub/icons-static-svg 1.95.1
+(claudecode.svg, codex.svg, openrouter-color.svg, opencode.svg, grok.svg, cursor.svg). Claude Code
+is a trademark of Anthropic, Codex of OpenAI, OpenRouter of OpenRouter, Inc., OpenCode of its
+owners, Grok of xAI and Cursor of Anysphere; the marks only name the providers Studio connects to.
 Source: https://github.com/lobehub/lobe-icons/blob/master/LICENSE
 
 MIT License

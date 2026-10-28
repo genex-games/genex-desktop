@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 18, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 22, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -127,6 +127,21 @@ sends the account's token to the Genex API to get a single-use sign-in ticket fo
 a like, and to read your referral code, which Invite a friend adds to the link it copies. Share and
 Invite only copy a genex.games link to the clipboard.
 
+A game with a Mac app has its own page, read from the Genex API (with the account's token when
+signed in, so it shows your like). The app is downloaded only when you press Install, over https
+from genex.games' CDN (cdn.genex.technology) and without your token; its size, checksum and
+signature are checked before it opens. Installed games and their saves live in the app profile.
+Each game runs in a sandbox with no network that can write only its own saves, preferences and
+a scratch folder removed when it ends, and removing a game keeps its saves. At start and every six hours the app reads each installed
+game's page in the same way to tell you about a newer version. Each time a game starts running
+(its window on screen, or a minute up without one the app can see), the app tells the Genex API
+which game was played. genex.games counts each person once per game, as it counts web plays, and
+keeps each report with its time, as it does for a web play. Signed in, the report carries the
+account's token; signed out, or once genex.games no longer accepts the token, it carries a random
+id the app made for this computer instead. That id is kept in the app profile beside the installed
+games and stays the same until the profile is removed; it says nothing else about you or the
+computer.
+
 A game's comments are read from the Genex API without a sign-in, a page at a time while you scroll
 them, with each writer's name and picture. Signed in, the app also sends the account's token to
 post a comment you write (its text, at most 500 characters, becomes public on the game's page) or
@@ -171,7 +186,8 @@ account on this Mac; turning the Genex plugin off signs nothing out.
 
 Remix clones the game's public source over https from git.genex.games into a new folder in your
 games folder, without its history, hooks, content filters or symbolic links; files the game keeps
-in Git LFS come from that same repository, through your Mac's git-lfs. The copy's
+in Git LFS are downloaded over https without git-lfs: the same repository's Git LFS batch API says
+where each one is, possibly a storage host it names, and each is kept only if its SHA-256 matches. The copy's
 Claude settings and hooks are not trusted. Recent (the last 12 games played) and a dismissed Genex
 card stay in the app profile. Development fixture launches answer from local data and open no
 connection.
@@ -187,6 +203,11 @@ After a turn on a game, and as Publish opens, Genex takes a cover picture and, f
 stages its own clip, records a five-second cover clip of it playing. Both stay in the app
 profile; the clip is uploaded to Genex only with a publish.
 
+When Publish lists a game's Mac or Windows app as ready, the same press also uploads that app (the
+build in the game folder, zipped) to genex.games once the web version is live, where people
+playing in the Genex desktop app can install it. A game with no web version is published as its
+apps alone, and listed in the gallery under the name shown in Publish.
+
 A plugin's staged upload requires a second review showing every included and excluded file.
 Approve only after checking that list and the contents. An unlisted draft is still uploaded to
 a remote service; listing it publicly is a separate confirmation. Hosted retention and account
@@ -194,7 +215,32 @@ deletion are governed by the service, not by deletion of the desktop profile.
 
 ## Analytics and shared build metrics
 
-Studio itself sends no usage analytics, session recordings or crash reports.
+Apart from a downloaded game's play report (see Play) and the two consents below, Studio sends
+no usage analytics, session recordings or crash reports.
+
+**Share usage data** is asked once, before anything is sent: over the first launch's welcome,
+or at the first launch of a version that has it. **Don't share** and **Share** weigh the same;
+the answer can change at any time in Settings → Privacy, and a later version that collects
+more asks again. Only after Share does the app send, to PostHog in the EU, which screen you
+are on (as `/game/live`, `/settings/privacy` and the like), clicks without their text or
+attributes, heatmaps, and events that describe what happened as codes, switches, counts,
+size buckets and durations: a provider connected or failed, a game made, a message sent, a
+question or permission waiting and how long, a build finished, a game shown in Live, why
+something was refused (as a code, never its message), and how the last session ended (quit,
+updated, or closed unexpectedly, with counts of crashed pages and hangs). For that last one, a
+build that can share keeps a small file of those counts and codes in Genex's data folder; it
+leaves this computer only after Share. Events
+carry the app version, platform, language, the ready engines and whether a Genex account is
+signed in (never which), under a random id kept on this computer; they are never linked to a
+Genex account, and turning sharing off ends the id, so a later yes starts a new one.
+
+One new install in five, drawn once at its first launch, also records a **replay of its first
+week**: the app's window as a page of shapes, with the words of its own buttons and menus
+shown and every other text, typed input, picture, canvas, terminal, file view and game hidden.
+Other installs, and any profile that existed before, never record one and are not asked about
+it. Analytics never carries prompts, chats, answers, code, files, file or game names, paths,
+accounts, models you typed, server addresses or error messages, and its last step rewrites any
+local path it finds. Developer, test and eval launches never send.
 
 **Share build metrics** (Settings → Privacy) is off by default and is a consent of its own.
 When it is on, each finished build becomes one row of anonymous numbers sent to the Genex API

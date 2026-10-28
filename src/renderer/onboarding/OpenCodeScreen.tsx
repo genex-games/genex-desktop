@@ -5,85 +5,41 @@
  * in to a provider is optional and runs OpenCode's own sign-in in a terminal inside the screen, as
  * Settings does.
  */
-import { lazy, Suspense, useId, useState, type JSX } from "react";
-import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { useId, useState, type JSX } from "react";
 import { EngineId } from "../../shared/providers.ts";
-import { TerminalKind, type TerminalSession } from "../../shared/terminal.ts";
-import { useCliInstall } from "../cli-install.ts";
-import { OpenCodeRowState, openCodeRowState } from "../panels/opencode-row.ts";
-import { useSignInTerminal } from "../panels/use-sign-in-terminal.ts";
+import { reportFreeModelPicked, useRowViewed } from "../analytics/welcome-report.ts";
+import { ProviderSurface } from "../analytics/welcome-vocabulary.ts";
+import { OpenCodeRowState } from "../panels/opencode-row.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
-import { Icon } from "../ui/icons.tsx";
-import { LoaderGrid } from "../ui/LoadingState.tsx";
-import { Pending } from "../ui/Pending.tsx";
 import { defaultModelKey } from "../model-choices.ts";
 import { safeStorage } from "../storage.ts";
 import { rememberWelcomeModel } from "../stored-model.ts";
-import { problemWords } from "../words.ts";
 import { MeteredMark } from "./art.ts";
-import { Check, Hug, MeteredMarkArt, StartBuilding, TopBar, useHeadingFocus } from "./parts.tsx";
+import { type Cli, SignInCard, Status, useCli } from "./cli-way.tsx";
+import { Hug, MeteredMarkArt, StartBuilding, TopBar, useHeadingFocus } from "./parts.tsx";
 import {
+  cliMark,
   type FreeModelOption,
   freeModelOptions,
-  openCodeMark,
   pickedFreeModel,
   picksFreeModel,
   WAYS_WORDS,
 } from "./ways.ts";
 
 const WORDS = WAYS_WORDS.openCode;
-const TerminalView = lazy(() => import("../panels/TerminalView.tsx"));
-/** An engine list without OpenCode yet reads as not installed until the engines arrive. */
-const NOT_INSTALLED = { status: { code: EngineStatusCode.NotInstalled } };
+/** The words around OpenCode's sign-in terminal. */
+const SIGN_IN_WORDS = {
+  terminal: WORDS.terminal,
+  cancel: WORDS.cancelSignIn,
+  openSignInPage: WORDS.openSignInPage,
+  note: WORDS.signingInNote,
+} as const;
 
 /** OpenCode as first launch drives it: its state, its trouble, and what each button does. */
-export function useOpenCode(engines: EngineDescriptor[], onEnginesRefresh: () => void) {
-  const engine = engines.find((candidate) => candidate.id === EngineId.OpenCode);
-  const install = useCliInstall(EngineId.OpenCode);
-  // The sign-in runs in this screen's terminal; when it exits, the host rechecks OpenCode's models.
-  const terminal = useSignInTerminal(TerminalKind.OpenCodeLogin);
-  const [checking, setChecking] = useState(false);
-  const [problem, setProblem] = useState<string | null>(null);
-  const [terminalError, setTerminalError] = useState<string | null>(null);
-  const row = openCodeRowState(engine ?? NOT_INSTALLED, {
-    installing: install.installing,
-    signingIn: Boolean(terminal),
-  });
-  const run = (action: () => Promise<unknown>) => {
-    setProblem(null);
-    void action().catch((err) => setProblem(problemWords(err)));
-  };
-  const recheck = async (): Promise<void> => {
-    setChecking(true);
-    try {
-      await window.studio.recheckEngines(EngineId.OpenCode);
-      onEnginesRefresh();
-    } finally {
-      setChecking(false);
-    }
-  };
-  return {
-    row,
-    checking,
-    terminal,
-    problem: problem ?? terminalError ?? install.problem,
-    setTerminalError,
-    install: () => run(install.install),
-    recheck: () => run(recheck),
-    signIn: () =>
-      run(async () => {
-        setTerminalError(null);
-        const started = await window.studio.openCodeSignIn();
-        if (!started.started) await recheck();
-      }),
-    cancelSignIn: () => {
-      if (terminal) run(() => window.studio.terminalStop(terminal.id));
-    },
-    openSignInPage: terminal?.signInPage ? () => run(() => window.studio.terminalOpenLink(terminal.id)) : null,
-  };
-}
-export type OpenCode = ReturnType<typeof useOpenCode>;
+export const useOpenCode = (engines: EngineDescriptor[], onEnginesRefresh: () => void): Cli =>
+  useCli(EngineId.OpenCode, engines, onEnginesRefresh);
+export type OpenCode = Cli;
 
 /** The free models to pick from, the one picked, and the pick. */
 export interface FreeModels {
@@ -101,8 +57,12 @@ export function useFreeModel(code: OpenCode, engines: EngineDescriptor[], others
   const [key, setKey] = useState(() => defaultModelKey(EngineId.OpenCode));
   const models = engines.find((engine) => engine.id === EngineId.OpenCode)?.models ?? [];
   const options = freeModelOptions(models);
+  const pick = (next: string): void => {
+    reportFreeModelPicked(next === defaultModelKey(EngineId.OpenCode), options.length);
+    setKey(next);
+  };
   const free: FreeModels | null = picksFreeModel(code.row, othersOn)
-    ? { options, picked: pickedFreeModel(options, key), onPick: setKey }
+    ? { options, picked: pickedFreeModel(options, key), onPick: pick }
     : null;
   return {
     free,
@@ -138,16 +98,6 @@ function FreeModelList({ free }: { free: FreeModels }): JSX.Element {
           </label>
         ))}
       </fieldset>
-    </div>
-  );
-}
-
-/** A status plate: progress while something runs, a check once ready. */
-function Status({ busy, children }: { busy?: boolean; children: string }): JSX.Element {
-  return (
-    <div role="status" className="onboarding-status" data-on={busy ? undefined : true}>
-      {busy ? <LoaderGrid /> : <Check />}
-      {children}
     </div>
   );
 }
@@ -240,34 +190,6 @@ function OpenCodeAside({ code, free }: { code: OpenCode; free: FreeModels | null
   }
 }
 
-/** OpenCode's own sign-in, in a terminal card on the screen: choose a provider, finish, or cancel. */
-function SignInCard({ code, session }: { code: OpenCode; session: TerminalSession }): JSX.Element {
-  return (
-    <>
-      <div className="onboarding-terminal" data-keeps-escape data-sign-in-terminal>
-        <div className="onboarding-terminal-bar">
-          <span className="onboarding-terminal-title">{WORDS.terminal}</span>
-          <Button variant="ghost" onClick={code.cancelSignIn}>
-            {WORDS.cancelSignIn}
-          </Button>
-        </div>
-        <div className="onboarding-terminal-body">
-          <Suspense fallback={<Pending label={WORDS.terminal} className="px-3 text-xs" />}>
-            <TerminalView session={session} visible onError={code.setTerminalError} />
-          </Suspense>
-        </div>
-      </div>
-      {code.openSignInPage && (
-        <Button variant="accent-tint" size="lg" className="onboarding-connect-action" onClick={code.openSignInPage}>
-          {WORDS.openSignInPage}
-          <Icon name="arrow-up-right" size={14} />
-        </Button>
-      )}
-      <p className="onboarding-note">{WORDS.signingInNote}</p>
-    </>
-  );
-}
-
 /** OpenCode's screen: its mark and state (or the sign-in's terminal), its trouble, and Start building. */
 export function OpenCodeScreen({
   code,
@@ -288,6 +210,7 @@ export function OpenCodeScreen({
   const heading = useHeadingFocus();
   const session = code.row === OpenCodeRowState.SigningIn ? code.terminal : undefined;
   const picking = free !== null && code.row === OpenCodeRowState.FreeOnly;
+  useRowViewed(EngineId.OpenCode, code.row, ProviderSurface.Onboarding, null);
   return (
     <section className="onboarding-screen onboarding-provider onboarding-enter" data-picking={picking || undefined}>
       <TopBar onBack={onBack} onSkip={anyOn ? undefined : onSkip} />
@@ -296,10 +219,10 @@ export function OpenCodeScreen({
       </h1>
       <p className="onboarding-lede onboarding-lede-narrow">{session ? WORDS.signInLede : WORDS.lede}</p>
       {session ? (
-        <SignInCard code={code} session={session} />
+        <SignInCard cli={code} session={session} words={SIGN_IN_WORDS} />
       ) : (
         <>
-          <MeteredMarkArt id={MeteredMark.OpenCode} state={openCodeMark(code.row, code.checking)} />
+          <MeteredMarkArt id={MeteredMark.OpenCode} state={cliMark(code.row, code.checking)} />
           <div className="onboarding-choice">
             <Hug swap={`${code.checking}:${code.row}`}>
               <OpenCodeControl code={code} />

@@ -5,12 +5,13 @@
  * finds the names).
  */
 import type { ChatFileRef } from "../shared/chat-files.ts";
+import { pathLeaf } from "../shared/path-label.ts";
 
 export type BesideTarget = { kind: "file"; path: string } | { kind: "image"; name: string; src: string };
 
 /** A file's or image's own name, as its tab and its viewer show it. */
 export function besideName(target: BesideTarget): string {
-  return target.kind === "image" ? target.name : (target.path.split("/").filter(Boolean).pop() ?? target.path);
+  return target.kind === "image" ? target.name : pathLeaf(target.path);
 }
 
 export const OPEN_BESIDE_EVENT = "studio:open-beside";

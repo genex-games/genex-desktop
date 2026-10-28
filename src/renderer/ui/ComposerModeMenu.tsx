@@ -1,10 +1,12 @@
 import { useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { LoopSetting } from "../loop-setting.ts";
 import { UNREAL_WORDS } from "../words.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { PickerCaption, PickerSegmented, pickerItem } from "./PickerPanel.tsx";
 import { Icon } from "./icons.tsx";
 import {
+  durationText,
   formatDuration,
   limitWords,
   MAX_LOOP_MINUTES,
@@ -49,18 +51,18 @@ function chosenLoop(next: Choice, current: LoopSetting): LoopSetting {
  * Loop allows a build and never orders one: the agent makes a small change itself.
  */
 function loopWords(loopOn: boolean, minutes: number | null) {
-  if (!loopOn) return { state: "Off", caption: "Does what you ask, then stops.", label: "Auto", time: null };
+  if (!loopOn) return { state: t("Off"), caption: t("Does what you ask, then stops."), label: "Auto", time: null };
   if (minutes === null)
     return {
-      state: "No time limit",
-      caption: "A team of AIs builds and tests your idea until it’s done.",
+      state: t("No time limit"),
+      caption: t("A team of AIs builds and tests your idea until it’s done."),
       label: "Loop",
       time: null,
     };
   const limit = limitWords(minutes);
   return {
     state: limit,
-    caption: `A team of AIs builds and tests your idea for up to ${limit}.`,
+    caption: t("A team of AIs builds and tests your idea for up to {limit}.", { limit }),
     label: "Loop",
     time: shortDuration(minutes),
   };
@@ -84,7 +86,7 @@ function CustomLimit({
     <div className="picker-stepper picker-expand">
       <button
         type="button"
-        aria-label="15 minutes less"
+        aria-label={t("15 minutes less")}
         disabled={minutes <= MIN_LOOP_MINUTES}
         onClick={() => onMinutes(minutes - STEP_MINUTES)}
       >
@@ -92,7 +94,7 @@ function CustomLimit({
       </button>
       <input
         type="text"
-        aria-label="Custom time limit"
+        aria-label={t("Custom time limit")}
         value={draft ?? formatDuration(minutes)}
         spellCheck={false}
         onChange={(event) => onDraft(event.target.value)}
@@ -106,7 +108,7 @@ function CustomLimit({
       />
       <button
         type="button"
-        aria-label="15 minutes more"
+        aria-label={t("15 minutes more")}
         disabled={minutes >= MAX_LOOP_MINUTES}
         onClick={() => onMinutes(minutes + STEP_MINUTES)}
       >
@@ -120,7 +122,7 @@ function CustomLimit({
 function loopOptions(unavailable: boolean) {
   const loop = { disabled: unavailable };
   return [
-    { value: LoopChoice.Off, label: "Off" },
+    { value: LoopChoice.Off, label: t("Off") },
     {
       value: LoopChoice.UntilSatisfied,
       // The prompt bar's own ∞, which mono would draw flat; the hidden ∞ is its text.
@@ -130,13 +132,13 @@ function loopOptions(unavailable: boolean) {
           <span className="sr-only">∞</span>
         </>
       ),
-      title: "No time limit",
+      title: t("No time limit"),
       ...loop,
     },
-    { value: "0.5" as const, label: "30 m", ...loop },
-    { value: "1" as const, label: "1 h", ...loop },
-    { value: "2" as const, label: "2 h", ...loop },
-    { value: LoopChoice.Custom, label: "Custom", ...loop },
+    { value: "0.5" as const, label: durationText(30), ...loop },
+    { value: "1" as const, label: durationText(MINUTES_PER_HOUR), ...loop },
+    { value: "2" as const, label: durationText(2 * MINUTES_PER_HOUR), ...loop },
+    { value: LoopChoice.Custom, label: t("Custom"), ...loop },
   ];
 }
 
@@ -200,7 +202,7 @@ export function ComposerModeMenu({
     >
       <PopoverTrigger
         render={<button type="button" />}
-        aria-label="Mode"
+        aria-label={t("Mode")}
         disabled={disabled}
         className="composer-text-button composer-mode shrink-0"
         data-announce
@@ -220,16 +222,16 @@ export function ComposerModeMenu({
         align="start"
         sideOffset={8}
         className="picker-panel mode-panel w-[376px] max-w-(--available-width) p-1.5"
-        aria-label="Mode options"
+        aria-label={t("Mode options")}
       >
         <div className={pickerItem}>
-          <span className="flex-1">Loop mode</span>
+          <span className="flex-1">{t("Loop mode")}</span>
           <span className="text-[12px] leading-4 text-ink-3">{state}</span>
         </div>
         <div className="px-1 pb-1">
           {onChange && (
             <PickerSegmented<Choice>
-              label="Loop time limit"
+              label={t("Loop time limit")}
               value={choice}
               onChange={pick}
               options={loopOptions(loopUnavailable)}

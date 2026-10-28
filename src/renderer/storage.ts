@@ -25,6 +25,8 @@ export const STORAGE_KEYS = {
   /** The Live game's sound switch (`panels/stage/game-sound.ts` owns the values). */
   gameSound: "studio.gameSound",
   appearance: "studio.appearance.v1",
+  /** The app's language: a locale or "system" (`renderer/language.ts` owns the values). */
+  language: "studio.language",
   /** Home's background picture and effect (`home-backdrop/settings.ts` owns the format). */
   homeBackdrop: "studio.homeBackdrop.v1",
   /** Live backgrounds a model made for home (`home-backdrop/made-shaders.ts` owns the format). */
@@ -35,12 +37,24 @@ export const STORAGE_KEYS = {
   notifications: "studio.notifications",
   /** Set once the first-launch welcome is finished or skipped on this profile. */
   welcomed: "studio.welcomed",
+  /** The person's answer about usage analytics and its consent version (`analytics/consent.ts` owns the format). */
+  analytics: "studio.analytics",
+  /** Whether this install records replays and until when, drawn once (`analytics/consent.ts` owns the format). */
+  analyticsReplay: "studio.analytics.replay",
+  /** The newest log record analytics has counted, so a reload never counts one twice (`analytics/observers.ts`). */
+  analyticsLogSeen: "studio.analytics.logSeen",
+  /** A random id per game, never derived from its name (`analytics/game-ref.ts` owns the format). */
+  analyticsGames: "studio.analytics.games",
+  /** The screen an unfinished welcome stood on, gone once it ends (`analytics/welcome-report.ts` owns the value). */
+  analyticsWelcomeScreen: "studio.analytics.welcomeScreen",
   /** The Genex promo after the welcome: queued, then settled (`genex-promo.ts` owns the values). */
   genexPromo: "studio.genexPromo",
   /** The games last opened in Play, newest first (`play/play-model.ts` owns the format). */
   playRecent: "studio.play.recent",
   /** Play's Genex card in the sidebar: "done" once dismissed (`play/play-model.ts` owns the value). */
   playPromo: "studio.play.promo",
+  /** The sidebar's friends folded to their one line: "1" while folded (`play/SidebarFriends.tsx`). */
+  sidebarFriendsFolded: "studio.sidebar.friendsFolded",
   /** Play's cover clips paused by the row's control: "1" while paused (`play/clip-playback.ts` owns the value). */
   playClipsPaused: "studio.play.clipsPaused",
   /** The Genex account last signed in on this Mac, for an offline start (`state/people.ts` owns the format). */
@@ -71,6 +85,8 @@ export const storageKeyFor = {
   threadEffort: (threadId: string): string => `studio.threadEffort.${threadId}`,
   /** The engine steps offer a game's Not now hid, by its record id (`chat/EngineStepsCard.tsx`). */
   engineStepsDismissed: (project: string): string => `studio.engineSteps.dismissed.${project}`,
+  /** A game's asks for another Genex cover or clip and how long the last took (`genex/cover-asks.ts` owns the format). */
+  coverAsks: (project: string): string => `studio.genex.coverAsks.${project}`,
   /** The Live view last chosen for a game whose folder has more than one, as its observer key (`live-views.ts`). */
   liveView: (project: string): string => `studio.liveView.${project}`,
   /** Set ("1") once a Genex account has met its generated avatar (`play/AvatarWelcome.tsx`). */

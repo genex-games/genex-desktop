@@ -5,13 +5,14 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GenexAction, type GenexStatus } from "../../../../shared/genex.ts";
+import { t } from "../../../../shared/i18n.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
 import { UiEvent } from "../../../../shared/ui-events.ts";
 import { type PluginReviewRequest, runPluginAction } from "../../../plugin-actions.ts";
 import { genexPollMs, isGenexStatus, type PageAttention } from "./genex-view.ts";
 
 /** Why an answer is not a status. */
-const MESSAGE = { unreadable: "Genex answered with something Studio can’t read." } as const;
+const MESSAGE = { unreadable: t("Genex answered with something Studio can’t read.") } as const;
 
 /** A cancelled review or approval is the person's choice, not an error to show. */
 const CANCELLED = /Cancelled/;

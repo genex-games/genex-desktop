@@ -3,7 +3,7 @@
 :root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--warn:#efbe72;--err:#f08287;color-scheme:dark;
   --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--outline:color-mix(in srgb,var(--fg) 14%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));
   /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
-  --sans:"Zalando Sans SemiExpanded",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
   --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E");
   --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E")}
 /* Chosen for at least 4.5:1 on every light theme's background. */
@@ -95,30 +95,34 @@ button.link:hover,button.link:disabled:hover{background:none;color:var(--fg);tex
 </style></head><body>
 <main id="app" aria-busy="true">
 <section id="setup" aria-labelledby="title">
-  <div class="intro" data-panel-head><h2 id="title" tabindex="-1">Set up Roblox Studio</h2><p class="quiet" id="intro">Looking for Roblox Studio…</p></div>
+  <div class="intro" data-panel-head><h2 id="title" tabindex="-1" data-t>Set up Roblox Studio</h2><p class="quiet" id="intro" data-t>Looking for Roblox Studio…</p></div>
   <p class="problem" id="problem" role="alert"></p>
-  <ol class="steps" id="steps" aria-label="Setup steps"></ol>
-  <div class="actions" id="setup-more" hidden><button type="button" class="link" id="undo" data-action="undo-setup">Undo Set up</button><button type="button" class="link" id="luau" data-action="add-luau-checks" hidden>Add Luau checks</button></div>
+  <ol class="steps" id="steps" aria-label="Setup steps" data-t="aria-label"></ol>
+  <div class="actions" id="setup-more" hidden><button type="button" class="link" id="undo" data-action="undo-setup" data-t>Undo Set up</button><button type="button" class="link" id="luau" data-action="add-luau-checks" data-t hidden>Add Luau checks</button></div>
   <p class="say quiet" id="setup-say" role="status"></p>
 </section>
 <section id="places" aria-labelledby="places-title" hidden>
-  <div class="intro" data-panel-head><h2 id="places-title" tabindex="-1">Choose your place</h2><p class="quiet">Places open in Studio right now.</p></div>
-  <p class="waiting" id="places-loading"><span class="orb" aria-hidden="true"></span>Looking for places</p>
-  <p class="quiet" id="places-none" hidden>No place is open in Roblox Studio.</p>
-  <ul class="places" id="open-places" aria-label="Places open in Studio"></ul>
-  <p class="sub-h" id="files-title" hidden>Place files on this computer</p>
+  <div class="intro" data-panel-head><h2 id="places-title" tabindex="-1" data-t>Choose your place</h2><p class="quiet" data-t>Places open in Studio right now.</p></div>
+  <p class="waiting" id="places-loading"><span class="orb" aria-hidden="true"></span><span data-t>Looking for places</span></p>
+  <p class="quiet" id="places-none" data-t hidden>No place is open in Roblox Studio.</p>
+  <ul class="places" id="open-places" aria-label="Places open in Studio" data-t="aria-label"></ul>
+  <p class="sub-h" id="files-title" data-t hidden>Place files on this computer</p>
   <ul class="places" id="file-places" aria-labelledby="files-title" hidden></ul>
-  <p class="sub-h" id="places-start">Or start one</p>
-  <div class="actions"><button type="button" id="places-new" data-action="create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New Roblox game</button><button type="button" id="places-file">Open a place file…</button></div>
+  <p class="sub-h" id="places-start" data-t>Or start one</p>
+  <div class="actions"><button type="button" id="places-new" data-action="create"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span data-t>New Roblox game</span></button><button type="button" id="places-file" data-t>Open a place file…</button></div>
   <p class="say" id="places-say" role="status"></p>
-  <div class="actions"><button type="button" class="link" id="places-back" data-panel-back>Back</button></div>
+  <div class="actions"><button type="button" class="link" id="places-back" data-panel-back data-t>Back</button></div>
 </section>
 <p class="sr-only" id="announce" role="status"></p>
-<footer class="legal">Not affiliated with Roblox Corporation. For people 18 and over.</footer>
+<footer class="legal" data-t>Not affiliated with Roblox Corporation. For people 18 and over.</footer>
 </main>
 <!-- STUDIO_PANEL_SDK -->
-<script>
-const api = window.studioPlugin, $ = (id) => document.getElementById(id);
+<script type="module">
+const api = window.studioPlugin;
+// The panel's words are in Genex's language once the host has named it (plugin-sdk/words.js).
+await api.ready;
+const { t } = api;
+const $ = (id) => document.getElementById(id);
 const SECOND_MS = 1000;
 const REFRESH_MS = 3 * SECOND_MS;
 /**
@@ -168,29 +172,29 @@ const WAITS = {
 };
 /** The panel's own words; each step's words come from the backend, as the chat's steps card shows them. */
 const WORDS = {
-  intro: "Genex sets up what it can and checks each step by itself.",
-  allDone: "Everything Roblox Studio needs from you is done.",
-  done: "Done:",
-  orInStudio: "Or in Studio:",
-  choosePlace: "Choose your place",
-  chooseAnother: "Choose another place",
-  publish: "Publish an update",
-  firstPublish: "Publish to Roblox",
-  publishName: "Name on Roblox",
-  firstPublishYourself: "Not on Roblox yet. To publish it yourself, in Studio:",
-  firstPublishThen: "Genex links this game to it by itself once it is published.",
-  publishYourself: "Publish updates yourself, in Studio:",
-  answerInChat: "Genex may ask you something in this game's chat first: close this panel to answer it there.",
-  newGame: "New Roblox game",
-  noGame: "Open a game first to use a place you already have, or start a new one.",
-  use: "Use in this game",
-  published: (id) => `Published · place ${id}`,
-  unsaved: "Not saved to a file yet",
-  savedFile: "Saved to a file",
-  takenBy: (title) => `Builds in ${title}`,
-  here: "This game builds here",
-  pickerTitle: "Choose a place file",
-  failed: "Genex couldn't ask Roblox Studio. Close this panel and open it again.",
+  intro: t("Genex sets up what it can and checks each step by itself."),
+  allDone: t("Everything Roblox Studio needs from you is done."),
+  done: t("Done:"),
+  orInStudio: t("Or in Studio:"),
+  choosePlace: t("Choose your place"),
+  chooseAnother: t("Choose another place"),
+  publish: t("Publish an update"),
+  firstPublish: t("Publish to Roblox"),
+  publishName: t("Name on Roblox"),
+  firstPublishYourself: t("Not on Roblox yet. To publish it yourself, in Studio:"),
+  firstPublishThen: t("Genex links this game to it by itself once it is published."),
+  publishYourself: t("Publish updates yourself, in Studio:"),
+  answerInChat: t("Genex may ask you something in this game's chat first: close this panel to answer it there."),
+  newGame: t("New Roblox game"),
+  noGame: t("Open a game first to use a place you already have, or start a new one."),
+  use: t("Use in this game"),
+  published: (placeId) => t("Published · place {placeId}", { placeId }),
+  unsaved: t("Not saved to a file yet"),
+  savedFile: t("Saved to a file"),
+  takenBy: (game) => t("Builds in {game}", { game }),
+  here: t("This game builds here"),
+  pickerTitle: t("Choose a place file"),
+  failed: t("Genex couldn't ask Roblox Studio. Close this panel and open it again."),
 };
 /** The place files Choose a place file offers. */
 const PLACE_EXTENSIONS = ["rbxl", "rbxlx"];

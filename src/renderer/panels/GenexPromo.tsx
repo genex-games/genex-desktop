@@ -22,6 +22,15 @@ import {
   promoPhase,
   storedGenexPromo,
 } from "../genex-promo.ts";
+import { promoOutcome } from "../analytics/welcome-flow.ts";
+import {
+  reportClock,
+  reportPromoClosed,
+  reportPromoConnectFinished,
+  reportPromoShown,
+  useReportOnce,
+} from "../analytics/welcome-report.ts";
+import { PromoCloseVia, SignInOutcome } from "../analytics/welcome-vocabulary.ts";
 import { runPluginAction } from "../plugin-actions.ts";
 import { playToolsUrl } from "../../shared/play.ts";
 import { usePlayWeb, usePlugins, useThreads } from "../state/hooks.ts";
@@ -161,17 +170,19 @@ function Footer({
   onConnect,
   onCancel,
   onClose,
+  onLearnMore,
 }: {
   phase: PromoPhase;
   busy: boolean;
   onConnect: () => void;
   onCancel: () => void;
-  onClose: () => void;
+  onClose: (via: PromoCloseVia) => void;
+  onLearnMore?: () => void;
 }): JSX.Element {
   if (phase === PromoPhase.Connected)
     return (
       <div className="genex-promo-footer">
-        <Button variant="default" className="ml-auto" onClick={onClose}>
+        <Button variant="default" className="ml-auto" onClick={() => onClose(PromoCloseVia.Done)}>
           {WORDS.done}
         </Button>
       </div>
@@ -190,7 +201,7 @@ function Footer({
   const failed = phase === PromoPhase.Failed;
   return (
     <div className="genex-promo-footer">
-      <LearnMore />
+      <LearnMore onOpen={onLearnMore} />
       <Button variant="default" disabled={busy} title={failed ? WORDS.failed : undefined} onClick={onConnect}>
         {failed && <Icon name="reload" />}
         {failed ? WORDS.retry : WORDS.connect}
@@ -203,7 +214,7 @@ function Footer({
  * Opens the Genex plugin's page in the browser. Where the browser may not be opened (a fixture profile), the
  * address is copied instead and the link says so for a moment.
  */
-function LearnMore(): JSX.Element {
+function LearnMore({ onOpen }: { onOpen?: () => void }): JSX.Element {
   const [copied, setCopied] = useState(false);
   const toolsUrl = playToolsUrl(usePlayWeb());
   useEffect(() => {
@@ -212,6 +223,7 @@ function LearnMore(): JSX.Element {
     return () => window.clearTimeout(timer);
   }, [copied]);
   const open = async (): Promise<void> => {
+    onOpen?.();
     try {
       await window.studio.openUrl(toolsUrl);
     } catch {
@@ -289,6 +301,51 @@ function useSignIn(
   return { busy, connect, cancel };
 }
 
+/** What usage analytics hears from the card: it rose, the sign-in it started settled, and how it went away. */
+function usePromoReports(card: {
+  visible: boolean;
+  phase: PromoPhase;
+  atHome: boolean;
+  account: PromoAccount;
+  sawSignIn: boolean;
+}) {
+  const latest = useRef(card);
+  latest.current = card;
+  const shownAt = useRef<number | null>(null);
+  const learnedMore = useRef(false);
+  const flight = useRef<{ startedAt: number; retry: boolean } | null>(null);
+  useReportOnce(card.visible ? PromoPhase.Offer : null, () => {
+    shownAt.current = reportClock();
+    reportPromoShown(latest.current.atHome, latest.current.account);
+  });
+  /** The card's own sign-in settled: say how, once. */
+  const settledAs = (outcome: SignInOutcome): void => {
+    if (flight.current) reportPromoConnectFinished({ outcome, sawSignIn: latest.current.sawSignIn, ...flight.current });
+    flight.current = null;
+  };
+  useEffect(() => {
+    const outcome = promoOutcome(card.phase);
+    if (outcome) settledAs(outcome);
+  });
+  // One set of actions for the card's life: each reads the card as it stands when pressed.
+  const [actions] = useState(() => ({
+    connecting: () => {
+      flight.current = { startedAt: reportClock(), retry: latest.current.phase === PromoPhase.Failed };
+    },
+    cancelled: () => settledAs(SignInOutcome.Cancelled),
+    learnedMore: () => {
+      learnedMore.current = true;
+    },
+    closed: (via: PromoCloseVia) => {
+      if (shownAt.current === null) return;
+      const at = shownAt.current;
+      shownAt.current = null;
+      reportPromoClosed({ phase: latest.current.phase, via, learnMore: learnedMore.current, shownAt: at });
+    },
+  }));
+  return actions;
+}
+
 /** The promo card, or nothing while it has no reason to show. */
 export function GenexPromo({
   welcoming,
@@ -319,17 +376,23 @@ export function GenexPromo({
     finishGenexPromo();
     setStored(storedGenexPromo());
   }, []);
-  // An account that already exists (or arrives from elsewhere) retires the promo without a card.
-  useEffect(() => {
-    if (genexPromoSettled(account)) settle();
-  }, [account, settle]);
   useEffect(() => {
     if (attempt.started && account === "authorizing" && !attempt.sawSignIn)
       setAttempt((a) => ({ ...a, sawSignIn: true }));
   }, [attempt.started, attempt.sawSignIn, account]);
   // A closing card stays mounted until its exit has played, though closing already settled the promo.
   const shown = useSettledFlag((offered || connected || closing) && !gone, APPEAR_DELAY_MS);
-  const close = (): void => {
+  const phase = promoPhase(account, attempt);
+  const visible = shown && !welcoming && !pluginsOpen;
+  const reports = usePromoReports({ visible, phase, atHome, account, sawSignIn: attempt.sawSignIn });
+  // An account that already exists (or arrives from elsewhere) retires the promo without a card.
+  useEffect(() => {
+    if (!genexPromoSettled(account)) return;
+    if (!attempt.started) reports.closed(PromoCloseVia.SettledElsewhere);
+    settle();
+  }, [account, settle, attempt.started, reports]);
+  const close = (via: PromoCloseVia): void => {
+    reports.closed(via);
     settle();
     setClosing(true);
     window.setTimeout(() => setGone(true), prefersReducedMotion() ? 0 : LEAVE_MS);
@@ -337,13 +400,20 @@ export function GenexPromo({
   if (!shown || welcoming || pluginsOpen) return null;
   return (
     <GenexPromoCard
-      phase={promoPhase(account, attempt)}
+      phase={phase}
       atHome={atHome}
       busy={signIn.busy}
       closing={closing}
-      onConnect={() => void signIn.connect()}
-      onCancel={() => void signIn.cancel()}
+      onConnect={() => {
+        reports.connecting();
+        void signIn.connect();
+      }}
+      onCancel={() => {
+        reports.cancelled();
+        void signIn.cancel();
+      }}
       onClose={close}
+      onLearnMore={reports.learnedMore}
     />
   );
 }
@@ -357,6 +427,7 @@ export function GenexPromoCard({
   onConnect,
   onCancel,
   onClose,
+  onLearnMore,
 }: {
   phase: PromoPhase;
   /** Home is up: the card takes the bottom-left corner, clear of home's composer. */
@@ -365,7 +436,10 @@ export function GenexPromoCard({
   closing: boolean;
   onConnect: () => void;
   onCancel: () => void;
-  onClose: () => void;
+  /** The card is dismissed: by its close button, Escape, or Done. */
+  onClose: (via: PromoCloseVia) => void;
+  /** Learn more was pressed (usage analytics). */
+  onLearnMore?: () => void;
 }): JSX.Element {
   // The card rises whole: it stays hidden until the film's first frame is there to rise with it.
   const [ready, reveal] = useFilmReady();
@@ -378,15 +452,27 @@ export function GenexPromoCard({
       data-leaving={closing || undefined}
       aria-label={WORDS.label}
       onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
+        if (event.key === "Escape") onClose(PromoCloseVia.Escape);
       }}
     >
       <PromoFilm onReady={reveal} />
-      <button type="button" className="genex-promo-close" aria-label={WORDS.dismiss} onClick={onClose}>
+      <button
+        type="button"
+        className="genex-promo-close"
+        aria-label={WORDS.dismiss}
+        onClick={() => onClose(PromoCloseVia.Close)}
+      >
         <Icon name="close" size={14} strokeWidth={2} />
       </button>
       <Body phase={phase} />
-      <Footer phase={phase} busy={busy} onConnect={onConnect} onCancel={onCancel} onClose={onClose} />
+      <Footer
+        phase={phase}
+        busy={busy}
+        onConnect={onConnect}
+        onCancel={onCancel}
+        onClose={onClose}
+        onLearnMore={onLearnMore}
+      />
     </aside>
   );
 }

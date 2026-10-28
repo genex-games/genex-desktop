@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { build, type Metafile } from "esbuild";
-import { rendererBuildOptions, rendererBundleReport } from "../../scripts/renderer-build.mjs";
+import { rendererBuildOptions, rendererBundleReport, studioRendererBuild } from "../../scripts/renderer-build.mjs";
 
 const DEVELOPMENT_REACT = /react.*\/cjs\/.*\.development\.js$/;
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 // React's development build keeps a User Timing measure per component render; shipped in
 // `npm start` builds it filled the UI renderer's memory during a long Autopilot run. Only watch
@@ -44,6 +47,23 @@ for (const { name, mode, development } of MODES) {
 test("a release cannot ask for development React", () => {
   assert.throws(() => rendererBuildOptions({ release: true, development: true }));
 });
+
+// A module script is always read as UTF-8, so a catalog keeps its letters: escaped, each Cyrillic
+// letter took six bytes and the Russian catalog a window reads before it shows doubled.
+for (const { name, mode } of MODES) {
+  test(`${name} renderer keeps a catalog's letters rather than escapes`, async () => {
+    const result = await build({
+      stdin: { contents: 'export default { "Try again": "Попробовать снова" };', loader: "ts" },
+      bundle: true,
+      write: false,
+      format: "esm",
+      logLevel: "silent",
+      platform: "browser",
+      ...rendererBuildOptions(mode),
+    });
+    assert.match(result.outputFiles[0]?.text ?? "", /Попробовать снова/);
+  });
+}
 
 test("the bundle report refuses development React outside a development build", async () => {
   const metafile = await bundleReactDom({ development: true });
@@ -95,4 +115,50 @@ for (const { name, mode, profiled } of [
 
 test("only development React can count commits", () => {
   assert.throws(() => rendererBuildOptions({ commitCounts: true }), /development/);
+});
+
+/** A renderer build's outputs: the entry, the studio it loads after the language, and one language. */
+function splitMetafile(studioInputs: Record<string, object>): Metafile {
+  const output = (entryPoint: string, bytes: number, inputs: Record<string, object>, imports: object[] = []) => ({
+    entryPoint,
+    bytes,
+    inputs,
+    imports,
+    exports: [],
+  });
+  return {
+    inputs: {},
+    outputs: {
+      "dist/renderer/renderer.js": output("src/renderer/main.tsx", 100, { "src/renderer/main.tsx": {} }, [
+        { path: "dist/renderer/chunks/studio-entry.js", kind: "dynamic-import" },
+        { path: "dist/renderer/chunks/ru.js", kind: "dynamic-import" },
+      ]),
+      "dist/renderer/chunks/studio-entry.js": output("src/renderer/studio-entry.tsx", 5_000, studioInputs),
+      "dist/renderer/chunks/ru.js": output("src/shared/locales/ru.ts", 9_000_000, { "src/shared/locales/ru.ts": {} }),
+    },
+  } as unknown as Metafile;
+}
+
+// CI builds production React, so the development budget was met only by an owned build, which
+// failed before its window opened: measure the studio itself as each budgeted build bundles it.
+for (const { name, mode, performance } of [
+  { name: "an owned fixture build", mode: { development: true, commitCounts: true }, performance: true },
+  { name: "a packaged build", mode: { release: true }, performance: false },
+]) {
+  test(`${name}'s studio fits its eager budget`, async () => {
+    const outdir = path.join(ROOT, "dist/renderer");
+    const options = studioRendererBuild({ root: ROOT, outdir, mode, performance });
+    const { metafile } = await build({ ...options, write: false, logLevel: "silent" });
+    assert.ok(metafile);
+    assert.ok(rendererBundleReport(metafile, mode).entryBytes > 0, "the report finds the eager entries");
+  });
+}
+
+test("the eager budget counts the studio the entry loads after the language, never the languages", () => {
+  const report = rendererBundleReport(splitMetafile({ "src/renderer/App.tsx": {} }), { release: true });
+  assert.equal(report.entryBytes, 5_100);
+  assert.throws(
+    () => rendererBundleReport(splitMetafile({ "node_modules/three/build/three.module.js": {} }), {}),
+    /three\.js/,
+  );
 });

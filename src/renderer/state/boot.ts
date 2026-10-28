@@ -8,7 +8,13 @@
  *
  * A Windows window opens before the core: it says which step the start is on, asking again until
  * the start ends, and main opens the studio in a window of its own. A studio whose harness would
- * not start stays on its failure, with Try again, a report and Quit.
+ * not start stays on its failure, with Try again, a report and Quit. A launch that moves Genex's
+ * data shows how far the move is, asking again until main starts Genex anew; one whose data
+ * folder is not there names it, with Try again and Quit.
+ *
+ * Until the studio is up, the window also asks main whether a new version of the app downloaded
+ * meanwhile (`watchUpdate`), so a start that fails or waits on Set up offers the relaunch into a
+ * release that may fix it; the studio's own sidebar offers it after.
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import {
@@ -20,18 +26,24 @@ import {
   type SandboxSetupResult,
   type StartStep,
   StudioPlatform,
+  WindowsSetupNeed,
 } from "../../shared/boot.ts";
+import type { DataMoveProgress } from "../../shared/data-folder.ts";
+import { type ReadyUpdate, UpdateAction } from "../../shared/app-update.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import type { StudioApi } from "../../shared/studio-api.ts";
 
 const MESSAGE = {
   /** The raw error under Details when an install went through and Windows still has no sandbox. */
-  stillNotSetUp: "The install finished, but Windows still reports the protected workspace as not set up.",
+  stillNotSetUp: t("The install finished, but Windows still reports the protected workspace as not set up."),
 } as const;
 
 /** How long a starting window waits before it asks main again which step the start is on. */
 const START_POLL_MS = SECOND_MS / 2;
+/** How long the window waits before it asks main again whether an update downloaded. */
+const UPDATE_POLL_MS = 10 * SECOND_MS;
 
 /** What the window shows for the boot state. */
 export const BootView = {
@@ -40,6 +52,8 @@ export const BootView = {
   Studio: "studio",
   Starting: "starting",
   Failed: "failed",
+  Moving: "moving",
+  DataMissing: "data-missing",
 } as const;
 export type BootView = (typeof BootView)[keyof typeof BootView];
 
@@ -69,6 +83,12 @@ export interface BootStoreState {
   error: string | null;
   /** The report of the last failed Set up. */
   report: SetupReport;
+  /** How far a move of Genex's data is, while the phase is Moving. */
+  move: DataMoveProgress | null;
+  /** The data folder that is not there, while the phase is DataMissing. */
+  dataFolder: string | null;
+  /** A new version of the app main downloaded (or, on Linux, found) while the studio is not up. */
+  update: ReadyUpdate | null;
 }
 
 export const initialBoot = (): BootStoreState => ({
@@ -81,6 +101,9 @@ export const initialBoot = (): BootStoreState => ({
   setupCancelled: false,
   error: null,
   report: SetupReport.Idle,
+  move: null,
+  dataFolder: null,
+  update: null,
 });
 
 /** Main answered: its platform, its phase, the step a start is on, the setup problem and why a start failed, if any. */
@@ -94,8 +117,15 @@ export function bootAnswered(state: BootStoreState, boot: BootState): BootStoreS
     retrying: false,
     settingUp: false,
     setupCancelled: false,
-    error: boot.phase === BootPhase.Failed ? (boot.failure ?? null) : null,
+    error: showsError(boot) ? (boot.failure ?? null) : null,
+    move: boot.move ?? null,
+    dataFolder: boot.dataFolder ?? null,
   };
+}
+
+/** A phase whose screen shows why the last try failed: a failed start, a missing data folder, a stopped move. */
+function showsError(boot: BootState): boolean {
+  return boot.phase === BootPhase.Failed || boot.phase === BootPhase.DataMissing || boot.phase === BootPhase.Moving;
 }
 
 export function retryStarted(state: BootStoreState): BootStoreState {
@@ -135,12 +165,22 @@ export function canSetUp(state: Pick<BootStoreState, "platform" | "problem">): b
   return state.platform === StudioPlatform.Windows && state.problem?.code === SandboxProblemCode.NotProvisioned;
 }
 
+/**
+ * Whether the window starts Set up by itself: a first install, whose prompt the person expects
+ * right after installing Genex. An update of an earlier install waits for its button.
+ */
+export function setsUpUnasked(state: Pick<BootStoreState, "platform" | "problem">): boolean {
+  return canSetUp(state) && state.problem?.windowsNeeds?.includes(WindowsSetupNeed.Reinstall) !== true;
+}
+
 /** The screen the state calls for. */
 export function bootView(state: BootStoreState): BootView {
   if (state.phase === BootPhase.Ready) return BootView.Studio;
   if (state.phase === BootPhase.SandboxSetup) return BootView.SandboxSetup;
   if (state.phase === BootPhase.Starting) return BootView.Starting;
   if (state.phase === BootPhase.Failed) return BootView.Failed;
+  if (state.phase === BootPhase.Moving) return BootView.Moving;
+  if (state.phase === BootPhase.DataMissing) return BootView.DataMissing;
   return BootView.Loading;
 }
 
@@ -164,12 +204,22 @@ export interface Boot {
   report(): Promise<void>;
   /** Quit the app, from the screen of a studio that would not start. */
   quit(): Promise<void>;
+  /** Ask main for a downloaded update until one waits for a relaunch or the studio is up. */
+  watchUpdate(): Promise<void>;
+  /** Relaunch into the downloaded update, or open a Linux release's download page. */
+  restartToUpdate(): Promise<void>;
 }
 
 export interface BootOptions {
   onReady(): void;
   /** Wait between questions while the core starts; a timer unless a test holds the clock. */
   wait?: (ms: number) => Promise<void>;
+}
+
+/** A start or a move main is working through, which the window follows by asking again; a stopped move is not. */
+function isUnderWay(boot: BootState): boolean {
+  if (boot.phase === BootPhase.Moving) return boot.failure === undefined;
+  return boot.phase === BootPhase.Starting;
 }
 
 /** The window's own clock: run `run` after `ms`. */
@@ -192,7 +242,17 @@ function shared(run: () => Promise<void>): () => Promise<void> {
 }
 
 export function createBoot(
-  api: Pick<StudioApi, "bootState" | "retrySandboxSetup" | "setUpSandbox" | "reportSandboxSetup" | "quitFromBoot">,
+  api: Pick<
+    StudioApi,
+    | "bootState"
+    | "retrySandboxSetup"
+    | "setUpSandbox"
+    | "reportSandboxSetup"
+    | "quitFromBoot"
+    | "readyUpdate"
+    | "restartToUpdate"
+    | "openUpdateDownload"
+  >,
   options: BootOptions,
 ): Boot {
   const wait = options.wait ?? timer;
@@ -224,7 +284,7 @@ export function createBoot(
   // own, which replaces this one, so this window keeps saying it is starting and starts nothing.
   const followStart = async (first: BootState): Promise<BootState | null> => {
     let boot = first;
-    while (boot.phase === BootPhase.Starting) {
+    while (isUnderWay(boot)) {
       await wait(START_POLL_MS);
       boot = await read();
       if (boot.phase === BootPhase.Ready) return null;
@@ -268,8 +328,34 @@ export function createBoot(
   const setUp = shared(runSetUp);
   const start = async (): Promise<void> => {
     const boot = await followStart(await ask());
-    if (boot && canSetUp(store.getState()) && !boot.setupTried) await setUp();
+    if (boot && setsUpUnasked(store.getState()) && !boot.setupTried) await setUp();
   };
   const quit = (): Promise<void> => api.quitFromBoot();
-  return { store, load, start, retry: shared(runRetry), setUp, report: shared(runReport), quit };
+  const studioUp = (): boolean => bootView(store.getState()) === BootView.Studio;
+  // A main that cannot say keeps what the screen shows; the next question may answer.
+  const readUpdate = (): Promise<ReadyUpdate | null> => api.readyUpdate().catch(() => store.getState().update);
+  const watchUpdate = async (): Promise<void> => {
+    while (!studioUp()) {
+      const update = await readUpdate();
+      store.setState((state) => ({ ...state, update }), true);
+      if (update?.action === UpdateAction.Restart) return;
+      await wait(UPDATE_POLL_MS);
+    }
+  };
+  const restartToUpdate = async (): Promise<void> => {
+    const { update } = store.getState();
+    if (update?.action === UpdateAction.Download) await api.openUpdateDownload();
+    else await api.restartToUpdate();
+  };
+  return {
+    store,
+    load,
+    start,
+    retry: shared(runRetry),
+    setUp,
+    report: shared(runReport),
+    quit,
+    watchUpdate: shared(watchUpdate),
+    restartToUpdate,
+  };
 }

@@ -14,7 +14,8 @@ import {
 } from "../../shared/genex.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { AiAudience, AiRequirement } from "../../shared/game-ai.ts";
-import type { AiPublishListing } from "../../shared/game-ai-check.ts";
+import { type AiPublishListing, readAiPublishListing } from "../../shared/game-ai-check.ts";
+import { t } from "../../shared/i18n.ts";
 import { stripAnsi } from "./cli.ts";
 import type { GenexConnection } from "./entry-page.ts";
 import { DEFAULT_DASHBOARD, isGenexLink } from "./http.ts";
@@ -33,31 +34,47 @@ const BACKGROUND_RETRY_MS = 30 * SECOND_MS;
 /** How much of a failed CLI run's message a job keeps. */
 export const PUBLISH_ERROR_TAIL_CHARS = 3000;
 
+/**
+ * A publish's words. Its record (a job's error and check, which the agent reads and a report
+ * carries) stays English; a refusal the Publish dialog shows is a function, translated when said.
+ */
 export const MESSAGE = {
-  BadAiListing: "Publish's play-time AI choice is not one Genex can list. Choose again in the Publish dialog.",
+  BadAiListing: () => t("Publish's play-time AI choice is not one Genex can list. Choose again in the Publish dialog."),
   AudienceRefused: "Genex didn't take who sees this game's AI text, so nothing was put online. Publish again.",
   UnknownAfterRestart: "Upload outcome is unknown after restart. Check the deployment page before retrying.",
   CannotReach: "Genex could not be reached to check this upload. Check again later.",
   DidNotLand: "The upload did not reach Genex: the hosted game is unchanged. You can upload again.",
   CannotTell: "Genex cannot tell whether this upload went live. Publish again to replace it.",
-  StillRunning: "This upload is still running",
-  NotCurrent: "That upload is no longer the current one",
+  StillRunning: () => t("This upload is still running"),
+  NotCurrent: () => t("That upload is no longer the current one"),
   OnlyDraftUpdated: "Only the draft page was updated: the public version is unchanged. Publish again to update it.",
   AllowedNewUpload: "Published again before Studio knew whether this upload reached Genex.",
+  EmptyStarter: "This game is still the empty starter: build something first, then publish.",
+  /** {@link MESSAGE.EmptyStarter} as Publish's refusal. */
+  EmptyStarterRefusal: () => t("This game is still the empty starter: build something first, then publish."),
   ConnectFirst: "Connect the Genex plugin first",
-  AuthorizationExpired: "Genex authorization expired. Reconnect the Genex plugin before uploading.",
+  /** {@link MESSAGE.ConnectFirst} as Publish's refusal. */
+  ConnectFirstRefusal: () => t("Connect the Genex plugin first"),
+  AuthorizationExpired: () => t("Genex authorization expired. Reconnect the Genex plugin before uploading."),
   NoHostedProject: "Genex did not create a hosted project for this game",
   NoStagingIdentity: "Upload recorded; staging identity is not yet available",
   RevisionMismatch: "Hosted staging revision does not match this upload yet",
-  NotInGallery: "This game is not in the gallery yet",
-  NothingOnline: "Nothing is online for this game yet",
-  UnrecognizedLink: "Unrecognized Genex page link",
+  NotInGallery: () => t("This game is not in the gallery yet"),
+  NothingOnline: () => t("Nothing is online for this game yet"),
+  UnrecognizedLink: () => t("Unrecognized Genex page link"),
   InvalidProject: "Invalid project",
-  NeedsGit: "Publishing needs git on this Mac. Install git (Xcode command line tools or Homebrew) and try again.",
-  NeedsGitLfs:
-    "Publishing needs git and git-lfs on this Mac (brew install git-lfs). Studio will not let the Genex CLI install software.",
+  NeedsGit: () =>
+    t("Publishing needs git on this Mac. Install git (Xcode command line tools or Homebrew) and try again."),
+  NeedsGitLfs: () =>
+    t(
+      "Publishing needs git and git-lfs on this Mac (brew install git-lfs). Studio will not let the Genex CLI install software.",
+    ),
   DraftFailedTest:
     "The new build did not pass its test on the draft page, so it was not made public. Players still get the previous version.",
+  NoApps: "This game has no Mac, Windows or Linux app ready to publish.",
+  /** {@link MESSAGE.NoApps} as Publish's refusal. */
+  NoAppsRefusal: () => t("This game has no Mac, Windows or Linux app ready to publish."),
+  ListingRefused: "Genex did not list the game in the gallery.",
   AiDirect: (hosts: readonly string[], more: number) =>
     `This game calls an AI service directly (${hosts.join(", ")}${more > 0 ? ` and ${more} more` : ""}). Genex blocks that while people play, so its AI won't work there: ask the agent to make its AI calls through genex-ai.`,
 } as const;
@@ -70,11 +87,6 @@ const HOSTNAME_RE = /^[a-z0-9.-]{1,253}$/;
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/**
- * Publish's warning for a build that calls an AI vendor directly (D5), from the host's export answer
- * (`ExportResult.aiDirect`), or null. The answer crosses the plugin boundary: anything that is not a
- * list of hostnames reads as no warning.
- */
 /** A hosted project's id as genex.games names one (a cuid): anything else never reaches a route. */
 export const GENEX_PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -128,6 +140,22 @@ export function aiDisclosure(title: string, listing: AiPublishListing): string {
   ].join("\n");
 }
 
+/**
+ * The game's play-time AI as Publish read it (`ai`), or null when Publish asked for none. One out of
+ * shape is refused before anything is exported or sent.
+ */
+export function aiListingOf(ai: unknown): AiPublishListing | null {
+  if (ai === undefined) return null;
+  const listing = readAiPublishListing(ai);
+  if (!listing) throw new Error(MESSAGE.BadAiListing());
+  return listing;
+}
+
+/**
+ * Publish's warning for a build that calls an AI vendor directly (D5), from the host's export answer
+ * (`ExportResult.aiDirect`), or null. The answer crosses the plugin boundary: anything that is not a
+ * list of hostnames reads as no warning.
+ */
 export function aiDirectWarning(exported: unknown): string | null {
   const ai = isObject(exported) ? exported.aiDirect : null;
   const rows: unknown[] = isObject(ai) && Array.isArray(ai.hosts) ? ai.hosts : [];
@@ -381,7 +409,9 @@ export function mergeMeta(state: GenexPublishState, meta: HostedMeta | null | un
   if (typeof meta?.id === "string") state.projectId = meta.id;
   if (meta?.status === GenexHostedStatus.Published || meta?.status === GenexHostedStatus.Draft)
     state.status = meta.status;
-  if (isGenexLink(meta?.playUrl)) state.playUrl = meta.playUrl;
+  // Until the game is public its live address serves nothing; a tester needs the draft page.
+  if (state.status !== GenexHostedStatus.Published) delete state.playUrl;
+  else if (isGenexLink(meta?.playUrl)) state.playUrl = meta.playUrl;
   Object.assign(state, publishUrls(meta));
 }
 
@@ -395,15 +425,36 @@ export function shareLink(out: string): string | undefined {
   return undefined;
 }
 
-/** The staging URL the CLI printed after "Live." or "Published.": ours, or the fixture API's own origin. */
-export function stagingLink(out: string, api: string): string | undefined {
+/**
+ * The staging URL the CLI printed after "Live." or "Published.": ours, the fixture API's own origin,
+ * or a game on a development stand's game host (`standGames`, which the host names).
+ */
+export function stagingLink(out: string, api: string, standGames?: string): string | undefined {
   const apiUrl = new URL(api);
   const isFixtureOrigin = (value: string) => apiUrl.hostname === "127.0.0.1" && new URL(value).origin === apiUrl.origin;
+  const onStand = (value: string) => standGames !== undefined && isStandGameLink(value, standGames);
   return stripAnsi(out)
     .split("\n")
     .filter((line) => /Live\.|Published\./.test(line))
     .flatMap((line) => line.match(/https?:\/\/[^\s)]+/g) ?? [])
-    .find((value) => isGenexLink(value) || isFixtureOrigin(value));
+    .find((value) => isGenexLink(value) || isFixtureOrigin(value) || onStand(value));
+}
+
+/** One DNS label, as a game's (or its draft's) subdomain spells it. */
+const GAME_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Whether `value` is a game one label under the stand's game host `games`: its scheme and port, no user. */
+function isStandGameLink(value: string, games: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = new URL(games);
+    const sameServer = url.protocol === host.protocol && url.port === host.port && !url.username && !url.password;
+    const suffix = `.${host.hostname}`;
+    const label = url.hostname.endsWith(suffix) ? url.hostname.slice(0, -suffix.length) : "";
+    return sameServer && GAME_LABEL.test(label);
+  } catch {
+    return false;
+  }
 }
 
 /** Which page a "publish-open" action may open. */

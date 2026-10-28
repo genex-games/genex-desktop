@@ -6,6 +6,7 @@ import path from "node:path";
 import { lstat, open, readdir, readFile, rename, rm } from "node:fs/promises";
 import { GenexJobStatus, GenexOperation, type GenexJob } from "../../shared/genex.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
+import { operationPrice } from "../../shared/play-credits.ts";
 import { API_REQUEST_TIMEOUT_MS, isGenexAssetUrl, readCapped } from "./http.ts";
 
 /** A Studio job id: a UUID, so it can name a folder and never a path. */
@@ -364,6 +365,31 @@ export async function fetchDesktopVariant(job: GenexJob, output: string, signal:
     job.variantError = MESSAGE.VariantUnavailable((error as Error).message);
     await rm(temporary, { force: true });
   }
+}
+
+/** The cheapest price of each kind, as `/api/credits/prices` lists them (`lanes[].kind`, `lanes[].from`). */
+function listedPrices(body: unknown): Partial<Record<string, number>> {
+  const lanes = (body as { lanes?: unknown } | null)?.lanes;
+  const prices: Partial<Record<string, number>> = {};
+  for (const lane of Array.isArray(lanes) ? lanes : []) {
+    const { kind, from } = (lane ?? {}) as { kind?: unknown; from?: unknown };
+    if (typeof kind === "string" && typeof from === "number" && Number.isSafeInteger(from)) prices[kind] = from;
+  }
+  return prices;
+}
+
+/**
+ * Whether the account has too few credits for an operation, from its balance (`/api/credits/me`)
+ * and the price list: an unlimited account never does, an unread balance is never short, and with
+ * no price for the operation only an empty balance is.
+ */
+export function shortOfCredits(account: unknown, priceList: unknown, operation: string): boolean {
+  const me = (account ?? {}) as { spendable?: unknown; balance?: unknown; unlimited?: unknown };
+  if (me.unlimited === true) return false;
+  const left = typeof me.spendable === "number" ? me.spendable : me.balance;
+  if (typeof left !== "number" || !Number.isFinite(left)) return false;
+  const price = operationPrice(operation, listedPrices(priceList));
+  return price === null ? left <= 0 : left < price;
 }
 
 /** Why an inspected job's files are not in this workspace, and which id to use instead. */

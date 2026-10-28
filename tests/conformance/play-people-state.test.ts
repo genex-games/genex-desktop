@@ -21,7 +21,7 @@ import { PlayShelf } from "../../src/shared/play.ts";
 import type { StudioApi } from "../../src/shared/studio-api.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
 import { type HandleSave, HandleSaveOutcome, HandleState } from "../../src/shared/handle.ts";
-import type { PlayCredits } from "../../src/shared/play-credits.ts";
+import { CreditKind, type PlayCredits } from "../../src/shared/play-credits.ts";
 import { type KeyValueStorage, STORAGE_KEYS } from "../../src/renderer/storage.ts";
 import {
   createPeopleStore,
@@ -120,6 +120,7 @@ function fakeApi(handlers: Partial<PeopleApi> = {}) {
     playStats: record("playStats", async () => null),
     playCreators: record("playCreators", async () => null),
     playCredits: record("playCredits", async () => credits(1700)),
+    storeCoins: record("storeCoins", async () => 1240),
     playSetHandle: record(
       "playSetHandle",
       async (handle: string): Promise<HandleSave> => ({
@@ -499,6 +500,37 @@ describe("the account across sign-in, offline and a sign-in that ended", () => {
     assert.ok(calls.some(([name]) => name === "genexSignIn"));
   });
 
+  it("reads the account again when the sign-in finishes between its two reads", async () => {
+    // A development stand's sign-in finishes inside main's read of where the account stands: the
+    // read of who it is, just before, still found no token.
+    let token: string | null = null;
+    const { api, calls } = fakeApi({
+      playMe: async () => (token ? me("u3") : null),
+      genexAccount: async () => {
+        token = "minted";
+        return { status: GenexAccountStatus.SignedIn };
+      },
+    });
+    const store = createPeopleStore(api, memoryStorage());
+    await store.loadMe();
+    assert.equal(store.getState().account, GenexAccountStatus.SignedIn);
+    assert.equal(store.getState().me?.id, "u3", "the plate fills in without another event");
+    assert.deepEqual(
+      calls.map(([name]) => name),
+      ["playMe", "genexAccount", "playMe"],
+    );
+  });
+
+  it("reads who it is once when the account is signed in from the start", async () => {
+    const { api, calls } = fakeApi();
+    const store = createPeopleStore(api, memoryStorage());
+    await store.loadMe();
+    assert.deepEqual(
+      calls.map(([name]) => name),
+      ["playMe", "genexAccount"],
+    );
+  });
+
   it("cancels a sign-in and signs out through main, signed out after", async () => {
     const { api, calls } = fakeApi();
     const store = createPeopleStore(api, memoryStorage());
@@ -527,6 +559,56 @@ describe("the account across sign-in, offline and a sign-in that ended", () => {
     assert.equal(store.getState().credits?.balance, 1700);
     await store.signOut();
     assert.equal(store.getState().credits, null);
+  });
+
+  it("keeps the price list read with the balance, for the prices shown where credits are spent", async () => {
+    let reachable = true;
+    const priced = { ...credits(1700), prices: { [CreditKind.Model]: 35 } };
+    const { api } = fakeApi({ playCredits: async () => (reachable ? priced : offline()) });
+    const store = createPeopleStore(api, memoryStorage());
+    assert.deepEqual(store.getState().creditPrices, {}, "none before a read");
+    await store.loadMe();
+    await store.loadCredits();
+    assert.deepEqual(store.getState().creditPrices, { [CreditKind.Model]: 35 });
+    reachable = false;
+    await store.loadCredits();
+    assert.deepEqual(store.getState().creditPrices, { [CreditKind.Model]: 35 }, "an unreachable read keeps them");
+  });
+});
+
+describe("the account's coin", () => {
+  it("reads the coin Play shows, keeps the last one when a read fails, and forgets it on sign-out", async () => {
+    let answer: () => Promise<number | null> = async () => 1240;
+    const { api } = fakeApi({ storeCoins: () => answer() });
+    const store = createPeopleStore(api, memoryStorage());
+    assert.equal(store.getState().coins, null, "nothing before a read");
+    await store.loadMe();
+    await store.loadCoins();
+    assert.equal(store.getState().coins, 1240);
+    answer = async () => {
+      throw new Error("offline");
+    };
+    await store.loadCoins();
+    assert.equal(store.getState().coins, 1240, "a failed read keeps the last balance");
+    answer = async () => null;
+    await store.loadCoins();
+    assert.equal(store.getState().coins, null, "coin off or signed out on genex.games shows none");
+    answer = async () => 900;
+    await store.loadCoins();
+    await store.signOut();
+    assert.equal(store.getState().coins, null);
+  });
+
+  it("lets a balance read for another account land nowhere", async () => {
+    const slow = deferred<number | null>();
+    const { api } = fakeApi({ storeCoins: () => slow.promise });
+    const store = createPeopleStore(api, memoryStorage());
+    await store.loadMe();
+    const read = store.loadCoins();
+    await store.signOut();
+    slow.resolve(1240);
+    await read;
+    assert.equal(store.getState().coins, null);
   });
 });
 

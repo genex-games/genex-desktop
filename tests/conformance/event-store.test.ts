@@ -6,13 +6,13 @@
  * port is checked against the semantics it claims to have rather than against itself.
  */
 import assert from "node:assert/strict";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
 import { compareIds, isUuidV7, uuid7Millis, uuidv7 } from "../../src/substrate/ids.ts";
 import { TurnFactory, findInterruptedTurns } from "../../src/substrate/turns.ts";
-import { HeadMismatch, ThreadNotFound } from "../../src/substrate/types.ts";
+import { type EventEnvelope, HeadMismatch, ThreadNotFound } from "../../src/substrate/types.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 async function newStore(): Promise<EventStore> {
@@ -231,6 +231,108 @@ describe("event store: append + head check", () => {
     await assert.rejects(() => store.appendEvents(uuidv7(), [{ type: "error", message: "x" }]), ThreadNotFound);
     await assert.rejects(() => store.listEvents(uuidv7()), ThreadNotFound);
   });
+});
+
+describe("event store: bounded pagination", () => {
+  it("a bounded page constructs references only for its returned rows", async () => {
+    const store = await newStore();
+    const thread = await store.createThread();
+    await store.appendEvents(
+      thread,
+      Array.from({ length: 96 }, (_, i) => ({ type: "custom" as const, event_type: "n", payload: i })),
+    );
+    const history = await store.listEvents(thread);
+    for (const tail of [false, true]) {
+      let references = 0;
+      const original = Array.prototype.map;
+      // Count materialized event references while using the public reader, without a timing budget.
+      // Restore the built-in before another test can observe this allocation probe.
+      Object.defineProperty(Array.prototype, "map", {
+        configurable: true,
+        writable: true,
+        value(this: unknown[], ...args: unknown[]) {
+          const values: unknown[] = Reflect.apply(original, this, args);
+          for (const value of values) {
+            if (value && typeof value === "object" && "threadId" in value && value.threadId === thread) references++;
+          }
+          return values;
+        },
+      });
+      let page: EventEnvelope[];
+      try {
+        page = await store.listEvents(thread, { limit: 3, tail });
+      } finally {
+        Array.prototype.map = original;
+      }
+      assert.deepEqual(page, tail ? history.slice(-3) : history.slice(0, 3));
+      assert.ok(references <= 3, `a three-row page constructed ${references} references (tail=${tail})`);
+    }
+  });
+
+  it("bounded reads preserve cursor, upper-bound and unusual limit semantics", async () => {
+    const store = await newStore();
+    const thread = await store.createThread();
+    const { events } = await store.appendEvents(
+      thread,
+      Array.from({ length: 8 }, (_, i) => ({ type: "custom" as const, event_type: "n", payload: i })),
+    );
+    const after = events[1]?.id;
+    const upToInclusive = events[6]?.id;
+    assert.ok(after && upToInclusive);
+    const range = events.slice(2, 7);
+    const cases = [
+      { limit: 0, count: 5 },
+      { limit: Number.NaN, count: 5 },
+      { limit: Number.POSITIVE_INFINITY, count: 5 },
+      { limit: -1, count: 0 },
+      { limit: Number.NEGATIVE_INFINITY, count: 0 },
+      { limit: 0.5, count: 1 },
+      { limit: 2.5, count: 3 },
+      { limit: 3, count: 3 },
+    ];
+    for (const { limit, count } of cases) {
+      for (const tail of [false, true]) {
+        let expected = range.slice(0, count);
+        if (tail && count > 0) expected = range.slice(-count);
+        const page = await store.listEvents(thread, { after, upToInclusive, limit, tail });
+        assert.deepEqual(page, expected, `limit=${limit}, tail=${tail}`);
+      }
+    }
+    assert.deepEqual(await store.listEvents(thread, { after: upToInclusive, upToInclusive: after, limit: 3 }), []);
+  });
+});
+
+it("bounded head and tail pages keep unreadable placeholders for corrupt or deleted selected bodies", async () => {
+  const store = await newStore();
+  const thread = await store.createThread();
+  await store.appendEvents(
+    thread,
+    Array.from({ length: 8 }, (_, i) => ({ type: "custom" as const, event_type: "n", payload: i })),
+  );
+  const history = await store.listEvents(thread);
+  const head = history.slice(0, 3);
+  const tail = history.slice(-3);
+  for (const rows of [head.slice(1), tail.slice(0, 2)]) {
+    const [corrupt, missing] = rows;
+    assert.ok(corrupt && missing);
+    await writeFile(store.eventPath(thread, corrupt.id), "{broken");
+    await unlink(store.eventPath(thread, missing.id));
+  }
+  for (const fromTail of [false, true]) {
+    const expected = fromTail ? tail : head;
+    const page = await store.listEvents(thread, { limit: 3, tail: fromTail });
+    assert.deepEqual(
+      page.map((event) => event.id),
+      expected.map((event) => event.id),
+    );
+    const placeholders = page.filter((event) => event.data.type === "error");
+    assert.equal(placeholders.length, 2);
+    for (const event of placeholders) {
+      assert.equal(event.data.type, "error");
+      if (event.data.type === "error") assert.match(event.data.message, /unreadable/);
+    }
+  }
+  assert.equal(await store.head(thread), history.at(-1)?.id);
 });
 
 describe("event store: read + watch", () => {

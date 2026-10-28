@@ -147,9 +147,9 @@ const MESSAGE = {
   NoProject:
     "No Unreal project is set up for Genex yet. Call unreal__use-project with the project's .uproject path: it sets the project up and links it to this game. Then retry.",
   NotAnswering: (name: string, endpoint: URL, reason: string) =>
-    `${name}'s Unreal MCP server isn't answering on ${endpoint.host} (${reason}). Ask the user to open ${name} in Unreal from the Unreal button, then retry.`,
+    `${name}'s Unreal MCP server isn't answering on ${endpoint.host} (${reason}). Call unreal__open-editor to open it, then retry once it answers.`,
   OtherOpen: (name: string, other: string) =>
-    `${name}'s Unreal MCP server isn't answering. ${other} is open in Unreal instead. Ask the user to choose ${other} from the Unreal button, or to open ${name}, then retry.`,
+    `${name}'s Unreal MCP server isn't answering. ${other} is open in Unreal instead. Call unreal__open-editor to open ${name} (${other} stays open), then retry once it answers.`,
   NotSetUp: (name: string, file: string) =>
     `${name} isn't set up for Genex. Call unreal__use-project with ${file}: it sets the project up and links it to this game. Then retry.`,
   StillStarting: (name: string) => `Unreal is still starting ${name}. Call again in a minute.`,
@@ -158,7 +158,7 @@ const MESSAGE = {
     `Unreal Editor did not complete the call (${reason}), so whether it took effect is unknown. Look before you repeat it.`,
   NotCompleted: (reason: string) => `Unreal Editor did not complete the call: ${reason}`,
   Crashed: (detail: string | undefined) =>
-    `Unreal crashed while this call ran${detail ? ` (${detail})` : ""}, so whether it took effect is unknown. Ask the user to reopen it from the Unreal button; once it answers, look before you repeat the call.`,
+    `Unreal crashed while this call ran${detail ? ` (${detail})` : ""}, so whether it took effect is unknown. Call unreal__open-editor to reopen it; once it answers, look before you repeat the call.`,
   ImageAttached: (n: number) => `[image ${n} attached]`,
   ImageOmitted: `[image omitted: at most ${MAX_IMAGES} per answer]`,
   LoopToolset: `${LOOP_TOOLSET} is Genex's own Unreal Loop toolset, which agents can't call. Build with genex_build.tools.GenexBuildTools and play with genex_play.tools.GenexPlayTools.`,

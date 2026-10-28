@@ -8,7 +8,7 @@ import type {
   StudioPushChannel,
   StudioPushPayload,
 } from "../shared/ipc-channels.ts";
-import { errorMessage } from "../shared/errors.ts";
+import { errorCode, errorMessage } from "../shared/errors.ts";
 
 /** Why an IPC call is refused before its handler runs. */
 const MESSAGE = {
@@ -49,6 +49,12 @@ const STUDIO_UI_ONLY = [
   "studio:assets.",
   "studio:play.manage",
   "studio:play.cover",
+  // The store buys with the account's coin and answers its purchase sheet; Create › Items puts the
+  // account's items on sale, shares them and adds other creators' items to its games.
+  "studio:store.",
+  "studio:items.",
+  // Moving Genex's data restarts Genex and moves every file it keeps.
+  "studio:data-folder.",
 ];
 
 // Writing and deleting comments as the Genex account: Studio's main frame or Play's bar layer only.
@@ -101,7 +107,8 @@ export function createIpcHandle(
         // still check the fields they act on, because the sender is a browser.
         return { ok: true, value: await fn(payload as StudioInvokePayload<C>) };
       } catch (err) {
-        return { ok: false, error: errorMessage(err) };
+        const code = errorCode(err);
+        return code ? { ok: false, error: errorMessage(err), code } : { ok: false, error: errorMessage(err) };
       } finally {
         if (options.performance) options.performance.record(`invoke:${channel}`, options.performance.now() - started);
       }

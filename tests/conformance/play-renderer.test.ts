@@ -12,6 +12,7 @@
  * when Play draws it again, remembering the most recent covers only.
  */
 import assert from "node:assert/strict";
+import { NativeSessionPhase, NO_INSTALLS, SessionAction } from "../../src/shared/play-native.ts";
 import { describe, it } from "node:test";
 import {
   BAR_AT_TOP,
@@ -24,10 +25,15 @@ import {
   FeedStatus,
   formatCount,
   escapeLeaves,
+  storeOverGame,
+  ViewerEscape,
+  viewerEscape,
   justLiked,
   nativeViewsUp,
   noteOn,
   PlateState,
+  plateEnd,
+  PlateEnd,
   plateState,
   NoteLook,
   PLAY_PROMO_DONE,
@@ -81,6 +87,8 @@ import {
   shelfChosen,
   shelvesLoaded,
   viewerReported,
+  installsReported,
+  sessionsReported,
 } from "../../src/renderer/state/play.ts";
 import { type KeyValueStorage, STORAGE_KEYS } from "../../src/renderer/storage.ts";
 import {
@@ -89,8 +97,11 @@ import {
   type PlayFeedPage,
   type PlayFeedRequest,
   type PlayGame,
+  type PlayGameDetail,
   PlayNote,
+  PlayRemixRefusal,
   PlayShelf,
+  type PlayBarState,
   type PlayShelves,
   PlayViewerPhase,
   RemixStep,
@@ -174,6 +185,12 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
     remix: [] as string[],
     close: 0,
     manage: [] as Array<{ gameId: string; change: PlayGameChange }>,
+    game: [] as string[],
+    install: [] as string[],
+    cancel: [] as string[],
+    uninstall: [] as string[],
+    launch: [] as string[],
+    session: [] as Array<[string, string]>,
   };
   const api: PlayApi = {
     playFeed: (request) => {
@@ -200,6 +217,10 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
       calls.remix.push(slug);
       return handlers.playRemix ? handlers.playRemix(slug) : Promise.resolve(`${slug}-copy`);
     },
+    playRemixReady: (slugs) =>
+      handlers.playRemixReady
+        ? handlers.playRemixReady(slugs)
+        : Promise.resolve(Object.fromEntries(slugs.map((slug) => [slug, true]))),
     assetLibrary: () => Promise.resolve({ assets: [], nextCursor: null }),
     playCatalog: () => Promise.resolve([]),
     playManage: (gameId, change) => {
@@ -207,6 +228,27 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
       return handlers.playManage
         ? handlers.playManage(gameId, change)
         : Promise.resolve({ outcome: PlayChangeOutcome.Done });
+    },
+    playGame: (slug) => {
+      calls.game.push(slug);
+      return handlers.playGame ? handlers.playGame(slug) : Promise.reject(new Error("no page"));
+    },
+    playInstalls: () => (handlers.playInstalls ? handlers.playInstalls() : Promise.resolve(NO_INSTALLS)),
+    playSessions: () => (handlers.playSessions ? handlers.playSessions() : Promise.resolve([])),
+    playInstall: async (slug) => {
+      calls.install.push(slug);
+    },
+    playInstallCancel: async (slug) => {
+      calls.cancel.push(slug);
+    },
+    playUninstall: async (slug) => {
+      calls.uninstall.push(slug);
+    },
+    playLaunch: async (slug) => {
+      calls.launch.push(slug);
+    },
+    playSession: async (slug, action) => {
+      calls.session.push([slug, action]);
     },
   };
   return { api, calls };
@@ -410,6 +452,26 @@ describe("Play's Genex card", () => {
   });
 });
 
+/** A header with nothing on it yet, as main first draws one. */
+const IDLE_BAR: PlayBarState = {
+  title: "A",
+  liked: false,
+  likes: 0,
+  remixable: false,
+  multiplayer: false,
+  note: null,
+  guestCard: false,
+  facts: null,
+  mic: null,
+  ai: null,
+  comments: null,
+  signedIn: true,
+  remixing: false,
+  nativeApp: null,
+  purchase: null,
+  store: null,
+};
+
 describe("Play's viewer cover", () => {
   const shown: ViewerShown = { slug: "a", title: "A", coverUrl: null, phase: PlayViewerPhase.Loading, openId: 2 };
   const fresh: ViewerShown = { ...shown, openId: null };
@@ -444,7 +506,9 @@ describe("Play's viewer cover", () => {
       comments: null,
       signedIn: true,
       remixing: false,
+      nativeApp: null,
       purchase: null,
+      store: null,
     };
     const drawn = viewerAfter(fresh, { slug: "a", openId: 2, phase: PlayViewerPhase.Loading, bar });
     assert.deepEqual(drawn?.bar, bar);
@@ -480,6 +544,40 @@ describe("Play's viewer cover", () => {
     assert.equal(escapeLeaves({ ...shown, phase: PlayViewerPhase.Failed }), true);
     assert.equal(escapeLeaves({ ...shown, phase: PlayViewerPhase.Playing }), false, "a tap of Esc is the game's");
   });
+
+  it("draws the game's Store in its place only while main says it is open", () => {
+    const bar = (store: PlayBarState["store"]): PlayBarState => ({ ...IDLE_BAR, store });
+    assert.equal(storeOverGame(null), false);
+    assert.equal(storeOverGame(shown), false, "no header drawn yet");
+    assert.equal(storeOverGame({ ...shown, bar: bar(null) }), false, "a game that sells nothing");
+    assert.equal(storeOverGame({ ...shown, bar: bar({ open: false }) }), false);
+    assert.equal(storeOverGame({ ...shown, bar: bar({ open: true }) }), true);
+  });
+
+  it("takes a fresh Esc in the app's page to the open Store first, then to the cover, then back to the game", () => {
+    const playing = { ...shown, phase: PlayViewerPhase.Playing };
+    const store = { ...playing, bar: { ...IDLE_BAR, store: { open: true } } };
+    const fresh = { repeat: false, handled: false };
+    const rows: Array<
+      [string, Parameters<typeof viewerEscape>[0], { repeat: boolean; handled: boolean }, ViewerEscape | null]
+    > = [
+      ["no game", null, fresh, null],
+      ["the cover", shown, fresh, ViewerEscape.Leave],
+      ["a failure", { ...shown, phase: PlayViewerPhase.Failed }, fresh, ViewerEscape.Leave],
+      ["a game being played", playing, fresh, ViewerEscape.Resume],
+      ["the open Store", store, fresh, ViewerEscape.CloseStore],
+      [
+        "the open Store over a game still loading",
+        { ...store, phase: PlayViewerPhase.Loading },
+        fresh,
+        ViewerEscape.CloseStore,
+      ],
+      ["a held key", store, { repeat: true, handled: false }, null],
+      ["an item sheet over the Store, which took it", store, { repeat: false, handled: true }, null],
+    ];
+    for (const [name, viewer, key, expected] of rows) assert.equal(viewerEscape(viewer, key), expected, name);
+  });
+
   it("keeps a cover opened again (Try again) through the closing of the game it replaces", () => {
     // Main closes the failed opening, then opens the game afresh.
     const kept = viewerAfter(fresh, { slug: "a", openId: 1, phase: PlayViewerPhase.Closed });
@@ -554,7 +652,9 @@ describe("Play's loader and header", () => {
       comments: null,
       signedIn: true,
       remixing: false,
+      nativeApp: null,
       purchase: null,
+      store: null,
     };
     assert.equal(noteOn(undefined, PlayControl.Share), null);
     assert.equal(noteOn(bar, PlayControl.Share), null);
@@ -588,7 +688,9 @@ describe("Play's loader and header", () => {
       comments: null,
       signedIn: true,
       remixing: false,
+      nativeApp: null,
       purchase: null,
+      store: null,
     };
     const liked = { ...bar, liked: true, likes: 4 };
     assert.equal(justLiked(bar, liked), true);
@@ -823,6 +925,44 @@ describe("Play: a remix shown in Create while it is made", () => {
     const refused = createPlayStore(fakeApi({ playRemix: () => Promise.reject(new Error("no")) }).api, memory());
     await refused.remix(game("c", { remixable: true }));
     assert.equal(refused.getState().remixFailed, true);
+    assert.equal(refused.getState().remixRefusal, null, "a failure names no reason");
+
+    const noProject = createPlayStore(
+      fakeApi({ playRemix: () => Promise.resolve({ refused: PlayRemixRefusal.NoProject }) }).api,
+      memory(),
+    );
+    await noProject.remix(game("d", { remixable: true }));
+    assert.equal(noProject.getState().remixFailed, true, "a source with no game makes nothing");
+    assert.equal(noProject.getState().remixRefusal, PlayRemixRefusal.NoProject, "and the shell says why");
+    assert.equal(noProject.getState().remixed, null);
+  });
+
+  it("asks main once, for every card shown together, whether each game's source holds a game", async () => {
+    const asked: string[][] = [];
+    let fail = true;
+    const { api } = fakeApi({
+      playRemixReady: async (slugs) => {
+        asked.push([...slugs]);
+        if (fail) throw new Error("offline");
+        return Object.fromEntries(slugs.map((slug) => [slug, slug !== "megastructure"]));
+      },
+    });
+    const store = createPlayStore(api, memory(), manualClock().now);
+    store.checkRemix("megastructure");
+    store.checkRemix("lost-cathedral");
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(asked, [["megastructure", "lost-cathedral"]], "one ask for the cards shown at once");
+    assert.deepEqual(store.getState().remixReady, {}, "a failed ask answers nothing: Remix stays hidden");
+    fail = false;
+    store.checkRemix("megastructure");
+    store.checkRemix("lost-cathedral");
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(store.getState().remixReady, { megastructure: false, "lost-cathedral": true });
+    store.checkRemix("megastructure");
+    await Promise.resolve();
+    assert.equal(asked.length, 2, "an answered game is not asked again");
   });
 
   it("makes the viewer's remix as a card's: the viewer gives way, and main always answers", async () => {
@@ -1203,6 +1343,24 @@ describe("the sidebar's account plate", () => {
   });
 });
 
+describe("What the account plate shows beside the name", () => {
+  it("shows coin in Play, nothing in Create, and the Offline mark offline wherever it is", () => {
+    assert.equal(plateEnd({ offline: false, play: true, coins: 1240 }), PlateEnd.Coins);
+    assert.equal(
+      plateEnd({ offline: false, play: true, coins: 0 }),
+      PlateEnd.Coins,
+      "none to spend is still a balance",
+    );
+    assert.equal(plateEnd({ offline: false, play: false, coins: 1240 }), PlateEnd.None);
+    assert.equal(plateEnd({ offline: true, play: true, coins: 1240 }), PlateEnd.Offline);
+    assert.equal(plateEnd({ offline: true, play: false, coins: null }), PlateEnd.Offline);
+  });
+
+  it("never puts credits beside the name: Play shows nothing while the coin is unknown, or coin is off", () => {
+    assert.equal(plateEnd({ offline: false, play: true, coins: null }), PlateEnd.None);
+  });
+});
+
 describe("Play covers shown before", () => {
   const url = (n: number) => `https://cdn.genex.technology/covers/${n}.webp`;
 
@@ -1223,5 +1381,120 @@ describe("Play covers shown before", () => {
       [1, 2, 3, 4].map((n) => covers.has(url(n))),
       [true, false, true, true],
     );
+  });
+});
+
+describe("Play store: a native game's own page", () => {
+  const nativeOnly = (slug: string) => game(slug, { native: { web: false, engine: "unity", builds: [] } });
+  const detail = (slug: string): PlayGameDetail => ({
+    ...nativeOnly(slug),
+    likes: 0,
+    liked: false,
+    comments: 0,
+    shots: [],
+    updatedAt: null,
+  });
+
+  it("opens a native-only game's page instead of the viewer, reads it, and remembers it in Recent as a page", async () => {
+    const { api, calls } = fakeApi({ playGame: async (slug) => detail(slug) });
+    const storage = memory();
+    const store = createPlayStore(api, storage, manualClock().now);
+    await store.open({ ...entry("dust-runners"), page: true });
+    assert.deepEqual(calls.open, [], "no viewer");
+    assert.deepEqual(store.getState().view, {
+      page: PlayPage.Game,
+      slug: "dust-runners",
+      back: { page: PlayPage.Shelf },
+    });
+    await store.loadGame("dust-runners");
+    assert.equal(store.getState().games["dust-runners"]?.game?.slug, "dust-runners");
+    assert.deepEqual(calls.game.slice(0, 1), ["dust-runners"]);
+    assert.equal(store.getState().recent[0]?.page, true);
+    assert.equal(readRecent(storage)[0]?.page, true, "Recent remembers it opens a page");
+    store.back();
+    assert.deepEqual(store.getState().view, { page: PlayPage.Shelf });
+  });
+
+  it("knows a game opens its page from the cards it read, so Join and Recent find it too", async () => {
+    const { api, calls } = fakeApi({
+      playFeed: async () => page([nativeOnly("dust-runners"), game("lost-cathedral")]),
+      playGame: async (slug) => detail(slug),
+    });
+    const store = createPlayStore(api, memory(), manualClock().now);
+    await store.loadFeed(PlayCategory.Featured);
+    await store.open(entry("dust-runners"));
+    assert.equal(store.getState().view.page, PlayPage.Game);
+    await store.open(entry("lost-cathedral"));
+    assert.deepEqual(calls.open, ["lost-cathedral"], "a web game still plays in the viewer");
+  });
+
+  it("goes back from a profile opened on a game's page to that page, and from the page to where it came from", () => {
+    const store = createPlayStore(fakeApi({ playGame: async (slug) => detail(slug) }).api, memory());
+    store.showFriends();
+    store.showGame("dust-runners");
+    store.showProfile("u-kir");
+    assert.equal(store.getState().view.page, PlayPage.Profile);
+    store.back();
+    assert.deepEqual(store.getState().view, {
+      page: PlayPage.Game,
+      slug: "dust-runners",
+      back: { page: PlayPage.Friends },
+    });
+    store.back();
+    assert.deepEqual(store.getState().view, { page: PlayPage.Friends });
+  });
+
+  it("asks main for every install and session action, and reads main's news into the store", async () => {
+    const { api, calls } = fakeApi();
+    const store = createPlayStore(api, memory());
+    await store.install("dust-runners");
+    await store.cancelInstall("dust-runners");
+    await store.uninstall("dust-runners");
+    await store.launch("dust-runners");
+    await store.showWindow("dust-runners");
+    await store.quitGame("dust-runners");
+    assert.deepEqual(calls.install, ["dust-runners"]);
+    assert.deepEqual(calls.cancel, ["dust-runners"]);
+    assert.deepEqual(calls.uninstall, ["dust-runners"]);
+    assert.deepEqual(calls.launch, ["dust-runners"]);
+    assert.deepEqual(calls.session, [
+      ["dust-runners", SessionAction.Show],
+      ["dust-runners", SessionAction.Quit],
+    ]);
+    const installs = { ...NO_INSTALLS, progress: [] };
+    store.setState((state) => installsReported(state, installs), true);
+    assert.equal(store.getState().installs, installs);
+    const sessions = [
+      { slug: "dust-runners", phase: NativeSessionPhase.Running, startedAt: "2026-10-20T00:00:00.000Z", failure: null },
+    ];
+    store.setState((state) => sessionsReported(state, sessions), true);
+    assert.equal(store.getState().sessions, sessions);
+  });
+});
+
+describe("Play store: one copy of a game at a time", () => {
+  it("brings a native app being played forward instead of opening its web build", async () => {
+    const { api, calls } = fakeApi();
+    const store = createPlayStore(api, memory());
+    store.setState(
+      (state) =>
+        sessionsReported(state, [
+          { slug: "skate", phase: NativeSessionPhase.Running, startedAt: "2026-10-20T00:00:00.000Z", failure: null },
+        ]),
+      true,
+    );
+    await store.open(entry("skate"));
+    assert.deepEqual(calls.open, [], "no viewer");
+    assert.deepEqual(calls.session, [["skate", SessionAction.Show]]);
+    assert.equal(store.getState().viewer, null);
+    store.setState(
+      (state) =>
+        sessionsReported(state, [
+          { slug: "skate", phase: NativeSessionPhase.Failed, startedAt: "2026-10-20T00:00:00.000Z", failure: null },
+        ]),
+      true,
+    );
+    await store.open(entry("skate"));
+    assert.deepEqual(calls.open, ["skate"], "a failed start is not a copy being played");
   });
 });

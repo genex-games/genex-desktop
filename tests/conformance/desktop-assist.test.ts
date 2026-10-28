@@ -21,13 +21,20 @@ import {
   AssistGrants,
   type AssistHost,
   assistAvailable,
+  assistOpensPages,
+  assistPageRefusal,
   assistGrants,
   declaredEngineApps,
   declaredPlayerApps,
   engineAppIds,
   engineAssist,
+  assistUnderWay,
+  followAssistDeliveries,
 } from "../../src/main/core/desktop-assist.ts";
+import { CustomEvent, customEventData } from "../../src/shared/custom-events.ts";
+import { SteerDelivery } from "../../src/shared/message-queue.ts";
 import { desktopControl } from "../../src/main/core/desktop-control.ts";
+import { engineAppRefusal } from "../../src/main/core/desktop-target.ts";
 import {
   EngineAssistRefusal,
   type PluginBinding,
@@ -37,7 +44,8 @@ import {
 } from "../../src/shared/plugins.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
 import { UiEvent, type UiEvent as UiEventData } from "../../src/shared/ui-events.ts";
-import type { DesktopDriver } from "../../src/substrate/desktop-driver.ts";
+import type { DesktopApp, DesktopDriver } from "../../src/substrate/desktop-driver.ts";
+import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -50,6 +58,7 @@ interface Seen {
   cards: AssistCard[];
   posted: Array<{ threadId: string; project: string; text: string; messageId: string }>;
   turnedOn: number;
+  grantWaits: number;
 }
 
 /** A host with one plugin, `toy-engine`: bundled or local, its apps, and the person's answers. */
@@ -61,9 +70,11 @@ function fakeHost(
     desktop?: boolean;
     answers?: boolean[];
     now?: () => number;
+    /** Whether this Mac gives the driver its grants while the press waits. */
+    macGrants?: boolean;
   } = {},
 ) {
-  const seen: Seen = { cards: [], posted: [], turnedOn: 0 };
+  const seen: Seen = { cards: [], posted: [], turnedOn: 0, grantWaits: 0 };
   let control = options.control ?? false;
   const answers = [...(options.answers ?? [])];
   const grants = new AssistGrants(options.now);
@@ -74,6 +85,10 @@ function fakeHost(
         ? { name: "Toy Engine", bundled: options.bundled ?? true, apps: options.apps ?? ["com.example.toy"] }
         : null,
     desktopAvailable: async () => options.desktop ?? true,
+    grantsReady: async () => {
+      seen.grantWaits += 1;
+      return options.macGrants ?? true;
+    },
     computerControlOn: () => control,
     turnOnComputerControl: async () => {
       control = true;
@@ -110,7 +125,21 @@ describe("game.engine.assist", () => {
       pluginId: "toy-engine",
       apps: new Set(["com.example.toy"]),
       messageId: "msg_assist_1",
+      asked: true,
     });
+  });
+
+  it("waits for this Mac's grants after the setting, and starts nothing when the person doesn't give them", async () => {
+    const given = fakeHost({ answers: [true] });
+    assert.deepEqual(await assist(given.host), { started: true });
+    assert.equal(given.seen.grantWaits, 1, "the task goes to the chat only once the driver can see and move");
+    const withheld = fakeHost({ control: true, macGrants: false });
+    assert.deepEqual(await assist(withheld.host), { started: false, reason: EngineAssistRefusal.Declined });
+    assert.deepEqual(withheld.seen.posted, [], "nothing is handed to the chat to fail");
+    assert.equal(withheld.grants.live("chat-1"), null);
+    const declined = fakeHost({ answers: [false] });
+    await assist(declined.host);
+    assert.equal(declined.seen.grantWaits, 0, "no macOS prompt follows a no to the setting");
   });
 
   it("with computer control off, a no leaves it off and starts nothing", async () => {
@@ -213,6 +242,7 @@ describe("game.engine.assist", () => {
     const unasked = { pluginId: "toy-engine", binding: BINDING, task: TASK, asked: false };
     assert.deepEqual(await engineAssist(fake.host, unasked), { started: true });
     const grant = fake.grants.live("chat-1");
+    assert.equal(grant?.asked, false, "nobody pressed it, so its turn still asks its own cards");
     // The turn that answers it calls the plugin's tool again instead of clicking.
     assert.deepEqual(await engineAssist(fake.host, unasked), { started: false, reason: EngineAssistRefusal.InAssist });
     assert.equal(fake.seen.posted.length, 1, "nothing more was posted");
@@ -220,6 +250,7 @@ describe("game.engine.assist", () => {
     // The person's own press still starts one.
     assert.deepEqual(await assist(fake.host), { started: true });
     assert.equal(fake.seen.posted.length, 2);
+    assert.equal(fake.grants.live("chat-1")?.asked, true, "the press is the person's yes");
   });
 
   it("any other plugin's call the person didn't make is refused before any card", async () => {
@@ -266,6 +297,22 @@ describe("an assist's grant", () => {
     assert.equal(grants.live("chat-1"), null);
   });
 
+  it("tells its listeners when its turn ends, once, so Genex comes back to the front", () => {
+    const grants = new AssistGrants(() => 0);
+    const ended: string[] = [];
+    const stop = grants.onEnded((threadId) => ended.push(threadId));
+    grants.record("chat-1", grant);
+    grants.turnEnded("chat-1", "msg_earlier");
+    assert.deepEqual(ended, [], "another turn's end is not its end");
+    grants.turnEnded("chat-1", "msg_a");
+    grants.turnEnded("chat-1", "msg_a");
+    assert.deepEqual(ended, ["chat-1"]);
+    stop();
+    grants.record("chat-1", grant);
+    grants.turnEnded("chat-1", "msg_a");
+    assert.deepEqual(ended, ["chat-1"], "a listener that stopped hears nothing more");
+  });
+
   it("ends with the turn its message was steered into", () => {
     const grants = new AssistGrants(() => 0);
     grants.record("chat-1", grant);
@@ -275,6 +322,46 @@ describe("an assist's grant", () => {
     grants.steered("chat-1", "msg_running", "msg_a");
     grants.turnEnded("chat-1", "msg_running");
     assert.equal(grants.live("chat-1"), null);
+  });
+
+  it("follows its message into the turn the log says it reached, by interrupt too, never into a lead's run", () => {
+    const delivered = (into: string, how: SteerDelivery, messageId = "msg_a") =>
+      customEventData(CustomEvent.CoordinatorMessageDelivered, { messageId, into, how });
+    const grants = new AssistGrants(() => 0);
+    grants.record("chat-1", grant);
+    followAssistDeliveries(grants, "chat-1", [delivered("run_7", SteerDelivery.Lead)]);
+    assert.equal(grants.forTurn("chat-1", "run_7"), null, "a build's lead never clicks for the person");
+    followAssistDeliveries(grants, "chat-1", [delivered("msg_running", SteerDelivery.Interrupt, "msg_other")]);
+    assert.equal(grants.forTurn("chat-1", "msg_running"), null, "another message's delivery moves nothing");
+    followAssistDeliveries(grants, "chat-1", [delivered("msg_running", SteerDelivery.Interrupt)]);
+    assert.ok(grants.forTurn("chat-1", "msg_running"), "the turn resumed with the message in front holds it");
+  });
+
+  it("ends when the queue says its message was answered or taken back, even by a turn that never clicked", () => {
+    const handled = (messageId: string) => customEventData(CustomEvent.CoordinatorMessageHandled, { messageId });
+    const grants = new AssistGrants(() => 0);
+    grants.record("chat-1", grant);
+    followAssistDeliveries(grants, "chat-1", [handled("msg_other")]);
+    assert.ok(grants.live("chat-1"), "another message answered leaves it");
+    followAssistDeliveries(grants, "chat-1", [handled("msg_a")]);
+    assert.equal(grants.live("chat-1"), null, "its turn ended, failed or not");
+    grants.record("chat-1", grant);
+    followAssistDeliveries(grants, "chat-1", [
+      customEventData(CustomEvent.CoordinatorMessageRemoved, { messageId: "msg_a" }),
+    ]);
+    assert.equal(grants.live("chat-1"), null, "taken back before it was answered");
+  });
+
+  it("is under way for its plugin in its game's chat until its turn ends", async () => {
+    const fake = fakeHost();
+    const project = { project: "toy", directory: "/games/toy" };
+    assert.equal(await assistUnderWay(fake.host, "toy-engine", project), false, "nothing asked yet");
+    fake.host.grants.record("chat-of-game", grant);
+    assert.equal(await assistUnderWay(fake.host, "toy-engine", project), true, "found through the game's chat");
+    assert.equal(await assistUnderWay(fake.host, "someone-else", project), false, "another plugin's never");
+    assert.equal(await assistUnderWay(fake.host, "toy-engine", { ...project, threadId: "chat-2" }), false);
+    fake.host.grants.turnEnded("chat-of-game", "msg_a");
+    assert.equal(await assistUnderWay(fake.host, "toy-engine", project), false);
   });
 
   it("drives the engine's app only in the turn that answers its message, never in a build turn running beside it", () => {
@@ -296,6 +383,44 @@ describe("an assist's grant", () => {
     assert.ok(grants.live("chat-1"));
     now += 1;
     assert.equal(grants.live("chat-1"), null);
+  });
+
+  it("survives Genex quitting before its turn ends: the turn that answers its message after the restart holds it", async () => {
+    const file = path.join(await tmpDir("assist-grants"), "assist-grants.json");
+    let now = 1_000;
+    const before = new AssistGrants(() => now, file);
+    before.record("chat-1", { ...grant, asked: true });
+    before.steered("chat-1", "msg_running", "msg_a");
+    const after = new AssistGrants(() => now, file);
+    assert.deepEqual(after.forTurn("chat-1", "msg_a"), { ...grant, apps: new Set(grant.apps), asked: true });
+    assert.ok(after.forTurn("chat-1", "msg_running"), "the turn its message was steered into, too");
+    assert.equal(after.forTurn("chat-1", "msg_build"), null, "still never a build turn beside it");
+    now += ASSIST_GRANT_MAX_MS;
+    assert.equal(new AssistGrants(() => now, file).live("chat-1"), null, "its limit counts from the press");
+    now = 1_000;
+    after.turnEnded("chat-1", "msg_a");
+    assert.equal(new AssistGrants(() => now, file).live("chat-1"), null, "an ended grant stays ended");
+  });
+
+  it("starts with none from a grants file it can't read, and never takes a malformed one", async () => {
+    const dir = await tmpDir("assist-grants-hostile");
+    const rows: Array<[string, string]> = [
+      ["not JSON", "{"],
+      ["an array", "[]"],
+      ["a grant with no apps", JSON.stringify({ "chat-1": { ...grant, apps: "com.example.toy", at: 1_000 } })],
+      ["a grant with no time", JSON.stringify({ "chat-1": { ...grant } })],
+      ["a grant with no message", JSON.stringify({ "chat-1": { pluginId: "toy-engine", apps: [], at: 1_000 } })],
+      ["an app that is not text", JSON.stringify({ "chat-1": { ...grant, apps: [7], at: 1_000 } })],
+    ];
+    for (const [name, text] of rows) {
+      const file = path.join(dir, `${name.replaceAll(" ", "-")}.json`);
+      await writeFile(file, text);
+      const grants = new AssistGrants(() => 1_000, file);
+      assert.equal(grants.live("chat-1"), null, name);
+      assert.equal(await readFile(file, "utf8"), text, `${name}: reading changes nothing`);
+    }
+    const missing = new AssistGrants(() => 1_000, path.join(dir, "absent", "assist-grants.json"));
+    assert.equal(missing.live("chat-1"), null, "no file is no grant");
   });
 });
 
@@ -353,6 +478,61 @@ async function toyWithAssist(): Promise<string> {
   return dir;
 }
 
+describe("the pages an assist may open in the person's browser", () => {
+  const kiln = {
+    enabled: true,
+    removed: false,
+    manifest: {
+      id: "kiln",
+      engine: {
+        id: "kiln",
+        label: "Kiln",
+        projectFiles: [".kiln"],
+        fact: "kiln",
+        projectInFolder: false,
+        pages: ["create.kiln.dev"],
+      },
+    },
+  };
+  const other = {
+    ...kiln,
+    manifest: { id: "other", engine: { ...kiln.manifest.engine, id: "other", pages: ["create.other.dev"] } },
+  };
+  const plugins = [kiln, other];
+  const grant = { pluginId: "kiln" };
+
+  it("lets an assist reach the person's browser only when its engine opens pages", () => {
+    assert.equal(assistOpensPages(grant, plugins), true);
+    const bare = { ...kiln, manifest: { ...kiln.manifest, engine: { ...kiln.manifest.engine, pages: [] } } };
+    assert.equal(assistOpensPages(grant, [bare]), false);
+    assert.equal(assistOpensPages(grant, [{ ...kiln, enabled: false }]), false, "a disabled engine opens none");
+  });
+
+  it("opens a page of a host the assist's own engine declares, in the turn that holds its grant", () => {
+    assert.equal(assistPageRefusal(new URL("https://create.kiln.dev/dashboard/1/icon"), grant, plugins), null);
+  });
+
+  const refused: Array<[string, string, { pluginId: string } | null, RegExp]> = [
+    ["a turn holding no grant", "https://create.kiln.dev/", null, /only in the turn that answers/],
+    ["another engine's page", "https://create.other.dev/", grant, /create\.kiln\.dev/],
+    ["a host that only ends like it", "https://evilcreate.kiln.dev/", grant, /create\.kiln\.dev/],
+    ["a host that only starts like it", "https://create.kiln.dev.evil.example/", grant, /create\.kiln\.dev/],
+    ["a page of the web at large", "https://example.com/", grant, /create\.kiln\.dev/],
+  ];
+  for (const [name, address, held, why] of refused) {
+    it(`refuses ${name}`, () => {
+      assert.match(String(assistPageRefusal(new URL(address), held, plugins)), why);
+    });
+  }
+
+  it("refuses every page for a disabled engine, or one that declares none", () => {
+    const off = { ...kiln, enabled: false };
+    assert.match(String(assistPageRefusal(new URL("https://create.kiln.dev/"), grant, [off])), /declares no pages/);
+    const bare = { ...kiln, manifest: { id: "kiln", engine: { ...kiln.manifest.engine, pages: undefined } } };
+    assert.match(String(assistPageRefusal(new URL("https://create.kiln.dev/"), grant, [bare])), /declares no pages/);
+  });
+});
+
 describe("the apps engines declare", () => {
   type Apps = { mac?: string[]; windows?: string[] };
   const plugin = (enabled: boolean, engine: { apps?: Apps; playerApps?: Apps }) => ({
@@ -386,6 +566,19 @@ describe("the apps engines declare", () => {
       [],
       "a Mac-only engine declares nothing here",
     );
+  });
+
+  it("Unreal's Do it for me may drive Epic's launcher, only in the turn answering its task, never Unreal's editor", async () => {
+    const manifest = validateManifest(JSON.parse(await readFile("src/plugins/unreal/plugin.json", "utf8")));
+    const unreal = [{ enabled: true, removed: false, manifest }];
+    const declared = declaredEngineApps(unreal, "win32");
+    assert.deepEqual([...declared], ["epicgameslauncher.exe", "epicwebhelper.exe"]);
+    assert.deepEqual([...declaredEngineApps(unreal, "darwin")], ["com.epicgames.EpicGamesLauncher"]);
+    const launcher: DesktopApp = { name: "Epic Games Launcher", bundleId: "epicgameslauncher.exe", pid: 7 };
+    assert.match(String(engineAppRefusal(launcher, { declared, granted: null })), /engine/, "outside its assist");
+    assert.equal(engineAppRefusal(launcher, { declared, granted: declared }), null, "the turn answering its task");
+    const editor: DesktopApp = { name: "Unreal Editor", bundleId: "unrealeditor.exe", pid: 8 };
+    assert.match(String(engineAppRefusal(editor, { declared, granted: declared })), /not one of the apps/);
   });
 });
 
@@ -467,10 +660,16 @@ describe("the toy engine's Do it for me, through a real core", () => {
   it("the setting card names computer control and says it is for every chat", async () => {
     const events = await lite.core.store.listEvents(threadId);
     const setting = events
-      .map((event) => (event.data as { payload?: { pluginId?: string; pluginName?: string; prompt?: string } }).payload)
+      .map(
+        (event) =>
+          (event.data as { payload?: { pluginId?: string; pluginName?: string; prompt?: string; note?: string } })
+            .payload,
+      )
       .find((payload) => payload?.pluginId === StudioConsentSource.ComputerSetting);
     assert.equal(setting?.pluginName, "Computer control");
-    assert.match(String(setting?.prompt), /every chat/);
+    // Flipped: the one-line question leaves "every chat" to the line under it.
+    assert.equal(setting?.prompt, "Turn on computer control?");
+    assert.match(String(setting?.note), /any chat/);
   });
 
   it("a confirmed tool whose card the person approved starts the task; declined, nothing is posted", async () => {

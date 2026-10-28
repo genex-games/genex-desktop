@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { GAME_LINK_SCHEME } from "../../src/main/play/game-links.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -40,4 +41,14 @@ test("Squirrel's install window plays Genex's own animation, a looping 400 × 26
   assert.equal(gif.subarray(0, 6).toString("latin1"), "GIF89a");
   assert.deepEqual([gif.readUInt16LE(6), gif.readUInt16LE(8)], [400, 260], "the size of Squirrel's install window");
   assert.ok(gif.includes(Buffer.from("NETSCAPE2.0", "latin1")), "the animation loops");
+});
+
+test("the app declares the genex:// scheme it answers, on the Mac and in each Linux package", () => {
+  const config = require("../../forge.config.cjs");
+  assert.deepEqual(config.packagerConfig.protocols, [{ name: "Genex", schemes: [GAME_LINK_SCHEME] }]);
+  const linuxMakers = config.makers.filter((maker: { name: string }) =>
+    ["@electron-forge/maker-deb", "@electron-forge/maker-rpm"].includes(maker.name),
+  );
+  for (const maker of linuxMakers)
+    assert.deepEqual(maker.config.options.mimeType, [`x-scheme-handler/${GAME_LINK_SCHEME}`], maker.name);
 });

@@ -75,6 +75,40 @@ const local: EngineDescriptor = {
   models: [model("qwen"), model("tiny", { supportsTools: false })],
 };
 
+describe("a saved model the plan no longer offers", () => {
+  const notOffered = (engines: EngineDescriptor[], modelKey: string) =>
+    resolveComposerModel({ studio: false, engines, modelKey, effort: null });
+
+  it("opens on a model that runs, so the picker, the panel and the send name the same one", () => {
+    const view = notOffered([claude, codex], "codex::gpt-5.5");
+    assert.equal(view.selected?.split("::")[0], "claude-code", "the first model the person can run");
+    assert.equal(view.selectedEngine?.id, "claude-code");
+    assert.ok(!view.choices.some((choice) => choice.key === "codex::gpt-5.5"), "no row for a model nobody can run");
+  });
+
+  it("keeps the saved pick while its provider's models are still being read", () => {
+    const catalog = (state: string, refreshing = false) =>
+      ({ ...codex, catalog: { state, revision: 1, refreshing } }) as EngineDescriptor;
+    for (const unsure of [catalog("loading"), catalog("unavailable"), catalog("stale"), catalog("ready", true)])
+      assert.equal(
+        notOffered([claude, unsure], "codex::gpt-5.5").selected,
+        "codex::gpt-5.5",
+        `a ${unsure.catalog?.state} list is not proof the model is gone`,
+      );
+    assert.equal(notOffered([claude, catalog("ready")], "codex::gpt-5.5").selected?.split("::")[0], "claude-code");
+    assert.equal(
+      notOffered([], "codex::gpt-5.5").selected,
+      "codex::gpt-5.5",
+      "nothing is known before the engines are",
+    );
+  });
+
+  it("keeps a signed-out provider's pick, where the sign-in is asked for", () => {
+    const out: EngineDescriptor = { ...codex, status: { code: "needs_login", detail: "" } };
+    assert.equal(notOffered([claude, out], "codex::gpt-5.5").selected?.split("::")[0], "codex");
+  });
+});
+
 describe("what a chat opens with", () => {
   it("a game chat keeps its own pick; a fresh one inherits the last pick, then its last turn's engine", () => {
     const store = storage({
@@ -226,8 +260,8 @@ describe("what the composer derives", () => {
     );
     assert.equal(
       resolveComposerModel({ studio: false, engines: [local], modelKey: "gone::model", effort: null }).selected,
-      "gone::model",
-      "an explicit pick must not become another provider",
+      "ollama::qwen",
+      "a pick whose provider is gone opens on a model that runs, and the picker names that one",
     );
   });
 
@@ -552,17 +586,19 @@ describe("what a chat's Loop is", () => {
     assert.deepEqual(modeMenuReach({ view: own, coordinating: true }), { opens: false, changes: false });
   });
 
-  it("Mode shows the chat's own Loop with no build or after it finished, and a running or paused build's own limit", () => {
+  it("Mode shows the chat's own Loop with no build, after it finished or while it is paused, and a running build's own limit", () => {
     const own = halfHour;
     assert.deepEqual(composerLoopView({ own, build: null }), { shown: own, editable: true });
     assert.deepEqual(composerLoopView({ own, build: { state: "running", loop: infinite } }), {
       shown: infinite,
       editable: false,
     });
-    assert.deepEqual(composerLoopView({ own: infinite, build: { state: "paused", loop: halfHour } }), {
-      shown: halfHour,
-      editable: false,
-    });
+    // A paused build no longer holds Mode on its own limit: Off can be picked after a Stop.
+    assert.deepEqual(
+      composerLoopView({ own: infinite, build: { state: "paused", loop: halfHour } }),
+      { shown: infinite, editable: true, forLater: true },
+      "a paused build shows the chat's own Loop, which can change",
+    );
     assert.deepEqual(
       composerLoopView({ own, build: { state: "running", loop: null } }).shown,
       infinite,
@@ -616,17 +652,16 @@ describe("what a chat's Loop is", () => {
   });
 });
 
-it("submission rejects an unavailable explicit main model or worker instead of substituting", () => {
+it("submission rejects an unavailable main model or worker it is handed, never sending it as another", () => {
   const view = resolveComposerModel({
     studio: false,
     engines: [claude, codex],
     modelKey: "codex::gpt-6-sol",
     effort: "high",
   });
-  assert.equal(view.selected, "codex::gpt-6-sol");
-  assert.ok(view.choices.some((row) => row.key === view.selected && row.disabled));
+  assert.notEqual(view.selected, "codex::gpt-6-sol", "the composer itself opens on a model that runs");
   assert.throws(
-    () => composerSendOptions({ ...view, preferences: {} }, view.selected, { autopilot: false }),
+    () => composerSendOptions({ ...view, preferences: {} }, "codex::gpt-6-sol", { autopilot: false }),
     /unavailable/i,
   );
   const other = resolveComposerModel({

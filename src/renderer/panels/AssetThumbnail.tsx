@@ -8,6 +8,7 @@ import { previewBytes } from "../asset-bytes.ts";
 import { type SnapshotRead, viewerSnapshot } from "../asset-snapshot.ts";
 import { assetTitle } from "../asset-names.ts";
 import { Icon } from "../ui/icons.tsx";
+import { t } from "../../shared/i18n.ts";
 
 /** A thumbnail's size in pixels, and the largest side of an image read for one. */
 const THUMB_WIDTH = 360;
@@ -20,12 +21,13 @@ const CACHE_MAX = 96;
 
 /** What a card shows in place of a thumbnail it could not draw. */
 const MESSAGE = {
-  cancelled: "Preview cancelled",
-  unavailable: "Preview unavailable",
-  videoUnavailable: "Video preview unavailable",
-  videoCodec: "Video codec unavailable",
-  openPreview: "Open preview to inspect this file",
-} as const;
+  cancelled: t("Preview cancelled"),
+  unavailable: t("Preview unavailable"),
+  videoUnavailable: t("Video preview unavailable"),
+  videoCodec: t("Video codec unavailable"),
+  openPreview: t("Open preview to inspect this file"),
+  loading: t("Loading preview…"),
+};
 
 /** The modes the card can draw a thumbnail for. A sound draws its own waveform (`AudioTile`). */
 const THUMBNAIL_MODES = new Set(["image", "model", "texture", "video"]);
@@ -186,13 +188,13 @@ function thumbnailState(src: string | null, error: boolean, supported: boolean):
   return supported ? "loading" : "unsupported";
 }
 
-/** What the thumbnail picture shows, for its alt text. */
-const ALT_KIND: Partial<Record<ProjectAsset["kind"], string>> = { model: "3D model" };
+/** The thumbnail picture's alt text, by what it shows. */
+const ALT_WORDS: Partial<Record<ProjectAsset["kind"], string>> = { model: t("3D model preview") };
 
 /** What stands in for a thumbnail: why there is none, that it is loading, or the file's name. */
 function placeholderWords(error: boolean, supported: boolean, file: string): string | undefined {
   if (error) return MESSAGE.unavailable;
-  return supported ? "Loading preview…" : file.split("/").at(-1);
+  return supported ? MESSAGE.loading : file.split("/").at(-1);
 }
 
 /** An animation file draws nothing of its own: a figure and its name stand in. */
@@ -236,7 +238,7 @@ export function AssetThumbnail({
       {src ? (
         <img
           src={src}
-          alt={`${ALT_KIND[asset.kind] ?? "Asset"} preview`}
+          alt={ALT_WORDS[asset.kind] ?? t("Asset preview")}
           className={`h-full w-full object-contain ${fresh ? "asset-thumbnail" : ""}`}
           draggable={false}
         />

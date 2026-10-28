@@ -1,5 +1,6 @@
 /** The card of one part: its steps as rows, why it stopped, the user's notes and its checks. */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import type { RunTask } from "../../../shared/run-summary.ts";
 import { type FacetNode, type RunGraph as RunGraphModel, runIdOf, thumbShot } from "../../run-graph.ts";
 import {
@@ -13,19 +14,15 @@ import {
   triesWord,
 } from "../../run-steps.ts";
 import { Icon } from "../../ui/icons.tsx";
-import { checkCounts, ranToItsEnd, stoppedWords } from "../../words.ts";
+import { checkCounts, ranToItsEnd, stopReason } from "../../words.ts";
 import { useRoundStill } from "../run-stills.ts";
-import { Details, NotesSection, Panel, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
+import { Details, NotesSection, Panel, PanelRow, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
 import { capitalise, joinDots } from "./format.ts";
 import { IMAGE_OUTLINE } from "./pictures.tsx";
 import { partSelection } from "./selection.ts";
 import { taskOf, taskRows } from "./SessionPanel.tsx";
 import { StateGlyph, Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
-
-/** How the stop words begin when the lead, not the budget or the judges, stopped a part. */
-const LEAD_STOPPED = /^stopped by the lead/;
-const LEAD_STOPPED_PREFIX = /^stopped by the lead\s*(?:—\s*)?/;
 
 /** A step as one row of its part's panel: thumbnail, name, state and tries. */
 function StepRow({ graph, step, onSelect }: { graph: RunGraphModel; step: Step; onSelect: () => void }): JSX.Element {
@@ -78,14 +75,14 @@ const stoppedEarly = (facet: FacetNode): facet is FacetNode & { stoppedBecause: 
 
 function partPill(row: PartRow, active: boolean): { tone: Tone; text: string } {
   const facet = row.facet;
-  if (active && row.working) return { tone: Tone.Accent, text: "Working" };
+  if (active && row.working) return { tone: Tone.Accent, text: t("Working") };
   if (stoppedEarly(facet)) {
-    const byLead = LEAD_STOPPED.test(stoppedWords(facet.stoppedBecause));
-    return { tone: Tone.Muted, text: byLead ? "Stopped by the lead" : "Stopped" };
+    const byLead = stopReason(facet.stoppedBecause).leadsWhy !== null;
+    return { tone: Tone.Muted, text: byLead ? t("Stopped by the lead") : t("Stopped") };
   }
   if (row.integrated)
-    return { tone: Tone.Green, text: row.inBuild === row.steps.length ? "Added to your build" : "Partly added" };
-  return { tone: Tone.Muted, text: "Left out of your build" };
+    return { tone: Tone.Green, text: row.inBuild === row.steps.length ? t("Added to your build") : t("Partly added") };
+  return { tone: Tone.Muted, text: t("Left out of your build") };
 }
 
 /** How long the part has been, or was, at work: its first try's start to its last try's news. */
@@ -107,10 +104,10 @@ function partDuration(row: PartRow, active: boolean): string | null {
 }
 
 /** Why a part stopped, and whether it was the lead that stopped it. A part that finished its work has no "why it stopped" to tell. */
-function stopReason(facet: FacetNode): { lead: boolean; text: string } | null {
+function whyStopped(facet: FacetNode): { lead: boolean; text: string } | null {
   if (!stoppedShort(facet.stoppedBecause)) return null;
-  const stopped = stoppedWords(facet.stoppedBecause);
-  return { lead: LEAD_STOPPED.test(stopped), text: stopped.replace(LEAD_STOPPED_PREFIX, "") || stopped };
+  const { said, leadsWhy } = stopReason(facet.stoppedBecause);
+  return { lead: leadsWhy !== null, text: leadsWhy || said };
 }
 
 const attemptsLine = (task: RunTask | null): string | null => {
@@ -118,7 +115,7 @@ const attemptsLine = (task: RunTask | null): string | null => {
   return task.attempts
     .map(
       (attempt) =>
-        `${attempt.iteration === null ? "session" : `#${attempt.iteration}`} ${attempt.evaluation ?? attempt.state}`,
+        `${attempt.iteration === null ? t("session") : `#${attempt.iteration}`} ${attempt.evaluation ?? attempt.state}`,
     )
     .join(" · ");
 };
@@ -129,11 +126,13 @@ function PartChecks({ row }: { row: PartRow }): JSX.Element | null {
   const board = [...rounds].reverse().find((node) => node.scoreboard)?.scoreboard ?? null;
   if (!board) return null;
   return (
-    <Row label="Checks" right={checkCounts(board)}>
+    <Row row={PanelRow.Checks} label={t("Checks")} right={checkCounts(board)}>
       <Para quiet>
-        {facet.plannedChecks !== null ? `${facet.plannedChecks} planned` : ""}
-        {facet.checksAdded ? ` · ${facet.checksAdded} added by the reviewers` : ""}
-        {facet.replans ? ` · ${facet.replans} re-pointed` : ""}
+        {facet.plannedChecks !== null ? t("{count, plural, other {# planned}}", { count: facet.plannedChecks }) : ""}
+        {facet.checksAdded
+          ? ` · ${t("{count, plural, other {# added by the reviewers}}", { count: facet.checksAdded })}`
+          : ""}
+        {facet.replans ? ` · ${t("{count, plural, other {# re-pointed}}", { count: facet.replans })}` : ""}
       </Para>
     </Row>
   );
@@ -148,12 +147,12 @@ export function PartPanel(props: InspectorProps & { row: PartRow }): JSX.Element
   const notes = graph.notes.filter((note) => note.facetId === facet.facetId && note.iteration === null);
   // A part built in one session has one node and no steps to count.
   const session = row.steps.every((step) => step.session);
-  const why = stopReason(facet);
-  const stepCount = `${row.steps.length} step${row.steps.length === 1 ? "" : "s"}`;
+  const why = whyStopped(facet);
+  const stepCount = t("{count, plural, one {# step} other {# steps}}", { count: row.steps.length });
   return (
     <Panel
       id={partSelection(facet.facetId)}
-      label="Selected part"
+      label={t("Selected part")}
       title={facet.title}
       sub={joinDots([session ? null : stepCount, partDuration(row, graph.active)])}
       status={<Status tone={pill.tone}>{pill.text}</Status>}
@@ -162,31 +161,31 @@ export function PartPanel(props: InspectorProps & { row: PartRow }): JSX.Element
       onClose={props.onClose}
       reply={{
         label: facet.title,
-        placeholder: "Anything this part should do differently?",
+        placeholder: t("Anything this part should do differently?"),
         target: { facetId: facet.facetId },
       }}
       onReply={props.onReply}
     >
-      <Section label="Steps" gap="gap-0">
+      <Section label={t("Steps")} gap="gap-0">
         {row.steps.map((step) => (
           <StepRow key={step.id} graph={graph} step={step} onSelect={() => props.onSelect(step.id)} />
         ))}
       </Section>
       {why ? (
-        <Quote label={why.lead ? "Why the lead stopped it" : "Why it stopped"}>{capitalise(why.text)}.</Quote>
+        <Quote label={why.lead ? t("Why the lead stopped it") : t("Why it stopped")}>{capitalise(why.text)}.</Quote>
       ) : null}
       <NotesSection notes={notes} />
       <Rows>
         <PartChecks row={row} />
-        <Row label="Technical details">
+        <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
           <Details
             rows={[
-              ["run", runIdOf(graph)],
-              ["part", facet.facetId],
-              ["budget share", facet.budgetShare !== null ? `${Math.round(facet.budgetShare * 100)}%` : null],
+              [t("run"), runIdOf(graph)],
+              [t("part"), facet.facetId],
+              [t("budget share"), facet.budgetShare !== null ? `${Math.round(facet.budgetShare * 100)}%` : null],
               ...taskRows(task),
-              ["attempts", attemptsLine(task)],
-              ["outages", facet.outages ? String(facet.outages) : null],
+              [t("attempts"), attemptsLine(task)],
+              [t("outages"), facet.outages ? String(facet.outages) : null],
             ]}
           />
         </Row>

@@ -5,15 +5,19 @@ button{padding:8px 12px;background:#ffffff12;color:inherit;border:1px solid #fff
 button:hover{background:#ffffff24}button:disabled{opacity:.5;cursor:default}button:focus-visible{outline:2px solid #999}
 pre{white-space:pre-wrap;overflow-wrap:anywhere}#jobs{display:grid;gap:8px}#path{overflow-wrap:anywhere}progress{width:100%}
 </style></head><body>
-<h2>Local Blender</h2>
-<p>Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.</p>
-<p id="status" role="status">Checking runtime…</p><p id="path"></p>
-<button id="recheck">Recheck</button> <button id="install" hidden>Download pinned Blender</button> <button id="cancel" hidden>Cancel download</button>
+<h2 data-t>Local Blender</h2>
+<p data-t>Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.</p>
+<p id="status" role="status" data-t>Checking runtime…</p><p id="path"></p>
+<button id="recheck" data-t>Recheck</button> <button id="install" hidden data-t>Download pinned Blender</button> <button id="cancel" hidden data-t>Cancel download</button>
 <p id="installation" role="status"></p><progress id="progress" hidden></progress>
 <pre id="error" role="alert"></pre><div id="jobs"></div>
 <!-- STUDIO_PANEL_SDK -->
-<script>
+<script type="module">
+// The panel's words are in Genex's language once the host has named it (plugin-sdk/words.js).
 const api=window.studioPlugin,$=id=>document.getElementById(id);
+await api.ready;
+const {t}=api;
+const mib=bytes=>Math.round(bytes/1048576);
 let busy=false,refreshing=false,last='',closed=false;
 async function refresh(){
   if(refreshing||closed)return;refreshing=true;
@@ -24,7 +28,8 @@ async function refresh(){
     const job=s.installation;
     $('cancel').hidden=!job?.active;$('progress').hidden=!job?.active;
     if(job){
-      $('installation').textContent=`Download: ${job.phase} · ${Math.round(job.completed/1048576)} / ${Math.round(job.total/1048576)} MiB${job.error?' · '+job.error:''}`;
+      const said={phase:job.phase,done:mib(job.completed),total:mib(job.total),error:job.error};
+      $('installation').textContent=job.error?t("Download: {phase} · {done} / {total} MiB · {error}",said):t("Download: {phase} · {done} / {total} MiB",said);
       $('progress').max=job.total;$('progress').value=job.completed;
     }
     const key=JSON.stringify(s.jobs);

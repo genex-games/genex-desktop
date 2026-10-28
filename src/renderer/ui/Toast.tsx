@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { t } from "../../shared/i18n.ts";
 import { type ToastItem, ToastTone } from "../state/toasts.ts";
 import { Icon } from "./icons.tsx";
 
@@ -35,7 +36,7 @@ export function ToastStack({
             <span className="min-w-0 flex-1 font-mono text-xs leading-relaxed text-ink-2">{toast.text}</span>
             <button
               type="button"
-              aria-label="Dismiss"
+              aria-label={t("Dismiss")}
               onClick={() => onDismiss(toast.id)}
               className="grid size-5 shrink-0 place-items-center rounded-full text-ink-3 hover:bg-control-hover hover:text-control-text-hover"
             >

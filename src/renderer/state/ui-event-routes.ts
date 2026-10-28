@@ -49,6 +49,8 @@ const LOGGED: ReadonlySet<UiEventType> = new Set<UiEventType>([
   UiEvent.PluginConsent,
   // So do Claude's own permission questions: the event is only a nudge, the log is the card.
   UiEvent.ToolPermission,
+  // A store item the agent made: its Listing draft card is in the log (`item_drafted`).
+  UiEvent.ItemDrafted,
 ]);
 
 const THREADS: ReadonlySet<UiEventType> = new Set<UiEventType>([

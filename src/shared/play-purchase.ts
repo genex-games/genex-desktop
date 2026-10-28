@@ -22,10 +22,11 @@ const INTENT_ID_MAX = 64;
 const BIDI_CONTROLS = /\p{Bidi_Control}/gu;
 
 /**
- * Where genex.games sells coin: its Buy coin dialog opens from the inventory page. UNCONFIRMED until
- * genex.games names a page for it; read from its web app's source, not from a published route.
+ * Where genex.games sells Nex: its coin page, opened on its Buy Nex picker (`buy=nex`, its web app's
+ * `COIN_PAGE_PATH`), so a player short of Nex lands on the packs rather than on their inventory. A
+ * website without that door shows the inventory, whose Buy Nex opens the same picker.
  */
-const COIN_PAGE_PATH = "/inventory";
+const COIN_PAGE_PATH = "/inventory?buy=nex";
 
 /** Where the sheet stands: one artboard each. Values are `data-play-purchase` selectors: never rename one. */
 export const PurchaseStep = {
@@ -35,7 +36,7 @@ export const PurchaseStep = {
   Paying: "paying",
   /** genex.games took the coin: the receipt and the balance left. */
   Paid: "paid",
-  /** The balance is short of the price: Get coin. `recovery` says whether Pay can still come back. */
+  /** The balance is short of the price: Get Nex. `recovery` says whether Pay can still come back. */
   NotEnough: "not-enough",
   /** No Genex account is unlocked, or genex.games refused its token on a read: Sign in. */
   SignedOut: "signed-out",
@@ -61,7 +62,7 @@ export type PurchaseProblem = (typeof PurchaseProblem)[keyof typeof PurchaseProb
 
 /** Where a NotEnough or SignedOut sheet's way back to Ask stands. */
 export const PurchaseRecovery = {
-  /** Get coin or Sign in is offered; once it is pressed, main checks again until the purchase times out. */
+  /** Get Nex or Sign in is offered; once it is pressed, main checks again until the purchase times out. */
   Waiting: "waiting",
   /** What was missing came in: Review shows the purchase again. A sheet never turns into Ask on its own. */
   Ready: "ready",
@@ -100,6 +101,13 @@ export interface PurchaseItem {
   unitPriceCoins: number;
 }
 
+/** Earned coin the account cannot spend yet (genex.games' spend hold), and when the first of it is ready. */
+export interface PurchaseHeld {
+  coins: number;
+  /** Milliseconds since the epoch. */
+  releaseAt: number;
+}
+
 /** The sheet as main draws it in the bar's layer (`PlayBarState.purchase`). */
 export interface PlayPurchaseSheet {
   /**
@@ -123,6 +131,8 @@ export interface PlayPurchaseSheet {
   price: { coins: number; usdCents: number | null } | null;
   /** The coin the account may spend: after paying once Paid. Null while unknown. */
   balance: number | null;
+  /** Earned coin on hold beside it, when genex.games says there is some and when it is ready; absent with none. */
+  held?: PurchaseHeld;
 }
 
 /** An answer as main takes it: to which sheet, and what. */
@@ -165,5 +175,5 @@ export function readPurchaseAnswer(value: unknown): PlayPurchaseAnswer | null {
   return isSheetNumber(sheet) && isAnswer(answer) ? { sheet, answer } : null;
 }
 
-/** The genex.games page Get coin opens, on the website Play links to. */
+/** The genex.games page Get Nex opens, on the website Play links to. */
 export const playCoinPageUrl = (web: string): string => new URL(COIN_PAGE_PATH, web).href;

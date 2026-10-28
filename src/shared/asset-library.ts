@@ -9,6 +9,7 @@
  */
 import { ASSET_PREVIEW_MIME } from "./asset-preview.ts";
 import { type AssetKind, assetExtension, type ProjectAsset } from "./game-assets.ts";
+import { t } from "./i18n.ts";
 
 /** An asset filter's kinds, in genex.games' wire spelling (the `type` of `/api/generations`). */
 export const LibraryKind = { Model: "3d", Image: "image", Sound: "sound", Video: "video" } as const;
@@ -250,7 +251,7 @@ export function shareNameOf(prompt: string | undefined, file: string): string {
     .replace(/\.[^.]+$/, "")
     .replace(/[-_]+/g, " ")
     .trim();
-  const name = fromPrompt || stem || "Asset";
+  const name = fromPrompt || stem || t("Asset");
   const capped = name.length > SHARE_NAME_MAX ? `${name.slice(0, SHARE_NAME_MAX - 1).trimEnd()}…` : name;
   return capped.charAt(0).toUpperCase() + capped.slice(1);
 }

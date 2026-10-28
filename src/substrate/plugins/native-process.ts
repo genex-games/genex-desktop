@@ -6,7 +6,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
+import { isGenexSlug } from "../genex-game-settings.ts";
 import { killProcessTree } from "../process-tree.ts";
+import { type ProcessSandbox, shellQuote } from "../spawn.ts";
+import { mixedPath } from "../windows-sandbox.ts";
 const quote = (s: string) => JSON.stringify(s);
 const exec = promisify(execFile);
 /**
@@ -135,6 +138,8 @@ export function nativeSandboxProfile(p: {
   extensions?: string[];
   denied: string[];
   gpu: boolean;
+  /** A game from Play: what it adds to a job's profile (`gameRules`). */
+  game?: GameSandbox;
 }): string {
   const subpaths = (values: string[]) => values.map((v) => `(subpath ${quote(v)})`).join(" ");
   const prefixes = (p.writePrefixes ?? []).filter((v) => PLAIN_PREFIX.test(v));
@@ -172,8 +177,76 @@ export function nativeSandboxProfile(p: {
         ]
       : []),
     ...(p.denied.length ? [`(deny file-read* ${subpaths(p.denied)})`] : []),
+    ...(p.game ? gameRules(p.game) : []),
     "(deny network*)",
+    ...gameNetwork(p.game),
   ].join("\n");
+}
+
+/** What a game from Play adds to a job's profile. */
+export interface GameSandbox {
+  /** Its bundle id, its own preference domain: Genex gives every installed game `games.genex.play.<slug>`. */
+  bundleId: string;
+  /** Its bundle name: macOS names the folders an atomic save goes through after it. */
+  bundleName: string;
+  /** The person's temporary folder (`DARWIN_USER_TEMP_DIR`) by its real path, where those folders are. */
+  userTemp: string;
+  /** Its Genex gateway's ports on 127.0.0.1 (`main/play/genex-gateway.ts`): its only network. */
+  genexPorts?: readonly number[];
+}
+
+/** A port a game's profile may name: an unprivileged one, written as a plain number. */
+const isGatewayPort = (port: number) => Number.isInteger(port) && port >= 1024 && port <= 65535;
+
+/**
+ * A game's one way onto the network: TCP to its Genex gateway's ports on this Mac. It comes after
+ * the profile's `(deny network*)`, which it narrows, since Seatbelt's last matching rule wins.
+ */
+function gameNetwork(game: GameSandbox | undefined): string[] {
+  const ports = (game?.genexPorts ?? []).filter(isGatewayPort);
+  if (!ports.length) return [];
+  return [`(allow network-outbound ${ports.map((port) => `(remote ip "localhost:${port}")`).join(" ")})`];
+}
+
+/** A game's own preference domain: Genex's prefix and a slug. */
+const GAME_DOMAIN = /^games\.genex\.play\.[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/;
+/** A bundle name the atomic-save rule may name: plain words, so it cannot change the rule's meaning. */
+const PLAIN_BUNDLE_NAME = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
+/**
+ * The preference domains every game reads but never writes: the system's global defaults and the
+ * accessibility, input and graphics settings AppKit reads while a window opens.
+ */
+const GAME_GLOBAL_PREFERENCES = [
+  "kCFPreferencesAnyApplication",
+  "com.apple.universalaccess",
+  "com.apple.accessibility",
+  "com.apple.hitoolbox",
+  "com.apple.coregraphics",
+  "com.apple.gms.availability",
+];
+/** System folders a game reads beside a job's: keyboard layouts, input methods and audio plug-ins. */
+export const GAME_SYSTEM_READS = ["/Library/Keyboard Layouts", "/Library/Input Methods", "/Library/Audio"];
+
+/** A regular expression's special characters escaped, for a Seatbelt `regex`. */
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * A game's rules: read and write its own preferences (and read the system's), ask the system for
+ * facts such as free space, and use the temporary folders macOS makes for its atomic saves. A
+ * domain or name that is not plain gets no rule: that game's preferences or atomic saves fail.
+ */
+function gameRules(game: GameSandbox): string[] {
+  const own = GAME_DOMAIN.test(game.bundleId)
+    ? [`(allow user-preference-read user-preference-write (preference-domain ${quote(game.bundleId)}))`]
+    : [];
+  const name = PLAIN_BUNDLE_NAME.test(game.bundleName) && path.isAbsolute(game.userTemp);
+  const saves = `${escapeRegex(path.join(game.userTemp, "TemporaryItems", `NSIRD_${game.bundleName}_`))}[^/]+(/|$)`;
+  return [
+    ...own,
+    `(allow user-preference-read (preference-domain ${GAME_GLOBAL_PREFERENCES.map(quote).join(" ")}))`,
+    "(allow system-info)",
+    ...(name ? [`(allow file-read* file-write* (regex #"^${saves}"))`] : []),
+  ];
 }
 /** A write prefix the profile accepts: an absolute path of plain characters, never a folder's whole contents. */
 const PLAIN_PREFIX = /^\/[A-Za-z0-9._/-]*[A-Za-z0-9_-]$/;
@@ -334,7 +407,7 @@ async function prepareSandbox(p: SandboxRequest): Promise<{ profile: string; hom
 }
 
 /** Kill a child's whole tree: descendants are listed first, while each still has its parent. */
-function treeKiller(child: ChildProcess) {
+export function treeKiller(child: ChildProcess) {
   const kill = (pid: number) => {
     try {
       process.kill(pid, "SIGKILL");
@@ -475,4 +548,155 @@ export async function runNativeProcess(p: NativeProcessRequest): Promise<NativeP
     });
     superviseJob(child, p, resolve, reject);
   });
+}
+
+/** The part of the process sandbox (`ProcessSandbox`) a Windows native job runs in. */
+export type NativeJobSandbox = Pick<ProcessSandbox, "run" | "allowRead">;
+
+/**
+ * A native job on Windows: the runtime started by Git Bash inside the process sandbox, as the
+ * sandbox user (srt-win), with no network, the run's temp folders in its scratch, and srt-win's
+ * job object holding its whole tree. `reads` and `writes` are the folders the run needs granted:
+ * the sandbox refuses the run when its grants do not cover them yet (`SandboxLaunchCode.NotGranted`),
+ * because srt-win changes grants only while no sandboxed command runs. Folders every Windows user
+ * reads (Program Files) need no grant and are not listed.
+ */
+export async function runSandboxedNativeProcess(
+  sandbox: NativeJobSandbox,
+  p: NativeProcessRequest,
+): Promise<NativeProcessResult> {
+  p.signal.throwIfAborted();
+  // The sandbox keeps the head of a run's output and a job's record keeps its end (the result line
+  // a runtime prints last), so each stream goes to a file in the job's scratch, read from its end.
+  const logs = { stdout: path.join(p.scratch, "stdout.log"), stderr: path.join(p.scratch, "stderr.log") };
+  const program = [shellQuote(mixedPath(p.binary)), ...p.args.map(shellQuote)].join(" ");
+  const command = `exec ${program} >${shellQuote(mixedPath(logs.stdout))} 2>${shellQuote(mixedPath(logs.stderr))}`;
+  const result = await sandbox.run({
+    command,
+    cwd: p.cwd,
+    env: { TMPDIR: p.scratch, TMP: p.scratch, TEMP: p.scratch },
+    timeoutMs: p.timeoutMs,
+    maxOutputBytes: p.maxOutputBytes,
+    signal: p.signal,
+    label: `native ${path.basename(p.binary)}`,
+    policy: { allowWrite: [...p.writes, p.scratch], allowRead: p.reads, denyRead: p.denyRead },
+  });
+  return {
+    code: result.code,
+    signal: result.signal,
+    stdout: await fileTail(logs.stdout, p.maxOutputBytes),
+    // What the sandbox itself said (a refused launch) comes after what the runtime printed.
+    stderr: (await fileTail(logs.stderr, p.maxOutputBytes)) + result.stderr,
+    reason: sandboxedEndReason(result, p.signal),
+    pid: null,
+  };
+}
+
+/** The last `maxBytes` of a log file as text; empty when the run never wrote it. */
+async function fileTail(file: string, maxBytes: number): Promise<string> {
+  const handle = await open(file, "r").catch(() => null);
+  if (!handle) return "";
+  try {
+    const { size } = await handle.stat();
+    const length = Math.min(size, maxBytes);
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(length), 0, length, size - length);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Why a sandboxed run ended, in a job record's words (`NativeEndReason`, or the signal that ended it). */
+function sandboxedEndReason(result: { timedOut: boolean; signal: NodeJS.Signals | null }, stop: AbortSignal): string {
+  if (stop.aborted) return NativeEndReason.Cancelled;
+  if (result.timedOut) return NativeEndReason.Timeout;
+  return result.signal ? `Runtime terminated by ${result.signal}` : NativeEndReason.Exit;
+}
+
+/** One game from Play to run: its app, its saves folder (its home) and what its profile names. */
+export interface NativeGameRequest {
+  /** The game's executable inside its installed app. */
+  binary: string;
+  /** The installed app bundle: what it may run programs from, read-only. */
+  app: string;
+  /** Its saves folder: its HOME (and Foundation's, `CFFIXED_USER_HOME`), the one place it writes. */
+  saves: string;
+  /** A fresh folder for its temporary files, removed by the caller after it exits. */
+  scratch: string;
+  bundleId: string;
+  bundleName: string;
+  /** Arguments for the game: a game from Play gets its engine's full-screen one (`launchArgs`), or none. */
+  args?: string[];
+  /** Its way to Genex: its gateway's ports and what it tells the game (`GameGenexEnv`); none, no network at all. */
+  genex?: { ports: readonly number[]; env: GameGenexEnv };
+}
+
+/**
+ * What a launched game is told about Genex (CLI_INTEGRATION §6b): its API's address, which is its
+ * gateway's, a single-use sign-in ticket while the person is signed in, and its own project on
+ * Genex, so a build made before its first publish still knows which game's rooms to join.
+ */
+export interface GameGenexEnv {
+  GENEX_API_URL: string;
+  GENEX_EMBED_TICKET?: string;
+  GENEX_GAME?: string;
+}
+/** A gateway address a game may be told: plain http on this Mac, an unprivileged port. */
+const GATEWAY_URL = /^http:\/\/127\.0\.0\.1:(\d{4,5})$/;
+/** A ticket as Genex mints one: a short token of URL-safe characters. */
+const TICKET = /^[A-Za-z0-9._~-]{16,4096}$/;
+
+/** The Genex part of a game's environment, each value checked; nothing that doesn't hold up. */
+export function gameGenexEnv(env: GameGenexEnv | undefined): Record<string, string> {
+  const port = Number(GATEWAY_URL.exec(env?.GENEX_API_URL ?? "")?.[1]);
+  if (!env || !isGatewayPort(port)) return {};
+  const ticket = env.GENEX_EMBED_TICKET && TICKET.test(env.GENEX_EMBED_TICKET) ? env.GENEX_EMBED_TICKET : undefined;
+  const game = env.GENEX_GAME && isGenexSlug(env.GENEX_GAME) ? env.GENEX_GAME : undefined;
+  return {
+    GENEX_API_URL: env.GENEX_API_URL,
+    ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}),
+    ...(game ? { GENEX_GAME: game } : {}),
+  };
+}
+
+/**
+ * A game from Play in the native-job sandbox with a window, the GPU and sound: its app read-only,
+ * its saves folder its home (Foundation's too, so Application Support lands there), its own
+ * preferences, no network but its Genex gateway's ports when it has one (and the Genex address and
+ * ticket in its environment), its own process group, stdin closed and its output for the caller to
+ * drain. Nothing it starts outlives it.
+ */
+export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProcessByStdio<null, Readable, Readable>> {
+  const binaryRoot = await realpath(p.app);
+  const extensions = await gpuCache(p.binary);
+  const userTemp = await realpath(
+    (await exec("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { timeout: PROBE_TIMEOUT_MS })).stdout.trim(),
+  );
+  const reads = await aliases([binaryRoot, ...SYSTEM_READS, ...GAME_SYSTEM_READS]);
+  const writes = await aliases([p.saves, p.scratch, ...extensions]);
+  const game = { bundleId: p.bundleId, bundleName: p.bundleName, userTemp, genexPorts: p.genex?.ports ?? [] };
+  const profile = path.join(p.scratch, "game.sb");
+  await writeFile(
+    profile,
+    nativeSandboxProfile({ binaryRoot, reads, writes, extensions, denied: [], gpu: true, game }),
+  );
+  const home = await realpath(p.saves);
+  const child = spawn("/usr/bin/sandbox-exec", ["-f", profile, p.binary, ...(p.args ?? [])], {
+    cwd: path.dirname(binaryRoot),
+    env: {
+      HOME: home,
+      CFFIXED_USER_HOME: home,
+      TMPDIR: p.scratch,
+      TMP: p.scratch,
+      TEMP: p.scratch,
+      PATH: JOB_PATH,
+      LANG: "en_US.UTF-8",
+      ...gameGenexEnv(p.genex?.env),
+    },
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const killAll = treeKiller(child);
+  child.once("exit", () => void killAll());
+  return child;
 }

@@ -9,6 +9,7 @@ import { type BootGate, createBootGate, startStepAfter } from "../../src/main/bo
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { registerBootIpc } from "../../src/main/ipc/boot.ts";
 import {
+  BootFailure,
   BootPhase,
   SandboxProblemCode,
   SandboxSetupOutcome,
@@ -122,8 +123,9 @@ describe("boot gate", () => {
 });
 
 describe("starting and a studio that would not start", () => {
-  it("moves the starting window on at the core's games and sandbox marks", () => {
+  it("moves the starting window on at the core's seed, games and sandbox marks", () => {
     assert.equal(startStepAfter("core:settings"), null);
+    assert.equal(startStepAfter("core:seed"), StartStep.Games);
     assert.equal(startStepAfter("core:games"), StartStep.Workspace);
     assert.equal(startStepAfter("core:sandbox"), StartStep.Studio);
   });
@@ -158,6 +160,7 @@ describe("starting and a studio that would not start", () => {
       phase: BootPhase.Failed,
       sandbox: null,
       failure: "harness exited during boot",
+      failureCode: BootFailure.CoreFailed,
     });
     assert.deepEqual(await gate.retry(), { platform: StudioPlatform.Mac, phase: BootPhase.Ready, sandbox: null });
     assert.equal(attempts, 1);
@@ -184,6 +187,7 @@ describe("starting and a studio that would not start", () => {
       phase: BootPhase.Ready,
       sandbox: null,
       failure: "srt-win acl stamp timed out after 60000ms",
+      failureCode: BootFailure.HarnessFailed,
     });
     assert.deepEqual(await gate.retry(), { platform: StudioPlatform.Windows, phase: BootPhase.Ready, sandbox: null });
     assert.equal(attempts, 1);
@@ -240,6 +244,48 @@ describe("starting and a studio that would not start", () => {
     const after = await gate.retry();
     assert.equal(after.phase, BootPhase.Failed);
     assert.equal(after.failure, "harness exited during boot");
+  });
+});
+
+describe("moving Genex's files, and a data folder that is not there", () => {
+  it("shows how far a move is", () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.moving({ to: "D:\\Genex", done: 0, total: 0 });
+    gate.moving({ to: "D:\\Genex", done: 10, total: 40 });
+    assert.deepEqual(gate.state(), {
+      platform: StudioPlatform.Windows,
+      phase: BootPhase.Moving,
+      sandbox: null,
+      move: { to: "D:\\Genex", done: 10, total: 40 },
+    });
+  });
+
+  it("a move that stopped part-way says why and offers Try again, which starts Genex again", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let restarts = 0;
+    gate.moveStopped("D:\\Genex", "A file was in use.", async () => {
+      restarts++;
+    });
+    assert.equal(gate.state().phase, BootPhase.Moving);
+    assert.equal(gate.state().failure, "A file was in use.");
+    assert.equal(gate.state().move?.to, "D:\\Genex");
+    await gate.retry();
+    assert.equal(restarts, 1);
+  });
+
+  it("names a missing folder, and a Try again while it is still missing keeps it with the new words", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let tries = 0;
+    gate.dataMissing("D:\\Genex", async () => {
+      tries++;
+      throw new Error("D:\\Genex is still not there.");
+    });
+    assert.equal(gate.state().phase, BootPhase.DataMissing);
+    assert.equal(gate.state().dataFolder, "D:\\Genex");
+    const after = await gate.retry();
+    assert.equal(tries, 1);
+    assert.equal(after.phase, BootPhase.DataMissing);
+    assert.equal(after.failure, "D:\\Genex is still not there.");
   });
 });
 

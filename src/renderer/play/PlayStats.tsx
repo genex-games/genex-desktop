@@ -6,6 +6,7 @@
  */
 import type { JSX, KeyboardEvent } from "react";
 import { useEffect, useState } from "react";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import {
   DEFAULT_STATS_PERIOD,
   dailyTotals,
@@ -16,6 +17,7 @@ import {
   type StatsPeriod,
   statsTotals,
 } from "../../shared/play-stats.ts";
+import { richText } from "../rich-text.tsx";
 import { usePeople } from "../state/hooks.ts";
 import { LoadStatus } from "../state/people.ts";
 import { studio } from "../state/studio.ts";
@@ -29,7 +31,7 @@ import { ChangeMark } from "./StatsStrip.tsx";
 
 const WORDS = PLAY_WORDS.stats;
 /** Dates under the chart and in its tooltip: "Oct 13". */
-const DAY_FORMAT = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+const DAY_FORMAT = new Intl.DateTimeFormat(intlLocale(), { month: "short", day: "numeric", timeZone: "UTC" });
 const dayLabel = (iso: string): string => DAY_FORMAT.format(new Date(`${iso}T00:00:00.000Z`));
 
 /** The period switch: a small segmented row; arrow keys move along it. */
@@ -100,10 +102,13 @@ function Tiles({ stats }: { stats: Stats }): JSX.Element {
         <span className="stats-tile-value">{formatStat(stats.published)}</span>
         {stats.publishedThisMonth > 0 && (
           <span className="stats-tile-note">
-            <span className="stats-change" data-change="up">
-              {WORDS.addedThisMonth(stats.publishedThisMonth)}
-            </span>{" "}
-            {WORDS.thisMonth}
+            {richText(t("<added>+{count}</added> this month", { count: stats.publishedThisMonth }), {
+              added: (words) => (
+                <span className="stats-change" data-change="up">
+                  {words}
+                </span>
+              ),
+            })}
           </span>
         )}
       </div>
@@ -166,7 +171,7 @@ function StatsBody({ stats }: { stats: Stats }): JSX.Element {
           data={dailyTotals(stats, "plays")}
           labels={labels}
           label={WORDS.chartLabel(stats.days)}
-          valueLine={(count) => WORDS.tooltip(count.toLocaleString())}
+          valueLine={(count) => WORDS.tooltip(count.toLocaleString(intlLocale()))}
           axisValue={(count) => formatCount(count)}
         />
       </section>

@@ -253,7 +253,7 @@ const DRIVE_INPUTS = { throttle: "Throttle", steer: "Steering" } as const;
 const PLAY_CHECK_TESTED = "the game";
 
 const MESSAGE = {
-  NotAnswering: "Unreal isn't answering. Reopen the game's project from the Unreal button.",
+  NotAnswering: "Unreal isn't answering. Call unreal__open-editor to reopen the game's project.",
   OwnerBusy: "You were working in the editor the whole time, so the part waited and wasn't run.",
   ApplyFailed: (why: string) => `The part's script failed in the editor: ${why}`,
   NoShot: (name: string) => `The play shot ${name} never appeared.`,

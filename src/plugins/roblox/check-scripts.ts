@@ -57,6 +57,8 @@ export const MAX_CHECK_FILES = 300;
 /** The largest script a check fingerprints; a larger one is always checked. */
 const MAX_FINGERPRINT_BYTES = 4 * 1024 * 1024;
 const MAX_RECORD_BYTES = 4 * 1024 * 1024;
+/** Older records may have cached a failed checker as clean; recheck them once. */
+const CLEAN_RECORD_VERSION = 2;
 /** How many finding lines a hook's note keeps before the count of the rest. */
 const NOTE_LINES = 20;
 const BYTES_PER_MB = 1024 * 1024;
@@ -356,7 +358,11 @@ function runnable(tools: LuauToolset) {
 
 /** The programs and definitions a clean record was made with: a change means every file is checked again. */
 const signature = (tools: LuauToolset, ran: readonly LuauTool[]) =>
-  JSON.stringify([...ran.map((tool) => tools.programs[tool]?.file ?? ""), tools.definitions ?? ""]);
+  JSON.stringify([
+    CLEAN_RECORD_VERSION,
+    ...ran.map((tool) => tools.programs[tool]?.file ?? ""),
+    tools.definitions ?? "",
+  ]);
 
 const recordFile = (storage: string, game: string) => path.join(storage, LUAU_FOLDER, CLEAN_FOLDER, `${game}.json`);
 
@@ -471,7 +477,12 @@ async function runTool(deps: CheckDeps, run: ToolRun, folder: string, signal: Ab
       signal: ends,
     });
     const why = failureOf(result, run.tool, limit.aborted && !signal?.aborted);
-    return why ? { tool: run.tool, why } : { tool: run.tool, findings: run.parse(result) };
+    if (why) return { tool: run.tool, why };
+    const findings = run.parse(result);
+    // Exit 1 is a findings result only when the program supplied findings we can read.
+    if (result.code !== 0 && findings.length === 0)
+      return { tool: run.tool, why: MESSAGE.Checks.Code(result.code ?? -1) };
+    return { tool: run.tool, findings };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return { tool: run.tool, why: MESSAGE.Checks.CouldNotStart(reason) };

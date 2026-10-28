@@ -6,7 +6,9 @@
 import type { ConnectionSnapshot } from "../../shared/connections.ts";
 import { McpHealth, mcpScopeCovers, type McpConnectorView } from "../../shared/mcp.ts";
 import { PluginHealth, type PluginInfo } from "../../shared/plugins.ts";
+import { t } from "../../shared/i18n.ts";
 import { PLUGINS_WORDS } from "../words.ts";
+import { isOwnPlugin } from "../analytics/plugins-ref.ts";
 
 export interface EntryStatus {
   text: string;
@@ -24,6 +26,8 @@ export interface AddMenuEntry {
   id: string;
   kind: "plugin" | "mcp";
   name: string;
+  /** Named by the person (a local or GitHub plugin, a server they added): kept out of usage recordings. */
+  own: boolean;
   on: boolean;
   locked?: boolean;
   /** Where the switch applies, when the row says so. */
@@ -80,17 +84,34 @@ function needsSetup(view: McpConnectorView, pluginOwned: boolean, enabled: boole
   return secrets.some((n) => !view.secrets.includes(n));
 }
 
-/** A server's trouble, lower-case, to follow its name or open a sentence. */
-function connectorTrouble(view: McpConnectorView, setup: boolean): string {
-  if (setup) return "needs setup";
-  if (view.health === McpHealth.Connecting) return "connecting…";
-  return view.health === McpHealth.Failed ? "failed to connect" : "not connected";
+/** What can be wrong with a server. */
+const Trouble = {
+  Setup: "setup",
+  Connecting: "connecting",
+  Failed: "failed",
+  NotConnected: "not-connected",
+} as const;
+type Trouble = (typeof Trouble)[keyof typeof Trouble];
+
+/** Each trouble said on its own, and after the name of the plugin's server it is about. */
+const TROUBLE_WORDS: Record<Trouble, { alone: string; of: (server: string) => string }> = {
+  [Trouble.Setup]: { alone: t("Needs setup"), of: (server) => t("{server} needs setup", { server }) },
+  [Trouble.Connecting]: { alone: t("Connecting…"), of: (server) => t("{server} connecting…", { server }) },
+  [Trouble.Failed]: { alone: t("Failed to connect"), of: (server) => t("{server} failed to connect", { server }) },
+  [Trouble.NotConnected]: { alone: t("Not connected"), of: (server) => t("{server} not connected", { server }) },
+};
+
+/** A server's trouble. */
+function connectorTrouble(view: McpConnectorView, setup: boolean): Trouble {
+  if (setup) return Trouble.Setup;
+  if (view.health === McpHealth.Connecting) return Trouble.Connecting;
+  return view.health === McpHealth.Failed ? Trouble.Failed : Trouble.NotConnected;
 }
 
 /** The button that fixes a server's trouble. */
 function connectorActionLabel(view: McpConnectorView, setup: boolean): string {
-  if (setup) return "Set up";
-  return view.health === McpHealth.Failed ? "Retry" : "Connect";
+  if (setup) return t("Set up");
+  return view.health === McpHealth.Failed ? t("Retry") : t("Connect");
 }
 
 /** A server's status, or null when it is off, ready, or a plugin's server waiting to connect on use. */
@@ -105,8 +126,8 @@ function connectorStatus(
   const setup = needsSetup(view, Boolean(pluginId), enabled);
   const connectsOnUse = Boolean(pluginId) && !setup && view.health === McpHealth.Idle && !view.error;
   if (connectsOnUse) return null; // Host connects lazily on use.
-  const text = connectorTrouble(view, setup);
-  const sentence = prefix ? `${prefix} ${text}` : text.charAt(0).toUpperCase() + text.slice(1);
+  const words = TROUBLE_WORDS[connectorTrouble(view, setup)];
+  const sentence = prefix ? words.of(prefix) : words.alone;
   if (view.health === McpHealth.Connecting) return { text: sentence };
   // A plugin's own server is configured on the plugin's page.
   const opensPage = Boolean(setup || pluginId);
@@ -139,8 +160,8 @@ function pluginStatus(
   if (account) return account;
   if (plugin.health === PluginHealth.Failed)
     return {
-      text: "Failed to start",
-      action: { label: "Manage", run: () => actions.manage(plugin.manifest.id), opensPage: true },
+      text: t("Failed to start"),
+      action: { label: t("Manage"), run: () => actions.manage(plugin.manifest.id), opensPage: true },
     };
   const servers = owned.map((view) => connectorStatus(view, plugin.manifest.id, true, serverName(view), actions));
   return servers.find(Boolean) ?? null;
@@ -184,6 +205,7 @@ export function addMenuEntries(
       id: `plugin:${plugin.manifest.id}`,
       kind: "plugin",
       name: plugin.manifest.name,
+      own: isOwnPlugin(plugin),
       on: plugin.enabled,
       scope: EntryScope.AllGames,
       status,
@@ -205,6 +227,7 @@ export function addMenuEntries(
       id: `mcp:${c.id}`,
       kind: "mcp",
       name: c.name,
+      own: true,
       on: c.enabled,
       locked: Boolean(pluginId),
       status: connectorStatus(view, pluginId, c.enabled, "", actions),
@@ -224,8 +247,10 @@ export interface MentionOption {
   icon?: string;
 }
 
-/** The option that adds images; it answers to "images" and to "reference mood board". */
+/** The option that adds images; it answers to "images", to "reference mood board" and to its own name. */
 export const IMAGES_OPTION = "images";
+/** The images option's name in the list. */
+const IMAGES_NAME = t("Images");
 
 /** The @ list for what was typed after the @: Images when it matches, then the plugins that are on. */
 export function mentionOptions(
@@ -235,9 +260,11 @@ export function mentionOptions(
   mentionEntry: (entry: AddMenuEntry) => void,
 ): MentionOption[] {
   const query = (mention ?? "").toLowerCase();
-  const images = IMAGES_OPTION.includes(query) || "reference mood board".includes(query);
+  const images = [IMAGES_OPTION, "reference mood board", IMAGES_NAME.toLowerCase()].some((words) =>
+    words.includes(query),
+  );
   return [
-    ...(images ? [{ id: IMAGES_OPTION, name: "Images", pick: pickImages }] : []),
+    ...(images ? [{ id: IMAGES_OPTION, name: IMAGES_NAME, pick: pickImages }] : []),
     ...entries
       .filter((e) => e.on && e.name.toLowerCase().includes(query))
       .map((e) => ({ id: e.id, name: e.name, pick: () => mentionEntry(e), ...(e.icon ? { icon: e.icon } : {}) })),

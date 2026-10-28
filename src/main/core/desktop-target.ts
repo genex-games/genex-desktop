@@ -25,6 +25,7 @@ import {
   TargetRefusal,
   VM_CAPABILITIES,
 } from "../../shared/computer-target.ts";
+import { errorMessage } from "../../shared/errors.ts";
 import { StillMimeType } from "../../shared/preview-contract.ts";
 import type { ComputerTarget, TargetShot } from "../../substrate/computer-target.ts";
 import { guardedWeb } from "./desktop-web.ts";
@@ -32,8 +33,10 @@ import type {
   DesktopApp,
   DesktopButton,
   DesktopDriver,
+  DesktopFocus,
   DesktopKeys,
   DesktopShot,
+  DesktopWindow,
 } from "../../substrate/desktop-driver.ts";
 import {
   MAX_HOLD_KEY_MS,
@@ -127,7 +130,80 @@ const MESSAGE = {
   playerApp: (app: string) =>
     `${app} is where an engine's games are played by everyone: computer use never plays there, not even for setup`,
   outsideAssist: (app: string) => `${app} is not one of the apps this setup step may use`,
+  noAppName: (name: string) =>
+    `"${name}" names no app: give the app's executable on Windows (msedge.exe) or its bundle id on a Mac (com.apple.Safari)`,
+  notInFront: (app: string) =>
+    `${app} did not come to the front: it may not be running (nothing is opened for you), or another window stayed in front`,
+  notRunning: (app: string) => `${app} is not running: bring_to_front opens nothing, it only raises a running app`,
+  noTitled: (app: string, window: string, titles: readonly string[]) =>
+    `no window of ${app} has "${window}" in its title; its windows are: ${titles.map((t) => `"${t}"`).join(", ") || "none with a title"}. Give part of one of those titles as window`,
+  noWindowPick: (app: string) =>
+    `this computer can't pick one of ${app}'s windows by title: bring_to_front raises its frontmost one, so leave window out`,
+  notPage: (raw: string) =>
+    `"${raw}" is not a page open_page opens: give a whole https:// address, with no user name, password or port`,
+  noPages: "this computer opens no pages for the agent",
 } as const;
+
+/**
+ * The process of an app's window whose title holds `window`, or why there is none to raise; no pick
+ * when no window is named.
+ */
+async function titledWindow(
+  driver: DesktopDriver,
+  id: string,
+  name: string,
+  raw: string | undefined,
+): Promise<{ window?: DesktopWindow; why?: string }> {
+  const window = raw?.trim();
+  if (!window) return {};
+  if (!driver.appWindows) return { why: MESSAGE.noWindowPick(name) };
+  const windows = await driver.appWindows(id);
+  const wanted = window.toLowerCase();
+  const titled = windows.find((w) => w.title.toLowerCase().includes(wanted));
+  if (titled) return { window: titled };
+  return { why: MESSAGE.noTitled(name, window, windows.map((w) => w.title).filter(Boolean)) };
+}
+
+/** Whether the app (and its process `pid`, when one was picked) has the keyboard now. */
+function inFront(focus: DesktopFocus, id: string, pid: number | undefined): boolean {
+  return focus.app?.bundleId === id && (pid === undefined || focus.app.pid === pid);
+}
+
+/** An app's name as `bring_to_front` takes it: an executable or a bundle id, never a path. */
+const APP_NAME = /^[\w .-]{1,128}$/;
+/** How long a raised app has to take the foreground before the target says it did not. */
+const FRONT_SETTLE_MS = 300;
+
+/** The app a `bring_to_front` name stands for: a Windows executable in lower case, as Windows names it. */
+function namedApp(raw: string): DesktopApp | null {
+  const name = raw.trim();
+  if (!APP_NAME.test(name)) return null;
+  const id = name.toLowerCase().endsWith(".exe") ? name.toLowerCase() : name;
+  return { name: id, bundleId: id, pid: null };
+}
+
+/** An address `open_page` opens: a whole https page, with no credentials and no port; null otherwise. */
+function pageAddress(raw: string): URL | null {
+  let address: URL;
+  try {
+    address = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  const plain = address.protocol === "https:" && address.hostname !== "" && address.port === "";
+  return plain && !address.username && !address.password ? address : null;
+}
+
+/** `open_page`: an https address handed to the host, which decides; null once the browser has it. */
+async function openPageWith(options: Pick<DesktopTargetOptions, "openPage" | "frontSettleMs">, raw: string) {
+  const address = pageAddress(raw);
+  if (!address) return MESSAGE.notPage(raw.trim());
+  if (!options.openPage) return MESSAGE.noPages;
+  const why = await options.openPage(address);
+  if (why) return why;
+  await sleep(options.frontSettleMs ?? FRONT_SETTLE_MS);
+  return null;
+}
 
 /** What the engine-app guard reads: the editors engines declare, and the chat's live assist grant. */
 export interface EngineAppRule {
@@ -137,18 +213,33 @@ export interface EngineAppRule {
   granted: ReadonlySet<string> | null;
   /** The apps every enabled engine's games are played in (`engine.playerApps`): never driven. */
   players?: ReadonlySet<string>;
+  /**
+   * During an assist, whether an app outside its grant that is no engine's editor is the person's to
+   * allow on their card (its engine opens pages in their browser, `engine.pages`) rather than refused.
+   */
+  others?: boolean;
 }
 
 /**
  * Why the engine-app guard refuses an app, or null: an app an engine's games are played in always;
- * during an assist every app outside its grant; outside one, every engine's editor. The apps the
- * studio never drives are refused before this.
+ * during an assist every app outside its grant, except that an assist whose engine opens pages
+ * (`others`) leaves an app that is no engine's editor to the person's card (its step needs their
+ * browser, for a game's page); outside one, every engine's editor. The apps the studio never drives
+ * are refused before this.
  */
 export function engineAppRefusal(app: DesktopApp, rule: EngineAppRule): string | null {
   const id = app.bundleId;
   if (id !== null && rule.players?.has(id)) return MESSAGE.playerApp(appName(app));
-  if (rule.granted) return id !== null && rule.granted.has(id) ? null : MESSAGE.outsideAssist(appName(app));
+  if (rule.granted) return assistAppRefusal(app, rule);
   return id !== null && rule.declared.has(id) ? MESSAGE.engineApp(appName(app)) : null;
+}
+
+/** During an assist: its granted apps go ahead, and the person's card decides only where `others` lets it. */
+function assistAppRefusal(app: DesktopApp, rule: EngineAppRule): string | null {
+  const id = app.bundleId;
+  if (id !== null && rule.granted?.has(id)) return null;
+  const editor = id === null || rule.declared.has(id);
+  return rule.others && !editor ? null : MESSAGE.outsideAssist(appName(app));
 }
 
 /** One refusal, the shape `refusals()` reports. */
@@ -172,6 +263,13 @@ export interface DesktopTargetOptions {
   ownApp?: (app: DesktopApp) => boolean;
   /** The engine-app guard ({@link engineAppRefusal}): why this app is refused now, or null. */
   engineApps?: (app: DesktopApp) => string | null;
+  /** How long a raised app has to take the foreground before `bring_to_front` checks it; {@link FRONT_SETTLE_MS} by default. */
+  frontSettleMs?: number;
+  /**
+   * Open an https page in the person's own default browser (`open_page`): the host decides which pages
+   * this turn may open, and answers why not, or null once the browser has it. Absent: no page opens.
+   */
+  openPage?: (address: URL) => Promise<string | null>;
   /** A smaller picture for the model, where the host can make one; the driver's own otherwise. */
   downscale?: (
     shot: DesktopShot,
@@ -426,16 +524,40 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
     const focus = await driver.focus();
     return { app: focus.app, secret: focus.secure && "keyboard" in aim, none: MESSAGE.noApp };
   };
+  /** Why the agent may not use this app, asking the person when no rule decides; null when it may. */
+  const appRefusal = async (app: DesktopApp): Promise<string | null> => {
+    if (neverDriven(app)) return MESSAGE.neverDriven(appName(app));
+    const engine = options.engineApps?.(app);
+    if (engine) return engine;
+    return (await options.allowApp(app)) ? null : MESSAGE.declined(appName(app));
+  };
   /** Whether one aim may go ahead: the app it lands in is allowed, and no secret is typed. */
   const aimCleared = async (op: string, aim: Aim): Promise<boolean> => {
     const { app, secret, none } = await landing(aim);
     if (secret) return refuse(op, MESSAGE.secureField);
     if (!app) return refuse(op, none);
-    if (neverDriven(app)) return refuse(op, MESSAGE.neverDriven(appName(app)));
-    const engine = options.engineApps?.(app);
-    if (engine) return refuse(op, engine);
-    if (!(await options.allowApp(app))) return refuse(op, MESSAGE.declined(appName(app)));
-    return true;
+    const refusal = await appRefusal(app);
+    return refusal ? refuse(op, refusal) : true;
+  };
+  /**
+   * A named app brought in front, held to a click's rules first; with `window`, the app's window
+   * whose title holds it (a Mac runs one Roblox Studio per place); null once it is in front.
+   */
+  const front = async (raw: string, window?: string): Promise<string | null> => {
+    const named = namedApp(raw);
+    if (!named?.bundleId || !driver.bringToFront) return MESSAGE.noAppName(raw.trim());
+    // Checked as the running app it names, under its own id: another case of a refused one is refused.
+    const app = driver.runningApp ? await driver.runningApp(named.bundleId) : named;
+    if (!app?.bundleId) return MESSAGE.notRunning(named.name);
+    const refusal = await appRefusal(app);
+    if (refusal) return refusal;
+    const pick = await titledWindow(driver, app.bundleId, appName(app), window);
+    if (pick.why) return pick.why;
+    // The driver may doubt a raise that worked (macOS moves focus late): what is in front decides.
+    const failed = await driver.bringToFront(app.bundleId, pick.window).then(() => null, errorMessage);
+    await sleep(options.frontSettleMs ?? FRONT_SETTLE_MS);
+    if (inFront(await driver.focus(), app.bundleId, pick.window?.pid)) return null;
+    return failed ?? MESSAGE.notInFront(appName(app));
   };
   /** Whether an action may go ahead: every point and keyboard it aims at is cleared, before any input. */
   const cleared = async (action: PreviewInputAction): Promise<boolean> => {
@@ -479,6 +601,8 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
       return { app: focus.app ? appName(focus.app) : null, tree: await driver.accessibility() };
     },
     refusals: () => state.refused.splice(0),
+    front,
+    openPage: (raw: string) => openPageWith(options, raw),
     ...(driver.web ? { web: guardedWeb(driver.web, { allowApp: options.allowApp, neverDriven }) } : {}),
   };
 }

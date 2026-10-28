@@ -26,19 +26,28 @@ import { threadMeta } from "./state/threads.ts";
 import { safeStorage } from "./storage.ts";
 import { ThreadKind } from "../shared/event-log.ts";
 import { UiEvent } from "../shared/ui-events.ts";
+import { t } from "../shared/i18n.ts";
+import { track } from "./analytics/client.ts";
+import { AnalyticsEvent } from "./analytics/events.ts";
+import { noticeProperties } from "./analytics/workspace-properties.ts";
+import { NoticeVia } from "./analytics/workspace-vocabulary.ts";
 
 const NOTICE_SUBTITLES: Partial<Record<NoticeKind, string>> = {
-  [NoticeKind.Question]: "Waiting for your answer",
-  [NoticeKind.Plan]: "Plan ready for review",
-  [NoticeKind.Permission]: "Permission needed",
+  [NoticeKind.Question]: t("Waiting for your answer"),
+  [NoticeKind.Plan]: t("Plan ready for review"),
+  [NoticeKind.Permission]: t("Permission needed"),
 };
+
+/** A sign-in or Play notice belongs to no chat: it always shows. Any other shows while its chat is open and its game is here. */
+const unthreaded = (notice: Notice): boolean => notice.kind === NoticeKind.SignIn || notice.kind === NoticeKind.Play;
 
 export interface Notifications {
   /** Rows about chats and games that still exist (and every sign-in). */
   visible: Notice[];
   waitingCount: number;
   unread: boolean;
-  open(notice: Notice): void;
+  /** Go where a row points; `via` says whether it was the panel's row or the system's notification. */
+  open(notice: Notice, via?: NoticeVia): void;
   readAll(): void;
   clear(): void;
 }
@@ -58,7 +67,7 @@ export function useNotifications({
   /** Another room covers the chat (Plugins): its rows are not being watched. */
   away: boolean;
   /** Take the person to what a row is about. */
-  onOpen: (notice: Notice) => void;
+  onOpen: (notice: Notice, via: NoticeVia) => void;
 }): Notifications {
   const storage = useMemo(() => safeStorage(), []);
   // With nothing saved yet, the first read catches up without ringing.
@@ -94,10 +103,11 @@ export function useNotifications({
     started.current = true;
     if (state === noticesNow.current) return;
     changed(state);
-    if (!arrived.length) return;
     // The first read and a focused window are already in front of the user: no system notice.
-    if (first || focused) return;
-    sendSystemNotices(arrived, threads, games);
+    // (Nothing arrived counts nothing and sends nothing.)
+    const notifies = !first && !focused && arrived.length > 0;
+    countArrived(arrived, { system_notified: notifies, window_focused: focused });
+    if (notifies) sendSystemNotices(arrived, threads, games);
   });
   useEffect(() => {
     if (ready) receive();
@@ -116,9 +126,8 @@ export function useNotifications({
     const openChat = (id: string): boolean =>
       threads.some((thread) => thread.id === id && !threadMeta(thread).archived);
     const gameKept = (project: string | undefined): boolean => !project || games.some((game) => game.name === project);
-    /** A sign-in notice always shows; any other while its chat is open and its game is still here. */
     const shows = (notice: Notice): boolean =>
-      notice.kind === NoticeKind.SignIn || (openChat(notice.threadId) && gameKept(notice.project));
+      unthreaded(notice) || (openChat(notice.threadId) && gameKept(notice.project));
     return notices.items.filter(shows);
   }, [notices, threads, games]);
   const waitingCount = waitingNotices(visible).length;
@@ -130,9 +139,9 @@ export function useNotifications({
   const onOpenNow = useRef(onOpen);
   onOpenNow.current = onOpen;
   const open = useCallback(
-    (notice: Notice) => {
+    (notice: Notice, via: NoticeVia = NoticeVia.Panel) => {
       changed(markRead(noticesNow.current, new Set([notice.id])));
-      onOpenNow.current(notice);
+      onOpenNow.current(notice, via);
     },
     [changed],
   );
@@ -142,7 +151,7 @@ export function useNotifications({
       window.studio.onEvent((event) => {
         if (event.type !== UiEvent.NotificationOpen) return;
         const notice = noticesNow.current.items.find((item) => item.id === event.payload.id);
-        if (notice) open(notice);
+        if (notice) open(notice, NoticeVia.SystemNotification);
       }),
     [open],
   );
@@ -162,6 +171,11 @@ export function useNotifications({
   );
 }
 
+/** Each notice that arrived, by its kind, for usage analytics: never its words or its game. */
+function countArrived(arrived: Notice[], seen: { system_notified: boolean; window_focused: boolean }): void {
+  for (const notice of arrived) track(AnalyticsEvent.NoticeArrived, { ...noticeProperties(notice), ...seen });
+}
+
 function sendSystemNotices(arrived: Notice[], threads: ConversationRecord[], games: GameProject[]): void {
   const source = (notice: Notice): string => {
     const thread = threadMeta(threads.find((item) => item.id === notice.threadId));
@@ -173,7 +187,14 @@ function sendSystemNotices(arrived: Notice[], threads: ConversationRecord[], gam
   };
   const notes =
     arrived.length > 3
-      ? [{ title: "Genex", body: `${arrived.length} updates from your games` }]
+      ? [
+          {
+            title: "Genex",
+            body: t("{count, plural, one {# update from your games} other {# updates from your games}}", {
+              count: arrived.length,
+            }),
+          },
+        ]
       : arrived.map((notice) => ({
           id: notice.id,
           title: source(notice),

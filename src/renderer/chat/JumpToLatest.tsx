@@ -1,8 +1,9 @@
 /** Shown while entries arrive below a reader who scrolled up; one press brings them back down. */
 import type { JSX } from "react";
+import { t } from "../../shared/i18n.ts";
 import { StatusOrb } from "../ui/StatusOrb.tsx";
 
-const MESSAGE = { jump: "Jump to latest" } as const;
+const MESSAGE = { jump: t("Jump to latest") } as const;
 
 /** While an agent works, the button holds the status line's loader in place of its words and chevron. */
 export function JumpToLatest({

@@ -50,7 +50,7 @@ describe("the name and platform genex.games is told", () => {
 describe("the watcher's files", () => {
   it("keeps the switch, the probe's canary and the jobs' folders where no other part looks", () => {
     const deps = planWatcherDeps({
-      origins: { api: "https://api.genex.games", web: "https://genex.games" },
+      origins: { api: "https://api.genex.games", web: "https://genex.games", games: "https://genex.technology" },
       version: "0.1.11",
       userData: "/Users/p/Library/Application Support/Genex",
       secretsDir: "/Users/p/Library/Application Support/Genex/secrets",

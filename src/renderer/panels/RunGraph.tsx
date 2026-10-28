@@ -34,6 +34,7 @@ import {
 } from "../run-steps.ts";
 import type { AgentScreenFrame } from "../../shared/agent-screen.ts";
 import { RunState } from "../../shared/run-state.ts";
+import { t } from "../../shared/i18n.ts";
 import type { HistoryEntry } from "../build-progress.ts";
 import { leadFrameOf } from "../state/agent-screens.ts";
 import { useAgentScreens } from "../state/hooks.ts";
@@ -57,8 +58,18 @@ import { useBuildsModel, useNow, useRunStills } from "./run-graph/use-builds-mod
 import { GLIDE_MS, useGraphCamera } from "./run-graph/use-graph-camera.ts";
 import { Inspector, Lightbox, type LightItem, type Reply } from "./RunInspector.tsx";
 import { type ReferenceFrame, useReferenceFrames } from "./run-stills.ts";
-import { StageLoading } from "./stage/LiveLoaderArt.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { Skeleton, SkeletonLines } from "../ui/Skeleton.tsx";
+import { nodeKindOf } from "../analytics/builds-stage.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { BuildSurface, NodeVia } from "../analytics/events/builds.ts";
+
+/** A node opened on the graph, and how. */
+function noteNodeOpened(id: string, via: NodeVia, active: boolean): void {
+  track(AnalyticsEvent.BuildsNodeOpened, { node_kind: nodeKindOf(id), via, run_active: active });
+}
 
 export { gateWords } from "./run-graph/gates.tsx";
 export { assetsStatus } from "./inspector/asset-jobs.ts";
@@ -192,22 +203,25 @@ function useStepper(overlays: Overlays, model: BuildsModel): (dir: number) => vo
       const facetId = partOf(selected);
       const first = facetId ? rows.find((row) => row.facet.facetId === facetId)?.steps[0]?.id : undefined;
       const next = first && dir > 0 ? first : ringStep(selectable, selectable.indexOf(first ?? selected ?? ""), dir);
-      if (next) setSelectedId(next);
+      if (!next) return;
+      noteNodeOpened(next, NodeVia.Arrow, model.graph.active === true);
+      setSelectedId(next);
     },
-    [rows, selectable, selected, setSelectedId],
+    [rows, selectable, selected, setSelectedId, model.graph.active],
   );
 }
 
 /** What a press on the canvas does: select a node, clear, or open a gate's node on its judges' notes. */
-function useCanvasActions(overlays: Overlays, moved: { current: boolean }) {
+function useCanvasActions(overlays: Overlays, moved: { current: boolean }, active: boolean) {
   const { setSelectedId, setTip } = overlays;
   const select = useCallback(
     (id: string): void => {
       if (moved.current) return;
       setTip(null);
+      noteNodeOpened(id, NodeVia.Click, active);
       setSelectedId(id);
     },
-    [moved, setSelectedId, setTip],
+    [moved, setSelectedId, setTip, active],
   );
   const onBackgroundClick = useCallback((): void => {
     if (moved.current) return;
@@ -218,9 +232,10 @@ function useCanvasActions(overlays: Overlays, moved: { current: boolean }) {
     (gate: GatePoint, notesId: string | null): void => {
       if (moved.current) return;
       setTip(null);
+      noteNodeOpened(gate.target, NodeVia.GateNotes, active);
       setSelectedId(gate.target, notesId);
     },
-    [moved, setSelectedId, setTip],
+    [moved, setSelectedId, setTip, active],
   );
   return useMemo(() => ({ select, onBackgroundClick, openGate }), [select, onBackgroundClick, openGate]);
 }
@@ -237,15 +252,20 @@ function useBuildActions(
   const { outcome, graph } = model;
   if (!runIdOf(graph)) return turnActions(graph, onShowLive);
   const hasBuild = Boolean(outcome?.head && outcome.head !== outcome.base);
+  const runActive = graph.active === true;
   const play = (): Promise<void> | void => {
     if (!project || !outcome?.head) return;
     return window.studio
       .showBuild(project, outcome.head)
       .then(() => {
+        track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.BuildsBar, run_active: runActive, ok: true });
         webBuildShown(project);
         onShowLive?.();
       })
-      .catch(notifyProblem(onNotice));
+      .catch((error: unknown) => {
+        track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.BuildsBar, run_active: runActive, ok: false });
+        notifyProblem(onNotice)(error);
+      });
   };
   const openJob = (job: AssetInfo): void => {
     if (!onShowAsset || !(job.generationId || job.jobId)) return;
@@ -260,15 +280,18 @@ function turnActions(graph: BuildsModel["graph"], onShowLive: Props["onShowLive"
   return { hasBuild, play: (): void => onShowLive?.(), openJob: (): void => {} };
 }
 
-/** Over the hidden canvas until the run's recorded outcome arrives: the stage's loader. */
+/** Over the hidden canvas until the run's recorded outcome arrives: the graph's shape, on its dots. */
 function OutcomePending(): JSX.Element {
   return (
-    <div
-      data-builds-loading
-      className="stage-loader-late absolute inset-0 grid place-items-center p-8"
-      style={{ visibility: "visible" }}
-    >
-      <StageLoading label="Loading builds" />
+    <div data-builds-loading className="absolute inset-0 bg-canvas" style={{ visibility: "visible" }}>
+      <Pending label={t("Loading builds")} className="skeleton-graph">
+        <SkeletonLines widths={[50, 110]} className="w-[110px]" />
+        <span className="skeleton-graph-column">
+          <Skeleton width={208} height={124} radius={14} />
+          <Skeleton width={208} height={124} radius={14} />
+        </span>
+        <Skeleton width={208} height={124} radius={14} />
+      </Pending>
     </div>
   );
 }
@@ -304,7 +327,7 @@ export const RunGraph = memo(function RunGraph({
   });
   const step = useStepper(overlays, model);
   useGraphKeys(overlays, camera.fitAll, step);
-  const actions = useCanvasActions(overlays, camera.moved);
+  const actions = useCanvasActions(overlays, camera.moved, model.graph.active === true);
   const { hasBuild, play, openJob } = useBuildActions(project, model, { onShowLive, onShowAsset, onNotice });
   const playBar = barPlay(hasBuild, play, onShowLive);
 
@@ -322,7 +345,7 @@ export const RunGraph = memo(function RunGraph({
           tabs={tabs}
           action={
             playBar ? (
-              <PlayButton quiet={graph.active} label={graph.active ? "Play latest" : "Play"} onPlay={playBar} />
+              <PlayButton quiet={graph.active} label={graph.active ? t("Play latest") : t("Play")} onPlay={playBar} />
             ) : null
           }
         />
@@ -598,6 +621,8 @@ const RowLabels = memo(function RowLabels({
             key={row.facet.id}
             type="button"
             data-graph-row={row.facet.facetId}
+            // A part is named by the build, from the person's request.
+            data-analytics-mask
             aria-pressed={selected === id}
             className="absolute flex min-w-0 cursor-pointer items-baseline gap-1.5 overflow-hidden rounded-[6px] px-0.5 text-left whitespace-nowrap hover:[&>span:first-child]:underline focus-visible:outline-2 focus-visible:outline-accent group-data-[zoom=far]/canvas:hidden"
             style={{ left: rect.x - 2, top: rect.y, maxWidth: rect.w }}

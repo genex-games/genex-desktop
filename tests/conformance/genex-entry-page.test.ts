@@ -80,7 +80,7 @@ describe("the connect script in a published page", () => {
       dashboardOrigins: ["https://genex.games"],
     });
     assert.match(script, /^\/\/ /, "it says what wrote it");
-    assert.match(script, /import \{ initEmbed \} from "\.\/embed-sdk\/index\.js";/);
+    assert.match(script, /import \{ [^}]*\binitEmbed\b[^}]* \} from "\.\/embed-sdk\/index\.js";/);
     assert.match(script, /slug: "rain-circuit"/);
     assert.match(script, /served\.apiUrl \?\? "https:\/\/api\.genex\.games"/);
     assert.match(script, /served\.dashboardOrigins \?\? \["https:\/\/genex\.games"\]/);
@@ -92,7 +92,13 @@ describe("the connect script in a published page", () => {
     await mkdir(path.join(dir, path.dirname(GENEX_EMBED_VENDOR.Entry)), { recursive: true });
     await writeFile(
       path.join(dir, GENEX_EMBED_VENDOR.Entry),
-      "export const seen = [];\nexport function initEmbed(config) { seen.push(config); }\n",
+      [
+        "export const seen = [];",
+        "export function initEmbed(config) { seen.push(config); }",
+        "export const waitForPlayer = () => {};",
+        "export const getColyseusAuth = () => {};",
+        "export const getColyseusUrls = () => [];",
+      ].join("\n"),
     );
     const connection = {
       slug: "rain-circuit",
@@ -112,6 +118,79 @@ describe("the connect script in a published page", () => {
       ]);
     } finally {
       Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
+  it("hands the page's one player to an engine's multiplayer bridge, and names the project on the page", async () => {
+    // A Godot web export loads Genex's multiplayer bridge, which would otherwise start a second
+    // embed SDK of its own: a second guest, or a second sign-in bounce.
+    const dir = await tmpDir("studio-connect-module-");
+    await mkdir(path.join(dir, "embed-sdk"));
+    await writeFile(
+      path.join(dir, "embed-sdk/index.js"),
+      [
+        "export const calls = [];",
+        "export const initEmbed = (options) => calls.push(['initEmbed', options.slug]);",
+        "export const waitForPlayer = async () => ({ user: { id: 'p1' }, guest: true });",
+        "export const getColyseusAuth = () => ({ embedToken: 'token-1' });",
+        "export const getColyseusUrls = () => ['wss://relay-asia.genex.games'];",
+      ].join("\n"),
+    );
+    const connection = {
+      slug: "rain-circuit",
+      apiUrl: "https://api.genex.games",
+      dashboardOrigins: ["https://genex.games"],
+    };
+    await writeFile(path.join(dir, "connect.js"), connectScript(connection));
+    const given: unknown[] = [];
+    // The module runs as a page's would, against the `window` this test stands in for.
+    const page = globalThis as unknown as { window?: Record<string, unknown> };
+    page.window = {
+      __GENEX__: { apiUrl: "https://api.genex.games", channel: "production" },
+      GenexMultiplayerBridge: { setIdentity: (identity: unknown) => given.push(identity) },
+    };
+    try {
+      await import(pathToFileURL(path.join(dir, "connect.js")).href);
+      const identity = given[0] as { ready: () => Promise<unknown>; auth: () => unknown; urls: () => unknown };
+      assert.equal(given.length, 1, "the bridge gets the page's identity once");
+      assert.deepEqual(await identity.ready(), { user: { id: "p1" }, guest: true });
+      assert.deepEqual(identity.auth(), { embedToken: "token-1" });
+      assert.deepEqual(identity.urls(), ["wss://relay-asia.genex.games"]);
+      assert.deepEqual(
+        page.window.__GENEX__,
+        { apiUrl: "https://api.genex.games", channel: "production", slug: "rain-circuit" },
+        "the host's environment stays, with the game's project beside it",
+      );
+      // A Unity WebGL build's Genex package reads the same player through `window.genexEmbed`.
+      const embed = page.window.genexEmbed as { waitForPlayer: () => Promise<unknown>; getColyseusAuth: () => unknown };
+      assert.deepEqual(await embed.waitForPlayer(), { user: { id: "p1" }, guest: true });
+      assert.deepEqual(embed.getColyseusAuth(), { embedToken: "token-1" });
+    } finally {
+      delete page.window;
+    }
+  });
+
+  it("connects a page with no multiplayer bridge as before", async () => {
+    const dir = await tmpDir("studio-connect-plain-");
+    await mkdir(path.join(dir, "embed-sdk"));
+    await writeFile(
+      path.join(dir, "embed-sdk/index.js"),
+      "export const initEmbed = (o) => { globalThis.__inited = o.slug; };\nexport const waitForPlayer = () => {};\nexport const getColyseusAuth = () => {};\nexport const getColyseusUrls = () => [];\n",
+    );
+    const connection = {
+      slug: "rain-circuit",
+      apiUrl: "https://api.genex.games",
+      dashboardOrigins: ["https://genex.games"],
+    };
+    await writeFile(path.join(dir, "connect.js"), connectScript(connection));
+    const page = globalThis as unknown as { window?: Record<string, unknown>; __inited?: string };
+    page.window = {};
+    try {
+      await import(pathToFileURL(path.join(dir, "connect.js")).href);
+      assert.equal(page.__inited, "rain-circuit");
+    } finally {
+      delete page.window;
+      delete page.__inited;
     }
   });
 

@@ -225,7 +225,7 @@ describe("Coin in a fixture launch", () => {
     assert.deepEqual(confirm.body, { error: CoinFailure.ConfirmRequiresSession });
   });
 
-  it("the fixture account holds 1,240 coin, and Get coin adds some as though bought on genex.games", async () => {
+  it("the fixture account holds 1,240 coin, and Get Nex adds some as though bought on genex.games", async () => {
     assert.equal(FIXTURE_BALANCE, 1240);
     assert.equal(await launchCoin.balance(), FIXTURE_BALANCE);
     fixtureGetCoin();
@@ -318,7 +318,7 @@ describe("What each fixture case sells", () => {
 });
 
 describe("How genex.games answers a fixture case's Pay", () => {
-  it("poor: costs more than the balance, until Get coin tops it up", async () => {
+  it("poor: costs more than the balance, until Get Nex tops it up", async () => {
     const { coin, client, id } = coinRig();
     const poor = await client.intent(id(FixtureCoinCase.Poor));
     assert.ok(poor.totalCoins > (await client.balance()));
@@ -433,7 +433,7 @@ describe("What the fixture's coin answers at all", () => {
 
 /**
  * Play's viewer playing Lost Cathedral over one launch's fixture coin, read by the real coin client on
- * the viewer's own clock: the sheet as a fixture profile shows it. Get coin and Sign in are wired as a
+ * the viewer's own clock: the sheet as a fixture profile shows it. Get Nex and Sign in are wired as a
  * fixture launch wires them (`topUp`, the fixture sign-in's account).
  */
 async function playingOnFixture(signedIn = true) {
@@ -506,7 +506,7 @@ describe("Every state of the purchase sheet, from the fixture's cases", () => {
     assert.equal(made.sheet()?.item?.imageUrl, null);
   });
 
-  it("poor: Not enough coin; Get coin tops the balance up, and Review brings Ask back", async () => {
+  it("poor: Not enough coin; Get Nex tops the balance up, and Review brings Ask back", async () => {
     const made = await playingOnFixture();
     await made.ask(FixtureCoinCase.Poor);
     assert.deepEqual(made.face(), NOT_ENOUGH(PurchaseRecovery.Waiting));

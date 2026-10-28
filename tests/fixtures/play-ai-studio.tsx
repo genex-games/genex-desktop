@@ -523,7 +523,7 @@ function publishSample() {
     published: fake
       .callsOf("genexPublish")
       .slice(publishedBefore)
-      .map((args) => args[3] ?? null),
+      .map((args) => args[4] ?? null),
     overflow: overflows(".genex-publish-content"),
   };
 }

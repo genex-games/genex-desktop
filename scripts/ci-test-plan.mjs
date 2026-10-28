@@ -20,6 +20,7 @@ import {
   testEnv,
   testFiles,
 } from "./affected-tests.mjs";
+import { parseDurations } from "./ci-durations.mjs";
 
 /** @typedef {{ id: number, files: string[] }} CiFileShard */
 /** @typedef {{ files: string[], shards: CiFileShard[] }} CiFileGroup */
@@ -54,6 +55,7 @@ const GLOBAL_INPUTS = new Set([
   "scripts/ci-test-plan.mjs",
   "scripts/ci-check-result.mjs",
   "scripts/ci-harness-shards.mjs",
+  "scripts/ci-durations.mjs",
   "scripts/check-node.mjs",
   "package.json",
   "package-lock.json",
@@ -69,6 +71,9 @@ const PLAN_VERSION = 3;
 const DEFAULT_SHARDS = 6;
 const MAX_SHARDS = 16;
 const GROUPS = ["unit", "harness", "seed", "fast", "rig"];
+/** The reporter whose per-file times `plan --durations` reads back (the release keeps them). */
+const DURATIONS_REPORTER = "./scripts/ci-durations-reporter.mjs";
+
 const SEED_UPGRADE = CI_BASELINE[0];
 const unique = (files) => [...new Set(files)].sort();
 const revision = (root) =>
@@ -85,17 +90,30 @@ function existingTest(root, file) {
     throw new Error(`Test escapes the checkout: ${file}`);
 }
 
-function partition(root, files, limit) {
+/**
+ * Source bytes are the deterministic default; with recorded times a file weighs its time, and a
+ * file without one weighs its bytes at the recorded files' average time per byte.
+ */
+function weigher(root, files, durations) {
+  const size = (file) => fs.statSync(path.join(root, file)).size;
+  const timed = files.filter((file) => Object.hasOwn(durations ?? {}, file));
+  const timedBytes = timed.reduce((sum, file) => sum + size(file), 0);
+  const timedMs = timed.reduce((sum, file) => sum + durations[file], 0);
+  if (!timedBytes || !timedMs) return size;
+  return (file) => (Object.hasOwn(durations, file) ? durations[file] : size(file) * (timedMs / timedBytes));
+}
+
+function partition(root, files, limit, durations) {
   if (!files.length) return [];
   const count = Math.min(limit, files.length);
   const buckets = Array.from({ length: count }, (_, index) => ({ id: index + 1, files: [], weight: 0 }));
   const reserved = count > 1 && files.includes(SEED_UPGRADE);
   if (reserved) buckets[0].files.push(SEED_UPGRADE);
   const available = reserved ? buckets.slice(1) : buckets;
-  // Source bytes are a deterministic balancing heuristic, not a timing prediction or result cache.
+  const weight = weigher(root, files, durations);
   const weighted = files
     .filter((file) => !reserved || file !== SEED_UPGRADE)
-    .map((file) => ({ file, weight: fs.statSync(path.join(root, file)).size }))
+    .map((file) => ({ file, weight: weight(file) }))
     .sort((a, b) => b.weight - a.weight || a.file.localeCompare(b.file));
   for (const { file, weight } of weighted) {
     const bucket = [...available].sort((a, b) => a.weight - b.weight || a.id - b.id)[0];
@@ -107,21 +125,23 @@ function partition(root, files, limit) {
     .map(({ id, files: assigned }) => ({ id, files: assigned.sort() }));
 }
 
-function group(root, files, count) {
+function group(root, files, count, durations) {
   const sorted = unique(files);
   for (const file of sorted) existingTest(root, file);
-  return { files: sorted, shards: partition(root, sorted, count) };
+  return { files: sorted, shards: partition(root, sorted, count, durations) };
 }
 
 /**
  * Plans each existing gate once; disjoint file shards retain the complete selected test inventory.
  * A full plan (the release regression) selects every fast test and the whole harness gate whatever
  * changed; its rig group holds every other rig test, so fast, rig and harness together are `npm test`.
+ * Recorded `durations` balance the serial rig shards by time; every other group keeps source bytes.
  * @param {string} root
- * @param {{ changed?: string[], base?: string, shards?: number, full?: boolean }} [options]
+ * @param {{ changed?: string[], base?: string, shards?: number, full?: boolean,
+ *   durations?: Record<string, number> }} [options]
  * @returns {CiPlan}
  */
-export function createCiPlan(root, { changed, base, shards = DEFAULT_SHARDS, full = false } = {}) {
+export function createCiPlan(root, { changed, base, shards = DEFAULT_SHARDS, full = false, durations } = {}) {
   if (!Number.isInteger(shards) || shards < 1 || shards > MAX_SHARDS) throw new Error("Invalid shard count");
   const changes = changed ?? (full ? [] : changedFiles(root, { base }));
   const tests = testFiles(root);
@@ -149,7 +169,7 @@ export function createCiPlan(root, { changed, base, shards = DEFAULT_SHARDS, ful
     harness: createHarnessPlan(root, harnessSelected),
     seed: createSeedPlan(root),
     fast: group(root, fast, shards),
-    rig: group(root, rig, shards),
+    rig: group(root, rig, shards, durations),
     full,
   };
   validateCiPlan(root, plan);
@@ -215,11 +235,22 @@ export function validateCiPlan(root, plan) {
     throw new Error("CI plan has an incomplete harness gate");
 }
 
-function commandsForShard(root, name, shard) {
+/** The spec reporter people read, plus a times file for the next plan when one is asked for. */
+const reporters = (durations) =>
+  durations
+    ? [
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        `--test-reporter=${DURATIONS_REPORTER}`,
+        `--test-reporter-destination=${durations}`,
+      ]
+    : [];
+
+function commandsForShard(root, name, shard, durations) {
   if (name === "seed") return seedCommands(root, shard);
   if (name === "harness") return harnessCommands(shard);
   // Rig suites drive a real core and its harness children, so each runner takes them one at a time.
-  if (name === "rig") return [["--test-concurrency=1", ...shard.files]];
+  if (name === "rig") return [["--test-concurrency=1", ...reporters(durations), ...shard.files]];
   return [["--test-concurrency=2", ...shard.files]];
 }
 
@@ -229,14 +260,17 @@ function commandsForShard(root, name, shard) {
  * @param {CiPlan} plan
  * @param {string} name
  * @param {number} id
+ * @param {{ durations?: string }} [options] where a rig shard also writes its files' times
  * @returns {number}
  */
-export function runCiShard(root, plan, name, id) {
+export function runCiShard(root, plan, name, id, { durations } = {}) {
   validateCiPlan(root, plan);
   if (!GROUPS.includes(name)) throw new Error(`Unknown CI group: ${name}`);
   const shard = plan[name].shards.find((item) => item.id === id);
   if (!shard) throw new Error(`Unknown or empty ${name} shard: ${id}`);
-  const commands = commandsForShard(root, name, shard);
+  // node --test opens a reporter destination without creating its folder.
+  if (durations) fs.mkdirSync(path.dirname(path.resolve(root, durations)), { recursive: true });
+  const commands = commandsForShard(root, name, shard, durations);
   console.log(`${name} shard ${id}: ${commands.length} test batch(es)`);
   for (const args of commands) {
     const run = spawnSync(process.execPath, ["scripts/test.mjs", ...args], {
@@ -252,7 +286,10 @@ export function runCiShard(root, plan, name, id) {
 }
 
 /** Valued flags each action accepts; `plan --full` is the one flag without a value. */
-const VALUE_FLAGS = { plan: ["base", "output", "github-output"], run: ["plan", "group", "shard"] };
+const VALUE_FLAGS = {
+  plan: ["base", "output", "github-output", "durations"],
+  run: ["plan", "group", "shard", "durations"],
+};
 
 function readFlag(action, options, rest) {
   const flag = rest.shift();
@@ -287,7 +324,10 @@ function readArgs(argv) {
 }
 
 function writePlan(root, options) {
-  const plan = createCiPlan(root, { base: options.base, full: options.full === true });
+  const durations = options.durations
+    ? parseDurations(JSON.parse(fs.readFileSync(options.durations, "utf8")))
+    : undefined;
+  const plan = createCiPlan(root, { base: options.base, full: options.full === true, durations });
   fs.mkdirSync(path.dirname(options.output), { recursive: true });
   fs.writeFileSync(options.output, `${JSON.stringify(plan, null, 2)}\n`);
   if (options["github-output"]) {
@@ -299,6 +339,7 @@ function writePlan(root, options) {
     lines.push(`harness_selected=${plan.harness.files.length > 0}`);
     fs.appendFileSync(options["github-output"], `${lines.join("\n")}\n`);
   }
+  if (durations) console.log(`Rig shards balanced by ${Object.keys(durations).length} recorded file times`);
   if (plan.globalChanges.length) console.log(`Full fast + harness coverage: ${plan.globalChanges.join(", ")}`);
   console.log(
     `CI plan: ${plan.unit.files.length} Linux files in ${plan.unit.shards.length} shards; ${plan.seed.shards.length} seed shards; ${plan.harness.files.length} harness files; ${plan.fast.files.length} macOS fast files; ${plan.rig.files.length} rig files`,
@@ -311,7 +352,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (options.action === "plan") writePlan(process.cwd(), options);
     else {
       const plan = JSON.parse(fs.readFileSync(options.plan, "utf8"));
-      process.exitCode = runCiShard(process.cwd(), plan, options.group, Number(options.shard));
+      process.exitCode = runCiShard(process.cwd(), plan, options.group, Number(options.shard), {
+        durations: options.durations,
+      });
     }
   } catch (error) {
     console.error(error.message);

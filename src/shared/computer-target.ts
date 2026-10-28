@@ -120,6 +120,11 @@ export interface TargetCapabilities {
    */
   dom: boolean;
   /**
+   * Whether a running app's window can be brought in front of the others by name (`bring_to_front`):
+   * a desktop, where the app the agent needs can sit behind a full-screen one. Absent is no.
+   */
+  apps?: boolean;
+  /**
    * Whether the mouse buttons press where the view is aimed, with no point to put the pointer at:
    * a game turned by mouse-look (a relative pointer). Absent is no.
    */
@@ -164,6 +169,7 @@ export const DESKTOP_CAPABILITIES: TargetCapabilities = {
   surfaces: false,
   actions: false,
   dom: true,
+  apps: true,
 };
 
 /**

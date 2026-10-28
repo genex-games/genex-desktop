@@ -73,6 +73,8 @@ export interface LeadLine {
 
 /** The lines open now, by run. */
 const lines = new Map<string, LeadLine>();
+/** The runs whose lead will take the chat once their start is ready (`expectLeadLine`), by run. */
+const preparing = new Set<string>();
 /** Settles when a line opens or shuts: what waits for a lead looks again. */
 let changed = signal();
 
@@ -161,9 +163,28 @@ export function openLeadLine(
       if (first) await first.giveBack(unheard.map(({ item }) => item)).catch(() => {});
     },
   };
+  preparing.delete(runId);
   lines.set(runId, line);
   announce();
   return line;
+}
+
+/**
+ * A run whose lead will take the chat once its start is ready (a waking director preparing it):
+ * until its line opens, the chat answers what is sent (live-chat.ts `chatWaitsFor`). Answers the
+ * call that ends the wait without a line (the start failed, was stopped or refused).
+ */
+export function expectLeadLine(runId: string): () => void {
+  preparing.add(runId);
+  announce();
+  return () => {
+    if (preparing.delete(runId)) announce();
+  };
+}
+
+/** Is this run's lead still preparing its start, its line not open yet (`expectLeadLine`)? */
+export function leadPreparing(runId: string): boolean {
+  return preparing.has(runId) && !lines.has(runId);
 }
 
 /** The line to the lead of this run, while it is open. */

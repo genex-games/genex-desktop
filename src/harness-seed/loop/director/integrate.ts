@@ -1048,13 +1048,11 @@ async function closingOf(
   finishing: { summary: string; args: AnyRecord; call: FinishCall; victory: boolean; claims: boolean; land: boolean },
 ): Promise<({ close: true } & ClosingVerdict) | { close: false; answer: string }> {
   const { summary, args, call, land } = finishing;
-  // A finish once the hours are spent (the wrap-up asks for it) is the time running out, for the card.
-  const pastCap = Number.isFinite(loopRun.softDeadline) && Date.now() >= loopRun.softDeadline;
   const finished = {
     close: true as const,
     because: "the director finished the run",
     summary,
-    ...(pastCap ? { why: StopWhy.Time } : {}),
+    ...(pastItsCap(loopRun) ? { why: StopWhy.Time } : {}),
   };
   if (!finishing.claims) return { ...finished, victory: finishing.victory };
   // The reviewer reads what would land, and its yes speaks for that head only.
@@ -1063,6 +1061,16 @@ async function closingOf(
   if (!verdict.close) return verdict;
   if (verdict.victory && (await loopRun.syncHead()) !== read) return { close: false, answer: CLAIM_ANSWER.moved };
   return { ...finished, ...verdict, ...(verdict.victory ? { reviewed: read } : {}) };
+}
+
+/**
+ * Whether a finish comes once the run's hours are spent, for its result card: against the run's own
+ * clock, whose cap no wrap-up moves (an idle lead's, the person's finish or a failed turn's wrap-up
+ * brings `softDeadline` forward to now; the time is not up for those).
+ */
+function pastItsCap(loopRun: LoopRun): boolean {
+  const cap = loopRun.clock?.softDeadline ?? loopRun.softDeadline;
+  return Number.isFinite(cap) && Date.now() >= cap;
 }
 
 /** What this run can honestly claim about the head it landed (`landingWords`, above). */
@@ -1266,14 +1274,15 @@ async function keepTheRecord(loopRun: LoopRun, landed: AnyRecord, because: strin
 
 /**
  * How the run ended, in its journal and report: paused or done, and what a close without a yes leaves
- * for its result card. A run the user stopped (a finish then closing included: it lands nothing), or
- * one a lost provider cut short (a limit, a sign-in, an outage) before a finish, is paused: Resume
+ * for its result card. A run whose landing the user's Stop refused (a finish then closing included),
+ * or one a lost provider cut short (a limit, a sign-in, an outage) before a finish, is paused: Resume
  * picks it up at its integration head (kept reachable by the ref) once the user, the limit or the
- * provider allows.
+ * provider allows. A Stop pressed once the landing is done ends nothing more: the run is done.
  */
-export function endedAs(loopRun: LoopRun): void {
-  const { ctx, journal, report, state } = loopRun;
-  const pausedByStopOrLimit = ctx.cancelled || (!state.finish && Boolean(state.limit));
+export function endedAs(loopRun: LoopRun, landed: AnyRecord): void {
+  const { journal, report, state } = loopRun;
+  const stopRefusedLanding = landed.why === NotLandedReason.Stopped;
+  const pausedByStopOrLimit = stopRefusedLanding || (!state.finish && Boolean(state.limit));
   const goalsBlocked = state.goals && goalDecision(state.goals, state.integrationHead) === GoalStatus.Blocked;
   journal.phase = pausedByStopOrLimit || goalsBlocked ? JournalPhase.Paused : JournalPhase.Done;
   report.executionStatus = executionStatusOf(report, journal.phase);
@@ -1387,7 +1396,7 @@ export async function closeRun(loopRun: LoopRun, landed: AnyRecord): Promise<voi
     reason: "Director runs finish without the optimization stage",
   }).catch(() => null);
   report.finishedAt = new Date().toISOString();
-  endedAs(loopRun);
+  endedAs(loopRun, landed);
   journal.director.integrationHead = state.integrationHead;
   await protectHead(state.integrationHead);
   await saveJournal();

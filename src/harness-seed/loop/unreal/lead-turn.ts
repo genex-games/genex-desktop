@@ -32,6 +32,7 @@ import { gameText, type Lead, type LeadTurn, requiredNow, saveLead, why } from "
 import { CARRIED, digestPrompt, HANDOVER_WHY, handoverWords, leadBrief, STEER } from "./lead-prompts.ts";
 import { LEAD_TOOLS, runStatusText } from "./lead-tools.ts";
 import type { TemplateKind } from "./template-kind.ts";
+import { folderLabelOf } from "../workers/identity.ts";
 
 /** One turn of the lead, at most. */
 export const TURN_MS = 45 * MINUTE_MS;
@@ -457,7 +458,7 @@ async function briefFor(lead: LeadRun): Promise<string> {
     references: lead.references,
     handover,
     notes: await gameFile(lead, "NOTES.md", NOTES_CHARS),
-    folderLabel: lead.game.dir.split("/").slice(-2).join("/"),
+    folderLabel: folderLabelOf(lead.game.dir, null),
     facts: lead.game.facts,
   });
 }

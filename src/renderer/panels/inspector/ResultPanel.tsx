@@ -1,6 +1,7 @@
 /** The card of "Your build": before and now, the last look anybody took at it, the lead's summary and what is still open. */
 import type { JSX } from "react";
 import { useState } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { type RunSummary, summaryOutcome } from "../../../shared/run-summary.ts";
 import {
   type FinalNode,
@@ -16,7 +17,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/icons.tsx";
 import { TOAST_WORDS } from "../../words.ts";
 import { OutcomeChecks, OutcomeDetails } from "../RunOutcome.tsx";
-import { Details, Panel, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
+import { Details, Panel, PanelRow, Para, Quote, Row, Rows, Section } from "./chrome.tsx";
 import { formatTime, modelLine } from "./format.ts";
 import { Compare, Single } from "./pictures.tsx";
 import { GraphSelection } from "./selection.ts";
@@ -24,6 +25,39 @@ import { Status } from "./tone.tsx";
 import type { InspectorProps } from "./types.ts";
 import { type Notify, notifyProblem, ToastTone } from "../../state/toasts.ts";
 import { webBuildShown } from "../../web-build-shown.ts";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { BuildSurface } from "../../analytics/events/builds.ts";
+
+/** Play this build from the result card, and say whether it played. */
+function playBuild(build: { project: string; head: string }, refuse: (error: unknown) => void): void {
+  const played = (ok: boolean) =>
+    track(AnalyticsEvent.BuildPlayed, { surface: BuildSurface.ResultPanel, run_active: false, ok });
+  void window.studio
+    .showBuild(build.project, build.head)
+    .then(() => {
+      played(true);
+      webBuildShown(build.project);
+    })
+    .catch((error: unknown) => {
+      played(false);
+      refuse(error);
+    });
+}
+
+/** Make this build the game, and say whether it went. */
+function landBuild(build: { project: string; head: string }, onNotice: Notify, refuse: (error: unknown) => void): void {
+  void window.studio
+    .landBuild(build.project, build.head)
+    .then(() => {
+      track(AnalyticsEvent.BuildMadeLive, { ok: true });
+      onNotice(TOAST_WORDS.buildLive, ToastTone.Ok);
+    })
+    .catch((error: unknown) => {
+      track(AnalyticsEvent.BuildMadeLive, { ok: false });
+      refuse(error);
+    });
+}
 
 /** The most open problems the panel lists. */
 const STILL_OPEN_SHOWN = 5;
@@ -55,28 +89,11 @@ function BuildActions({
   const refuse = notifyProblem(onNotice);
   return (
     <>
-      <Button
-        variant="default"
-        onClick={() =>
-          void window.studio
-            .showBuild(build.project, build.head)
-            .then(() => webBuildShown(build.project))
-            .catch(refuse)
-        }
-      >
+      <Button variant="default" onClick={() => playBuild(build, refuse)}>
         <Icon name="play" size={13} />
-        Play this build
+        {t("Play this build")}
       </Button>
-      <Button
-        onClick={() =>
-          void window.studio
-            .landBuild(build.project, build.head)
-            .then(() => onNotice(TOAST_WORDS.buildLive, ToastTone.Ok))
-            .catch(refuse)
-        }
-      >
-        Make it live
-      </Button>
+      <Button onClick={() => landBuild(build, onNotice, refuse)}>{t("Make it live")}</Button>
     </>
   );
 }
@@ -85,7 +102,7 @@ function LeadSummary({ final }: { final: FinalNode | null }): JSX.Element | null
   const [readAll, setReadAll] = useState(false);
   if (!final?.summary) return null;
   return (
-    <Section label="The lead's summary" gap="gap-1">
+    <Section label={t("The lead's summary")} gap="gap-1">
       <p
         className={`text-chat-sub whitespace-pre-wrap text-ink-2 [overflow-wrap:anywhere] ${readAll ? "" : "line-clamp-4"}`}
       >
@@ -97,7 +114,7 @@ function LeadSummary({ final }: { final: FinalNode | null }): JSX.Element | null
           className="w-fit cursor-pointer text-body-sm text-accent-ink hover:underline"
           onClick={() => setReadAll((value) => !value)}
         >
-          {readAll ? "Show less" : "Read all"}
+          {readAll ? t("Show less") : t("Read all")}
         </button>
       ) : null}
     </Section>
@@ -107,7 +124,7 @@ function LeadSummary({ final }: { final: FinalNode | null }): JSX.Element | null
 function StillOpen({ items }: { items: string[] }): JSX.Element | null {
   if (!items.length) return null;
   return (
-    <Section label="Still open">
+    <Section label={t("Still open")}>
       {items.map((text, index) => (
         <span key={index} className="flex items-baseline gap-2 text-chat-sub text-ink-2">
           <span aria-hidden="true" className="size-1.5 shrink-0 -translate-y-0.5 rounded-full bg-orange" />
@@ -140,17 +157,19 @@ function ResultRows({
   return (
     <Rows>
       {outcome?.learning ? (
-        <Row label="What the studio learned" right={outcome.learning}>
-          <Para quiet>Studio learning: {outcome.learning} — separate from game execution.</Para>
+        <Row row={PanelRow.StudioLearned} label={t("What the studio learned")} right={outcome.learning}>
+          <Para quiet>
+            {t("Studio learning: {learning} — separate from game execution.", { learning: outcome.learning })}
+          </Para>
         </Row>
       ) : null}
-      <Row label="Technical details">
+      <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
         {outcome ? <OutcomeDetails summary={outcome} /> : null}
         <div className="mt-2">
           <Details
             rows={[
-              ["run", runIdOf(graph)],
-              ["model", modelLine(run.engine, run.model)],
+              [t("run"), runIdOf(graph)],
+              [t("model"), modelLine(run.engine, run.model)],
             ]}
           />
         </div>
@@ -173,9 +192,13 @@ function LastLook({ graph }: { graph: RunGraphModel }): JSX.Element | null {
 /** The card's subtitle: when the run started or finished, and how long it worked. A paused run is not finished. */
 function resultSub(graph: RunGraphModel, run: RunNode, outcome: RunSummary | null): string {
   const duration = workedSpan(outcome?.worked) ?? elapsedWords(run.startedAt, run.finishedAt);
-  if (graph.active) return `Started ${formatTime(run.startedAt)}${duration ? ` · ${duration} so far` : ""}`;
-  if (run.paused) return `Paused${duration ? ` · ${duration}` : ""}`;
-  return `Finished ${formatTime(run.finishedAt ?? outcome?.endedAt ?? null)}${duration ? ` · ${duration}` : ""}`;
+  if (graph.active) {
+    const time = formatTime(run.startedAt);
+    return duration ? t("Started {time} · {duration} so far", { time, duration }) : t("Started {time}", { time });
+  }
+  if (run.paused) return duration ? t("Paused · {duration}", { duration }) : t("Paused");
+  const time = formatTime(run.finishedAt ?? outcome?.endedAt ?? null);
+  return duration ? t("Finished {time} · {duration}", { time, duration }) : t("Finished {time}", { time });
 }
 
 /**
@@ -193,10 +216,11 @@ function ResultMedia({
   borrowed: boolean;
   onOpen: () => void;
 }): JSX.Element {
-  if (borrowed) return <Single src={null} label="Now" empty="Checking the new build starts. Its picture comes next." />;
+  if (borrowed)
+    return <Single src={null} label={t("Now")} empty={t("Checking the new build starts. Its picture comes next.")} />;
   if (baseSrc && resultSrc)
-    return <Compare left={baseSrc} right={resultSrc} leftLabel="Before" rightLabel="Now" onOpen={onOpen} />;
-  return <Single src={resultSrc} label="Now" onOpen={onOpen} />;
+    return <Compare left={baseSrc} right={resultSrc} leftLabel={t("Before")} rightLabel={t("Now")} onOpen={onOpen} />;
+  return <Single src={resultSrc} label={t("Now")} onOpen={onOpen} />;
 }
 
 /** The card of the run's build: the picture before and now, and everything said about it. */
@@ -205,16 +229,20 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
   const final = finalNodeOf(graph);
   // The node and its card say the same words about the same build.
   const status = resultStatus(graph, outcome);
-  const title = graph.active ? "Latest build" : "Your build";
+  const title = graph.active ? t("Latest build") : t("Your build");
   const ended = endedWords(graph);
   const open = (): void => {
-    if (resultSrc) props.onLight([{ path: resultPath, src: resultSrc, title, caption: "camera: default" }], 0);
+    if (resultSrc)
+      props.onLight(
+        [{ path: resultPath, src: resultSrc, title, caption: t("camera: {camera}", { camera: "default" }) }],
+        0,
+      );
   };
-  const attention = outcome && checksNeedAttention(outcome) ? "checks need attention" : null;
+  const attention = outcome && checksNeedAttention(outcome) ? t("checks need attention") : null;
   return (
     <Panel
       id={GraphSelection.Final}
-      label="Your build"
+      label={t("Your build")}
       title={title}
       sub={resultSub(graph, run, outcome)}
       status={
@@ -226,7 +254,7 @@ export function ResultPanel(props: InspectorProps): JSX.Element {
       onPrev={props.onPrev}
       onNext={props.onNext}
       onClose={props.onClose}
-      reply={{ label: title, placeholder: "Ask for a change to this build" }}
+      reply={{ label: title, placeholder: t("Ask for a change to this build") }}
       onReply={props.onReply}
       actions={<BuildActions build={unlandedBuild(graph, final, run)} onNotice={onNotice} />}
       media={<ResultMedia baseSrc={baseSrc} resultSrc={resultSrc} borrowed={resultBorrowed} onOpen={open} />}

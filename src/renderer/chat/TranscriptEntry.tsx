@@ -2,7 +2,11 @@
  * One entry of the transcript, drawn by its kind (`chat-entries.ts` decides what the entries are).
  */
 import { type JSX, memo, useCallback, useMemo } from "react";
-import { type Entry, EntryAction, EntryKind, type MorningEntry } from "../chat-entries.ts";
+import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { BuildSurface } from "../analytics/events/builds.ts";
+import { type Entry, EntryAction, EntryKind, type MorningEntry, systemTagWords } from "../chat-entries.ts";
 import { ExportReview } from "./ExportReview.tsx";
 import { type ConversationEntry, WORK_KIND } from "./conversation-entries.ts";
 import { type KeepBuildingTap, keepBuilding, keepsBuildingIn } from "../keep-building.ts";
@@ -18,6 +22,7 @@ import { AssetResults } from "./AssetResults.tsx";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
 import { GenexCoverCard } from "./GenexCoverCard.tsx";
+import { ListingDraftCard } from "./ListingDraftCard.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { EngineLinkLine } from "./EngineLinkLine.tsx";
 import { RewindLine } from "./RewindLine.tsx";
@@ -105,8 +110,6 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       );
     case EntryKind.Assets:
       return <AssetResults deliveries={deliveries} onOpenAssets={context.onShowAssets} />;
-    case EntryKind.GenexCover:
-      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.User:
       return <UserEntry key={entry.id} entry={entry} context={context} />;
     case EntryKind.Mentions:
@@ -126,7 +129,7 @@ export const TranscriptEntry = memo(function TranscriptEntry({
     case EntryKind.Question:
       return (
         <ChatDisclosure label={entry.text}>
-          <p className="px-3 py-2 text-step text-ink-3">Answered in the conversation.</p>
+          <p className="px-3 py-2 text-step text-ink-3">{t("Answered in the conversation.")}</p>
         </ChatDisclosure>
       );
     case EntryKind.Morning:
@@ -166,12 +169,24 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       return <ActionEntry entry={entry} context={context} resume={resume} />;
     case EntryKind.Compaction:
       return <CompactionEntry messages={entry.messages} summary={entry.summary} />;
+    default:
+      return <CardEntry entry={entry} context={context} />;
+  }
+});
+
+/** A card the host put in the conversation: the Genex cover, a plugin to turn on, a store item's Listing draft. */
+function CardEntry({ entry, context }: { entry: ConversationEntry; context: TranscriptContext }): JSX.Element | null {
+  switch (entry.kind) {
+    case EntryKind.GenexCover:
+      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.PluginSuggestion:
-      return <PluginSuggestionCard entry={entry} onNotice={onNotice} onTurnedOn={context.onPluginTurnedOn} />;
+      return <PluginSuggestionCard entry={entry} onNotice={context.onNotice} onTurnedOn={context.onPluginTurnedOn} />;
+    case EntryKind.ListingDraft:
+      return <ListingDraftCard draft={entry.draft} />;
     default:
       return null;
   }
-});
+}
 
 /** A finished compaction, in the work rows' type: it opens to the summary that replaced the messages. */
 function CompactionEntry({ messages, summary }: { messages: number | null; summary: string | null }): JSX.Element {
@@ -267,9 +282,9 @@ const SystemTag = {
 /** How a turn the user stopped is recorded. */
 const CANCELLED_TEXT = "cancelled";
 
-/** A system tag as a heading: an error in plain words, any other tag in sentence case. */
+/** A system tag as a heading: an error in plain words, any other tag in the reader's words, sentence case. */
 const systemHeading = (tag: string): string =>
-  tag === SystemTag.Error ? "Something went wrong" : tag.charAt(0) + tag.slice(1).toLowerCase();
+  tag === SystemTag.Error ? t("Something went wrong") : systemTagWords(tag);
 
 /** A system line: its tag as a heading (an error in plain words), then its text. */
 function SystemEntry({ entry }: { entry: Extract<Entry, { kind: typeof EntryKind.System }> }) {
@@ -280,7 +295,7 @@ function SystemEntry({ entry }: { entry: Extract<Entry, { kind: typeof EntryKind
   return (
     <div className="flex min-w-0 flex-col gap-1 text-chat-sub leading-relaxed text-ink-2">
       {showsHeading && <span className="text-[12px] font-medium text-ink-3">{systemHeading(tag)}</span>}
-      <span className="[overflow-wrap:anywhere]">{stopped ? "Stopped" : <FileText text={entry.text} />}</span>
+      <span className="[overflow-wrap:anywhere]">{stopped ? t("Stopped") : <FileText text={entry.text} />}</span>
     </div>
   );
 }
@@ -321,6 +336,12 @@ function quietLine(
   return null;
 }
 
+/** The chat card's own Resume, counted from the card; MorningCard's Resume counts its own. */
+const resumedFromCard = (resume: (runId: string) => () => void, runId: string) => (): void => {
+  resume(runId)();
+  track(AnalyticsEvent.RunResumePressed, { surface: BuildSurface.ChatCard });
+};
+
 function ActionEntry({
   entry,
   context,
@@ -338,10 +359,11 @@ function ActionEntry({
     const held = entry.pending && entry.runId === activeRunId && (entry.expiresAt ?? 0) > Date.now();
     return held ? (
       <ChatQuestion
-        title="Review the build plan"
+        keys={false}
+        title={t("Review the build plan")}
         choices={[
-          { id: "approve", label: "Approve plan" },
-          { id: "revise", label: "Make changes" },
+          { id: "approve", label: t("Approve plan") },
+          { id: "revise", label: t("Make changes") },
         ]}
         onConfirm={async (choice) => {
           if (choice === "approve") await context.onApprovePlan();
@@ -351,7 +373,7 @@ function ActionEntry({
         <Markdown text={entry.text} />
       </ChatQuestion>
     ) : (
-      <ChatDisclosure label="Build plan">
+      <ChatDisclosure label={t("Build plan")}>
         <div className="px-3 py-2">
           <Markdown text={entry.text} />
         </div>
@@ -363,8 +385,8 @@ function ActionEntry({
   if (entry.action === EntryAction.Live) {
     return (
       <div data-build-updated className="flex min-w-0 items-center gap-3 text-chat text-ink-3">
-        <span>Build updated</span>
-        <ResultButton onClick={() => context.onShowLive?.()}>See it</ResultButton>
+        <span>{t("Build updated")}</span>
+        <ResultButton onClick={() => context.onShowLive?.()}>{t("See it")}</ResultButton>
       </div>
     );
   }
@@ -375,11 +397,11 @@ function ActionEntry({
           <FileText text={entry.text} />
         </span>
         {resumable(entry.runId, context) ? (
-          <ResultButton type="button" data-run-resume={entry.runId} onClick={resume(entry.runId)}>
+          <ResultButton type="button" data-run-resume={entry.runId} onClick={resumedFromCard(resume, entry.runId)}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>
-            Resume
+            {t("Resume")}
           </ResultButton>
         ) : null}
       </div>
@@ -388,17 +410,17 @@ function ActionEntry({
   const snapshotId = entry.snapshotId;
   return (
     <div key={entry.id} className="flex min-w-0 flex-col gap-1 text-chat-sub leading-relaxed text-ink-2">
-      <span className="text-[12px] font-medium text-ink-3">{entry.tag}</span>
+      <span className="text-[12px] font-medium text-ink-3">{systemTagWords(entry.tag).toUpperCase()}</span>
       <span className="min-w-0 [overflow-wrap:anywhere]">
         <FileText text={entry.text} />
         {entry.action === EntryAction.Rewind && snapshotId ? (
           <ResultButton
             type="button"
-            title="Roll the studio back to the moment before this change"
+            title={t("Roll the studio back to the moment before this change")}
             onClick={() => void window.studio.rollback(snapshotId).catch(() => {})}
             className="ml-2 align-middle"
           >
-            Rewind
+            {t("Rewind")}
           </ResultButton>
         ) : null}
       </span>

@@ -1,8 +1,10 @@
 /** The card of one step: its picture before and after, its tries, what the judges said and their notes, and its checks. */
 import type { JSX } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { t } from "../../../shared/i18n.ts";
 import {
   type AdviceInfo,
+  cameraWords,
   checkWords,
   type IterationNode,
   IterationStatus,
@@ -12,9 +14,8 @@ import {
   type RunGraph as RunGraphModel,
   type RunNode,
   runIdOf,
-  type Shot,
-  thumbShot,
 } from "../../run-graph.ts";
+import { openingView, type ShotView, shotViews, viewBefore } from "../../run-graph-pictures.ts";
 import {
   isJudgedTry,
   isLiveStep,
@@ -28,21 +29,14 @@ import {
 import { useStill } from "../../stills.ts";
 import { Icon, type IconName } from "../../ui/icons.tsx";
 import { checkCounts, undoneBecause } from "../../words.ts";
-import { useRoundStill } from "../run-stills.ts";
-import { Details, NotesSection, Panel, Para, Quote, Row, Rows } from "./chrome.tsx";
+import { useRoundStill, useSavePointShot } from "../run-stills.ts";
+import { Details, NotesSection, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise, listOrNull, modelLine } from "./format.ts";
 import { JudgesNotes } from "./JudgesNotes.tsx";
 import { Cameras, Compare, Single, TryThumb } from "./pictures.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
 import { Status } from "./tone.tsx";
 import type { StepPanelProps } from "./types.ts";
-
-/** The demo cameras record play, not the scene: the panel never shows them as stills. */
-const sceneShots = (node: IterationNode): Shot[] => node.shots.filter((shot) => !shot.camera.startsWith("demo"));
-
-/** A try's shot through one camera, or its thumbnail shot when it has none from there. */
-const shotThrough = (node: IterationNode, camera: string | null): Shot | null =>
-  node.shots.find((shot) => shot.camera === camera) ?? thumbShot(node);
 
 /** What the build looked like before this step: the step it follows on the line, or the start. */
 const stepBefore = (row: PartRow, step: Step): Step | null =>
@@ -61,28 +55,42 @@ function openingTry(step: Step, notesFor: string | null): number {
 
 const mergeLine = (merge: MergeInfo | null): string | null => {
   if (!merge) return null;
-  return `${merge.head?.slice(0, 8) ?? ""}${merge.conflict ? " · conflict" : ""}${merge.union ? " · union" : ""}`;
+  return `${merge.head?.slice(0, 8) ?? ""}${merge.conflict ? ` · ${t("conflict")}` : ""}${merge.union ? ` · ${t("union")}` : ""}`;
 };
 
 const outageLine = (outage: OutageInfo | null): string | null => {
   if (!outage) return null;
-  return `×${outage.count}${outage.phase ? ` during ${outage.phase}` : ""}`;
+  if (outage.phase) return t("×{count} during {phase}", { count: outage.count, phase: outage.phase });
+  return `×${outage.count}`;
 };
 
-/** The before and after of the try on show through one camera, and everything the camera switch needs. */
+/** A picture's name on the camera switch and in the viewer: the lead's named one says what it is for. */
+const viewLabel = (view: ShotView): string => (view.changed ? t("What changed") : cameraWords(view.shot.camera));
+
+/**
+ * The before and after of the try on show, and everything the picture switch needs: it opens on the
+ * picture the step's card wears, and compares each camera only with that camera before it.
+ */
 function useStepPicture(props: StepPanelProps, node: IterationNode) {
   const { graph, row, step, baseSrc } = props;
-  const cameras = useMemo(() => [...new Set(sceneShots(node).map((shot) => shot.camera))], [node]);
-  const [camera, setCamera] = useState<string | null>(thumbShot(node)?.camera ?? null);
-  useEffect(() => setCamera(thumbShot(node)?.camera ?? null), [node]);
+  const views = useMemo(() => shotViews(node), [node]);
+  const card = useSavePointShot(node, node === step.shown ? step.earlier : null);
+  // A picture picked by hand holds for the try it was picked on; another try opens on its card's again.
+  const [picked, setPicked] = useState<{ node: string; key: string } | null>(null);
+  const pickedKey = picked?.node === node.id ? picked.key : null;
+  const view = views.find((item) => item.key === pickedKey) ?? openingView(views, card);
   const live = graph.active && node.status === IterationStatus.Building;
-  const rightShot = shotThrough(node, camera);
+  const rightShot = view?.shot ?? null;
   const right = useRoundStill(graph, node.facetId, node.iteration, rightShot?.path ?? null, live);
   const beforeNode = stepBefore(row, step)?.shown ?? null;
-  const leftShot = beforeNode ? shotThrough(beforeNode, camera) : null;
-  const leftStill = useStill(leftShot?.path ? { run: leftShot.path } : null);
-  const left = beforeNode ? leftStill : baseSrc;
-  return { cameras, camera, setCamera, rightShot, right, left, compare: Boolean(left || beforeNode) };
+  const leftShot = beforeNode && view ? viewBefore(view, beforeNode) : null;
+  const leftStill = useStill(leftShot ? { run: leftShot.path } : null);
+  // The start's picture is the default camera's: the lead's named picture is framed its own way.
+  const baseLeft = view?.changed ? null : baseSrc;
+  const left = beforeNode ? leftStill : baseLeft;
+  const compare = beforeNode ? Boolean(leftShot) : Boolean(baseLeft);
+  const pick = (key: string): void => setPicked({ node: node.id, key });
+  return { views, view, pick, right, left, compare };
 }
 
 const PASS_MARK: Record<"pass" | "fail" | "unknown", { color: string; icon: IconName }> = {
@@ -112,7 +120,7 @@ function CheckList({ node }: { node: IterationNode }): JSX.Element {
             </span>
             <span className="min-w-0 text-ink-2 [overflow-wrap:anywhere]">
               {capitalise(checkWords(row.id))}
-              {flips.has(row.id) ? <span className="text-green"> · newly passing</span> : null}
+              {flips.has(row.id) ? <span className="text-green"> · {t("newly passing")}</span> : null}
               {row.reason ? <span className="block text-ink-3">{row.reason}</span> : null}
             </span>
           </li>
@@ -136,7 +144,7 @@ function TriesStrip({
 }): JSX.Element | null {
   if (tries.length < 2) return null;
   return (
-    <div role="group" aria-label="Tries" className="flex flex-wrap gap-2.5 pt-1">
+    <div role="group" aria-label={t("Tries")} className="flex flex-wrap gap-2.5 pt-1">
       {tries.map((item, at) => (
         <TryThumb
           key={item.id}
@@ -164,9 +172,13 @@ function StepStory({ step, node }: { step: Step; node: IterationNode }): JSX.Ele
   if (!said && !stopped && !undone) return null;
   return (
     <div className="flex flex-col gap-2.5">
-      {said ? <Quote label={tries.length > 1 ? `Reviewers · try ${n}` : "Reviewers"}>“{said}”</Quote> : null}
+      {said ? (
+        <Quote label={tries.length > 1 ? t("Reviewers · try {number}", { number: n }) : t("Reviewers")}>“{said}”</Quote>
+      ) : null}
       {stopped ? <Para quiet>{capitalise(stopped)}.</Para> : null}
-      {undone ? <Para quiet>Undone because {undoneBecause(node.verdictSource, node.verdict)}.</Para> : null}
+      {undone ? (
+        <Para quiet>{t("Undone because {reason}.", { reason: undoneBecause(node.verdictSource, node.verdict) })}</Para>
+      ) : null}
     </div>
   );
 }
@@ -180,12 +192,12 @@ function AdviceNotes({ advice }: { advice: AdviceInfo }): JSX.Element {
           {advice.defects.map((item) => (
             <li key={item.defect} className="text-body-sm text-ink-2 [overflow-wrap:anywhere]">
               {item.defect}
-              {item.fix ? <span className="block text-ink-3">Fix: {item.fix}</span> : null}
+              {item.fix ? <span className="block text-ink-3">{t("Fix: {fix}", { fix: item.fix })}</span> : null}
             </li>
           ))}
         </ul>
       ) : null}
-      {advice.boldMove ? <Quote label="One bold move">{advice.boldMove}</Quote> : null}
+      {advice.boldMove ? <Quote label={t("One bold move")}>{advice.boldMove}</Quote> : null}
       {advice.gates.length ? (
         <ul className="flex flex-col gap-1 text-body-sm text-ink-3">
           {advice.gates.map((gate) => (
@@ -216,7 +228,8 @@ function StepRows({
     <Rows>
       {judged ? (
         <Row
-          label="Reviewers' notes"
+          row={PanelRow.ReviewersNotes}
+          label={t("Reviewers' notes")}
           right={node.defects.length ? String(node.defects.length) : null}
           defaultOpen={notesOpen}
         >
@@ -224,27 +237,27 @@ function StepRows({
         </Row>
       ) : null}
       {node.advice ? (
-        <Row label="Critic's advice" right={String(node.advice.defects.length)}>
+        <Row row={PanelRow.CriticsAdvice} label={t("Critic's advice")} right={String(node.advice.defects.length)}>
           <AdviceNotes advice={node.advice} />
         </Row>
       ) : null}
       {node.scoreboard ? (
-        <Row label="Checks" right={checkCounts(node.scoreboard)}>
+        <Row row={PanelRow.Checks} label={t("Checks")} right={checkCounts(node.scoreboard)}>
           <CheckList node={node} />
         </Row>
       ) : null}
-      <Row label="Technical details">
+      <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
         <Details
           rows={[
-            ["run", runIdOf(graph)],
-            ["part", node.facetId],
-            ["round", String(node.iteration)],
-            ["verdict by", node.verdictSource],
-            ["merged", mergeLine(node.merge)],
-            ["cameras", listOrNull(node.shots.map((shot) => shot.camera))],
-            ["model", modelLine(run.engine, run.model)],
-            ["flags", listOrNull(node.flags.map((flag) => flag.what))],
-            ["outage", outageLine(node.outage)],
+            [t("run"), runIdOf(graph)],
+            [t("part"), node.facetId],
+            [t("round"), String(node.iteration)],
+            [t("verdict by"), node.verdictSource],
+            [t("merged"), mergeLine(node.merge)],
+            [t("cameras"), listOrNull(node.shots.map((shot) => cameraWords(shot.camera)))],
+            [t("model"), modelLine(run.engine, run.model)],
+            [t("flags"), listOrNull(node.flags.map((flag) => flag.what))],
+            [t("outage"), outageLine(node.outage)],
           ]}
         />
       </Row>
@@ -254,8 +267,8 @@ function StepRows({
 
 /** The label of the still on the right: the try on show, this step, or this one try. */
 function rightLabelOf(step: Step, n: number): string {
-  if (step.tries.length > 1) return `Try ${n}`;
-  return step.onLine ? "This step" : "This try";
+  if (step.tries.length > 1) return t("Try {number}", { number: n });
+  return step.onLine ? t("This step") : t("This try");
 }
 
 /** A try's saved stills: before and after when there is a before, else the one; and the camera switch. */
@@ -276,14 +289,18 @@ function TryStills({
         <Compare
           left={picture.left}
           right={picture.right}
-          leftLabel={onLine ? "Before" : "In your build"}
+          leftLabel={onLine ? t("Before") : t("In your build")}
           rightLabel={label}
           onOpen={onOpen}
         />
       ) : (
         <Single src={picture.right} label={label} onOpen={onOpen} />
       )}
-      <Cameras names={picture.cameras} value={picture.camera} onChange={picture.setCamera} />
+      <Cameras
+        views={picture.views.map((view) => ({ key: view.key, label: viewLabel(view) }))}
+        value={picture.view?.key ?? null}
+        onChange={picture.pick}
+      />
     </>
   );
 }
@@ -306,40 +323,45 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
   const liveFrame = node === tries.at(-1) ? screen.frame : null;
   const n = tries.indexOf(node) + 1;
   const rightLabel = rightLabelOf(step, n);
+  const tryTitle = t("{name} · try {number}", { name: step.name, number: n });
   const open = (): void => {
-    const shots = sceneShots(node);
-    if (!shots.length) return;
-    const items = shots.map((shot) => ({
-      path: shot.path,
+    const views = picture.views;
+    if (!views.length) return;
+    const items = views.map((view) => ({
+      path: view.shot.path,
       src: null,
-      title: `${step.name} · try ${n}`,
-      caption: `camera: ${shot.camera}`,
+      title: tryTitle,
+      caption: view.changed ? viewLabel(view) : t("camera: {camera}", { camera: viewLabel(view) }),
     }));
     props.onLight(
       items,
       Math.max(
         0,
-        shots.findIndex((shot) => shot.camera === picture.rightShot?.camera),
+        views.findIndex((view) => view.key === picture.view?.key),
       ),
     );
   };
   const several = tries.length > 1;
   const reply = {
-    label: several ? `${step.name} · try ${n}` : step.name,
-    placeholder: "What should the worker do instead?",
+    label: several ? tryTitle : step.name,
+    placeholder: t("What should the worker do instead?"),
     target: {
       facetId: node.facetId,
       iteration: node.iteration,
-      ...(picture.rightShot ? { camera: picture.rightShot.camera } : {}),
+      // A note names a real camera: the lead's named picture is no camera of the game's.
+      ...(picture.view && !picture.view.changed ? { camera: picture.view.shot.camera } : {}),
     },
   };
   return (
     <Panel
       id={step.id}
-      label="Selected step"
+      label={t("Selected step")}
       title={step.name}
       status={
-        <Status tone={STATE_TONE[step.state]} meta={several ? `${tries.length} tries` : null}>
+        <Status
+          tone={STATE_TONE[step.state]}
+          meta={several ? t("{count, plural, other {# tries}}", { count: tries.length }) : null}
+        >
           {stepPill(step, graph.active)}
         </Status>
       }
@@ -354,10 +376,8 @@ function StepView(props: StepPanelProps & { node: IterationNode; onPick: (at: nu
             <LiveScreen
               frame={liveFrame}
               trail={screen.trail}
-              label={`${step.name} · try ${n}`}
-              onOpen={(src, caption) =>
-                props.onLight([{ path: null, src, title: `${step.name} · try ${n}`, caption }], 0)
-              }
+              label={tryTitle}
+              onOpen={(src, caption) => props.onLight([{ path: null, src, title: tryTitle, caption }], 0)}
             />
           ) : (
             <TryStills picture={picture} onLine={step.onLine} label={rightLabel} onOpen={open} />

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
+import { parseDurations } from "../../scripts/ci-durations.mjs";
 import { CI_BASELINE, createCiPlan, runCiShard, validateCiPlan } from "../../scripts/ci-test-plan.mjs";
 import { HARNESS_GATE, testEnv } from "../../scripts/affected-tests.mjs";
 import { assertCiResults } from "../../scripts/ci-check-result.mjs";
@@ -218,6 +219,102 @@ test("a rig worker runs its files one at a time", (t) => {
   ]);
 });
 
+test("a rig worker asked for its times adds the durations reporter beside the spec one", (t) => {
+  const { root, write } = fixture(t);
+  const plan = createCiPlan(root, { full: true });
+  write(
+    "scripts/test.mjs",
+    `import fs from 'node:fs'; fs.writeFileSync('worker-args.json', JSON.stringify(process.argv.slice(2)));`,
+  );
+  assert.ok(!fs.existsSync(path.join(root, ".studio-dev/ci")));
+  assert.equal(runCiShard(root, plan, "rig", 1, { durations: ".studio-dev/ci/rig-1.json" }), 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "worker-args.json"), "utf8")), [
+    "--test-concurrency=1",
+    "--test-reporter=spec",
+    "--test-reporter-destination=stdout",
+    "--test-reporter=./scripts/ci-durations-reporter.mjs",
+    "--test-reporter-destination=.studio-dev/ci/rig-1.json",
+    "tests/conformance/rig-behavior.test.ts",
+  ]);
+  // node --test opens a reporter destination without creating its folder.
+  assert.ok(fs.statSync(path.join(root, ".studio-dev/ci")).isDirectory());
+});
+
+test("recorded times balance the rig shards; a file without one weighs its bytes at their rate", (t) => {
+  const { root, write } = fixture(t);
+  const rigFile = (name: string, bytes: number) =>
+    write(
+      `tests/conformance/${name}.test.ts`,
+      `import { rig } from '../helpers/studio-rig.ts'; void rig;\n// ${"x".repeat(bytes)}\n`,
+    );
+  rigFile("rig-large-a", 4000);
+  rigFile("rig-large-b", 4000);
+  rigFile("rig-slow", 10);
+  const shardOf = (plan: ReturnType<typeof createCiPlan>, file: string) =>
+    plan.rig.shards.find((shard) => shard.files.includes(file))?.files;
+  const slow = "tests/conformance/rig-slow.test.ts";
+  const bySize = createCiPlan(root, { full: true, shards: 2 });
+  assert.notDeepEqual(shardOf(bySize, slow), [slow], "source bytes pair the small, slow file with others");
+  const durations = {
+    [slow]: 600_000,
+    "tests/conformance/rig-large-a.test.ts": 1_000,
+    "tests/conformance/rig-large-b.test.ts": 1_000,
+  };
+  const byTime = createCiPlan(root, { full: true, shards: 2, durations });
+  assert.deepEqual(shardOf(byTime, slow), [slow]);
+  assert.deepEqual(byTime.rig.files, bySize.rig.files, "times move files between shards, never drop one");
+  assert.doesNotThrow(() => validateCiPlan(root, byTime));
+  assert.deepEqual(byTime.fast, bySize.fast, "only the rig shards follow recorded times");
+});
+
+test("recorded times are refused unless every entry is a test path with a plausible time", () => {
+  const ok = { "tests/conformance/a.test.ts": 1200 };
+  assert.deepEqual(parseDurations(ok), ok);
+  for (const value of [
+    null,
+    [],
+    "tests/conformance/a.test.ts",
+    { "../tests/a.test.ts": 1 },
+    { "tests/../src/a.test.ts": 1 },
+    { "/tmp/tests/a.test.ts": 1 },
+    { "tests/conformance/a.ts": 1 },
+    { "tests/conformance/a.test.ts": -1 },
+    { "tests/conformance/a.test.ts": Number.NaN },
+    { "tests/conformance/a.test.ts": Number.POSITIVE_INFINITY },
+    { "tests/conformance/a.test.ts": "12" },
+    { "tests/conformance/a.test.ts": 7 * 60 * 60 * 1000 },
+  ])
+    assert.throws(() => parseDurations(value), /Invalid test duration/, JSON.stringify(value));
+});
+
+test("the durations reporter writes each file's top-level time, relative to the working directory", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "studio-ci-durations-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "tests"));
+  fs.writeFileSync(
+    path.join(root, "tests/timed.test.ts"),
+    "import { describe, it } from 'node:test';\nimport { setTimeout } from 'node:timers/promises';\n" +
+      "describe('suite', () => { it('waits', () => setTimeout(30)); it('again', () => setTimeout(30)); });\n" +
+      "it('alone', () => setTimeout(30));\n",
+  );
+  const out = path.join(root, "times.json");
+  const run = spawnSync(
+    process.execPath,
+    [
+      "--test",
+      `--test-reporter=${path.join(repo, "scripts/ci-durations-reporter.mjs")}`,
+      `--test-reporter-destination=${out}`,
+      "tests/timed.test.ts",
+    ],
+    // Without this the child would report to this test's runner instead of its own reporters.
+    { cwd: root, encoding: "utf8", env: { ...process.env, NODE_TEST_CONTEXT: undefined } },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  const times = parseDurations(JSON.parse(fs.readFileSync(out, "utf8")));
+  assert.deepEqual(Object.keys(times), ["tests/timed.test.ts"]);
+  assert.ok(times["tests/timed.test.ts"] >= 90, `suite and test both counted once: ${times["tests/timed.test.ts"]}`);
+});
+
 test("malformed, incomplete, repeated, escaped and missing-file plans fail before a worker starts", (t) => {
   const { root } = fixture(t);
   const original = createCiPlan(root, { changed: [] });
@@ -320,6 +417,7 @@ test("stable gate names fail closed on failed, cancelled, skipped or absent requ
   assert.throws(() => assertCiResults({ ...complete, "fast-tests": { result: "cancelled" } }, "fast"));
   const regression = {
     validate: { result: "success" },
+    plan: { result: "success" },
     "fast-evidence": { result: "success", outputs: { reuse: "false" } },
     "regression-rig": { result: "success" },
     "regression-harness": { result: "success" },

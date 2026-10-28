@@ -15,7 +15,7 @@ import { userSaysBlock } from "./wake-prompts.ts";
  * the tool's name is read only once every module has loaded.
  */
 const actOnWords = (otherwise: string): string =>
-  `An ask to stop or finish the build is ${DirectorTool.WrapUp}, quoting their words; act on anything else they ask; otherwise ${otherwise}. A question alone never stops or restarts a worker.`;
+  `An ask to stop or finish the build is ${DirectorTool.WrapUp}, quoting their words (with next_goal when they also want a new Loop after it); act on anything else they ask; otherwise ${otherwise}. A question alone never stops or restarts a worker.`;
 
 /** The user's words as a turn under way reads them, at its next step. */
 export function midTurnUserSays(words: readonly string[]): string {

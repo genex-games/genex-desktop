@@ -53,7 +53,8 @@ async function setup() {
       },
     ],
   };
-  const service = new PluginNativeServices(root, []),
+  // The pins below carry no platform, so they are Apple Silicon's: this computer reads as one.
+  const service = new PluginNativeServices(root, [], { platform: "darwin-arm64" }),
     binding = { project: "game", directory: game };
   const call = (method: string, args: any, signal = new AbortController().signal, source = "tool") =>
     service.call(manifest, pkg, storage, method, args, binding, { method: source, name: "install", signal }, () => {});

@@ -4,7 +4,7 @@
  * the Loop switched on or off or its hours, roles or plan review changed, a new mood board, or a
  * slash command — joins as a switch: the session is cut at its next step and the turn goes on with
  * that message's settings (chat-steer.ts), which only a runner that says it can take switches does.
- * A fresh build asked for and Studio's own chat never join.
+ * A fresh build asked for, Studio's own chat and a Keep building tap never join.
  *
  * A module of its own: the queue (message-queue.ts) and the turn's runners read it, and a seed
  * upgrade keeps an older copy of any of those the agent edited, which never exported these names.
@@ -39,9 +39,14 @@ export const isSlashText = (text: unknown): boolean =>
     .trimStart()
     .startsWith("/");
 
-/** A fresh build asked for (`newRun`, a New build queued before the composer dropped it), or Studio's chat. */
+/**
+ * A fresh build asked for (`newRun`, a New build queued before the composer dropped it), Studio's
+ * chat, or Keep building: its mark must reach the turn that reopens or starts the build, never a turn
+ * already answering something else.
+ */
 function ownTurn(item: AnyRecord, action: AnyRecord): boolean {
-  return Boolean(item.newRun || item.studioThread || action.studioThread);
+  const keepBuilding = item.autopilot?.keepBuilding === true;
+  return Boolean(item.newRun || item.studioThread || action.studioThread || keepBuilding);
 }
 
 /** The engine, model, effort and Loop a message is answered on, as one comparable string. */

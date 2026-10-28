@@ -9,6 +9,7 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { HOUR_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import { type OutcomeView, outcomeEnded } from "../../shared/run-summary.ts";
 import { NO_STORAGE, type StorageFreed, StorageKind, type StorageSpace } from "../../shared/storage-space.ts";
 import { clearSideTracks, historySpace } from "../../substrate/history-space.ts";
@@ -18,9 +19,10 @@ import type { GameHistorySpace } from "../../shared/game-history.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { safePathSegment } from "./run-shots.ts";
 
+/** What the person reads in Settings → Storage when freeing space is refused. */
 const MESSAGE = {
-  busy: "Wait for this game's work to finish, then free its space.",
-  unknownGame: (project: string) => `There is no game named "${project}".`,
+  busy: () => t("Wait for this game's work to finish, then free its space."),
+  unknownGame: (project: string) => t('There is no game named "{game}".', { game: project }),
 } as const;
 
 /** Where shown builds' copies are made under scratch (`previews.ts` `showBuild`). */
@@ -96,7 +98,7 @@ export class StorageSpaceService {
   async free(project?: string): Promise<StorageFreed> {
     if (project !== undefined) {
       const freed = await this.#freeGame(project, await this.#gameDir(project));
-      if (freed === null) throw new Error(MESSAGE.busy);
+      if (freed === null) throw new Error(MESSAGE.busy());
       return { freedBytes: freed, skipped: [] };
     }
     const games = (await this.#core.games.list()).map((game) => game.name);

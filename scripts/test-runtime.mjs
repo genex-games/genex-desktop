@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { makeTestTmp, sweepTestTmp, testTmpParents } from "./test-tmp.mjs";
 
 /** Local and affected fast groups use two file workers to leave room for their child processes. */
 export const FAST_TEST_CONCURRENCY = 2;
@@ -40,23 +39,6 @@ export function testEnv(env = process.env) {
 /** Fail a test file that leaves children running after its own cleanup instead of hanging the suite. */
 export const TEST_PRELOAD = ["--import", new URL("../tests/helpers/leftover-children.ts", import.meta.url).href];
 
-/** A batch's own temp folder prefix. */
-const BATCH_TMP_PREFIX = "gt-";
-
-/**
- * Makes a batch's temp folder: in `/tmp` off Windows, shorter than macOS's per-user temp folder,
- * so the paths tests build under it (Unix sockets limited to 104 bytes, command lines that list
- * many of them) stay as short as they were; in the inherited temp folder where `/tmp` is not
- * writable (a sandboxed session).
- */
-function makeBatchTmp() {
-  if (process.platform !== "win32")
-    try {
-      return fs.mkdtempSync(path.join("/tmp", BATCH_TMP_PREFIX));
-    } catch {}
-  return fs.mkdtempSync(path.join(os.tmpdir(), BATCH_TMP_PREFIX));
-}
-
 /**
  * Points every temp-folder variable at a folder the batch owns, so what its tests leave in the
  * temp folder goes when the batch ends instead of filling the disk until the OS purges it.
@@ -69,7 +51,9 @@ function batchTmpEnv(env, dir) {
 export function runTestBatch(root, files, { flags = [], concurrency = 1, env = process.env, stdio = "inherit" } = {}) {
   if (!files.length) return 0;
   const args = [...TEST_PRELOAD, "--test", `--test-concurrency=${concurrency}`, ...flags, ...files];
-  const tmp = makeBatchTmp();
+  // A batch killed before its own cleanup left its folder: the next batch removes it.
+  sweepTestTmp(testTmpParents());
+  const tmp = makeTestTmp();
   try {
     const result = spawnSync(process.execPath, args, { cwd: root, stdio, env: batchTmpEnv(testEnv(env), tmp) });
     if (result.error) console.error(result.error.message);

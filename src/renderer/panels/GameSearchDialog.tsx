@@ -2,11 +2,15 @@
 import type { JSX, KeyboardEvent, RefObject } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationRecord, GameProject } from "../types.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { searchClosedProperties } from "../analytics/workspace-properties.ts";
 import { librarySearch, type GameSearchItem } from "../game-search.ts";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { Shortcut } from "../ui/Shortcut.tsx";
+import { t } from "../../shared/i18n.ts";
 
 /** How long typing pauses before the results follow it. */
 const SEARCH_DEBOUNCE_MS = 120;
@@ -39,6 +43,28 @@ function useGameSearch(games: GameProject[], threads: ConversationRecord[], firs
   return { query, setQuery, debounced, items, selected, setActive };
 }
 
+/**
+ * The search's end for usage analytics, counted once: the result picked or none, with how long the
+ * query was, how many results it had, and whether a search came up empty on the way.
+ */
+function useSearchEnd(query: string, debounced: string, items: GameSearchItem[]) {
+  const openedAt = useRef(Date.now());
+  const emptySeen = useRef(false);
+  const ended = useRef(false);
+  useEffect(() => {
+    if (debounced.trim() && items.length === 0) emptySeen.current = true;
+  }, [debounced, items]);
+  return (picked: GameSearchItem | null): void => {
+    if (ended.current) return;
+    ended.current = true;
+    const index = picked ? items.indexOf(picked) : -1;
+    const at = Date.now();
+    const pick = picked ? { index, earlierChat: !picked.game } : null;
+    const closed = { picked: pick, query, results: items.length, noResultsSeen: emptySeen.current };
+    track(AnalyticsEvent.GameSearchClosed, searchClosedProperties({ ...closed, openedAt: openedAt.current, at }));
+  };
+}
+
 /** The results: recent games for an empty search, else the matches, or what to say without any. */
 function SearchResults({
   list,
@@ -62,12 +88,14 @@ function SearchResults({
     <div
       ref={list}
       className="game-search-results"
+      // The results are the person's games and chats.
+      data-analytics-mask
       role="listbox"
       id="game-search-results"
-      aria-label="Games"
+      aria-label={t("Games")}
       aria-busy={query !== debounced}
     >
-      {!searched && items.length > 0 && <div className="px-3 py-2 text-xs text-ink-3">Recent games</div>}
+      {!searched && items.length > 0 && <div className="px-3 py-2 text-xs text-ink-3">{t("Recent games")}</div>}
       {items.map((item, index) => (
         <button
           key={item.id}
@@ -89,7 +117,7 @@ function SearchResults({
       ))}
       {items.length === 0 && (
         <p className="px-4 py-8 text-center text-body-sm text-ink-3">
-          {searched ? `No games for “${searched}”.` : "Your games will appear here."}
+          {searched ? t("No games for “{query}”.", { query: searched }) : t("Your games will appear here.")}
         </p>
       )}
     </div>
@@ -117,7 +145,13 @@ export function GameSearchDialog({
   useEffect(() => {
     list.current?.querySelector(`[data-search-index="${selected}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
+  const end = useSearchEnd(query, debounced, items);
+  const dismiss = (): void => {
+    end(null);
+    onDismiss();
+  };
   function select(item: GameSearchItem) {
+    end(item);
     onDismiss();
     if (item.game) onSelectGame(item.game.name);
     else if (item.threadId) onSelectThread(item.threadId);
@@ -130,7 +164,7 @@ export function GameSearchDialog({
     const command = event.metaKey || event.ctrlKey;
     if (command && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      onDismiss();
+      dismiss();
     }
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -147,11 +181,11 @@ export function GameSearchDialog({
   };
   return (
     <DialogSurface
-      title="Search games"
+      title={t("Search games")}
       size="xl"
       testId="game-search-dialog"
       initialFocus={input}
-      onDismiss={onDismiss}
+      onDismiss={dismiss}
       className="gap-0 p-0"
       showClose={false}
     >
@@ -161,8 +195,8 @@ export function GameSearchDialog({
           ref={input}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search anything…"
-          aria-label="Search games"
+          placeholder={t("Search anything…")}
+          aria-label={t("Search games")}
           role="combobox"
           aria-expanded="true"
           aria-controls="game-search-results"
@@ -170,7 +204,7 @@ export function GameSearchDialog({
           aria-activedescendant={items[selected] ? `game-search-${selected}` : undefined}
           onKeyDown={onKey}
         />
-        <button type="button" aria-label="Close search" onClick={onDismiss}>
+        <button type="button" aria-label={t("Close search")} onClick={dismiss}>
           <Shortcut>esc</Shortcut>
         </button>
       </div>
@@ -185,13 +219,13 @@ export function GameSearchDialog({
       />
       <div className="game-search-footer">
         <span>
-          <Shortcut>↑↓</Shortcut> navigate
+          <Shortcut>↑↓</Shortcut> {t("navigate")}
         </span>
         <span>
-          <Shortcut>↵</Shortcut> open
+          <Shortcut>↵</Shortcut> {t("open")}
         </span>
         <span>
-          <Shortcut>esc</Shortcut> close
+          <Shortcut>esc</Shortcut> {t("close")}
         </span>
       </div>
     </DialogSurface>

@@ -10,6 +10,7 @@ import { test } from "node:test";
 import {
   linuxSecretStorageSwitches,
   quitsWhenLastWindowCloses,
+  testLanguageSwitches,
   testLaunchChromiumSwitches,
 } from "../../src/main/dev/launch-flags.ts";
 
@@ -93,4 +94,14 @@ test("an explicit password-store switch and other platforms keep Chromium's own 
   assert.deepEqual(linuxSecretStorageSwitches({ platform: "linux", env, hasPasswordStoreSwitch: true }), []);
   assert.deepEqual(linuxSecretStorageSwitches({ platform: "darwin", env, hasPasswordStoreSwitch: false }), []);
   assert.deepEqual(linuxSecretStorageSwitches({ platform: "win32", env, hasPasswordStoreSwitch: false }), []);
+});
+
+test("a test or fixture launch reads English unless it asks to see one of the app's languages", () => {
+  assert.deepEqual(testLanguageSwitches(false, "ru"), []);
+  assert.deepEqual(testLanguageSwitches(true), [["lang", "en-US"]]);
+  assert.deepEqual(testLanguageSwitches(true, "ru"), [["lang", "ru"]]);
+  assert.deepEqual(testLanguageSwitches(true, "zh-Hans"), [["lang", "zh-CN"]]);
+  assert.deepEqual(testLanguageSwitches(true, "--disable-web-security"), [["lang", "en-US"]]);
+  // "system": no pin, so the launch finds its language as a person's launch does.
+  assert.deepEqual(testLanguageSwitches(true, "system"), []);
 });

@@ -51,11 +51,13 @@
         "docs/agent/feature-map.md",
         "docs/agent/architecture.md",
         "docs/agent/design.md",
+        "docs/agent/translation.md",
         "docs/local-models.md",
         "docs/connections-and-context.md",
         "docs/tool-permissions.md",
         "docs/performance.md",
-        "docs/play.md"
+        "docs/play.md",
+        "docs/usage-analytics.md"
       ],
       "commands": ["typecheck", "test:build-ui"]
     },
@@ -113,14 +115,17 @@
         "src/substrate/paths.ts",
         "tests/conformance/paths.test.ts",
         "tests/conformance/fsx.test.ts",
-        "src/substrate/windows-sandbox.ts"
+        "src/substrate/windows-sandbox.ts",
+        "src/substrate/git-policy.ts",
+        "scripts/vendor-git-for-mac.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/workspace.md",
         "docs/harness-runtime.md",
-        "docs/windows-sandbox.md"
+        "docs/windows-sandbox.md",
+        "docs/mac-bundled-git.md"
       ],
       "commands": ["check", "test:fast"]
     },
@@ -441,6 +446,7 @@
         "docs/STUDIO-DEVELOPER-FIELD-GUIDE.md",
         "docs/release-readiness.md",
         "docs/agent/glossary.md",
+        "docs/agent/translation.md",
         "docs/agent/recipes.md",
         "src/AGENTS.md",
         "tests/AGENTS.md",

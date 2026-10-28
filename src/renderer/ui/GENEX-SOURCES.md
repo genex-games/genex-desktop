@@ -30,15 +30,27 @@ The web app's primitives (`Button`, `dialog`, `dropdown-menu`, `input`, `popover
 
 ## Font licenses
 
-Font binaries are as published upstream (Geist Mono is its Google Fonts Latin subset). Each is
-licensed under SIL Open Font License 1.1; full notices ship beside the binaries. License texts were retrieved from the upstream Google Fonts copies:
+Each font is licensed under SIL Open Font License 1.1; its full notice ships beside the binary.
+License texts were retrieved from the upstream copies:
 
-- [Zalando Sans SemiExpanded OFL](https://github.com/google/fonts/blob/main/ofl/zalandosanssemiexpanded/OFL.txt)
-- [Geist OFL](https://github.com/google/fonts/blob/main/ofl/geist/OFL.txt)
-- [Geist Mono OFL](https://github.com/google/fonts/blob/main/ofl/geistmono/OFL.txt)
+- [Zalando Sans SemiExpanded OFL](https://github.com/google/fonts/blob/main/ofl/zalandosanssemiexpanded/OFL.txt), as published.
+- [Geist Mono OFL](https://github.com/google/fonts/blob/main/ofl/geistmono/OFL.txt), as published (Latin, Cyrillic, Greek).
+- [TikTok Sans OFL](https://github.com/google/fonts/blob/main/ofl/tiktoksans/OFL.txt): the Cyrillic and Greek of
+  `TikTokSans[opsz,slnt,wdth,wght].ttf`, fixed at opsz 14, wdth 109, slnt 0 (Zalando Sans SemiExpanded's
+  lowercase width), its weight axis relabelled so CSS weight w draws TikTok's 1.16w − 19 (Zalando's stem
+  thickness at 300–700), named "TikTok Sans Genex"; `size-adjust: 101.3%` in theme.css matches
+  Zalando's capital height.
+- [LINE Seed JP OFL](https://github.com/google/fonts/blob/main/ofl/lineseedjp/OFL.txt): Regular and Bold, as published.
+- [Pretendard OFL](https://github.com/orioncactus/pretendard/blob/main/LICENSE) (Reserved Font Name "Pretendard"):
+  `PretendardVariable.ttf` 1.3.9 cut to Hangul and CJK punctuation and renamed "Genex Hangul", as the
+  license requires of a modified copy.
+- [Noto Sans SC OFL](https://github.com/google/fonts/blob/main/ofl/notosanssc/OFL.txt): `NotoSansSC[wght].ttf`
+  cut to the 7,445 characters of GB 2312 and the CJK and full-width punctuation; rarer characters fall to
+  the system font.
 
-The Geist fallback is restricted to the source's Greek/Cyrillic Unicode ranges; it does not
-replace the Latin Zalando face. There are no runtime font-network requests.
+Zalando Sans has Latin only (zalando/sans#40 asks for Cyrillic): Cyrillic and Greek come from TikTok
+Sans, and the app language's script from LINE Seed JP, Genex Hangul or Noto Sans SC, all after
+Zalando in the stack (`--font-language` in theme.css). There are no runtime font-network requests.
 
 ## Other notices
 

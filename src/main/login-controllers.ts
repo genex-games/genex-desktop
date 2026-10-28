@@ -1,6 +1,6 @@
 /**
- * The two subscription sign-in controllers main owns, wired to the same external installation
- * generation uses. Login state is display-only and transient: it is pushed to the window, never
+ * The sign-in controllers main owns (the two subscriptions', and OpenCode's and Grok Build's own
+ * CLI sign-ins in the terminal), wired to the same external installation generation uses. Login state is display-only and transient: it is pushed to the window, never
  * stored with the events.
  */
 import os from "node:os";
@@ -8,7 +8,9 @@ import { UiEvent } from "../shared/ui-events.ts";
 import { findClaudeBinary } from "../substrate/engines/claude-cli.ts";
 import { requireCodingCli } from "../substrate/engines/external-cli.ts";
 import { openCodeSignInArgs } from "../substrate/engines/opencode-cli.ts";
+import { CURSOR_FILE_STORE, CursorCommand } from "../substrate/engines/cursor-cli.ts";
 import { childEnv } from "../substrate/child-env.ts";
+import { grokHome } from "../substrate/credential-homes.ts";
 import type { ClaudeLoginState } from "../shared/claude-login.ts";
 import type { CodexLoginState } from "../shared/codex-login.ts";
 import { ClaudeLoginController } from "./claude-login.ts";
@@ -18,6 +20,7 @@ import { EngineId } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
 import type { EngineStatus } from "../shared/engine-descriptor.ts";
 import type { SubscriptionAccounts } from "../substrate/engines/subscription-accounts.ts";
+import { t } from "../shared/i18n.ts";
 
 /**
  * Both subscriptions answer the same three questions — which login would I use, sign me in,
@@ -65,6 +68,10 @@ export interface LoginControllerDeps {
   showClaudeState(state: ClaudeLoginState): void;
   /** OpenCode's sign-in ended: read the models it can run now. */
   onOpenCodeSignedIn?(): Promise<unknown>;
+  /** Grok Build's sign-in ended: read whose sign-in it runs on, and its models, now. */
+  onGrokSignedIn?(): Promise<unknown>;
+  /** Cursor's sign-in ended: check the sign-in and read the models it can run now. */
+  onCursorSignedIn?(): Promise<unknown>;
   /** The installed CLI each sign-in runs; the studio's own resolver unless a test gives another. */
   requireCli?: typeof requireCodingCli;
   findBinary?: typeof findClaudeBinary;
@@ -80,10 +87,14 @@ export function createLoginControllers({
   requireCli = requireCodingCli,
   findBinary = findClaudeBinary,
   onOpenCodeSignedIn,
+  onGrokSignedIn,
+  onCursorSignedIn,
 }: LoginControllerDeps): {
   codexLogin: CodexLoginController;
   claudeLogin: ClaudeLoginController;
   openCodeLogin: OpenCodeLogin;
+  grokLogin: CliLogin;
+  cursorLogin: CliLogin;
 } {
   let lastCodexLoginPhase = "idle";
   const codexLogin = new CodexLoginController({
@@ -119,7 +130,7 @@ export function createLoginControllers({
         args: ["auth", "login"],
         cwd: options.configDir ?? os.tmpdir(),
         env: options.env,
-        title: "Claude Code sign-in",
+        title: t("Claude Code sign-in"),
         kind: TerminalKind.ClaudeLogin,
         onUrl: options.onUrl,
         onExit: options.onExit,
@@ -146,7 +157,7 @@ export function createLoginControllers({
         // provider list comes from the catalog it already has: a refresh can stall for minutes
         // before the first question, and the engine refreshes the models itself after.
         env: childEnv(cli.env, { base: "contractor", vendor: "opencode", set: { OPENCODE_DISABLE_MODELS_FETCH: "1" } }),
-        title: "OpenCode sign-in",
+        title: t("OpenCode sign-in"),
         kind: TerminalKind.OpenCodeLogin,
         onExit: () => {
           void onOpenCodeSignedIn?.()?.catch(() => {});
@@ -155,7 +166,73 @@ export function createLoginControllers({
       return { started: true };
     },
   };
-  return { codexLogin, claudeLogin, openCodeLogin };
+  const grokLogin: CliLogin = {
+    async start() {
+      const cli = await requireCli(EngineId.Grok).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: ["login"],
+        cwd: os.tmpdir(),
+        // Its own sign-in, into the home every session reads (`GROK_HOME`): no other vendor's
+        // variables, and no xAI key, which would stand in for the account.
+        env: childEnv(cli.env, {
+          base: "contractor",
+          vendor: "grok",
+          set: { GROK_HOME: grokHome(), GROK_DISABLE_AUTOUPDATER: "1" },
+        }),
+        title: t("Grok Build sign-in"),
+        kind: TerminalKind.GrokLogin,
+        onExit: () => {
+          void onGrokSignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
+  const cursorLogin = cursorSignIn({ terminals, requireCli, onCursorSignedIn });
+  return { codexLogin, claudeLogin, openCodeLogin, grokLogin, cursorLogin };
+}
+
+/**
+ * Cursor's sign-in: `cursor-agent login` in a terminal in its Settings row, its sign-in kept in its
+ * file as every session reads it (never the Keychain, which no sandboxed session reaches); when the
+ * terminal closes, the studio checks the sign-in and reads the models again.
+ */
+function cursorSignIn({
+  terminals,
+  requireCli,
+  onCursorSignedIn,
+}: Pick<LoginControllerDeps, "terminals" | "onCursorSignedIn"> & {
+  requireCli: typeof requireCodingCli;
+}): CliLogin {
+  return {
+    async start() {
+      const cli = await requireCli(EngineId.Cursor).catch(() => null);
+      if (!cli) return { started: false, missingCli: true };
+      terminals.open({
+        file: cli.path,
+        args: [CursorCommand.SignIn],
+        cwd: os.tmpdir(),
+        // No other vendor's variables and no credential: the person signs in with their account.
+        env: childEnv(cli.env, { base: "contractor", vendor: "cursor", set: { ...CURSOR_FILE_STORE } }),
+        title: t("Cursor sign-in"),
+        kind: TerminalKind.CursorLogin,
+        onExit: () => {
+          void onCursorSignedIn?.()?.catch(() => {});
+        },
+      });
+      return { started: true };
+    },
+  };
+}
+
+/**
+ * A CLI's own sign-in, run in a terminal in its Settings row; the CLI keeps what it is given. Cursor
+ * opens the browser itself and prints the page too; its account goes into its own file.
+ */
+export interface CliLogin {
+  start(): Promise<{ started: boolean; missingCli?: boolean }>;
 }
 
 /**
@@ -163,6 +240,4 @@ export function createLoginControllers({
  * of the providers it supports. OpenCode keeps what it is given in its own store; the studio
  * rereads the models OpenCode can run once the terminal closes.
  */
-export interface OpenCodeLogin {
-  start(): Promise<{ started: boolean; missingCli?: boolean }>;
-}
+export type OpenCodeLogin = CliLogin;

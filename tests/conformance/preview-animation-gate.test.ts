@@ -106,3 +106,44 @@ test("a cancelled callback from before hide cannot consume the newly armed frame
   deliveries[1]?.(2);
   assert.deepEqual(frames, [2]);
 });
+
+test("a capped preview lets through at most its rate of frames, each frame whole, and the cap lifts at once", () => {
+  let queued: Array<(time: number) => void> = [];
+  const gate = animationGate({
+    request: (callback) => {
+      queued.push(callback);
+      return queued.length;
+    },
+    cancel: () => {},
+  });
+  const frame = (time: number) => {
+    const now = queued;
+    queued = [];
+    for (const callback of now) callback(time);
+  };
+  const game: number[] = [];
+  const shim: number[] = [];
+  const loop = (time: number) => {
+    game.push(time);
+    gate.request(loop);
+  };
+  const pump = (time: number) => {
+    shim.push(time);
+    gate.request(pump);
+  };
+  gate.request(pump);
+  gate.request(loop);
+  gate.setMaxFps(30);
+  // A 120 Hz display for 100 ms: frames every 8.33 ms.
+  for (let n = 0; n <= 12; n++) frame(n * (1000 / 120));
+  assert.deepEqual(
+    game.map((time) => Math.round(time)),
+    [0, 33, 67, 100],
+    "about every fourth frame at 120 Hz",
+  );
+  assert.deepEqual(shim, game, "every callback of a frame shares it");
+  gate.setMaxFps(0);
+  frame(108.4);
+  frame(116.7);
+  assert.equal(game.length, 6, "uncapped, every frame runs again");
+});

@@ -64,6 +64,7 @@ import {
   TAPE_WIRE_VERSION,
   type TapeLine,
 } from "../../shared/game-ai-tape.ts";
+import { t } from "../../shared/i18n.ts";
 import { REDACTED } from "../../shared/redact.ts";
 import type { AiCallTrace, GameAiCaller, GameAiClock, GameAiReports, GenexAiPlatform } from "./types.ts";
 
@@ -95,10 +96,6 @@ const NODE_BUDGET = Math.floor(AI_REPORT_BOUNDS.nodes * 0.95);
 const BODY_HEADROOM_CHARS = 64 * 1024;
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 const SHA_HEX = "hex";
-
-const MESSAGE = {
-  Unreadable: "The Report's bundle does not fit its own contract",
-} as const;
 
 /** A send that never reached genex.games. */
 const OFFLINE: AiReportOutcome = { ok: false, failure: AiReportFailure.Offline };
@@ -456,7 +453,7 @@ function readable(bundle: AiReportBundle): AiReportBundle {
   if (readAiReportBundle(JSON.parse(JSON.stringify(bundle)))) return bundle;
   const withoutCheck = { ...bundle, modelCheck: null };
   if (readAiReportBundle(JSON.parse(JSON.stringify(withoutCheck)))) return withoutCheck;
-  throw new Error(MESSAGE.Unreadable);
+  throw new Error(t("The Report's bundle does not fit its own contract"));
 }
 
 // ── the service ────────────────────────────────────────────────────────────────────────────

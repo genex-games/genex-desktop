@@ -16,10 +16,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   GENEX_COVER_CANDIDATES_DIR,
   GENEX_COVER_MAX_BYTES,
   GENEX_COVER_SHOT_FILE,
+  type GenexCoverAgentTook,
   GenexCoverOrigin,
   type GenexCoverFrameStats,
   GenexCoverOperation,
@@ -31,7 +33,13 @@ import {
   type GenexPublishState,
 } from "../../shared/genex.ts";
 import { PluginStillProblemCode, type PluginStillProblem } from "../../shared/plugins.ts";
-import { CaptureSource, type StillExposure, StillMimeType } from "../../shared/preview-contract.ts";
+import {
+  CaptureSource,
+  isFlatStill,
+  isTooDarkStill,
+  type StillExposure,
+  StillMimeType,
+} from "../../shared/preview-contract.ts";
 import { atomicWriteText, isJsonObject, replaceFile } from "../../substrate/fsx.ts";
 import { stripAnsi } from "./cli.ts";
 
@@ -56,8 +64,6 @@ export const COVER_SEND_TIMEOUT_MS = 90 * SECOND_MS;
 /** How long asking Genex for the game's current cover may take. */
 export const COVER_VIEW_TIMEOUT_MS = 30 * SECOND_MS;
 
-/** Advisory mirror of Genex's gate on a cover's luma (0–1): the server decides, on the encoded frame. */
-const GATE = { MinMean: 0.12, MaxNearBlack: 0.85, MinSpread: 0.04 } as const;
 /** The cover card's comfort line: a frame that only just clears the gate reads murky on a card. */
 const COMFORT = { MinMean: 0.2, MinSpread: 0.08, MaxNearBlack: 0.7 } as const;
 /** Mirror of the size Genex stores a cover at: a smaller frame is scaled up and goes soft. */
@@ -75,6 +81,8 @@ export const COVER_CANDIDATES_MAX = 4;
 /** A candidate's name: the sha256 of its image bytes, nothing a path could hide in. */
 const CANDIDATE_SHA = /^[0-9a-f]{64}$/;
 const SENT_RECORD = "sent.json";
+/** When the agent itself last kept a shot and a clip (`GenexCoverAgentTook`). */
+const AGENT_RECORD = "agent.json";
 /** A send's own copy of the shot it uploads, beside the shot: removed when the send ends. */
 const SEND_COPY_PREFIX = ".send-";
 const PRIVATE_FILE = 0o600;
@@ -193,7 +201,7 @@ export const MESSAGE = {
     `The cover frame is ${w}×${h}: Genex stores covers at 1280×720 and scales a smaller one up, so it looks soft.`,
   NotWide: (w: number, h: number) => `The cover frame is ${w}×${h}, not 16:9: Genex crops it to its middle 16:9.`,
   TooDark:
-    "Genex will likely refuse this frame as too dark (mean brightness under 0.12, or over 85% near-black). Find the game's best-lit honest moment; if it is dark by design, stop: never relight the game for a cover.",
+    "Genex will likely refuse this frame as too dark (mean brightness under 0.11, or over 85% near-black). Find the game's best-lit honest moment; if it is dark by design, stop: never relight the game for a cover.",
   Flat: "Genex will likely refuse this frame as one flat colour (contrast under 0.04): the canvas may not have drawn, or a fade, a loading screen, sky or fog fills it.",
   Dim: "This frame only just clears Genex's gate and will read murky on a card: where the game's own light allows, aim for brightness 0.2 or more, contrast 0.08 or more and under 70% near-black.",
   Rejected: (reason: string, stats: GenexCoverFrameStats | null) => {
@@ -209,7 +217,8 @@ export const MESSAGE = {
   SendTimedOut: "Genex did not answer about the cover in time",
   OwnerHolds:
     "The owner chose this game's cover on genex.games and that choice stands: send nothing, and never ask them to clear it.",
-  NoSuchCandidate: "That cover is no longer among this game's recent frames.",
+  /** Publish's refusal of a pick, in the person's words. */
+  NoSuchCandidate: () => t("That cover is no longer among this game's recent frames."),
   TermsFirst: "Genex's terms have changed: the user must accept them on genex.games before the cover can be set.",
 } as const;
 
@@ -343,8 +352,9 @@ export function readStillAnswer(answer: unknown): { still: CoverStill } | { prob
 export function coverAdvice(shot: Pick<GenexCoverShot, "width" | "height" | "stats">): CoverAdvice[] {
   const { lumaMean, lumaStdDev, nearBlackFraction } = shot.stats;
   const advice: CoverAdvice[] = [];
-  const dark = lumaMean < GATE.MinMean || nearBlackFraction > GATE.MaxNearBlack;
-  const flat = lumaStdDev < GATE.MinSpread;
+  // Advisory: Genex's own gate decides, on the encoded frame.
+  const dark = isTooDarkStill(shot.stats);
+  const flat = isFlatStill(shot.stats);
   const dim = lumaMean < COMFORT.MinMean || lumaStdDev < COMFORT.MinSpread || nearBlackFraction >= COMFORT.MaxNearBlack;
   if (dark) advice.push(CoverAdvice.TooDark);
   if (flat) advice.push(CoverAdvice.Flat);
@@ -546,6 +556,25 @@ export async function readSent(dir: string): Promise<GenexCoverSent | null> {
   const sent = await readJsonFile(path.join(dir, SENT_RECORD));
   const valid = isJsonObject(sent) && OUTCOME_KINDS.has(String(sent.kind)) && typeof sent.at === "string";
   return valid ? (sent as unknown as GenexCoverSent) : null;
+}
+
+/** A time the agent record keeps, when it is one. */
+const isTime = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
+
+/** When the agent itself last kept a shot and a clip; anything unsound in the record is left out. */
+export async function readAgentTook(dir: string): Promise<GenexCoverAgentTook> {
+  const kept = await readJsonFile(path.join(dir, AGENT_RECORD));
+  if (!isJsonObject(kept)) return {};
+  return {
+    ...(isTime(kept.shot) ? { shot: kept.shot } : {}),
+    ...(isTime(kept.clip) ? { clip: kept.clip } : {}),
+  };
+}
+
+/** Note that the agent itself kept a shot or a clip at these times; the other kind's time stays. */
+export async function noteAgentTook(dir: string, took: GenexCoverAgentTook): Promise<void> {
+  const next = { ...(await readAgentTook(dir)), ...took };
+  await atomicWriteText(path.join(dir, AGENT_RECORD), `${JSON.stringify(next, null, 2)}\n`, { mode: PRIVATE_FILE });
 }
 
 /** Write bytes beside their final name, private, then put them in place in one rename. */

@@ -69,6 +69,18 @@ test("real intake questions survive pagination and settle on either a choice rep
   assert.throws(() => interviewQuestion({ question: " " }));
 });
 
+test("an agent's question keeps its one-line recap above it, and the card reads it", () => {
+  const asked = interviewQuestion({
+    recap: "  The road, two cars and the lap timer are in.  ",
+    question: "Which camera should the race use?",
+    options: "Behind the car (Recommended) | You see the car and the road ahead\nHood view\nTop-down",
+  });
+  assert.equal(asked.recap, "The road, two cars and the lap timer are in.");
+  assert.equal("recap" in interviewQuestion({ question: "Which camera?", recap: " " }), false, "no empty recap");
+  const card = toEntries([custom(1, "interview_question", asked)]).find((e) => e.kind === "question");
+  assert.equal(card?.kind === "question" ? card.recap : undefined, "The road, two cars and the lap timer are in.");
+});
+
 test("host handoff diagnostics disappear while ordinary explanations and errors remain", () => {
   const technical =
     "**test-4** (folder `AI Games/test-4`) — Claude Code (opus) · medium effort conducts the build interview itself and starts the run when it has what it needs.";

@@ -12,6 +12,18 @@ export interface WaitingCard {
 }
 
 /**
+ * The composer while a card waits: what it invites, and where its words go — the card's own answer
+ * (words for Claude instead of the request), or the chat as ever when `send` is absent (an agent's
+ * question takes the next message as its answer).
+ */
+export interface OwnAnswer {
+  placeholder: string;
+  send?: (text: string) => Promise<void>;
+  /** The words answer an agent's question, sent to the chat as the person's message. */
+  answersQuestion?: boolean;
+}
+
+/**
  * The card to show: the one on show before while it still waits (unless it is blocked and
  * another is not), else the first that can be answered, else the first.
  */

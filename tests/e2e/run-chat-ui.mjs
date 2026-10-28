@@ -4,6 +4,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { request } from "../../scripts/studio-dev/client.ts";
+import { pressStageView } from "./stage-views.mjs";
 import { sourceIdentity } from "../../scripts/studio-dev/files.mjs";
 const root = process.cwd(),
   profile = `chat-ui-${Date.now()}`,
@@ -146,7 +147,7 @@ try {
   report.identity = await cli(["start", "--profile", profile, "--fixture", "chat-questions"]);
   started = true;
   descriptor = JSON.parse(fs.readFileSync(path.join(root, `.studio-dev/profiles/${profile}/controller.json`), "utf8"));
-  await check("permission question stays reachable and submits only after explicit confirmation", async () => {
+  await check("permission questions answer on one press, one card at a time, and take typed words", async () => {
     await until(async () => (await snap()).text.includes("Use the new moon texture in this game?"), "question visible");
     assert.equal((await snap()).stage.stageView, "builds", "an active run opens the Builds panel");
     // Claude's own cards (a command, then a plan) and the plugin's wait one at a time, in the order
@@ -162,44 +163,42 @@ try {
         },
         `${title} on show, ${more || "nothing"} behind it`,
       );
-    await showing("Claude wants to run a command", "2 more waiting");
-    assert.doesNotMatch(await shown(), /Approve this plan\?|Use the new moon texture/, "one card at a time");
-    const continues = async () => (await snap()).controls.filter((c) => c.text === "Continue").length;
-    assert.equal(await continues(), 1, "only the card on show offers Continue");
-    assert.ok((await snap()).controls.some((c) => c.text === "Continue" && c.disabled));
-    const command = '[data-pending-questions] [data-chat-question]:has(input[value="deny"])';
-    await clickQuestion(command + ' input[value="deny"]');
-    await pause(500);
-    assert.ok(
-      (await snap()).controls.some((c) => c.text === "Continue" && !c.disabled),
-      "selection must not auto-submit",
-    );
-    await clickQuestion(command + ' [aria-label="Put question aside"]');
+    // The cards wait in the order they were asked: the plugin's, then Claude's command, then its plan.
+    const moon = '[data-pending-questions] [data-chat-question]:has([data-answer="decline"])';
+    await showing("Use the new moon texture in this game?", "2 more waiting");
+    assert.doesNotMatch(await shown(), /Approve this plan\?|Claude wants to run a command/, "one card at a time");
+    // Flipped: an answer is one press of its button, so no card offers Continue any more.
+    assert.ok(!(await snap()).controls.some((c) => c.text === "Continue"), "no Continue: a press answers");
+    const answers = (await op("snapshot", { surface: "desktop", scope: `${moon} [data-question-answers]`, limit: 20 }))
+      .text;
+    assert.match(answers, /^Allow once/, "the recommended answer comes first, at the left edge");
+    await clickQuestion(moon + ' [aria-label="Put question aside"]');
     await until(
       async () => (await snap()).controls.some((c) => c.text === "Review permission request"),
       "the card put aside",
     );
     await op("key", { surface: "desktop", key: "Enter", code: "Enter" });
-    await until(
-      async () => (await snap()).controls.some((c) => c.text === "Continue" && !c.disabled),
-      "reopen preserves selection",
-    );
+    await until(async () => (await shown()).includes("Use the new moon texture in this game?"), "the card back");
     await capture("permission-question");
-    // Answer every card (deny the command, approve the plan asking first, decline the plugin), so the
-    // build is the only thing still running: a waiting question keeps the chat's own busy line up instead.
-    await clickQuestion(command + ' button[type="submit"]');
-    await showing("Approve this plan?", "1 more waiting");
-    const plan = '[data-pending-questions] [data-chat-question]:has(input[value="default"])';
-    await clickQuestion(plan + ' input[value="default"]');
-    await clickQuestion(plan + ' button[type="submit"]');
-    await showing("Use the new moon texture in this game?", "");
-    const form = '[data-pending-questions] [data-chat-question]:has(input[value="decline"])';
-    await clickQuestion(form + ' input[value="decline"]');
-    await clickQuestion(form + ' button[type="submit"]');
+    // Answer every card (decline the plugin, deny the command with words for Claude, approve the
+    // plan with the answer keys), so the build is the only thing still running: a waiting question
+    // keeps the chat's own busy line up instead.
+    await clickQuestion(moon + ' [data-answer="decline"]');
+    await showing("Claude wants to run a command", "1 more waiting");
+    await op("type", { selector: '[aria-label="Prompt"]', text: "Use the old texture instead", replace: true });
+    await op("key", { surface: "desktop", key: "Enter", code: "Enter" });
+    await showing("Approve this plan?", "");
+    await op("key", {
+      surface: "desktop",
+      key: "Enter",
+      code: "Enter",
+      modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+    });
     await until(
-      async () => (await continues()) === 0 && (await snap()).text.includes("Declined"),
-      "durable answer, nothing left waiting",
+      async () => !(await snap()).controls.some((c) => c.text === "Review plan" || c.text?.startsWith("Yes, in")),
+      "nothing left waiting",
     );
+    assert.match((await snap()).text, /Declined/, "durable answers in the chat");
     await latest();
   });
   await check("opens at the latest reply with a bounded transcript and collapsed tools", async () => {
@@ -246,7 +245,7 @@ try {
     await capture("current-task");
   });
   await check("generated image loads, opens a modal and opens the project Assets view", async () => {
-    await op("click", { selector: "[data-stage-action=live]" });
+    await pressStageView((selector) => op("click", { selector }), "live");
     await until(async () => (await snap()).stage.stageView === "live", "native Live visible");
     await op("game.state");
     await scroll(-350);

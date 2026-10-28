@@ -134,9 +134,11 @@ export function LoadingState({
         <StatusOrb />
       </span>
       <span className="chat-status-words">
+        {/* The label can be the agent's own words about the work. */}
         <span
           ref={status}
           role="status"
+          data-analytics-mask
           data-shimmer={!held.waiting || undefined}
           className={`${held.waiting ? "text-ink-2" : "chat-status-shimmer"} min-w-0 truncate`}
         >

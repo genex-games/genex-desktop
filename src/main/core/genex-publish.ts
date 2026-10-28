@@ -5,7 +5,8 @@
  * request for the same action is only relayed by the main frame, so it still goes through the
  * review, ticket and native dialog of `studio:plugins.action`, and an agent's publish asks in chat.
  * Neither the dialog, an agent nor a plugin's own export publishes a game that holds no web game at
- * its root, such as an Unreal game (`assertPublishable`).
+ * its root, such as an Unreal game (`assertPublishable`), as a web game; one that holds a ready Mac or
+ * Windows app is published from the dialog as its apps (`publishAppsFromDialog`).
  */
 import { CoreFact, hasFact } from "../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../shared/project-workspace.ts";
@@ -20,15 +21,20 @@ import {
 import { createGameAiTapes } from "../game-ai/tapes.ts";
 import { type ExportReview, type PluginBinding, PluginSourceKind } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
+import { pinnedCliSendsApps } from "../../plugins/genex/native-publish.ts";
+import { publishedApps } from "./publish-platforms.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** Why Publish is refused before Genex is asked anything. */
 const MESSAGE = {
-  NoGame: "Open a game to publish it",
-  GenexUnavailable: "Publishing needs the Genex plugin, which isn't installed",
-  NoFileList: "Review the files before publishing",
-  BadAiChoice: "Choose whether the game needs AI again",
-  UnrealGame: (title: string) => `${title} builds in Unreal; publishing an Unreal game isn't supported yet.`,
-  NotWebGame: (title: string) => `${title} isn't a web game, so Genex can't publish it yet.`,
+  NoGame: () => t("Open a game to publish it"),
+  GenexUnavailable: () => t("Publishing needs the Genex plugin, which isn't installed"),
+  NoFileList: () => t("Review the files before publishing"),
+  BadAiChoice: () => t("Choose whether the game needs AI again"),
+  UnrealGame: (title: string) =>
+    t("{title} builds in Unreal; publishing an Unreal game isn't supported yet.", { title }),
+  NotWebGame: (title: string) => t("{title} isn't a web game, so Genex can't publish it yet.", { title }),
+  NoApps: () => t("This game has no Mac, Windows or Linux app ready to publish"),
 } as const;
 
 /** Why a game can't be published at all, by code: callers act on it, never on its words. */
@@ -83,12 +89,21 @@ export async function assertPublishable(core: Pick<StudioCore, "games">, project
   throw new PublishRefusedError(PublishRefusal.NotWebGame, MESSAGE.NotWebGame(game.title));
 }
 
+/** The dialog's Allow remixing as the publish's argument: sent only when the dialog said yes or no. */
+const remixArg = (remix: unknown): { remix?: boolean } => (typeof remix === "boolean" ? { remix } : {});
+
 /** The game the dialog names, bound as Studio allows it to be opened, while Studio's Genex is installed. */
-async function dialogBinding(core: DialogCore, project: unknown): Promise<PluginBinding> {
-  if (typeof project !== "string" || !project) throw new Error(MESSAGE.NoGame);
-  if (!core.plugins.list().some(isUsableGenex)) throw new Error(MESSAGE.GenexUnavailable);
+async function boundGame(core: DialogCore, project: unknown): Promise<PluginBinding> {
+  if (typeof project !== "string" || !project) throw new Error(MESSAGE.NoGame());
+  if (!core.plugins.list().some(isUsableGenex)) throw new Error(MESSAGE.GenexUnavailable());
   const binding = await core.pluginBinding(project);
-  if (!binding) throw new Error(MESSAGE.NoGame);
+  if (!binding) throw new Error(MESSAGE.NoGame());
+  return binding;
+}
+
+/** {@link boundGame} for a game Publish can put online as a web game. */
+async function dialogBinding(core: DialogCore, project: unknown): Promise<PluginBinding> {
+  const binding = await boundGame(core, project);
   await assertPublishable(core, binding.project);
   return binding;
 }
@@ -103,7 +118,7 @@ export async function publishReview(core: DialogCore, project: unknown): Promise
 function aiChoiceOf(raw: unknown): AiPublishChoice | undefined {
   if (raw === undefined) return undefined;
   const choice = readAiPublishChoice(raw);
-  if (!choice) throw new Error(MESSAGE.BadAiChoice);
+  if (!choice) throw new Error(MESSAGE.BadAiChoice());
   return choice;
 }
 
@@ -128,27 +143,72 @@ async function listingOf(core: DialogCore, project: string, choice: AiPublishCho
   return { ...choice, sites: dir ? await disclosedSites(dir) : [] };
 }
 
+/** The game's AI listing as the publish's argument: sent only when the dialog asked for a choice. */
+async function aiArg(
+  core: DialogCore,
+  project: string,
+  choice: AiPublishChoice | undefined,
+): Promise<{ ai?: AiPublishListing }> {
+  return choice ? { ai: await listingOf(core, project, choice) } : {};
+}
+
 /**
  * Publish `project` to the Genex gallery under `title` (cleaned; the plugin picks the name when none is
- * left), after the person approved `review` in the dialog, with the game's play-time AI choice
- * (`ai`: Needs AI or Works without AI, a leaderboard and who sees its AI text) when the dialog asked
- * for one, with the call sites its saved playtests show.
+ * left), after the person approved `review` in the dialog. The game's ready apps, which the dialog
+ * lists above its press, go once the web build is public (`publishedApps`). The game's play-time AI
+ * choice (`ai`: Needs AI or Works without AI, a leaderboard and who sees its AI text) goes with it
+ * when the dialog asked for one, with the call sites its saved playtests show.
  */
 export async function publishFromDialog(
   core: DialogCore,
   project: unknown,
   review: unknown,
   title?: unknown,
+  sendsApps = pinnedCliSendsApps(),
+  remix?: unknown,
   ai?: unknown,
 ): Promise<void> {
-  if (!isExportReview(review)) throw new Error(MESSAGE.NoFileList);
+  if (!isExportReview(review)) throw new Error(MESSAGE.NoFileList());
   const choice = aiChoiceOf(ai);
   const binding = await dialogBinding(core, project);
   const name = cleanGenexTitle(title);
-  const listing = choice ? await listingOf(core, binding.project, choice) : null;
-  const args = { ...(name ? { title: name } : {}), ...(listing ? { ai: listing } : {}) };
+  const native = await publishedApps(core, binding.project, sendsApps);
+  const args = {
+    ...(name ? { title: name } : {}),
+    ...(native.length > 0 ? { native } : {}),
+    ...remixArg(remix),
+    ...(await aiArg(core, binding.project, choice)),
+  };
   // Genex exports inside this call, so the approval lives exactly as long as it.
   await core.withApprovedExport(GENEX_PLUGIN_ID, binding.project, review, () =>
     core.plugins.action(GENEX_PLUGIN_ID, GenexAction.PublishGallery, args, binding),
+  );
+}
+
+/**
+ * Publish a game that has only apps, no web build (a Unity or Unreal game built for the Mac), from
+ * the dialog: its ready apps go to Genex and the game is listed under `title`, with its play-time AI
+ * choice (`ai`) when the dialog asked for one. The rows the dialog lists above its press name exactly
+ * these apps, so the press is the consent. Refused when the game has no ready app, or Studio's Genex
+ * CLI cannot send apps.
+ */
+export async function publishAppsFromDialog(
+  core: DialogCore,
+  project: unknown,
+  title?: unknown,
+  sendsApps = pinnedCliSendsApps(),
+  remix?: unknown,
+  ai?: unknown,
+): Promise<void> {
+  const choice = aiChoiceOf(ai);
+  const binding = await boundGame(core, project);
+  const native = await publishedApps(core, binding.project, sendsApps);
+  if (native.length === 0) throw new Error(MESSAGE.NoApps());
+  const name = cleanGenexTitle(title);
+  await core.plugins.action(
+    GENEX_PLUGIN_ID,
+    GenexAction.PublishApps,
+    { native, ...(name ? { title: name } : {}), ...remixArg(remix), ...(await aiArg(core, binding.project, choice)) },
+    binding,
   );
 }

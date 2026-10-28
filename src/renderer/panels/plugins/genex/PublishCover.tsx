@@ -1,18 +1,21 @@
 /**
  * The Publish banner's cover controls, drawn over the cover itself: arrows and dots to flip
  * through the recent frames, the Picture / Clip switch with the clip playing in the banner,
- * Another cover (or clip) with a field for what it should show, and a quiet pill while one is
- * being taken or made. Publish stays pressable through all of them.
+ * Another cover (or clip) with a field for what it should show, whose Ask agent closes the dialog
+ * into the chat, and a quiet pill while one is being taken or made. Publish stays pressable through
+ * all of them.
  */
 import type { FormEvent, JSX } from "react";
 import { useEffect, useRef, useState } from "react";
+import { SECOND_MS } from "../../../../shared/duration.ts";
 import { ProjectAssetScope } from "../../../../shared/game-assets.ts";
+import { LoaderGrid } from "../../../ui/LoadingState.tsx";
 import { prefersReducedMotion } from "../../../ui/media-queries.ts";
 import { Icon } from "../../../ui/icons.tsx";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
 import { GENEX_WORDS } from "../../../words.ts";
-import { clock } from "./genex-publish-view.ts";
-import { CoverKind, type PublishCover, useElapsed } from "./use-publish-cover.ts";
+import { CoverKind, coverMinutesLeft } from "./cover-asks.ts";
+import { type PublishCover, useElapsed } from "./use-publish-cover.ts";
 
 const WORDS = GENEX_WORDS.publish;
 
@@ -178,14 +181,28 @@ export function CoverControls({
   );
 }
 
-/** The pill while Studio takes the first cover, or while another is being made, with its clock. */
-function CoverBusy({ text, since }: { text: string; since: string | null }): JSX.Element {
+/**
+ * The pill while Studio takes the first cover, or while the agent makes another, with roughly how
+ * long is left once this game's last one was timed (`took`); nothing more before that or past it.
+ */
+function CoverBusy({
+  text,
+  since = null,
+  took,
+}: {
+  text: string;
+  since?: string | null;
+  took?: number | undefined;
+}): JSX.Element {
   const elapsed = useElapsed(since);
+  const minutes = elapsed === null ? null : coverMinutesLeft(took, elapsed * SECOND_MS);
   return (
     <span className="genex-publish-glass" role="status" data-genex-cover-busy>
-      <Icon name="reload" size={13} className="animate-spin" />
+      <LoaderGrid />
       {text}
-      {elapsed !== null && <span className="genex-publish-glass-clock">{clock(elapsed)}</span>}
+      {minutes !== null && (
+        <span className="genex-publish-glass-clock chat-status-shimmer">{WORDS.coverLeft(minutes)}</span>
+      )}
     </span>
   );
 }
@@ -227,7 +244,8 @@ function CoverAskForm({ onMake, onKeep }: { onMake: (want: string) => void; onKe
 
 /**
  * The banner's foot, beside the name: the busy pill, or Another cover (Another clip while the clip
- * shows). Asking opens the field in the foot's place (`asking`), so the name steps aside.
+ * shows). Asking opens the field in the foot's place (`asking`), so the name steps aside; Ask agent
+ * sends it to the chat and closes the dialog there (`onAsked`), where the agent's work shows.
  */
 export function CoverTool({
   cover,
@@ -235,16 +253,22 @@ export function CoverTool({
   disabled,
   asking,
   onAsking,
+  onAsked,
 }: {
   cover: PublishCover;
   show: CoverKind;
   disabled: boolean;
   asking: boolean;
   onAsking: (asking: boolean) => void;
+  onAsked: () => void;
 }): JSX.Element | null {
   const ask = cover.ask;
-  if (cover.taking) return <CoverBusy text={WORDS.coverTaking} since={null} />;
-  if (cover.making) return <CoverBusy text={WORDS.coverMaking} since={cover.making.since} />;
+  const making = cover.making;
+  if (cover.taking) return <CoverBusy text={WORDS.coverTaking} />;
+  if (making) {
+    const text = making.kind === CoverKind.Clip ? WORDS.coverMakingClip : WORDS.coverMaking;
+    return <CoverBusy text={text} since={making.since} took={making.took} />;
+  }
   if (!ask || disabled) return null;
   if (asking)
     return (
@@ -253,6 +277,7 @@ export function CoverTool({
         onMake={(want) => {
           ask(show, want);
           onAsking(false);
+          onAsked();
         }}
       />
     );

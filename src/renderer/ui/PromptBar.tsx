@@ -1,5 +1,6 @@
 import { markPerformance } from "../performance.tsx";
 import { PerformanceMarkName } from "../../shared/performance.ts";
+import { t } from "../../shared/i18n.ts";
 import type { ClipboardEvent, JSX, KeyboardEvent, Ref, RefObject } from "react";
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons.tsx";
@@ -55,6 +56,11 @@ import {
   storedChatLoop,
 } from "../loop-setting.ts";
 import { parseModelKey } from "../model-key.ts";
+import { chatMemory, noteComposed } from "../analytics/chat-memory.ts";
+import { hoursBucket, sendBlockedProperties, stopRequestedProperties } from "../analytics/chat-properties.ts";
+import { ComposerRoom, LoopVia, PlanModeVia, SendBlock, StopIgnored, StopVia } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 import {
   atomicBackspaceRange,
   splitMentions,
@@ -150,7 +156,7 @@ const MIN_INPUT_HEIGHT = 38;
 const MAX_INPUT_HEIGHT = 138;
 /** The send control morphs into Stop on the same click; this long after a send, Stop ignores it (ms). */
 const STOP_PAD_MS = 600;
-const DEFAULT_PLACEHOLDER = "Write a message…";
+const DEFAULT_PLACEHOLDER = t("Write a message…");
 
 /**
  * The composer's mode: the chat's own Loop (`loop-setting.ts`), what Mode shows and allows given
@@ -175,12 +181,14 @@ function useLoopSettings(props: PromptBarProps) {
   }, [conversationKey, coordinating]);
   const build = props.build ?? (coordinating ? RUNNING_BUILD : null);
   const view = composerLoopView({ own: setting, build, loopAvailable: props.loopAvailable });
-  const chooseLoop = (next: LoopSetting): void => {
+  const chooseLoop = (next: LoopSetting, via: LoopVia = LoopVia.ModeMenu): void => {
     setPick({ thread: conversationKey, setting: next });
     rememberChatLoop(browserStorage(), conversationKey, next);
+    track(AnalyticsEvent.LoopModeChanged, { on: next.on, hours_bucket: hoursBucket(next), via });
   };
-  // As Mode is: a build that owns the chat keeps its own plan, so its follow-ups get no review.
-  const planAvailable = view.editable && !coordinating;
+  // As Mode is: a build that owns the chat keeps its own plan, so its follow-ups get no review; nor
+  // do a paused build's, whose Loop is kept for later.
+  const planAvailable = view.editable && view.forLater !== true && !coordinating;
   // What the bulb, Add's row and the box show: plan review that this chat's next send will carry.
   const planOn = reviewPlan && planAvailable;
   return { setting, view, chooseLoop, reviewPlan, setReviewPlan, planAvailable, planOn, gate: props.loopGate };
@@ -375,7 +383,14 @@ function useBoardFrames(conversationKey: string | undefined) {
         overFiles: attached.overLimit,
         unlinked: read.unlinked,
       };
-      setLeftOut(leftOutLine(left) ? left : null);
+      const leftOut = leftOutLine(left) !== null;
+      setLeftOut(leftOut ? left : null);
+      if (leftOut)
+        track(AnalyticsEvent.ComposerAttachmentsRejected, {
+          over_pictures: left.overPictures,
+          over_files: left.overFiles,
+          unlinked: left.unlinked.length,
+        });
       now.current = { frames: board.frames, files: attached.files };
       setFrames(board.frames);
       setFiles(attached.files);
@@ -460,9 +475,12 @@ function FrameBoard({
   onRemoveFile: (path: string) => void;
 }): JSX.Element {
   return (
-    <div className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5" aria-label={gameMode ? "Mood board" : "Attached images"}>
+    <div
+      className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5"
+      aria-label={gameMode ? t("Mood board") : t("Attached images")}
+    >
       {frames.map((frame, index) => (
-        <div key={`${frame.label}-${index}`} className="group relative">
+        <div key={`${frame.label}-${index}`} data-analytics-mask className="group relative">
           <img
             src={`data:${frame.mimeType};base64,${frame.data}`}
             alt={frame.label}
@@ -471,7 +489,7 @@ function FrameBoard({
           />
           <button
             type="button"
-            aria-label={`Remove ${frame.label}`}
+            aria-label={t("Remove {name}", { name: frame.label })}
             onClick={() => onRemove(index)}
             className="absolute -top-1 -right-1 flex size-5 items-center justify-center rounded-full bg-ink text-micro text-surface group-hover:flex"
             style={{ background: "var(--ink)", color: "var(--surface)" }}
@@ -493,14 +511,15 @@ function ReplyAboutTag({ about }: { about: ReplyAboutChip }): JSX.Element {
     <div className="flex min-w-0 px-1 pt-1 pb-0.5">
       <span
         data-reply-about
+        data-analytics-mask
         className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-[9px] bg-inset pr-1 pl-2 text-body-sm text-ink-2"
-        title={`Your next message goes to the build as a note about ${about.label}`}
+        title={t("Your next message goes to the build as a note about {about}", { about: about.label })}
       >
         <Icon name="chat" size={13} />
         <span className="truncate">{about.label}</span>
         <button
           type="button"
-          aria-label={`Stop replying about ${about.label}`}
+          aria-label={t("Stop replying about {about}", { about: about.label })}
           onClick={about.onClear}
           className="grid size-5 shrink-0 cursor-pointer place-items-center rounded-[6px] text-ink-3 hover:bg-control-hover hover:text-control-text-hover"
         >
@@ -516,11 +535,14 @@ function SendControl({
   action,
   onSend,
   onStop,
+  onStopIgnored,
   ignoreStopUntil,
 }: {
   action: SendAction;
   onSend: () => void;
   onStop: () => void;
+  /** A Stop press the pad after Send swallowed. */
+  onStopIgnored?: () => void;
   ignoreStopUntil: RefObject<number>;
 }): JSX.Element {
   const stopping = action === SendAction.Stop;
@@ -532,17 +554,17 @@ function SendControl({
       hidden={quiet}
       content={
         stopping ? (
-          "Stop"
+          t("Stop")
         ) : (
           <span className="flex items-center gap-2">
-            Send <Shortcut>↵</Shortcut>
+            {t("Send")} <Shortcut>↵</Shortcut>
           </span>
         )
       }
     >
       <button
         type="button"
-        aria-label={stopping ? "Stop" : "Send"}
+        aria-label={stopping ? t("Stop") : t("Send")}
         data-state={action}
         disabled={action === SendAction.Idle}
         onClick={(event) => {
@@ -554,7 +576,10 @@ function SendControl({
           event.stopPropagation();
           // The send control morphs into Stop on the same click; the pad keeps that click from
           // cancelling the turn it just started.
-          if (Date.now() < ignoreStopUntil.current) return;
+          if (Date.now() < ignoreStopUntil.current) {
+            onStopIgnored?.();
+            return;
+          }
           onStop();
         }}
         onKeyDown={(event) => {
@@ -621,6 +646,14 @@ interface PromptBarProps {
   /** Composer stays usable, but Enter/send starts sign-in instead of a turn. */
   blockSend?: boolean;
   onBlockedSend?: () => void;
+  /** Where this composer sits, as usage analytics names it (a dead Send says where). */
+  room?: ComposerRoom;
+}
+
+/** A Stop press the send pad swallowed, right after Send. */
+function trackPaddedStop(thread: string | undefined, buildRunning: boolean): void {
+  const stop = { thread, via: StopVia.Button, ignored: StopIgnored.SendPad, buildRunning };
+  track(AnalyticsEvent.ChatStopRequested, stopRequestedProperties(chatMemory, stop, Date.now()));
 }
 
 /** The draft: the chat's own when it controls it, else the composer's. */
@@ -659,6 +692,8 @@ function useComposerSend(
   const send = (): void => {
     if (writable && noModel) {
       modelNudge.nudge();
+      const blocked = { reason: SendBlock.NoModel, room: props.room ?? ComposerRoom.Other, key: null };
+      track(AnalyticsEvent.MessageSendBlocked, sendBlockedProperties(chatMemory, blocked));
       return;
     }
     if (props.blockSend) {
@@ -688,6 +723,7 @@ function useComposerSend(
       ...(tags.length ? { mentions: tags } : {}),
     };
     loop.setReviewPlan(false);
+    noteComposed(chatMemory, props.conversationKey, sent.files.length);
     void Promise.resolve(props.onSend(text, Object.keys(extras).length ? extras : undefined)).catch(() => {
       if (extras.reviewPlan) loop.setReviewPlan(true);
       if (!inputRef.current?.value) setDraft(words);
@@ -764,7 +800,7 @@ function PaintedDraft({
   mirrorRef: RefObject<HTMLDivElement | null>;
 }): JSX.Element {
   return (
-    <div ref={mirrorRef} aria-hidden className={`${PROMPT_INPUT_CLASS} composer-input-paint`}>
+    <div ref={mirrorRef} aria-hidden data-analytics-mask className={`${PROMPT_INPUT_CLASS} composer-input-paint`}>
       {runs.map((run, index) =>
         run.handle ? (
           // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the draft.
@@ -831,7 +867,7 @@ function PromptTextarea({
         }
       }}
       placeholder={placeholder}
-      aria-label="Prompt"
+      aria-label={t("Prompt")}
       onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
       {...(list
         ? {
@@ -1039,6 +1075,7 @@ export function PromptBar(props: PromptBarProps): JSX.Element {
               action={composer.action}
               onSend={composer.send}
               onStop={() => props.onStop?.()}
+              onStopIgnored={() => trackPaddedStop(props.conversationKey, props.coordinating === true)}
               ignoreStopUntil={composer.ignoreStopUntil}
             />
           }
@@ -1088,7 +1125,7 @@ function usePromptHandle(
         const { loop, gameMode } = loopNow.current;
         const on = { on: true, hours: loop.setting.hours };
         const turnsOn = gameMode && loop.view.editable && !loop.view.loopUnavailable;
-        if (turnsOn) loop.chooseLoop(on);
+        if (turnsOn) loop.chooseLoop(on, LoopVia.KeepBuilding);
         const view = turnsOn ? { ...loop.view, shown: on } : loop.view;
         return composerExtras({ gameMode, view, reviewPlan: false, frames: [] });
       },
@@ -1169,7 +1206,15 @@ function ComposerToolbar(props: ComposerToolbarProps): JSX.Element {
           disabled={props.disabled}
         />
       )}
-      {gameMode && loop.planOn && <PlanModeOff onOff={() => loop.setReviewPlan(false)} disabled={props.disabled} />}
+      {gameMode && loop.planOn && (
+        <PlanModeOff
+          onOff={() => {
+            track(AnalyticsEvent.PlanModeToggled, { on: false, via: PlanModeVia.BulbOff });
+            loop.setReviewPlan(false);
+          }}
+          disabled={props.disabled}
+        />
+      )}
       {/* The flexible space: its margin takes back its own gap, so at no width it costs the name nothing. */}
       <div className="-ms-1 min-w-0 flex-1" />
       <ModelControls {...props} />
@@ -1197,7 +1242,14 @@ function AttachControl({
         project={project}
         anchor={panelRef}
         disabled={disabled}
-        plan={{ on: loop.planOn, available: loop.planAvailable, onChange: loop.setReviewPlan }}
+        plan={{
+          on: loop.planOn,
+          available: loop.planAvailable,
+          onChange: (on) => {
+            track(AnalyticsEvent.PlanModeToggled, { on, via: PlanModeVia.AddMenu });
+            loop.setReviewPlan(on);
+          },
+        }}
         onReferences={onPickImages}
         mention={mentions.mention?.query ?? null}
         listId={mentions.mentionListId}
@@ -1211,10 +1263,10 @@ function AttachControl({
     );
   }
   return (
-    <ComposerTip align="start" content="Attach images">
+    <ComposerTip align="start" content={t("Attach images")}>
       <button
         type="button"
-        aria-label="Attach images"
+        aria-label={t("Attach images")}
         disabled={disabled}
         onClick={onPickImages}
         className="composer-icon composer-add"

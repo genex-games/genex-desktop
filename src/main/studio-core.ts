@@ -14,11 +14,11 @@
  * preview is injected through {@link PreviewPort}.
  */
 import type { ChildProcess } from "node:child_process";
-import { cp, lstat, mkdtemp, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { sandboxBesidePlugins } from "./core/boot-side-by-side.ts";
-import { assistAvailable, coreAssistHost, engineAssist } from "./core/desktop-assist.ts";
+import { assistAvailable, assistUnderWay, coreAssistHost, engineAssist } from "./core/desktop-assist.ts";
 import type { DesktopControl } from "./core/desktop-control.ts";
 import type { MentionSources } from "./core/mention-tags.ts";
 import type { BuildPreviewRequest } from "../shared/build-preview.ts";
@@ -35,10 +35,17 @@ import { coverLookName, coverRecipeFromTool } from "../shared/cover-recipe.ts";
 import { CustomEvent, customEventData } from "../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineStatusCode } from "../shared/engine-descriptor.ts";
-import { errorMessage } from "../shared/errors.ts";
+import { CodedError, errorMessage } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
-import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
+import {
+  coverFromBrief,
+  ExportRefusal,
+  replaceableCover,
+  type GameUpdate,
+  WorkspaceRefusal,
+} from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
 import { GAME_AI_DIR, type GameAiHarnessHost } from "./game-ai/types.ts";
 import type { NativeAiHost } from "./game-ai/bridge-native.ts";
@@ -46,6 +53,7 @@ import type { AiDemoResult, AiDemoRun } from "./game-ai/harness-host.ts";
 import { reportCaptureOf, withinCaptureWait } from "./game-ai/capture.ts";
 import { REPORT_DEFAULT_ENGINE, type ReportCapture } from "./game-ai/report.ts";
 import { corePlayerDeps, previewDemoPlayer } from "./core/ai-demo-player.ts";
+import type { WebBuildLoad } from "../shared/live-behind.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -58,7 +66,8 @@ import {
   NativeRuntimeState,
 } from "../shared/plugins.ts";
 import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
-import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
+import { type ViewOpener, viewStill, type ViewStillOptions } from "./core/view-still.ts";
+import { type ReelView, throughCoverReel } from "./core/cover-reel.ts";
 import { viewClip, type ViewClipOptions } from "./core/view-clip.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
 import { type JobRecord, JobScopeKind, JobStopper } from "../shared/jobs.ts";
@@ -73,7 +82,7 @@ import {
   HarnessState,
 } from "../shared/protocol.ts";
 import { EngineId } from "../shared/providers.ts";
-import { ExecutionStatus, isExecutionEvent, JournalPhase, RunState } from "../shared/run-state.ts";
+import { ExecutionStatus, isExecutionEvent, JournalPhase, ResumeRefusal, RunState } from "../shared/run-state.ts";
 import { credentialEnvValues, redactTokens, secretRedactor } from "../shared/redact.ts";
 import { ActivityIndex, feedsActivity, type StudioActivityItem } from "../shared/studio-activity.ts";
 import {
@@ -93,7 +102,10 @@ import { BonsaiEngine } from "../substrate/engines/bonsai.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
-import { OpenCodeEngine } from "../substrate/engines/opencode.ts";
+import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
+import { CursorEngine } from "../substrate/engines/cursor.ts";
+import { GrokEngine } from "../substrate/engines/grok.ts";
+import { cursorHomes, grokHome } from "../substrate/credential-homes.ts";
 import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
 import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
 import { LocalServerEngine } from "../substrate/engines/local-server.ts";
@@ -122,6 +134,7 @@ import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { mcpSecretPort, type SecretPort } from "../substrate/mcp/store.ts";
 import { isBelow, isInside } from "../substrate/paths.ts";
 import { PluginNativeServices } from "../substrate/plugins/native.ts";
+import { PluginSandboxJobs } from "../substrate/plugins/sandbox-jobs.ts";
 import { spawnNativeLongLived } from "../substrate/plugins/native-process.ts";
 import { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { PluginServices } from "../substrate/plugins/services.ts";
@@ -133,6 +146,7 @@ import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/s
 import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { claudeFolderDenyWrites, ProcessSandbox } from "../substrate/spawn.ts";
 import { ensureHostGit } from "../substrate/windows-sandbox.ts";
+import { ensureMacGit } from "../substrate/git-policy.ts";
 import { type JobProbe, JobService, type JobSpawn } from "../substrate/jobs.ts";
 import { type AppLookPort, type ScreenAccess, unsupportedAppLook } from "../substrate/app-look.ts";
 import { checkLinuxIsolation } from "../substrate/linux-isolation.ts";
@@ -148,8 +162,22 @@ import { DelegationService } from "./core/delegation.ts";
 import { GameFileService } from "./core/game-files.ts";
 import { nameFromIdea, nameGame } from "./core/game-naming.ts";
 import { makeBackdropShader } from "./core/backdrop-generation.ts";
-import { GENEX_PLUGIN_ID, GenexCliService, genexHostPreflight, genexHostTool } from "./core/genex-cli.ts";
+import {
+  GENEX_PLUGIN_ID,
+  GenexCliService,
+  type GenexStand,
+  genexHostPreflight,
+  genexPluginAccount,
+  genexHostTool,
+  standCredentialFile,
+} from "./core/genex-cli.ts";
+import { isLocalDraft, type ListingRecord } from "../shared/item-draft.ts";
+import { type CreatorItem, type Selling, type StoreRefused, StoreRefusal } from "../shared/store-items.ts";
+import { ITEM_APPROVALS_FILE, ItemApprovals } from "./core/item-approvals.ts";
+import { hasLocalDrafts } from "./core/local-item-files.ts";
+import { hostedDraftIds, LocalItems, type LocalItemsDeps } from "./core/local-items.ts";
 import { GenexPackageService } from "./core/genex-package.ts";
+import { boundGameFolder } from "./core/genex-bound-game.ts";
 import { assertPublishable } from "./core/genex-publish.ts";
 import { GENEX_ACCOUNT_ACTIONS } from "../shared/genex.ts";
 import { GameThreadService } from "./core/game-threads.ts";
@@ -182,8 +210,10 @@ import {
   clampBuilders,
   LEGACY_DEFAULT_BUILDERS,
   LEGACY_DEFAULT_POOL,
+  savedLanguage,
   type StudioSettings,
 } from "./core/settings.ts";
+import { SYSTEM_LANGUAGE } from "../shared/locale.ts";
 import { SUBSCRIPTION_ENGINES } from "./core/subscription-engines.ts";
 import { GameBuilds } from "./game-build.ts";
 import { engineRpc } from "./harness-rpc/engine.ts";
@@ -221,26 +251,37 @@ const HARNESS_HEARTBEAT_TIMEOUT_MS = 10 * MINUTE_MS;
 const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 /** Where the folder chosen in Settings → Games is remembered, under userData. */
 const GAMES_ROOT_FILE = "games-root.json";
+/** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
+const PLUGIN_JOBS_FOLDER = "plugin-jobs";
+/** The folder in the sandbox's scratch where an engine game's cover reel is staged for a still or clip. */
+const COVER_REEL_FOLDER = "cover-reels";
+/** The folder in the sandbox's scratch where Node keeps the harness's compiled modules between boots. */
+const HARNESS_COMPILE_CACHE_FOLDER = "harness-compile-cache";
 /** The prefix of the scratch folder an engine's game runs with (its private home and temp files). */
 const ENGINE_SCRATCH_PREFIX = "genex-play-";
 
 /** How long after a boot the first full read of the log (for Activity) waits. */
 const ACTIVITY_WARMUP_DELAY_MS = 5 * SECOND_MS;
 
-/** What the core itself writes for people: thread titles, journal reasons, errors. */
+/**
+ * What the core itself writes: thread titles and journal reasons (stored, so English), the cover
+ * tools' answers and the harness's refusals (the agent reads them, English), and the errors a
+ * person reads, which answer in the app's language.
+ */
 const MESSAGE = {
   studioThreadTitle: "Studio",
   resetByUser: "reset to the shipped version by the user",
   updateRewound: "it did not boot; the studio rewound",
   updateUnhealthy: "healthcheck failed",
-  stillBuilding: (project: string) => `a contractor is still building in "${project}" — wait for it to finish first`,
-  protectedLocation: "Studio can't create games there. Choose another folder.",
-  workStillRunning: "Wait for this game's work to finish before removing it.",
-  buildStillRunning: "Stop this game's build before removing it.",
-  gameNotFound: "Game not found",
-  exportBuildFailed: "Current build failed; no stale output was exported",
+  stillBuilding: (project: string) =>
+    t('a contractor is still building in "{project}" — wait for it to finish first', { project }),
+  protectedLocation: () => t("Studio can't create games there. Choose another folder."),
+  workStillRunning: () => t("Wait for this game's work to finish before removing it."),
+  buildStillRunning: () => t("Stop this game's build before removing it."),
+  gameNotFound: () => t("Game not found"),
+  exportBuildFailed: () => t("Current build failed; no stale output was exported"),
   coverWrongGame: "Cover tool is bound to this conversation’s game.",
-  notEnginePlugin: "That plugin doesn't link games to an engine.",
+  notEnginePlugin: () => t("That plugin doesn't link games to an engine."),
   noCoverRenderer: "GPU cover rendering is unavailable.",
   shaderCoverKept: "This game already has a custom cover. Its image was preserved.",
   shaderCoverRaced: "The cover changed while rendering. The newer image was preserved.",
@@ -249,11 +290,11 @@ const MESSAGE = {
   recipeCoverKept: "This game already has a chosen cover. It was kept.",
   recipeCoverRaced: "The cover changed meanwhile. The newer one was kept.",
   recipeCoverSaved: (look: string) => `Saved this game’s cover: ${look}.`,
-  queueNeedsHarness: "Queue editing needs the updated conversation harness. Your message is still queued.",
-  resumeUnsupported:
-    "This build of the studio can't pick a build back up yet — its own loop code predates timed builds.",
-  runAlreadyFinished: (runId: string) => `run ${runId} already finished — nothing to resume`,
-  noAutopilotJournal: (runId: string) => `no Autopilot journal found for run ${runId}`,
+  queueNeedsHarness: () => t("Queue editing needs the updated conversation harness. Your message is still queued."),
+  resumeUnsupported: () =>
+    t("This build of the studio can't pick a build back up yet — its own loop code predates timed builds."),
+  runAlreadyFinished: (runId: string) => t("run {runId} already finished — nothing to resume", { runId }),
+  noAutopilotJournal: (runId: string) => t("no Autopilot journal found for run {runId}", { runId }),
   notInLibrary: (project: string) => `refused: "${project}" is not a game in the library`,
   notOurRoot: (root: string, project: string) =>
     `refused: ${root} is not a studio worktree or the folder of "${project}"`,
@@ -451,6 +492,23 @@ export interface StudioCoreOptions {
    * this Mac's models. Absent: every line is answered `ai_off` and the game plays its fallbacks.
    */
   gameAiNative?: (game: { name: string; title: string }) => NativeAiHost;
+  /**
+   * A development profile's stand (`main/play/origins.ts`): the Genex host tools' CLI runs against its
+   * API with the account the profile signed in to there, never the Genex plugin's genex.games account.
+   * Absent: genex.games, with the Genex plugin's account.
+   */
+  genexStand?: GenexStand;
+  /**
+   * A game's local item drafts after its publish: Put on sale as the app's Genex account, and in a
+   * fixture launch the fixture's own sync and sharing in place of the CLI's (`dev/fixture-items.ts`).
+   * Absent: nothing a local draft's settle uploads goes on sale.
+   */
+  localItems?: {
+    putOnSale(skuId: string): Promise<CreatorItem | StoreRefused>;
+    /** The account's items on genex.games (Selling), for the drafts a publish puts on sale. */
+    selling(): Promise<Selling | StoreRefused>;
+    runs?: Pick<LocalItemsDeps, "sync" | "setShared">;
+  };
 }
 
 export type { CoreInternals };
@@ -490,6 +548,8 @@ export class StudioCore {
   pluginServices!: PluginServices;
   /** The plugins' native runtimes: detected for jobs, and for an engine a bridge game's play names. */
   #nativePlugins: PluginNativeServices | null = null;
+  /** A game's local item drafts, made on first use (`localItems`). */
+  #localItems: LocalItems | null = null;
   /** Each game's link to an engine project, kept for `game-engine` plugins (`game.engine.*`, Undo, the first call's link). */
   engineLinks!: EngineLinks;
   /**
@@ -543,6 +603,7 @@ export class StudioCore {
     blender: true,
     autoResume: true,
     computerControl: false,
+    language: SYSTEM_LANGUAGE,
   };
   #assetCheckpointStore?: AssetCheckpoints;
   #planReviews?: PlanReviewController;
@@ -784,6 +845,9 @@ export class StudioCore {
     if (process.platform === StudioPlatform.Windows && !(await ensureHostGit())) {
       throw new SandboxUnavailableError(gitMissingProblem());
     }
+    // A Mac without Apple's developer tools: its /usr/bin/git only asks to install them, so the host
+    // and every PATH made from the app's (the agents', the terminal's) run Genex's own git instead.
+    if (process.platform === StudioPlatform.Mac) await ensureMacGit(this.options.paths.resources);
     await this.#restoreGamesRoot();
     for (const dir of Object.values(this.layout)) await ensureDir(dir);
     await this.#loadSettings();
@@ -834,6 +898,7 @@ export class StudioCore {
       root: this.layout.jobs,
       spawn: this.options.jobSpawn ?? ((request) => this.sandbox.spawnLongLived(request)),
       probe: this.options.jobProbe,
+      onLog: (line) => this.options.onLog?.(line, "stderr"),
       onStarted: (record) => recordJobStarted(this, record),
       onEnded: (record) => recordJobEnded(this, record),
     });
@@ -981,15 +1046,15 @@ export class StudioCore {
     return listed;
   }
 
-  /**
-   * What no agent process may read: the studio's secrets, the engines' homes, the Genex login, and
-   * play-time AI's grants, limits and ledger (so no agent can grant itself AI or raise a limit).
-   */
   /** What no agent process may read: play-time AI's plan watcher denies the same to every job it runs. */
   deniedPaths(): string[] {
     return this.#protectedPaths();
   }
 
+  /**
+   * What no agent process may read: the studio's secrets, the engines' homes, the Genex login, and
+   * play-time AI's grants, limits and ledger (so no agent can grant itself AI or raise a limit).
+   */
   #protectedPaths(): string[] {
     return [
       this.layout.secrets,
@@ -999,7 +1064,35 @@ export class StudioCore {
     ];
   }
 
-  #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {
+  /** The plugins' native runtimes and jobs; on Windows they run in the process sandbox, from folders it is granted at start. */
+  #nativeServices(): PluginNativeServices {
+    const windows = {
+      // Null until the sandbox has started (plugins are wired beside it).
+      sandbox: () => this.#sandboxIfStarted(),
+      work: this.layout.nativeWork,
+      runtimes: this.layout.nativeRuntimes,
+    };
+    return new PluginNativeServices(this.options.paths.userData, [this.layout.secrets], {
+      settings: (id) => this.plugins.settings(id),
+      ...(process.platform === StudioPlatform.Windows ? { windows } : {}),
+    });
+  }
+
+  /** The process sandbox once `init` has set it; plugin services are wired before it is. */
+  #sandboxIfStarted(): ProcessSandbox | null {
+    const started: ProcessSandbox | undefined = this.sandbox;
+    return started ?? null;
+  }
+
+  async #createSandbox(games: GameProject[]): Promise<ProcessSandbox> {
+    // Windows: native jobs work in, and read pinned runtimes from, folders granted now. srt-win
+    // changes grants only while no sandboxed command runs, and agents keep commands running.
+    const windows = process.platform === StudioPlatform.Windows;
+    // OpenCode's, Grok Build's and Cursor's own folders too: their sessions run as the sandbox user
+    // and read their sign-ins there.
+    const cliFolders = windows ? [...openCodeSessionFolders(), grokHome(), ...cursorHomes()] : [];
+    if (windows)
+      await Promise.all([this.layout.nativeRuntimes, ...cliFolders].map((dir) => mkdir(dir, { recursive: true })));
     return ProcessSandbox.create({
       writableRoots: [
         this.layout.workspaces,
@@ -1007,6 +1100,8 @@ export class StudioCore {
         this.layout.exports,
         this.layout.gamesRoot,
         ...games.map((game) => game.dir),
+        ...(windows ? [this.layout.nativeWork] : []),
+        ...cliFolders,
       ],
       scratchDir: this.layout.scratch,
       secretPaths: this.#protectedPaths(),
@@ -1024,13 +1119,29 @@ export class StudioCore {
           games.map((game) => game.dir),
         ),
       ],
-      readableRoots: [this.options.paths.resources],
+      readableRoots: [this.options.paths.resources, ...(windows ? [this.layout.nativeRuntimes] : [])],
+      dataRoot: this.options.paths.userData,
       enabled: this.options.sandbox ?? true,
       // Windows: the window opens on the games while the network check and folder grants finish.
       startInBackground: true,
       log: (line) => this.options.onLog?.(`[sandbox] ${line}`, "stderr"),
       // A Finder-launched app has no npm on its PATH; every build the studio ever ran exited 127.
       toolPath: async () => (await toolchain()).path,
+    });
+  }
+
+  /**
+   * The programs the host runs for plugins, each in this studio's sandbox: a manifest's `host` tool
+   * (Genex's CLI, a package install) and an engine plugin's long job (`sandbox.run`: Unreal's
+   * package on Windows), which keeps its scratch in the sandbox's own scratch folder.
+   */
+  #wirePluginPrograms(): void {
+    const genex = { cli: this.#genexCli(), packages: this.#genexPackages() };
+    this.plugins.hostTool = genexHostTool(genex);
+    this.plugins.hostToolConsent = genexHostPreflight(genex.packages, genex.cli);
+    this.plugins.sandboxJobs = new PluginSandboxJobs({
+      run: (request) => this.sandbox.run(request),
+      scratch: path.join(this.layout.scratch, PLUGIN_JOBS_FOLDER),
     });
   }
 
@@ -1075,18 +1186,14 @@ export class StudioCore {
     };
     // `game.engine.runs`: the games whose run is going, so an engine plugin never quits an editor a Loop uses.
     this.pluginServices.runningGames = () => this.#runningGames();
-    // `game.engine.assist`: Do it for me, a setup task handed to the game's chat (`desktop-assist.ts`).
-    this.pluginServices.engineAssist = (pluginId, binding, task, call) =>
-      engineAssist(coreAssistHost(this), { pluginId, binding, task, ...call });
-    // `game.engine.canAssist`: whether that can run here, so a plugin shows its click path instead.
-    this.pluginServices.engineCanAssist = (pluginId) => assistAvailable(coreAssistHost(this), pluginId);
+    this.#wireAssists(this.pluginServices);
     this.plugins = new PluginRegistry(
       path.join(this.layout.engineHomes, "plugins"),
       path.join(this.options.paths.resources, "plugins"),
       path.join(this.options.paths.resources, "plugin-sdk/backend.mjs"),
       (id, method, args, binding, invocation) => this.pluginServices.call(id, method, args, binding, invocation),
     );
-    const nativePlugins = new PluginNativeServices(this.options.paths.userData, [this.layout.secrets]);
+    const nativePlugins = this.#nativeServices();
     this.#nativePlugins = nativePlugins;
     this.plugins.nativeService = (manifest, directory, method, args, binding, invocation) =>
       nativePlugins.call(
@@ -1118,6 +1225,8 @@ export class StudioCore {
     };
     // The Genex account is the app's: Genex off takes the agent's tools, never the sign-in or Publish.
     this.plugins.appAccount = { id: GENEX_PLUGIN_ID, actions: GENEX_ACCOUNT_ACTIONS };
+    // A development profile on a stand: the Genex plugin (its publish) talks to the stand as its account.
+    this.plugins.hostAccount = genexPluginAccount(this.options.genexStand);
     this.plugins.onChange = (c) => {
       this.emit(UiEvent.PluginsChanged, c);
       this.#connections.changed();
@@ -1127,8 +1236,7 @@ export class StudioCore {
     this.plugins.agentWritable = (directory) => this.#agentWritable(directory);
     // A Finder-launched app has a bare PATH: Genex's publish found no git-lfs from Homebrew there.
     this.plugins.toolPath = async () => (await toolchain()).path;
-    this.plugins.hostTool = genexHostTool({ cli: this.#genexCli(), packages: this.#genexPackages() });
-    this.plugins.hostToolConsent = genexHostPreflight(this.#genexPackages());
+    this.#wirePluginPrograms();
     this.pluginServices.exportStage = async (binding, target, pluginId) => {
       // A panel's or toolbar's own publish reaches only here: refused as the dialog and agent tool refuse it.
       await assertPublishable(this, binding.project);
@@ -1138,23 +1246,100 @@ export class StudioCore {
         await this.#pluginTools.reviewExport(pluginId, binding, result);
       return result;
     };
+    await this.#initPlugins();
+  }
+
+  /** Do it for me's host services (`desktop-assist.ts`). */
+  #wireAssists(services: PluginServices): void {
+    // `game.engine.assist`: Do it for me, a setup task handed to the game's chat.
+    services.engineAssist = (pluginId, binding, task, call) =>
+      engineAssist(coreAssistHost(this), { pluginId, binding, task, ...call });
+    // `game.engine.canAssist`: whether that can run here, so a plugin shows its click path instead.
+    services.engineCanAssist = (pluginId) => assistAvailable(coreAssistHost(this), pluginId);
+    // `game.engine.assisting`: whether the chat still runs it, so a plugin's card ends with its turn.
+    services.engineAssisting = (pluginId, binding) => assistUnderWay(coreAssistHost(this), pluginId, binding);
+  }
+
+  /** The registry's start, each part of it marked so a slow plugin setup's log says which part held it. */
+  async #initPlugins(): Promise<void> {
+    // A first launch also marks each seed it copies.
+    this.plugins.onInitStep = (step, plugin) =>
+      this.options.markBoot?.(`core:plugins-${step}${plugin ? `:${plugin}` : ""}`);
     await this.plugins.init();
   }
 
   /**
    * `genex__cli`: Studio's pinned Genex CLI, run in the sandbox in a folder under userData that no
-   * agent can write, never in a game, which it may not write either.
+   * agent can write, never in a game, which it may not write either. Studio itself copies a store
+   * item's files in from the bound game and moves a shared item's folder into it.
    */
   #genexCli(): GenexCliService {
+    const stand = this.options.genexStand;
     return new GenexCliService({
       run: (request) => this.sandbox.run(request),
-      credentialFile: () => this.plugins.hostCredentialFile(GENEX_PLUGIN_ID),
+      credentialFile: stand ? standCredentialFile(stand) : () => this.plugins.hostCredentialFile(GENEX_PLUGIN_ID),
+      ...(stand ? { api: stand.api } : {}),
       heldCredentials: () => this.plugins.heldCredentials(),
       runsRoot: path.join(this.options.paths.userData, "genex-cli"),
       resources: this.options.paths.resources,
       genexStorage: this.pluginServices.root(GENEX_PLUGIN_ID),
       protectedWrites: async () => [this.games.root, ...(await this.games.list()).map((game) => game.dir)],
+      onListingDraft: (draft, binding, fingerprint) => this.#recordListingDraft(draft, binding.threadId, fingerprint),
+      onLocalDraftsRemoved: (project, localIds) => this.localItems.forget(project, localIds),
+      picturesRoot: this.layout.itemPictures,
+      gameFolder: (project) => realpath(this.games.dirFor(project)),
+      // A store item's files and a shared item's folder: the bound game's own folder or its Studio worktree.
+      boundGame: (binding) =>
+        boundGameFolder(binding, { gameDir: (project) => this.games.dirFor(project), scratch: this.layout.scratch }),
       ...(this.options.execPath ? { execPath: this.options.execPath } : {}),
+    });
+  }
+
+  /**
+   * A store item the game's agent made (`genex__cli`) or changed (`genex__cli-paid`): its Listing draft card
+   * in the chat that asked (`item_drafted`, a record only the host writes), and a nudge for Create ›
+   * Items. The card's buttons call genex.games from main; the agent never presses them (D40). A local
+   * draft is noted first, so the person's "Sell when published" can name only what the CLI printed.
+   */
+  async #recordListingDraft(
+    draft: ListingRecord,
+    threadId: string | undefined,
+    fingerprint?: string | null,
+  ): Promise<void> {
+    if (isLocalDraft(draft)) await this.localItems.noteDraft(draft, fingerprint ?? null);
+    if (threadId) await this.append([customEventData(CustomEvent.ItemDrafted, { ...draft })], threadId);
+    const itemId = isLocalDraft(draft) ? draft.localId : draft.itemId;
+    this.emit(UiEvent.ItemDrafted, { project: draft.project, itemId, ...(threadId ? { threadId } : {}) });
+  }
+
+  /**
+   * A game's local item drafts (`core/local-items.ts`): the person's approvals, kept in this profile's
+   * app data, and the settle after the game's publish, which puts on sale only what they approved.
+   */
+  get localItems(): LocalItems {
+    this.#localItems ??= this.#makeLocalItems();
+    return this.#localItems;
+  }
+
+  #makeLocalItems(): LocalItems {
+    const cli = this.#genexCli();
+    const options = this.options.localItems;
+    const gameFolder = (project: string) => realpath(this.games.dirFor(project));
+    return new LocalItems({
+      approvals: new ItemApprovals(path.join(this.options.paths.userData, ITEM_APPROVALS_FILE)),
+      published: (project) => cli.published(project),
+      hasDrafts: async (project) => hasLocalDrafts(await gameFolder(project)),
+      sync: options?.runs?.sync ?? ((project) => cli.syncLocalItems(project)),
+      setShared:
+        options?.runs?.setShared ?? ((project, localId, shared) => cli.setLocalShared(project, localId, shared)),
+      putOnSale: (skuId) => (options ? options.putOnSale(skuId) : Promise.resolve({ refused: StoreRefusal.Unknown })),
+      hostedDrafts: async (project) => {
+        const hosted = await cli.hostedProjectId(project);
+        if (!hosted || !options) return [];
+        return hostedDraftIds(await options.selling(), hosted);
+      },
+      now: Date.now,
+      changed: (project) => this.emit(UiEvent.ItemsLocal, { project }),
     });
   }
 
@@ -1205,7 +1390,10 @@ export class StudioCore {
    * the asked size, never Live, given back however it ends (`core/view-still.ts`).
    */
   #observeStill(binding: PluginBinding, still: PluginStillOrder): Promise<PluginStillAnswer> {
-    return viewStill(this.#previews, binding, still, this.options.pluginStill);
+    const view = still.demo === undefined ? {} : { stillDemo: still.demo };
+    return this.#throughReel(binding, view, (open) =>
+      viewStill(this.#previews, binding, still, { ...this.options.pluginStill, ...(open ? { open } : {}) }),
+    );
   }
 
   /**
@@ -1213,7 +1401,23 @@ export class StudioCore {
    * of its own at the asked size, never Live, given back however it ends (`core/view-clip.ts`).
    */
   #observeClip(binding: PluginBinding, clip: PluginClipOrder): Promise<PluginClipAnswer> {
-    return viewClip(this.#previews, binding, clip, this.options.pluginClip);
+    return this.#throughReel(binding, { clipDemo: clip.demo }, (open) =>
+      viewClip(this.#previews, binding, clip, { ...this.options.pluginClip, ...(open ? { open } : {}) }),
+    );
+  }
+
+  /**
+   * A still or clip of an engine game is taken of the cover its agent rendered in the engine
+   * (`core/cover-reel.ts`): a web page of a game that runs as an app shows nothing of it.
+   */
+  async #throughReel<A>(
+    binding: PluginBinding,
+    view: ReelView,
+    take: (open: ViewOpener | undefined) => Promise<A>,
+  ): Promise<A> {
+    const game = await this.games.kindOf(binding.project).catch(() => null);
+    const scratch = path.join(this.layout.scratch, COVER_REEL_FOLDER);
+    return throughCoverReel({ game, gameDir: binding.directory, scratch }, view, take);
   }
 
   /**
@@ -1315,6 +1519,8 @@ export class StudioCore {
       EngineId.LocalServer,
       ...SUBSCRIPTION_ENGINES,
       EngineId.OpenCode,
+      EngineId.Grok,
+      EngineId.Cursor,
       EngineId.OpenRouter,
     ]);
   }
@@ -1343,6 +1549,10 @@ export class StudioCore {
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.ClaudeCode }),
         engineHome: path.join(this.layout.engineHomes, EngineId.ClaudeCode),
         protectedPaths: this.#protectedPaths(),
+        // Windows: Genex's sandbox runs a worker's or builder's commands (`studioShell`), its scratch
+        // inside the studio's own, which every sandboxed process there is already granted.
+        scratchRoot: path.join(this.layout.scratch, EngineId.ClaudeCode),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         // Beside the engine's home, never in it: that can be the CLI's own config folder.
         sessionCosts: path.join(this.layout.engineHomes, "session-costs", `${EngineId.ClaudeCode}.json`),
         // The app is the one caller that owns the homes the boot sweep touches.
@@ -1357,6 +1567,15 @@ export class StudioCore {
         protectedPaths: this.#protectedPaths(),
         ...(this.options.codexExecutable ? { executable: this.options.codexExecutable } : {}),
       }),
+      // Cursor on the person's Cursor plan, signed in in its own CLI. Registered whether or not the
+      // CLI is on this computer, so the picker and Settings can offer it.
+      new CursorEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Cursor),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Cursor }),
+      }),
       // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
       // Settings. Registered like the subscriptions, so the picker can offer them.
       new OpenCodeEngine({
@@ -1365,6 +1584,14 @@ export class StudioCore {
         toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
+      }),
+      // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is.
+      new GrokEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Grok),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Grok }),
       }),
       new OpenRouterEngine({
         root: path.join(this.layout.engineHomes, EngineId.OpenRouter),
@@ -1386,12 +1613,14 @@ export class StudioCore {
       sandbox: this.sandbox,
       api: this.api(),
       updatesDir: this.layout.updates,
+      compileCache: path.join(this.layout.scratch, HARNESS_COMPILE_CACHE_FOLDER),
       // The harness's environment is an allow-list: the run overrides are handed on by name.
       env: harnessRunEnv(process.env),
       heartbeatTimeoutMs: HARNESS_HEARTBEAT_TIMEOUT_MS,
       crashLoop: HARNESS_CRASH_LOOP,
       onNotify: (type, payload) => this.#onHarnessNotify(type, payload),
       ...(this.options.onLog ? { onLog: this.options.onLog } : {}),
+      onBootStep: (step) => this.options.markBoot?.(`core:harness-${step}`),
       onStateChange: (state) => {
         // A loop that stops (a planned restart too) never ends the turns it began.
         if (state !== HarnessState.Ready) {
@@ -1417,14 +1646,18 @@ export class StudioCore {
    * recover — the shipped seed is copied over the harness before it boots.
    */
   async start(bootReason: BootReason = BootReason.ColdStart, options: { resetHarness?: boolean } = {}): Promise<void> {
+    const mark = (step: string): void => this.options.markBoot?.(`core:start-${step}`);
     await this.snapshots.init();
+    mark("snapshots");
     await this.#threads.adoptOrphanedGameThreads().catch(() => {}); // a repair must never block the boot
     await this.#recovery
       .closeInterruptedWork()
       .catch((err) => this.options.onLog?.(`[core] closing interrupted work failed: ${errorMessage(err)}`, "stderr"));
+    mark("repairs");
     // If a self-update was in flight when the app died, the durable record says so.
     const pending = await this.journal.pending();
     await this.#announceSeedUpgrade();
+    mark("journal");
     const rewound = await this.#bootHarness(bootNotice(pending, bootReason), options.resetHarness === true);
     this.#started = true;
     // The first read of the whole log is the slow one; take it once the boot has settled rather
@@ -1457,9 +1690,14 @@ export class StudioCore {
    * Resolves whether the self that booted was rewound (or reset) rather than the one on disk.
    */
   async #bootHarness(notice: BootNotice, resetHarness: boolean): Promise<boolean> {
+    // A sandbox fault cannot be repaired by rewinding the harness's code.
+    const mark = (step: string): void => this.options.markBoot?.(`core:start-${step}`);
+    await this.sandbox.ensureReady();
+    mark("sandbox");
     if (!resetHarness) await this.#recovery.migrateHarnessLayout();
     let rewound = false;
     const bootedCode = resetHarness ? null : await this.#recovery.codeAboutToBoot();
+    mark("code");
     if (resetHarness) {
       await this.#resetHarnessToShipped();
       rewound = true;
@@ -1521,6 +1759,8 @@ export class StudioCore {
     }
     this.#started = false;
     this.plugins?.cancel();
+    // Engine plugins' sandbox jobs are the studio's own: none outlives it.
+    await this.plugins?.sandboxJobs?.stopAll().catch(() => {});
     this.#consent.cancel({}, "stop");
     this.#permissions.cancel({}, ToolPermissionBy.Stop);
     if (this.#x.idleTimer) clearInterval(this.#x.idleTimer);
@@ -1804,6 +2044,7 @@ export class StudioCore {
     }
     // Only an explicit true turns the computer over; anything else the page sends reads as off.
     next.computerControl = next.computerControl === true;
+    next.language = savedLanguage(next.language);
     const computerOff = this.#settings.computerControl && !next.computerControl;
     this.#settings = next;
     // Turning computer control off stops every desktop session's driver now, as ⌃⌥⌘Esc does.
@@ -1844,6 +2085,7 @@ export class StudioCore {
         autoResume: parsed.autoResume !== false,
         // Off unless the person turned it on: a file from before the switch reads as off.
         computerControl: parsed.computerControl === true,
+        language: savedLanguage(parsed.language),
       };
     } catch {
       /* first launch — defaults stand */
@@ -1939,7 +2181,7 @@ export class StudioCore {
     for (const guarded of this.#protectedPaths()) {
       // Compared real path to real path: the Genex folder may itself be a link.
       const resolved = await realpath(guarded).catch(() => path.resolve(guarded));
-      if (isInside(resolved, real)) throw new Error(MESSAGE.protectedLocation);
+      if (isInside(resolved, real)) throw new CodedError(WorkspaceRefusal.LocationRefused, MESSAGE.protectedLocation());
     }
   }
 
@@ -2004,7 +2246,8 @@ export class StudioCore {
   async undoEngineLink(request: EngineLinkUndo): Promise<boolean> {
     const { project, pluginId, linkedAt, threadId } = request;
     const plugin = this.plugins.list().find((p) => p.manifest.id === pluginId);
-    if (!plugin?.manifest.capabilities.includes(PluginCapability.GameEngine)) throw new Error(MESSAGE.notEnginePlugin);
+    if (!plugin?.manifest.capabilities.includes(PluginCapability.GameEngine))
+      throw new Error(MESSAGE.notEnginePlugin());
     await this.assertProjectAllowed(this.games.dirFor(project));
     // The chat line belongs to this game's chat; a line from another chat says nothing there.
     const own = threadId ? threadProject(await this.store.getRecord(threadId)) === project : false;
@@ -2032,10 +2275,12 @@ export class StudioCore {
     const threadWorking = threads.some(
       (thread) => this.#x.activeCompletions.has(thread.id) || this.#x.pluginTurnLeases.has(thread.id),
     );
-    if (this.#building(project) || threadWorking) throw new Error(MESSAGE.workStillRunning);
+    if (this.#building(project) || threadWorking)
+      throw new CodedError(WorkspaceRefusal.WorkRunning, MESSAGE.workStillRunning());
     for (const thread of threads) {
       const run = latestRun(await this.store.listEvents(thread.id));
-      if (run?.state === RunState.Running) throw new Error(MESSAGE.buildStillRunning);
+      if (run?.state === RunState.Running)
+        throw new CodedError(WorkspaceRefusal.BuildRunning, MESSAGE.buildStillRunning());
     }
     await this.games.forget(project);
     this.emit(UiEvent.GameChanged, { project });
@@ -2123,13 +2368,13 @@ export class StudioCore {
    */
   async exportPublicCopy(project: string, targetDir: string): Promise<ExportResult> {
     const game = (await this.games.list()).find((g) => g.name === project);
-    if (!game) throw new Error(MESSAGE.gameNotFound);
+    if (!game) throw new CodedError(WorkspaceRefusal.GameNotFound, MESSAGE.gameNotFound());
     // A game whose web game is in a folder of it (an engine's web export) publishes that folder.
     const folder = webFolderOf(game);
     let output: string | undefined = folder ? path.join(game.dir, folder) : undefined;
     if (!folder && game.shape?.build) {
       const built = await this.builds.ensure({ project: game.name, dir: game.dir, shape: game.shape });
-      if (!built.ok || !built.output) throw new Error(MESSAGE.exportBuildFailed);
+      if (!built.ok || !built.output) throw new CodedError(ExportRefusal.BuildFailed, MESSAGE.exportBuildFailed());
       output = built.output;
     }
     return this.games.export(project, targetDir, output, { secretValues: this.knownSecretValues() });
@@ -2298,6 +2543,8 @@ export class StudioCore {
     if (!project) return undefined;
     const directory = this.games.dirFor(project);
     await this.assertProjectAllowed(directory);
+    // A game opened from another Genex brings its engine link: adopted before any plugin reads its storage.
+    await this.engineLinks?.adopt(project).catch(() => undefined);
     return { project, directory, threadId };
   }
 
@@ -2378,8 +2625,8 @@ export class StudioCore {
   }
 
   /** Reflect stage visibility (and whether the person watches a game in Live) while preserving active observations. */
-  previewStageVisible(visible: boolean, watching = visible): Promise<void> {
-    return this.#previews.setStageVisible(visible, watching);
+  previewStageVisible(visible: boolean, watching = visible, stageGame: string | null = null): Promise<void> {
+    return this.#previews.setStageVisible(visible, watching, stageGame);
   }
 
   /** The Live game's sound switch, as the user left it. */
@@ -2422,6 +2669,11 @@ export class StudioCore {
   /** The stage's Play on a stopped game. */
   playLive(): Promise<void> {
     return this.#previews.playLive();
+  }
+
+  /** Live loads the game's finished web build in a folder when it holds another page of the game (`PreviewService.loadWebBuild`). */
+  loadWebBuild(project: string): Promise<WebBuildLoad> {
+    return this.#previews.loadWebBuild(project);
   }
 
   /** Something would have changed Live: it waits for the person's Reload instead (`live.behind`). */
@@ -2703,7 +2955,7 @@ export class StudioCore {
     operation: "hold" | "edit" | "remove",
     text?: string,
   ): Promise<void> {
-    if (!this.host.hasCapability(HarnessCapability.MessageQueue)) throw new Error(MESSAGE.queueNeedsHarness);
+    if (!this.host.hasCapability(HarnessCapability.MessageQueue)) throw new Error(MESSAGE.queueNeedsHarness());
     this.#rewind.assertNotRewinding(threadId);
     await this.store.getRecord(threadId);
     await this.host.dispatch({ type: DispatchActionType.QueueMessage, threadId, messageId, operation, text });
@@ -2774,19 +3026,20 @@ export class StudioCore {
     this.#selfImprovement.touchActivity();
     const loopPredatesResume =
       this.host.state === HarnessState.Ready && !this.host.hasCapability(HarnessCapability.Autopilot);
-    if (loopPredatesResume) throw new Error(MESSAGE.resumeUnsupported);
+    if (loopPredatesResume) throw new CodedError(ResumeRefusal.Unsupported, MESSAGE.resumeUnsupported());
     for (const thread of await this.store.listThreads()) {
       const journal = (await this.store.readArtifact(thread.id, `autopilot_${runId}`).catch(() => null)) as {
         phase?: string;
       } | null;
       if (!journal) continue;
-      if (journal.phase === JournalPhase.Done) throw new Error(MESSAGE.runAlreadyFinished(runId));
+      if (journal.phase === JournalPhase.Done)
+        throw new CodedError(ResumeRefusal.AlreadyFinished, MESSAGE.runAlreadyFinished(runId));
       // A rewind stopping this chat's build waits for it to close: a Resume must not restart it.
       this.#rewind.assertNotRewinding(thread.id);
       await this.host.dispatch({ type: DispatchActionType.AutopilotResume, threadId: thread.id, runId });
       return;
     }
-    throw new Error(MESSAGE.noAutopilotJournal(runId));
+    throw new CodedError(ResumeRefusal.NoJournal, MESSAGE.noAutopilotJournal(runId));
   }
 
   newRunId(): string {

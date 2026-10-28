@@ -6,6 +6,7 @@
  */
 import { LibraryKind } from "../../shared/asset-library.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   isPlayCategory,
   isPlayShelf,
@@ -17,10 +18,18 @@ import {
   type PlayFeedPage,
   type PlayFeedRequest,
   type PlayGame,
+  type PlayGameDetail,
   PlayShelf,
   type PlayShelves,
   shelfOf,
 } from "../../shared/play.ts";
+import {
+  FIXTURE_BUILD_HOSTS,
+  NATIVE_BUILD_HOSTS,
+  type NativeHost,
+  nativeOf,
+  playableHere,
+} from "../../shared/play-native.ts";
 import { AvatarStyle, isAccountId } from "../../shared/play-people.ts";
 import { isPlayMobileSupport, type PlayCuration, PlayMobileSupport } from "../../shared/play-manage.ts";
 import type { GenexCatalogItem } from "../../shared/mention-corpus.ts";
@@ -45,8 +54,10 @@ export const HTTP_UNAUTHORIZED = 401;
 const BAD_GATEWAY = 502;
 /** The longest cursor the gallery hands out (an id), with room to spare; ids and codes are held to it too. */
 const CURSOR_MAX = 64;
-/** How much of a gallery item's text a card keeps. */
-const TEXT_MAX = { title: 200, author: 120, description: 400 } as const;
+/** How much of a gallery item's text a card keeps; a game's own page keeps more of its description. */
+const TEXT_MAX = { title: 200, author: 120, description: 400, about: 4000 } as const;
+/** The most screenshots a game's page shows. */
+const SHOTS_MAX = 4;
 /** The most online reads one count makes: the shown games beyond them wait for the next count. */
 const ONLINE_MAX_READS = 4;
 /** How long one network call may take. */
@@ -77,16 +88,19 @@ export const PlayRoute = {
   Corpus: "/api/gallery/search-corpus",
   Online: "/api/gallery/online",
   Ticket: "/api/embed/ticket",
+  /** A downloaded game's play, once its window is on screen (`native-plays.ts`). */
+  NativePlay: "/api/embed/native-play",
   Referral: "/api/referrals/me",
   world: (slug: string) => `/api/gallery/world/${encodeURIComponent(slug)}`,
   like: (id: string) => `/api/projects/${encodeURIComponent(id)}/like`,
   assetManifest: (slug: string) => `/api/projects/asset-manifest/${encodeURIComponent(slug)}`,
 } as const;
 
+/** Why a call is refused: a malformed request stays English for its developer; SignIn reaches a person's toast. */
 const MESSAGE = {
   BadCategory: "Unknown Play category",
   BadSlug: "Not a game address",
-  SignIn: "Connect Genex to do this",
+  SignIn: () => t("Connect Genex to do this"),
 } as const;
 
 /** An answer from the API: its status and its parsed JSON body (null when it had none). */
@@ -107,8 +121,13 @@ export interface GalleryDeps {
   /** The unlocked Genex account's token, or undefined while there is none. */
   token(): Promise<string | undefined>;
   now(): number;
-  /** A fixture launch: its drawn covers are let through. */
+  /** A fixture launch: its drawn covers are let through, and its builds' made-up host. */
   localImages?: boolean;
+  /**
+   * This computer, when the app knows it: a game it cannot play at all (no web build, no build for
+   * it) is left out of the tabs and search. Absent, every game is listed.
+   */
+  host?: NativeHost;
 }
 
 /** A failed call that keeps its status, so a sign-in problem reads apart from an outage. */
@@ -123,7 +142,7 @@ export class GalleryError extends Error {
 /** The thrown answer when a write needs the Genex account and none is unlocked. */
 export class SignInNeeded extends Error {
   constructor() {
-    super(MESSAGE.SignIn);
+    super(MESSAGE.SignIn());
   }
 }
 
@@ -137,6 +156,14 @@ export const TicketStatus = {
   NotMinted: "not-minted",
 } as const;
 export type TicketStatus = (typeof TicketStatus)[keyof typeof TicketStatus];
+
+/**
+ * How a ticket reaches the game, as Genex mints it: in a web page's address (`redirect`), or in a
+ * native game's environment when Play starts it on this computer (`desktop`, which Genex signs in
+ * without a per-game question: only the phone app's `native` asks). Wire values: never rename.
+ */
+export const TicketDelivery = { Redirect: "redirect", Desktop: "desktop" } as const;
+export type TicketDelivery = (typeof TicketDelivery)[keyof typeof TicketDelivery];
 
 /** A ticket, or why there is none. */
 export type PlayTicket =
@@ -243,11 +270,16 @@ function curationOf(item: Record<string, unknown>): PlayCuration {
   };
 }
 
+/** The hosts a build may download from: genex.games' build CDN, or a fixture launch's made-up one. */
+export const buildHostsFor = (local: boolean): ReadonlySet<string> =>
+  local ? FIXTURE_BUILD_HOSTS : NATIVE_BUILD_HOSTS;
+
 /**
  * One gallery item as the dashboard shows it, or null when it lacks what a card needs. `local`
- * (fixture launches only) also lets drawn SVG covers through.
+ * (fixture launches only) also lets drawn SVG covers through. Its native builds are kept only from
+ * `hosts`, and only an item that names builds gets a native side.
  */
-export function toPlayGame(item: unknown, local = false): PlayGame | null {
+export function toPlayGame(item: unknown, local = false, hosts = buildHostsFor(local)): PlayGame | null {
   if (!isRecord(item)) return null;
   const id = text(item.id, CURSOR_MAX);
   const title = text(item.title, TEXT_MAX.title).trim();
@@ -255,6 +287,7 @@ export function toPlayGame(item: unknown, local = false): PlayGame | null {
   const author = isRecord(item.author) ? item.author : {};
   const online = typeof item.online === "number" && Number.isFinite(item.online) ? count(item.online) : null;
   const coverUrl = imageUrl(item.thumbnailUrl, local);
+  const native = nativeOf(item, hosts);
   return {
     id,
     slug: item.slug,
@@ -275,6 +308,7 @@ export function toPlayGame(item: unknown, local = false): PlayGame | null {
     remixable: cloneUrlOf(item) !== null,
     assetKind: assetKindOf(item.assetKind),
     curation: curationOf(item),
+    ...(native ? { native } : {}),
   };
 }
 
@@ -302,8 +336,14 @@ export function itemShelf(item: unknown): PlayShelf {
   return categories.includes(PlayShelf.Tools) ? PlayShelf.Tools : PlayShelf.Games;
 }
 
-/** A page of the gallery: its valid items (on `shelf` alone when one is named), each once, and the next cursor. */
-export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf): PlayFeedPage {
+/** Whether `game` plays on `host` at all; every game does while the computer is not known. */
+const playsOn = (game: PlayGame, host: NativeHost | undefined): boolean => !host || playableHere(game, host);
+
+/**
+ * A page of the gallery: its valid items (on `shelf` alone when one is named), each once, and the
+ * next cursor. Given `host`, a game it cannot play at all is left out.
+ */
+export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf, host?: NativeHost): PlayFeedPage {
   const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
   const seen = new Set<string>();
   const games: PlayGame[] = [];
@@ -311,6 +351,7 @@ export function toFeedPage(body: unknown, local = false, shelf?: PlayShelf): Pla
     if (shelf && itemShelf(item) !== shelf) continue;
     const game = toPlayGame(item, local);
     if (!game || seen.has(game.id)) continue;
+    if (!playsOn(game, host)) continue;
     seen.add(game.id);
     games.push(game);
   }
@@ -408,7 +449,7 @@ export async function readRoute(request: GalleryRequest, route: string, auth?: s
  * The whole search catalog, every shelf, read at most every few minutes (once, however many searches
  * wait on it); `forget` drops it, and a read under way then keeps nothing of what it read.
  */
-function corpusReads(deps: GalleryDeps) {
+function corpusReads(deps: GalleryDeps, note: (body: unknown) => void = () => {}) {
   const { request, now } = deps;
   const local = deps.localImages === true;
   let corpus: { at: number; entries: CorpusEntry[] } | null = null;
@@ -422,6 +463,7 @@ function corpusReads(deps: GalleryDeps) {
     const read = readRoute(request, PlayRoute.Corpus)
       .then((body) => {
         const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
+        note(body);
         const entries = items.flatMap((item) => {
           const game = toSearchGame(item, local);
           return game ? [{ shelf: itemShelf(item), game }] : [];
@@ -445,13 +487,28 @@ function corpusReads(deps: GalleryDeps) {
   return { catalog, forget };
 }
 
+/** The source address each item of a page or the catalog (`body`) names, by slug: the remixable ones only. */
+function sourcesIn(body: unknown): Array<[string, string]> {
+  const items: unknown[] = isRecord(body) && Array.isArray(body.items) ? body.items : [];
+  return items.flatMap((item): Array<[string, string]> => {
+    if (!isRecord(item) || !isPlaySlug(item.slug)) return [];
+    const url = cloneUrlOf(item);
+    return url ? [[item.slug, url]] : [];
+  });
+}
+
 /** The catalog's anonymous reads: tabs, their pages and search, each kept a while. */
 function catalogReads(deps: GalleryDeps) {
   const { request, now } = deps;
   const local = deps.localImages === true;
   let counts: { at: number; shelves: PlayShelves } | null = null;
   const firstPages = new Map<PlayCategory, { at: number; page: PlayFeedPage }>();
-  const corpus = corpusReads(deps);
+  /** Each game's source address as the catalog last named it, for Remix's look at it (`remix-ready.ts`). */
+  const sources = new Map<string, string>();
+  const noteSources = (body: unknown): void => {
+    for (const [slug, url] of sourcesIn(body)) sources.set(slug, url);
+  };
+  const corpus = corpusReads(deps, noteSources);
   const { catalog } = corpus;
   /** Bumped by `forget`: a read that started before it keeps nothing of what it read. */
   let generation = 0;
@@ -466,7 +523,9 @@ function catalogReads(deps: GalleryDeps) {
     if (category !== PlayCategory.Featured) query.set("category", category);
     if (isCursor(cursor)) query.set("cursor", cursor);
     const started = generation;
-    const page = toFeedPage(await readRoute(request, `${PlayRoute.Feed}?${query}`), local, shelfOf(category));
+    const body = await readRoute(request, `${PlayRoute.Feed}?${query}`);
+    noteSources(body);
+    const page = toFeedPage(body, local, shelfOf(category), deps.host);
     if (first && started === generation) firstPages.set(category, { at: now(), page });
     return page;
   };
@@ -494,7 +553,7 @@ function catalogReads(deps: GalleryDeps) {
     if (words.length === 0) return [];
     const searched = isPlayShelf(shelf) ? shelf : PlayShelf.Games;
     const scored = (await catalog())
-      .filter((entry) => entry.shelf === searched)
+      .filter((entry) => entry.shelf === searched && playsOn(entry.game, deps.host))
       .map(({ game }) => ({ game, score: searchScore(game, words) }))
       .filter((hit) => hit.score > 0);
     scored.sort((a, b) => b.score - a.score || b.game.plays - a.game.plays);
@@ -539,7 +598,18 @@ function catalogReads(deps: GalleryDeps) {
     return Object.fromEntries(read.flat());
   };
 
-  return { feed, shelves, search, mentionItems, assetManifest, online, forget };
+  /** The source address the catalog last named for `slug`, or null. */
+  const sourceOf = (slug: string): string | null => sources.get(slug) ?? null;
+
+  return { feed, shelves, search, mentionItems, assetManifest, online, sourceOf, forget };
+}
+
+/** When a game last changed: the API's own date, else its newest build's, else null. */
+function updatedAtOf(item: Record<string, unknown>, game: PlayGame): string | null {
+  const at = typeof item.updatedAt === "string" ? Date.parse(item.updatedAt) : Number.NaN;
+  if (Number.isFinite(at)) return new Date(at).toISOString();
+  const published = game.native?.builds.map((build) => build.publishedAt).sort() ?? [];
+  return published.at(-1) ?? null;
 }
 
 /** What the signed-in account adds: a game's likes, a like, a sign-in ticket and an invite code. */
@@ -548,21 +618,26 @@ function accountCalls(deps: GalleryDeps) {
   const local = deps.localImages === true;
   let invite: { token: string; code: string } | null = null;
 
-  /** The game's page facts, with whether this account likes it when one is signed in. */
-  const world = async (slug: string): Promise<PlayWorld> => {
+  /** A game's page item and its card, read with the account's token so the API says whether it likes it. */
+  const worldItem = async (slug: string): Promise<{ item: Record<string, unknown>; game: PlayGame }> => {
     if (!isPlaySlug(slug)) throw new Error(MESSAGE.BadSlug);
     const body = await readRoute(request, PlayRoute.world(slug), await token());
     const item = isRecord(body) && isRecord(body.item) ? body.item : {};
     const game = toPlayGame(item, local);
     if (!game) throw new GalleryError(PlayRoute.world(slug), BAD_GATEWAY);
+    return { item, game };
+  };
+
+  /** The game's page facts, with whether this account likes it when one is signed in. */
+  const world = async (slug: string): Promise<PlayWorld> => {
+    const { item, game } = await worldItem(slug);
     const { id, title, multiplayer, remixable, plays, online } = game;
-    const likes = count(item.likesCount);
     return {
       id,
       slug,
       title,
       multiplayer,
-      likes,
+      likes: count(item.likesCount),
       liked: item.likedByMe === true,
       remixable,
       cloneUrl: cloneUrlOf(item),
@@ -572,6 +647,21 @@ function accountCalls(deps: GalleryDeps) {
       online,
       comments: count(item.commentsCount),
       coverUrl: game.coverUrl,
+    };
+  };
+
+  /** A game's own page: its card, likes and comments, its whole description, screenshots and when it changed. */
+  const game = async (slug: string): Promise<PlayGameDetail> => {
+    const { item, game: card } = await worldItem(slug);
+    const shots = Array.isArray(item.shots) ? item.shots.map((shot) => imageUrl(shot, local)) : [];
+    return {
+      ...card,
+      description: text(item.description, TEXT_MAX.about).trim(),
+      likes: count(item.likesCount),
+      liked: item.likedByMe === true,
+      comments: count(item.commentsCount),
+      shots: shots.filter((shot): shot is string => shot !== null).slice(0, SHOTS_MAX),
+      updatedAt: updatedAtOf(item, card),
     };
   };
 
@@ -588,16 +678,17 @@ function accountCalls(deps: GalleryDeps) {
   };
 
   /**
-   * A single-use ticket that signs the player in when the game's page loads with it in its address
-   * fragment; else whether that is for want of an account (signed out) or because none could be
-   * minted for the one there. Either way the game plays as a guest.
+   * A single-use ticket that signs the player in: when the game's page loads with it in its address
+   * fragment, or (`desktop`) when Play starts the game with it in its environment. Else whether that
+   * is for want of an account (signed out) or because none could be minted for the one there.
+   * Either way the game plays as a guest.
    */
-  const ticket = async (slug: string): Promise<PlayTicket> => {
+  const ticket = async (slug: string, delivery: TicketDelivery = TicketDelivery.Redirect): Promise<PlayTicket> => {
     if (!isPlaySlug(slug)) return NOT_MINTED;
     const auth = await token();
     if (!auth) return { status: TicketStatus.SignedOut };
     try {
-      const body = { slug, delivery: "redirect", channel: "production" };
+      const body = { slug, delivery, channel: "production" };
       const answer = await request(PlayRoute.Ticket, { method: "POST", token: auth, body });
       const minted = isRecord(answer.body) ? answer.body.ticket : undefined;
       if (answer.status !== HTTP_OK || typeof minted !== "string" || !minted) return NOT_MINTED;
@@ -623,7 +714,7 @@ function accountCalls(deps: GalleryDeps) {
     }
   };
 
-  return { world, setLiked, ticket, inviteCode };
+  return { world, game, setLiked, ticket, inviteCode };
 }
 
 /** Play's gallery over `deps`. */

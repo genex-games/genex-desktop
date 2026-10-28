@@ -90,10 +90,20 @@ export const COMPUTER_HOST_ACTIONS = [
   "web_read",
   "web_click",
   "web_type",
+  "bring_to_front",
+  "open_page",
 ] as const;
 
 /** The actions the session itself treats specially, by name: a wait, a batch and a reload. */
-export const ComputerVerb = { Wait: "wait", Batch: "batch", Reload: "reload", Act: "act", Look: "look" } as const;
+export const ComputerVerb = {
+  Wait: "wait",
+  Batch: "batch",
+  Reload: "reload",
+  Act: "act",
+  Look: "look",
+  BringToFront: "bring_to_front",
+  OpenPage: "open_page",
+} as const;
 
 /** The web page verbs: a page read and driven by its structure, in a separate, clean browser. */
 export const WebVerb = { Open: "web_open", Read: "web_read", Click: "web_click", Type: "web_type" } as const;
@@ -164,6 +174,8 @@ export interface ComputerRequest {
   ref?: string;
   /** web_type: press Enter after the text. */
   submit?: boolean;
+  /** bring_to_front: part of the title of the app's window to raise, among several it has open. */
+  window?: string;
   /** Which player this and every later action addresses, on a target that plays several. */
   player?: number;
 }
@@ -187,6 +199,8 @@ const MAX_QUOTED_SURFACE_CHARS = 40;
 const MAX_CAPTION_TEXT_CHARS = 40;
 /** The longest web element ref the tool reads. */
 const MAX_REF_CHARS = 64;
+/** The longest window title part bring_to_front reads. */
+const MAX_WINDOW_CHARS = 200;
 /** A web element ref inside whatever a model wrote for it (`[p3:12] link "Home"` → `p3:12`). */
 const WEB_REF = /[a-z]+\d+:\d+/i;
 
@@ -334,6 +348,8 @@ function readPointerFields(request: ComputerRequest, raw: Record<string, unknown
 function readOtherFields(request: ComputerRequest, raw: Record<string, unknown>): void {
   if (raw.text !== undefined && raw.text !== null) request.text = String(raw.text);
   readWebFields(request, raw);
+  const window = raw.window === undefined || raw.window === null ? "" : String(raw.window).trim();
+  if (window) request.window = window.slice(0, MAX_WINDOW_CHARS);
   const repeat = num(raw.repeat);
   if (repeat !== null) request.repeat = clampRepeat(repeat);
   const duration = num(raw.duration);
@@ -422,6 +438,8 @@ const ACTION_NEEDS: Partial<Record<ComputerAction, (request: ComputerRequest) =>
   web_open: (r) => (r.text?.trim() ? null : COMPUTER_ARG_PROBLEM.webOpenNeedsUrl),
   web_click: (r) => (r.ref ? null : COMPUTER_ARG_PROBLEM.webNeedsRef(r.action)),
   web_type: (r) => (r.ref && r.text !== undefined ? null : COMPUTER_ARG_PROBLEM.webTypeNeedsRefAndText),
+  bring_to_front: (r) => (r.text?.trim() ? null : COMPUTER_ARG_PROBLEM.frontNeedsApp),
+  open_page: (r) => (r.text?.trim() ? null : COMPUTER_ARG_PROBLEM.pageNeedsAddress),
 };
 
 /** The amounts an action falls back to when it names none. */
@@ -588,6 +606,8 @@ const ACTION_NEEDS_CAPABILITY: Partial<Record<ComputerAction, (caps: TargetCapab
   web_read: (caps) => caps.dom,
   web_click: (caps) => caps.dom,
   web_type: (caps) => caps.dom,
+  bring_to_front: (caps) => caps.apps === true,
+  open_page: (caps) => caps.apps === true,
 };
 
 /** Can this target carry out this action? */
@@ -675,6 +695,7 @@ export function computerToolDefinition(
         ...((capabilities.players ?? 1) > 1
           ? { player: { type: "number", description: text.player(capabilities.players ?? 1) } }
           : {}),
+        ...(capabilities.apps ? { window: { type: "string", description: text.window } } : {}),
         observe: { type: "string", description: text.observe },
         actions: { type: "string", description: text.actions },
       },
@@ -714,7 +735,19 @@ const ACTION_DEED: Record<ComputerAction, ScreenDeed> = {
   web_read: ScreenDeed.Look,
   web_click: ScreenDeed.Click,
   web_type: ScreenDeed.Type,
+  bring_to_front: ScreenDeed.Load,
+  open_page: ScreenDeed.Load,
 };
+
+/** The host an `open_page` address names, for its caption; the text itself when it names none. */
+function pageHost(text: string | undefined): string {
+  const raw = String(text ?? "").trim();
+  try {
+    return new URL(raw).host || raw.slice(0, MAX_CAPTION_TEXT_CHARS);
+  } catch {
+    return raw.slice(0, MAX_CAPTION_TEXT_CHARS);
+  }
+}
 
 /** A computer action as the agent's screen shows it: its deed, and the keys of a press. */
 export function computerAct(request: ComputerRequest): ScreenAct {
@@ -773,6 +806,15 @@ function describeStudioAction(request: ComputerRequest): string {
       return `look ${Math.round(request.dx ?? 0)},${Math.round(request.dy ?? 0)}`;
     case "act":
       return `act ${request.text}${request.duration ? ` ${request.duration}s` : ""}`;
+    case "bring_to_front":
+      return `bring ${String(request.text ?? "")
+        .trim()
+        .slice(
+          0,
+          MAX_CAPTION_TEXT_CHARS,
+        )}${request.window ? ` (${request.window.slice(0, MAX_CAPTION_TEXT_CHARS)})` : ""} to the front`;
+    case "open_page":
+      return `open ${pageHost(request.text)} in the browser`;
     default:
       return describeWebAction(request);
   }

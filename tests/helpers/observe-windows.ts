@@ -80,6 +80,8 @@ export type FakePort = PreviewPort & {
   log: string[];
   asked: PreviewStillRequest[];
   clips: PreviewClipRequest[];
+  /** Each page it loaded: its entry, and the folder it was served from when not the game's own. */
+  loads: Array<{ entry: string | undefined; root: string | undefined }>;
   late: string[];
 };
 /** A still's answer as a plugin reads it: one of the two fields is set. */
@@ -134,10 +136,12 @@ export function windows(page: PageScript = {}) {
       log: own,
       asked: [] as PreviewStillRequest[],
       clips: [] as PreviewClipRequest[],
+      loads: [] as FakePort["loads"],
       late,
-      async load(_project: string, entry?: string) {
+      async load(_project: string, entry?: string, root?: string) {
         touch("load");
         note("load");
+        fake.loads.push({ entry, root });
         await page.load?.();
         url = `http://localhost:4173/${entry ?? "index.html"}`;
         loadError = page.loadError ?? null;
@@ -217,7 +221,7 @@ export type BudgetWait = (ms: number, signal: AbortSignal) => Promise<unknown>;
 /** A real core over fake windows, and a plugin's still or clip of a game outside its library. */
 export async function observeHost(
   page: PageScript = {},
-  options: { hidden?: boolean; preview?: boolean; wait?: BudgetWait } = {},
+  options: { hidden?: boolean; preview?: boolean; wait?: BudgetWait; inLibrary?: boolean } = {},
 ) {
   const w = windows(page);
   const lite = await coreLite({
@@ -226,7 +230,10 @@ export async function observeHost(
     previewPoolMax: 4,
     ...(options.wait ? { pluginStill: { wait: options.wait }, pluginClip: { wait: options.wait } } : {}),
   });
-  const game = path.join(await realpath(await tmpDir("studio-still-game-")), "game");
+  // A game in the library is one the core knows the kind of; any other is outside it.
+  const game = options.inLibrary
+    ? path.join(lite.gamesRoot, "game")
+    : path.join(await realpath(await tmpDir("studio-still-game-")), "game");
   await mkdir(game);
   await writeFile(path.join(game, "index.html"), "<canvas></canvas>");
   const binding: PluginBinding = { project: "game", directory: game };
@@ -234,7 +241,7 @@ export async function observeHost(
     lite.core.pluginServices.call("example", "observe", { project: "game", root: game, files: [], ...extra }, binding);
   const still = async (request: unknown): Promise<StillAnswer> => observe({ still: request }) as Promise<StillAnswer>;
   const clip = async (request: unknown): Promise<ClipAnswer> => observe({ clip: request }) as Promise<ClipAnswer>;
-  return { ...w, still, clip };
+  return { ...w, still, clip, game, scratch: lite.core.layout.scratch };
 }
 
 /** The budget on a clock the test holds: it runs out only when the test says so. */

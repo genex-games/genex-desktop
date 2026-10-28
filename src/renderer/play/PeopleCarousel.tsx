@@ -51,6 +51,7 @@ export function PeopleCarousel({
   note,
   quiet = false,
   label,
+  arrows,
   hook,
   children,
 }: {
@@ -59,8 +60,10 @@ export function PeopleCarousel({
   note?: string;
   /** The title set small and mono like a note: a row that labels itself rather than heads the page. */
   quiet?: boolean;
-  /** The row's accessible name, and what its arrows scroll. */
+  /** The row's accessible name. */
   label: string;
+  /** The arrows' names: what each scrolls to. */
+  arrows: { previous: string; next: string };
   /** The section's `data-*` hook. */
   hook: Record<`data-${string}`, string>;
   children: ReactNode;
@@ -74,7 +77,8 @@ export function PeopleCarousel({
     element.scrollBy({ left: direction * element.clientWidth * PAGE_SHARE, behavior });
   };
   return (
-    <section className="people-carousel" aria-label={label} {...hook}>
+    // People, by their names: friends, creators, a profile's friends.
+    <section className="people-carousel" aria-label={label} data-analytics-mask {...hook}>
       <div className="people-carousel-head">
         <h2 className="people-carousel-title" data-quiet={quiet || undefined}>
           {title}
@@ -85,7 +89,7 @@ export function PeopleCarousel({
             <button
               type="button"
               className="people-arrow"
-              aria-label={WORDS.previousOf(label)}
+              aria-label={arrows.previous}
               disabled={!ends.back}
               onClick={() => page(-1)}
             >
@@ -94,7 +98,7 @@ export function PeopleCarousel({
             <button
               type="button"
               className="people-arrow"
-              aria-label={WORDS.nextOf(label)}
+              aria-label={arrows.next}
               disabled={!ends.forward}
               onClick={() => page(1)}
             >

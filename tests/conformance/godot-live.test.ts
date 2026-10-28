@@ -32,7 +32,7 @@ import { PluginNativeServices } from "../../src/substrate/plugins/native.ts";
 import { spawnNativeLongLived } from "../../src/substrate/plugins/native-process.ts";
 import { readProjectShape } from "../../src/substrate/project-shape.ts";
 import { fixtureAiService, fixtureNativeHost } from "../helpers/ai-fixture-service.ts";
-import { ADDON, SCRIPTS, TEMPLATES } from "../helpers/godot-fake-engine.ts";
+import { ADDON, MULTIPLAYER, SCRIPTS, TEMPLATES } from "../helpers/godot-fake-engine.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const LIVE = process.env.STUDIO_GODOT_LIVE === "1";
@@ -62,6 +62,7 @@ async function liveGame() {
     scripts: SCRIPTS,
     templates: TEMPLATES,
     addon: ADDON,
+    multiplayer: MULTIPLAYER,
   });
   const context = (more: Partial<PluginContext> = {}): PluginContext => ({
     project: "live",

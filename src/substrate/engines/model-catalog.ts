@@ -6,6 +6,7 @@ import {
   type ModelCatalogStatus,
 } from "../../shared/model-catalog.ts";
 import type { EngineModel } from "./types.ts";
+import { t } from "../../shared/i18n.ts";
 
 const FRESH_MS = 60 * SECOND_MS;
 export const CATALOG_DEADLINE_MS = 10 * SECOND_MS;
@@ -106,7 +107,7 @@ export class ModelCatalog {
       const problem =
         error instanceof CatalogError
           ? error
-          : new CatalogError(ModelCatalogProblemCode.Provider, "Could not refresh models. Try again.");
+          : new CatalogError(ModelCatalogProblemCode.Provider, t("Could not refresh models. Try again."));
       this.#status = {
         ...this.#status,
         state: this.#models.length ? ModelCatalogState.Stale : ModelCatalogState.Unavailable,

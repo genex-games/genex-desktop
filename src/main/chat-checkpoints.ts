@@ -11,6 +11,7 @@ import { serial } from "./core/serial.ts";
  * LFS conversion. Large files stay subject to the checkpoint size limit. Path lists use stdin.
  */
 import path from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
@@ -24,6 +25,8 @@ import { ignoreLine, type PlacedRule, ruleGlob, ruleMatches } from "../shared/pr
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { REWIND_REFS } from "../shared/game-history.ts";
 import { isRewindId, UndoRewindRefusal, undoRewindRefusalWords } from "../shared/chat-rewind.ts";
+import { CodedError } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 
 /** Files the rewind never puts back: the game's shape and consent belong to now, not then. */
 const KEPT_PATHS = new Set(["studio.json"]);
@@ -62,13 +65,14 @@ export const CheckpointPhase = {
 } as const;
 export type CheckpointPhase = (typeof CheckpointPhase)[keyof typeof CheckpointPhase];
 
-/** Why a restore is refused. */
+/** Why a restore is refused, as the rewind's error says it. */
 const MESSAGE = {
-  HistoryChanged:
-    "The game files changed through a commit or a landed build since this message, so they stay as they are.",
-  NoCheckpoint: "There is no saved copy of the game files from before this message.",
-  NotSaved: "The game files could not be saved before rewinding.",
-  OutsideFolder: (relative: string) => `Refusing to remove a path outside the game folder: ${relative}`,
+  HistoryChanged: () =>
+    t("The game files changed through a commit or a landed build since this message, so they stay as they are."),
+  NoCheckpoint: () => t("There is no saved copy of the game files from before this message."),
+  NotSaved: () => t("The game files could not be saved before rewinding."),
+  OutsideFolder: (relative: string) =>
+    t("Refusing to remove a path outside the game folder: {path}", { path: relative }),
 } as const;
 
 /** The mode git records a nested repository's link with; its files are not the folder's. */
@@ -135,12 +139,26 @@ const exec = promisify(execFile);
 /** The PATH filters such as git-lfs are found on (an app started from the Finder has a bare one). */
 let toolPath: string | undefined;
 /**
+ * The folder's executable-configuration overrides, read once per checkpoint operation instead of
+ * before each of its git runs: the read is its own git process, and doubling every run cost a
+ * chat message about a quarter of a second before its answer could start. The configuration is
+ * read again by the next operation, so a filter added between two is still disabled.
+ */
+const operationConfig = new AsyncLocalStorage<Map<string, { config: Promise<string[]> }>>();
+function gitConfig(dir: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const known = operationConfig.getStore();
+  if (!known) return hostGitConfig(dir, env);
+  const cached = known.get(dir) ?? { config: hostGitConfig(dir, env) };
+  known.set(dir, cached);
+  return cached.config;
+}
+/**
  * Git with executable configuration disabled, never prompting. Line endings are kept
  * as they are: Git for Windows installs with core.autocrlf=true, which wrote LF files back as CRLF.
  */
 async function read(dir: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<string> {
   const environment = hostGitEnv({ ...(toolPath ? { PATH: toolPath } : {}), ...env });
-  const config = await hostGitConfig(dir, environment);
+  const config = await gitConfig(dir, environment);
   const running = exec("git", [...config, "-C", dir, "-c", "core.autocrlf=false", ...hostGitArgs(args)], {
     windowsHide: true,
     env: environment,
@@ -152,7 +170,7 @@ async function read(dir: string, args: string[], env: Record<string, string> = {
 /** Git as the studio: its identity, isolated configuration, and no hooks (reference-transaction). */
 async function write(dir: string, args: string[]): Promise<string> {
   const env = hostGitEnv(GIT_ENV);
-  const config = await hostGitConfig(dir, env);
+  const config = await gitConfig(dir, env);
   const { stdout } = await exec("git", [...config, "-C", dir, ...args], {
     windowsHide: true,
     env,
@@ -192,7 +210,7 @@ export class ChatCheckpoints {
   #serial<T>(dir: string, work: () => Promise<T>): Promise<T> {
     return serial(this.#tails, dir, async () => {
       if (this.#path && toolPath === undefined) toolPath = await this.#path().catch(() => process.env.PATH ?? "");
-      return work();
+      return operationConfig.run(new Map(), work);
     });
   }
 
@@ -484,7 +502,7 @@ export class ChatCheckpoints {
     return this.#serial(dir, async () => {
       const found = await this.#checkpoint(dir, threadId, messageId);
       if ("reason" in found) {
-        throw new Error(found.reason === "history-changed" ? MESSAGE.HistoryChanged : MESSAGE.NoCheckpoint);
+        throw new Error(found.reason === "history-changed" ? MESSAGE.HistoryChanged() : MESSAGE.NoCheckpoint());
       }
       return this.#restoreFrom(dir, threadId, found.commit, `studio: game files before rewinding to ${messageId}`);
     });
@@ -496,7 +514,7 @@ export class ChatCheckpoints {
    * moved since the rewind, as a restore is; a restore that fails partway is undone the same way.
    */
   restoreSaved(dir: string, threadId: string, rewindId: string): Promise<RestoredCheckpoint> {
-    const refused = (reason: UndoRewindRefusal) => new Error(undoRewindRefusalWords(reason));
+    const refused = (reason: UndoRewindRefusal) => new CodedError(reason, undoRewindRefusalWords(reason));
     if (!isRewindId(rewindId)) return Promise.reject(refused(UndoRewindRefusal.Gone));
     return this.#serial(dir, async () => {
       const saved = await commitAt(dir, rewoundRef(threadId, rewindId));
@@ -510,7 +528,7 @@ export class ChatCheckpoints {
   async #restoreFrom(dir: string, threadId: string, target: string, text: string): Promise<RestoredCheckpoint> {
     const rewindId = newRewindId();
     const taken = await this.#take(dir, rewoundRef(threadId, rewindId), text);
-    if (!taken) throw new Error(MESSAGE.NotSaved);
+    if (!taken) throw new Error(MESSAGE.NotSaved());
     const saved = taken.commit;
     await this.#prune(dir, `${refRoot(threadId)}/rewound/`, REWOUND_KEPT);
     try {

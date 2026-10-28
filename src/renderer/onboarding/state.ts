@@ -7,6 +7,7 @@ import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { t } from "../../shared/i18n.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineId, type SubscriptionId } from "../../shared/providers.ts";
 import type { EngineDescriptor } from "../types.ts";
@@ -16,12 +17,24 @@ import { STORAGE_KEYS } from "../storage.ts";
 /** Set once the welcome is finished or skipped on this profile. */
 export const WELCOMED_KEY = STORAGE_KEYS.welcomed;
 /** The demo prompt names the game the Judges' screen plays. */
-export const DEMO_IDEA = "A tiny space shooter in a field of asteroids";
+export const DEMO_IDEA = t("A tiny space shooter in a field of asteroids");
 
 /** Welcome only a first launch: the session allows it, the library is empty and this profile was never welcomed. */
 export function shouldWelcome(allowed: boolean | undefined, games: number, storage: Pick<Storage, "getItem">): boolean {
   return allowed === true && games === 0 && storage.getItem(WELCOMED_KEY) !== "1";
 }
+
+/** The onboarding screens: the welcome, Connect, and one for each of Connect's other ways. */
+export const WelcomeScreen = {
+  Welcome: "welcome",
+  Connect: "connect",
+  Local: "local",
+  OpenRouter: "openrouter",
+  OpenCode: "opencode",
+  Grok: "grok",
+  Cursor: "cursor",
+} as const;
+export type WelcomeScreen = (typeof WelcomeScreen)[keyof typeof WelcomeScreen];
 
 /** A subscription first launch offers to connect: Claude Code or Codex. */
 export type Subscription = SubscriptionId;
@@ -35,24 +48,24 @@ type Words = Record<
 
 const WORDS: Record<Subscription, Words> = {
   [EngineId.ClaudeCode]: {
-    connect: "Connect Claude Code",
-    install: "Set up Claude Code",
-    installing: "Setting up Claude Code…",
-    update: "Update Claude Code",
-    updating: "Updating Claude Code…",
-    recheck: "Check Claude Code again",
-    on: "Claude Code connected",
-    notStarting: "Claude Code is signed in, but Genex couldn't start it.",
+    connect: t("Connect Claude Code"),
+    install: t("Set up Claude Code"),
+    installing: t("Setting up Claude Code…"),
+    update: t("Update Claude Code"),
+    updating: t("Updating Claude Code…"),
+    recheck: t("Check Claude Code again"),
+    on: t("Claude Code connected"),
+    notStarting: t("Claude Code is signed in, but Genex couldn't start it."),
   },
   [EngineId.Codex]: {
-    connect: "Connect ChatGPT",
-    install: "Set up Codex",
-    installing: "Setting up Codex…",
-    update: "Update Codex",
-    updating: "Updating Codex…",
-    recheck: "Check Codex again",
-    on: "ChatGPT connected",
-    notStarting: "Codex is signed in, but Genex couldn't start it.",
+    connect: t("Connect ChatGPT"),
+    install: t("Set up Codex"),
+    installing: t("Setting up Codex…"),
+    update: t("Update Codex"),
+    updating: t("Updating Codex…"),
+    recheck: t("Check Codex again"),
+    on: t("ChatGPT connected"),
+    notStarting: t("Codex is signed in, but Genex couldn't start it."),
   },
 };
 
@@ -103,16 +116,16 @@ export interface ConnectInput {
 function claudeSignInView(phase: ConnectInput["claude"], pastingCode: boolean): ConnectView | undefined {
   switch (phase) {
     case "starting":
-      return { kind: ConnectViewKind.Busy, label: "Opening sign-in…", cancel: true };
+      return { kind: ConnectViewKind.Busy, label: t("Opening sign-in…"), cancel: true };
     case "browser":
-      return { kind: ConnectViewKind.Busy, label: "Finish in your browser", cancel: true };
+      return { kind: ConnectViewKind.Busy, label: t("Finish in your browser"), cancel: true };
     case "code":
       if (pastingCode) return { kind: ConnectViewKind.Code };
-      return { kind: ConnectViewKind.Busy, label: "Finish in your browser", cancel: true, offersCode: true };
+      return { kind: ConnectViewKind.Busy, label: t("Finish in your browser"), cancel: true, offersCode: true };
     case "verifying":
-      return { kind: ConnectViewKind.Busy, label: "Checking…", cancel: false };
+      return { kind: ConnectViewKind.Busy, label: t("Checking…"), cancel: false };
     case "terminal":
-      return { kind: ConnectViewKind.Action, action: ConnectAction.Terminal, label: "Finish in the terminal" };
+      return { kind: ConnectViewKind.Action, action: ConnectAction.Terminal, label: t("Finish in the terminal") };
     default:
       return undefined;
   }
@@ -129,7 +142,7 @@ export function connectView(id: Subscription, input: ConnectInput): ConnectView 
     const verifying = input.codex === "verifying";
     return {
       kind: ConnectViewKind.Busy,
-      label: verifying ? "Checking…" : "Finish in your browser",
+      label: verifying ? t("Checking…") : t("Finish in your browser"),
       cancel: !verifying,
     };
   }
@@ -148,7 +161,7 @@ function failsToStart(engine: ConnectInput["engine"]): boolean {
 function readyView(words: Words, input: ConnectInput): ConnectView {
   if (!failsToStart(input.engine)) return { kind: ConnectViewKind.On, label: words.on };
   if (input.checking || input.engine?.catalog?.refreshing)
-    return { kind: ConnectViewKind.Busy, label: "Checking…", cancel: false };
+    return { kind: ConnectViewKind.Busy, label: t("Checking…"), cancel: false };
   return { kind: ConnectViewKind.Action, action: ConnectAction.Recheck, label: words.recheck };
 }
 
@@ -167,7 +180,7 @@ function cliView(words: Words, input: ConnectInput): ConnectView {
     const label = cli === CodingCliState.Incompatible ? words.updating : words.installing;
     return { kind: ConnectViewKind.Busy, label, cancel: false };
   }
-  if (input.checking) return { kind: ConnectViewKind.Busy, label: "Checking…", cancel: false };
+  if (input.checking) return { kind: ConnectViewKind.Busy, label: t("Checking…"), cancel: false };
   if (cli === CodingCliState.Incompatible)
     return { kind: ConnectViewKind.Action, action: ConnectAction.Update, label: words.update };
   const cliMissing = cli !== undefined && cli !== CodingCliState.Ready;

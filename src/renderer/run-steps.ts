@@ -17,9 +17,9 @@
 import { MINUTE_MS } from "../shared/duration.ts";
 import { assetFormat, type ProjectAsset } from "../shared/game-assets.ts";
 import { GameEngine } from "../shared/game-engine.ts";
+import { formatList, t, tc } from "../shared/i18n.ts";
 import { comparedWithNothing, ExecutionStatus, type RunWorked, VerdictPass, workedMs } from "../shared/run-state.ts";
 import { type RunSummary, UNKNOWN_EXECUTION } from "../shared/run-summary.ts";
-import { plural } from "../shared/skill-words.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { WorkerEnd, WorkerIsolation, WorkerStopCode, WorkerVerdict } from "../shared/workers.ts";
 import {
@@ -49,6 +49,7 @@ import {
   ranToItsEnd,
   savedByLead,
   spanWords,
+  stopReason,
   stoppedWords,
   TURN_WORDS,
   verdictSentence,
@@ -176,7 +177,7 @@ export function headline(text: string): string {
 export function stepName(node: IterationNode): string {
   const asked = node.fix?.what ?? node.move?.what ?? null;
   if (asked) return headline(asked);
-  return node.iteration === 1 ? "First build" : "Small fixes";
+  return node.iteration === 1 ? t("First build") : t("Small fixes");
 }
 
 /** Two rounds are tries at one step when they were asked the same thing. */
@@ -515,11 +516,12 @@ function sessionCheckedBy(verdict: VerdictRecord | null, integrated: boolean): C
 export function rowMeta(row: PartRow, active: boolean): string {
   if (row.steps.every((step) => step.session)) return "";
   const total = row.steps.length;
-  if (row.inBuild === total) return total === 1 ? "added" : `all ${total} added`;
-  if (active && row.working) return row.inBuild ? `${row.inBuild} added so far` : "working";
-  if (!row.inBuild && row.steps.some((step) => step.state === StepState.Paused)) return "paused";
-  if (!row.inBuild) return "nothing added";
-  return `${row.inBuild} of ${total} added`;
+  if (row.inBuild === total) return t("{count, plural, =1 {added} other {all # added}}", { count: total });
+  if (active && row.working)
+    return row.inBuild ? t("{count, plural, other {# added so far}}", { count: row.inBuild }) : t("working");
+  if (!row.inBuild && row.steps.some((step) => step.state === StepState.Paused)) return t("paused");
+  if (!row.inBuild) return t("nothing added");
+  return t("{added} of {total} added", { added: row.inBuild, total });
 }
 
 /** The step the run is on right now — the newest one in hand — or null between steps. */
@@ -559,7 +561,7 @@ export const STATE_TONE: Record<StepState, Tone> = {
 
 /** How many tries a folded node stands for, or nothing for one. */
 export function triesWord(step: Step): string | null {
-  return step.tries.length > 1 ? `${step.tries.length} tries` : null;
+  return step.tries.length > 1 ? t("{count, plural, one {# try} other {# tries}}", { count: step.tries.length }) : null;
 }
 
 /**
@@ -567,15 +569,15 @@ export function triesWord(step: Step): string | null {
  * says "Added" for a part merged into the build, and so does the graph.
  */
 const STEP_WORD: Record<Exclude<StepState, typeof StepState.Kept>, string> = {
-  [StepState.InBuild]: "Added",
-  [StepState.Delivered]: "Delivered",
-  [StepState.Undone]: "Undone",
-  [StepState.Building]: "Working",
-  [StepState.Judging]: "Being checked",
-  [StepState.Waiting]: "Waiting to start",
-  [StepState.NotInBuild]: "Left out",
-  [StepState.NotDelivered]: "Didn't deliver",
-  [StepState.Paused]: "Paused",
+  [StepState.InBuild]: t("Added"),
+  [StepState.Delivered]: t("Delivered"),
+  [StepState.Undone]: t("Undone"),
+  [StepState.Building]: t("Working"),
+  [StepState.Judging]: t("Being checked"),
+  [StepState.Waiting]: t("Waiting to start"),
+  [StepState.NotInBuild]: t("Left out"),
+  [StepState.NotDelivered]: t("Didn't deliver"),
+  [StepState.Paused]: t("Paused"),
 };
 
 /**
@@ -636,67 +638,99 @@ const isRefused = (step: Step): boolean =>
 
 /** The one status line on a node; the tries it folds are counted on its picture. */
 export function stepWord(step: Step, active: boolean): string {
-  if (step.state === StepState.Kept) return active ? "Kept" : "Kept, not added";
+  if (step.state === StepState.Kept) return active ? t("Kept") : t("Kept, not added");
   return workerWord(step) ?? STEP_WORD[step.state];
 }
 
 /** The status of each state at the top of a step's card; `kept` depends on whether the run goes on. */
 const STEP_PILL: Record<Exclude<StepState, typeof StepState.Kept>, string> = {
-  [StepState.InBuild]: "Added to your build",
-  [StepState.Delivered]: "Delivered, not used yet",
-  [StepState.Building]: "Working",
-  [StepState.Judging]: "Being checked",
-  [StepState.Waiting]: "Waiting to start",
-  [StepState.Undone]: "Rejected by reviewers",
-  [StepState.NotInBuild]: "Left out of your build",
-  [StepState.NotDelivered]: "Didn't deliver",
-  [StepState.Paused]: "Paused, its work is kept for the lead",
+  [StepState.InBuild]: t("Added to your build"),
+  [StepState.Delivered]: t("Delivered, not used yet"),
+  [StepState.Building]: t("Working"),
+  [StepState.Judging]: t("Being checked"),
+  [StepState.Waiting]: t("Waiting to start"),
+  [StepState.Undone]: t("Rejected by reviewers"),
+  [StepState.NotInBuild]: t("Left out of your build"),
+  [StepState.NotDelivered]: t("Didn't deliver"),
+  [StepState.Paused]: t("Paused, its work is kept for the lead"),
 };
 
 /** The status at the top of a step's card: who decided it, or where it stands against the build you play. */
 export function stepPill(step: Step, active: boolean): string {
-  if (step.state === StepState.Kept) return active ? "Kept by reviewers" : "Kept by reviewers, not added";
+  if (step.state === StepState.Kept) return active ? t("Kept by reviewers") : t("Kept by reviewers, not added");
   return workerWord(step) ?? STEP_PILL[step.state];
 }
 
-const COUNT = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+/** Small counts as the step sentences say them: "undid two tries". */
+const COUNT = [
+  tc("count", "no"),
+  tc("count", "one"),
+  tc("count", "two"),
+  tc("count", "three"),
+  tc("count", "four"),
+  tc("count", "five"),
+  tc("count", "six"),
+  tc("count", "seven"),
+  tc("count", "eight"),
+  tc("count", "nine"),
+];
 const count = (n: number): string => COUNT[n] ?? String(n);
-const ORDINAL = ["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"];
-const ordinal = (n: number): string => ORDINAL[n] ?? `${n}th`;
+const ORDINAL = [
+  t("zeroth"),
+  t("first"),
+  t("second"),
+  t("third"),
+  t("fourth"),
+  t("fifth"),
+  t("sixth"),
+  t("seventh"),
+  t("eighth"),
+  t("ninth"),
+];
+const ordinal = (n: number): string => ORDINAL[n] ?? t("{position}th", { position: n });
 
 /** A single session's sentence, by where it stands. */
 function sessionSentence(state: StepState): string {
-  if (state === StepState.InBuild) return "Built in one session and merged into your build.";
-  if (state === StepState.Building) return "A worker is building it in one session.";
-  if (state === StepState.Waiting) return "It hasn't started yet.";
-  if (state === StepState.Delivered) return "Its files are in your game folder, waiting for the lead to use them.";
-  if (state === StepState.NotDelivered) return "Its session failed before it delivered anything.";
-  return "Built in one session. Its work wasn't merged into your build.";
+  if (state === StepState.InBuild) return t("Built in one session and merged into your build.");
+  if (state === StepState.Building) return t("A worker is building it in one session.");
+  if (state === StepState.Waiting) return t("It hasn't started yet.");
+  if (state === StepState.Delivered) return t("Its files are in your game folder, waiting for the lead to use them.");
+  if (state === StepState.NotDelivered) return t("Its session failed before it delivered anything.");
+  return t("Built in one session. Its work wasn't merged into your build.");
 }
 
 /** What a step the lead saved itself says instead of the judges' words: nobody judged it. */
-const LEAD_SAVED = "The lead saved it after looking at its own captures; no reviewer judged it.";
+const LEAD_SAVED = t("The lead saved it after looking at its own captures; no reviewer judged it.");
 
 /** What the judges did with a step's tries: kept one (after undoing some), or undid them. */
 function judgesSentence(tries: number, undone: number, keptAt: number): string {
-  if (keptAt === 1) return "The reviewers kept it on the first try.";
-  if (keptAt) {
-    const before = count(undone) === "one" ? "the one" : count(undone);
-    return `The reviewers kept try ${keptAt} after undoing ${before} before it.`;
-  }
+  if (keptAt === 1) return t("The reviewers kept it on the first try.");
+  if (keptAt && undone === 1)
+    return t("The reviewers kept try {tryNumber} after undoing the one before it.", { tryNumber: keptAt });
+  if (keptAt)
+    return t("The reviewers kept try {tryNumber} after undoing {count} before it.", {
+      tryNumber: keptAt,
+      count: count(undone),
+    });
   if (!undone) return "";
   if (undone === tries)
-    return undone === 1 ? "The reviewers undid it." : `The reviewers undid all ${count(undone)} tries.`;
-  return `The reviewers undid ${count(undone)} ${undone === 1 ? "try" : "tries"}.`;
+    return undone === 1
+      ? t("The reviewers undid it.")
+      : t("The reviewers undid all {count} tries.", { count: count(undone) });
+  return t("{undone, plural, one {The reviewers undid {count} try.} other {The reviewers undid {count} tries.}}", {
+    undone,
+    count: count(undone),
+  });
 }
 
 /** Which tries the lead stopped before any judge saw them. */
 function leadStopSentence(tries: IterationNode[], stopped: IterationNode[]): string {
   if (!stopped.length) return "";
-  if (tries.length === 1) return "The lead stopped it before the reviewers saw it.";
+  if (tries.length === 1) return t("The lead stopped it before the reviewers saw it.");
   const [only] = stopped;
-  if (stopped.length === 1 && only) return `The lead stopped the ${ordinal(tries.indexOf(only) + 1)}.`;
-  return `The lead stopped ${count(stopped.length)}.`;
+  if (stopped.length === 1 && only)
+    return t("The lead stopped the {ordinal}.", { ordinal: ordinal(tries.indexOf(only) + 1) });
+  return t("The lead stopped {count}.", { count: count(stopped.length) });
 }
 
 /** Where the step stands against the build now. */
@@ -705,20 +739,20 @@ function standingSentence(step: Step, active: boolean, anyStopped: boolean): str
   switch (step.state) {
     case StepState.InBuild:
       return step.checkedBy === CheckedBy.Lead && !step.tries.some(isKept)
-        ? "No reviewer saw it; the lead merged the part's work into your build."
+        ? t("No reviewer saw it; the lead merged the part's work into your build.")
         : "";
     case StepState.Kept:
       return active
-        ? "It merges into your build when the lead integrates this part."
-        : "The lead didn't merge it, so it isn't in your build.";
+        ? t("It merges into your build when the lead integrates this part.")
+        : t("The lead didn't merge it, so it isn't in your build.");
     case StepState.NotInBuild:
-      return anyStopped ? "Its work is saved, not merged." : "The run ended before the reviewers saw it.";
+      return anyStopped ? t("Its work is saved, not merged.") : t("The run ended before the reviewers saw it.");
     case StepState.Paused:
-      return "The build paused before the reviewers saw it. Its work is kept, and the lead can still add it.";
+      return t("The build paused before the reviewers saw it. Its work is kept, and the lead can still add it.");
     case StepState.Building:
-      return tries > 1 ? `The worker is on try ${tries}.` : "A worker is building it.";
+      return tries > 1 ? t("The worker is on try {tryNumber}.", { tryNumber: tries }) : t("A worker is building it.");
     case StepState.Judging:
-      return `The reviewers are looking at try ${tries}.`;
+      return t("The reviewers are looking at try {tryNumber}.", { tryNumber: tries });
     default:
       return "";
   }
@@ -741,7 +775,7 @@ export function stepSentence(step: Step, active: boolean): string {
     keptAt ? "" : leadStopSentence(all, stopped),
     standingSentence(step, active, stopped.length > 0),
   ].filter(Boolean);
-  return parts.join(" ") || (all.at(-1)?.status === IterationStatus.Accepted ? "Kept." : "");
+  return parts.join(" ") || (all.at(-1)?.status === IterationStatus.Accepted ? t("Kept.") : "");
 }
 
 /** What the judges said about one try, in their words, or nothing when they said nothing. */
@@ -754,8 +788,8 @@ export function judgesOn(node: IterationNode): string {
 /** The lead's reason for stopping a try, when it gave one — without saying twice who stopped it. */
 export function leadStopped(node: IterationNode): string | null {
   if (node.status !== IterationStatus.Stopped || !node.reason) return null;
-  const words = stoppedWords(node.reason).replace(/^stopped by the lead\s*(?:—\s*)?/, "");
-  return words || null;
+  const reason = stopReason(node.reason);
+  return (reason.leadsWhy ?? reason.said) || null;
 }
 
 /** What a step was asked, minus the name the node already wears: "Tall mountain: a tall…" → "A tall…". */
@@ -827,13 +861,13 @@ export interface ResultStatus {
 
 /** A running run's build: none yet, one that did not start, one being tried, or one to play. */
 function runningResultStatus(graph: RunGraph, summary: RunSummary | null): ResultStatus {
-  if (!hasNewBuild(graph, summary)) return { word: "Nothing yet", tone: Tone.Muted, state: StepState.Waiting };
+  if (!hasNewBuild(graph, summary)) return { word: t("Nothing yet"), tone: Tone.Muted, state: StepState.Waiting };
   const merged = graph.mergedHead;
   const didNotStart = merged !== null && summary !== null && merged.head === summary.head && merged.healthy === false;
-  if (didNotStart) return { word: "Didn't start", tone: Tone.Red, state: StepState.Undone };
+  if (didNotStart) return { word: t("Didn't start"), tone: Tone.Red, state: StepState.Undone };
   if (checkingBuild(graph, summary))
-    return { word: "Checking it starts…", tone: Tone.Accent, state: StepState.Judging };
-  return { word: "Ready to play", tone: Tone.Green, state: StepState.InBuild };
+    return { word: t("Checking it starts…"), tone: Tone.Accent, state: StepState.Judging };
+  return { word: t("Ready to play"), tone: Tone.Green, state: StepState.InBuild };
 }
 
 /**
@@ -847,8 +881,8 @@ export function readyToPlay(graph: RunGraph, summary: RunSummary | null): string
 
 /** Who took the last look at the build on offer, as the result card names them; the reviewers otherwise. */
 const REVIEW_BY: Partial<Record<string, string>> = {
-  [VerdictPass.Health]: "Health check",
-  [VerdictPass.Close]: "Lead's last look",
+  [VerdictPass.Health]: t("Health check"),
+  [VerdictPass.Close]: t("Lead's last look"),
 };
 
 /**
@@ -860,7 +894,7 @@ export function buildReview(graph: RunGraph): { label: string; words: string } |
   const look = headVerdict(graph);
   const words = verdictSentence(look);
   if (!look || !words || comparedWithNothing(look.decision.rule)) return null;
-  return { label: REVIEW_BY[look.pass] ?? "Reviewers", words };
+  return { label: REVIEW_BY[look.pass] ?? t("Reviewers"), words };
 }
 
 /** A chat turn put a worker's work in your game: the lead added it, or the worker wrote it there and finished. */
@@ -882,10 +916,10 @@ export function resultStatus(graph: RunGraph, summary: RunSummary | null): Resul
   if (graph.turn) return turnResultStatus(graph);
   if (summary?.landed === true && summary.profile === LoopProfile.Open)
     return { word: IN_PLACE_WORDS.kept, tone: Tone.Green, state: StepState.InBuild };
-  if (summary?.landed === true) return { word: "Live in your game", tone: Tone.Green, state: StepState.InBuild };
+  if (summary?.landed === true) return { word: t("Live in your game"), tone: Tone.Green, state: StepState.InBuild };
   if (graph.active) return runningResultStatus(graph, summary);
-  if (hasNewBuild(graph, summary)) return { word: "Not live yet", tone: Tone.Orange, state: StepState.Kept };
-  return { word: "No new build", tone: Tone.Muted, state: StepState.NotInBuild };
+  if (hasNewBuild(graph, summary)) return { word: t("Not live yet"), tone: Tone.Orange, state: StepState.Kept };
+  return { word: t("No new build"), tone: Tone.Muted, state: StepState.NotInBuild };
 }
 
 /** Where the run stands: its recorded execution, else live or completed by the graph. */
@@ -908,14 +942,16 @@ export function leadWorking(graph: RunGraph, summary: RunSummary | null, rows: P
 export function budgetWords(elapsedMs: number, budgetMs: number): string {
   const elapsed = Math.max(0, Math.floor(elapsedMs / MINUTE_MS));
   const budget = Math.max(1, Math.round(budgetMs / MINUTE_MS));
-  return budget < MINUTES_PER_HOUR ? `${elapsed} of ${budget} min` : `${spanWords(elapsed)} of ${spanWords(budget)}`;
+  if (budget < MINUTES_PER_HOUR) return t("{elapsed} of {budget} min", { elapsed, budget });
+  return t("{elapsed} of {budget}", { elapsed: spanWords(elapsed), budget: spanWords(budget) });
 }
 
 /** A span of whole minutes in the chat build card's short units: "9m", "1h", "1h 5m". */
 function shortSpanWords(minutes: number): string {
-  if (minutes < MINUTES_PER_HOUR) return `${minutes}m`;
+  if (minutes < MINUTES_PER_HOUR) return t("{minutes}m", { minutes });
   const rest = minutes % MINUTES_PER_HOUR;
-  return `${Math.floor(minutes / MINUTES_PER_HOUR)}h${rest ? ` ${rest}m` : ""}`;
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  return rest ? t("{hours}h {minutes}m", { hours, minutes: rest }) : t("{hours}h", { hours });
 }
 
 /**
@@ -923,7 +959,7 @@ function shortSpanWords(minutes: number): string {
  * target — the build may finish well before it.
  */
 export function capWords(budgetMs: number): string {
-  return `up to ${shortSpanWords(Math.max(1, Math.round(budgetMs / MINUTE_MS)))}`;
+  return t("up to {time}", { time: shortSpanWords(Math.max(1, Math.round(budgetMs / MINUTE_MS))) });
 }
 
 /** Whole minutes from `from` to `to` (or now); null when unknown, backwards or under a minute. */
@@ -945,9 +981,6 @@ export function elapsedWords(
   const minutes = elapsedMinutes(from, to, now);
   return minutes === null ? null : spanWords(minutes);
 }
-
-const listWords = (names: string[]): string =>
-  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
 /** How many steps that missed the build the finished line names before it only counts them. */
 const MAX_NAMED_MISSING = 2;
@@ -1009,16 +1042,16 @@ export function statusLine(graph: RunGraph, summary: RunSummary | null, rows: Pa
   if (execution === ExecutionStatus.Paused)
     return {
       tone: Tone.Orange,
-      strong: timed("Paused", facts.time),
-      rest: facts.hasBuild ? "an earlier build is ready to play · resume from chat" : "resume from chat",
+      strong: timed(t("Paused"), facts.time),
+      rest: facts.hasBuild ? t("an earlier build is ready to play · resume from chat") : t("resume from chat"),
     };
   if (execution === ExecutionStatus.Failed || execution === ExecutionStatus.Cancelled)
     return stoppedLine(execution === ExecutionStatus.Failed, summary, facts);
   if (execution === UNKNOWN_EXECUTION)
     return {
       tone: Tone.Muted,
-      strong: timed("Status unavailable", facts.worked),
-      rest: "the run's record is incomplete",
+      strong: timed(t("Status unavailable"), facts.worked),
+      rest: t("the run's record is incomplete"),
     };
   return finishedLine(summary, rows, facts);
 }
@@ -1040,17 +1073,19 @@ function runningLine(graph: RunGraph, summary: RunSummary | null, rows: PartRow[
   const working = rows.filter((row) => row.working).length;
   const workers = graph.tree ? rows.filter(isWorkerAtWork).length : 0;
   let rest: string;
-  if (base?.kind === GraphNodeKind.Base && !base.done) rest = "building the starting point";
+  if (base?.kind === GraphNodeKind.Base && !base.done) rest = t("building the starting point");
   else rest = runningRest(graph, summary, step, { building, working, workers });
   // A failed start stays in the line beside whatever is building on.
   const startFailed = base?.kind === GraphNodeKind.Base && base.done && base.ok === false;
   if (startFailed)
-    rest =
-      building || working
-        ? `${rest} · the starting point failed`
-        : `the starting point failed${base.error ? `: ${base.error}` : ""}`;
-  const doing = step?.state === StepState.Judging ? "Checking" : "Building";
+    rest = building || working ? `${rest} · ${t("the starting point failed")}` : startFailedWords(base.error);
+  const doing = step?.state === StepState.Judging ? t("Checking") : t("Building");
   return { tone: "live", strong: timed(doing, facts.time), rest };
+}
+
+/** The starting point failed, with the harness's own error when it gave one. */
+function startFailedWords(error: string | null | undefined): string {
+  return error ? t("the starting point failed: {error}", { error }) : t("the starting point failed");
 }
 
 /** What a running run is on, once its starting point is built. */
@@ -1061,27 +1096,35 @@ function runningRest(
   counts: { building: number; working: number; workers: number },
 ): string {
   if (step?.state === StepState.Judging)
-    return `the reviewers are looking at try ${step.tries.length} of ${lowerFirst(step.name)}`;
+    return t("the reviewers are looking at try {tryNumber} of {step}", {
+      tryNumber: step.tries.length,
+      step: lowerFirst(step.name),
+    });
   if (counts.workers) return workersOnIt(counts.workers);
-  if (counts.building > 1) return `${counts.building} parts working`;
+  if (counts.building > 1) return partsWorking(counts.building);
   if (step) return stepRest(graph, step);
-  if (counts.working) return `${plural(counts.working, "part")} working`;
+  if (counts.working) return partsWorking(counts.working);
   // Nothing of a part in hand is not a pause: the lead has the run, or the new build is being tried.
-  return checkingBuild(graph, summary) ? "checking the new build starts" : "the lead is working on the next step";
+  return checkingBuild(graph, summary) ? t("checking the new build starts") : t("the lead is working on the next step");
 }
+
+/** How many parts are working, as the status line says it. */
+const partsWorking = (count: number): string =>
+  t("{count, plural, one {# part working} other {# parts working}}", { count });
 
 function stepRest(graph: RunGraph, step: Step): string {
   const title = graph.facets.find((facet) => facet.facetId === step.facetId)?.title ?? step.facetId;
-  if (step.session) return `working on ${title}`;
-  const tryNote = step.tries.length > 1 ? ` · try ${step.tries.length}` : "";
-  return `${title}: ${lowerFirst(step.name)}${tryNote}`;
+  if (step.session) return t("working on {part}", { part: title });
+  const words = { part: title, step: lowerFirst(step.name) };
+  if (step.tries.length > 1) return t("{part}: {step} · try {tryNumber}", { ...words, tryNumber: step.tries.length });
+  return t("{part}: {step}", words);
 }
 
 function stoppedLine(failed: boolean, summary: RunSummary | null, facts: LineFacts): StatusLine {
-  const rest = facts.hasBuild ? "an earlier build is ready to play" : "nothing was made live";
+  const rest = facts.hasBuild ? t("an earlier build is ready to play") : t("nothing was made live");
   return {
     tone: failed ? Tone.Red : Tone.Muted,
-    strong: timed(failed ? "Build failed" : "Build stopped", facts.worked),
+    strong: timed(failed ? t("Build failed") : t("Build stopped"), facts.worked),
     rest: summary?.reason ? stoppedWords(summary.reason) : rest,
   };
 }
@@ -1103,13 +1146,15 @@ const didNotDeliver = (step: Step): boolean => step.state === StepState.NotDeliv
  */
 function leadLandedWords(rows: PartRow[]): string {
   const steps = rows.flatMap((row) => row.steps);
-  const saves = plural(steps.filter(isSavePoint).length, "save point");
+  const saves = t("{count, plural, one {# save point} other {# save points}}", {
+    count: steps.filter(isSavePoint).length,
+  });
   const failed = rows.filter((row) => row.steps.some(didNotDeliver));
   if (!failed.length) return saves;
   const named = failed.length <= MAX_NAMED_MISSING;
   const lost = named
-    ? failed.map((row) => `${row.facet.title} didn't deliver`)
-    : [`${plural(failed.length, "worker")} didn't deliver`];
+    ? failed.map((row) => t("{worker} didn't deliver", { worker: row.facet.title }))
+    : [t("{count, plural, one {# worker didn't deliver} other {# workers didn't deliver}}", { count: failed.length })];
   return [saves, ...lost].join(" · ");
 }
 
@@ -1119,36 +1164,41 @@ function landedWords(rows: PartRow[]): string {
   if (!steps.length) return "";
   if (steps.some(isSavePoint)) return leadLandedWords(rows);
   const missing = steps.filter((step) => step.state !== StepState.InBuild).map((step) => lowerFirst(step.name));
-  if (!missing.length) return steps.length === 1 ? "it landed" : "every step landed";
-  if (missing.length <= MAX_NAMED_MISSING) return `all but ${listWords(missing)} landed`;
-  return `${steps.length - missing.length} of ${steps.length} steps landed`;
+  if (!missing.length) return steps.length === 1 ? t("it landed") : t("every step landed");
+  if (missing.length <= MAX_NAMED_MISSING) return t("all but {steps} landed", { steps: formatList(missing) });
+  return t("{total, plural, one {{landed} of # step landed} other {{landed} of # steps landed}}", {
+    landed: steps.length - missing.length,
+    total: steps.length,
+  });
 }
 
 function finishedLine(summary: RunSummary | null, rows: PartRow[], facts: LineFacts): StatusLine {
   const failed = failedChecks(summary);
-  const failedWords = failed ? `${plural(failed, "check")} failed` : "";
+  const failedWords = failed
+    ? t("{count, plural, one {# check failed} other {# checks failed}}", { count: failed })
+    : "";
   if (summary?.landed === true) {
     const newer = summary.deliveredSourceHead !== null && summary.deliveredSourceHead !== summary.head;
     const clean = !failed && !newer;
-    const rest = [failedWords, newer ? "a newer build wasn't made live" : "", clean ? landedWords(rows) : ""]
+    const rest = [failedWords, newer ? t("a newer build wasn't made live") : "", clean ? landedWords(rows) : ""]
       .filter(Boolean)
       .join(" · ");
     return {
       tone: clean ? Tone.Green : Tone.Orange,
-      strong: timed(summary.profile === LoopProfile.Open ? IN_PLACE_WORDS.kept : "Live in your game", facts.worked),
-      rest: rest || "finished",
+      strong: timed(summary.profile === LoopProfile.Open ? IN_PLACE_WORDS.kept : t("Live in your game"), facts.worked),
+      rest: rest || t("finished"),
     };
   }
   if (facts.hasBuild)
     return {
       tone: Tone.Orange,
-      strong: timed("Not live yet", facts.worked),
-      rest: [failedWords, "the build is ready to play"].filter(Boolean).join(" · "),
+      strong: timed(t("Not live yet"), facts.worked),
+      rest: [failedWords, t("the build is ready to play")].filter(Boolean).join(" · "),
     };
   return {
     tone: Tone.Muted,
-    strong: timed("No new build", facts.worked),
-    rest: summary?.reason ? stoppedWords(summary.reason) : "nothing was merged",
+    strong: timed(t("No new build"), facts.worked),
+    rest: summary?.reason ? stoppedWords(summary.reason) : t("nothing was merged"),
   };
 }
 

@@ -10,8 +10,10 @@ import type { OptimizationCheckpointV1, OptimizationResultV1 } from "../../share
 import path from "node:path";
 import { once } from "node:events";
 import { interruptedReplyNotice } from "../../shared/message-queue.ts";
+import { constants } from "node:fs";
 import { cp, readdir, rm } from "node:fs/promises";
 import { shortId } from "../../substrate/ids.ts";
+import { pathExists } from "../../substrate/fsx.ts";
 import { RUNS_AS_CODE } from "../self-changes.ts";
 import {
   type ApplySeedOptions,
@@ -27,13 +29,14 @@ import {
 import { type TypeCheckResult, diagnosticsFor, typeCheckText, TypeCheckFailure } from "../../substrate/type-gate.ts";
 import type { ForkBoot } from "./self-edit-gate.ts";
 import { seedCallMemory, seedMoveMemory } from "../seed-upgrade-notice.ts";
-import { type SnapshotRecord, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
+import { type SnapshotRecord, checkOutNewRepo, HARNESS_WORKSPACE } from "../../substrate/snapshots.ts";
 import type { ThreadFold } from "../../substrate/event-store.ts";
 import { interruptedTurnsIn } from "../../substrate/turns.ts";
 import { type InboxState, foldInbox, inboxOf } from "./inbox.ts";
 import type { EventData, EventEnvelope } from "../../substrate/types.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { CustomEvent, customEventData, customRecord } from "../../shared/custom-events.ts";
 import { EventKind, SnapshotScope } from "../../shared/event-log.ts";
 import { type BootNotice, BootReason, DispatchActionType } from "../../shared/protocol.ts";
@@ -45,7 +48,10 @@ import { releaseHarnessDesktops } from "../harness-rpc/desktop.ts";
 import { forgetHarnessComputers } from "../harness-rpc/preview.ts";
 import { RetainedState } from "../../substrate/game-candidate.ts";
 
-/** Words the recovery writes into the logs the user reads, and the errors it throws at them. */
+/**
+ * Words the recovery writes into the logs the user reads (English, as the log keeps them), and the
+ * errors it throws at them (the functions, in the person's language).
+ */
 const MESSAGE = {
   replyInterrupted: "This response was interrupted by a restart. Send a message to continue.",
   runInterrupted: "interrupted by restart",
@@ -53,8 +59,8 @@ const MESSAGE = {
   optimizationNotApplied: "Optimization interrupted; unverified candidate changes were not applied",
   adoptionRecovered: "Verified optimization kept; adoption recovered after restart",
   liveFilesChanged: "Live files changed after the saved adoption intent; they were preserved",
-  snapshotGone: "Studio no longer has that saved version.",
-  buildInFlight: "Studio is building right now. Rewind when the build finishes.",
+  snapshotGone: () => t("Studio no longer has that saved version."),
+  buildInFlight: () => t("Studio is building right now. Rewind when the build finishes."),
   rolledBackByUser: "rolled back by the user",
   rewindFailed: (failed: string) => `rewind failed: ${failed}`,
   reseedFailedToo: (failed: string, last: string) => `${failed}; reseeding failed too: ${last}`,
@@ -63,6 +69,17 @@ const MESSAGE = {
   selfUpdateUnhealthy: (updateId: string) => `self-update ${updateId} failed its healthcheck`,
   selfUpdateThrew: (updateId: string, error: string) => `self-update ${updateId} threw: ${error}`,
 } as const;
+
+/**
+ * A first launch's harness workspace: its repository made from the shipped seed as the files are
+ * laid (`checkOutNewRepo`), so the first start reads back none of them. A workspace that is still a
+ * repository (its files deleted) keeps its history and gets a copy.
+ */
+async function layHarnessSeed(seedDir: string, workspaceDir: string, files: readonly string[]): Promise<void> {
+  if (await pathExists(path.join(workspaceDir, ".git")))
+    await cp(seedDir, workspaceDir, { recursive: true, force: true, mode: constants.COPYFILE_FICLONE });
+  else await checkOutNewRepo(seedDir, workspaceDir, files);
+}
 
 /** The seed manifest's file name in userData. */
 const SEED_MANIFEST_FILE = "harness-seed-manifest.json";
@@ -331,6 +348,7 @@ export class RecoveryService {
       manifestFile: this.#seedManifestFile(),
       updatesDir: this.#core.layout.updates,
       ...(this.#core.options.appVersion ? { appVersion: this.#core.options.appVersion } : {}),
+      laySeed: layHarnessSeed,
     };
   }
 
@@ -347,7 +365,10 @@ export class RecoveryService {
   async seedHarnessWorkspace(): Promise<void> {
     const backupDir = this.#updatesBackupDir("seed-backup");
     this.#x.seedReport = await applySeed({ ...this.#seedOptions(), backupDir });
-    await this.#core.snapshots.init();
+    // A first start's slowest step on a busy Windows PC: each part gets its own boot mark.
+    const mark = (step: string): void => this.#core.options.markBoot?.(`core:${step}`);
+    mark("seed-files");
+    await this.#core.snapshots.init((workspace, step) => mark(`seed-git-${step}:${workspace}`));
   }
 
   /**
@@ -818,8 +839,8 @@ export class RecoveryService {
    */
   async rollbackTo(snapshotId: string): Promise<void> {
     const record = this.#core.snapshotIndex.get(snapshotId);
-    if (!record) throw new Error(MESSAGE.snapshotGone);
-    if (this.#x.selfImprovement.workInFlight()) throw new Error(MESSAGE.buildInFlight);
+    if (!record) throw new Error(MESSAGE.snapshotGone());
+    if (this.#x.selfImprovement.workInFlight()) throw new Error(MESSAGE.buildInFlight());
     const rescue = await this.keepingGameLessons(() => this.#core.snapshots.restore(record));
     // A manual rollback rewinds the harness exactly like the watchdog does — skipping the
     // reconcile here would pin every rewound seed file as an agent edit at the next boot.

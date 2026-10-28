@@ -9,7 +9,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CoinFailure, type CoinIntent, CoinIntentStatus, CoinRefused, CoinRoute } from "../../src/main/play/coin.ts";
-import { BAR_FADE_MS, BAR_SHOWN_MS } from "../../src/main/play/bar-reveal.ts";
 import { GalleryError, SignInNeeded } from "../../src/main/play/gallery.ts";
 import {
   PURCHASE_COOLDOWN_MS,
@@ -105,8 +104,6 @@ const refused = (status: number, code: CoinFailure) => new CoinRefused(CoinRoute
 describe("A game's purchase sheet: asking", () => {
   it("draws Ask over the whole window from what genex.games says, and takes the keyboard once the page shows it", async () => {
     const made = await playing();
-    made.advance(BAR_SHOWN_MS);
-    made.advance(BAR_FADE_MS);
     made.log.length = 0;
     made.viewer.purchase(INTENT.id);
     await settle();
@@ -128,7 +125,6 @@ describe("A game's purchase sheet: asking", () => {
       balance: WALLET,
     });
     assert.ok(made.log.includes(`bar.show 0,0 ${WINDOW.width}x${WINDOW.height}`), "the layer covers the window");
-    assert.equal(made.bar()?.shown, false, "the bar itself stays down");
     assert.ok(!made.log.includes("bar.focus"), "the keyboard waits for the page to show the sheet");
     answer(made, PurchaseAnswer.Shown);
     assert.equal(made.log.at(-1), "bar.focus");
@@ -334,14 +330,14 @@ describe("A game's purchase sheet: a game that keeps asking", () => {
 });
 
 describe("A game's purchase sheet: not enough coin", () => {
-  it("offers Get coin when the balance is short, and comes back to Ask only through Review once the coin lands", async () => {
+  it("offers Get Nex when the balance is short, and comes back to Ask only through Review once the coin lands", async () => {
     const balances = [40, 40, WALLET];
     const made = await asked({ coin: { balance: async () => balances.shift() ?? WALLET } });
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Waiting));
     assert.equal(made.sheet()?.balance, 40);
     made.advance(PURCHASE_RECHECK_MS * 3);
     await settle();
-    assert.equal(balances.length, 2, "nothing is checked again before Get coin");
+    assert.equal(balances.length, 2, "nothing is checked again before Get Nex");
     answer(made, PurchaseAnswer.GetCoin);
     assert.deepEqual(made.pages, [playCoinPageUrl("https://genex.games")]);
     made.advance(PURCHASE_RECHECK_MS);
@@ -351,7 +347,7 @@ describe("A game's purchase sheet: not enough coin", () => {
     made.advance(PURCHASE_RECHECK_MS);
     await settle();
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Ready));
-    assert.ok((made.sheet()?.sheet ?? 0) > waiting, "a new sheet: a press meant for Get coin is dropped");
+    assert.ok((made.sheet()?.sheet ?? 0) > waiting, "a new sheet: a press meant for Get Nex is dropped");
     made.advance(PURCHASE_RECHECK_MS * 3);
     await settle();
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Ready), "never Ask by itself");
@@ -379,7 +375,7 @@ describe("A game's purchase sheet: not enough coin", () => {
     answer(made, PurchaseAnswer.Pay);
     made.advance(INTENT_LONG);
     await settle();
-    assert.equal(made.pages.length, 1, "Get coin still opens genex.games");
+    assert.equal(made.pages.length, 1, "Get Nex still opens genex.games");
     assert.equal(made.sheet()?.balance, 40);
     assert.deepEqual(face(made), NOT_ENOUGH(PurchaseRecovery.Over));
     assert.equal(coinCalls(made, "confirm").length, 1);
@@ -812,8 +808,8 @@ describe("A game's purchase sheet: leaving it", () => {
     answer(made, PurchaseAnswer.Shown);
     made.log.length = 0;
     made.viewer.loaded();
-    made.viewer.hold({ held: true, overlay: PlayBarOverlay.Comments });
-    made.viewer.hold({ held: false, overlay: null });
+    made.viewer.hold({ overlay: PlayBarOverlay.Comments });
+    made.viewer.hold({ overlay: null });
     made.viewer.control(PlayControl.Resume);
     assert.ok(
       !made.log.includes("game.focus"),

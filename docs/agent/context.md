@@ -7,7 +7,7 @@ a real local project to open, edit and export.
 
 ## What the app contains
 
-The sidebar's **Play** runs published games; **Create** opens games, Plugins, Studio and
+The sidebar's **Play** runs published games; **Create** opens games, Plugins, Items, Studio and
 Settings. Each game has one conversation on the left and a stage on the right. The stage
 switches between **Live** (the playable
 game), **Builds** (work and results) and **Assets** (files and generated media).

@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { memo, useMemo, useState } from "react";
 import type { AssetDeliveredPayload, ProjectAsset } from "../../shared/game-assets.ts";
 import { assetPreviewMode } from "../../shared/asset-preview.ts";
+import { t } from "../../shared/i18n.ts";
 import type { ModelRig } from "../../shared/model-rig.ts";
 import { assetTitle, clipTitles } from "../asset-names.ts";
 import { foldAssets, ownerInGame, useModelRigs } from "../model-rigs.ts";
@@ -283,7 +284,7 @@ export const AssetResults = memo(function AssetResults({
     </div>
   );
   return (
-    <section data-chat-assets className="w-full max-w-[26rem] min-w-0 space-y-2" aria-label="Generated assets">
+    <section data-chat-assets className="w-full max-w-[26rem] min-w-0 space-y-2" aria-label={t("Generated assets")}>
       <TileGroup tiles={page.filter(isVisual)} render={tile} />
       {(loose.length > 0 || rows.length > 0) && (
         <div className="flex flex-col gap-1.5">
@@ -305,7 +306,7 @@ export const AssetResults = memo(function AssetResults({
         </div>
       )}
       {ordered.length > limit && (
-        <ResultButton onClick={() => setLimit((n) => n + PAGE_SIZE)}>Show more assets</ResultButton>
+        <ResultButton onClick={() => setLimit((n) => n + PAGE_SIZE)}>{t("Show more assets")}</ResultButton>
       )}
       {error && (
         <p role="alert" className="text-chat-sub text-ink-3">

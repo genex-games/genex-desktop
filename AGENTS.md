@@ -61,6 +61,10 @@ when relevant.
 
 - Safety: no destructive git on user folders without a game snapshot. Validate host RPC path
   parameters by realpath. Quote shell arguments with `shellQuote`.
+- Players' Macs have no developer tools: shipped code never runs a /usr/bin program that only
+  stands in for Xcode's (`lipo`, `otool`, `xcrun`); read the file in the app or use macOS's own
+  tool. `scripts/check-mac-tools.ts` (in `check:static`) refuses them, and
+  `DEVELOPER_DIR=/nonexistent` reproduces such a Mac in a test or a `studio:dev` launch.
 - Tests prove behavior. Copy or spacing edits do not need new tests.
 - Contracts live in `src/shared` (IPC channel map, UiEventMap, CustomEventMap, HarnessHostApi);
   add new events/channels there first; no payload as / as never.
@@ -107,9 +111,9 @@ Write code a person enjoys reading; behavior never changes in a readability edit
   small predicate beside its type (`needsSignIn(engine)`). Compute repeated sub-expressions
   once. No nested ternaries, no `!` assertions in code you touch.
 - Timeouts, caps, sizes and retries are SCREAMING_CASE consts at the top of their module, in
-  `shared/duration.ts` units (the seed's `loop/time.ts`). User copy lives in
-  `renderer/words.ts` or a module-local `MESSAGE` object; model prompts in a sibling
-  `*-prompts.ts` or seed `prompts/*.md`.
+  `shared/duration.ts` units (the seed's `loop/time.ts`). User copy is English inside `t()`
+  ([translation](docs/agent/translation.md)), in `renderer/words.ts` or a module-local
+  `MESSAGE` object; model prompts in a sibling `*-prompts.ts` or seed `prompts/*.md`.
 - Functions aim for 60 lines (80 at most, cognitive complexity 15): guard clauses first, no
   `else` after `return`, no parameter reassignment, repeated steps become a named helper beside
   their domain.

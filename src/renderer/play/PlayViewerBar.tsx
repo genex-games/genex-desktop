@@ -1,23 +1,26 @@
 /**
- * The viewer's bar: the app's own 48px strip of glass over the game's top edge, drawn in the bar's
- * layer above the game's view (`PlayBarPage.tsx`). Back and the game's name with its facts (players
- * now, plays, maker) on the left; Like, Comments (its count, or the icon alone), Share (its icon
- * alone), Invite a friend in a multiplayer game, Remix and Exit on the right, as 32px buttons with 9px
- * corners, every one with a visible background. A note is worn by the button it is about, in place of its label
- * ("Link copied" on Share), and the button turns back when main drops it; a like of the player's own
- * bursts. Main keeps what it shows (`PlayViewerEvent.bar`), says when it is up, and acts on what it
- * asks (`studio:play.control`). An Esc held in the game puts the keyboard here (Esc gives it back).
- * A signed-out guest is offered a Genex account here until its ×. A game in voice chat gets the mic
- * switch beside its name, with a menu of microphones. A game that uses AI gets the AI pill before the
- * actions (`PlayAiPill.tsx`). Offline, the facts say so in place of the players, and Like and Remix
- * wait for the connection.
+ * The viewer's bar: the app's own 48px strip across the window's top, the game below it, drawn in the bar's
+ * layer above the game's view (`PlayBarPage.tsx`). Back and the game's name with its facts (players now,
+ * plays, maker) on the left; Like, Comments (its count, or the icon alone), Share (its icon alone), Store
+ * (a game that sells items), Invite a friend in a multiplayer game, Remix, Full screen (its icon alone,
+ * once the game plays) and Exit on the right, as 32px buttons with 9px corners, every one with a visible
+ * background. A note is worn by the
+ * button it is about, in place of its label ("Link copied" on Share), and the button turns back when main
+ * drops it; a like of the player's own bursts. Main keeps what it shows (`PlayViewerEvent.bar`) and acts on
+ * what it asks (`studio:play.control`). An Esc held in the game puts the keyboard here (Esc gives it back).
+ * A signed-out guest is offered a Genex account here until its ×. A game in voice chat gets the mic switch
+ * beside its name, with a menu of microphones. A game that uses AI gets the AI pill before the actions
+ * (`PlayAiPill.tsx`). Offline, the facts say so in place of the players, and Like and Remix wait for the
+ * connection.
  */
-import type { CSSProperties, FocusEvent, JSX, PointerEvent, ReactNode, RefObject } from "react";
+import { sizeWords } from "../../shared/byte-size.ts";
+import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
+import type { CSSProperties, JSX, PointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
-import { type PlayBarState, type PlayMicBar, PlayControl, type PlayPoint } from "../../shared/play.ts";
+import { type PlayBarState, type PlayMicBar, PlayControl, type PlayPoint, PlayViewerPhase } from "../../shared/play.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { useOnline } from "../ui/use-online.ts";
-import { PLAY_WORDS } from "../words.ts";
+import { NATIVE_WORDS, PLAY_WORDS } from "../words.ts";
 import type { BarView } from "./bar-model.ts";
 import { formatCount, justLiked, noteOn } from "./play-model.ts";
 
@@ -312,19 +315,23 @@ function CommentsButton({ count, onOpen }: { count: number | null; onOpen: () =>
 }
 
 /**
- * The game's actions: Like with its count, Comments, Share, Invite a friend in a multiplayer game,
- * Remix when it may be remixed, Exit.
+ * The game's actions: Like with its count, Comments, Share, the Store for a game that sells items
+ * (pressed while it is open in the game's place), Invite a friend in a multiplayer game, Remix when it
+ * may be remixed, Full screen once the game is on screen, Exit.
  */
 function Actions({
   bar,
   actions,
   online,
+  playing,
   send,
   onComments,
 }: {
   bar: PlayBarState | null;
   actions: RefObject<HTMLDivElement | null>;
   online: boolean;
+  /** The game is on screen: Full screen has a game to fill the window with. */
+  playing: boolean;
   send: SendControl;
   onComments: () => void;
 }): JSX.Element {
@@ -334,6 +341,7 @@ function Actions({
   const bursts = useLikeBursts(bar);
   return (
     <div ref={actions} className="play-viewer-bar-actions">
+      {bar?.nativeApp && <NativeAppButton app={bar.nativeApp} send={send} />}
       <BarButton
         control={PlayControl.Like}
         icon="heart"
@@ -351,6 +359,17 @@ function Actions({
       />
       <CommentsButton count={bar?.comments ?? null} onOpen={onComments} />
       <BarButton control={PlayControl.Share} icon="export" ariaLabel={WORDS.share} bar={bar} send={send} />
+      {bar?.store && (
+        <BarButton
+          control={PlayControl.Store}
+          icon="tag"
+          label={WORDS.store}
+          bar={bar}
+          send={send}
+          className="play-viewer-bar-store"
+          ariaPressed={bar.store.open}
+        />
+      )}
       {bar?.multiplayer && (
         <BarButton control={PlayControl.Invite} icon="users" label={WORDS.invite} bar={bar} send={send} />
       )}
@@ -363,6 +382,15 @@ function Actions({
           send={send}
           className="play-viewer-bar-remix"
           disabled={remixWaits}
+        />
+      )}
+      {playing && (
+        <BarButton
+          control={PlayControl.FullScreen}
+          icon="maximize"
+          ariaLabel={WORDS.fullScreen}
+          bar={bar}
+          send={send}
         />
       )}
       <button
@@ -378,23 +406,56 @@ function Actions({
   );
 }
 
-/** What holds the bar up, as the layer tracks it: the pointer over it, or the keyboard in it. */
-export interface BarHolds {
-  pointer(over: boolean): void;
-  keyboard(inside: boolean): void;
+/** The game's native app beside Like: install it, its install's progress as a ring, or play it. */
+function NativeAppButton({ app, send }: { app: PlayBarNative; send: SendControl }): JSX.Element {
+  const platform = NATIVE_WORDS.platform[app.platform];
+  const size = sizeWords(app.bytes);
+  const installing = app.offer === NativeAppOffer.Installing;
+  const label = (() => {
+    if (installing) return NATIVE_WORDS.appInstalling(platform, app.percent);
+    if (app.offer === NativeAppOffer.Ready) return NATIVE_WORDS.playApp(platform);
+    return NATIVE_WORDS.app(platform);
+  })();
+  return (
+    <button
+      type="button"
+      className="play-viewer-bar-pill play-viewer-bar-native"
+      aria-label={app.offer === NativeAppOffer.Install ? NATIVE_WORDS.installAppLabel(platform, size) : label}
+      data-play-bar={PlayControl.NativeApp}
+      data-native-offer={app.offer}
+      aria-disabled={installing || undefined}
+      onClick={() => send(PlayControl.NativeApp)}
+    >
+      <span className="play-bar-icon">
+        {installing ? (
+          <span
+            className="play-bar-ring"
+            aria-hidden="true"
+            style={{ background: `conic-gradient(currentColor ${app.percent * 3.6}deg, transparent 0)` }}
+          />
+        ) : (
+          <Icon name={app.offer === NativeAppOffer.Ready ? "play" : "download"} size={16} />
+        )}
+      </span>
+      <span className="play-bar-label" data-shown>
+        <span>
+          {label}
+          {app.offer === NativeAppOffer.Install && <span className="play-bar-size"> {size}</span>}
+        </span>
+      </span>
+    </button>
+  );
 }
 
-/** The bar over the game `view` shows; it fades up and out while main says it is down. */
+/** The bar above the game `view` shows. */
 export function PlayViewerBar({
   view,
   send,
-  holds,
   aiPill,
   onComments,
 }: {
   view: BarView;
   send: SendControl;
-  holds: BarHolds;
   /** The game's AI pill, once the game has said hello to its AI. */
   aiPill?: ReactNode;
   onComments: () => void;
@@ -408,13 +469,6 @@ export function PlayViewerBar({
   useEffect(() => {
     if (view.focusAsks) actions.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
   }, [view.focusAsks]);
-  // Only the keyboard's own focus holds the bar up; a button a click focused does not.
-  const entered = (event: FocusEvent<HTMLDivElement>): void => {
-    if (event.target.matches(":focus-visible")) holds.keyboard(true);
-  };
-  const left = (event: FocusEvent<HTMLDivElement>): void => {
-    if (!event.currentTarget.contains(event.relatedTarget)) holds.keyboard(false);
-  };
   // A press with the pointer leaves the keyboard with the game; a control that opens something keeps it.
   const pressed = (event: PointerEvent<HTMLDivElement>): void => {
     const button = event.target instanceof Element ? event.target.closest("button") : null;
@@ -426,13 +480,7 @@ export function PlayViewerBar({
       className="play-viewer-bar"
       aria-label={WORDS.label(title)}
       data-play-viewer-bar
-      data-down={bar?.shown === false ? true : undefined}
-      onPointerEnter={() => holds.pointer(true)}
-      onPointerMove={() => holds.pointer(true)}
-      onPointerLeave={() => holds.pointer(false)}
       onPointerUp={pressed}
-      onFocus={entered}
-      onBlur={left}
     >
       <button
         type="button"
@@ -455,7 +503,14 @@ export function PlayViewerBar({
         {bar?.note ? WORDS.notes[bar.note] : null}
       </span>
       {aiPill}
-      <Actions bar={bar} actions={actions} online={online} send={send} onComments={onComments} />
+      <Actions
+        bar={bar}
+        actions={actions}
+        online={online}
+        playing={view.phase === PlayViewerPhase.Playing}
+        send={send}
+        onComments={onComments}
+      />
     </div>
   );
 }

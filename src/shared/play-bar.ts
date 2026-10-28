@@ -1,8 +1,8 @@
 /**
  * Play's bar layer: the transparent page main lays over a game in the viewer (`renderer/play-bar.html`).
  * Its preload (`preload/play-bar.ts`) gives it only these calls of the studio's bridge, and it tells
- * main what holds the bar up. The bar also carries the game's AI pill: the chat's model button, which
- * names the model, opens the model menu, and drops Genex's own cards over the game.
+ * main which of its overlays is open. The bar also carries the game's AI pill: the chat's model
+ * button, which names the model, opens the model menu, and drops Genex's own cards over the game.
  */
 import type { AiFunding, AiGameKey, AiModelRef } from "./game-ai.ts";
 import type { AiModelTag } from "./game-ai-views.ts";
@@ -10,8 +10,9 @@ import type { StudioApi } from "./studio-api.ts";
 
 /**
  * The studio calls the bar's layer may make: the viewer's news, its controls, its game's comments,
- * purchase sheet and AI. Get credits reads the packs and the person's auto top-up, and saves its
- * switch; every spend still waits for a card's yes or checkout in the browser.
+ * purchase sheet and AI, and the computer's languages. Get credits reads the packs and the person's
+ * auto top-up, and saves its switch; every spend still waits for a card's yes or checkout in the
+ * browser.
  */
 export const PLAY_BAR_CALLS = [
   "onEvent",
@@ -33,6 +34,7 @@ export const PLAY_BAR_CALLS = [
   "gameAiSettings",
   "gameAiSettingsSave",
   "playPurchase",
+  "systemLanguages",
 ] as const satisfies readonly (keyof StudioApi)[];
 
 /** The bridge the bar's layer gets. */
@@ -60,12 +62,11 @@ const OVERLAYS: ReadonlySet<unknown> = new Set(Object.values(PlayBarOverlay));
 export const isPlayBarOverlay = (value: unknown): value is PlayBarOverlay => OVERLAYS.has(value);
 
 /**
- * What the bar's layer tells main about itself: the pointer or the keyboard is on it, or one of its
- * overlays is open; `ready` once its page has mounted, so main draws the bar again for a page that
- * loaded late.
+ * What the bar's layer tells main about itself: which of its overlays is open, if any (main then lays
+ * the layer over the whole window); `ready` once its page has mounted, so main draws the bar again for
+ * a page that loaded late.
  */
 export interface PlayBarHold {
-  held: boolean;
   overlay: PlayBarOverlay | null;
   ready?: boolean;
 }

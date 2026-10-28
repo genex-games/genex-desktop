@@ -5,6 +5,7 @@
  */
 import type { JSX } from "react";
 import type { ProjectAsset } from "../../../shared/game-assets.ts";
+import { t } from "../../../shared/i18n.ts";
 import type { RunSummary, RunTask } from "../../../shared/run-summary.ts";
 import { runIdOf } from "../../run-graph.ts";
 import type { WorkerInfo } from "../../run-graph-workers.ts";
@@ -22,7 +23,7 @@ import {
 import { stoppedWords, verdictSentence, WORKER_WORDS } from "../../words.ts";
 import { useRoundStill, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
-import { type DetailRow, Details, Panel, Para, Quote, Row, Rows } from "./chrome.tsx";
+import { type DetailRow, Details, Panel, PanelRow, Para, Quote, Row, Rows } from "./chrome.tsx";
 import { capitalise } from "./format.ts";
 import { IMAGE_OUTLINE, Single } from "./pictures.tsx";
 import { LiveScreen, usePartScreen } from "./screen.tsx";
@@ -35,22 +36,25 @@ export const taskOf = (outcome: RunSummary | null, facetId: string): RunTask | n
 
 /** The technical rows a part's task adds: how often it merged and who built it. */
 export const taskRows = (task: RunTask | null): DetailRow[] => [
-  ["integrations", task ? String(task.integrations) : null],
-  ["workers", task && task.workers.length > 1 ? task.workers.join(" → ") : null],
+  [t("integrations"), task ? String(task.integrations) : null],
+  [t("workers"), task && task.workers.length > 1 ? task.workers.join(" → ") : null],
 ];
 
 function WhoChecked({ step }: { step: Step }): JSX.Element | null {
   if (!step.checkedBy) return null;
   if (step.checkedBy !== CheckedBy.Judges)
     return (
-      <Quote label="The lead">
-        It merged this part's work without a reviewer's verdict. The reviewers score parts that build in steps; this one
-        was built in one session.
+      <Quote label={t("The lead")}>
+        {t(
+          "It merged this part's work without a reviewer's verdict. The reviewers score parts that build in steps; this one was built in one session.",
+        )}
       </Quote>
     );
   const preferred =
-    step.gate === Gate.Kept ? "They preferred this build to the one before it." : "They preferred the build before it.";
-  return <Quote label="Reviewers">{verdictSentence(step.verdict) || preferred}</Quote>;
+    step.gate === Gate.Kept
+      ? t("They preferred this build to the one before it.")
+      : t("They preferred the build before it.");
+  return <Quote label={t("Reviewers")}>{verdictSentence(step.verdict) || preferred}</Quote>;
 }
 
 /** A part's own account: who checked it, what happened to it, why it stopped short, its details. */
@@ -66,9 +70,14 @@ function PartAbout({ props, step }: { props: StepPanelProps; step: Step }): JSX.
         {stoppedShort(stopped) ? <Para quiet>{capitalise(stoppedWords(stopped))}.</Para> : null}
       </div>
       <Rows>
-        <Row label="Technical details">
+        <Row row={PanelRow.TechnicalDetails} label={t("Technical details")}>
           <Details
-            rows={[["run", runIdOf(graph)], ["part", step.facetId], ...taskRows(task), ["state", task?.state ?? null]]}
+            rows={[
+              [t("run"), runIdOf(graph)],
+              [t("part"), step.facetId],
+              ...taskRows(task),
+              [t("state"), task?.state ?? null],
+            ]}
           />
         </Row>
       </Rows>
@@ -128,13 +137,13 @@ export function SessionPanel(props: StepPanelProps): JSX.Element {
   return (
     <Panel
       id={step.id}
-      label="Selected part"
+      label={t("Selected part")}
       title={step.name}
       status={<Status tone={STATE_TONE[step.state]}>{stepPill(step, graph.active)}</Status>}
       onPrev={props.onPrev}
       onNext={props.onNext}
       onClose={props.onClose}
-      reply={{ label: step.name, placeholder: "Anything to change here?", target: { facetId: step.facetId } }}
+      reply={{ label: step.name, placeholder: t("Anything to change here?"), target: { facetId: step.facetId } }}
       onReply={props.onReply}
       media={
         screen.frame ? (

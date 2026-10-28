@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { setImmediate } from "node:timers/promises";
-import { UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
+import { RestartAnswer, UpdateAction, UpdateCheckStatus } from "../../src/shared/app-update.ts";
 import {
   AUTO_UPDATE_ENABLED,
   InstallCheck,
@@ -27,6 +27,8 @@ import {
   UpdateSkip,
   autoUpdateDecision,
   createUpdateAnnouncer,
+  FIRST_RUN_CHECK_DELAY_MS,
+  firstCheckDelay,
   installedFromGenexRepository,
   releaseVersion,
   watchInstaller,
@@ -47,6 +49,13 @@ const released: UpdateLaunch = {
   productName: "Genex",
   systemPackages: false,
 };
+
+test("the first check waits out Squirrel's hold on a fresh install, and runs at once otherwise", () => {
+  assert.equal(firstCheckDelay(["C:\\genex\\app-0.1.14\\Genex.exe", "--squirrel-firstrun"]), FIRST_RUN_CHECK_DELAY_MS);
+  assert.ok(FIRST_RUN_CHECK_DELAY_MS > 0);
+  assert.equal(firstCheckDelay(["C:\\genex\\app-0.1.14\\Genex.exe"]), 0);
+  assert.equal(firstCheckDelay(["/Applications/Genex.app/Contents/MacOS/Genex"]), 0);
+});
 
 test("a renamed fork cannot consume the official update feed", () => {
   assert.deepEqual(autoUpdateDecision({ ...released, productName: "My Studio" }), {
@@ -143,7 +152,7 @@ function announcer(change: Partial<UpdateAnnouncerDeps> = {}) {
       clicks.push(onClick);
     },
     confirmRestart: async () => true,
-    quitAndInstall: () => log.push("quit and install"),
+    quitAndInstall: () => void log.push("quit and install"),
     openRelease: (url) => log.push(`open ${url}`),
     ...change,
   });
@@ -177,13 +186,13 @@ test("before the studio is up, the update is one notification that names the ver
 test("restart installs only a downloaded update, and only once the person agrees", async () => {
   let agree = false;
   const { updates, log } = announcer({ confirmRestart: async () => agree });
-  assert.equal(await updates.restart(), false, "nothing downloaded");
+  assert.equal(await updates.restart(), RestartAnswer.NoUpdate, "nothing downloaded");
   updates.downloaded("0.2.0");
   log.length = 0;
-  assert.equal(await updates.restart(), false, "the person kept the run going");
+  assert.equal(await updates.restart(), RestartAnswer.Declined, "the person kept the run going");
   assert.deepEqual(log, []);
   agree = true;
-  assert.equal(await updates.restart(), true);
+  assert.equal(await updates.restart(), RestartAnswer.Relaunching);
   assert.deepEqual(log, ["quit and install"]);
 });
 
@@ -201,9 +210,9 @@ test("a second restart while the first still asks does not ask again", async () 
   updates.downloaded("0.2.0");
   log.length = 0;
   const first = updates.restart();
-  assert.equal(await updates.restart(), false);
+  assert.equal(await updates.restart(), RestartAnswer.AlreadyAsking);
   answer(true);
-  assert.equal(await first, true);
+  assert.equal(await first, RestartAnswer.Relaunching);
   assert.equal(asked, 1);
   assert.deepEqual(log, ["quit and install"]);
 });
@@ -216,7 +225,7 @@ test("a published release Linux cannot install is offered for download, once per
   updates.available({ version: "0.2.0", url: PAGE });
   assert.deepEqual(updates.ready(), { version: "0.2.0", action: UpdateAction.Download });
   assert.deepEqual(log, ["announce 0.2.0"], "a later check of the same release says nothing new");
-  assert.equal(await updates.restart(), false, "nothing downloaded to install");
+  assert.equal(await updates.restart(), RestartAnswer.NoUpdate, "nothing downloaded to install");
   assert.equal(updates.download(), true);
   assert.deepEqual(log.slice(1), [`open ${PAGE}`]);
 });

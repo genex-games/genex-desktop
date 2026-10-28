@@ -3,6 +3,7 @@
  * Recent, profiles), what the mobile row reads, and the store's `manage` over a fake API.
  */
 import assert from "node:assert/strict";
+import { NO_INSTALLS } from "../../src/shared/play-native.ts";
 import { describe, it } from "node:test";
 import { changedGame, curationOf, MobileShown, mobileShown } from "../../src/renderer/play/card-menu/manage-model.ts";
 import { EMPTY_FEED, FeedStatus } from "../../src/renderer/play/play-model.ts";
@@ -155,8 +156,19 @@ describe("Play card menu: the store's manage", () => {
         playOpen: async () => {},
         playClose: async () => {},
         playRemix: async (slug) => slug,
+        playRemixReady: async (slugs) => Object.fromEntries(slugs.map((slug) => [slug, true])),
         assetLibrary: async () => ({ assets: [], nextCursor: null }),
         playCatalog: async () => [],
+        playGame: async () => {
+          throw new Error("no page");
+        },
+        playInstalls: async () => NO_INSTALLS,
+        playSessions: async () => [],
+        playInstall: async () => {},
+        playInstallCancel: async () => {},
+        playUninstall: async () => {},
+        playLaunch: async () => {},
+        playSession: async () => {},
         playManage: (gameId, change) => {
           changes.push({ gameId, change });
           return answer();

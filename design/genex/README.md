@@ -6,7 +6,8 @@ Genex source application's visual language with local desktop behavior. See
 for principles and skill routing.
 
 - **Type:** Zalando Sans SemiExpanded for words, Geist Mono for actions and machine text;
-  restricted Geist fallback for Greek/Cyrillic. Chat/menu 14px, composer 15px, dialog title
+  TikTok Sans tuned to Zalando for Cyrillic/Greek, and the app language's script from LINE Seed JP,
+  Genex Hangul (Pretendard) or Noto Sans SC. Chat/menu 14px, composer 15px, dialog title
   20px. Use named roles rather than adding arbitrary font sizes.
 - **Color:** configurable semantic light/dark palettes on one shared lightness ramp. A first launch follows the
   system's light or dark, painted before the page's first frame (`appearance/first-paint.ts`); Genex dark is the dark default,
@@ -35,11 +36,14 @@ for principles and skill routing.
   a faster start sees only the page), fades out in 200ms and never returns, and the window can be
   dragged by it. Reduced motion shows it at once and still. A failed start shows each
   area's failure and Retry, which stays up, busy (**Retrying…**), while it runs.
-- **Loading:** there are no skeletons, except, at the owner's request, Play's grid: a tab on its
-  way draws eight cards' shapes (cover tile, title and author bars) shimmering in a faint ink tint,
-  fading in after 120ms, still under reduced motion. Elsewhere a region whose content is on its way uses `Pending`: nothing
-  for 400ms (the local reads behind chats, settings, activity and files usually finish unseen),
-  then its label ("Loading conversation…") shimmering in ink-3, still under reduced motion.
+- **Loading:** a region whose content is on its way uses `Pending`: nothing for 400ms (the local
+  reads behind chats, settings, activity and files usually finish unseen), then the shape of what
+  is coming, never words: `Skeleton` blocks in the hover fill, the size of the lines, pictures and
+  controls that come, breathing slowly together (2.4s), still under reduced motion. Each place draws
+  its own shape (a chat's message, reply and card over a quiet composer; Builds' parts on the graph's
+  dots; settings rows; asset tiles); the label is only announced. Real work being started (checking
+  Blender, a terminal starting) is `Pending working`: the chat's orb beside one 12px shimmering line.
+  Play's grid, the @ picker and comments keep their own shimmering card shapes.
   Nothing claims to be empty (No matches, No screenshot, stripes for a missing still) before its
   read has answered, and a read that fails says so instead of checking forever. Media keeps a
   plain inset tile of its final size while it loads; an agent's turn keeps `LoadingState`; actions
@@ -129,15 +133,12 @@ updates. Long work trails mount 30 steps at a time, workers initially show six, 
 is paged/windowed. Studio build reports and learning use the same `ChatDisclosure` heading, body font and framed expansion as work logs; only genuine decisions get answer controls. Routine build decisions remain activity text, with failures visible. A new running build opens Builds once (after the idea-to-crane hand-off when Live shows the first-idea state); later tab choices remain with the user. There is one elapsed timer, without a second build-total line. Scroll-follow accounts for the composer/question dock changing height and
 never pulls a reader away from history.
 
-Loop intake uses the same question surface for `ask_user`: its options, then a row with a radio and an inline "Write your own answer…" field (focus or typing selects it; Enter sends), each radio on its label's first line. The footer pins **Chat about this** (a filled quiet button with a chat icon, at the leading edge) opposite **Send answer**; it puts the card aside behind its "Answer question" reopener and focuses the composer. The choices scroll inside the card (at most 60% of the window); the footer never does. That card has no close icon. **Send answer** stays disabled until a choice or typed text exists. Selection alone never sends. Questions survive reload and pagination; any submitted reply settles the question. Model-generated questions must be requested through the tool, not inferred from arbitrary prose or routine progress. Host handoff/session narration stays in diagnostics, including suppression of known older host templates.
+Every question waiting on the person uses one surface, asked as Claude asks (`chat/ChatQuestion.tsx`): a full-width composer-colored card; an agent's one-line recap in ink-2 above the question when it wrote one (`ask_user`'s `recap`); the question at 15px semibold; one ink-2 line under it when there is something to know (a plugin's name, what a yes lets the agent do), ending in **Details ›** where the request has more; then the answers as buttons from the card's left edge, wrapping when they do not fit, never more than three. The first answer is the recommended one: filled in ink with two keycaps (⌘ ↩ on a Mac, Ctrl ↵ elsewhere; `aria-keyshortcuts`) that press it from anywhere in the chat, the composer included, unless a dialog is open or another field has the typing (`chat/answer-keys.ts`); the others are outlined in the card's color. A press answers at once: no radios and no Continue; while it sends only a filled "Sending…" stays. A choice's description is its tooltip. The words scroll inside the card (at most 60% of the window); the answers never do. The cross in the corner, or Esc on the card, puts it aside behind its reopener ("Answer question", "Review permission request", "Review plan"), which brings focus back to the first answer; Esc in the composer still stops the turn. The person's own words go in the composer, whose placeholder says what they do: "Write your own answer…" under an agent's question (the next message is its answer), "Tell Claude what to do instead…" or "Keep planning: what should change?" under Claude's (a Deny with those words). Questions survive reload and pagination; any submitted reply settles an agent's question. Model-generated questions must be requested through the tool, not inferred from arbitrary prose or routine progress. Host handoff/session narration stays in diagnostics, including suppression of known older host templates.
 
-Permission questions use one full-width composer-colored surface: 16px horizontal/12px
-vertical padding, full-row choices with 16px radio marks and visible descriptions. Selection
-never submits permission. Continue explicitly sends the selected answer; a busy request blocks
-duplicate submission. Putting a question aside only collapses it and leaves a keyboard-reachable
-reopener. Pending plugin and Claude permission questions are pinned above the composer even if
+Permission questions use that surface; a busy request blocks duplicate submission, and putting
+one aside only collapses it. Pending plugin and Claude permission questions are pinned above the composer even if
 their history page is unloaded; settled outcomes remain in history. Request arguments are disclosed in context. Plans appear expanded with a scrolling Markdown
-body and a fixed compact footer: primary **Approve**, secondary **Make changes** and **Cancel**.
+body and a fixed compact footer: primary **Approve** with the answer keys, secondary **Make changes** and **Cancel**.
 Make changes shows a chat status and focuses the existing composer without overwriting its
 draft. Approve remains disabled while that revision is being drafted; sending it requests a
 new plan and explicit approval. Failed plan generation uses a recovery card with Choose model, Model providers, Try again and Dismiss; approval controls appear only for a prepared plan. Raw error details expand on demand. Steering can prefill the composer. These reuse existing consent
@@ -164,15 +165,14 @@ Claude Code's own permission requests use that surface too (`chat/PermissionRequ
 title is Claude Code's sentence ("Claude wants to edit main.js"); for Bash it reads "Claude wants
 to run a command" and the command follows once, in highlighted mono (`chat-tool-code`), never
 repeated in the title. A file tool shows its path as a link; the description line is Claude's
-description, else its reason. Choices: **Allow** ("Just this once."), the offered grants in words,
-every one named ("Always allow npm install commands in this game"; absent when none is offered)
-and **Deny**, then an own-words row, "Tell Claude what to do instead…", which denies with that
-message. **Request details** discloses the reason and the tool input. A plan leaving Plan mode is
+description, else its reason. Answers: **Allow once**, the offered grants in words, every one
+named ("Always allow npm install commands in this game"; absent when none is offered) and **Deny**;
+words in the composer deny with that message. **Details** discloses the reason and the tool input. A plan leaving Plan mode is
 **Approve this plan?**: its Markdown in a focusable region that scrolls (at most
 max(5rem, 45vh − 19rem); its last line fades over 32px while more lies below), then **Yes, in Auto mode** (left out where Auto is unavailable for the
-model), **Yes, and accept edits**, **Yes, and ask before changes** and a "Keep planning: what
-should change?" row. Continue confirms; put aside, a card reopens from Review permission request
-or Review plan. Settled, history keeps one disclosure line in the "Worked on N steps" type: the
+model), **Yes, and accept edits**, **Yes, and ask before changes**, with "Keep planning: what
+should change?" in the composer. Put aside, a card reopens from Review permission request or
+Review plan. Settled, history keeps one disclosure line in the "Worked on N steps" type: the
 outcome, then what it was about (Allowed · npm install three, Always allowed · …, Denied · …,
 Withdrawn when the work stopped · …, and for a build's lead's card nobody answered in five minutes
 Withdrawn: nobody answered · …; a plan reads Plan approved · Auto). It opens to the question as
@@ -445,13 +445,20 @@ chat header's ⋯ menu and uses that chat's bound game; it is disabled on drafts
 game stage, selected build history and native-view occlusion behind Review, drawers and dialogs.
 
 Chat header and stage strip are 48px: 8px above and below 32px controls, and every gap between
-controls drags the window. The strip is always one row: once its labelled buttons (a plugin's, Make
-multiplayer, Publish) would overflow it, they all fold into 32px icons at once, each name moving to
-its tooltip and a status dot to the icon's corner, and unfold only when the labelled row fits again
-(`panels/stage/strip-fold.ts`). The game title hugs its text (at most 320px, then truncates); select it
+controls drags the window. The strip holds the views, Play/Stop, Reload, Sound and Full screen at
+its start and the plugin buttons (a plugin's, Make multiplayer, Publish) at its end, always named,
+and nothing in it ever runs under the window's own controls. Narrower, it makes room in steps
+(`panels/stage/strip-fold.ts`): the views fold into one button naming the current one, in the
+switcher's selected tint with a chevron, its menu listing every view with the current one ticked; then the
+plugin buttons move to a second 48px row at the strip's end; then Sound and Full screen join them at
+that row's start. Each step undoes once the first row fits again. Play/Stop, Reload, Sound and Full
+screen sit 4px apart, 8px after the views. The game title hugs its text (at most 320px, then truncates); select it
 to rename, Enter to save and Escape to cancel. Rename updates the library display name; folder
-paths and identifiers stay stable. Show in Finder and Terminal sit together at the header's end,
-then ⋯ (Export game…, Rename). One game has one chat, so there is no chat switcher; conversations
+paths and identifiers stay stable. A game made in an engine has the engine's button (Roblox,
+Unity, Unreal, Godot) at the header's end, then Show in Finder and Terminal sit together, then ⋯
+(Export game…, Rename). The engine's button is the strip's plugin button in 13px, 4px before the icons,
+its tooltip below it; once the header is under 360px it folds to the engine's mark, its status dot or
+update mark on the mark's corner. One game has one chat, so there is no chat switcher; conversations
 left from before that rule, and unbound ones, are found through search. The stage strip does not
 repeat the title. Icon-only controls carry tooltips with shortcut chips. The native game view paints
 over the page, so no z-index lifts a tooltip above it: every tooltip keeps 4px clear of it, shifting
@@ -470,13 +477,13 @@ full screen a studio-drawn dark glass pill sits 14px from the top-right corner, 
 full screen” beside the exit glyph; after 2.6s the words fold into the icon, which rests at 45%
 until the pointer is on it. Plugin buttons wear the prompt bar's model-pill fill (`pill-quiet`);
 one whose status says its action is due (`attention`) takes the accent. Publish (Genex's or
-Studio's own) wears Play's blue instead, as the profile's people buttons do: the tint with its edge
-(`Button variant="play-tint"`), the filled blue (`play-fill`) once there is something to publish,
-and no badge. A status badge is micro text after the
+Studio's own) wears the accent's tint with its edge instead, as the profile's people buttons do
+(`Button variant="play-tint"`), the flat accent fill (`play-fill`) once there is something to
+publish, and no badge. A status badge is micro text after the
 label in its tone's colour, the quiet info word in ink-2 (4.5:1 on the pill in every theme), or,
 when the status asks for a dot, a 6px dot in green, amber, red or ink-3 grey. Unreal's button shows
 only on an Unreal game (its facts) or one whose chat chose Unreal; it leads with the Unreal glyph and
-wears a dot, never a word: green Ready, amber Starting, grey Not open, Not set up or Not installed. A button's title opens in the strip's tooltip beside it, a dot's word on its first line;
+wears a dot, never a word: green Ready, amber Starting, grey Not open, Not set up or Not installed. A button's title opens in its tooltip (beside it on the strip, below it in the chat header), a dot's word on its first line;
 a screen reader hears the badge after the button's name ("Unreal Editor, Ready"). An Unreal game's Live is one centred card (at most 560px) on the
 stage's hatch: the latest play shot when there is one, the project's name, one line of where it
 stands (a timer while it opens; "Ready in Unreal" once it answers) and at most one button, the same
@@ -490,7 +497,7 @@ Not connected), its foot one primary (held, not hidden, while Unreal is busy), C
 ⋯ menu (Undo setup, Quit Unreal); This computer's block lists the engine and Xcode. The Unity
 panel is the same: its project block (Unity's mark on the tile, `unity/`, state in the button's
 words, the step, Engine, one primary and a quiet action at the foot's end) and This computer (the
-newest Unity, ticked once it is Unity 6); its strip button folds to Unity's mark. While Live or
+newest Unity, ticked once it is Unity 6); its header button folds to Unity's mark. While Live or
 Builds loads, a 52×36 halftone plasma in ink at 62% sits over a shimmering 13px line; it appears
 only after 0.4s, stays at least 0.6s and fades out (150ms) before the native view is uncovered.
 
@@ -681,7 +688,7 @@ do not replace them with hover-only controls.
 ## Engine panels
 
 Every plugin that works with an engine's or tool's files (Unreal, Unity and Godot now; Blender, Roblox
-next) follows one pattern. Its strip button shows only on a game that is that engine: the game's
+next) follows one pattern. Its button, in the chat header, shows only on a game that is that engine: the game's
 facts name its project (`toolbar[].facts`), or its chat chose the engine before the project exists
 (the status's `shown`). A plugin that is on adds nothing to other games. The button opens one panel,
 and the dialog is its window: the dialog's title is the view's own heading (Set up Roblox Studio,
@@ -701,7 +708,7 @@ which scroll above it. List rows are 60px (32px tile, 15px name, 12px mono path,
 chevron; the whole row is the button); fact rows 44px, label left and mono value right; 16px side
 padding everywhere. A path starts at `~` with its middle folded to …; a temporary folder says so;
 the full path is the tooltip. Status is a dot and one word, the same in the block's head and on the
-strip button, except Ready, which is the green dot alone. Tags name the consequence (Outside game),
+engine's button, except Ready, which is the green dot alone. Tags name the consequence (Outside game),
 explained once under the list.
 
 ## First launch
@@ -735,6 +742,14 @@ on a surface with an accent dot), OpenCode default first and picked; a short win
 for it. The marks are the vendors' own paths, unaltered (`ui/provider-marks.ts`). All art is canvas in the empty states' wireframe
 language, reads theme colours from CSS and holds a still frame under Reduce Motion. Skip for now
 and Start building fade into home, the welcome's idea waiting in its composer.
+
+A build with usage analytics asks **Help improve Genex?** first (`panels/AnalyticsConsent.tsx`):
+the standard 448px dialog over the welcome's first frame, its film held on the caret, with no close
+and no Escape. One line under the title, then the promo's row pattern (18px glyph, 14px medium
+title, one 13px ink-3 line): screens, clicks and errors; the replay of the first week, only on a
+sampled install; never your work or name, its glyph ink-3. **Don't share** and **Share** are the
+same quiet button, right of a 13px ink-3 "Change it anytime in Settings." On a profile welcomed
+before, the same dialog opens over home once; the promo and the avatar welcome wait for it.
 
 After the welcome, the Genex promo is a 360px surface card floating 16px from a bottom corner
 (above the workspace, beneath dialogs and toasts) that moves nothing beneath it: bottom-left while
@@ -932,7 +947,13 @@ The dock never opens by itself for it, and the result the agent receives is not 
 Settings → Appearance provides System/Light/Dark with independent palettes and profile-local
 customization. New profiles default to the neutral charcoal Genex dark preset; persisted choices win. Start from `appearance/themes.ts` and the shared aliases in `theme.css`; do not
 introduce dark-only foregrounds, translucent white field fills or fixed brand-colored shadows.
-Colors are drawn exactly as the palette sets them; no role is lifted to a contrast floor. Filled
+Colors are drawn exactly as the palette sets them; no role is lifted to a contrast floor. Genex
+paints one blue, genex.games' own (#2454d2 dark, #1661d9 light): every switch's selected segment
+(Live/Builds/Assets, Play / Create, Play's and the Genex plugin's tabs) wears `.selected-tint`, the
+accent at `--select-share` with its edge at `--select-edge-share` (16% and 55% dark, 10% and 35%
+light) and the label in ink; only a surface's one main action is filled, flat, never a gradient; the
+Builds graph, the selected icon, Play's blue, its main people button and the requests count take
+the accent until a palette sets its own. Filled
 accent actions (primary buttons, text selection) use `--accent-fill`, `--accent-hover` and
 `--accent-foreground`: a palette may set each (`accentFill`, `accentHover`, `accentText`), else the
 fill is the accent darkened in OKLCH until white reaches 5:1. Quiet icons (icon buttons, sidebar
@@ -943,7 +964,7 @@ solid (`--logo-fade`). Its sidebar width is `--logo-width`. The selected Setting
 (`--prompt-edge`). Every floating menu (composer menus, dropdowns, popovers) draws one edge, `--menu-edge`
 (utility `border-menu-edge`, no ring): the prompt bar's edge on a light theme, the control edge on a dark
 one, whose menu fill would swallow the prompt bar's. A box inside a menu (a plan's limits, a mention card)
-has the `line-soft` edge. The Live/Assets switch's current view reads `viewSwitch` (`--switch-fill`) and the
+has the `line-soft` edge. The Live/Assets switch's current view is tinted with `viewSwitch` (`--switch-fill`) and the
 empty-state wire art `wireArt` (`--wire-art`); the stage's hatch draws `hatch` stripes
 (`--hatch-stripe`) over `hatchGround` (`--hatch-ground`), else the text's faint `--stripe` over the canvas.
 Chips, tabs and hover states read `controlFill`, `controlHover`, `controlText` and
@@ -1001,7 +1022,8 @@ Use `npm run test:design-ui` for shared Genex primitive changes selected by the 
 gallery and tests it in credential-disabled disposable Electron: actual per-script font
 selection, 32px controls, pointer cursors, keyboard menus/tabs/switches, modal focus trapping
 and restoration, disclosure collapse, reduced motion and zoom. Chat specimens also exercise
-radio-key navigation, explicit submission, collapse focus, expanded plans and all three footer
+answers from the left edge, the answer keys, Tab order, the sending state, Esc and reopen focus,
+an agent's recap, expanded plans and all three footer
 actions, scroll-stable plan actions, single-line tool labels/highlighted code output, long-message
 folding with keyboard expansion, timer placement,
 300px width and 200% zoom. The gallery window is parked and nonfocusable, uses CDP keyboard

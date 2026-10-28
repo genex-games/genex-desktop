@@ -51,6 +51,7 @@ import { EngineId } from "../../shared/providers.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { redactSecrets } from "../../shared/redact.ts";
 import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** OpenRouter's OpenAI-compatible API. */
 export const OPENROUTER_API = "https://openrouter.ai/api/v1";
@@ -97,16 +98,25 @@ const INSTRUCTION_ROLES: ReadonlySet<unknown> = new Set(["system", "developer"])
  */
 const GAME_PROVIDER_ROUTING = { allow_fallbacks: false, require_parameters: true, data_collection: "deny" } as const;
 
-/** What this engine says to the person. */
+/**
+ * What this engine says: statuses, remedies, price notes and model-list problems for Settings in the
+ * person's language (functions, since main sets its language after it starts), and the errors a
+ * session's run reads in English, since the harness and the model read them too.
+ */
 const MESSAGE = {
-  NoKey: "No OpenRouter API key is saved.",
-  KeyRemedy: "Add your OpenRouter API key in Settings › Model Providers.",
-  KeyRefused: "OpenRouter did not accept the saved API key.",
-  ReplaceRemedy: "Replace the key in Settings › Model Providers.",
-  Ready: "OpenRouter API key saved",
-  Unreachable: (detail: string) => `OpenRouter could not be reached (${detail}).`,
-  Locked: (detail: string) => `The OS secret store is locked, so the OpenRouter key cannot be read. ${detail}`,
-  BadShape: "That does not look like an OpenRouter API key. Paste the whole key, with no spaces.",
+  NoKey: () => t("No OpenRouter API key is saved."),
+  KeyRemedy: () => t("Add your OpenRouter API key in Settings › Model Providers."),
+  NoKeyError: "No OpenRouter API key is saved. Add your OpenRouter API key in Settings › Model Providers.",
+  KeyRefused: () => t("OpenRouter did not accept the saved API key."),
+  ReplaceRemedy: () => t("Replace the key in Settings › Model Providers."),
+  Ready: () => t("OpenRouter API key saved"),
+  Unreachable: (detail: string) => t("OpenRouter could not be reached ({detail}).", { detail }),
+  Locked: (detail: string) =>
+    t("The OS secret store is locked, so the OpenRouter key cannot be read. {detail}", { detail }),
+  LockedError: (detail: string) => `The OS secret store is locked, so the OpenRouter key cannot be read. ${detail}`,
+  BadShape: () => t("That does not look like an OpenRouter API key. Paste the whole key, with no spaces."),
+  Free: () => t("Free"),
+  Price: (input: string, output: string) => t("{input} in / {output} out per M tokens", { input, output }),
   NoModel: "Pick an OpenRouter model for this chat.",
   UnknownModel: (model: string) => `OpenRouter does not offer ${model} with tool calling. Pick another model.`,
   NoTools: "this model cannot call tools",
@@ -116,9 +126,9 @@ const MESSAGE = {
     `The request needs about ${required} tokens including the reply; this model's context is ${window}.`,
   Threshold: (required: number, threshold: number, percent: number) =>
     `The request needs about ${required} tokens including the reply; the compaction threshold is ${threshold} (${percent}%).`,
-  MalformedCatalog: "OpenRouter's model list could not be read.",
-  CatalogTooLarge: "OpenRouter's model list was larger than expected.",
-  CatalogFailed: (status: number) => `OpenRouter's model list failed (HTTP ${status}).`,
+  MalformedCatalog: () => t("OpenRouter's model list could not be read."),
+  CatalogTooLarge: () => t("OpenRouter's model list was larger than expected."),
+  CatalogFailed: (status: number) => t("OpenRouter's model list failed (HTTP {status}).", { status }),
 } as const;
 
 /** One model as OpenRouter's catalog lists it: the fields this engine reads. */
@@ -140,8 +150,8 @@ function perMillion(value: unknown): number | null {
 
 /** The price line a picker row shows: "$3.00 / $15.00 per M tokens", or "Free". */
 function priceNote(input: number, output: number): string {
-  if (input === 0 && output === 0) return "Free";
-  return `$${input.toFixed(2)} in / $${output.toFixed(2)} out per M tokens`;
+  if (input === 0 && output === 0) return MESSAGE.Free();
+  return MESSAGE.Price(`$${input.toFixed(2)}`, `$${output.toFixed(2)}`);
 }
 
 /** A model row's prices in dollars per million tokens, kept beside the row pi-ai prices replies from. */
@@ -214,7 +224,7 @@ export function openRouterModel(entry: CatalogEntry): EngineModel | null {
 /** The tool-calling models of a catalog response, in the order OpenRouter lists them. */
 export function openRouterModels(body: unknown): EngineModel[] {
   const data = (body as { data?: unknown } | null)?.data;
-  if (!Array.isArray(data)) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.MalformedCatalog);
+  if (!Array.isArray(data)) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.MalformedCatalog());
   const rows: EngineModel[] = [];
   for (const entry of data) {
     const row = entry && typeof entry === "object" ? openRouterModel(entry as CatalogEntry) : null;
@@ -226,7 +236,7 @@ export function openRouterModels(body: unknown): EngineModel[] {
 /** A response body read whole, refused past `max` bytes so a misbehaving server cannot fill memory. */
 async function readCapped(response: Response, max: number): Promise<string> {
   const declared = Number(response.headers.get("content-length") ?? Number.NaN);
-  if (declared > max) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.CatalogTooLarge);
+  if (declared > max) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.CatalogTooLarge());
   const reader = response.body?.getReader();
   if (!reader) return "";
   const chunks: Uint8Array[] = [];
@@ -237,7 +247,7 @@ async function readCapped(response: Response, max: number): Promise<string> {
     size += value.byteLength;
     if (size > max) {
       await reader.cancel().catch(() => {});
-      throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.CatalogTooLarge);
+      throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.CatalogTooLarge());
     }
     chunks.push(value);
   }
@@ -372,9 +382,9 @@ export class OpenRouterEngine implements Engine {
         return { code: EngineStatusCode.Error, detail: MESSAGE.Locked(err.message) };
       throw err;
     }
-    if (!key) return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NoKey, remedy: MESSAGE.KeyRemedy };
+    if (!key) return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NoKey(), remedy: MESSAGE.KeyRemedy() };
     const check = await this.#checkKey(key);
-    return check.ok ? { code: EngineStatusCode.Ready, detail: MESSAGE.Ready } : check.status;
+    return check.ok ? { code: EngineStatusCode.Ready, detail: MESSAGE.Ready() } : check.status;
   }
 
   /** Ask OpenRouter whether a key is good: refused, unreachable, or fine. */
@@ -394,7 +404,7 @@ export class OpenRouterEngine implements Engine {
     if (refused)
       return {
         ok: false,
-        status: { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.KeyRefused, remedy: MESSAGE.ReplaceRemedy },
+        status: { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.KeyRefused(), remedy: MESSAGE.ReplaceRemedy() },
       };
     return {
       ok: false,
@@ -408,7 +418,7 @@ export class OpenRouterEngine implements Engine {
    */
   async saveKey(value: unknown): Promise<EngineStatus> {
     const key = cleanApiKey(value);
-    if (!key) return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.BadShape, remedy: MESSAGE.KeyRemedy };
+    if (!key) return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.BadShape(), remedy: MESSAGE.KeyRemedy() };
     const check = await this.#checkKey(key);
     if (!check.ok) return check.status;
     await this.#keys.write(key);
@@ -455,7 +465,7 @@ export class OpenRouterEngine implements Engine {
       body = JSON.parse(await readCapped(response, MAX_CATALOG_BYTES));
     } catch (err) {
       if (err instanceof CatalogError) throw err;
-      throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.MalformedCatalog);
+      throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.MalformedCatalog());
     }
     return { models: openRouterModels(body), source: ModelCatalogSource.Provider };
   }
@@ -482,9 +492,9 @@ export class OpenRouterEngine implements Engine {
     try {
       key = await this.#keys.read();
     } catch (err) {
-      throw new EngineError(EngineFailureKind.Auth, this.id, MESSAGE.Locked(errorMessage(err)));
+      throw new EngineError(EngineFailureKind.Auth, this.id, MESSAGE.LockedError(errorMessage(err)));
     }
-    if (!key) throw new EngineError(EngineFailureKind.Auth, this.id, `${MESSAGE.NoKey} ${MESSAGE.KeyRemedy}`);
+    if (!key) throw new EngineError(EngineFailureKind.Auth, this.id, MESSAGE.NoKeyError);
     return key;
   }
 

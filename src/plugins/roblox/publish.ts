@@ -2,9 +2,10 @@
  * Publishing to Roblox: a place's first publish, and its updates. No Studio or plugin API publishes a
  * place, and Open Cloud's place publishing takes API keys Genex never asks for, so the person's own
  * computer control clicks File › Publish to Roblox in their Studio: Genex hands the game's chat that
- * task through `game.engine.assist`. The person approves every publish: the panel's press, or the
- * card the manifest declares on the agent's `first-publish` and `publish-update`, which the host
- * asks before the plugin runs.
+ * task through `game.engine.assist`. The person approves every publish: their press in the panel or
+ * on the strip's Publish card (no further card), or the card the manifest declares on the agent's
+ * `first-publish` and `publish-update`, which the host asks before the plugin runs. The card follows
+ * the publish through `publish-attempt.ts`.
  *
  * - **First publish** (`first-publish`): a place never published (its link has no `remote` ids)
  *   becomes a new game on Roblox under the name the person approved (the Genex game's title unless
@@ -21,11 +22,18 @@ import type {
   PluginEngineLink,
   PluginReview,
 } from "../../plugin-sdk/index.d.ts";
+import { SECOND_MS } from "../../shared/duration.ts";
 import { PUBLISH_PROMPTS } from "./publish-prompts.ts";
 import { MESSAGE, PUBLISH_CLICK_PATH } from "./words.ts";
 
 export { PUBLISH_CLICK_PATH };
 
+/**
+ * How long a publish waits for the game's changed scripts to reach Studio before handing over: a
+ * busy Studio (or one still reconciling after a restart) would otherwise hold the press past the
+ * plugin call's own deadline, and the publish goes on with what Studio has.
+ */
+export const PUBLISH_FLUSH_MS = 15 * SECOND_MS;
 /** A place name at most this long goes into the task whole; a longer one is cut, so the task stays one short line. */
 const MAX_TASK_NAME_CHARS = 60;
 /** The longest name Roblox takes for a new game. */
@@ -67,6 +75,8 @@ export interface PublishDeps {
   assist(task: string): Promise<PluginEngineAssistAnswer>;
   /** Sends the script files changed and not yet in Studio, so the publish holds them. */
   flush?(): Promise<void>;
+  /** Ends a play test running in the game's Studio and waits until Studio is editing again. */
+  toEdit?(): Promise<boolean>;
   /**
    * Notes a first publish under this name once the chat has started it, so Genex links the game to
    * the published place afterwards (`relink.ts`); a refused hand-over is never noted.
@@ -141,14 +151,39 @@ export function firstPublishTask(name: string): string {
   return `Publish to Roblox as a new game named "${gameName(name)}": ${PUBLISH_CLICK_PATH} in Studio, now, with the desktop tool (not first-publish). Keep Studio's privacy and settings, the description empty. Stop at any age, ID, two-step, terms or payment question.`;
 }
 
-/** Each asker's words for each answer. */
-const WORDS = {
-  [PublishAsker.Person]: MESSAGE.Publish,
-  [PublishAsker.Agent]: PUBLISH_PROMPTS,
-} as const;
+/** The words a publish's answers are read from, whoever asked. */
+interface PublishWords {
+  Started: string;
+  FirstStarted(name: string): string;
+  Unavailable: string;
+  Declined: string;
+  NoChat: string;
+  NotStarted: string;
+  FirstPublish(name: string): string;
+  AlreadyPublished: string;
+  NoPlace: string;
+}
 
-/** The words both askers' answers are read from. */
-type PublishWords = (typeof WORDS)[PublishAsker];
+/** The person's words for each answer, in Genex's language as it is now. */
+function personWords(): PublishWords {
+  const W = MESSAGE.Publish;
+  return {
+    Started: W.Started(),
+    FirstStarted: W.FirstStarted,
+    Unavailable: W.Unavailable(),
+    Declined: W.Declined(),
+    NoChat: W.NoChat(),
+    NotStarted: W.NotStarted(),
+    FirstPublish: W.FirstPublish,
+    AlreadyPublished: W.AlreadyPublished(),
+    NoPlace: W.NoPlace(),
+  };
+}
+
+/** Each asker's words for each answer: the person's, or the agent's (English). */
+const wordsOf = (asker: PublishAsker): PublishWords =>
+  asker === PublishAsker.Person ? personWords() : PUBLISH_PROMPTS;
+
 /** The answers that are the same line whoever asked. */
 type PlainWords = "Unavailable" | "Declined" | "NoChat" | "NotStarted";
 
@@ -172,6 +207,8 @@ function refusedAnswer(answer: PluginEngineAssistAnswer, words: PublishWords): P
 
 /** Hands the chat a publish's task, once the game's changed script files are in Studio. */
 async function handOver(deps: PublishDeps, task: string): Promise<PluginEngineAssistAnswer> {
+  // Studio publishes from its editor: a play test running there is ended first, never the person's chore.
+  await deps.toEdit?.().catch(() => false);
   // Studio holds the scripts it last had when a send fails; the publish goes on with those.
   await deps.flush?.().catch(() => undefined);
   return deps.assist(task);
@@ -186,7 +223,7 @@ export async function publishUpdate(
   deps: PublishDeps,
   asker: PublishAsker,
 ): Promise<PublishAnswer> {
-  const words = WORDS[asker];
+  const words = wordsOf(asker);
   if (!place.link) return { started: false, message: words.NoPlace, reason: PublishMiss.NoPlace };
   if (!place.link.remote)
     return { started: false, message: words.FirstPublish(firstPublishName(place)), reason: PublishMiss.FirstPublish };
@@ -205,7 +242,7 @@ export async function firstPublish(
   asker: PublishAsker,
   requested?: string,
 ): Promise<PublishAnswer> {
-  const words = WORDS[asker];
+  const words = wordsOf(asker);
   if (!place.link) return { started: false, message: words.NoPlace, reason: PublishMiss.NoPlace };
   if (place.link.remote) return { started: false, message: words.AlreadyPublished, reason: PublishMiss.Published };
   const name = firstPublishName(place, requested);
@@ -219,8 +256,9 @@ export async function firstPublish(
 /** The panel's card for a published place: its name and what publishing does; a first publish keeps the manifest's. */
 export function reviewPublish(place: PublishPlace): PluginReview {
   if (!place.link?.remote) return {};
-  const name = plainName(place.name) || plainName(place.link.name) || "this game's place";
-  return { message: MESSAGE.Publish.Confirm(name), detail: MESSAGE.Publish.Plan };
+  const name = plainName(place.name) || plainName(place.link.name);
+  const message = name ? MESSAGE.Publish.Confirm(name) : MESSAGE.Publish.ConfirmUnnamed();
+  return { message, detail: MESSAGE.Publish.Plan() };
 }
 
 /** The panel's card for a first publish: the name it gets on Roblox and what happens; a published place keeps the manifest's. */
@@ -228,6 +266,6 @@ export function reviewFirstPublish(place: PublishPlace, requested?: string): Plu
   if (!place.link || place.link.remote) return {};
   return {
     message: MESSAGE.Publish.ConfirmFirst(firstPublishName(place, requested)),
-    detail: MESSAGE.Publish.PlanFirst,
+    detail: MESSAGE.Publish.PlanFirst(),
   };
 }

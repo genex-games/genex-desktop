@@ -8,6 +8,7 @@ import { conversationThrough, latestRun, runSnapshot } from "../../shared/coordi
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { EventKind, type Message } from "../../shared/event-log.ts";
 import { WorkClass } from "../../shared/harness-api.ts";
+import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import type { Engine } from "../../substrate/engines/types.ts";
 import type { EventEnvelope } from "../../substrate/types.ts";
@@ -28,7 +29,7 @@ const PLAN_STATE_CHARS = 12_000;
 
 /** What the user reads when a plan cannot be written. */
 const MESSAGE = {
-  cannotPlan: "This provider cannot prepare a reviewable plan. Choose another model.",
+  cannotPlan: () => t("This provider cannot prepare a reviewable plan. Choose another model."),
 } as const;
 
 type PlanCore = Pick<StudioCore, "store" | "engines" | "budget" | "mainThread" | "append" | "emit" | "sendUserMessage">;
@@ -94,7 +95,7 @@ async function draftPlan(core: PlanCore, x: PlanFacts, ask: PlanAsk): Promise<st
 /** The engine the user picked, or the first one ready; it must be able to answer a completion. */
 async function planningEngine(core: PlanCore, engineId: string | undefined): Promise<PlanningEngine> {
   const engine = engineId ? core.engines.get(engineId) : await core.engines.firstReady();
-  if (!canComplete(engine)) throw new Error(MESSAGE.cannotPlan);
+  if (!canComplete(engine)) throw new Error(MESSAGE.cannotPlan());
   return engine;
 }
 

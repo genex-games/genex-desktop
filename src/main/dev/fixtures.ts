@@ -22,6 +22,7 @@ import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistor
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
   appendSuggestion,
+  FIXTURE_GAME,
   FIXTURE_MODEL,
   FIXTURE_VERSION,
   FixtureName,
@@ -34,6 +35,7 @@ import { announceOpenLoopWait, seedOpenLoops, seedOpenProjects } from "./fixture
 import { seedStillsGame } from "./fixture-stills.ts";
 import { seedAssetLibrary } from "./fixture-assets-tab.ts";
 import { seedRobloxGame } from "./fixture-roblox.ts";
+import { seedItemsStore } from "./fixture-items.ts";
 import { seedGenexTerms } from "./fixture-genex-terms.ts";
 import { seedUnrealGame } from "./fixture-unreal.ts";
 import { seedUnrealChat } from "./fixture-unreal-chat.ts";
@@ -49,8 +51,10 @@ export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
 export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
+  FIXTURE_GAME,
   FIXTURE_AGENTS_FAILURE,
   FIXTURE_NAMES,
+  FIXTURE_DATA_FOLDER,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FIXTURE_VERSION,
@@ -101,8 +105,8 @@ export async function prepareFixture(core: StudioCore, id: string): Promise<Prep
   if (id === FixtureName.FirstLaunch)
     return { project: "", threadId: core.mainThread, fixture: id, version: FIXTURE_VERSION };
   // Reuse never resets a project's files or append-only history.
-  const found = (await core.games.list()).find((p) => p.name === "fixture-game");
-  const project = found ?? (await core.games.scaffold("fixture-game", { title: "Fixture Game" }));
+  const found = (await core.games.list()).find((p) => p.name === FIXTURE_GAME);
+  const project = found ?? (await core.games.scaffold(FIXTURE_GAME, { title: "Fixture Game" }));
   const game: FixtureGame = {
     core,
     id,
@@ -163,6 +167,7 @@ async function seedFreshFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.RobloxGame) return seedRobloxGame(core, game.project, threadId);
   if (id === FixtureName.GenexTerms) return seedGenexTerms(core, game.project.name, threadId);
   if (id === FixtureName.AssetLibrary) return seedAssetLibrary(game.project.dir);
+  if (id === FixtureName.ItemsStore) return seedItemsStore(core, game.project.name, threadId);
 }
 
 async function seedGraphOnce(game: FixtureGame): Promise<void> {

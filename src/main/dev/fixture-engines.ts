@@ -1,6 +1,6 @@
 /**
- * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, OpenRouter and
- * local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
+ * The scripted engines of a fixture session: Ollama, Claude Code, Codex, OpenCode, Grok Build, Cursor,
+ * OpenRouter and local server stand-ins that answer from fixed text, never reach an account, a key, a server or the
  * network, and start no vendor worker. Markers in
  * the user's words (`fixture:pending`, `fixture:stream`, `fixture:plan`, …) choose the script.
  */
@@ -27,6 +27,7 @@ import { FIXTURE_MODEL } from "./fixture-kit.ts";
 import { fixtureText } from "../game-ai/doors/fixture.ts";
 import { AiOp } from "../../shared/game-ai.ts";
 import { setTimeout as sleep } from "node:timers/promises";
+import { readFileSync } from "node:fs";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 
 const DAY_MS = 24 * HOUR_MS;
@@ -35,6 +36,8 @@ const FIXTURE_ENGINES = [
   EngineId.ClaudeCode,
   EngineId.Codex,
   EngineId.OpenCode,
+  EngineId.Grok,
+  EngineId.Cursor,
   EngineId.OpenRouter,
   EngineId.LocalServer,
 ] as const;
@@ -52,8 +55,47 @@ const FIXTURE_SERVER: LocalServerInfo = {
   kind: LocalServerKind.TabbyApi,
   hasKey: true,
 };
-/** The status each fixture starts with when the session names none: ready, but for the local server. */
-const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = { [EngineId.LocalServer]: NO_LOCAL_SERVER };
+/** Cursor's CLI is not on a fixture session's computer, so the picker's lists stay as they were. */
+const NO_CURSOR: EngineStatus = { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Cursor CLI" };
+/** The status each fixture starts with when the session names none: ready, but for the local server and Cursor. */
+const DEFAULT_STATUS: Partial<Record<string, EngineStatus>> = {
+  [EngineId.LocalServer]: NO_LOCAL_SERVER,
+  [EngineId.Cursor]: NO_CURSOR,
+};
+/**
+ * How each subscription's plan limits answer, read again on every read so a reviewer can change it
+ * while the window is open: a JSON file named by `STUDIO_FIXTURE_USAGE_FILE`, for example
+ * `{"claude-code":"slow","codex":"failed"}`. `slow` answers after `SLOW_USAGE_MS`, `failed` throws,
+ * `none` shares no limits, `signed_out` also makes the subscription signed out, `ready` makes a
+ * stand-in that starts not installed (Cursor's) ready; anything else, or no file, answers the
+ * fixed limits at once.
+ */
+const FixtureUsage = { Slow: "slow", Failed: "failed", None: "none", SignedOut: "signed_out", Ready: "ready" } as const;
+const SLOW_USAGE_MS = 8000;
+const SIGNED_OUT_STATUS: EngineStatus = { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; signed out" };
+
+/** How `id`'s plan limits answer now (`STUDIO_FIXTURE_USAGE_FILE`). */
+function fixtureUsageMode(id: string): string | null {
+  const file = process.env.STUDIO_FIXTURE_USAGE_FILE;
+  if (!file) return null;
+  try {
+    const modes: unknown = JSON.parse(readFileSync(file, "utf8"));
+    const mode = modes && typeof modes === "object" ? (modes as Record<string, unknown>)[id] : null;
+    return typeof mode === "string" ? mode : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A subscription stand-in's plan limits, as `STUDIO_FIXTURE_USAGE_FILE` says they answer. */
+async function readFixtureUsage(id: EngineId) {
+  const mode = fixtureUsageMode(id);
+  if (mode === FixtureUsage.Failed) throw new Error("fixture: the plan's limits could not be read");
+  if (mode === FixtureUsage.None) return null;
+  if (mode === FixtureUsage.Slow) await sleep(SLOW_USAGE_MS);
+  return fixtureUsage(id);
+}
+
 /** How long naming a game takes, so home's Naming step can be seen. */
 const NAMING_DELAY_MS = 2500;
 /** How long making a background takes, so the panel's progress can be seen. */
@@ -97,8 +139,8 @@ const COMMAND_MARKER = "fixture:command";
 const LATEST_MESSAGE = "LATEST USER MESSAGE:\n";
 
 /**
- * First launch: an empty library, Claude Code waiting for a sign-in, Codex and OpenCode not
- * installed, OpenRouter with no key, and no local server.
+ * First launch: an empty library, Claude Code waiting for a sign-in, Codex, OpenCode, Grok Build and
+ * Cursor not installed, OpenRouter with no key, and no local server.
  */
 export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   [EngineId.ClaudeCode]: {
@@ -107,6 +149,8 @@ export const FIRST_LAUNCH_STATUS: Record<string, EngineStatus> = {
   },
   [EngineId.Codex]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Codex app" },
   [EngineId.OpenCode]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no OpenCode CLI" },
+  [EngineId.Grok]: { code: EngineStatusCode.NotInstalled, detail: "AG-933 fixture; no Grok Build CLI" },
+  [EngineId.Cursor]: NO_CURSOR,
   [EngineId.OpenRouter]: { code: EngineStatusCode.NeedsLogin, detail: "AG-933 fixture; no OpenRouter key" },
   [EngineId.LocalServer]: NO_LOCAL_SERVER,
 };
@@ -133,7 +177,7 @@ function fixtureEngine(
     supportsSessions: !(directChat && local),
     // Claude Code reads the person's messages mid-turn; Codex is interrupted and resumed instead.
     ...(id === EngineId.ClaudeCode ? { steersMidTurn: true } : {}),
-    status: async () => statuses[id] ?? DEFAULT_STATUS[id] ?? READY_STATUS,
+    status: async () => fixtureStatus(id, statuses),
     // A local server stand-in names its server only while the session has it ready.
     ...(id === EngineId.LocalServer
       ? {
@@ -158,10 +202,18 @@ function fixtureEngine(
     defaultModel: async () => FIXTURE_MODEL,
     // Deterministic plan limits so the composer's usage panel has something honest to show; only a
     // subscription has a plan.
-    ...(isSubscriptionFixture(id) ? { readUsage: async () => fixtureUsage(id) } : {}),
+    ...(isSubscriptionFixture(id) ? { readUsage: () => readFixtureUsage(id) } : {}),
     complete: (request: CompleteRequest) => completeFixture(id, request),
     delegate: (request: DelegateRequest) => delegateFixture(id, request, pendingSessions),
   };
+}
+
+/** A stand-in's status: as `STUDIO_FIXTURE_USAGE_FILE` sets it, else as the session names it, else its default. */
+function fixtureStatus(id: EngineId, statuses: Record<string, EngineStatus>): EngineStatus {
+  const mode = fixtureUsageMode(id);
+  if (mode === FixtureUsage.SignedOut) return SIGNED_OUT_STATUS;
+  if (mode === FixtureUsage.Ready) return READY_STATUS;
+  return statuses[id] ?? DEFAULT_STATUS[id] ?? READY_STATUS;
 }
 
 /** A subscription's stand-in: the only fixtures with plan limits. */
@@ -419,6 +471,7 @@ function interviewReply(id: EngineId, request: DelegateRequest) {
   const question = {
     name: "ask_user",
     args: {
+      recap: "A night scene needs a place first.",
       question: "Where should the scene take place?",
       options: "Ashlands (Recommended) | Open terrain and mushroom trees\nTown street | Buildings and lanterns",
     },

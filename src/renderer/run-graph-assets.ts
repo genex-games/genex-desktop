@@ -5,6 +5,7 @@
 import { GENEX_LOOKUPS, genexEndedUnmade, genexRefused, isGenexSource } from "../shared/asset-making.ts";
 import { digestOperation } from "../shared/game-assets.ts";
 import { GenexOperation } from "../shared/genex.ts";
+import { t } from "../shared/i18n.ts";
 import type { AssetInfo, AssetState } from "./run-graph.ts";
 import {
   digestField,
@@ -178,7 +179,7 @@ export function blenderAsset(payload: Payload, place: AssetPlace): AssetInfo {
   const file = strOrNull(payload.file);
   const ok = payload.ok === true;
   const identity: CardIdentity = {
-    name: str(payload.name, "asset"),
+    name: str(payload.name, t("asset")),
     at: strOrNull(payload.at) ?? place.at,
     source: BLENDER_SOURCE,
     pluginName: "Blender",
@@ -244,7 +245,7 @@ export function assetRequested(ledger: AssetLedger, payload: Payload, place: Ass
     return;
   }
   const identity: CardIdentity = {
-    name: prompt ?? digestField(args, "name") ?? operation ?? tool ?? "asset",
+    name: prompt ?? digestField(args, "name") ?? operation ?? tool ?? t("asset"),
     at: strOrNull(payload.at) ?? place.at,
     source: str(payload.pluginId, "plugin"),
     pluginName: strOrNull(payload.pluginName),
@@ -368,7 +369,8 @@ function genexEnding(job: AssetInfo, payload: Payload): { refused: boolean; erro
   const status = strOrNull(reply?.status);
   if (!genexEndedUnmade(status)) return null;
   const generationId = job.generationId ?? strOrNull(reply?.generationId);
-  return { refused: genexRefused({ status, generationId }), error: strOrNull(reply?.error)?.trim() || null };
+  const blocked = strOrNull(reply?.blocked);
+  return { refused: genexRefused({ status, generationId, blocked }), error: strOrNull(reply?.error)?.trim() || null };
 }
 
 /**

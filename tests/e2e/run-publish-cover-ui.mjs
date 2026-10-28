@@ -1,8 +1,9 @@
 /**
  * The Publish dialog's cover, in a disposable Electron profile with a fake `window.studio`: the
  * production dialog beside the production ChatPanel of the same game. With no cover Studio takes
- * one; the arrows pick a recent frame; Another cover sends its ask through that chat and the banner
- * waits for the new frame; a kept clip plays behind its switch; the owner's cover is never touched.
+ * one; the arrows pick a recent frame; Another cover sends its ask through that chat and closes the
+ * dialog there, and the banner opened again waits for the new frame, with the time left once this
+ * game's last one was timed; a kept clip plays behind its switch; the owner's cover is never touched.
  */
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -13,6 +14,8 @@ import { buildDesignGallery } from "../../scripts/design-gallery.mjs";
 import { fixtureElectronArgs, fixtureElectronEnv, resolveElectron } from "../../scripts/electron-runtime.mjs";
 import { sourceIdentity } from "../../scripts/studio-dev/files.mjs";
 
+/** The foot's line when the game has no picture to go out with. */
+const NO_COVER = "No cover yet, so it goes out without a picture.";
 /** The whole check, from Electron's start to its exit. */
 const RUN_TIMEOUT_MS = 90_000;
 
@@ -66,7 +69,14 @@ app.whenReady().then(async()=>{
   assert.equal(taken.another,'picture','Another cover is offered');
   assert.equal(taken.arrows,0,'one frame: nothing to flip');
   report.cover=await capture('cover');
-  // Three recent frames: dots and arrows; an arrow makes the next one the kept frame.
+  // Studio's take finds only a blank screen: nothing is kept, and the foot says it goes out without a picture.
+  const blankTake=await step('blank-taking','window.publishCover.open({blank:true})');
+  assert.ok(!blankTake.hints.includes(${JSON.stringify(NO_COVER)}),'while the take runs, nothing says there is none');
+  const blank=await step('blank','window.publishCover.untilTaken()');
+  assert.equal(blank.shot,false,'no frame on the banner');
+  assert.ok(blank.hints.includes(${JSON.stringify(NO_COVER)}),'the dialog says it goes out without a picture: '+JSON.stringify(blank.hints));
+  report.blank=await capture('blank');
+    // Three recent frames: dots and arrows; an arrow makes the next one the kept frame.
   const three=await step('three','window.publishCover.open({kept:"b",candidates:["c","b","a"]})');
   assert.deepEqual(three.actions,[],'a kept shot: Studio takes none');
   assert.equal(three.arrows,2);
@@ -76,22 +86,47 @@ app.whenReady().then(async()=>{
   assert.ok(next.actions.includes('cover-pick'),'the arrow picks a frame');
   const picked=await step('picked','window.publishCover.settle(30).then(()=>window.publishCover.sample())');
   assert.equal(picked.dots,'Cover 3 of 3','the older frame is kept now');
-  // Another cover: the field, Make sends the ask through this game's chat, the banner waits for it.
+  // Another cover: the field, Ask agent sends the ask through this game's chat and closes the dialog there.
   await step('another','window.publishCover.press("[data-genex-another-cover]")');
   const field=await step('field','window.publishCover.sample()');
   assert.equal(field.field,true,'the field takes the foot');
   report.field=await capture('another-field');
   const made=await step('made','window.publishCover.make("closer on the snowball at sunset")');
   const ASK='Make another Genex cover for this game: closer on the snowball at sunset';
-  // Sent through the chat's own send; a chat with no model to send to keeps it in its composer.
-  assert.ok(made.sends.includes(ASK)||made.prompt===ASK,'the ask reached the chat: '+JSON.stringify(made));
-  assert.equal(made.dialog,true,'the dialog stays open');
-  assert.equal(made.busy?.startsWith('New cover'),true,'the banner says one is coming');
-  assert.equal(made.hint,'The new one shows here when it’s ready.');
+  // Sent through the chat's own send, with the chat's model.
+  assert.ok(made.sends.includes(ASK),'the chat sent the ask: '+JSON.stringify(made));
+  assert.equal(made.dialog,false,'the dialog closes into the chat');
+  report.asked=await capture('asked');
+  // Opened again before the frame comes: the banner says the agent is at it, with no time yet.
+  const waiting=await step('waiting','window.publishCover.reopen()');
+  assert.equal(waiting.busy,'Making a cover','never timed: no time left shown');
+  assert.equal(waiting.hint,'The agent is making it in the chat. It shows here when it’s ready.');
   report.making=await capture('making');
-  const arrived=await step('arrived','window.publishCover.arrive("c")');
-  assert.equal(arrived.busy,null,'a new frame ends the wait');
+  // Studio's own take after a turn is a new kept frame, but not the one asked for.
+  const studio=await step('studio','window.publishCover.studioTake("b")');
+  assert.equal(studio.busy,'Making a cover','a take by Studio ends no wait');
+  const arrived=await step('arrived','window.publishCover.arrive("c",150000)');
+  assert.equal(arrived.busy,null,'the frame the agent took ends the wait');
   assert.equal(arrived.another,'picture');
+  // The next ask counts down from how long that one took.
+  await step('again','window.publishCover.press("[data-genex-another-cover]")');
+  const again=await step('again-made','window.publishCover.make("")');
+  assert.equal(again.dialog,false);
+  const timed=await step('timed','window.publishCover.reopen()');
+  assert.equal(timed.busy,'Making a cover~3 min','the last one took 2.5 minutes');
+  report.timed=await capture('making-timed');
+  await step('light','window.publishCover.theme("light")');
+  report.timedLight=await capture('making-timed-light');
+  await step('dark','window.publishCover.theme("dark")');
+  // A chat with no model sends nothing: nothing runs, so Publish waits for nothing.
+  await step('unsent-open','window.publishCover.open({kept:"a",candidates:["a"],model:false})');
+  await step('unsent-another','window.publishCover.press("[data-genex-another-cover]")');
+  const unsent=await step('unsent','window.publishCover.make("")');
+  assert.equal(unsent.dialog,false);
+  assert.deepEqual(unsent.sends,[],'nothing was sent');
+  const idle=await step('idle','window.publishCover.reopen()');
+  assert.equal(idle.busy,null,'an ask the chat did not send shows no wait');
+  assert.equal(idle.another,'picture');
   // A kept clip plays behind its switch, and Another asks for a clip there.
   const clip=await step('clip','window.publishCover.open({kept:"a",candidates:["a"],clip:true})');
   assert.deepEqual(clip.show,['false','true'],'the clip shows first');

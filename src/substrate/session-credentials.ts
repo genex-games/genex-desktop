@@ -1,3 +1,4 @@
+import { t } from "../shared/i18n.ts";
 import { secretStorageIssueOf } from "../shared/secret-storage.ts";
 
 /** Whether this process holds the saved account's token. Reported to the renderer: never rename a value. */
@@ -11,14 +12,18 @@ export type CredentialState = (typeof CredentialState)[keyof typeof CredentialSt
 /** The longest token a restored lease may carry. */
 const MAX_LEASE_TOKEN_CHARS = 65536;
 
+/** What a failed unlock or save says to the person; functions, as main sets its language after this loads. */
 const MESSAGE = {
   InvalidLease: "Invalid credential lease",
-  UnlockFailed:
-    "Saved account could not be unlocked. Automatic retries are paused; retry only when you want to allow credential access.",
-  SaveFailed: "Credential save failed. Sign-in is stopped; no automatic retry will occur.",
+  UnlockFailed: () =>
+    t(
+      "Saved account could not be unlocked. Automatic retries are paused; retry only when you want to allow credential access.",
+    ),
+  SaveFailed: () => t("Credential save failed. Sign-in is stopped; no automatic retry will occur."),
   /** What a locked secret store adds: its own reason, such as the keyring to start. */
-  UnlockRefused: (reason: string) => `Saved account could not be unlocked. ${reason} Automatic retries are paused.`,
-  SaveRefused: (reason: string) => `Credential save failed. ${reason} Sign-in is stopped.`,
+  UnlockRefused: (reason: string) =>
+    t("Saved account could not be unlocked. {reason} Automatic retries are paused.", { reason }),
+  SaveRefused: (reason: string) => t("Credential save failed. {reason} Sign-in is stopped.", { reason }),
 } as const;
 
 /** Explicit host-UI unlock; background reads never open the OS credential store. */
@@ -101,8 +106,8 @@ export class SessionCredentials {
   }
 
   /** The error to raise for a failed storage call: the store's own reason when it is locked, else `generic`. */
-  #failure(cause: unknown, epoch: number, refused: (reason: string) => string, generic: string): Error {
-    if (!(cause instanceof Error) || secretStorageIssueOf(cause) === null) return new Error(generic);
+  #failure(cause: unknown, epoch: number, refused: (reason: string) => string, generic: () => string): Error {
+    if (!(cause instanceof Error) || secretStorageIssueOf(cause) === null) return new Error(generic());
     const error = new Error(refused(cause.message));
     if (epoch === this.#epoch) this.#refusal = error;
     return error;

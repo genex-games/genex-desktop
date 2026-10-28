@@ -244,6 +244,28 @@ describe("what check-scripts checks again", () => {
     assert.deepEqual(after.missing, [LuauTool.LuauLsp]);
   });
 
+  it("rechecks legacy clean records made before failed output was distinguished from clean output", async () => {
+    const { folder, storage, deps, tools } = await bench({
+      [LuauTool.LuauLsp]: "clean",
+      [LuauTool.Selene]: "clean",
+      [LuauTool.StyLua]: "clean",
+    });
+    await checkScripts(deps, { folder, game: "game-1" });
+    const file = path.join(storage, "luau", "clean", "game-1.json");
+    const record = JSON.parse(await readFile(file, "utf8"));
+    record.by = JSON.stringify([
+      ...Object.values(LuauTool).map((tool) => tools.programs[tool]?.file ?? ""),
+      tools.definitions ?? "",
+    ]);
+    await writeFile(file, JSON.stringify(record));
+    assert.deepEqual((await checkScripts(deps, { folder, game: "game-1" })).files, ALL_FILES);
+    assert.deepEqual(
+      (await checkScripts(deps, { folder, game: "game-1" })).files,
+      [],
+      "new clean checks are still cached",
+    );
+  });
+
   it("answers there is nothing to check for a game with no scripts", async () => {
     const { root, deps, calls } = await bench();
     const empty = path.join(root, "empty");
@@ -259,6 +281,23 @@ describe("what check-scripts checks again", () => {
 const SHORT_LIMIT_MS = 500;
 
 describe("a program that misbehaves is named, never mistaken for a clean check", () => {
+  for (const tool of Object.values(LuauTool))
+    for (const output of ["", "Error loading configuration\n"])
+      it(`${tool} exit 1 without readable findings never marks scripts clean (${output ? "unrecognized output" : "empty output"})`, async () => {
+        const { folder, deps } = await bench();
+        const run: CheckRun = async () => ({ code: 1, stdout: output, stderr: output, cut: false, stopped: false });
+        const onlyTool = { ...deps, run, tools: { ...deps.tools, programs: { [tool]: deps.tools.programs[tool] } } };
+        const first = await checkScripts(onlyTool, { folder, game: "g" });
+        assert.deepEqual(first.ran, [], "a failed program did not check the scripts");
+        assert.deepEqual(
+          first.failed.map((failure) => failure.tool),
+          [tool],
+        );
+        assert.match(first.message, /didn't check: .*code 1/);
+        const again = await checkScripts(onlyTool, { folder, game: "g" });
+        assert.deepEqual(again.files, ALL_FILES, "a failed check must not suppress the next run");
+      });
+
   const rows: Array<{ name: string; tool: LuauTool; mode: Mode; why: RegExp }> = [
     { name: "hangs past its limit", tool: LuauTool.LuauLsp, mode: "hang", why: /didn't finish within/ },
     { name: "prints past the cap", tool: LuauTool.Selene, mode: "flood", why: /printed more than/ },

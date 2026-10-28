@@ -16,6 +16,7 @@ import {
   searchMentions,
 } from "../../shared/mention-corpus.ts";
 import type { GameCover } from "../../shared/game-library.ts";
+import { t } from "../../shared/i18n.ts";
 import { type MentionDoc, MentionKind, MentionOrigin } from "../../shared/prompt-mention.ts";
 import { MENTION_WORDS } from "../words.ts";
 import type { MentionOption } from "./add-menu-entries.ts";
@@ -138,7 +139,7 @@ function MentionCard({
       role="option"
       aria-selected={active}
       aria-disabled={disabled || undefined}
-      aria-label={`${kindWord(doc)}: ${doc.title}`}
+      aria-label={t("{kind}: {title}", { kind: kindWord(doc), title: doc.title })}
       data-mention-card={doc.handle}
       data-highlighted={active || undefined}
       className="mention-card"
@@ -493,7 +494,7 @@ export function MentionPanel(props: MentionPanelProps): JSX.Element {
   );
   let index = pluginsFirst ? lead.length + rows.length : lead.length;
   return (
-    <div className="mention-panel" style={{ "--mention-columns": props.columns } as CSSProperties}>
+    <div className="mention-panel" data-analytics-mask style={{ "--mention-columns": props.columns } as CSSProperties}>
       <MentionHeader
         query={props.query}
         filter={props.filter}

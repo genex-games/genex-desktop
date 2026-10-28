@@ -28,6 +28,7 @@ export const RobloxTool = {
   StudioState: "studio-state",
   StudioCrashNote: "studio-crash-note",
   TeamNote: "team-note",
+  CloseAfterPublish: "close-after-publish",
   PlayOpen: EnginePlayTool.Open,
   PlayInput: EnginePlayTool.Input,
   PlayShot: EnginePlayTool.Shot,
@@ -49,6 +50,10 @@ export const RobloxTool = {
   InsertAsset: AskFirstTool.InsertAsset,
   CheckModel: "check-model",
   ImportModel: "import-model",
+  /** The publishing turn's word on how its publish ended, for Studio's publishing card. */
+  PublishResult: "publish-result",
+  /** The game's icon and thumbnail for Roblox, made from Studio's viewport. */
+  CoverPictures: "cover-pictures",
   PublishUpdate: RobloxAction.PublishUpdate,
   FirstPublish: RobloxAction.FirstPublish,
   Setup: RobloxAction.Setup,
@@ -61,6 +66,7 @@ export const RobloxTool = {
   QuitStudio: RobloxAction.QuitStudio,
   Places: RobloxAction.Places,
   AddLuauChecks: RobloxAction.AddLuauChecks,
+  FinishSetup: RobloxAction.FinishSetup,
 } as const;
 export type RobloxTool = (typeof RobloxTool)[keyof typeof RobloxTool];
 

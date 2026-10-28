@@ -42,6 +42,8 @@ describe("Genex's own table", () => {
       "/Intermediate/",
       "/DerivedDataCache/",
       "/Binaries/",
+      "/Builds/",
+      "Build/*/FileOpenOrder/",
       "Plugins/*/Intermediate/",
       "Plugins/*/Binaries/",
     ]);
@@ -67,6 +69,8 @@ describe("Genex's own table", () => {
       "/Intermediate/",
       "/DerivedDataCache/",
       "/Binaries/",
+      "/Builds/",
+      "Build/*/FileOpenOrder/",
       "Plugins/*/Intermediate/",
       "Plugins/*/Binaries/",
     ]);

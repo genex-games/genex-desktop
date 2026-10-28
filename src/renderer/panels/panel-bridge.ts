@@ -3,6 +3,8 @@
  * runs, and how a failed request is answered. Kept apart from the React host so they run in tests.
  */
 import { errorMessage, isUserCancelled } from "../../shared/errors.ts";
+import { currentLocale } from "../../shared/i18n.ts";
+import type { Locale } from "../../shared/locale.ts";
 import { PanelErrorCode, PLUGIN_API_VERSION } from "../../shared/plugins.ts";
 
 /** Reads one CSS custom property, as `getComputedStyle` does. */
@@ -26,12 +28,14 @@ const SURFACE_BACKGROUND = {
  * the surface it sits on) and the plugin API version. `accent` is the raw accent; `accentFill`,
  * `accentForeground` and `accentHover` are the readable button colours Studio's own primary
  * buttons use. `surface` says what the frame sits on: in a dialog's card the panel's heading is
- * the dialog's title, so the panel leaves out its own.
+ * the dialog's title, so the panel leaves out its own. `locale` is the window's language, which the
+ * SDK (`plugin-sdk/words.js`) speaks when the plugin brings that language's words.
  */
 export function panelContext(
   project: string | null | undefined,
   style: StyleReader,
   surface: PanelSurface = PanelSurface.Page,
+  locale: Locale = currentLocale(),
 ) {
   const read = (name: string) => style.getPropertyValue(name).trim();
   return {
@@ -46,6 +50,7 @@ export function panelContext(
     },
     apiVersion: PLUGIN_API_VERSION,
     surface,
+    locale,
   };
 }
 

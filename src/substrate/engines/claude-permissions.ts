@@ -32,6 +32,7 @@ import {
   RuleScope,
   WHOLE_TOOL_RULES,
 } from "../../shared/permissions.ts";
+import { stripTerminalCodes } from "../../shared/terminal.ts";
 import { isInside } from "../paths.ts";
 import {
   type NeverTouchHit,
@@ -40,8 +41,9 @@ import {
   neverTouchVerdict,
   pathVerdict,
   screenedPaths,
+  SHELL_TOOL,
 } from "./never-touch.ts";
-import { STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
+import { STUDIO_SHELL_TOOL, STUDIO_TOOL_PREFIX } from "./studio-tool-prompts.ts";
 import type {
   DelegateAsks,
   DelegatePermissions,
@@ -106,6 +108,14 @@ const LEAD_UNSCREENED_TOOLS: ReadonlySet<string> = new Set([
 ]);
 /** The hook event a tool call's screen answers, in the SDK's spelling. */
 const PRE_TOOL_USE = "PreToolUse";
+
+/**
+ * A tool as the host reads it: the studio's shell (Genex's sandbox running a Claude Code session's
+ * commands on Windows) is that session's Bash, so its question and its screen read as a command.
+ */
+function hostTool(tool: string): string {
+  return tool === STUDIO_SHELL_TOOL ? SHELL_TOOL : tool;
+}
 /** The CLI's Auto gate refusing the mode: its words, which only this adapter reads. */
 const AUTO_REFUSED = /cannot set permission mode to auto/i;
 /** Claude Code's own name for Manual in the modes it reports. */
@@ -154,10 +164,6 @@ const GLOB_CHARACTERS = /[[\]()|+^$*]/g;
 export function unspellable(name: string): boolean {
   return name.includes("?") || /[*\s]$/.test(name);
 }
-/** Terminal colour and cursor codes Claude Code leaves in a decision reason. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal escapes is the point: they are removed.
-const ANSI_ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
-
 /** A host callback reports; it never ends the session it reports on. */
 export function quietly(call: () => void): void {
   try {
@@ -681,7 +687,7 @@ function answerResult(
 
 /** The optional words of Claude Code's question, without the ones it left out. */
 function askWords(options: Parameters<CanUseTool>[2]): Record<string, string> {
-  const reason = options.decisionReason?.replace(ANSI_ESCAPES, "").trim();
+  const reason = options.decisionReason && stripTerminalCodes(options.decisionReason).trim();
   const words: Record<string, string | undefined> = {
     title: options.title,
     displayName: options.displayName,
@@ -718,7 +724,7 @@ async function carryQuestion(
   let answer: PermissionReply;
   try {
     answer = await asks.ask(
-      { tool: toolName, input, toolUseId: options.toolUseID, ...askWords(options), always: grants },
+      { tool: hostTool(toolName), input, toolUseId: options.toolUseID, ...askWords(options), always: grants },
       options.signal,
     );
   } catch {
@@ -796,6 +802,7 @@ function preToolAsk(reason: string): Record<string, unknown> {
 
 /** Whether a lead's call goes on without the host's screen: a read, its own bookkeeping, the studio's own tools. */
 function unscreened(tool: string): boolean {
+  if (tool === STUDIO_SHELL_TOOL) return false;
   return LEAD_UNSCREENED_TOOLS.has(tool) || tool.startsWith(STUDIO_TOOL_PREFIX);
 }
 
@@ -820,7 +827,7 @@ export function leadScreenHook(lead: LeadAsks) {
     const toolInput = hook.tool_input && typeof hook.tool_input === "object" ? hook.tool_input : {};
     const toolUseId = typeof hook.tool_use_id === "string" ? { toolUseId: hook.tool_use_id } : {};
     const verdict = await lead
-      .screen({ tool, input: toolInput as Record<string, unknown>, ...toolUseId })
+      .screen({ tool: hostTool(tool), input: toolInput as Record<string, unknown>, ...toolUseId })
       .catch(() => ({ message: MESSAGE.unscreened }));
     if (!verdict) return {};
     return "askFirst" in verdict ? preToolAsk(verdict.reason) : preToolDeny(verdict.message);

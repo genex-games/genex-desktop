@@ -42,7 +42,7 @@ const Command = {
 
 const MESSAGE = {
   NoProject: "This game has no Unity project. Open or create its Unity project first.",
-  NoEditor: "This game's Unity editor is not open or does not answer. Open it with the Unity button and try again.",
+  NoEditor: "This game's Unity editor is not open or does not answer. Call unity__open-editor, then try again.",
   Busy: "Unity is busy compiling or reloading scripts. Try again once it is ready.",
   NotPlaying: "No play is running in Unity. Look again to start one.",
   PersonPlaying: "The person is playing in Unity. A fresh play waits until they stop.",

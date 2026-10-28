@@ -1,14 +1,11 @@
 /** Studio-owned agent sessions. A local completion model can execute the same host-granted
  * director/worker tools as a subscription, without borrowing a subscription's CLI or account. */
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
 import { EngineFailureKind, isContextFailure, StopReason } from "../../shared/engine-requests.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
@@ -16,8 +13,6 @@ import { PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { credentialHomes } from "../credential-homes.ts";
 import { atomicWriteText } from "../fsx.ts";
-import { HOST_GIT_CONFIG } from "../snapshots.ts";
-import { ProcessSandbox } from "../spawn.ts";
 import type { Message, ToolCall, Usage } from "../types.ts";
 import { type SteerSession, steerSession } from "./claude-steer.ts";
 import { DEFAULT_COMPACTION_PERCENT, interruption } from "./common.ts";
@@ -40,6 +35,7 @@ import {
   type ToolContext,
 } from "./local-session-tools.ts";
 import { lockUnowned, releaseLocks } from "./ownership-locks.ts";
+import { type CommandSandbox, commandSandbox } from "./session-commands.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import {
   type CompleteRequest,
@@ -71,7 +67,6 @@ const LOCAL_SESSION_LIMITS = {
   /** Tool rounds without a workspace change before the session stops, and the rounds that get a nudge. */
   idleRoundLimit: 16,
   idleNudgeRounds: [6, 10] as readonly number[],
-  gitProbeTimeoutMs: 5 * SECOND_MS,
 } as const;
 
 /** How much of a workspace a progress stamp looks at. */
@@ -411,18 +406,10 @@ export class LocalSessions {
   }
 
   /** The command sandbox: the workspace and a linked worktree's Git metadata are its only writable places. */
-  async #sandbox(cwd: string, id: string, forbidden: string[], deniedWrites: string[]): Promise<ProcessSandbox> {
-    // A linked worktree's index and objects live outside cwd; authorize only its Git metadata.
-    const gitMetadata: string[] = [];
-    for (const flag of ["--absolute-git-dir", "--git-common-dir"]) {
-      const answer = await promisify(execFile)("/usr/bin/git", [...HOST_GIT_CONFIG, "-C", cwd, "rev-parse", flag], {
-        timeout: LOCAL_SESSION_LIMITS.gitProbeTimeoutMs,
-      }).catch(() => null);
-      if (answer) gitMetadata.push(await realpath(path.resolve(cwd, answer.stdout.trim())));
-    }
+  #sandbox(cwd: string, id: string, forbidden: string[], deniedWrites: string[]): Promise<CommandSandbox> {
     const scratchRoot = this.options.scratchRoot ?? path.join(os.tmpdir(), `studio-${this.engine}`);
-    return ProcessSandbox.create({
-      writableRoots: [cwd, ...gitMetadata],
+    return commandSandbox({
+      cwd,
       scratchDir: path.join(scratchRoot, id),
       secretPaths: forbidden,
       denyWrite: deniedWrites,

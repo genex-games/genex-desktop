@@ -24,6 +24,8 @@ export const GenexAction = {
   PublishStatus: "publish-status",
   PublishDraft: "publish-draft",
   PublishGallery: "publish-gallery",
+  /** Publish a game that has only apps, no web build: send them and list the game (`genex native publish --gallery`). */
+  PublishApps: "publish-apps",
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
@@ -48,6 +50,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishStatus,
   GenexAction.PublishDraft,
   GenexAction.PublishGallery,
+  GenexAction.PublishApps,
   GenexAction.PublishAllowUpload,
   GenexAction.PublishOpen,
   GenexAction.PublishBadge,
@@ -60,7 +63,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
  * a package; the version always comes from here. Multiplayer's card asks for `^0.16.0`.
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.17.0",
+  "@genex-ai/multiplayer": "0.17.1",
   "@genex-ai/embed-sdk": "0.33.0",
 } as const;
 /** A Genex SDK package a game may add. */
@@ -312,6 +315,8 @@ export type GenexUseVerification = (typeof GenexUseVerification)[keyof typeof Ge
 export const GenexBlocked = {
   /** Genex's terms changed and the account has not accepted them yet. */
   Terms: "terms",
+  /** The account had too few credits for it: Genex refused it before making or charging anything. */
+  Credits: "credits",
 } as const;
 export type GenexBlocked = (typeof GenexBlocked)[keyof typeof GenexBlocked];
 
@@ -567,6 +572,18 @@ export interface GenexCoverRecord {
   clip?: GenexCoverClip | null;
   /** How the last clip send went; null before any. */
   clipLast?: GenexCoverSent | null;
+  /** When the agent itself last kept a shot and a clip; absent from a plugin older than this. */
+  agentTook?: GenexCoverAgentTook;
+}
+
+/**
+ * When the agent itself last kept the game's cover shot and clip (`genex__cover` shoot and clip),
+ * ISO; a kind it never took is absent. Studio's own takes and a publish's shot leave it, so Publish
+ * knows a frame the person asked the agent for has come (`covers/<project>/agent.json`).
+ */
+export interface GenexCoverAgentTook {
+  shot?: string;
+  clip?: string;
 }
 
 /** The game's kept cover clip (`covers/<project>/clip.json`), beside its video: five seconds of real play. */
@@ -609,4 +626,101 @@ export interface GenexPublishState {
    * Absent from a Genex plugin older than covers.
    */
   cover?: GenexCoverRecord;
+  /**
+   * The game's Mac, Windows and Linux apps as its last publish sent them, answered beside the record like
+   * the cover. Absent from a Genex plugin older than native builds.
+   */
+  native?: GenexNativeRecord;
+  /**
+   * The game's project as remixers get it, answered beside the record like the cover. Absent from a
+   * Genex plugin older than remixing from the app.
+   */
+  remix?: GenexRemixRecord;
+}
+
+/** Where Genex's review of an app someone other than an admin sent stands. Wire values: never rename one. */
+export const GenexBuildReview = { Pending: "pending", Approved: "approved", Rejected: "rejected" } as const;
+export type GenexBuildReview = (typeof GenexBuildReview)[keyof typeof GenexBuildReview];
+
+/** One app a publish sent: live for desktop players under `version`, once Genex approved it. */
+export interface GenexNativeSent {
+  platform: string;
+  arch: string;
+  version: string;
+  sizeBytes: number;
+  /** The archive's sha256 as Genex keeps it: the build a clip of a game with only apps names. */
+  sha256?: string;
+  publishedAt: string;
+  /** Genex's review of it; absent when Genex did not review it (an admin's app, a Genex before review). */
+  review?: GenexBuildReview;
+  /** Why Genex turned it down, when it did and said why. */
+  reviewReason?: string;
+}
+
+/** One app a publish could not send, and Genex's or the CLI's words for why. */
+export interface GenexNativeFailure {
+  platform: string;
+  arch: string;
+  error: string;
+}
+
+/** How Genex answered the listing of a game that has only apps. Wire values: never rename one. */
+export const GenexListingState = { Published: "published", Held: "held", Refused: "refused" } as const;
+export type GenexListingState = (typeof GenexListingState)[keyof typeof GenexListingState];
+
+/** Genex's answer to listing a game that has only apps: listed, held for review, or refused, and why. */
+export interface GenexNativeListing {
+  state: GenexListingState;
+  detail: string | null;
+}
+
+/**
+ * A publish's apps (`genex native publish`): they go after the web build is public, one at a time,
+ * and an app that fails never fails the publish. `supported` is false while Studio's pinned CLI is
+ * older than native builds: the dialog then says they are coming soon and nothing is sent.
+ */
+/** Why a game's project did not go for remixing, by code. Wire values: never rename one. */
+export const GenexRemixProblem = {
+  /** The game folder has no git repository, so which files are its own is unknown. */
+  NoRepository: "no-repository",
+  /** Nothing of the game's own is left once caches, secrets and links are taken out. */
+  Empty: "empty",
+  /** More than Genex keeps of a game's source. */
+  TooBig: "too-big",
+  /** The CLI could not send it. */
+  Failed: "failed",
+} as const;
+export type GenexRemixProblem = (typeof GenexRemixProblem)[keyof typeof GenexRemixProblem];
+
+/**
+ * The game's project as remixers get it, answered beside the publish record like the cover. Remixing
+ * is allowed only with the project: a publish whose project could not go turns remixing off on Genex,
+ * so no one remixes a game without its project. `supported` is false while Studio's pinned CLI cannot
+ * send a game's project: the dialog then offers no choice and nothing changes on Genex.
+ */
+export interface GenexRemixRecord {
+  supported: boolean;
+  /** The project is being sent now (Allow remixing on a game already published). */
+  sending: boolean;
+  /** Whether the person last chose to allow remixing; absent before any choice. */
+  allowed?: boolean;
+  /** When the project last went to Genex; absent while remixers would get nothing of the game. */
+  sentAt?: string;
+  /** How big the project that went was. */
+  files?: number;
+  bytes?: number;
+  /** Why the last try did not send it. */
+  problem?: GenexRemixProblem;
+}
+
+export interface GenexNativeRecord {
+  supported: boolean;
+  /** Apps are being sent now. */
+  sending: boolean;
+  /** The publish the record belongs to; absent before any. */
+  jobId?: string;
+  sent: GenexNativeSent[];
+  failed: GenexNativeFailure[];
+  /** A game with only apps is listed with its first app that goes: Genex's answer. */
+  listing?: GenexNativeListing;
 }

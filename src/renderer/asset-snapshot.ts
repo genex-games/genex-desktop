@@ -4,10 +4,11 @@
  */
 import { PreviewFailure } from "../shared/asset-preview.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 
 const MESSAGE = {
-  cancelled: "Preview cancelled",
-  unavailable: "Preview unavailable",
+  cancelled: t("Preview cancelled"),
+  unavailable: t("Preview unavailable"),
 } as const;
 
 /** A snapshot the viewer gave up on, and why: the file itself, or something around it that may pass. */

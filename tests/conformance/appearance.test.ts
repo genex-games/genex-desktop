@@ -358,6 +358,31 @@ test("a palette's logo colours the wordmark and its gradient's secondary ink; un
   assert.match(set["--logo-2"] ?? "", /#3f61f5 70%/);
 });
 
+test("Genex paints one blue, genex.games' own: selection, the main button, the graph and the selected icon take its accent", () => {
+  for (const [id, blue] of [
+    ["genex-dark", "#2454d2"],
+    ["genex-light", "#1661d9"],
+  ] as const) {
+    const colors = PRESETS.find((x) => x.id === id)!.colors;
+    assert.equal(colors.accent, blue, `${id} accent`);
+    const v = themeVariables(colors);
+    assert.equal(v["--accent-fill"], blue, `${id}: the main button is filled with the accent itself`);
+    for (const own of [
+      "--graph",
+      "--icon-selected",
+      "--switch-fill",
+      "--play-selected",
+      "--play-selected-edge",
+      "--people-tint-hue",
+      "--people-primary-top",
+      "--people-primary-bottom",
+      "--people-request",
+      "--play-blue",
+    ])
+      assert.equal(v[own], undefined, `${id}: ${own} follows the accent`);
+  }
+});
+
 test("a palette's graph accent colours the builds graph alone; unset, the graph keeps the app's accent", () => {
   const { graph: _, ...base } = PRESETS.find((x) => x.id === "genex-dark")!.colors;
   assert.equal(themeVariables(base)["--graph"], undefined);

@@ -7,13 +7,15 @@ import {
   type PointerEvent,
   type RefObject,
 } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { effortLabel } from "./ModelMenu.tsx";
 
-const HELP =
-  "How long models think before they act. One setting for the main agent, workers and reviewers; each model uses the closest level it supports.";
+const HELP = t(
+  "How long models think before they act. One setting for the main agent, workers and reviewers; each model uses the closest level it supports.",
+);
 
 /** The effort slider's keys: arrows and Page keys step one stop, Home and End jump to the ends. */
 const SLIDER_STEPS: ReadonlyMap<string, number> = new Map([
@@ -63,7 +65,7 @@ export function ComposerEffort({
       <PopoverTrigger
         render={<button type="button" />}
         disabled={disabled}
-        aria-label={`Effort: ${effortLabel(current)}`}
+        aria-label={t("Effort: {effort}", { effort: effortLabel(current) })}
         className="composer-text-button composer-effort shrink-0"
       >
         {effortLabel(current)}
@@ -73,15 +75,15 @@ export function ComposerEffort({
         align="end"
         sideOffset={8}
         className="picker-panel w-[280px] max-w-(--available-width) px-3 pt-2.5 pb-3"
-        aria-label="Effort"
+        aria-label={t("Effort")}
         initialFocus={slider}
       >
         <div className="effort-head">
-          <span className="text-ink-3">Effort</span>
+          <span className="text-ink-3">{t("Effort")}</span>
           <span>{effortLabel(current)}</span>
           <Tooltip>
             <TooltipTrigger asChild>
-              <button type="button" className="effort-help" aria-label="About effort">
+              <button type="button" className="effort-help" aria-label={t("About effort")}>
                 <Icon name="help" size={16} />
               </button>
             </TooltipTrigger>
@@ -91,8 +93,8 @@ export function ComposerEffort({
           </Tooltip>
         </div>
         <div className="effort-ends" aria-hidden>
-          <span>Faster</span>
-          <span>Smarter</span>
+          <span>{t("Faster")}</span>
+          <span>{t("Smarter")}</span>
         </div>
         <EffortSlider track={slider} efforts={efforts} value={current} onChange={onChange} />
       </PopoverContent>
@@ -141,7 +143,7 @@ function EffortSlider({
       data-effort-slider
       role="slider"
       tabIndex={0}
-      aria-label="Effort"
+      aria-label={t("Effort")}
       aria-valuemin={0}
       aria-valuemax={last}
       aria-valuenow={index}

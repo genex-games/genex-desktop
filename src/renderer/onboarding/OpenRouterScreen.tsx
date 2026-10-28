@@ -8,6 +8,15 @@ import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import { OpenRouterSignInOutcome } from "../../shared/openrouter-login.ts";
 import { EngineId } from "../../shared/providers.ts";
+import {
+  reportClock,
+  reportKeyChecked,
+  reportProviderPress,
+  reportSignInHelper,
+  reportSignInSettled,
+  reportSignInStarted,
+} from "../analytics/welcome-report.ts";
+import { ProviderAction, ProviderSurface, SignInHelper, SignInOutcome } from "../analytics/welcome-vocabulary.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -32,16 +41,22 @@ export function useOpenRouter(engines: EngineDescriptor[], onEnginesRefresh: () 
 
   const connect = async (): Promise<void> => {
     const mine = ++attempt.current;
+    reportProviderPress(EngineId.OpenRouter, ProviderAction.Connect, ProviderSurface.Onboarding);
+    reportSignInStarted(EngineId.OpenRouter, true);
     setProblem(null);
     setPasting(false);
     setSigningIn(true);
     try {
       const result = await window.studio.openRouterSignIn();
       if (mine !== attempt.current) return;
-      if (result.outcome === OpenRouterSignInOutcome.Failed) setProblem(result.error);
+      const failed = result.outcome === OpenRouterSignInOutcome.Failed ? result : null;
+      reportSignInSettled(EngineId.OpenRouter, result.outcome, failed?.problem ?? null);
+      if (failed) setProblem(failed.error);
       onEnginesRefresh();
     } catch (err) {
-      if (mine === attempt.current) setProblem(problemWords(err));
+      if (mine !== attempt.current) return;
+      reportSignInSettled(EngineId.OpenRouter, SignInOutcome.Failed);
+      setProblem(problemWords(err));
     } finally {
       if (mine === attempt.current) setSigningIn(false);
     }
@@ -49,29 +64,42 @@ export function useOpenRouter(engines: EngineDescriptor[], onEnginesRefresh: () 
   const save = async (key: string): Promise<void> => {
     setProblem(null);
     setSaving(true);
+    const startedAt = reportClock();
     try {
       const answer = await window.studio.openRouterKeySave(key);
+      reportKeyChecked(EngineId.OpenRouter, ProviderSurface.Onboarding, answer.code, startedAt);
       if (answer.code === EngineStatusCode.Ready) setPasting(false);
       else setProblem(answer.code === EngineStatusCode.NeedsLogin ? WORDS.refused : answer.detail);
       onEnginesRefresh();
     } catch (err) {
+      reportKeyChecked(EngineId.OpenRouter, ProviderSurface.Onboarding, null, startedAt);
       setProblem(problemWords(err));
     } finally {
       setSaving(false);
     }
   };
   const ignore = () => {};
+  const helped = (helper: SignInHelper) =>
+    reportSignInHelper(EngineId.OpenRouter, helper, { surface: ProviderSurface.Onboarding });
   return {
     status,
     step,
     problem,
     connect: () => void connect(),
     save: (key: string) => void save(key),
-    reopen: () => void window.studio.openRouterSignInReopen().catch(ignore),
+    reopen: () => {
+      helped(SignInHelper.PageReopened);
+      void window.studio.openRouterSignInReopen().catch(ignore);
+    },
     cancel: () => void window.studio.openRouterSignInCancel().catch(ignore),
     paste: (on: boolean) => {
+      helped(on ? SignInHelper.KeyBoxOpened : SignInHelper.BrowserInstead);
       setProblem(null);
       setPasting(on);
+    },
+    getKey: () => {
+      helped(SignInHelper.GetKeyClicked);
+      void window.studio.openUrl(METERED_PROVIDER_WORDS.openRouter.keysUrl).catch(ignore);
     },
   };
 }
@@ -99,6 +127,7 @@ function KeyForm({ router }: { router: OpenRouter }): JSX.Element {
       <input
         ref={field}
         type="password"
+        data-analytics-mask
         aria-label={WORDS.keyLabel}
         placeholder={WORDS.keyPlaceholder}
         value={key}
@@ -170,12 +199,7 @@ function RouterAside({ router }: { router: OpenRouter }): JSX.Element | null {
       return (
         <>
           <div className="onboarding-links">
-            <button
-              type="button"
-              className="onboarding-link"
-              data-state="idle"
-              onClick={() => void window.studio.openUrl(METERED_PROVIDER_WORDS.openRouter.keysUrl).catch(() => {})}
-            >
+            <button type="button" className="onboarding-link" data-state="idle" onClick={router.getKey}>
               {WORDS.getKey}
               <Icon name="arrow-up-right" size={14} />
             </button>

@@ -2,9 +2,9 @@
 
 ## From a request to a game
 
-Auto edits directly or starts a Loop when asked; Loop delegates workers (four by
-default) while the chat leads. Parts grow boldly within the ask; an art director reviews the whole
-game; only its blockers send a part back. Other
+Auto edits directly or starts a Loop when asked; Loop delegates workers while the chat leads.
+Parts grow boldly within the ask; an art director reviews the whole game; only its blockers send a
+part back. Other
 projects' Loops run [in place](projects-engines.md#loops-in-place). Loop hours are a soft cap (a
 reviewer's yes ends it early, in place after the lead's named gaps; 15 minutes' grace).
 Acceptance survives workers and restarts. External blockers pause the run at its
@@ -16,18 +16,16 @@ An active run opens Builds once; a build shown from chat, or empty Builds, opens
 
 ## The two views
 
-**Live** plays the browser game in a native view; unwatched previews pause. The strip
+**Live** plays the browser game natively; previews pause unwatched or hidden. The strip
 holds Live/Builds/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
-game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until Play
-or Reload. An empty scaffold shows “Ready for your first idea”, or
+game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until
+Play/Reload. An empty scaffold shows “Ready for your first idea”, or
 “Building your game” with Watch progress, then Play latest; the first healthy build shows itself.
-Otherwise only the user changes Live (opening a game, Reload, Play, Make live, a chat request while
-hidden). A newer healthy build, a changed game folder (checkpoint, landing, rewind), a chat's show
-or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
-in at once.
-Previews reach only public library CDNs; Open Game names other hosts. Game AI runs only in Live,
-with Create Live on. Other folders' views:
-[projects](projects-engines.md#lives-views).
+Opening a game starts nothing: Live keeps its game. Otherwise only the user changes Live (Play,
+Reload, Make live, a chat request while hidden) or a finished Unity/Godot `web/` build. A newer
+healthy build, a changed game folder, a chat's show or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
+in at once. Previews reach only public library CDNs (Open Game names other hosts) and, in Live
+with Create Live on, game AI. Other folders' views: [projects](projects-engines.md#lives-views).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
@@ -39,8 +37,8 @@ below), then the finish check tinted Checking, Not yet (reasons, round of 3), Do
 line each round. In place, save points form one line showing each change; workers hang off
 it, solid under the save point taking their work, else ghosts.
 
-Agents test in hidden windows, never Live; blind judges play when screenshots can't decide;
-chat frames never certify a build. A finished worker, passing checks, integration and Live's
+Agents test hidden, only while playing (Godot too), never Live; blind judges play when screenshots
+can't decide; chat frames never certify a build. A finished worker, passing checks, integration and Live's
 revision are distinct facts; Builds and Studio report missing checks, coverage, revisions and
 studio-verified plays; chat shows a delivery's capture, failures too.
 

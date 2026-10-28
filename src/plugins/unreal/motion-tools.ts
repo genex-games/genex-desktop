@@ -109,13 +109,13 @@ const MESSAGE = {
   NoDisk: (needGb: number, freeGb: number) =>
     `Adding the sample's content needs about ${needGb} GB free on the game's disk, and ${freeGb} GB is. Free some space first.`,
   OtherEditor:
-    "Unreal is open, but this game's project isn't answering, so Genex didn't quit it to add Motion Matching. Quit Unreal, then try again.",
+    "Unreal is open, but this game's project isn't answering, so Genex can't save its work and didn't quit it to add Motion Matching. When it is this game's Unreal, call unreal__open-editor with restart: true (work not saved in it is lost), then try again; when it is another project's, ask the user to quit it.",
   NotSaved: (why: string) =>
     `Genex couldn't save your work in Unreal (${why}), so it left Unreal open and added nothing.`,
   NoSaveAnswer: "the Genex editor helper didn't answer",
   Unsaved: (names: string) => `Unreal didn't save ${names}, so Genex left it open and added nothing.`,
-  NotClosed: `Unreal didn't close within ${QUIT_WAIT_MS / SECOND_MS} s, so Genex added nothing. Close it from its own window, then try again.`,
-  NotAnswering: `Genex added the sample's content, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening the game. Its first open compresses the sample's clips and can take ${FIRST_OPEN_MINUTES} minutes: open the game from the Unreal button.`,
+  NotClosed: `Unreal didn't close within ${QUIT_WAIT_MS / SECOND_MS} s, so Genex added nothing. Call unreal__quit-editor, then try again.`,
+  NotAnswering: `Genex added the sample's content, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes of opening the game. Its first open compresses the sample's clips and can take ${FIRST_OPEN_MINUTES} minutes: call unreal__editor-status with seconds until it answers, and unreal__open-editor if it stopped opening.`,
   Started: `Adding the Game Animation Sample's content: Genex saves your work, quits Unreal, adds it and opens Unreal again. Its first open compresses the sample's clips (about ${FIRST_OPEN_MINUTES} minutes). Read motion-status.`,
 } as const;
 

@@ -28,6 +28,8 @@ import type { PluginInfo } from "../../../../shared/plugins.ts";
 import type { FactRef, FolderHolds, GameKind } from "../../../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../../../shared/project-workspace.ts";
 import { MINUTE_MS } from "../../../../shared/duration.ts";
+import { isBlankStill } from "../../../../shared/preview-contract.ts";
+import { t } from "../../../../shared/i18n.ts";
 import { FEEDBACK_TEXT_MAX_CHARS, type FeedbackDraft, FeedbackScreen } from "../../../../shared/feedback.ts";
 import { relativeTime } from "../../../chat-labels.ts";
 import { type StepState, stepStateAt } from "../../../ui/step-bar.ts";
@@ -129,6 +131,8 @@ export interface PublishView {
   needsCover: boolean;
   /** Whether the banner offers Another cover: the plugin keeps covers, nothing runs, and the owner chose none. */
   canAskCover: boolean;
+  /** The game would go out with no picture: no cover to send, and none on Genex ({@link goesWithoutCover}). */
+  withoutCover: boolean;
 }
 
 export const isListed = (state: GenexPublishState): boolean => state.status === GenexHostedStatus.Published;
@@ -191,7 +195,7 @@ function againButton(job: GenexPublishJob | undefined, unresolved: boolean): Pub
     label: WORDS.publishAgain,
     action: GenexAction.PublishAllowUpload,
     args: { jobId: job.id },
-    ariaLabel: "Publish again without waiting for the last upload",
+    ariaLabel: t("Publish again without waiting for the last upload"),
   };
 }
 
@@ -211,6 +215,27 @@ export function needsCover(state: GenexPublishState): boolean {
   const cover = state.cover;
   if (!cover || cover.shot) return false;
   return canAskCover(state);
+}
+
+/** Answers whose frame Genex shows as the game's cover now. */
+const SHOWN_ON_GENEX = new Set<GenexCoverOutcome>([GenexCoverOutcome.Applied]);
+
+/** Whether the last answer left a cover Genex shows: one it applied, then or when these bytes were first sent. */
+const genexShowsCover = (cover: GenexCoverRecord): boolean => {
+  const last = cover.last;
+  if (!last) return false;
+  return SHOWN_ON_GENEX.has(last.kind) || (last.settled !== undefined && SHOWN_ON_GENEX.has(last.settled));
+};
+
+/**
+ * Whether the game would go out with no picture: the plugin keeps covers, nothing runs, the owner
+ * chose none, Genex shows none from an earlier send, and Studio keeps no frame that is a picture
+ * (none, or only a blank or loading screen Genex would refuse).
+ */
+export function goesWithoutCover(state: GenexPublishState): boolean {
+  const cover = state.cover;
+  if (!cover || !canAskCover(state) || genexShowsCover(cover)) return false;
+  return !cover.shot || isBlankStill(cover.shot.stats);
 }
 
 /** Whether a new cover may be asked for now: the plugin keeps covers, nothing runs, and the owner chose none. */
@@ -233,19 +258,6 @@ export function flipCover(choices: { shas: string[]; index: number }, step: 1 | 
   const from = index < 0 ? 0 : index;
   return shas[(from + step + shas.length) % shas.length] ?? null;
 }
-
-/** How long the banner says a cover is being made after Another cover, unless a new frame arrives first. */
-export const COVER_MAKING_MS = 15 * MINUTE_MS;
-
-/** An ask for another cover: the frame it was asked over, and when. */
-export interface CoverAskRecord {
-  from: string | null;
-  at: number;
-}
-
-/** Whether the banner still says a cover is being made: no new frame since the ask, and not for too long. */
-export const coverMaking = (ask: CoverAskRecord | null, shot: string | null, now: number): boolean =>
-  ask !== null && ask.from === shot && now - ask.at < COVER_MAKING_MS;
 
 /** The dialog's view of a publish record, at `now`. */
 export function publishView(state: GenexPublishState, now = Date.now()): PublishView {
@@ -271,7 +283,7 @@ export function publishView(state: GenexPublishState, now = Date.now()): Publish
     primary: {
       label: (failed && WORDS.tryAgain) || (listed && WORDS.updatePublic) || WORDS.publishToWeb,
       action: GenexAction.PublishGallery,
-      ariaLabel: "Publish this game on Genex",
+      ariaLabel: t("Publish this game on Genex"),
     },
     again: againButton(job, unresolved),
     terms:
@@ -285,6 +297,7 @@ export function publishView(state: GenexPublishState, now = Date.now()): Publish
     testLink: testLinkOf(state, listed),
     needsCover: needsCover(state),
     canAskCover: canAskCover(state),
+    withoutCover: goesWithoutCover(state),
   };
 }
 
@@ -413,9 +426,10 @@ export function stripEntries(
   project: string | null,
   facts: readonly FactRef[],
   holds?: FolderHolds,
+  apps = false,
 ): PluginToolbarEntry[] {
   const entries = toolbarEntries(plugins, project, { facts, holds });
-  return publishable(facts, holds) ? entries : entries.filter((entry) => !isGenexPublish(entry));
+  return publishable(facts, holds) || apps ? entries : entries.filter((entry) => !isGenexPublish(entry));
 }
 
 /**
@@ -427,9 +441,15 @@ export function studioPublishButton(
   project: string | null,
   facts: readonly FactRef[],
   holds?: FolderHolds,
+  apps = false,
 ): boolean {
-  return Boolean(project) && publishable(facts, holds) && !toolbarEntries(plugins, project).some(isGenexPublish);
+  const offered = publishable(facts, holds) || apps;
+  return Boolean(project) && offered && !toolbarEntries(plugins, project).some(isGenexPublish);
 }
+
+/** Whether Publish puts the game online as a web game (else, at most, as its apps). */
+export const publishesWeb = (facts: readonly FactRef[], holds: FolderHolds | undefined): boolean =>
+  publishable(facts, holds);
 
 /**
  * Answers that leave nothing for a publish to do about a frame: Genex took it, already had it, or

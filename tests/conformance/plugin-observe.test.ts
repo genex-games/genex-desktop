@@ -23,6 +23,7 @@ import {
   usedAfterRelease,
 } from "../helpers/observe-windows.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+import { STILL_RETAKE_GAP_MS, STILL_RETAKES, STILL_TIMEOUT_MS } from "../../src/main/core/view-still.ts";
 
 const MIB = 1024 * 1024;
 const STILL = { demo: "hero-shot", width: 1920, height: 1080 } as const;
@@ -449,5 +450,60 @@ describe("a plugin's still that ends before its picture", () => {
     await assert.rejects(host.still({ ...STILL, demo: "../escape" }), refused);
     assert.deepEqual(host.log, [], "no window was leased");
     assert.deepEqual(host.live.log, []);
+  });
+});
+
+describe("a plugin's still that comes back blank", () => {
+  const DARK = { ...FRAME, stats: { lumaMean: 0.02, lumaStdDev: 0.01, nearBlackFraction: 0.99, litFraction: 0 } };
+  /** The budget never runs out; each gap between pictures passes at once and is written down. */
+  function gaps() {
+    const asked: number[] = [];
+    const wait = (ms: number, signal: AbortSignal) => {
+      if (ms === STILL_TIMEOUT_MS)
+        return new Promise<never>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+        );
+      asked.push(ms);
+      return Promise.resolve();
+    };
+    return { asked, wait };
+  }
+
+  it("is taken again after the game has had time to draw, and the first real picture is the answer", async () => {
+    const clock = gaps();
+    const frames = [DARK, DARK, FRAME];
+    const host = await observeHost(
+      { still: async () => ({ still: { ...(frames.shift() ?? FRAME) } }) },
+      { wait: clock.wait },
+    );
+    const answer = await host.still(STILL);
+    assert.deepEqual(answer, { still: { ...FRAME, view: { demo: "hero-shot" } } });
+    assert.deepEqual(host.log, [
+      ...UNTIL_VIEW,
+      "call:demos",
+      "call:demo:hero-shot",
+      "still",
+      "still",
+      "still",
+      "restore",
+      "release",
+    ]);
+    assert.deepEqual(clock.asked, [STILL_RETAKE_GAP_MS, STILL_RETAKE_GAP_MS]);
+  });
+
+  it("answers its last picture once the retakes are spent, so the plugin still sees what the game shows", async () => {
+    const clock = gaps();
+    const host = await observeHost({ still: async () => ({ still: { ...DARK } }) }, { wait: clock.wait });
+    const answer = await host.still(STILL);
+    assert.deepEqual(answer.still?.stats, DARK.stats);
+    assert.equal(host.log.filter((entry) => entry === "still").length, STILL_RETAKES + 1);
+    assert.equal(clock.asked.length, STILL_RETAKES);
+  });
+
+  it("is not taken again when the first picture already shows something", async () => {
+    const clock = gaps();
+    const host = await observeHost({}, { wait: clock.wait });
+    await host.still(STILL);
+    assert.deepEqual(clock.asked, [], "no gap was waited");
   });
 });

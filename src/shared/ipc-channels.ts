@@ -15,14 +15,17 @@
  * validating the fields it acts on.
  */
 import type { StudioApi } from "./studio-api.ts";
+import type { StudioErrorCode } from "./error-codes.ts";
 import type { AddSource, ShareItem } from "./asset-library.ts";
 import type { ExportReview, GithubVersion } from "./plugins.ts";
 import type { PlayControl, PlayPoint, PlayShelf } from "./play.ts";
+import type { SessionAction } from "./play-native.ts";
 import type { PlayBarHold } from "./play-bar.ts";
 import type { PlayPurchaseAnswer } from "./play-purchase.ts";
 import type { PlayCoverType, PlayGameChange } from "./play-manage.ts";
 import type { AvatarStyle, FriendActionRequest, PresenceVisibility } from "./play-people.ts";
 import type { StatsPeriod } from "./play-stats.ts";
+import type { ItemReportReason } from "./store-items.ts";
 import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
 
 type Arg<M extends keyof StudioApi, I extends number> = Parameters<StudioApi[M]>[I];
@@ -61,6 +64,9 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:game.archive": "archiveGame",
   "studio:storage": "storageSpace",
   "studio:storage.free": "freeStorage",
+  "studio:data-folder": "dataFolder",
+  "studio:data-folder.choose": "chooseDataFolder",
+  "studio:data-folder.move": "moveDataFolder",
   "studio:game.engine.undo": "undoEngineLink",
   "studio:jobs.stop": "stopJob",
   "studio:app-look.open-settings": "openPrivacySettings",
@@ -106,7 +112,9 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:plugins.action": "pluginAction",
   "studio:plugins.choose-file": "pluginChooseFile",
   "studio:plugins.genex-publish-review": "genexPublishReview",
+  "studio:plugins.genex-publish-platforms": "genexPublishPlatforms",
   "studio:plugins.genex-publish": "genexPublish",
+  "studio:plugins.genex-publish-apps": "genexPublishApps",
   "studio:plugins.index": "pluginsIndex",
   "studio:plugins.install-github": "pluginInstallGithub",
   "studio:plugins.lookup-github": "pluginLookupGithub",
@@ -143,6 +151,9 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:claude-login.browser": "claudeLoginOpenBrowser",
   "studio:claude-login.cancel": "claudeLoginCancel",
   "studio:opencode.signin": "openCodeSignIn",
+  "studio:grok.signin": "grokSignIn",
+  "studio:cursor.signin": "cursorSignIn",
+  "studio:cursor.signout": "cursorSignOut",
   "studio:openrouter.key.save": "openRouterKeySave",
   "studio:openrouter.key.clear": "openRouterKeyClear",
   "studio:openrouter.signin": "openRouterSignIn",
@@ -173,9 +184,21 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:play.search": "playSearch",
   "studio:play.catalog": "playCatalog",
   "studio:play.remix": "playRemix",
+  "studio:play.remix-ready": "playRemixReady",
   "studio:play.online": "playOnline",
   "studio:play.open": "playOpen",
+  "studio:play.game": "playGame",
+  "studio:play.install": "playInstall",
+  "studio:play.install-cancel": "playInstallCancel",
+  "studio:play.installs": "playInstalls",
+  "studio:play.uninstall": "playUninstall",
+  "studio:play.launch": "playLaunch",
+  "studio:play.session": "playSession",
+  "studio:play.sessions": "playSessions",
+  "studio:play.reveal-install": "playRevealInstall",
+  "studio:play.like": "playLike",
   "studio:play.close": "playClose",
+  "studio:play.take-game-link": "playTakeGameLink",
   "studio:play.control": "playControl",
   "studio:play.bar": "playBar",
   "studio:play.comments": "playComments",
@@ -232,6 +255,29 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:plan-watcher.sign-out": "planWatcherSignOut",
   "studio:ai-reports.inbox": "gameAiInbox",
   "studio:ai-reports.fix": "gameAiInboxFix",
+  "studio:store.items": "storeItems",
+  "studio:store.my-items": "storeMyItems",
+  "studio:store.item-games": "storeItemGames",
+  "studio:store.buy": "storeBuy",
+  "studio:store.answer": "storeAnswer",
+  "studio:store.claim": "storeClaim",
+  "studio:store.shelf": "storeShelf",
+  "studio:store.coins": "storeCoins",
+  "studio:store.get-coin": "storeGetCoin",
+  "studio:store.report": "storeReport",
+  "studio:items.browse": "itemsBrowse",
+  "studio:items.detail": "itemsBrowseDetail",
+  "studio:items.add": "itemsAddToGame",
+  "studio:items.remove": "itemsRemoveFromGame",
+  "studio:items.selling": "itemsSelling",
+  "studio:items.put-on-sale": "itemPutOnSale",
+  "studio:items.take-off-sale": "itemTakeOffSale",
+  "studio:items.shared": "itemSetShared",
+  "studio:items.local": "itemsLocal",
+  "studio:items.local-approve": "itemsLocalApprove",
+  "studio:items.local-withdraw": "itemsLocalWithdraw",
+  "studio:items.local-share": "itemsLocalShare",
+  "studio:items.local-settle": "itemsLocalSettle",
   "studio:genex-account.read": "genexAccount",
   "studio:genex-account.sign-in": "genexSignIn",
   "studio:genex-account.cancel": "genexCancelSignIn",
@@ -241,6 +287,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:rollback": "rollback",
   "studio:selfchange.undo": "undoChange",
   "studio:preview.load": "loadPreview",
+  "studio:preview.web-build": "loadWebBuild",
   "studio:build.preview": "buildPreview",
   "studio:preview.screens": "agentScreens",
   "studio:run.still": "readRunStill",
@@ -334,6 +381,9 @@ export interface StudioInvokePayloads {
   "studio:game.archive": { project: string };
   "studio:storage": { project?: string };
   "studio:storage.free": { project?: string };
+  "studio:data-folder": undefined;
+  "studio:data-folder.choose": undefined;
+  "studio:data-folder.move": undefined;
   "studio:game.engine.undo": Arg<"undoEngineLink", 0>;
   "studio:jobs.stop": { project: string; jobId: string };
   "studio:app-look.open-settings": { pane: Arg<"openPrivacySettings", 0> };
@@ -379,11 +429,19 @@ export interface StudioInvokePayloads {
   "studio:plugins.action": { id: string; name: string; args: unknown; project?: string; ticket?: string };
   "studio:plugins.choose-file": { id: string; request: Arg<"pluginChooseFile", 1> };
   "studio:plugins.genex-publish-review": { project: string };
+  "studio:plugins.genex-publish-platforms": { project: string };
   "studio:plugins.genex-publish": {
     project: string;
     review: ExportReview;
     title?: string;
-    ai?: Arg<"genexPublish", 3>;
+    remix?: boolean;
+    ai?: Arg<"genexPublish", 4>;
+  };
+  "studio:plugins.genex-publish-apps": {
+    project: string;
+    title?: string;
+    remix?: boolean;
+    ai?: Arg<"genexPublishApps", 3>;
   };
   "studio:plugins.index": { refresh?: boolean };
   "studio:plugins.install-github": { spec: string };
@@ -422,6 +480,9 @@ export interface StudioInvokePayloads {
   "studio:claude-login.browser": undefined;
   "studio:claude-login.cancel": undefined;
   "studio:opencode.signin": undefined;
+  "studio:grok.signin": undefined;
+  "studio:cursor.signin": undefined;
+  "studio:cursor.signout": undefined;
   "studio:openrouter.key.save": { key: string };
   "studio:openrouter.key.clear": undefined;
   "studio:openrouter.signin": undefined;
@@ -452,9 +513,21 @@ export interface StudioInvokePayloads {
   "studio:play.search": { query: string; shelf: PlayShelf };
   "studio:play.catalog": undefined;
   "studio:play.remix": { slug: string };
+  "studio:play.remix-ready": { slugs: string[] };
   "studio:play.online": { slugs: string[] };
   "studio:play.open": { slug: string; title: string };
+  "studio:play.game": { slug: string };
+  "studio:play.install": { slug: string };
+  "studio:play.install-cancel": { slug: string };
+  "studio:play.installs": undefined;
+  "studio:play.uninstall": { slug: string };
+  "studio:play.launch": { slug: string };
+  "studio:play.session": { slug: string; action: SessionAction };
+  "studio:play.sessions": undefined;
+  "studio:play.reveal-install": { slug: string };
+  "studio:play.like": { slug: string; liked: boolean };
   "studio:play.close": undefined;
+  "studio:play.take-game-link": undefined;
   "studio:play.control": { control: PlayControl; at?: PlayPoint };
   "studio:play.bar": PlayBarHold;
   "studio:play.comments": { cursor: string | null };
@@ -504,6 +577,29 @@ export interface StudioInvokePayloads {
   "studio:plan-watcher.sign-out": undefined;
   "studio:ai-reports.inbox": { project: string };
   "studio:ai-reports.fix": { project: string; id: string };
+  "studio:store.items": { slug: string };
+  "studio:store.my-items": { slug: string };
+  "studio:store.item-games": { itemId: string };
+  "studio:store.buy": { itemId: string; slug: string };
+  "studio:store.answer": PlayPurchaseAnswer;
+  "studio:store.claim": { itemId: string; slug: string };
+  "studio:store.shelf": { userId: string };
+  "studio:store.coins": undefined;
+  "studio:store.get-coin": undefined;
+  "studio:store.report": { itemId: string; reason: ItemReportReason; message: string | null };
+  "studio:items.browse": { query: string; cursor: string | null; tags: string[] };
+  "studio:items.detail": { itemId: string };
+  "studio:items.add": { itemId: string; projectId: string };
+  "studio:items.remove": { itemId: string; projectId: string };
+  "studio:items.selling": undefined;
+  "studio:items.put-on-sale": { itemId: string };
+  "studio:items.take-off-sale": { itemId: string };
+  "studio:items.shared": { itemId: string; shared: boolean };
+  "studio:items.local": { project: string };
+  "studio:items.local-approve": { project: string; localId: string; contentHash: string };
+  "studio:items.local-withdraw": { project: string; localId: string };
+  "studio:items.local-share": { project: string; localId: string; contentHash: string; shared: boolean };
+  "studio:items.local-settle": { project: string; force: boolean };
   "studio:genex-account.read": undefined;
   "studio:genex-account.sign-in": undefined;
   "studio:genex-account.cancel": undefined;
@@ -513,6 +609,7 @@ export interface StudioInvokePayloads {
   "studio:rollback": { snapshotId: string };
   "studio:selfchange.undo": { snapshotId: string };
   "studio:preview.load": { project: string };
+  "studio:preview.web-build": { project: string };
   "studio:build.preview": Arg<"buildPreview", 0>;
   "studio:preview.screens": undefined;
   "studio:run.still": { file: string; maxPx?: number };
@@ -578,8 +675,11 @@ export type StudioInvokeResult<C extends StudioInvokeChannel> = Awaited<
   ReturnType<StudioApi[(typeof STUDIO_INVOKE_CHANNELS)[C]]>
 >;
 
-/** Every invoke answers with this envelope; the preload turns `ok: false` into a rejection. */
-export type IpcResult<T = unknown> = { ok: true; value: T } | { ok: false; error: string };
+/**
+ * Every invoke answers with this envelope; the preload turns `ok: false` into a rejection, with the
+ * failure's typed code when it had one (`CodedError`).
+ */
+export type IpcResult<T = unknown> = { ok: true; value: T } | { ok: false; error: string; code?: StudioErrorCode };
 
 /** Each push channel and the `StudioApi` subscription that delivers it. */
 export const STUDIO_PUSH_CHANNELS = {
@@ -587,6 +687,7 @@ export const STUDIO_PUSH_CHANNELS = {
   "studio:terminal": "onTerminal",
   "studio:claude-login": "onClaudeLogin",
   "studio:codex-login": "onCodexLogin",
+  "studio:store.sheet": "onStoreSheet",
 } as const satisfies Record<`studio:${string}`, keyof StudioApi>;
 
 export type StudioPushChannel = keyof typeof STUDIO_PUSH_CHANNELS;

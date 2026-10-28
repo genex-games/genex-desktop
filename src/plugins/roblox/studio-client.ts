@@ -230,12 +230,14 @@ interface Session {
 }
 
 function settle(session: Session, line: string): void {
-  let answer: JsonRpcAnswer;
+  let value: unknown;
   try {
-    answer = JSON.parse(line) as JsonRpcAnswer;
+    value = JSON.parse(line);
   } catch {
     return;
   }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const answer = value as JsonRpcAnswer;
   if (typeof answer.id !== "number") return;
   const pending = session.pending.get(answer.id);
   if (!pending) return;
@@ -298,6 +300,7 @@ function request(
   params: unknown,
   options: CallOptions,
 ): Promise<unknown> {
+  if (options.signal?.aborted) return Promise.reject(fail(StudioClientFailure.Closed, MESSAGE.Closed));
   if (session.ended) return Promise.reject(fail(StudioClientFailure.Crashed, MESSAGE.Crashed));
   const id = ++session.nextId;
   const timer = new AbortController();
@@ -398,6 +401,7 @@ export function createStudioClient(deps: StudioClientDeps): StudioClient {
   }
 
   async function call(method: string, params: unknown, options: CallOptions = {}): Promise<unknown> {
+    if (options.signal?.aborted) throw fail(StudioClientFailure.Closed, MESSAGE.Closed);
     return request(deps, await current(), method, params, options);
   }
 

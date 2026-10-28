@@ -1,6 +1,7 @@
 /** Genex desktop dialog, adapted from the source Radix branch (no mobile drawer). */
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Icon } from "./icons.tsx";
 import { cn } from "./cn.ts";
 import { prefersReducedMotion } from "./media-queries.ts";
@@ -107,7 +108,7 @@ export function DialogSurface({
               <div className="flex min-w-0 items-center gap-1.5">
                 <button
                   type="button"
-                  aria-label="Back"
+                  aria-label={t("Back")}
                   onClick={onBack}
                   className="-ml-1.5 inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-control-text-hover"
                 >
@@ -126,7 +127,7 @@ export function DialogSurface({
           {showClose && (
             <Dialog.Close
               disabled={!dismissible}
-              aria-label="Close"
+              aria-label={t("Close")}
               className="absolute top-3.5 right-3.5 inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-control-text-hover"
             >
               <Icon name="close" />

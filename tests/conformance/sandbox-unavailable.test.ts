@@ -15,9 +15,12 @@ import {
   linuxInstallCommands,
 } from "../../src/shared/boot.ts";
 import {
+  SandboxLaunchCode,
+  SandboxLaunchError,
   SandboxUnavailableError,
   missingLinuxTools,
   sandboxProblem,
+  windowsProxyPortsError,
   windowsSetupProblem,
 } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
@@ -93,6 +96,18 @@ describe("sandbox problem mapping", () => {
     assert.deepEqual(problem?.windowsNeeds, needs);
   });
 
+  it("an install by another release asks for the install again, and a disabled Secondary Logon for the service", () => {
+    const typed = (code: string) => Object.assign(new Error("anything at all"), { code });
+    const reinstall = windowsSetupProblem(typed("reinstall_required"));
+    assert.equal(reinstall?.code, SandboxProblemCode.NotProvisioned);
+    assert.deepEqual(reinstall?.windowsNeeds, [WindowsSetupNeed.Reinstall]);
+    assert.deepEqual(windowsSetupProblem(typed("seclogon_disabled"))?.windowsNeeds, [WindowsSetupNeed.LogonService]);
+    // A first install says nothing, which Set up reads as the sandbox install alone.
+    assert.equal(windowsSetupProblem(typed("not_provisioned"))?.windowsNeeds, undefined);
+    // A loopback mode another program installed is not Genex's to replace: it stays the start's error.
+    assert.equal(windowsSetupProblem(typed("wfp_loopback_mismatch")), null);
+  });
+
   it("Windows initialize errors map by their code, never by their words", () => {
     for (const code of ["not_provisioned", "wfp_fence_inactive"]) {
       const error = Object.assign(new Error("anything at all"), { code });
@@ -106,6 +121,31 @@ describe("sandbox problem mapping", () => {
       null,
     ])
       assert.equal(windowsSetupProblem(error), null, String(error));
+  });
+});
+
+describe("Windows proxy ports", () => {
+  it("Windows refusing every proxy port says what to do, by the error's code and call", () => {
+    const refused = (code: string, syscall = "listen") =>
+      Object.assign(new Error(`listen ${code}: permission denied 127.0.0.1:60089`), { code, syscall, port: 60089 });
+    for (const code of ["EACCES", "EADDRINUSE"]) {
+      const error = refused(code);
+      const launch = windowsProxyPortsError(error);
+      assert.ok(launch instanceof SandboxLaunchError, code);
+      assert.equal(launch.code, SandboxLaunchCode.ProxyPortsRefused);
+      assert.equal(launch.cause, error);
+      assert.match(launch.message, /60080-60089/);
+      assert.match(launch.message, /net start winnat/);
+    }
+    for (const error of [
+      refused("EACCES", "connect"),
+      refused("EINVAL"),
+      Object.assign(new Error("listen EACCES"), { code: "acl_grant_failed" }),
+      new Error("listen EACCES: permission denied 127.0.0.1:60080"),
+      "EACCES",
+      null,
+    ])
+      assert.equal(windowsProxyPortsError(error), null, String(error));
   });
 });
 

@@ -8,6 +8,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import { pluginFileRequest, type PluginFileRequest } from "../../shared/plugin-file-request.ts";
 import type { PluginInfo, PluginManifest } from "../../shared/plugins.ts";
 
@@ -35,15 +36,28 @@ export interface PluginFilePickerDeps<W> {
   plugins(): readonly PickerPlugin[];
 }
 
-/** Why Choose file is refused, and the picker's own words. */
+/**
+ * Why Choose file is refused, and the picker's own words. `unavailable` and `noWindow` answer a
+ * call no panel on screen can make (a plugin that is not enabled, a closed window), so they stay
+ * English; the rest a person reads in the panel or on the picker.
+ */
 const MESSAGE = {
   unavailable: "Choose file is only for a panel of an enabled plugin",
   noWindow: "the window is not open",
-  busy: "A file picker is already open",
+  busy: () => t("A file picker is already open"),
   wrongFile: (extensions: readonly string[]) =>
-    `Choose a file that ends in ${extensions.map((extension) => `.${extension}`).join(" or ")}`,
-  choose: "Choose",
+    t("Choose a file that ends in {extensions}", {
+      extensions: eitherList(extensions.map((extension) => `.${extension}`)),
+    }),
+  choose: () => t("Choose"),
 } as const;
+
+/** "a, b or c" in the active language; English keeps the picker's own form. */
+function eitherList(items: readonly string[]): string {
+  const locale = intlLocale();
+  if (!locale) return items.join(" or ");
+  return new Intl.ListFormat(locale, { style: "long", type: "disjunction" }).format(items);
+}
 
 /** The name of the enabled plugin with a panel that `id` names, or null. */
 function panelPluginName(plugins: readonly PickerPlugin[], id: unknown): string | null {
@@ -59,7 +73,7 @@ export function pluginFileDialogOptions(pluginName: string, request: PluginFileR
   return {
     title: heading,
     message: heading,
-    buttonLabel: MESSAGE.choose,
+    buttonLabel: MESSAGE.choose(),
     properties: ["openFile"],
     filters: [
       { name: request.extensions.map((extension) => `.${extension}`).join(", "), extensions: [...request.extensions] },
@@ -91,7 +105,7 @@ export function createPluginFilePicker<W>(
     const request = pluginFileRequest(value);
     const window = deps.window();
     if (!window) throw new Error(MESSAGE.noWindow);
-    if (open) throw new Error(MESSAGE.busy);
+    if (open) throw new Error(MESSAGE.busy());
     open = true;
     try {
       const result = await deps.showOpenDialog(window, pluginFileDialogOptions(pluginName, request));

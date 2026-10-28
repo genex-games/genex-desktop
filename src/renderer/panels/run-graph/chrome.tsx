@@ -1,6 +1,7 @@
 /** The Builds tab's bar of the chat's builds, its Play button, and the zoom pill in the canvas corner. */
 import type { JSX, KeyboardEvent, ReactNode, RefObject } from "react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { t } from "../../../shared/i18n.ts";
 import { RunState } from "../../../shared/run-state.ts";
 import { buildWhen, type HistoryEntry, historyLabel, isNewestBuild } from "../../build-progress.ts";
 import type { statusLine } from "../../run-steps.ts";
@@ -346,7 +347,7 @@ export function PlayButton({
       }}
     >
       <Icon name="play" size={13} />
-      {opening ? "Opening…" : label}
+      {opening ? t("Opening…") : label}
     </Button>
   );
 }
@@ -376,22 +377,25 @@ export function ZoomPill({
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <button type="button" aria-label="Zoom out" title="Zoom out" className={ICON_BUTTON} onClick={onOut}>
+      <button type="button" aria-label={t("Zoom out")} title={t("Zoom out")} className={ICON_BUTTON} onClick={onOut}>
         <Icon name="minus" size={13} />
       </button>
-      <span className="w-10 text-center font-mono text-xs text-ink-3 tabular-nums" aria-label={`Zoom ${pct}%`}>
+      <span
+        className="w-10 text-center font-mono text-xs text-ink-3 tabular-nums"
+        aria-label={t("Zoom {percent}%", { percent: pct })}
+      >
         {pct}%
       </span>
-      <button type="button" aria-label="Zoom in" title="Zoom in" className={ICON_BUTTON} onClick={onIn}>
+      <button type="button" aria-label={t("Zoom in")} title={t("Zoom in")} className={ICON_BUTTON} onClick={onIn}>
         <Icon name="plus" size={13} />
       </button>
       <span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-line-strong" />
-      <button type="button" title="Fit everything (0)" className={TEXT_BUTTON} onClick={onFit}>
-        Fit
+      <button type="button" title={t("Fit everything (0)")} className={TEXT_BUTTON} onClick={onFit}>
+        {t("Fit")}
       </button>
       {onNow ? (
         <button type="button" className={`${TEXT_BUTTON} text-accent-ink`} onClick={onNow}>
-          Jump to now
+          {t("Jump to now")}
         </button>
       ) : null}
     </div>

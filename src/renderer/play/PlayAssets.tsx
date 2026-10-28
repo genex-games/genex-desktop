@@ -28,7 +28,7 @@ import {
 import { Icon } from "../ui/icons.tsx";
 import { useBackOnline } from "../ui/use-online.ts";
 import { ViewSwitcher, type ViewSwitcherItem } from "../ui/view-switcher.tsx";
-import { PLAY_ASSET_WORDS, PLAY_WORDS } from "../words.ts";
+import { type FeedThings, PLAY_ASSET_WORDS, PLAY_WORDS } from "../words.ts";
 import { KIND_GLYPH } from "../asset-library-view.ts";
 import { CardTagMark } from "../panels/assets/CardMarks.tsx";
 import {
@@ -61,6 +61,9 @@ const SEARCH_DEBOUNCE_MS = 200;
 /** Use's inset from the tile's edges, and on a sound tile its start, past the play button (`play-assets.css`). */
 const USE_INSET_PX = 8;
 const SOUND_USE_START_PX = 44;
+
+/** What a kind's grid holds, as its messages name it: every kind together is the Assets shelf. */
+const thingsOf = (kind: KindChoice): FeedThings => (kind === KindChoice.All ? PlayShelf.Assets : kind);
 
 const KIND_ITEMS: readonly ViewSwitcherItem<KindChoice>[] = KIND_CHOICES.map((key) => ({
   key,
@@ -252,9 +255,9 @@ function AssetGrid({ tiles, placeholders }: { tiles: readonly AssetTile[]; place
 }
 
 /** A grid on its way: real-size tile shapes. */
-function Loading({ noun }: { noun: string }): JSX.Element {
+function Loading({ things }: { things: FeedThings }): JSX.Element {
   return (
-    <div role="status" aria-busy="true" aria-label={PLAY_WORDS.loading(noun)}>
+    <div role="status" aria-busy="true" aria-label={PLAY_WORDS.loading(things)}>
       <AssetGrid tiles={[]} placeholders={PLACEHOLDERS} />
     </div>
   );
@@ -263,20 +266,20 @@ function Loading({ noun }: { noun: string }): JSX.Element {
 /** Under a paged grid: the next page's failure, the marker that reads it, and that it is coming. */
 function Paging({
   list,
-  noun,
+  things,
   online,
   onMore,
   scroller,
 }: {
   list: { nextCursor: string | null; loadingMore: boolean; moreFailed: boolean };
-  noun: string;
+  things: FeedThings;
   online: boolean;
   onMore: () => void;
   scroller: RefObject<HTMLDivElement | null>;
 }): JSX.Element {
   return (
     <>
-      {list.moreFailed && <MoreFailed noun={noun} online={online} onRetry={onMore} />}
+      {list.moreFailed && <MoreFailed things={things} online={online} onRetry={onMore} />}
       {/* Made afresh for each page: a page too short to move the marker out of the look-ahead still reads the next. */}
       {list.nextCursor && <MoreMarker key={list.nextCursor} onNear={onMore} scroller={scroller} />}
       {list.loadingMore && (
@@ -289,10 +292,17 @@ function Paging({
 }
 
 /** A list that could not be read: offline it waits for the network, else Try again. */
-function Failed({ noun, online, onRetry }: { noun: string; online: boolean; onRetry: () => void }): JSX.Element {
-  if (!online)
-    return <OfflineNotice text={PLAY_WORDS.offline.shelf(PLAY_WORDS.shelves[PlayShelf.Assets])} onRetry={onRetry} />;
-  return <Notice text={PLAY_WORDS.failed(noun)} onRetry={onRetry} />;
+function Failed({
+  things,
+  online,
+  onRetry,
+}: {
+  things: FeedThings;
+  online: boolean;
+  onRetry: () => void;
+}): JSX.Element {
+  if (!online) return <OfflineNotice text={PLAY_WORDS.offline.shelf(PlayShelf.Assets)} onRetry={onRetry} />;
+  return <Notice text={PLAY_WORDS.failed(things)} onRetry={onRetry} />;
 }
 
 /** Everyone, every kind: the Assets feed, page by page as today. */
@@ -301,15 +311,15 @@ function FeedTiles({ online, scroller }: { online: boolean; scroller: RefObject<
   const play = studio().play;
   const more = useCallback(() => void play.loadFeed(PlayCategory.Assets, { more: true }), [play]);
   const tiles = useMemo(() => gameTiles(feed.games, KindChoice.All), [feed.games]);
-  const noun = WORDS.nouns[KindChoice.All];
+  const things = thingsOf(KindChoice.All);
   const reload = () => void play.loadFeed(PlayCategory.Assets, { force: true });
-  if (feed.status === FeedStatus.Failed) return <Failed noun={noun} online={online} onRetry={reload} />;
-  if (feed.status === FeedStatus.Loading && tiles.length === 0) return <Loading noun={noun} />;
-  if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(noun)} />;
+  if (feed.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
+  if (feed.status === FeedStatus.Loading && tiles.length === 0) return <Loading things={things} />;
+  if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
   return (
     <>
       <AssetGrid tiles={tiles} placeholders={feed.loadingMore ? PLACEHOLDERS / 2 : 0} />
-      <Paging list={feed} noun={noun} online={online} onMore={more} scroller={scroller} />
+      <Paging list={feed} things={things} online={online} onMore={more} scroller={scroller} />
     </>
   );
 }
@@ -319,11 +329,11 @@ function CatalogTiles({ kind, online }: { kind: KindChoice; online: boolean }): 
   const catalog = usePlay((s) => s.assetCatalog);
   useEffect(() => void studio().play.loadAssetCatalog(), []);
   const tiles = useMemo(() => catalogTiles(catalog.items, kind), [catalog.items, kind]);
-  const noun = WORDS.nouns[kind];
+  const things = thingsOf(kind);
   const reload = () => void studio().play.loadAssetCatalog({ force: true });
-  if (catalog.status === FeedStatus.Failed) return <Failed noun={noun} online={online} onRetry={reload} />;
-  if (catalog.status === FeedStatus.Loading && catalog.items.length === 0) return <Loading noun={noun} />;
-  if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(noun)} />;
+  if (catalog.status === FeedStatus.Failed) return <Failed things={things} online={online} onRetry={reload} />;
+  if (catalog.status === FeedStatus.Loading && catalog.items.length === 0) return <Loading things={things} />;
+  if (tiles.length === 0) return <Notice text={PLAY_WORDS.empty(things)} />;
   return <AssetGrid tiles={tiles} placeholders={0} />;
 }
 
@@ -340,12 +350,12 @@ function SearchTiles({
   onRetry: () => void;
 }): JSX.Element {
   const tiles = useMemo(() => gameTiles(search.games, kind), [search.games, kind]);
-  const noun = WORDS.nouns[kind];
+  const things = thingsOf(kind);
   if (search.status === FeedStatus.Failed && !online)
     return <OfflineNotice text={PLAY_WORDS.offline.search} onRetry={onRetry} />;
-  if (search.status === FeedStatus.Failed) return <Notice text={PLAY_WORDS.failed(noun)} onRetry={onRetry} />;
+  if (search.status === FeedStatus.Failed) return <Notice text={PLAY_WORDS.failed(things)} onRetry={onRetry} />;
   if (search.status === FeedStatus.Ready && tiles.length === 0)
-    return <Notice text={PLAY_WORDS.noMatches(search.query, noun)} />;
+    return <Notice text={PLAY_WORDS.noMatches(search.query, things)} />;
   const waiting = search.status === FeedStatus.Loading && tiles.length === 0;
   return (
     <div aria-busy={search.status === FeedStatus.Loading}>
@@ -379,8 +389,8 @@ function useSettled(value: string, ms: number): string {
 
 /** What Mine says with nothing to show: no match for the words typed, or nothing of the kind yet. */
 const mineEmpty = (key: LibraryKey): string => {
-  if (key.query) return PLAY_WORDS.noMatches(key.query, WORDS.nouns[key.kind]);
-  return key.kind === KindChoice.All ? WORDS.mineEmpty : PLAY_WORDS.empty(WORDS.nouns[key.kind]);
+  if (key.query) return PLAY_WORDS.noMatches(key.query, thingsOf(key.kind));
+  return key.kind === KindChoice.All ? WORDS.mineEmpty : PLAY_WORDS.empty(thingsOf(key.kind));
 };
 
 /** Mine: the person's own library, newest first, page by page; signed out it asks to sign in. */
@@ -406,17 +416,17 @@ function MineTiles({
   }, [play, key, signedIn]);
   const more = useCallback(() => void play.loadLibrary(key, { more: true }), [play, key]);
   const tiles = useMemo(() => feed.assets.map(libraryTile), [feed.assets]);
-  const noun = WORDS.nouns[kind];
+  const things = thingsOf(kind);
   if (account !== null && !signedIn) return <SignInNotice />;
   const shown = sameLibraryKey(feed, key);
   if (shown && feed.status === FeedStatus.Failed)
-    return <Failed noun={noun} online={online} onRetry={() => void play.loadLibrary(key, { force: true })} />;
-  if (!shown || (feed.status === FeedStatus.Loading && tiles.length === 0)) return <Loading noun={noun} />;
+    return <Failed things={things} online={online} onRetry={() => void play.loadLibrary(key, { force: true })} />;
+  if (!shown || (feed.status === FeedStatus.Loading && tiles.length === 0)) return <Loading things={things} />;
   if (tiles.length === 0) return <Notice text={mineEmpty(key)} />;
   return (
     <>
       <AssetGrid tiles={tiles} placeholders={feed.loadingMore ? PLACEHOLDERS / 2 : 0} />
-      <Paging list={feed} noun={noun} online={online} onMore={more} scroller={scroller} />
+      <Paging list={feed} things={things} online={online} onMore={more} scroller={scroller} />
     </>
   );
 }
@@ -453,7 +463,7 @@ export function AssetsBody({
     case TileSource.Library:
       return <MineTiles kind={view.kind} query={query} online={online} scroller={scroller} />;
     case TileSource.Search:
-      if (!search) return <Loading noun={WORDS.nouns[view.kind]} />;
+      if (!search) return <Loading things={thingsOf(view.kind)} />;
       return <SearchTiles search={search} kind={view.kind} online={online} onRetry={onRetrySearch} />;
     case TileSource.Catalog:
       return <CatalogTiles kind={view.kind} online={online} />;

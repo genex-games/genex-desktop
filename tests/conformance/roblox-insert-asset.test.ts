@@ -55,6 +55,16 @@ interface StudioPlace {
   info?: Record<string, unknown>;
   scripts?: InsertedScript[];
   insert?: StudioToolResult;
+  childrenAnswer?: StudioToolResult;
+  scriptsAnswer?: StudioToolResult;
+}
+
+function inventoryAnswer(place: StudioPlace, op: unknown): StudioToolResult {
+  if (op === "info") return text(JSON.stringify(place.info ?? { error: "not found" }));
+  if (op === "children") return place.childrenAnswer ?? text(JSON.stringify({ ids: ["d1", "d2"] }));
+  if (op === "scripts")
+    return place.scriptsAnswer ?? text(JSON.stringify({ added: ["Workspace.Tree"], scripts: place.scripts ?? [] }));
+  return text("unknown step", true);
 }
 
 /** A stand-in Studio with one place: what search, product info, the insert and the script list answer. */
@@ -67,11 +77,7 @@ function standIn(place: StudioPlace) {
       if (name === "insert_asset") return place.insert ?? text("Inserted the asset into Workspace.");
       if (name !== "execute_luau") return text(`no ${name}`, true);
       const step = stepArgs(String(args.code));
-      if (step.op === "info") return text(JSON.stringify(place.info ?? { error: "not found" }));
-      if (step.op === "children") return text(JSON.stringify({ ids: ["d1", "d2"] }));
-      if (step.op === "scripts")
-        return text(JSON.stringify({ added: ["Workspace.Tree"], scripts: place.scripts ?? [] }));
-      return text("unknown step", true);
+      return inventoryAnswer(place, step.op);
     },
   };
   return {
@@ -161,7 +167,71 @@ describe("insert-asset", () => {
     assert.equal(answered.done, true, answered.message);
     assert.match(answered.message, /no scripts/);
   });
+});
 
+describe("insert-asset verifies script inventories", () => {
+  const FAILED_INVENTORIES = [
+    ["a refused read", text("Source read failed", true)],
+    ["an incomplete JSON answer", text("{}")],
+    ["unparseable output", text("Studio stopped answering")],
+    ["an error object", text(JSON.stringify({ error: "no parent Workspace", ids: [], added: [], scripts: [] }))],
+    ["a malformed list", text(JSON.stringify({ ids: [7], added: [7], scripts: [null] }))],
+  ] as const;
+  for (const [why, inventory] of FAILED_INVENTORIES) {
+    it(`does not insert without a trustworthy before inventory (${why})`, async () => {
+      const { stand, answer } = insert(
+        { search: searchAnswer([storeResult(FREE, true)]), childrenAnswer: inventory },
+        { id: FREE },
+        await gameIn(),
+      );
+      refused(await answer, /before inserting/i);
+      assert.ok(!stand.calls.some((call) => call.name === "insert_asset"), "no unauditable insert");
+    });
+
+    it(`reports an incomplete review after insertion without claiming no scripts (${why})`, async () => {
+      const { stand, answer } = insert(
+        { search: searchAnswer([storeResult(FREE, true)]), scriptsAnswer: inventory },
+        { id: FREE },
+        await gameIn(),
+      );
+      const answered = await answer;
+      refused(answered, /already inserted/i);
+      assert.doesNotMatch(answered.message, /no scripts/i);
+      assert.match(answered.message, /do not insert it again/i);
+      assert.equal(stand.calls.filter((call) => call.name === "insert_asset").length, 1);
+      assert.deepEqual(answered.result, { assetId: FREE, inserted: true, scriptsReviewed: false });
+    });
+  }
+
+  it("does not silently discard malformed script entries from an otherwise valid inventory", async () => {
+    const { answer } = insert(
+      {
+        search: searchAnswer([storeResult(FREE, true)]),
+        scriptsAnswer: text(JSON.stringify({ added: ["Workspace.Tree"], scripts: [{ path: "Workspace.Tree.Code" }] })),
+      },
+      { id: FREE },
+      await gameIn(),
+    );
+    const answered = await answer;
+    refused(answered, /already inserted/i);
+    assert.doesNotMatch(answered.message, /no scripts/i);
+  });
+
+  it("accepts the helper's empty Luau tables as empty inventories", async () => {
+    const { answer } = insert(
+      {
+        search: searchAnswer([storeResult(FREE, true)]),
+        childrenAnswer: text(JSON.stringify({ ids: {} })),
+        scriptsAnswer: text(JSON.stringify({ added: ["Workspace.Tree"], scripts: {} })),
+      },
+      { id: FREE },
+      await gameIn(),
+    );
+    assert.equal((await answer).done, true);
+  });
+});
+
+describe("insert-asset argument and Studio refusals", () => {
   it("an asset search doesn't find is read by its product info: public, or the person's own, goes in; anything else is refused", async () => {
     const CASES: Array<[string, Record<string, unknown>, boolean]> = [
       ["free to take", { publicDomain: true, creatorId: 5, creatorType: "User", user: USER, name: "Rock" }, true],

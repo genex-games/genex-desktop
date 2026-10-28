@@ -24,11 +24,21 @@ Where it disagrees with this preface, this preface wins.
   options. Studio passes `--out-dir` and `--no-wait` itself, and delivered files land in the game,
   so wire in those local paths. In a Godot game they land in its project (`godot/assets/...`),
   which the game loads as `res://assets/...`.
-- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel` and `shop list`: `genex__cli`.
-  `budget --assets` is not available: Studio's own asset allowance and the user's approval govern
-  asset spending.
-- `llm bench` and `shop add|set|remove|test`: `genex__cli-paid`. The user approves each call,
-  because it spends coin or changes what the game sells.
+- `doctor`, `budget`, `llm models`, `llm status`, `llm cancel`, `shop list`, `shop add`,
+  `items list` and `items search`: `genex__cli`. `budget --assets` is not available: Studio's own
+  asset allowance and the user's approval govern asset spending. `shop add` asks nobody: it makes
+  a store item's draft, which spends nothing and sells nothing until Studio puts it on sale with the game's publish,
+  and it needs the item's picture (`image`, a square PNG of at least 768 × 768), at any time, with or
+  without a build.
+  So do `shop set` and `shop remove` on a local draft (`local_…`).
+- `llm bench`, `shop set|remove` on an item in the store, `shop test` and `items add|remove`:
+  `genex__cli-paid`. The user
+  approves each call, because it spends Nex (Genex's currency, which the cards call coin) or changes
+  what the game sells. A store item's `image`, `model` and `package` name paths inside this game,
+  and `items add` writes `genex-items/<id>/` into it; `shop publish` is not available, because Studio puts
+  a game's items on sale when it is published. Read the `genex-items` skill first. A thing priced in Nex is a store item, listed this
+  way by default; coins, gold or gems are the game's own currency unless the person says they are
+  for real money.
 - `publish` and `promote`: `genex__publish {"operation":"gallery"}`, which also updates the draft;
   use it when the user wants the game published. `preview` alone: `genex__publish
   {"operation":"draft"}`, a test build that leaves the public version as it is. Follow a publish
@@ -40,17 +50,28 @@ Where it disagrees with this preface, this preface wins.
   {"name":"genex-cover"}` first, and never save a frame in `.genex/scratch`.
 - `npm i @genex-ai/multiplayer`: `genex__package {"package":"@genex-ai/multiplayer"}`, and
   `npm i @genex-ai/embed-sdk`: `genex__package {"package":"@genex-ai/embed-sdk"}`. Studio picks
-  the version and the user approves the install. In a game made from Studio's template it maps
+  the version and installs it without asking anyone. In a game made from Studio's template it maps
   Studio's copy in the import map instead, and Studio calls `initEmbed()` for the game.
+- A card Studio shows for a paid command waits for the person even after your turn ends, and the
+  call runs once they approve. Never record it as declined or blocked while it waits; when you come
+  back, check whether it ran and ask again only if the person declined it.
 - A `genex__cli` call carries the words of the command, its positional argument and its flags by
   name without dashes: `npx genex llm cancel <id>` is
   `genex__cli {"command":"llm cancel","args":"<id>"}`, and `--all` is `"options":{"all":true}`.
 - Any other `npx genex` command is not available in Studio. Say so rather than work around it.
 
-<!-- upstream https://genex.games/SKILL.md v1.36.9 sha256 574d8254b3c98a5396ce75b27f42d6752e9e8b33d1f4caf1fc85256260144e2d -->
+## When credits run short
+
+Building the game never uses Genex credits: it runs on the user's own plan. A generation Genex
+refuses for too few credits keeps its card in Studio, which says so and offers Get credits, then
+Make it. So never relay the balance, price or refill date, and never retry: add at most one short
+sentence ("The dragon needs credits; a simple box stands in for now.") and carry on with a stand-in.
+This holds for every lane card's "Out of credits" line too.
+
+<!-- upstream https://genex.games/SKILL.md v1.36.17 sha256 03bc487ae0afdf9df0cd460a32558542a03078ed117684bdfd7bc6f39c988b7a -->
 ---
 name: genex
-version: 1.36.9
+version: 1.36.17
 description: >-
   Game-dev asset generation for your agent. Proactively check Genex before
   shipping placeholder assets, hand-rolling programmer art, or telling the user
@@ -95,7 +116,7 @@ The game's folder is the workspace: setup marks the folder you run it in, and ev
 4. If it ends with **"Not approved yet"**, nothing is broken - the user had not finished yet. Run `npx genex auth` to pick up the **same** code. Never restart from scratch, never treat that message as an error.
 5. When it is done, the folder has tool skill cards in every agent workspace it detected (`.claude/skills`, `.codex/skills`, `.cursor/skills`, `.hermes/skills` or `.agents/skills` for OpenClaw), the workspace rules in `AGENTS.md`, and this machine signed in. Nothing was created on the Genex platform and none of the user's files were touched.
 
-This file tracks CLI `1.36.9` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
+This file tracks CLI `1.36.17` (the `version` above). `npx genex --version` equal or newer is fine - the installed CLI carries its own, newer skill cards. Older means your local CLI is behind this file: run `npm i -D @genex-ai/cli-demo@latest` in this folder. `npx genex tools` cannot fix it - an older CLI only reinstalls its own older cards, and in a folder that is already set up it returns before the card step. Any `npx genex` command after the bump re-projects the cards. Re-fetch this file from `https://genex.games/SKILL.md` if a command below no longer exists.
 
 ## Never delete or overwrite anything in this folder
 

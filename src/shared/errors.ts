@@ -1,3 +1,5 @@
+import { isStudioErrorCode, type StudioErrorCode } from "./error-codes.ts";
+
 /**
  * The words of whatever was thrown. JavaScript throws anything — an `Error`, a string, an object
  * from another realm, `null` — and `(err as Error).message` read `undefined` for most of them and
@@ -29,4 +31,33 @@ export class UserCancelledError extends Error {
  */
 export function isUserCancelled(error: unknown): boolean {
   return error instanceof UserCancelledError || errorMessage(error) === USER_CANCELLED_MESSAGE;
+}
+
+/**
+ * A failure with a typed code beside its words: the code crosses IPC with the words (`IpcResult`)
+ * and comes back as this class in the renderer, so a caller tells failures apart by `code`.
+ */
+export class CodedError extends Error {
+  readonly code: StudioErrorCode;
+  constructor(code: StudioErrorCode, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** Whatever a thrown value says its `code` is, unchecked. */
+const thrownCode = (error: unknown): unknown =>
+  error !== null && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+
+/** The code of whatever was thrown, when it is one of the app's; never words, a path or a Node code. */
+export function errorCode(error: unknown): StudioErrorCode | null {
+  const code = thrownCode(error);
+  return isStudioErrorCode(code) ? code : null;
+}
+
+/** The code of whatever was thrown when it is a value of `vocabulary`, else null. */
+export function errorCodeIn<V extends Record<string, string>>(vocabulary: V, error: unknown): V[keyof V] | null {
+  const code = thrownCode(error);
+  const values: readonly unknown[] = Object.values(vocabulary);
+  return values.includes(code) ? (code as V[keyof V]) : null;
 }

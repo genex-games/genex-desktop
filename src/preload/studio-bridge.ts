@@ -3,6 +3,7 @@
  * test can drive it with a recorder. Every call goes through {@link invoke} or {@link subscribe},
  * whose channel, payload and result types come from `shared/ipc-channels.ts`.
  */
+import { CodedError, errorCode } from "../shared/errors.ts";
 import { createRunSummaryFeeds, type GraphCursor } from "../shared/run-summary-feed.ts";
 import type { StudioApi } from "../shared/studio-api.ts";
 import type {
@@ -36,20 +37,25 @@ export interface BridgeFiles {
 const NO_FILES: BridgeFiles = { getPathForFile: () => "" };
 
 /** Calls the preload answers itself, asking main nothing. */
-export const PRELOAD_LOCAL_CALLS = ["pathOfFile"] as const;
+export const PRELOAD_LOCAL_CALLS = ["pathOfFile", "systemLanguages"] as const;
 
 /** A channel whose payload is `undefined` is called with no payload argument. */
 type PayloadArgs<C extends StudioInvokeChannel> =
   StudioInvokePayload<C> extends undefined ? [] : [payload: StudioInvokePayload<C>];
 
-export function createStudioBridge(ipc: BridgeIpc, files: BridgeFiles = NO_FILES): StudioApi {
+/** A bridge built with no languages (a test of its IPC) has System follow Chromium's list. */
+export function createStudioBridge(
+  ipc: BridgeIpc,
+  files: BridgeFiles = NO_FILES,
+  languages: readonly string[] = [],
+): StudioApi {
   async function invoke<C extends StudioInvokeChannel>(
     channel: C,
     ...args: PayloadArgs<C>
   ): Promise<StudioInvokeResult<C>> {
     // Main answers every invoke with `IpcResult` (`main/ipc-handle.ts`), typed by the same map.
     const result = (await ipc.invoke(channel, args[0])) as IpcResult<StudioInvokeResult<C>>;
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw failure(result);
     return result.value;
   }
   function subscribe<C extends StudioPushChannel>(
@@ -71,16 +77,24 @@ export function createStudioBridge(ipc: BridgeIpc, files: BridgeFiles = NO_FILES
         return "";
       }
     },
+    systemLanguages: () => [...languages],
     ...threadCalls(bridge),
     ...gameCalls(bridge),
     ...runCalls(bridge),
     ...studioCalls(bridge),
     ...playCalls(bridge),
+    ...storeCalls(bridge),
     ...pluginCalls(bridge),
     ...accountCalls(bridge),
     ...terminalCalls(bridge),
     ...previewCalls(bridge),
   };
+}
+
+/** A failed invoke as the renderer catches it: its words, and its code when it is one of the app's. */
+function failure(result: Extract<IpcResult, { ok: false }>): Error {
+  const code = errorCode(result);
+  return code ? new CodedError(code, result.error) : new Error(result.error);
 }
 
 /** What every group of calls is built from: the raw IPC, and the typed invoke and subscribe over it. */
@@ -131,6 +145,9 @@ function gameCalls(bridge: BridgeCalls) {
     archiveGame: (project) => invoke("studio:game.archive", { project }),
     storageSpace: (project) => invoke("studio:storage", project === undefined ? {} : { project }),
     freeStorage: (project) => invoke("studio:storage.free", project === undefined ? {} : { project }),
+    dataFolder: () => invoke("studio:data-folder"),
+    chooseDataFolder: () => invoke("studio:data-folder.choose"),
+    moveDataFolder: () => invoke("studio:data-folder.move"),
     undoEngineLink: (request) => invoke("studio:game.engine.undo", request),
     stopJob: (project, jobId) => invoke("studio:jobs.stop", { project, jobId }),
     openPrivacySettings: (pane) => invoke("studio:app-look.open-settings", { pane }),
@@ -212,9 +229,21 @@ function playCalls(bridge: BridgeCalls) {
     playSearch: (query, shelf) => invoke("studio:play.search", { query, shelf }),
     playCatalog: () => invoke("studio:play.catalog"),
     playRemix: (slug) => invoke("studio:play.remix", { slug }),
+    playRemixReady: (slugs) => invoke("studio:play.remix-ready", { slugs }),
     playOnline: (slugs) => invoke("studio:play.online", { slugs }),
     playOpen: (slug, title) => invoke("studio:play.open", { slug, title }),
+    playGame: (slug) => invoke("studio:play.game", { slug }),
+    playInstall: (slug) => invoke("studio:play.install", { slug }),
+    playInstallCancel: (slug) => invoke("studio:play.install-cancel", { slug }),
+    playInstalls: () => invoke("studio:play.installs"),
+    playUninstall: (slug) => invoke("studio:play.uninstall", { slug }),
+    playLaunch: (slug) => invoke("studio:play.launch", { slug }),
+    playSession: (slug, action) => invoke("studio:play.session", { slug, action }),
+    playSessions: () => invoke("studio:play.sessions"),
+    playRevealInstall: (slug) => invoke("studio:play.reveal-install", { slug }),
+    playLike: (slug, liked) => invoke("studio:play.like", { slug, liked }),
     playClose: () => invoke("studio:play.close"),
+    playTakeGameLink: () => invoke("studio:play.take-game-link"),
     playControl: (control, at) => invoke("studio:play.control", { control, at }),
     playBar: (hold) => invoke("studio:play.bar", hold),
     playComments: (cursor) => invoke("studio:play.comments", { cursor }),
@@ -264,6 +293,39 @@ function playCalls(bridge: BridgeCalls) {
     playShare: (url, at) => invoke("studio:play.share", { url, at }),
     playManage: (gameId, change) => invoke("studio:play.manage", { gameId, change }),
     playCover: (gameId, image, contentType) => invoke("studio:play.cover", { gameId, image, contentType }),
+  } satisfies Partial<StudioApi>;
+}
+
+/** The store: a game's Store and My items, the purchase sheet, the shelf, complaints and Create › Items. */
+function storeCalls(bridge: BridgeCalls) {
+  const { invoke, subscribe } = bridge;
+  return {
+    storeItems: (slug) => invoke("studio:store.items", { slug }),
+    storeMyItems: (slug) => invoke("studio:store.my-items", { slug }),
+    storeItemGames: (itemId) => invoke("studio:store.item-games", { itemId }),
+    storeBuy: (itemId, slug) => invoke("studio:store.buy", { itemId, slug }),
+    storeAnswer: (sheet, answer) => invoke("studio:store.answer", { sheet, answer }),
+    onStoreSheet: (listener) => subscribe("studio:store.sheet", listener),
+    storeClaim: (itemId, slug) => invoke("studio:store.claim", { itemId, slug }),
+    storeShelf: (userId) => invoke("studio:store.shelf", { userId }),
+    storeCoins: () => invoke("studio:store.coins"),
+    storeGetCoin: () => invoke("studio:store.get-coin"),
+    storeReport: (itemId, reason, message) => invoke("studio:store.report", { itemId, reason, message }),
+    itemsBrowse: (query, cursor, tags = []) => invoke("studio:items.browse", { query, cursor, tags }),
+    itemsBrowseDetail: (itemId) => invoke("studio:items.detail", { itemId }),
+    itemsAddToGame: (itemId, projectId) => invoke("studio:items.add", { itemId, projectId }),
+    itemsRemoveFromGame: (itemId, projectId) => invoke("studio:items.remove", { itemId, projectId }),
+    itemsSelling: () => invoke("studio:items.selling"),
+    itemPutOnSale: (itemId) => invoke("studio:items.put-on-sale", { itemId }),
+    itemTakeOffSale: (itemId) => invoke("studio:items.take-off-sale", { itemId }),
+    itemSetShared: (itemId, shared) => invoke("studio:items.shared", { itemId, shared }),
+    itemsLocal: (project) => invoke("studio:items.local", { project }),
+    itemsLocalApprove: (project, localId, contentHash) =>
+      invoke("studio:items.local-approve", { project, localId, contentHash }),
+    itemsLocalWithdraw: (project, localId) => invoke("studio:items.local-withdraw", { project, localId }),
+    itemsLocalShare: (project, localId, contentHash, shared) =>
+      invoke("studio:items.local-share", { project, localId, contentHash, shared }),
+    itemsLocalSettle: (project, force) => invoke("studio:items.local-settle", { project, force }),
   } satisfies Partial<StudioApi>;
 }
 
@@ -341,8 +403,11 @@ function pluginCalls(bridge: BridgeCalls) {
       invoke("studio:plugins.action", { id, name, args, project, ticket }),
     pluginChooseFile: (id, request) => invoke("studio:plugins.choose-file", { id, request }),
     genexPublishReview: (project) => invoke("studio:plugins.genex-publish-review", { project }),
-    genexPublish: (project, review, title, ai) =>
-      invoke("studio:plugins.genex-publish", { project, review, title, ai }),
+    genexPublishPlatforms: (project) => invoke("studio:plugins.genex-publish-platforms", { project }),
+    genexPublish: (project, review, title, remix, ai) =>
+      invoke("studio:plugins.genex-publish", { project, review, title, remix, ai }),
+    genexPublishApps: (project, title, remix, ai) =>
+      invoke("studio:plugins.genex-publish-apps", { project, title, remix, ai }),
     pluginsIndex: (refresh) => invoke("studio:plugins.index", { refresh }),
     pluginInstallGithub: (spec) => invoke("studio:plugins.install-github", { spec }),
     pluginLookupGithub: (link, version) => invoke("studio:plugins.lookup-github", { link, version }),
@@ -393,6 +458,9 @@ function accountCalls(bridge: BridgeCalls) {
     claudeLoginOpenBrowser: () => invoke("studio:claude-login.browser"),
     claudeLoginCancel: () => invoke("studio:claude-login.cancel"),
     openCodeSignIn: () => invoke("studio:opencode.signin"),
+    grokSignIn: () => invoke("studio:grok.signin"),
+    cursorSignIn: () => invoke("studio:cursor.signin"),
+    cursorSignOut: () => invoke("studio:cursor.signout"),
     openRouterKeySave: (key) => invoke("studio:openrouter.key.save", { key }),
     openRouterKeyClear: () => invoke("studio:openrouter.key.clear"),
     openRouterSignIn: () => invoke("studio:openrouter.signin"),
@@ -435,6 +503,7 @@ function previewCalls(bridge: BridgeCalls) {
   const { invoke } = bridge;
   return {
     loadPreview: (project) => invoke("studio:preview.load", { project }),
+    loadWebBuild: (project) => invoke("studio:preview.web-build", { project }),
     buildPreview: (request) => invoke("studio:build.preview", request),
     agentScreens: () => invoke("studio:preview.screens"),
     previewBounds: (bounds) => invoke("studio:preview.bounds", bounds),

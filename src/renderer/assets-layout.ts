@@ -16,6 +16,7 @@
  */
 import type { MakingJob } from "../shared/asset-making.ts";
 import { type AssetKind, type AssetSource, assetKind, type ProjectAsset } from "../shared/game-assets.ts";
+import { t } from "../shared/i18n.ts";
 import { ASSET_LIBRARY_WORDS } from "./words.ts";
 
 /** The sources the studio names itself (`AssetSource`); any other source is a plugin id. */
@@ -89,7 +90,7 @@ const SOURCE_LABEL = new Map<string, string>([
   [Source.Blender, "Blender"],
   [Source.Library, ASSET_LIBRARY_WORDS.myLibrary],
   [Source.Community, ASSET_LIBRARY_WORDS.community],
-  [Source.Imported, "Your files"],
+  [Source.Imported, t("Your files")],
 ]);
 
 /** What a source is called on screen. A plugin id nobody ships is shown as it is. */

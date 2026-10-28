@@ -98,9 +98,9 @@ describe("each step of the purchase sheet as drawn", () => {
     assert.ok(pay && cancel, unarmed);
     assert.ok(disabled(pay), `Pay waits to be armed: ${pay}`);
     assert.ok(!disabled(cancel), cancel);
-    assert.match(unarmed, /Pay 75 coin/);
+    assert.match(unarmed, /Pay 75 Nex/);
     assert.match(unarmed, /\$0\.75/);
-    assert.match(unarmed, /1,165 coin/, "the balance after paying");
+    assert.match(unarmed, /1,165 Nex/, "the balance after paying");
     const [armed] = buttonsFor(draw(sheetWith()), PurchaseAnswer.Pay);
     assert.ok(armed && !disabled(armed), armed);
   });
@@ -119,21 +119,21 @@ describe("each step of the purchase sheet as drawn", () => {
   it("draws the receipt once paid: the game has it, what is left, and only Back to game", () => {
     const markup = draw(sheetWith({ step: PurchaseStep.Paid, armed: false, balance: 1165 }));
     assert.match(markup, /Lantern Run has your receipt\./);
-    assert.match(markup, /1,165 coin/);
+    assert.match(markup, /1,165 Nex/);
     assert.equal(buttonsFor(markup, PurchaseAnswer.Back).length, 1);
     assert.equal(buttonsFor(markup, PurchaseAnswer.Pay).length, 0);
     assert.equal(buttonsFor(markup, PurchaseAnswer.Cancel).length, 0);
     assert.doesNotMatch(markup, /Unlock the shortcut/, "the receipt line takes the description's place");
   });
 
-  it("shows what is missing when the balance is short, with Get coin and where it leads", () => {
+  it("shows what is missing when the balance is short, with Get Nex and where it leads", () => {
     const markup = draw(
       sheetWith({ step: PurchaseStep.NotEnough, recovery: PurchaseRecovery.Waiting, armed: false, balance: 40 }),
     );
     assert.match(markup, /35 more needed/);
     assert.equal(buttonsFor(markup, PurchaseAnswer.GetCoin).length, 1);
     assert.equal(buttonsFor(markup, PurchaseAnswer.Pay).length, 0, "no Pay while short");
-    assert.match(markup, /Opens genex\.games\. Pay comes back once the coin lands\./);
+    assert.match(markup, /Opens genex\.games\. Pay comes back once the Nex lands\./);
   });
 
   it("tells a purchase that timed out, with the item and Back to game", () => {
@@ -157,7 +157,7 @@ describe("each step of the purchase sheet as drawn", () => {
     assert.match(markup, /Sign in to buy things in games/);
     assert.equal(buttonsFor(markup, PurchaseAnswer.SignIn).length, 1);
     assert.equal(buttonsFor(markup, PurchaseAnswer.Cancel).length, 1);
-    assert.doesNotMatch(markup, /\d coin/, "no price was read");
+    assert.doesNotMatch(markup, /\d Nex/, "no price was read");
   });
 });
 

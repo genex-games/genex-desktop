@@ -298,6 +298,8 @@ function schemaLines(tool: BridgeTool): string {
 
 export class StudioBridge {
   readonly dir: string;
+  /** The folder the contractor writes its requests into: the only one it must write here. */
+  readonly requests: string;
   readonly #mcp: boolean;
   readonly #cwd: string;
   readonly #tools: BridgeTool[];
@@ -317,6 +319,7 @@ export class StudioBridge {
   private constructor(options: BridgeOptions) {
     this.#cwd = path.resolve(options.cwd);
     this.dir = path.join(this.#cwd, BRIDGE_DIR);
+    this.requests = path.join(this.dir, "req");
     this.#tools = options.tools.map((tool) =>
       tool.inputSchema || !Object.values(tool.parameters.properties).some((property) => property.type !== "string")
         ? tool
@@ -337,11 +340,11 @@ export class StudioBridge {
     // A bridge left behind by a crashed build is scaffolding, not state: start clean. `rm` removes
     // a planted link itself, never what it points at.
     await rm(bridge.dir, { recursive: true, force: true }).catch(() => {});
-    await mkdir(path.join(bridge.dir, "req"), { recursive: true });
+    await mkdir(bridge.requests, { recursive: true });
     await mkdir(path.join(bridge.dir, "res"), { recursive: true });
     const res = await lstat(path.join(bridge.dir, "res"));
     bridge.#res = { dev: res.dev, ino: res.ino };
-    const req = await lstat(path.join(bridge.dir, "req"));
+    const req = await lstat(bridge.requests);
     bridge.#req = { dev: req.dev, ino: req.ino };
     if (!(await bridge.#intact())) throw new Error(MESSAGE.NotPlainFolder(bridge.dir));
     await writeFile(path.join(bridge.dir, "tool.mjs"), SHIM_SOURCE, "utf8");

@@ -20,17 +20,15 @@ permissions:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
+# Usage analytics' PostHog project key (docs/usage-analytics.md); unset, a release carries none.
+env:
+  STUDIO_POSTHOG_KEY: ${{ vars.STUDIO_POSTHOG_KEY }}
 jobs:
   validate:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     outputs:
       publish: ${{ steps.intent.outputs.publish }}
-      unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
-      seed_matrix: ${{ steps.plan.outputs.seed_matrix }}
-      harness_matrix: ${{ steps.plan.outputs.harness_matrix }}
-      fast_matrix: ${{ steps.plan.outputs.fast_matrix }}
-      rig_matrix: ${{ steps.plan.outputs.rig_matrix }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -48,24 +46,55 @@ jobs:
       - name: Say when the regression is skipped
         if: vars.RELEASE_REGRESSION == 'skip'
         run: echo "::warning::RELEASE_REGRESSION=skip; this release runs without the regression. Dispatch a build-only run on main afterwards and unset the variable."
-      - run: npm ci --ignore-scripts
-      # The complete `npm test` inventory (fast, rig and the harness gate) in disjoint shards, so
-      # the regression runs on parallel runners and a failed shard re-runs alone.
-      - name: Partition the complete test inventory
-        id: plan
-        run: node scripts/ci-test-plan.mjs plan --full --output .studio-dev/ci/plan.json --github-output "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: regression-test-plan
-          path: .studio-dev/ci/plan.json
-          include-hidden-files: true
-          if-no-files-found: error
       - name: Lockfile dependency inventory
         run: npm sbom --sbom-format cyclonedx --package-lock-only > SBOM.cyclonedx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-inventory
           path: SBOM.cyclonedx.json
+          if-no-files-found: error
+  # The complete `npm test` inventory (fast, rig and the harness gate) in disjoint shards, so the
+  # regression runs on parallel runners and a failed shard re-runs alone. It is its own job so the
+  # macOS build and the e2e, which need only validate, take the first macOS runners. The serial rig
+  # shards balance by the file times the newest earlier release left (by source bytes without one).
+  plan:
+    needs: validate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      unit_matrix: ${{ steps.plan.outputs.unit_matrix }}
+      seed_matrix: ${{ steps.plan.outputs.seed_matrix }}
+      harness_matrix: ${{ steps.plan.outputs.harness_matrix }}
+      fast_matrix: ${{ steps.plan.outputs.fast_matrix }}
+      rig_matrix: ${{ steps.plan.outputs.rig_matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Read the rig file times an earlier release left
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-durations.mjs fetch .studio-dev/ci/durations.json
+      - run: npm ci --ignore-scripts
+      - name: Partition the complete test inventory
+        id: plan
+        run: |
+          times=()
+          if [ -f .studio-dev/ci/durations.json ]; then times=(--durations .studio-dev/ci/durations.json); fi
+          node scripts/ci-test-plan.mjs plan --full "${times[@]}" --output .studio-dev/ci/plan.json --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: regression-test-plan
+          path: .studio-dev/ci/plan.json
+          include-hidden-files: true
           if-no-files-found: error
   # Linux static checks and the Linux fast inventory (`npm run test:fast`) gate the draft whether
   # or not the regression runs; the packages build beside them.
@@ -86,10 +115,10 @@ jobs:
       - run: npm run check:static
       - run: npm run lint
   linux-unit:
-    needs: validate
+    needs: plan
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.unit_matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.unit_matrix) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -116,10 +145,10 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group unit --shard "$SHARD"
   linux-seed:
-    needs: validate
+    needs: plan
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.seed_matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.seed_matrix) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -316,11 +345,11 @@ jobs:
   # them), the static gates once, and the end-to-end suites. Each shard reports on its own, so a
   # failure names its shard and "Re-run failed jobs" repeats only that one.
   regression-rig:
-    needs: validate
+    needs: plan
     if: vars.RELEASE_REGRESSION != 'skip'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.rig_matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.rig_matrix) }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -340,19 +369,33 @@ jobs:
       - name: Regression rig shard
         env:
           SHARD: ${{ matrix.shard }}
-        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group rig --shard "$SHARD"
+        run: node scripts/ci-test-plan.mjs run --plan .studio-dev/ci/plan.json --group rig --shard "$SHARD" --durations ".studio-dev/ci/durations/rig-$SHARD.json"
+      # Its files' times, so the next release can balance the rig shards by time.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: rig-durations-${{ matrix.shard }}
+          path: .studio-dev/ci/durations
+          include-hidden-files: true
+          if-no-files-found: ignore
+          overwrite: true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: regression-evidence-rig-${{ matrix.shard }}
           path: .studio-dev/evidence
           if-no-files-found: ignore
+  # The harness shards are short (1-4 min) and the rig shards long (6-11 min). Released together,
+  # the macOS queue took them in mixed order and long rig shards started last, ending the
+  # regression ~3 min after the queue drained (v0.1.16-17). Waiting on linux-static, which the
+  # draft needs anyway, queues the rig shards first so the harness shards fill the tail.
   regression-harness:
-    needs: validate
+    needs: [plan, linux-static]
     if: vars.RELEASE_REGRESSION != 'skip'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.harness_matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.harness_matrix) }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -380,11 +423,11 @@ jobs:
           path: .studio-dev/evidence
           if-no-files-found: ignore
   regression-fast:
-    needs: [validate, fast-evidence]
+    needs: [plan, fast-evidence]
     if: vars.RELEASE_REGRESSION != 'skip' && needs.fast-evidence.outputs.reuse == 'false'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.validate.outputs.fast_matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -417,7 +460,7 @@ jobs:
   # One stable result for the whole regression: success only when every shard and the e2e passed
   # (the fast shards either here or in Check on this commit), skipped under RELEASE_REGRESSION=skip.
   regression:
-    needs: [validate, fast-evidence, regression-rig, regression-harness, regression-fast, regression-e2e]
+    needs: [validate, plan, fast-evidence, regression-rig, regression-harness, regression-fast, regression-e2e]
     if: ${{ !cancelled() && vars.RELEASE_REGRESSION != 'skip' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 5
@@ -425,6 +468,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      # The rig shards' file times, kept for the next release's plan; they never decide this result.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          pattern: rig-durations-*
+          path: .studio-dev/ci/rig-durations
+          merge-multiple: true
+      - name: Merge the rig file times
+        continue-on-error: true
+        run: node scripts/release-durations.mjs merge .studio-dev/ci/rig-durations .studio-dev/ci/durations/durations.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        with:
+          name: regression-durations
+          path: .studio-dev/ci/durations/durations.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
       - name: Require every regression shard
         env:
           STUDIO_CI_NEEDS: ${{ toJSON(needs) }}

@@ -25,7 +25,7 @@ import { describe, it } from "node:test";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import { type Launch, type LaunchEnv, systemLaunchEnv } from "../../src/plugins/unreal/editor-launch.ts";
 import { UnrealStepId, unrealInstallCard, unrealSteps, XcodeStep } from "../../src/plugins/unreal/engine-steps.ts";
-import type { PluginEngineLink } from "../../src/plugin-sdk/index.d.ts";
+import type { PluginEngineLink, PluginEngineRun } from "../../src/plugin-sdk/index.d.ts";
 import { pluginBackendEnv } from "../../src/substrate/plugins/process.ts";
 import { editorLogPath, readEditorLog } from "../../src/plugins/unreal/editor-log.ts";
 import { chosenProject, derivedPort, listSetUpProjects, SetupStorage } from "../../src/plugins/unreal/editor-port.ts";
@@ -154,6 +154,43 @@ async function fakeEpic(home: string, platform: "darwin" | "win32", recent: Arra
   );
 }
 
+/** An install record of Epic's launcher (`<id>.item`), as it writes one for an engine or for one of its plugins. */
+const launcherRecord = (app: string, version: string, folder: string, more: Record<string, unknown> = {}) => ({
+  FormatVersion: 0,
+  bIsIncompleteInstall: false,
+  LaunchExecutable: "Engine/Binaries/Win64/UnrealEditor.exe",
+  AppCategories: ["engines/ue5", "engines"],
+  DisplayName: "Unreal Engine",
+  InstallLocation: folder,
+  AppName: app,
+  AppVersionString: version,
+  MainGameAppName: "",
+  ...more,
+});
+
+/** Where Epic's launcher keeps its install records on a fake computer. */
+const recordsFolder = (home: string, platform: "darwin" | "win32") =>
+  platform === "win32"
+    ? path.join(home, "ProgramData", "Epic", "EpicGamesLauncher", "Data", "Manifests")
+    : path.join(home, "Library", "Application Support", "Epic", "EpicGamesLauncher", "Data", "Manifests");
+
+/** Epic's install records, by file name: a record as JSON in Epic's tab layout, or a string as it is. */
+async function fakeRecords(home: string, platform: "darwin" | "win32", records: Record<string, unknown>) {
+  const folder = recordsFolder(home, platform);
+  await mkdir(path.join(folder, "Pending"), { recursive: true });
+  for (const [name, record] of Object.entries(records))
+    await writeFile(path.join(folder, name), typeof record === "string" ? record : JSON.stringify(record, null, "\t"));
+  return folder;
+}
+
+/** Epic's launcher on a Windows PC since 2025: its list of engines empty, each install only in its own record. */
+async function fakeRecordsOnly(home: string, records: Record<string, unknown>) {
+  const list = path.join(home, "ProgramData", "Epic", "UnrealEngineLauncher", "LauncherInstalled.dat");
+  await mkdir(path.dirname(list), { recursive: true });
+  await writeFile(list, '{\r\n\t"InstallationList": []\r\n}');
+  return fakeRecords(home, "win32", records);
+}
+
 async function fakeProject(root: string, name = "Drift", options: { ini?: string } = {}) {
   const directory = path.join(root, name);
   await mkdir(directory, { recursive: true });
@@ -260,6 +297,114 @@ describe("Set up Unreal finds", () => {
     );
     assert.match(ini, new RegExp(`ServerPortNumber=${derivedPort(await realpath(project.file))}`));
   });
+
+  it("finds an engine Epic's launcher keeps only in its install record, as the Windows launcher does since 2025", async () => {
+    const home = await tmpDir("studio-unreal-home-");
+    const ue58 = path.join(home, "Program Files", "Epic Games", "UE_5.8");
+    await mkdir(ue58, { recursive: true });
+    await fakeRecordsOnly(home, {
+      "4D983583C6D582563E072E4E19204751.item": launcherRecord(
+        "UE_5.8",
+        "5.8.4-58902052+++UE5+Release-5.8-Windows",
+        ue58,
+      ),
+      // Epic's plugins installed into the engine have records of their own, under their own names.
+      "56B46A5BE520EE48809A6CF66158186.item": launcherRecord("QuixelBridge_5.8", "5.8.0-55116800-Windows", ue58, {
+        MainGameAppName: "UE_5.8",
+        AppCategories: ["plugins/engine", "plugins"],
+      }),
+      "4D983583C6D582563E072E4E19204751.manifest": "Epic's chunk manifest, not a record",
+    });
+    const engines = await findEngines(fakeEnv(home, { platform: "win32" }));
+    assert.deepEqual(
+      engines.map((e) => [e.version, e.build, e.directory, e.supported]),
+      [["5.8", "5.8.4", ue58, true]],
+    );
+  });
+
+  it("reads an install record Epic wrote with a byte order mark, and Mac records beside the Mac list, each engine once", async () => {
+    const home = await tmpDir("studio-unreal-home-");
+    await fakeEpic(home, "darwin", []);
+    const ue58 = path.join(home, "Engines", "UE_5.8");
+    const record = JSON.stringify(launcherRecord("UE_5.8", "5.8.4-58902052+++UE5+Release-5.8-Mac", ue58));
+    await fakeRecords(home, "darwin", { "A.item": `﻿${record}` });
+    const engines = await findEngines(fakeEnv(home));
+    assert.deepEqual(
+      engines.map((e) => [e.version, e.build]),
+      [
+        ["5.8", "5.8.4"],
+        ["5.7", "5.7.1"],
+      ],
+      "the record is the launcher's current word on the folder its list also names",
+    );
+  });
+
+  /** Each row: what Epic's folders hold, the engines still found (newest first), and why it can't run here. */
+  const notEngines: Array<[string, (home: string, folders: string) => Promise<unknown>, string[], string | false]> = [
+    [
+      "an engine still installing, even while Epic's list names its folder",
+      async (home) => {
+        await fakeEpic(home, "win32", []);
+        const record = launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(home, "Engines", "UE_5.8"), {
+          bIsIncompleteInstall: true,
+        });
+        await fakeRecords(home, "win32", { "A.item": record });
+      },
+      ["5.7"],
+      false,
+    ],
+    [
+      "an engine whose folder is gone",
+      (home, folders) =>
+        fakeRecordsOnly(home, { "A.item": launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8")) }),
+      [],
+      false,
+    ],
+    [
+      "records that aren't JSON objects, a folder named like a record, and one far bigger than a record",
+      async (home, folders) => {
+        await mkdir(path.join(folders, "UE_5.8"), { recursive: true });
+        const records = await fakeRecordsOnly(home, {
+          "A.item": "{ not json",
+          "B.item": JSON.stringify([launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8"))]),
+          "C.item": JSON.stringify({
+            ...launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8")),
+            Padding: "x".repeat(200 * 1024),
+          }),
+        });
+        await mkdir(path.join(records, "D.item"));
+      },
+      [],
+      false,
+    ],
+    [
+      "a record that links to a file outside Epic's folder",
+      async (home, folders) => {
+        await mkdir(path.join(folders, "UE_5.8"), { recursive: true });
+        const records = await fakeRecordsOnly(home, {});
+        const outside = path.join(home, "planted.item");
+        await writeFile(
+          outside,
+          JSON.stringify(launcherRecord("UE_5.8", "5.8.4-1-Windows", path.join(folders, "UE_5.8"))),
+        );
+        await symlink(outside, path.join(records, "A.item"));
+      },
+      [],
+      process.platform === "win32" && "links need privileges on Windows",
+    ],
+  ];
+  for (const [name, arrange, found, skip] of notEngines)
+    it(`finds no engine in ${name}, and changes nothing`, { skip }, async () => {
+      const home = await tmpDir("studio-unreal-home-");
+      await arrange(home, path.join(home, "Program Files", "Epic Games"));
+      const before = await tree(home);
+      const engines = await findEngines(fakeEnv(home, { platform: "win32" }));
+      assert.deepEqual(
+        engines.map((e) => e.version),
+        found,
+      );
+      assert.deepEqual(await tree(home), before);
+    });
 });
 
 describe("Set up Unreal on a project", () => {
@@ -1323,36 +1468,53 @@ describe("On Windows, the Unreal plugin's console tools", () => {
     const parent = {
       SystemRoot: "D:\\Windows",
       ProgramData: "D:\\ProgramData",
+      ProgramFiles: "E:\\Program Files",
       "ProgramFiles(x86)": "D:\\Program Files (x86)",
       PATH: "D:\\Windows\\System32",
     };
     const env = pluginBackendEnv(parent, "win32");
     assert.equal(systemSetupEnv(env, "win32").programData, "D:\\ProgramData");
     assert.equal(systemLaunchEnv("win32", env).applications, "D:\\Program Files (x86)");
+    assert.equal(systemLaunchEnv("win32", env).programFiles, "E:\\Program Files", "where the 64-bit launcher installs");
   });
 
   it("without those variables, takes the folders from SystemRoot's drive, and C: only with nothing at all", () => {
     assert.equal(systemSetupEnv({ SystemRoot: "D:\\Windows" }, "win32").programData, "D:\\ProgramData");
     assert.equal(systemLaunchEnv("win32", { SystemRoot: "D:\\Windows" }).applications, "D:\\Program Files (x86)");
+    assert.equal(systemLaunchEnv("win32", { SystemRoot: "D:\\Windows" }).programFiles, "D:\\Program Files");
     assert.equal(systemSetupEnv({}, "win32").programData, "C:\\ProgramData");
     assert.equal(systemLaunchEnv("win32", {}).applications, "C:\\Program Files (x86)");
+    assert.equal(systemLaunchEnv("win32", {}).programFiles, "C:\\Program Files");
+    assert.equal(systemLaunchEnv("darwin", {}).programFiles, undefined, "a Mac has one Applications folder");
   });
 });
 
 describe("a game's own Unreal project and the steps card", () => {
   type HostCall = [string, unknown];
   /** A backend whose host answers storage and the game.engine services, keeps the game's link, and records every call. */
-  async function linkFixture(overrides: Partial<SetupEnv> = {}, game: string | null = "valley") {
+  async function linkFixture(
+    overrides: Partial<SetupEnv> = {},
+    game: string | null = "valley",
+    onLaunch: (l: Launch) => void = () => {},
+    runs: PluginEngineRun[] = [],
+  ) {
     const f = await setupFixture({ ini: USER_INI });
     await fakeEpic(f.home, "darwin", [[f.project.file, "2026.10.03-20.00.00"]]);
     const env = { ...f.env, xcode: async () => READY_XCODE, ...overrides };
     const launched: Launch[] = [];
-    const launch: LaunchEnv = { ...noLaunch(f.root), open: async (l) => void launched.push(l) };
+    const launch: LaunchEnv = {
+      ...noLaunch(f.root),
+      open: async (l) => {
+        launched.push(l);
+        onLaunch(l);
+      },
+    };
     const backend = createUnrealBackend({ env, helper: HELPER, launch });
     const calls: HostCall[] = [];
     let link: PluginEngineLink | null = null;
     const host = (async (method: string, args?: unknown) => {
       if (method === "storage.root") return f.storage;
+      if (method === "game.engine.runs") return runs;
       calls.push([method, args]);
       if (method === "game.engine.link") {
         const project = (args as { project: string }).project;
@@ -1552,18 +1714,120 @@ describe("a game's own Unreal project and the steps card", () => {
     assert.deepEqual(b.calls.at(-1), ["game.engine.link", { project: b.real }], "a set-up project links as before");
   });
 
-  it("the agent's use-project refuses a project open in Unreal, saying why in one line, and changes nothing", async () => {
-    const b = await linkFixture({ editorRunning: async () => true });
+  it("the agent's use-project on a project open in Unreal quits it, sets it up, links it and opens it again", async () => {
+    const live = { editors: 1 };
+    const quitting = (l: Launch) => l.command === "/usr/bin/osascript";
+    const b = await linkFixture({ editorRunning: async () => live.editors > 0 }, "valley", (l) => {
+      live.editors += quitting(l) ? -1 : 1;
+    });
+    await mkdir(path.join(b.home, "Engines", "UE_5.8", "Engine", "Binaries", "Mac", "UnrealEditor.app"), {
+      recursive: true,
+    });
+    const answer = String(await b.backend.tool?.("use-project", { project: b.project.file }, b.context));
+    assert.match(answer, /Unreal had Drift open, so Genex quit it/);
+    assert.match(answer, /unreal__editor-status/, "the agent waits for it itself");
+    assert.doesNotMatch(answer, /ask the user|Unreal button/i);
+    assert.deepEqual(
+      b.launched.map((l) => (quitting(l) ? "quit" : l.args.at(-1))),
+      ["quit", b.real],
+      "Unreal's own quit (it asks about unsaved work), then the set-up project opened again",
+    );
+    assert.deepEqual(b.calls, [["game.engine.link", { project: b.real, setUp: true }]]);
+    const state = await inspectProject(b.project.file, b.options);
+    assert.deepEqual([state.plugins, state.autoStart, state.undoable], [true, true, true]);
+  });
+
+  it("the agent's use-project never quits the Unreal a Loop is using: it changes nothing and says to call again after the Loop", async () => {
+    const runs: PluginEngineRun[] = [];
+    const b = await linkFixture({ editorRunning: async () => true }, "valley", undefined, runs);
+    runs.push({ game: "lantern", title: "Lantern Path", project: b.real });
     const before = await tree(b.root);
     const call = b.backend.tool?.("use-project", { project: b.project.file }, b.context) ?? Promise.reject();
     await assert.rejects(call, (error: Error) => {
-      assert.match(error.message, /Drift is open in Unreal Editor/);
-      assert.match(error.message, /quit Unreal Editor/);
+      assert.match(error.message, /Lantern Path's Loop is using Drift in Unreal/);
+      assert.match(error.message, /Call unreal__use-project again once that Loop has ended/);
+      return true;
+    });
+    assert.deepEqual(await tree(b.root), before, "no record, the .uproject and its settings untouched");
+    assert.deepEqual([b.calls, b.launched], [[], []], "nothing is linked, quit or opened");
+  });
+
+  it("the agent's use-project changes nothing when Unreal won't quit the open project, and says what the person must do", async () => {
+    const b = await linkFixture({ editorRunning: async () => true, editorCount: async () => 2 });
+    const before = await tree(b.root);
+    const call = b.backend.tool?.("use-project", { project: b.project.file }, b.context) ?? Promise.reject();
+    await assert.rejects(call, (error: Error) => {
+      assert.match(error.message, /Two Unreal editors are open/);
+      assert.match(error.message, /quit the one that has Drift open, then call unreal__use-project again/);
       assert.doesNotMatch(error.message, /Unreal button|\n/);
       return true;
     });
     assert.deepEqual(await tree(b.root), before, "no record, the .uproject and its settings untouched");
-    assert.deepEqual(b.calls, [], "nothing is linked");
+    assert.deepEqual([b.calls, b.launched], [[], []], "nothing is linked, quit or opened");
+  });
+
+  /**
+   * A game whose link came with it from another Genex profile, whose set-up record stayed in that
+   * profile's storage: the project's files are set up (and, unless `module`, it has no C++ module, so
+   * a reopen builds nothing), the link is in this profile's storage, and Unreal answers once opened.
+   */
+  async function linkedElsewhere(live: { running: boolean; answering: boolean }, setUpThere = true) {
+    const b = await linkFixture(
+      { editorRunning: async () => live.running, editorAnswers: async () => live.answering },
+      "valley",
+      (l) => {
+        if (l.command === "/usr/bin/osascript") live.running = false;
+        else Object.assign(live, { running: true, answering: true });
+      },
+    );
+    const blueprint = JSON.parse(UPROJECT) as Record<string, unknown>;
+    delete blueprint.Modules;
+    await writeFile(b.project.file, `${JSON.stringify(blueprint, null, "\t")}\n`);
+    const elsewhere = { ...b.options, storage: path.join(b.root, "other-profile") };
+    const there = setUpThere ? await setUpProject(b.project.file, elsewhere) : { port: null };
+    await mkdir(path.join(b.storage, "links"), { recursive: true });
+    await writeFile(path.join(b.storage, "links", "valley.json"), JSON.stringify({ kind: "unreal", project: b.real }));
+    await mkdir(path.join(b.home, "Engines", "UE_5.8", "Engine", "Binaries", "Mac", "UnrealEditor.app"), {
+      recursive: true,
+    });
+    return { ...b, port: there.port };
+  }
+
+  it("open-for-run records a linked project another profile set up, touching none of its files, then opens it", async () => {
+    const b = await linkedElsewhere({ running: false, answering: false });
+    assert.deepEqual(await listSetUpProjects(b.storage), [], "no set-up record in this profile");
+    const project = await tree(b.project.directory);
+    const answer = (await b.backend.tool?.("open-for-run", {}, b.context)) as { block?: string };
+    assert.equal(answer.block, undefined, answer.block);
+    assert.deepEqual(await listSetUpProjects(b.storage), [{ project: b.real, name: "Drift", port: b.port }]);
+    assert.deepEqual(await tree(b.project.directory), project, "the project's files as they were");
+    assert.deepEqual(
+      b.launched.map((l) => l.args.at(-1)),
+      [b.real],
+      "opened, never quit",
+    );
+  });
+
+  it("open-for-run never quits Unreal to set up a linked project it can't adopt: it blocks, naming the tool that can", async () => {
+    const b = await linkedElsewhere({ running: true, answering: false }, false);
+    const before = await tree(b.root);
+    const answer = (await b.backend.tool?.("open-for-run", {}, b.context)) as { block?: string };
+    assert.match(answer.block ?? "", /Unreal has Drift open/);
+    assert.match(answer.block ?? "", /unreal__use-project/);
+    assert.deepEqual(b.launched, [], "Unreal is neither quit nor opened at the Loop's start");
+    assert.deepEqual(await tree(b.root), before, "nothing set up");
+  });
+
+  it("the agent's use-project links a project another profile set up while Unreal has it open, quitting nothing", async () => {
+    const b = await linkedElsewhere({ running: true, answering: true });
+    const answer = String(await b.backend.tool?.("use-project", { project: b.project.file }, b.context));
+    assert.match(answer, /This game now builds in Drift/);
+    assert.deepEqual(b.launched, [], "Unreal stays open");
+    assert.deepEqual(
+      b.calls,
+      [["game.engine.link", { project: b.real }]],
+      "no set-up of its own for Undo to take back",
+    );
   });
 
   it("the agent's use-project takes its set-up back when the host refuses the link", async () => {

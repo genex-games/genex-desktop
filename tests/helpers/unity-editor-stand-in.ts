@@ -88,6 +88,7 @@ export async function macEnv(): Promise<EditorsEnv> {
   const base = await realpath(await tmpDir("unity-mac-"));
   const home = path.join(base, "home");
   await mkdir(path.join(home, "Library", "Application Support", "UnityHub"), { recursive: true });
+  await acceptUnityTerms(home);
   await mkdir(path.join(base, "Applications"), { recursive: true });
   return {
     platform: "darwin",
@@ -95,6 +96,23 @@ export async function macEnv(): Promise<EditorsEnv> {
     applications: path.join(base, "Applications"),
     appData: path.join(home, "AppData"),
   };
+}
+
+/** Unity's own preferences on a Mac, where it keeps each version of its Software Terms a person accepted. */
+export const UNITY_PREFERENCES = ["Library", "Preferences", "com.unity3d.UnityEditor5.x.plist"] as const;
+
+/**
+ * This Mac's Unity has had its Software Terms accepted, as a Unity used before keeps them: a binary
+ * property list naming the accepted version's key. `macEnv` starts every Mac so; a test of a first
+ * start removes the file.
+ */
+export async function acceptUnityTerms(home: string): Promise<void> {
+  const file = path.join(home, ...UNITY_PREFERENCES);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(
+    file,
+    Buffer.from("bplist00\u00d1\u0001\u0002_\u0010&Terms-a406f2015eeb4822cbb013b27860953b\u0010\u0001", "latin1"),
+  );
 }
 
 /**
@@ -121,12 +139,17 @@ export async function fakeEditor(
  * A call's binding as the host hands it to the plugin's backend: the game and its folder (or
  * whatever a test binds), with a host that answers the plugin's storage and nothing else.
  */
-export function pluginContext(storage: string, binding: Partial<PluginContext> = {}): PluginContext {
+export function pluginContext(
+  storage: string,
+  binding: Partial<PluginContext> = {},
+  settings: Record<string, unknown> = {},
+): PluginContext {
   return {
     ...binding,
     signal: binding.signal ?? new AbortController().signal,
     callId: 1,
     host: (async (method: string) => {
+      if (method === "settings.read") return settings;
       if (method !== "storage.root") throw new Error(`unexpected host call ${method}`);
       return storage;
     }) as PluginContext["host"],

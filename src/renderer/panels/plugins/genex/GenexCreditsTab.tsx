@@ -8,6 +8,7 @@
  */
 import type { JSX, ReactNode } from "react";
 import { useState } from "react";
+import { intlLocale } from "../../../../shared/i18n.ts";
 import {
   type CreditEntry,
   CreditKind,
@@ -23,21 +24,25 @@ import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/icons.tsx";
 import { Pending } from "../../../ui/Pending.tsx";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
+import { richText } from "../../../rich-text.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
 import { GenexTool } from "../../../../shared/asset-making.ts";
 import { accountCreditsOf, CreditsKind } from "./genex-view.ts";
 import { ICON_TOOLS, markIsLight, toolMark } from "./routed-tools.ts";
+import { Skeleton, SkeletonControl, SkeletonRows } from "../../../ui/Skeleton.tsx";
 
 const WORDS = GENEX_WORDS.creditsTab;
 /** Credits read with the reader's own digit grouping. */
-const NUMBER = new Intl.NumberFormat();
+const NUMBER = new Intl.NumberFormat(intlLocale());
 /** "Nov 1": when the Pro allowance comes. */
-const DAY = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const DAY = new Intl.DateTimeFormat(intlLocale(), { month: "short", day: "numeric" });
 
 /** The tool each kind is made with, whose logo marks its row in both lists (the first, when two share it). */
 const KIND_TOOLS: Record<CreditKind, GenexTool> = {
   [CreditKind.Model]: GenexTool.Tripo,
   [CreditKind.Character]: GenexTool.Meshy,
+  [CreditKind.CharacterPreview]: GenexTool.Meshy,
+  [CreditKind.CharacterFinalize]: GenexTool.Meshy,
   [CreditKind.ModelAnimation]: GenexTool.Tripo,
   [CreditKind.Image]: GenexTool.GptImage,
   [CreditKind.Texture]: GenexTool.NanoBanana,
@@ -133,15 +138,18 @@ function Balance({ credits }: { credits: PlayCredits }): JSX.Element {
             </span>
           )}
         </button>
-        <button
-          type="button"
-          className="people-button"
-          data-tone="primary"
-          data-credits-get
-          onClick={() => void window.studio.openUrl(creditsPlansUrl(web))}
-        >
-          {WORDS.getCredits}
-        </button>
+        {/* An unlimited account never runs out: nothing to get. */}
+        {!credits.unlimited && (
+          <button
+            type="button"
+            className="people-button"
+            data-tone="primary"
+            data-credits-get
+            onClick={() => void window.studio.openUrl(creditsPlansUrl(web))}
+          >
+            {WORDS.getCredits}
+          </button>
+        )}
       </span>
     </div>
   );
@@ -221,7 +229,7 @@ function PriceList({ credits }: { credits: PlayCredits }): JSX.Element {
               hook={{ "data-credits-kind": kind }}
             >
               <span className="credits-row-amount">
-                {WORDS.from} <b>{NUMBER.format(credits.prices[kind] ?? 0)}</b>
+                {richText(WORDS.from(NUMBER.format(credits.prices[kind] ?? 0)), { b: (price) => <b>{price}</b> })}
                 <CreditsShard size={12} />
               </span>
             </CreditRow>
@@ -255,7 +263,8 @@ function RecentRow({ entry }: { entry: CreditEntry }): JSX.Element {
 function RecentSpending({ credits }: { credits: PlayCredits }): JSX.Element {
   const none = credits.recent.length === 0;
   return (
-    <section className="credits-column" aria-label={WORDS.recent} data-credits-recent>
+    // Each spend names the game it was for.
+    <section className="credits-column" aria-label={WORDS.recent} data-credits-recent data-analytics-mask>
       {/* Its heading and line stand at the foot of the heading rows, just over its list. */}
       <div className="credits-head-end">
         <h2 className="credits-heading">{WORDS.recent}</h2>
@@ -290,7 +299,20 @@ export function GenexCreditsTab(): JSX.Element {
         </Button>
       </div>
     );
-  if (!credits) return <Pending label={WORDS.loading} className="genex-checking" spinner />;
+  if (!credits)
+    return (
+      <Pending label={WORDS.loading} className="flex flex-col gap-8">
+        <span className="skeleton-row">
+          <Skeleton width={35} height={35} />
+          <span className="skeleton-row-text">
+            <Skeleton width={120} height={18} />
+            <Skeleton width={90} height={8} />
+          </span>
+          <Skeleton width={110} height={30} radius={8} />
+        </span>
+        <SkeletonRows count={4} control={SkeletonControl.None} />
+      </Pending>
+    );
   return (
     <div className="credits-tab" data-credits-tab>
       <Balance credits={credits} />

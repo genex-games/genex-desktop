@@ -4,6 +4,7 @@
  * button's panel offers. Pure, so each step is tested without a DOM.
  */
 import { UnrealStageStep, type UnrealStageStatus } from "../../unreal-game.ts";
+import { t } from "../../../shared/i18n.ts";
 import { UNREAL_WORDS } from "../../words.ts";
 
 /**
@@ -36,6 +37,9 @@ export type StageView = {
 };
 
 const WORDS = UNREAL_WORDS.stage;
+
+/** Two sentences one after the other, run on as the reader's language does (a space between them in English). */
+const thenSay = (first: string, second: string): string => t("{first} {second}", { first, second });
 
 /** A line with no button. */
 const said = (line: string, timer = false): StageView => ({ line, button: null, timer, hint: null });
@@ -80,10 +84,10 @@ function busyView(status: UnrealStageStatus, name: string): StageView | null {
   const run = status.busyRun;
   if (!run || !BUSY_STEPS.has(status.next)) return null;
   const who = loopWords(run);
-  if (status.next === UnrealStageStep.QuitFirst) return said(`${who} ${WORDS.setUpAfter(name)}`);
-  if (run.project !== status.project?.file) return said(`${who} ${WORDS.openAfter(name)}`);
+  if (status.next === UnrealStageStep.QuitFirst) return said(thenSay(who, WORDS.setUpAfter(name)));
+  if (run.project !== status.project?.file) return said(thenSay(who, WORDS.openAfter(name)));
   const state = status.next === UnrealStageStep.PortBlocked ? WORDS.portBlocked(name) : WORDS.notAnswering(name);
-  return said(`${state} ${who} ${WORDS.leaveOpen}`);
+  return said(thenSay(thenSay(state, who), WORDS.leaveOpen));
 }
 
 /**
@@ -93,7 +97,7 @@ function busyView(status: UnrealStageStatus, name: string): StageView | null {
 function setUpView(status: UnrealStageStatus, name: string): StageView {
   if (status.editors > 0) {
     const then = status.busyRun ? WORDS.openAfterLoop : WORDS.openWhenFree;
-    const line = `${holderWords(status)} ${WORDS.setUpBeside(name)} ${then}`;
+    const line = thenSay(thenSay(holderWords(status), WORDS.setUpBeside(name)), then);
     return offers(line, WORDS.setUpButton, StageAct.SetUp);
   }
   return offers(status.portTaken ? WORDS.portTaken(name) : WORDS.setUp, WORDS.setUpAndOpen, StageAct.SetUpAndOpen);
@@ -106,7 +110,7 @@ function startingView(status: UnrealStageStatus): StageView {
 
 /** A quit or restart, unless two editors run and a quit could reach the wrong project's. */
 function quitting(status: UnrealStageStatus, line: string, label: string, act: StageAct): StageView {
-  if (status.editors > 1) return said(`${line} ${WORDS.severalEditors}`);
+  if (status.editors > 1) return said(thenSay(line, WORDS.severalEditors));
   return offers(line, label, act);
 }
 
@@ -151,7 +155,7 @@ export function stageView(
     case UnrealStageStep.Connected:
       return said(WORDS.ready);
     case UnrealStageStep.OpenWhenFree:
-      return said(`${holderWords(status)} ${WORDS.openProjectWhenFree(name)}`);
+      return said(thenSay(holderWords(status), WORDS.openProjectWhenFree(name)));
     case UnrealStageStep.Crashed:
       return said(WORDS.crashed(name));
     default:

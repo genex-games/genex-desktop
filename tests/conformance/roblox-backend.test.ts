@@ -3,7 +3,7 @@
  * button's word and dot for each state of Studio (not installed, not set up, not open, starting,
  * ready), the panel's status, the lock's probe, and that none of it reads the person's Documents
  * folder. Then the built package: it builds, seeds off, shows no button while off, and shows the
- * "Roblox Studio" button with the box glyph and a status word once turned on.
+ * "Roblox" button with the box glyph and a status word once turned on.
  */
 import assert from "node:assert/strict";
 import { access, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -14,7 +14,6 @@ import type {
   PluginContext,
   PluginEngineAssistAnswer,
   PluginEngineAssistRefusal,
-  PluginReview,
   PluginToolbarStatus,
 } from "../../src/plugin-sdk/index.d.ts";
 import {
@@ -28,6 +27,7 @@ import {
   studioStatusOf,
 } from "../../src/plugins/roblox/backend.ts";
 import type { StepsCard } from "../../src/renderer/chat/engine-steps.ts";
+import { noMomentServices } from "../../src/plugins/roblox/moment-ops.ts";
 import { HELPER_FILE } from "../../src/plugins/roblox/setup.ts";
 import type { InstallDeps } from "../../src/plugins/roblox/studio-install.ts";
 import { type Launch, QUIT_WAIT_MS } from "../../src/plugins/roblox/studio-launch.ts";
@@ -531,16 +531,6 @@ describe("Set up, Restart Studio and Do it for me from the panel", () => {
     const clicked = String(await createRobloxBackend(fakeMac(STARTING).deps).tool?.("do-it-for-me", {}, refused));
     assert.ok(clicked.includes(MCP_SWITCH_CLICK_PATH), clicked);
   });
-
-  it("Set up's confirmation says what it does, naming the Documents prompt on a Mac", async () => {
-    const review = (await createRobloxBackend(fakeMac(NOT_SET_UP).deps).review?.(
-      "setup",
-      {},
-      context(),
-    )) as PluginReview;
-    assert.match(review.message ?? "", /Genex helper/);
-    assert.match(review.detail ?? "", /macOS may ask to let Genex use your Documents folder/);
-  });
 });
 
 /** The status once Get Roblox Studio has finished, or failed, polled as the panel polls it. */
@@ -553,9 +543,11 @@ async function finished(backend: ReturnType<typeof createRobloxBackend>, storage
   assert.fail("Get Roblox Studio never finished");
 }
 
-/** The steps card the chat draws, for the game the call is bound to. */
-async function stepsCard(mac: Mac, linked = false) {
-  const backend = createRobloxBackend(fakeMac(mac).deps);
+/** The steps card the chat draws, for the game the call is bound to; `helper` is the Studio its helper bound. */
+async function stepsCard(mac: Mac, linked = false, helper?: { studio: string | undefined }) {
+  const deps = fakeMac(mac).deps;
+  const moments = helper ? { ...noMomentServices(() => 0), bound: () => helper.studio } : undefined;
+  const backend = createRobloxBackend(moments ? { ...deps, moments } : deps);
   const host = (async (method: string) => {
     if (method === "storage.root") return STORAGE;
     if (method === "game.engine.read") return linked ? { kind: "roblox", project: "place.rbxl", name: "place" } : null;
@@ -578,12 +570,27 @@ describe("Get Roblox Studio and the steps card", () => {
     );
   });
 
+  it("Studio answering with the game's place is ready only once its Genex helper is connected", async () => {
+    const away = await stepsCard(READY, true, { studio: undefined });
+    const helper = away.steps.find((row) => row.id === "helper");
+    assert.equal(helper?.done, false, "Studio answers, but the helper never loaded: not ready");
+    assert.equal(helper?.action?.name, "restart-studio");
+    assert.equal(away.open, true, "so nobody is told Studio is ready");
+    const here = await stepsCard(READY, true, { studio: "studio-1" });
+    assert.equal(
+      here.steps.every((row) => row.done),
+      true,
+      "with the helper connected every step is done",
+    );
+    assert.equal(here.open, false);
+  });
+
   it("without Studio, the Studio row offers Get Roblox Studio and sign-in stays the person's step", async () => {
     const card = await stepsCard(MISSING);
     const studio = card.steps.find((row) => row.id === "studio");
     assert.deepEqual(studio?.action, { name: "get-studio", args: {}, label: "Get Roblox Studio" });
     const signIn = card.steps.find((row) => row.id === "sign-in");
-    assert.equal(signIn?.detail, MESSAGE.Steps.SignInDetail);
+    assert.equal(signIn?.detail, MESSAGE.Steps.SignInDetail());
     assert.equal(signIn?.action, undefined, "Genex never signs in");
     assert.equal(card.open, true);
     for (const row of card.steps) assert.doesNotMatch(`${row.label} ${row.detail}`, BANNED_WORDS);
@@ -610,21 +617,6 @@ describe("Get Roblox Studio and the steps card", () => {
       ],
     );
     assert.equal(card.open, false);
-  });
-
-  it("Get Roblox Studio's confirmation names Roblox, this computer's download size, and the sign-in", async () => {
-    const review = (await createRobloxBackend(fakeMac(MISSING).deps).review?.(
-      "get-studio",
-      {},
-      context(),
-    )) as PluginReview;
-    assert.equal(
-      review.message,
-      "Download Roblox Studio from Roblox (about 11 MB), check that Roblox signed it, and install it?",
-    );
-    assert.match(review.detail ?? "", /setup\.rbxcdn\.com/);
-    assert.match(review.detail ?? "", /Genex never sees your password/);
-    assert.doesNotMatch(`${review.message} ${review.detail}`, BANNED_WORDS);
   });
 
   it("is not run again when Studio is already here: nothing is downloaded", async () => {
@@ -738,15 +730,19 @@ describe("every panel action the person can press is also an agent tool", () => 
     "add-luau-checks": "add-luau-checks",
     "publish-update": "publish-update",
     "first-publish": "first-publish",
+    "finish-setup": "finish-setup",
   };
-  /** The tools that ask on a card though their panel press doesn't: an agent never closes Studio unasked. */
-  const ASKS_ONLY_AS_A_TOOL = new Set(["quit-studio"]);
+  /**
+   * The tools that ask on a card though their press doesn't: an agent never closes Studio or
+   * publishes unasked, while the person's own press is their go-ahead.
+   */
+  const ASKS_ONLY_AS_A_TOOL = new Set(["quit-studio", "publish-update", "first-publish"]);
   /** Words that hand the person a click Genex can do itself. */
   const HANDS_A_CLICK = /\bpress\b|click it yourself|turn it on yourself|in the Roblox Studio panel/i;
 
   it("the manifest declares a tool for each, asking on a card where its press asks (and before quitting Studio)", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(MANIFEST, "utf8")));
-    const read = new Set(["status", "toolbar-status", "steps"]);
+    const read = new Set(["status", "toolbar-status", "steps", "publish-status"]);
     const actions = (manifest.actions ?? []).filter((action) => !read.has(action.name));
     assert.deepEqual(actions.map((action) => action.name).sort(), Object.keys(PRESSABLE).sort());
     for (const action of actions) {
@@ -867,7 +863,7 @@ describe("the built Roblox Studio plugin", () => {
     assert.match(panel, /Not affiliated with Roblox Corporation\. For people 18 and over\./);
   });
 
-  it("is seeded off: no Roblox button until it is turned on, then Roblox Studio on a Roblox game only, with the box glyph and a word", async () => {
+  it("is seeded off: no Roblox button until it is turned on, then Roblox Studio on a Roblox game only, with its roblox mark and a word", async () => {
     const lite = await coreLite();
     const roblox = lite.core.plugins.list().find((p) => p.manifest.id === "roblox");
     assert.equal(roblox?.enabled, false, "the plugin ships turned off");
@@ -882,7 +878,7 @@ describe("the built Roblox Studio plugin", () => {
         );
       assert.equal(on({ facts: [{ id: "web-game", path: "." }] }), undefined, "a web game shows no Roblox button");
       const entry = on({ facts: [{ id: "roblox-project", path: "." }] });
-      assert.deepEqual([entry?.item.label, entry?.item.icon], ["Roblox Studio", "box"]);
+      assert.deepEqual([entry?.item.label, entry?.item.icon], ["Roblox", "roblox"]);
       const status = (await lite.core.plugins.action("roblox", "toolbar-status", {})) as PluginToolbarStatus;
       const words = STATES.map(([, , badge]) => badge);
       assert.ok(words.includes(status.badge ?? ""), `a status word: ${JSON.stringify(status)}`);

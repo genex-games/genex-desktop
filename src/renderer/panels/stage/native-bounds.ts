@@ -1,6 +1,6 @@
 /** Where the native game view sits: over the stage's slot, or nowhere while something else owns the stage. */
 import type { RefObject } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { NATIVE_VIEW_ATTRIBUTE } from "../../native-view.ts";
 import { scheduleBounds } from "./bounds-schedule.ts";
 
@@ -45,6 +45,9 @@ function holdStill(element: HTMLElement, still: string | null): void {
 
 type Viewport = { width: number; height: number };
 
+/** What main hears with every rectangle: whether a game in Live is watched, and the game open on the stage. */
+type StageReport = { watching: boolean; project: string | null };
+
 /**
  * Sends the slot's rectangle to main. When something comes to cover the game, the game is
  * photographed first and hidden after, so the dialog opens over the frame instead of a black slot.
@@ -72,11 +75,11 @@ async function decodedStill(still: string | null): Promise<string | null> {
   );
 }
 
-function boundsSender(element: HTMLElement, watching: boolean) {
+function boundsSender(element: HTMLElement, stage: StageReport) {
   let covering = false;
   let cover = 0;
   const send = (bounds: Bounds, viewport: Viewport): Promise<unknown> =>
-    window.studio.previewBounds({ ...bounds, watching, viewport }).catch(() => false);
+    window.studio.previewBounds({ ...bounds, ...stage, viewport }).catch(() => false);
   // Covering: the frame is decoded and painted under the view before the view leaves, so no
   // frame of the empty slot ever shows. Uncovering: the view comes back over the frame first,
   // and the frame goes two painted frames later. Either way the stage never blinks black.
@@ -117,6 +120,7 @@ export interface StageCover {
   sidebarOverlay: boolean;
   buildsOpen: boolean;
   assetsOpen: boolean;
+  shopOpen: boolean;
   fileOpen: boolean;
   showEmpty: boolean;
   liveLoading: boolean;
@@ -133,17 +137,30 @@ export interface StageCover {
   watching: boolean;
 }
 
+/** Whether the studio window is shown: not hidden or minimized (a window merely covered by others still counts as shown). */
+function useWindowShown(): boolean {
+  return useSyncExternalStore(
+    (changed) => {
+      document.addEventListener("visibilitychange", changed);
+      return () => document.removeEventListener("visibilitychange", changed);
+    },
+    () => document.visibilityState !== "hidden",
+  );
+}
+
 /**
  * Whether the stage shows the running game at all. The compact sidebar and the stage toolbar's
  * panels only float over it: they cover the game like a popover does (see `overlaid`), so the
  * game is photographed before it leaves rather than leaving a black stage behind them.
  */
-const showsGame = (cover: StageCover): boolean =>
+const showsGame = (cover: StageCover, windowShown: boolean): boolean =>
+  windowShown &&
   cover.visible &&
   Boolean(cover.project) &&
   ![
     cover.buildsOpen,
     cover.assetsOpen,
+    cover.shopOpen,
     cover.fileOpen,
     cover.showEmpty,
     cover.liveLoading,
@@ -158,6 +175,9 @@ const showsGame = (cover: StageCover): boolean =>
 // paint over it).
 /** Report the slot's rectangle to main while the game shows, and zero it the moment anything covers it. */
 export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cover: StageCover): void {
+  // The game view never throttles itself (agents watch it in the background), so a window out of
+  // sight takes it off the stage like any cover: its frames pause and it comes back as it was.
+  const windowShown = useWindowShown();
   // The floating covers change without re-placing the view: report() reads them when they move.
   const overlaid = useRef(false);
   overlaid.current = cover.toolbarOpen || cover.sidebarOverlay;
@@ -167,6 +187,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     project,
     buildsOpen,
     assetsOpen,
+    shopOpen,
     fileOpen,
     showEmpty,
     liveLoading,
@@ -181,14 +202,16 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
   useEffect(() => {
     const element = slot.current;
     if (!element) return;
-    if (!showsGame(cover)) {
+    // Main hears the game open on the stage, so a show asked in its chat may start it (`liveOutOfSight`).
+    const stage: StageReport = { watching, project: visible ? project : null };
+    if (!showsGame(cover, windowShown)) {
       element.removeAttribute(NATIVE_VIEW_ATTRIBUTE);
       holdStill(element, null);
-      void window.studio.previewBounds({ ...HIDDEN_BOUNDS, watching });
+      void window.studio.previewBounds({ ...HIDDEN_BOUNDS, ...stage });
       return;
     }
     let lastBounds = "";
-    const sender = boundsSender(element, watching);
+    const sender = boundsSender(element, stage);
     const report = (): void => {
       const rect = element.getBoundingClientRect();
       const panels = [...document.querySelectorAll(FLOATING_PANELS)];
@@ -235,6 +258,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     project,
     buildsOpen,
     assetsOpen,
+    shopOpen,
     fileOpen,
     showEmpty,
     liveLoading,
@@ -244,6 +268,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     stillsOnStage,
     watching,
     stopped,
+    windowShown,
   ]);
 }
 

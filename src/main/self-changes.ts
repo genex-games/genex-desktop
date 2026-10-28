@@ -7,6 +7,7 @@
  * record is trusted as a path, and nothing is written over a file it was not made for.
  */
 import { applyEdits } from "../shared/skill-edits.ts";
+import { t } from "../shared/i18n.ts";
 import type { EventEnvelope } from "../substrate/types.ts";
 import { CustomEvent } from "../shared/custom-events.ts";
 import { EventKind } from "../shared/event-log.ts";
@@ -36,7 +37,11 @@ export interface StagedRecord {
 
 /** What the user reads when a staged suggestion cannot be applied. */
 const MESSAGE = {
-  damaged: "This suggestion is damaged, so Studio did not apply it. Discard it.",
+  damaged: () => t("This suggestion is damaged, so Studio did not apply it. Discard it."),
+  stale: () =>
+    t(
+      "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.",
+    ),
 } as const;
 
 /** A suggestion that can never be applied as it stands — not a passing failure worth retrying. */
@@ -76,7 +81,7 @@ export function proposalTarget(proposal: StagedRecord): ProposalTarget {
   const target = stagedTargetOf(proposal);
   const file = targetFile(proposal);
   const wellFormed = target && file !== null && proposal.file === file && typeof proposal.proposedText === "string";
-  if (!wellFormed) throw new SuggestionRefused(MESSAGE.damaged);
+  if (!wellFormed) throw new SuggestionRefused(MESSAGE.damaged());
   return { target, skill: proposal.skill, file };
 }
 
@@ -96,9 +101,7 @@ export function rebaseProposal(proposal: StagedRecord, current: string): string 
       if (replay.applied.length === original.applied.length) return replay.text;
     }
   }
-  throw new SuggestionRefused(
-    "Studio’s instructions changed after this suggestion was made, and it no longer fits. Discard it; Studio will suggest again after a later build.",
-  );
+  throw new SuggestionRefused(MESSAGE.stale());
 }
 
 /**

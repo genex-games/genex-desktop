@@ -57,6 +57,7 @@ const METHODS = [
   "liveAiCapture",
   "liveState",
   "loadPreview",
+  "loadWebBuild",
   // Home's Make your own writes a live background on the model the user picked (backdrop-generation.ts).
   "makeBackdrop",
   "messageImages",
@@ -136,7 +137,7 @@ const METHODS = [
   "withApprovedExport",
 ];
 // `planReviews` is TypeScript-`private`, which is erased: it is still reachable at run time.
-const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "pendingUpdateId", "planReviews", "settings"];
+const ACCESSORS = ["assetCheckpoints", "autoResumeAt", "localItems", "pendingUpdateId", "planReviews", "settings"];
 /** Own enumerable fields after `init()` (true `#private` state is not visible and not listed). */
 const FIELDS = [
   "appLook",

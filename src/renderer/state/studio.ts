@@ -17,8 +17,22 @@ import type { ComposerSendOptions } from "../../shared/composer.ts";
 import type { GameUpdate } from "../../shared/game-library.ts";
 import { HarnessState } from "../../shared/protocol.ts";
 import type { GameName } from "../../shared/game-project.ts";
+import { t } from "../../shared/i18n.ts";
 import type { Bootstrap, ConversationRecord, GameProject, StudioApi } from "../../shared/studio-api.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
+import {
+  type AnalyticsChoice,
+  readAnalyticsChoice,
+  replayDraw,
+  replayRunning,
+  writeAnalyticsChoice,
+} from "../analytics/consent.ts";
+import { track } from "../analytics/client.ts";
+import { WorkspaceEvent } from "../analytics/events/workspace.ts";
+import { gameRef } from "../analytics/game-ref.ts";
+import { gameCreatedProperties, launchFailedProperties } from "../analytics/workspace-properties.ts";
+import { noteStageSwitch } from "../analytics/workspace-trackers.ts";
+import { GameCreatedFrom, LaunchFailReason, LaunchStage, StageSwitchVia } from "../analytics/workspace-vocabulary.ts";
 import { shouldWelcome } from "../onboarding/state.ts";
 import {
   browserStorage,
@@ -58,6 +72,7 @@ import {
 } from "./launch.ts";
 import { createLayoutStore, stageViewChosen, type LayoutStore } from "./layout.ts";
 import { createModelPickerStore, type ModelPickerStore } from "./model-picker.ts";
+import { createProviderUsageStore, type ProviderUsageStore, usageReported } from "./provider-usage.ts";
 import {
   createLibraryStore,
   delegationChanged,
@@ -67,10 +82,20 @@ import {
   type LibraryStore,
 } from "./library.ts";
 import { createPluginsStore, PLUGIN_INDEX_POLL_MS, type PluginsStore } from "./plugins.ts";
-import { createPlayStore, type PlayStore, remixClosed, remixProgressed, viewerReported } from "./play.ts";
+import {
+  createPlayStore,
+  installsReported,
+  type PlayStore,
+  remixClosed,
+  remixProgressed,
+  sessionsReported,
+  viewerReported,
+} from "./play.ts";
 import { createPeopleStore, type PeopleStore } from "./people.ts";
+import { createItemsStore, type ItemsStore, ItemsRead } from "./items.ts";
 import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
+  analyticsChosen,
   bootstrapFailed,
   bootstrapReady,
   bootstrapStarted,
@@ -84,6 +109,10 @@ import {
   harnessDown,
   isGameThread,
   projectOf,
+  Room,
+  roomOf,
+  liveIdentified,
+  liveLoadFailed,
   stageProjectSet,
   statusBootstrapped,
   personFirstReported,
@@ -95,17 +124,20 @@ import {
   type ThreadsState,
   type ThreadsStore,
 } from "./threads.ts";
-import { createToastsStore, notifyProblem, ToastTone, type ToastsStore } from "./toasts.ts";
+import { createToastsStore, type Notify, notifyProblem, ToastTone, type ToastsStore } from "./toasts.ts";
 import { uiEventReads } from "./ui-event-routes.ts";
 import { createUpdateStore, updateDownloaded, type UpdateStore } from "./update.ts";
 import { agentsFailed, agentsStarted, type AgentsStartStore, createAgentsStartStore } from "./agents-start.ts";
+import { errorCode } from "../../shared/errors.ts";
 
 /** The log is the source of truth; this poll is the safety net for anything the stream missed. */
 export const EVENT_POLL_MS = 3 * SECOND_MS;
 /** What a launch says when it stops before making a game. */
 const MESSAGE = {
   outOfUsage: (why: string) =>
-    `${why.replace(/[\s.]+$/, "")}. No game was made: send it again after the reset, from another account or with another model.`,
+    t("{why}. No game was made: send it again after the reset, from another account or with another model.", {
+      why: why.replace(/[\s.]+$/, ""),
+    }),
 } as const;
 
 /** An agent screen that went away. */
@@ -135,6 +167,8 @@ export interface Studio {
   readonly play: PlayStore;
   /** Play's people: the Genex account, friends and profiles (`people.ts`). */
   readonly people: PeopleStore;
+  /** Create › Items: Browse, Selling and the presses on an item (`items.ts`). */
+  readonly items: ItemsStore;
   /** Save and Share on the open game's assets (`sharing.ts`). */
   readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
@@ -147,6 +181,8 @@ export interface Studio {
   readonly launch: LaunchStore;
   /** Which subscription models the model picker lists, as set in Settings. */
   readonly modelPicker: ModelPickerStore;
+  /** The subscriptions' plan limits as main keeps and pushes them (`provider-usage.ts`). */
+  readonly providerUsage: ProviderUsageStore;
   /** A new version of the app waiting for a restart. */
   readonly update: UpdateStore;
   /** Whether the open studio's agents started, and the sidebar's Try again and report when not. */
@@ -157,13 +193,20 @@ export interface Studio {
   bootstrap(): Promise<void>;
   /** Feed one UI event to the stores (what the `onEvent` subscription does). */
   handleUiEvent(event: UiEvent): void;
-  notify(text: string, tone?: ToastTone): void;
+  /**
+   * Hear every UI event after the stores took it, through the one `onEvent` subscription (each
+   * extra IPC listener costs the preload one more). Returns the stop.
+   */
+  onUiEvent(listener: (event: UiEvent) => void): () => void;
+  notify: Notify;
   /** Open a conversation the user picked. */
   selectThread(threadId: string): void;
   /** Go home: no conversation open, the composer that starts a new game. */
   goHome(): void;
   /** The first-launch welcome is done on this profile; home follows it. */
   finishWelcome(): void;
+  /** The person's answer about usage analytics, kept on this profile, from the question or Settings → Privacy. */
+  chooseAnalytics(choice: AnalyticsChoice): void;
   /**
    * Open a game's chat (made on demand by main) and put the game on the stage. Resolves with the
    * chat, or null when main refused (the refusal is toasted). `open` carries out the selection
@@ -195,6 +238,8 @@ export interface Studio {
 export interface OpenHooks {
   beforeOpen?: (record: ConversationRecord) => void;
   open?: (select: () => void) => void;
+  /** Load the game into Live too: a game home just made. Opening a game otherwise starts nothing. */
+  start?: boolean;
 }
 
 /** What home sends a new game: the message, what it carries, the model it was written for, and where it goes. */
@@ -219,6 +264,7 @@ interface Stores {
   readonly plugins: PluginsStore;
   readonly play: PlayStore;
   readonly people: PeopleStore;
+  readonly items: ItemsStore;
   readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
@@ -227,6 +273,7 @@ interface Stores {
   readonly layout: LayoutStore;
   readonly launch: LaunchStore;
   readonly modelPicker: ModelPickerStore;
+  readonly providerUsage: ProviderUsageStore;
   readonly update: UpdateStore;
   readonly agentsStart: AgentsStartStore;
 }
@@ -253,6 +300,7 @@ function createStores(
     // A change from a card's menu shows on a profile's cards too.
     play: createPlayStore(api, storage, Date.now, (gameId, next) => people.gameChanged(gameId, next)),
     people,
+    items: createItemsStore(api, timers),
     sharing: createSharingStore(api, timers),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
@@ -261,6 +309,7 @@ function createStores(
     layout: createLayoutStore(storage),
     launch: createLaunchStore(),
     modelPicker: createModelPickerStore(storage),
+    providerUsage: createProviderUsageStore(api),
     update: createUpdateStore(),
     agentsStart: createAgentsStartStore(api),
   };
@@ -275,33 +324,28 @@ interface StudioContext {
   readonly visibility: VisibilitySource;
   /** The wall clock, for when a launch began. */
   now(): number;
-  notify(text: string, tone?: ToastTone): void;
+  notify: Notify;
   selectThread(threadId: string): void;
 }
 
 interface StageFollower {
-  /** The threads changed: load the stage's game if it moved, and remember the last game chat. */
+  /** The threads changed: remember the stage's game and the last game chat. */
   threadsChanged(): void;
-  /** Run a change that loads the preview itself, so the follower leaves that one change alone. */
-  whileLoading(project: string, change: () => void): void;
 }
 
 /**
- * The preview follows the game on the stage: whenever it changes to a game, main is asked to
- * load it. A command that loads the preview itself (opening a game) says so, and the follower
- * leaves that one change alone.
+ * The stage's game and the last game chat, remembered as they change. Moving the stage to a game
+ * loads nothing: Live keeps the game it holds (`liveProject`), paused while out of sight, so going
+ * back to it finds it as it was left, and a game it does not hold waits for the person's Play.
  */
-function stageFollower(api: StudioApi, threads: ThreadsStore, storage: KeyValueStorage | null): StageFollower {
+function stageFollower(threads: ThreadsStore, storage: KeyValueStorage | null): StageFollower {
   let followed: string | null = projectOf(threads.getState());
-  let loading: string | null = null;
   let lastGame = threads.getState().lastGameThreadId;
   const follow = (): void => {
     const project = projectOf(threads.getState());
     if (project === followed) return;
     followed = project;
-    if (!project) return;
-    writeText(STORAGE_KEYS.reviewProject, project, storage);
-    if (project !== loading) void api.loadPreview(project);
+    if (project) writeText(STORAGE_KEYS.reviewProject, project, storage);
   };
   const rememberLastGame = (): void => {
     const next = threads.getState().lastGameThreadId;
@@ -315,11 +359,6 @@ function stageFollower(api: StudioApi, threads: ThreadsStore, storage: KeyValueS
       follow();
       rememberLastGame();
     },
-    whileLoading(project, change) {
-      loading = project;
-      change();
-      loading = null;
-    },
   };
 }
 
@@ -331,8 +370,36 @@ function openedThreads(state: ThreadsState, boot: Bootstrap): ThreadsState {
   return statusBootstrapped(threadsLoaded(state, boot.threads), boot.threadStatus);
 }
 
+/** The clock and the dice a bootstrap draws an install's replay with. */
+interface Chance {
+  now(): number;
+  random(): number;
+}
+
+/**
+ * The analytics a bootstrap opens with: the build's config when this launch may offer it, the
+ * profile's answer, and the end of this install's replay week. The replay is drawn once, at the
+ * first launch that offers analytics (`analytics/consent.ts`).
+ */
+function analyticsOpening(boot: Bootstrap, firstLaunch: boolean, storage: KeyValueStorage | null, chance: Chance) {
+  const analytics = boot.analytics ?? null;
+  if (!analytics) return { analytics, analyticsChoice: null, replayUntil: null };
+  const now = chance.now();
+  const draw = replayDraw(storage, { firstLaunch, now, random: chance.random });
+  return {
+    analytics,
+    analyticsChoice: readAnalyticsChoice(storage),
+    replayUntil: replayRunning(draw, now) ? draw.until : null,
+  };
+}
+
 /** (Re)load everything main knows; a newer call wins over one still in flight. */
-function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage | null): () => Promise<void> {
+function bootstrapper(
+  api: StudioApi,
+  stores: Stores,
+  storage: KeyValueStorage | null,
+  chance: Chance,
+): () => Promise<void> {
   const { session, eventLog, library, engines, threads, plugins, agentScreens, update, agentsStart } = stores;
   let generation = 0;
   return async () => {
@@ -349,7 +416,9 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
       threads.setState((state) => openedThreads(state, boot), true);
       const welcome = shouldWelcome(boot.welcome, boot.games.length, safeStorage(storage));
       const { developer, playWebOrigin: playWeb } = boot;
-      session.setState((state) => bootstrapReady(state, { welcome, developer, playWeb }), true);
+      const analytics = analyticsOpening(boot, welcome, storage, chance);
+      const opening = { welcome, developer, playWeb, ...analytics, launch: boot.launch ?? null };
+      session.setState((state) => bootstrapReady(state, opening), true);
       void plugins.refresh();
       void plugins.refreshIndex();
       // An update downloaded before this window opened, or before a reload, still waits.
@@ -373,10 +442,21 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
 
 /** The events that change a store directly, beyond the reads they ask for. */
 function applyUiEvent(
-  { agentScreens, threads, layout, library, update, play, agentsStart }: Stores,
+  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage, items }: Stores,
   event: UiEvent,
 ): void {
   switch (event.type) {
+    case UiEvent.ItemDrafted:
+      // A new or changed item of the account's: Selling, once shown, reads it again.
+      if (items.getState().selling.read !== ItemsRead.Idle) void items.readSelling();
+      break;
+    case UiEvent.ItemsLocal:
+      // Main's record of a game's local drafts changed: a card showing one of them reads it again.
+      if (Object.hasOwn(items.getState().local, event.payload.project)) void items.readLocal(event.payload.project);
+      break;
+    case UiEvent.ProviderUsage:
+      providerUsage.setState((state) => usageReported(state, event.payload.reports), true);
+      break;
     case UiEvent.PlayViewer:
       // The bar's Remix closed the viewer: the copy is made of the game it showed, as a card's is.
       if (remixClosed(play.getState().viewer, event.payload)) void play.remixViewed();
@@ -384,6 +464,15 @@ function applyUiEvent(
       break;
     case UiEvent.PlayRemix:
       play.setState((state) => remixProgressed(state, event.payload), true);
+      break;
+    case UiEvent.PlayInstalls:
+      play.setState((state) => installsReported(state, event.payload), true);
+      break;
+    case UiEvent.PlaySessions:
+      play.setState((state) => sessionsReported(state, event.payload), true);
+      break;
+    case UiEvent.PreviewIdentity:
+      threads.setState((state) => liveIdentified(state, event.payload), true);
       break;
     case UiEvent.PreviewFrame:
       agentScreens.setState((state) => frameReceived(state, event.payload), true);
@@ -406,8 +495,10 @@ function applyUiEvent(
       break;
     case UiEvent.StageShow:
       // The chat put a build on screen for the game on the stage: that is Live, so Live shows.
-      if (event.payload.project === projectOf(threads.getState()))
+      if (event.payload.project === projectOf(threads.getState())) {
+        noteStageSwitch(StageSwitchVia.ChatStageShow);
         layout.setState((state) => stageViewChosen(state, event.payload.view), true);
+      }
       break;
     case UiEvent.UpdateReady:
       update.setState((state) => updateDownloaded(state, event.payload), true);
@@ -457,41 +548,52 @@ function refreshAfter(stores: Stores, event: UiEvent): void {
 
 /**
  * Open a game's chat (made on demand by main) and put the game on the stage. `beforeOpen` runs
- * with the chat before it is selected; `open` makes the selection (at once, by default).
+ * with the chat before it is selected; `open` makes the selection (at once, by default). Opening
+ * a game never starts it: Live keeps the game it holds, and a game it does not hold waits for Play.
+ * Opening the game Live holds while it is on the stage reloads it, as the sidebar always did; `start`
+ * loads a game home just made.
  */
 async function enterProject(
   ctx: StudioContext,
   name: string,
-  { beforeOpen, open = (select) => select() }: OpenHooks = {},
+  { beforeOpen, open = (select) => select(), start = false }: OpenHooks = {},
 ): Promise<ConversationRecord | null> {
   const { api, stores, storage, notify } = ctx;
+  const threadsNow = stores.threads.getState();
+  const onStage = roomOf(threadsNow) === Room.Build && projectOf(threadsNow) === name;
+  const reload = start || (onStage && threadsNow.liveProject === name);
   let record: ConversationRecord;
   try {
     record = await api.threadForGame(name);
   } catch (error) {
-    notify(problemWords(error), ToastTone.Error);
+    notify(problemWords(error), ToastTone.Error, errorCode(error));
     return null;
   }
   stores.threads.setState((state) => threadAdded(state, record), true);
   beforeOpen?.(record);
-  // This command loads the preview itself (and re-reads the library after it), so the
-  // follower leaves the change it is about to see alone.
-  open(() =>
-    ctx.follower.whileLoading(name, () => {
-      ctx.selectThread(record.id);
-      if (!isGameThread(record)) stores.threads.setState((state) => stageProjectSet(state, name), true);
-    }),
-  );
+  // A game started here is Live's from now: its stage waits for the page rather than offering Play.
+  if (start) stores.threads.setState((state) => liveIdentified(state, { project: name, error: null }), true);
+  open(() => {
+    ctx.selectThread(record.id);
+    if (!isGameThread(record)) stores.threads.setState((state) => stageProjectSet(state, name), true);
+  });
   writeText(STORAGE_KEYS.reviewProject, name, storage);
+  if (!reload) {
+    void stores.library.refreshGames();
+    return record;
+  }
   void api
     .loadPreview(name)
     .then(() => stores.library.refreshGames())
-    .catch(notifyProblem(notify));
+    .catch((error: unknown) => {
+      if (start) stores.threads.setState((state) => liveLoadFailed(state, name), true);
+      notifyProblem(notify)(error);
+    });
   return record;
 }
 
 /** Untitled game: what a game is called when even naming it failed. */
-const UNTITLED_GAME = "Untitled game";
+const UNTITLED_GAME = t("Untitled game");
 let launches = 0;
 
 /**
@@ -515,14 +617,32 @@ function keepComposerChoice(storage: KeyValueStorage | null, threadId: string, i
   if (input.effort) rememberChatEffort(kept, threadId, input.effort);
 }
 
+/** A launch that stopped, for usage analytics: the step, why, how long it had run, and main's refusal code. */
+function launchStopped(ctx: StudioContext, input: LaunchInput, startedAt: number) {
+  return (stage: LaunchStage, reason: LaunchFailReason, failure?: unknown): void =>
+    track(
+      WorkspaceEvent.GameLaunchFailed,
+      launchFailedProperties({
+        stage,
+        reason,
+        startedAt,
+        at: ctx.now(),
+        customLocation: Boolean(input.parent),
+        failure,
+      }),
+    );
+}
+
 async function launchGame(ctx: StudioContext, input: LaunchInput): Promise<void> {
   const { api, stores, storage, notify } = ctx;
   const { launch } = stores;
   if (launch.getState().launch) return;
   const id = `launch-${++launches}`;
   const known = stores.library.getState().games.map((game) => game.name);
+  const startedAt = ctx.now();
+  const stopped = launchStopped(ctx, input, startedAt);
   launch.setState(
-    (state) => launchStarted(state, { id, text: input.text, extras: input.extras, at: ctx.now(), known }),
+    (state) => launchStarted(state, { id, text: input.text, extras: input.extras, at: startedAt, known }),
     true,
   );
   const { title, provisional, limited } = await launchName(api, input);
@@ -530,27 +650,48 @@ async function launchGame(ctx: StudioContext, input: LaunchInput): Promise<void>
   if (limited) {
     notify(MESSAGE.outOfUsage(limited), ToastTone.Error);
     launch.setState((state) => launchFailed(state, id), true);
+    stopped(LaunchStage.Naming, LaunchFailReason.UsageLimit);
     return;
   }
   launch.setState((state) => launchNamed(state, id, title), true);
+  let made = false;
   try {
     const options = { ...(input.parent ? { parent: input.parent } : {}), ...(provisional ? { provisional } : {}) };
+    const creatingAt = ctx.now();
     const game = await api.createGame(title, ...(Object.keys(options).length ? [options] : []));
+    made = true;
     // The launch learns its game as the library lists it, so its placeholder row never sits
     // beside the game's own while the chat opens (a library refresh can land first).
     launch.setState((state) => launchMade(state, id, game.name), true);
     stores.library.setState((state) => gameAdded(state, game), true);
+    track(
+      WorkspaceEvent.GameCreated,
+      gameCreatedProperties({
+        from: GameCreatedFrom.Home,
+        startedAt: creatingAt,
+        at: ctx.now(),
+        customLocation: Boolean(input.parent),
+        provisional: provisional === true,
+        games: stores.library.getState().games.length,
+        ref: gameRef(game.name, storage),
+      }),
+    );
     const record = await enterProject(ctx, game.name, {
       beforeOpen: (opened) => keepComposerChoice(storage, opened.id, input),
+      start: true,
     });
     if (!record) {
       launch.setState((state) => launchFailed(state, id), true);
+      stopped(LaunchStage.Opening, LaunchFailReason.OpenRefused);
       return;
     }
     launch.setState((state) => launchOpened(state, id, { project: game.name, threadId: record.id }), true);
   } catch (error) {
-    notify(problemWords(error), ToastTone.Error);
+    notify(problemWords(error), ToastTone.Error, errorCode(error));
     launch.setState((state) => launchFailed(state, id), true);
+    // A game made and then lost on the way to its chat failed opening; otherwise main refused making it.
+    if (made) stopped(LaunchStage.Opening, LaunchFailReason.OpenRefused, error);
+    else stopped(LaunchStage.Creating, LaunchFailReason.CreateRefused, error);
   }
 }
 
@@ -569,7 +710,12 @@ async function removeGame({ stores, storage }: StudioContext, name: string): Pro
 }
 
 /** Subscribe to main's events and start the poll and the bootstrap. Returns the stop. */
-function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers: StudioTimers): () => void {
+function startStores(
+  ctx: StudioContext,
+  bootstrap: () => Promise<void>,
+  timers: StudioTimers,
+  handle: (event: UiEvent) => void,
+): () => void {
   const { api, stores, follower } = ctx;
   const unfollow = stores.threads.subscribe((state, previous) => {
     follower.threadsChanged();
@@ -577,10 +723,7 @@ function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers:
     const ids = new Set(state.records.filter((record) => !record.metadata?.archived).map((record) => record.id));
     for (const record of previous.records) if (!ids.has(record.id)) stores.eventLog.forgetThread(record.id);
   });
-  const off = api.onEvent((event) => {
-    applyUiEvent(stores, event);
-    refreshAfter(stores, event);
-  });
+  const off = api.onEvent(handle);
   const offTerminal = api.onTerminal((event) => {
     stores.commandOutput.terminalEvent(event);
     stores.commandRuns.setState((state) => terminalChanged(state, event), true);
@@ -613,6 +756,8 @@ export function createStudio(
     timers?: StudioTimers;
     visibility?: VisibilitySource;
     now?: () => number;
+    /** A draw in [0, 1): which installs record a replay. */
+    random?: () => number;
   } = {},
 ): Studio {
   const storage = options.storage === undefined ? browserStorage() : options.storage;
@@ -620,12 +765,12 @@ export function createStudio(
   const visibility = options.visibility ?? browserVisibility;
   const stores = createStores(api, storage, timers, visibility);
   const { session, threads, library } = stores;
-  const notify = (text: string, tone: ToastTone = ToastTone.Info): void => stores.toasts.notify(text, tone);
+  const notify: Notify = (text, tone = ToastTone.Info, code = null) => stores.toasts.notify(text, tone, code);
   const selectThread = (threadId: string): void => {
     threads.setState((state) => threadSelected(state, threadId), true);
     writeText(STORAGE_KEYS.activeThread, threadId, storage);
   };
-  const follower = stageFollower(api, threads, storage);
+  const follower = stageFollower(threads, storage);
   const ctx: StudioContext = {
     visibility,
     now: options.now ?? Date.now,
@@ -636,16 +781,23 @@ export function createStudio(
     notify,
     selectThread,
   };
-  const bootstrap = bootstrapper(api, stores, storage);
+  const bootstrap = bootstrapper(api, stores, storage, { now: ctx.now, random: options.random ?? Math.random });
+  const uiListeners = new Set<(event: UiEvent) => void>();
+  const handleUiEvent = (event: UiEvent): void => {
+    applyUiEvent(stores, event);
+    refreshAfter(stores, event);
+    for (const listener of uiListeners) listener(event);
+  };
 
   return {
     api,
     ...stores,
-    start: () => startStores(ctx, bootstrap, timers),
+    start: () => startStores(ctx, bootstrap, timers, handleUiEvent),
     bootstrap,
-    handleUiEvent(event) {
-      applyUiEvent(stores, event);
-      refreshAfter(stores, event);
+    handleUiEvent,
+    onUiEvent(listener) {
+      uiListeners.add(listener);
+      return () => void uiListeners.delete(listener);
     },
     notify,
     selectThread,
@@ -655,6 +807,10 @@ export function createStudio(
     finishWelcome() {
       writeText(STORAGE_KEYS.welcomed, "1", storage);
       session.setState((state) => welcomeFinished(state), true);
+    },
+    chooseAnalytics(choice) {
+      writeAnalyticsChoice(storage, choice);
+      session.setState((state) => analyticsChosen(state, choice), true);
     },
     enterProject: (name, hooks) => enterProject(ctx, name, hooks),
     renameThread(threadId, title) {

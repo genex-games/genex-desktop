@@ -5,7 +5,10 @@
  * app always exits). `main/index.ts` wires them to `process`, `webContents` and `before-quit`.
  */
 import { errorMessage } from "../shared/errors.ts";
+import { MainDiagnostic, RendererGone } from "../shared/app-session.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import type { MainFault } from "./app-diagnostics.ts";
+import { quitsWhenLastWindowCloses } from "./dev/launch-flags.ts";
 
 /** Where a line goes: the studio log's `write`. */
 export type LogLine = (source: string, line: string) => void;
@@ -23,25 +26,33 @@ function describe(reason: unknown): string {
  * Log an uncaught exception or unhandled rejection instead of letting it end the process (or
  * Electron's modal error box). None is treated as fatal: a failure at startup already has its own
  * error box in `main()`, and one in a background task should not take the open window with it.
+ * `fault` hears each one's kind after the log (`app-diagnostics.ts`); it failing changes nothing.
  */
-export function installProcessHandlers(target: ProcessEvents, log: LogLine): void {
-  const record = (kind: string) => (reason: unknown) => {
+export function installProcessHandlers(
+  target: ProcessEvents,
+  log: LogLine,
+  fault: (kind: MainFault, reason: unknown) => void = () => undefined,
+): void {
+  const record = (kind: MainFault, words: string) => (reason: unknown) => {
     try {
-      log("main", `${kind}: ${describe(reason)}`);
+      log("main", `${words}: ${describe(reason)}`);
     } catch {
       /* the log itself failed; nothing is left to tell */
     }
+    try {
+      fault(kind, reason);
+    } catch {
+      /* nothing may hear it yet (main is still starting); the log has it */
+    }
   };
-  target.on("uncaughtException", record("uncaught exception"));
-  target.on("unhandledRejection", record("unhandled rejection"));
+  target.on("uncaughtException", record(MainDiagnostic.Uncaught, "uncaught exception"));
+  target.on("unhandledRejection", record(MainDiagnostic.Rejection, "unhandled rejection"));
 }
 
 /** What to do after `render-process-gone`: reload, leave a clean exit alone, or stop retrying. */
 export const ReloadDecision = { Reload: "reload", CleanExit: "clean-exit", GiveUp: "give-up" } as const;
 export type ReloadDecision = (typeof ReloadDecision)[keyof typeof ReloadDecision];
 
-/** Electron's `render-process-gone` reason for a renderer that exited normally. */
-const CLEAN_EXIT_REASON = "clean-exit";
 /** How many crash reloads a renderer gets within one window, by default. */
 const RELOADS_PER_WINDOW = 2;
 
@@ -61,7 +72,7 @@ export function createReloadPolicy({
   const reloads: number[] = [];
   return {
     decide(reason: string): ReloadDecision {
-      if (reason === CLEAN_EXIT_REASON) return ReloadDecision.CleanExit;
+      if (reason === RendererGone.CleanExit) return ReloadDecision.CleanExit;
       const at = now();
       const expired = (): boolean => {
         const oldest = reloads[0];
@@ -150,6 +161,27 @@ export function quitQuestion(state: { runActive: boolean; resumeAt: number | nul
   return state.resumeAt === null ? QuitQuestion.None : QuitQuestion.ResumePending;
 }
 
+/** What the window's close button does: close it, hide it, or ask the quit question first. */
+export const WindowClose = { Close: "close", Hide: "hide", AskToQuit: "ask-to-quit" } as const;
+export type WindowClose = (typeof WindowClose)[keyof typeof WindowClose];
+
+/**
+ * A run outlives its window's close button: the preview dies with the window, so the window must
+ * not close under a run. On a Mac it hides, and the Dock icon brings it back (`activate`). Where
+ * closing the last window quits, a hidden window leaves no Dock, tray or taskbar button to find
+ * it by, and the run would go on spending unseen; there the close asks the quit question, and
+ * "Keep running" leaves the window where it was. Once the person agreed to end the run, it closes.
+ */
+export function windowClose(state: {
+  platform: NodeJS.Platform;
+  runActive: boolean;
+  quitConfirmed: boolean;
+  testLaunch: boolean;
+}): WindowClose {
+  if (!state.runActive || state.quitConfirmed) return WindowClose.Close;
+  return quitsWhenLastWindowCloses(state) ? WindowClose.AskToQuit : WindowClose.Hide;
+}
+
 export interface ShutdownStep {
   name: string;
   timeoutMs: number;
@@ -163,6 +195,8 @@ export interface QuitParts {
   claudeLogin: { cancel(): unknown };
   terminals: { dispose(): unknown };
   core: { host: { stop(): Promise<void>; kill(): void }; stop(): Promise<void> } | null;
+  /** Play's native games being played in their own windows: each ends with the app. */
+  games?: { stopAll(): Promise<void> } | null;
   /** Play-time AI, when the studio composed it: its watcher stops and its waiting counts go. */
   gameAi?: { dispose(): Promise<void> } | null;
 }
@@ -180,9 +214,12 @@ export function shutdownSteps({
   claudeLogin,
   terminals,
   core,
+  games,
   gameAi,
 }: QuitParts): ShutdownStep[] {
   return [
+    // A game asked to quit gets its grace period, then is killed with everything it started.
+    { name: "end native games", timeoutMs: 5 * SECOND_MS, run: () => games?.stopAll() },
     { name: "stop the harness", timeoutMs: 7 * SECOND_MS, run: () => core?.host.stop() },
     { name: "stop play-time AI", timeoutMs: 5 * SECOND_MS, run: () => gameAi?.dispose() },
     { name: "release keep-awake", timeoutMs: SECOND_MS, run: () => keepAwake.release() },

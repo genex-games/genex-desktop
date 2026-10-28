@@ -1,11 +1,11 @@
 /* ── Play: the genex.games catalog inside the app ───────────────────────────────────────── */
 /* Play's own blue marks the Genex card's glyphs; the switch and everything else wear the app's roles. */
 :root {
-  /* genex.games' own blue. The colour tweaker's "Play: switch and tabs" group sets the selected
+  /* genex.games' own blue, the app's accent. The colour tweaker's "Play: switch and tabs" group sets the selected
      blue, its edge and text, the switch's track and edge, and the other tabs' backing, edge and text
      (`--play-selected*`, `--play-switch-track`, `--play-switch-edge`, `--play-tab-*`), and the focused
      search's edge (`--play-search-focus`). */
-  --play-blue: #4b60bf;
+  --play-blue: var(--accent);
   --play-icon: #4da3ff;
   --play-track: rgb(77 81 96 / 0.1);
   --play-track-edge: rgb(121 127 139 / 0.21);
@@ -27,25 +27,31 @@
   --purchase-short-ink: color-mix(in oklab, var(--orange) 60%, var(--ink));
 }
 
-/* Play's selected look, genex.games' blue secondary (its Invite and agent buttons): the blue at 12%
-   with a 1px edge of it at 40%, the label in ink. The switch's pill and the selected tab wear it, and so
-   do the app's other segmented switches (the Genex plugin's Tools / Credits, the stats' period), so the
-   colour tweaker's "Play: switches and tabs" group tunes them all at once. */
+/* Play's selected look, the app's own (theme.css `.selected-tint`): the accent mixed into the fill and
+   its edge, the label in ink. The switch's pill and the selected tab wear it, and so do the app's other
+   segmented switches (the Genex plugin's Tools / Credits, the stats' period, a game's Store / My items),
+   so the colour tweaker's "Play: switches and tabs" group tunes them all at once. */
 .play-switch-pill,
 .play-tab[aria-selected="true"],
 .genex-tab[aria-selected="true"],
-.stats-period[aria-selected="true"] {
-  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+.stats-period[aria-selected="true"],
+.store-tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-share), transparent);
   box-shadow: inset 0 0 0 1px
-    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+    var(
+      --play-selected-edge,
+      color-mix(in srgb, var(--play-selected, var(--play-blue)) var(--select-edge-share), transparent)
+    );
   color: var(--play-selected-text, var(--ink));
 }
 
-/* Play / Create beside the wordmark: a small track, the selected pill sliding to the side that is on. */
+/* Play / Create beside the wordmark: a small track, the selected pill sliding to the side that is on.
+   Each tab is at least its English width and grows to a longer language's label; PlaySwitch.tsx
+   measures them for the pill. */
 .play-switch {
   position: relative;
   display: inline-grid;
-  grid-template-columns: 44px 54px;
+  grid-template-columns: auto auto;
   flex: none;
   padding: 2px;
   border-radius: 9px;
@@ -56,24 +62,29 @@
   position: absolute;
   inset-block: 2px;
   inset-inline-start: 2px;
-  width: 44px;
+  width: var(--play-switch-play, 44px);
   border-radius: 7px;
   transition:
     translate var(--duration-fast) var(--ease-smooth-out),
     width var(--duration-fast) var(--ease-smooth-out);
 }
 .play-switch[data-mode="create"] .play-switch-pill {
-  width: 54px;
-  translate: 44px 0;
+  width: var(--play-switch-create, 54px);
+  translate: var(--play-switch-play, 44px) 0;
 }
 .play-switch-tab {
   position: relative;
+  min-width: 44px;
   height: 22px;
+  padding-inline: 5px;
   border-radius: 7px;
   color: var(--ink-3);
   font: 11px / 16px var(--font-family-mono);
   cursor: pointer;
   transition: color var(--duration-quick);
+}
+.play-switch-tab[data-play-mode="create"] {
+  min-width: 54px;
 }
 .play-switch-tab:hover,
 .play-switch-tab[aria-selected="true"],
@@ -946,13 +957,15 @@
   -webkit-app-region: no-drag;
 }
 
-/* The viewer under the game's view: its cover while it loads, and what went wrong when it cannot. */
+/* The viewer under the game's view: its cover while it loads, and what went wrong when it cannot, in
+   the game's own place below the bar's 48px strip (`PLAY_BAR_HEIGHT`), which its layer draws above. */
 .play-viewer {
   position: fixed;
   inset: 0;
   z-index: 250;
   display: flex;
   flex-direction: column;
+  padding-top: 48px;
   overflow: hidden;
   background: #000;
   color: #f5f5f5;
@@ -975,10 +988,10 @@
   background: transparent;
 }
 
-/* The bar: the app's own 48px strip of glass over the game's top edge, the popover's colour let
-   through over a soft hairline. Back and the game's name with its facts, then a note, the guest's
-   offer and the actions as rounded pills; Remix wears Play's blue secondary. Its empty space drags
-   the window. When main says it is down it fades up and out, and gives the pointer back. */
+/* The bar: the app's own 48px strip across the window's top, the game below it, never under it; the
+   popover's colour over the app's background, over a soft hairline. Back and the game's name with
+   its facts, then a note, the guest's offer and the actions as rounded pills; Remix wears Play's blue
+   secondary. Its empty space drags the window. */
 .play-viewer-bar {
   position: fixed;
   inset: 0 0 auto;
@@ -987,20 +1000,11 @@
   gap: 8px;
   height: 48px;
   padding: 0 12px 0 16px;
-  background: color-mix(in srgb, var(--popover) 86%, transparent);
+  background: color-mix(in srgb, var(--popover) 86%, var(--background));
   box-shadow: inset 0 -1px 0 var(--line-soft);
   color: var(--ink);
   font-family: var(--font-family-sans);
   -webkit-app-region: drag;
-  transition:
-    opacity 240ms var(--ease-smooth-out),
-    translate 240ms var(--ease-smooth-out);
-}
-.play-viewer-bar[data-down] {
-  opacity: 0;
-  translate: 0 -8px;
-  pointer-events: none;
-  -webkit-app-region: no-drag;
 }
 /* An overlay (Comments, what the AI pill opens) or a purchase sheet covers the window: the bar under
    its dimmed backdrop drags nothing. */
@@ -1183,6 +1187,16 @@
   color: var(--play-selected-text, var(--ink));
 }
 .play-viewer-bar-remix:hover:enabled {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
+}
+/* The Store door, pressed while the game's Store is open in its place: Play's selected look. */
+.play-viewer-bar-store[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+}
+.play-viewer-bar-store[aria-pressed="true"]:hover:enabled {
   background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
 }
 /* The game's voice chat: the mic switch and its menu of microphones, joined, beside the name. On,
@@ -2087,9 +2101,6 @@
 
 /* Reduce Motion: things change in place; Play's shimmer and slides hold still. */
 @media (prefers-reduced-motion: reduce) {
-  .play-viewer-bar[data-down] {
-    translate: none;
-  }
   .play-switch-pill,
   .sidebar-fold,
   .sidebar-lists > .sidebar-scroll,
@@ -2190,4 +2201,91 @@
   outline: 2px solid var(--focus-edge);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* ── The Nex sheet (`play/NexSheet.tsx`): what Nex is, and how it is got, spent and earned ── */
+.nex-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.nex-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--line);
+}
+.nex-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--page);
+}
+.nex-figure-label {
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.nex-figure-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 22px;
+  line-height: 28px;
+  font-variant-numeric: tabular-nums;
+}
+.nex-figure[data-nex-held] .nex-figure-amount {
+  color: var(--ink-2);
+}
+.nex-ways {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.nex-way {
+  display: flex;
+  gap: 14px;
+}
+.nex-way-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--soft);
+  color: var(--ink);
+}
+.nex-way-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  line-height: 20px;
+}
+.nex-way-title {
+  font-weight: 500;
+}
+.nex-way-body {
+  color: var(--ink-2);
+}
+.nex-credits {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--page);
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 19px;
+}
+.nex-foot {
+  display: flex;
+  justify-content: flex-end;
 }

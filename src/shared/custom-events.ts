@@ -14,6 +14,7 @@ import type { ChatActivityPhase } from "./chat-activity.ts";
 import type { ChatRewind, CheckpointSkippedPayload, RewindUndonePayload } from "./chat-rewind.ts";
 import type { PlanReviewRecord } from "./composer.ts";
 import type { ContextMeasurement } from "./context.ts";
+import type { EngineFailureKind } from "./engine-requests.ts";
 import type { AssetDeliveredPayload, PluginToolFinishedPayload, PluginToolStartedPayload } from "./game-assets.ts";
 import type { MentionTaggedPayload } from "./prompt-mention.ts";
 import type { PluginConsentEvent } from "./plugins.ts";
@@ -32,6 +33,8 @@ import type { ChatJudgeResultPayload } from "./chat-judge.ts";
 import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
 import type { ObserverCapturePayload } from "./observers.ts";
 import type { FinishCheckPayload, StillToFix } from "./finish-check.ts";
+import type { InstallFailure, PlayInstallPayload } from "./play-native.ts";
+import type { ListingDraft, LocalListingDraft } from "./item-draft.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -71,6 +74,8 @@ export const CustomEvent = {
   AgentWentAhead: "agent_went_ahead",
   /** A blind judge played the game for the chat's own session (shared/chat-judge.ts); written by the host only. */
   ChatJudgeResult: "chat_judge_result",
+  /** The game's agent made or changed a store item, on genex.games or as a local draft: its Listing draft card (shared/item-draft.ts); written by the host only. */
+  ItemDrafted: "item_drafted",
   // the unattended run and its lead
   AutopilotBase: "autopilot_base",
   AutopilotBaseStarted: "autopilot_base_started",
@@ -183,6 +188,12 @@ export const CustomEvent = {
   ToolRegistryApplied: "tool_registry_applied",
   UserFeedback: "user_feedback",
   // the studio itself: its harness, learning and games
+  /** A game from Play installed on this computer (shared/play-native.ts); written by the host only. */
+  PlayInstallFinished: "play_install_finished",
+  /** A game from Play failed to install, and why; written by the host only. */
+  PlayInstallFailed: "play_install_failed",
+  /** genex.games has a newer build of an installed game; written by the host only. */
+  PlayUpdateAvailable: "play_update_available",
   BuildObservation: "build_observation",
   FixtureNoise: "fixture_noise",
   GameArchived: "game_archived",
@@ -374,6 +385,29 @@ export type AutoResumeCause = (typeof AutoResumeCause)[keyof typeof AutoResumeCa
 export interface RunAutoResumedPayload extends RunScope {
   cause?: AutoResumeCause;
   attempt?: number;
+}
+
+/**
+ * Why the harness refused to start a run (`refusal` on `run_start_blocked`, beside its English
+ * `reason`). The seed's copy is `RunStartRefusal` in `loop/run-dispatch.ts`
+ * (tests/conformance/seed-contracts.test.ts holds the two together); an older seed writes none.
+ * Persisted: never rename a value.
+ */
+export const RunStartRefusal = {
+  /** A run already owns the chat or the game. */
+  RunOwnsThread: "run_owns_thread",
+  /** The folder is an engine's export: compiled, with nothing a run could edit. */
+  EngineExport: "engine_export",
+  /** Genex's `web.ready` gate: the web page lacks files it needs to load. */
+  WebNotReady: "web_not_ready",
+} as const;
+export type RunStartRefusal = (typeof RunStartRefusal)[keyof typeof RunStartRefusal];
+
+/** A run's start the harness refused: the run that holds the chat (when one does), the one asked for, and why. */
+export interface RunStartBlockedPayload extends RunScope {
+  requestedRunId?: string;
+  reason?: string;
+  refusal?: RunStartRefusal;
 }
 
 /** One part of the plan, as the start and plan-review records list it. */
@@ -612,6 +646,9 @@ export interface GameAiCallPayload {
 
 export interface CustomEventMap {
   asset_delivered: AssetDeliveredPayload;
+  play_install_finished: PlayInstallPayload;
+  play_install_failed: PlayInstallPayload & { failure?: InstallFailure; neededBytes?: number };
+  play_update_available: PlayInstallPayload & { sizeBytes?: number };
   mention_tagged: MentionTaggedPayload;
   /**
    * `facetId` and `beyond`: a card about a step beyond the ask names its part and the proposal, so a
@@ -655,6 +692,8 @@ export interface CustomEventMap {
    * (shared/chat-rewind.ts `endsChatSessions`); its summary, when it reports one, is the provider's own.
    */
   compacted: Partial<ContextMeasurement> & { messages?: number; trigger?: string; summary?: string; native?: boolean };
+  /** A summary that could not be written (loop/compact.ts): its engine, the words, and why. */
+  compaction_failed: { engine?: string; model?: string; error?: string; failure?: EngineFailureKind };
   completion_call: CompletionCallPayload;
   game_ai_call: GameAiCallPayload;
   connector_tool: RunScope & Omit<ConnectorToolEvent, "error"> & { error?: string | null };
@@ -724,7 +763,8 @@ export interface CustomEventMap {
   facet_provider_outage: RunScope & { phase?: string; wait?: number; attempt?: number; error?: string; lost?: string };
   facet_review_enforced: FacetReviewEnforcedPayload;
   improvement_applied: { file?: string; reason?: string; snapshot_id?: string };
-  interview_question: { question?: string; choices?: InterviewChoice[] };
+  /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
+  interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };
   /** A provider signed out mid-turn (harness `turn-loop.ts`); `message` is the provider's own error. */
   needs_signin: { engine?: string; message?: string };
   plan_review: PlanReviewRecord;
@@ -739,6 +779,7 @@ export interface CustomEventMap {
   app_look_access: Partial<AppLookAccessPayload>;
   agent_went_ahead: Partial<AgentWentAheadPayload>;
   chat_judge_result: Partial<ChatJudgeResultPayload>;
+  item_drafted: Partial<ListingDraft> | Partial<LocalListingDraft>;
   worker_started: WorkerStartedPayload;
   worker_finished: WorkerFinishedPayload;
   observer_capture: Partial<ObserverCapturePayload>;
@@ -749,6 +790,7 @@ export interface CustomEventMap {
   run_finished: RunFinishedPayload;
   run_iteration: RunScope & { winner?: string; biggest_gap?: string; verdict?: RoundVerdict | null };
   run_registered: RunScope & { budgets?: RecordedRunBudgets; resumed?: boolean };
+  run_start_blocked: RunStartBlockedPayload;
   run_started: RunScope & {
     budgets?: RecordedRunBudgets;
     goal?: string;

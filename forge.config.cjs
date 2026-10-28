@@ -32,6 +32,8 @@ const { version } = require("./package.json");
 
 const PRODUCT_NAME = "Genex";
 const EXECUTABLE_NAME = "genex";
+/** The URL scheme the app answers: `GAME_LINK_SCHEME` in src/main/play/game-links.ts (forge-config.test.ts holds them equal). */
+const GAME_LINK_SCHEME = "genex";
 const HOMEPAGE = "https://github.com/genex-games/genex-desktop";
 const SUMMARY = "Self-improving AI game studio";
 /** The Linux desktop entry's generic name, beside the product name. */
@@ -86,6 +88,9 @@ module.exports = {
     appBundleId: APP_BUNDLE_ID,
     appCategoryType: "public.app-category.developer-tools",
     icon: ICON,
+    // The website's Open in Genex links (`genex://game/<slug>`, main/play/game-links.ts): macOS
+    // learns the scheme from the app's Info.plist; Windows and Linux from the app at its start.
+    protocols: [{ name: "Genex", schemes: [GAME_LINK_SCHEME] }],
     // Each platform is made on its own runner, so only a Linux build carries the repository key.
     ...(process.platform === "linux" ? { extraResource: [LINUX_REPOSITORY_KEY] } : {}),
     asar: {
@@ -225,6 +230,7 @@ module.exports = {
           icon: `${ICON}.png`,
           depends: LINUX_DEPENDS,
           scripts: DEB_SCRIPTS,
+          mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },
     },
@@ -246,6 +252,7 @@ module.exports = {
           requires: LINUX_DEPENDS,
           license: "MIT",
           scripts: RPM_SCRIPTS,
+          mimeType: [`x-scheme-handler/${GAME_LINK_SCHEME}`],
         },
       },
     },

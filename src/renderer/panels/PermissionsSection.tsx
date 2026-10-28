@@ -5,8 +5,14 @@
  * each chat still picks its own mode in the composer.
  */
 import { type JSX, useEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { countBucket } from "../analytics/properties.ts";
+import { trackSettingChanged } from "../analytics/workspace-track.ts";
+import { ActionOutcome, RuleScope, SettingKey } from "../analytics/workspace-vocabulary.ts";
 import {
-  PERMISSION_MODE_WORDS,
+  permissionModeWords,
   PERMISSION_MODES,
   type PermissionMode,
   type PermissionSettingsView,
@@ -31,24 +37,31 @@ import { computerControlOffered } from "../../shared/computer-control.ts";
 import { useComputerControl } from "../use-computer-control.ts";
 import { usePermissionSettings } from "../use-permission-settings.ts";
 import { COMPUTER_CONTROL_SETTING_WORDS, computerControlDetail, permissionRuleWords, problemWords } from "../words.ts";
-import { plural } from "../../shared/skill-words.ts";
+import { SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** The section's own words. */
 const WORDS = {
-  loading: "Loading…",
-  everyGame: "In every game",
-  startsIn: "New chats start in",
-  allowed: "Always allowed",
-  about: "What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game.",
-  none: "Nothing yet. Choosing Always allow in a chat adds an action here.",
-  count: (actions: number, games: number) => `${plural(actions, "action")} · ${plural(games, "game")}`,
+  loading: t("Loading…"),
+  everyGame: t("In every game"),
+  startsIn: t("New chats start in"),
+  allowed: t("Always allowed"),
+  about: t("What Claude does without asking. Choosing Always allow in a chat adds an action here, for that game."),
+  none: t("Nothing yet. Choosing Always allow in a chat adds an action here."),
+  count: (actions: number, games: number) =>
+    t("{actions, plural, one {# action} other {# actions}} · {games, plural, one {# game} other {# games}}", {
+      actions,
+      games,
+    }),
   where: (action: AllowedAction) =>
-    action.games.length === 1 ? (action.games[0]?.title ?? "") : plural(action.games.length, "game"),
-  stop: (action: AllowedAction, words: string) =>
     action.games.length === 1
-      ? `Stop allowing: ${words}`
-      : `Stop allowing in all ${action.games.length} games: ${words}`,
-  stopIn: (title: string) => `Stop allowing in ${title}`,
+      ? (action.games[0]?.title ?? "")
+      : t("{count, plural, one {# game} other {# games}}", { count: action.games.length }),
+  stop: (action: AllowedAction, words: string) =>
+    t("{count, plural, =1 {Stop allowing: {action}} other {Stop allowing in all # games: {action}}}", {
+      count: action.games.length,
+      action: words,
+    }),
+  stopIn: (title: string) => t("Stop allowing in {game}", { game: title }),
 } as const;
 
 /** The modes a new chat may start in, in the composer's order. */
@@ -72,7 +85,7 @@ function StartingMode({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button data-default-mode disabled={busy} className="h-9 gap-2 ps-3.5 pe-3 text-sm">
-              {PERMISSION_MODE_WORDS[mode].label}
+              {permissionModeWords()[mode].label}
               <Icon name="chevron-down" size={14} />
             </Button>
           </DropdownMenuTrigger>
@@ -81,8 +94,8 @@ function StartingMode({
               {STARTING_MODES.map((option) => (
                 <DropdownMenuRadioItem key={option} value={option} onSelect={() => onPick(option)}>
                   <span className="flex min-w-0 flex-col">
-                    <span>{PERMISSION_MODE_WORDS[option].label}</span>
-                    <span className="text-xs text-muted-foreground">{PERMISSION_MODE_WORDS[option].description}</span>
+                    <span>{permissionModeWords()[option].label}</span>
+                    <span className="text-xs text-muted-foreground">{permissionModeWords()[option].description}</span>
                   </span>
                 </DropdownMenuRadioItem>
               ))}
@@ -131,14 +144,15 @@ function ActionRow({
 }: {
   action: AllowedAction;
   busy: boolean;
-  onForget: (rule: string, projects: string[]) => void;
+  onForget: (rule: string, projects: string[], scope: RuleScope) => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
   const covers = useLibrary((s) => s.games);
   const words = permissionRuleWords(action.rule);
   const stopAll = WORDS.stop(action, words);
+  // The rule (a command, a path) and the games it is allowed in are the person's.
   return (
-    <li className="settings-list-group">
+    <li className="settings-list-group" data-analytics-mask>
       <div className="flex items-center gap-1 pe-1">
         <button
           type="button"
@@ -169,6 +183,7 @@ function ActionRow({
             onForget(
               action.rule,
               action.games.map((game) => game.project),
+              RuleScope.AllGames,
             )
           }
         >
@@ -192,7 +207,7 @@ function ActionRow({
                 aria-label={WORDS.stopIn(game.title)}
                 title={WORDS.stopIn(game.title)}
                 disabled={busy}
-                onClick={() => onForget(action.rule, [game.project])}
+                onClick={() => onForget(action.rule, [game.project], RuleScope.OneGame)}
               >
                 <Icon name="trash" />
               </Button>
@@ -212,7 +227,7 @@ function AllowedActions({
 }: {
   settings: PermissionSettingsView;
   busy: boolean;
-  onForget: (rule: string, projects: string[]) => void;
+  onForget: (rule: string, projects: string[], scope: RuleScope) => void;
 }): JSX.Element {
   const actions = allowedActions(settings.rules);
   const games = settings.rules.filter((game) => game.rules.length > 0).length;
@@ -238,6 +253,13 @@ function AllowedActions({
   );
 }
 
+/** A rule forgotten (or not), with how many allowed actions are left, for usage analytics. */
+function trackForgotten(scope: RuleScope, view: PermissionSettingsView | null | undefined): void {
+  const left = view ? { remaining_rules_bucket: countBucket(allowedActions(view.rules).length) } : {};
+  const outcome = view === undefined ? ActionOutcome.Failed : ActionOutcome.Ok;
+  track(AnalyticsEvent.PermissionRuleForgotten, { scope, ...left, outcome });
+}
+
 export function PermissionsSection(): JSX.Element {
   const { settings, setSettings, error } = usePermissionSettings();
   const [busy, setBusy] = useState(false);
@@ -253,23 +275,31 @@ export function PermissionsSection(): JSX.Element {
     (next ?? root.current?.closest<HTMLElement>('[role="tabpanel"]'))?.focus();
     refocus.current = null;
   }, [busy, settings]);
-  /** Run one change to the host's settings, showing its answer, or why it failed. */
-  const change = async (work: () => Promise<PermissionSettingsView | null>, focusAt: number | null) => {
-    if (busy) return;
+  /**
+   * Run one change to the host's settings, showing its answer, or why it failed. Answers the view
+   * it left (null when there was none), or undefined when it failed or did not run.
+   */
+  const change = async (
+    work: () => Promise<PermissionSettingsView | null>,
+    focusAt: number | null,
+  ): Promise<PermissionSettingsView | null | undefined> => {
+    if (busy) return undefined;
     setBusy(true);
     setFailure(null);
     try {
       const view = await work();
       if (view) setSettings(view);
       refocus.current = focusAt;
+      return view;
     } catch (cause) {
       setFailure(problemWords(cause));
+      return undefined;
     } finally {
       setBusy(false);
     }
   };
   // One game at a time: each answer is the whole view, so the last is the one that holds.
-  const forget = (rule: string, projects: string[]) => {
+  const forget = (rule: string, projects: string[], scope: RuleScope) => {
     const at = allowedActions(settings?.rules ?? []).findIndex((action) => action.rule === rule);
     void change(
       async () => {
@@ -278,9 +308,12 @@ export function PermissionsSection(): JSX.Element {
         return view;
       },
       Math.max(0, at),
-    );
+    ).then((view) => trackForgotten(scope, view));
   };
-  const pickMode = (mode: PermissionMode) => void change(() => window.studio.setPermissionMode(null, mode), null);
+  const pickMode = (mode: PermissionMode) =>
+    void change(() => window.studio.setPermissionMode(null, mode), null).then((view) =>
+      trackSettingChanged(SettingKey.DefaultPermissionMode, mode, view === undefined),
+    );
   if (!settings)
     return (
       <div data-permission-settings className="appearance-section">
@@ -289,7 +322,9 @@ export function PermissionsSection(): JSX.Element {
             {error}
           </p>
         ) : (
-          <Pending label={WORDS.loading} />
+          <Pending label={WORDS.loading}>
+            <SkeletonRows />
+          </Pending>
         )}
       </div>
     );

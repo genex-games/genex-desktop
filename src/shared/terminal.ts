@@ -1,17 +1,23 @@
 /**
- * What a terminal session runs: the game's shell, a Claude Code or OpenCode sign-in, or one command a
- * chat reply offered.
+ * What a terminal session runs: the game's shell, a Claude Code, OpenCode or Grok Build sign-in, or
+ * one command a chat reply offered.
  */
 export const TerminalKind = {
   Shell: "shell",
   ClaudeLogin: "claude-login",
   OpenCodeLogin: "opencode-login",
+  GrokLogin: "grok-login",
+  CursorLogin: "cursor-login",
   Command: "command",
 } as const;
 export type TerminalKind = (typeof TerminalKind)[keyof typeof TerminalKind];
 
 /** Sign-ins Settings shows in their own row: revealing the dock would close Settings over them. */
-const SETTINGS_TERMINALS: ReadonlySet<TerminalKind> = new Set([TerminalKind.OpenCodeLogin]);
+const SETTINGS_TERMINALS: ReadonlySet<TerminalKind> = new Set([
+  TerminalKind.OpenCodeLogin,
+  TerminalKind.GrokLogin,
+  TerminalKind.CursorLogin,
+]);
 
 /** Whether the dock lists this session; a Settings sign-in shows in Settings instead. */
 export const inDock = (session: { kind: TerminalKind }): boolean => !SETTINGS_TERMINALS.has(session.kind);
@@ -103,3 +109,12 @@ export function terminalSize(cols: unknown, rows: unknown): { cols: number; rows
 /** The open session of a sign-in kind, while it has not exited. */
 export const liveSignIn = (sessions: readonly TerminalSession[], kind: TerminalKind): TerminalSession | undefined =>
   sessions.find((session) => session.kind === kind && session.phase !== "exited");
+
+/** Terminal colour, cursor and title codes a command-line tool leaves in what it prints. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal escapes is the point: they are removed.
+const TERMINAL_CODES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
+
+/** Text a tool printed for a terminal, as words a person reads: its terminal codes taken out. */
+export function stripTerminalCodes(text: string): string {
+  return text.replace(TERMINAL_CODES, "");
+}

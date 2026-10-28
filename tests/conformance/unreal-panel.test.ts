@@ -15,7 +15,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { type Browser, chromium, type Page } from "@playwright/test";
 import type { PluginEngineLink } from "../../src/plugin-sdk/index.d.ts";
-import { inlinePanelSdk } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
+import { inlinePanelSdk, panelWordsScripts } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import type { Launch } from "../../src/plugins/unreal/editor-launch.ts";
 import type { EditorLog } from "../../src/plugins/unreal/editor-log.ts";
@@ -266,7 +266,9 @@ describe("The Set up Unreal panel", { skip }, () => {
   let server: http.Server;
   let url = "";
   before(async () => {
-    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", BRIDGE);
+    // The stand-in bridge, then the SDK's own words (in English: the stand-in names no language).
+    const words = await panelWordsScripts();
+    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", () => BRIDGE + words);
     server = http.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page),
     );

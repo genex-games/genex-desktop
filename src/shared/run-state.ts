@@ -156,6 +156,20 @@ export const JournalPhase = {
 export type JournalPhase = (typeof JournalPhase)[keyof typeof JournalPhase];
 
 /**
+ * Why the core refused a Resume (`StudioCore.resumeAutopilot`): the code that crosses IPC beside
+ * its words (`shared/error-codes.ts`), so `error_toast_shown` says which refusal it was.
+ */
+export const ResumeRefusal = {
+  /** The harness's loop predates timed builds: it cannot pick one back up. */
+  Unsupported: "resume_unsupported",
+  /** The run's journal says it is done. */
+  AlreadyFinished: "resume_already_finished",
+  /** No chat holds a journal for the run. */
+  NoJournal: "resume_no_journal",
+} as const;
+export type ResumeRefusal = (typeof ResumeRefusal)[keyof typeof ResumeRefusal];
+
+/**
  * What a run's budgets say ends it (`budgets.completionPolicy`): the judge's satisfaction, or its
  * time. The harness writes these (its copy is `CompletionPolicy` in `loop/completion-policy.ts`):
  * never rename a value.

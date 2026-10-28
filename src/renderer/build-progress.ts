@@ -1,6 +1,7 @@
 import { mergeChatEvents } from "../shared/chat-history.ts";
 import { CustomEvent, customEvent, customRecord, DELEGATED_PREFIX } from "../shared/custom-events.ts";
 import { type ConversationRecord, type EventEnvelope, EventKind } from "../shared/event-log.ts";
+import { intlLocale, t } from "../shared/i18n.ts";
 import { messageQueueState, type QueueView } from "../shared/message-queue.ts";
 import { graphKeyOf, turnOfGraphKey } from "../shared/run-graph-events.ts";
 import { type RunExecution, RunState, runExecutions, workStart } from "../shared/run-state.ts";
@@ -331,7 +332,7 @@ function dayWords(startedAt: string | null, now: Date): string | null {
   const day = dayOf(startedAt ?? "", now);
   if (day === DayGroup.Today) return BUILD_HISTORY_WORDS.today;
   if (day === DayGroup.Yesterday) return BUILD_HISTORY_WORDS.yesterday;
-  return date.toLocaleDateString([], { day: "numeric", month: "short" });
+  return date.toLocaleDateString(intlLocale(), { day: "numeric", month: "short" });
 }
 
 /** The picker's times are tabular, and tabular figures widen a plain (or narrow) space: "9:08 PM" keeps a no-break one. */
@@ -345,8 +346,8 @@ export function buildWhen(startedAt: string | null, now: Date = new Date()): str
   if (day === DayGroup.Yesterday) return dayGroup(startedAt ?? "", now);
   const words =
     day === DayGroup.Today
-      ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-      : date.toLocaleDateString([], { day: "numeric", month: "short" });
+      ? date.toLocaleTimeString(intlLocale(), { hour: "numeric", minute: "2-digit" })
+      : date.toLocaleDateString(intlLocale(), { day: "numeric", month: "short" });
   return words.replace(/\s/gu, TIME_SPACE);
 }
 
@@ -358,6 +359,12 @@ function historyName(entry: HistoryEntry, newest: boolean, now: Date): string {
   return chat ? BUILD_HISTORY_WORDS.turnFrom(day) : BUILD_HISTORY_WORDS.loopFrom(day);
 }
 
+/** A build's state as its history label says it after its name; a finished build says none. */
+const HISTORY_STATE_WORDS: Readonly<Record<string, string>> = {
+  [RunState.Running]: t("running"),
+  [RunState.Paused]: t("paused"),
+};
+
 /**
  * A build in the history, in plain words: what it was and when, then its state unless it simply
  * finished ("Loop from yesterday · paused"). `newest`: it is the latest build in the history.
@@ -367,7 +374,8 @@ export function historyLabel(
   { newest, now = new Date() }: { newest: boolean; now?: Date },
 ): string {
   const name = historyName(entry, newest, now);
-  return entry.state === RunState.Finished ? name : `${name} · ${entry.state}`;
+  if (entry.state === RunState.Finished) return name;
+  return `${name} · ${HISTORY_STATE_WORDS[entry.state] ?? entry.state}`;
 }
 
 /**

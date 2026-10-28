@@ -2,6 +2,9 @@
 import { useState, type JSX } from "react";
 import { Button } from "../ui/Button.tsx";
 import { problemWords } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
+import { track } from "../analytics/client.ts";
+import { LaunchEvent } from "../analytics/events/launch.ts";
 
 export function DiagnosticsRow(): JSX.Element {
   const [busy, setBusy] = useState(false);
@@ -11,9 +14,11 @@ export function DiagnosticsRow(): JSX.Element {
     setNotice(null);
     try {
       await navigator.clipboard.writeText(await window.studio.diagnostics());
-      setNotice("Copied.");
+      setNotice(t("Copied."));
+      track(LaunchEvent.DiagnosticsCopied, { ok: true });
     } catch (cause) {
       setNotice(problemWords(cause));
+      track(LaunchEvent.DiagnosticsCopied, { ok: false });
     } finally {
       setBusy(false);
     }
@@ -21,13 +26,13 @@ export function DiagnosticsRow(): JSX.Element {
   return (
     <div className="appearance-row">
       <span className="flex min-w-0 flex-col">
-        <span className="text-ink">Diagnostics</span>
+        <span className="text-ink">{t("Diagnostics")}</span>
         <span role="status" className="text-ink-3">
-          {notice ?? "Versions, provider status and recent log lines for a bug report. Paths and keys are removed."}
+          {notice ?? t("Versions, provider status and recent log lines for a bug report. Paths and keys are removed.")}
         </span>
       </span>
       <Button data-copy-diagnostics disabled={busy} onClick={() => void copy()}>
-        Copy diagnostics
+        {t("Copy diagnostics")}
       </Button>
     </div>
   );

@@ -3,8 +3,9 @@ name: Windows
 # on demand; PRs into dev skip these billed minutes. Required: install, typecheck, lint, the one-time
 # sandbox setup and the curated suite in tests/windows-suite.json. A dispatch with `backlog` also
 # runs the rest of the fast group as an informational pass (it lists the failing files and never
-# fails the job); one with `files` runs just those test files after the sandbox setup. Unless it
-# names files, it also drives computer control on the runner's desktop. The hosted
+# fails the job); one with `files` runs just those test files after the sandbox setup, and one with
+# `desktop` only drives computer control. Unless it names files, it drives computer control on the
+# runner's desktop. The hosted
 # runner is elevated and disposable, so the sandbox install needs no UAC prompt. No secrets;
 # pull_request runs with the fork's read-only token.
 on:
@@ -18,6 +19,10 @@ on:
         default: ""
       backlog:
         description: Also run the rest of the fast group (the informational pass, about 20 minutes)
+        type: boolean
+        default: false
+      desktop:
+        description: Only drive computer control on the desktop; skips typecheck, lint and the tests
         type: boolean
         default: false
 permissions:
@@ -41,13 +46,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - if: ${{ !inputs.files }}
+      - if: ${{ !inputs.files && !inputs.desktop }}
         run: npm run typecheck
-      - if: ${{ !inputs.files }}
+      - if: ${{ !inputs.files && !inputs.desktop }}
         run: npm run lint
       - name: Windows sandbox setup (srt-sandbox user and WFP filters)
         run: node scripts/ci-windows-sandbox.mjs
       - name: Tests
+        if: ${{ !inputs.desktop }}
         env:
           FILES: ${{ inputs.files }}
           BACKLOG: ${{ inputs.backlog }}

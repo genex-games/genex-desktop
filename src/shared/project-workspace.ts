@@ -84,6 +84,10 @@ export const CORE_WORKSPACE = {
       "Intermediate/",
       "DerivedDataCache/",
       "Binaries/",
+      // Builds/ is where package-game archives the apps players install: output, never history.
+      "Builds/",
+      // A package's cook logs, written anew by every package.
+      "Build/*/FileOpenOrder/",
       "Plugins/*/Intermediate/",
       "Plugins/*/Binaries/",
     ],
@@ -110,6 +114,12 @@ export const CORE_WORKSPACE = {
     ignore: ["Library/", "Temp/", "Logs/", "obj/", "UserSettings/", "Builds/"],
     copySkip: [],
     assets: [{ folder: "Assets", formats: MEDIA_FORMATS }],
+  },
+  // A Roblox game's assets live in its place and on Roblox: its media keeps the default folders.
+  [CoreFact.RobloxProject]: {
+    ignore: [],
+    copySkip: [],
+    assets: [],
   },
   [CoreFact.BlenderAssets]: {
     ignore: ["**/*.blend1", "**/*.blend2"],

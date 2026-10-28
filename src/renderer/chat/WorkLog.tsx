@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
+import { t } from "../../shared/i18n.ts";
 import { usePlugins } from "../state/hooks.ts";
 import { FileText } from "../ui/FileText.tsx";
 import { PluginIcon } from "../ui/PluginIcon.tsx";
@@ -52,7 +53,13 @@ export const WorkLog = memo(function WorkLog({
         open={open}
         onToggle={() => setOpen((value) => !value)}
         frame={false}
-        suffix={failures > 0 ? <span className="shrink-0 text-orange">· {failures} failed</span> : undefined}
+        suffix={
+          failures > 0 ? (
+            <span className="shrink-0 text-orange">
+              {t("{count, plural, other {· # failed}}", { count: failures })}
+            </span>
+          ) : undefined
+        }
       >
         <WorkLogContent items={items} />
       </ChatDisclosure>
@@ -99,7 +106,7 @@ export function WorkLogContent({ items }: { items: ActivityItem[] }) {
     <div data-work-log-items className="chat-tool-frame">
       {items.length > limit && (
         <button type="button" onClick={() => setLimit((value) => value + 30)} className="chat-disclosure mx-1">
-          Show {Math.min(30, items.length - limit)} earlier steps
+          {t("{count, plural, other {Show # earlier steps}}", { count: Math.min(30, items.length - limit) })}
         </button>
       )}
       {items.slice(-limit).map((item) =>

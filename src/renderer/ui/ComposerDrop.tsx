@@ -172,7 +172,7 @@ export function LeftOutNote({
 /** A file going with the next message: its name on a chip (its place on hover), and its remove button. */
 export function FileChip({ file, onRemove }: { file: AttachedFile; onRemove: () => void }): JSX.Element {
   return (
-    <div data-attached-file className="group relative">
+    <div data-attached-file data-analytics-mask className="group relative">
       <span className="composer-file-chip" title={file.path}>
         <Icon name="file" size={14} />
         <span className="truncate">{file.name}</span>

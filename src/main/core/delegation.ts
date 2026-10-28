@@ -29,11 +29,13 @@ import {
   EngineFailureKind,
   StopReason,
   type DelegateOwnership,
+  type TurnFailure,
+  turnFailure,
 } from "../../shared/engine-requests.ts";
 import { type ConversationRecord, type EventEnvelope, ThreadKind } from "../../shared/event-log.ts";
 import { ExecutionStatus, RUN_START_EVENTS } from "../../shared/run-state.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
-import type { McpLiveTool } from "../../substrate/mcp/registry.ts";
+import type { McpLiveTool, SilentConnector } from "../../substrate/mcp/registry.ts";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -95,6 +97,8 @@ import {
   unsavedFilesNotice,
   leadToolsNote,
   mainAgentReachNote,
+  silentConnectorLog,
+  silentConnectorsNotice,
   withdrawnNotice,
   withdrawnSince,
 } from "./delegation-prompts.ts";
@@ -119,6 +123,8 @@ import { noteAsking, noteEvent, type ToolsInFlight, toolsInFlight } from "./stee
 import { type ToolOffered, toolAllowRule } from "../../substrate/plugins/tool-allow.ts";
 import { type RunCreditCap, runCreditCap } from "./run-credits.ts";
 import { checkpointWords } from "./plugin-hooks.ts";
+import { appEngineOf } from "./cover-reel.ts";
+import { appCoverGuidance } from "./cover-reel-prompts.ts";
 import { CHECKPOINT_TOOL } from "../../substrate/engines/studio-tool-prompts.ts";
 import { HookEvent } from "../../shared/plugin-hooks.ts";
 
@@ -343,18 +349,15 @@ interface DelegationSession {
    * A lead in its game's folder: the worktree it leads, as its seat checked it (`seat.leads`), or the
    * game folder itself for a lead in place. Its plugins act there (the binding's directory), as a
    * director's in its worktree, so what they deliver reaches the game when the run lands; and, the
-   * lead not being the chat's turn, another turn's end leaves its consent cards and connector calls
-   * going. Null otherwise.
+   * lead not being the chat's turn, neither another turn's end nor its own withdraws its plugin
+   * cards: only the person, the timeout or a Stop settles them. Its connector calls end with its own
+   * session (`ended`). Null otherwise.
    */
   leads: string | null;
   /** A Loop's lead in the game folder itself (`seat.leadsInPlace`): its plugins act where it sits. */
   leadsInPlace: boolean;
   abort: AbortController;
-  /**
-   * Aborted once the delegation returns. A lead's plugin and connector calls end with it besides
-   * `abort`: no turn of the chat's ending withdraws their consent cards or calls, so the end of its
-   * own session must, or a card approved later would run a tool for a session that is gone.
-   */
+  /** Aborted once the delegation returns: a lead's connector calls end with it besides `abort`. */
   ended: AbortController;
   mirror: DelegationMirror;
   /** Steer: the chat turn this session answers, when it is the chat's own or a lead's (`chat-steer.ts`). */
@@ -423,6 +426,8 @@ interface SessionTools {
   handed: HandedPlugin[];
   /** A resumed session's plugins and skills that were handed to it before and are gone now. */
   withdrawn: PluginAppliedSet | null;
+  /** The in-scope connectors that gave this session no tools, each told to it so it doesn't look for them. */
+  silent: SilentConnector[];
   /** A resumed session's plugins handed to it now and not before; none for a new session. */
   added: HandedPlugin[];
   /** The thread's cut-off calls its brief names; forgotten once the session answers (`#settled`). */
@@ -471,6 +476,12 @@ function answeredPhase(result: DelegateResult): ChatActivityPhase {
  * How a lead's turn that threw ended: an abort (the user's stop, or the harness dying or
  * restarting) reads as interrupted, anything else failed.
  */
+/** How a chat turn's delegation failed, for the turn's end to record. */
+function failedTurn(failure: unknown): TurnFailure {
+  if (!(failure instanceof EngineError)) return turnFailure(EngineFailureKind.Other);
+  return turnFailure(failure.kind, failure.retryAfterMs);
+}
+
 function thrownPhase(err: unknown): ChatActivityPhase {
   const stopped = err instanceof EngineError && err.kind === EngineFailureKind.Aborted;
   return stopped ? ChatActivityPhase.Interrupted : ChatActivityPhase.Failed;
@@ -802,19 +813,16 @@ export class DelegationService {
     const shape = await readProjectShape(initialRoot).catch(() => null);
     if (shape?.runtime !== TargetRuntime.Bridge)
       return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
+    // Started on the session's first move, never here: every chat turn is handed a computer, and a
+    // native game opens a window of its own. Until it runs, the tool offers what such a game may do.
     const ai = await this.#nativeAi(grant.project);
-    const tools = computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
+    return computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
       bridge: {
         sandbox: this.#core.sandbox,
         engine: (engine, root) => this.#core.startEngine(engine, root),
         ...(ai ? { ai } : {}),
       },
     });
-    // A Play Protocol game says what it can do only once it runs: start it now, so the tool the
-    // session is handed offers only what this game can do. A game that fails to start is said on
-    // the first call.
-    await tools.prepare().catch(() => {});
-    return tools;
   }
 
   /** Play-time AI for a native game of the library the computer starts, named as the library names it. */
@@ -2488,13 +2496,17 @@ export class DelegationService {
    */
   async #offerConnectors(p: DelegateParams, session: DelegationSession, tools: SessionTools): Promise<void> {
     const asWorker = Boolean(session.worker) || typeof p.worker?.id === "string";
-    const connectors = await this.#core.mcp.toolsFor(p.project, {
+    const report = await this.#core.mcp.toolsReport(p.project, {
       signal: session.abort.signal,
       facts: session.facts,
       ...(session.holds ? { holds: session.holds } : {}),
       ...(asWorker ? { kindServers: false } : {}),
     });
-    tools.mcp = connectors.filter((tool) => offers(session, tool.name));
+    tools.mcp = report.tools.filter((tool) => offers(session, tool.name));
+    // A connector that gave nothing is said, in the log and to the session, never left to be looked for.
+    tools.silent = report.silent;
+    for (const connector of report.silent)
+      this.#core.options.onLog?.(`[core] ${silentConnectorLog(connector)} in ${p.project}`, "stderr");
   }
 
   /**
@@ -2723,6 +2735,7 @@ export class DelegationService {
       unsavedFilesNotice(tools.unsaved),
       tools.jobNews.notice,
       tools.withdrawn ? withdrawnNotice(tools.withdrawn) : "",
+      silentConnectorsNotice(tools.silent),
       addedNotice(tools.added),
       p.prompt,
       tools.judgeBrief,
@@ -2732,6 +2745,7 @@ export class DelegationService {
       toldWhereLeadToolsWork ? leadToolsNote() : "",
       this.#core.mcp.guidance(tools.mcp),
       tools.cover.length ? COVER_TOOL_GUIDANCE : "",
+      appCoverNote(p, session),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -2858,12 +2872,14 @@ export class DelegationService {
       return this.#x.setGameCover(p.project, args, p.threadId, signal);
     if (session.runControls && isGrantedRunControl(name, session.runControls))
       return this.#x.conversation.runControl(session.threadId, session.runControls, name, args, session.abort);
-    // A lead's plugins act on the build it leads, never the live game folder it sits in, and its
-    // calls outlive the chat's turns, ending with its own session instead.
+    // A lead's plugins act on the build it leads, never the live game folder it sits in. Its plugin
+    // calls outlive the chat's turns and its own: a Loop's lead ends its turn to wait for its workers,
+    // and a card it asked with (a package, a store item) stays the person's to answer. Stop ends them.
     const directory = session.leads ?? target.cwd;
     const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
     const lead = session.leads !== null;
-    const callSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
+    // A connector call waits on a service, not on the person: it ends with the lead's own session.
+    const connectorSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
     // A chat turn's call stops waiting for one once the person writes: its signal taken now, as the call starts.
     const locking = { ...holderField(session), ...personWroteField(session) };
@@ -2873,7 +2889,7 @@ export class DelegationService {
     // anything is asked or run.
     if (this.#core.mcp.owns(name)) {
       if (!handed(session, tools, name)) throw new Error(MESSAGE.unknownTool(name));
-      return this.#x.pluginTools.invokeConnectorTool(name, args, binding, callSignal, {
+      return this.#x.pluginTools.invokeConnectorTool(name, args, binding, connectorSignal, {
         outlivesTurn: lead,
         ...this.#runConsentFor(name, p, session),
         ...callRunField(session),
@@ -2885,7 +2901,7 @@ export class DelegationService {
       if (!handler) throw new Error(MESSAGE.unknownTool(name));
       return handler(name, args);
     }
-    const result = await this.#x.pluginTools.invokePluginTool(name, args, binding, callSignal, {
+    const result = await this.#x.pluginTools.invokePluginTool(name, args, binding, signal, {
       engine: target.engineId,
       selfCapture: grants.selfCapture,
       director: grants.director,
@@ -3028,6 +3044,7 @@ export class DelegationService {
     if (streamId) this.#core.emit(UiEvent.ChatStreamEnded, { threadId: session.threadId, streamId, failed: true });
     await this.#leadTurnEnded(session, thrownPhase(err), engineId);
     const failure = await withFallbacks(this.#core.engines, engineId, err);
+    if (session.conversational || session.leadTurn) this.#core.turns.noteFailure(session.threadId, failedTurn(failure));
     if (failure instanceof EngineError && failure.kind === EngineFailureKind.Auth) {
       this.#core.emit(UiEvent.EnginesChanged, { engine: engineId });
     }
@@ -3078,6 +3095,16 @@ async function withAccounts(
   );
 }
 
+/**
+ * The cover guidance for the session that owns the build of a game made as an app: the chat's own
+ * session or a Loop's lead, with host tools. Nothing for a web game, a worker or a reader.
+ */
+function appCoverNote(p: DelegateParams, session: DelegationSession): string {
+  const owner = session.hostTools && (isChatsOwnSession(p) || session.leads !== null);
+  const engine = owner ? appEngineOf({ facts: session.facts }) : null;
+  return engine ? appCoverGuidance(engine) : "";
+}
+
 /** A session's tools before they are prepared: the plugins of the snapshot it began with, and nothing else yet. */
 function sessionTools(
   plugins: Pick<PluginSnapshot, "tools" | "guidance" | "applied">,
@@ -3098,6 +3125,7 @@ function sessionTools(
     applied: plugins.applied,
     handed,
     withdrawn: null,
+    silent: [],
     added: [],
     cutOffs: [],
     unsaved: [],

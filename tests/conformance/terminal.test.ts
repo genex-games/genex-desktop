@@ -39,6 +39,26 @@ describe("the shell a game's terminal opens", () => {
     const user = "C:\\Users\\Ada\\AppData\\Local\\Programs\\Git\\bin\\bash.exe";
     assert.equal(terminalShell("win32", { env: windowsEnv, exists: (file) => file === user })?.file, user);
   });
+  it("is Genex's own Git Bash on a PC without Git for Windows, and an installed Git still comes first", () => {
+    const resources = "C:\\Program Files\\Genex\\resources";
+    const bundled = "C:\\Program Files\\Genex\\resources\\git\\bin\\bash.exe";
+    const machine = "C:\\Program Files\\Git\\bin\\bash.exe";
+    assert.deepEqual(terminalShell("win32", { env: windowsEnv, resources, exists: (file) => file === bundled }), {
+      file: bundled,
+      args: ["--login", "-i"],
+    });
+    const both = (file: string) => file === bundled || file === machine;
+    assert.equal(terminalShell("win32", { env: windowsEnv, resources, exists: both })?.file, machine);
+    const bundledOnly = { ...windowsEnv, STUDIO_WINDOWS_BUNDLED_GIT_ONLY: "1" };
+    assert.equal(terminalShell("win32", { env: bundledOnly, resources, exists: both })?.file, bundled);
+    assert.deepEqual(
+      commandShell("win32", "rm -rf dist && npm run build", { env: windowsEnv, resources, exists: both }),
+      {
+        file: machine,
+        args: ["--login", "-c", "rm -rf dist && npm run build"],
+      },
+    );
+  });
   it("is Windows PowerShell by its full path otherwise, never a shell found on PATH", () => {
     assert.deepEqual(terminalShell("win32", { env: windowsEnv, exists: () => false }), {
       file: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
@@ -258,6 +278,34 @@ describe("a command a chat reply offered", () => {
     } finally {
       await manager.dispose();
     }
+  });
+});
+
+describe("Cursor's sign-in terminal", () => {
+  it("opens in Settings, never in the dock, and its printed page is found", async () => {
+    const { manager, events } = service();
+    try {
+      const session = manager.open({ ...launch, args: ["login"], kind: TerminalKind.CursorLogin, project: undefined });
+      assert.equal(inDock(session), false, "Settings shows it");
+      assert.ok(events.every((event) => event.type !== "session" || !event.reveal));
+    } finally {
+      await manager.dispose();
+    }
+    // What `cursor-agent login` 2026.10.22 printed in Genex's row (its one-time challenge replaced).
+    const found: string[] = [];
+    const scanner = new LinkScanner((url) => found.push(url));
+    scanner.write(
+      "Starting login process...\r\nAuthenticating with Cursor...\r\nWaiting for browser authentication...\r\n",
+    );
+    scanner.write(
+      "If your browser didn't open, use this link:\r\nhttps://cursor.com/loginDeepControl?challenge=CHALLENGE",
+    );
+    scanner.write(
+      "&uuid=UUID&mode=login&redirectTarget=cli&supportsSelectedTeamLogin=true\r\n\r\nPress q to show a QR code\r\n",
+    );
+    assert.deepEqual(found, [
+      "https://cursor.com/loginDeepControl?challenge=CHALLENGE&uuid=UUID&mode=login&redirectTarget=cli&supportsSelectedTeamLogin=true",
+    ]);
   });
 });
 

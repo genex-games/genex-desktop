@@ -1,14 +1,20 @@
+import type { AnalyticsConfig } from "./analytics.ts";
 import type {
   PlayControl,
   PlayFeedPage,
   PlayFeedRequest,
   PlayGame,
+  PlayGameDetail,
   PlayPoint,
+  PlayRemixAnswer,
   PlayShelf,
   PlayShelves,
 } from "./play.ts";
 import type { PlayChangeResult, PlayCoverResult, PlayCoverType, PlayGameChange } from "./play-manage.ts";
+import type { NativeInstalls, NativeSession, SessionAction } from "./play-native.ts";
+import type { PublishPlatform } from "./publish-platforms.ts";
 import type { GenexCatalogItem } from "./mention-corpus.ts";
+import type { LanguageChoice } from "./locale.ts";
 import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
 import type {
   AvatarStyle,
@@ -25,6 +31,24 @@ import type { GenexAccountView } from "./genex-account.ts";
 import type { PlayBarHold } from "./play-bar.ts";
 import type { PurchaseAnswer } from "./play-purchase.ts";
 import type { PlayComment, PlayCommentsPage } from "./play-comments.ts";
+import type {
+  BrowseDetail,
+  BrowsePage,
+  CreatorItem,
+  ItemAdded,
+  ItemAllowance,
+  ItemGames,
+  ItemReportReason,
+  MyItem,
+  Selling,
+  ShelfItem,
+  StoreBuyResult,
+  StoreClaimed,
+  StoreRefused,
+  StoreSheet,
+  StoreTab,
+} from "./store-items.ts";
+import type { LocalItemsView, LocalShareResult } from "./item-draft.ts";
 import type { PlayCredits } from "./play-credits.ts";
 import type { AiGameKey, AiModelRef } from "./game-ai.ts";
 import type { AiCheckResult, AiPublishChoice, AiPublishFacts } from "./game-ai-check.ts";
@@ -92,9 +116,10 @@ import type { ChatFileLink, ChatFileOpenOutside, ChatFileRef } from "./chat-file
 import type { ReferenceFrame } from "./protocol.ts";
 import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { BootState, SandboxSetupResult } from "./boot.ts";
-import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
+import type { AppAbout, ReadyUpdate, RestartAnswer, UpdateCheckResult } from "./app-update.ts";
+import type { LaunchFacts } from "./app-session.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
-import type { LiveBehindEvent } from "./live-behind.ts";
+import type { LiveBehindEvent, WebBuildLoad } from "./live-behind.ts";
 import type { FieldRow, RunSharingDeleteResult, RunSharingStatus } from "./run-sharing.ts";
 
 export type { ProjectAsset, ProjectAssets };
@@ -125,6 +150,13 @@ export interface Bootstrap {
   developer?: boolean;
   /** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
   playWebOrigin?: string;
+  /** Usage analytics this session may offer; null in builds without a key and in launches that never send. */
+  analytics?: AnalyticsConfig | null;
+  /**
+   * How this launch started and how the session before it ended, for usage analytics: only in a
+   * launch that keeps them, and only in its first bootstrap (a reload or Retry gets none).
+   */
+  launch?: LaunchFacts | null;
 }
 
 /** The window-control overlay's background and glyph colours, as `#rrggbb`. */
@@ -235,11 +267,27 @@ export interface StudioApi {
   pluginChooseFile(id: string, request: PluginFileRequest): Promise<string | null>;
   /** The files Publish would put online for a game, for Studio's Publish dialog to show. Uploads nothing. */
   genexPublishReview(project: string): Promise<ExportReview>;
+  /** The web, Mac, Windows and Linux rows of Studio's Publish dialog for a game, from what its folder holds. */
+  genexPublishPlatforms(project: string): Promise<PublishPlatform[]>;
   /**
    * Publish the game to the Genex gallery from Studio's Publish dialog: its Publish press approved
-   * the files in `review`; `title` is the name players see.
+   * the files in `review`; `title` is the name players see; `remix` is its Allow remixing, whether the
+   * game's project goes with it so others can remix it; `ai` is what its listing says of the game's AI.
    */
-  genexPublish(project: string, review: ExportReview, title?: string, ai?: AiPublishChoice): Promise<void>;
+  genexPublish(
+    project: string,
+    review: ExportReview,
+    title?: string,
+    remix?: boolean,
+    ai?: AiPublishChoice,
+  ): Promise<void>;
+  /**
+   * Publish a game that has only apps (no web build) from Studio's Publish dialog: its ready Mac and
+   * Windows apps go to Genex and the game is listed under `title`. The press, under the rows it names,
+   * is the consent; `remix` is its Allow remixing, whether the game's project goes once they are live;
+   * `ai` is what its listing says of the game's AI.
+   */
+  genexPublishApps(project: string, title?: string, remix?: boolean, ai?: AiPublishChoice): Promise<void>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */
@@ -312,10 +360,10 @@ export interface StudioApi {
   /** The new version of the app downloaded in the background, or null; `onEvent` announces later ones. */
   readyUpdate(): Promise<ReadyUpdate | null>;
   /**
-   * Quit and relaunch into the downloaded version. Asks first while a run is active; false when
-   * there is nothing to install or the person kept the run going.
+   * Quit and relaunch into the downloaded version. Asks first while a run is active; says why it
+   * did not relaunch: nothing to install, a Relaunch already asking, or the person kept the run going.
    */
-  restartToUpdate(): Promise<boolean>;
+  restartToUpdate(): Promise<RestartAnswer>;
   /** Check for a newer version now (Settings → About, the app menu); a found one also announces itself. */
   checkForUpdates(): Promise<UpdateCheckResult>;
   /** Open the waiting downloadable release's page in the browser; false when none waits. */
@@ -367,6 +415,15 @@ export interface StudioApi {
   storageSpace(project?: string): Promise<import("./storage-space.ts").StorageSpace>;
   /** Free space in one game (refused while it works) or (none named) in every game not working. */
   freeStorage(project?: string): Promise<import("./storage-space.ts").StorageFreed>;
+  /** Settings → Storage (Windows): the folder Genex keeps its files in, and the last move that did not happen. */
+  dataFolder(): Promise<import("./data-folder.ts").DataFolderState>;
+  /**
+   * Settings → Storage: asks for a folder to keep Genex's files in and checks it; null when
+   * cancelled. Nothing is written until {@link moveDataFolder}.
+   */
+  chooseDataFolder(): Promise<import("./data-folder.ts").DataFolderChoice | null>;
+  /** Move Genex's files to the folder chosen last: Genex restarts and moves them; a refusal says why. */
+  moveDataFolder(): Promise<import("./data-folder.ts").DataFolderChoice>;
   /** Takes back a game's engine link from its chat line; refused once the link has changed since. */
   undoEngineLink(request: import("./game-engine.ts").EngineLinkUndo): Promise<boolean>;
   /** The person's Stop on a job's chat line: the job's record, or null for a job the game never had. */
@@ -420,6 +477,7 @@ export interface StudioApi {
     blender?: boolean;
     autoResume?: boolean;
     computerControl?: boolean;
+    language?: LanguageChoice;
   }): Promise<StudioSettingsView>;
   /** Settings → Copy diagnostics: versions, provider status and the recent log, already redacted. */
   diagnostics(): Promise<string>;
@@ -457,6 +515,12 @@ export interface StudioApi {
   claudeLoginCancel(): Promise<unknown>;
   /** OpenCode's own sign-in (`opencode auth login`), in the terminal dock. */
   openCodeSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Grok Build's own sign-in (`grok login`, a Grok account in the browser), in its Settings row. */
+  grokSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Cursor's own sign-in (`cursor-agent login`), in a terminal in its Settings row. */
+  cursorSignIn(): Promise<{ started: boolean; missingCli?: boolean }>;
+  /** Sign Cursor's CLI out of the account Genex runs on; answers Cursor's status. */
+  cursorSignOut(): Promise<import("./engine-descriptor.ts").EngineStatus>;
   /**
    * Check a pasted OpenRouter API key with OpenRouter and keep it in the OS secret store when it is
    * accepted. The answer is OpenRouter's status; the key never comes back.
@@ -516,17 +580,44 @@ export interface StudioApi {
   playSearch(query: string, shelf: PlayShelf): Promise<PlayGame[]>;
   /** The whole catalog for the composer's @ picker: every shelf, who made each, whether it may be taken. */
   playCatalog(): Promise<GenexCatalogItem[]>;
-  /** Play: copy a game's public source into a new game of the person's own; answers its library name. */
-  playRemix(slug: string): Promise<string>;
+  /**
+   * Play: copy a game's public source into a new game of the person's own; answers its library name,
+   * or why nothing was made (a source with no game in it).
+   */
+  playRemix(slug: string): Promise<PlayRemixAnswer>;
+  /** Play: whether each named game's source holds a game, so its card offers Remix. */
+  playRemixReady(slugs: string[]): Promise<Record<string, boolean>>;
   /** Play: players in each named game now; a game nobody counts is left out. */
   playOnline(slugs: string[]): Promise<Record<string, number>>;
   /** Play: open a game full screen in the viewer, its bar showing `title`; how it goes arrives as `UiEvent.PlayViewer`. */
   playOpen(slug: string, title: string): Promise<void>;
+  /** Play: a game's own page (a native game's, which has no web build to open): its card and what the page adds. */
+  playGame(slug: string): Promise<PlayGameDetail>;
+  /** Play: install a game's build for this computer; how it goes arrives as `UiEvent.PlayInstalls`. */
+  playInstall(slug: string): Promise<void>;
+  /** Play: stop a game's install, waiting or under way, or forget how a failed one ended. */
+  playInstallCancel(slug: string): Promise<void>;
+  /** Play: every game installed on this computer and every install under way or failed. */
+  playInstalls(): Promise<NativeInstalls>;
+  /** Play: remove a game from this computer; its saves stay. */
+  playUninstall(slug: string): Promise<void>;
+  /** Play: play an installed game in its own window (a running one comes forward); how it goes arrives as `UiEvent.PlaySessions`. */
+  playLaunch(slug: string): Promise<void>;
+  /** Play: bring a running game forward, quit it, or forget how it failed to start. */
+  playSession(slug: string, action: SessionAction): Promise<void>;
+  /** Play: the games being played in their own windows, and the ones that failed to start. */
+  playSessions(): Promise<NativeSession[]>;
+  /** Play: show an installed game's app in Finder. */
+  playRevealInstall(slug: string): Promise<void>;
+  /** Play: like or unlike a game from its own page, as the Genex account; answers its likes after. */
+  playLike(slug: string, liked: boolean): Promise<{ liked: boolean; likes: number }>;
   /** Play: close the viewer. */
   playClose(): Promise<void>;
+  /** Play: the game a `genex://game/<slug>` link asked to open, once; null when none waits. */
+  playTakeGameLink(): Promise<string | null>;
   /** Play: one of the viewer header's controls (Like, Share, Exit…); main answers with `UiEvent.PlayViewer`. */
   playControl(control: PlayControl, at?: PlayPoint): Promise<void>;
-  /** Play: what holds the viewer's bar up (the pointer or the keyboard on it, its Comments open). */
+  /** Play: which of the viewer bar's overlays is open, if any (main then lays its layer over the whole window). */
   playBar(hold: PlayBarHold): Promise<void>;
   /** Play: a page of the viewed game's comments, newest first: the first, or the one after `cursor`. */
   playComments(cursor: string | null): Promise<PlayCommentsPage>;
@@ -628,6 +719,60 @@ export interface StudioApi {
   gameAiInbox(project: string): Promise<AiReportInboxItem[]>;
   /** Play-time AI: save a Player report's replay as one of the game's playtests, for Fix with agent. */
   gameAiInboxFix(project: string, id: string): Promise<AiReportFixOutcome>;
+  /** Store: a game's Store tab (its items on sale, then the shared ones it added); empty when it sells nothing or the store is off. */
+  storeItems(slug: string): Promise<StoreTab>;
+  /** Store: My items on a game's page, each marked Works here or Not in this game; signed out, `unauthorized`. */
+  storeMyItems(slug: string): Promise<MyItem[] | StoreRefused>;
+  /** Store: "Works in N games", with the first games' covers. */
+  storeItemGames(itemId: string): Promise<ItemGames>;
+  /**
+   * Store: buy an item on a game's page. Main starts the purchase and shows Play's sheet for it
+   * (`onStoreSheet`); answers when the sheet closes, or with genex.games' refusal before any sheet.
+   */
+  storeBuy(itemId: string, slug: string): Promise<StoreBuyResult>;
+  /** Store: the studio window's answer to the purchase sheet numbered `sheet`; main acts only on the one on screen. */
+  storeAnswer(sheet: number, answer: PurchaseAnswer): Promise<void>;
+  /** Store: the purchase sheet main draws in the studio window, or null once it closes. */
+  onStoreSheet(listener: (sheet: StoreSheet | null) => void): () => void;
+  /** Store: claim a Free item on a game's page; a second claim replays the first. */
+  storeClaim(itemId: string, slug: string): Promise<StoreClaimed | StoreRefused>;
+  /** Store: a profile's shelf, at most five items; none for a person genex.games does not know. */
+  storeShelf(userId: string): Promise<ShelfItem[]>;
+  /** The coin the Genex account may spend, for the account plate in Play; null signed out or with coin off. */
+  storeCoins(): Promise<number | null>;
+  /** Get Nex: genex.games' coin page in the browser. */
+  storeGetCoin(): Promise<void>;
+  /** Store: report an item (Copy, Doesn't work, Inappropriate, Scam), as the account when there is one. */
+  storeReport(itemId: string, reason: ItemReportReason, message: string | null): Promise<true | StoreRefused>;
+  /** Create › Items › Browse: other creators' shared items, a page at a time. */
+  itemsBrowse(query: string, cursor: string | null, tags?: string[]): Promise<BrowsePage | StoreRefused>;
+  /** Create › Items › Browse: one item's detail panel. */
+  itemsBrowseDetail(itemId: string): Promise<BrowseDetail | StoreRefused>;
+  /** Create › Items: Add to \<game>, a game of the account's named by its Genex project id. */
+  itemsAddToGame(itemId: string, projectId: string): Promise<ItemAdded | StoreRefused>;
+  /** Create › Items: take a shared item out of one of the account's games. */
+  itemsRemoveFromGame(itemId: string, projectId: string): Promise<ItemAllowance | StoreRefused>;
+  /** Create › Items › Selling: the ready / on-hold strip and the account's items. */
+  itemsSelling(): Promise<Selling | StoreRefused>;
+  /** Create › Items: Put on sale, from the listing draft card or Selling. Only Studio's own button publishes (D40). */
+  itemPutOnSale(itemId: string): Promise<CreatorItem | StoreRefused>;
+  /** Create › Items › Selling: Take off sale; owners keep it. */
+  itemTakeOffSale(itemId: string): Promise<CreatorItem | StoreRefused>;
+  /** Create › Items: "Other games can use it", on or off. */
+  itemSetShared(itemId: string, shared: boolean): Promise<CreatorItem | StoreRefused>;
+  /** A game's local item drafts as Studio holds them: approvals, drafts and what became of each after its publish. */
+  itemsLocal(project: string): Promise<LocalItemsView>;
+  /** "Sell when published" on a local draft as its card shows it (`contentHash`); kept in Studio's app data. */
+  itemsLocalApprove(project: string, localId: string, contentHash: string): Promise<LocalItemsView>;
+  /** Undo "Sell when published" on a local draft. */
+  itemsLocalWithdraw(project: string, localId: string): Promise<LocalItemsView>;
+  /** "Other games can use it" on a local draft, whose card shows `contentHash`: main runs the CLI's `shop set`. */
+  itemsLocalShare(project: string, localId: string, contentHash: string, shared: boolean): Promise<LocalShareResult>;
+  /**
+   * Settle a game's local drafts once it is on Genex: upload them, then put on sale only what the
+   * person approved unchanged. Paced in main; `force` right after a publish finished.
+   */
+  itemsLocalSettle(project: string, force: boolean): Promise<LocalItemsView>;
   /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
   genexAccount(): Promise<GenexAccountView>;
   /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */
@@ -644,6 +789,12 @@ export interface StudioApi {
   /** Take back one learned change, leaving every later change and the game lessons in place. */
   undoChange(snapshotId: string): Promise<{ file: string }>;
   loadPreview(project: string): Promise<string>;
+  /**
+   * Live loads the game's finished web build in a folder (a Godot or Unity export in web/) when it
+   * runs the game's folder without it, as when the game was opened before its export existed; never
+   * a build the person chose to view or a stopped game. A build still being written is `Unfinished`.
+   */
+  loadWebBuild(project: string): Promise<WebBuildLoad>;
   buildPreview(
     request: import("./build-preview.ts").BuildPreviewRequest,
   ): Promise<import("./build-preview.ts").BuildPreviewFrame | null>;
@@ -714,6 +865,11 @@ export interface StudioApi {
     width: number;
     height: number;
     watching: boolean;
+    /**
+     * The game open on the stage (absent under home, Play or Studio): a show the person asks for in
+     * its chat may load it even while Live holds another game out of sight.
+     */
+    project?: string | null;
     viewport?: { width: number; height: number };
   }): Promise<boolean>;
   /** The Live game's sound switch; main decides when Live is actually heard. */
@@ -738,7 +894,13 @@ export interface StudioApi {
     /** The person stopped the game (`stopPreview`): Live holds no page until Play. */
     stopped: boolean;
     loadError: string | null;
+    /** What kind of failure `loadError` is (Chromium's, or the game's own build); null while there is none. */
+    loadFailure: import("./preview-contract.ts").LiveLoadFailure | null;
     crashed: boolean;
+    /** Why the page's renderer went away while `crashed`; null while it runs. */
+    gone: import("./preview-contract.ts").PreviewGone | null;
+    /** The page's loop stopped answering and has not answered since. */
+    unresponsive: boolean;
     page: { complete: boolean; resources: number; state: Record<string, unknown> | null } | null;
   }>;
   /** Why the stage cannot show this game's own build; null when the last build was fine. */
@@ -805,6 +967,11 @@ export interface StudioApi {
    */
   pathOfFile(file: File): string;
   /**
+   * The computer's languages in order, as main reads them, so the window's System is the menus'.
+   * Answered by the preload from the page's arguments (`shared/locale.ts`), never by main.
+   */
+  systemLanguages(): readonly string[];
+  /**
    * The native folder dialog. It answers *which folder* only — nothing is written by picking, and
    * the answer goes straight back to `inspectFolder`/`adoptFolder`; the renderer shows the folder
    * as `pathLabel`, never as the path it holds here.
@@ -847,6 +1014,8 @@ export interface StudioSettingsView {
   autoResume?: boolean;
   /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
   computerControl?: boolean;
+  /** The app's language for main's menus, dialogs and notifications; System by default. */
+  language?: LanguageChoice;
 }
 
 declare global {

@@ -20,7 +20,7 @@ import {
   type PluginStillProblem,
   type PluginStillView,
 } from "../../shared/plugins.ts";
-import { GameView } from "../../shared/preview-contract.ts";
+import { GameView, isBlankStill } from "../../shared/preview-contract.ts";
 import type { PreviewPool } from "../../substrate/preview-pool.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import type { PreviewService } from "./previews.ts";
@@ -28,6 +28,10 @@ import type { SessionPort } from "./session-port.ts";
 
 /** The whole still (window, load, view and picture) answers within this, or answers `timeout`. */
 export const STILL_TIMEOUT_MS = 60 * SECOND_MS;
+/** How many more pictures a still takes while its view is still a blank or loading screen. */
+export const STILL_RETAKES = 3;
+/** How long the game plays between two of those pictures: time to load and draw its first frames. */
+export const STILL_RETAKE_GAP_MS = 2 * SECOND_MS;
 /** The long side of the JPEG preview that comes with every still. */
 const STILL_PREVIEW_MAX_PX = 1280;
 /** How much of the page's own words about a view a problem quotes. */
@@ -46,12 +50,24 @@ const MESSAGE = {
   timedOut: (ms: number) => `the still did not finish within ${Math.round(ms / SECOND_MS)} s`,
 } as const;
 
+/**
+ * How a leased window gets the page a view is taken of, or why it did not: the game served
+ * ({@link openGame}) unless another page stands in for it, such as an engine game's cover reel.
+ */
+export type ViewOpener = (
+  port: PreviewPort,
+  binding: PluginBinding,
+  abandoned: AbortSignal,
+) => Promise<PluginStillProblem | null>;
+
 /** The still's budget and its clock: a test seam (`StudioCoreOptions.pluginStill`). */
 export interface ViewStillOptions {
   /** The whole still's budget; {@link STILL_TIMEOUT_MS} unless a test gives another. */
   timeoutMs?: number;
   /** Resolves once `ms` have passed and rejects when `signal` aborts: the budget's clock. */
   wait?: (ms: number, signal: AbortSignal) => Promise<unknown>;
+  /** The page the view is taken of, when it is not the game served. */
+  open?: ViewOpener;
 }
 
 /** The parts of the core's previews a still or a clip uses. */
@@ -222,6 +238,12 @@ export async function openGame(
   return null;
 }
 
+/** The opener of the game itself, served as Live serves it and put in play. */
+export const servedGame =
+  (previews: ViewPreviews): ViewOpener =>
+  (port, binding, abandoned) =>
+    openGame(previews, port, binding, abandoned);
+
 /** What one lease of a hidden window is: its label, its budget and its clock, and what it does inside. */
 export interface Lease<A> {
   label: string;
@@ -286,20 +308,48 @@ async function photograph(port: StillPort, order: PluginStillOrder): Promise<Plu
  * may load, probe, play or photograph in it again, inside a step or between two.
  */
 async function shoot(
-  previews: ViewPreviews,
+  open: ViewOpener,
   pool: PreviewPool,
   session: SessionPort,
-  { binding, order, abandoned }: { binding: PluginBinding; order: PluginStillOrder; abandoned: AbortSignal },
+  {
+    binding,
+    order,
+    abandoned,
+    wait,
+  }: {
+    binding: PluginBinding;
+    order: PluginStillOrder;
+    abandoned: AbortSignal;
+    wait: NonNullable<ViewStillOptions["wait"]>;
+  },
 ): Promise<PluginStillAnswer> {
   const window = await sizedWindow(pool, session, order, STILL_NEED);
   if ("refused" in window) return { stillProblem: window.refused };
   const port = untilAbandoned(window.port, abandoned);
-  const unopened = await openGame(previews, port, binding, abandoned);
+  const unopened = await open(port, binding, abandoned);
   if (unopened) return { stillProblem: unopened };
   const placed = order.demo !== undefined ? await runDemo(port, order.demo) : await placeCamera(port, order.camera);
   abandoned.throwIfAborted();
   if (placed) return placed;
-  return photograph(port, order);
+  return photographDrawn(port, order, { abandoned, wait });
+}
+
+/**
+ * The picture of the view, taken again after a short while of play while it is still a blank or
+ * loading screen (a canvas that has not drawn, a splash cleared to one colour): at most
+ * {@link STILL_RETAKES} more, then the last one is the answer, so the plugin sees what the game shows.
+ */
+async function photographDrawn(
+  port: StillPort,
+  order: PluginStillOrder,
+  { abandoned, wait }: { abandoned: AbortSignal; wait: NonNullable<ViewStillOptions["wait"]> },
+): Promise<PluginStillAnswer> {
+  let answer = await photograph(port, order);
+  for (let retake = 0; retake < STILL_RETAKES && "still" in answer && isBlankStill(answer.still.stats); retake++) {
+    await wait(STILL_RETAKE_GAP_MS, abandoned);
+    answer = await photograph(port, order);
+  }
+  return answer;
 }
 
 /**
@@ -313,11 +363,13 @@ export async function viewStill(
   options: ViewStillOptions = {},
 ): Promise<PluginStillAnswer> {
   const timeoutMs = options.timeoutMs ?? STILL_TIMEOUT_MS;
+  const open = options.open ?? servedGame(previews);
   return leased(previews, {
     label: `still:${binding.project}`,
     timeoutMs,
     ...(options.wait ? { wait: options.wait } : {}),
-    run: (pool, session, abandoned) => shoot(previews, pool, session, { binding, order, abandoned }),
+    run: (pool, session, abandoned) =>
+      shoot(open, pool, session, { binding, order, abandoned, wait: options.wait ?? waitFor }),
     unavailable: () => problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noHiddenWindow }),
     late: () => problem(PluginStillProblemCode.Timeout, { reason: MESSAGE.timedOut(timeoutMs) }),
   });

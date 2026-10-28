@@ -71,7 +71,7 @@ const PRINTABLE = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u;
  * The names the stage strip gives Genex's own Live views when a folder has more than one (the
  * renderer's `STAGE_WORDS.tabs`, held to this list by plugin-observers.test.ts).
  */
-const GENEX_VIEW_LABELS = ["Web game", "Unreal"] as const;
+export const GENEX_VIEW_LABELS = ["Web game", "Unreal"] as const;
 
 /**
  * Whether a label repeats, in any case, a name the stage strip already shows: its own buttons'

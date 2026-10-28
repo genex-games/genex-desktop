@@ -9,9 +9,9 @@
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
-import { isUserCancelled } from "../../../shared/errors.ts";
+import { isUserCancelled, errorCode } from "../../../shared/errors.ts";
 import { type PluginStageButton, type PluginStageCard, stageCardFrom } from "../../../shared/plugin-stage-card.ts";
-import type { PluginInfo } from "../../../shared/plugins.ts";
+import { type PluginInfo, PluginSourceKind } from "../../../shared/plugins.ts";
 import { runPluginAction } from "../../plugin-actions.ts";
 import { openPluginSetup } from "../../plugin-setup.ts";
 import { type StatusPoll, startStatusPoll } from "../../status-poll.ts";
@@ -94,7 +94,9 @@ export function PluginCardStage({
   const source = useMemo(() => cardSource(plugins, observer), [plugins, observer]);
   const { card, refresh } = usePluginCard(source, game.name);
   const [busy, setBusy] = useState(false);
-  const pluginName = plugins.find((p) => p.manifest.id === observer?.split("/")[0])?.manifest.name ?? "";
+  const owner = plugins.find((p) => p.manifest.id === observer?.split("/")[0]);
+  const pluginName = owner?.manifest.name ?? "";
+  const bundled = owner?.source === PluginSourceKind.Bundled;
   const button = card?.button;
   const run = async (step: PluginStageButton) => {
     if (!source) return;
@@ -102,7 +104,7 @@ export function PluginCardStage({
     try {
       await press(source, step, game.name);
     } catch (err) {
-      if (!isUserCancelled(err)) onNotice(problemWords(err), ToastTone.Error);
+      if (!isUserCancelled(err)) onNotice(problemWords(err), ToastTone.Error, errorCode(err));
     } finally {
       setBusy(false);
       await refresh();
@@ -122,7 +124,7 @@ export function PluginCardStage({
             className="aspect-video w-full rounded-lg border border-line object-cover"
           />
         ) : null}
-        <h2 className="empty-state-title max-w-full" title={game.title}>
+        <h2 data-analytics-mask className="empty-state-title max-w-full" title={game.title}>
           {game.title}
         </h2>
         {/* One line tall even before the first answer, so the line arriving moves nothing. */}
@@ -131,7 +133,8 @@ export function PluginCardStage({
         </p>
         {card?.hint ? <p className="empty-state-subtitle max-w-full">{card.hint}</p> : null}
         {button ? (
-          <div className="empty-state-slot">
+          // A plugin that is not bundled words its own button.
+          <div className="empty-state-slot" {...(bundled ? {} : { "data-analytics-mask": "" })}>
             <Button data-plugin-card-button="" variant="default" disabled={busy} onClick={() => void run(button)}>
               {button.label}
             </Button>

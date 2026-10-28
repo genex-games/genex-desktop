@@ -7,18 +7,22 @@
  * Offline, the bar says so, what cannot load says it comes back by itself, and it does once the Mac
  * is online again.
  */
+import { opensPage } from "./native-model.ts";
 import type { JSX, KeyboardEvent, RefObject, UIEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AssetScope } from "../../shared/asset-library.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { PlayCategory, type PlayGame, PlayShelf } from "../../shared/play.ts";
-import { SIDEBAR_TOGGLE } from "../shell/use-shell-chrome.ts";
+import { SIDEBAR_TOGGLE, SidebarToggle } from "../shell/use-shell-chrome.ts";
 import { feedOf } from "../state/play.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { playSearchedProperties } from "../analytics/plugins-play.ts";
 import { usePlay, useShallow } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { Icon } from "../ui/icons.tsx";
 import { withViewTransition } from "../ui/view-transition.ts";
-import { PLAY_WORDS } from "../words.ts";
+import { type FeedThings, PLAY_WORDS } from "../words.ts";
 import { useBackOnline, useOnline } from "../ui/use-online.ts";
 import { gridColumns, setClipsCovered, topRowClip } from "./clip-playback.ts";
 import { ClipsToggle } from "./CoverClip.tsx";
@@ -83,12 +87,12 @@ function CategoryTabs({
 
 function SearchField({
   query,
-  noun,
+  things,
   onQuery,
 }: {
   query: string;
   /** What the shelf holds, as the placeholder names it. */
-  noun: string;
+  things: FeedThings;
   onQuery: (query: string) => void;
 }): JSX.Element {
   return (
@@ -98,7 +102,7 @@ function SearchField({
       <input
         type="search"
         value={query}
-        placeholder={WORDS.search(noun)}
+        placeholder={WORDS.search(things)}
         spellCheck={false}
         data-play-search
         onChange={(event) => onQuery(event.target.value)}
@@ -120,6 +124,10 @@ export interface SearchState {
   status: FeedStatus;
 }
 
+/** A Play search's answer, for usage analytics: never its words. */
+const reportSearch = (shelf: PlayShelf, query: string, games: number | null): void =>
+  track(AnalyticsEvent.PlaySearched, playSearchedProperties(shelf, query, games));
+
 /** What on `shelf` answers `query`, read a moment after typing stops, and a way to read it again. */
 function useSearch(query: string, shelf: PlayShelf): { search: SearchState | null; retry: () => void } {
   const [state, setState] = useState<SearchState | null>(null);
@@ -137,8 +145,16 @@ function useSearch(query: string, shelf: PlayShelf): { search: SearchState | nul
       studio()
         .api.playSearch(trimmed, shelf)
         .then(
-          (games) => live && setState({ query: trimmed, games, status: FeedStatus.Ready }),
-          () => live && setState({ query: trimmed, games: [], status: FeedStatus.Failed }),
+          (games) => {
+            if (!live) return;
+            reportSearch(shelf, trimmed, games.length);
+            setState({ query: trimmed, games, status: FeedStatus.Ready });
+          },
+          () => {
+            if (!live) return;
+            reportSearch(shelf, trimmed, null);
+            setState({ query: trimmed, games: [], status: FeedStatus.Failed });
+          },
         );
     }, SEARCH_DEBOUNCE_MS);
     return () => {
@@ -209,10 +225,11 @@ export function Grid({
   /** The measured first row plays its clips by itself (the dashboard's Games feed only). */
   autoplayTopRow?: boolean;
 }): JSX.Element {
-  const play = useCallback(
-    (game: PlayGame) => void studio().play.open({ slug: game.slug, title: game.title, coverUrl: game.coverUrl }),
-    [],
-  );
+  const play = useCallback((game: PlayGame) => {
+    const entry = { slug: game.slug, title: game.title, coverUrl: game.coverUrl };
+    // A native game with no web build opens its own page.
+    void studio().play.open(opensPage(game) ? { ...entry, page: true } : entry);
+  }, []);
   const grid = useRef<HTMLDivElement>(null);
   const columns = useGridColumns(grid, autoplayTopRow);
   const topRow = (game: PlayGame, index: number): boolean =>
@@ -255,20 +272,19 @@ function FeedBody({
 }): JSX.Element {
   const feed = usePlay((s) => feedOf(s, category));
   const play = studio().play;
-  const noun = WORDS.nouns[shelf];
   const more = useCallback(() => void play.loadFeed(category, { more: true }), [play, category]);
   const reload = () => void play.loadFeed(category, { force: true });
   useOnlineCounts(category, feed.status === FeedStatus.Ready);
   if (feed.status === FeedStatus.Failed && !online)
-    return <OfflineNotice text={WORDS.offline.shelf(WORDS.shelves[shelf])} onRetry={reload} />;
-  if (feed.status === FeedStatus.Failed) return <Notice text={WORDS.failed(noun)} onRetry={reload} />;
+    return <OfflineNotice text={WORDS.offline.shelf(shelf)} onRetry={reload} />;
+  if (feed.status === FeedStatus.Failed) return <Notice text={WORDS.failed(shelf)} onRetry={reload} />;
   if (feed.status === FeedStatus.Loading && feed.games.length === 0)
     return (
-      <div role="status" aria-busy="true" aria-label={WORDS.loading(noun)}>
+      <div role="status" aria-busy="true" aria-label={WORDS.loading(shelf)}>
         <Grid games={[]} placeholders={PLACEHOLDERS} onRemix={onRemix} />
       </div>
     );
-  if (feed.games.length === 0) return <Notice text={WORDS.empty(noun)} />;
+  if (feed.games.length === 0) return <Notice text={WORDS.empty(shelf)} />;
   return (
     <>
       <Grid
@@ -277,7 +293,7 @@ function FeedBody({
         onRemix={onRemix}
         autoplayTopRow={shelf === PlayShelf.Games}
       />
-      {feed.moreFailed && <MoreFailed noun={noun} online={online} onRetry={more} />}
+      {feed.moreFailed && <MoreFailed things={shelf} online={online} onRetry={more} />}
       {/* Made afresh for each page: a page too short to move the marker out of the look-ahead still reads the next. */}
       {feed.nextCursor && <MoreMarker key={feed.nextCursor} onNear={more} scroller={scroller} />}
       {feed.loadingMore && (
@@ -292,22 +308,22 @@ function FeedBody({
 /** A search's games. */
 function SearchBody({
   search,
-  noun,
+  things,
   online,
   onRetry,
   onRemix,
 }: {
   search: SearchState;
-  noun: string;
+  things: FeedThings;
   online: boolean;
   onRetry: () => void;
   onRemix: (game: PlayGame) => void;
 }): JSX.Element {
   if (search.status === FeedStatus.Failed && !online)
     return <OfflineNotice text={WORDS.offline.search} onRetry={onRetry} />;
-  if (search.status === FeedStatus.Failed) return <Notice text={WORDS.failed(noun)} onRetry={onRetry} />;
+  if (search.status === FeedStatus.Failed) return <Notice text={WORDS.failed(things)} onRetry={onRetry} />;
   if (search.status === FeedStatus.Ready && search.games.length === 0)
-    return <Notice text={WORDS.noMatches(search.query, noun)} />;
+    return <Notice text={WORDS.noMatches(search.query, things)} />;
   const waiting = search.status === FeedStatus.Loading && search.games.length === 0;
   return (
     <div aria-busy={search.status === FeedStatus.Loading}>
@@ -340,9 +356,8 @@ function ShelfBody({
     return (
       <AssetsBody query={query} search={search} online={online} onRetrySearch={onRetrySearch} scroller={scroller} />
     );
-  const noun = WORDS.nouns[shelf];
   if (search)
-    return <SearchBody search={search} noun={noun} online={online} onRetry={onRetrySearch} onRemix={onRemix} />;
+    return <SearchBody search={search} things={shelf} online={online} onRetry={onRetrySearch} onRemix={onRemix} />;
   return <FeedBody category={category} shelf={shelf} online={online} onRemix={onRemix} scroller={scroller} />;
 }
 
@@ -427,9 +442,10 @@ export function PlayRoom({
   const tabs = shelfTabs(categories, shelf);
   const picked = chosen[shelf];
   const shown = picked && tabs.includes(picked) ? picked : (tabs[0] ?? PlayCategory.Featured);
-  const noun = WORDS.nouns[shelf];
   useEffect(() => {
     void studio().play.loadShelves();
+    // The cards of native games show what is installed and installing on this computer.
+    void studio().play.loadNative();
   }, []);
   useEffect(() => {
     void studio().play.loadFeed(shown);
@@ -459,6 +475,7 @@ export function PlayRoom({
             <button
               type="button"
               className="no-drag sidebar-toggle"
+              data-sidebar-toggle={SidebarToggle.Show}
               aria-label={SIDEBAR_TOGGLE.Show}
               aria-controls="studio-sidebar"
               aria-expanded="false"
@@ -471,7 +488,7 @@ export function PlayRoom({
           {tabs.length > 1 && <CategoryTabs categories={tabs} active={search ? null : shown} onSelect={choose} />}
           <ClipsToggle />
           {!online && <OfflineChip />}
-          <SearchField query={query} noun={noun} onQuery={setQuery} />
+          <SearchField query={query} things={shelf} onQuery={setQuery} />
         </header>
         <div className="play-content">
           <ShelfBody

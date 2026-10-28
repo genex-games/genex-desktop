@@ -1,4 +1,4 @@
-import { consentAudience, priorConsentDecline } from "./consent-audience.ts";
+import { allowedInChat, consentAudience, priorConsentDecline } from "./consent-audience.ts";
 import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plugins.ts";
 /**
  * Plugin and connector tools as agents call them: the consent a confirmed tool waits for, the
@@ -6,6 +6,7 @@ import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plu
  * `StudioCore`; its state stays in the core.
  */
 import { PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
+import { shownCardTool } from "../../substrate/plugins/manifest-words.ts";
 import { PluginCallCutOff, PluginCallNotSent } from "../../substrate/plugins/process.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { finishedPayload, roleOf, startedPayload } from "../plugin-activity.ts";
@@ -63,6 +64,7 @@ import { shortId } from "../../substrate/ids.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -111,15 +113,19 @@ export const PLUGIN_MCP_PROJECT = /^[a-zA-Z0-9_-]{1,100}$/;
 /** The folder a plugin server with no project of its own works in, beside the per-project ones. */
 export const PLUGIN_MCP_SHARED = "_shared";
 
-/** Why a plugin's MCP server cannot start, as the connector panel and the agent read it. */
+/**
+ * The consent cards' questions and why a plugin's MCP server cannot start (the connector panel shows
+ * it), in the person's language; the agent's answers (a refused or cut-off call) stay English.
+ */
 const MESSAGE = {
-  exportConfirmation: "Review the files that will be uploaded. Approve only if this staged copy is ready to share.",
+  exportConfirmation: () =>
+    t("Review the files that will be uploaded. Approve only if this staged copy is ready to share."),
   connectorConversation: "Connector calls require a game conversation for consent",
-  connectorConfirmation: (name: string) => `Let the agent use ${name}?`,
+  connectorConfirmation: (name: string) => t("Let the agent use {name}?", { name }),
   localConnectorConfirmation: (plugin: string, tool: string) =>
-    `${plugin} was loaded from a folder on this Mac and runs with your access. Let it run ${tool}?`,
-  unlockFirst: "Unlock this plugin's account first.",
-  setSettingFirst: (key: string) => `Set "${key}" in this plugin's settings first.`,
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. Let it run {tool}?", { plugin, tool }),
+  unlockFirst: () => t("Unlock this plugin's account first."),
+  setSettingFirst: (key: string) => t('Set "{setting}" in this plugin\'s settings first.', { setting: key }),
   bundledOnly: "Only the bundled plugin may start a program Studio ships",
   inPlan:
     "The chat is in Plan mode, so this action did not run: plugin and connector actions wait until the plan is approved. Put it in your plan instead.",
@@ -334,7 +340,7 @@ export class PluginToolService {
    */
   async requestConsent(
     pluginId: string,
-    tool: PluginTool & Pick<PluginManifestTool, "confirmationInput">,
+    tool: PluginTool & Pick<PluginManifestTool, "confirmationInput" | "onAccount">,
     args: Record<string, unknown>,
     binding: PluginBinding,
     signal?: AbortSignal,
@@ -342,6 +348,8 @@ export class PluginToolService {
     options: {
       offerAlways?: boolean;
       displayName?: string;
+      /** One line the card shows under its question (the studio's own cards). */
+      note?: string;
       modeAnswers?: PluginConsentRequest["modeAnswers"];
       /**
        * Asked for the person's own act (a press, or a card they just approved): an earlier no to the
@@ -354,21 +362,27 @@ export class PluginToolService {
     const attribution = this.#x.pluginCallAttribution.get(binding);
     const threadId = await consentAudience(this.#core, binding, attribution?.runId);
     const name = `${pluginId}__${tool.name}`;
-    const declined = options.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
-    if (declined) return declined;
+    const card = await this.#shownCard(pluginId, tool);
     const base = {
       consentId,
       pluginId,
-      pluginName: options.displayName ?? this.#pluginName(pluginId),
+      pluginName: options.displayName ?? this.#pluginName(pluginId, card.name),
       tool: name,
       args: consentArgsDigest(args),
       project: binding.project,
       ...consentThreads(binding.threadId, threadId, attribution),
-      prompt: tool.confirmation ?? "",
-      ...(exportReview ? { exportReview } : {}),
-      ...(options.offerAlways ? { alwaysOffered: true } : {}),
+      prompt: card.tool.confirmation ?? "",
+      ...cardOffers(exportReview, options, tool),
     };
-    const field = cardField(tool, args);
+    const field = cardField(card.tool, args);
+    const ownAct = options.afresh === true || exportReview !== undefined;
+    const modeAnswers = this.#modeAnswers(pluginId, threadId, options, ownAct || tool.onAccount === true);
+    const afresh = options.afresh === true;
+    const settled = await this.#settledBefore({ attribution, threadId, name, args, afresh, modeAnswers, tool });
+    if (settled) {
+      if (settled.by !== "user") await this.#recordAnswer({ ...base, ...field }, settled, 0, threadId);
+      return settled;
+    }
     const asked: PluginConsentEvent = {
       ...base,
       ...field,
@@ -385,7 +399,7 @@ export class PluginToolService {
       ...(signal ? { signal } : {}),
       // A build's lead is not the chat's turn: another turn ending leaves its question waiting.
       ...(attribution?.lead ? { outlivesTurn: true } : {}),
-      ...(options.modeAnswers ? { modeAnswers: options.modeAnswers } : {}),
+      ...(modeAnswers ? { modeAnswers } : {}),
     });
     try {
       await this.#core.append([customEventData(CustomEvent.PluginConsent, { ...asked })], threadId);
@@ -404,6 +418,51 @@ export class PluginToolService {
     const { edited, shown } = cardEdit(field, result, sent);
     await this.#recordAnswer({ ...base, ...shown }, result, performance.now() - waitStarted, threadId);
     return edited ? { ...result, input: edited } : result;
+  }
+
+  /**
+   * The chat modes that answer a card with no question: a connector's own, else, as Bypass asks
+   * nothing, Bypass for every card but one that stays the person's own (`personal`: their press,
+   * an export's review, a tool acting on their account elsewhere) or a plugin's from a folder.
+   */
+  #modeAnswers(
+    pluginId: string,
+    threadId: string,
+    options: { modeAnswers?: PluginConsentRequest["modeAnswers"] },
+    personal: boolean,
+  ): PluginConsentRequest["modeAnswers"] | null {
+    if (options.modeAnswers) return options.modeAnswers;
+    if (personal || this.#fromFolder(pluginId)) return null;
+    return { threadId, modes: [PermissionMode.Bypass] };
+  }
+
+  /**
+   * A card's answer given before it is shown, or null to ask: the person's earlier no to the same
+   * call (`user`, not logged again), their Allow in this chat for an `onAccount` tool (`chat`), or
+   * the chat's Bypass (`mode`). Bypass asks nothing: an agent's card in a Bypass chat goes on, and
+   * one asked in another mode is answered by the person's switch (`modeAnswers`).
+   */
+  async #settledBefore(asked: {
+    attribution: { runId?: string; lead?: boolean } | undefined;
+    threadId: string;
+    name: string;
+    args: Record<string, unknown>;
+    afresh: boolean;
+    modeAnswers: PluginConsentRequest["modeAnswers"] | null;
+    tool: Pick<PluginManifestTool, "onAccount">;
+  }): Promise<{ approved: boolean; by: PluginConsentBy } | null> {
+    const { attribution, threadId, name, args } = asked;
+    const declined = asked.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
+    if (declined) return declined;
+    if (asked.tool.onAccount && (await allowedInChat(this.#core, threadId, name)))
+      return { approved: true, by: "chat" };
+    return (await this.#bypassed(asked.modeAnswers, threadId)) ? { approved: true, by: "mode" } : null;
+  }
+
+  /** Whether chat `threadId` is in Bypass now and Bypass answers this card. */
+  async #bypassed(modeAnswers: PluginConsentRequest["modeAnswers"] | null, threadId: string): Promise<boolean> {
+    if (!modeAnswers?.modes.includes(PermissionMode.Bypass)) return false;
+    return (await this.#x.chatMode(threadId)) === PermissionMode.Bypass;
   }
 
   /** A card's answer, logged beside its question and announced to the chat. */
@@ -460,10 +519,24 @@ export class PluginToolService {
     return consentAudience(this.#core, binding, runId);
   }
 
-  /** The name a consent card shows: the connector's or plugin's own, else its id. */
-  #pluginName(pluginId: string): string {
+  /**
+   * A card in the app's language: its plugin's name, and the tool's confirmation and field label
+   * where they are the manifest's own words (`shownCardTool`).
+   */
+  async #shownCard<T extends PluginTool & Pick<PluginManifestTool, "confirmationInput">>(
+    pluginId: string,
+    tool: T,
+  ): Promise<{ name?: string; tool: T }> {
+    const shown = await this.#core.plugins.displayManifest(pluginId);
+    const declared = this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest;
+    return { name: shown?.name, tool: shownCardTool(tool, declared, shown) };
+  }
+
+  /** The name a consent card shows: the connector's or plugin's own (`shown`, in the app's language), else its id. */
+  #pluginName(pluginId: string, shown?: string): string {
     return (
       this.#core.mcp.nameOf(pluginId) ??
+      shown ??
       this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest.name ??
       studioConsentName(pluginId) ??
       pluginId
@@ -478,8 +551,8 @@ export class PluginToolService {
   ): Promise<void> {
     const tool: PluginTool = {
       name: "export_review",
-      description: MESSAGE.exportConfirmation,
-      confirmation: MESSAGE.exportConfirmation,
+      description: MESSAGE.exportConfirmation(),
+      confirmation: MESSAGE.exportConfirmation(),
       parameters: { type: "object", properties: {} },
     };
     const review = { included: [...result.included].sort(), excluded: [...result.excluded].sort() };
@@ -967,6 +1040,15 @@ export class PluginToolService {
     return modes;
   }
 
+  /**
+   * Whether `id` is a plugin loaded from a folder on this Mac, or one of its connectors: its code runs
+   * with the person's access, so its cards stay theirs to answer, Bypass included.
+   */
+  #fromFolder(id: string): boolean {
+    const local = this.#core.plugins.list().some((p) => p.manifest.id === id && p.source === PluginSourceKind.Local);
+    return local || this.#localOwner(id);
+  }
+
   /** Whether connector `id` is a server of a plugin loaded from a folder on this Mac. */
   #localOwner(id: string): boolean {
     const owner = this.#core.mcp.ownerOf(id);
@@ -1040,7 +1122,7 @@ export class PluginToolService {
     unlocked: boolean,
   ): Promise<McpPluginServer> {
     let unavailable: string | undefined;
-    if (server.requires?.credential && !unlocked) unavailable = MESSAGE.unlockFirst;
+    if (server.requires?.credential && !unlocked) unavailable = MESSAGE.unlockFirst();
     for (const key of server.requires?.settings ?? []) {
       const value = settings[key];
       if (value === undefined || value === "") unavailable ??= MESSAGE.setSettingFirst(key);
@@ -1050,7 +1132,7 @@ export class PluginToolService {
     // The manifest validator reserves `host-cli` for the id `genex`; an id is not a provenance, so
     // the code that actually starts it asks where the package came from as well.
     if (server.command !== "node" && source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.bundledOnly);
-    const args = await pluginMcpArgs(server, launch.packageDir);
+    const args = await pluginMcpArgs(server, launch.packageDir, launch.seed);
     return {
       id: server.id,
       name: `${pluginName} · ${server.id}`,
@@ -1313,6 +1395,20 @@ export function consentArgsDigest(args: Record<string, unknown>): Record<string,
   return digest;
 }
 
+/** What a card offers beyond its question: an export's review, a lasting yes, and its line under the question. */
+function cardOffers(
+  exportReview: PluginConsentEvent["exportReview"],
+  options: { offerAlways?: boolean; note?: string },
+  tool: Pick<PluginManifestTool, "onAccount">,
+): Pick<PluginConsentEvent, "exportReview" | "alwaysOffered" | "chatOffered" | "note"> {
+  return {
+    ...(exportReview ? { exportReview } : {}),
+    ...(options.offerAlways ? { alwaysOffered: true } : {}),
+    ...(tool.onAccount ? { chatOffered: true } : {}),
+    ...(options.note ? { note: options.note } : {}),
+  };
+}
+
 /** A card's field as its event carries it: none, or its label and the value it holds. */
 type CardField = Pick<PluginConsentEvent, "input">;
 
@@ -1413,6 +1509,7 @@ export const CONSENT_DECLINED_MESSAGES: Record<PluginConsentBy, string> = {
   restart: "The studio restarted before the user answered. Ask again before trying this action.",
   // A mode answers only with a yes; listed so every ending has its words.
   mode: "The chat's mode answered this request.",
+  chat: "The user's Allow in this chat answered this request.",
 };
 
 export const requireFromHere = createRequire(import.meta.url);
@@ -1421,27 +1518,37 @@ export const requireFromHere = createRequire(import.meta.url);
  * How a plugin MCP server starts: a `node` server runs the package's own script (resolved through
  * the containment check an install uses), `host-cli` runs Studio's Genex CLI behind its preload.
  */
-async function pluginMcpArgs(server: PluginMcpServer, packageDir: string): Promise<string[]> {
+async function pluginMcpArgs(server: PluginMcpServer, packageDir: string, seed?: string): Promise<string[]> {
   if (server.command === "node") {
     const [script = "", ...rest] = server.args;
     return [await containedReal(packageDir, script), ...rest];
   }
   // A file URL: on Windows Node reads a bare `C:\…` after --import as a URL with the scheme `c:`.
   const preload = pathToFileURL(await containedReal(packageDir, "preload.mjs")).href;
-  return ["--import", preload, genexCliPath(packageDir), ...server.args];
+  return ["--import", preload, genexCliPath(packageDir, seed), ...server.args];
 }
 
 /**
- * The Genex CLI, resolved the way the asset adapter resolves it: the plugin's own copy when the
- * package ships one, Studio's otherwise, and rewritten out of the asar either way — a packaged
- * app cannot spawn a file that only exists inside the archive.
+ * The Genex CLI, resolved the way the asset adapter resolves it: its bundled seed's in the app
+ * (`seed`: a first launch no longer copies it, and the app's pin outranks an older profile's
+ * copy), then the plugin's own copy, then Studio's, and rewritten out of the asar either way — a
+ * packaged app cannot spawn a file that only exists inside the archive.
  */
-export function genexCliPath(packageDir: string): string {
-  let pkg: string;
-  try {
-    pkg = createRequire(path.join(packageDir, "package.json")).resolve("@genex-ai/cli-demo/package.json");
-  } catch {
-    pkg = requireFromHere.resolve("@genex-ai/cli-demo/package.json");
-  }
+export function genexCliPath(packageDir: string, seed?: string): string {
+  const pkg =
+    (seed ? resolveCliPackage(createRequire(path.join(seed, "package.json"))) : undefined) ??
+    resolveCliPackage(createRequire(path.join(packageDir, "package.json"))) ??
+    requireFromHere.resolve(CLI_PACKAGE_JSON);
   return path.join(path.dirname(pkg), "dist/index.js").replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+}
+
+const CLI_PACKAGE_JSON = "@genex-ai/cli-demo/package.json";
+
+/** Where `require` finds the CLI's package.json, or undefined when it finds none. */
+function resolveCliPackage(require: NodeJS.Require): string | undefined {
+  try {
+    return require.resolve(CLI_PACKAGE_JSON);
+  } catch {
+    return undefined;
+  }
 }

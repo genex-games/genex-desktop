@@ -21,6 +21,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
 import { HarnessInbox } from "../../src/substrate/harness-inbox.ts";
 import { SandboxLaunchCode, SandboxLaunchError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, killChild } from "../../src/substrate/spawn.ts";
@@ -38,6 +39,7 @@ const SKIP = skipReason();
 const REPO = fileURLToPath(new URL("../..", import.meta.url));
 const BOOTSTRAP = path.join(REPO, "src", "harness-boot", "bootstrap.mjs");
 const FIXTURE_OK = path.join(REPO, "tests", "fixtures", "harness-ok");
+const FAKE_PLAY_GAME = path.join(REPO, "tests", "fixtures", "fake-play-game.mjs");
 const ELECTRON_DIST = path.join(REPO, "node_modules", "electron", "dist");
 const RUN_TIMEOUT_MS = 60_000;
 const TEST_TIMEOUT_MS = 180_000;
@@ -136,6 +138,42 @@ after(async () => {
 
 const inside = (command: string, extra: Partial<Parameters<ProcessSandbox["run"]>[0]> = {}) =>
   sandbox.run({ command, cwd: workspace, timeoutMs: RUN_TIMEOUT_MS, ...extra });
+
+describe("Windows sandbox: a frozen folder in a write root", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
+  it("reads the files of a write-denied folder in a root srt-win grants for the first time", async () => {
+    // The harness workspace's skills, prompts and judge folders are write-denied by Genex, and
+    // srt-win grants the workspace above them: the harness's first boot could not read the
+    // skills already there (EPERM on skills/director.md on every release canary machine).
+    const root = realpathSync.native(await tmpDir("genex-frozen-in-root-"));
+    const workspaceRoot = path.join(root, "workspaces");
+    const frozen = path.join(workspaceRoot, "harness", "skills");
+    await mkdir(frozen, { recursive: true });
+    await writeFile(path.join(frozen, "director.md"), "playbook");
+    const box = await ProcessSandbox.create({
+      writableRoots: [workspaceRoot],
+      scratchDir: path.join(root, "scratch"),
+      secretPaths: [],
+      denyWrite: [frozen],
+    });
+    try {
+      const run = (command: string) =>
+        box.run({ command, cwd: path.join(workspaceRoot, "harness"), timeoutMs: RUN_TIMEOUT_MS });
+      const read = await run("cat skills/director.md");
+      const acls = () =>
+        [workspaceRoot, path.dirname(frozen), frozen, path.join(frozen, "director.md")]
+          .map((p) => execFileSync("icacls", [p], { encoding: "utf8" }))
+          .join("\n");
+      assert.equal(read.stdout, "playbook", `${read.stderr}\n${read.stderr ? acls() : ""}`);
+      const written = await run("printf x > skills/director.md");
+      assert.notEqual(written.code, 0, "the frozen folder stays write-denied");
+      const beside = await run("printf ok > beside.txt && cat beside.txt");
+      assert.equal(beside.stdout, "ok", beside.stderr);
+    } finally {
+      await box.dispose();
+      await removeTree(root);
+    }
+  });
+});
 
 describe("Windows sandbox: identity and files", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
   it("runs Git Bash commands as the sandbox user", async () => {
@@ -264,6 +302,32 @@ describe("Windows sandbox: stdio", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () 
     assert.equal(result.stdout, "from-the-host\n", result.stderr);
   });
 
+  it("hands a long-lived process its input, as OpenCode's brief must reach `opencode run`", async () => {
+    const { child } = await sandbox.spawnLongLived({ command: "cat", cwd: workspace, stdin: "the brief\n" });
+    let output = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    const code = await new Promise((resolve) => child.once("close", resolve));
+    assert.equal(code, 0);
+    assert.equal(output, "the brief\n");
+  });
+
+  it("drives a Play Protocol game it started, its requests reaching the game through the input relay", async () => {
+    const launched = await launchGameBridge({
+      sandbox,
+      command: `${q(process.execPath)} ${q(FAKE_PLAY_GAME)}`,
+      cwd: workspace,
+      stopGraceMs: 2_000,
+    });
+    try {
+      assert.equal(launched.target.hello?.protocol, 3);
+    } finally {
+      await launched.stop();
+    }
+  });
+
   it("boots the harness bootstrap and hears it over the loopback inbox (stdin does not reach it)", async () => {
     const harness = path.join(workspace, "inbox-harness");
     await cp(FIXTURE_OK, harness, { recursive: true });
@@ -332,10 +396,20 @@ describe("Windows sandbox: environment", { skip: SKIP, timeout: TEST_TIMEOUT_MS 
     assert.ok(status.sid, "the sandbox user has a SID");
     const acl = { sandboxUserSid: status.sid, holderPid: holder.pid, srtWin };
     try {
-      srt.grantWindowsAcl({ ...acl, read: [theirs[2]], write: [theirs[1]] });
-      srt.stampWindowsAcl({ ...acl, denyRead: [theirs[0]], denyWrite: [] });
+      // As a host on sandbox-runtime 0.0.81 starts and ends a session: srt-win refuses the
+      // ordinary token's grant once a write grant is kept. A write root of theirs would be kept.
+      const { grantWindowsAclPersistent } = await import(
+        "@anthropic-ai/sandbox-runtime/dist/sandbox/windows-sandbox-utils.js"
+      );
+      await grantWindowsAclPersistent({
+        ...acl,
+        read: [theirs[1], theirs[2]],
+        write: [],
+        denyRead: [theirs[0]],
+        denyWrite: [],
+      });
+      srt.revokeWindowsAclChecked(acl);
       srt.restoreWindowsAcl(acl);
-      srt.revokeWindowsAcl(acl);
     } finally {
       holder.kill();
       for (const dir of theirs) await removeTree(dir);
@@ -467,10 +541,17 @@ describe("Windows sandbox: network", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, (
     assert.equal((await inside(probe)).stdout.trim(), "403", "closed again after the run");
   });
 
-  it("reaches an allowed registry over HTTPS with curl and with Node's fetch", async () => {
+  it("reaches an allowed Git host over HTTPS with git, on the OpenSSL backend sandbox-runtime sets", async () => {
+    const policy = { allowedDomains: ["github.com"] };
+    const git = await inside("git ls-remote https://github.com/git/git.git HEAD", { policy });
+    assert.equal(git.code, 0, git.stderr);
+    assert.match(git.stdout, /^[0-9a-f]{40}\tHEAD/);
+  });
+
+  it("reaches an allowed registry over HTTPS with Node's fetch", async () => {
+    // Not with curl: Git for Windows' curl uses Schannel alone, which the write-restricted token
+    // every command runs under (sandbox-runtime 0.0.81) cannot use.
     const policy = { allowedDomains: ["registry.npmjs.org"] };
-    const viaCurl = await inside(curl("https://registry.npmjs.org/left-pad"), { policy });
-    assert.equal(viaCurl.stdout.trim(), "200", viaCurl.stderr);
     const viaNode = await inside(
       `node -e 'fetch("https://registry.npmjs.org/left-pad").then(r=>console.log(r.status),e=>console.log(e.cause?.code??e.message))'`,
       { policy },
@@ -535,6 +616,24 @@ describe("Windows sandbox: kill", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () =
     const atKill = await beats(file);
     await sleep(KILL_SETTLE_MS);
     assert.equal(await beats(file), atKill, "nothing keeps beating after the kill");
+  });
+
+  it("a long-lived process that exits by itself leaves no background child running", async () => {
+    const file = path.join(workspace, "orphan.hb");
+    // The heartbeat ends itself after a minute, so a failure here leaves nothing running for long.
+    const orphan = `node -e 'setInterval(()=>require("fs").appendFileSync("orphan.hb", "b\\n"),200);setTimeout(()=>process.exit(),60000)'`;
+    const { child } = await sandbox.spawnLongLived({ command: `${orphan} & sleep 3; exit 0`, cwd: workspace });
+    const exited = new Promise((resolve) => child.once("exit", resolve));
+    try {
+      assert.ok((await beatsReach(file, 3)) >= 3, "the background heartbeat started");
+      await exited;
+    } finally {
+      killChild(child);
+    }
+    await sleep(KILL_SETTLE_MS);
+    const atExit = await beats(file);
+    await sleep(KILL_SETTLE_MS);
+    assert.equal(await beats(file), atExit, "the shell's background child ended with it");
   });
 
   it("killing a long-lived process ends its children", async () => {

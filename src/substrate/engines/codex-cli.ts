@@ -109,8 +109,8 @@ export async function codexAuthStatus(
 
 /**
  * The account's plan limits from `codex app-server`: initialize, one `account/rateLimits/read`,
- * then close. Nothing else is sent, so no thread starts and nothing is spent. Null when the
- * CLI cannot answer in time; the caller keeps whatever it read before.
+ * then close. Nothing else is sent, so no thread starts and nothing is spent. Throws when the
+ * CLI cannot answer in time, so a failed read is never taken for a plan without limits.
  */
 export async function readCodexRateLimits(
   binary: string,
@@ -122,8 +122,6 @@ export async function readCodexRateLimits(
   try {
     await control.initialize();
     return await control.request("account/rateLimits/read", { excludeResetCreditDetails: true });
-  } catch {
-    return null;
   } finally {
     await control.close();
   }

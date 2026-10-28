@@ -6,6 +6,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import { GENEX_PLUGIN_ID, GenexAction, type GenexStatus } from "../../../../shared/genex.ts";
+import { intlLocale } from "../../../../shared/i18n.ts";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
 import { CreditsShard } from "../../../play/CreditsShard.tsx";
 import { GenexMark } from "../../../ui/GenexLogo.tsx";
@@ -14,7 +15,7 @@ import { CreditsKind, creditsOf, isGenexStatus, spentOf } from "./genex-view.ts"
 
 const WORDS = GENEX_WORDS.usage;
 /** Credits read with the reader's own digit grouping. */
-const NUMBER = new Intl.NumberFormat();
+const NUMBER = new Intl.NumberFormat(intlLocale());
 
 /** Genex's status for the open game, read each time the panel opens; null while off, signed out or unread. */
 function useGameStatus(project: string | null | undefined, open: boolean): GenexStatus | null {

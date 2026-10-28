@@ -337,7 +337,8 @@ describe("a game the app made before the chat's first ask", () => {
 
   it("is never asked on a resumed session or a run's own turn, and asked again on a later message while the folder has no kind", async () => {
     const turns: Record<string, [Parameters<typeof chatTurn>[0], Record<string, unknown>, string[]]> = {
-      "a resumed session": [{}, { ...ON_ITS_GAME, resume: "session-1" }, [AUTO_LOOP]],
+      // Flipped: a resumed session that still has no kind keeps the card its first brief named.
+      "a resumed session": [{}, { ...ON_ITS_GAME, resume: "session-1" }, [AUTO_LOOP, "ask_user"]],
       "a run's own turn": [{}, { ...ON_ITS_GAME, runId: "run-1" }, []],
     };
     for (const [label, [options, turn, expected]] of Object.entries(turns)) {

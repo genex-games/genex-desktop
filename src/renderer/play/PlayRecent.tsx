@@ -45,7 +45,8 @@ export function PlayRecent(): JSX.Element | null {
   const recent = usePlay((s) => s.recent);
   if (recent.length === 0) return null;
   return (
-    <div className="sidebar-games" data-play-recent-list>
+    // Other people's games, by their titles.
+    <div className="sidebar-games" data-play-recent-list data-analytics-mask>
       {recent.map((entry) => (
         <div key={entry.slug} className="sidebar-game">
           <RecentRow entry={entry} />

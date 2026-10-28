@@ -31,6 +31,8 @@ Every Ollama download goes through the person's own Ollama at its host; Studio n
 nor starts one. A pull that finds nothing answering there fails as `Unavailable` with that host
 named, not as the fetch's bare error, and its row then offers Install Ollama beside Download: the
 platform's page on ollama.com. The person installs and starts Ollama, then downloads again.
+Ollama keeps its models in its own folder; Local Models says to move them in Ollama → Settings →
+Model location.
 
 Settings → Local Models downloads Bonsai weights and the Q8 vision projector directly from pinned
 Prism ML Hugging Face revisions, plus the pinned Prism llama.cpp macOS arm64 release.

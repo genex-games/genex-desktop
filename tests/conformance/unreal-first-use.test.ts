@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { PluginEngineLink, PluginToolbarStatus } from "../../src/plugin-sdk/index.d.ts";
 import { createUnrealBackend, PanelStep } from "../../src/plugins/unreal/backend.ts";
 import type { Launch } from "../../src/plugins/unreal/editor-launch.ts";
@@ -19,6 +20,7 @@ import {
   WAIT_EDITOR_MAX_MS,
   waitForEditor,
 } from "../../src/plugins/unreal/editor-wait.ts";
+import type { EpicInstallDeps } from "../../src/plugins/unreal/epic-install.ts";
 import type { SetupEnv } from "../../src/plugins/unreal/setup.ts";
 import { XcodeState } from "../../src/plugins/unreal/xcode.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -33,26 +35,79 @@ type Installed = Array<[string, string]>;
 const ONLY_58: Installed = [["5.8", "5.8.3"]];
 
 /**
- * A fake Mac with the engines listed, a 5.8 project Lantern and a second one, Harbor; with `game`
- * the calls come from that open Genex game, whose link the host keeps.
+ * A fake Mac (or, with `platform`, a fake Windows PC) with the engines listed in Epic's launcher
+ * list, a 5.8 project Lantern and a second one, Harbor; with `game` the calls come from that open
+ * Genex game, whose link the host keeps.
  */
-async function computer(options: { engines?: Installed; game?: string | null } = {}) {
+async function computer(
+  options: {
+    engines?: Installed;
+    game?: string | null;
+    platform?: "darwin" | "win32";
+    /** What Do it for me installs with; none: the launcher's step opens Epic's download page. */
+    install?: EpicInstallDeps;
+    /** Whether Windows has the runtime Unreal's editor loads, asked each time. */
+    runtime?: () => boolean;
+    /** Whether the host can hand a setup task to the chat, and how it answers one. */
+    assist?: { can: boolean; answer: { started: boolean; reason?: string } };
+  } = {},
+) {
   const root = await realpath(await tmpDir("studio-unreal-first-use-"));
   const home = path.join(root, "home");
   const storage = path.join(root, "storage");
-  const list = [];
-  for (const [version, build] of options.engines ?? ONLY_58) {
+  const platform = options.platform ?? "darwin";
+  const windows = platform === "win32";
+  const programData = path.join(home, "ProgramData");
+  /** Where Epic keeps its launcher's own files on this computer. */
+  const epicData = windows ? path.join(programData, "Epic") : path.join(home, "Library", "Application Support", "Epic");
+  /** An engine's folder with its editor in it, as Epic's launcher installs it. */
+  const engineFolder = async (version: string) => {
     const folder = path.join(root, "Engines", `UE_${version}`);
-    await mkdir(path.join(folder, "Engine", "Binaries", "Mac", "UnrealEditor.app"), { recursive: true });
+    const binaries = path.join(folder, "Engine", "Binaries");
+    if (windows) {
+      await mkdir(path.join(binaries, "Win64"), { recursive: true });
+      await writeFile(path.join(binaries, "Win64", "UnrealEditor.exe"), "MZ");
+    } else await mkdir(path.join(binaries, "Mac", "UnrealEditor.app"), { recursive: true });
+    return folder;
+  };
+  const list = [];
+  for (const [version, build] of options.engines ?? ONLY_58)
     list.push({
-      InstallLocation: folder,
+      InstallLocation: await engineFolder(version),
       AppVersion: `${build}-1+++UE5+Release-${version}-Mac`,
       AppName: `UE_${version}`,
     });
-  }
-  const epic = path.join(home, "Library", "Application Support", "Epic", "UnrealEngineLauncher");
+  const epic = path.join(epicData, "UnrealEngineLauncher");
   await mkdir(epic, { recursive: true });
   await writeFile(path.join(epic, "LauncherInstalled.dat"), JSON.stringify({ InstallationList: list }));
+  /** Unreal installed as Epic's launcher records it since 2025: in an install record of its own, its list left as it was. */
+  const installByRecord = async (version: string, build: string) => {
+    const records = path.join(epicData, "EpicGamesLauncher", "Data", "Manifests");
+    await mkdir(records, { recursive: true });
+    const record = {
+      bIsIncompleteInstall: false,
+      InstallLocation: await engineFolder(version),
+      AppName: `UE_${version}`,
+      AppVersionString: `${build}-1+++UE5+Release-${version}-Windows`,
+    };
+    await writeFile(path.join(records, `UE_${version}.item`), JSON.stringify(record, null, "\t"));
+  };
+  /** Where each system's launcher is looked for: Applications on a Mac, both Program Files on Windows. */
+  const folders = windows
+    ? { applications: path.join(root, "Program Files (x86)"), programFiles: path.join(root, "Program Files") }
+    : { applications: path.join(root, "Applications") };
+  /** Epic's launcher, installed where it installs itself: the 64-bit one in Program Files, or the Mac app. */
+  const launcherExe = path.join(root, "Program Files", "Epic Games", "Launcher", "Portal", "Binaries", "Win64");
+  const addLauncher = async () => {
+    if (!windows) {
+      const app = path.join(folders.applications, "Epic Games Launcher.app");
+      await mkdir(app, { recursive: true });
+      return app;
+    }
+    await mkdir(launcherExe, { recursive: true });
+    await writeFile(path.join(launcherExe, "EpicGamesLauncher.exe"), "MZ");
+    return path.join(launcherExe, "EpicGamesLauncher.exe");
+  };
   const project = async (name: string) => {
     const file = path.join(root, "Projects", name, `${name}.uproject`);
     await mkdir(path.dirname(file), { recursive: true });
@@ -69,8 +124,8 @@ async function computer(options: { engines?: Installed; game?: string | null } =
   };
   const env: SetupEnv = {
     home,
-    platform: "darwin",
-    programData: path.join(home, "ProgramData"),
+    platform,
+    programData,
     editorRunning: async () => live.running,
     editorLog: async () => live.log,
     heldProjects: async () => live.held ?? [],
@@ -95,18 +150,27 @@ async function computer(options: { engines?: Installed; game?: string | null } =
     projects: async () => path.join(home, "Documents", "Unreal Projects"),
     launch: {
       open: async (l) => void launched.push(l),
-      applications: path.join(root, "Applications"),
+      ...folders,
       now: () => clock.now,
     },
+    ...(options.install ? { install: options.install } : {}),
+    ...(options.runtime ? { runtime: async () => options.runtime?.() ?? true } : {}),
   });
   const game: { link: PluginEngineLink | null } = { link: null };
   /** The games whose Loop is going, as the host's `game.engine.runs` names them. */
   const runs: Array<{ game: string; title: string; project: string }> = [];
-  const host = async (method: string, args?: { project: string }) => {
+  /** Each task handed to the chat with `game.engine.assist`. */
+  const assisted: string[] = [];
+  const host = async (method: string, args?: { project: string; task?: string }) => {
     if (method === "storage.root") return storage;
     if (method === "game.engine.runs") return runs;
     if (method === "game.engine.read") return game.link;
     if (method === "game.engine.steps") return true;
+    if (method === "game.engine.canAssist" && options.assist) return options.assist.can;
+    if (method === "game.engine.assist" && options.assist) {
+      assisted.push(args?.task ?? "");
+      return options.assist.answer;
+    }
     if (method !== "game.engine.link") throw new Error(`unexpected host call ${method}`);
     const linked = args?.project ?? "";
     game.link = { kind: "unreal", project: linked, name: path.basename(linked, ".uproject"), linkedAt: "" };
@@ -140,6 +204,9 @@ async function computer(options: { engines?: Installed; game?: string | null } =
     live,
     clock,
     launched,
+    assisted,
+    installByRecord,
+    addLauncher,
     act,
     tool,
     actFor,
@@ -381,6 +448,246 @@ describe("the Unreal setup card on a Mac without Unreal", () => {
     assert.match(String(skipped.doneSays), /web game/);
     await c.tool("show-steps");
     assert.equal((await card()).open, true, "the person changed their mind");
+  });
+});
+
+describe("Unreal on a fresh Windows PC", () => {
+  type Card = { open: boolean; steps: { id: string; done: boolean }[]; doneSays?: string };
+  const card = async (c: Awaited<ReturnType<typeof computer>>) => (await c.act("steps")) as Card;
+
+  it("notices Unreal that Epic's launcher keeps only in its install record: the card closes and tells the agent to go on", async () => {
+    const c = await computer({ engines: [], platform: "win32" });
+    await c.tool("show-steps");
+    assert.equal((await card(c)).open, true);
+    await c.installByRecord("5.8", "5.8.4");
+    const status = (await c.tool("engine-status")) as Record<string, unknown>;
+    assert.deepEqual([status.engine, status.version, status.ready], [EngineReadiness.Ready, "5.8", true]);
+    const done = await card(c);
+    assert.equal(done.open, false);
+    assert.match(String(done.doneSays), /^Unreal 5\.8 is installed on this computer\. Go on with the person's game/);
+    const toolbar = (await c.act("toolbar-status")) as { badge?: string };
+    assert.notEqual(toolbar.badge, "Not installed");
+  });
+
+  it("counts Epic's 64-bit launcher in Program Files as got, and its button opens that launcher", {
+    skip: process.platform !== "win32" && "Windows paths name a PC's own folders",
+  }, async () => {
+    const c = await computer({ engines: [], platform: "win32" });
+    await c.tool("show-steps");
+    const steps = async () => (await card(c)).steps.map((step) => [step.id, step.done]);
+    assert.deepEqual(await steps(), [
+      ["get-launcher", false],
+      ["install-engine", false],
+    ]);
+    const launcher = await c.addLauncher();
+    assert.deepEqual(await steps(), [
+      ["get-launcher", true],
+      ["install-engine", false],
+    ]);
+    assert.deepEqual(await c.act("get-unreal"), { opened: "launcher" });
+    assert.deepEqual(c.launched, [{ command: launcher, args: [], detached: true }]);
+  });
+});
+
+describe("Do it for me on the Unreal setup card", () => {
+  type Button = { name: string; label: string };
+  type Card = {
+    open: boolean;
+    steps: { id: string; done: boolean; you?: true; working?: true; detail: string }[];
+    primary?: Button;
+    secondary?: Button;
+    doneSays?: string;
+    stuckSays?: string;
+  };
+  type Answer = { step: string; started: boolean; message: string; reason?: string };
+  const card = async (c: Awaited<ReturnType<typeof computer>>) => (await c.act("steps")) as Card;
+  const step = (shown: Card, id: string) => shown.steps.find((row) => row.id === id);
+  const EPIC = "CN=Epic Games Inc., O=Epic Games Inc., L=Cary, S=North Carolina, C=US";
+  const MICROSOFT = "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US";
+
+  /** Looks again, a turn of the event loop apart, until `check` holds. */
+  async function settle(check: () => Promise<boolean>) {
+    for (let turn = 0; turn < 500; turn++) {
+      if (await check()) return;
+      await nextTurn();
+    }
+    assert.fail("Do it for me never got there");
+  }
+
+  /**
+   * Windows' side of Do it for me, faked: Epic's download held until `gate` opens (or the Stop),
+   * Authenticode answering Epic's or Microsoft's signature by the file checked (none when
+   * `unsigned`), and each installer's run handed to `onInstall`.
+   */
+  async function fakeInstall(
+    script: { gate?: Promise<void>; unsigned?: boolean; onInstall?: (file: string) => Promise<void> } = {},
+  ) {
+    const ran: string[] = [];
+    const fetchFn = (async (_input: string | URL | Request, init?: RequestInit) => {
+      const stopped = new Promise<never>((_resolve, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }),
+      );
+      await Promise.race([script.gate ?? Promise.resolve(), stopped]);
+      return new Response(Buffer.from("epic installer"), { status: 200 });
+    }) as typeof fetch;
+    const run: EpicInstallDeps["run"] = async (file, _args, options) => {
+      ran.push(path.win32.basename(file));
+      if (!file.endsWith("powershell.exe")) {
+        await script.onInstall?.(file);
+        return { code: 0, stdout: "" };
+      }
+      const subject = options.env?.GENEX_INSTALLER?.endsWith(".msi") ? EPIC : MICROSOFT;
+      const signature = script.unsigned ? { status: "NotSigned", subject: "" } : { status: "Valid", subject };
+      return { code: 0, stdout: JSON.stringify(signature) };
+    };
+    const tempRoot = await tmpDir("unreal-for-me-");
+    const install: EpicInstallDeps = {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      fetch: fetchFn,
+      run,
+      tempRoot,
+    };
+    return { install, ran };
+  }
+
+  it("hands installing Unreal to the game's chat once the launcher is here, opening the launcher first", async () => {
+    const c = await computer({ engines: [], assist: { can: true, answer: { started: true } } });
+    const launcher = await c.addLauncher();
+    await c.tool("show-steps");
+    const shown = await card(c);
+    assert.equal(shown.primary?.name, "install-for-me");
+    assert.equal(step(shown, "install-engine")?.you, undefined, "Genex does it; only signing in is the person's");
+    const answer = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.step, answer.started], ["engine", true]);
+    const [opened] = c.launched;
+    assert.equal(c.launched.length, 1);
+    assert.deepEqual(
+      [opened?.command, opened?.args[0], path.normalize(opened?.args[1] ?? "")],
+      ["/usr/bin/open", "-a", path.normalize(launcher)],
+    );
+    assert.equal(c.assisted.length, 1);
+    const task = c.assisted[0] ?? "";
+    assert.match(task, /^Install Unreal Engine 5\.8 in the Epic Games Launcher/);
+    assert.ok(task.length <= 300 && !task.includes("\n"), "one plain line, as the host takes a task");
+  });
+
+  it("leaves the launcher open with the click path when the chat can't click, and tells the agent why", async () => {
+    const c = await computer({ engines: [], assist: { can: true, answer: { started: false, reason: "declined" } } });
+    await c.addLauncher();
+    const answer = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.started, answer.reason], [false, "declined"]);
+    assert.match(answer.message, /Library, \+ beside Engine Versions, 5\.8, Install/);
+    assert.equal(c.launched.length, 1, "the launcher is open for the person");
+    assert.match(String(await c.tool("install-unreal")), /couldn't hand the install to this chat \(declined\)/);
+  });
+
+  it("offers no Do it for me for Unreal itself where the chat can't click, leaving it the person's", async () => {
+    const c = await computer({
+      engines: [],
+      assist: { can: false, answer: { started: false, reason: "unavailable" } },
+    });
+    await c.addLauncher();
+    await c.tool("show-steps");
+    const shown = await card(c);
+    assert.equal(shown.primary, undefined);
+    assert.equal(step(shown, "install-engine")?.you, true);
+  });
+
+  it("installs Epic's launcher itself on Windows: the card follows the install, and the launcher opens once it is in", async () => {
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    // Windows Installer puts the launcher where it installs itself, on the computer below.
+    const installed: { add?: () => Promise<string> } = {};
+    const { install, ran } = await fakeInstall({ gate, onInstall: async () => void (await installed.add?.()) });
+    const d = await computer({
+      engines: [],
+      platform: "win32",
+      install,
+      assist: { can: true, answer: { started: true } },
+    });
+    installed.add = d.addLauncher;
+    await d.tool("show-steps");
+    const offered = await card(d);
+    assert.equal(offered.primary?.name, "install-for-me");
+    assert.match(step(offered, "get-launcher")?.detail ?? "", /downloads it from Epic/);
+    const answer = (await d.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.step, answer.started], ["launcher", true]);
+    const working = await card(d);
+    assert.deepEqual(
+      [step(working, "get-launcher")?.working, working.secondary?.name, working.primary],
+      [true, "stop-install", undefined],
+    );
+    assert.match(step(working, "get-launcher")?.detail ?? "", /Downloading the Epic Games Launcher from Epic/);
+    open();
+    // The install is over once Stop goes: the launcher's row may tick sooner, as soon as it is found.
+    await settle(async () => (await card(d)).secondary?.name !== "stop-install");
+    assert.deepEqual(
+      ran,
+      ["powershell.exe", "msiexec.exe"],
+      "Epic's signature checked before Windows Installer ran it",
+    );
+    assert.equal(d.launched.length, 1, "the launcher (or, where it can't be found, Epic's page) opens for the sign-in");
+    assert.equal((await card(d)).stuckSays, undefined);
+  });
+
+  it("stops the download at the person's Stop without telling the agent, and tells it once an install fails", async () => {
+    const held = await fakeInstall({ gate: new Promise<void>(() => {}) });
+    const c = await computer({ engines: [], platform: "win32", install: held.install });
+    await c.tool("show-steps");
+    await c.act("install-for-me");
+    assert.deepEqual(await c.act("stop-install"), { stopped: true, message: "Stopped." });
+    await settle(async () => (await card(c)).secondary?.name !== "stop-install");
+    assert.equal((await card(c)).stuckSays, undefined, "the person's own Stop is not news to the agent");
+    assert.deepEqual(held.ran, [], "nothing ran");
+    const unsigned = await fakeInstall({ unsigned: true });
+    const d = await computer({ engines: [], platform: "win32", install: unsigned.install });
+    await d.tool("show-steps");
+    await d.act("install-for-me");
+    await settle(async () => (await card(d)).stuckSays !== undefined);
+    assert.match(String((await card(d)).stuckSays), /^Do it for me stopped; the card says: The installer isn't signed/);
+    assert.deepEqual(unsigned.ran, ["powershell.exe"], "an unsigned installer never runs");
+  });
+
+  it("refuses a new game while Windows lacks Unreal's runtime, then installs it from Unreal's own copy and closes the card", async () => {
+    const present = { runtime: false };
+    const { install, ran } = await fakeInstall({
+      onInstall: async () => {
+        present.runtime = true;
+      },
+    });
+    const c = await computer({ platform: "win32", install, runtime: () => present.runtime });
+    const redist = path.join(c.root, "Engines", "UE_5.8", "Engine", "Extras", "Redist", "en-us");
+    await mkdir(redist, { recursive: true });
+    await writeFile(path.join(redist, "vc_redist.x64.exe"), "MZ");
+    await assert.rejects(c.tool("new-game", { template: "TP_BlankBP", name: "Lantern" }), /Visual C\+\+ runtime/);
+    const missing = await card(c);
+    assert.equal(missing.open, true, "the game chose Unreal: its card shows what is missing");
+    assert.deepEqual(
+      missing.steps.map((row) => [row.id, row.done]),
+      [
+        ["get-launcher", true],
+        ["install-engine", true],
+        ["install-runtime", false],
+      ],
+    );
+    assert.equal(missing.primary?.name, "install-for-me");
+    const answer = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.step, answer.started], ["runtime", true]);
+    await settle(async () => !(await card(c)).open);
+    assert.deepEqual(ran, ["powershell.exe", "vc_redist.x64.exe"]);
+    assert.match(String((await card(c)).doneSays), /^Unreal 5\.8 is installed on this computer/);
+  });
+
+  it("answers what is left once everything is in", async () => {
+    const c = await computer({ assist: { can: true, answer: { started: true } } });
+    const answer = (await c.act("install-for-me")) as Answer;
+    assert.deepEqual([answer.step, answer.started], ["done", false]);
+    assert.match(answer.message, /Unreal 5\.8 and everything it needs are on this computer/);
+    assert.match(String(await c.tool("install-unreal")), /call unreal__new-game/);
+    assert.deepEqual(c.assisted, [], "nothing handed to the chat");
   });
 });
 

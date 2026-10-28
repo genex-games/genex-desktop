@@ -10,6 +10,8 @@ import { runTurn, type TurnOptions, type TurnOutcome } from "./turn-loop.ts";
 import * as turnLoopParts from "./turn-loop.ts";
 import { sayInTurn, TurnStatus, TurnStop } from "./turn-record.ts";
 import { runCoordinatorTurn } from "./coordinator.ts";
+import { type StopAsk, stopAfterReply, stopAskedFor } from "./chat-stop.ts";
+import { dropSteeringBacklog } from "./steering-backlog.ts";
 import * as coordinatorParts from "./coordinator.ts";
 import * as coordinatorPromptsParts from "./coordinator-prompts.ts";
 import * as chatSessionParts from "./chat-session.ts";
@@ -59,6 +61,7 @@ import { type ActiveRun, type RunReopen, StatusLane, type Studio } from "./studi
 import { clampRunHours, MAX_RUN_HOURS } from "./config.ts";
 import { CLIP_GAME_TITLE } from "./text.ts";
 import { createScope, userWordsInLog } from "./scope.ts";
+import { type StoreItem, storeItemsOf, storeLaunchWords, storeScopeItems } from "./store-items.ts";
 import { closeCarriedPool } from "./workers/carry.ts";
 import type { AnyRecord, ForwardedCall, HarnessCtx, HarnessEvent, Host, HostCall } from "../types/harness.d.ts";
 import type { ModelPreferences, RunSpec } from "../types/host-api.d.ts";
@@ -89,12 +92,12 @@ const MESSAGE = {
   // stay awake, and that a paused run is not a lost one. "until satisfied" alone
   // answered none of those — the first real run ended on the plan's five-hour window at 105
   // of 180 minutes and nobody had been told that could happen.
-  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
+  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the computer awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
-    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the Mac awake. `,
+    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   planWindow:
-    "Your Claude plan's window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
+    "Your plan's usage window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
   connectionFirst:
     " Your game doesn't have the studio's connection yet, so the first thing this build does is add it — without it nothing can tell whether a change made the game better.",
 } as const;
@@ -167,6 +170,9 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   const ctx = studio.scoped(action.threadId, StatusLane.Chat);
   if (steering) await expectSession(studio.host, action, existing, steering);
   if (asksStudioThreadToBuild(action)) return answerStudioThreadBuild(studio.host, ctx, action);
+  // A build's late steering stays with that build: the section older builds left in NOTES.md goes
+  // before the chat answers, so no later agent reads it as its own instruction.
+  if (!action.studioThread) await dropSteeringBacklog(studio.host, action.project);
 
   ctx.setStatus("thinking");
   const turn = await studio.host.call(HostMethod.TurnBegin, {
@@ -491,18 +497,56 @@ async function keepBuildingNow(
   return true;
 }
 
-/** The next Loop Keep building starts: the last Loop's goal with what is left, on the message's Loop and models. */
+/**
+ * The next Loop Keep building starts, as the launch tool would commission it: an Autopilot run on the
+ * last Loop's goal (the one it was built on, so taps never pile up) with what is left, its reference,
+ * the message's hours (∞ with the launch tool's ceiling) and models.
+ */
 async function nextLoopSpec(host: Host, action: QueueAction, hours: number | null): Promise<AnyRecord> {
-  const last = latestRun(await host.call(HostMethod.EventsList, { threadId: action.threadId }).catch(() => []));
-  const before = typeof last?.goal === "string" ? last.goal.trim() : "";
+  const events: HarnessEvent[] = await host.call(HostMethod.EventsList, { threadId: action.threadId }).catch(() => []);
+  const last = latestRun(events);
+  const base = baseGoalOf(last);
   const text = String(action.text ?? "").trim();
   const roles = action.autopilot?.roles;
+  const reference = referenceOf(events, last?.runId);
   return {
-    goal: before ? `${before}\n\n${text}` : text,
-    ...(hours === null ? { untilSatisfied: true } : { hours }),
+    goal: base ? `${base}\n\n${text}` : text,
+    ...(base ? { keepBuildingFrom: base } : {}),
+    mode: RunMode.Autopilot,
+    ...(reference ? { reference } : {}),
+    hours: hours ?? MAX_RUN_HOURS,
+    ...(hours === null ? { untilSatisfied: true } : {}),
     ...(action.engine ? { engine: action.engine } : {}),
     ...(action.model ? { model: action.model } : {}),
     ...(roles ? { roles } : {}),
+  };
+}
+
+/** The goal a run was built on: a Keep building run's own base goal, else its goal. */
+function baseGoalOf(run: AnyRecord | null): string {
+  const base = typeof run?.keepBuildingFrom === "string" ? run.keepBuildingFrom : run?.goal;
+  return typeof base === "string" ? base.trim() : "";
+}
+
+/**
+ * A run's reference as a launch takes it again, from the newest of its start records (its close
+ * keeps only a name): its name, kind and notes, its stills staying with that run.
+ */
+function referenceOf(events: readonly HarnessEvent[], runId: unknown): AnyRecord | null {
+  const opened = events.filter((event) => {
+    const data = event?.data;
+    const opens = data?.event_type === RunEvent.RunStarted || data?.event_type === RunEvent.RunRegistered;
+    return data?.type === EventKind.Custom && opens && data.payload?.runId === runId;
+  });
+  const reference = opened
+    .map((event) => event.data.payload?.reference)
+    .findLast((ref) => typeof ref?.name === "string");
+  if (!reference?.name.trim()) return null;
+  return {
+    name: reference.name,
+    shots: [],
+    ...(typeof reference.kind === "string" ? { kind: reference.kind } : {}),
+    ...(typeof reference.notes === "string" ? { notes: reference.notes } : {}),
   };
 }
 
@@ -551,11 +595,23 @@ async function coordinatorAnswer(
   const frameCount = action.stills?.length ?? 0;
   const reopen = reopens(coordinated, commission) ? { hours: commissionHours(commission), frameCount } : null;
   await runCoordinatorTurn(ctx, { ...action, turnId, run: existing, ...(steer ? { steer } : {}), reopen });
+  const stop = ctx.cancelled ? null : await stopAsked(host, action, existing);
+  if (stop) return stopOutcome(stop);
   const followup = ctx.cancelled ? null : await followupFor(host, action, existing);
   if (!followup) return undefined;
   // A contained change is one builder turn, Loop or not: only more work reopens the build.
   if (reopen && !followup.contained) return reopenOutcome(reopen.hours, reopenRequest(followup.text, steer));
   return runTurn(turnCtx, followupOptions(action, turnId, followup, existing, steer));
+}
+
+/** The stop the run's coordinator recorded for this message (chat-stop.ts), or null. */
+function stopAsked(host: Host, action: QueueAction, existing: RunRecord): Promise<StopAsk | null> {
+  return stopAskedFor(host, { threadId: action.threadId, runId: String(existing.runId), messageId: action.messageId });
+}
+
+/** The coordinator's stop of the build, done once the reply ends (`afterTheReply`). */
+function stopOutcome(stop: StopAsk): TurnOutcome {
+  return { stopped: TurnStop.Done, round: 0, details: { stopRun: stop } };
 }
 
 /** The coordinator's continued work as a reopen of the same build, done once the reply ends (`afterTheReply`). */
@@ -564,19 +620,25 @@ function reopenOutcome(hours: number | null, text: string): TurnOutcome {
 }
 
 /**
- * What the reply asked for, done once it has ended: the paused run the chat's own session asked
- * to resume (its lead is that same session), the finished build it or the run's coordinator asked to
- * reopen, or the run an interview launched.
+ * What the reply asked for, done once it has ended: the build the run's coordinator asked to stop
+ * (and maybe go on again), the paused run the chat's own session asked to resume (its lead is that
+ * same session), the finished build it or the run's coordinator asked to reopen, or the run an
+ * interview launched.
  */
 async function afterTheReply(
   studio: Studio,
   ctx: HarnessCtx,
   asked: QueueAction,
   outcome: TurnOutcome | undefined,
-  { after, coordinated }: RoutedLoopRuns,
+  { after, coordinated, existing }: RoutedLoopRuns & { existing: RunRecord | null },
 ): Promise<void> {
   // A message sent while the turn worked may have changed its settings: what it asked for follows them.
   const action = followedSettings(asked, outcome);
+  const stop = existing ? outcome?.details?.stopRun : null;
+  if (existing && stop) {
+    const where = { threadId: action.threadId, runId: String(existing.runId), messageId: action.messageId };
+    return stopAfterReply(studio, where, stop);
+  }
   const resume = after ? outcome?.details?.resumeRun : null;
   if (after && resume) return resumeAfterReply(studio, ctx, after, resume);
   const loopRun = after ?? coordinated;
@@ -863,7 +925,6 @@ export async function launchFromIntake(
     readiness?.missing,
   );
   if (refusal) throw new Error(refusal);
-  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action));
   // A promise the run cannot keep is worse than no promise: a second Loop for a game
   // that already owns a run is refused below, and the only record of that refusal is an event
   // no chat surface renders. Ask the same question here, before anything is promised — once a
@@ -876,10 +937,15 @@ export async function launchFromIntake(
   // before anything is promised, when the run's engine is none the host seats there.
   const needsSession = await needsSessionRefusal(host, listed, spec);
   if (needsSession) throw new Error(needsSession);
+  // What the user sells for Nex rides the run's scope, so no plan can cut it; the build lists each
+  // item once it has drawn its picture, since the store takes none without one.
+  const store = storeItemsOf(spec.storeItems);
+  const run = intakeRun(spec, action, project, readiness, await userWordsSoFar(host, action), store);
   // Such a Loop adds no connection and ends on a reviewer's yes: its own promise.
-  const promise = openLoop
+  const launched = openLoop
     ? openLaunchPromise(run.budgets, Date.now())
     : launchPromise(run.budgets, run.readiness, Date.now());
+  const promise = [launched, storeLaunchWords(store)].filter(Boolean).join("\n\n");
   // The board did its job — the run spec carries the frames now; the next interview on this
   // thread starts with a clean slate.
   studio.moodBoards.delete(action.threadId);
@@ -1019,14 +1085,16 @@ function readInto(events: readonly HarnessEvent[], messageId: string): Set<strin
 }
 
 /**
- * What the run is for (loop/scope.ts): the user's words as the log has them, and the in-scope and cut
- * lists the launch named. None when there are no words to keep.
+ * What the run is for (loop/scope.ts): the user's words as the log has them, the in-scope and cut
+ * lists the launch named, and what it sells in the Genex store. None when there are no
+ * words to keep.
  */
-function intakeScope(spec: AnyRecord, asked: readonly string[]): AnyRecord {
+function intakeScope(spec: AnyRecord, asked: readonly string[], store: readonly StoreItem[]): AnyRecord {
   const scope = createScope({
     asked,
     inScope: Array.isArray(spec.inScope) ? spec.inScope : [],
     cut: Array.isArray(spec.cut) ? spec.cut : [],
+    store: storeScopeItems(store),
   });
   return scope.asked.length ? { scope } : {};
 }
@@ -1038,6 +1106,7 @@ function intakeRun(
   project: string,
   readiness: { contract?: string; problems?: string[] } | null,
   asked: readonly string[] = [],
+  store: readonly StoreItem[] = [],
 ): RunSpec & AnyRecord {
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
@@ -1054,10 +1123,11 @@ function intakeRun(
       : {}),
     ...(spec.reviewPlan ? { reviewPlan: true } : {}),
     ...(spec.mode ? { mode: spec.mode } : {}),
+    ...(typeof spec.keepBuildingFrom === "string" ? { keepBuildingFrom: spec.keepBuildingFrom } : {}),
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.roles ? { roles: spec.roles } : {}),
-    ...intakeScope(spec, asked),
+    ...intakeScope(spec, asked, store),
     // The run inherits the interview's effort: builders work at exactly the model and effort
     // the user generates with, never a quieter tier than the chat that commissioned them.
     ...commissionedWith(action),

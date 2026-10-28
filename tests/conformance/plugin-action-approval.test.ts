@@ -2,7 +2,8 @@
  * A plugin action that declares `confirmation` is reviewed, then approved in a native dialog main
  * builds. When the plugin's `review` gives a question and words of its own, the dialog asks that
  * question, shows those words, and confirms with the action's own name; it never lists the
- * arguments as JSON then. Without a review the manifest's confirmation lists them, as before.
+ * arguments as JSON then. Without a review the manifest's confirmation lists them, as before. The
+ * dialog says the plugin's name, label and confirmation as the app's language does (`displayManifest`).
  */
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
@@ -35,13 +36,17 @@ const SETUP = { name: "setup", label: "Set up", confirmation: "Set up this Unrea
 const ARGS = { project: "/Users/me/Lyra/Lyra.uproject" };
 type Answer = { ok: true; value: unknown } | { ok: false; error: string };
 
-/** Main's review and action channels over one plugin whose `review` answers `review`. */
-function channels(review: unknown) {
+/**
+ * Main's review and action channels over one plugin whose `review` answers `review`, its manifest
+ * in the app's language `inLanguage` (the English one unless given).
+ */
+function channels(review: unknown, inLanguage?: Record<string, unknown>) {
   const reached: string[] = [];
   const manifest = { id: "unreal", name: "Unreal", actions: [SETUP], capabilities: [] };
   const core = {
     plugins: {
       list: () => [{ manifest, enabled: true, removed: false, source: "bundled" }],
+      displayManifest: async () => inLanguage ?? manifest,
       // The plugin is on: every action of its is the person's to run.
       servesAction: () => true,
       review: async () => review,
@@ -114,6 +119,20 @@ describe("A confirmed plugin action's native dialog", () => {
     assert.equal(shown[0]?.message, SETUP.confirmation);
     assert.equal(shown[0]?.detail, JSON.stringify(ARGS, null, 2));
     assert.deepEqual(shown[0]?.buttons, ["Cancel", "Approve"]);
+  });
+
+  it("says the plugin's name, label and confirmation in the app's language", async () => {
+    const russian = { label: "Настроить", confirmation: "Настроить этот проект Unreal для Genex?" };
+    const inRussian = { id: "unreal", name: "Unreal Engine", actions: [{ ...SETUP, ...russian }], capabilities: [] };
+    const { reviewAndRun, reached } = channels({}, inRussian);
+    assert.equal((await reviewAndRun()).ok, true);
+    assert.equal(shown[0]?.title, "Unreal Engine: Настроить");
+    assert.equal(shown[0]?.message, russian.confirmation);
+    assert.deepEqual(reached, ["setup"], "the action runs by its own name");
+    shown.length = 0;
+    const reviewed = channels({ message: "Set up Lyra for Genex?" }, inRussian);
+    assert.equal((await reviewed.reviewAndRun()).ok, true);
+    assert.deepEqual(shown[0]?.buttons, ["Cancel", "Настроить"]);
   });
 
   const malformed: Array<[string, unknown]> = [

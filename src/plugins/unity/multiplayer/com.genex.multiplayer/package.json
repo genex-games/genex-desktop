@@ -1,0 +1,27 @@
+{
+  "name": "com.genex.multiplayer",
+  "version": "0.1.0",
+  "displayName": "Genex Multiplayer",
+  "description": "Genex relay protocol 3 client for Unity: players, shared state, owned objects, host, inputs, game events, chat, reconnection, sender-clock interpolation and matchmaking — a thin layer over the official Colyseus Unity SDK 0.18.8.",
+  "unity": "2021.3",
+  "license": "MIT",
+  "category": "Networking",
+  "keywords": [
+    "genex",
+    "multiplayer",
+    "colyseus",
+    "netcode"
+  ],
+  "author": {
+    "name": "Genex",
+    "url": "https://genex.games"
+  },
+  "dependencies": {},
+  "samples": [
+    {
+      "displayName": "Quickstart",
+      "description": "Connect, publish your position at 15 Hz, render everyone else interpolated, chat.",
+      "path": "Samples~/Quickstart"
+    }
+  ]
+}

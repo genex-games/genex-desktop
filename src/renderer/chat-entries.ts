@@ -1,6 +1,8 @@
+import { t, tc } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import type { ExportReview } from "../shared/plugins.ts";
 import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
+import { type ListingRecord, listingDraftOf, listingKey } from "../shared/item-draft.ts";
 import { parseSuggestion } from "./chat/plugin-suggestion.ts";
 import { type JobHandle, type JobStart, jobEndLine, jobStart, missingPanes } from "./chat/job-lines.ts";
 import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
@@ -42,7 +44,7 @@ import { GENEX_COVER_TOOL, GENEX_PLUGIN_ID, GenexCoverOperation } from "../share
 import { SteerDelivery } from "../shared/message-queue.ts";
 import { engineLabel, roleName } from "../shared/model-roles.ts";
 import { ExecutionStatus, RoundOutcome, roundOutcome } from "../shared/run-state.ts";
-import { plural, skillWords } from "../shared/skill-words.ts";
+import { skillUpdatedWords } from "../shared/skill-words.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { type ToolPermissionEvent, ToolPermissionState } from "../shared/permissions.ts";
 import { contractorIdentity } from "./chat-labels.ts";
@@ -71,7 +73,6 @@ import {
   decisionWords,
   fixWords,
   flagWords,
-  harnessLearnedWords,
   improvementWords,
   judgeRoundLine,
   judgeUnreachable,
@@ -123,6 +124,8 @@ export const EntryKind = {
   PluginSuggestion: "plugin-suggestion",
   /** What a message's @ tags gave the agent (`mention_tagged`): one card under the message. */
   Mentions: "mentions",
+  /** A store item the game's agent made: its Listing draft card, with Put on sale (`item_drafted`). */
+  ListingDraft: "listing-draft",
 } as const;
 export type EntryKind = (typeof EntryKind)[keyof typeof EntryKind];
 
@@ -195,6 +198,8 @@ export type Entry =
       kind: typeof EntryKind.Question;
       id: string;
       text: string;
+      /** The agent's one line above its question: what it found or did. */
+      recap?: string;
       choices: Array<{ id: string; label: string; description?: string }>;
       pending: boolean;
     }
@@ -205,6 +210,11 @@ export type Entry =
    * only that last shot has a card.
    */
   | { kind: typeof EntryKind.GenexCover; id: string; callId: string; project?: string }
+  /**
+   * A store item the game's agent made or changed, read from a record only the host writes: once the
+   * turn that made it has ended, the item's latest draft (an earlier card of the same item comes down).
+   */
+  | { kind: typeof EntryKind.ListingDraft; id: string; draft: ListingRecord }
   /** A card with one affordance: Resume a paused run, prefill a steering message, or Rewind. */
   | {
       kind: typeof EntryKind.Action;
@@ -220,9 +230,12 @@ export type Entry =
       consentSourceId?: string;
       consentSource?: string;
       consentPrompt?: string;
+      /** The line the card shows under its question (the studio's own cards). */
+      consentNote?: string;
       consentExport?: ExportReview;
       /** A connector's card: Always allow is offered. */
       consentAlwaysOffered?: boolean;
+      consentChatOffered?: boolean;
       /** A card with a field the person may edit before Allow: its label and the value it holds. */
       consentInput?: { label: string; value: string };
       /** action "permission": Claude's own Allow / Deny question (or a plan to approve), as first asked, and how it ended. */
@@ -297,6 +310,8 @@ export type Entry =
 type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
 /** The card of the Genex cover a builder kept. */
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
+/** A store item's Listing draft card. */
+export type ListingDraftEntry = Extract<Entry, { kind: typeof EntryKind.ListingDraft }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
 
 /** A plugin's permission card in the transcript. */
@@ -338,6 +353,45 @@ export const SystemTag = {
   Engine: "ENGINE",
 } as const;
 export type SystemTag = (typeof SystemTag)[keyof typeof SystemTag];
+
+/** Each tag in the reader's words, in sentence case: what the transcript heads its line with. */
+export const SYSTEM_TAG_WORDS: Record<SystemTag, string> = {
+  [SystemTag.Error]: t("Error"),
+  [SystemTag.SignIn]: t("Sign in"),
+  [SystemTag.Restarted]: t("Restarted"),
+  [SystemTag.Failed]: t("Failed"),
+  [SystemTag.Seed]: t("Seed"),
+  [SystemTag.Compacted]: t("Compacted"),
+  [SystemTag.Better]: t("Better"),
+  [SystemTag.Run]: t("Run"),
+  [SystemTag.TheLead]: t("The lead"),
+  [SystemTag.TheBuild]: t("The build"),
+  [SystemTag.Part]: t("Part"),
+  [SystemTag.Move]: t("Move"),
+  [SystemTag.Blender]: "Blender",
+  [SystemTag.Fix]: t("Fix"),
+  [SystemTag.Alive]: t("Alive"),
+  [SystemTag.Waiting]: t("Waiting"),
+  [SystemTag.Update]: tc("tag", "Update"),
+  [SystemTag.Plan]: t("Plan"),
+  [SystemTag.Ask]: t("Ask"),
+  [SystemTag.Stopped]: t("Stopped"),
+  [SystemTag.Resumed]: t("Resumed"),
+  [SystemTag.Reviewer]: t("Reviewer"),
+  [SystemTag.Checked]: t("Checked"),
+  [SystemTag.Show]: tc("tag", "Show"),
+  [SystemTag.Checkpoint]: t("Checkpoint"),
+  [SystemTag.Engine]: t("Engine"),
+};
+
+const SYSTEM_TAGS: ReadonlySet<string> = new Set(Object.values(SystemTag));
+const isSystemTag = (tag: string): tag is SystemTag => SYSTEM_TAGS.has(tag);
+
+/** A line's tag as its heading says it: a known tag in the reader's words, any other in sentence case. */
+export function systemTagWords(tag: string): string {
+  if (isSystemTag(tag)) return SYSTEM_TAG_WORDS[tag];
+  return tag.charAt(0) + tag.slice(1).toLowerCase();
+}
 
 /** Routine narration: folded into one activity row unless it reports trouble. */
 const ROUTINE_TAGS = new Set<string>([
@@ -493,6 +547,13 @@ interface CoverCard {
   placed: boolean;
 }
 
+/** A Listing draft card and the chat it waits in: it goes up once that chat's turn has ended. */
+interface ListingCard {
+  entry: ListingDraftEntry;
+  thread: string;
+  placed: boolean;
+}
+
 /** Everything `toEntries` keeps while it walks the log. */
 interface ChatDraft {
   signInReplies: Set<string>;
@@ -512,6 +573,8 @@ interface ChatDraft {
   pluginCalls: Map<string, ToolChipRow>;
   /** The Genex cover card of the latest shoot that kept a shot, held until the work that took it ends. */
   cover: CoverCard | null;
+  /** Each item's latest Listing draft card, held until the turn that made it ends. */
+  listings: ListingCard[];
   /**
    * A delegated builder's own chip row, by the tool it called. The SDK mirrors the call but never
    * its result, so a plugin tool that failed used to leave a row that looked like it worked; the
@@ -568,6 +631,7 @@ export function toEntries(events: EventEnvelope[], queueIds?: ReadonlyMap<string
   for (const event of events) readEvent(chat, event);
   keepOfferedRewind(chat, events);
   placeLastCoverCard(chat);
+  placeLastListings(chat);
   for (const [runId, deliveries] of chat.runAssets) {
     const result = chat.runResults.get(runId);
     if (result) result.assets = deliveries;
@@ -613,6 +677,7 @@ function newChatDraft(events: EventEnvelope[], queueIds: ReadonlyMap<string, str
     workerCalls: new Set(),
     pluginCalls: new Map(),
     cover: null,
+    listings: [],
     hostedTools: new Set(events.flatMap(hostedToolKey)),
     hostedCalls: new Set(),
     playing: false,
@@ -632,6 +697,7 @@ function readEvent(chat: ChatDraft, event: EventEnvelope): void {
   if (readConversation(chat, event)) return;
   settleWaitingCards(chat, event.data);
   if (readToolTraffic(chat, event)) return;
+  if (holdListing(chat, event)) return;
   if (readQuiet(chat, event.data)) return;
   closeGroup(chat);
   for (const narrate of NARRATORS) narrate(chat, event);
@@ -686,6 +752,7 @@ function endTurn(chat: ChatDraft, event: EventEnvelope, status: string | undefin
     if (row.state === ToolState.Running && !chat.runByCall.has(id)) row.state = ended;
   // After the turn's reply: a stopped turn too, since the shot it kept stays kept.
   if (coverWaitsForTurn(chat.cover, event.thread_id)) placeCoverCard(chat);
+  placeListings(chat, event.thread_id);
 }
 
 /** A question or a steering card still waiting for the user. */
@@ -719,6 +786,7 @@ function readConversation(chat: ChatDraft, event: EventEnvelope): boolean {
       kind: EntryKind.Question,
       id: event.id,
       text: asked.question,
+      ...(asked.recap ? { recap: asked.recap } : {}),
       choices: asked.choices ?? [],
       pending: true,
     });
@@ -743,7 +811,7 @@ function readNoteLabel(chat: ChatDraft, data: EventData): boolean {
 }
 
 /** What a note's bubble says it was about until its record names it. */
-const NOTE_ABOUT = "Note to the build";
+const NOTE_ABOUT = t("Note to the build");
 
 /** A user bubble; a note sent to a build from its graph shows the words the user wrote, and what they were about. */
 function userEntry(id: string, content: string): Entry {
@@ -1129,7 +1197,7 @@ function narrateSignIn(chat: ChatDraft, event: EventEnvelope): void {
       chat,
       event.id,
       SystemTag.SignIn,
-      TRANSCRIPT_WORDS.signInAgain(providerInfo(failure.engine)?.label ?? "Your coding provider"),
+      TRANSCRIPT_WORDS.signInAgain(providerInfo(failure.engine)?.label ?? t("Your coding provider")),
     );
 }
 
@@ -1447,8 +1515,8 @@ function narrateSkillAccepted(chat: ChatDraft, event: EventEnvelope): void {
   // The instruction file and the proposer's notes live in Activity; the chat says it plainly.
   const title = skillAccepted.title?.trim().replace(/\.$/, "");
   const text = title
-    ? `Harness learned to ${title.charAt(0).toLowerCase()}${title.slice(1)}.`
-    : `Harness updated ${skillWords(skillAccepted.skill).replace(/^how Harness /, "how it ")}.`;
+    ? t("Harness learned to {skill}.", { skill: `${title.charAt(0).toLowerCase()}${title.slice(1)}` })
+    : skillUpdatedWords(skillAccepted.skill);
   chat.entries.push({ id: event.id, kind: EntryKind.Learning, text, link: TRANSCRIPT_WORDS.seeInHarness });
 }
 
@@ -1468,7 +1536,9 @@ function narrateRunStart(chat: ChatDraft, event: EventEnvelope): void {
   const judgeEngine = started.judgeEngine ?? started.engine ?? "";
   const judgeName = judge ? roleName(judgeEngine, judge) : null;
   const crossProvider = Boolean(judgeName && started.engine && judgeEngine !== started.engine);
-  const judgeWords = crossProvider ? `${judgeName} on ${providerName(judgeEngine)}` : judgeName;
+  const judgeWords = crossProvider
+    ? t("{model} on {provider}", { model: judgeName ?? "", provider: providerName(judgeEngine) })
+    : judgeName;
   say(chat, event.id, SystemTag.Run, runStartWords(started.reference ?? null, judgeWords));
 }
 
@@ -1618,6 +1688,42 @@ function placeLastCoverCard(chat: ChatDraft): void {
   const thread = chat.cover?.thread;
   if (thread === undefined || chat.activeTurns.has(thread)) return;
   if (coverWaitsForTurn(chat.cover, thread)) placeCoverCard(chat);
+}
+
+/**
+ * A Listing draft record (`item_drafted`): the item's card is held until the chat's turn ends, after
+ * the agent's reply; a newer draft of the same item takes an earlier card's place. A record that
+ * does not read draws nothing. True when the record was one.
+ */
+function holdListing(chat: ChatDraft, event: EventEnvelope): boolean {
+  const recorded = customPayload(event.data, CustomEvent.ItemDrafted);
+  if (!recorded) return false;
+  const draft = listingDraftOf(recorded);
+  if (!draft) return true;
+  const key = listingKey(draft);
+  const earlier = chat.listings.findIndex((card) => listingKey(card.entry.draft) === key);
+  const [replaced] = earlier >= 0 ? chat.listings.splice(earlier, 1) : [];
+  const shown = replaced ? chat.entries.indexOf(replaced.entry) : -1;
+  if (shown >= 0) chat.entries.splice(shown, 1);
+  const entry: ListingDraftEntry = { kind: EntryKind.ListingDraft, id: event.id, draft };
+  chat.listings.push({ entry, thread: event.thread_id, placed: false });
+  if (!chat.activeTurns.has(event.thread_id)) placeListings(chat, event.thread_id);
+  return true;
+}
+
+/** The thread's held Listing draft cards go up, in the order they were made. */
+function placeListings(chat: ChatDraft, thread: string): void {
+  for (const card of chat.listings) {
+    if (card.placed || card.thread !== thread) continue;
+    chat.entries.push(card.entry);
+    card.placed = true;
+  }
+}
+
+/** A log that ends with no turn open in a card's thread shows its held cards last. */
+function placeLastListings(chat: ChatDraft): void {
+  const threads = new Set(chat.listings.map((card) => card.thread));
+  for (const thread of threads) if (!chat.activeTurns.has(thread)) placeListings(chat, thread);
 }
 
 function pluginCallState(closing: boolean, ok: boolean | undefined): ToolState {
@@ -1843,7 +1949,13 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
   const consentId = consent.consentId ?? event.id;
   const existing = chat.entries.find((e): e is ActionEntry => isConsentCard(e) && e.consentId === consentId);
   const pending = consent.state === "pending";
-  const outcome = () => consentOutcomeWords({ state: consent.state, by: consent.by, always: consent.always });
+  const outcome = () =>
+    consentOutcomeWords({
+      state: consent.state,
+      by: consent.by,
+      always: consent.always,
+      chatOffered: consent.chatOffered,
+    });
   if (existing) {
     existing.pending = pending;
     if (!pending) existing.outcome = outcome();
@@ -1859,8 +1971,10 @@ function narrateConsent(chat: ChatDraft, event: EventEnvelope): void {
     ...(consent.pluginId ? { consentSourceId: consent.pluginId } : {}),
     consentSource: consent.pluginName || A_PLUGIN,
     consentPrompt: consent.prompt || undefined,
+    ...(consent.note ? { consentNote: consent.note } : {}),
     consentExport: consent.exportReview,
     ...(consent.alwaysOffered ? { consentAlwaysOffered: true } : {}),
+    ...(consent.chatOffered ? { consentChatOffered: true } : {}),
     ...(consent.input ? { consentInput: consent.input } : {}),
     text: consentAskWords({
       pluginName: consent.pluginName,
@@ -2084,7 +2198,10 @@ function narrateLearningPass(chat: ChatDraft, event: EventEnvelope): void {
   chat.entries.push({
     id: event.id,
     kind: EntryKind.Learning,
-    text: harnessLearnedWords(plural(learned, "thing")),
+    text: t(
+      "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}",
+      { count: learned },
+    ),
     link: staged > 0 ? TRANSCRIPT_WORDS.reviewInHarness : TRANSCRIPT_WORDS.seeInHarness,
   });
 }

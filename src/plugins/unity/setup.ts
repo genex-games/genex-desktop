@@ -70,7 +70,7 @@ interface SetupRecord {
 }
 
 /** A manifest as read: where it is by real path, and its fields. */
-interface Manifest {
+export interface Manifest {
   file: string;
   fields: Record<string, unknown>;
   dependencies: Record<string, unknown>;
@@ -81,7 +81,7 @@ const copyOfManifest = (place: SetupPlace): string =>
   path.join(place.storage, SETUP_FOLDER, place.game, "manifest.json");
 
 /** Reads the project's manifest by real path inside the project, or says why it can't be changed. */
-async function readManifest(root: string): Promise<Manifest> {
+export async function readManifest(root: string): Promise<Manifest> {
   const file = await containedReal(root, MANIFEST_FILE).catch(() => undefined);
   if (!file) {
     const there = await pathExists(path.join(root, ...MANIFEST_FILE.split("/")));
@@ -101,7 +101,7 @@ async function readManifest(root: string): Promise<Manifest> {
 }
 
 /** Writes the manifest back with these dependencies, sorted by name as Unity keeps them. */
-async function writeManifest(manifest: Manifest, dependencies: Record<string, unknown>): Promise<void> {
+export async function writeManifest(manifest: Manifest, dependencies: Record<string, unknown>): Promise<void> {
   const sorted = Object.fromEntries(Object.entries(dependencies).sort(([a], [b]) => (a < b ? -1 : 1)));
   await atomicWriteText(manifest.file, `${JSON.stringify({ ...manifest.fields, dependencies: sorted }, null, 2)}\n`);
 }

@@ -15,6 +15,7 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { AiVendor, aiVendorOfHost, findAiKeys } from "../shared/ai-vendors.ts";
 import type { ExportAiHost } from "../shared/game-project.ts";
+import { t } from "../shared/i18n.ts";
 import { readRegularFile } from "./fsx.ts";
 
 /** Past this a file is an asset too large to read whole; the credential scan skips it as well. */
@@ -43,11 +44,6 @@ const VENDOR_NAME = {
   [AiVendor.Replicate]: "Replicate",
   [AiVendor.Fal]: "fal",
 } as const satisfies Record<AiVendor, string>;
-
-const MESSAGE = {
-  KeyLeaked: (file: string, line: number, vendor: AiVendor) =>
-    `Export stopped: ${file} (line ${line}) holds a ${VENDOR_NAME[vendor]} API key. Remove it from the game: anyone who plays a published game can read its files, and games reach models only through genex-ai.`,
-} as const;
 
 /**
  * A URL's host after its `//`: an optional user part, then the host's own characters. The host ends
@@ -122,4 +118,7 @@ export async function scanExportForAi(staging: string, files: readonly string[])
 
 /** The refusal of an export that holds a vendor key: the file, the line and the vendor, never the key. */
 export const exportKeyRefusal = (key: AiKeyFound & { file: string }): string =>
-  MESSAGE.KeyLeaked(key.file, key.line, key.vendor);
+  t(
+    "Export stopped: {file} (line {line}) holds a {vendor} API key. Remove it from the game: anyone who plays a published game can read its files, and games reach models only through genex-ai.",
+    { file: key.file, line: key.line, vendor: VENDOR_NAME[key.vendor] },
+  );

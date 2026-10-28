@@ -25,6 +25,15 @@ export const CliInstallProblem = {
 } as const;
 export type CliInstallProblem = (typeof CliInstallProblem)[keyof typeof CliInstallProblem];
 
+/** Why an install or update was refused before it started: its IPC failure's code. Never rename a value. */
+export const CliInstallRefusal = {
+  /** Not a CLI the app installs. */
+  UnknownProvider: "unknown_provider",
+  /** An update waits for active work to finish. */
+  Busy: "busy",
+} as const;
+export type CliInstallRefusal = (typeof CliInstallRefusal)[keyof typeof CliInstallRefusal];
+
 /** One provider's in-app install: the latest one, running or finished. */
 export const CliInstallOperation = { Install: "install", Update: "update" } as const;
 export type CliInstallOperation = (typeof CliInstallOperation)[keyof typeof CliInstallOperation];

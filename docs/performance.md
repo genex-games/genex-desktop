@@ -79,7 +79,9 @@ counters carry the regression gates.
 - Fixture messages for journeys: `fixture:stream` (a short streamed reply) and `fixture:stream-long`
   (about ten thousand characters of Markdown and code, streamed at a fast model's pace, in a game chat).
 - `dist/renderer/bundle-report.json`: eager renderer bytes against the budget in
-  `scripts/renderer-build.mjs`; three.js must stay out of the eager graph.
+  `scripts/renderer-build.mjs`; three.js must stay out of the eager graph. CI's own build bundles
+  production React, so `renderer-build.test.ts` bundles the studio as an owned fixture build and a
+  packaged build do and holds each to its budget.
 - The eval ledger's `time.*` fields and `npm run eval -- compare|check` for whole-build timing
   ([evals](evals.md)).
 - `scripts/bench/event-log.ts` for event-store reads at scale.
@@ -93,10 +95,13 @@ counters carry the regression gates.
 | three.js in the eager renderer graph | none | `scripts/renderer-build.mjs` |
 | Production React in a packaged app | required | `tests/e2e/run-packaged-smoke.mjs` |
 | sandbox-runtime, the Agent SDK or the MCP SDK imported at the top of main | none | `scripts/main-build.mjs` |
+| A language catalog inside `app.mjs` | none | `scripts/main-build.mjs` |
 | Chat typing commits | unchanged per key | `tests/e2e/run-chat-ui.mjs` |
 
 ## Rules that keep work off the critical path
 
+- Launch opens Create's home, so what covers it later loads the first time it opens, each a chunk
+  of its own outside the eager graph: Plugins, Create › Items, Play's pages and Settings.
 - The chat transcript mounts rows three screens ahead both ways and keeps them four screens
   back (`chat/transcript-window.ts`): a GPU busy with Live's game draws newly mounted rows late,
   so rows mounted just in time showed as a blank block under a fast fling.
@@ -115,10 +120,27 @@ counters carry the regression gates.
   bottom margins until the renderer measures again (`main/preview-anchor.ts`).
 - Coding-CLI discovery reads the login shell's PATH once and asks an unchanged binary for
   `--version`/`--help` once, an answer kept across launches; sessions reuse both until Recheck.
+  Concurrent ordinary readers share discovery; cancellable and forced reads keep their own work.
+  Only the latest request in the current settings generation may replace its cached answer.
 - The launch's bootstrap does not wait for the engine checks: it carries the engines the last
   launch checked while this launch's checks run (`main/engine-boot.ts`).
 - Plugin packages are inspected from directory listings, several folders at a time; event bodies
   are read through a sliding window.
+- Sidebar ordering and keyboard navigation index conversation activity in one history pass;
+  sort comparisons do not scan the history. Bounded event pages materialize only their selected
+  references, including the placeholder rows for damaged bodies.
+- Concurrent run-summary readers share a matching evidence-version scan; a subsequent read
+  still validates the files. Toolbar status batches run one at a time, with at most one queued
+  refresh after a burst; teardown cancels timers and ignores late answers.
+- Log email scrubbing begins only at the start of a possible local part, so long non-address
+  words do not cause repeated scans. Job logs respect the writer's backpressure until their cap;
+  their exit watcher distinguishes buffered output from an idle orphan pipe.
+- The launch's seed upgrade (`substrate/seed-upgrade.ts`) hashes the seed and the harness
+  workspace, and rewrites renamed names, 32 files at a time rather than one after another.
+- Each harness boot (launch, restart, self-edit reload) runs with `NODE_COMPILE_CACHE` in the
+  sandbox's scratch (`harness-compile-cache`), flushed once the harness is ready, so a boot reuses
+  the type-stripped, compiled seed (Node 24, Linux: importing the seed 640 → 225 ms median). Entries
+  are keyed by file content, so the agent's edits compile afresh.
 
 ## Packaged builds
 
@@ -126,12 +148,24 @@ counters carry the regression gates.
 differs from an owned development build:
 
 - **Renderer:** minified, production React, no StrictMode replays, no Profiler or journey marks.
-  Owned builds overstate render cost; a packaged measurement needs `--studio-diagnostics`.
-- **Main bundle:** `main.mjs` is not minified in any mode, and no build uses a V8 code cache, so
-  every launch parses and compiles it. Heavy packages load on first use, not at its top.
+  Owned builds overstate render cost; a packaged measurement needs `--studio-diagnostics`. In
+  every mode its chunks keep a catalog's letters as UTF-8 rather than `\u` escapes, which halves
+  the Russian catalog a window reads before it shows (1.1 → 0.56 MB).
+- **Main bundle:** `main.mjs` is a small entry (`main/boot.ts`) that turns on V8's compile cache
+  and then imports the app, `app.mjs`, which is not minified in any mode. A packaged normal launch
+  keeps the compiled code in `<userData>/v8-compile-cache` (`main/compile-cache.ts`), written 30 s
+  after launch and at quit, so later launches skip most parsing and compiling (Electron 43, Linux:
+  the bundle's import 238 → 168 ms median). Development, test and runner launches never write it.
+  Heavy packages load on first use, not at its top, and each language catalog but English is a
+  file of its own beside it (`main/locales/<locale>.mjs`), read only when that language is chosen:
+  bundled in, the eight of them made `app.mjs` 12.2 MB instead of 7 and kept 10 MB more of main's
+  heap.
 - **Archive:** the app loads from `app.asar` with integrity validation; `dist/resources` (harness
   seed, vendored TypeScript, three.js, plugin payloads), node-pty and the sandbox vendor folder
-  are unpacked because they are spawned or served.
+  are unpacked because they are spawned or served. Packages esbuild bundles (React, xterm,
+  `es-module-lexer`, `update-electron-app`, …) are devDependencies, so the packager's prune leaves
+  them out of `app.asar`; `dependencies` holds only what the bundles load from `node_modules` at run
+  time (the `external` list in `scripts/build.mjs`, and `zod`, which the agent SDK peers on).
 - **Fuses:** `NODE_OPTIONS` and `--inspect` are off, so a packaged app cannot be profiled with a
   Node inspector; use diagnostics and Chromium traces.
 - **First launch:** Gatekeeper verifies the signed bundle once, which lengthens the first start.

@@ -22,6 +22,7 @@ import { access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { setTimeout as sleepFor } from "node:timers/promises";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
@@ -30,6 +31,7 @@ import {
   type DesktopDriver,
   type DesktopFocus,
   type DesktopShot,
+  type DesktopWindow,
   windowsAppId,
 } from "./desktop-driver.ts";
 import { type MacApps, macApps } from "./mac-apps.ts";
@@ -60,6 +62,10 @@ const DEFAULT_SCROLL_NOTCHES = 3;
 const APPS_TTL_MS = 1_500;
 /** How many accessibility elements a state read brings back. */
 const MAX_ELEMENTS = 250;
+/** How long a press waits for the person to allow Genex in System Settings: inside a plugin call's 190 s. */
+const GRANT_WAIT_MS = 150 * SECOND_MS;
+/** How often the grants are read again while the person gives them. */
+const GRANT_POLL_MS = 1_500;
 /**
  * A password field in an accessibility tree row or element: cua prints a field's role, not its
  * secure subrole (macOS) or its password flag (Windows UI Automation, whose text field is an `Edit`
@@ -152,7 +158,8 @@ const DESKTOP = { kind: "desktop", display_id: "primary" } as const;
 /** What the person reads when the driver cannot be used. */
 const MESSAGE = {
   permissions: {
-    host: "Genex needs Accessibility and Screen Recording to use this computer: turn Genex on in System Settings → Privacy & Security → Accessibility and → Screen & System Audio Recording, then try again",
+    host: (app: string) =>
+      `${app} needs Accessibility and Screen Recording to use this computer: turn ${app} on in System Settings → Privacy & Security → Accessibility and → Screen & System Audio Recording, then try again`,
     driver:
       "cua-driver needs Accessibility and Screen Recording: allow CuaDriver in System Settings → Privacy & Security, then try again",
   },
@@ -194,6 +201,9 @@ export interface CuaCommand {
 /** Who holds the grants a driver needs: the studio itself (embedded), or the driver's own app (a VM's). */
 export const GrantHolder = { Host: "host", Driver: "driver" } as const;
 export type GrantHolder = (typeof GrantHolder)[keyof typeof GrantHolder];
+
+/** The app the studio's grants are under when nothing names it: the release app. */
+export const DEFAULT_HOST_APP = "Genex";
 
 /** A VM's driver over SSH, when its address is a plain `user@host`; null otherwise. */
 export function vmDriverCommand(address: string): CuaCommand | null {
@@ -300,6 +310,7 @@ interface CuaWindow {
   pid: number | null;
   windowId: number | null;
   appName: string;
+  title: string;
   z: number;
   bounds: { x: number; y: number; width: number; height: number } | null;
 }
@@ -312,7 +323,8 @@ function windowOf(row: Record<string, unknown>, index: number): CuaWindow {
       : null;
   // cua numbers windows so the largest z_index is the frontmost; without one, the list is front first.
   const appName = typeof row.app_name === "string" ? row.app_name : "";
-  return { pid: num(row.pid), windowId: num(row.window_id), appName, z: num(row.z_index) ?? -index, bounds };
+  const title = typeof row.title === "string" ? row.title : "";
+  return { pid: num(row.pid), windowId: num(row.window_id), appName, title, z: num(row.z_index) ?? -index, bounds };
 }
 
 /** Whether a listed window is the driver's own cursor overlay, by its app's name (macOS) or executable (Windows). */
@@ -368,6 +380,61 @@ async function listedWindows(call: CuaCall, pid?: number): Promise<CuaWindow[]> 
   return rows.map(windowOf).sort((a, b) => b.z - a.z);
 }
 
+/**
+ * Bring a running app to the front by its bundle id: the driver activates the process that owns its
+ * frontmost window (on any Space, or in Stage Manager's strip). An app with no window is left alone.
+ */
+async function bringAppToFront(call: CuaCall, app: string, window?: DesktopWindow): Promise<void> {
+  if (window) {
+    await raiseWindow(call, window);
+    return;
+  }
+  const [front] = await appWindows(call, app);
+  if (!front) return;
+  // The process is raised as a whole when the driver can: naming a window holds the raise to a
+  // stricter check that a browser coming forward can fail. One owning several windows (Studio keeps
+  // a small untitled one) is refused that way, and then raised by its frontmost window.
+  const whole = await call("bring_to_front", { pid: front.pid }).then(
+    () => true,
+    (error: unknown) => {
+      if (front.windowId === null) throw error;
+      return false;
+    },
+  );
+  if (!whole) await raiseWindow(call, front);
+}
+
+/** One window of a process brought to the front, by its id when the driver gave one. */
+async function raiseWindow(call: CuaCall, window: DesktopWindow): Promise<void> {
+  await call("bring_to_front", {
+    pid: window.pid,
+    ...(window.windowId !== null ? { window_id: window.windowId } : {}),
+  });
+}
+
+/** An app's windows by its bundle id or name, front first. */
+async function appWindowRows(call: CuaCall, app: string): Promise<CuaWindow[]> {
+  const rows = listOf(await call("list_windows", { app }), "windows");
+  return rows.map(windowOf).sort((a, b) => b.z - a.z);
+}
+
+/** An app's windows that a process owns, front first, with their titles. */
+async function appWindows(call: CuaCall, app: string): Promise<DesktopWindow[]> {
+  const owned = (await appWindowRows(call, app)).filter((window) => window.pid !== null);
+  return owned.map((window) => ({ pid: window.pid ?? 0, windowId: window.windowId, title: window.title }));
+}
+
+/** A running Mac app by its bundle id in any case, or its name: the app under its own id, or null. */
+async function runningMacApp(call: CuaCall, name: string): Promise<DesktopApp | null> {
+  const wanted = name.toLowerCase();
+  // cua lists installed apps too, with pid 0: only a running one can be raised.
+  const apps = listOf(await call("list_apps", {}), "apps")
+    .map(appOf)
+    .filter((app) => (app.pid ?? 0) > 0);
+  const byId = apps.find((app) => app.bundleId?.toLowerCase() === wanted);
+  return byId ?? apps.find((app) => app.bundleId !== null && app.name.toLowerCase() === wanted) ?? null;
+}
+
 /** The accessibility tree of an app's front window, or null when it has none on screen. */
 async function frontTreeOf(
   call: CuaCall,
@@ -421,8 +488,10 @@ function desktopReads(call: CuaCall, options: { mac?: MacApps; secureInput?: () 
     appOfPid,
     appAt: async (x, y) => {
       const under = (await windows()).find((window) => holds(window, x, y));
-      if (!under?.pid) return null;
-      return (await appOfPid(under.pid)) ?? { name: under.appName, bundleId: null, pid: under.pid };
+      if (under?.pid) return (await appOfPid(under.pid)) ?? { name: under.appName, bundleId: null, pid: under.pid };
+      // Above every listed window (the menu bar, an open menu): macOS's own hit test names the app.
+      const pid = mac ? await mac.pidAt(x, y) : null;
+      return pid ? appOfPid(pid) : null;
     },
     frontApp,
     focus: async () => {
@@ -448,6 +517,14 @@ function windowsKey(key: string): string {
 function probedApp(probed: ProbedApp | null): DesktopApp | null {
   if (!probed) return null;
   return { name: probed.name || probed.exe, bundleId: windowsAppId(probed.exe), pid: probed.pid };
+}
+
+/**
+ * The running app an executable's name stands for on a PC, windowed or not: a guessed name no
+ * process has (robloxstudio.exe for RobloxStudioBeta.exe) is none, so nothing is asked about it.
+ */
+function windowsRunningApp(probe: WindowsProbe) {
+  return async (name: string): Promise<DesktopApp | null> => probedApp(await probe.running(name.toLowerCase()));
 }
 
 /**
@@ -542,6 +619,17 @@ export function cuaDriver(
     },
     focus: () => reads.focus(),
     appAt: (x, y) => reads.appAt((x * screen.width) / picture.width, (y * screen.height) / picture.height),
+    ...(options.windows
+      ? { runningApp: windowsRunningApp(options.windows) }
+      : {
+          runningApp: (name: string) => runningMacApp(call, name),
+          appWindows: (app: string) => appWindows(call, app),
+        }),
+    bringToFront: async (app: string, window?: DesktopWindow) => {
+      // Windows raises by executable through its own probe: the driver's bring_to_front is the Mac's.
+      if (options.windows) await options.windows.raise(app);
+      else await bringAppToFront(call, app, window);
+    },
     // move_cursor takes no delivery mode, and a desktop target is its own scope.
     move: (x, y) => call("move_cursor", { target: DESKTOP, x, y }).then(() => undefined),
     click: async (x, y, o) =>
@@ -667,7 +755,8 @@ export function driverEnv(
 }
 
 /** An MCP connection to a driver command, over the SDK's stdio transport. */
-async function openConnection(command: CuaCommand): Promise<CuaConnection> {
+/** A connection to the driver `command` starts, checked by its first call. */
+export async function openConnection(command: CuaCommand): Promise<CuaConnection> {
   const { Client } = (await import("@modelcontextprotocol/sdk/client/index.js")) as unknown as {
     Client: new (info: {
       name: string;
@@ -726,6 +815,73 @@ async function permitted(connection: CuaConnection): Promise<Grants> {
   return body.accessibility === true && body.screen_recording === true ? Grants.Held : Grants.Missing;
 }
 
+/** The grants computer control waits for on a Mac, in the order macOS is asked for them. */
+export const GrantStage = {
+  Accessibility: "accessibility",
+  ScreenRecording: "screen-recording",
+  /** macOS's own consent for capturing the screen directly (the private window picker's bypass). */
+  DirectCapture: "direct-capture",
+} as const;
+export type GrantStage = (typeof GrantStage)[keyof typeof GrantStage];
+
+/** The screen-capture probe's answers that need nothing more of the person. */
+const CAPTURE_READY: ReadonlySet<unknown> = new Set([undefined, "ready", "unavailable", "not_checked"]);
+
+/** The first grant the driver is still without, or null when it can see and move. */
+async function missingGrant(open: () => Promise<CuaConnection>): Promise<GrantStage | null> {
+  const connection = await open();
+  try {
+    const body = structured(await connection.call("check_permissions", { prompt: false }));
+    if (body.accessibility !== true) return GrantStage.Accessibility;
+    if (body.screen_recording !== true) return GrantStage.ScreenRecording;
+    // Both held: the live probe raises macOS's screen-capture consent while it is still to give.
+    const probe = structured(await connection.call("check_permissions", { prompt: true, probe_direct_capture: true }));
+    return CAPTURE_READY.has(probe.direct_capture_status) ? null : GrantStage.DirectCapture;
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
+/** Ask macOS for a missing grant the first time it is found missing; the probe raises its own consent. */
+async function askOnce(stage: GrantStage, asked: Set<GrantStage>, ask: (stage: GrantStage) => Promise<void>) {
+  if (stage === GrantStage.DirectCapture || asked.has(stage)) return;
+  asked.add(stage);
+  await ask(stage).catch(() => {});
+}
+
+/**
+ * Wait until this Mac lets the driver see and move: each missing grant is asked of macOS once
+ * (`ask`: its prompt, or System Settings at its list), and the grants are read again by a fresh
+ * daemon (`restart`; macOS keeps a process's old answer) until the person gives them. False when
+ * `waitMs` passes or `signal` stops the wait first; nothing is ever asked twice.
+ */
+export async function awaitGrants(
+  open: () => Promise<CuaConnection>,
+  options: {
+    ask: (stage: GrantStage) => Promise<void>;
+    restart?: () => Promise<void>;
+    signal?: AbortSignal;
+    waitMs?: number;
+    pollMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  },
+): Promise<boolean> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => sleepFor(ms));
+  const deadline = now() + (options.waitMs ?? GRANT_WAIT_MS);
+  const asked = new Set<GrantStage>();
+  for (;;) {
+    if (options.signal?.aborted) return false;
+    const missing = await missingGrant(open);
+    if (missing === null) return true;
+    await askOnce(missing, asked, options.ask);
+    if (now() >= deadline) return false;
+    await sleep(options.pollMs ?? GRANT_POLL_MS);
+    if (missing !== GrantStage.DirectCapture) await options.restart?.().catch(() => {});
+  }
+}
+
 /** What the driver's grants are: held, missing, or granted but not yet seen by a daemon started before. */
 const Grants = { Held: "held", Missing: "missing", Pending: "pending" } as const;
 type Grants = (typeof Grants)[keyof typeof Grants];
@@ -778,6 +934,8 @@ export async function connectCuaDriver(
     platform?: NodeJS.Platform;
     probe?: () => StartedProbe;
     holder?: GrantHolder;
+    /** The app macOS lists the host's grants under, named in the sentence the person reads. */
+    hostApp?: string;
     restart?: () => Promise<void>;
     askForGrants?: () => Promise<void>;
   },
@@ -803,7 +961,8 @@ export async function connectCuaDriver(
   }
   if (opened.grants !== Grants.Held) {
     await options.askForGrants?.().catch(() => {});
-    throw new Error(MESSAGE.permissions[options.holder ?? GrantHolder.Driver]);
+    const host = options.holder === GrantHolder.Host;
+    throw new Error(host ? MESSAGE.permissions.host(options.hostApp ?? DEFAULT_HOST_APP) : MESSAGE.permissions.driver);
   }
   return cuaDriver(opened.connection, options.local ? { secureInput: secureInputActive, mac: macApps() } : {});
 }

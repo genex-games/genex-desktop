@@ -10,8 +10,16 @@
  * in its record, and its Undo has the plugin take the set-up back first (`undoSetUp`), unless
  * another game's current link names the same project: that game builds in it too, so only the link
  * is undone.
+ *
+ * The link follows the game: a game this Genex never linked (no link file, not even an Undo's
+ * `unlinkedAt`) whose studio.json mirrors a link another Genex made (a game opened from its folder,
+ * from another profile) is adopted on its first plugin call or read: the plugin's record is written
+ * from the mirror, without `setUp` (this Genex set nothing up) and with no chat line (there is nothing
+ * to undo). Only a mirror of that plugin's engine whose project file is a regular file at exactly
+ * its real path inside the game's own real folder is adopted.
  */
-import { mkdir, readdir, rm } from "node:fs/promises";
+import { link as hardLink, lstat, mkdir, readdir, realpath, rm, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { CustomEvent, type CustomEventRecord, customEventData } from "../../shared/custom-events.ts";
 import {
@@ -26,7 +34,15 @@ import {
 } from "../../shared/game-engine.ts";
 import { ENGINE_LINKS_FOLDER, type PluginBinding } from "../../shared/plugins.ts";
 import { atomicWriteJson, readJsonIfExists } from "../fsx.ts";
-import { projectFileOf, restoreEngineBinding, stillThere, writeEngineBinding } from "../game-engine-binding.ts";
+import {
+  projectFileOf,
+  readEngineBinding,
+  restoreEngineBinding,
+  stillThere,
+  writeEngineBinding,
+} from "../game-engine-binding.ts";
+import { isBelow } from "../paths.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** A game id as it names a link file: a plain folder name, never a path. */
 const GAME_ID = /^[a-zA-Z0-9_-]{1,100}$/;
@@ -34,12 +50,16 @@ const GAME_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 const MAX_LINK_NAME = 80;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
+/**
+ * What a link refuses with. Undo is the person's, so its words are functions, in their language; a
+ * link is a plugin's call, so its refusals stay English for the plugin and the model behind it.
+ */
 const MESSAGE = {
   GameRequired: "Project required",
   InvalidGame: "Invalid game",
   NoEngine: "This plugin declares no engine, so it can't link a game to a project.",
-  Stale: "This link already changed, so there is nothing to undo.",
-  NoSetUpUndo: "Genex can't take back this project's set-up here, so the link stays.",
+  Stale: () => t("This link already changed, so there is nothing to undo."),
+  NoSetUpUndo: () => t("Genex can't take back this project's set-up here, so the link stays."),
 } as const;
 
 /** A game's link as a plugin reads it: the binding plus the project's name. */
@@ -48,7 +68,7 @@ export type EngineLink = EngineBinding & { name: string };
 /** Undo was asked for a link that is no longer the game's current one. */
 export class EngineLinkStale extends Error {
   constructor() {
-    super(MESSAGE.Stale);
+    super(MESSAGE.Stale());
     this.name = "EngineLinkStale";
   }
 }
@@ -97,6 +117,7 @@ function gameOf(project: string | undefined): string {
 }
 
 const LINK_FILE_EXTENSION = ".json";
+const STUDIO_JSON = "studio.json";
 const linkFile = (root: string, game: string) => path.join(root, ENGINE_LINKS_FOLDER, `${game}${LINK_FILE_EXTENSION}`);
 
 /** A catalog of the one engine a plugin declares: what its own link records may name. */
@@ -129,6 +150,42 @@ async function writeRecord(root: string, game: string, record: LinkRecord): Prom
       }
     : { unlinkedAt: record.unlinkedAt };
   await atomicWriteJson(linkFile(root, game), body);
+}
+
+/** Whether the plugin keeps any file for the game's link: a link, an Undo's `unlinkedAt`, or one it can't read. */
+async function hasRecordFile(root: string, game: string): Promise<boolean> {
+  return (await lstat(linkFile(root, game)).catch(() => null)) !== null;
+}
+
+/**
+ * Writes the game's first link record, refusing when a record appeared meanwhile (a link made at the
+ * same moment wins): written whole beside it, then linked into place, which fails on any file there.
+ */
+async function createRecord(root: string, game: string, record: LinkRecord): Promise<boolean> {
+  const folder = path.join(root, ENGINE_LINKS_FOLDER);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const staged = path.join(folder, `.${game}.${randomUUID()}.adopt`);
+  await atomicWriteJson(staged, record.link);
+  try {
+    await hardLink(staged, linkFile(root, game));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await unlink(staged).catch(() => undefined);
+  }
+}
+
+/**
+ * The link the game's studio.json mirrors for `engine` when this Genex may adopt it: of that
+ * engine, its project still a regular file at exactly the real path recorded, inside the game's own
+ * real folder. Undefined otherwise.
+ */
+async function adoptable(dir: string, engine: EngineDeclaration): Promise<EngineBinding | undefined> {
+  const mirror = await readEngineBinding(dir, own(engine)).catch(() => undefined);
+  if (!mirror) return undefined;
+  const folder = await realpath(dir).catch(() => undefined);
+  return folder && isBelow(folder, mirror.project) ? mirror : undefined;
 }
 
 /** The recorded binding while its project is still a regular file of the engine's kind at exactly that real path. */
@@ -290,7 +347,7 @@ async function takeBackSetUp(
 ): Promise<SetUpUndo | null> {
   if (!current.setUp || !current.link) return null;
   if (await linkedElsewhere(deps.root(pluginId), game, current.link.project, engine)) return SetUpUndo.Kept;
-  if (!deps.undoSetUp) throw new Error(MESSAGE.NoSetUpUndo);
+  if (!deps.undoSetUp) throw new Error(MESSAGE.NoSetUpUndo());
   await deps.undoSetUp(pluginId, game, current.link.project);
   return SetUpUndo.Undone;
 }
@@ -310,6 +367,38 @@ function undoneRecord(
     ...(names.setUpUndone ? { setUpUndone: names.setUpUndone } : {}),
     ...(names.setUpKept ? { setUpKept: names.setUpKept } : {}),
   });
+}
+
+/**
+ * Adopts the link the game brought in its studio.json for `pluginId`'s engine when the plugin
+ * keeps no record of the game at all: the adopted binding, else undefined.
+ */
+async function adoptFor(
+  deps: EngineLinkDeps,
+  pluginId: string,
+  game: string,
+  engine: EngineDeclaration,
+): Promise<EngineBinding | undefined> {
+  const root = deps.root(pluginId);
+  if (await hasRecordFile(root, game)) return undefined;
+  const mirror = await adoptable(deps.gameDir(game), engine);
+  if (!mirror || !(await createRecord(root, game, { link: mirror }))) return undefined;
+  deps.changed(game);
+  return mirror;
+}
+
+/**
+ * Adopts the link a game brought from another Genex (see the module's header), for the plugin
+ * whose engine its studio.json names. A game id that isn't a plain folder name adopts nothing.
+ */
+async function adoptMirror(deps: EngineLinkDeps, project: string): Promise<void> {
+  if (!GAME_ID.test(project)) return;
+  const meta = await readJsonIfExists<{ engine?: unknown }>(path.join(deps.gameDir(project), STUDIO_JSON)).catch(
+    () => null,
+  );
+  const kind = parseEngineBinding(meta?.engine, deps.catalog())?.kind;
+  const engine = kind ? deps.catalog().get(kind) : undefined;
+  if (engine) await adoptFor(deps, engine.id, project, engine);
 }
 
 /** The link service a host wires to `game.engine.*`, plus Undo. */
@@ -369,7 +458,8 @@ export function createEngineLinks(deps: EngineLinkDeps) {
     const game = gameOf(binding?.project);
     const engine = deps.catalog().get(pluginId);
     if (!engine) return null;
-    const current = await holding((await record(pluginId, game, engine))?.link, engine);
+    const stored = (await record(pluginId, game, engine))?.link ?? (await adoptFor(deps, pluginId, game, engine));
+    const current = await holding(stored, engine);
     return current ? asLink(current, engine) : null;
   }
 
@@ -406,7 +496,10 @@ export function createEngineLinks(deps: EngineLinkDeps) {
     return true;
   }
 
-  return { link, read, steps, undo };
+  /** Adopts the engine link `project` brought in its studio.json from another Genex, when this one has none. */
+  const adopt = (project: string): Promise<void> => adoptMirror(deps, project);
+
+  return { link, read, steps, undo, adopt };
 }
 
 /** The link service a host keeps. */

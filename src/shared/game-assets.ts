@@ -125,6 +125,8 @@ export const ProjectAssetScope = {
   GenexInspection: "genex-inspection",
   GenexCover: "genex-cover",
   GenexCoverClip: "genex-cover-clip",
+  /** A store item's picture in its local draft's own folder (`.genex/items/<localId>/`). */
+  ItemPicture: "item-picture",
 } as const;
 export type ProjectAssetScope = (typeof ProjectAssetScope)[keyof typeof ProjectAssetScope];
 
@@ -143,6 +145,7 @@ export type ProjectAssetRead =
       jobId?: string;
     }
   | { project: string; scope: typeof ProjectAssetScope.GenexCover; maxPx?: number; candidate?: string }
+  | { project: string; scope: typeof ProjectAssetScope.ItemPicture; file: string; maxPx?: number }
   | { project: string; scope: typeof ProjectAssetScope.GenexCoverClip };
 
 /** Which session asked for the tool. There is no `role` on a delegate request; it is derived. */

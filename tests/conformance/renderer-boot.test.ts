@@ -16,6 +16,7 @@ import {
   type BootState,
   type SandboxProblem,
   type SandboxSetupResult,
+  WindowsSetupNeed,
 } from "../../src/shared/boot.ts";
 import { BootView, bootView, canSetUp, createBoot, SetupReport } from "../../src/renderer/state/boot.ts";
 import { nativeViewsUp } from "../../src/renderer/play/play-model.ts";
@@ -27,6 +28,7 @@ import {
   windowControlColors,
 } from "../../src/renderer/window-controls.ts";
 import { PlayViewerPhase } from "../../src/shared/play.ts";
+import { type ReadyUpdate, UpdateAction } from "../../src/shared/app-update.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 
 const PROBLEM: SandboxProblem = {
@@ -197,6 +199,17 @@ describe("Set up on Windows", () => {
     assert.equal(bootView(controller.store.getState()), BootView.SandboxSetup);
   });
 
+  it("waits for the press to update a sandbox another release set up: an update raises no prompt unasked", async () => {
+    const { controller, fake } = windowsBoot([]);
+    const reinstall = { ...NOT_PROVISIONED, windowsNeeds: [WindowsSetupNeed.Reinstall] };
+    fake.stub("bootState", async () => ({ ...WINDOWS_SETUP, sandbox: reinstall }));
+    await controller.start();
+    assert.equal(fake.callsOf("setUpSandbox").length, 0);
+    assert.equal(bootView(controller.store.getState()), BootView.SandboxSetup);
+    await controller.setUp();
+    assert.equal(fake.callsOf("setUpSandbox").length, 1);
+  });
+
   it("starts nothing by itself where Set up is not offered: a ready start, or Linux", async () => {
     for (const first of [READY, SETUP]) {
       const { controller, fake } = boot(first);
@@ -351,6 +364,7 @@ const FAILED: BootState = {
 describe("a window that opens while the studio starts", () => {
   it("says which step the core is on, and follows it", async () => {
     const { controller, waits } = startingBoot([
+      starting(StartStep.Agents),
       starting(StartStep.Games),
       starting(StartStep.Workspace),
       starting(StartStep.Studio),
@@ -361,8 +375,8 @@ describe("a window that opens while the studio starts", () => {
       if (bootView(state) === BootView.Starting) steps.push(state.step);
     });
     await controller.start();
-    assert.deepEqual(steps, [StartStep.Games, StartStep.Workspace, StartStep.Studio]);
-    assert.equal(waits.length, 3, "one wait before each new question");
+    assert.deepEqual(steps, [StartStep.Agents, StartStep.Games, StartStep.Workspace, StartStep.Studio]);
+    assert.equal(waits.length, 4, "one wait before each new question");
   });
 
   it("goes on to the setup screen a start ends on, and runs Set up there by itself", async () => {
@@ -424,6 +438,56 @@ describe("a studio that would not start", () => {
     await controller.start();
     await controller.quit();
     assert.equal(fake.callsOf("quitFromBoot").length, 1);
+  });
+});
+
+describe("an update that arrives before the studio opens", () => {
+  const NEXT: ReadyUpdate = { version: "0.1.14", action: UpdateAction.Restart };
+
+  /** A boot whose main has nothing downloaded for the first `empty` questions, then `NEXT`. */
+  function updatingBoot(first: BootState, empty: number) {
+    const booted = startingBoot([first]);
+    let asked = 0;
+    booted.fake.stub("readyUpdate", async () => (asked++ < empty ? null : NEXT));
+    return booted;
+  }
+
+  it("a start that failed shows the update downloaded meanwhile, and Relaunch installs it", async () => {
+    const { controller, fake, waits } = updatingBoot(FAILED, 2);
+    await controller.start();
+    assert.equal(controller.store.getState().update, null);
+    await controller.watchUpdate();
+    assert.deepEqual(controller.store.getState().update, NEXT);
+    assert.equal(fake.callsOf("readyUpdate").length, 3, "asks again until one is downloaded");
+    assert.equal(waits.length, 2, "one wait between questions");
+    await controller.restartToUpdate();
+    assert.equal(fake.callsOf("restartToUpdate").length, 1);
+  });
+
+  it("the setup screen shows it too", async () => {
+    const { controller } = updatingBoot(WINDOWS_SETUP, 0);
+    await controller.load();
+    await controller.watchUpdate();
+    assert.deepEqual(controller.store.getState().update, NEXT);
+  });
+
+  it("stops asking once the studio is up: its sidebar offers the relaunch", async () => {
+    const { controller, fake } = updatingBoot(WINDOWS_READY, 5);
+    await controller.load();
+    await controller.watchUpdate();
+    assert.equal(fake.callsOf("readyUpdate").length, 0);
+  });
+
+  it("a main that cannot say keeps the screen as it is and asks again", async () => {
+    const { controller, fake } = startingBoot([FAILED]);
+    let asked = 0;
+    fake.stub("readyUpdate", async () => {
+      if (asked++ === 0) throw new Error("no handler");
+      return NEXT;
+    });
+    await controller.start();
+    await controller.watchUpdate();
+    assert.deepEqual(controller.store.getState().update, NEXT);
   });
 });
 
@@ -501,5 +565,80 @@ describe("window control colours", () => {
     stop();
     setHomeUnderControls(false);
     assert.deepEqual(fake.callsOf("setWindowControls"), []);
+  });
+});
+
+const MOVE_TO = "D:\\Genex";
+const moving = (done: number, total: number): BootState => ({
+  platform: StudioPlatform.Windows,
+  phase: BootPhase.Moving,
+  sandbox: null,
+  move: { to: MOVE_TO, done, total },
+});
+const MISSING: BootState = {
+  platform: StudioPlatform.Windows,
+  phase: BootPhase.DataMissing,
+  sandbox: null,
+  dataFolder: MOVE_TO,
+};
+
+describe("a launch that moves Genex's files", () => {
+  it("follows the move from counting to the last byte, and starts nothing: main starts Genex again", async () => {
+    const { controller, started } = startingBoot([
+      moving(0, 0),
+      moving(0, 900),
+      moving(450, 900),
+      moving(900, 900),
+      WINDOWS_READY,
+    ]);
+    const seen: Array<[number, number]> = [];
+    controller.store.subscribe((state) => {
+      if (bootView(state) === BootView.Moving && state.move) seen.push([state.move.done, state.move.total]);
+    });
+    await controller.start();
+    assert.deepEqual(seen, [
+      [0, 0],
+      [0, 900],
+      [450, 900],
+      [900, 900],
+    ]);
+    assert.equal(controller.store.getState().move?.to, MOVE_TO);
+    assert.equal(started(), 0);
+  });
+});
+
+describe("a move that stopped part-way", () => {
+  it("stops following the move and shows why, with Try again", async () => {
+    const stopped: BootState = { ...moving(0, 0), failure: "A file was in use." };
+    const { controller, waits, fake } = startingBoot([moving(10, 90), stopped]);
+    await controller.start();
+    const state = controller.store.getState();
+    assert.equal(bootView(state), BootView.Moving);
+    assert.equal(state.error, "A file was in use.");
+    assert.equal(waits.length, 1, "no more questions once it stopped");
+    await controller.retry();
+    assert.equal(fake.callsOf("retrySandboxSetup").length, 1);
+  });
+});
+
+describe("a data folder that is not there", () => {
+  it("names the folder and starts nothing", async () => {
+    const { controller, started } = startingBoot([MISSING]);
+    await controller.start();
+    const state = controller.store.getState();
+    assert.equal(bootView(state), BootView.DataMissing);
+    assert.equal(state.dataFolder, MOVE_TO);
+    assert.equal(state.error, null);
+    assert.equal(started(), 0);
+  });
+
+  it("a Try again while it is still missing says so and stays", async () => {
+    const still: BootState = { ...MISSING, failure: `${MOVE_TO} is still not there.` };
+    const { controller } = startingBoot([MISSING], [still]);
+    await controller.start();
+    await controller.retry();
+    const state = controller.store.getState();
+    assert.equal(bootView(state), BootView.DataMissing);
+    assert.equal(state.error, `${MOVE_TO} is still not there.`);
   });
 });

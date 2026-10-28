@@ -86,8 +86,6 @@ const READ_ON_SURFACES: readonly AnyRole[] = [
   "danger",
   "settingsTab",
 ];
-/** Play's blue (genex.games' own): the selected tab and switch side unless a palette sets one (play.css `--play-blue`). */
-const PLAY_BLUE = "#4b60bf";
 /** WCAG AA: body text, and icons and other graphics that identify a control. */
 const TEXT_CONTRAST = 4.5;
 const GRAPHIC_CONTRAST = 3;
@@ -135,7 +133,7 @@ const DETAIL_VARIABLE: Record<
   meterFill: "--muted-foreground",
   meterHigh: "--orange",
   meterFull: "--destructive",
-  viewSwitch: "--accent-fill",
+  viewSwitch: "--accent-primary",
   playTrack: "--hover",
   playSelectedText: "--foreground",
   playTab: "--background",
@@ -147,8 +145,6 @@ const DETAIL_VARIABLE: Record<
 /** Marks read on their own grounds: labels on fills (text contrast) and meter fills on their track (graphic). */
 const ON_GROUND: readonly { marks: readonly DetailRole[]; grounds: readonly DetailRole[]; minimum: number }[] = [
   { marks: ["accentText"], grounds: ["accentFill", "accentHover"], minimum: TEXT_CONTRAST },
-  // The Live / Assets switch writes the current view's name in the button text on its own fill.
-  { marks: ["accentText"], grounds: ["viewSwitch"], minimum: TEXT_CONTRAST },
   { marks: ["controlText"], grounds: ["controlFill", "promptChipFill", "well"], minimum: TEXT_CONTRAST },
   { marks: ["controlTextHover"], grounds: ["controlHover", "chipHover", "thumb"], minimum: TEXT_CONTRAST },
   { marks: ["meterFill", "meterHigh", "meterFull"], grounds: ["meterTrack"], minimum: GRAPHIC_CONTRAST },
@@ -370,7 +366,10 @@ const STRIPE_INK = 0.04;
  * Play's edges while unset (play.css): the selected blue's, the switch track's grey, the scrolled
  * tabs' ink and the focused search's muted ink.
  */
-const PLAY_SELECTED_EDGE_SHARE = 0.4;
+/** The selected edge's share on each scheme (theme.css `--select-edge-share`). */
+const PLAY_SELECTED_EDGE_SHARE: Record<Scheme, number> = { [Scheme.Dark]: 0.55, [Scheme.Light]: 0.35 };
+/** The selected segment's tint on each scheme (theme.css `--select-share`). */
+const SELECT_SHARE: Record<Scheme, number> = { [Scheme.Dark]: 0.16, [Scheme.Light]: 0.1 };
 const PLAY_TRACK_EDGE = { color: "#797f8b", share: 0.21 } as const;
 const PLAY_TAB_EDGE_SHARE = 0.09;
 const PLAY_SEARCH_FOCUS_SHARE = 0.18;
@@ -399,18 +398,24 @@ function sidebarRowColor(palette: Palette, row: SidebarRow): string {
   return mixOklab(color, palette.sidebar, percent / 100);
 }
 
+/** Play's people roles that follow the accent while unset (people.css, play.css): its blue, its main button's fill, the requests count. */
+const ACCENT_PEOPLE = {
+  playBlue: (p: Palette) => p.accent,
+  peoplePrimary: (p: Palette) => shownColor(p, "accentFill"),
+  peoplePrimaryShade: (p: Palette) => shownColor(p, "accentFill"),
+  peopleRequest: (p: Palette) => p.accent,
+} as const satisfies Partial<Record<PeopleRole, (p: Palette) => string>>;
+type AccentPeopleRole = keyof typeof ACCENT_PEOPLE;
+const isAccentPeopleRole = (role: AnyRole): role is AccentPeopleRole => role in ACCENT_PEOPLE;
+
 /** people.css's own colours for Play's people, stats and credits, on a dark canvas and a light one. */
-const PEOPLE_COLORS: Record<Scheme, Record<PeopleRole, string>> = {
+const PEOPLE_COLORS: Record<Scheme, Record<Exclude<PeopleRole, AccentPeopleRole>, string>> = {
   [Scheme.Dark]: {
     peopleChipText: "#9fb0ff",
     peopleChipNumber: "#d3dbff",
-    playBlue: "#4b60bf",
-    peoplePrimary: "#4b60bf",
-    peoplePrimaryShade: "#3f51a8",
     peopleLive: "#22a55b",
     peopleLiveText: "#5fd18b",
     peoplePro: "#8d9bff",
-    peopleRequest: "#3f61f5",
     statsLine: "#7d8ff0",
     statsUp: "#5fd18b",
     statsDown: "#ff8a7a",
@@ -421,13 +426,9 @@ const PEOPLE_COLORS: Record<Scheme, Record<PeopleRole, string>> = {
   [Scheme.Light]: {
     peopleChipText: "#3d58d8",
     peopleChipNumber: "#1e33b4",
-    playBlue: "#4b60bf",
-    peoplePrimary: "#4b60bf",
-    peoplePrimaryShade: "#3f51a8",
     peopleLive: "#22a55b",
     peopleLiveText: "#16803f",
     peoplePro: "#4353d9",
-    peopleRequest: "#3f61f5",
     statsLine: "#4b60bf",
     statsUp: "#16803f",
     statsDown: "#b42318",
@@ -440,10 +441,13 @@ const PEOPLE_COLORS: Record<Scheme, Record<PeopleRole, string>> = {
 const DARK_CANVAS_LIGHTNESS = 0.5;
 const isPeopleRole = (role: AnyRole): role is PeopleRole => (PEOPLE_ROLES as readonly string[]).includes(role);
 const isPlayHueRole = (role: AnyRole): role is PlayHueRole => (PLAY_HUE_ROLES as readonly string[]).includes(role);
-/** An unset people role's colour: people.css's own for the palette's scheme. */
+/** The scheme a palette's canvas belongs to: people.css and play.css pick their colours by it. */
+const schemeOf = (palette: Palette): Scheme =>
+  oklch(palette.background)[0] < DARK_CANVAS_LIGHTNESS ? Scheme.Dark : Scheme.Light;
+/** An unset people role's colour: the accent's for the roles that follow it, else people.css's own for the palette's scheme. */
 function peopleColor(palette: Palette, role: PeopleRole): string {
-  const scheme = oklch(palette.background)[0] < DARK_CANVAS_LIGHTNESS ? Scheme.Dark : Scheme.Light;
-  return PEOPLE_COLORS[scheme][role];
+  if (isAccentPeopleRole(role)) return ACCENT_PEOPLE[role](palette);
+  return PEOPLE_COLORS[schemeOf(palette)][role];
 }
 
 /** {@link DETAIL_VARIABLE} looked up by any role: the details with no variable of their own answer nothing. */
@@ -461,21 +465,22 @@ const LAYERED: Partial<Record<AnyRole, (p: Palette) => [string, string, number]>
   artButton: (p) => [p.background, p.accent, ACCENT_TINT],
   promptEdge: (p) => [p.surface, p.border, PROMPT_EDGE_SHARE],
   hatch: (p) => [p.background, p.foreground, STRIPE_INK],
-  playSelectedEdge: (p) => [p.background, p.playSelected ?? PLAY_BLUE, PLAY_SELECTED_EDGE_SHARE],
+  playSelectedEdge: (p) => [p.background, p.playSelected ?? p.accent, PLAY_SELECTED_EDGE_SHARE[schemeOf(p)]],
   playTrackEdge: (p) => [p.background, PLAY_TRACK_EDGE.color, PLAY_TRACK_EDGE.share],
   playTabEdge: (p) => [p.background, p.foreground, PLAY_TAB_EDGE_SHARE],
   playSearchFocus: (p) => [p.background, p.foreground, PLAY_SEARCH_FOCUS_SHARE],
 };
 
 /**
- * An unset Play colour: the selected blue is Play's own, the tinted families wear it (the credits card
- * the chips' hue), and the people and stats colours are people.css's own; null for any other role.
+ * An unset Play colour: the selected blue is the accent, the tinted families wear it (the credits card
+ * the chips' hue), and the people and stats colours are people.css's own or the accent's
+ * (`ACCENT_PEOPLE`); null for any other role.
  */
 function unsetPlayColor(palette: Palette, role: AnyRole): string | null {
-  if (role === "playSelected") return PLAY_BLUE;
+  if (role === "playSelected") return palette.accent;
   if (isPeopleRole(role)) return peopleColor(palette, role);
   if (!isPlayHueRole(role)) return null;
-  return role === "creditsCard" ? shownColor(palette, "peopleChip") : (palette.playSelected ?? PLAY_BLUE);
+  return role === "creditsCard" ? shownColor(palette, "peopleChip") : (palette.playSelected ?? palette.accent);
 }
 
 /** The colour a role is drawn in: its own, or for an unset detail the one the app derives. */
@@ -709,6 +714,11 @@ export function readability(palette: Palette, role: AnyRole): Readability | null
   // The current sidebar row's icon sits on the selected fill, a faint lift of the sidebar.
   if (role === "logo" || role === "logoShade" || role === "iconSelected")
     return { ratio: contrastRatio(shownColor(palette, role), palette.sidebar), minimum: GRAPHIC_CONTRAST };
+  // The Live / Assets switch writes the current view's name in the text colour on its tint over the glass.
+  if (role === "viewSwitch") {
+    const tint = over(palette.popover, shownColor(palette, role), SELECT_SHARE[schemeOf(palette)]);
+    return { ratio: contrastRatio(palette.foreground, tint), minimum: TEXT_CONTRAST };
+  }
   // The onboarding art and the empty-state cube draw their lines and glows in this colour on the canvas.
   if (role === "art" || role === "wireArt")
     return { ratio: contrastRatio(shownColor(palette, role), palette.background), minimum: GRAPHIC_CONTRAST };

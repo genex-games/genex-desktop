@@ -265,9 +265,11 @@ describe("the open Loop under its cap", () => {
 });
 
 describe("a web Loop's close and its result card (director/integrate.ts)", () => {
-  it("a Stop while a finish closes pauses the build for a Resume; a close its time ended lists what is left with its hours", async () => {
+  it("a Stop that refused a closing finish's landing pauses the build; one after it landed ends nothing more; a close its time ended lists what is left", async () => {
     const { endedAs } = await import("../../src/harness-seed/loop/director/integrate.ts");
-    const closing = (over: { cancelled: boolean; state: Record<string, unknown> }) => {
+    const STOPPED = { ok: false, why: "stopped", reason: "stopped by the user" };
+    const LANDED = { ok: true, how: "judge-pick", line: "made live" };
+    const closing = (over: { cancelled: boolean; state: Record<string, unknown> }, landed: object = STOPPED) => {
       const loopRun = {
         ctx: { cancelled: over.cancelled },
         journal: { phase: "running" },
@@ -275,18 +277,23 @@ describe("a web Loop's close and its result card (director/integrate.ts)", () =>
         run: { runId: "run_w", project: "plaza", budgets: { wallClockMs: 2 * HOUR_MS, completionPolicy: "duration" } },
         state: { integrationHead: "a".repeat(40), ...over.state },
       };
-      endedAs(loopRun as never);
+      endedAs(loopRun as never, landed);
       return loopRun;
     };
     const finish = { summary: "done", land: true, victory: true, at: 0 };
     const stopped = closing({ cancelled: true, state: { finish } });
     assert.equal(stopped.report.executionStatus, "paused", "Resume picks it up");
     assert.equal(stopped.report.stillToFix, undefined, "a pause keeps its own words, with no list");
+    const late = closing({ cancelled: true, state: { finish } }, LANDED);
+    assert.equal(late.report.executionStatus, "completed", "a Stop after the landing: the build is done, no Resume");
     const tally = { round: 1, rejections: 1, checking: false, reasons: [], notDone: ["No door"] };
-    const timedOut = closing({
-      cancelled: false,
-      state: { finish: { ...finish, victory: false }, endedWhy: StopWhy.Time, finishTally: tally },
-    });
+    const timedOut = closing(
+      {
+        cancelled: false,
+        state: { finish: { ...finish, victory: false }, endedWhy: StopWhy.Time, finishTally: tally },
+      },
+      LANDED,
+    );
     assert.equal(timedOut.report.executionStatus, "completed");
     assert.deepEqual(timedOut.report.stillToFix, { done: [], notDone: ["No door"], why: StopWhy.Time, hours: 2 });
   });

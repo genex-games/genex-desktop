@@ -81,8 +81,10 @@ export function VirtualTranscript<T extends { id: string }>({
     const element = scroller.current;
     if (!element) return;
     let frame = 0;
+    let after: ReturnType<typeof setTimeout> | undefined;
     const measure = () => {
       frame = 0;
+      after = undefined;
       const top = host.current
         ? host.current.getBoundingClientRect().top - element.getBoundingClientRect().top + element.scrollTop
         : 0;
@@ -91,8 +93,13 @@ export function VirtualTranscript<T extends { id: string }>({
       const rows = mounted.current;
       setViewport((previous) => (rows ? retainedViewport(offsetsRef.current, previous, next, rows) : next));
     };
+    // Read once the frame is painted, when its layout is still clean: read inside the frame, while
+    // a streaming reply glides the transcript taller, it laid the page out a second time each frame.
     const scroll = () => {
-      if (!frame) frame = requestAnimationFrame(measure);
+      if (frame || after) return;
+      frame = requestAnimationFrame(() => {
+        after = setTimeout(measure);
+      });
     };
     const observer = new ResizeObserver(scroll);
     observer.observe(element);
@@ -102,6 +109,7 @@ export function VirtualTranscript<T extends { id: string }>({
       element.removeEventListener("scroll", scroll);
       observer.disconnect();
       cancelAnimationFrame(frame);
+      clearTimeout(after);
     };
   }, [scroller]);
   useLayoutEffect(() => {

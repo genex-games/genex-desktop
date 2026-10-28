@@ -83,19 +83,19 @@ export const withoutComment = (list: CommentsList, id: string): CommentsList => 
 export const NOTHING_TOLD = "";
 
 /**
- * What the layer tells main about what holds the bar, given what it last told (`told`, a key from an
- * earlier answer): nothing when that is unchanged; the first word after `NOTHING_TOLD` asks main to
- * draw the bar again for it (`ready`).
+ * What the layer tells main about itself, given what it last told (`told`, a key from an earlier
+ * answer): nothing when that is unchanged; the first word after `NOTHING_TOLD` asks main to draw the
+ * bar again for it (`ready`).
  */
 export function holdToTell(told: string, hold: PlayBarHold): { key: string; payload: PlayBarHold } | null {
-  const plain = { held: hold.held, overlay: hold.overlay };
+  const plain = { overlay: hold.overlay };
   const key = holdKey(plain);
   if (key === told) return null;
   return { key, payload: told === NOTHING_TOLD ? { ...plain, ready: true } : plain };
 }
 
 /** The key a hold is remembered by, once told. */
-export const holdKey = (hold: PlayBarHold): string => JSON.stringify({ held: hold.held, overlay: hold.overlay });
+export const holdKey = (hold: PlayBarHold): string => JSON.stringify({ overlay: hold.overlay });
 
 /** What Esc in the bar's layer does. Never rename a value. */
 export const BarEscape = {

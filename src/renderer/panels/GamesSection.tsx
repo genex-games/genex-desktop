@@ -1,22 +1,24 @@
 /** Settings → Games: the folder new games are created in. */
 import { useState, type JSX } from "react";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { elapsedMs } from "../analytics/properties.ts";
+import { workspaceCode } from "../analytics/workspace-properties.ts";
+import { settingsVisit } from "../analytics/workspace-trackers.ts";
+import { GamesRootOutcome } from "../analytics/workspace-vocabulary.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { problemWords } from "../words.ts";
+import { pathParts } from "../../shared/path-label.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The section's own words. */
 const WORDS = {
-  title: "Default game folder",
-  hint: "New games are created here. Games you already have stay where they are.",
-  change: "Change…",
-  choosing: "Choosing…",
+  title: t("Default game folder"),
+  hint: t("New games are created here. Games you already have stay where they are."),
+  change: t("Change…"),
+  choosing: t("Choosing…"),
 } as const;
-
-/** A path as its parent ("~/") and its own folder ("AI Games"): the parent is cut first when it is long. */
-function pathParts(label: string): { parent: string; leaf: string } {
-  const cut = label.replace(/\/+$/, "").lastIndexOf("/");
-  return cut < 0 ? { parent: "", leaf: label } : { parent: label.slice(0, cut + 1), leaf: label.slice(cut + 1) };
-}
 
 export function GamesSection({
   rootLabel,
@@ -31,10 +33,18 @@ export function GamesSection({
     if (busy) return;
     setBusy(true);
     setError(null);
+    const started = Date.now();
+    const ended = (outcome: GamesRootOutcome, failure?: unknown): void => {
+      if (outcome !== GamesRootOutcome.Cancelled) settingsVisit.changed(outcome === GamesRootOutcome.Refused);
+      const code = outcome === GamesRootOutcome.Refused ? { code: workspaceCode(failure) } : {};
+      track(AnalyticsEvent.GamesRootChanged, { outcome, choose_ms: elapsedMs(started, Date.now()), ...code });
+    };
     try {
       const label = await window.studio.chooseGamesRoot();
+      ended(label ? GamesRootOutcome.Changed : GamesRootOutcome.Cancelled);
       if (label) onRoot(label);
     } catch (cause) {
+      ended(GamesRootOutcome.Refused, cause);
       setError(problemWords(cause));
     } finally {
       setBusy(false);
@@ -48,8 +58,11 @@ export function GamesSection({
         <div className="mt-2.5 flex min-w-0 items-center gap-2">
           <div data-games-root title={rootLabel} className="settings-path">
             <Icon name="folder" size={14} className="shrink-0 text-ink-3" />
-            <span className="min-w-0 truncate text-ink-3">{parent}</span>
-            <span className="shrink-0 whitespace-nowrap text-ink">{leaf}</span>
+            {/* One run of text: the parent's separator sits right against the folder's name. */}
+            <span className="flex min-w-0">
+              <span className="min-w-0 truncate text-ink-3">{parent}</span>
+              <span className="shrink-0 whitespace-nowrap text-ink">{leaf}</span>
+            </span>
           </div>
           <Button disabled={busy} onClick={() => void choose()} className="h-9">
             {busy ? WORDS.choosing : WORDS.change}

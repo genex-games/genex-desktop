@@ -28,6 +28,7 @@ import {
   type ShareOutcome,
 } from "../../shared/asset-library.ts";
 import { assetKind, type ProjectAsset, type ProjectAssets } from "../../shared/game-assets.ts";
+import { t } from "../../shared/i18n.ts";
 import { isPlaySlug } from "../../shared/play.ts";
 import { atomicWriteJson, createFileInDir, ensureDirBelow, readRegularFile } from "../../substrate/fsx.ts";
 import type { AssetLibrary, ShareAnswer } from "../play/asset-library.ts";
@@ -55,20 +56,23 @@ const MEDIA_KIND: Readonly<Record<string, LibraryKind>> = {
 /** A generation id no generation has: the read that proves the account and genex.games' id filter. */
 const PROBE_GENERATION_ID = "probe-no-generation";
 
+/** What the person reads in the Assets tab when Save, Share or Add is refused. */
 const MESSAGE = {
-  notInGame: "That file isn't one of this game's assets.",
-  olderLibrary: "genex.games can't save or share from the app yet.",
-  notFound: "That asset isn't in your library.",
-  noFile: "genex.games has no file for that asset.",
-  notWebGame: "Code assets are for web games.",
-  notSendable:
-    "genex.games takes GLB, PNG, JPEG, WebP, MP3, WAV, OGG and MP4 files, pictures and sounds up to 32 MB, models and videos up to 64 MB.",
+  notInGame: () => t("That file isn't one of this game's assets."),
+  olderLibrary: () => t("genex.games can't save or share from the app yet."),
+  notFound: () => t("That asset isn't in your library."),
+  noFile: () => t("genex.games has no file for that asset."),
+  notWebGame: () => t("Code assets are for web games."),
+  notSendable: () =>
+    t(
+      "genex.games takes GLB, PNG, JPEG, WebP, MP3, WAV, OGG and MP4 files, pictures and sounds up to 32 MB, models and videos up to 64 MB.",
+    ),
 } as const;
 
 /** The library has no such generation (deleted, or never this account's): nothing to add. */
 export class NotInLibrary extends Error {
   constructor() {
-    super(MESSAGE.notFound);
+    super(MESSAGE.notFound());
   }
 }
 
@@ -230,7 +234,7 @@ async function lookup(deps: LibrarySharingDeps, ids: readonly string[]): Promise
     const run = asked.slice(start, start + LIBRARY_IDS_MAX);
     const page = await deps.library().list({ ids: run });
     // An older genex.games ignores `ids` and answers the newest rows: it has no Save or Share for the app.
-    if (page.assets.some((asset) => !run.includes(asset.id))) throw new Error(MESSAGE.olderLibrary);
+    if (page.assets.some((asset) => !run.includes(asset.id))) throw new Error(MESSAGE.olderLibrary());
     for (const asset of page.assets) found.set(asset.id, asset);
   }
   return found;
@@ -267,7 +271,7 @@ async function saveFiles(
   const known = await knownFiles(deps, project);
   for (const file of files) {
     const match = known.find((entry) => entry.asset.file === file);
-    if (!match) throw new Error(MESSAGE.notInGame);
+    if (!match) throw new Error(MESSAGE.notInGame());
     if (match.generationId) await deps.library().setSaved(match.generationId, saved);
     else if (saved) {
       const generationId = await sendFile(deps, dir, match.asset);
@@ -281,7 +285,7 @@ async function saveFiles(
 /** A game file sent to the library, saved under what it was made from (else its name); its generation. */
 async function sendFile(deps: LibrarySharingDeps, dir: string, asset: ProjectAsset): Promise<string> {
   // Checked before the file is read: genex.games would refuse it after the upload.
-  if (!isSendable(asset.file, asset.bytes)) throw new Error(MESSAGE.notSendable);
+  if (!isSendable(asset.file, asset.bytes)) throw new Error(MESSAGE.notSendable());
   const read = await deps.readFile(dir, asset.file, sendMaxBytes(asset.file));
   const filename = asset.file.split("/").at(-1) ?? asset.file;
   const title = asset.prompt ?? filename;
@@ -298,7 +302,7 @@ async function shareFiles(
   const outcomes: ShareOutcome[] = [];
   for (const item of items) {
     const state = current.states.find((entry) => entry.file === item.file);
-    if (!state) throw new Error(MESSAGE.notInGame);
+    if (!state) throw new Error(MESSAGE.notInGame());
     outcomes.push({ file: item.file, ...(await shareOne(deps, state, item.name)) });
   }
   return outcomes;
@@ -318,7 +322,7 @@ async function shareOne(deps: LibrarySharingDeps, state: AssetLibraryState, name
 /** Take a file's shared page off Play. */
 async function unshareFile(deps: LibrarySharingDeps, project: string, file: string): Promise<GameLibraryStates> {
   const state = (await readStates(deps, project)).states.find((entry) => entry.file === file);
-  if (!state) throw new Error(MESSAGE.notInGame);
+  if (!state) throw new Error(MESSAGE.notInGame());
   if (state.shared?.live) await deps.library().unshare(state.shared.projectId);
   return readStates(deps, project);
 }
@@ -341,7 +345,7 @@ async function addGeneration(
   const dir = await deps.gameDir(project);
   const entry = (await lookup(deps, [generationId])).get(generationId);
   if (!entry) throw new NotInLibrary();
-  if (!entry.fileUrl) throw new Error(MESSAGE.noFile);
+  if (!entry.fileUrl) throw new Error(MESSAGE.noFile());
   const bytes = await deps.download(entry.fileUrl, LIBRARY_FILE_MAX_BYTES);
   const file = await place(dir, AddFolder.Library, downloadName(entry.fileUrl, entry.id, entry.kind), bytes);
   await turn(linksTurn(dir), () => writeLinks(dir, { [file]: { generationId, sent: false } }));
@@ -359,9 +363,9 @@ async function addShared(deps: LibrarySharingDeps, project: string, slug: string
     const name = downloadName(fileUrl, slug, MEDIA_KIND[String(fieldOf(asset, "media"))] ?? LibraryKind.Model);
     return { files: [await place(dir, AddFolder.Community, name, bytes)] };
   }
-  if (!(await deps.webGame(project))) throw new Error(MESSAGE.notWebGame);
+  if (!(await deps.webGame(project))) throw new Error(MESSAGE.notWebGame());
   const written = await deps.vendorModule(dir, manifest);
-  if (!written) throw new Error(MESSAGE.noFile);
+  if (!written) throw new Error(MESSAGE.noFile());
   return { files: [written] };
 }
 
@@ -371,7 +375,7 @@ function addToGame(deps: LibrarySharingDeps, turn: Turn, project: string, source
     return addGeneration(deps, turn, project, source.generationId);
   }
   if ("slug" in source && isPlaySlug(source.slug)) return addShared(deps, project, source.slug);
-  return Promise.reject(new Error(MESSAGE.notFound));
+  return Promise.reject(new Error(MESSAGE.notFound()));
 }
 
 /** A game's library sharing over `deps`. */

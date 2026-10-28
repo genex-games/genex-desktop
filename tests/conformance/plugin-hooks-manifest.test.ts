@@ -342,7 +342,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
   it("the bundled Unreal manifest is valid and its lock's probe needs no lock", () => {
     const raw = JSON.parse(readFileSync("src/plugins/unreal/plugin.json", "utf8")) as PluginManifest;
     const unreal = validateManifest(raw);
-    assert.equal(unreal.version, "0.18.0");
+    assert.equal(unreal.version, "0.19.0");
     assert.deepEqual(unreal.locks, [
       { id: "editor", label: "Unreal", per: LockScope.Project, personFirst: "editor-activity" },
     ]);
@@ -380,7 +380,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     const raw = JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest;
     const roblox = validateManifest(raw);
     // A change to the plugin raises its version above the one dev has (check-plugin-versions).
-    assert.equal(roblox.version, "0.1.5", "one step above the version dev has");
+    assert.equal(roblox.version, "0.1.31", "a step above the version dev has");
     assert.deepEqual(roblox.locks, [
       { id: "studio", label: "Roblox Studio", per: LockScope.Project, personFirst: "studio-activity" },
     ]);
@@ -390,9 +390,9 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
     assert.deepEqual(roblox.toolbar, [
       {
         id: "studio",
-        label: "Roblox Studio",
+        label: "Roblox",
         ariaLabel: "Roblox Studio",
-        icon: "box",
+        icon: "roblox",
         facts: ["roblox-project"],
         target: { kind: "panel", id: "setup" },
         status: "toolbar-status",
@@ -422,6 +422,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
       [
         { on: "run.prepare", tool: "open-for-run", facts: ROBLOX_PROJECT },
         { on: "turn.start", tool: "team-note", facts: ROBLOX_PROJECT },
+        { on: "turn.end", tool: "close-after-publish", facts: ROBLOX_PROJECT },
         { on: "checkpoint.before", tool: "save-place", facts: ROBLOX_PROJECT, messages: true },
         { on: "checkpoint.after", tool: "hero-shots", facts: ROBLOX_PROJECT },
         { on: "restore.before", tool: "save-place", facts: ROBLOX_PROJECT },
@@ -532,6 +533,9 @@ const UNREAL_EDITOR_STEPS = [
   "run-part",
   "rollback-part",
   "reload-level",
+  // The agent's own Open and Quit, which may end the editor.
+  "open-editor",
+  "quit-editor",
   // The computer's play in the editor (`shared/engine-play.ts`): each call waits for the lock.
   ...ENGINE_PLAY_TOOLS,
 ];

@@ -38,6 +38,7 @@ export function TopCreators(): JSX.Element | null {
       note={WORDS.period}
       quiet
       label={WORDS.title}
+      arrows={WORDS.arrows}
       hook={{ "data-top-creators": "" }}
     >
       {creators.map((creator) => (
@@ -60,6 +61,7 @@ function CreatorsPlaceholder(): JSX.Element {
       note={WORDS.period}
       quiet
       label={WORDS.title}
+      arrows={WORDS.arrows}
       hook={{ "data-top-creators": "loading" }}
     >
       {Array.from({ length: PLACEHOLDER_TILES }, (_, tile) => (

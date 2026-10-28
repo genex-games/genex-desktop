@@ -17,6 +17,9 @@ description: Verify renderer, IPC, preview or startup changes through owned stud
 - A new user's first launch (no Claude Code, Codex or sign-in): add `--fresh-machine` to that live
   start; `shell --profile <name>` is that account's terminal.
 - Human review explicitly using fixture data: set `STUDIO_FIXTURE_INTERACTIVE=1` on start/restart.
+- Fixtures run in English. `STUDIO_FIXTURE_LANGUAGE=ru` (any app language) shows one;
+  `STUDIO_FIXTURE_LANGUAGE=system STUDIO_FIXTURE_SYSTEM_LANGUAGES=ja-JP,en-US` lets the app detect it
+  as on a Mac with that language list (macOS; the computer's settings are untouched).
 
 Inspect ownership/status before reusing a profile. Preserve active user work. Leave human testing
 sessions running and retain their state. The stop/clean steps below apply only to disposable

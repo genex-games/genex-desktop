@@ -1,0 +1,17 @@
+{
+  "Blender": "Blender",
+  "Cancel download": "取消下载",
+  "Checking runtime…": "正在检查 Blender…",
+  "Download Blender 5.2.1": "下载 Blender 5.2.1",
+  "Download Blender 5.2.1 (350 to 400 MB) into Genex's Local Blender storage, so agents can model with it. Genex verifies its digest, and your own Blender stays as it is.": "将 Blender 5.2.1（350 到 400 MB）下载到 Genex 的 Local Blender 存储中，让智能体可以用它建模。Genex 会核对校验值，你自己的 Blender 保持不变。",
+  "Download pinned Blender": "下载 Genex 专用 Blender",
+  "Download the pinned Blender 5.2.1 runtime (350 to 400 MB) into this plugin’s storage. Studio verifies its digest. Existing external Blender installations stay unchanged.": "将固定版本的 Blender 5.2.1（350 到 400 MB）下载到此插件的存储中。Studio 会核对校验值。已安装的 Blender 保持不变。",
+  "Download: {phase} · {done} / {total} MiB": "下载：{phase} · {done} / {total} MiB",
+  "Download: {phase} · {done} / {total} MiB · {error}": "下载：{phase} · {done} / {total} MiB · {error}",
+  "Local Blender": "Local Blender",
+  "Model 3D assets with Blender on this computer. No account or credits.": "用这台电脑上的 Blender 制作 3D 素材。无需账号或积分。",
+  "Model assets on this Mac. No Genex account or credits are used. Enabling this plugin makes its tools available in this chat’s next response.": "在这台 Mac 上制作素材模型，不使用 Genex 账号或积分。启用此插件后，它的工具会在这个对话的下一次回复中可用。",
+  "Recheck": "重新检查",
+  "Runtime and jobs": "运行环境与任务",
+  "The Blender program to use (blender.exe on Windows), when Genex doesn't find yours": "Genex 找不到你的 Blender 时要使用的 Blender 程序（Windows 上为 blender.exe）"
+}

@@ -17,14 +17,20 @@
  * The same script sets the entries Genex keeps itself for the sandbox users' group (`ownAclEntries`
  * in `windows-sandbox.ts`): a grant on each folder the sandbox may use and a deny on each path it
  * may not, each passed down to everything under its path, and a FILE_DELETE_CHILD deny on a denied
- * path's parent folder alone. Those have no `icacls` fallback: `icacls` would walk a denied path's
- * parent, which is what they exist to avoid.
+ * path's parent folder alone. A deny on a path the sandbox user can open nothing under anyway (a
+ * browser profile only its owner, SYSTEM and the Administrators may open, checked entry by entry)
+ * waits for its walk ({@link OwnWalk}): walking one took 17 s of a lived-in Windows 11 first start.
+ * On such a path a deny Windows refuses (the person may not change its entries: a field PC's
+ * Chrome profile refused at every start, so the agents never started) is done without.
+ * Those have no `icacls` fallback: `icacls` would walk a denied path's parent, which is what they
+ * exist to avoid.
  */
 import { execFile, execFileSync } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { windowsPowerShellEnv } from "./child-env.ts";
 
 const run = promisify(execFile);
 
@@ -60,6 +66,20 @@ export interface FolderAceEdit {
   op: typeof FolderAceOp.Grant | typeof FolderAceOp.Remove;
 }
 
+/** When an own edit passes the path's entries down through everything under it. */
+export const OwnWalk = {
+  /**
+   * Now, unless the sandbox user can open nothing under the path either way: the path passes no
+   * allow down to anyone it may be, before or after the edit, and every entry under it is owned by
+   * and allows only SYSTEM, the Administrators or the person running Genex. Then the path alone is
+   * written now and the outcome says the walk is `deferred`.
+   */
+  Later: "later",
+  /** Now, even when the path's entries are already the edit's: a walk deferred earlier. */
+  Again: "again",
+} as const;
+export type OwnWalk = (typeof OwnWalk)[keyof typeof OwnWalk];
+
 /** The SID's own entries on one path, made exactly these; all off takes them back. */
 export interface FolderOwnEdit {
   dir: string;
@@ -76,24 +96,41 @@ export interface FolderOwnEdit {
    * folder Genex grants or once granted. Elsewhere (a deny, a guard) an allow it did not set stays.
    */
   allows: boolean;
+  /** When the entries are passed down (default: now, whenever they change what is passed down). */
+  walk?: OwnWalk;
 }
 
 /**
  * What became of one edit: done (and how long Windows took, for an edit that passed entries
- * down), or the reason it was refused; `timedOut` when the batch ran out of time before it.
+ * down, and `deferred` when it left that walk for later, {@link OwnWalk}), or the reason it was
+ * refused; `timedOut` when the batch ran out of time before it. A deny Windows refused with
+ * ERROR_ACCESS_DENIED on a path the sandbox user can open nothing at or under anyway is done
+ * without it, and `refused` carries Windows' words.
  */
-export type FolderAceOutcome = { ok: true; ms?: number } | { ok: false; error: string; timedOut?: true };
+export type FolderAceOutcome =
+  | { ok: true; ms?: number; deferred?: true; refused?: string }
+  | { ok: false; error: string; timedOut?: true };
 
 /** Applies edits in order and answers one outcome per edit; never throws. */
 export type FolderAceEditor = (edits: readonly FolderAceEdit[]) => Promise<FolderAceOutcome[]>;
 /** {@link FolderAceEditor} for process exit, when nothing asynchronous runs any more. */
 export type FolderAceEditorSync = (edits: readonly FolderAceEdit[]) => FolderAceOutcome[];
+/** How one batch runs: how long it may (default {@link OWN_TIMEOUT_MS} for own edits), and what stops it early. */
+export interface FolderOwnRun {
+  timeoutMs?: number;
+  /** Stops the batch, leaving each edit it had not finished undone (Genex quitting during a walk). */
+  signal?: AbortSignal;
+}
 /**
  * Applies own edits in order and answers one outcome per edit, or null when PowerShell could not
  * apply the batch here (locked down, no answer, or a SID the running user holds); never throws. A
- * batch that ran out of time answers every edit as refused with `timedOut`.
+ * batch that ran out of time keeps the outcomes of the edits it finished and answers the rest as
+ * refused with `timedOut`, the first of them the edit Windows was still on.
  */
-export type FolderOwnEditor = (edits: readonly FolderOwnEdit[]) => Promise<FolderAceOutcome[] | null>;
+export type FolderOwnEditor = (
+  edits: readonly FolderOwnEdit[],
+  run?: FolderOwnRun,
+) => Promise<FolderAceOutcome[] | null>;
 /** {@link FolderOwnEditor} for process exit. */
 export type FolderOwnEditorSync = (edits: readonly FolderOwnEdit[]) => FolderAceOutcome[] | null;
 
@@ -101,6 +138,7 @@ const MESSAGE = {
   /** A refusal the script gave no words for. */
   Refused: "refused",
   TimedOut: (ms: number) => `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s`,
+  NotReached: (ms: number) => `not reached: the batch ran out of time after ${Math.round(ms / SECOND_MS)} s`,
 } as const;
 
 /** How long one PowerShell batch or one `icacls` call may take. */
@@ -112,17 +150,24 @@ const TOOL_TIMEOUT_MS = 15 * SECOND_MS;
  * stay between launches, so that walk happens once per folder, and later launches only check
  * them; a batch that still runs out of time keeps what it set, and the next try goes on from there.
  */
-const OWN_TIMEOUT_MS = 10 * MINUTE_MS;
+export const OWN_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The variable that hands a batch to the script: base64 of its UTF-8 JSON, so no console code page touches a path. */
 const EDITS_ENV = "GENEX_FOLDER_ACES";
+/**
+ * The variable that hands over the script itself, as base64 of its UTF-8 text. The script is too
+ * long for -EncodedCommand: its UTF-16 base64 passes Windows' 32,767-character command line.
+ */
+const SCRIPT_ENV = "GENEX_FOLDER_ACE_SCRIPT";
+/** The command line's whole script: run the one {@link SCRIPT_ENV} carries. */
+const SCRIPT_LOADER = `$ErrorActionPreference = 'Stop'; Invoke-Expression ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:${SCRIPT_ENV})))`;
 
 /**
  * Edits each folder's DACL through GetFileSecurityW and SetFileSecurityW, which touch that folder
  * only. The DACL is edited as raw entries, never through .NET's canonicalizing ACL classes, so an
  * order srt-win or anyone else chose survives. A deny edit that changes an inheritable entry is
  * written by name instead (SetNamedSecurityInfoW), which passes it down through everything under
- * that path, as srt-win's own stamp does. Writes one JSON outcome per edit, as UTF-8 bytes; a batch
- * that would deny a SID the running user holds is refused whole, with no outcomes.
+ * that path, as srt-win's own stamp does. Writes one JSON outcome line per edit as it finishes, as
+ * UTF-8 bytes; a batch that would deny a SID the running user holds is refused whole, with no outcomes.
  */
 export const FOLDER_ACE_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -142,6 +187,9 @@ foreach ($native in @(
 }
 $api = $type.CreateType()
 $DACL = 4
+# OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, and room for any one entry's answer to them.
+$OWNER_AND_DACL = 5
+$SCAN_BUFFER = New-Object byte[] 65536
 # FILE_READ_ATTRIBUTES | SYNCHRONIZE
 $READ_ATTRIBUTES = 0x100080
 # What a deny refuses: FILE_ALL_ACCESS, as srt-win's read deny; or srt-win's write deny (write
@@ -152,6 +200,9 @@ $DENIED = @{ read = 0x1F01FF; write = 0x10156 }
 # write, execute and DELETE, without FILE_DELETE_CHILD, so a denied file in it cannot be deleted).
 $GRANTED = @{ read = 0x1200A9; modify = 0x1301BF }
 $DELETE_CHILD = 0x40
+$ACCESS_DENIED = 5
+# ObjectInherit | ContainerInherit: an entry the path passes down.
+$INHERITS = 3
 $PASSED_DOWN = [Security.AccessControl.AceFlags]'ObjectInherit, ContainerInherit'
 $SE_FILE_OBJECT = 1
 # DACL_SECURITY_INFORMATION with PROTECTED_DACL_SECURITY_INFORMATION (inheritance stays cut off),
@@ -200,10 +251,98 @@ function Shapes($aces, $inheritable) {
 function Entry($flags, $qualifier, $mask, $sid) {
   New-Object Security.AccessControl.CommonAce($flags, [Security.AccessControl.AceQualifier]::$qualifier, $mask, $sid, $false, $null)
 }
+# Whether an allow for the SID can never reach the sandbox user, a standard user in BUILTIN\\Users:
+# SYSTEM's, the Administrators' or the person running Genex's ($UNREACHED), or an app container's
+# or a capability's (S-1-15-2-*, S-1-15-3-*; Chrome gives its own sandboxes its profile's network
+# folder). Windows matches those only in an app container's second access check, and an app
+# container gets only what its user is allowed as well.
+function Unreached($sid) {
+  $ordinal = [StringComparison]::Ordinal
+  ($UNREACHED -contains $sid) -or $sid.Value.StartsWith('S-1-15-2-', $ordinal) -or $sid.Value.StartsWith('S-1-15-3-', $ordinal)
+}
+# Whether the path passes an allow down to anyone the sandbox user may be (Unreached).
+function PassesAllowDown($acl) {
+  foreach ($ace in $acl) {
+    if (([int]$ace.AceFlags -band $INHERITS) -eq 0) { continue }
+    $qualified = $ace -is [Security.AccessControl.QualifiedAce]
+    if ($qualified -and $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
+    if ($qualified -and (Unreached $ace.SecurityIdentifier)) { continue }
+    return $true
+  }
+  return $false
+}
+# Whether a security descriptor opens nothing to the sandbox user: owned by SYSTEM, the
+# Administrators or the person running Genex, and every allow in it Unreached. Anything else,
+# no DACL or an entry of a kind not judged here included, answers no.
+function OpensNothing($sd) {
+  if ($null -eq $sd.DiscretionaryAcl -or $UNREACHED -notcontains $sd.Owner) { return $false }
+  foreach ($ace in $sd.DiscretionaryAcl) {
+    if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $false }
+    $allow = $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed
+    if ($allow -and -not (Unreached $ace.SecurityIdentifier)) { return $false }
+  }
+  return $true
+}
+# Whether nothing under the path is open to anyone the sandbox user may be: every entry
+# OpensNothing, whatever it inherited (a folder moved in keeps what it inherited elsewhere until a
+# walk) and whether its DACL is protected or not. Reading each entry's owner and DACL opens it for
+# READ_CONTROL alone, and most entries share one descriptor, judged once: Chrome's 15,000-entry
+# profile took 1.5 s, its walk 17 s. A link is checked, never followed; an entry that cannot be
+# read, or anything else unsure, answers no. Inline on purpose, but for the judging of a
+# descriptor not seen yet: a PowerShell function call per entry more than doubled the time.
+function ClosedBelow($dir) {
+  $folders = New-Object Collections.Generic.Stack[string]
+  $folders.Push($dir)
+  $judged = New-Object Collections.Generic.HashSet[string]
+  $needed = 0
+  while ($folders.Count -gt 0) {
+    foreach ($item in (New-Object IO.DirectoryInfo $folders.Pop()).EnumerateFileSystemInfos()) {
+      if (-not $api::GetFileSecurityW($item.FullName, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
+      $descriptor = [Convert]::ToBase64String($SCAN_BUFFER, 0, $needed)
+      if (-not $judged.Contains($descriptor)) {
+        if (-not (OpensNothing (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)))) { return $false }
+        [void]$judged.Add($descriptor)
+      }
+      $folder = ($item.Attributes -band [IO.FileAttributes]'Directory, ReparsePoint') -eq [IO.FileAttributes]::Directory
+      if ($folder) { $folders.Push($item.FullName) }
+    }
+  }
+  return $true
+}
+# Whether the sandbox user can open nothing at the path or under it: the path's own owner and
+# entries OpensNothing, and everything under it is ClosedBelow (already known when this edit's
+# walk could wait).
+function ClosedAt($dir) {
+  $needed = 0
+  if (-not $api::GetFileSecurityW($dir, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
+  if (-not (OpensNothing (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)))) { return $false }
+  if ($script:closedBelow) { return $true }
+  try { return ClosedBelow $dir } catch { return $false }
+}
+# Whether a refused edit was not needed: Windows refused a deny with ERROR_ACCESS_DENIED (the
+# person may not change that path's entries, as security software or another owner can leave a
+# browser profile), and the sandbox user can open nothing at or under the path
+# anyway (ClosedAt). The deny stays wanted, so every later start tries it again and checks again.
+function Unneeded($edit, $refusal) {
+  $deny = ($edit.op -eq '${FolderAceOp.Own}') -and $edit.deny -and -not $edit.grant
+  $accessDenied = ($refusal -is [ComponentModel.Win32Exception]) -and $refusal.NativeErrorCode -eq $ACCESS_DENIED
+  if (-not ($deny -and $accessDenied)) { return $false }
+  try { return ClosedAt $edit.dir } catch { return $false }
+}
+# Whether the walk under the path can wait: the path passes no allow down to anyone the sandbox
+# user may be, before or after the edit, and nothing under it is open to them either
+# (ClosedBelow). The sandbox user can then open nothing under the path with or without the
+# walk, so the path alone is written now, which everything made in it later inherits.
+function WalkCanWait($dir, $before, $acl) {
+  if ($before -or (PassesAllowDown $acl)) { return $false }
+  try { $script:closedBelow = ClosedBelow $dir } catch { $script:closedBelow = $false }
+  return $script:closedBelow
+}
 # The SID's denies (and, with allows set, its passed-down allows) made exactly the edit's: denies
 # first, then the allow after every explicit deny (the canonical order); the read-attributes
 # entries, and without allows every allow, left as they are.
 function Own($acl, $sid, $edit) {
+  $passedDown = PassesAllowDown $acl
   $denies = @()
   if ($edit.deny) { $denies += ,(Entry $PASSED_DOWN 'AccessDenied' $DENIED[[string]$edit.deny] $sid) }
   if ($edit.guard) { $denies += ,(Entry ([Security.AccessControl.AceFlags]::None) 'AccessDenied' $DELETE_CHILD $sid) }
@@ -219,6 +358,7 @@ function Own($acl, $sid, $edit) {
     $acl.InsertAce($at, $ace)
   }
   if ((Shapes $had $true) -eq (Shapes ($denies + $allows) $true)) { return 'folder' }
+  if ($edit.walk -eq '${OwnWalk.Later}' -and (WalkCanWait $edit.dir $passedDown $acl)) { return 'deferred' }
   return 'tree'
 }
 # By name, with the path's explicit entries alone: Windows works out again what it inherits and
@@ -249,9 +389,14 @@ function Edit($edit) {
   if ($null -eq $acl) { if ($own) { throw 'the path has no DACL' } else { return } }
   $sid = New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)
   $how = if ($own) { Own $acl $sid $edit } elseif ($edit.op -eq '${FolderAceOp.Grant}') { Grant $acl $sid } else { Remove $acl $sid }
+  if ($how -eq 'none' -and $edit.walk -eq '${OwnWalk.Again}') { $how = 'tree' }
   if ($how -eq 'none') { return }
   $sd.DiscretionaryAcl = $acl
   if ($how -eq 'tree') { WriteTree $edit.dir $sd; return }
+  $script:deferred = $how -eq 'deferred'
+  # Written alone, the folder would drop its auto-inherited mark, and what is made in it meanwhile
+  # would take the deny as its own entry, which no later walk or take-back reaches.
+  if ($script:deferred) { $sd.SetFlags([Security.AccessControl.ControlFlags]([int]$sd.ControlFlags -bor [int][Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired)) }
   $out = New-Object byte[] $sd.BinaryLength
   $sd.GetBinaryForm($out, 0)
   $ok = $api::SetFileSecurityW($edit.dir, $DACL, $out); $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -266,21 +411,32 @@ function Answer($json) {
 # A deny for the running user, or a group it is in, would lock the person out of their own files.
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $held = @($identity.User) + @($identity.Groups)
+# SYSTEM, the Administrators and the person running Genex: no allow of theirs reaches the sandbox user (Unreached).
+$UNREACHED = @((New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'), $identity.User)
 foreach ($edit in @($request)) {
   if ($edit.op -eq '${FolderAceOp.Own}' -and ($held -contains (New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)))) {
     Answer '{"refused":"the running user holds this SID"}'
     exit
   }
 }
-$outcomes = foreach ($edit in @($request)) {
+# One answer line per edit, written as soon as it is done: a batch stopped at its deadline still
+# says which edits it finished, and the first one without a line is the one Windows was still on.
+foreach ($edit in @($request)) {
   $watch = [Diagnostics.Stopwatch]::StartNew()
+  $script:deferred = $false
+  $script:closedBelow = $false
   try {
-    Edit $edit
+    $null = Edit $edit
     # How long Windows took over an own edit, which may pass entries down a large folder.
-    if ($edit.op -eq '${FolderAceOp.Own}') { @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { @{ ok = $true } }
-  } catch { @{ ok = $false; error = $_.Exception.Message } }
+    if ($script:deferred) { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds; deferred = $true } }
+    elseif ($edit.op -eq '${FolderAceOp.Own}') { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { $outcome = @{ ok = $true } }
+  } catch {
+    $refusal = $_.Exception
+    if (Unneeded $edit $refusal) { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds; refused = $refusal.Message } }
+    else { $outcome = @{ ok = $false; error = $refusal.Message } }
+  }
+  Answer ((ConvertTo-Json -InputObject $outcome -Compress) + [char]10)
 }
-Answer (ConvertTo-Json -InputObject @($outcomes) -Compress)
 `;
 
 /** Windows PowerShell by its full path: a folder on PATH must not stand in for it. */
@@ -294,30 +450,57 @@ export function folderAceCommand(
   edits: readonly (FolderAceEdit | FolderOwnEdit)[],
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  const script = Buffer.from(FOLDER_ACE_SCRIPT, "utf16le").toString("base64");
+  const loader = Buffer.from(SCRIPT_LOADER, "utf16le").toString("base64");
+  const script = Buffer.from(FOLDER_ACE_SCRIPT, "utf8").toString("base64");
   const payload = Buffer.from(JSON.stringify(edits), "utf8").toString("base64");
+  const variables: NodeJS.ProcessEnv = { ...windowsPowerShellEnv(env), [SCRIPT_ENV]: script, [EDITS_ENV]: payload };
   return {
     file: windowsPowerShell(env),
-    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", script],
-    env: { ...env, [EDITS_ENV]: payload },
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", loader],
+    env: variables,
   };
+}
+
+/** An edit the script did: how long Windows took, whether it left its walk for later, and a refusal it did without. */
+function doneOutcome(answer: object): FolderAceOutcome {
+  const ms = "ms" in answer && typeof answer.ms === "number" ? { ms: answer.ms } : {};
+  const deferred = "deferred" in answer && answer.deferred === true ? { deferred: true as const } : {};
+  const refused = "refused" in answer && typeof answer.refused === "string" ? { refused: answer.refused } : {};
+  return { ok: true, ...ms, ...deferred, ...refused };
+}
+
+/** One answer line as an outcome; null when it is not one. */
+function outcomeOf(line: string): FolderAceOutcome | null {
+  try {
+    const answer: unknown = JSON.parse(line);
+    if (typeof answer !== "object" || answer === null || Array.isArray(answer) || !("ok" in answer)) return null;
+    if (answer.ok === true) return doneOutcome(answer);
+    return { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The outcomes the script finished, in the order of the batch: one per answer line, the text after
+ * the last line break left out (a batch stopped mid-line). Null for anything else, a batch refused
+ * whole among it.
+ */
+export function folderAceProgress(stdout: string): FolderAceOutcome[] | null {
+  const outcomes: FolderAceOutcome[] = [];
+  for (const line of stdout.split("\n").slice(0, -1)) {
+    if (!line.trim()) continue;
+    const outcome = outcomeOf(line);
+    if (!outcome) return null;
+    outcomes.push(outcome);
+  }
+  return outcomes;
 }
 
 /** The script's answer, when it is one outcome per edit; anything else is null. */
 export function folderAceOutcomes(stdout: string, count: number): FolderAceOutcome[] | null {
-  try {
-    const parsed: unknown = JSON.parse(stdout);
-    if (!Array.isArray(parsed) || parsed.length !== count) return null;
-    return parsed.map((item: unknown): FolderAceOutcome => {
-      const answer = typeof item === "object" && item !== null ? item : {};
-      if ("ok" in answer && answer.ok === true) {
-        return "ms" in answer && typeof answer.ms === "number" ? { ok: true, ms: answer.ms } : { ok: true };
-      }
-      return { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused };
-    });
-  } catch {
-    return null;
-  }
+  const outcomes = folderAceProgress(stdout);
+  return outcomes?.length === count ? outcomes : null;
 }
 
 /** The `icacls` arguments that make the same change, walking everything under the folder. */
@@ -336,8 +519,11 @@ function icaclsFailure(error: unknown): string {
 /** What an editor runs; each default is the real program, with `env` (default: this process's). */
 export interface FolderAceTools {
   env?: NodeJS.ProcessEnv;
-  /** Runs PowerShell and answers what it wrote; rejects when it fails or does not finish. */
-  powershell?: (file: string, args: string[], env: NodeJS.ProcessEnv) => Promise<string>;
+  /**
+   * Runs PowerShell, stopped as `run` says, and answers what it wrote; rejects when it fails or does
+   * not finish, with what it wrote by then as the error's `stdout`.
+   */
+  powershell?: (file: string, args: string[], env: NodeJS.ProcessEnv, run?: FolderOwnRun) => Promise<string>;
   /** Runs `icacls`; rejects with its output when it fails. */
   icacls?: (args: string[]) => Promise<void>;
 }
@@ -346,9 +532,10 @@ async function runPowerShell(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  timeoutMs: number = TOOL_TIMEOUT_MS,
+  { timeoutMs = TOOL_TIMEOUT_MS, signal }: FolderOwnRun = {},
 ): Promise<string> {
-  const running = run(file, args, { env, timeout: timeoutMs, windowsHide: true, encoding: "utf8" });
+  const stop = signal ? { signal } : {};
+  const running = run(file, args, { env, timeout: timeoutMs, windowsHide: true, encoding: "utf8", ...stop });
   // PowerShell may wait for its input to end before it exits; it reads none.
   running.child.stdin?.end();
   return (await running).stdout;
@@ -428,21 +615,42 @@ function ranOutOfTime(error: unknown): boolean {
   return typeof error === "object" && error !== null && "killed" in error && error.killed === true;
 }
 
+/** What a stopped run wrote before it was stopped. */
+function writtenBefore(error: unknown): string {
+  return typeof error === "object" && error !== null && "stdout" in error ? String(error.stdout) : "";
+}
+
+/**
+ * Every edit of a batch stopped after `ms`: the outcomes it finished, then the edit Windows was
+ * still on and those it never reached, refused as `timedOut`.
+ */
+function stoppedOutcomes(edits: readonly FolderOwnEdit[], finished: readonly FolderAceOutcome[], ms: number) {
+  return edits.map((_, i): FolderAceOutcome => {
+    const outcome = finished[i];
+    if (outcome) return outcome;
+    const error = i === finished.length ? MESSAGE.TimedOut(ms) : MESSAGE.NotReached(ms);
+    return { ok: false, error, timedOut: true };
+  });
+}
+
 /**
  * An editor for Genex's own entries: one PowerShell batch, with no `icacls` to fall back to (it
  * would walk everything under each denied path's parent); null where PowerShell cannot apply the
- * batch, and every edit refused as `timedOut` when it ran past {@link OWN_TIMEOUT_MS}.
+ * batch or the run's signal stopped it. A batch that runs past its deadline ({@link OWN_TIMEOUT_MS}
+ * unless the run says) keeps what it finished, and the rest are refused as `timedOut`.
  */
 export function folderOwnEditor(tools: Pick<FolderAceTools, "env" | "powershell"> = {}): FolderOwnEditor {
-  const powershellRun = tools.powershell ?? ((file, args, env) => runPowerShell(file, args, env, OWN_TIMEOUT_MS));
-  return async (edits) => {
+  const powershellRun = tools.powershell ?? runPowerShell;
+  return async (edits, run = {}) => {
     if (edits.length === 0) return [];
+    const timeoutMs = run.timeoutMs ?? OWN_TIMEOUT_MS;
     const command = folderAceCommand(edits, tools.env);
     try {
-      return folderAceOutcomes(await powershellRun(command.file, command.args, command.env), edits.length);
+      const stdout = await powershellRun(command.file, command.args, command.env, { ...run, timeoutMs });
+      return folderAceOutcomes(stdout, edits.length);
     } catch (error) {
       if (!ranOutOfTime(error)) return null;
-      return edits.map(() => ({ ok: false, error: MESSAGE.TimedOut(OWN_TIMEOUT_MS), timedOut: true }) as const);
+      return stoppedOutcomes(edits, folderAceProgress(writtenBefore(error)) ?? [], timeoutMs);
     }
   };
 }

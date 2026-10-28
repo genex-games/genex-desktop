@@ -11,6 +11,7 @@ import { Button } from "../ui/Button.tsx";
 import { DialogSurface } from "../ui/dialog.tsx";
 import { Switch } from "../ui/switch.tsx";
 import { FEEDBACK_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** ⌘↵ (Ctrl+↵ off the Mac) sends from the text field, as Send does. */
 const isSendKey = (event: KeyboardEvent): boolean => event.key === "Enter" && (event.metaKey || event.ctrlKey);
@@ -125,7 +126,7 @@ export function FeedbackDialog({
       )}
       <div className="flex justify-end gap-2">
         <Button variant="ghost" disabled={busy} onClick={onDismiss}>
-          Cancel
+          {t("Cancel")}
         </Button>
         <Button
           data-feedback-send

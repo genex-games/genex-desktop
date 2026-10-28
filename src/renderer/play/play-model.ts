@@ -5,6 +5,7 @@
  * `PlayPromo.tsx`, `ProfilePlate.tsx`, `PlayViewerLayer.tsx` and `App.tsx` draw what these decide.
  */
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import type { PlayMe } from "../../shared/play-people.ts";
 import {
   isPlaySlug,
@@ -43,6 +44,8 @@ export interface PlayRecentEntry {
   slug: string;
   title: string;
   coverUrl: string | null;
+  /** A native game with no web build: it opens its page, not the viewer. */
+  page?: true;
 }
 
 /** `game` first in Recent, once, with the list kept to {@link RECENT_MAX}. */
@@ -58,7 +61,8 @@ const isRecentEntry = (value: unknown): value is PlayRecentEntry => {
     isPlaySlug(entry.slug) &&
     typeof entry.title === "string" &&
     entry.title.length > 0 &&
-    (cover === null || typeof cover === "string")
+    (cover === null || typeof cover === "string") &&
+    (entry.page === undefined || entry.page === true)
   );
 };
 
@@ -84,7 +88,7 @@ export function writeRecent(
 /** Below this a stat is shown whole: the account's own numbers keep every play until they run long. */
 const STAT_WHOLE_BELOW = 10_000;
 /** Digit grouping in the reader's own style. */
-const GROUPED = new Intl.NumberFormat();
+const GROUPED = new Intl.NumberFormat(intlLocale());
 
 /** A count as the stats show it: whole and grouped below ten thousand (1,240), else as a card does (12k). */
 export function formatStat(value: number): string {
@@ -98,10 +102,10 @@ export function formatCount(value: number): string {
   if (value < 1000) return String(Math.floor(value));
   if (value < 1_000_000) {
     const thousands = value / 1000;
-    return `${thousands < 10 ? trimmed(thousands) : Math.floor(thousands)}k`;
+    return t("{thousands}k", { thousands: thousands < 10 ? trimmed(thousands) : Math.floor(thousands) });
   }
   const millions = value / 1_000_000;
-  return `${millions < 10 ? trimmed(millions) : Math.floor(millions)}M`;
+  return t("{millions}M", { millions: millions < 10 ? trimmed(millions) : Math.floor(millions) });
 }
 
 /** One decimal, rounded down and dropped when it is zero: 2.7, 6, 9.9. */
@@ -273,6 +277,23 @@ export const PlateState = {
 } as const;
 export type PlateState = (typeof PlateState)[keyof typeof PlateState];
 
+/** What the signed-in plate shows beside the name. Its `data-plate-end` value. */
+export const PlateEnd = {
+  /** Nothing: in Create, where credits show only where they are spent, and in Play until the coin is read. */
+  None: "none",
+  /** The coin the account may spend, which opens Get Nex: in Play. */
+  Coins: "coins",
+  /** The Offline mark: friends' games and balances are not current. */
+  Offline: "offline",
+} as const;
+export type PlateEnd = (typeof PlateEnd)[keyof typeof PlateEnd];
+
+/** Coin in Play once read; the Offline mark offline; nothing else. Credits never sit beside the name. */
+export function plateEnd(view: { offline: boolean; play: boolean; coins: number | null }): PlateEnd {
+  if (view.offline) return PlateEnd.Offline;
+  return view.play && view.coins !== null ? PlateEnd.Coins : PlateEnd.None;
+}
+
 /**
  * The plate for where the account stands and whether the Mac is `online`. A remembered account
  * shows before main has answered; offline only ever changes the friends beside it.
@@ -337,6 +358,35 @@ export const nativeViewsUp = (viewer: ViewerShown | null): boolean => viewer !==
  */
 export const escapeLeaves = (viewer: ViewerShown | null): boolean =>
   viewer !== null && viewer.phase !== PlayViewerPhase.Playing;
+
+/** Whether the game's Store is open in its place, where the app's page draws it (main hides the game). */
+export const storeOverGame = (viewer: ViewerShown | null): boolean => viewer?.bar?.store?.open === true;
+
+/** What an Esc in the app's page does while a game is open. */
+export const ViewerEscape = {
+  /** Leave the cover or the failure. */
+  Leave: "leave",
+  /** Give the game being played the keyboard back. */
+  Resume: "resume",
+  /** Close the game's Store, back to the game. */
+  CloseStore: "close-store",
+} as const;
+export type ViewerEscape = (typeof ViewerEscape)[keyof typeof ViewerEscape];
+
+/**
+ * What a fresh Esc in the app's page does: nothing for a held key or one a dialog over the page took
+ * (an item's sheet); otherwise it closes the open Store first, then leaves the cover or the failure,
+ * then gives a game being played the keyboard back.
+ */
+export function viewerEscape(
+  viewer: ViewerShown | null,
+  key: { repeat: boolean; handled: boolean },
+): ViewerEscape | null {
+  if (!viewer || key.repeat || key.handled) return null;
+  if (storeOverGame(viewer)) return ViewerEscape.CloseStore;
+  if (escapeLeaves(viewer)) return ViewerEscape.Leave;
+  return viewer.phase === PlayViewerPhase.Playing ? ViewerEscape.Resume : null;
+}
 
 /** How a header button wears a note in place of its label: confirming (a check), or just saying it. */
 export const NoteLook = { Done: "done", Said: "said" } as const;

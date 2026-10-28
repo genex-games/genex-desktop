@@ -1,16 +1,25 @@
 /**
  * Settings → Storage: what freeing space deletes, by kind, across every game, and one button that
  * frees it all after a confirmation. Games that are working are left alone and named afterwards.
+ * On Windows it also shows where Genex keeps its files, with Change… to move them to another drive.
  */
 import { type JSX, useEffect, useState } from "react";
 import { sizeWords } from "../../shared/byte-size.ts";
-import { freeableBytes, STORAGE_KINDS, type StorageSpace } from "../../shared/storage-space.ts";
+import { freeableBytes, STORAGE_KINDS, type StorageFreed, type StorageSpace } from "../../shared/storage-space.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { freedProperties } from "../analytics/workspace-properties.ts";
+import { StorageSurface } from "../analytics/workspace-vocabulary.ts";
 import { useLibrary } from "../state/hooks.ts";
 import { Button } from "../ui/Button.tsx";
 import { Pending } from "../ui/Pending.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { freedWords, freeSpaceWords, freeUpWords, problemWords, STORAGE_KIND_WORDS, STORAGE_WORDS } from "../words.ts";
 import { FreeSpaceSheet } from "./FreeSpaceSheet.tsx";
+import { DataFolderCard } from "./DataFolderCard.tsx";
+import type { DataFolderState } from "../../shared/data-folder.ts";
+import { InstalledGamesSection } from "./InstalledGamesSection.tsx";
+import { Skeleton } from "../ui/Skeleton.tsx";
 
 /** The one button: how much it frees, with what goes and what stays in its tooltip. */
 function FreeUpButton({
@@ -73,16 +82,27 @@ export function StorageSection(): JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dataFolder, setDataFolder] = useState<DataFolderState | null>(null);
   useEffect(() => {
     void window.studio.storageSpace().then(setSpace, (cause: unknown) => setError(problemWords(cause)));
+    // Only where it can move: a launch that cannot leaves the card out.
+    void window.studio.dataFolder().then(setDataFolder, () => setDataFolder(null));
   }, []);
   const titleOf = (name: string): string => games.find((game) => game.name === name)?.title || name;
   const free = async (): Promise<void> => {
     setFreeing(true);
     setNotice(null);
     setError(null);
+    const offered = space ? freeableBytes(space) : 0;
+    const answered = (freed: StorageFreed | null): void =>
+      track(AnalyticsEvent.FreeSpaceAnswered, freedProperties(StorageSurface.Settings, offered, freed));
     try {
-      setNotice(freedWords(await window.studio.freeStorage(), titleOf));
+      const freed = await window.studio.freeStorage().catch((cause: unknown) => {
+        answered(null);
+        throw cause;
+      });
+      answered(freed);
+      setNotice(freedWords(freed, titleOf));
       setSpace(await window.studio.storageSpace());
     } catch (cause) {
       setError(problemWords(cause));
@@ -93,7 +113,12 @@ export function StorageSection(): JSX.Element {
   return (
     <div data-storage-settings className="appearance-section flex flex-col gap-3">
       {confirming && space && (
-        <FreeSpaceSheet space={space} onFree={() => void free()} onDone={() => setConfirming(false)} />
+        <FreeSpaceSheet
+          space={space}
+          surface={StorageSurface.Settings}
+          onFree={() => void free()}
+          onDone={() => setConfirming(false)}
+        />
       )}
       <section aria-label={STORAGE_WORDS.title} data-row className="settings-card">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -103,12 +128,19 @@ export function StorageSection(): JSX.Element {
         {space ? (
           <FreeUpButton space={space} freeing={freeing} onChoose={() => setConfirming(true)} />
         ) : (
-          !error && <Pending label={STORAGE_WORDS.measuring} />
+          !error && (
+            <Pending label={STORAGE_WORDS.measuring}>
+              <Skeleton width={64} height={12} />
+            </Pending>
+          )
         )}
       </section>
       {space && <StorageKinds space={space} />}
+      <InstalledGamesSection />
+      {dataFolder?.movable && <DataFolderCard state={dataFolder} />}
       {notice && (
-        <p role="status" className="text-ink-2">
+        // It names the games that were left alone.
+        <p role="status" className="text-ink-2" data-analytics-mask>
           {notice}
         </p>
       )}

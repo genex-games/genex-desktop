@@ -15,6 +15,12 @@ import { Lightbox } from "../ui/Lightbox.tsx";
 import { prefersReducedMotion } from "../ui/media-queries.ts";
 import { hostPlatform } from "../platform.ts";
 import { ASSET_WORDS, fileManagerWords } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
+import { Pending } from "../ui/Pending.tsx";
+import { Skeleton } from "../ui/Skeleton.tsx";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
+import { PreviewFailure } from "../analytics/events/builds.ts";
 
 /** How much of a text file the preview decodes. */
 const TEXT_PREVIEW_BYTES = 256 * 1024;
@@ -24,18 +30,23 @@ const ZOOM_MIN_SCALE = 2;
 const SPEEDS = [1, 2, 0.5] as const;
 
 type Mode = ReturnType<typeof assetPreviewMode>;
+
+/** A preview that could not show, by the step that failed. */
+const previewFailed = (mode: Mode, stage: PreviewFailure): void =>
+  track(AnalyticsEvent.AssetPreviewFailed, { mode, stage });
 type Viewer = ReturnType<typeof createAssetViewer>;
 type Clip = { name: string; duration: number };
 
 /** Why a file could not show, by mode. */
 const MESSAGE = {
-  image: "This image could not be decoded. The file may be incomplete or unsupported.",
-  audio: "This audio codec could not be played. Try a WAV, MP3 or Ogg export.",
-  video: "This video codec could not be played. Try an MP4 (H.264) or WebM export.",
-  unsupported:
+  image: t("This image could not be decoded. The file may be incomplete or unsupported."),
+  audio: t("This audio codec could not be played. Try a WAV, MP3 or Ogg export."),
+  video: t("This video codec could not be played. Try an MP4 (H.264) or WebM export."),
+  unsupported: t(
     "This format needs its authoring app. For a 3D preview with materials and animation, export GLB; for a sprite animation, export animated GIF/WebP or video.",
-  truncated: "\n… Preview truncated at 256 KiB; original unchanged.",
-} as const;
+  ),
+  truncated: `\n${t("… Preview truncated at 256 KiB; original unchanged.")}`,
+};
 
 /** What a read file shows as: its text, truncated past the preview's limit, or an object URL for the media element. */
 function mediaFrom(
@@ -73,7 +84,9 @@ function useAssetSource(
     let cancelled = false;
     let objectURL: string | null = null;
     const fail = (error: unknown) => {
-      if (!cancelled) setError(error instanceof Error ? error.message : String(error));
+      if (cancelled) return;
+      previewFailed(mode, model ? PreviewFailure.Viewer : PreviewFailure.Read);
+      setError(error instanceof Error ? error.message : String(error));
     };
     const read = (file: string) => window.studio.previewProjectAsset({ project, file });
     if (model && host) {
@@ -152,7 +165,10 @@ function ImageStage({ url, name, source }: { url: string; name: string; source: 
       alt={name}
       draggable={false}
       onLoad={() => source.setReady(true)}
-      onError={() => source.setError(MESSAGE.image)}
+      onError={() => {
+        previewFailed(source.mode, PreviewFailure.Decode);
+        source.setError(MESSAGE.image);
+      }}
       style={style}
       className={`lightbox-media block ${style ? "max-w-none" : "max-h-[calc(100vh-160px)] max-w-[calc(100vw-160px)] object-contain"}`}
     />
@@ -206,7 +222,10 @@ function MediaBody({ source, asset }: { source: Source; asset: ProjectAsset }): 
         src={url}
         className="lightbox-media max-h-[calc(100vh-160px)] max-w-[calc(100vw-160px)]"
         onLoadedMetadata={() => setReady(true)}
-        onError={() => setError(MESSAGE.video)}
+        onError={() => {
+          previewFailed(mode, PreviewFailure.Codec);
+          setError(MESSAGE.video);
+        }}
       />
     );
   if (mode === "audio" && url)
@@ -219,7 +238,10 @@ function MediaBody({ source, asset }: { source: Source; asset: ProjectAsset }): 
           src={url}
           className="w-full"
           onLoadedMetadata={() => setReady(true)}
-          onError={() => setError(MESSAGE.audio)}
+          onError={() => {
+            previewFailed(mode, PreviewFailure.Codec);
+            setError(MESSAGE.audio);
+          }}
         />
       </div>
     );
@@ -261,10 +283,11 @@ function AnimationBar({ source }: { source: Source }): JSX.Element {
   };
   const clipName = animations[Math.max(clip, 0)]?.name ?? "";
   return (
-    <div role="group" aria-label={ASSET_WORDS.animations} className="lightbox-bar">
+    // The clips are named in the person's model, and its buttons say them.
+    <div role="group" aria-label={ASSET_WORDS.animations} data-analytics-mask className="lightbox-bar">
       <button
         type="button"
-        aria-label={`${playing ? "Pause" : "Play"} ${clipName}`}
+        aria-label={playing ? t("Pause {clip}", { clip: clipName }) : t("Play {clip}", { clip: clipName })}
         onClick={toggle}
         className="lightbox-play"
       >
@@ -328,8 +351,10 @@ export function AssetPreview({
   const { mode, model, ready, error } = source;
   const shown = ready && !error;
   const loading = !ready && !error && mode !== "unsupported";
+  // A video or a sound draws its own player while it loads; the shape would cover its controls.
+  const drawsWhileLoading = mode === "video" || mode === "audio";
   const animated = source.animations.length > 0;
-  const name = asset.file.split("/").pop() ?? "Asset preview";
+  const name = asset.file.split("/").pop() ?? t("Asset preview");
   return (
     <Lightbox
       title={name}
@@ -357,12 +382,9 @@ export function AssetPreview({
         )}
         {model && shown && animated && <AnimationBar source={source} />}
         {loading && (
-          <div
-            role="status"
-            className="stage-loader-late pointer-events-none absolute inset-0 grid place-items-center text-body-sm text-ink-3"
-          >
-            {ASSET_WORDS.loading}
-          </div>
+          <Pending label={ASSET_WORDS.loading} className="pointer-events-none absolute inset-0 grid place-items-center">
+            {!drawsWhileLoading && <Skeleton width={220} height={220} radius={20} />}
+          </Pending>
         )}
         {error && (
           <div role="alert" className="max-w-md text-center text-body-sm text-ink-2">

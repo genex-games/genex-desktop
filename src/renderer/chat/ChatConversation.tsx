@@ -5,6 +5,7 @@
 import { memo, useMemo, useRef, useCallback, type JSX, type ReactNode } from "react";
 import { PerformanceBoundary } from "../performance.tsx";
 import { PerformanceComponent } from "../../shared/performance.ts";
+import { t } from "../../shared/i18n.ts";
 import { QueueState } from "../../shared/message-queue.ts";
 import { EntryKind } from "../chat-entries.ts";
 import { QueuedMessage, SendingMessage } from "../panels/QueuedMessage.tsx";
@@ -27,6 +28,9 @@ import type { FollowScroll } from "./use-follow-scroll.ts";
 import type { PendingSends } from "./use-pending-sends.ts";
 import type { ThreadTranscript } from "./use-thread-transcript.ts";
 import { UserMessage } from "./UserMessage.tsx";
+import { HeldFirstMessage } from "./HeldFirstMessage.tsx";
+import type { HeldFirstSend } from "./use-launch-handover.ts";
+import { PLAN_PROVIDERS } from "../ui/usage-words.ts";
 import { VirtualTranscript } from "./VirtualTranscript.tsx";
 
 /** The transcript's context: the chat's run, game and pictures, and what its cards and bubbles do. */
@@ -108,6 +112,7 @@ export function ChatConversation(parts: ChatParts): JSX.Element {
       streaming: (showing: boolean) => latest.current.stream.onShowing(showing),
       jumpToLatest: () => latest.current.follow.jumpToLatest(),
       loadEarlier: () => latest.current.props.history.loadEarlier(),
+      actOnHeld: () => latest.current.handover.act(),
       handlers: {
         onWheel: (event: Parameters<FollowScroll["handlers"]["onWheel"]>[0]) =>
           latest.current.follow.handlers.onWheel(event),
@@ -144,8 +149,18 @@ export function ChatConversation(parts: ChatParts): JSX.Element {
     streaming: parts.stream.showing,
     loading: parts.props.loading,
     onNotice: parts.props.onNotice,
+    held: parts.handover.held,
+    heldEngine: parts.composer.model.selectedEngine?.id,
+    heldBrand: heldBrand(parts.composer.model.selectedEngine),
+    onActOnHeld: actions.actOnHeld,
   });
   return <ConversationContent view={view} context={context} onAsk={actions.ask} onStreaming={actions.streaming} />;
+}
+
+/** What the held block calls the model's provider: a subscription by its brand, else its own name. */
+function heldBrand(engine: { id: string; label: string } | undefined): string {
+  if (!engine) return "";
+  return PLAN_PROVIDERS[engine.id]?.brand ?? engine.label;
 }
 
 type ConversationSends = Pick<PendingSends, "shown" | "adoptedRows" | "placeholders">;
@@ -167,6 +182,11 @@ type ConversationView = {
   /** The chat is loading: what arrives with it is simply there. */
   loading: boolean;
   onNotice: Notify;
+  /** A game's first message from home while it cannot go yet (`use-launch-handover.ts`). */
+  held: HeldFirstSend | null;
+  heldEngine: string | undefined;
+  heldBrand: string;
+  onActOnHeld: () => void;
 };
 
 /**
@@ -221,6 +241,14 @@ const ConversationContent = memo(function ConversationContent({
             sizeOf={entrySize}
           />
           <PendingBubbles key={`pending:${threadId}`} sends={sends} />
+          {view.held && (
+            <HeldFirstMessage
+              held={view.held}
+              engine={view.heldEngine}
+              brand={view.heldBrand}
+              onAct={view.onActOnHeld}
+            />
+          )}
           <StreamingReply threadId={threadId} events={view.events} onShowing={onStreaming} />
 
           <ChatWork key={`work:${threadId}`} {...view.line} still={loading} onNotice={onNotice} />
@@ -251,7 +279,7 @@ function ChatScroll({ follow, children }: { follow: FollowScroll; children: Reac
       // below it would jump past an expanded tool list and unmount its disclosure.
       style={{ overflowAnchor: "none" }}
       data-chat-scroll
-      aria-label="Conversation"
+      aria-label={t("Conversation")}
       tabIndex={0}
       // Nothing in the conversation is wider than its column: a long unbroken line wraps or scrolls
       // in its own box, never the whole conversation sideways.
@@ -266,9 +294,9 @@ function ChatScroll({ follow, children }: { follow: FollowScroll; children: Reac
 function EarlierFailed({ onRetry }: { onRetry: () => Promise<void> }): JSX.Element {
   return (
     <div role="alert" className="flex items-center justify-center gap-2 text-xs text-red">
-      Could not load earlier messages.
+      {t("Could not load earlier messages.")}
       <Button variant="ghost" onClick={() => void onRetry()}>
-        Try again
+        {t("Try again")}
       </Button>
     </div>
   );

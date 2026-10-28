@@ -52,9 +52,11 @@ export function PickCircle({
   onToggle: () => void;
 }): JSX.Element {
   return (
+    // Its label names the asset's file.
     <button
       type="button"
       data-asset-pick={picked || undefined}
+      data-analytics-mask
       aria-pressed={picked}
       aria-label={picked ? WORDS.deselect(name) : WORDS.select(name)}
       className="asset-pick"
@@ -108,6 +110,7 @@ function ReportButton({
     <button
       type="button"
       data-share-report
+      data-analytics-mask
       aria-label={WORDS.sendReportLabel}
       disabled={busy}
       className="asset-line-button"

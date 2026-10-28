@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { openBeside } from "../open-beside.ts";
 
@@ -100,18 +101,22 @@ export function MessageImages({
   const shown = frames ?? images ?? Array.from({ length: Math.min(count, 12) }, () => null);
   if (!shown.length) return null;
   return (
-    <div data-message-images className={`flex flex-wrap justify-end gap-1.5 ${placed ? "" : "ms-auto max-w-[88%]"}`}>
+    <div
+      data-message-images
+      data-analytics-mask
+      className={`flex flex-wrap justify-end gap-1.5 ${placed ? "" : "ms-auto max-w-[88%]"}`}
+    >
       {shown.map((image, index) =>
         image ? (
           <button
             key={index}
             type="button"
-            aria-label={`Open ${image.label || "image"}`}
+            aria-label={image.label ? t("Open {name}", { name: image.label }) : t("Open image")}
             title={image.label}
             onClick={() =>
               openBeside({
                 kind: "image",
-                name: image.label || `Image ${index + 1}`,
+                name: image.label || t("Image {number}", { number: index + 1 }),
                 src: imageSrc(image),
               })
             }

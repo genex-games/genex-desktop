@@ -52,8 +52,10 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
       setReadError(words(e));
     }
   }, [id, project]);
-  // A Publish press shows its first steps (preparing the copy) while the press itself still runs.
-  const busy = (state ? publishView(state).running : false) || pressing === Pressing.Publish;
+  // A Publish press shows its first steps (preparing the copy) while the press itself still runs,
+  // and the game's apps going behind its web build are followed as closely as the build.
+  const sendingApps = state?.native?.sending === true;
+  const busy = (state ? publishView(state).running : false) || sendingApps || pressing === Pressing.Publish;
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), busy ? RUNNING_POLL_MS : IDLE_POLL_MS);
@@ -92,11 +94,18 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
       run(Pressing.Action, () => runPluginAction({ plugin, name, args, project, review: setReview })),
     listFiles: (): Promise<void> => run(Pressing.Files, currentFiles),
     /**
-     * Publish under `title`, with the game's play-time AI choice when Publish asked for one: the
-     * press is the consent to exactly the listed files.
+     * Publish under `title`: the press is the consent to exactly the listed files, to the game's
+     * project when `remix` (Allow remixing) is ticked, and carries the game's play-time AI choice
+     * (`ai`) when Publish asked for one.
      */
-    publish: (title: string, ai?: AiPublishChoice): Promise<void> =>
-      run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title, ai)),
+    publish: (title: string, remix?: boolean, ai?: AiPublishChoice): Promise<void> =>
+      run(Pressing.Publish, async () => window.studio.genexPublish(game, await currentFiles(), title, remix, ai)),
+    /**
+     * Publish a game that has only apps under `title`: the press is the consent to the apps its rows
+     * name, with the game's play-time AI choice (`ai`) when Publish asked for one.
+     */
+    publishApps: (title: string, remix?: boolean, ai?: AiPublishChoice): Promise<void> =>
+      run(Pressing.Publish, () => window.studio.genexPublishApps(game, title, remix, ai)),
     /**
      * Publish again while Studio cannot tell whether the last upload reached Genex: settle that
      * upload (`again` names it), then publish under `title` as Publish does.
@@ -104,7 +113,7 @@ export function usePublishRecord(plugin: PluginInfo, project: string | null) {
     publishAgain: (again: PublishButton, title: string, ai?: AiPublishChoice): Promise<void> =>
       run(Pressing.Publish, async () => {
         await runPluginAction({ plugin, name: again.action, args: again.args ?? {}, project, review: setReview });
-        await window.studio.genexPublish(game, await currentFiles(), title, ai);
+        await window.studio.genexPublish(game, await currentFiles(), title, undefined, ai);
       }),
   };
 }

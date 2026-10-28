@@ -23,7 +23,16 @@ async function answer(instance, message, context) {
   if (message.method === "review" && !instance.review) return {};
   return instance[message.method](message.name, message.args, context);
 }
+/**
+ * The app's language, as the host sends it before a call: the backend's own copy of the app's
+ * words (`shared/i18n.ts`, bundled into it) reads it from this process-wide slot.
+ */
+const LANGUAGE_SLOT = Symbol.for("genex.language");
 process.on("message", async (message) => {
+  if (message.kind === "language") {
+    globalThis[LANGUAGE_SLOT] = { locale: message.locale, catalog: message.catalog ?? {} };
+    return;
+  }
   if (message.kind === "host-result") {
     const p = pending.get(message.id);
     if (!p) return;

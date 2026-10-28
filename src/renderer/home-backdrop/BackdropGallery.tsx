@@ -5,6 +5,7 @@
  */
 import type { JSX, ReactNode } from "react";
 import { useMemo, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Scheme } from "../appearance/themes.ts";
 import { Icon } from "../ui/icons.tsx";
 import { BackdropPreview } from "./HomeBackdrop.tsx";
@@ -26,22 +27,22 @@ import { updateBackdrop } from "./store.ts";
 import type { Rect, Size } from "./view.ts";
 
 const MESSAGE = {
-  backgrounds: "Backgrounds",
-  effect: "Effect",
-  off: "Off",
-  picture: "Picture",
-  make: "Make your own",
-  making: "Making…",
-  connect: "Connect AI model",
-  full: `${MAX_MADE_SHADERS} kept`,
-  remove: (name: string) => `Remove ${name}`,
+  backgrounds: t("Backgrounds"),
+  effect: t("Effect"),
+  off: t("Off"),
+  picture: t("Picture"),
+  make: t("Make your own"),
+  making: t("Making…"),
+  connect: t("Connect AI model"),
+  full: t("{count, plural, other {# kept}}", { count: MAX_MADE_SHADERS }),
+  remove: (name: string) => t("Remove {name}", { name }),
 } as const;
 
 /** The effects, as the gallery names them. */
 const EFFECTS = [
-  { effect: BackdropEffect.None, name: "None" },
-  { effect: BackdropEffect.Lines, name: "Lines" },
-  { effect: BackdropEffect.Dots, name: "Dots" },
+  { effect: BackdropEffect.None, name: t("None") },
+  { effect: BackdropEffect.Lines, name: t("Lines") },
+  { effect: BackdropEffect.Dots, name: t("Dots") },
   { effect: BackdropEffect.Ascii, name: "ASCII" },
 ] as const;
 
@@ -87,6 +88,7 @@ const change = (update: (previous: BackdropSettings) => BackdropSettings): void 
 function Tile({
   look,
   name,
+  own = false,
   selected,
   onChoose,
   onRemove,
@@ -95,6 +97,8 @@ function Tile({
 }: {
   look: string;
   name: string;
+  /** The name is the person's own (a background they made): kept out of usage recordings. */
+  own?: boolean;
   selected: boolean;
   onChoose: () => void;
   onRemove?: () => void;
@@ -102,7 +106,7 @@ function Tile({
   children: ReactNode;
 }): JSX.Element {
   return (
-    <div className="backdrop-tile">
+    <div className="backdrop-tile" {...(own ? { "data-analytics-mask": "" } : {})}>
       <button
         type="button"
         className="backdrop-tile-choice"
@@ -130,6 +134,7 @@ function Tile({
 function LiveTile(props: {
   look: string;
   name: string;
+  own?: boolean;
   body: string;
   settings: BackdropSettings;
   selected: boolean;
@@ -181,6 +186,7 @@ function MadeTile({ made, settings }: { made: MadeShader; settings: BackdropSett
     <LiveTile
       look={made.id}
       name={made.title}
+      own
       body={made.wgsl}
       settings={shown}
       selected={selected}

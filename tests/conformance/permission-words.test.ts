@@ -47,6 +47,11 @@ describe("permissionTitleWords", () => {
       "Claude wants to edit main.ts",
     );
     assert.equal(
+      permissionTitleWords(ask({ tool: "Edit", input: { file_path: "C:\\Users\\me\\game\\src\\main.ts" } })),
+      "Claude wants to edit main.ts",
+      "a Windows path",
+    );
+    assert.equal(
       permissionTitleWords(ask({ tool: "NotebookEdit", input: { notebook_path: "/tmp/notes.ipynb" } })),
       "Claude wants to edit notes.ipynb",
     );
@@ -295,7 +300,7 @@ describe("a settled plugin or connector question", () => {
       consentLineWords(consentOutcomeWords(outcome), "Unreal Engine");
     assert.equal(line({ state: "approved", by: "user", always: true }), "Always allowed · Unreal Engine");
     assert.equal(line({ state: "approved", by: "user" }), "Allowed · Unreal Engine");
-    assert.equal(line({ state: "approved", by: "mode" }), "Allowed · Unreal Engine");
+    assert.equal(line({ state: "approved", by: "mode" }), "Allowed in Bypass · Unreal Engine");
     assert.equal(line({ state: "declined", by: "user" }), "Declined · Unreal Engine");
     assert.equal(line({ state: "declined", by: "timeout" }), "Nobody answered · Unreal Engine");
   });
@@ -322,6 +327,8 @@ describe("Settings → Permissions: what is always allowed, by action", () => {
       ["WebFetch(domain:threejs.org)", "Open pages on threejs.org"],
       ["Read(//Users/you/refs/**)", "Read files in ~/refs"],
       ["Edit(//Users/you/Games/kart/**)", "Edit files in ~/Games/kart"],
+      ["Read(//c/Users/you/refs/**)", "Read files in ~/refs"],
+      ["Edit(C:\\Users\\you\\Games\\kart)", "Edit files in ~\\Games\\kart"],
       ["Read(src/**)", "Read files in src"],
       ["mcp__genex__make_sound", "mcp__genex__make_sound"],
     ];

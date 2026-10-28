@@ -87,8 +87,12 @@ export const GenexRoute = {
   LegalStatus: "/api/legal/status",
   Session: "/api/auth/get-session",
   Credits: "/api/credits/me",
+  /** The public price list: the cheapest price of each kind of generation. */
+  Prices: "/api/credits/prices",
   Lanes: "/api/generations/lanes",
   projectBySlug: (slug: string) => `/api/projects/by-slug/${encodeURIComponent(slug)}`,
+  /** Whether a published game is open to remixers (`{ private }`), as its owner sets it on genex.games. */
+  visibility: (id: string) => `/api/projects/${encodeURIComponent(id)}/visibility`,
   generation: (id: string) => `/api/generations/${encodeURIComponent(id)}`,
   generationRequest: (id: string) => `/api/generations/requests/${encodeURIComponent(id)}`,
 } as const;

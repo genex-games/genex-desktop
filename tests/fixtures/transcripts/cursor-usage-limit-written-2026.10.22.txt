@@ -1,0 +1,1 @@
+ConnectError: [resource_exhausted] You have used your weekly included usage. Add credit or wait for the reset.

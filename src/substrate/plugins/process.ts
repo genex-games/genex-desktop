@@ -1,10 +1,12 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { outlivesHarness } from "../../shared/plugin-hooks.ts";
-import { CallCutOff, type PluginBinding } from "../../shared/plugins.ts";
+import { CallCutOff, type PluginBinding, PluginFailure } from "../../shared/plugins.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { activeCatalog, currentLocale } from "../../shared/i18n.ts";
+import type { Locale } from "../../shared/locale.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { windowsBaseEnv } from "../child-env.ts";
-import { envPath, envValue } from "../toolchain.ts";
+import { envPath, envValue, isWindows } from "../toolchain.ts";
 
 /** What the backend bootstrap (`plugin-sdk/backend.mjs`) and the host say to each other. Wire values. */
 const MessageKind = {
@@ -13,6 +15,8 @@ const MessageKind = {
   Result: "result",
   Host: "host",
   HostResult: "host-result",
+  /** The app's language and its words, before the first call and again after it changes (`plugin-sdk/backend.mjs`). */
+  Language: "language",
 } as const;
 /** A message from the backend: a call's result, or a host-service request made during a call. */
 interface BackendMessage {
@@ -30,7 +34,7 @@ const STOPPED_BEFORE = "Stopped before plugin invocation";
 const STDERR_LINE_CHARS = 4000;
 /** How long one plugin invocation may run unless its caller sets its own limit. */
 const DEFAULT_CALL_TIMEOUT_MS = 190 * SECOND_MS;
-/** A stopped backend gets this long after SIGTERM before SIGKILL. */
+/** A stopped backend gets this long after its stop (SIGTERM, or on Windows its channel closing) before it is ended. */
 const KILL_GRACE_MS = 3 * SECOND_MS;
 
 /** What a cut-off call answers, by why it was cut off; the backend's own end keeps its exit text. */
@@ -65,10 +69,48 @@ export class PluginCallNotSent extends Error {
 }
 
 /**
+ * Names a bundled plugin's seed folder in the app's resources to its backend. A first launch copies
+ * the seed without its `node_modules` (Windows 11 held each first write of the Genex seed's
+ * thousands of dependency files for minutes), so the backend resolves its dependencies there.
+ */
+export const PLUGIN_SEED_ENV = "STUDIO_PLUGIN_SEED";
+
+/**
+ * Names to a backend the API the host has it talk to in place of its own default: a development
+ * profile's stand (`registry.hostAccount`). Only the host sets it; a parent's never passes through.
+ */
+export const PLUGIN_API_ENV = "STUDIO_PLUGIN_API";
+
+/**
+ * Names to a backend the stand's own CA file (an absolute PEM path), which the stand's hosts are
+ * signed with: a local stand's API, source host and game host. Only the host sets it, beside
+ * {@link PLUGIN_API_ENV}; a parent's never passes through.
+ */
+export const PLUGIN_CA_ENV = "STUDIO_PLUGIN_CA";
+
+/**
+ * Names to a backend the stand's game host (a bare origin, e.g. `https://localhost:8443`): a game
+ * plays at `<slug>.<host>`, so a publish there tests its draft on it. Only the host sets it, beside
+ * {@link PLUGIN_API_ENV}; a parent's never passes through.
+ */
+export const PLUGIN_GAMES_ENV = "STUDIO_PLUGIN_GAMES";
+
+/** What the host has a backend use in place of its own defaults: a development profile's stand. */
+export interface PluginHostEnv {
+  /** The stand's API origin ({@link PLUGIN_API_ENV}). */
+  api: string;
+  /** The stand's own CA file ({@link PLUGIN_CA_ENV}); the backend's own requests trust it too. */
+  ca?: string;
+  /** The stand's game host ({@link PLUGIN_GAMES_ENV}). */
+  games?: string;
+}
+
+/**
  * A plugin backend's whole environment, built from scratch: PATH, HOME, TMPDIR, the credential
- * opt-out and, on Windows, what any program needs to start there plus ProgramData and Program
- * Files (x86), and the made-up Mac a development test of an engine plugin names. Nothing else of
- * Studio's.
+ * opt-out and, on Windows, what any program needs to start there plus ProgramData and both Program
+ * Files folders, the made-up Mac a development test of an engine plugin names, and a bundled plugin's
+ * seed folder (`seed`) and the stand the host has it use (`host`: its API, its game host, and its CA,
+ * which the backend's own requests trust through Node's `NODE_EXTRA_CA_CERTS`). Nothing else of Studio's.
  * `toolPath` is the user's login PATH when known: an app started from the Finder has a bare one,
  * on which a backend finds none of the user's tools (Genex's publish needs git-lfs from Homebrew).
  */
@@ -76,6 +118,8 @@ export function pluginBackendEnv(
   parent: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform,
   toolPath?: string,
+  seed?: string,
+  host?: PluginHostEnv,
 ): Record<string, string> {
   const env: Record<string, string | undefined> = {
     ...windowsBaseEnv(parent, platform),
@@ -85,10 +129,21 @@ export function pluginBackendEnv(
     ELECTRON_RUN_AS_NODE: "1",
     STUDIO_DISABLE_OS_CREDENTIALS: parent.STUDIO_DISABLE_OS_CREDENTIALS,
     STUDIO_ENGINE_TEST_ROOT: parent.STUDIO_ENGINE_TEST_ROOT,
-    // Where Windows keeps shared app data and 32-bit programs, which a plugin may need to find an
-    // installed app (Epic's launcher keeps its list of engines there); neither is secret.
+    // A bundled plugin's own seed, where its dependencies stay (never the parent's: only the host names it).
+    [PLUGIN_SEED_ENV]: seed,
+    // The stand the host has this backend use (a development profile's); never the parent's.
+    [PLUGIN_API_ENV]: host?.api,
+    [PLUGIN_CA_ENV]: host?.ca,
+    [PLUGIN_GAMES_ENV]: host?.games,
+    NODE_EXTRA_CA_CERTS: host?.ca,
+    // Where Windows keeps shared app data and programs (64-bit and 32-bit), which a plugin may need
+    // to find an installed app (Epic's launcher and its records of engines are there); none is secret.
     ...(platform === "win32"
-      ? { ProgramData: envValue(parent, "ProgramData"), "ProgramFiles(x86)": envValue(parent, "ProgramFiles(x86)") }
+      ? {
+          ProgramData: envValue(parent, "ProgramData"),
+          ProgramFiles: envValue(parent, "ProgramFiles"),
+          "ProgramFiles(x86)": envValue(parent, "ProgramFiles(x86)"),
+        }
       : {}),
   };
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
@@ -136,6 +191,8 @@ export interface PluginCallOptions {
 /** Crash isolation only. Installed backends remain trusted native code. Never replay a call. */
 export class PluginProcess {
   #child: ChildProcess | undefined;
+  /** The language the running backend was last told, so a call after a change tells it again. */
+  #told: Locale | undefined;
   #sequence = 0;
   #pending = new Map<
     number,
@@ -158,11 +215,18 @@ export class PluginProcess {
     context: PluginBinding | undefined,
     invocation: PluginInvocation,
   ) => Promise<unknown>;
-  readonly failed: (error: string) => void;
+  /** Hears the backend end: its words, and whether it exited or could not be run (`PluginFailure`). */
+  readonly failed: (error: string, failure: PluginFailure) => void;
   /** Developer debug sink for backend stderr lines; default discards. Never a source of user-facing status. */
   readonly onStderr: ((line: string) => void) | undefined;
   /** The PATH the backend starts with; absent or failing, the app's own. */
   readonly toolPath: (() => Promise<string>) | undefined;
+  /** A bundled plugin's seed folder, named to the backend (`PLUGIN_SEED_ENV`). */
+  readonly seed: string | undefined;
+  /** The stand the host has the backend use (`PLUGIN_API_ENV`, `PLUGIN_CA_ENV`); absent: its own default. */
+  readonly host: PluginHostEnv | undefined;
+  /** The computer the backend runs on, which decides how it is asked to stop. */
+  readonly platform: NodeJS.Platform;
   constructor(
     bootstrap: string,
     entry: string,
@@ -172,8 +236,14 @@ export class PluginProcess {
       context: PluginBinding | undefined,
       invocation: PluginInvocation,
     ) => Promise<unknown>,
-    failed: (error: string) => void,
-    options?: { onStderr?: (line: string) => void; toolPath?: () => Promise<string> },
+    failed: (error: string, failure: PluginFailure) => void,
+    options?: {
+      onStderr?: (line: string) => void;
+      toolPath?: () => Promise<string>;
+      seed?: string;
+      host?: PluginHostEnv;
+      platform?: NodeJS.Platform;
+    },
   ) {
     this.bootstrap = bootstrap;
     this.entry = entry;
@@ -181,6 +251,9 @@ export class PluginProcess {
     this.failed = failed;
     this.onStderr = options?.onStderr;
     this.toolPath = options?.toolPath;
+    this.seed = options?.seed;
+    this.host = options?.host;
+    this.platform = options?.platform ?? process.platform;
   }
   /** A backend's answer to one call: its result or its error. */
   #settle(m: BackendMessage) {
@@ -213,6 +286,13 @@ export class PluginProcess {
       reply({ error: errorMessage(e) });
     }
   }
+  /** Tell the backend the app's language when it has not heard it: its words for the person follow it. */
+  #tellLanguage(child: ChildProcess): void {
+    const locale = currentLocale();
+    if (this.#told === locale) return;
+    child.send({ kind: MessageKind.Language, locale, catalog: activeCatalog() });
+    this.#told = locale;
+  }
   /** The running backend, started with the user's PATH when this is its first call. */
   async #started(): Promise<ChildProcess> {
     if (this.#child) return this.#child;
@@ -226,10 +306,11 @@ export class PluginProcess {
       execPath: process.execPath,
       execArgv: [],
       serialization: "advanced",
-      env: pluginBackendEnv(process.env, process.platform, toolPath),
+      env: pluginBackendEnv(process.env, process.platform, toolPath, this.seed, this.host),
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     this.#child = child;
+    this.#told = undefined;
     // Backend stderr may contain provider output: never surface it as sanitized account status.
     const onStderr = this.onStderr;
     if (!onStderr) child.stderr?.resume();
@@ -239,7 +320,7 @@ export class PluginProcess {
       if (m?.kind === MessageKind.Result) this.#settle(m);
       else if (m?.kind === MessageKind.Host) await this.#answerHost(child, m);
     });
-    const fail = (error: string) => {
+    const fail = (error: string, failure: PluginFailure) => {
       if (this.#child !== child) return;
       this.#child = undefined;
       for (const p of this.#pending.values()) {
@@ -247,10 +328,12 @@ export class PluginProcess {
         p.reject(new PluginCallCutOff(CallCutOff.PluginEnded, error));
       }
       this.#pending.clear();
-      this.failed(error);
+      this.failed(error, failure);
     };
-    child.on("error", (e) => fail(e.message));
-    child.on("exit", (code) => fail(`Plugin process exited (${code}); accepted remote jobs may still continue. `));
+    child.on("error", (e) => fail(e.message, PluginFailure.BackendError));
+    child.on("exit", (code) =>
+      fail(`Plugin process exited (${code}); accepted remote jobs may still continue. `, PluginFailure.BackendExited),
+    );
     return child;
   }
   async call(
@@ -294,6 +377,7 @@ export class PluginProcess {
         },
       });
       signal?.addEventListener("abort", cancel, { once: true });
+      this.#tellLanguage(child);
       child.send({ kind: MessageKind.Call, id, method, name, args, context }, (error) => {
         if (error) {
           const p = this.#pending.get(id);
@@ -345,9 +429,22 @@ export class PluginProcess {
     this.#pending.clear();
     const c = this.#child;
     if (!c) return;
-    c.kill("SIGTERM");
+    this.#askToStop(c);
     const timer = setTimeout(() => c.kill("SIGKILL"), KILL_GRACE_MS);
     timer.unref();
     c.once("exit", () => clearTimeout(timer));
+  }
+  /**
+   * Asks the backend to stop its work and exit: SIGTERM, or on Windows, where any signal ends a
+   * process outright and leaves the programs its jobs started running, the closing of its channel,
+   * which the backend hears the same way.
+   */
+  #askToStop(c: ChildProcess) {
+    if (!isWindows(this.platform)) {
+      c.kill("SIGTERM");
+      return;
+    }
+    if (c.connected) c.disconnect();
+    else c.kill();
   }
 }

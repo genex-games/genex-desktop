@@ -11,12 +11,14 @@
 import type { JSX } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { avatarRecipe } from "../../shared/avatar-recipe.ts";
+import { intlLocale } from "../../shared/i18n.ts";
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
 import { creditsPlansUrl } from "../../shared/play-credits.ts";
 import { handleBaseFromName } from "../../shared/handle.ts";
 import { AvatarStyle, PLAY_NAME_LENGTH, type PlayMe, playName } from "../../shared/play-people.ts";
 import { AvatarMotion, GeneratedAvatar } from "../avatars/GeneratedAvatar.tsx";
 import { MakingDrawing } from "../making-art.ts";
+import { richText } from "../rich-text.tsx";
 import { GenexTab, openGenexPage } from "./plugins/genex/genex-tab.ts";
 import { avatarWebp } from "../play/avatar-image.ts";
 import { CreditsShard } from "../play/CreditsShard.tsx";
@@ -219,7 +221,7 @@ function NameplateRow({ me }: { me: PlayMe }): JSX.Element {
     <div className="account-row" data-account-nameplate>
       <span className="account-row-label">{WORDS.nameplate}</span>
       <div className="account-row-body">
-        <div className="account-nameplate">
+        <div className="account-nameplate" data-analytics-mask>
           <Nameplate recipe={plate}>
             <span className="account-nameplate-row" data-avatar-host>
               <PersonAvatar person={me} size={PLATE_FACE} />
@@ -372,7 +374,12 @@ function NicknameRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Eleme
           <NicknameEditor me={me} online={online} onClose={close} />
         ) : (
           <span className="account-nickname-line">
-            <span className="account-handle" data-account-handle data-none={!me.handle || undefined}>
+            <span
+              className="account-handle"
+              data-account-handle
+              data-none={!me.handle || undefined}
+              data-analytics-mask
+            >
               {me.handle ? `@${me.handle}` : NICKNAME_WORDS.none}
             </span>
             <button
@@ -397,7 +404,9 @@ function NicknameRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Eleme
 /** "1,700 credits": the balance as last read, or nothing before it was. */
 function creditsWords(credits: { balance: number | null; unlimited: boolean } | null): string | null {
   if (credits?.unlimited) return WORDS.creditsUnlimited;
-  return credits?.balance == null ? null : WORDS.creditsCount(new Intl.NumberFormat().format(credits.balance));
+  return credits?.balance == null
+    ? null
+    : WORDS.creditsCount(new Intl.NumberFormat(intlLocale()).format(credits.balance));
 }
 
 /**
@@ -415,30 +424,31 @@ function CreditsRow(): JSX.Element {
       .api.openUrl(creditsPlansUrl(web))
       .catch(() => undefined);
   };
-  const note = WORDS.creditsNote;
   return (
     <div className="account-row" data-account-credits>
       <span className="account-row-label">{WORDS.credits}</span>
       <div className="account-row-body">
         <div className="account-credits">
           <CreditsShard size={16} />
-          {amount !== null && <span>{amount}</span>}
+          {amount !== null && <span data-analytics-mask>{amount}</span>}
           <button type="button" className="people-button" aria-label={WORDS.buyCreditsLabel} onClick={buy}>
             {WORDS.buyCredits}
             <Icon name="arrow-up-right" size={14} />
           </button>
         </div>
         <span className="account-note">
-          {note.before}
-          <button
-            type="button"
-            className="account-note-link"
-            aria-label={WORDS.creditsPluginLabel}
-            onClick={() => openGenexPage(GenexTab.Tools)}
-          >
-            {note.plugin}
-          </button>
-          {note.after}
+          {richText(WORDS.creditsNote, {
+            plugin: (name) => (
+              <button
+                type="button"
+                className="account-note-link"
+                aria-label={WORDS.creditsPluginLabel}
+                onClick={() => openGenexPage(GenexTab.Tools)}
+              >
+                {name}
+              </button>
+            ),
+          })}
         </span>
       </div>
     </div>
@@ -489,7 +499,10 @@ function SignInStage(): JSX.Element {
           </div>
           {code && (
             <p className="account-note" role="status">
-              {WORDS.browserShows} <code className="account-code">{code}</code>
+              {WORDS.browserShows}{" "}
+              <code className="account-code" data-analytics-mask>
+                {code}
+              </code>
             </p>
           )}
         </>

@@ -111,6 +111,8 @@ export function ShareProfile({ me, profile }: { me: PlayMe; profile: PlayProfile
         aria-label={WORDS.shareProfileTitle}
         initialFocus={copy}
         data-share-popover
+        // The person's own profile: their name, link and games.
+        data-analytics-mask
       >
         <h2 className="share-popover-title">{WORDS.shareProfileTitle}</h2>
         <SharePreview me={me} profile={profile} link={link} />

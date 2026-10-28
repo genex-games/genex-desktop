@@ -1,14 +1,19 @@
 /**
  * The strip's Play/Stop: one button that stops the Live game (it then runs no scripts, frames or
  * sound, `stopPreview`) and plays it again (the same page, `playPreview`), with a spinner in its
- * place while either is under way. Whether the game is stopped is main's to say, on every probe.
+ * place while either is under way. Whether the game is stopped is main's to say, on every probe. A
+ * game that waits for Play (Live holds another game's page, or none) loads on Play (`loadPreview`).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { track } from "../../analytics/client.ts";
+import { AnalyticsEvent } from "../../analytics/events.ts";
+import { LiveTrigger } from "../../analytics/events/builds.ts";
 import { type Notify, ToastTone } from "../../state/toasts.ts";
 import { problemWords } from "../../words.ts";
 import { useGameSound } from "./game-sound.ts";
 import type { useLiveLoad } from "./live-load.ts";
 import { useLoaderPresence } from "./loader-presence.ts";
+import { errorCode } from "../../../shared/errors.ts";
 
 /** Where the Live game is, as the Play/Stop button shows it. */
 export const LiveRun = {
@@ -48,33 +53,44 @@ export function useLiveRun(
 ): { run: LiveRun; toggle: () => void } {
   const [stopping, setStopping] = useState(false);
   const [starting, setStarting] = useState(false);
-  const { stopped, setStopped, loadLive } = live;
+  const { stopped, setStopped, idle, loadLive } = live;
   const loading = Boolean(project && live.liveLoad?.project === project);
   // Starting lasts until the page Play asked for is on the stage.
   useEffect(() => {
     if (starting && !loading) setStarting(false);
   }, [starting, loading]);
-  const run = liveRun({ stopped, stopping, starting });
+  const run = liveRun({ stopped: stopped || idle, stopping, starting });
   const toggle = useCallback(() => {
     if (!project) return;
     if (run === LiveRun.Running) {
       setStopping(true);
       window.studio
         .stopPreview()
-        .then(() => setStopped(true))
-        .catch((err: unknown) => onNotice(problemWords(err), ToastTone.Error))
+        .then(() => {
+          setStopped(true);
+          track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Stopped, ok: true });
+        })
+        .catch((err: unknown) => {
+          track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Stopped, ok: false });
+          onNotice(problemWords(err), ToastTone.Error, errorCode(err));
+        })
         .finally(() => setStopping(false));
       return;
     }
     if (run !== LiveRun.Stopped) return;
     setStarting(true);
     setStopped(false);
-    loadLive(project, () => window.studio.playPreview()).catch((err: unknown) => {
-      setStopped(true);
-      setStarting(false);
-      onNotice(problemWords(err), ToastTone.Error);
-    });
-  }, [project, run, setStopped, loadLive, onNotice]);
+    const start = idle ? () => window.studio.loadPreview(project) : () => window.studio.playPreview();
+    loadLive(project, start, LiveTrigger.Play).then(
+      () => track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Running, ok: true }),
+      (err: unknown) => {
+        track(AnalyticsEvent.LivePlayToggled, { to: LiveRun.Running, ok: false });
+        if (!idle) setStopped(true);
+        setStarting(false);
+        onNotice(problemWords(err), ToastTone.Error, errorCode(err));
+      },
+    );
+  }, [project, run, idle, setStopped, loadLive, onNotice]);
   return { run, toggle };
 }
 

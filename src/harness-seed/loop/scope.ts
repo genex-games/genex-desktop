@@ -48,6 +48,11 @@ export interface RunScope {
   added: string[];
   /** The user steers that changed scope, each usable once. */
   revisions: string[];
+  /**
+   * What the build sells in the game's Genex store for Nex (store-items.ts `storeScopeItems`);
+   * never cut. Absent on a scope that sells nothing.
+   */
+  store?: string[];
 }
 
 /** The parts a launch knows: the user's words, and the contractor's in-scope and cut lists. */
@@ -56,6 +61,7 @@ export interface ScopeParts {
   inScope?: readonly unknown[];
   cut?: readonly unknown[];
   added?: readonly unknown[];
+  store?: readonly unknown[];
 }
 
 /** The non-empty strings of a list, trimmed and de-duplicated. */
@@ -119,7 +125,8 @@ export function scopeItems(value: unknown): string[] {
 }
 
 /** A run's scope at launch. */
-export function createScope({ asked, inScope = [], cut = [], added = [] }: ScopeParts): RunScope {
+export function createScope({ asked, inScope = [], cut = [], added = [], store = [] }: ScopeParts): RunScope {
+  const sold = items(store);
   return {
     version: SCOPE_VERSION,
     asked: boundAsked(asked),
@@ -127,6 +134,7 @@ export function createScope({ asked, inScope = [], cut = [], added = [] }: Scope
     cut: items(cut),
     added: items(added),
     revisions: [],
+    ...(sold.length ? { store: sold } : {}),
   };
 }
 
@@ -140,6 +148,7 @@ export function restoreScope(value: unknown): RunScope | undefined {
     inScope: Array.isArray(saved.inScope) ? saved.inScope : [],
     cut: Array.isArray(saved.cut) ? saved.cut : [],
     added: Array.isArray(saved.added) ? saved.added : [],
+    store: Array.isArray(saved.store) ? saved.store : [],
   });
   if (!scope.asked.length) return undefined;
   return { ...scope, revisions: words(saved.revisions).slice(-SCOPE_REVISIONS) };

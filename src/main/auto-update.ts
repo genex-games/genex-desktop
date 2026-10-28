@@ -23,7 +23,15 @@
  * check already running, and the periodic checks stop once a version is downloaded.
  */
 import { SECOND_MS } from "../shared/duration.ts";
-import { type ReadyUpdate, UpdateAction, type UpdateCheckResult, UpdateCheckStatus } from "../shared/app-update.ts";
+import { t } from "../shared/i18n.ts";
+import {
+  type ReadyUpdate,
+  RestartAnswer,
+  UpdateAction,
+  type UpdateCheckResult,
+  UpdateCheckStatus,
+  UpdateFailure,
+} from "../shared/app-update.ts";
 import type { PublishedRelease, ReleaseCheck } from "./release-check.ts";
 import { ReleaseCheckKind } from "./release-check.ts";
 
@@ -36,6 +44,13 @@ export const AUTO_UPDATE_ENABLED = true;
 export const UPDATE_REPO = "genex-games/genex-desktop";
 /** How often an installed copy asks for a newer release (the `ms` syntax the library parses). */
 const UPDATE_CHECK_INTERVAL = "1 hour";
+/**
+ * How long a fresh install's first launch waits before its first check: Squirrel.Windows holds
+ * its lock on the install for a moment after `--squirrel-firstrun`, and a check then fails.
+ */
+export const FIRST_RUN_CHECK_DELAY_MS = 10 * SECOND_MS;
+/** The argument Squirrel.Windows starts a fresh install's first launch with. */
+const SQUIRREL_FIRST_RUN = "--squirrel-firstrun";
 /** The platforms update.electronjs.org serves. */
 const UPDATE_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set(["darwin", "win32"]);
 /** The platforms told about a release they download themselves. */
@@ -100,28 +115,31 @@ export type UpdateMode = (typeof UpdateMode)[keyof typeof UpdateMode];
 
 export type UpdateDecision = { start: true; mode: UpdateMode } | { start: false; reason: UpdateSkip };
 
+/** What the updater's notifications and the menu's Check for Updates say, in main's language. */
 const MESSAGE = {
-  title: "Update ready — restart",
+  title: () => t("Update ready — restart"),
   namedBody: (version: string) =>
-    `Genex ${version} is downloaded. Click to restart now, or it installs the next time you quit.`,
-  unnamedBody: "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.",
-  availableTitle: (version: string) => `Genex ${version} is available`,
-  availableBody: "Click to open its download page.",
-  current: (version: string) => `Genex ${version} is the latest version.`,
-  downloading: "A new version of Genex is downloading.",
-  downloadingDetail: "It installs when you relaunch; Genex tells you when it's ready.",
-  readyToRestart: (version: string) => `Genex ${version} is ready to install.`,
-  readyDetail: "Relaunch now, or it installs the next time you quit.",
-  available: (version: string) => `Genex ${version} is available.`,
-  availableDetail: "Download it from the release page and install it over this version.",
-  off: "This build of Genex doesn't check for updates.",
-  offDetail: "Development builds and builds packaged under another name update from source.",
-  system: "Genex updates with your system.",
-  systemDetail:
-    "New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade.",
-  failed: "Genex couldn't check for updates.",
-  failedDetail: "Check your connection and try again.",
-  newVersion: "the new version",
+    t("Genex {version} is downloaded. Click to restart now, or it installs the next time you quit.", { version }),
+  unnamedBody: () =>
+    t("A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit."),
+  availableTitle: (version: string) => t("Genex {version} is available", { version }),
+  availableBody: () => t("Click to open its download page."),
+  current: (version: string) => t("Genex {version} is the latest version.", { version }),
+  downloading: () => t("A new version of Genex is downloading."),
+  downloadingDetail: () => t("It installs when you relaunch; Genex tells you when it's ready."),
+  readyToRestart: (version: string | null | undefined) =>
+    version ? t("Genex {version} is ready to install.", { version }) : t("Genex the new version is ready to install."),
+  readyDetail: () => t("Relaunch now, or it installs the next time you quit."),
+  available: (version: string | null | undefined) =>
+    version ? t("Genex {version} is available.", { version }) : t("Genex the new version is available."),
+  availableDetail: () => t("Download it from the release page and install it over this version."),
+  off: () => t("This build of Genex doesn't check for updates."),
+  offDetail: () => t("Development builds and builds packaged under another name update from source."),
+  system: () => t("Genex updates with your system."),
+  systemDetail: () =>
+    t("New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade."),
+  failed: () => t("Genex couldn't check for updates."),
+  failedDetail: () => t("Check your connection and try again."),
 } as const;
 
 /** Whether this launch checks for updates, and the first reason it does not. */
@@ -135,6 +153,11 @@ export function autoUpdateDecision(launch: UpdateLaunch): UpdateDecision {
   if (launch.productName !== "Genex") return { start: false, reason: UpdateSkip.Identity };
   if (UPDATE_PLATFORMS.has(launch.platform)) return { start: true, mode: UpdateMode.Install };
   return { start: true, mode: launch.systemPackages ? UpdateMode.System : UpdateMode.Notify };
+}
+
+/** How long this launch waits before its first update check (`FIRST_RUN_CHECK_DELAY_MS`). */
+export function firstCheckDelay(argv: readonly string[]): number {
+  return argv.includes(SQUIRREL_FIRST_RUN) ? FIRST_RUN_CHECK_DELAY_MS : 0;
 }
 
 /**
@@ -155,7 +178,7 @@ export function releaseVersion(releaseName: string): string | null {
 
 /** The notification for a downloaded update, naming its version when the release gave one. */
 function updateReadyNote(version: string | null): { title: string; body: string } {
-  return { title: MESSAGE.title, body: version ? MESSAGE.namedBody(version) : MESSAGE.unnamedBody };
+  return { title: MESSAGE.title(), body: version ? MESSAGE.namedBody(version) : MESSAGE.unnamedBody() };
 }
 
 /** What announcing and installing a downloaded update needs from main. */
@@ -168,8 +191,8 @@ export interface UpdateAnnouncerDeps {
   notify(note: { title: string; body: string }, onClick: () => void): void;
   /** Asks before a restart would end an active run; resolves true when nothing runs. */
   confirmRestart(): Promise<boolean>;
-  /** Quits and relaunches into the downloaded version (`autoUpdater.quitAndInstall`). */
-  quitAndInstall(): void;
+  /** Quits and relaunches into the downloaded version (`autoUpdater.quitAndInstall`), once main is ready to. */
+  quitAndInstall(): void | Promise<void>;
   /** Opens a release page (already checked by `releasePageUrl`) in the browser. */
   openRelease(url: string): void;
 }
@@ -182,8 +205,8 @@ export interface UpdateAnnouncer {
   downloaded(releaseName: string): void;
   /** A newer release this copy cannot install in place: remember it and tell the person once. */
   available(release: PublishedRelease): void;
-  /** Restart into the downloaded update; false when there is none, one is already asking, or a run is kept. */
-  restart(): Promise<boolean>;
+  /** Restart into the downloaded update, or say why not: none waits, one is already asking, or a run is kept. */
+  restart(): Promise<RestartAnswer>;
   /** Open the waiting release's download page; false when no downloadable release waits. */
   download(): boolean;
 }
@@ -192,13 +215,14 @@ export function createUpdateAnnouncer(deps: UpdateAnnouncerDeps): UpdateAnnounce
   let ready: ReadyUpdate | null = null;
   let releaseUrl: string | null = null;
   let asking = false;
-  const restart = async (): Promise<boolean> => {
-    if (ready?.action !== UpdateAction.Restart || asking) return false;
+  const restart = async (): Promise<RestartAnswer> => {
+    if (ready?.action !== UpdateAction.Restart) return RestartAnswer.NoUpdate;
+    if (asking) return RestartAnswer.AlreadyAsking;
     asking = true;
     try {
-      if (!(await deps.confirmRestart())) return false;
-      deps.quitAndInstall();
-      return true;
+      if (!(await deps.confirmRestart())) return RestartAnswer.Declined;
+      await deps.quitAndInstall();
+      return RestartAnswer.Relaunching;
     } finally {
       asking = false;
     }
@@ -224,7 +248,7 @@ export function createUpdateAnnouncer(deps: UpdateAnnouncerDeps): UpdateAnnounce
       ready = update;
       releaseUrl = release.url;
       if (deps.studioUp()) deps.announce(update);
-      else deps.notify({ title: MESSAGE.availableTitle(release.version), body: MESSAGE.availableBody }, download);
+      else deps.notify({ title: MESSAGE.availableTitle(release.version), body: MESSAGE.availableBody() }, download);
     },
     restart,
     download,
@@ -326,22 +350,42 @@ export function askUpdater(
   });
 }
 
+/** The stage an autoUpdater error during `phase` failed at. */
+const FAILED_STAGE = {
+  [InstallerPhase.Idle]: UpdateFailure.Check,
+  [InstallerPhase.Checking]: UpdateFailure.Check,
+  [InstallerPhase.Downloading]: UpdateFailure.Download,
+  [InstallerPhase.Downloaded]: UpdateFailure.Install,
+} as const satisfies Record<InstallerPhase, UpdateFailure>;
+
 /**
  * Electron's autoUpdater, watched from launch, so Check for Updates knows the periodic check it
  * would collide with. A refused check changes nothing, and a downloaded version stays downloaded.
+ * An error the app's own checks meet (the periodic ones) is told to `failed` with its stage; one
+ * that answers a Check for Updates the person asked for is that check's answer instead.
  */
 export function watchInstaller(
   updater: WatchableUpdater,
-  options: { timeoutMs?: number } = {},
+  { failed, ...options }: { timeoutMs?: number; failed?: (stage: UpdateFailure) => void } = {},
 ): { ask(): Promise<InstallCheck> } {
   let phase: InstallerPhase = InstallerPhase.Idle;
+  let asking = 0;
+  updater.on(UpdaterEvent.Error, (error) => {
+    if (asking === 0 && !refusedAsBusy(error)) failed?.(FAILED_STAGE[phase]);
+  });
   for (const [event, next] of INSTALLER_PHASES) {
     updater.on(event, (error) => {
       if (phase === InstallerPhase.Downloaded || refusedAsBusy(error)) return;
       phase = next;
     });
   }
-  return { ask: () => askUpdater(updater, { ...options, phase: () => phase }) };
+  const ask = (): Promise<InstallCheck> => {
+    asking++;
+    return askUpdater(updater, { ...options, phase: () => phase }).finally(() => {
+      asking--;
+    });
+  };
+  return { ask };
 }
 
 /** What Check for Updates needs: this launch's decision, the announcer, and the two ways to ask. */
@@ -404,19 +448,20 @@ export function updateCheckNote(result: UpdateCheckResult): {
   detail: string;
   act: UpdateAction | null;
 } {
-  const version = result.update?.version ?? MESSAGE.newVersion;
+  const version = result.update?.version;
   if (result.status === UpdateCheckStatus.Current)
     return { message: MESSAGE.current(result.current), detail: "", act: null };
   if (result.status === UpdateCheckStatus.Downloading)
-    return { message: MESSAGE.downloading, detail: MESSAGE.downloadingDetail, act: null };
-  if (result.status === UpdateCheckStatus.Off) return { message: MESSAGE.off, detail: MESSAGE.offDetail, act: null };
+    return { message: MESSAGE.downloading(), detail: MESSAGE.downloadingDetail(), act: null };
+  if (result.status === UpdateCheckStatus.Off)
+    return { message: MESSAGE.off(), detail: MESSAGE.offDetail(), act: null };
   if (result.status === UpdateCheckStatus.System)
-    return { message: MESSAGE.system, detail: MESSAGE.systemDetail, act: null };
+    return { message: MESSAGE.system(), detail: MESSAGE.systemDetail(), act: null };
   if (result.status === UpdateCheckStatus.Failed)
-    return { message: MESSAGE.failed, detail: MESSAGE.failedDetail, act: null };
+    return { message: MESSAGE.failed(), detail: MESSAGE.failedDetail(), act: null };
   if (result.update?.action === UpdateAction.Download)
-    return { message: MESSAGE.available(version), detail: MESSAGE.availableDetail, act: UpdateAction.Download };
-  return { message: MESSAGE.readyToRestart(version), detail: MESSAGE.readyDetail, act: UpdateAction.Restart };
+    return { message: MESSAGE.available(version), detail: MESSAGE.availableDetail(), act: UpdateAction.Download };
+  return { message: MESSAGE.readyToRestart(version), detail: MESSAGE.readyDetail(), act: UpdateAction.Restart };
 }
 
 /** What starting the updater needs from main: the log, and where a finished download goes. */

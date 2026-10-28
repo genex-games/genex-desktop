@@ -569,7 +569,7 @@ export interface ProjectAsset {
 export type MakingKind = 'character' | 'creature' | 'model' | 'rigged-model' | 'animation' | 'image' | 'texture' | 'video' | 'sound-effect' | 'music' | 'voice';
 // ↑ src/shared/asset-making.ts
 
-export type MakingPhase = 'queued' | 'making' | 'review' | 'not-fetched' | 'not-in-game' | 'failed' | 'stopped' | 'unsure';
+export type MakingPhase = 'queued' | 'making' | 'review' | 'not-fetched' | 'not-in-game' | 'failed' | 'stopped' | 'unsure' | 'needs-credits';
 // ↑ src/shared/asset-making.ts
 
 /**
@@ -593,6 +593,8 @@ export interface MakingJob {
   operation?: string;
   /** It delivered files earlier that the game no longer holds. */
   delivered?: boolean;
+  /** What it costs in Genex credits, as Genex quoted or charged it (after refunds); absent when unknown. */
+  credits?: number;
 }
 // ↑ src/shared/asset-making.ts
 
@@ -950,11 +952,16 @@ export type EngineKind = 'direct' | 'delegated';
 export type EngineStatusCode = 'ready' | 'not_installed' | 'not_running' | 'needs_login' | 'error';
 // ↑ src/shared/engine-descriptor.ts
 
+export type EngineStatusReason = 'not_signed_in' | 'api_key_login' | 'auth_failed' | 'check_failed' | 'cli_missing';
+// ↑ src/shared/engine-descriptor.ts
+
 export interface EngineStatus {
   code: EngineStatusCode;
   detail: string;
   /** What the UI should offer to do about it. */
   remedy?: string;
+  /** Why it is not ready, when the engine knows. */
+  reason?: EngineStatusReason;
 }
 // ↑ src/shared/engine-descriptor.ts
 
@@ -986,7 +993,7 @@ export interface ModelCatalogStatus {
 }
 // ↑ src/shared/model-catalog.ts
 
-export type CodingProvider = "codex" | "claude-code" | "opencode";
+export type CodingProvider = "codex" | "claude-code" | "opencode" | "grok" | "cursor";
 // ↑ src/shared/coding-cli.ts
 
 export interface CodingCliStatus {
@@ -1015,7 +1022,8 @@ export interface EngineAccount {
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
  * through its native login reported from the in-app console, OpenCode through its own `auth login`
- * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
+ * in the embedded terminal (which keeps every provider it signs in to), Grok Build and Cursor through
+ * their own sign-in command there (the person's account, in the browser), `none` for an engine with
  * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
@@ -1041,15 +1049,16 @@ export type Billing = "local" | "subscription" | "metered";
 
 /** What the sign-in card and the Models room say for a subscription. */
 export interface SignInCopy {
-  /** "your Claude subscription": the thing the user already pays for. */
-  readonly product: string;
   readonly card: string;
   readonly account: string;
   readonly install: string;
   /** The vendor's own install page for the CLI. */
   readonly installUrl: string;
   readonly get: string;
-  readonly who: string;
+  /** The flat sign-in card's line: the thing the user already pays for, put to work. */
+  readonly useLine: string;
+  /** The sign-in card's line while the subscription is not signed in: why, and who handles the password. */
+  readonly signInLine: string;
 }
 // ↑ src/shared/providers.ts
 
@@ -1064,6 +1073,8 @@ export interface ProviderInfo {
   readonly billing: Billing;
   /** Subscriptions only. */
   readonly signIn: SignInCopy | null;
+  /** Shipped before a live test proved it: Settings and the picker say Beta. */
+  readonly beta?: true;
 }
 // ↑ src/shared/providers.ts
 
@@ -1119,6 +1130,13 @@ export interface EngineDescriptor {
 }
 // ↑ src/shared/engine-descriptor.ts
 
+export type Locale = 'en' | 'ru' | 'es' | 'pt-BR' | 'de' | 'fr' | 'ja' | 'ko' | 'zh-Hans';
+// ↑ src/shared/locale.ts
+
+/** What Settings remembers: a language, or the computer's. */
+export type LanguageChoice = Locale | "system";
+// ↑ src/shared/locale.ts
+
 export interface StudioSettingsView {
   /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
   learning: boolean;
@@ -1134,6 +1152,8 @@ export interface StudioSettingsView {
   autoResume?: boolean;
   /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
   computerControl?: boolean;
+  /** The app's language for main's menus, dialogs and notifications; System by default. */
+  language?: LanguageChoice;
 }
 // ↑ src/shared/studio-api.ts
 
@@ -1177,6 +1197,10 @@ export interface StudioActivityItem {
   runId?: string;
   snapshotId?: string;
   undone?: boolean;
+  /** A learned change the person took back themselves (Undo), not one a later restore took back. */
+  undoneByUser?: true;
+  /** A restart of Studio that failed: the one recovery the person must act on. */
+  restartFailed?: true;
   outcome?: RunOutcomeKind;
   /** The run's own plain report, when it wrote one. */
   report?: string;
@@ -2354,6 +2378,11 @@ export interface HarnessHostApi {
       pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
+  /**
+   * The language Genex speaks (Settings, else the computer's): its tag and its own name. An agent
+   * answers Genex's own messages in it (a resume, a continue), and the person in theirs.
+   */
+  "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };

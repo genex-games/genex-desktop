@@ -31,6 +31,10 @@ import { rm } from "node:fs/promises";
 import net from "node:net";
 import { setTimeout as sleep } from "node:timers/promises";
 import { CUA_DRIVER_RELEASE } from "../../scripts/vendor-cua-driver.ts";
+import { GIT_SOURCE_RELEASE, MAC_GIT_FILES } from "../../scripts/vendor-git-for-mac.ts";
+import { macOwnGitBin } from "../../src/substrate/git-policy.ts";
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
 import vcRuntime from "../../scripts/package-vc-runtime.cjs";
 import { connectCuaDriver, driverEnv, GrantHolder } from "../../src/substrate/cua-driver-client.ts";
 import {
@@ -57,6 +61,8 @@ const EXPECTED_FUSES = {
 };
 /** sandbox-runtime helpers by the platform that runs them (scripts/package-prune.cjs). */
 const SANDBOX_HELPERS = { seccomp: "linux", "srt-win": "win32" };
+/** sandbox-runtime's JVM proxy agent, every platform's: only its jar is packaged. */
+const SANDBOX_JAVA_AGENT = { folder: "java-proxy-agent", jar: "srt-proxy-agent.jar" };
 
 const server = await startFakeOllama({
   models: [{ name: "qwen3.6:27b", size: 17_000_000_000, capabilities: ["completion", "tools"] }],
@@ -175,6 +181,7 @@ const foreignHelpers = unpacked.filter((entry) => {
   const match = /node_modules\/@anthropic-ai\/sandbox-runtime\/vendor\/([^/]+)(?:\/([^/]+))?/.exec(entry);
   if (!match) return false;
   const [, helper, arch] = match;
+  if (helper === SANDBOX_JAVA_AGENT.folder) return arch !== undefined && arch !== SANDBOX_JAVA_AGENT.jar;
   return SANDBOX_HELPERS[helper] !== process.platform || (arch !== undefined && arch !== process.arch);
 });
 addCheck(
@@ -190,6 +197,7 @@ addCheck(
   wrongFuses.map(([name]) => `${name}=${String.fromCharCode(fuses[FuseV1Options[name]] ?? 63)}`).join(", "),
 );
 if (process.platform === "darwin") await signatureChecks();
+if (process.platform === "darwin") await bundledGitChecks();
 if (process.platform === "darwin" || process.platform === "win32") await cuaDriverChecks();
 if (process.platform === "win32") await vcRuntimeCheck();
 // Keep the fallback in smoke mode if the gate regresses: this negative probe must
@@ -371,6 +379,64 @@ async function cuaDriverChecks() {
     driverTeam === appTeam,
     `${driverTeam} vs ${appTeam}`,
   );
+}
+
+/**
+ * The git every macOS build carries for a Mac without Apple's developer tools
+ * (scripts/vendor-git-for-mac.ts): the pinned version, run from inside the package as on such a
+ * Mac (`DEVELOPER_DIR=/nonexistent` breaks /usr/bin's stand-ins, and no other git is on PATH),
+ * with a valid signature on each of its programs; a Developer ID build signs them with the app's team.
+ */
+async function bundledGitChecks() {
+  const run = promisify(execFile);
+  const bin = macOwnGitBin(path.join(resourcesDir, "app.asar.unpacked", "dist", "resources"));
+  const gitRoot = path.dirname(bin);
+  const env = {
+    PATH: `${bin}:/usr/bin:/bin`,
+    DEVELOPER_DIR: "/nonexistent",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    HOME: os.tmpdir(),
+  };
+  const said = await run(path.join(bin, "git"), ["--version"], { env }).then(
+    ({ stdout }) => stdout.trim(),
+    (error) => String(error.stderr ?? error.message).trim(),
+  );
+  addCheck(
+    "package carries the pinned git, which runs from inside it",
+    said === `git version ${GIT_SOURCE_RELEASE.version}`,
+    said,
+  );
+  const repo = await mkdtemp(path.join(os.tmpdir(), "packaged-git-"));
+  const steps = [
+    ["init", "-q", repo],
+    ["-C", repo, "commit", "-q", "--allow-empty", "-m", "packaged", "--author", "t <t@t>"],
+    ["clone", "-q", repo, `${repo}-clone`],
+  ];
+  let failed = "";
+  for (const args of steps) {
+    failed ||= await run("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { env }).then(
+      () => "",
+      (error) => `git ${args[0]}: ${String(error.stderr ?? error.message).trim()}`,
+    );
+  }
+  await rm(repo, { recursive: true, force: true });
+  await rm(`${repo}-clone`, { recursive: true, force: true });
+  addCheck("the bundled git makes a repository, commits and clones it with no developer tools", !failed, failed);
+  const programs = MAC_GIT_FILES.programs.map((entry) => path.join(gitRoot, entry));
+  const unsigned = [];
+  for (const program of programs)
+    await run("codesign", ["--verify", "--strict", program]).catch(() =>
+      unsigned.push(path.relative(gitRoot, program)),
+    );
+  addCheck("codesign --verify accepts each of the bundled git's programs", unsigned.length === 0, unsigned.join(", "));
+  if (!expectSigned) return;
+  const teamOf = async (file) =>
+    /^TeamIdentifier=(.+)$/m.exec((await run("codesign", ["-dv", file]).catch((error) => error)).stderr ?? "")?.[1] ??
+    "";
+  const appTeam = await teamOf(appBundle);
+  const others = [];
+  for (const program of programs) if ((await teamOf(program)) !== appTeam) others.push(path.relative(gitRoot, program));
+  addCheck("the bundled git's programs are signed with the app's own team", others.length === 0, others.join(", "));
 }
 
 /**

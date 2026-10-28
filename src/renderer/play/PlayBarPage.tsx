@@ -1,13 +1,12 @@
 /**
- * The bar's layer over the game (`play-bar.html`, a transparent view main lays above the game's own):
- * the viewer's bar with the game's AI pill, and one overlay at a time over the game: Comments, or what
- * the pill opens (`PlayAiLayer.tsx`). It hears the viewer's news as the studio's page does, asks main
- * for the bar's controls, and tells main what holds the bar up: the pointer or the keyboard on it, or
- * an overlay open (main then lays the layer over the whole window and gives it the keyboard, and gives
- * the game the keyboard back once it closes). Esc here gives the keyboard back to the game; before the
- * game plays it leaves, as the cover's does. A game's coin purchase draws its sheet here too, over the
- * whole window: main lays the layer out for it and keeps the keyboard on it, an open overlay closes for
- * it, and Esc is the sheet's own.
+ * The bar's layer above the game (`play-bar.html`, a transparent view main lays above the game's own):
+ * the viewer's bar with the game's AI pill, and one overlay at a time over the dimmed game: Comments, or
+ * what the pill opens (`PlayAiLayer.tsx`). It hears the viewer's news as the studio's page does, asks
+ * main for the bar's controls, and tells main which overlay is open (main then lays the layer over the
+ * whole window and gives it the keyboard, and gives the game the keyboard back once it closes). Esc here
+ * gives the keyboard back to the game; before the game plays it leaves, as the cover's does. A game's
+ * coin purchase draws its sheet here too, over the whole window: main lays the layer out for it and
+ * keeps the keyboard on it, an open overlay closes for it, and Esc is the sheet's own.
  */
 import type { JSX } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -18,7 +17,7 @@ import { BarEscape, type BarView, barEscape, barNews, holdKey, holdToTell, NOTHI
 import { type BarOverlays, usePlayAiLayer } from "./PlayAiLayer.tsx";
 import { PlayComments } from "./PlayComments.tsx";
 import { PlayPurchase } from "./PlayPurchase.tsx";
-import { type BarHolds, PlayViewerBar, type SendControl } from "./PlayViewerBar.tsx";
+import { PlayViewerBar, type SendControl } from "./PlayViewerBar.tsx";
 
 /** The calls the bar's layer makes. */
 export type BarApi = PlayBarApi;
@@ -37,42 +36,34 @@ function useBarView(api: BarApi): BarView | null {
 }
 
 /**
- * What holds the bar up, told to main whenever it changes: the pointer or the keyboard on it, or one
- * of its overlays open. An overlay opens once main has laid the layer over the window, and closes when
- * a purchase sheet opens over it.
+ * Which overlay is open, told to main whenever it changes; an overlay opens once main has laid the
+ * layer over the window, and closes when a purchase sheet opens over it.
  */
-function useHold(api: BarApi, openId: number | null, sheetOpen: boolean) {
-  const [pointer, setPointer] = useState(false);
-  const [keyboard, setKeyboard] = useState(false);
+function useOverlays(api: BarApi, openId: number | null, sheetOpen: boolean) {
   const [overlay, setOverlay] = useState<PlayBarOverlay | null>(null);
   const told = useRef(NOTHING_TOLD);
   const opening = useRef(openId);
   opening.current = openId;
-  const held = pointer || keyboard;
   useEffect(() => {
-    const tell = holdToTell(told.current, { held, overlay });
+    const tell = holdToTell(told.current, { overlay });
     if (!tell) return;
     told.current = tell.key;
     api.playBar(tell.payload).catch(() => undefined);
-  }, [api, held, overlay]);
-  // Another game, or none: an overlay belongs to the game it was opened over, and main holds nothing
-  // for the new one until the pointer or the keyboard comes back to the bar.
+  }, [api, overlay]);
+  // Another game, or none: an overlay belongs to the game it was opened over.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the opening is what resets it.
   useEffect(() => {
     setOverlay(null);
-    setPointer(false);
-    setKeyboard(false);
     told.current = NOTHING_TOLD;
   }, [openId]);
   // A purchase sheet takes the layer: main keeps it over the window and the keyboard on the sheet.
   useEffect(() => {
     if (sheetOpen) setOverlay(null);
   }, [sheetOpen]);
-  const holds: BarHolds = useMemo(() => ({ pointer: setPointer, keyboard: setKeyboard }), []);
   const open = useCallback(
     async (next: PlayBarOverlay): Promise<void> => {
       // The layer covers the window first, so nothing opened draws cut off at the bar's edge.
-      const hold = { held: true, overlay: next };
+      const hold = { overlay: next };
       const forGame = opening.current;
       try {
         await api.playBar(hold);
@@ -86,7 +77,7 @@ function useHold(api: BarApi, openId: number | null, sheetOpen: boolean) {
     [api],
   );
   const close = useCallback(() => setOverlay(null), []);
-  return { holds, overlay, open, close };
+  return { overlay, open, close };
 }
 
 /** Esc in the layer while the bar has the keyboard: back to the game, or out of a game still loading. */
@@ -112,7 +103,7 @@ function useEscape(api: BarApi, view: BarView | null, covered: { overlayOpen: bo
 export function PlayBarPage({ api }: { api: BarApi }): JSX.Element | null {
   const view = useBarView(api);
   const sheet = view?.bar?.purchase ?? null;
-  const { holds, overlay, open, close } = useHold(api, view?.openId ?? null, sheet !== null);
+  const { overlay, open, close } = useOverlays(api, view?.openId ?? null, sheet !== null);
   useEscape(api, view, { overlayOpen: overlay !== null, sheetOpen: sheet !== null });
   // The viewer may have closed under the press: nothing is left for it to do.
   const send: SendControl = useCallback(
@@ -125,13 +116,7 @@ export function PlayBarPage({ api }: { api: BarApi }): JSX.Element | null {
   // Nothing of the bar's stays open under a purchase sheet: two modals would fight over the keyboard.
   return (
     <div className="play-bar-layer" data-overlay={overlay ?? undefined} data-sheet={sheet ? true : undefined}>
-      <PlayViewerBar
-        view={view}
-        send={send}
-        holds={holds}
-        aiPill={ai.pill}
-        onComments={() => void open(PlayBarOverlay.Comments)}
-      />
+      <PlayViewerBar view={view} send={send} aiPill={ai.pill} onComments={() => void open(PlayBarOverlay.Comments)} />
       {!sheet && overlay === PlayBarOverlay.Comments && view.bar && (
         <PlayComments key={view.openId} api={api} bar={view.bar} send={send} onClose={close} />
       )}

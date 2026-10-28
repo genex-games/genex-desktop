@@ -21,17 +21,24 @@ export interface PluginNativeRuntime {
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
+  install?: PluginRuntimePin;
+  /** Pinned downloads for other computers, one per `platform`. */
+  installs?: PluginRuntimePin[];
+}
+/** One pinned runtime download behind a confirmed setup action, for one kind of computer. */
+export interface PluginRuntimePin {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: "dmg" | "tar.gz" | "zip";
+  entry: string;
+  executable: string;
+  notices: string[];
+  /** The computer this download runs on; left out, a Mac with Apple silicon. */
+  platform?: "darwin-arm64" | "win32-x64" | "win32-arm64";
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
 export interface PluginNativeJob {
@@ -50,11 +57,40 @@ export interface PluginNativeJob {
   /** Needed for GPU rendering, including Blender EEVEE; permits the runtime's Metal cache, and lets Metal's compiler use it. */
   gpu?: boolean;
 }
+/**
+ * `sandbox.run`: the program (inside one of `reads`), its arguments, the folders it reads, the real
+ * folders inside the bound game it writes, variables Genex sets to a scratch folder of the job's own,
+ * further variables, and a deadline of 1000 ms to 60 minutes. On Windows, Genex's sandbox grants
+ * writes for its whole session: `writes` is what the job asks for, not a per-job fence.
+ */
+export interface PluginSandboxRunArgs {
+  program: string;
+  args: string[];
+  reads: string[];
+  writes: string[];
+  scratchEnv?: string[];
+  env?: Record<string, string>;
+  timeoutMs: number;
+}
+/** A sandbox job: running, exited (with its exit code), timed out, stopped, or failed to start. */
+export interface PluginSandboxJob {
+  id: string;
+  state: "running" | "exited" | "timed-out" | "stopped" | "failed";
+  exitCode?: number | null;
+  /** The last 4 MiB of each stream, where a long log ends with its verdict; `truncated` when cut. */
+  stdout?: string;
+  stderr?: string;
+  truncated?: boolean;
+  seconds?: number;
+  reason?: string;
+}
 export interface PluginNativeStatus {
   state: "ready" | "missing" | "incompatible" | "failed";
   path?: string;
   version?: string;
   detail: string;
+  /** The pinned download for this computer, when the runtime has one: its setup action and size. */
+  download?: { action: string; url: string; bytes: number };
 }
 export interface PluginRuntimeInstall {
   runtime: string;
@@ -165,8 +201,19 @@ export interface PluginManifestTool extends PluginTool {
    * Their Allow runs the call with what the field holds (one plain line, 1–200 characters).
    */
   confirmationInput?: { parameter: string; label: string };
+  /**
+   * API 3, with `confirmation`: the call acts on the person's account with another service (an
+   * upload it moderates, a generation that counts against its limits, a publish). Its card asks in
+   * every chat mode, Bypass included, and offers Allow in this chat, which covers the tool there.
+   */
+  onAccount?: true;
   /** API 3, agent tools only: the kind of asset a call makes. */
   asset?: PluginToolAsset;
+  /**
+   * API 3: the longest one call may run, in whole milliseconds, when that is longer than the host's
+   * ceiling (190 s): a game engine's import or export. At most 9 minutes.
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -595,6 +642,14 @@ export interface PluginHostCall {
     args: { job: string; inputs: Record<string, string>; values: Record<string, string> },
   ): Promise<PluginNativeResult>;
   (method: "native.jobs"): Promise<PluginNativeResult[]>;
+  /**
+   * `game-engine`: starts a long job in Genex's process sandbox and answers its id at once; Genex owns
+   * the job from then on and ends it when the plugin stops, is turned off or is removed. A `.bat` or
+   * `.cmd` program on Windows runs through `cmd.exe`, its command line quoted by Genex.
+   */
+  (method: "sandbox.run", args: PluginSandboxRunArgs): Promise<{ id: string }>;
+  (method: "sandbox.result", args: { id: string }): Promise<PluginSandboxJob | null>;
+  (method: "sandbox.stop", args: { id: string }): Promise<{ stopped: boolean }>;
   (method: "native.result", args: { id: string }): Promise<PluginNativeResult | null>;
   /**
    * Every setting this version declares: the stored value when it has the declared type, else the
@@ -699,6 +754,12 @@ export interface PluginHostCall {
    * Offer Do it for me only when it answers true, and the click path otherwise.
    */
   (method: "game.engine.canAssist"): Promise<boolean>;
+  /**
+   * `game-engine`: whether the bound game's chat still runs the turn your Do it for me started:
+   * false once that turn has ended (answered, failed or taken back), or after 20 minutes. Use it to
+   * end a progress display the agent never ended. Throws where the host has no assists.
+   */
+  (method: "game.engine.assisting"): Promise<boolean>;
 }
 
 /** `game.engine.assist`'s task: what the chat is asked to click, in plain words. */
@@ -863,6 +924,12 @@ export interface PluginPanelContext {
    * Absent from older hosts.
    */
   surface?: "page" | "card";
+  /**
+   * Genex's language as a BCP 47 tag: `en`, `ru`, `es`, `pt-BR`, `de`, `fr`, `ja`, `ko` or
+   * `zh-Hans`. `studioPlugin.t` already speaks it when the plugin brings its words; absent from
+   * older hosts, which speak English.
+   */
+  locale?: string;
 }
 
 /**
@@ -921,6 +988,22 @@ export interface StudioPluginPanel {
   chooseFile(request: PluginFileRequest): Promise<string | null>;
   /** Present once `src/plugin-sdk/ui.js` is inlined after `panel.js`. */
   ui?: StudioPluginUi;
+  /**
+   * `english` (ICU message syntax: `{name}`, `{count, plural, one {# game} other {# games}}`,
+   * `{choice, select, …}`) in Genex's language, its placeholders filled in from `params`; the
+   * English when the plugin's `locales/<lang>.json` has no translation. Call it once `ready` has
+   * settled. Present once `src/plugin-sdk/words.js` is inlined (the SDK marker does it).
+   */
+  t?(english: string, params?: Record<string, string | number>): string;
+  /** "a, b and c" in the panel's language. */
+  formatList?(items: string[]): string;
+  /** The language the panel speaks: Genex's when the plugin brings its words, else `en`. */
+  readonly locale?: string;
+  /**
+   * Settles with `locale` once the host has named the language (or after two seconds, in English)
+   * and the page's `data-t` marks speak it: await it before the panel writes any words.
+   */
+  ready?: Promise<string>;
 }
 
 declare global {

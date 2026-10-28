@@ -1,3 +1,16 @@
+import { SECOND_MS } from "../../shared/duration.ts";
+
+/**
+ * The least time between two re-reads that a window coming back to the front or a tab chosen asks
+ * for: a burst of them (focus, a tab, focus again) reads once. A press that changed something reads
+ * again whatever the time.
+ */
+export const REREAD_GAP_MS = 2 * SECOND_MS;
+
+/** Whether a re-read asked for at `now` is due: nothing was read yet, or the last read is at least the gap old. */
+export const rereadDue = (last: number | undefined, now: number): boolean =>
+  last === undefined || now - last >= REREAD_GAP_MS;
+
 /**
  * One way to re-read something from main: `createRefresher(fetch, apply)`.
  *

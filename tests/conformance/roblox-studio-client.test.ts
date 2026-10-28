@@ -400,3 +400,105 @@ test("a nameless Studio (a play test's server or client, or one just opening) is
     ],
   );
 });
+
+test("a cancelled call is refused before Studio can execute its tool", async () => {
+  const dir = await tmpDir("roblox-cancelled-");
+  const log = path.join(dir, "calls.jsonl");
+  const fake = standIn(["--log", log]);
+  const client = createStudioClient(macDeps(fake.run));
+  try {
+    await client.studios();
+    const cancelled = AbortSignal.abort();
+    await assert.rejects(
+      client.callTool(
+        "execute_luau",
+        { studio_id: "studio-1", datamodel_type: "Edit", code: "return 4" },
+        {
+          signal: cancelled,
+        },
+      ),
+      failure(StudioClientFailure.Closed),
+    );
+    // A later answered request ensures the stand-in consumed every earlier line in the pipe.
+    await client.studios();
+    assert.equal((await logOf(log)).filter((entry) => entry.tool === "execute_luau").length, 0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("a cancelled first call starts no StudioMCP process", async () => {
+  const fake = standIn();
+  const client = createStudioClient(macDeps(fake.run));
+  try {
+    await assert.rejects(client.studios({ signal: AbortSignal.abort() }), failure(StudioClientFailure.Closed));
+    assert.equal(fake.spawned.length, 0);
+  } finally {
+    await client.close();
+  }
+});
+
+test("a call cancelled while StudioMCP starts never reaches Studio after the handshake", async () => {
+  const dir = await tmpDir("roblox-opening-cancelled-");
+  const log = path.join(dir, "calls.jsonl");
+  const fake = standIn(["--log", log]);
+  let signalLocating = () => {};
+  const locating = new Promise<void>((resolve) => {
+    signalLocating = resolve;
+  });
+  let finishLocating = (_file: string) => {};
+  const located = new Promise<string>((resolve) => {
+    finishLocating = resolve;
+  });
+  const client = createStudioClient(
+    macDeps(fake.run, {
+      mcp: () => {
+        signalLocating();
+        return located;
+      },
+    }),
+  );
+  const controller = new AbortController();
+  try {
+    const call = client.callTool(
+      "execute_luau",
+      {
+        studio_id: "studio-1",
+        datamodel_type: "Edit",
+        code: "return 4",
+      },
+      { signal: controller.signal },
+    );
+    const cancelled = assert.rejects(call, failure(StudioClientFailure.Closed));
+    await locating;
+    controller.abort();
+    finishLocating(MAC_MCP);
+    await cancelled;
+    await client.studios();
+    assert.equal((await logOf(log)).filter((entry) => entry.tool === "execute_luau").length, 0);
+  } finally {
+    finishLocating(MAC_MCP);
+    await client.close();
+  }
+});
+
+test("malformed JSON-RPC values cannot crash the connection's reader", async () => {
+  const fake = standIn();
+  const children: ChildProcess[] = [];
+  const run: SpawnStudioMcp = (file, args, options) => {
+    const child = fake.run(file, args, options);
+    children.push(child);
+    return child;
+  };
+  const client = createStudioClient(macDeps(run));
+  try {
+    await client.studios();
+    const reader = children[0]?.stdout;
+    assert.ok(reader);
+    for (const value of [null, false, 3, "unexpected", []])
+      assert.doesNotThrow(() => reader.emit("data", `${JSON.stringify(value)}\n`));
+    assert.deepEqual(await client.studios(), [{ id: "studio-1", name: "Place1" }]);
+  } finally {
+    await client.close();
+  }
+});

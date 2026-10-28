@@ -2841,19 +2841,28 @@ describe("the director's finish claim", () => {
     assert.deepEqual(theirs.checks(), []);
   });
 
-  it("a timed build's finish once its hours are spent closes as its time running out, for its card", async () => {
+  it("a timed build's finish once its hours are spent closes as its time running out; an idle or asked-for wrap-up does not", async () => {
     const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
     const timed = { wallClockMs: 60 * 60_000, completionPolicy: "duration" };
-    const late = claimingLoopRun([]);
-    late.loopRun.run.budgets = timed;
-    late.loopRun.softDeadline = Date.now() - 60_000;
+    // A wrap-up brings `softDeadline` to now whatever its cause; the run's own clock keeps its cap.
+    const wrappedUp = (cap: number, over: { finishing?: boolean } = {}) => {
+      const run = claimingLoopRun([], over);
+      run.loopRun.run.budgets = timed;
+      run.loopRun.softDeadline = Date.now() - 1000;
+      run.loopRun.clock = { started: cap - 60 * 60_000, softDeadline: cap, finalDeadline: cap + 15 * 60_000 };
+      return run;
+    };
+    const late = wrappedUp(Date.now() - 60_000);
     await finish(late.loopRun as never, { summary: "where it got to", land: "yes" });
-    assert.equal(late.closes[0]?.ended, StopWhy.Time, "the wrap-up's finish: the hours ran out");
-    const early = claimingLoopRun([], { finishing: true });
-    early.loopRun.run.budgets = timed;
-    await finish(early.loopRun as never, { summary: "as far as it got", land: "no", victory: "no" });
-    assert.equal(early.closes.length, 1, "the person's own finish closes it");
-    assert.equal(early.closes[0]?.ended, undefined, "a finish with hours left is no time-out");
+    assert.equal(late.closes[0]?.ended, StopWhy.Time, "the wrap-up at the cap: the hours ran out");
+    const idle = wrappedUp(Date.now() + 60 * 60_000);
+    await finish(idle.loopRun as never, { summary: "nothing more to do", land: "yes" });
+    assert.equal(idle.closes.length, 1, "an idle lead's wrap-up closes it");
+    assert.equal(idle.closes[0]?.ended, undefined, "with an hour left, not as its time running out");
+    const asked = wrappedUp(Date.now() + 60 * 60_000, { finishing: true });
+    await finish(asked.loopRun as never, { summary: "as far as it got", land: "no", victory: "no" });
+    assert.equal(asked.closes.length, 1, "the person's own finish closes it");
+    assert.equal(asked.closes[0]?.ended, undefined, "the person's finish is no time-out");
   });
 
   it("a claim with no time left in the lead's call for a reviewer is not counted, and the run goes on", async () => {
@@ -6010,7 +6019,8 @@ describe("a director's run through the real core and harness", () => {
             assert.match(request.prompt, /Keep going and land the saved sign/);
             assert.deepEqual(
               (request.interviewTools ?? []).map((tool) => tool.name),
-              ["resume_run"],
+              // Named flip: a new Loop's start, for one asked in words, sits beside the resume.
+              ["start_autopilot", "resume_run"],
             );
             return {
               ok: true,

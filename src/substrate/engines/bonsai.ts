@@ -22,6 +22,7 @@ import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts"
 import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { t } from "../../shared/i18n.ts";
 import { DEFAULT_COMPACTION_PERCENT } from "./common.ts";
 import { gameCallSchema, gameResponseFormat, isGameCall } from "./game-calls.ts";
 import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
@@ -113,12 +114,16 @@ const BONSAI_EFFORTS: string[] = [
   ReasoningEffort.Max,
 ];
 
-/** What this engine says to the user. */
+/**
+ * What this engine says: statuses for Settings in the person's language (functions, since main sets
+ * its language after it starts), and the errors a session's run reads in English, since the harness
+ * and the model read them too.
+ */
 const MESSAGE = {
-  AppleSiliconOnly: "Bonsai requires Apple Silicon",
-  Ready: "Bonsai installed · starts on demand",
-  NotDownloaded: "Download Bonsai 2 to build locally",
-  DownloadRemedy: "Choose PQ2_0 (recommended) or PTQ1_0 in Model setup.",
+  AppleSiliconOnly: () => t("Bonsai requires Apple Silicon"),
+  Ready: () => t("Bonsai installed · starts on demand"),
+  NotDownloaded: () => t("Download Bonsai 2 to build locally"),
+  DownloadRemedy: () => t("Choose PQ2_0 (recommended) or PTQ1_0 in Model setup."),
   DownloadFirst: "Download Bonsai first",
   NoTokens: "Runtime tokenizer returned no tokens",
   EmptyResponse: "Empty inference response",
@@ -161,9 +166,9 @@ export class BonsaiEngine implements Engine {
   }
   async status(): Promise<EngineStatus> {
     if (process.platform !== "darwin" || process.arch !== "arm64")
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.AppleSiliconOnly };
-    if ((await this.models()).length) return { code: EngineStatusCode.Ready, detail: MESSAGE.Ready };
-    return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotDownloaded, remedy: MESSAGE.DownloadRemedy };
+      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.AppleSiliconOnly() };
+    if ((await this.models()).length) return { code: EngineStatusCode.Ready, detail: MESSAGE.Ready() };
+    return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotDownloaded(), remedy: MESSAGE.DownloadRemedy() };
   }
   async models() {
     const found = [];

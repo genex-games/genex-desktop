@@ -1,19 +1,23 @@
 /**
- * Play's game viewer: a published game fills the whole window, and the studio's own bar lies over its
- * top edge as glass, in a layer of its own above the game's view (`PlayViewerBar.tsx`): Back, the
- * game's name and facts, Like, Comments, Share, Invite a friend, Remix and Exit. The bar is up while
- * the game loads and fades a few seconds after it plays, coming back at the top edge or on Esc
- * (`bar-reveal.ts`); its Comments opens over the dimmed game (`viewer-comments.ts`), and so does a
- * game's coin purchase sheet (`viewer-purchase.ts`). Main keeps what the bar shows and acts on what it
- * asks (`studio:play.control`, `studio:play.purchase`). Holding Esc in the game moves the
- * keyboard to the bar (a tap still reaches the game: pause menus, mouse lock); Esc there gives it
- * back. A guest with no Genex account is offered a Genex account in the bar until its ×. A game in
- * voice chat gets the bar's mic switch and its menu (`mic.ts`). Electron-free: the game's view, the
- * bar's layer, the window, the clipboard, the microphone, genex.games' coin and the clock come in as deps.
+ * Play's game viewer: the studio's own bar is a strip of its own across the window's top, in a layer above
+ * the game's view (`PlayViewerBar.tsx`): Back, the game's name and facts, Like, Comments, Share, Invite a
+ * friend, Remix, Full screen and Exit. A published game fills the window below it, never under it, and the
+ * bar stays up for the whole game; only its page's full screen gives it the whole window, asked for by the
+ * game or by the bar's Full screen (`bar-layout.ts`). Its Comments opens over the dimmed game
+ * (`viewer-comments.ts`), and so do the menu and cards of the AI pill main draws for a game that uses AI
+ * (`aiBar`), and a game's coin purchase sheet (`viewer-purchase.ts`). Main keeps what
+ * the bar shows and acts on what it asks (`studio:play.control`, `studio:play.purchase`). Holding Esc in
+ * the game moves the keyboard to the bar (a tap still reaches the game: pause menus, mouse lock); Esc there
+ * gives it back. A guest with no Genex account is offered a Genex account in the bar until its ×. A game in
+ * voice chat gets the bar's mic switch and its menu (`mic.ts`). A game that sells items gets the bar's
+ * Store door: its Store opens in the game's place, drawn by the app's own page below the bar, while the
+ * game's view is hidden (never closed, so the game keeps its session) and the keyboard is the page's.
+ * Electron-free: the game's view, the bar's layer, the window, the clipboard, the microphone, genex.games'
+ * coin and store, and the clock come in as deps.
  */
 import { ESC_HOLD_MS, type FullScreenKey, type Rect } from "../game-full-screen.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { isPlayBarOverlay, type PlayBarHold } from "../../shared/play-bar.ts";
+import { isPlayBarOverlay, type PlayAiBar, type PlayBarHold } from "../../shared/play-bar.ts";
 import {
   isPlayControl,
   isPlaySlug,
@@ -29,10 +33,10 @@ import {
 } from "../../shared/play.ts";
 import type { PlayMicReport } from "../../shared/play-mic.ts";
 import { playGameKey } from "../../shared/game-ai.ts";
-import type { PlayAiBar } from "../../shared/play-bar.ts";
 import type { PlayAiGame } from "../game-ai/bridge-play.ts";
+import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
 import { mintedTicket, type PlayGallery, type PlayWorld, SignInNeeded, TicketStatus } from "./gallery.ts";
-import { BarLayout, barReveal } from "./bar-reveal.ts";
+import { BarLayout, barLayout } from "./bar-layout.ts";
 import type { PlayComments } from "./comments.ts";
 import { chooseMic, freshMic, heardMic, type MicSession, type PlayMicDeps, toggleMic } from "./mic.ts";
 import { viewerComments } from "./viewer-comments.ts";
@@ -44,8 +48,6 @@ export type { PlayMicDeps } from "./mic.ts";
 export const SHOW_GAME_AFTER_MS = 8 * SECOND_MS;
 /** How long a note ("Link copied") stays in the header. */
 export const NOTE_MS = 2.2 * SECOND_MS;
-/** How near the window's top edge the pointer brings the bar back, in pixels. */
-export const BAR_EDGE_PX = 4;
 
 /** Everything the viewer moves or asks: the game's view, the window, the gallery, the clipboard and the clock. */
 export interface PlayViewerDeps {
@@ -56,16 +58,16 @@ export interface PlayViewerDeps {
     contentSize(): { width: number; height: number };
     /** Show or hide the window's own buttons (macOS's traffic lights), which sit in the bar. */
     buttons(visible: boolean): void;
-    /** The bar fades during play; where the window's own controls can't go with it, it stays up. */
-    barFades: boolean;
   };
   /** A fresh view for each game; `close` destroys it (its sound and memory go with it). */
   game: {
-    /** Load `url`, the page that plays `slug`, in a new view. */
-    open(url: string, slug: string): void;
+    /** Load `url`, the page that plays `slug`, in a new view laid at `bounds`, where it will play. */
+    open(url: string, slug: string, bounds: Rect): void;
     show(bounds: Rect): void;
     hide(): void;
     focus(): void;
+    /** Ask the game's page for its own full screen, as if the player had asked it: its Esc and the bar's return follow. */
+    fullScreen(): void;
     close(): void;
   };
   /** The bar's layer above the game's view: where it lies, and the keyboard (the game lets go of the mouse). */
@@ -77,6 +79,8 @@ export interface PlayViewerDeps {
     focused(): boolean;
     /** Make the layer and load its page ahead of the first game, so the bar is there as it opens. */
     warm(): void;
+    /** Load the layer's page again, if it has one: it reads the app's words when it loads. */
+    reload(): void;
   };
   /** The game's comments on genex.games. */
   comments: Pick<PlayComments, "list" | "post" | "remove">;
@@ -84,7 +88,7 @@ export interface PlayViewerDeps {
   coin: ViewerCoin;
   /** The app's Genex account: the purchase sheet's Sign in signs in to it in the browser. */
   account: { signIn(): void };
-  /** Open a genex.games page in the browser (the purchase sheet's Get coin); a fixture launch opens nothing. */
+  /** Open a genex.games page in the browser (the purchase sheet's Get Nex); a fixture launch opens nothing. */
   openPage(url: string): void;
   clipboard(text: string): void;
   /** The website Play links to: Share and Invite copy the game's page there. */
@@ -93,6 +97,23 @@ export interface PlayViewerDeps {
   clock: { setTimeout(run: () => void, ms: number): unknown; clearTimeout(handle: unknown): void; now(): number };
   /** The game's voice chat: the system, the page's microphone, the menu and what is remembered. */
   mic: PlayMicDeps;
+  /**
+   * The game's Store (`PlayControl.Store`): whether the game sells items, and the app's own page,
+   * which draws the Store in the game's place and takes the keyboard while it is open. None, no door.
+   */
+  store?: {
+    /** The game `slug` has items on sale; false when it has none or the store is off. */
+    shown(slug: string): Promise<boolean>;
+    /** Give the keyboard to the app's own page. */
+    focusPage(): void;
+  };
+  /** A web game's native app on this computer (`PlayControl.NativeApp`); none where Genex plays no native game. */
+  nativeApp?: {
+    /** What the bar offers for `slug`'s app, or null when this computer has none. */
+    offer(slug: string): Promise<PlayBarNative | null>;
+    /** Install it, or play it in its own window. */
+    press(slug: string): Promise<void>;
+  };
 }
 
 interface Session {
@@ -116,7 +137,6 @@ interface Session {
 
 const IDLE_STATE: PlayBarState = {
   title: "",
-  shown: true,
   liked: false,
   likes: 0,
   remixable: false,
@@ -129,7 +149,9 @@ const IDLE_STATE: PlayBarState = {
   comments: null,
   signedIn: null,
   remixing: false,
+  nativeApp: null,
   purchase: null,
+  store: null,
 };
 
 type Clock = PlayViewerDeps["clock"];
@@ -173,8 +195,12 @@ interface ViewerContext {
   current(epoch: number): Session | null;
   /** Tell the app how the header looks now. */
   draw(): void;
-  /** Comments or a purchase sheet covers the window: the keyboard stays with the bar's layer. */
+  /** Comments, a purchase sheet or the Store covers the game: the keyboard stays off it. */
   covering(): boolean;
+  /** Where the game's view goes now: below the bar, or the whole window while its page is full screen. */
+  gameBounds(): Rect;
+  /** Show the game's view where it goes now, unless its Store is open over its place. */
+  showGame(): void;
   note(value: PlayNote | null): void;
   close(news?: ClosedNews): void;
 }
@@ -244,6 +270,8 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
     },
     () => null,
   );
+  void readNativeApp(ctx, epoch);
+  void readStore(ctx, epoch);
   const ticket = await gallery.ticket(s.slug);
   if (!ctx.current(epoch)) return null;
   // Only a missing account earns the guest card: a ticket the account could not mint is no reason to install Genex.
@@ -251,8 +279,69 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
   s.state = { ...s.state, signedIn: !s.signedOut };
   ctx.draw();
   s.address = ctx.deps.gameUrl(s.slug, mintedTicket(ticket));
-  ctx.deps.game.open(s.address, s.slug);
+  ctx.deps.game.open(s.address, s.slug, ctx.gameBounds());
   return ctx.deps.clock.setTimeout(showAnyway, SHOW_GAME_AFTER_MS);
+}
+
+/** Whether the game opened as `epoch` sells items: the bar shows its Store door once it does. */
+async function readStore(ctx: ViewerContext, epoch: number): Promise<void> {
+  const s = ctx.current(epoch);
+  const store = ctx.deps.store;
+  if (!s || !store) return;
+  // An outage reads as a store with nothing in it: no door.
+  const shown = await store.shown(s.slug).catch(() => false);
+  const live = ctx.current(epoch);
+  if (!live || !shown) return;
+  live.state = { ...live.state, store: { open: false } };
+  ctx.draw();
+}
+
+/** Whether the game's Store is open over its place. */
+const storeOpen = (s: Session | null): boolean => s?.state.store?.open === true;
+
+/**
+ * The Store door pressed: the Store opens in the game's place (the game hidden, its session kept, the
+ * keyboard the app page's), or closes and gives the game back its place and, once it plays, the keyboard.
+ */
+function toggleStore(ctx: ViewerContext): void {
+  const s = ctx.session();
+  const store = ctx.deps.store;
+  if (!s?.state.store || !store) return;
+  const open = !s.state.store.open;
+  s.state = { ...s.state, store: { open } };
+  if (open) {
+    ctx.deps.game.hide();
+    store.focusPage();
+  } else if (s.phase === PlayViewerPhase.Playing) {
+    ctx.showGame();
+    if (!ctx.covering()) ctx.deps.game.focus();
+  }
+  ctx.draw();
+}
+
+/** What the bar offers for the game opened as `epoch`'s native app, read again whenever an install changes. */
+async function readNativeApp(ctx: ViewerContext, epoch: number): Promise<void> {
+  const s = ctx.current(epoch);
+  const native = ctx.deps.nativeApp;
+  if (!s || !native) return;
+  const offer = await native.offer(s.slug).catch(() => null);
+  const live = ctx.current(epoch);
+  if (!live) return;
+  live.state = { ...live.state, nativeApp: offer };
+  ctx.draw();
+}
+
+/**
+ * The native-app pill pressed: install the app, or play it, the viewer giving way first (one copy
+ * of a game at a time). Nothing while it installs.
+ */
+function pressNativeApp(ctx: ViewerContext): void {
+  const s = ctx.session();
+  const native = ctx.deps.nativeApp;
+  const offer = s?.state.nativeApp?.offer;
+  if (!s || !native || !offer || offer === NativeAppOffer.Installing) return;
+  if (offer === NativeAppOffer.Ready) ctx.close();
+  void native.press(s.slug).catch(() => undefined);
 }
 
 /** Offer a signed-out guest a Genex account in the header, until its × or the game closes. */
@@ -269,10 +358,12 @@ function dropGuestCard(ctx: ViewerContext, s: Session): void {
   ctx.draw();
 }
 
-/** Where the game's view goes: the whole window, under the bar. */
-function gameBounds(deps: PlayViewerDeps): Rect {
+/** Where the game's view goes: the window below the bar's strip, or all of it while its page is full screen. */
+function gameBounds(deps: PlayViewerDeps, fullScreen: boolean): Rect {
   const { width, height } = deps.window.contentSize();
-  return { x: 0, y: 0, width, height };
+  if (fullScreen) return { x: 0, y: 0, width, height };
+  const top = Math.min(height, PLAY_BAR_HEIGHT);
+  return { x: 0, y: top, width, height: height - top };
 }
 
 /** Where the bar's layer goes for `layout`: its strip across the top, or the whole window for Comments. */
@@ -335,7 +426,13 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
       if (ctx.session()?.phase === PlayViewerPhase.Playing && !ctx.covering()) ctx.deps.game.focus();
     },
     [PlayControl.Mic]: () => void toggleMic(ctx).catch(() => ctx.note(PlayNote.MicFailed)),
+    [PlayControl.NativeApp]: () => pressNativeApp(ctx),
     [PlayControl.MicDevices]: (at) => chooseMic(ctx, at),
+    // Only a game on screen, with nothing over it, has a page to fill the window with.
+    [PlayControl.FullScreen]: () => {
+      if (ctx.session()?.phase === PlayViewerPhase.Playing && !ctx.covering()) ctx.deps.game.fullScreen();
+    },
+    [PlayControl.Store]: () => toggleStore(ctx),
   };
 }
 
@@ -368,63 +465,58 @@ function placeBarInPlay(deps: PlayViewerDeps, layout: BarLayout, playing: boolea
   if (handBack) deps.game.focus();
 }
 
-/** What the bar's layer says holds it, as main accepts it: booleans and an overlay it names, anything else none. */
+/** What the bar's layer says, as main accepts it: an overlay it names and a boolean, anything else none. */
 const readHold = (value: unknown): PlayBarHold => {
   const hold = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
   const overlay = isPlayBarOverlay(hold.overlay) ? hold.overlay : null;
-  return { held: hold.held === true, overlay, ready: hold.ready === true };
+  return { overlay, ready: hold.ready === true };
 };
 
 /**
- * The bar's reveal over the viewer's session: its look drawn in the header, its layer laid over the
- * window. The context comes later than the reveal, so it is asked for when the reveal moves.
+ * The bar's layer laid over the window for the viewer's session. The context comes later than the
+ * layout, so it is asked for when the layer moves.
  */
-function revealBar(deps: PlayViewerDeps, viewer: () => ViewerContext) {
-  return barReveal({
-    clock: deps.clock,
-    shown: (up) => {
-      const s = viewer().session();
-      if (!s) return;
-      s.state = { ...s.state, shown: up };
-      viewer().draw();
-    },
+function layBar(deps: PlayViewerDeps, viewer: () => ViewerContext) {
+  return barLayout({
     place: (layout) => placeBarInPlay(deps, layout, viewer().session()?.phase === PlayViewerPhase.Playing),
   });
 }
 
-/** What the viewer's own loop moves beyond the context: the bar's reveal, its phase and its timers. */
+/** What the viewer's own loop moves beyond the context: the bar's layer, its phase and its timers. */
 interface ViewerLoop {
   ctx: ViewerContext;
-  reveal: ReturnType<typeof barReveal>;
+  layer: ReturnType<typeof barLayout>;
   /** A game's coin purchase sheet. */
   purchases: ViewerPurchase;
-  /** Where the pointer last moved over the game, if it has. */
-  lastPointer: { x: number; y: number } | null;
   setPhase(phase: PlayViewerPhase): void;
   stopShowTimer(): void;
 }
 
 /**
- * The bar's layer said what holds it: an overlay (Comments, an AI card or menu) opening takes the
- * keyboard, closing gives it back to the game unless a purchase sheet still covers it. A page that has
- * just mounted is drawn the bar again, whatever news it missed loading.
+ * The bar's layer said which of its overlays is open (Comments, an AI card or menu): one opening takes
+ * the keyboard, the last closing gives it back to the game unless a purchase sheet still covers it, or
+ * to the app's page under the open Store. A page that has just mounted is drawn the bar again, whatever
+ * news it missed loading.
  */
 function holdBar(loop: ViewerLoop, value: unknown): void {
   const s = loop.ctx.session();
   if (!s) return;
   const next = readHold(value);
   if (next.ready) loop.ctx.draw();
-  const was = loop.reveal.overlaid();
+  const was = loop.layer.overlaid();
   const opened = next.overlay !== null;
-  loop.reveal.hold(next);
+  loop.layer.hold(next);
   if (opened && !was) loop.ctx.deps.bar.focus();
-  const closedOverGame = !opened && was && s.phase === PlayViewerPhase.Playing;
-  if (closedOverGame && !loop.reveal.covering()) loop.ctx.deps.game.focus();
+  const closed = !opened && was;
+  // An overlay closed over the open Store: the keyboard goes back to the Store's page, never the hidden game.
+  if (closed && storeOpen(s)) loop.ctx.deps.store?.focusPage();
+  const closedOverGame = closed && s.phase === PlayViewerPhase.Playing;
+  if (closedOverGame && !loop.ctx.covering()) loop.ctx.deps.game.focus();
 }
 
 /** What the viewer answers beyond opening and closing: its view's news, the bar's asks and the window. */
 function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
-  const { ctx, reveal, purchases } = loop;
+  const { ctx, layer, purchases } = loop;
   const { deps } = ctx;
   const actions = barActions(ctx);
   const playing = () => ctx.session()?.phase === PlayViewerPhase.Playing;
@@ -437,7 +529,7 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (ctx.session()?.phase !== PlayViewerPhase.Loading) return;
       loop.stopShowTimer();
       loop.setPhase(PlayViewerPhase.Playing);
-      if (!reveal.covering()) deps.game.focus();
+      if (!ctx.covering()) deps.game.focus();
     },
     /** The game's page could not load, or its renderer went away: an unpaid purchase sheet goes with it. */
     failed: (): void => {
@@ -451,29 +543,27 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
     control: (value: unknown, at?: PlayPoint): void => {
       if (ctx.session() && isPlayControl(value)) actions[value](at);
     },
-    /** What holds the bar up: the pointer or the keyboard on it, or Comments open. */
+    /** Which of the bar's overlays is open, and whether its page has just mounted. */
     hold: (value: unknown): void => holdBar(loop, value),
     /** The game's page said how its microphone is. */
     mic: (report: PlayMicReport): void => heardMic(ctx, report),
-    /** A key pressed in the game's view: Esc brings the bar back, and held, gives it the keyboard. */
+    /** A key pressed in the game's view: Esc held there gives the bar the keyboard. */
     key: (input: FullScreenKey): void => {
-      if (!ctx.session()) return;
-      heldEsc.key(input);
-      if (input.key === "Escape" && input.type === "keyDown" && !input.isAutoRepeat && playing()) reveal.reveal();
+      if (ctx.session()) heldEsc.key(input);
     },
     /**
-     * The pointer moved over the game, to `x`, `y` on the window: at the top edge the bar comes back.
-     * A game holding the mouse is sent moves at one frozen point: only a pointer that moved counts.
+     * The game's page took the screen in full screen, or gave it back: it has the whole window
+     * meanwhile, and the bar's strip comes back after.
      */
-    pointer: (x: number, y: number): void => {
-      const moved = loop.lastPointer?.x !== x || loop.lastPointer.y !== y;
-      loop.lastPointer = { x, y };
-      if (moved && playing() && y <= BAR_EDGE_PX) reveal.reveal();
+    fullScreen: (on: boolean): void => {
+      if (!ctx.session()) return;
+      layer.fullScreen(on);
+      if (playing()) ctx.showGame();
     },
     /** The window changed size: the game and the bar follow. */
     resized: (): void => {
-      if (playing()) deps.game.show(gameBounds(deps));
-      if (ctx.session() && reveal.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, reveal.layout()));
+      if (playing()) ctx.showGame();
+      if (ctx.session() && layer.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, layer.layout()));
     },
     ...viewerComments(ctx),
     /**
@@ -498,6 +588,11 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (!world || !s.address || !ctx.current(s.epoch)) return null;
       return { projectId: world.id, title: world.title || s.title, address: s.address, shared: world.multiplayer };
     },
+    /** An install changed: the bar's native-app pill reads what it offers again. */
+    nativeChanged: (): void => {
+      const s = ctx.session();
+      if (s) void readNativeApp(ctx, s.epoch);
+    },
     purchase: purchases.purchase,
     mayReserve: purchases.mayReserve,
     answerPurchase: purchases.answerPurchase,
@@ -518,16 +613,13 @@ export function playViewer(deps: PlayViewerDeps) {
   /** Remixes being made: the bar's Remix waits for them. */
   let remixes = 0;
 
-  const reveal = revealBar(deps, () => ctx);
+  const layer = layBar(deps, () => ctx);
   const setPhase = (phase: PlayViewerPhase): void => {
     if (!session || session.phase === phase) return;
     session.phase = phase;
     if (phase === PlayViewerPhase.Failed) game.hide();
-    if (phase === PlayViewerPhase.Playing) game.show(gameBounds(deps));
+    if (phase === PlayViewerPhase.Playing) ctx.showGame();
     deps.emit({ slug: session.slug, openId: session.epoch, phase });
-    // The bar fades once the game plays, where the window's own controls can fade with it.
-    if (phase === PlayViewerPhase.Playing && deps.window.barFades) reveal.playing();
-    else reveal.pinned();
     if (phase === PlayViewerPhase.Playing) offerGuestCard(ctx, session);
   };
   const close = (news: ClosedNews = {}): void => {
@@ -538,7 +630,7 @@ export function playViewer(deps: PlayViewerDeps) {
     noteTimer = stop(clock, noteTimer);
     heldEsc.clear();
     loop.purchases.drop();
-    reveal.close();
+    layer.close();
     deps.window.buttons(true);
     game.close();
     deps.emit({ slug, openId, phase: PlayViewerPhase.Closed, ...news });
@@ -550,7 +642,11 @@ export function playViewer(deps: PlayViewerDeps) {
     draw: () => {
       if (session) deps.emit({ slug: session.slug, openId: session.epoch, phase: session.phase, bar: session.state });
     },
-    covering: () => reveal.covering(),
+    covering: () => layer.covering() || storeOpen(session),
+    gameBounds: () => gameBounds(deps, layer.isFullScreen()),
+    showGame: () => {
+      if (!storeOpen(session)) game.show(ctx.gameBounds());
+    },
     note: (value) => {
       if (!session) return;
       noteTimer = stop(clock, noteTimer);
@@ -566,8 +662,7 @@ export function playViewer(deps: PlayViewerDeps) {
     if (session) close();
     epoch += 1;
     const opened = epoch;
-    reveal.pinned();
-    loop.lastPointer = null;
+    layer.opened();
     session = freshSession(slug, barTitle(title), opened, deps.mic.store.on(slug), remixes > 0);
     // The first news of the opening: loading, with the bar as it starts.
     ctx.draw();
@@ -587,9 +682,9 @@ export function playViewer(deps: PlayViewerDeps) {
   const heldEsc = heldEscape(clock, () => focusBarByKeyboard(ctx));
   const loop: ViewerLoop = {
     ctx,
-    reveal,
-    purchases: viewerPurchase({ ...ctx, reveal }),
-    lastPointer: null,
+    layer,
+    // A sheet that closes gives the game the keyboard only with nothing else over it, its Store included.
+    purchases: viewerPurchase({ ...ctx, layer: { sheet: (on) => layer.sheet(on), covering: ctx.covering } }),
     setPhase,
     stopShowTimer: () => (showTimer = stop(clock, showTimer)),
   };
@@ -599,6 +694,8 @@ export function playViewer(deps: PlayViewerDeps) {
     close: () => close(),
     /** Play's dashboard is open: the bar's layer gets ready for the first game. */
     warm: (): void => deps.bar.warm(),
+    /** The app's language changed: the bar's page loads again in it, and says it is ready as a late page does. */
+    languageChanged: (): void => deps.bar.reload(),
     /** A remix began or ended (a card's, or the viewer's own): the bar's Remix waits while one is made. */
     remixing: (on: boolean): void => {
       remixes = Math.max(0, remixes + (on ? 1 : -1));

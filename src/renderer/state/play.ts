@@ -15,6 +15,8 @@ import {
   type PlayCategory,
   type PlayFeedPage,
   type PlayGame,
+  type PlayGameDetail,
+  type PlayRemixRefusal,
   PlayShelf,
   type PlayShelves,
   type PlayViewerEvent,
@@ -24,6 +26,14 @@ import {
 } from "../../shared/play.ts";
 import { type PlayChangeResult, PlayChangeOutcome, type PlayGameChange } from "../../shared/play-manage.ts";
 import type { StudioApi } from "../../shared/studio-api.ts";
+import {
+  type NativeInstalls,
+  type NativeSession,
+  NativeSessionPhase,
+  NO_INSTALLS,
+  SessionAction,
+} from "../../shared/play-native.ts";
+import { opensPage } from "../play/native-model.ts";
 import { changedGame } from "../play/card-menu/manage-model.ts";
 import {
   ALL_ASSETS,
@@ -54,8 +64,17 @@ import type { KeyValueStorage } from "../storage.ts";
 /** A tab this old is read again behind what it shows. */
 export const FEED_STALE_MS = MINUTE_MS;
 
-/** Which page Play shows: a shelf's dashboard, the Friends page, someone's profile, or the account's stats. */
-export const PlayPage = { Shelf: "shelf", Friends: "friends", Profile: "profile", Stats: "stats" } as const;
+/**
+ * Which page Play shows: a shelf's dashboard, the Friends page, someone's profile, the account's
+ * stats, or a native game's own page.
+ */
+export const PlayPage = {
+  Shelf: "shelf",
+  Friends: "friends",
+  Profile: "profile",
+  Stats: "stats",
+  Game: "game",
+} as const;
 export type PlayPage = (typeof PlayPage)[keyof typeof PlayPage];
 
 /** The page a profile was opened from, where its Back goes. */
@@ -63,13 +82,16 @@ type ProfileFrom = typeof PlayPage.Shelf | typeof PlayPage.Friends;
 
 /**
  * The page Play shows. A profile remembers the page it was opened from, where Back goes; the stats
- * page remembers the profile it was opened from (the account's own), where its Back goes.
+ * page remembers the profile it was opened from (the account's own), where its Back goes. A game's
+ * page remembers the whole page it was opened from, and a profile opened from a game's page goes
+ * back to it (`back`).
  */
 export type PlayView =
   | { page: typeof PlayPage.Shelf }
   | { page: typeof PlayPage.Friends }
-  | { page: typeof PlayPage.Profile; userId: string; from: ProfileFrom }
-  | { page: typeof PlayPage.Stats; userId: string; from: ProfileFrom };
+  | { page: typeof PlayPage.Profile; userId: string; from: ProfileFrom; back?: PlayView }
+  | { page: typeof PlayPage.Stats; userId: string; from: ProfileFrom; back?: PlayView }
+  | { page: typeof PlayPage.Game; slug: string; back: PlayView };
 
 const SHELF_VIEW: PlayView = { page: PlayPage.Shelf };
 const FRIENDS_VIEW: PlayView = { page: PlayPage.Friends };
@@ -115,6 +137,10 @@ export interface PlayState {
   remixed: string | null;
   /** A remix failed: the shell says so once. */
   remixFailed: boolean;
+  /** Why the failed remix made nothing, when Genex's answer named a reason; the shell says it in its words. */
+  remixRefusal: PlayRemixRefusal | null;
+  /** Whether each looked-at game's source holds a game, by slug: a card shows Remix only once main says yes. */
+  remixReady: Record<string, boolean>;
   /** The viewer's guest card asked to sign in: the shell signs in to Genex once (`useGuestSignIn`). */
   installAsked: boolean;
   /** The AI pill's Add more models closed the viewer: the shell opens Settings → Model Providers once (`useModelsAsked`). */
@@ -125,6 +151,18 @@ export interface PlayState {
   library: LibraryFeed;
   /** The whole catalog, read once for the kind switcher's choices on Everyone. */
   assetCatalog: AssetCatalog;
+  /** Native games' own pages as read, by slug. */
+  games: Record<string, GamePageEntry>;
+  /** What is installed and installing on this computer (`UiEvent.PlayInstalls`). */
+  installs: NativeInstalls;
+  /** The native games being played, and any that failed to start (`UiEvent.PlaySessions`). */
+  sessions: NativeSession[];
+}
+
+/** A native game's page as read. */
+export interface GamePageEntry {
+  status: FeedStatus;
+  game: PlayGameDetail | null;
 }
 
 /** The whole catalog as the Assets shelf read it. */
@@ -148,11 +186,16 @@ export const initialPlay = (recent: PlayRecentEntry[] = []): PlayState => ({
   making: null,
   remixed: null,
   remixFailed: false,
+  remixRefusal: null,
+  remixReady: {},
   installAsked: false,
   modelsAsked: false,
   assetView: ALL_ASSETS,
   library: EMPTY_LIBRARY,
   assetCatalog: EMPTY_CATALOG,
+  games: {},
+  installs: NO_INSTALLS,
+  sessions: [],
 });
 
 /** A tab's state, or the empty one. */
@@ -175,29 +218,85 @@ export const shelfChosen = (state: PlayState, shelf: PlayShelf): PlayState =>
 export const friendsShown = (state: PlayState): PlayState =>
   state.view.page === PlayPage.Friends ? state : { ...state, view: FRIENDS_VIEW };
 
-/** Someone's profile shows; Back returns to the page it was opened from. */
+/** Someone's profile shows; Back returns to the page it was opened from (a game's page too). */
 export function profileShown(state: PlayState, userId: string): PlayState {
   const current = state.view;
   if (current.page === PlayPage.Profile && current.userId === userId) return state;
+  if (current.page === PlayPage.Game)
+    return { ...state, view: { page: PlayPage.Profile, userId, from: PlayPage.Shelf, back: current } };
   const from = current.page === PlayPage.Profile || current.page === PlayPage.Stats ? current.from : current.page;
-  return { ...state, view: { page: PlayPage.Profile, userId, from } };
+  const back = current.page === PlayPage.Profile || current.page === PlayPage.Stats ? current.back : undefined;
+  return { ...state, view: { page: PlayPage.Profile, userId, from, ...(back ? { back } : {}) } };
 }
 
 /** The stats page shows, from the profile on screen; its Back returns to that profile. */
 export function statsShown(state: PlayState): PlayState {
   const current = state.view;
   if (current.page !== PlayPage.Profile) return state;
-  return { ...state, view: { page: PlayPage.Stats, userId: current.userId, from: current.from } };
+  const { userId, from, back } = current;
+  return { ...state, view: { page: PlayPage.Stats, userId, from, ...(back ? { back } : {}) } };
 }
 
 /** Back: from the stats page to its profile, from a profile to the page it was opened from. */
 export function backFromProfile(state: PlayState): PlayState {
   const current = state.view;
-  if (current.page === PlayPage.Stats)
-    return { ...state, view: { page: PlayPage.Profile, userId: current.userId, from: current.from } };
+  if (current.page === PlayPage.Stats) {
+    const { userId, from, back } = current;
+    return { ...state, view: { page: PlayPage.Profile, userId, from, ...(back ? { back } : {}) } };
+  }
+  if (current.page === PlayPage.Game) return { ...state, view: current.back };
   if (current.page !== PlayPage.Profile) return state;
+  if (current.back) return { ...state, view: current.back };
   return { ...state, view: current.from === PlayPage.Friends ? FRIENDS_VIEW : SHELF_VIEW };
 }
+
+/** A native game's own page shows; Back returns to the page it was opened from. */
+export function gameShown(state: PlayState, slug: string): PlayState {
+  const current = state.view;
+  if (current.page === PlayPage.Game && current.slug === slug) return state;
+  return { ...state, view: { page: PlayPage.Game, slug, back: current } };
+}
+
+/** Whether a game Play has read opens its page: a native game with no web build. */
+export function opensItsPage(state: PlayState, slug: string): boolean {
+  const page = state.games[slug]?.game;
+  if (page) return opensPage(page);
+  for (const feed of Object.values(state.feeds)) {
+    const card = feed?.games.find((game) => game.slug === slug);
+    if (card) return opensPage(card);
+  }
+  return false;
+}
+
+/** A game's page is on its way: one already read stays shown while it is read again. */
+export function gameRequested(state: PlayState, slug: string): PlayState {
+  const entry = state.games[slug];
+  if (entry?.game) return state;
+  return { ...state, games: { ...state.games, [slug]: { status: FeedStatus.Loading, game: null } } };
+}
+
+/** A game's page arrived. */
+export const gameLoaded = (state: PlayState, game: PlayGameDetail): PlayState => ({
+  ...state,
+  games: { ...state.games, [game.slug]: { status: FeedStatus.Ready, game } },
+});
+
+/** A game's page could not be read: one read before stays. */
+export function gameFailed(state: PlayState, slug: string): PlayState {
+  const entry = state.games[slug];
+  if (entry?.game) return state;
+  return { ...state, games: { ...state.games, [slug]: { status: FeedStatus.Failed, game: null } } };
+}
+
+/** Whether `slug`'s native app is being played in its own window (or starting). */
+export const beingPlayed = (state: PlayState, slug: string): boolean =>
+  state.sessions.some((session) => session.slug === slug && session.phase !== NativeSessionPhase.Failed);
+
+/** Main's word on what is installed and installing here. */
+export const installsReported = (state: PlayState, installs: NativeInstalls): PlayState => ({ ...state, installs });
+
+/** Main's word on the games being played. */
+export const sessionsReported = (state: PlayState, sessions: NativeSession[]): PlayState => ({ ...state, sessions });
 
 /** A page is on its way: a tab with nothing yet says it is loading; one with games keeps them. */
 export function feedRequested(state: PlayState, category: PlayCategory, more: boolean): PlayState {
@@ -331,8 +430,18 @@ export function remixProgressed(state: PlayState, progress: RemixProgress): Play
 /** A card's remix was made: its name waits for the shell. */
 const remixAnswered = (state: PlayState, name: string): PlayState => ({ ...state, remixed: name });
 
-/** A remix failed: the shell says so once. */
-const remixRefused = (state: PlayState): PlayState => ({ ...state, remixFailed: true });
+/** Main said which games' sources hold a game. */
+export const remixReadyRead = (state: PlayState, ready: Record<string, boolean>): PlayState => ({
+  ...state,
+  remixReady: { ...state.remixReady, ...ready },
+});
+
+/** A remix failed, for `refusal` when one was named: the shell says so once. */
+const remixRefused = (state: PlayState, refusal: PlayRemixRefusal | null = null): PlayState => ({
+  ...state,
+  remixFailed: true,
+  remixRefusal: refusal,
+});
 
 /** The new game is open in Create: nothing shows the remix being made any more. */
 export const remixEnded = (state: PlayState): PlayState => (state.making === null ? state : { ...state, making: null });
@@ -360,7 +469,7 @@ export function remixReturnedTo(state: PlayState): PlayState {
 
 /** The shell told a remix's failure; nothing shows it being made any more. */
 export const remixFailureTold = (state: PlayState): PlayState =>
-  state.remixFailed ? { ...state, remixFailed: false, making: null } : state;
+  state.remixFailed ? { ...state, remixFailed: false, remixRefusal: null, making: null } : state;
 
 /** The shell ran the guest card's Sign in. */
 export const installAnswered = (state: PlayState): PlayState =>
@@ -455,6 +564,8 @@ export interface PlayStore extends StoreApi<PlayState> {
   retry(): Promise<void>;
   /** Copy a card's game into a new game of the person's own; its name or its failure waits for the shell. */
   remix(game: PlayGame): Promise<void>;
+  /** Ask main, with the other cards shown at once, whether a remixable game's source holds a game. */
+  checkRemix(slug: string): void;
   /** Copy the viewer's game as a card's is: the viewer closes at once. */
   remixViewed(): Promise<void>;
   /** Turn the Assets shelf's switchers. */
@@ -470,6 +581,50 @@ export interface PlayStore extends StoreApi<PlayState> {
   manage(game: PlayGame, change: PlayGameChange): Promise<PlayChangeResult>;
   /** A game's new cover took: its cards show it. */
   coverChanged(game: PlayGame, coverUrl: string): void;
+  /** Show a native game's own page, and read it. */
+  showGame(slug: string): void;
+  /** Read a native game's page (again). */
+  loadGame(slug: string): Promise<void>;
+  /** Read what is installed and installing here, and the games being played. */
+  loadNative(): Promise<void>;
+  /** Install a game on this computer; how it goes arrives as main's news. */
+  install(slug: string): Promise<void>;
+  /** Stop an install, or forget how a failed one ended. */
+  cancelInstall(slug: string): Promise<void>;
+  /** Remove a game from this computer; its saves stay. */
+  uninstall(slug: string): Promise<void>;
+  /** Play an installed game in its own window. */
+  launch(slug: string): Promise<void>;
+  /** Bring a running game forward. */
+  showWindow(slug: string): Promise<void>;
+  /** Quit a running game, or forget how one failed to start. */
+  quitGame(slug: string): Promise<void>;
+}
+
+/**
+ * The cards' asks of whether a game's source holds a game, made together: the cards shown in one
+ * moment become one ask. A game is asked of once; an ask that fails is made again by the next card
+ * that shows it.
+ */
+function remixChecks(api: PlayApi, store: StoreApi<PlayState>): (slug: string) => void {
+  const asked = new Set<string>();
+  let waiting: string[] = [];
+  const send = async (): Promise<void> => {
+    const slugs = waiting;
+    waiting = [];
+    try {
+      const ready = await api.playRemixReady(slugs);
+      store.setState((state) => remixReadyRead(state, ready), true);
+    } catch {
+      for (const slug of slugs) asked.delete(slug);
+    }
+  };
+  return (slug) => {
+    if (asked.has(slug) || slug in store.getState().remixReady) return;
+    asked.add(slug);
+    waiting.push(slug);
+    if (waiting.length === 1) queueMicrotask(() => void send());
+  };
 }
 
 type PlayApi = Pick<
@@ -480,9 +635,18 @@ type PlayApi = Pick<
   | "playOpen"
   | "playClose"
   | "playRemix"
+  | "playRemixReady"
   | "playManage"
   | "assetLibrary"
   | "playCatalog"
+  | "playGame"
+  | "playInstalls"
+  | "playSessions"
+  | "playInstall"
+  | "playInstallCancel"
+  | "playUninstall"
+  | "playLaunch"
+  | "playSession"
 >;
 
 /** The store's `manage`: send the change, then show it on every card of the game at once. */
@@ -587,39 +751,30 @@ export function createPlayStore(
     }
   };
 
-  const open = async (game: PlayRecentEntry): Promise<void> => {
-    set((state) => gameOpened(state, game));
-    writeRecent(store.getState().recent, storage);
-    try {
-      await api.playOpen(game.slug, game.title);
-    } catch {
-      set((state) => openRefused(state, game.slug));
-    }
-  };
-
-  const close = async (): Promise<void> => {
-    set(unansweredClosed);
-    await api.playClose();
-  };
+  const native = nativeActions(api, set);
+  const { open, close } = opening(api, store, set, storage, native.showGame);
 
   /** Make a game a new one of the person's own: shown from the press, its name or its failure kept for the shell. */
   const remix = async (game: PlayRecentEntry): Promise<void> => {
     if (store.getState().making) return;
     set((state) => remixStarted(state, game));
     try {
-      const name = await api.playRemix(game.slug);
-      set((state) => remixAnswered(state, name));
+      const answer = await api.playRemix(game.slug);
+      if (typeof answer === "string") set((state) => remixAnswered(state, answer));
+      else set((state) => remixRefused(state, answer.refused));
     } catch {
-      set(remixRefused);
+      set((state) => remixRefused(state));
     }
   };
 
   const assets = assetReads(api, store, set, now);
+  const checkRemix = remixChecks(api, store);
   const shown = showing(store, storage, gone, onGameChanged);
   const manage = managing(api, shown);
 
   return Object.assign(store, {
     ...assets,
+    ...native,
     loadShelves,
     chooseShelf: (shelf: PlayShelf) => set((state) => shelfChosen(state, shelf)),
     showFriends: () => set(friendsShown),
@@ -635,6 +790,7 @@ export function createPlayStore(
       if (shown) await open(shown);
     },
     remix,
+    checkRemix,
     remixViewed: async () => {
       const shown = store.getState().viewer;
       if (!shown || store.getState().making) return;
@@ -646,6 +802,40 @@ export function createPlayStore(
     manage,
     coverChanged: (game: PlayGame, coverUrl: string) => shown(game, { ...game, coverUrl }),
   });
+}
+
+/**
+ * Opening a game and closing its viewer. A native game with no web build opens its own page, never
+ * a viewer with nothing to play; any other game's cover shows at once and leads Recent.
+ */
+function opening(
+  api: Pick<PlayApi, "playOpen" | "playClose" | "playSession">,
+  store: StoreApi<PlayState>,
+  set: (change: (state: PlayState) => PlayState) => void,
+  storage: KeyValueStorage | null,
+  showGame: (slug: string) => void,
+) {
+  const open = async (game: PlayRecentEntry): Promise<void> => {
+    // One copy of a game at a time: its native app being played comes forward instead.
+    if (beingPlayed(store.getState(), game.slug)) return api.playSession(game.slug, SessionAction.Show);
+    if (game.page || opensItsPage(store.getState(), game.slug)) {
+      set((state) => ({ ...state, recent: withRecent(state.recent, { ...game, page: true }) }));
+      writeRecent(store.getState().recent, storage);
+      return showGame(game.slug);
+    }
+    set((state) => gameOpened(state, game));
+    writeRecent(store.getState().recent, storage);
+    try {
+      await api.playOpen(game.slug, game.title);
+    } catch {
+      set((state) => openRefused(state, game.slug));
+    }
+  };
+  const close = async (): Promise<void> => {
+    set(unansweredClosed);
+    await api.playClose();
+  };
+  return { open, close };
 }
 
 /** The Assets shelf's reads: the person's library page by page, and the whole catalog. */
@@ -714,4 +904,56 @@ function assetReads(
 
   const chooseAssets = (change: Partial<AssetView>) => set((state) => assetViewChosen(state, change));
   return { loadLibrary, loadAssetCatalog, chooseAssets };
+}
+
+/** A native game's page, its installs and its sessions: reads, and what its buttons ask of main. */
+function nativeActions(
+  api: Pick<
+    PlayApi,
+    | "playGame"
+    | "playInstalls"
+    | "playSessions"
+    | "playInstall"
+    | "playInstallCancel"
+    | "playUninstall"
+    | "playLaunch"
+    | "playSession"
+  >,
+  set: (change: (state: PlayState) => PlayState) => void,
+) {
+  const reading = new Map<string, Promise<void>>();
+  const loadGame = (slug: string): Promise<void> => {
+    const running = reading.get(slug);
+    if (running) return running;
+    const read = (async () => {
+      set((state) => gameRequested(state, slug));
+      try {
+        const game = await api.playGame(slug);
+        set((state) => gameLoaded(state, game));
+      } catch {
+        set((state) => gameFailed(state, slug));
+      }
+    })().finally(() => reading.delete(slug));
+    reading.set(slug, read);
+    return read;
+  };
+  const loadNative = async (): Promise<void> => {
+    const [installs, sessions] = await Promise.all([api.playInstalls(), api.playSessions()]).catch(() => [null, null]);
+    if (installs) set((state) => installsReported(state, installs));
+    if (sessions) set((state) => sessionsReported(state, sessions));
+  };
+  return {
+    showGame: (slug: string) => {
+      set((state) => gameShown(state, slug));
+      void loadGame(slug);
+    },
+    loadGame,
+    loadNative,
+    install: (slug: string) => api.playInstall(slug),
+    cancelInstall: (slug: string) => api.playInstallCancel(slug),
+    uninstall: (slug: string) => api.playUninstall(slug),
+    launch: (slug: string) => api.playLaunch(slug),
+    showWindow: (slug: string) => api.playSession(slug, SessionAction.Show),
+    quitGame: (slug: string) => api.playSession(slug, SessionAction.Quit),
+  };
 }

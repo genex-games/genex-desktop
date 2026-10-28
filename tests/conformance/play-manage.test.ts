@@ -10,6 +10,7 @@ import { FixtureAccount, fixtureAccountToken } from "../../src/main/dev/fixture-
 import { fixturePlayRequest } from "../../src/main/dev/fixture-play.ts";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { gameLinks } from "../../src/main/play/game-links.ts";
 import {
   type GalleryAnswer,
   GalleryError,
@@ -418,8 +419,14 @@ describe("Play's manage channels", () => {
     const unused = {} as unknown;
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
+      gameLinks: gameLinks(),
       remix: async () => "",
+      remixReady: async () => ({}),
       viewer: () => null,
+      installs: () => null,
+      here: () => null,
+      sessions: () => null,
+      reveal: () => {},
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
       credits: unused as PlayIpcDeps["credits"],
@@ -497,7 +504,17 @@ describe("the fixture launch's genex.games", () => {
       changed: gallery.forget,
       localImages: true,
     });
-  const gamesTab = async () => (await gallery.feed({ category: PlayCategory.Featured })).games;
+  /** Every page of Featured: the fixture's catalog runs past its first page. */
+  const gamesTab = async (): Promise<PlayGame[]> => {
+    const games: PlayGame[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await gallery.feed({ category: PlayCategory.Featured, cursor });
+      games.push(...page.games);
+      cursor = page.nextCursor;
+    } while (cursor);
+    return games;
+  };
   const bySlug = async (slug: string): Promise<PlayGame> => {
     const found = (await gamesTab()).find((game) => game.slug === slug);
     assert.ok(found, `${slug} is in the catalog`);

@@ -7,6 +7,11 @@ import { PlanReviewState, type PlanReviewRecord } from "../../shared/composer.ts
 import type { EventEnvelope } from "../../shared/event-log.ts";
 import { CHAT_WORDS } from "../words.ts";
 import { pendingPlanReview } from "./transcript.ts";
+import { chatMemory } from "../analytics/chat-memory.ts";
+import { planAnsweredProperties } from "../analytics/chat-properties.ts";
+import { PlanAction } from "../analytics/chat-vocabulary.ts";
+import { track } from "../analytics/client.ts";
+import { AnalyticsEvent } from "../analytics/events.ts";
 
 /** Does the plan wait for the user: shown for approval, or failed and offered again? */
 export const planAwaitsAnswer = (review: PlanReviewRecord | null): review is PlanReviewRecord =>
@@ -15,6 +20,12 @@ export const planAwaitsAnswer = (review: PlanReviewRecord | null): review is Pla
 /** Is the plan being written, or its approved build starting? */
 export const planInProgress = (review: PlanReviewRecord | null): boolean =>
   review?.state === PlanReviewState.Generating || review?.state === PlanReviewState.Starting;
+
+/** What a yes or no on the plan card is: Approve, else Cancel on a waiting plan and Dismiss on a failed one. */
+function planAnswer(review: PlanReviewRecord, approved: boolean): PlanAction {
+  if (approved) return PlanAction.Approve;
+  return review.state === PlanReviewState.Failed ? PlanAction.Dismiss : PlanAction.Cancel;
+}
 
 export interface PlanReviewView {
   /** The newest plan review in the chat, whatever its state. */
@@ -40,7 +51,10 @@ export function usePlanReview(threadEvents: readonly EventEnvelope[], threadId: 
     if (!threadId || !review) return;
     setAnswering(true);
     try {
-      if (!(await window.studio.answerPlan(threadId, review.id, approved))) throw new Error(CHAT_WORDS.planSettled);
+      const taken = await window.studio.answerPlan(threadId, review.id, approved);
+      const answer = { review: review.id, action: planAnswer(review, approved), refused: !taken };
+      track(AnalyticsEvent.PlanAnswered, planAnsweredProperties(chatMemory, answer, Date.now()));
+      if (!taken) throw new Error(CHAT_WORDS.planSettled);
     } finally {
       setAnswering(false);
     }

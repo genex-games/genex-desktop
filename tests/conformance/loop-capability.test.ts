@@ -12,7 +12,9 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import { SendRefusal } from "../../src/shared/composer.ts";
 import { HarnessCapability } from "../../src/shared/protocol.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { customEvents, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 
 const rigs: Rig[] = [];
@@ -104,6 +106,13 @@ describe("loop capability handshake", () => {
     assert.ok(
       rig.events.some((e) => e.type === "chat.error"),
       "the open window is told, not just the log",
+    );
+    assert.ok(
+      rig.events.some(
+        (e) =>
+          e.type === UiEvent.ChatError && (e.payload as { refusal?: unknown }).refusal === SendRefusal.LoopOutdated,
+      ),
+      "and told which refusal it was, as a code beside the words",
     );
 
     // Only Loop is gated: the same stale self still gets plain chat.

@@ -1,4 +1,5 @@
 import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { splitMentions } from "../../shared/prompt-mention.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { FileText } from "../ui/FileText.tsx";
@@ -72,7 +73,7 @@ function UserBubble({ text, pending, tags }: { text: string; pending: boolean; t
             setExpanded((value) => !value);
           }}
         >
-          {expanded ? "Show less" : "Show more"}
+          {expanded ? t("Show less") : t("Show more")}
         </button>
       )}
     </div>
@@ -114,7 +115,7 @@ export const UserMessage = memo(function UserMessage({
     rewind && onRewind ? (
       <IconButton
         icon="rewind"
-        label="Rewind to before this message"
+        label={t("Rewind to before this message")}
         size={14}
         className={`chat-user-action absolute right-full ${bottom} me-1`}
         onClick={() => onRewind(rewind)}

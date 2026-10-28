@@ -153,7 +153,6 @@ const fake = fakeStudioApi({
 
 const BAR: PlayBarState = {
   title: "Crowns of 1444",
-  shown: true,
   liked: false,
   likes: 212,
   remixable: false,
@@ -166,7 +165,9 @@ const BAR: PlayBarState = {
   comments: 4,
   signedIn: true,
   remixing: false,
+  nativeApp: null,
   purchase: null,
+  store: null,
 };
 
 const AI: PlayAiBar = {

@@ -5,16 +5,22 @@ import { tagGenexLink } from "../../plugins/genex/http.ts";
 import { browserMayOpen } from "../play/origins.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { ChatFileOpen } from "../../shared/chat-files.ts";
+import { CodedError } from "../../shared/errors.ts";
+import { WorkspaceRefusal } from "../../shared/game-library.ts";
 import { isGenexRef } from "../../shared/genex-ref.ts";
+import { t } from "../../shared/i18n.ts";
 import { gameLocationPickerOptions, projectPickerOptions } from "../project-picker.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
 
-/** Why a project request from the renderer is refused. */
+/**
+ * Why a project request from the renderer is refused. A person reads `unknownProject`; the plain
+ * strings answer only a call our own renderer never makes (a link it does not offer, a closed window).
+ */
 const MESSAGE = {
   httpsOnly: "only https urls, or the pages of the website Play links to",
   noWindow: "the window is not open",
-  unknownProject: (name: string) => `unknown project ${name}`,
+  unknownProject: (name: string) => t("unknown project {name}", { name }),
 } as const;
 
 export interface ProjectsIpcDeps {
@@ -78,7 +84,7 @@ export function registerProjectsIpc(
 
   handle("studio:project.pick", async () => {
     const window = currentWindow();
-    if (!window) throw new Error(MESSAGE.noWindow);
+    if (!window) throw new CodedError(WorkspaceRefusal.NoWindow, MESSAGE.noWindow);
     const result = await dialog.showOpenDialog(window, projectPickerOptions(core.layout.gamesRoot));
     const dir = result.filePaths[0];
     if (result.canceled || !dir) return null;
@@ -91,7 +97,7 @@ export function registerProjectsIpc(
   // creating there will be, so a refused folder is said at once; nothing is written until Create.
   handle("studio:game.location.pick", async () => {
     const window = currentWindow();
-    if (!window) throw new Error(MESSAGE.noWindow);
+    if (!window) throw new CodedError(WorkspaceRefusal.NoWindow, MESSAGE.noWindow);
     const result = await dialog.showOpenDialog(window, gameLocationPickerOptions(core.layout.gamesRoot));
     const dir = result.filePaths[0];
     if (result.canceled || !dir) return null;
@@ -101,12 +107,12 @@ export function registerProjectsIpc(
   // Settings → Games. New games go to the chosen folder; the ones already made stay where they are.
   handle("studio:games-root.choose", async () => {
     const window = currentWindow();
-    if (!window) throw new Error(MESSAGE.noWindow);
+    if (!window) throw new CodedError(WorkspaceRefusal.NoWindow, MESSAGE.noWindow);
     const result = await dialog.showOpenDialog(window, {
-      title: "Folder for new games",
+      title: t("Folder for new games"),
       defaultPath: path.dirname(core.layout.gamesRoot),
-      buttonLabel: "Use this folder",
-      message: "Choose an empty folder, or create one. Games you already have stay where they are.",
+      buttonLabel: t("Use this folder"),
+      message: t("Choose an empty folder, or create one. Games you already have stay where they are."),
       properties: ["openDirectory", "createDirectory"],
     });
     const dir = result.filePaths[0];

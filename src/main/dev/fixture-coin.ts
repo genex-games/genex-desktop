@@ -6,7 +6,7 @@
  * first time Studio reads it, named by its case, a nonce and the game's slug; each case is one of the
  * sheet's states: what it sells, how long it stays open, and how genex.games answers its Pay.
  */
-import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { DAY_MS, MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { CoinFailure, CoinIntentStatus, CoinRoute, ConfirmSurface, PaymentPolicy } from "../play/coin.ts";
 import { type GalleryAnswer, type GalleryRequest, isRecord } from "../play/gallery.ts";
 import { takenAccount } from "./fixture-people.ts";
@@ -18,7 +18,7 @@ import { takenAccount } from "./fixture-people.ts";
 export const FIXTURE_CONFIRM_ORIGIN = "https://confirm.genex.invalid";
 /** The coin a fixture account holds when the launch starts. */
 export const FIXTURE_BALANCE = 1240;
-/** What Get coin adds in a fixture launch, as though it were bought on genex.games. */
+/** What Get Nex adds in a fixture launch, as though it were bought on genex.games. */
 export const FIXTURE_TOP_UP = 1000;
 /** How long a purchase stays open to pay: genex.games' own intent TTL. */
 export const FIXTURE_INTENT_TTL_MS = 2 * MINUTE_MS;
@@ -47,7 +47,7 @@ export const FixtureCoinCase = {
   NoImage: "noimage",
   /** The longest name and terms a game may write. */
   Long: "long",
-  /** Costs more than the balance: Not enough coin before Pay, until Get coin tops the balance up. */
+  /** Costs more than the balance: Not enough coin before Pay, until Get Nex tops the balance up. */
   Poor: "poor",
   /** genex.games refuses Pay for want of coin (402) and ends the purchase. */
   Short: "short",
@@ -252,6 +252,12 @@ interface FixtureIntent {
   landsAt: number | null;
 }
 
+/**
+ * The fixture account's earned coin still inside genex.games' spend hold (Create › Items › Selling's
+ * strip, `fixture-store.ts`): never spendable, so a short sheet says how much and until when.
+ */
+export const FIXTURE_EARNED_HOLD = { earnedHeld: 36_800, readyInMs: 3 * DAY_MS, holdDays: 7 } as const;
+
 /** One launch's coin: the balance and every purchase made so far. */
 interface CoinState {
   deps: FixtureCoinDeps;
@@ -373,19 +379,23 @@ function cancel(intent: FixtureIntent): GalleryAnswer {
   return ok(view(intent));
 }
 
-/** The account's coin, as `GET /api/coin/balance` answers it. */
+/** The account's coin, as `GET /api/coin/balance` answers it: what it bought, and what it earned still on hold. */
 function balanceAnswer(state: CoinState): GalleryAnswer {
   settle(state);
   const spendable = state.balance;
+  const { earnedHeld, readyInMs, holdDays } = FIXTURE_EARNED_HOLD;
   return ok({
     purchased: spendable,
-    earned: 0,
+    earned: earnedHeld,
     promo: 0,
     traded: 0,
     spendable,
-    earnedHeld: 0,
+    earnedHeld,
     earnedEligible: 0,
     displayUsdCents: spendable,
+    earnedReady: 0,
+    nextReleaseAt: new Date(state.deps.now() + readyInMs).toISOString(),
+    holdDays,
   });
 }
 
@@ -421,7 +431,7 @@ function intentAnswer(state: CoinState, pathname: string, init: Parameters<Galle
 
 /**
  * One launch's coin: `answer` answers genex.games' coin routes (null for any other route), and
- * `topUp` adds {@link FIXTURE_TOP_UP} coin, as Get coin does in a fixture launch.
+ * `topUp` adds {@link FIXTURE_TOP_UP} coin, as Get Nex does in a fixture launch.
  */
 export function createFixtureCoin(deps: FixtureCoinDeps) {
   const state: CoinState = { deps, balance: FIXTURE_BALANCE, intents: new Map() };

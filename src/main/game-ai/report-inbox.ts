@@ -28,12 +28,9 @@ import {
   readTapeLine,
   type TapeLine,
 } from "../../shared/game-ai-tape.ts";
+import { t } from "../../shared/i18n.ts";
 import { ensureDirBelow, writeFileInDir } from "../../substrate/fsx.ts";
 import type { GameAiInboxHost } from "./types.ts";
-
-const MESSAGE = {
-  unread: "The game's reports can't be read right now",
-} as const;
 
 /** A library game as the inbox needs it: its folder, and its project on genex.games once published. */
 export interface ReportInboxGame {
@@ -94,7 +91,7 @@ export function createReportInbox(deps: ReportInboxDeps): GameAiInboxHost {
       const game = await deps.game(project);
       if (game.playProject === null) return [];
       const items = readAiReportInbox(await deps.source.list(game.playProject));
-      if (!items) throw new Error(MESSAGE.unread);
+      if (!items) throw new Error(t("The game's reports can't be read right now"));
       return Promise.all(
         items.map(async (item) => ({
           ...item,

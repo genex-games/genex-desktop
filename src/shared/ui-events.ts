@@ -9,15 +9,20 @@
  * name those producers pass is a key of {@link UiEventMap}, and that every key is still produced.
  */
 import type { AgentScreenEvent, AgentScreenFrame } from "./agent-screen.ts";
-import type { ReadyUpdate } from "./app-update.ts";
+import type { ReadyUpdate, UpdateFailure } from "./app-update.ts";
+import type { MainDiagnostic } from "./app-session.ts";
+import type { BootFailureCode } from "./boot.ts";
 import type { AssetDeliveredPayload } from "./game-assets.ts";
 import type { LiveBehindEvent } from "./live-behind.ts";
 import type { McpChange } from "./mcp.ts";
 import type { CliInstallJob } from "./cli-install.ts";
-import type { ModelInstallJob } from "./model-install.ts";
+import type { ModelInstallJob, ModelInstallProblem, ModelPullProblem } from "./model-install.ts";
+import type { SendFailure, SendRefusal } from "./composer.ts";
+import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
 import type { GameAiNotice } from "./game-ai-views.ts";
+import type { NativeInstalls, NativeSession } from "./play-native.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
@@ -31,11 +36,14 @@ export type ThreadStatusMap = Record<string, { status: string; since: number }>;
 
 /** A download step for a local model: Ollama's pull stream, Bonsai's installer, or the failure. */
 export interface ModelPullProgress {
+  /** Ollama's own step, Bonsai's `DownloadStatus`, or the app's end (`ModelPullStatus`). */
   status: string;
   digest?: string;
   completed?: number;
   total?: number;
   error?: string;
+  /** Why the download failed (`ModelPullStatus.Error`). */
+  problem?: ModelPullProblem | ModelInstallProblem;
 }
 
 /** A contractor's reply streaming into a thread, before its words land in the log. */
@@ -52,7 +60,8 @@ export interface ChatDelta {
 export interface UiEventMap {
   // — chat and threads —
   "chat.message": { threadId?: string; role?: string; content?: string };
-  "chat.error": { threadId?: string; message?: string };
+  /** A message that did not reach its chat (`failure`), or reached it and was refused there (`refusal`). */
+  "chat.error": { threadId?: string; message?: string; failure?: SendFailure; refusal?: SendRefusal };
   "chat.delta": ChatDelta;
   "chat.stream.started": { threadId: string; streamId: string; afterEventId: string | null };
   "chat.stream.ended": { threadId: string; streamId: string; failed?: boolean };
@@ -89,7 +98,7 @@ export interface UiEventMap {
   "harness.log": { line: string; stream: "stdout" | "stderr" };
   "harness.boot": Partial<BootNotice>;
   /** The open studio's harness would not start (main's own, never the harness's): why, for its line. */
-  "harness.start-failed": { failure: string };
+  "harness.start-failed": { failure: string; failureCode?: BootFailureCode };
   "seed.upgraded": { added: string[]; updated: string[]; kept: string[]; retired: string[] };
   "watchdog.triggered": { reason: string; snapshot: string | null };
   "watchdog.recovered": { reason: string; ok: boolean; reseeded?: boolean };
@@ -99,11 +108,17 @@ export interface UiEventMap {
   "notification.open": { id: string };
   /** A new version of the app is downloaded; a restart installs it (`main/auto-update.ts`). */
   "update.ready": ReadyUpdate;
+  /** An update the app looked for on its own failed, at `stage` (`main/auto-update.ts`). */
+  "update.failed": { stage?: UpdateFailure };
+  /** Main's own process caught an error nowhere, or a window answered again after `durationMs`. */
+  "app.diagnostic": { kind?: MainDiagnostic; durationMs?: number; errorType?: string };
 
   // — engines and models —
   "engines.changed": { engine?: string };
   "engine.auth": { engine?: string; message?: string };
   "engine.fallback": { from?: string; to?: string; kind?: string; role?: string };
+  /** Every subscription's plan limits as they stand now, sent whenever one of them changes. */
+  "provider.usage": { reports: ProviderUsageReport[] };
   "model.install": ModelInstallJob;
   /** An in-app Claude Code or Codex install started, finished or failed. */
   "cli.install": CliInstallJob;
@@ -167,6 +182,24 @@ export interface UiEventMap {
   "game-ai.notice": GameAiNotice;
   /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
   "play.remix": RemixProgress;
+  /** Play's installed games or an install changed: every one, as `studio:play.installs` answers (`main/play/native-installs.ts`). */
+  "play.installs": NativeInstalls;
+  /** A native game started, came on screen, ended or failed to start: every session (`main/play/native-launch.ts`). */
+  "play.sessions": NativeSession[];
+  /** A `genex://game/<slug>` link waits for the page to take it (`studio:play.take-game-link`, `main/play/game-links.ts`). */
+  "play.game-link": Record<string, never>;
+
+  // — store —
+  /**
+   * A game's agent made or changed a store item and Studio drew its Listing draft card
+   * (`item_drafted`, `main/core/item-draft.ts`): Create › Items reads Selling again. Host only.
+   */
+  "item.drafted": { project: string; itemId: string; threadId?: string };
+  /**
+   * A game's local item drafts changed in Studio's app data (an approval, a draft the CLI printed, the
+   * settle after its publish): its Listing draft cards read them again (`studio:items.local`). Host only.
+   */
+  "items.local": { project: string };
 
   // — plugins and connectors —
   "plugins.changed": PluginChange;
@@ -253,9 +286,12 @@ export const UiEvent = {
   StudioReady: "studio.ready",
   NotificationOpen: "notification.open",
   UpdateReady: "update.ready",
+  UpdateFailed: "update.failed",
+  AppDiagnostic: "app.diagnostic",
   EnginesChanged: "engines.changed",
   EngineAuth: "engine.auth",
   EngineFallback: "engine.fallback",
+  ProviderUsage: "provider.usage",
   ModelInstall: "model.install",
   CliInstall: "cli.install",
   ModelPull: "model.pull",
@@ -295,6 +331,11 @@ export const UiEvent = {
   PlayViewer: "play.viewer",
   GameAi: "game-ai.notice",
   PlayRemix: "play.remix",
+  PlayInstalls: "play.installs",
+  PlaySessions: "play.sessions",
+  PlayGameLink: "play.game-link",
+  ItemDrafted: "item.drafted",
+  ItemsLocal: "items.local",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",
@@ -364,9 +405,15 @@ export function uiEvent<K extends UiEventType>(type: K, payload: UiEventMap[K]):
 
 /**
  * Events only the host may send: what they say the renderer acts on (`live.behind` names the
- * build Live's Reload plays), so the harness's forwarded notifications never carry one.
+ * build Live's Reload plays; `item.drafted` stands for a real `genex shop add` result, `items.local`
+ * for Studio's own record of local drafts), so the
+ * harness's forwarded notifications never carry one.
  */
-const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([UiEvent.LiveBehind]);
+const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
+  UiEvent.LiveBehind,
+  UiEvent.ItemDrafted,
+  UiEvent.ItemsLocal,
+]);
 
 /** Whether a harness notification names an event only the host sends. */
 export const isHostOnlyUiEvent = (name: string): boolean => HOST_ONLY.has(name);

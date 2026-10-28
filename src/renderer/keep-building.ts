@@ -7,13 +7,17 @@ import { RunState } from "../shared/run-state.ts";
 import type { HistoryEntry } from "./build-progress.ts";
 import type { ComposerExtras } from "./ui/PromptBar.tsx";
 import { STILL_TO_FIX_WORDS } from "./words.ts";
+import { track } from "./analytics/client.ts";
+import { AnalyticsEvent } from "./analytics/events.ts";
+import { BuildSurface } from "./analytics/events/builds.ts";
 
 export const KEEP_BUILDING_EVENT = "studio:keep-building";
 
-/** A Keep building tap: the chat whose run it was, and what that run left to fix. */
+/** A Keep building tap: the chat whose run it was, what that run left to fix, and the card it was pressed on (the chat's by default). */
 export interface KeepBuildingAsk {
   threadId: string;
   notDone: string[];
+  surface?: BuildSurface;
 }
 
 /** A Keep building tap on a card: what is left; true once its message went out. */
@@ -30,10 +34,15 @@ export interface KeepBuilding extends KeepBuildingAsk {
  * (false when no open chat took it, or it sent nothing: a sign-in first, a Loop this game can't run).
  */
 export function keepBuilding(ask: KeepBuildingAsk): Promise<boolean> {
-  return new Promise((resolve) => {
+  const sent = new Promise<boolean>((resolve) => {
     const detail: KeepBuilding = { ...ask, answer: resolve };
     window.dispatchEvent(new CustomEvent<KeepBuilding>(KEEP_BUILDING_EVENT, { detail }));
     if (!detail.taken) resolve(false);
+  });
+  return sent.then((went) => {
+    const surface = ask.surface ?? BuildSurface.ChatCard;
+    track(AnalyticsEvent.KeepBuildingPressed, { surface, not_done_count: ask.notDone.length, sent: went });
+    return went;
   });
 }
 
