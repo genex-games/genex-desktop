@@ -64,6 +64,8 @@ async function keepWinner(loop: FacetLoop, round: FacetRound): Promise<void> {
   // The game's declared demos (not the ones the capture happened to photograph): what
   // integration must not lose.
   result.demos = Array.isArray(round.evidence.registeredDemos) ? [...round.evidence.registeredDemos] : [];
+  // What the accepted build's provenance audit found is what the next round is held to adding to (taste.ts).
+  if (Array.isArray(round.provenance)) loop.incumbentProvenance = [...round.provenance];
   if (worktree) {
     await commitAll(
       ctx,

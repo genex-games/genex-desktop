@@ -18671,6 +18671,79 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     assert.doesNotMatch(String(await loopRun.setPlan({ summary: "A school.", workers: school })), /^plan:/);
   });
 
+  it("G3-2c. seven benches, four bins and every birch were planned as models and delivered as box scripts with no normal map: the provenance audit follows each planned tag to its file and lock row, and a lesser source is a blocking art-source-mismatch the round may not add", async () => {
+    const { auditProvenance } = await import("../../src/harness-seed/loop/provenance.ts");
+    const { glbFile } = await import("../helpers/roblox-models.ts");
+    const { symlink } = await import("node:fs/promises");
+    const game = await tmpDir("g3-provenance-");
+    const outside = await tmpDir("g3-outside-");
+    const textured = glbFile(
+      { asset: { version: "2.0" }, images: [{ uri: "a.png" }], materials: [{ normalTexture: { index: 0 } }] },
+      Buffer.alloc(0),
+    );
+    const flat = glbFile(
+      { asset: { version: "2.0" }, materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.5, 0.5, 0.5, 1] } }] },
+      Buffer.alloc(0),
+    );
+    const put = async (rel: string, bytes: Buffer, root = game) => {
+      await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+      await writeFile(path.join(root, rel), bytes);
+    };
+    await put("assets/blender/bench/model.glb", flat);
+    await put("assets/blender/block/model.glb", textured);
+    await put("assets/genex/bin/model.glb", textured);
+    await put("kit.glb", textured, outside);
+    await mkdir(path.join(game, "assets/blender/linked"), { recursive: true });
+    await symlink(path.join(outside, "kit.glb"), path.join(game, "assets/blender/linked/model.glb"));
+    const rows = ["assets/blender/bench/model.glb", "assets/blender/block/model.glb", "assets/blender/linked/model.glb"]
+      .map((file) => ({ path: file, origin: "blender" }))
+      .concat([{ path: "assets/genex/bin/model.glb", origin: "genex" }]);
+    await writeFile(path.join(game, "genex-assets.lock"), JSON.stringify({ version: 1, entries: rows, derived: [] }));
+    const art = {
+      generations: 2,
+      assets: [
+        { area: "the yard", tier: "hero", kind: "prop", asset: "park bench", source: "genex-model", tags: ["bench"] },
+        { area: "the yard", tier: "hero", kind: "prop", asset: "bins", source: "genex-model", tags: ["bin"] },
+        {
+          area: "the yard",
+          tier: "mid",
+          kind: "structure",
+          asset: "panel blocks",
+          source: "blender-kit",
+          why: "scans",
+          tags: ["block", "garage", "stray", "far"],
+        },
+        { area: "the yard", tier: "scatter", kind: "surface", asset: "snow ground", source: "scan", tags: ["ground"] },
+      ],
+    };
+    const tag = (model: string, extra: Record<string, unknown> = {}) => ({ coverage: 0.05, model, ...extra });
+    const state = lookState({
+      bench: tag("assets/blender/bench/model.glb"),
+      bin: tag("assets/genex/bin/model.glb"),
+      block: tag("assets/blender/block/model.glb"),
+      ground: tag("assets/blender/bench/model.glb"),
+      // Hostile model paths the build itself reported: never read, so never trusted as a textured kit.
+      garage: tag("assets/blender/linked/model.glb"),
+      stray: tag("../g3-outside/kit.glb"),
+      far: tag(path.join(outside, "kit.glb")),
+    });
+    const audit = await auditProvenance({ ...yard, art }, state, game);
+    const tags = audit.map((text) => /^\[art-source-mismatch\] ([a-z]+):/.exec(text)?.[1]);
+    assert.deepEqual(tags, ["bench", "garage", "stray", "far"], audit.join("\n"));
+    assert.match(
+      audit[0] ?? "",
+      /plans park bench as genex-model \(hero\), and it is drawn from code-built or an untextured box script \(assets\/blender\/bench\/model\.glb\)/,
+    );
+    // The engine's word that a tag is all primitives outranks the folder it came from.
+    const primitive = await auditProvenance(
+      { ...yard, art },
+      lookState({ bin: tag("assets/genex/bin/model.glb", { primitive_only: true }) }),
+      game,
+    );
+    assert.equal(primitive.length, 1);
+    assert.deepEqual(await auditProvenance({ ...yard }, state, game), [], "no art pass, nothing to audit");
+  });
+
   it("G3-4a. the light facet settled the classroom at mean luma 28 with 41% in the darkest bin and [crushed-shadow] never stopped a keep: a playable camera outside the luminance band is a blocking defect", async () => {
     const { lumaBandDefect } = await import("../../src/harness-seed/loop/look-facts.ts");
     const { blocksLook } = await import("../../src/harness-seed/loop/look-bar.ts");

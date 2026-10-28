@@ -15,6 +15,8 @@ import { roundFields } from "../record.ts";
 import { roundStage } from "../stage.ts";
 import { keptByBlock } from "../build-block.ts";
 import { blockReason } from "../build-block-prompts.ts";
+import { asksForLook } from "../../look-bar.ts";
+import { auditProvenance } from "../../provenance.ts";
 
 /** The harness's eyes the taste judge looks through beside the facet's own cameras. */
 const TASTE_EYES = ["eye:spawn", "eye:here", "eye:down"];
@@ -55,6 +57,7 @@ export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<
     // A finishing round is judged as one: polish is expected, and its polish list is the work.
     stage: roundStage(round, spec),
   });
+  await auditRound(loop, round);
   // The move (§5): measured by its own check when it has one, else by the taste judge.
   // A build that flipped nothing AND did not deliver a move somebody asked for is a
   // loss — polish alone never wins. A move the harness invented for itself is guidance
@@ -106,6 +109,24 @@ function tasteReason(loop: FacetLoop, round: FacetRound, decided: Decision): str
   if (round.verdictSource === VerdictSource.NoMove)
     return `no check moved and the move was not delivered: ${String(loop.currentMove?.what).slice(0, MOVE_QUOTED)}`;
   return `${flipped} and the taste judge kept the incumbent`;
+}
+
+/**
+ * The provenance audit of the challenger (provenance.ts): on a run with a visual bar, a planned tag
+ * now drawn from a lesser source than the art pass named, and not already so on the accepted build,
+ * is a look blocker the round added. The audit rides on the round, and becomes the incumbent's when
+ * the round is kept (keep.ts).
+ */
+async function auditRound(loop: FacetLoop, round: FacetRound): Promise<void> {
+  const { run } = loop;
+  if (!asksForLook(run)) return;
+  const audit = await auditProvenance(run, round.evidence.state, loop.worktree ?? loop.workdir).catch(() => []);
+  round.provenance = audit;
+  const before = new Set(loop.incumbentProvenance ?? []);
+  const added = audit.filter((text) => !before.has(text));
+  if (!added.length) return;
+  round.taste.addedBlockers = [...new Set([...(round.taste.addedBlockers ?? []), ...added])];
+  round.taste.satisfied = false;
 }
 
 /**
