@@ -6,9 +6,13 @@
 import type { ImportIssue as ReportIssue } from "../../shared/asset-db.ts";
 import type { CharacterFacts } from "../../shared/character-facts.ts";
 import type { BuildTarget } from "../../shared/game-project.ts";
+import { ImportIssueCode } from "../../shared/asset-db.ts";
+import { MODEL_IMPORT_TRIANGLES } from "../../shared/model-budget.ts";
 import { audioToOgg } from "./audio-ogg.ts";
 import type { TextureUsage } from "./basis-encoder.ts";
 import { characterFacts } from "./character-facts.ts";
+import { decimateGlb } from "./decimate.ts";
+import { meshoptSimplifier } from "./decoders.ts";
 import { GlbError, meshToGlb } from "./glb.ts";
 import { addGlbTextures, type GlbTextureSidecar } from "./glb-textures.ts";
 import { importGltf } from "./gltf-decompress.ts";
@@ -54,6 +58,8 @@ export interface ConvertInput {
   meshletMinTriangles?: number;
   /** A `texture-encode` file's resolved usage (`texture-usage.ts`). */
   usage?: TextureUsage;
+  /** The most triangles a static model imports with (decimated to it past it); the import cap when absent. */
+  triangleBudget?: number;
 }
 
 /** What a step wrote, or why it refused. */
@@ -119,19 +125,34 @@ function checkHdr(input: ConvertInput): ConvertResult {
   return { ok: true, bytes: input.bytes };
 }
 
+/** What the mesh steps noticed that the receipt names: a decimation's triangles before and after. */
+interface MeshNotes {
+  decimated?: { before: number; after: number };
+}
+
 /** One optional mesh step: a GLB in, the GLB to hand on out (the same bytes when the step skips). */
-type MeshStep = (glb: Uint8Array, input: ConvertInput) => Promise<Uint8Array>;
+type MeshStep = (glb: Uint8Array, input: ConvertInput, notes: MeshNotes) => Promise<Uint8Array>;
+
+/** A static model over its budget brought down to it (WP-0/WP-6), noted for the receipt. */
+const decimateStep: MeshStep = async (glb, input, notes) => {
+  const outcome = await decimateGlb(glb, input.triangleBudget ?? MODEL_IMPORT_TRIANGLES, await meshoptSimplifier());
+  if (!outcome.decimated) return glb;
+  notes.decimated = { before: outcome.before, after: outcome.after };
+  return outcome.bytes;
+};
 
 /**
  * The mesh steps in order. Weld comes before tangents (MikkTSpace splits only what welded vertices
  * still disagree on) and both before the reorder, which fixes the vertex order the meshlets and LODs
- * then index; the extras name views by index, so nothing rewrites vertices after them. Authored
- * `MSFT_lod` levels are lifted into a private extra before the weld and folded into `genex_lods`
- * after the reorder (LOD-11).
+ * then index; the extras name views by index, so nothing rewrites vertices after them. A model over
+ * its triangle budget is decimated right after the weld, so every later step works on LOD0 at the
+ * budget. Authored `MSFT_lod` levels are lifted into a private extra before the weld and folded into
+ * `genex_lods` after the reorder (LOD-11).
  */
 const MESH_STEPS: readonly MeshStep[] = [
   async (glb) => liftMsftLod(glb).bytes,
   async (glb) => weldGlb(glb).bytes,
+  decimateStep,
   async (glb) => (await addTangents(glb)).bytes,
   async (glb) => (await reorderGlb(glb)).bytes,
   async (glb) => (await foldAuthoredLods(glb)).bytes,
@@ -142,16 +163,24 @@ const MESH_STEPS: readonly MeshStep[] = [
   async (glb) => (await addLodExtras(glb)).bytes,
 ];
 
+/** The receipt's issue for a decimation, before the report's own. */
+const decimatedIssues = (notes: MeshNotes): ReportIssue[] =>
+  notes.decimated
+    ? [{ code: ImportIssueCode.Decimated, detail: `${notes.decimated.before}/${notes.decimated.after}` }]
+    : [];
+
 /**
- * A GLB the runtime loads: welded, deduplicated and pruned (C-7), tangent-complete and in vertex
- * cache and fetch order (C-8), then with import-time meshlets (R2.3) and LODs (A6.9) when it is big
- * enough for each, and its sizes for the receipt; never a refusal.
+ * A GLB the runtime loads: welded, deduplicated and pruned (C-7), decimated to its triangle budget
+ * when it is over it, tangent-complete and in vertex cache and fetch order (C-8), then with
+ * import-time meshlets (R2.3) and LODs (A6.9) when it is big enough for each, and its sizes for the
+ * receipt; never a refusal.
  */
 async function meshSteps(glb: Uint8Array, input: ConvertInput): Promise<ConvertResult> {
   let bytes = glb;
-  for (const step of MESH_STEPS) bytes = await step(bytes, input);
+  const notes: MeshNotes = {};
+  for (const step of MESH_STEPS) bytes = await step(bytes, input, notes);
   const sizes = inspectGlb(bytes);
-  const report = reportGlb(bytes);
+  const report = [...decimatedIssues(notes), ...reportGlb(bytes)];
   const character = characterFacts(bytes);
   return {
     ok: true,

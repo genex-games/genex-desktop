@@ -567,7 +567,7 @@ export type AssetImportStatus = 'pending' | 'ready' | 'refused';
 export type AssetImportRefusal = 'unsupported-by-raylib' | 'unsupported-by-rust' | 'unsafe-path' | 'escapes-game' | 'missing' | 'not-regular-file' | 'too-large' | 'malformed' | 'unsupported-extension' | 'converter-missing' | 'importer-failed' | 'validation-failed';
 // ↑ src/shared/game-assets.ts
 
-export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning' | 'albedo-out-of-range' | 'metallic-partial' | 'ior-out-of-range' | 'triangles-over-budget';
+export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning' | 'albedo-out-of-range' | 'metallic-partial' | 'ior-out-of-range' | 'triangles-over-budget' | 'decimated';
 // ↑ src/shared/asset-db.ts
 
 /** One issue on a lock row. */
