@@ -12,6 +12,7 @@ import {
   ASSET_ROUTES,
   AssetClass,
   AssetNever,
+  AssetPlugin,
   type AssetRoute,
   AssetSource,
   assetRoutingText,
@@ -56,16 +57,24 @@ describe("the asset routing table", () => {
 
   it("is the paragraph every asset plugin's guiding skill carries", async () => {
     const paragraph = assetRoutingText();
-    const carriers: Array<[string, string]> = [
-      ["genex", "asset-preference"],
-      ["blender", "local-modeling"],
-      ["blender", "local-modeling-rust"],
-      ["cc0", "cc0-library"],
-      ["cc0", "cc0-library-rust"],
+    const carriers: Array<[AssetPlugin, string]> = [
+      [AssetPlugin.Genex, "asset-preference"],
+      [AssetPlugin.Blender, "local-modeling"],
+      [AssetPlugin.Blender, "local-modeling-rust"],
+      [AssetPlugin.Cc0, "cc0-library"],
+      [AssetPlugin.Cc0, "cc0-library-rust"],
     ];
     for (const [plugin, skill] of carriers) {
       const text = (await skills(plugin)).get(skill);
-      assert.ok(text?.includes(paragraph), `${plugin}/${skill} carries the routing paragraph`);
+      const own = plugin === AssetPlugin.Genex ? paragraph : assetRoutingText(plugin);
+      assert.ok(text?.includes(own), `${plugin}/${skill} carries its routing paragraph`);
     }
+  });
+
+  it("names only a plugin's own tools in that plugin's paragraph, so a sub-agent sees only tools it can call", () => {
+    assert.doesNotMatch(assetRoutingText(AssetPlugin.Blender), /genex__|cc0__/);
+    assert.doesNotMatch(assetRoutingText(AssetPlugin.Cc0), /genex__|blender__/);
+    assert.match(assetRoutingText(AssetPlugin.Blender), /gx\.slab/);
+    assert.match(assetRoutingText(AssetPlugin.Cc0), /cc0__fetch/);
   });
 });
