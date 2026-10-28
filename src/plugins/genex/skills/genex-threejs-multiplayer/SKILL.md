@@ -10,6 +10,16 @@ This card is for web games written with npm and three.js. A Godot game gets Gene
 `unity__multiplayer`, then `unity__skill {"name":"unity-multiplayer"}`. Stop reading here for those,
 and never write a relay server of your own: Genex's relays already serve web, Godot and Unity players.
 
+## The player is in their own lobby from the first click
+
+While `mm.matchmaking.status` is `'searching'` the player is in no room yet, so `players`,
+`connectedPlayers` and `opponents` are all empty, and with `minPlayers === maxPlayers` the room
+skips `'waiting'` altogether. A lobby drawn from `players` alone shows the person's own slot empty
+until a match forms, then everyone at once. From the moment they press Play, draw their own slot
+from what this client already knows (their name from `waitForPlayer()`, their colour or avatar),
+count `Math.max(queue.size, 1)` while searching, and fill the other slots from the roster once
+seated. Never wait for the network to show the person to themselves.
+
 ## Multiplayer runs on the Genex draft link, with two different players
 
 - Studio's preview is single-player. It opens a game that uses `@genex-ai/embed-sdk` in local
