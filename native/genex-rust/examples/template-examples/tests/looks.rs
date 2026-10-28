@@ -14,6 +14,7 @@ mod game;
 mod looks;
 mod support;
 
+use genex::prelude::json;
 use genex::render::{QualityPreset, RenderConfig};
 use genex::{FIXED_STEP_MS, Game, Runtime, View};
 
@@ -52,7 +53,10 @@ fn every_scene_draws_the_stage_on_a_terrain_with_its_room_probe_and_volume() {
         let lights = frame.lights();
         assert_eq!((lights.reflection_probes.len(), lights.irradiance_volumes.len()), (1, 1), "{}: one probe and one volume on the room", scene.name());
         assert!(frame.declared_environment().is_some(), "{} declares its sky", scene.name());
-        assert_eq!(runtime.state()["look"]["scene"], scene.name(), "the probe names the scene");
+        let state = runtime.state();
+        assert_eq!(state["look"]["scene"], scene.name(), "the probe names the scene");
+        assert_eq!(state["look"]["band"], json!(scene.luma()), "and its luma band");
+        assert_eq!(state["look"]["recipes"].as_array().map(Vec::len), Some(Scene::ALL.len()), "and every recipe");
     }
 }
 
