@@ -365,7 +365,37 @@ function planParts(workers: unknown): { parts: PlanPart[]; error?: undefined } |
     if (parts.some((w) => w.id === id)) return { error: `plan: two parts called "${id}"` };
     parts.push(planPart(entry, id));
   }
+  const shared = sharedOwnership(parts);
+  if (shared)
+    return {
+      error: `plan: ${shared.a} and ${shared.b} both own ${shared.path} — every file has one owner, so one part's mandatory work never waits on files another part holds; give it to one of them, or split it`,
+    };
   return { parts };
+}
+
+/** A path a part owns, as the overlap check reads it: posix, no leading "./", no trailing "/". */
+const ownedPath = (entry: string): string => entry.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+
+/** Does owning `a` hold `b` too: the same path, or a folder `b` lies in? */
+const holds = (a: string, b: string): boolean => a === b || b.startsWith(`${a}/`);
+
+/**
+ * The first path two parts both own, or null. Gen3's yard spent three rounds on window glass and
+ * fog the light part owned: a plan that hands one file to two parts is refused before anybody builds.
+ */
+export function sharedOwnership(parts: readonly PlanPart[]): { a: string; b: string; path: string } | null {
+  for (const [i, part] of parts.entries()) {
+    for (const other of parts.slice(i + 1)) {
+      for (const mine of part.owns.map(String).map(ownedPath).filter(Boolean)) {
+        const theirs = other.owns
+          .map(String)
+          .map(ownedPath)
+          .find((path) => holds(mine, path) || holds(path, mine));
+        if (theirs) return { a: part.id, b: other.id, path: mine.length <= theirs.length ? theirs : mine };
+      }
+    }
+  }
+  return null;
 }
 
 /**

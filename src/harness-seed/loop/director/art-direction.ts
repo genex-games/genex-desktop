@@ -26,6 +26,7 @@
  * it through the run and check that it is there. It reads budgets.ts and rules.ts by namespace,
  * so a kept older copy of either never stops it linking.
  */
+import { asksForLook } from "../look-bar.ts";
 import { shortSha } from "../git.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
 import { DEFAULT_CAMERA } from "../cameras.ts";
@@ -629,13 +630,13 @@ export async function shipFinishGate(
 const CLOSE_SHIP_MIN_MS = MINUTE_MS;
 
 /**
- * Is the head the close is about to land owed the art director's look: it moved beyond the start,
- * it loads, and no review stands on it. Gen3's final head got only "it starts and draws its first
+ * Is the head the close is about to land owed the art director's look: the ask sets a visual bar,
+ * the head moved beyond the start, it loads, and no review stands on it. Gen3's final head got only "it starts and draws its first
  * frame": its judge made no model call, and the report read as a verdict nobody gave.
  */
 export function closeOwesShipReview(loopRun: LoopRun, head: string | null): boolean {
-  const { ctx, state } = loopRun;
-  if (ctx.cancelled || !head || !movedBeyondStart(loopRun, head)) return false;
+  const { ctx, run, state } = loopRun;
+  if (ctx.cancelled || !asksForLook(run) || !head || !movedBeyondStart(loopRun, head)) return false;
   return state.healthByHead.get(head) === true && !shipReviewOn(loopRun, head);
 }
 

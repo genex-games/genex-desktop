@@ -1,3 +1,4 @@
+import { qualityRefusal } from "../quality-lint.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
 import { goalCommission } from "./commission.ts";
@@ -930,6 +931,8 @@ function ladderArg(args: AnyRecord): { value: AnyRecord[]; error?: undefined } |
     return {
       error: `milestones: every rung is {"what":"one structural step — what the game IS after it","check":{…}} and "check" is optional; the last may be {"open":true}`,
     };
+  const worse = qualityRefusal("milestones", ladder);
+  if (worse) return { error: worse };
   return { value: ladder };
 }
 

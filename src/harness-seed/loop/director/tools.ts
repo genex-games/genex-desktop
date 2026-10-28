@@ -1,4 +1,5 @@
 import { keepCheckpoint } from "./progress.ts";
+import { qualityRefusal } from "../quality-lint.ts";
 import { retainSpan, timedOperation } from "./timing.ts";
 import { capRefusesWorker, runNow } from "./cap-lines.ts";
 import { GoalBlocker, GoalStatus, goalDecision, recordGoalEvidence, replanGoal } from "./goals.ts";
@@ -837,8 +838,15 @@ function finallyJudged(judged: LastJudge | null, head: string | null): boolean {
  */
 export async function judgeTheLanding(loopRun: LoopRun, head: string | null, judgeBy?: number): Promise<void> {
   const { note } = loopRun;
-  const ask = closeJudgeAsk(loopRun, head);
-  if (!ask) return;
+  const asked = closeJudgeAsk(loopRun, head);
+  if (!asked) return;
+  // The same look carries the art director's review of the head it lands (art-direction.ts `closeShipReview`): one capture, one record.
+  // A blind compare against the start stays a compare: its ship review runs on its own after it.
+  const owesShip =
+    asked.against === Against.None &&
+    typeof loopRun.closeOwesShipReview === "function" &&
+    loopRun.closeOwesShipReview(head);
+  const ask = owesShip ? { ...asked, ship: "yes" } : asked;
   const options = { borrow: true, final: true, until: landingJudgeUntil(Date.now(), judgeBy) };
   await judge(loopRun, ask, options).catch((err: unknown) =>
     note(
@@ -1255,6 +1263,8 @@ function addRung(worker: Worker, moveText: string): { rung: AnyRecord } | { refu
     return {
       refusal: `worker ${worker.id} has no ladder to add a move to — it is a single session; send it text instead`,
     };
+  const worse = qualityRefusal("move", [moveText]);
+  if (worse) return { refusal: worse };
   const climbed = worker.spec.milestones ?? [];
   const milestone = normalizeMilestone({ what: moveText }, climbed.length);
   if (!milestone) return { refusal: "move: one sentence saying what the game IS after this iteration" };

@@ -18933,4 +18933,32 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       ["[uncomfortable-camera] demo:sprint-run"],
     );
   });
+  it("G3-5a. milestones asked for 'a sprint that tilts and shakes the view' and 'birch and pine billboards', and the scaffold was told frame.cube: a mandate that asks for less is refused, two parts may not own one file, and a look brief starts from sourced models", async () => {
+    const { qualityRefusal } = await import("../../src/harness-seed/loop/quality-lint.ts");
+    const { sharedOwnership } = await import("../../src/harness-seed/loop/director/rules.ts");
+    const { rustBaseBrief } = await import("../../src/harness-seed/loop/rust-briefs.ts");
+    assert.match(
+      String(qualityRefusal("milestones", [{ what: "a sprint that tilts and shakes the view" }])),
+      /^milestones: rung 1 asks for shake/,
+    );
+    assert.match(String(qualityRefusal("move", ["birch and pine billboards along the fence"])), /asks for billboard/);
+    assert.match(
+      String(qualityRefusal("milestones", [{ what: "scans at 1k to keep boot short" }])),
+      /asks for low-resolution/,
+    );
+    assert.equal(qualityRefusal("milestones", [{ what: "the yard reads as a snowy courtyard at dusk" }]), null);
+    const part = (id: string, owns: string[]) => ({ id, title: id, seam: "", owns, done: [], minutes: null });
+    assert.deepEqual(
+      sharedOwnership([part("light", ["src/light.rs", "src/glass/"]), part("yard", ["src/glass/window.rs"])]),
+      { a: "light", b: "yard", path: "src/glass/window.rs" },
+    );
+    assert.equal(sharedOwnership([part("light", ["src/light.rs"]), part("yard", ["src/yard.rs"])]), null);
+    const brief = (run: Run) => rustBaseBrief({ run, plan: { facets: [] }, projectLabel: "body-cam" } as never);
+    assert.match(brief(yard), /This ask sets a visual bar: show the requested subject with models from assets\//);
+    assert.doesNotMatch(brief(yard), /or procedural shapes/);
+    assert.match(
+      brief({ ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run),
+      /frame\.cube, frame\.sphere/,
+    );
+  });
 });

@@ -1582,6 +1582,8 @@ describe("Bodycam gen3: the final head nobody judged for its look (run_mvs67gsby
   it("G3-1e. the final integration head got only 'it starts' and judge_5 made no model call: the close always gets the art director's look at the head it lands, once, and a close with none reports no art verdict", async () => {
     const host = fakeHost();
     const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: shipAndQuestion() } });
+    assert.equal(loopRun.closeOwesShipReview(HEAD), false, "a run with no visual bar is not held to one");
+    loopRun.run.goal = "a photorealistic night race around the plaza";
     assert.equal(loopRun.closeOwesShipReview(HEAD), true, "a head that loads, beyond the start, with no review");
     await loopRun.closeShipReview(HEAD);
     assert.equal(shipCalls(host).length, 1, "the art director looked at the landing head");
