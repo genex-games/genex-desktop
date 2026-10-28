@@ -1,0 +1,37 @@
+{"type":"session","version":3,"id":"01a183b1-710e-714d-ba5d-a6442783c6fd","timestamp":"2026-10-28T18:06:46.543Z","cwd":"/game"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"system","content":"","sections":"<elided: Pi system prompt>","timestamp":1793210806593}}
+{"type":"message_end","message":{"role":"system","content":"","sections":"<elided: Pi system prompt>","timestamp":1793210806593}}
+{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"Say hello"}],"timestamp":1793210806593}}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Say hello"}],"timestamp":1793210806593}}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210806606,"errorMessage":"Connection error.","durationMs":17,"thinkingLevel":"off"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210806606,"errorMessage":"Connection error.","durationMs":17,"thinkingLevel":"off"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210806606,"errorMessage":"Connection error.","durationMs":17,"thinkingLevel":"off"},"toolResults":[]}
+{"type":"agent_end","messages":"<elided>","willRetry":true}
+{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"Connection error."}
+{"type":"entry_appended","entry":{"type":"context_edit","id":"fef9f31c","parentId":"c847e56d","timestamp":"2026-10-28T18:06:46.626Z","targetId":"c847e56d","replacement":null}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210808633,"errorMessage":"Connection error.","durationMs":3,"thinkingLevel":"off"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210808633,"errorMessage":"Connection error.","durationMs":3,"thinkingLevel":"off"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210808633,"errorMessage":"Connection error.","durationMs":3,"thinkingLevel":"off"},"toolResults":[]}
+{"type":"agent_end","messages":"<elided>","willRetry":true}
+{"type":"auto_retry_start","attempt":2,"maxAttempts":3,"delayMs":4000,"errorMessage":"Connection error."}
+{"type":"entry_appended","entry":{"type":"context_edit","id":"1c4f2e2b","parentId":"68968a2f","timestamp":"2026-10-28T18:06:48.637Z","targetId":"68968a2f","replacement":null}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210812639,"errorMessage":"Connection error.","durationMs":2,"thinkingLevel":"off"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210812639,"errorMessage":"Connection error.","durationMs":2,"thinkingLevel":"off"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210812639,"errorMessage":"Connection error.","durationMs":2,"thinkingLevel":"off"},"toolResults":[]}
+{"type":"agent_end","messages":"<elided>","willRetry":true}
+{"type":"auto_retry_start","attempt":3,"maxAttempts":3,"delayMs":8000,"errorMessage":"Connection error."}
+{"type":"entry_appended","entry":{"type":"context_edit","id":"9d58cbb8","parentId":"4d2c5b76","timestamp":"2026-10-28T18:06:52.641Z","targetId":"4d2c5b76","replacement":null}}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210820649,"errorMessage":"Connection error.","durationMs":3,"thinkingLevel":"off"}}
+{"type":"message_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210820649,"errorMessage":"Connection error.","durationMs":3,"thinkingLevel":"off"}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"api":"openai-completions","provider":"stubdown","model":"stub-nonetwork","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1793210820649,"errorMessage":"Connection error.","durationMs":3,"thinkingLevel":"off"},"toolResults":[]}
+{"type":"agent_end","messages":"<elided>","willRetry":false}
+{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"Connection error."}
+{"type":"agent_settled","aborted":false}

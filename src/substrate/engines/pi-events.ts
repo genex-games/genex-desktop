@@ -3,7 +3,8 @@
  *
  * Each line is one JSON object. The first is the session header; the rest are agent events
  * (`json.md` in the Pi coding agent). They are mirrored in the compacted Claude Code shape every
- * consumer already reads. Recorded samples: `tests/fixtures/transcripts/pi-*.jsonl`.
+ * consumer already reads. Samples: `tests/fixtures/transcripts/pi-*.jsonl` (shaped after `json.md`) and
+ * `tests/fixtures/transcripts/pi-recorded/` (recorded from a real `pi --mode json`, see its README).
  */
 import { clip } from "./common.ts";
 import { DelegateEventType } from "./types.ts";
@@ -110,7 +111,10 @@ function messageUpdate(event: Record_): Translated {
   const nested = record(event.assistantMessageEvent);
   const latestUsage = usageOf(record(event.usage));
   if (nested.type === "error") {
-    const message = String(nested.error ?? nested.reason ?? "Pi stopped") || "Pi stopped";
+    // `error` is the failed AssistantMessage (pi-ai `AssistantMessageEvent`), not a string.
+    const failed = record(nested.error);
+    const said = typeof nested.error === "string" ? nested.error : failed.errorMessage;
+    const message = String(said ?? nested.reason ?? "Pi stopped") || "Pi stopped";
     return { events: [], pendingFailure: { message, status: statusIn(message) }, latestUsage };
   }
   if (nested.type !== "text_delta") return { events: [], latestUsage };

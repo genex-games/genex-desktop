@@ -496,3 +496,104 @@ describe("Pi's plan and one-shot answers", () => {
     );
   });
 });
+
+/**
+ * Streams recorded from a real `pi --mode json` (1.4.0) against a local stand-in endpoint
+ * (`fixtures/transcripts/pi-recorded/README.md`): Pi's own events, retries, stop reasons and usage.
+ */
+describe("Pi's recorded JSON stream", () => {
+  const recorded = (name: string) => events(path.join("pi-recorded", `${name}.jsonl`));
+  const run = async (name: string) => {
+    const cwd = await game();
+    const stream = await recorded(name);
+    const mirrored: DelegateEvent[] = [];
+    const { engine } = await engineWith(() => replay(stream));
+    const settled = engine
+      .delegate({ cwd, prompt: "Say hello", onEvent: (event) => mirrored.push(event) })
+      .then((result) => ({ result, error: null }))
+      .catch((error: unknown) => ({ result: null, error }));
+    return { ...(await settled), mirrored };
+  };
+  const errorRows = (mirrored: DelegateEvent[]) =>
+    mirrored.filter((event) => event.type === "result" && (event.payload as { subtype?: string }).subtype === "error");
+
+  it("adds one reply's usage once, from message_end, however many deltas carried it", async () => {
+    const { result, mirrored } = await run("ok");
+    assert.equal(result?.ok, true);
+    assert.equal(result?.usage.input_tokens, 120, "five message_update snapshots of 120 are still 120");
+    assert.equal(result?.usage.output_tokens, 7);
+    assert.equal(mirrored.filter((event) => event.type === "text_delta").length, 3, "each delta streams live");
+  });
+
+  it("sums usage across replies, one message_end each", async () => {
+    const { result } = await run("tool");
+    assert.equal(result?.ok, true);
+    assert.equal(result?.summary, "Done: genex.");
+    assert.equal(result?.usage.input_tokens, 250, "100 + 150");
+    assert.equal(result?.usage.output_tokens, 12, "5 + 7");
+  });
+
+  it("makes one chat row per reply, not one per delta, and does not repeat the text", async () => {
+    const { result, mirrored } = await run("ok");
+    const rows = mirrored.filter((event) => event.type === "assistant");
+    assert.equal(rows.length, 1);
+    assert.equal(result?.turns, 1);
+    assert.equal(result?.summary, "Hello from Pi.");
+    const said = JSON.stringify(rows[0]?.payload);
+    assert.equal(said.split("Hello from Pi.").length - 1, 1, "message_end's text appears once");
+  });
+
+  it("a rate limit Pi gave up retrying is a rate-limit failure, not an empty success", async () => {
+    const { result, error } = await run("ratelimit");
+    assert.equal(result, null);
+    assert.ok(error instanceof EngineError && error.kind === "rate_limit", String(error));
+  });
+
+  it("a retry that then succeeds ends as that success, with no error left in the chat", async () => {
+    const { result, mirrored } = await run("flaky");
+    assert.equal(result?.ok, true);
+    assert.equal(result?.summary, "Hello from Pi.");
+    assert.equal(result?.usage.input_tokens, 120, "the failed attempt reported no usage");
+    assert.deepEqual(errorRows(mirrored), []);
+  });
+
+  it("a model the provider does not have is an error with the provider's words", async () => {
+    const { result, error } = await run("badmodel");
+    const said = result?.errorText ?? (error instanceof Error ? error.message : "");
+    assert.notEqual(result?.ok, true);
+    assert.match(said, /does not exist/);
+  });
+
+  it("a 401 says to sign in to Pi again", async () => {
+    const { error } = await run("auth");
+    assert.ok(error instanceof EngineError && error.kind === "auth", String(error));
+    assert.match(error.message, /sign in to Pi again/i);
+  });
+
+  it("a filtered reply with no text is an error, not an empty answer", async () => {
+    const { result } = await run("refusal");
+    assert.equal(result?.ok, false);
+    assert.equal(result?.stopReason, "error");
+    assert.match(result?.errorText ?? "", /content_filter/);
+  });
+
+  it("no network is an error once Pi stops retrying", async () => {
+    const { result, error } = await run("nonetwork");
+    const said = result?.errorText ?? (error instanceof Error ? error.message : "");
+    assert.notEqual(result?.ok, true);
+    assert.match(said, /Connection error/);
+  });
+
+  it("reads the failed message inside a nested stream error, not [object Object]", () => {
+    const translated = translatePiEvent({
+      type: "message_update",
+      assistantMessageEvent: {
+        type: "error",
+        reason: "error",
+        error: { role: "assistant", content: [], stopReason: "error", errorMessage: "429 rate limited" },
+      },
+    });
+    assert.equal(translated.pendingFailure?.message, "429 rate limited");
+    assert.equal(translated.pendingFailure?.status, 429);
+  });
+});
