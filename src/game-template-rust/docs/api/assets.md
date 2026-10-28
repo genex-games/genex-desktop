@@ -1,7 +1,7 @@
 # Reading assets
 
 A reset may read the game's own files while it builds the world: a level's JSON, a table of
-waves, the triangles of a model for a navmesh or a collider. The bytes are part of the build, so
+waves, the triangles of a model for a navmesh or a collider. (Genex Library entries: `docs/api/library.md`.) The bytes are part of the build, so
 the same seed gives the same checksum on every destination. Every type and call in one line:
 
 ```rust

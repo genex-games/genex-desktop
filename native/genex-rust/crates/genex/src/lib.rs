@@ -61,6 +61,7 @@ mod group;
 mod gfx;
 pub mod gpu;
 mod input;
+mod library;
 mod lod;
 mod mesh;
 #[doc(hidden)]
@@ -134,6 +135,8 @@ pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
 };
+/// The Genex Library (`docs/api/library.md`): `gfx.assets().library(id)` and what it hands out.
+pub use library::{LIBRARY_ASSET_FOLDER, LIBRARY_ENTRY_FILE, LIBRARY_ENTRY_SCHEMA, LibraryAsset, LibraryKind, library_folder};
 /// A model's levels of detail (game systems LOD-07): `Model::with_levels`, `Model::with_lod_bias`,
 /// `Assets::compound` and their refusals (`state().__render.lodRefused`).
 pub use lod::{Impostor, ImpostorLayout, LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
