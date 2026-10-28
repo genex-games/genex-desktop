@@ -13,8 +13,54 @@ const CHAIN_DEPTH: usize = 24;
 /// Bits of the three-byte hash.
 const HASH_BITS: u32 = 15;
 
-/// The PNG of `rgba` (`width` × `height` texels, four bytes each, rows top first).
-pub(crate) fn encode_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+/// The PNG of `rgba` (`width` × `height` texels, four bytes each, rows top first), deflated
+/// (`compress`) or in stored blocks (a fast write for bytes decoded once in memory).
+pub(crate) fn encode(rgba: &[u8], width: u32, height: u32, compress: bool) -> Vec<u8> {
+    if compress {
+        return encode_rgba(rgba, width, height);
+    }
+    let stride = width as usize * 4;
+    let mut raw = Vec::with_capacity((stride + 1) * height as usize);
+    for row in rgba.chunks(stride) {
+        raw.push(0);
+        raw.extend_from_slice(row);
+    }
+    container(width, height, &zlib_stored(&raw))
+}
+
+/// A zlib stream of `data` in stored (uncompressed) blocks.
+fn zlib_stored(data: &[u8]) -> Vec<u8> {
+    const BLOCK: usize = 65_535;
+    let mut out = Vec::with_capacity(data.len() + data.len() / BLOCK * 5 + 16);
+    out.extend([0x78, 0x01]);
+    let blocks = data.len().div_ceil(BLOCK).max(1);
+    for (at, block) in data.chunks(BLOCK).enumerate() {
+        let last = u8::from(at + 1 == blocks);
+        out.push(last);
+        let length = block.len() as u16;
+        out.extend(length.to_le_bytes());
+        out.extend((!length).to_le_bytes());
+        out.extend_from_slice(block);
+    }
+    out.extend(adler32(data).to_be_bytes());
+    out
+}
+
+/// The PNG chunks around an IDAT stream.
+fn container(width: u32, height: u32, idat: &[u8]) -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut header = Vec::with_capacity(13);
+    header.extend(width.to_be_bytes());
+    header.extend(height.to_be_bytes());
+    header.extend([8, 6, 0, 0, 0]);
+    chunk(&mut png, b"IHDR", &header);
+    chunk(&mut png, b"IDAT", idat);
+    chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+/// The PNG of `rgba`, each row filtered and the whole deflated.
+fn encode_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     let stride = width as usize * 4;
     let mut filtered = Vec::with_capacity((stride + 1) * height as usize);
     let mut row_up = vec![0u8; stride];
@@ -31,15 +77,7 @@ pub(crate) fn encode_rgba(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
         filtered.push(kind);
         filtered.extend_from_slice(bytes);
     }
-    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
-    let mut header = Vec::with_capacity(13);
-    header.extend(width.to_be_bytes());
-    header.extend(height.to_be_bytes());
-    header.extend([8, 6, 0, 0, 0]);
-    chunk(&mut png, b"IHDR", &header);
-    chunk(&mut png, b"IDAT", &zlib(&filtered));
-    chunk(&mut png, b"IEND", &[]);
-    png
+    container(width, height, &zlib(&filtered))
 }
 
 /// One PNG chunk: length, type, data, CRC of type and data.
@@ -227,19 +265,23 @@ mod tests {
                 rgba.extend([(x * 3) as u8, if x % 9 < 5 { 200 } else { 10 }, noise, (y * 6) as u8]);
             }
         }
-        let png = encode_rgba(&rgba, width, height);
-        let decoded = genex_render::mesh::decode_image(&png).expect("a PNG the renderer reads");
-        assert_eq!((decoded.width(), decoded.height()), (width, height));
-        assert_eq!(decoded.rgba(), &rgba[..], "lossless");
-        assert_eq!(png, encode_rgba(&rgba, width, height), "the same pixels write the same bytes");
+        for compress in [true, false] {
+            let png = encode(&rgba, width, height, compress);
+            let decoded = genex_render::mesh::decode_image(&png).expect("a PNG the renderer reads");
+            assert_eq!((decoded.width(), decoded.height()), (width, height));
+            assert_eq!(decoded.rgba(), &rgba[..], "lossless (compressed: {compress})");
+            assert_eq!(png, encode(&rgba, width, height, compress), "the same pixels write the same bytes");
+        }
     }
 
     #[test]
     fn a_flat_image_compresses() {
         let rgba = vec![90u8; 256 * 256 * 4];
-        let png = encode_rgba(&rgba, 256, 256);
+        let png = encode(&rgba, 256, 256, true);
         assert!(png.len() < rgba.len() / 50, "{} bytes for a flat 256² image", png.len());
         let decoded = genex_render::mesh::decode_image(&png).expect("decodes");
         assert_eq!(decoded.rgba(), &rgba[..]);
+        let stored = encode(&rgba, 256, 256, false);
+        assert_eq!(genex_render::mesh::decode_image(&stored).expect("stored blocks decode").rgba(), &rgba[..], "several stored blocks");
     }
 }

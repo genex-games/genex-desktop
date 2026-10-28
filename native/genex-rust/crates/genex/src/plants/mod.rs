@@ -28,6 +28,7 @@ mod species;
 mod texture;
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::foliage::WindResponse;
 use crate::gfx::Model;
@@ -225,13 +226,34 @@ pub struct PlantGlb {
 /// Grow `spec` into its GLBs (deterministic: the same spec gives the same bytes). Write
 /// `levels[0]` under `assets/` for Studio's import step, or let `gfx.plant` keep them in memory.
 pub fn plant_glb(spec: &PlantSpec) -> PlantGlb {
+    build(spec, &paint(spec, true))
+}
+
+/// The maps of `spec`'s species in its season at its size, as PNG files (deflated when
+/// `compress`; stored for bytes decoded once in memory): every seed of one species and season
+/// shares them.
+fn paint(spec: &PlantSpec, compress: bool) -> Maps {
+    let preset = species::preset(spec.species);
+    let seed = texture_seed(spec.species, spec.season);
+    let size = spec.texture_size;
+    let png = |image: &texture::Image| png::encode(&image.rgba, image.size, image.size, compress);
+    let branched = preset.form != Form::Clump;
+    let mut pngs = Vec::with_capacity(5);
+    if branched {
+        let bark = texture::bark(preset.bark, spec.season, size, seed);
+        pngs.extend([png(&bark.albedo), png(&bark.normal), png(&bark.orm)]);
+    }
+    let cards = texture::cards(preset.leaf, spec.season, preset.twig, size, seed ^ 0xca2d);
+    pngs.extend([png(&cards.albedo), png(&cards.normal)]);
+    Maps { pngs, bark: branched }
+}
+
+/// Grow `spec` into its GLBs, level 0 embedding `maps`.
+fn build(spec: &PlantSpec, maps: &Maps) -> PlantGlb {
     let preset = species::preset(spec.species);
     let height = spec.grown_height();
     let skeleton = grow::grow(&preset, spec.season, height, spec.seed);
-    let texture_seed = texture_seed(spec.species, spec.season);
     let branched = preset.form != Form::Clump;
-    let bark = branched.then(|| texture::bark(preset.bark, spec.season, spec.texture_size, texture_seed));
-    let cards = texture::cards(preset.leaf, spec.season, preset.twig, spec.texture_size, texture_seed ^ 0xca2d);
     let mut levels = Vec::with_capacity(PLANT_LEVELS);
     let mut facts = PlantFacts { height, triangles: [0; PLANT_LEVELS], cards: [0; PLANT_LEVELS], stems: [0; PLANT_LEVELS], texture_size: spec.texture_size, impostor: branched };
     for (level, detail) in DETAILS.iter().enumerate() {
@@ -245,8 +267,7 @@ pub fn plant_glb(spec: &PlantSpec) -> PlantGlb {
         facts.triangles[level] = parts.iter().map(|(part, _)| part.triangles() as u32).sum();
         facts.cards[level] = geometry::cards_kept(&skeleton, *detail) as u32;
         facts.stems[level] = geometry::stems_kept(&skeleton, *detail) as u32;
-        let maps = Maps { bark: bark.as_ref().map(|maps| [&maps.albedo, &maps.normal, &maps.orm]), cards: [&cards.albedo, &cards.normal] };
-        levels.push(glb::write(&parts, (level == 0).then_some(&maps)));
+        levels.push(glb::write(&parts, (level == 0).then_some(maps)));
     }
     PlantGlb { levels, distances: level_distances(&preset, height), facts }
 }
@@ -266,10 +287,12 @@ fn level_distances(preset: &Preset, height: f32) -> [f32; PLANT_LEVELS - 1] {
     [(1.5 * height).max(6.0), (4.0 * height).max(15.0)]
 }
 
-/// The plants a game's resets grew, kept across seeds (each spec grows once a process).
+/// The plants a game's resets grew, kept across seeds (each spec grows once a process), and the
+/// maps each species and season painted (each painted once, whatever the seeds).
 #[derive(Debug, Default)]
 pub(crate) struct PlantCache {
     grown: RefCell<Vec<((Species, Season, u32, Option<u32>, u32), Model)>>,
+    painted: RefCell<Vec<((Species, Season, u32), Rc<Maps>)>>,
 }
 
 impl PlantCache {
@@ -279,15 +302,27 @@ impl PlantCache {
         if let Some((_, model)) = self.grown.borrow().iter().find(|(known, _)| *known == key) {
             return model.clone();
         }
-        let model = model_of(spec);
+        let maps = self.maps(spec);
+        let model = model_of(spec, &maps);
         self.grown.borrow_mut().push((key, model.clone()));
         model
+    }
+
+    /// The maps of `spec`'s species and season at its size, painted on their first ask.
+    fn maps(&self, spec: &PlantSpec) -> Rc<Maps> {
+        let key = (spec.species, spec.season, spec.texture_size);
+        if let Some((_, maps)) = self.painted.borrow().iter().find(|(known, _)| *known == key) {
+            return Rc::clone(maps);
+        }
+        let maps = Rc::new(paint(spec, false));
+        self.painted.borrow_mut().push((key, Rc::clone(&maps)));
+        maps
     }
 }
 
 /// A plant's model: its levels, its impostor (not for grass) and its species' wind.
-fn model_of(spec: &PlantSpec) -> Model {
-    let PlantGlb { levels, distances, facts } = plant_glb(spec);
+fn model_of(spec: &PlantSpec, maps: &Maps) -> Model {
+    let PlantGlb { levels, distances, facts } = build(spec, maps);
     let mut handles = levels.into_iter().map(crate::mesh::built_glb);
     let full = handles.next().unwrap_or_default();
     let coarser: Vec<(Model, f32)> = handles.zip(distances).collect();

@@ -51,7 +51,6 @@ pub(crate) struct Card {
 pub(crate) struct Skeleton {
     pub(crate) branches: Vec<Branch>,
     pub(crate) cards: Vec<Card>,
-    pub(crate) height: f32,
 }
 
 /// `v` turned about the unit `axis` by `angle` radians (Rodrigues).
@@ -256,7 +255,7 @@ pub(crate) fn grow(preset: &Preset, season: Season, height: f32, seed: u32) -> S
     let mut rng = Rng::new(seed);
     if preset.form == Form::Clump {
         let cards = blades(preset, height, &mut rng);
-        return Skeleton { branches: Vec::new(), cards, height };
+        return Skeleton { branches: Vec::new(), cards };
     }
     let mut grower = Grower { preset, season, rng, height, branches: Vec::new() };
     let radius = (height * preset.girth).max(0.01);
@@ -274,5 +273,5 @@ pub(crate) fn grow(preset: &Preset, season: Season, height: f32, seed: u32) -> S
         Form::Palm => fronds(preset, season, &branches[0], &mut rng),
         _ => twig_cards(preset, season, &branches, &mut rng),
     };
-    Skeleton { branches, cards, height }
+    Skeleton { branches, cards }
 }

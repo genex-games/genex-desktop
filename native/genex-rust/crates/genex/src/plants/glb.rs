@@ -8,8 +8,6 @@
 use serde_json::{Value, json};
 
 use super::geometry::Part;
-use super::png::encode_rgba;
-use super::texture::Image;
 use crate::mesh::{container, floats, tangents};
 
 /// The foliage's alpha cutoff.
@@ -20,10 +18,12 @@ const LEAF_TRANSMISSION: f32 = 0.55;
 const LEAF_ROUGHNESS: f32 = 0.6;
 const BARK_ROUGHNESS: f32 = 0.9;
 
-/// The maps a full level embeds, in image order.
-pub(crate) struct Maps<'a> {
-    pub(crate) bark: Option<[&'a Image; 3]>,
-    pub(crate) cards: [&'a Image; 2],
+/// The maps a full level embeds as PNG files, in image order: the bark's albedo, normal and ORM
+/// (when `bark`), then the cards' albedo and normal.
+#[derive(Debug)]
+pub(crate) struct Maps {
+    pub(crate) pngs: Vec<Vec<u8>>,
+    pub(crate) bark: bool,
 }
 
 /// What a part is drawn as.
@@ -34,7 +34,7 @@ pub(crate) enum Surface {
 }
 
 /// The GLB of `parts` (each with its surface), embedding `maps` when given.
-pub(crate) fn write(parts: &[(&Part, Surface)], maps: Option<&Maps<'_>>) -> Vec<u8> {
+pub(crate) fn write(parts: &[(&Part, Surface)], maps: Option<&Maps>) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut views: Vec<Value> = Vec::new();
     let mut accessors: Vec<Value> = Vec::new();
@@ -86,15 +86,13 @@ pub(crate) fn write(parts: &[(&Part, Surface)], maps: Option<&Maps<'_>>) -> Vec<
     }
     let mut images = Vec::new();
     if let Some(maps) = maps {
-        let embedded: Vec<&Image> = maps.bark.iter().flatten().copied().chain(maps.cards).collect();
-        for image in embedded {
-            let png = encode_rgba(&image.rgba, image.size, image.size);
-            let index = view(&mut bin, &png, None);
+        for png in &maps.pngs {
+            let index = view(&mut bin, png, None);
             images.push(json!({ "bufferView": index, "mimeType": "image/png" }));
         }
     }
     let textured = maps.is_some();
-    let bark_textured = maps.is_some_and(|maps| maps.bark.is_some());
+    let bark_textured = maps.is_some_and(|maps| maps.bark);
     let first_card = if bark_textured { 3 } else { 0 };
     let bark = if bark_textured {
         json!({

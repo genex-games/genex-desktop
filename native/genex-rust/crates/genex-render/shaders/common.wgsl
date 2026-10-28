@@ -518,6 +518,22 @@ const GX_SWAY_BRANCH_CALM: f32 = 0.35;
 const GX_SWAY_FLUTTER_CALM: f32 = 0.5;
 const GX_SWAY_TAU: f32 = 6.28318531;
 
+// A half float's value from its 16 bits (the wind words' pairs; `unpack2x16float` needs a
+// capability WebGPU core lacks). Subnormals read as 0; the words never hold infinities.
+fn gx_half(bits: u32) -> f32 {
+    let exponent = (bits >> 10u) & 0x1fu;
+    if exponent == 0u {
+        return 0.0;
+    }
+    let sign = (bits & 0x8000u) << 16u;
+    return bitcast<f32>(sign | ((exponent + 112u) << 23u) | ((bits & 0x3ffu) << 13u));
+}
+
+// The pair of half floats in `word`: low then high.
+fn gx_halves(word: u32) -> vec2<f32> {
+    return vec2<f32>(gx_half(word & 0xffffu), gx_half(word >> 16u));
+}
+
 // The row's wind words.
 fn gx_row_wind(row: Instance) -> vec3<u32> {
     return vec3<u32>(row.wind0, row.wind1, row.wind2);
@@ -530,9 +546,9 @@ fn gx_sway_on(wind: vec3<u32>) -> bool {
 
 // How far the vertex at model-space `local` of a copy under `model` moves, `t` wind seconds in.
 fn gx_sway_offset(model: mat4x4<f32>, local: vec3<f32>, wind: vec3<u32>, t: f32) -> vec3<f32> {
-    let extent = unpack2x16float(wind.x);
-    let bend = unpack2x16float(wind.y);
-    let leaf = unpack2x16float(wind.z);
+    let extent = gx_halves(wind.x);
+    let bend = gx_halves(wind.y);
+    let leaf = gx_halves(wind.z);
     let root = model[3].xyz;
     let scale = length(model[1].xyz);
     let field = gx_wind(root, t);
@@ -576,7 +592,7 @@ fn gx_sway_reach(row: Instance) -> f32 {
     if !gx_sway_on(wind) {
         return 0.0;
     }
-    let bend = unpack2x16float(wind.y);
+    let bend = gx_halves(wind.y);
     let scale = max(max(length(row.model[0].xyz), length(row.model[1].xyz)), length(row.model[2].xyz));
-    return (bend.x + bend.y + unpack2x16float(wind.z).x) * scale;
+    return (bend.x + bend.y + gx_halves(wind.z).x) * scale;
 }
