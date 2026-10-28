@@ -1,5 +1,17 @@
 # Grading and the lens
 
+Every type and call in one line (each a `RenderConfig` or `Grading` builder):
+
+```rust
+use genex::render::{DepthOfField, Grading, GradingLut, GradingSection, MotionBlur, RenderConfig};
+game.render_settings(RenderConfig::from_build().grading(grade)); // from_build keeps genex.toml's [render]
+Grading::NEUTRAL.with_contrast(1.1).with_saturation(0.95).with_vibrance(1.1); // each 0..=2, 1 is none
+Grading { shadows: GradingSection { lift: -0.01, ..GradingSection::NEUTRAL }, ..Grading::NEUTRAL }; // midtones, highlights
+grade.with_lut(GradingLut::parse_cube(text)?.intern()?, 0.8);  // -> Result<_, GradingLutError>
+config.temperature(0.3, 0.0).white_balance([1.0, 0.85, 0.65]).exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)]);
+config.depth_of_field(DepthOfField::focused(3.0, 2.0)).motion_blur(MotionBlur::shutter(0.5));
+```
+
 Grade last. Build a scene's look in this order and check a capture after each step: the
 environment and the sun's elevation, the local lights, a reflection probe and an irradiance volume
 for each room or courtyard, the fog, the exposure (auto, with its curve), and only then the grade.

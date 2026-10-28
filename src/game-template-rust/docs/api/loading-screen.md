@@ -4,7 +4,9 @@ From the first paint until the game's first lit frame every destination shows th
 screen: its title, a spinner that keeps turning while shaders compile, a bar and the stage in words
 (downloading the game, loading assets, starting the graphics, preparing shaders n of m, drawing the
 first frame). The web page, Live, a desktop window and a phone all draw it; a game never draws its own. Style
-it in `genex.toml`, never in code:
+it in `genex.toml`, never in code: there is no Rust call for it, and `genex::loading` is the
+shells' glue, not game API. The keys, all optional, in `[render.loading]`: `title` (text),
+`background`, `accent`, `text` (`#rrggbb` strings) and `logo` (an image path under `assets/`).
 
 ```toml
 [render.loading]            # every key optional

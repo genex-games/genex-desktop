@@ -16,9 +16,30 @@ panel with `genex::render::settings_button(ui, "Settings")`, a drawn gear beside
 The whole settings menu (graphics, audio, controls, language and accessibility, the game's own
 options) is `genex::settings::menu(ui)` (`docs/api/settings.md`).
 
-The HUD is egui 0.36. Inside a hook `ui.max_rect()` is the hook's area (its centre is the
-screen's, for a crosshair); the whole window is `ui.ctx().content_rect()`, which older egui
-called `screen_rect`.
+The HUD is egui 0.36 (pinned `=0.36.2`, re-exported as `genex::egui`; never add egui to
+`[crates]`). Inside a hook `ui.max_rect()` is the hook's area (its centre is the screen's, for a
+crosshair); the whole window is `ui.ctx().content_rect()`. This egui has no `screen_rect`. Every
+type and call in one line:
+
+```rust
+use genex::prelude::*;                                         // UiConfig, UiScale, TextArgs, egui
+use genex::ui::{Bar, Dialog, GridAnswer, ItemGrid, ItemList, Locale, Menu, ToastKind, Toasts};
+game.on_ui(|sim, ui, ctx| {});                                 // ui: &mut egui::Ui, once per tick
+game.ui(UiConfig::new().locales(&["en", "fr"]).scale(UiScale::Fixed(1.25))); // -> &mut Game
+ui.ctx().content_rect(); ui.max_rect();                        // -> egui::Rect: the screen, the hook's area
+genex::ui::tr("title-new"); genex::ui::tr_args("hud-coins", &TextArgs::new().num("coins", 3)); // -> String
+genex::ui::locale(); genex::ui::reduced_motion(); genex::ui::safe_area(ui); // -> Option<Locale>, bool, egui::Margin
+Menu::new("pause").item("resume", &resume).back("resume").show(ui); // -> Option<&str>, the picked key
+Dialog::new("quit").body(&sure).button("yes", &yes).cancel("no").show(ui); // -> Option<&str>; .title too
+ItemGrid::new("bag", 6).cell(64.0).show(ui, count, |ui, i, rect| label_of(i)); // -> GridAnswer
+ItemList::new("quests").show(ui, count, |ui, i, rect| label_of(i)); // GridAnswer { activated, moved, focused }
+Bar::new("hp", 0.5).label("Health").show(ui);                  // -> egui::Response
+Toasts::push(ui.ctx(), ToastKind::Info, &saved); Toasts::show(ui);
+genex::render::settings_button(ui, "Settings");                // -> egui::Response
+```
+
+A label is a `&str` the widget borrows: keep a `tr(..)` in a `let` before the builder when you
+keep the answer.
 
 ## The kit (`game.ui`)
 

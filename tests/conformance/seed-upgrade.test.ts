@@ -729,8 +729,8 @@ describe("the craft migration on an installed catalogue", () => {
     const owners = await craftCheckOwners(path.join(repoRoot, "src", "harness-seed"));
     assert.equal(
       owners.size,
-      42,
-      "one owner per craft check (rust.fps-viewmodel-rig's magazine-leaves-the-well is the 42nd)",
+      43,
+      "one owner per craft check (rust.soldier-kit's soldier-aims-along-pitch is the 43rd)",
     );
     assert.equal(owners.get("organic-not-solid"), "flora.organic-not-solid");
     for (const keeper of [

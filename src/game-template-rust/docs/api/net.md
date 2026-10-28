@@ -29,6 +29,24 @@ A `NetPlayer` reads `id`, `name`, `is_me`, `state` and `state_raw`. `NetEvent` i
 `Control { ticket, result, retry_at_tick }`, `RoomOpen { open }`, `Reconnecting { attempt }`,
 `Reconnected`, `Closed { reason }`, `Match { status }` and `Warning { code }`.
 
+```rust
+for event in sim.net.events() {                                // event: &NetEvent
+    match event {
+        NetEvent::Joined { player } => { sim.world.scores.insert(player.as_str().to_owned(), 0); }
+        NetEvent::Left { player } => { sim.world.scores.remove(player.as_str()); }
+        _ => {}                                                // required: NetEvent is #[non_exhaustive]
+    }
+}
+```
+
+Common mistakes:
+
+- `sim.net.players()` and `sim.net.remotes()` are iterators, not `Vec`s: there is no `len`; count
+  them with `Iterator::count`. `sim.net.connected()` is the quorum (seats not held by the
+  reconnect grace), not the same number while someone reconnects.
+- `sim.net.events()` is a slice, `&[NetEvent]`, which has no `cloned`: loop over it as above, or
+  own the events with `sim.net.events().to_vec()` when the loop also writes to `sim.net`.
+
 ## In Studio
 
 - The build chooses the room, never the game. A build with networking runs a **loopback room** in

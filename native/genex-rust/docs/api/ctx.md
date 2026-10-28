@@ -1,5 +1,28 @@
 # Ctx
 
+A tick's input, randomness, clock and save folder, read in `on_update` and `on_ui`. Every type
+and call in one line:
+
+```rust
+use genex::prelude::*;                                      // Ctx, Key, Touch, Input, Pcg32, Fit (Game::fit)
+use genex::TouchPhase;                                      // Began | Held | Ended | Tapped
+ctx.keys.down(Key::KeyW); ctx.keys.pressed(Key::Space); ctx.keys.released(key); // -> bool
+ctx.touches.all();                                          // -> &[Touch]: Touch { id: u32, position: Vec2, phase }
+ctx.touches.tapped(); ctx.touches.began();                  // -> bool, any finger
+ctx.pads.down(pad, button); ctx.pads.value(pad, button); ctx.pads.axis(pad, axis); // -> bool, f32, f32
+ctx.pointer; ctx.look; ctx.wheel; ctx.text;                 // Vec2, Vec2, Vec2, &str
+ctx.rng.f32(); ctx.rng.range(lo, hi); ctx.rng.range_i32(lo, hi); // -> f32, f32, i32; a reset's Pcg32 the same
+ctx.rng.below(n); ctx.rng.chance(p); ctx.rng.next_u32();    // -> u32, bool, u32
+ctx.dt; ctx.tick; ctx.world_size;                           // f32, u64, [u32; 2]
+ctx.save("progress.json", &bytes); ctx.load("progress.json"); // -> bool, Option<Vec<u8>>
+ui.ctx().content_rect();                                    // the whole window in on_ui (not screen_rect: docs/api/ui.md)
+Game::new(world).fit(Fit::Expand);                          // or Fit::Letterbox, the default
+Input::key_tap(Key::Space).and(Input::click_at(x, y));      // also key_down, key_up, pointer, look, wheel, text
+Input::touch_start(id, x, y); Input::touch_move(id, x, y); Input::touch_end(id, x, y);
+```
+
+`ctx.actions` is `docs/api/input.md` and `ctx.audio` is `docs/api/audio.md`.
+
 `ctx.keys` (`down`, `pressed`, `released` by `Key`, the DOM code names), `ctx.touches`,
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,
 `ctx.text`, `ctx.rng` (the only randomness: `ctx.rng.f32()` in `[0, 1)`, `ctx.rng.range(lo, hi)`

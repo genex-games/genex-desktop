@@ -19,11 +19,25 @@ g.layer("base"); g.state(base, "idle", Motion::clip(idle)); // -> LayerId, State
 g.event(clip, 0.3, "hit");                  // -> EventId
 animator.update(ctx.dt);                    // -> AnimatorStep { root_motion, events }
 frame.character_with(&animator, at, &CharacterDraw::new().tint(Color::RED));
+use genex::animation::{JointId, Limb, LimbTarget, LookTarget}; // sockets and IK
+animator.socket(joint, model);              // joint: JointId, model: Mat4 -> Mat4, the joint in the world
+animator.look_at(Some(LookTarget { target, weight: 1.0 })); // character space; None lets go
+animator.reach(Limb::RightArm, Some(LimbTarget { target, pole, weight: 1.0 }));
 ```
 
 A `CharacterAsset` keeps its fields private: read it through the calls above. An
 `AnimationError`'s `code` and `detail` are fields. The prelude's `Condition` is the input page's;
 a graph's conditions come from its parameters (`speed.above(0.1)`, `attack.fired()`).
+
+Common mistakes:
+
+- `CharacterAsset` has no `joint` method. A joint is a `JointId` from `hero.skeleton()`'s `find`,
+  which takes the joint's name (exact, else the part after `|` or `:` ignoring case, so `"hips"`
+  finds `mixamorig:Hips`) and answers `Option<JointId>`. Its transform is the animator's:
+  `animator.socket(joint, model)`, `model` being the `Mat4` the character is drawn at (a
+  `Transform`'s `matrix`).
+- `LookTarget` and `LimbTarget` have no `new`: write the struct, `LookTarget { target, weight }`
+  (a `Vec3` in character space, an `f32` in 0..=1), and pass it as `Some(..)`.
 
 ## The simple animator (start here)
 

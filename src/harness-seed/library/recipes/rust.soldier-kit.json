@@ -1,0 +1,68 @@
+{
+  "id": "rust.soldier-kit",
+  "runtime": "rust-wgpu",
+  "title": "Remote soldiers in Rust: the soldier kit's rig, driven only by replicated state, aiming along its pitch and firing its own rifle",
+  "tags": [
+    "soldier",
+    "enemy",
+    "enemies",
+    "remote",
+    "player",
+    "multiplayer",
+    "network",
+    "replicated",
+    "animation",
+    "animated",
+    "rig",
+    "kit",
+    "aim",
+    "pitch",
+    "strafe",
+    "crouch",
+    "fire",
+    "muzzle",
+    "hit",
+    "death",
+    "shooter",
+    "bodycam",
+    "fps",
+    "tps"
+  ],
+  "checkClass": "characters",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "Shooter enemies and remote players: start from docs/examples/soldier (a rigged soldier with a rifle, locomotion, an aim layer along the pitch, fire, reload, hits and death), animated from replicated state alone; never a capsule or a statue.",
+  "intent": "Remote soldiers that do not read as people are the shooter's most repeated judge note: no aim along the pitch, no muzzle flash from their own rifle, sliding or frozen legs, and no close view of their animations. The template ships a kit for this: docs/examples/soldier/soldier.glb (Quaternius' CC0 animation library mannequin in combat gear holding the arms kit's rifle on a weapon bone), with Idle, Walk, Run, Sprint, StrafeLeft, StrafeRight, CrouchIdle, CrouchWalk and Death for the legs, RifleAim, RifleAimUp, RifleAimDown, RifleLow, RifleFire and RifleReload for the upper body (masked from upper_chest), and additive HitFront, HitBack, HitLeft and HitRight; its body bones carry humanoid names, so plant_feet finds the legs. Copy it to assets/kits/soldier.glb and copy docs/examples/soldier/src/facets/soldier.rs. Drive it only from what the network replicates (position, velocity, yaw, pitch, crouch, health, and counters of shots, reloads and hits with the hit's direction): the velocity in the soldier's own frame picks the gait, the pitch weights the aim-up or aim-down additive layer, a changed counter fires the shot, reload or the side's hit, zero health holds the death and drops the upper body's weight. Plant the feet after each update, draw it under frame.tag(\"soldier\") and one frame.id, and flash at its own muzzle socket. Give judges a camera that frames it close (the example's game camera does) and capture idle, run, strafe, aim up and down, fire, a hit and death. For another look, run soldier.py through blender__model with the UAL's GLB as its model.",
+  "sketch": "// genex.toml: [animation] enabled = true\n// assets/kits/soldier.glb: the kit, copied from docs/examples/soldier/; soldier.py makes it\n// src/facets/soldier.rs, cut down from the whole facet in docs/examples/soldier/src/facets/: a remote soldier\n// animated from its replicated state alone, so every machine shows the same soldier.\nuse genex::animation::{FloatParam, LayerId, Mask, Motion, TriggerParam, height_ground};\nuse genex::prelude::*;\n\n/// What the network carries (World holds one per remote soldier): counters, not events.\n#[derive(Clone, Copy, Default)]\npub struct SoldierNet { pub pos: Vec3, pub vel: Vec3, pub yaw: f32, pub pitch: f32, pub shots: u32, pub hp: f32 }\n\nstruct Kit { animator: Animator, gait: FloatParam, fire: TriggerParam, aim_up: LayerId, seen_shots: u32 }\n\npub fn wire(game: &mut Game<super::World>) {\n    game.on_reset(|sim, _, _, gfx| {\n        let Ok(kit) = gfx.character(\"kits/soldier.glb\") else { return };\n        let (Some(idle), Some(walk), Some(aim), Some(up), Some(fire)) = (kit.clip(\"Idle\"), kit.clip(\"Walk\"), kit.clip(\"RifleAim\"), kit.clip(\"RifleAimUp\"), kit.clip(\"RifleFire\")) else { return };\n        let Some(upper_chest) = kit.skeleton().find(\"upper_chest\") else { return };\n        let mut g = kit.graph();\n        let gait = g.float(\"gait\", 0.0);\n        let base = g.layer(\"base\");\n        let standing = g.state(base, \"idle\", Motion::clip(idle));\n        let walking = g.state(base, \"walk\", Motion::clip(walk)); // + run, back (Walk at -1), strafes, crouch, death\n        g.transition(standing, walking).when(gait.above(0.5)).inertialize(0.25);\n        g.transition(walking, standing).when(gait.below(0.5)).inertialize(0.25);\n        // The rifle rides the upper body (upper_chest and below it), over whatever the legs do.\n        let upper = g.layer(\"upper\");\n        g.layer_mask(upper, Mask::Joints(vec![upper_chest]));\n        g.state(upper, \"aim\", Motion::clip(aim));\n        // The pitch: an additive layer weighted by it (a second one tilts down).\n        let aim_up = g.layer(\"aim-up\");\n        g.layer_mask(aim_up, Mask::Joints(vec![upper_chest]));\n        g.layer_additive(aim_up, aim);\n        g.state(aim_up, \"aim-up\", Motion::clip(up));\n        let shots = g.layer(\"shots\");\n        g.layer_additive(shots, fire);\n        let none = g.state(shots, \"none\", Motion::Empty);\n        let firing = g.state(shots, \"fire\", Motion::clip(fire).once());\n        let shot = g.trigger(\"fire\");\n        g.transition(none, firing).when(shot.fired()).crossfade(0.0);\n        g.transition(firing, none).at_end().crossfade(0.03);\n        let Ok(graph) = g.build() else { return };\n        let Ok(animator) = kit.animator(&graph) else { return };\n        sim.world.kit = Some(Kit { animator, gait, fire: shot, aim_up, seen_shots: 0 });\n    });\n    game.on_update(|sim, ctx| {\n        let net = sim.world.remote; // the last packet's state\n        let Some(kit) = sim.world.kit.as_mut() else { return };\n        kit.animator.set_float(kit.gait, if net.vel.length() > 0.3 { 1.0 } else { 0.0 });\n        kit.animator.set_layer_weight(kit.aim_up, (net.pitch / 0.52).clamp(0.0, 1.0));\n        if net.shots != kit.seen_shots { kit.animator.fire(kit.fire); kit.seen_shots = net.shots; }\n        kit.animator.update(ctx.dt);\n        kit.animator.plant_feet(placed(&net), height_ground(|_, _| Some(0.0)));\n    });\n    game.on_draw(|sim, frame, _| {\n        let Some(kit) = &sim.world.kit else { return };\n        let at = placed(&sim.world.remote);\n        frame.tag(\"soldier\").id(0x534f_4c44).character(&kit.animator, at).end_id();\n        // The muzzle flash comes from the soldier's own rifle: kit.animator.socket(muzzle, at.matrix()).\n    });\n}\n\n/// The soldier at its position, turned to its yaw about +y (0 along +x); the kit faces +z.\nfn placed(net: &SoldierNet) -> Transform {\n    Transform::from_translation(net.pos).with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2 - net.yaw))\n}\n",
+  "check": {
+    "id": "soldier-aims-along-pitch",
+    "kind": "demo",
+    "name": "soldier-aim",
+    "expr": "result.muzzleRiseM > 0.1",
+    "weight": "identity",
+    "note": "A demo named soldier-aim holds a remote soldier's pitch at +0.5 and then -0.5 and returns { muzzleRiseM }: how much higher its muzzle socket is aiming up than down. A soldier that aims only by turning leaves it near 0."
+  },
+  "port": "One facet owns the remote soldiers' animators and draws them; the network or the AI writes only their replicated state into the world, and nothing else moves an animator.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/examples/soldier/README.md",
+      "note": "The kit's clips, joints and layers, how soldier.rs drives them from replicated state, and how to rebuild it with soldier.py."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Animation)",
+      "note": "gfx.character, the graph (layers, masks, additive layers, weights, triggers), plant_feet, frame.character, animator.socket."
+    },
+    {
+      "source": "library/recipes/rust.animated-characters.json",
+      "note": "The general animated-character technique this kit specialises for shooters, from the bodycam rerun's judges (remote soldiers that did not read as people)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

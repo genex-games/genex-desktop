@@ -1,5 +1,20 @@
 # genex.toml
 
+Every table and its keys in one line (only `[game] title` is required; a key not listed here is
+refused):
+
+```text
+[game] title, world_size, fit, save_name      [crates] <crate> = "<version>"   [[crate_request]] name, version, reason
+[[wgsl]] path, kind, api                      [gpu] native_features            [web] wasm_budget_mb
+[physics] [audio] [nav] [streaming] [animation] enabled
+[[texture]] path, usage                       [[asset_group]] name, paths
+[assets] budget_mb, phone_max_texture_px      [assets.<web|ios|android|desktop>] budget_mb
+[net] enabled   [net.matchmaking] preset, win_condition   [net.matchmaking.config] <knob> = <number>
+[render] and its tables: docs/api/rendering.md   [render.loading]: docs/api/loading-screen.md
+```
+
+Studio writes `[engine]` when the person ejects the engine; never add or edit it.
+
 ```toml
 [game]
 title = "Pond"            # required

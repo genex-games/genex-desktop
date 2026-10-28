@@ -294,10 +294,15 @@
     "skinned": "refused mesh-invalid",
     "parts": "5a36ae9f06ad11ff"
   },
+  "tests/fixtures/asset-import/lods-finned.glb": {
+    "mesh": "e7d6c3118735a9c3",
+    "skinned": "refused mesh-invalid",
+    "parts": "34bb415c78d6c39a"
+  },
   "tests/fixtures/asset-import/lods-sphere.glb": {
     "mesh": "5ab6927feb50cf37",
     "skinned": "refused mesh-invalid",
-    "parts": "b81fb49d0a0c10fc"
+    "parts": "ba4d58c4ab2ffcad"
   },
   "tests/fixtures/asset-import/quantized.glb": {
     "mesh": "refused mesh-invalid",

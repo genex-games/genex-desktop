@@ -1,8 +1,10 @@
 # Drawing
 
-Every call in one line (each returns `&mut Frame`, so calls chain):
+Every type and call in one line (each `frame.*` returns `&mut Frame`, so calls chain):
 
 ```rust
+use genex::prelude::*;                                      // Frame, Transform, Color, Material, Model, MeshData, Camera
+use genex::{Impostor, LodRefusalCode, MeshError, MeshErrorCode}; // and LOD_LEVELS_MAX, MESH_VERTICES_MAX
 frame.tag("walls");                                         // later draws count under "walls"
 frame.model(&model, transform);                             // a GLB with its own materials
 frame.model_with(&model, transform, &material);             // a GLB (or a built mesh) in one Material
@@ -10,11 +12,25 @@ frame.model_tinted(&model, transform, color);               // its own materials
 frame.cube(transform, color);                               // a unit cube (-0.5..0.5), scaled by the transform
 frame.cube_with(transform, &material);
 frame.sphere(center, radius, color);                        // a Vec3 and a radius, never a Transform
-frame.sphere_with(center, radius, &material);
+frame.sphere_with(center, radius, &material);               // the same: frame.sphere_with(vec3(0.0, 1.0, 0.0), 0.5, &mat)
 frame.line(from, to, color);
 frame.lines(&points, color);                                // each pair of points one segment
 frame.clear(color);
+Transform::from_xyz(x, y, z).with_rotation(quat).with_scale(scale); // also ::from_translation(v), ::IDENTITY
+Color::rgb(r, g, b); Color::rgba(r, g, b, a);               // u8 sRGB; Color::WHITE, BLACK, RED, GREEN, BLUE
+gfx.assets().model("pond.glb");                             // -> Model, in on_reset
+gfx.mesh(&data);                                            // -> Result<Model, MeshError>; error.code.wire()
+data.cuboid(min, max, metres).quad(corners, metres);        // data: MeshData::new(); .vertex(p, n, uv) -> u32, .triangle(a, b, c)
+model.with_levels(&[(lod1, 24.0)]).with_lod_bias(2.0).with_impostor(Impostor::hemi()); // -> Model
+model.impostor(); model.lod_refusal();                      // -> Option<Impostor>, Option<LodRefusalCode>
+gfx.assets().compound(&[&wood, &foliage]);                  // -> Model
+Camera::look_at(position, target);                          // Camera { projection: Projection::Orthographic, fovy, .. }
 ```
+
+There is no `Material::with_double_sided`. A GLB whose glTF material is `doubleSided` draws both
+faces through `frame.model` or `frame.model_tinted`; `frame.model_with` replaces its materials and
+culls back faces. A built card gets its back as a second quad wound the other way:
+`data.quad([bl, br, tr, tl], 1.0).quad([br, bl, tl, tr], 1.0)`.
 
 A `Transform` is `Transform::from_xyz(x, y, z)` or `Transform::from_translation(v)`, then
 `.with_rotation(quat)` and `.with_scale(vec3(4.0, 3.0, 0.2))`: a 4 m wide, 3 m tall, 0.2 m thick

@@ -1,5 +1,21 @@
 # Custom materials and post passes
 
+Every type and call in one line:
+
+```rust
+use genex::prelude::*;                                      // CustomMaterial, CustomMesh, PostPass, Gfx, Frame
+use genex::ExtensionRefusal;                                // material.refusal() -> Option<&ExtensionRefusal>
+use genex::render::{ClassOverride, JitterCycle, RenderConfig, TaaQuality};
+game.wgsl("shaders/glow.wgsl", include_str!("../shaders/glow.wgsl")); // one per [[wgsl]] row
+gfx.material(path, &uniforms);                              // -> CustomMaterial; uniforms: &[f32]
+gfx.set_material_uniforms(&material, &uniforms);            // -> Result<(), ExtensionRefusal>
+gfx.material_textured(path, &uniforms, &[&gfx.texture("textures/noise.png")]); // -> CustomMaterial
+gfx.post_pass(path); gfx.post_pass_with(path, &uniforms);   // -> PostPass
+frame.custom(&model, transform, &material, tint);           // or CustomMesh::Cube, CustomMesh::Sphere for &model
+frame.post_pass(&pass);                                     // after the world, before the HUD
+RenderConfig::new().class(class, ClassOverride { taa: Some(TaaQuality::DEFAULT.with_jitter_cycle(JitterCycle::Sixteen)), ..Default::default() });
+```
+
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,
 `kind = "material"` or `"post"`, `api = 1`) and compile it in with
 `game.wgsl("shaders/glow.wgsl", include_str!("../shaders/glow.wgsl"))`: web, phone and export builds

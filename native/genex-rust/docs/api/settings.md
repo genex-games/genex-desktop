@@ -6,6 +6,22 @@ change the focused row, A activates, and B backs out. The pointer moving onto a 
 so one row is outlined at a time. `menu` answers whether something changed;
 `genex::settings::menu_answer(ui)` also answers the tab drawn and `back`, so a pause menu can close
 it.
+The types live in `genex::settings`, not the prelude. Every type and call in one line:
+
+```rust
+use genex::settings::{MenuAnswer, SettingDef, SettingValue, SettingsConfig, SettingsTab};
+game.settings(SettingsConfig::new().option(tab, def).preset(tab, "veteran", &[("hints", value)])); // -> &mut Game
+SettingDef::toggle(key, label, default);                       // default: bool
+SettingDef::slider(key, label, min, max, step, default);       // all f32
+SettingDef::choice(key, label, &["off", "some", "all"], default); // default: u16, an index
+// SettingValue::Bool(bool) | Number(f32) | Choice(u16); SettingsTab::Graphics | Audio | Controls | Accessibility | Game
+genex::settings::menu(ui);                                     // -> bool: something changed
+genex::settings::menu_answer(ui);                              // -> MenuAnswer { tab, changed, back }
+genex::settings::value("ui.subtitles");                        // -> Option<SettingValue>
+genex::settings::number("ui.screen_shake"); genex::settings::flag("ui.subtitles"); // -> f32, bool
+```
+
+`SettingValue` and `SettingsTab` are `#[non_exhaustive]`: a `match` on one ends with `_ => {}`.
 
 | Tab | What it holds |
 |-|-|
