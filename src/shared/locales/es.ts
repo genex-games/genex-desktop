@@ -5253,6 +5253,7 @@ export default {
     "el proveedor de modelos nos frenó: esperando a que se restablezca el límite",
   "the modeller": "el modelador",
   "the must-fix was not fixed": "no se hizo el arreglo obligatorio",
+  "it added something below the game's look bar": "añadió algo por debajo del nivel visual del juego",
   "the plan": "el plan",
   "the plan is ready — {parts}.": "el plan está listo: {parts}.",
   "the plan is ready.": "el plan está listo.",

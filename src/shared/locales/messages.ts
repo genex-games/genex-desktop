@@ -4628,6 +4628,7 @@ export const MESSAGES = [
   "installs Genex packages in the game",
   "insufficient samples",
   "integrations",
+  "it added something below the game's look bar",
   "it finished",
   "it landed",
   "it ran out of time",

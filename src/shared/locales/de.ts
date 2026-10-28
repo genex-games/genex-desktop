@@ -5298,6 +5298,7 @@ export default {
     "der Modellanbieter hat uns gestoppt – wir warten, bis das Limit zurückgesetzt ist",
   "the modeller": "der Modellierer",
   "the must-fix was not fixed": "der Pflicht-Fix wurde nicht gemacht",
+  "it added something below the game's look bar": "es fügte etwas hinzu, das unter dem Look-Anspruch des Spiels liegt",
   "the plan": "der Plan",
   "the plan is ready — {parts}.": "der Plan steht – {parts}.",
   "the plan is ready.": "der Plan steht.",

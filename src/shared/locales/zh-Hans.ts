@@ -4897,6 +4897,7 @@ export default {
   "the model provider stopped us — waiting for the limit to reset": "模型提供方暂停了请求——正在等待额度重置",
   "the modeller": "建模师",
   "the must-fix was not fixed": "必须修复的问题没有修好",
+  "it added something below the game's look bar": "它加入了低于游戏画面标准的内容",
   "the plan": "计划",
   "the plan is ready — {parts}.": "计划已就绪——{parts}。",
   "the plan is ready.": "计划已就绪。",

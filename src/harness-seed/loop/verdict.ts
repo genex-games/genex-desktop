@@ -77,6 +77,7 @@ export const VerdictRule = {
   NoChange: "no-change",
   NoMove: "no-move",
   Unfixed: "unfixed",
+  BelowLookBar: "below-look-bar",
   Broken: "broken",
   Unreachable: "unreachable",
   Stopped: "stopped",
@@ -131,6 +132,8 @@ export const VerdictSource = {
   NoMove: "no-move",
   /** THE FIX was mandatory and the build leaves it. */
   Unfixed: "unfixed",
+  /** On a run with a visual bar, the round added a look blocker (look-bar.ts): not kept, whatever checks flipped. */
+  LookBlocked: "look-blocked",
   /** The challenger did not produce a judgeable build. */
   Broken: "broken",
   /** The judge could not be reached: an auto-tie. */
@@ -156,6 +159,7 @@ const LOST_BY_SOURCE: Record<string, string> = {
   [VerdictSource.Invisible]: VerdictRule.NoChange,
   [VerdictSource.NoMove]: VerdictRule.NoMove,
   [VerdictSource.Unfixed]: VerdictRule.Unfixed,
+  [VerdictSource.LookBlocked]: VerdictRule.BelowLookBar,
   [VerdictSource.Broken]: VerdictRule.Broken,
   [VerdictSource.Outage]: VerdictRule.Unreachable,
   [VerdictSource.Stopped]: VerdictRule.Stopped,
@@ -173,6 +177,7 @@ const BECAUSE: Record<string, string> = {
   "no-change": "Undone: every camera showed exactly what the round before showed.",
   "no-move": "Undone: the step it was asked for did not arrive.",
   unfixed: "Undone: the problem it was told to fix is still there.",
+  "below-look-bar": "Undone: it added something below the look the game is held to.",
   broken: "Undone: the game did not start after this build.",
   unreachable: "Undone: the judge could not be reached, so nothing was changed.",
   stopped: "Not judged: the lead stopped this round, and the work it had done is kept.",

@@ -5185,6 +5185,7 @@ export default {
     "モデルプロバイダーに止められました。上限のリセットを待っています",
   "the modeller": "モデラー",
   "the must-fix was not fixed": "必ず直すべき問題が直っていませんでした",
+  "it added something below the game's look bar": "ゲームの見た目の基準に届かないものを追加しました",
   "the plan": "プラン",
   "the plan is ready — {parts}.": "プランができました：{parts}。",
   "the plan is ready.": "プランができました。",

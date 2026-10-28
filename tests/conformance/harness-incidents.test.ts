@@ -17888,11 +17888,12 @@ describe("a first-person Rust game's craft, handed before anything fails (bodyca
   /** The art pass a photoreal brief's plan carries (look-bar.ts). */
   const SCHOOL_ART = JSON.stringify(
     [
-      ["hero", "gloved hands and pistol", "genex-model"],
-      ["mid", "peeling-paint windows with sunburst grilles", "genex-model"],
-      ["scatter", "plaster debris and dust", "scan"],
-      ["sky", "hard sun through dusty air", "blender"],
-    ].map(([tier, asset, source]) => ({ area: "the corridor", tier, asset, source })),
+      // Flipped (gen3 G3-2a): a look brief's assets say what they are, and the sky is an HDRI scan, not Blender.
+      ["hero", "gloved hands and pistol", "genex-model", "prop"],
+      ["mid", "peeling-paint windows with sunburst grilles", "genex-model", "structure"],
+      ["scatter", "plaster debris and dust", "scan", "surface"],
+      ["sky", "hard sun through dusty air", "scan", "atmosphere"],
+    ].map(([tier, asset, source, kind]) => ({ area: "the corridor", tier, asset, source, kind })),
   );
   /** A three.js recipe's Rust port: `fps.hands-in-frame` is `rust.fps-hands-in-frame` (no id holds another's). */
   const rustPortOf = (id: string) => `rust.${id.replace(".", "-")}`;
@@ -18345,13 +18346,15 @@ describe("Bodycam rerun: greybox nobody had to replace", () => {
       tier,
       asset: `${tier} asset`,
       source,
+      kind: "prop",
       ...extra,
     });
+    // Flipped (gen3 G3-2a): every asset names its kind, and the sky is an HDRI scan rather than Blender.
     const full = [
       asset("hero", "genex-model"),
       asset("mid", "genex-model"),
-      asset("scatter", "scan"),
-      asset("sky", "blender"),
+      asset("scatter", "scan", { kind: "surface" }),
+      asset("sky", "scan", { kind: "atmosphere" }),
     ];
     assert.match(String(await loopRun.setPlan({ summary, workers })), /plan: the ask sets a visual bar/);
     assert.match(String(await loopRun.setPlan({ summary, workers, art: "none" })), /needs its art pass/);
@@ -18381,5 +18384,230 @@ describe("Bodycam rerun: greybox nobody had to replace", () => {
     });
     assert.doesNotMatch(String(await chess.setPlan({ summary: "Chess.", workers })), /^plan:/);
     assert.equal(artPassLines(chess.run), "");
+  });
+});
+
+describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", () => {
+  // Gen3 kept a yard of box benches, cone birches and slab snow: rounds were kept when existence
+  // checks flipped, look blockers only changed `satisfied`, judges looked through 960×540 stills
+  // and nothing measured exposure or motion over time. One row per failure in the AAA review.
+  const yard: Run = {
+    runId: "g3-yard",
+    project: "body-cam-2",
+    goal: "Make the photorealistic bodycam fps shooter in a snowy post-soviet yard.",
+    reference: { name: "a photoreal bodycam shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const facet = { id: "yard", title: "The yard", intent: "a snowy panel-block courtyard with benches and birches" };
+  const judging = (answer: Record<string, unknown>) =>
+    ctxRecorder({ handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(answer) } }) } });
+  const askedOf = (recorder: ReturnType<typeof judging>): string => {
+    const messages = recorder.paramsOf("engine.complete")[0]?.messages;
+    return Array.isArray(messages) ? String(messages[0]?.content) : "";
+  };
+  const preferChallenger = (extra: Record<string, unknown> = {}) => ({
+    pick: "A",
+    satisfied: false,
+    regression: null,
+    newCheck: null,
+    defects: [],
+    polish: [],
+    scale: "structural",
+    reason: "the yard is a courtyard now",
+    ...extra,
+  });
+  /** A game state reporting one tag's engine look facts. */
+  const lookState = (tags: Record<string, Record<string, unknown>>) => ({
+    phase: "playing",
+    __render: { look: { tags } },
+  });
+  const BOX_BENCH = { coverage: 0.04, flat_coverage: 0.035, primitive_only: true, organic: false };
+
+  it("G3-1a. yard it1 was kept on yard-is-a-courtyard while it added a bench of twelve boxes: a round that adds a look blocker is not kept, whatever checks flipped", async () => {
+    const { acceptRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
+    const spec = { checks: [{ id: "yard-is-a-courtyard", kind: "vision" }] };
+    const board = { "yard-is-a-courtyard": { kind: "vision", pass: true } };
+    const comparison = { flips: ["yard-is-a-courtyard"] };
+    const kept = acceptRound({ spec, board, comparison, taste: { veto: false, pick: "challenger" } });
+    assert.equal(kept.accepted, true, "a strong flip alone still keeps a round");
+    const blocked = acceptRound({
+      spec,
+      board,
+      comparison,
+      taste: { veto: false, pick: "challenger", addedBlockers: ["[primitive] the bench is twelve boxes — eye:spawn"] },
+    });
+    assert.deepEqual([blocked.accepted, blocked.source], [false, "look-blocked"]);
+  });
+
+  it("G3-1b. the taste judge saw a box bench appear where there was none and could not call it a regression: on a look bar it lists what the accepted build added, and the engine's facts add theirs", async () => {
+    const bench = "[primitive] the new bench by the garages is twelve grey boxes — eye:spawn";
+    const recorder = judging(preferChallenger({ added: [bench, "a nicer bench"] }));
+    const taste = await tasteVeto(recorder.ctx, {
+      run: yard,
+      facet,
+      challenger: { state: { phase: "playing" } },
+      incumbentEvidence: { state: { phase: "playing" } },
+      random: () => 0.1,
+    });
+    assert.deepEqual(taste.addedBlockers, [bench], "only a tagged look blocker counts as added");
+    assert.match(askedOf(recorder), /ART BAR: .*"added".*"Worse against the art bar" is a regression/);
+    // The engine's facts: a bench drawn as untouched primitives in flat colour, new in this round.
+    const facts = await tasteVeto(judging(preferChallenger()).ctx, {
+      run: yard,
+      facet,
+      challenger: { state: lookState({ bench: BOX_BENCH }) },
+      incumbentEvidence: { state: lookState({}) },
+      random: () => 0.1,
+    });
+    assert.deepEqual(
+      facts.addedBlockers.map((text: string) => /^\[([a-z-]+)\] bench:/.exec(text)?.[1]),
+      ["primitive", "flat-material"],
+    );
+    // A blocker the incumbent already showed was not added by this round.
+    const old = await tasteVeto(judging(preferChallenger()).ctx, {
+      run: yard,
+      facet,
+      challenger: { state: lookState({ bench: BOX_BENCH }) },
+      incumbentEvidence: { state: lookState({ bench: BOX_BENCH }) },
+      random: () => 0.1,
+    });
+    assert.deepEqual(old.addedBlockers, []);
+    // A run with no visual bar is not held to one.
+    const chess = { ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run;
+    const plain = judging(preferChallenger({ added: [bench] }));
+    const unbarred = await tasteVeto(plain.ctx, {
+      run: chess,
+      facet,
+      challenger: { state: lookState({ bench: BOX_BENCH }) },
+      incumbentEvidence: { state: lookState({}) },
+      random: () => 0.1,
+    });
+    assert.deepEqual(unbarred.addedBlockers, []);
+    assert.doesNotMatch(askedOf(plain), /ART BAR/);
+  });
+
+  it("G3-2a. the art pass took a cone-script birch and a box bench as `blender`, and the grammar's own example sourced the sky from Blender: a kit is the modular shell only, every asset says what it is, and the example is a valid pass", async () => {
+    const { readArtPass, ArtRefusal } = await import("../../src/harness-seed/loop/look-bar.ts");
+    const { ART_GRAMMAR } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");
+    const example = JSON.parse(/\[\{.*?\}\]/.exec(ART_GRAMMAR)?.[0] ?? "[]");
+    const read = readArtPass(JSON.stringify(example), true);
+    assert.ok("art" in read && read.art, "the grammar's example passes its own rules");
+    const sky = example.find((asset: { tier: string }) => asset.tier === "sky");
+    assert.notEqual(sky.source, "blender-kit", "the sky is no Blender script");
+    const row = (extra: Record<string, unknown>) => ({ area: "the yard", asset: "a thing", ...extra });
+    const others = [
+      row({ tier: "mid", kind: "structure", source: "blender-kit", why: "wears the concrete_panels scan" }),
+      row({ tier: "scatter", kind: "surface", source: "scan" }),
+      row({ tier: "sky", kind: "atmosphere", source: "scan" }),
+    ];
+    const pass = (hero: Record<string, unknown>) => readArtPass(JSON.stringify([row(hero), ...others]), true);
+    const problem = (hero: Record<string, unknown>) => {
+      const answer = pass(hero);
+      return "problem" in answer ? answer.problem.code : null;
+    };
+    assert.equal(
+      problem({ tier: "hero", kind: "prop", source: "blender" }),
+      ArtRefusal.KitNotForHero,
+      "the old `blender` is a kit",
+    );
+    const birch = row({ tier: "mid", kind: "organic", source: "blender-kit", why: "bark scan" });
+    const birches = readArtPass(
+      JSON.stringify([row({ tier: "hero", kind: "prop", source: "genex-model" }), birch, ...others]),
+      true,
+    );
+    assert.equal(
+      "problem" in birches ? birches.problem.code : null,
+      ArtRefusal.KitNotForHero,
+      "a cone-script birch is no kit",
+    );
+    assert.equal(problem({ tier: "hero", source: "genex-model" }), ArtRefusal.KindMissing);
+    const bare = readArtPass(
+      JSON.stringify([
+        row({ tier: "hero", kind: "prop", source: "cc0-model" }),
+        ...others.slice(1),
+        row({ tier: "mid", kind: "structure", source: "blender-kit" }),
+      ]),
+      true,
+    );
+    assert.equal("problem" in bare ? bare.problem.code : null, ArtRefusal.KitWithoutWhy);
+    const good = pass({ tier: "hero", kind: "prop", source: "cc0-model", tags: ["bench"] });
+    assert.ok("art" in good && good.art?.assets[0]?.tags?.[0] === "bench", "a row keeps its draw tags");
+    // A run with no visual bar plans kits as it did.
+    const unbarred = readArtPass(JSON.stringify([row({ tier: "hero", source: "blender" }), ...others]), false);
+    assert.ok("art" in unbarred);
+  });
+
+  it("G3-2b. the 16:45 re-plan added the yard and kept an art pass that planned nothing for it: a re-plan that adds a part on a look bar gives art= again", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const loopRun = fakeLoopRun(fakeHost(), {
+      ctx: {
+        threadId: "t1",
+        cancelled: false,
+        workspace: path.join(process.cwd(), "src", "harness-seed"),
+        setStatus: () => {},
+        notify: () => {},
+        call: async () => null,
+      },
+      integrationWorktree: await tmpDir("g3-replan-"),
+      run: { ...yard, engine: "claude" },
+    });
+    const art = JSON.stringify([
+      { area: "the school", tier: "hero", kind: "prop", asset: "desks", source: "genex-model" },
+      {
+        area: "the school",
+        tier: "mid",
+        kind: "structure",
+        asset: "walls",
+        source: "blender-kit",
+        why: "plaster scans",
+      },
+      { area: "the school", tier: "scatter", kind: "surface", asset: "debris", source: "scan" },
+      { area: "the school", tier: "sky", kind: "atmosphere", asset: "overcast HDRI", source: "scan" },
+    ]);
+    const school = JSON.stringify([{ id: "school", done: ["the classroom reads"] }]);
+    const both = JSON.stringify([
+      { id: "school", done: ["the classroom reads"] },
+      { id: "yard", done: ["the yard reads"] },
+    ]);
+    assert.doesNotMatch(String(await loopRun.setPlan({ summary: "A school.", workers: school, art })), /^plan:/);
+    const refused = String(await loopRun.setPlan({ summary: "A school and its yard.", workers: both }));
+    assert.match(refused, /^plan: the plan adds yard and keeps an art pass that plans nothing for it/);
+    assert.equal(
+      (loopRun.state.plan as { workers: unknown[] }).workers.length,
+      1,
+      "nothing was re-planned while refused",
+    );
+    // The same part list again keeps the pass it does not repeat.
+    assert.doesNotMatch(String(await loopRun.setPlan({ summary: "A school.", workers: school })), /^plan:/);
+  });
+
+  it("G3-4a. the light facet settled the classroom at mean luma 28 with 41% in the darkest bin and [crushed-shadow] never stopped a keep: a playable camera outside the luminance band is a blocking defect", async () => {
+    const { lumaBandDefect } = await import("../../src/harness-seed/loop/look-facts.ts");
+    const { blocksLook } = await import("../../src/harness-seed/loop/look-bar.ts");
+    const histogram = (darkest: number) => [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)];
+    const dark = lumaBandDefect(
+      "classroom",
+      { ev: -1, targetEv: -1, meanLuma: 28, histogram: histogram(0.41) },
+      { night: false },
+    );
+    assert.ok(dark && blocksLook(dark), String(dark));
+    assert.match(String(dark), /classroom settles at mean luma 28 with 41\.0%/);
+    assert.equal(
+      lumaBandDefect("classroom", { ev: 0, targetEv: 0, meanLuma: 105, histogram: histogram(0.08) }, { night: false }),
+      null,
+    );
+    // A declared night look sits lower; a frame of black still fails it.
+    assert.equal(
+      lumaBandDefect("street", { ev: -3, targetEv: -3, meanLuma: 60, histogram: histogram(0.3) }, { night: true }),
+      null,
+    );
+    assert.ok(
+      lumaBandDefect("street", { ev: -5, targetEv: -5, meanLuma: 20, histogram: histogram(0.6) }, { night: true }),
+    );
+    assert.equal(
+      lumaBandDefect("classroom", null, { night: false }),
+      null,
+      "a camera that reports nothing is not judged by facts",
+    );
   });
 });

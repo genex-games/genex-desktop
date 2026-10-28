@@ -5069,6 +5069,7 @@ export default {
     "모델 제공자가 멈춰 세웠어요 — 한도가 초기화되기를 기다리는 중",
   "the modeller": "모델러",
   "the must-fix was not fixed": "꼭 고쳐야 할 문제가 고쳐지지 않았어요",
+  "it added something below the game's look bar": "게임의 비주얼 기준에 못 미치는 것을 추가했어요",
   "the plan": "계획",
   "the plan is ready — {parts}.": "계획이 준비됐어요 — {parts}.",
   "the plan is ready.": "계획이 준비됐어요.",

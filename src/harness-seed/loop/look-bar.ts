@@ -36,6 +36,14 @@ export const LookBlocker = {
   VisibleTiling: "visible-tiling",
   /** A scene camera that would not pass as a screenshot from a shipped game of its genre. */
   NotShipped: "not-shipped",
+  /** A prop, wall or ground drawn in one untextured flat colour: no albedo, normal or roughness detail. */
+  FlatMaterial: "flat-material",
+  /** A tree or bush built from cones, cylinders or sticks with no leaf or twig cards. */
+  StickTree: "stick-tree",
+  /** Snow, sand or dust drawn as a separate box or slab laid on a prop or the ground. */
+  SlabSnow: "slab-snow",
+  /** An asset delivered from a lesser source than the art pass planned (a box script where a model was planned). */
+  ArtSourceMismatch: "art-source-mismatch",
 } as const;
 export type LookBlocker = (typeof LookBlocker)[keyof typeof LookBlocker];
 
@@ -123,14 +131,43 @@ export const ArtSource = {
   GenexTexture: "genex-texture",
   /** A Genex plugin generation: a rigged character. */
   GenexCharacter: "genex-character",
-  /** A Poly Haven or ambientCG scan (CC0). */
+  /** A Poly Haven or ambientCG scan (CC0): a PBR texture set or an HDRI sky. */
   Scan: "scan",
-  /** A Blender bpy script the builder runs. */
-  Blender: "blender",
-  /** Geometry built in the game's code. */
+  /** A CC0 model (Poly Haven, a curated pack), decimated to its tier's budget on import. */
+  Cc0Model: "cc0-model",
+  /**
+   * A modular Blender kit: walls, floors, trims and shells built by a bpy script and textured with
+   * scans. Never a hero asset, a prop or anything organic on a run with a visual bar: gen3's bench,
+   * birches, bins and garages were box and cone scripts under the old `blender` source.
+   */
+  BlenderKit: "blender-kit",
+  /** Geometry built in the game's code. A bpy script of untouched primitives counts as this. */
   Code: "code",
 } as const;
 export type ArtSource = (typeof ArtSource)[keyof typeof ArtSource];
+
+/** The old single Blender source: a plan that still writes it is read as a modular kit. */
+const LEGACY_BLENDER = "blender";
+
+/** What an art-pass asset is, which decides the sources it may come from. */
+export const ArtKind = {
+  /** A movable object seen up close: furniture, a bench, a bin, a vehicle, a weapon. */
+  Prop: "prop",
+  /** Trees, bushes, grass, anything grown. */
+  Organic: "organic",
+  /** The modular shell: walls, floors, ceilings, trims, building blocks. */
+  Structure: "structure",
+  /** A surface: a PBR texture set or a decal. */
+  Surface: "surface",
+  /** A person or creature. */
+  Character: "character",
+  /** Sky, weather and the light's mood. */
+  Atmosphere: "atmosphere",
+} as const;
+export type ArtKind = (typeof ArtKind)[keyof typeof ArtKind];
+
+/** The kinds a modular Blender kit may never make on a run with a visual bar. */
+const NOT_A_KIT: ReadonlySet<string> = new Set([ArtKind.Prop, ArtKind.Organic, ArtKind.Character]);
 
 /** How near the camera an asset sits: every tier is planned. */
 export const ArtTier = {
@@ -159,13 +196,20 @@ const ART_FIELD_CHARS = 160;
 /** The plan's word for a run with no visual bar. */
 export const ART_NONE = "none";
 
+/** The most draw tags one art-pass asset names. */
+const MAX_ASSET_TAGS = 8;
+
 /** One planned asset. */
 export interface ArtAsset {
   area: string;
   tier: ArtTier;
   asset: string;
   source: ArtSource;
-  /** Why code builds it: required for `code`, the last resort. */
+  /** What it is, which decides its sources (`ArtKind`). */
+  kind?: ArtKind;
+  /** The draw tags the game draws it under: the provenance audit follows them to their files. */
+  tags?: string[];
+  /** Why code builds it: required for `code`, the last resort, and for a Blender kit (the scans it wears). */
   why?: string;
 }
 
@@ -189,6 +233,14 @@ export const ArtRefusal = {
   TierMissing: "tier-missing",
   /** Code-built geometry with no reason it cannot come from a generation, a scan or Blender. */
   CodeWithoutWhy: "code-without-why",
+  /** An asset on a run with a visual bar that does not say what it is (`kind`). */
+  KindMissing: "kind-missing",
+  /** A Blender kit planned for a hero asset, a prop, a character or something organic on a run with a visual bar. */
+  KitNotForHero: "kit-not-for-hero",
+  /** A Blender kit that does not say which scans it wears. */
+  KitWithoutWhy: "kit-without-why",
+  /** A re-plan adds a part and keeps the old art pass, which plans nothing for it. */
+  AreaUnplanned: "area-unplanned",
 } as const;
 export type ArtRefusal = (typeof ArtRefusal)[keyof typeof ArtRefusal];
 
@@ -203,17 +255,43 @@ const clipField = (value: unknown): string =>
     .trim()
     .slice(0, ART_FIELD_CHARS);
 
+const isOneOf = (vocabulary: Readonly<Record<string, string>>, value: string): boolean =>
+  Object.values(vocabulary).includes(value);
+
+/** The source a row names, with the old `blender` read as a kit. */
+function sourceOf(raw: unknown): string {
+  const said = String(raw ?? "").trim();
+  return said === LEGACY_BLENDER ? ArtSource.BlenderKit : said;
+}
+
+/** The draw tags a row names: strings, trimmed, at most `MAX_ASSET_TAGS`. */
+function tagsOf(raw: unknown): string[] {
+  if (typeof raw === "string") return tagsOf([raw]);
+  const listed: unknown[] = Array.isArray(raw) ? raw : [];
+  return [...new Set(listed.map((tag) => clipField(tag)).filter(Boolean))].slice(0, MAX_ASSET_TAGS);
+}
+
 /** One listed asset, or null when it is not one. */
 function assetOf(raw: AnyRecord): ArtAsset | null {
   const area = clipField(raw?.area);
   const asset = clipField(raw?.asset);
   const tier = String(raw?.tier ?? "").trim() as ArtTier;
-  const source = String(raw?.source ?? "").trim() as ArtSource;
-  const known =
-    (Object.values(ArtTier) as string[]).includes(tier) && (Object.values(ArtSource) as string[]).includes(source);
-  if (!area || !asset || !known) return null;
+  const source = sourceOf(raw?.source) as ArtSource;
+  const kind = String(raw?.kind ?? "").trim();
+  const known = isOneOf(ArtTier, tier) && isOneOf(ArtSource, source);
+  const kindRead = !kind || isOneOf(ArtKind, kind);
+  if (!area || !asset || !known || !kindRead) return null;
   const why = clipField(raw?.why);
-  return why ? { area, tier, asset, source, why } : { area, tier, asset, source };
+  const tags = tagsOf(raw?.tags);
+  return {
+    area,
+    tier,
+    asset,
+    source,
+    ...(kind ? { kind: kind as ArtKind } : {}),
+    ...(tags.length ? { tags } : {}),
+    ...(why ? { why } : {}),
+  };
 }
 
 /** The listed assets, or what is wrong with them. */
@@ -256,8 +334,37 @@ export function readArtPass(raw: unknown, lookBar: boolean): { art: ArtPass | nu
     .filter((asset) => asset.source === ArtSource.Code && !asset.why)
     .map((asset) => asset.asset);
   if (unexplained.length) return { problem: { code: ArtRefusal.CodeWithoutWhy, names: unexplained } };
+  const kitProblem = lookBar ? kitRefusal(assets) : null;
+  if (kitProblem) return { problem: kitProblem };
   const generations = assets.filter((asset) => GENEX_SOURCES.has(asset.source)).length;
   return { art: { assets, generations } };
+}
+
+/**
+ * What a run with a visual bar refuses about its kits: an asset that does not say what it is, a
+ * Blender kit planned for a hero, a prop, a character or something grown, and a kit that does not
+ * name the scans it wears.
+ */
+function kitRefusal(assets: readonly ArtAsset[]): ArtProblem | null {
+  const unkinded = assets.filter((asset) => !asset.kind).map((asset) => asset.asset);
+  if (unkinded.length) return { code: ArtRefusal.KindMissing, names: unkinded };
+  const kits = assets.filter((asset) => asset.source === ArtSource.BlenderKit);
+  const heroKits = kits
+    .filter((asset) => asset.tier === ArtTier.Hero || NOT_A_KIT.has(asset.kind ?? ""))
+    .map((asset) => asset.asset);
+  if (heroKits.length) return { code: ArtRefusal.KitNotForHero, names: heroKits };
+  const bareKits = kits.filter((asset) => !asset.why).map((asset) => asset.asset);
+  return bareKits.length ? { code: ArtRefusal.KitWithoutWhy, names: bareKits } : null;
+}
+
+/**
+ * The parts a re-plan adds that the art pass it keeps plans nothing for: on a run with a visual
+ * bar, a plan that adds a part and omits `art` must give the pass again with the new area in it.
+ * Gen3's 16:45 re-plan added the yard, and its assets were planned by nobody.
+ */
+export function unplannedParts(previousWorkers: readonly string[], workers: readonly string[]): string[] {
+  const before = new Set(previousWorkers);
+  return workers.filter((id) => !before.has(id));
 }
 
 /** The art pass a run carries, when its plan gave one. */

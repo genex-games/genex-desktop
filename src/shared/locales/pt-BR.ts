@@ -5238,6 +5238,7 @@ export default {
     "o provedor de modelos parou a gente — esperando o limite renovar",
   "the modeller": "o modelador",
   "the must-fix was not fixed": "a correção obrigatória não foi feita",
+  "it added something below the game's look bar": "adicionou algo abaixo do padrão visual do jogo",
   "the plan": "o plano",
   "the plan is ready — {parts}.": "o plano está pronto — {parts}.",
   "the plan is ready.": "o plano está pronto.",

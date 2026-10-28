@@ -444,6 +444,7 @@ const UNDONE_BECAUSE: Record<string, string> = {
   "taste-veto": t("the reviewer preferred the round before"),
   "no-move": t("the step it was asked for was not delivered"),
   unfixed: t("the must-fix was not fixed"),
+  "look-blocked": t("it added something below the game's look bar"),
   broken: t("the build was broken"),
   outage: t("the model could not be reached"),
   race: t("the game had not finished loading when it was looked at"),

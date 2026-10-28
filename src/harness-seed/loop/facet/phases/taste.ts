@@ -59,24 +59,27 @@ export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<
   // the record says so, because "rolled back — now a new check" is what the user sees.
   // A build block (facet/build-block.ts) is kept on the checks the board already settled: the
   // judge looked once, and its pick, veto and notes are the next round's work, not a verdict.
-  const decided = round.buildBlock
-    ? keptByBlock(spec, round.nextBoard, round.comparison)
-    : acceptRound({
-        spec,
-        board: round.nextBoard,
-        comparison: round.comparison,
-        taste: round.taste,
-        moveMissing: moveNow.costsRound,
-      });
+  const lookBlocked = Boolean(round.taste.addedBlockers?.length);
+  const decided =
+    round.buildBlock && !lookBlocked
+      ? keptByBlock(spec, round.nextBoard, round.comparison)
+      : acceptRound({
+          spec,
+          board: round.nextBoard,
+          comparison: round.comparison,
+          taste: round.taste,
+          moveMissing: moveNow.costsRound,
+        });
   const weakOnly = decided.strong.length === 0 && round.comparison.flips.length > 0;
   round.verdictSource = decided.source;
   round.verdict = {
     pick: decided.accepted ? Side.Challenger : Side.Incumbent,
     satisfied: round.taste.satisfied,
-    biggest_gap: round.taste.regression?.what ?? round.taste.biggest_gap ?? "",
-    reason: round.buildBlock
-      ? blockReason(decided.strong)
-      : tasteReason(loop, round, { ...decided, weakOnly, moveNow }),
+    biggest_gap: round.taste.addedBlockers?.[0] ?? round.taste.regression?.what ?? round.taste.biggest_gap ?? "",
+    reason:
+      round.buildBlock && !lookBlocked
+        ? blockReason(decided.strong)
+        : tasteReason(loop, round, { ...decided, weakOnly, moveNow }),
     defects: round.taste.defects,
   };
   if (decided.accepted) holdTheFix(loop, round);
@@ -92,6 +95,8 @@ function tasteReason(loop: FacetLoop, round: FacetRound, decided: Decision): str
   if (accepted && strong.length)
     return `checks accepted (${strong.join(", ")}), taste judge did not veto${moveNow.missing ? "; the move was not delivered" : ""}`;
   if (accepted) return `${flipped}; taste judge preferred the challenger${moveWords(loop, round, moveNow)}`;
+  if (round.verdictSource === VerdictSource.LookBlocked)
+    return `the round added a look blocker, so it is not kept whatever checks flipped: ${round.taste.addedBlockers.join("; ")}`;
   if (round.verdictSource === VerdictSource.TasteVeto) return `taste veto: ${round.taste.regression?.what}`;
   if (round.verdictSource === VerdictSource.NoMove)
     return `no check moved and the move was not delivered: ${String(loop.currentMove?.what).slice(0, MOVE_QUOTED)}`;
