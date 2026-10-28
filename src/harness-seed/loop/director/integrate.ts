@@ -11,6 +11,7 @@ import {
   commitAll,
   GIT,
   gitAt,
+  gitExec,
   gitlinks,
   headOf,
   isAncestor,
@@ -32,6 +33,7 @@ import {
   trimLedger,
 } from "../ledger.ts";
 import { unionMergeMain } from "../merge.ts";
+import { resolveStudioJson } from "../studio-json-merge.ts";
 import { wiringFor } from "../native-loop.ts";
 import { failedObservationRule, NativeVerdict } from "../native-verdict.ts";
 import { skipOptimization } from "../optimization.ts";
@@ -1215,10 +1217,21 @@ export async function landIntegration(loopRun: LoopRun, land: boolean): Promise<
   const changed = await gameFolderChanges(loopRun);
   if (changed.held)
     return notLanded(LANDING_WORDS.uncommitted(changed.paths, integrationRef), NotLandedReason.UncommittedChanges);
+  const message = `director ${run.runId}: integrated build`;
+  const label = `director:${run.runId}:land`;
   const merge = await mergeNoFf(ctx, { project: run.project }, state.integrationHead, {
-    message: `director ${run.runId}: integrated build`,
-    label: `director:${run.runId}:land`,
+    message,
+    label,
     listConflicts: true,
+    // The studio's own kind declaration may sit in the folder's studio.json beside the build's:
+    // merged by its keys, so the same `game` block on both sides is no conflict.
+    resolve: () =>
+      resolveStudioJson(
+        (command) => gitExec(ctx, { project: run.project }, command, { label: `${label}:studio-json` }),
+        {
+          message,
+        },
+      ),
   });
   if (!merge.ok) {
     // Git refused to write over uncommitted changes, or the build conflicts with commits made in

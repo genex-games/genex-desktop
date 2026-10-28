@@ -5944,8 +5944,12 @@ describe("one session, reviewed", () => {
   /**
    * A game folder at `base` and a build that adds src/sky.js, and the landing (`landIntegration`)
    * over a run of real git in them: the close's own look and head are not the question here.
+   * `files` adds to the base and to the build.
    */
-  async function landingOver(prepare: (git: (...a: string[]) => Promise<string>, dir: string) => Promise<void>) {
+  async function landingOver(
+    prepare: (git: (...a: string[]) => Promise<string>, dir: string) => Promise<void>,
+    files: { base?: Record<string, string>; build?: Record<string, string> } = {},
+  ) {
     const { tmpDir } = await import("../helpers/tmp.ts");
     const dir = await tmpDir("one-session-landing-");
     const git = async (...args: string[]) => (await gitFile(args, { cwd: dir })).stdout.trim();
@@ -5955,11 +5959,13 @@ describe("one session, reviewed", () => {
     await mkdir(path.join(dir, "src"), { recursive: true });
     await writeFile(path.join(dir, "README.md"), "a game\n");
     await writeFile(path.join(dir, "src", "sign.js"), "export const sign = 'none';\n");
+    for (const [file, text] of Object.entries(files.base ?? {})) await writeFile(path.join(dir, file), text);
     await git("add", "-A");
     await git("commit", "-qm", "base");
     const base = await git("rev-parse", "HEAD");
     await git("checkout", "-qb", "run");
     await writeFile(path.join(dir, "src", "sky.js"), "export const sky = 'blue';\n");
+    for (const [file, text] of Object.entries(files.build ?? {})) await writeFile(path.join(dir, file), text);
     await git("add", "-A");
     await git("commit", "-qm", "the run's build");
     const head = await git("rev-parse", "HEAD");
@@ -5991,6 +5997,41 @@ describe("one session, reviewed", () => {
     const landed = await landIntegration(loopRun as never, true);
     return { landed, git, dir, head, notes, report };
   }
+
+  it("BC1. Studio's own kind declaration committed in the game folder and the lead's same game block in the build: the landing merges studio.json by its keys instead of refusing", async () => {
+    const studioJson = (game?: Record<string, unknown>, more: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ name: "body-cam", kind: "rust-wgpu", serve: ".", ...more, ...(game ? { game } : {}) }, null, 2)}\n`;
+    const block = { kind: "first-person", hud: true, mouseLook: true, keyboardMove: true };
+    // The folder's commit is the director's `declareGameKind`; the build's block is the lead's own.
+    const declared =
+      (game: Record<string, unknown>) => async (git: (...a: string[]) => Promise<string>, dir: string) => {
+        await writeFile(path.join(dir, "studio.json"), studioJson(game));
+        await git("commit", "-qam", "studio: this game is a first-person game");
+      };
+    const build = { "studio.json": studioJson(block, { title: "Body Cam" }) };
+    const same = await landingOver(declared({ ...block, declaredBy: "plan" }), {
+      base: { "studio.json": studioJson() },
+      build,
+    });
+    assert.equal(same.landed.ok, true, same.landed.reason);
+    assert.deepEqual(JSON.parse(await same.git("show", "HEAD:studio.json")), {
+      name: "body-cam",
+      kind: "rust-wgpu",
+      serve: ".",
+      game: { ...block, declaredBy: "plan" },
+      title: "Body Cam",
+    });
+    assert.equal(await same.git("show", "HEAD:src/sky.js"), "export const sky = 'blue';");
+    assert.equal(await same.git("status", "--porcelain"), "", "the merge is committed, nothing left over");
+
+    // A kind the folder and the build disagree on is a real conflict: aborted, never guessed.
+    const differs = await landingOver(declared({ ...block, kind: "racing", declaredBy: "plan" }), {
+      base: { "studio.json": studioJson() },
+      build,
+    });
+    assert.equal(differs.landed.why, "could-not-land", differs.landed.reason);
+    assert.equal(await differs.git("status", "--porcelain"), "", "the merge was aborted");
+  });
 
   it("OS6. the landing tells uncommitted changes in the game folder from commits that conflict or a hook that refuses, and never undoes a merge of the user's own under way", async () => {
     // Only a stray the build does not touch: it lands, and the stray is named, left as it was.
