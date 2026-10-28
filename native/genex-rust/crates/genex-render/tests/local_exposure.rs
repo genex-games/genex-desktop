@@ -163,8 +163,13 @@ fn room_camera() -> CameraDesc {
 
 /// Desktop `high` at `local` exposure, auto exposure metering the whole frame.
 fn high_renderer(gpu: &Gpu, local: LocalExposure) -> genex_render::Renderer {
+    high_renderer_at(gpu, ROOM_SIZE, local)
+}
+
+/// [`high_renderer`] drawing a `size` frame.
+fn high_renderer_at(gpu: &Gpu, size: (u32, u32), local: LocalExposure) -> genex_render::Renderer {
     let class = DeviceClass::from_wire("desktop-high").expect("class");
-    let mut renderer = genex_render::Renderer::with_options(gpu, ROOM_SIZE.0, ROOM_SIZE.1, genex_render::RenderOptions { msaa: false }).expect("renderer");
+    let mut renderer = genex_render::Renderer::with_options(gpu, size.0, size.1, genex_render::RenderOptions { msaa: false }).expect("renderer");
     renderer.set_scene_format(genex_render::settings::SceneFormat::Rgba16Float);
     renderer.set_quality(&preset_quality(QualityPreset::High, class));
     renderer.set_environment(&Environment::sky());
@@ -367,4 +372,60 @@ fn metal_fog_inside_a_room_does_not_glow_with_the_sky_through_its_walls() {
     }
     let lift = (rows[1] - rows[0]) / rows[0].max(1e-6);
     assert!(lift <= ROOM_FOG_LIFT_MAX, "the room's fog lifts its dark wall by {:.0}% (at most {:.0}%)", 100.0 * lift, 100.0 * ROOM_FOG_LIFT_MAX);
+}
+
+/// The median GPU time of each graph node over `frames` armed Live frames of `scene` (after the
+/// environment and the volumes settled), by node name; None without timestamp queries.
+fn node_medians(gpu: &Gpu, renderer: &mut genex_render::Renderer, scene: &Scene, frames: u64) -> Option<Vec<(&'static str, f64)>> {
+    settled_capture(renderer, gpu, scene);
+    let mut samples: Vec<(&'static str, f64)> = Vec::new();
+    for frame in 100..100 + frames + 12 {
+        let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
+        let landed = renderer.arm_node_timer(&gpu.queue, frame)?;
+        samples.extend(landed.iter().flat_map(|frame| frame.nodes.iter().map(|node| (node.node, node.ms))));
+        renderer.set_frame_index(frame);
+        renderer.render(gpu, scene, genex_render::CullPath::Gpu).expect("frame");
+    }
+    let mut names: Vec<&'static str> = samples.iter().map(|(name, _)| *name).collect();
+    names.dedup();
+    names.sort_unstable();
+    names.dedup();
+    Some(
+        names
+            .into_iter()
+            .map(|name| {
+                let mut times: Vec<f64> = samples.iter().filter(|(node, _)| *node == name).map(|(_, ms)| *ms).collect();
+                times.sort_by(f64::total_cmp);
+                (name, times[times.len() / 2])
+            })
+            .collect(),
+    )
+}
+
+/// The most local exposure may add to the tonemap node at 1080p (its grid pass and the slice).
+const LOCAL_EXPOSURE_BUDGET_MS: f64 = 0.3;
+
+#[test]
+#[ignore = "real GPU: run with --ignored metal"]
+fn metal_local_exposure_at_1080p_holds_its_budget() {
+    use genex_render::settings::Fog;
+    let Some(gpu) = gpu() else { return };
+    let size = (1920, 1080);
+    let fog = Fog::default().with_density(0.02).with_height(0.2, 0.0).with_range(0.0, 0.6);
+    let mut rows = Vec::new();
+    for local in [LocalExposure::OFF, LocalExposure::DEFAULT] {
+        let mut renderer = high_renderer_at(&gpu, size, local);
+        renderer.set_look(renderer.look().with_fog(fog));
+        let Some(nodes) = node_medians(&gpu, &mut renderer, &room_with_a_window(), 40) else {
+            eprintln!("skipped: no timestamp queries");
+            return;
+        };
+        let shown: Vec<String> = nodes.iter().filter(|(_, ms)| *ms >= 0.05).map(|(name, ms)| format!("{name} {ms:.3}")).collect();
+        eprintln!("local exposure {:?}: {}", local.is_on(), shown.join(", "));
+        rows.push(nodes);
+    }
+    let node = |rows: &[(&str, f64)], name: &str| rows.iter().find(|(node, _)| *node == name).map_or(0.0, |(_, ms)| *ms);
+    let added = node(&rows[1], "tonemap") - node(&rows[0], "tonemap");
+    eprintln!("local exposure adds {added:.3} ms to the tonemap at 1080p");
+    assert!(added <= LOCAL_EXPOSURE_BUDGET_MS, "local exposure adds {added:.3} ms (at most {LOCAL_EXPOSURE_BUDGET_MS})");
 }

@@ -44,7 +44,7 @@
 // Local exposure (AAA push P3, `post::local_exposure`) changes the scene before bloom and the curve
 // in every entry point: each region moves towards middle grey by its own EV, `base × (contrast - 1)`
 // held to ±3 EV, where the base is the bilateral grid (local_exposure.wgsl) sliced trilinearly at
-// the pixel's own EV and mixed with the cells' plain mean by `local.w`, and the contrast is the
+// the pixel's own EV and mixed with the cells' bilinear plain mean by `local.w`, and the contrast is the
 // look's highlights above middle grey and its shadows below. `local.z` 0 (the default look on a
 // quality without it: neutral textures are bound) skips it, so the picture is byte for byte the
 // one before.
@@ -377,16 +377,6 @@ fn gx_tm_bloom(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     return scene + (bloom - gx_tm_bloom_part(scene)) * gx_tm.shape.z;
 }
 
-// The cells' plain mean EV about `at` (grid uv): four bilinear taps half a cell around it, a 3x3 tent.
-fn gx_tm_local_mean(at: vec2<f32>) -> f32 {
-    let half = 0.5 * gx_tm.local_grid.zw;
-    let a = textureSampleLevel(gx_local_mean, gx_tm_sampler, at - half, 0.0).x;
-    let b = textureSampleLevel(gx_local_mean, gx_tm_sampler, at + vec2<f32>(half.x, -half.y), 0.0).x;
-    let c = textureSampleLevel(gx_local_mean, gx_tm_sampler, at + vec2<f32>(-half.x, half.y), 0.0).x;
-    let d = textureSampleLevel(gx_local_mean, gx_tm_sampler, at + half, 0.0).x;
-    return 0.25 * (a + b + c + d);
-}
-
 // `hdr` at `uv` under local exposure (unchanged when it is off, and black stays black): its region's
 // base EV from the grid, then `exp2(base × (contrast - 1))` (`LocalExposure::change_ev`).
 fn gx_tm_local(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
@@ -402,7 +392,8 @@ fn gx_tm_local(hdr: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let at = uv * gx_tm.local_grid.xy;
     let slice = (ev - GX_LE_EV_LO) / (GX_LE_EV_HI - GX_LE_EV_LO) * (GX_LE_SLICES - 1.0);
     let cell = textureSampleLevel(gx_local_grid, gx_tm_sampler, vec3<f32>(at, (slice + 0.5) / GX_LE_SLICES), 0.0);
-    let mean = gx_tm_local_mean(at);
+    // The cells' plain mean EV, bilinear between the four cells around the pixel.
+    let mean = textureSampleLevel(gx_local_mean, gx_tm_sampler, at, 0.0).x;
     let bilateral = select(mean, cell.x / max(cell.y, GX_LE_WEIGHT_MIN) + GX_LE_EV_LO, cell.y > GX_LE_WEIGHT_MIN);
     let base = mix(bilateral, mean, gx_tm.local.w);
     let contrast = select(gx_tm.local.y, gx_tm.local.x, base > 0.0);

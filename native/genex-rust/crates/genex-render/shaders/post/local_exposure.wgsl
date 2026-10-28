@@ -1,7 +1,8 @@
 // Local exposure's grid (AAA push P3, `post/local_exposure.rs`): before the tonemap, the scene it
 // reads into a bilateral grid of log luminance. One workgroup per 32² cell (`GRID_CELL`), one
-// invocation per 2² block of it: the block's mean (one bilinear tap at its shared corner; on the
-// multisampled scene the mean of each texel's first sample) turned into its EV,
+// invocation per 4² block of it: the block's mean (four bilinear taps, one at the shared corner of
+// each 2² of it; on the multisampled scene the first sample of each 2²'s corner texels) turned
+// into its EV,
 // `log2(luminance / 0.18)` of the pre-exposed scene held to -8..8 (`EV_RANGE`), and splatted with a
 // tent into the two nearest of 16 slices (`GRID_SLICES`) as an (EV sum, weight) pair. The cell's
 // plain mean EV goes to a second texture. Workgroup u32 atomics in fixed point (WebGPU core) make
@@ -15,11 +16,13 @@ const GX_LE_KEY: f32 = 0.18;
 const GX_LE_BLACK: f32 = 1.0e-6;
 // The largest radiance the scene stores (lighting/output.wgsl's GX_SCENE_RADIANCE_MAX).
 const GX_LE_RADIANCE_MAX: f32 = 64512.0;
-// Fixed point: one sample's whole weight. 256 samples × 16 EV × 64 stays far inside a u32.
+// Fixed point: one sample's whole weight. 64 samples × 16 EV × 64 stays far inside a u32.
 const GX_LE_UNIT: f32 = 64.0;
-// Samples in a whole cell (16² blocks): the grid's weights are shares of a whole cell.
-const GX_LE_CELL_SAMPLES: f32 = 256.0;
+// Samples in a whole cell (8² blocks): the grid's weights are shares of a whole cell.
+const GX_LE_CELL_SAMPLES: f32 = 64.0;
 const GX_LE_CELL: u32 = 32u;
+// A sample's block side, in texels.
+const GX_LE_BLOCK: u32 = 4u;
 
 var<workgroup> gx_le_weight: array<atomic<u32>, 16>;
 var<workgroup> gx_le_sum: array<atomic<u32>, 16>;
@@ -87,33 +90,38 @@ fn gx_le_write(cell: vec2<u32>, local: u32) {
     }
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(8, 8)
 fn cs_local_exposure_grid(@builtin(workgroup_id) cell: vec3<u32>, @builtin(local_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local: u32) {
     gx_le_clear(local);
     workgroupBarrier();
     let size = textureDimensions(gx_le_scene);
-    let origin = cell.xy * GX_LE_CELL + id.xy * 2u;
+    let origin = cell.xy * GX_LE_CELL + id.xy * GX_LE_BLOCK;
     if all(origin < size) {
-        // The shared corner of the 2² block: the bilinear tap is its mean (the edge texel repeats).
-        let uv = (vec2<f32>(origin) + 1.0) / vec2<f32>(size);
-        gx_le_splat(gx_le_ev(textureSampleLevel(gx_le_scene, gx_le_sampler, uv, 0.0).rgb));
+        // The shared corner of each 2² of the block: each bilinear tap is its mean (the edge
+        // texel repeats).
+        var sum = vec3<f32>(0.0);
+        for (var i = 0u; i < 4u; i++) {
+            let corner = vec2<f32>(origin + 2u * vec2<u32>(i & 1u, i >> 1u)) + 1.0;
+            sum += textureSampleLevel(gx_le_scene, gx_le_sampler, corner / vec2<f32>(size), 0.0).rgb;
+        }
+        gx_le_splat(gx_le_ev(sum * 0.25));
     }
     workgroupBarrier();
     gx_le_write(cell.xy, local);
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(8, 8)
 fn cs_local_exposure_grid_msaa(@builtin(workgroup_id) cell: vec3<u32>, @builtin(local_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) local: u32) {
     gx_le_clear(local);
     workgroupBarrier();
     let size = textureDimensions(gx_le_msaa);
-    let origin = cell.xy * GX_LE_CELL + id.xy * 2u;
+    let origin = cell.xy * GX_LE_CELL + id.xy * GX_LE_BLOCK;
     if all(origin < size) {
         let last = vec2<i32>(size) - 1;
         let at = vec2<i32>(origin);
         var sum = vec3<f32>(0.0);
         for (var i = 0; i < 4; i++) {
-            let texel = min(at + vec2<i32>(i & 1, i >> 1u), last);
+            let texel = min(at + 2 * vec2<i32>(i & 1, i >> 1u), last);
             sum += min(max(textureLoad(gx_le_msaa, texel, 0).rgb, vec3<f32>(0.0)), vec3<f32>(GX_LE_RADIANCE_MAX));
         }
         gx_le_splat(gx_le_ev(sum * 0.25));

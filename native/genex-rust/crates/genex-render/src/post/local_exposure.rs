@@ -7,7 +7,7 @@
 //! After Unreal Engine 5's local exposure (a bilateral grid of log luminance, its contrast scales
 //! and its blend with a blurred luminance) and Paris, Kornprobst and Tumblin's bilateral grid
 //! (2009): a compute pass ([`crate::shaders::LOCAL_EXPOSURE`], `cs_local_exposure_grid` or
-//! `cs_local_exposure_grid_msaa`) reads the scene the tonemap reads, one sample per 2² block,
+//! `cs_local_exposure_grid_msaa`) reads the scene the tonemap reads, one sample per 4² block,
 //! and for each [`GRID_CELL`]² cell splats the samples' EV (`log2(luminance / 0.18)` of the
 //! pre-exposed scene, held to [`EV_RANGE`]) into [`GRID_SLICES`] slices with a tent, as
 //! (weighted EV sum, weight) pairs; a second texture holds each cell's plain mean EV. Counting
@@ -15,8 +15,8 @@
 //! invocation order.
 //!
 //! The tonemap slices the grid trilinearly at the pixel's own EV (an edge-aware base: a window
-//! pixel reads the bright slice, the wall beside it the dark one), mixes it with the plain mean's
-//! 3x3 tent by [`BLURRED_BLEND`] and changes the pixel by `exp2(base × (contrast − 1))`, held to
+//! pixel reads the bright slice, the wall beside it the dark one), mixes it with the cells' plain
+//! mean (bilinear) by [`BLURRED_BLEND`] and changes the pixel by `exp2(base × (contrast − 1))`, held to
 //! ±[`CHANGE_LIMIT_EV`], where the contrast is `highlights` above middle grey and `shadows` below
 //! ([`LocalExposure::change_ev`] is the CPU reference). A look with both contrasts at 1
 //! ([`LocalExposure::OFF`]) or a quality without it draws nothing and binds neutral textures: the
