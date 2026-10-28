@@ -936,7 +936,10 @@ fn metal_a_particle_marks_its_soft_dot_in_the_reactive_mask_unless_hidden() {
 
 /// Renderer pass 2 A.11: the coverage is the drawn billboard. A rain streak (stretched along its
 /// motion) marks its whole length, not a dot at its centre, and a camera looking straight down
-/// marks its particles (the basis crossed with +Y was NaN there, so nothing was marked).
+/// marks its particles (the basis crossed with +Y was NaN there, so nothing was marked). Flipped
+/// by the Bodycam light fix (was "the unstretched dot does not reach 5 px below its centre"): a
+/// moving dot's coverage also sweeps back over its last three ticks, so TAA drops the history
+/// where a falling snowflake was instead of drawing it as a streak; it still marks nothing ahead.
 #[test]
 #[ignore = "GPU: run with -- --ignored metal"]
 fn metal_a_streak_and_a_particle_seen_from_straight_above_mark_what_is_drawn() {
@@ -947,7 +950,8 @@ fn metal_a_streak_and_a_particle_seen_from_straight_above_mark_what_is_drawn() {
     let dot = particle_mask_of(&gpu, 0.0, CoverageParticle { stretch: 0.0, ..streak });
     let mask = particle_mask_of(&gpu, 0.0, streak);
     let at = |mask: &[u8], x: usize, y: usize| mask[y * 32 + x];
-    assert_eq!(at(&dot, 16, 21), 0, "the unstretched dot does not reach 5 px below its centre");
+    assert!(at(&dot, 16, 21) > 0, "the moving dot marks where it was 5 px below its centre");
+    assert_eq!((at(&dot, 20, 21), at(&dot, 16, 10)), (0, 0), "the dot's sweep is narrow and trails behind its motion");
     assert!(at(&mask, 16, 21) >= 150, "the streak marks its trail 5 px below its centre: {}", at(&mask, 16, 21));
     assert_eq!((at(&mask, 20, 21), at(&mask, 16, 10)), (0, 0), "the streak is narrow and trails behind its motion");
     // Looking straight down -Y (up on the screen is -Z): a particle half a unit below the camera.

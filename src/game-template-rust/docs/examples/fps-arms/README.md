@@ -15,7 +15,7 @@ shooter from it rather than from boxes.
 3. Switch `[animation]` and `[physics]` on in `genex.toml`, as this folder's does.
 
 The kit is in the camera's frame: the eye at its origin, looking along -z. `viewmodel.rs` draws
-it at the camera with `frame.character`, under `frame.tag("hands")` and one `frame.id`.
+it at the camera with `frame.character`, under `frame.tag("hands")`, one `frame.id` and `frame.view_model()`.
 
 ## What the GLB holds
 

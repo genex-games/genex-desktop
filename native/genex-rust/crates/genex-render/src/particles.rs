@@ -30,8 +30,9 @@
 //!   thickness) rests where it hit, fading out, then is gone. Being stateless, a particle that hit
 //!   something out of view or behind something nearer is not stopped. Only a colliding frame's
 //!   emit pass waits for the prepass: otherwise the emit, sort and gather run beside it;
-//! - spawn boxes, growth, rotation and stretching along the motion (rain), and a per-class cap on
-//!   the particles a frame draws ([`particle_cap`]): past it every n-th slot is drawn;
+//! - spawn boxes (rain and snow from a box's top, dust throughout it), growth, rotation and
+//!   stretching along the motion (rain), and a per-class cap on the particles a frame draws
+//!   ([`particle_cap`]): past it every n-th slot is drawn;
 //! - TAA's reactive coverage marks the billboard as drawn, turned or stretched
 //!   (`particle_billboard.wgsl`, shared with the draw).
 //!
@@ -313,6 +314,59 @@ impl EmitterDesc {
             soft_distance: 0.05,
             near_fade: RAIN_NEAR_FADE,
             collision: Some(DepthCollision { thickness: 0.6, rest_ticks: 0 }),
+            ..EmitterDesc::fountain(origin, seed)
+        }
+    }
+
+    /// Snow over the box of half sides `extent` around `origin` (its top, as for
+    /// [`EmitterDesc::rain`]): round soft flakes 2.5 cm across, near-white with a touch of blue,
+    /// falling 1 m/s (± 20%) and drifting up to 0.18 m/s on each axis, 14 a tick living 12 s
+    /// (10 080 alive), so nearly every flake reaches the ground from 8-10 m. A flake that meets
+    /// what the camera sees rests there for half a second, fading; flakes fade against the scene
+    /// over 10 cm and in over the [`RAIN_NEAR_FADE`] in front of the camera. Weather is these
+    /// dots, never meshes.
+    pub fn snow(origin: [f32; 3], extent: [f32; 3], seed: u32) -> EmitterDesc {
+        EmitterDesc {
+            extent,
+            velocity: [0.0, -0.0167, 0.0],
+            speed_jitter: 0.2,
+            spread: 0.003,
+            gravity: [0.0; 3],
+            size: 0.025,
+            size_end: 1.0,
+            color_start: [235, 240, 255, 200],
+            color_end: [235, 240, 255, 160],
+            rate_per_tick: 14,
+            lifetime_ticks: 720,
+            soft_distance: 0.1,
+            near_fade: RAIN_NEAR_FADE,
+            // A collision samples a 12 s path 24 times (0.5 m apart at 1 m/s): thicker than that.
+            collision: Some(DepthCollision { thickness: 0.8, rest_ticks: 30 }),
+            ..EmitterDesc::fountain(origin, seed)
+        }
+    }
+
+    /// Dust motes hanging in the air of the box of half sides `extent` around `origin` (a room, a
+    /// sunbeam): round soft specks 5 mm across, warm and faint (alpha 70 of 255, fading out over
+    /// a life), born anywhere in the box, sinking 6 mm/s and drifting up to 1.8 cm/s on each axis,
+    /// one a tick for 20 s (1 200 alive). They are not lit: give the box a sunbeam's extent for
+    /// motes in the light. They fade against the scene over 2 cm and in over 0.4 m in front of
+    /// the camera.
+    pub fn dust(origin: [f32; 3], extent: [f32; 3], seed: u32) -> EmitterDesc {
+        EmitterDesc {
+            extent,
+            velocity: [0.0, -0.0001, 0.0],
+            speed_jitter: 0.5,
+            spread: 0.0003,
+            gravity: [0.0; 3],
+            size: 0.005,
+            size_end: 1.0,
+            color_start: [255, 236, 200, 70],
+            color_end: [255, 236, 200, 0],
+            rate_per_tick: 1,
+            lifetime_ticks: 1200,
+            soft_distance: 0.02,
+            near_fade: 0.4,
             ..EmitterDesc::fountain(origin, seed)
         }
     }

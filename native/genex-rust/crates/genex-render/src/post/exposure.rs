@@ -111,6 +111,13 @@ pub const METERING_WEIGHT_MAX: u32 = 16;
 pub const SPOT_RADIUS: f32 = 0.2;
 /// [`GpuExposureState::flags`] and [`GpuExposureParams::control`] `w`: adapt instantly.
 pub const EXPOSURE_FLAG_INSTANT: u32 = 1;
+/// How many times faster auto exposure adapts just after the camera crosses into or out of a room
+/// a game declares (an irradiance volume's or a reflection probe's box): stepping from a sunlit
+/// yard into a corridor, the eye adjusts in a moment instead of the picture sitting dark for
+/// seconds ([`RoomAdaptation`]).
+pub const ROOM_ADAPT_BOOST: f32 = 8.0;
+/// Simulated ticks the boost lasts after a crossing (half a second).
+pub const ROOM_ADAPT_TICKS: u32 = 30;
 /// The histogram's bilinear sampler binding (clamped to the edge: the edge texel repeats).
 pub const HISTOGRAM_SAMPLER_BINDING: u32 = 4;
 /// Bytes of the histogram buffer.
@@ -208,6 +215,49 @@ impl GpuExposureParams {
     /// The input divisor.
     pub fn divisor(&self) -> u32 {
         self.control[0].max(1)
+    }
+
+    /// The params adapting `boost` times faster both ways ([`RoomAdaptation`]; 1: as they are).
+    pub fn boosted(mut self, boost: f32) -> GpuExposureParams {
+        self.speed[0] *= boost;
+        self.speed[1] *= boost;
+        self
+    }
+}
+
+/// The rooms around the camera at `eye`: one bit per declared irradiance volume (bits 0..32) and
+/// reflection probe (bits 32..64) whose box holds it, in declaration order.
+pub fn rooms_around(eye: [f32; 3], volumes: &[crate::irradiance::IrradianceVolume], probes: &[crate::probes::ReflectionProbe]) -> u64 {
+    let inside = |min: [f32; 3], max: [f32; 3]| (0..3).all(|axis| eye[axis] >= min[axis].min(max[axis]) && eye[axis] <= min[axis].max(max[axis]));
+    let volume_bits = volumes.iter().take(32).enumerate().filter(|(_, volume)| inside(volume.min, volume.max)).fold(0, |bits, (i, _)| bits | (1u64 << i));
+    let probe_bits = probes.iter().take(32).enumerate().filter(|(_, probe)| inside(probe.min, probe.max)).fold(0, |bits, (i, _)| bits | (1u64 << (32 + i)));
+    volume_bits | probe_bits
+}
+
+/// Auto exposure's quick adjustment at a doorway: when the rooms around the camera change, Live
+/// frames adapt [`ROOM_ADAPT_BOOST`] times faster for [`ROOM_ADAPT_TICKS`] simulated ticks, so the
+/// exposure meets the room the camera stepped into (or the yard it stepped out to) at once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RoomAdaptation {
+    /// The rooms around the camera on the last frame ([`rooms_around`]; None before the first).
+    inside: Option<u64>,
+    /// Ticks the boost still lasts.
+    left: u32,
+}
+
+impl RoomAdaptation {
+    /// The speed multiplier of a frame that ran `ticks` with the camera in `rooms`: the boost from
+    /// the frame that crosses until its ticks run out, else 1.
+    pub fn step(&mut self, rooms: u64, ticks: u32) -> f32 {
+        if self.inside.is_some_and(|before| before != rooms) {
+            self.left = ROOM_ADAPT_TICKS;
+        }
+        self.inside = Some(rooms);
+        if self.left == 0 {
+            return 1.0;
+        }
+        self.left = self.left.saturating_sub(ticks);
+        ROOM_ADAPT_BOOST
     }
 }
 
@@ -431,6 +481,9 @@ pub struct ExposureInput<'a> {
     pub ticks: u32,
     /// Adapt at once (a settled capture).
     pub instant: bool,
+    /// How many times faster than the look's speeds the frame adapts ([`RoomAdaptation`]; 1: as
+    /// the look says).
+    pub boost: f32,
     /// The node's timestamps (`GpuTimer::compute_writes`), when timed.
     pub timestamp_writes: Option<ComputePassTimestampWrites<'a>>,
 }
@@ -614,7 +667,7 @@ impl ExposurePass {
         history.fixed_written = None;
         let instant = input.instant || history.instant_pending;
         history.instant_pending = false;
-        let params = GpuExposureParams::new(input.look, input.quality.exposure_input_divisor, input.ticks, instant);
+        let params = GpuExposureParams::new(input.look, input.quality.exposure_input_divisor, input.ticks, instant).boosted(input.boost);
         queue.write_buffer(&history.params, 0, bytemuck::bytes_of(&params));
         encoder.clear_buffer(&history.histogram, 0, None);
         let (histogram_group, adapt_group) = self.groups(device, history, input.scene);
@@ -659,5 +712,40 @@ impl ExposurePass {
             })
         });
         (histogram, adapt.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crossing_into_a_room_adapts_faster_for_half_a_second() {
+        use crate::irradiance::IrradianceVolume;
+        let room = [IrradianceVolume::new([0.0, 0.0, 0.0], [4.0, 3.0, 10.0])];
+        let (yard, corridor) = ([-2.0, 1.6, 5.0], [1.0, 1.6, 5.0]);
+        assert_eq!(rooms_around(yard, &room, &[]), 0);
+        assert_eq!(rooms_around(corridor, &room, &[]), 1);
+        let mut adaptation = RoomAdaptation::default();
+        assert_eq!(adaptation.step(0, 1), 1.0, "the first frame has nothing to cross from");
+        assert_eq!(adaptation.step(0, 1), 1.0);
+        let boosted: Vec<f32> = (0..ROOM_ADAPT_TICKS + 2).map(|_| adaptation.step(1, 1)).collect();
+        assert!(boosted[..ROOM_ADAPT_TICKS as usize].iter().all(|boost| *boost == ROOM_ADAPT_BOOST), "{boosted:?}");
+        assert_eq!(boosted[ROOM_ADAPT_TICKS as usize], 1.0, "half a second later the look's speeds again");
+        assert_eq!(adaptation.step(0, 1), ROOM_ADAPT_BOOST, "stepping back out to the yard boosts too");
+    }
+
+    #[test]
+    fn the_default_look_brightens_faster_than_it_darkens_and_a_boost_scales_both() {
+        let look = Look::default();
+        assert!(look.adaptation_up > look.adaptation_down, "brightening (into a room) is the faster way");
+        // A corridor 5 EV under the yard: within half an EV after 69 ticks of linear steps, landed
+        // exactly (the exponential tail's last 1e-4 EV included) within two and a half seconds.
+        assert!(ticks_to_adapt(-5.0, &look) <= 150, "{} ticks", ticks_to_adapt(-5.0, &look));
+        assert!(ticks_to_adapt(-5.0, &look) < ticks_to_adapt(5.0, &look));
+        let params = GpuExposureParams::new(&look, 1, 1, false);
+        let boosted = params.boosted(ROOM_ADAPT_BOOST);
+        assert_eq!((boosted.speed[0], boosted.speed[1]), (params.speed[0] * ROOM_ADAPT_BOOST, params.speed[1] * ROOM_ADAPT_BOOST));
+        assert_eq!(params.boosted(1.0), params);
     }
 }

@@ -1,9 +1,10 @@
 # Particles
 
-Steam from a vent, rain over a street, sparks from a fountain: an emitter made once and drawn every
-frame with `frame.particles(&emitter)`, one logical draw. A particle is a pure function of the
-emitter and the tick the frame is drawn at, never of earlier frames, so Live and a capture of the
-same tick draw the same particles; nothing is read back and the simulation never sees them.
+Steam from a vent, rain or snow over a street, dust in a sunbeam, sparks from a fountain: an
+emitter made once and drawn every frame with `frame.particles(&emitter)`, one logical draw. A
+particle is a pure function of the emitter and the tick the frame is drawn at, never of earlier
+frames, so Live and a capture of the same tick draw the same particles; nothing is read back and
+the simulation never sees them.
 
 `Particles` is at the crate root: not in the prelude, and not under `genex::render`. Every call
 in one line (each `with_*` takes `&self` and answers a new emitter):
@@ -11,6 +12,7 @@ in one line (each `with_*` takes `&self` and answers a new emitter):
 ```rust
 use genex::{Particles, ParticlesError};                       // and PARTICLES_MAX, ParticleFlipbook
 Particles::steam(origin);                                      // -> Particles; ::rain(top, half_extent), ::fountain(origin)
+Particles::snow(top, half_extent);                             // -> Particles; ::dust(origin, half_extent)
 emitter.with_rate(per_tick, lifetime_ticks);                   // -> Result<Particles, ParticlesError>
 emitter.with_flipbook(atlas, columns, rows, frames, cycles, blend); // -> Result<Particles, ParticlesError>
 emitter.with_origin(origin, half_extent);                      // -> Particles, like every with_* below
@@ -33,10 +35,17 @@ frame.particles(&sim.world.steam).particles(&sim.world.rain);
 
 `Particles::steam(origin)` rises slowly, grows and turns, drawn back to front and soft where it
 meets walls and the ground; `Particles::rain(top, half_extent)` falls as streaks from the top of a
-box and stops where it meets what the camera sees; `Particles::fountain(origin)` throws round warm
-sparks. Change one with `.with_rate(per_tick, lifetime_ticks)` (at most `PARTICLES_MAX`, 16384,
-alive at once), `.with_origin(origin, half_extent)`, `.with_motion(velocity, spread, gravity)`
-(world units a tick at 60 ticks a second), `.with_look(size, end_scale, start, end)`,
+box and stops where it meets what the camera sees; `Particles::snow(top, half_extent)` drops soft
+round flakes 2.5 cm across from the top of a box at 1 m/s, drifting, settling briefly where they
+land; `Particles::dust(origin, half_extent)` hangs faint 5 mm motes throughout a box (a room, a
+sunbeam: motes are unlit, so size the box to the beam); `Particles::fountain(origin)` throws round
+warm sparks. Rain's streaks and the snow's and dust's round dots are soft sprites: never draw
+weather or dust as meshes or cubes, which read as flying blocks. A box moved with the camera every
+frame is a new emitter every frame: cover the world with a few rain or snow boxes made once and
+draw those near the camera. Change one with `.with_rate(per_tick, lifetime_ticks)` (at most
+`PARTICLES_MAX`, 16384, alive at once), `.with_origin(origin, half_extent)`,
+`.with_motion(velocity, spread, gravity)` (world units a tick at 60 ticks a second),
+`.with_look(size, end_scale, start, end)`,
 `.with_soft(distance)` (a billboard fades out over that many metres as it nears the scene behind
 it instead of cutting a line; soft where the quality may run the depth prepass, desktop `medium`
 and up, hard elsewhere), `.with_sorted(true)` (back to front, for smoke and steam that overlap),

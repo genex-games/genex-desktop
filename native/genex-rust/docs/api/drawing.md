@@ -6,6 +6,7 @@ Every type and call in one line (each `frame.*` returns `&mut Frame`, so calls c
 use genex::prelude::*;                                      // Frame, Transform, Color, Material, Model, MeshData, Camera
 use genex::{Impostor, LodRefusalCode, MeshError, MeshErrorCode}; // and LOD_LEVELS_MAX, MESH_VERTICES_MAX
 frame.tag("walls");                                         // later draws count under "walls"
+frame.view_model(); frame.end_view_model();                 // the first-person arms and weapon between them
 frame.model(&model, transform);                             // a GLB with its own materials
 frame.model_with(&model, transform, &material);             // a GLB (or a built mesh) in one Material
 frame.model_tinted(&model, transform, color);               // its own materials times a colour
@@ -26,6 +27,12 @@ model.impostor(); model.lod_refusal();                      // -> Option<Imposto
 gfx.assets().compound(&[&wood, &foliage]);                  // -> Model
 Camera::look_at(position, target);                          // Camera { projection: Projection::Orthographic, fovy, .. }
 ```
+
+Draw a first-person game's arms and weapon between `frame.view_model()` and
+`frame.end_view_model()` (with their `frame.id`, as `docs/examples/fps-arms` does): screen-space
+ambient occlusion and contact shadows, made for the world, leave them alone, and a soft fill from
+over the camera's shoulder at the frame's exposure keeps them from going black against a bright
+sky. Give them their real colours: a 3% black glove still reads as black.
 
 There is no `Material::with_double_sided`. A GLB whose glTF material is `doubleSided` draws both
 faces through `frame.model` or `frame.model_tinted`; `frame.model_with` replaces its materials and

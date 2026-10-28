@@ -63,10 +63,11 @@ struct FroxelParams {
     prev_camera: vec4<f32>,
     // x, y, z: froxels across, down and slices; w: 1 when the frame's lights are binned.
     grid: vec4<u32>,
-    // xyz: this frame's jitter inside a froxel (0..1; the centre, 0.5, without history); w: 0.
+    // xyz: this frame's jitter inside a froxel (0..1; the centre, 0.5, without history); w: the
+    // first irradiance volume's row in `froxel_rooms`.
     jitter: vec4<f32>,
     // x, y: the render size in pixels; z: 1 when the environment lights the scene (the sky or a
-    // map), else 0 (the flat colour: the fog's colour is its in-scatter); w: 0.
+    // map), else 0 (the flat colour: the fog's colour is its in-scatter); w: the volumes' rows.
     screen: vec4<f32>,
     // The fog row (fog.rs `GpuFog`): the look's under the quality, density > 0.
     fog_color: vec4<f32>,
@@ -268,7 +269,9 @@ fn froxel_room_mean(room: FroxelRoom, p: vec3<f32>) -> vec3<f32> {
 fn froxel_room_light(p: vec3<f32>, sky: vec3<f32>) -> vec3<f32> {
     var light = vec3<f32>(0.0);
     var weight = 0.0;
-    for (var i = 0u; i < arrayLength(&froxel_rooms); i++) {
+    let first = u32(froxel.jitter.w);
+    let end = min(first + u32(froxel.screen.w), arrayLength(&froxel_rooms));
+    for (var i = first; i < end; i++) {
         let room = froxel_rooms[i];
         // A volume's layer is negative once baked; a probe's is positive, an empty row's 0.
         if room.max_layer.w >= 0.0 {

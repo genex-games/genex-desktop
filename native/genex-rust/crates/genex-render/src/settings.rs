@@ -311,6 +311,11 @@ pub struct Look {
     /// its detail kept ([`crate::post::local_exposure::LocalExposure`]; on by default, drawn where
     /// the quality's [`Quality::local_exposure`] is). HDR scene only.
     pub local_exposure: crate::post::local_exposure::LocalExposure,
+    /// Auto exposure adapts much faster for a moment when the camera crosses into or out of a room
+    /// the game declares (an irradiance volume's or a reflection probe's box; Bodycam light fix,
+    /// [`crate::post::exposure::RoomAdaptation`]), so stepping from a sunlit yard into a corridor
+    /// does not leave the picture dark. On by default.
+    pub doorway_adaptation: bool,
 }
 
 /// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
@@ -560,9 +565,11 @@ pub const DEFAULT_BLOOM_INTENSITY: f32 = 0.04;
 pub const DEFAULT_EV_MIN: f32 = -8.0;
 /// Auto exposure's default metering ceiling, in EV.
 pub const DEFAULT_EV_MAX: f32 = 8.0;
-/// Auto exposure's default brightening speed (the scene got darker), in EV per second: slow, as
-/// an eye adjusts to the dark.
-pub const DEFAULT_ADAPTATION_UP: f32 = 1.0;
+/// Auto exposure's default brightening speed (the scene got darker), in EV per second: fast, so
+/// stepping from a sunlit yard into a room does not leave the picture dark for seconds (a
+/// corridor 5 EV under the yard reads within about a second; at a declared room's doorway faster
+/// still, `post::exposure::RoomAdaptation`).
+pub const DEFAULT_ADAPTATION_UP: f32 = 4.0;
 /// Auto exposure's default darkening speed (the scene got brighter), in EV per second: fast, so
 /// stepping into sunlight does not leave the picture blown out for long.
 pub const DEFAULT_ADAPTATION_DOWN: f32 = 3.0;
@@ -616,6 +623,7 @@ const DEFAULT_LOOK: Look = Look {
     depth_of_field: crate::post::dof::DepthOfField::OFF,
     motion_blur: crate::post::motion_blur::MotionBlur::OFF,
     local_exposure: crate::post::local_exposure::LocalExposure::DEFAULT,
+    doorway_adaptation: true,
 };
 
 impl Default for Look {
@@ -881,6 +889,13 @@ impl SkyParams {
     pub fn with_intensity(mut self, intensity: f32) -> SkyParams {
         self.intensity = environment_intensity(intensity);
         self
+    }
+
+    /// A snowy or rainy day's sky (Bodycam light fix): the overcast air ([`SkyMedium::overcast`]),
+    /// a bright even grey on every preset, and a full deck of cloud ([`Clouds::overcast`]) that
+    /// veils the sun the ground gets, so shadows are soft and the sky's light fills them.
+    pub fn overcast() -> SkyParams {
+        SkyParams::default().with_medium(SkyMedium::overcast()).with_clouds(Some(Clouds::overcast()))
     }
 
     /// The sky made of `medium` (held to what the LUTs take, [`SkyMedium::validated`]).

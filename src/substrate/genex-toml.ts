@@ -36,7 +36,7 @@
  * bloom_intensity = 0.04    # 0..=1
  * ev_min = -6               # auto exposure's metered EV range, within ±16 (default -8..=8)
  * ev_max = 8
- * adaptation_speed_up = 1   # EV per second, 0 < speed <= 20 (defaults 1 and 3)
+ * adaptation_speed_up = 4   # EV per second, 0 < speed <= 20 (defaults 4 and 3)
  * adaptation_speed_down = 3
  *
  * [render.loading]          # the loading screen until the first lit frame (`shared/loading-style.ts`)

@@ -312,7 +312,9 @@ through every level of detail.
 A particle is a pure function of its emitter and the tick, so Live and a capture agree and nothing
 is read back. A compute pass ahead of the world pass writes every row; graph node 15 draws them as
 billboards after the transparent draws, through the air and the fog at their centres (the froxel
-fog where it runs). Each feature is per emitter:
+fog where it runs). Presets: `fountain`, `steam`, `rain`, `snow` (soft round 2.5 cm flakes at
+1 m/s, settling briefly) and `dust` (faint 5 mm motes throughout a box). Each feature is per
+emitter:
 
 - **Soft** (`soft_distance`, after three.js's `SoftParticles.js`): a billboard fades as it nears
   the opaque scene behind it. It reads the prepass depth as view depth at half the render size

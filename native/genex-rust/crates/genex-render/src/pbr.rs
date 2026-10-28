@@ -8,7 +8,7 @@
 //! radiance 1 at EV 0 is the legacy path's white), added after lighting and before fog, then
 //! pre-exposed with it, so auto exposure meters it and bloom spreads it.
 
-use crate::layout::{GpuMaterial, GpuMaterialExt, MATERIAL_EXT_FLAG_EMISSIVE, MATERIAL_EXT_FLAG_SUBSURFACE, MATERIAL_EXT_NO_TEXTURE, NO_TEXTURE};
+use crate::layout::{GpuMaterial, GpuMaterialExt, MATERIAL_EXT_FLAG_EMISSIVE, MATERIAL_EXT_FLAG_SUBSURFACE, MATERIAL_EXT_FLAG_VIEW_MODEL, MATERIAL_EXT_NO_TEXTURE, NO_TEXTURE};
 use crate::subsurface::Subsurface;
 use crate::texture::{TextureId, TextureKind};
 
@@ -61,6 +61,11 @@ pub struct Material {
     pub uv: UvMapping,
     /// What keeps a tiled texture from reading as a repeat (Bodycam B2b): none by default.
     pub variation: UvVariation,
+    /// A first-person view model's surface (the arms and the rifle at the lens; Bodycam light
+    /// fix): screen-space AO and contact shadows, made for the world, leave it alone, and a soft
+    /// fill from over the camera's shoulder at the frame's exposure keeps it from going black
+    /// against a bright sky. False by default.
+    pub view_model: bool,
 }
 
 /// [`GpuMaterialExt`] `tiling.x` bit: the maps are projected from the world ([`UvMapping::World`]).
@@ -192,6 +197,7 @@ impl Material {
             subsurface: None,
             uv: UvMapping::default(),
             variation: UvVariation::default(),
+            view_model: false,
         }
     }
 
@@ -324,6 +330,7 @@ impl Material {
             occlusion: self.occlusion_reference().map(|reference| (reference, self.occlusion_strength().to_bits())),
             subsurface: self.visible_subsurface().map(Subsurface::key),
             uv: uv_bits(uv_rows(self.uv, self.variation)),
+            view_model: self.view_model,
         }
     }
 
@@ -351,6 +358,9 @@ impl Material {
         if let Some(subsurface) = self.visible_subsurface() {
             (row.subsurface, row.transmission) = subsurface.rows();
             flags |= MATERIAL_EXT_FLAG_SUBSURFACE;
+        }
+        if self.view_model {
+            flags |= MATERIAL_EXT_FLAG_VIEW_MODEL;
         }
         row.params[2] = flags as f32;
         if !self.is_emissive() {
@@ -407,6 +417,8 @@ pub(crate) struct MaterialKey {
     subsurface: Option<[u32; 7]>,
     /// The UV mapping and variation rows' bits (Bodycam B2b).
     uv: [u32; 8],
+    /// A view model's (Bodycam light fix).
+    view_model: bool,
 }
 
 /// The bits of a material's UV rows ([`uv_rows`]), for its key.

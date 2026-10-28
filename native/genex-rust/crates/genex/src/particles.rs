@@ -3,11 +3,12 @@
 //! tick the frame is drawn at, never of earlier frames: Live and a capture of the same tick draw
 //! the same particles, nothing is read back, and the simulation and its checksum never see them.
 //!
-//! Start from [`Particles::steam`], [`Particles::rain`] or [`Particles::fountain`] and change what
-//! you need: soft billboards that fade where they meet the scene behind them, a flipbook atlas
-//! from the game's assets, back-to-front sorting, and collision with what the camera sees (a
-//! particle that falls behind a visible surface rests there and is gone; one that hits something
-//! out of view is not stopped).
+//! Start from [`Particles::steam`], [`Particles::rain`], [`Particles::snow`], [`Particles::dust`]
+//! or [`Particles::fountain`] and change what you need: soft billboards that fade where they meet
+//! the scene behind them, a flipbook atlas from the game's assets, back-to-front sorting, and
+//! collision with what the camera sees (a particle that falls behind a visible surface rests there
+//! and is gone; one that hits something out of view is not stopped). Rain, snow and dust are these
+//! soft billboards, never meshes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -167,6 +168,23 @@ impl Particles {
     /// out within two metres of the camera.
     pub fn rain(origin: Vec3, extent: Vec3) -> Particles {
         Particles::of(EmitterDesc::rain(origin.to_array(), extent.to_array(), 1))
+    }
+
+    /// Snow falling from the box centred on `top` with half sides `half_extent` (a y of 0: its top
+    /// face): soft round flakes 2.5 cm across falling 1 m/s and drifting, about 10 000 alive and
+    /// living 12 s, so they reach the ground from 8-10 m. A flake settles for half a second where
+    /// it lands on what the camera sees and fades in over two metres in front of the camera.
+    /// Draw weather with this, never with meshes.
+    pub fn snow(top: Vec3, half_extent: Vec3) -> Particles {
+        Particles::of(EmitterDesc::snow(top.to_array(), half_extent.max(Vec3::ZERO).to_array(), 1))
+    }
+
+    /// Dust motes hanging in the air of the box centred on `origin` with half sides `half_extent`
+    /// (a room, a sunbeam): faint warm specks 5 mm across, born anywhere in the box, drifting a
+    /// centimetre or two a second, 1 200 alive and living 20 s each. They are not lit by the sun:
+    /// size the box to the sunbeam for motes in the light.
+    pub fn dust(origin: Vec3, half_extent: Vec3) -> Particles {
+        Particles::of(EmitterDesc::dust(origin.to_array(), half_extent.max(Vec3::ZERO).to_array(), 1))
     }
 
     /// `per_tick` particles spawned each tick, each living `lifetime_ticks` (60 a second). Refused

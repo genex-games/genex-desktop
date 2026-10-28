@@ -138,7 +138,10 @@ that move later do not change it. Only scenes the sky or an HDR map lights take 
 quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`; 2 to 4
 on phones at `high` and `ultra` only, none at a phone's own `medium` or `low` preset or on the
 low phones); the rest take the sky's light. Give a volume to each
-room or courtyard whose bounced colour matters, alongside its reflection probe.
+room or courtyard whose bounced colour matters, alongside its reflection probe. A room's probe and
+volume also steer auto exposure: when the camera crosses into or out of either box, it adapts
+eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once
+(`look.doorway_adaptation`, on by default).
 
 Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
 depth and float off it at a distance): `frame.decal(&Decal::on_wall(center, facing, width,
@@ -178,7 +181,10 @@ with an `.exposure_curve(..)` (Grading and the lens) keeps the night darker than
 `.with_layer(base_km, thickness_km)`, `.with_density(..)`, `.with_offset([x_km, z_km])` to let them
 drift, `.with_cirrus(0.6)` for high streaks) adds cumulus lit by the sun (by night, the moon),
 drawn in the sky and seen by reflections and the ambient light, on desktop `medium` and up; `low`
-and phones show a clear sky.
+and phones show a clear sky. On every preset clouds veil the sun the ground gets (about half at
+coverage 0.5), so a cloudy day's shadows are lit by the sky, never black. Snow and rain fall from
+an overcast sky: `Environment::Sky(SkyParams::overcast())`, a bright grey sky on every preset and
+a veiled sun, not a blue sky with a full sun.
 `Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
 Radiance `.hdr` under `assets/` (`HdriEnvironment::new(path).with_rotation_degrees(90.0)
 .with_intensity(0.5)`, inside `Environment::Hdri(..)`) and is drawn behind it. By default

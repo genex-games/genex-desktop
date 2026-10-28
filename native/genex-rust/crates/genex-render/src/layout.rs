@@ -209,6 +209,10 @@ pub const MATERIAL_EXT_FLAG_EMISSIVE: u32 = 1;
 /// `subsurface` and `transmission` rows hold a [`crate::subsurface::Subsurface`] and the forward
 /// pass runs the subsurface chunk for it.
 pub const MATERIAL_EXT_FLAG_SUBSURFACE: u32 = 2;
+/// [`GpuMaterialExt::params`] `z` flag: a first-person view model's surface (Bodycam light fix,
+/// [`crate::pbr::Material::view_model`]): no screen-space AO or contact shadow, and the camera's
+/// fill light (`gx_view_model_fill`).
+pub const MATERIAL_EXT_FLAG_VIEW_MODEL: u32 = 4;
 /// The emissive texture layer of a material without one ([`GpuMaterialExt`] `params.x`).
 pub const MATERIAL_EXT_NO_TEXTURE: f32 = -1.0;
 

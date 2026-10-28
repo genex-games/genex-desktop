@@ -3233,8 +3233,65 @@ fn write_world(sink: &mut impl WorldSink, frame: &Frame, assets: &AssetCache, dr
     for draw in frame.draws() {
         sink.tag(&draw.tag);
         sink.id(draw.id);
-        let triangles = push_shape(sink, assets, &mut drawn.missing_models, &draw.shape);
+        let triangles = if draw.view_model {
+            push_shape(&mut ViewModelSink(&mut *sink), assets, &mut drawn.missing_models, &draw.shape)
+        } else {
+            push_shape(sink, assets, &mut drawn.missing_models, &draw.shape)
+        };
         note_triangles(drawn, &draw.tag, triangles);
+    }
+}
+
+/// A sink drawing everything it is handed as the first-person view model ([`Frame::view_model`]):
+/// each material marked so (`Material::view_model`), everything else passed through.
+struct ViewModelSink<'a, S: WorldSink>(&'a mut S);
+
+/// `material` as the view model draws it.
+fn view_model_material(material: Material) -> Material {
+    Material { view_model: true, ..material }
+}
+
+impl<S: WorldSink> characters::SkinSink for ViewModelSink<'_, S> {
+    fn skinned(&mut self, skin: genex_render::skin::SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, materials: Vec<Material>) {
+        self.0.skinned(skin, model, joints, materials.into_iter().map(view_model_material).collect());
+    }
+}
+
+impl<S: WorldSink> WorldSink for ViewModelSink<'_, S> {
+    fn tag(&mut self, name: &str) {
+        self.0.tag(name);
+    }
+
+    fn id(&mut self, id: Option<DrawId>) {
+        self.0.id(id);
+    }
+
+    fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
+        self.0.mesh(mesh, model, view_model_material(material));
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        self.0.group(group, view_model_material(material));
+    }
+
+    fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
+        self.0.line(from, to, color);
+    }
+
+    fn lines(&mut self, vertices: &[LineVertex]) {
+        self.0.lines(vertices);
+    }
+
+    fn lighting(&mut self) -> &mut Lighting {
+        self.0.lighting()
+    }
+
+    fn lod(&mut self, lod: DrawLod) {
+        self.0.lod(lod);
+    }
+
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        self.0.far_rule(rule)
     }
 }
 

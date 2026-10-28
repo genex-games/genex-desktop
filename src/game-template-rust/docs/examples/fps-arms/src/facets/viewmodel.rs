@@ -9,8 +9,10 @@
 //!   still cycles the carrier.
 //! - Sway against the turn, the kick and the pull-back from a wall come from simulation state and
 //!   move the whole kit; down the sights they shrink, so the sight line settles on the centre.
-//! - Drawn under the `hands` tag and one `frame.id`, so TAA moves it with the camera. The flash and
-//!   the tracer start at the kit's `muzzle` socket, wherever the clip has the rifle.
+//! - Drawn under the `hands` tag and one `frame.id`, so TAA moves it with the camera, and as the
+//!   view model (`frame.view_model`), so screen-space AO leaves it alone and a fill from over the
+//!   camera's shoulder keeps it from going black with the sun in front. The flash and the tracer
+//!   start at the kit's `muzzle` socket, wherever the clip has the rifle.
 
 use genex::animation::{BoolParam, FloatParam, JointId, Motion, TriggerParam};
 use genex::math::{self, Mat3, Quat, Vec3, vec3};
@@ -226,9 +228,9 @@ pub fn kit_transform(world: &World, sway: Vec2, camera: &Camera) -> Transform {
 
 fn draw(kit: &Kit, world: &World, sway: Vec2, frame: &mut Frame, camera: &Camera) {
     let at = kit_transform(world, sway, camera);
-    frame.tag("hands").id(VIEW_MODEL_ID);
+    frame.tag("hands").id(VIEW_MODEL_ID).view_model();
     frame.character(&kit.animator, at);
-    frame.end_id();
+    frame.end_view_model().end_id();
     let muzzle = kit.animator.socket(kit.muzzle, at.matrix()).transform_point3(Vec3::ZERO);
     let since = world.fired_at.map(|tick| world.tick - tick);
     if since.is_some_and(|ticks| ticks < FLASH_TICKS) {

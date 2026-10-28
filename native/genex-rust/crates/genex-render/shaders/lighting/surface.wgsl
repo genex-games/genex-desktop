@@ -122,6 +122,14 @@ const GX_STOCHASTIC_STEPS: f32 = 8.0;
 // (stochastic tiling, macro variation); zero for every Level-2 v2 surface.
 var<private> gx_surface_tiling: vec4<f32> = vec4<f32>(0.0);
 
+// The extension row's flag of a first-person view model (`layout::MATERIAL_EXT_FLAG_VIEW_MODEL`).
+const GX_MATERIAL_VIEW_MODEL: u32 = 4u;
+// Whether the fragment being shaded is a view model's (Bodycam light fix): set by the forward
+// pass from its material's row before any light; screen-space AO and contact shadows, made for
+// the world, leave it alone (forward_effects.wgsl), and it takes the camera's fill
+// (`gx_view_model_fill`). False for every other surface.
+var<private> gx_view_model: bool = false;
+
 // The world position projected along the axis `normal` faces most, `scale` tiles per metre: u runs
 // to the viewer's right and v down a wall, and the tangent is the projection's own u axis with the
 // meshes' handedness (-1: the bitangent is where v grows).

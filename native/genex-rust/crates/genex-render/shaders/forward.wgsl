@@ -173,6 +173,28 @@ fn gx_scene_shades_hdr() -> bool {
     return GX_SCENE_HDR;
 }
 
+// A first-person view model's fill (Bodycam light fix): a soft light from above the camera and
+// to its right, behind the lens, at a level relative to the frame's exposure (scene units over the
+// pre-exposure, `cascade_splits.z`), so the arms and the rifle at the lens keep their form against
+// a bright sky with the sun in front, as a game's camera light would. Through the surface's own
+// BRDF, so steel catches a highlight and a dark glove stays darker than a pale one: a white
+// surface facing it reads at `GX_VIEW_MODEL_FILL` of middle grey's scene value twice over (the
+// irradiance is pi times it, as the BRDF divides the diffuse term by pi).
+const GX_VIEW_MODEL_FILL: f32 = 0.6;
+const GX_VIEW_MODEL_FILL_DIRECTION: vec3<f32> = vec3<f32>(0.35, 0.55, 0.76);
+
+fn gx_view_model_fill(s: Surface) -> vec3<f32> {
+    let forward = normalize(frame.camera_forward.xyz);
+    // Any up that is not the forward axis: looking straight up or down keeps a basis.
+    let up_hint = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(forward.y) > 0.99);
+    let right = normalize(cross(forward, up_hint));
+    let up = cross(right, forward);
+    let d = GX_VIEW_MODEL_FILL_DIRECTION;
+    let l = normalize(right * d.x + up * d.y - forward * d.z);
+    let level = GX_VIEW_MODEL_FILL * PI / max(frame.cascade_splits.z, 1e-6);
+    return shade(s.n, s.v, l, vec3<f32>(level), s.albedo, s.metallic, s.roughness);
+}
+
 // Linear rgb and alpha of a fragment: ambient, then the sun (and the sun's light through a
 // translucent material, B.1), then the local lights, then the
 // material's emission (RQ6.3), through the air (aerial perspective) and the fog.
@@ -193,6 +215,7 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     let facing = select(-1.0, 1.0, front);
     let tangent = vec4<f32>(in.tangent.xyz * facing, in.tangent.w * facing);
     let ext = material_ext[in.material];
+    gx_view_model = (u32(max(ext.params.z, 0.0)) & GX_MATERIAL_VIEW_MODEL) != 0u;
     let mapped = gx_surface_uv(ext.uv, ext.tiling, in.uv, tangent, in.world_pos, in.normal * facing);
     var s = gx_surface(in.world_pos, in.normal * facing, mapped.uv, mapped.tangent, in.material);
     s.v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -224,6 +247,9 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
         color += gx_subsurface_sun(s, ext, sun);
     }
     color = gx_local_lights(color, s);
+    if gx_view_model {
+        color += gx_view_model_fill(s);
+    }
     color += gx_emission(ext, mapped.uv);
     color = gx_forward_fog(color, s.world_pos);
     return vec4<f32>(color, s.alpha);

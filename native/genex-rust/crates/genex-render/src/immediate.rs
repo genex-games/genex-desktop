@@ -740,6 +740,8 @@ struct ExposureFrame<'a> {
     ticks: u32,
     /// Adapt at once (a settled capture).
     instant: bool,
+    /// How many times faster than the look it adapts (a Live frame at a room's doorway).
+    boost: f32,
 }
 
 impl FrameNodesOf<'_> {
@@ -805,6 +807,7 @@ impl FrameNodesOf<'_> {
             quality: &exposure.quality,
             ticks: exposure.ticks,
             instant: exposure.instant,
+            boost: exposure.boost,
             timestamp_writes: None,
         };
         let ran = exposure.pass.encode(&self.gpu.device, &self.gpu.queue, frame.encoder(), exposure.history, input);
@@ -986,14 +989,14 @@ fn v2_frame_facts(renderer: &Renderer, frame: &ImmediateFrame, history: &FrameHi
 /// The exposure node's work for a frame at `history`: the node's set (Live or the capture's),
 /// with instant adaptation in a capture. None before the node exists, on frames that cannot draw
 /// HDR, or with the exposure switch off.
-fn exposure_frame<'a>(node: &'a mut Option<ExposureHistories>, renderer: &Renderer, history: &FrameHistory) -> Option<ExposureFrame<'a>> {
+fn exposure_frame<'a>(node: &'a mut Option<ExposureHistories>, renderer: &Renderer, history: &FrameHistory, boost: f32) -> Option<ExposureFrame<'a>> {
     let (quality, look) = (*renderer.quality(), *renderer.look());
     let runs = quality.hdr && quality.exposure && renderer.hdr_scene_format() != WORLD_FORMAT;
     let node = node.as_mut().filter(|_| runs)?;
     node.set_look(&look);
     let (pass, history_buffers) = node.parts(history.set);
     let instant = history.set == HistorySet::Capture;
-    Some(ExposureFrame { pass, history: history_buffers, look, quality, ticks: history.ticks, instant })
+    Some(ExposureFrame { pass, history: history_buffers, look, quality, ticks: history.ticks, instant, boost })
 }
 
 /// The buffer the frame's pre-exposure is copied from under auto exposure (a fixed exposure is
@@ -1030,6 +1033,8 @@ pub struct FrameRenderer {
     /// The exposure node with Live's and the capture's histories, made on the first frame that
     /// meters (graph node 20).
     exposure: Option<ExposureHistories>,
+    /// Auto exposure's quick adjustment at a declared room's doorway (Live frames).
+    room_adaptation: crate::post::exposure::RoomAdaptation,
     /// Settled captures begun since this renderer was made.
     settled: u32,
 }
@@ -1066,6 +1071,7 @@ impl FrameRenderer {
             last_history: None,
             paced_ticks: None,
             exposure: None,
+            room_adaptation: crate::post::exposure::RoomAdaptation::default(),
         })
     }
 
@@ -1326,7 +1332,12 @@ impl FrameRenderer {
         if let Some((node, reversed)) = self.renderer.reactive_node() {
             self.particles.ensure_reactive(&gpu.device, node, reversed)?;
         }
-        let exposure = exposure_frame(&mut self.exposure, &self.renderer, &history);
+        // A Live frame whose camera crossed into or out of a declared room adapts faster.
+        let lighting = &frame.scene().lighting;
+        let rooms = crate::post::exposure::rooms_around(frame.scene().camera.eye, &lighting.irradiance_volumes, &lighting.reflection_probes);
+        let doorway = history.set == HistorySet::Live && self.renderer.look().doorway_adaptation;
+        let boost = if doorway { self.room_adaptation.step(rooms, history.ticks) } else { 1.0 };
+        let exposure = exposure_frame(&mut self.exposure, &self.renderer, &history, boost);
         let pre_exposure = exposure.as_ref().and_then(|work| auto_pre_exposure(work));
         let frame_v2 = self.materials.frame_v2().cloned();
         let mut encoder = FrameEncoder::new(&gpu.device, &gpu.queue, "frame");
