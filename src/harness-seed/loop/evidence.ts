@@ -115,7 +115,8 @@ export type PlayVia = (typeof PlayVia)[keyof typeof PlayVia];
 /** Whether the drive of a game with a front-end started in play, and how it got there. */
 export interface PlayReach {
   declared: true;
-  reached: boolean;
+  /** Null when the game reports no `state().flow`: its declared start keys were pressed, and nothing says whether play began. */
+  reached: boolean | null;
   phase: string | null;
   via: PlayVia;
   /** Simulated milliseconds stepped after `begin()` (or the keys) before play. */
@@ -224,6 +225,8 @@ const LAST_DRIVE_STEP = DRIVE_STEPS - 1;
 /** Reaching play: the clock steps this long between reads of `flow.playing`, for at most this long. */
 const PLAY_WAIT_STEP_MS = 240;
 const PLAY_WAIT_MAX_MS = 12 * SECOND_MS;
+/** A game with no `flow`: after its declared start keys the clock steps this long before the opening sample. */
+const START_SETTLE_MS = SECOND_MS;
 /** How much of what `__studio.begin()` answered when it refused a warning quotes. */
 const BEGIN_REASON_CHARS = 160;
 /**
@@ -1201,7 +1204,7 @@ function playReach(flow: { playing: boolean; phase: string | null }, via: PlayVi
  */
 async function reachPlay(look: Look): Promise<void> {
   const flow = flowOf(look.stateEarly);
-  if (!flow) return;
+  if (!flow) return pressDeclaredStart(look);
   if (flow.playing) {
     look.play = playReach(flow, PlayVia.Boot, 0);
     return;
@@ -1217,6 +1220,30 @@ async function reachPlay(look: Look): Promise<void> {
   look.stateEarly = state;
   look.play = playReach(flowOf(state) ?? flow, via, ms);
   if (!look.play.reached) look.warnings.push(outsidePlay(look.play, startKeysOf(look.run?.game), look.beginRefusal));
+}
+
+/**
+ * (6a, no flow) A game that reports no `state().flow` but declared how it leaves its title (a Rust
+ * or C++ game has no `__studio.begin()`, and its state has no flow unless it adds one): its start
+ * keys are pressed and the clock settled before the opening sample, so the scripted controls land
+ * in play. The Bodycam rerun drove its title for two rounds and named the input dead. Nothing says
+ * whether play began, so the builder is asked for `flow`. A game that declared nothing, or the
+ * worker judged on its front-end, is driven call for call as before.
+ */
+async function pressDeclaredStart(look: Look): Promise<void> {
+  const { ctx, h, run } = look;
+  const keys = startKeysOf(run?.game);
+  if (!keys.length || look.requestedSetup?.begin === false) return;
+  await applyPlayScript(ctx, [{ type: "tap", keys }], { clock: "step", runId: run.runId, ...h });
+  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: START_SETTLE_MS, ...h });
+  look.stateEarly = await ctx.call(HostMethod.PreviewState, stateParams(look));
+  look.play = { declared: true, reached: null, phase: null, via: PlayVia.Keys, ms: START_SETTLE_MS };
+  look.warnings.push(unreadPlay(keys));
+}
+
+/** What the builder is told when the start keys were pressed on a game that cannot say it is in play. */
+function unreadPlay(keys: string[]): string {
+  return `the game reports no state().flow, so the harness pressed the declared start keys (${keys.join("/")}) and stepped ${START_SETTLE_MS / SECOND_MS} s without reading whether play began — report flow {playing, phase} in state() (a "flow" probe) so the drive knows`;
 }
 
 /** `__studio.begin()`, or the declared start keys when the page has none; how the pass asked. */
@@ -1324,7 +1351,7 @@ async function driveGame(look: Look): Promise<void> {
   const played = await applyPlayScript(ctx, driveScriptOf(look), { clock: "step", runId: run.runId, ...h });
   if (played.refused > 0) look.warnings.push(touchesSkipped(played.refused));
   // A menu is never held on the throttle: the front-end's own worker, or a game that never got into play.
-  const onMenu = Boolean(look.play && !look.play.reached);
+  const onMenu = look.play?.reached === false;
   const cruise = onMenu ? [] : cruiseOf(run?.game);
   look.cornerWatch = !onMenu && cornersOf(run?.game) ? newCornerWatch() : null;
   if (cruise.length) {

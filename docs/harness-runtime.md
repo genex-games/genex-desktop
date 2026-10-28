@@ -52,7 +52,13 @@ judgement (racing and flight then hold W/ArrowUp through the rest of the drive, 
 the game's racing line when it has one and released before the cameras; a declared script holds
 nothing; a front-end kept for its owner, `begin:false`, is pressed by nothing, not even a declared
 script), and `gameLine(run.game)` is the first line of
-every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` may declare `start.keys`. A play script may
+every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` declares `start.keys`; the director's `plan`
+refuses a kind without `start` (keys, or `none` for a game that boots into play). Both evidence
+passes press the keys before the opening sample (the web pass once `begin()` refuses), until `state().flow` says play began; a game that
+reports no `flow` (a Rust or C++ game unless it adds a `flow` probe) gets one settle step and a
+warning asking for it. A judge's `[dead-input]` defect is read off state, never asked of a frame
+(`facet/defects.ts`): it goes to the defect ledger, and the kind's look and move probes measure it.
+A play script may
 `touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for
 the finger): it reaches a Rust · wgpu game's contract v2 run or web page through `preview.input`;
 any other preview answers `touch-not-taken`, the script skips that touch, and the look warns that

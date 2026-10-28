@@ -267,13 +267,38 @@ function scenarios(value: unknown): string[] {
     .filter(Boolean);
 }
 
+/** The word a plan's `start` takes for a game that boots straight into play. */
+const START_NONE = "none";
+
+/** The refusal of a plan that declares a game to drive but not how it leaves its title. */
+const START_MISSING =
+  'plan: start says how the game leaves its title before the harness drives it — the keys a player presses there (["Enter"]), or "none" when it boots straight into play';
+
+/**
+ * How the game goes from boot into play, as the plan wrote it (`start`): its keys, `none` as an
+ * empty list, or null when the plan said nothing. A Rust or C++ game has no `__studio.begin()`,
+ * and the Bodycam rerun's judges drove its title for two rounds because nobody had said Enter.
+ */
+function planStart(start: unknown): { keys: string[] } | null {
+  if (
+    String(start ?? "")
+      .trim()
+      .toLowerCase() === START_NONE
+  )
+    return { keys: [] };
+  const keys = lines(start);
+  return keys.length ? { keys } : null;
+}
+
 /**
  * What kind of game this is (M4.4). Declared here or nowhere: the board, the play script the
- * harness drives and the line every judge reads all come from it, and nothing is assumed.
+ * harness drives and the line every judge reads all come from it, and nothing is assumed. A game
+ * the harness will drive also says how it leaves its title (`start`), checked here, at plan time.
  */
 function planGame(
   kind: unknown,
   play_script: unknown,
+  start: unknown,
 ): { game: AnyRecord | null; error?: undefined } | { error: string } {
   const kindName = String(kind ?? "").trim();
   const quoted = kindName.slice(0, KIND_QUOTED);
@@ -285,8 +310,14 @@ function planGame(
   if (parsedScript?.__error) return { error: `plan: play_script ${parsedScript.__error}` };
   const playScript = normalizePlayScript(parsedScript);
   if (!kindName && !playScript) return { game: null };
+  const leaves = planStart(start);
+  if (!leaves) return { error: START_MISSING };
   return {
-    game: normalizeGameTraits({ ...(kindName ? { kind: kindName } : {}), ...(playScript ? { playScript } : {}) }),
+    game: normalizeGameTraits({
+      ...(kindName ? { kind: kindName } : {}),
+      ...(playScript ? { playScript } : {}),
+      start: leaves,
+    }),
   };
 }
 
@@ -354,6 +385,7 @@ export function compilePlan({
   risks = "",
   kind = "",
   play_script = null,
+  start = null,
   contract = null,
   vision = null,
   cut = null,
@@ -365,6 +397,8 @@ export function compilePlan({
   risks?: unknown;
   kind?: string;
   play_script?: unknown;
+  /** How the game leaves its title: its keys (a JSON array or one key), or `none`. Required with a kind. */
+  start?: unknown;
   /** The module contract (module-contract.ts): who owns which module and what it exposes. */
   contract?: unknown;
   /** The vision (vision.ts): what the world grows toward — scale, the far view, set-pieces, headroom. */
@@ -377,7 +411,7 @@ export function compilePlan({
   const text = String(summary ?? "").trim();
   if (!text)
     return { error: "plan: summary is what this run is for, in two or three sentences the user would understand" };
-  const declared = planGame(kind, play_script);
+  const declared = planGame(kind, play_script, start);
   if (declared.error !== undefined) return { error: declared.error };
   const named = planParts(workers);
   if (named.error !== undefined) return { error: named.error };

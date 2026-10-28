@@ -1070,6 +1070,41 @@ describe("the judging target (D2)", () => {
     );
   });
 
+  it("a game on its title with declared start keys: they are pressed before the opening sample (Bodycam rerun BC3)", async () => {
+    const recorder = fakeHost();
+    const pressed: string[] = [];
+    recorder.handle(HostMethod.PreviewInput, (p) => {
+      for (const action of (p.actions ?? []) as Array<{ type: string; keys?: string[] }>)
+        pressed.push(`${action.type}:${(action.keys ?? []).join("+")}`);
+      return { ok: true, applied: 1, width: 640, height: 360 };
+    });
+    const game = { kind: "first-person", start: { keys: ["Enter"] } };
+    const evidence = await nativePass(ctxOf(recorder), {
+      run: raylibRun({ stack: GameStack.RustWgpu, game }),
+      handle: NATIVE,
+      seed: SEED,
+    });
+    const start = pressed.findIndex((word) => word.endsWith(":Enter"));
+    const walk = pressed.findIndex((word) => word.includes("w"));
+    assert.ok(start >= 0 && start < walk, `Enter before the scripted controls: ${pressed.join(" ")}`);
+    assert.ok(
+      evidence.warnings.some((warning) => /reports no state\(\)\.flow/.test(warning)),
+      JSON.stringify(evidence.warnings),
+    );
+    const plain = fakeHost();
+    const keys: string[] = [];
+    plain.handle(HostMethod.PreviewInput, (p) => {
+      keys.push(JSON.stringify(p.actions));
+      return { ok: true, applied: 1, width: 640, height: 360 };
+    });
+    await nativePass(ctxOf(plain), {
+      run: raylibRun({ stack: GameStack.RustWgpu, game: { kind: "first-person" } }),
+      handle: NATIVE,
+      seed: SEED,
+    });
+    assert.ok(!keys.some((actions) => actions.includes("Enter")), "nothing pressed that the game did not declare");
+  });
+
   it("a capture refused device-lost past its retries fails by camera, never silently", async () => {
     const recorder = fakeHost({ deviceLostOnce: ["default", "default"] });
     const evidence = await nativePass(ctxOf(recorder), {

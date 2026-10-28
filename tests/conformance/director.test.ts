@@ -1305,11 +1305,20 @@ describe("the run's plan, before anyone builds", () => {
   it("takes what kind of game this is on the plan, and refuses a kind that is not one", () => {
     const one = JSON.stringify([{ id: "board" }]);
     const board = (
-      compilePlan({ summary: "a chess board that reads", workers: one, kind: "static-board" }) as { plan: any }
+      compilePlan({ summary: "a chess board that reads", workers: one, kind: "static-board", start: "none" }) as {
+        plan: any;
+      }
     ).plan;
     assert.deepEqual(
       board.game,
-      { kind: "static-board", hud: false, mouseLook: false, keyboardMove: false, playScript: null },
+      {
+        kind: "static-board",
+        hud: false,
+        mouseLook: false,
+        keyboardMove: false,
+        playScript: null,
+        start: { keys: [] },
+      },
       "a declared kind brings its own traits and nothing else",
     );
 
@@ -1318,6 +1327,7 @@ describe("the run's plan, before anyone builds", () => {
         summary: "a builder you pan around",
         workers: one,
         kind: "free-camera",
+        start: "none",
         play_script: JSON.stringify([{ type: "drag", fromX: 100, fromY: 100, x: 300, y: 200 }]),
       }) as { plan: any }
     ).plan;
@@ -7255,7 +7265,7 @@ describe("a director's run through the real core and harness", () => {
         seen.director.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         // The director looked and decided this is not the top-down game the file says.
-        results.planned = text(await call("plan", { ...planFor("core"), kind: "first-person" }));
+        results.planned = text(await call("plan", { ...planFor("core"), kind: "first-person", start: '["Enter"]' }));
         // A worker with no seam owns nearly the whole repository, so it starts alone…
         results.startedCore = json(
           await call("worker_start", {

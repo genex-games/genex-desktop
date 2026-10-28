@@ -1889,7 +1889,9 @@ describe("racing and flight hold the throttle through the drive", () => {
 
   it("reads declared start keys from the plan or studio.json, and writes them back", async () => {
     assert.deepEqual(normalizeGameTraits({ start: { keys: "Enter" } }).start, { keys: ["Enter"] });
-    assert.equal("start" in normalizeGameTraits({ start: { keys: [] } }), false);
+    // An explicit empty list is the plan's `start=none`: the game boots straight into play (BC3).
+    assert.deepEqual(normalizeGameTraits({ start: { keys: [] } }).start, { keys: [] });
+    assert.equal("start" in normalizeGameTraits({ start: {} }), false);
     assert.equal("start" in normalizeGameTraits({ start: 5 }), false);
     assert.deepEqual(startKeysFor({ start: { keys: ["Enter", "space"] } }), ["Enter", "space"]);
     assert.deepEqual(startKeysFor(undefined), []);
