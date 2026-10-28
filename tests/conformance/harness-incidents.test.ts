@@ -18744,6 +18744,38 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     assert.deepEqual(await auditProvenance({ ...yard }, state, game), [], "no art pass, nothing to audit");
   });
 
+  it("G3-3a. a 15 s web boot gate and a phone memory note made a native desktop game ship 1k scans with no normal or ORM maps: budgets are said per destination, a look brief declares its boot, and no judge or director turns a budget into dropped maps", async () => {
+    const { slowBootWarning, bootBudgetLine, LOOK_BAR_BOOT_MS } = await import(
+      "../../src/harness-seed/loop/destination-budgets.ts"
+    );
+    const { artPassLines, ART_PASS_RULE } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");
+    const { judgePrompt } = await import("../../src/harness-seed/loop/judge.ts");
+    const native = { destinations: { stack: "rust-wgpu", targets: ["macos", "windows"] } } as unknown as Run;
+    const web = { destinations: { stack: "rust-wgpu", targets: ["web", "macos"] } } as unknown as Run;
+    assert.match(
+      slowBootWarning(14_200, native),
+      /web preview Genex judges this native game through took 14\.2 s.*not the desktop build's budget: keep full-resolution maps/,
+    );
+    assert.match(
+      slowBootWarning(14_200, web),
+      /^the page took 14\.2 s .*\[\[asset_group\]\]s rather than cutting maps/,
+    );
+    assert.match(bootBudgetLine(yard), new RegExp(`"bootMs": ${LOOK_BAR_BOOT_MS} in studio\\.json`));
+    assert.equal(bootBudgetLine({ ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run), "");
+    const art = {
+      generations: 0,
+      assets: [{ area: "yard", tier: "hero", kind: "prop", asset: "bench", source: "cc0-model" }],
+    };
+    assert.match(artPassLines({ ...yard, art }), /BOOT: this look loads 2k and 4k scans/);
+    const neverCut = /never by dropping normal or ORM maps/;
+    assert.match(ART_PASS_RULE, neverCut, "the director never caps textures to protect a boot");
+    const ctx = { workspace: path.join(process.cwd(), "src", "harness-seed") } as never;
+    for (const rubric of ["taste-veto.md", "ship-review.md"])
+      assert.match(await judgePrompt(ctx, rubric, "fallback"), neverCut, rubric);
+    const { SHIP_REVIEW_FALLBACK } = await import("../../src/harness-seed/loop/ship-review-prompts.ts");
+    assert.match(SHIP_REVIEW_FALLBACK, neverCut, "a workspace without the rubric file says it too");
+  });
+
   it("G3-4a. the light facet settled the classroom at mean luma 28 with 41% in the darkest bin and [crushed-shadow] never stopped a keep: a playable camera outside the luminance band is a blocking defect", async () => {
     const { lumaBandDefect } = await import("../../src/harness-seed/loop/look-facts.ts");
     const { blocksLook } = await import("../../src/harness-seed/loop/look-bar.ts");

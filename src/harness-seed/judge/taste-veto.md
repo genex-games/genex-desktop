@@ -18,6 +18,10 @@ Rules:
   below the bar has regressed even though the other build lacks the thing — pick the other
   build and name it in `regression`. A round that adds a look blocker is not kept, whatever
   checks flipped.
+- A boot, memory or texture budget is met by deferring what the first playable frame does not
+  need into `[[asset_group]]`s that stream after it — never by dropping normal or ORM maps,
+  shrinking near surfaces below 2k, sharing one model for different props or cutting lights.
+  Never name any of those as a fix, and never call a full-resolution map a defect for its size.
 - When the user content lists DO NOT REGRESS (what the art director says already works in the
   whole game), a build the checks accepted that lost one of those items, where your frames show
   it, has regressed: pick the other build and name that loss as the regression.

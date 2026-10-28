@@ -332,6 +332,8 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
   // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
   loopRun.game = { hookEvents: game?.hookEvents, ...editorPlayOf(game) };
   loopRun.leaseGame = leaseGameOf(game);
+  // Budgets are said per destination (destination-budgets.ts): every look reads them off the run.
+  if (game?.destinations) loopRun.run.destinations = game.destinations;
   return projectDir;
 }
 
