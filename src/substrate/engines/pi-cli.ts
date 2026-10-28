@@ -24,8 +24,9 @@ const THINKING_EFFORTS: readonly string[] = [
   ReasoningEffort.Max,
 ];
 /**
- * Where a built-in provider answers. An unknown id reaches only the https host in its
- * `models.json` / `models-store.json` `baseUrl` — never every known host.
+ * Where a built-in provider answers: Pi's bundled catalog (`@earendil-works/pi-ai` 1.4.0,
+ * `dist/providers/data/*.json` `baseUrl`, plus each provider's sign-in hosts). An unknown id reaches
+ * only the https host in its `models.json` / `models-store.json` `baseUrl` — never every known host.
  */
 const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   openai: ["api.openai.com", "chatgpt.com", "auth.openai.com"],
@@ -36,7 +37,10 @@ const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   "amazon-bedrock": ["*.amazonaws.com"],
   azure: ["*.openai.azure.com", "*.cognitiveservices.azure.com"],
   "azure-cognitive-services": ["*.cognitiveservices.azure.com"],
-  "github-copilot": ["api.github.com"],
+  // The token names its own API host: api.individual / api.business / api.enterprise.githubcopilot.com.
+  "github-copilot": ["api.github.com", "*.githubcopilot.com"],
+  // ChatGPT sign-in (Pi's legacy id for it).
+  "openai-codex": ["chatgpt.com", "auth.openai.com"],
   cerebras: ["api.cerebras.ai"],
   cohere: ["api.cohere.com"],
   deepinfra: ["api.deepinfra.com"],
@@ -48,6 +52,35 @@ const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   vercel: ["ai-gateway.vercel.sh"],
   cursor: ["api2.cursor.sh", "www.cursor.com"],
   openrouter: ["openrouter.ai"],
+  "ant-ling": ["api.ant-ling.com"],
+  baseten: ["inference.baseten.co"],
+  "cloudflare-ai-gateway": ["gateway.ai.cloudflare.com"],
+  "cloudflare-workers-ai": ["api.cloudflare.com"],
+  deepseek: ["api.deepseek.com"],
+  fireworks: ["api.fireworks.ai"],
+  huggingface: ["router.huggingface.co"],
+  "kimi-coding": ["api.kimi.com"],
+  meta: ["api.meta.ai"],
+  minimax: ["api.minimax.io"],
+  "minimax-cn": ["api.minimaxi.com"],
+  moonshotai: ["api.moonshot.ai"],
+  "moonshotai-cn": ["api.moonshot.cn"],
+  nvidia: ["integrate.api.nvidia.com"],
+  opencode: ["opencode.ai"],
+  "opencode-go": ["opencode.ai"],
+  "qwen-token-plan": ["token-plan.ap-southeast-1.maas.aliyuncs.com"],
+  "qwen-token-plan-individual": ["token-plan.ap-southeast-1.maas.aliyuncs.com"],
+  "qwen-token-plan-cn": ["token-plan.cn-beijing.maas.aliyuncs.com"],
+  radius: ["radius.pi.dev"],
+  together: ["api.together.ai"],
+  typesafe: ["api.typesafe.ai"],
+  "vercel-ai-gateway": ["ai-gateway.vercel.sh"],
+  xiaomi: ["api.xiaomimimo.com"],
+  "xiaomi-token-plan-ams": ["token-plan-ams.xiaomimimo.com"],
+  "xiaomi-token-plan-cn": ["token-plan-cn.xiaomimimo.com"],
+  "xiaomi-token-plan-sgp": ["token-plan-sgp.xiaomimimo.com"],
+  zai: ["api.z.ai"],
+  "zai-coding-cn": ["open.bigmodel.cn"],
 };
 
 /** List-models and `/login`: no extensions, no automatic catalog/package fetch. */
@@ -64,7 +97,7 @@ function hostsFor(provider: string, extra: readonly string[] | undefined): strin
   return [];
 }
 
-/** https hostnames from Pi's models store. Never follows `!command` keys. */
+/** https hostnames from Pi's `models.json` or models store. Never follows `!command` keys. */
 export function hostsFromPiModelsJson(text: string): Record<string, string[]> {
   let data: unknown;
   try {
@@ -73,8 +106,12 @@ export function hostsFromPiModelsJson(text: string): Record<string, string[]> {
     return {};
   }
   if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  // `models.json` keeps its providers under `providers`; `models-store.json` is keyed by provider.
+  const nested = (data as Record<string, unknown>).providers;
+  const providers = nested && typeof nested === "object" && !Array.isArray(nested) ? nested : data;
   const out: Record<string, string[]> = {};
-  for (const [provider, entry] of Object.entries(data)) {
+  for (const [provider, entry] of Object.entries(providers)) {
+    if (provider.startsWith("$")) continue;
     const hosts = new Set<string>();
     collectHttpsHosts(entry, hosts);
     if (hosts.size) out[provider] = [...hosts];

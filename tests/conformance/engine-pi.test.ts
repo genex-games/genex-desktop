@@ -95,6 +95,38 @@ describe("Pi's model list", () => {
     assert.equal(hosts.local, undefined);
   });
 
+  it("reads models.json as Pi writes it, providers under `providers`", () => {
+    const hosts = hostsFromPiModelsJson(
+      JSON.stringify({
+        $schema: "https://pi.dev/schemas/models.schema.json",
+        providers: {
+          acme: { baseUrl: "https://llm.acme.test/v1", api: "openai-completions", apiKey: "!op read acme" },
+          local: { baseUrl: "http://localhost:11434/v1", models: [{ id: "qwen" }] },
+        },
+      }),
+    );
+    assert.deepEqual(hosts, { acme: ["llm.acme.test"] }, "a custom provider reaches its own baseUrl, nothing else");
+    const [custom] = parsePiModels(
+      "provider  model  context  max-out  thinking  images\nacme  bot  32K  8K  no  no\n",
+      hosts,
+    );
+    assert.deepEqual(custom?.hosts, ["llm.acme.test"]);
+  });
+
+  it("gives Copilot and ChatGPT sign-in the hosts Pi's catalog sends them to", () => {
+    const listing = [
+      "provider  model  context  max-out  thinking  images",
+      "github-copilot  gpt-5  128K  16K  yes  yes",
+      "openai-codex  gpt-5.1-codex  272K  128K  yes  yes",
+      "deepseek  deepseek-chat  128K  8K  no  no",
+    ].join("\n");
+    const [copilot, codex, deepseek] = parsePiModels(listing);
+    assert.ok(copilot?.hosts.includes("*.githubcopilot.com"), "the Copilot API, not only api.github.com");
+    assert.ok(copilot?.hosts.includes("api.github.com"), "where its token is exchanged");
+    assert.deepEqual(codex?.hosts, ["chatgpt.com", "auth.openai.com"]);
+    assert.deepEqual(deepseek?.hosts, ["api.deepseek.com"]);
+  });
+
   it("skips the header and refuses a listing that is not one", () => {
     assert.deepEqual(parsePiModels(""), []);
     assert.deepEqual(parsePiModels("provider     model                      context  max-out  thinking  images\n"), []);
