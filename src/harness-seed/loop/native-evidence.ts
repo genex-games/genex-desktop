@@ -221,6 +221,8 @@ const MESSAGE = {
   noLease: (target: string) => `no ${target} lease was free to run the gate`,
   buildFailed: (target: string, why: string) => `the ${target} build failed: ${why}`,
   builtNotRun: (host: string) => `built, not run on this ${host}`,
+  builtWhereIntegrated: (target: string) =>
+    `not built in a worker's copy: the ${target} build is made where the run integrates, so each copy does not keep one of its own`,
   phoneNotBuilt: (target: string) =>
     `not built or run by the judge: an ${target} build is made by the export lane and runs only on a device the person starts from Studio, so its gameplay is judged on this computer's build`,
   hostRefusedBuild: (refusal: string, detail: string | null) =>
@@ -1024,6 +1026,12 @@ export interface ParityLook {
   judged: boolean;
   tolerances?: ToleranceStore;
   retriesMs?: readonly number[];
+  /**
+   * Build the Windows and Linux destinations this host builds but does not run (the default).
+   * False on a Loop worker's copy: a cross build is many gigabytes per folder, so it is made once,
+   * where the run integrates, and the worker's look leaves those rows unmeasured.
+   */
+  crossBuilds?: boolean;
 }
 
 /**
@@ -1067,6 +1075,8 @@ async function targetGate(ctx: HarnessCtx, look: ParityLook, target: BuildTarget
   if (!host) return unrunnableParity(target, TargetRefusal.NotRunnableHere, MESSAGE.noHost);
   const refusal = runRefusal(host, target, { gameBox: look.capacity.native?.gameBox === true });
   const builtNotRun = refusal === TargetRefusal.NotRunnableHere && CROSS_TARGETS.includes(target);
+  if (builtNotRun && look.crossBuilds === false)
+    return unrunnableParity(target, TargetRefusal.NotRunnableHere, MESSAGE.builtWhereIntegrated(target));
   if (builtNotRun) return crossGate(ctx, look, target, MESSAGE.builtNotRun(HOST_NAME[host]));
   if (refusal) return unrunnableParity(target, refusal);
   if (!look.judged) return unrunnableParity(target, null, MESSAGE.webUnjudged);
@@ -1228,6 +1238,7 @@ export async function withParity(
     cameras,
     viewpoints: evidence.viewpoints ?? cameras,
     judged: !evidence.loadError && cameras.length > 0,
+    crossBuilds: options.crossBuilds !== false,
   });
   if (!parity) return evidence;
   evidence.parity = parity;

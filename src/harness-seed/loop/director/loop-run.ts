@@ -827,7 +827,17 @@ export async function evidenceOf(
     scaffold,
     inheritedConsole,
     camerasOwned,
+    crossBuilds: buildsCrossAt(loopRun, root),
   });
+}
+
+/**
+ * Does a look at `root` build the game's Windows and Linux destinations: on the run's integration
+ * worktree and the game's own folder, once per run; never in a worker's copy, or every copy keeps
+ * cross builds of its own (the Bodycam rerun's four workers filled 70 GB in two hours).
+ */
+function buildsCrossAt(loopRun: LoopRun, root: string): boolean {
+  return root === loopRun.integrationWorktree || root === loopRun.projectDir;
 }
 
 /**

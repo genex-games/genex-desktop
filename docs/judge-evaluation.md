@@ -58,8 +58,11 @@ verdicts, a seeded two-run replay, and `state()` agreement with the web build af
 (`__render` and root `drawCalls`/`triangles`); gameplay and nested probes still compare. Native
 replay keeps render counters and compares asset claims by logical asset path, not the temporary
 bundle root. Frame similarity is unmeasured until PX10; unmeasured never
-passes; Windows or Linux builds on a Mac are `not-runnable-here`. Campaigns compare stacks only on
-tasks both measure.
+passes; Windows or Linux builds on a Mac are `not-runnable-here`: built and admitted when a look is
+at the run's integration worktree or the game's own folder, and left unmeasured, not built, in a
+Loop worker's copy (`buildsCrossDestinations`, `GatherOptions.crossBuilds`), so a run keeps one
+cross build per destination instead of one per worker. Campaigns compare stacks only on tasks both
+measure.
 
 A Rust · wgpu game is judged the same way, with its own rubric (`judge/code-review-rust.md`:
 determinism, `ctx` input, tagged draws, no network, no build or dependency edits) and its own

@@ -26,6 +26,7 @@ import { roundFields } from "../record.ts";
 import { admitRound } from "../admission.ts";
 import { judgedOnMotion } from "../../motion-intent.ts";
 import { ownsCameraWiring } from "../camera-wiring.ts";
+import { buildsCrossDestinations } from "../cross-builds.ts";
 import type { Check } from "../../spec.ts";
 
 /**
@@ -266,6 +267,7 @@ async function lookAtMergedIncumbent(loop: FacetLoop, round: FacetRound, worktre
     requiredDemos: demosNamedByChecks(spec.checks),
     keepPaths: statePathsNamedByChecks(spec.checks),
     camerasOwned: ownsCameraWiring(loop),
+    crossBuilds: buildsCrossDestinations(loop),
     setup: facetSetup,
   });
   if (!merged.ok) return;
