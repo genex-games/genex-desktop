@@ -14,7 +14,7 @@ import { MODEL_IMPORT_TRIANGLES } from "../../src/shared/model-budget.ts";
 import { LODS_EXTRAS_KEY } from "../../src/shared/render-quality.ts";
 import { convertAsset } from "../../src/substrate/asset-import/convert.ts";
 import { DecimateSkip, decimateGlb } from "../../src/substrate/asset-import/decimate.ts";
-import { readGlb, writeGlb } from "../../src/substrate/asset-import/glb.ts";
+import { meshToGlb, readGlb, writeGlb } from "../../src/substrate/asset-import/glb.ts";
 import { ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
 import { inspectGlb } from "../../src/substrate/asset-import/inspect.ts";
 import { readGeometry } from "../../src/substrate/asset-import/meshlets.ts";
@@ -101,6 +101,27 @@ describe("decimating a model to a triangle budget", () => {
       decimated: false,
       reason: DecimateSkip.UnreadableGeometry,
     });
+  });
+
+  it("brings a crown of separate leaf cards under budget too (their open borders are not locked)", async () => {
+    const cards = 3_000;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    for (let card = 0; card < cards; card++) {
+      const x = (card % 50) * 0.1;
+      const z = Math.floor(card / 50) * 0.1;
+      const base = positions.length / 3;
+      positions.push(x, 0, z, x + 0.05, 0, z, x + 0.05, 0.05, z, x, 0.05, z);
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+    const crown = meshToGlb({
+      name: "crown",
+      materials: [],
+      primitives: [{ positions: Float32Array.from(positions), indices: Uint32Array.from(indices) }],
+    });
+    const outcome = await decimateGlb(crown, 1_000, MeshoptSimplifier);
+    assert.ok(outcome.decimated);
+    assert.ok(outcome.after <= 1_100, `${outcome.after} of 6000 triangles`);
   });
 
   it("is a pure function of the input", async () => {

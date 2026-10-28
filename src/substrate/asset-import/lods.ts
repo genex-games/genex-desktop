@@ -424,13 +424,18 @@ async function fineBoundFor(inputs: SimplifyInput[], count: number): Promise<num
 }
 
 /** Each primitive's simplifier input, its attributes read from `doc`. */
-export function simplifyInputs(doc: PackDoc, primitives: Json[], geometry: Geometry[]): SimplifyInput[] {
+export function simplifyInputs(
+  doc: PackDoc,
+  primitives: Json[],
+  geometry: Geometry[],
+  options: { lockCards?: boolean } = {},
+): SimplifyInput[] {
   const locks = sharedVertexLocks(geometry);
   return geometry.map((each, at) => {
     const primitive = primitives[at] ?? {};
     const count = each.positions.length / 3;
     const lock = locks[at] ?? new Uint8Array(count);
-    lockCards(each, lock);
+    if (options.lockCards !== false) lockCards(each, lock);
     return {
       geometry: each,
       ...weighedAttributes(doc, primitive, count),

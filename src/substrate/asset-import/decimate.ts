@@ -103,7 +103,7 @@ function simplifyPrimitive(simplifier: DecimateSimplifier, input: SimplifyInput,
     flagsFor(input),
   );
   if (careful.length <= target * SHARE_SLACK) return careful;
-  const [sloppy] = simplifier.simplifySloppy(careful, positions, TRIANGLE, input.lock, target, UNBOUNDED_ERROR);
+  const [sloppy] = simplifier.simplifySloppy(careful, positions, TRIANGLE, null, target, UNBOUNDED_ERROR);
   return sloppy.length && sloppy.length < careful.length ? sloppy : careful;
 }
 
@@ -157,7 +157,7 @@ export async function decimateGlb(
   if (before <= budget) return skip(DecimateSkip.WithinBudget);
   await simplifier.ready;
   const share = budget / before;
-  const inputs = simplifyInputs(doc, primitives, geometry);
+  const inputs = simplifyInputs(doc, primitives, geometry, { lockCards: false });
   let after = 0;
   try {
     inputs.forEach((input, at) => {
