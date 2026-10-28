@@ -4,7 +4,7 @@
 # GPU, `--ignored metal`) writes a capture of each.
 [package]
 name = "template-examples"
-description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set and the first-person arms kit."
+description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit and the soldier kit."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -32,6 +32,10 @@ path = "../../../../src/game-template-rust/docs/examples/fps/src/main.rs"
 [[bin]]
 name = "fps-arms"
 path = "../../../../src/game-template-rust/docs/examples/fps-arms/src/main.rs"
+
+[[bin]]
+name = "soldier"
+path = "../../../../src/game-template-rust/docs/examples/soldier/src/main.rs"
 
 [features]
 default = ["studio"]

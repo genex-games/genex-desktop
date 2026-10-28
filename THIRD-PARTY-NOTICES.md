@@ -1200,6 +1200,18 @@ stand-ins without them.
 | `metal_grate_rusty` | the drains along the kerbs, the manhole covers, the alley's gutter and the air conditioners' grilles | https://polyhaven.com/a/metal_grate_rusty (`metal_grate_rusty_diff_1k.jpg`, `metal_grate_rusty_nor_gl_1k.jpg`, `metal_grate_rusty_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,774,295 bytes |
 | `kloppenheim_01_puresky` | the overcast dusk sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_01_puresky (`kloppenheim_01_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,187,954 bytes |
 
+## Soldier kit
+
+`src/game-template-rust/docs/examples/soldier/soldier.glb` is built by `soldier.py` from Quaternius'
+Universal Animation Library (Standard), CC0 1.0: its mannequin, skeleton and clips (Idle, Walk,
+Run, Sprint, CrouchIdle, CrouchWalk and Death, some turned, the strafes made from its walk). The
+library is `universal_animation_librarystandard.zip` (14,541,205 bytes, sha256
+`18ff1a7215f4852b320203e8aaf02a1578b5c8eef9027fbaedfcedc7b85a3ac2`) from
+https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip (page
+https://quaternius.com), its `Godot/AnimationLibrary_Godot_Standard.glb`. The outfit and rifle carry
+the arms kit's scans below (Poly Haven's `book_pattern`, `leather_white` and `dark_wood`; ambientCG's
+`Metal029` and `Plastic014A`), tinted. CC0; the credit is given anyway.
+
 ## First-person arms kit scans
 
 `src/game-template-rust/docs/examples/fps-arms/fps-arms.glb` carries five CC0 scans, resized

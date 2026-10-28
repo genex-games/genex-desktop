@@ -35,6 +35,7 @@ import os
 import tempfile
 
 import bmesh
+import bpy
 import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 
@@ -362,6 +363,19 @@ def sweep(bm, rings):
             bm.faces.new((a[i], a[j], b[j], b[i]))
     bm.faces.new(verts[0])
     bm.faces.new(list(reversed(verts[-1])))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+
+
+def sweep_open(bm, rings):
+    """A surface through rings of points (each the same count), its first ring closed by a fan
+    to its centre and its last left open."""
+    verts = [[bm.verts.new(p) for p in ring] for ring in rings]
+    count = len(rings[0])
+    for a, b in zip(verts, verts[1:]):
+        for i in range(count):
+            j = (i + 1) % count
+            bm.faces.new((a[i], a[j], b[j], b[i]))
+    bm.faces.new(list(reversed(verts[0])))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
 
 
@@ -1027,4 +1041,7 @@ def build():
     key_clips(rig)
 
 
-build()
+# blender__model runs this file as the script; another kit's script imports it for the rifle and the
+# scan helpers (`import fps_arms`, setting `fps_arms.ASSET_INPUTS` and `fps_arms.HIP` first).
+if __name__ == "__main__":
+    build()

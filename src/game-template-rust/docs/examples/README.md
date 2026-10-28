@@ -10,6 +10,7 @@ where yours go. Keep your own title, and merge `genex.toml` switches rather than
 | `docs/examples/interior-kit/` | A school corridor and classroom built from a modular interior kit: 2 m wall modules with real reveals, their dado coat and trims, windows with frames, sashes, broken glass and sunburst or barred grilles, doors, beams, fluorescent fittings, radiators, desks, chairs, lockers, a blackboard and rubble, each piece a small GLB drawn with a CC0 scan at its real size or the kit's trim sheet and props atlas, peeling-paint decals, a collider per solid part | the shell and dressing of a finished level (`docs/examples/rooms-and-buildings.md`) |
 | `docs/examples/fps/` | An FPS facet set: mouse look, a chest camera with bob, a view model of forearms, gloves and a pistol built from parts, hitscan against Rapier colliders, recoil, and a rigged enemy with idle, walk, fire, hit and death | any first-person game (`docs/examples/fps.md` explains each part) |
 | `docs/examples/fps-arms/` | The first-person arms kit: gloved arms on an AK-pattern rifle as one rigged GLB (`fps-arms.glb`, made by `fps_arms.py`), whose magazine, charging handle and trigger are bones, played by an animator from the rifle's rules: hip, walk, sprint, sights, fire, dry fire, a reload that takes the magazine out, inspect | the arms and gun of any first-person shooter (`docs/examples/fps-arms/README.md`) |
+| `docs/examples/soldier/` | The soldier kit: a rigged soldier in combat gear holding the arms kit's rifle (`soldier.glb`, made by `soldier.py` from Quaternius' CC0 animation library), animated from a remote player's replicated state alone: gaits from the velocity, an aim layer along the pitch, fire, reload, hits by side and death, framed close by the game camera | enemies and remote players in any shooter (`docs/examples/soldier/README.md`) |
 
 ## What each needs in `assets/`
 
@@ -30,6 +31,8 @@ The interior kit and the arms kit ship their own GLBs.
 - **fps-arms**: `fps-arms.glb` from this folder copied to `kits/fps-arms.glb`; without it the view
   model is left out and its probe says `"kit": false`. Its `studio.json` declares the same traits
   as the FPS set's.
+- **soldier**: `soldier.glb` from this folder copied to `kits/soldier.glb`; without it the soldier is
+  left out and its probe says `"kit": false`.
 - **fps**: a rigged character at `characters/enemy.glb` with clips you rename in `CLIPS` (Uthana
   makes one from a generated model), and `decals/bullet-hole.png`. Its `studio.json` declares
   `"game": { "kind": "first-person", "hud": true, "mouseLook": true, "keyboardMove": true }`, so
