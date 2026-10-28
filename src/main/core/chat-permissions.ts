@@ -53,7 +53,7 @@ import {
   type ToolPermissionEvent,
   ToolPermissionState,
 } from "../../shared/permissions.ts";
-import { EngineId } from "../../shared/providers.ts";
+import { EngineId, runsClaudeCode } from "../../shared/providers.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import type {
   AskFirst,
@@ -990,7 +990,7 @@ export class ChatPermissionService {
     if (given?.decision === PermissionDecision.Always && !always) return { decision: PermissionDecision.Allow };
     const autoPlan = given?.decision === PermissionDecision.ApprovePlan && given.mode === PermissionMode.Auto;
     // Auto's gate is Claude Code's: another engine's model of the same name says nothing about it.
-    const gated = session.engine === EngineId.ClaudeCode && this.#autoUnavailable.has(session.model);
+    const gated = runsClaudeCode(session.engine) && this.#autoUnavailable.has(session.model);
     if (autoPlan && gated) return { decision: PermissionDecision.ApprovePlan, mode: PermissionMode.Manual };
     return given;
   }

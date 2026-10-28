@@ -14,7 +14,7 @@ import {
   PermissionMode,
   planContinuations,
 } from "../../shared/permissions.ts";
-import { EngineId } from "../../shared/providers.ts";
+import { runsClaudeCode } from "../../shared/providers.ts";
 import { parseModelKey } from "../model-key.ts";
 import { type Notify, ToastTone } from "../state/toasts.ts";
 import type { ComposerPermissions } from "../ui/PromptBar.tsx";
@@ -69,7 +69,7 @@ export function usePermissionMode(input: {
   useEffect(() => setPick(null), [recorded, threadId]);
   const { engine, model } = parseModelKey(selected);
   // Auto's gate is Claude Code's: another engine's model of the same name says nothing about it.
-  const autoUnavailable = engine === EngineId.ClaudeCode && Boolean(settings?.autoUnavailable.includes(model));
+  const autoUnavailable = runsClaudeCode(engine) && Boolean(settings?.autoUnavailable.includes(model));
   const planModes = planModesFor(engine, autoUnavailable);
   if (studio) return { bar: null, planModes };
   const picked = pick?.thread === threadId ? pick?.mode : undefined;

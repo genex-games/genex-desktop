@@ -963,6 +963,17 @@ async function createCore(userData: string): Promise<StudioCore> {
     // A development profile on a stand: the Genex host tools' CLI and the Genex plugin (its publish)
     // go to the stand as the account it signed in to.
     ...optionalStand(launchStand(stand, () => genexAccountFor(studio).token())),
+    // Building with Genex: Claude Code on the account's credits, through genex.games (or its stand).
+    // A fixture launch has its own engines and never reaches the network.
+    ...(fixtureNativePolicy
+      ? {}
+      : {
+          genexBuild: {
+            api: playOrigin.api,
+            token: () => genexAccountFor(studio).token(),
+            refused: (token) => genexAccountFor(studio).refused(token),
+          },
+        }),
     // A game's local item drafts after its publish: Put on sale as the app's account; a fixture
     // launch uploads them to its own store in place of the CLI.
     localItems: {

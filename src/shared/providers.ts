@@ -73,6 +73,7 @@ export const EngineId = {
   LocalServer: "local-server",
   Grok: "grok",
   Cursor: "cursor",
+  Genex: "genex",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -190,6 +191,18 @@ export const PROVIDERS = [
     beta: true,
   },
   {
+    // Claude Code on Genex credits: the app's own relay hands its calls to genex.games, which
+    // runs them on the three models it offers (`shared/genex-build.ts`). Nothing to install or
+    // sign in to beyond the person's Genex account.
+    id: EngineId.Genex,
+    label: "Genex",
+    subscription: false,
+    login: "none",
+    roles: "sessions",
+    billing: "metered",
+    signIn: null,
+  },
+  {
     id: EngineId.OpenRouter,
     label: "OpenRouter",
     subscription: false,
@@ -231,6 +244,14 @@ export function providerInfo(id: string | null | undefined): ProviderInfo | unde
 /** How this engine signs in; `none` for a local engine or one the table does not list. */
 export function loginKind(id: string | null | undefined): LoginKind {
   return providerInfo(id)?.login ?? "none";
+}
+
+/**
+ * True for an engine whose sessions are Claude Code's: Claude Code itself, and Genex, which runs it
+ * on Genex credits. Their tools, permission modes and Auto are Claude Code's.
+ */
+export function runsClaudeCode(id: string | null | undefined): boolean {
+  return id === EngineId.ClaudeCode || id === EngineId.Genex;
 }
 
 /** True for a provider billed per token: the app never picks one on the person's behalf. */

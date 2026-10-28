@@ -16,7 +16,7 @@ import {
   UnavailableModeReason,
   unavailableModeReason,
 } from "../../shared/permissions.ts";
-import { EngineId, providerInfo } from "../../shared/providers.ts";
+import { EngineId, providerInfo, runsClaudeCode } from "../../shared/providers.ts";
 import { hostPlatform } from "../platform.ts";
 import { bypassPermissionsWords } from "../words.ts";
 import { Button } from "./Button.tsx";
@@ -97,7 +97,7 @@ function modeDescription(option: PermissionModeType, engine: string, autoUnavail
   const own = ENGINE_MODE_WORDS[engine]?.[option];
   if (own) return own;
   if (option !== PermissionMode.Auto) return permissionModeWords()[option].description;
-  if (engine !== EngineId.ClaudeCode) return WORDS.sandboxedAuto;
+  if (!runsClaudeCode(engine)) return WORDS.sandboxedAuto;
   return autoUnavailable ? WORDS.autoUnavailable : permissionModeWords()[option].description;
 }
 

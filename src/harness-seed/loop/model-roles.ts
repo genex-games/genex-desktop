@@ -44,6 +44,7 @@ export const EngineId = {
   LocalServer: "local-server",
   Grok: "grok",
   Cursor: "cursor",
+  Genex: "genex",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -67,6 +68,7 @@ const SESSION_ENGINES: readonly string[] = [
   EngineId.LocalServer,
   EngineId.Grok,
   EngineId.Cursor,
+  EngineId.Genex,
 ];
 
 /** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */
@@ -130,6 +132,7 @@ export const ENGINE_LABELS: Record<string, string> = {
   [EngineId.ClaudeCode]: "Claude Code",
   [EngineId.Codex]: "Codex",
   [EngineId.Cursor]: "Cursor",
+  [EngineId.Genex]: "Genex",
 };
 
 /** "Claude Code", "Codex", or the id itself for an engine nobody named. */
@@ -338,7 +341,8 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
 }
 
 /**
- * How a Codex, OpenCode, Grok Build or Cursor session spells a studio tool. Claude Code receives the
+ * How a Codex, OpenCode, Grok Build or Cursor session spells a studio tool. Claude Code (on a plan or on
+ * Genex credits) receives the
  * studio's tools as MCP tools and calls them by name; the others have no tool channel of the studio's, so the
  * studio ships a bridge and the session runs it as a shell command. The two spellings are the ONLY thing in
  * the whole harness that branches on the engine, and every prompt that mentions a tool renders
@@ -351,13 +355,21 @@ export function plannerModel(run: RoleRun | null | undefined): string | undefine
  */
 export const BRIDGE_TOOL_CMD = "node .studio/bridge/tool.mjs";
 
+/** The engines whose sessions are Claude Code's and take the studio's tools as MCP tools (Genex runs Claude Code). */
+const MCP_ENGINES: readonly string[] = [EngineId.ClaudeCode, EngineId.Genex];
+
+/** True when this engine's session calls the studio's tools by their MCP names. */
+function speaksMcp(engine: string | null | undefined): boolean {
+  return MCP_ENGINES.includes(engine as string);
+}
+
 /** The engines whose sessions reach the studio's tools through the bridge command. */
 const BRIDGE_ENGINES: readonly string[] = [EngineId.Codex, EngineId.OpenCode, EngineId.Grok, EngineId.Cursor];
 
 /** One studio tool, spelled the way this engine's session must write it. */
 export function toolCall(engine: string | null | undefined, name: unknown): string {
   const tool = String(name ?? "");
-  if (engine === EngineId.ClaudeCode) return `mcp__studio__${tool}`;
+  if (speaksMcp(engine)) return `mcp__studio__${tool}`;
   if (BRIDGE_ENGINES.includes(engine as string)) return `${BRIDGE_TOOL_CMD} ${tool}`;
   // A local engine drives its tools through the studio's own tool loop, where a tool is its
   // bare name and neither spelling exists.
@@ -366,7 +378,7 @@ export function toolCall(engine: string | null | undefined, name: unknown): stri
 
 /** The clause at the head of a TOOLS block: how this engine calls the tools listed under it. */
 export function toolSyntax(engine: string | null | undefined): string {
-  if (engine === EngineId.ClaudeCode) return "call each one by its name, mcp__studio__<name>";
+  if (speaksMcp(engine)) return "call each one by its name, mcp__studio__<name>";
   if (BRIDGE_ENGINES.includes(engine as string)) return `run each one as \`${BRIDGE_TOOL_CMD} <name> --field=value\``;
   return "call each one by its name";
 }
