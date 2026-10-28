@@ -124,6 +124,7 @@
       "tests/conformance/rust-build-web-families.test.ts",
       "tests/conformance/extension-ladder-docs.test.ts"
     ],
+    "src/game-template-rust/docs/examples/interior-kit/**": ["tests/conformance/rust-interior-kit.test.ts"],
     "src/harness-seed/skills/rust-extension-ladder.md": ["tests/conformance/extension-ladder-docs.test.ts"],
     "scripts/toolchains/rust-inventory.json": ["tests/conformance/rust-template.test.ts"],
     "native/genex-rust/deny.toml": ["tests/conformance/rust-template.test.ts"],

@@ -208,6 +208,14 @@ The Play film, `play-publish.mp4`, shows game covers from the public genex.games
 (`design/play-publish-video/README.md`); its players and its desk were made with Genex image
 generation for the film.
 
+## Rust template's interior kit
+
+The trim sheet, props atlas and decals in `src/game-template-rust/docs/examples/interior-kit/assets/kit/`
+are cut and repainted from Poly Haven scans published under CC0-1.0 (`wood_table_worn`,
+`green_metal_rust`, `rusty_metal_02`, `concrete_wall_003`, `painted_plaster_wall`,
+`peeling_painted_wall`) by `native/genex-rust/examples/template-examples/kit/kit_sheets.py`; no
+credit is required. Its GLBs are made by Genex's own `interior_kit.py`.
+
 ## Downloaded components
 
 C++ · raylib games are built with toolchains, and Rust games' crate requests are checked with a

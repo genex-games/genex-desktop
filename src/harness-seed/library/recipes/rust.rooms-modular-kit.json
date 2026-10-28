@@ -1,0 +1,63 @@
+{
+  "id": "rust.rooms-modular-kit",
+  "runtime": "rust-wgpu",
+  "title": "Rooms in Rust from the interior kit: 2 m modules with real reveals, trims, windows, props and peeling-paint decals, never untextured boxes",
+  "tags": [
+    "room",
+    "rooms",
+    "interior",
+    "indoor",
+    "corridor",
+    "classroom",
+    "school",
+    "office",
+    "building",
+    "wall",
+    "window",
+    "door",
+    "grille",
+    "radiator",
+    "desk",
+    "chair",
+    "locker",
+    "debris",
+    "rubble",
+    "kit",
+    "modular",
+    "trim",
+    "primitive",
+    "greybox",
+    "placeholder",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "stats",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Build an indoor level from docs/examples/interior-kit: copy assets/kit, place its 2 m modules and props with frame.model_with, never greybox boxes.",
+  "intent": "Untextured boxes, box stacks and a dado that is one scan tinted read as a prototype. Copy docs/examples/interior-kit/assets/kit/ to assets/kit/ and lay the level out in 2 m wall modules as that example's game.rs does: wall, wall-window or wall-door (the opening's sides are its reveals), each painted face with its -paint coat and -trims; windows dressed with window-frame, window-sill, window-sash, window-glass or window-glass-broken and a grille; door-frame and door; beam, light-fitting with light-tube, radiator, desk, chair, lockers, teacher-desk, blackboard, debris-pile, fallen-plaster, paper-litter. Each GLB has one material named for its role: draw it with frame.model_with and that role's material, a CC0 scan with .with_world_uv(metres) and .with_stochastic_tiling(true) for plaster, paint and concrete, kit/trim_*.webp for trims and kit/props_*.webp for props. Give radiator, desk, chair, lockers and the sunburst grille their -lod1 level with Model::with_levels. Colliders come from the same plan as the draw. Wear is the kit's decals: peel_edge under the dado rail, leak under sills, grime_base along the floor.",
+  "sketch": "use genex::prelude::*;\n\n/// One wall module of the kit: shell, coat and trims, turned to face the room.\nfn module(frame: &mut Frame, kit: &Kit, kind: &str, at: Vec3, yaw: f32, looks: &Looks) {\n    let place = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(yaw));\n    frame.model_with(&kit.piece(kind), place, &looks.plaster);\n    frame.model_with(&kit.piece(&format!(\"{kind}-paint\")), place, &looks.paint);\n    frame.model_with(&kit.piece(&format!(\"{kind}-trims\")), place, &looks.trim);\n}\n\n// The roles' materials: a scan at its real size for the shell, the kit's sheets for the rest.\nlet plaster = Material::color(Color::WHITE)\n    .with_base_texture(\"cc0/<job>/painted_plaster_wall_diff_1k.jpg\")\n    .with_world_uv(2.5)\n    .with_stochastic_tiling(true);\nlet trim = Material::color(Color::WHITE)\n    .with_base_texture(\"kit/trim_color.webp\")\n    .with_normal_texture(\"kit/trim_normal.webp\", 1.0)\n    .with_orm_texture(\"kit/trim_orm.webp\");\n",
+  "port": "The facet that owns the level's layout owns the module plan, its colliders and its probes; a facet that dresses a room places the kit's props and decals and tags them.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/examples/interior-kit (the kit, its script and a corridor and classroom built from it)",
+      "note": "42 one-material GLBs on a 2 m grid, a trim sheet, a props atlas and peeling-paint decals from CC0 scans; the example draws, collides and decals them from one plan."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Lighting, materials and environment)",
+      "note": "Material::with_world_uv and with_stochastic_tiling keep a scan at its real size on any piece; decals lay wear onto a surface."
+    },
+    {
+      "source": "src/game-template-rust/CLAUDE.md (Rooms and buildings)",
+      "note": "A room is built, not boxed: greybox, scans, then the interior kit's modules and dressing."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

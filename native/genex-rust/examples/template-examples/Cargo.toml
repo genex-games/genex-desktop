@@ -4,7 +4,7 @@
 # GPU, `--ignored metal`) writes a capture of each.
 [package]
 name = "template-examples"
-description = "The Rust template's copyable examples: a lit interior room and an FPS facet set."
+description = "The Rust template's copyable examples: a lit interior room, an interior kit level and an FPS facet set."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -20,6 +20,10 @@ workspace = true
 [[bin]]
 name = "interior-room"
 path = "../../../../src/game-template-rust/docs/examples/interior-room/src/main.rs"
+
+[[bin]]
+name = "interior-kit"
+path = "../../../../src/game-template-rust/docs/examples/interior-kit/src/main.rs"
 
 [[bin]]
 name = "fps"

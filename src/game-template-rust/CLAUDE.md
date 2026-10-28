@@ -3,8 +3,9 @@ for UI) for the destinations in `studio.json`: desktop, phones and the web, from
 `docs/GENEX_API.md` indexes the whole API it is written against (each topic is a page in
 `docs/api/`), and `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the
 game with and which refusals a run can meet. `docs/examples/README.md` lists working code for this
-engine to copy from: a lit interior room (`docs/examples/interior-room/`), a room's shell as a
-Blender kit, and an FPS facet set (`docs/examples/fps/`, explained in `docs/examples/fps.md`).
+engine to copy from: a lit interior room (`docs/examples/interior-room/`), a modular interior kit
+with a corridor and classroom built from it (`docs/examples/interior-kit/`), and an FPS facet set
+(`docs/examples/fps/`, explained in `docs/examples/fps.md`).
 Start an indoor scene or a first-person game from them, not from a blank file.
 
 1. **Read `.studio/BRIEF.md` first when it exists.**
@@ -165,13 +166,13 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 ## Rooms and buildings
 
 A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the order. Greybox in code
-with Rapier colliders, fetch a CC0 scan per surface, then build the shell as one GLB kit with
-`blender__model` from a bpy script at `assets/src/<name>.py` (walls with real openings, frames,
-sills, trims, radiators, world-scale UVs; `docs/examples/room-kit/room_kit.py` is one) and draw it
-with `frame.model`. Neither stretch a scan nor tile it in a grid: `.with_world_uv(metres)` at the
-scan's real size, `.with_stochastic_tiling(true)` and a macro variation, uneven patches each
-jittered from a seed, close tints of one scan, a second scan only in a zone of its own, decals over
-the rest. Then light it as World look says: a sun that falls in at the windows, every glowing
+with Rapier colliders, fetch a CC0 scan per surface, then build the shell and its dressing from the
+interior kit: copy `docs/examples/interior-kit/assets/kit/` to `assets/kit/` and place its 2 m
+modules, windows, doors, trims and props with `frame.model_with` as that example does (a piece it
+lacks: its `interior_kit.py` with `blender__model`). Neither stretch a scan nor tile it in a
+grid: `.with_world_uv(metres)` at the scan's real size, `.with_stochastic_tiling(true)` and a macro
+variation, uneven patches each jittered from a seed, close tints of one scan, a second scan only in
+a zone of its own, decals over the rest. Then light it as World look says: a sun that falls in at the windows, every glowing
 fitting paired with a light, a probe and a volume per room, decals for wear, thin fog. Boxes are
 for the greybox: they have no reveals, sills or broken edges, which the kit or a built mesh
 (`gfx.mesh`, `docs/api/drawing.md`) gives.

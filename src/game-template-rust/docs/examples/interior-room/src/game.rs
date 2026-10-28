@@ -66,21 +66,21 @@ struct Scan {
     stand_in: Color,
 }
 
-/// How a source names a scan's maps.
+/// How a source names a scan's maps. An ambientCG scan names them `<id>_1K-JPG_Color.jpg` and
+/// `<id>_1K-JPG_NormalGL.jpg` (its roughness map is one grey channel, not the green-roughness,
+/// blue-metal packing a material samples): add a variant for it when a game fetches one.
 #[derive(Clone, Copy)]
 enum Maps {
     /// Poly Haven: `<id>_diff_1k.jpg`, `<id>_nor_gl_1k.jpg`, and `<id>_arm_1k.jpg` when it has one.
     PolyHaven { arm: bool },
-    /// ambientCG: `<id>_1K-JPG_Color.jpg` and `<id>_1K-JPG_NormalGL.jpg` (its roughness map is one
-    /// grey channel, not the green-roughness, blue-metal packing a material samples, so it is left out).
-    AmbientCg,
 }
 
 // `cc0__fetch {source: "polyhaven", id, resolution: "1k"}` lands each scan in exactly these
 // folders; if a fetch answers another path, use the path it answered.
 const PLASTER: Scan = Scan { folder: "cc0/aeaef6d7-72f1-a42b-cd06-d4d2de83a72a", id: "peeling_painted_wall", maps: Maps::PolyHaven { arm: true }, tile: 2.0, stand_in: Color::rgb(150, 160, 140) };
-// `{source: "ambientcg", id: "PaintedPlaster016", resolution: "1k"}`: the oil-painted dado below.
-const PLASTER_B: Scan = Scan { folder: "cc0/bda79521-bec0-2370-fb9d-36bab473c63b", id: "PaintedPlaster016", maps: Maps::AmbientCg, tile: 2.0, stand_in: Color::rgb(160, 165, 150) };
+// `{source: "polyhaven", id: "blue_plaster_wall", resolution: "1k"}`: the oil-painted dado below, one
+// even coat with fine cracks (a blotchy scan tinted a colour reads as camouflage up close).
+const PLASTER_B: Scan = Scan { folder: "cc0/c2536c59-bceb-ebba-aced-d476539274ad", id: "blue_plaster_wall", maps: Maps::PolyHaven { arm: true }, tile: 2.0, stand_in: Color::rgb(90, 130, 150) };
 const TILES: Scan = Scan { folder: "cc0/e6657b6b-b54c-49ce-7af8-709354a34ed0", id: "floor_tiles_06", maps: Maps::PolyHaven { arm: true }, tile: 2.0, stand_in: Color::rgb(120, 100, 90) };
 const CONCRETE: Scan = Scan { folder: "cc0/69d58cd7-d02f-5f73-c20b-748197b36df8", id: "concrete_wall_003", maps: Maps::PolyHaven { arm: true }, tile: 2.5, stand_in: Color::rgb(140, 138, 132) };
 const WOOD: Scan = Scan { folder: "cc0/e1301015-c73e-179e-3826-3d51565ca96f", id: "wood_table_worn", maps: Maps::PolyHaven { arm: false }, tile: 1.2, stand_in: Color::rgb(110, 80, 55) };
@@ -88,7 +88,7 @@ const RUST: Scan = Scan { folder: "cc0/9356d36e-45b6-0825-4b29-fa582aa2f82a", id
 /// Each finish's variants: one scan in a few close tints (multiplied with its colour map). Keep
 /// them a shade apart: two differently coloured scans mixed panel by panel read as a quilt.
 const PLASTER_TINTS: [Color; 3] = [Color::WHITE, Color::rgb(240, 234, 224), Color::rgb(228, 228, 226)];
-const DADO_TINTS: [Color; 3] = [Color::rgb(150, 186, 160), Color::rgb(144, 180, 156), Color::rgb(156, 190, 164)];
+const DADO_TINTS: [Color; 3] = [Color::WHITE, Color::rgb(238, 240, 242), Color::rgb(230, 234, 238)];
 const PLAIN_TINTS: [Color; 2] = [Color::WHITE, Color::rgb(236, 234, 230)];
 /// The painted dado's top: the second paint goes below it, where a real one ends at a line.
 const DADO: f32 = 1.3;
@@ -114,17 +114,10 @@ impl Scan {
             .with_world_uv(self.tile)
             .with_stochastic_tiling(true)
             .with_macro_variation(MACRO_STRENGTH, MACRO_METRES);
-        match self.maps {
-            Maps::PolyHaven { arm } => {
-                let map = |kind: &str| format!("{folder}/{id}_{kind}_1k.jpg");
-                let surface = surface.with_base_texture(&map("diff")).with_normal_texture(&map("nor_gl"), 1.0);
-                if arm { surface.with_metal_rough_texture(&map("arm")) } else { surface }
-            }
-            Maps::AmbientCg => {
-                let map = |kind: &str| format!("{folder}/{id}_1K-JPG_{kind}.jpg");
-                surface.with_base_texture(&map("Color")).with_normal_texture(&map("NormalGL"), 1.0)
-            }
-        }
+        let Maps::PolyHaven { arm } = self.maps;
+        let map = |kind: &str| format!("{folder}/{id}_{kind}_1k.jpg");
+        let surface = surface.with_base_texture(&map("diff")).with_normal_texture(&map("nor_gl"), 1.0);
+        if arm { surface.with_metal_rough_texture(&map("arm")) } else { surface }
     }
 }
 
@@ -390,7 +383,7 @@ struct Opening {
 /// A wall `span` long from floor to ceiling, with `openings` cut through it, as panels: a full
 /// pier between openings, and under and over each opening, each covered in its paint's panels.
 // A finished level gives each wall real depth at its openings (reveals, sills, broken edges): a
-// kit from Local Blender (`docs/examples/room-kit/room_kit.py`), or a mesh built in `on_reset` with
+// kit (`docs/examples/interior-kit/`), or a mesh built in `on_reset` with
 // `MeshData` and `gfx.mesh` (`docs/api/drawing.md`, Built meshes) drawn with the same materials.
 fn wall(frame: &mut Frame, side: Side, span: (f32, f32), openings: &[Opening], paint: Paint<'_>) {
     let bounds = |along: (f32, f32), up: (f32, f32), proud: f32| match side {
