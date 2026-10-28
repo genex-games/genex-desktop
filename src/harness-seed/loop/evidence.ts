@@ -159,6 +159,11 @@ export interface GatherOptions {
    * entry cannot rewire the cameras, so a dead cameras contract is a warning for it, never a failure.
    */
   camerasOwned?: boolean;
+  /**
+   * Build the Windows and Linux destinations for the parity gate (default): false on a Loop
+   * worker's copy, whose cross builds are made once, where the run integrates (native-evidence.ts).
+   */
+  crossBuilds?: boolean;
 }
 
 /** The pass's own state, phase to phase: its arguments, then what each phase found. */

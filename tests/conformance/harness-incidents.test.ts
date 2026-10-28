@@ -9532,6 +9532,54 @@ describe("C++ · raylib on the web lane (M3a)", () => {
     assert.equal(refused.board?.pass, false, "and the board");
   });
 
+  it("BODYCAM-DISK. a six-destination Rust Loop's worker looks build Browser and this Mac only: Windows and Linux are built where the run integrates", async () => {
+    // The Bodycam rerun: every look at each of four workers' copies built Windows and Linux too
+    // (crossGate), six build folders of 13–14 GB each, 70 GB in two hours, rebuilt within minutes
+    // of being deleted.
+    const { buildsCrossDestinations } = await import("../../src/harness-seed/loop/facet/cross-builds.ts");
+    const { FacetRole: Role } = await import("../../src/harness-seed/loop/facet/state.ts");
+    const look = async (crossBuilds: boolean | undefined) => {
+      const recorder = ctxRecorder({
+        unknown: { value: null },
+        handlers: {
+          [HostMethod.NativeBuild]: () => ({ ok: true, problem: null, lock: "abc", output: "/out", admission: null }),
+        },
+      });
+      const verdict = await parityFor(recorder.ctx as never, {
+        run: { runId: "r1", project: "body-cam", stack: GameStack.RustWgpu } as never,
+        destinations: { stack: GameStack.RustWgpu, targets: Object.values(BuildTarget) },
+        capacity: { host: StudioPlatform.Mac, native: { gameBox: true, leases: 0, max: 4 } } as never,
+        webHandle: "w1",
+        root: "/runs/r1/fps",
+        seed: 1234,
+        cameras: ["default"],
+        judged: true,
+        retriesMs: [],
+        ...(crossBuilds === undefined ? {} : { crossBuilds }),
+      });
+      return { built: recorder.paramsOf(HostMethod.NativeBuild).map((params) => params.target), verdict };
+    };
+    const worker = await look(false);
+    assert.deepEqual(worker.built, [BuildTarget.Mac], "a worker's copy builds this Mac's destination alone");
+    for (const target of [BuildTarget.Windows, BuildTarget.Linux]) {
+      const gate = worker.verdict?.targets.find((entry) => entry.target === target);
+      assert.equal(gate?.pass, null, `${target} is unmeasured on a worker, never passed`);
+      assert.ok(
+        gate?.rows.every((row) => row.pass === null && /where the run integrates/.test(row.reason)),
+        JSON.stringify(gate?.rows),
+      );
+    }
+    const integration = await look(undefined);
+    assert.deepEqual(integration.built, [BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux]);
+    assert.equal(buildsCrossDestinations({ role: Role.Facet, worktree: "/runs/r1/fps" }), false, "a worker");
+    assert.equal(buildsCrossDestinations({ role: Role.Integration, worktree: "/runs/r1/integration" }), true);
+    assert.equal(
+      buildsCrossDestinations({ role: Role.Facet, worktree: null }),
+      true,
+      "a facet on the game's own folder",
+    );
+  });
+
   it("RAYLIB-CHECKS. scene checks on a raylib spec report pass: null, and the page is never asked", async () => {
     const recorder = ctxRecorder({
       handlers: {
