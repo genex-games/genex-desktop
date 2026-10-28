@@ -5,7 +5,7 @@
  *     Expand `picks.ts` from Poly Haven's API into `src/plugins/library/catalog.json`: name, tags,
  *     authors, real size, and every upstream file pinned by size and md5. A built entry whose
  *     upstream is unchanged keeps its build record.
- *   node scripts/library/build-library.ts build [--only <id,...>|starter] [--tiers 2k,4k] [--out <dir>]
+ *   node scripts/library/build-library.ts build [--only <id,...>|starter] [--force] [--tiers 2k,4k] [--out <dir>]
  *     Download each entry's pinned sources (md5 and size checked, cached in .studio-dev/), process
  *     them (a material's maps kept as JPEG with a Basis UASTC KTX2 twin each; a sky's HDRIs; a model
  *     packed into one GLB, decimated to its budget, levels baked in) and write the pack's flat files
@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { packGlb } from "../../src/plugins/cc0/glb.ts";
 import { stageDelivery } from "../../src/plugins/library/install.ts";
@@ -83,6 +84,9 @@ const POLYHAVEN_MAPS = [
 ] as const;
 /** The generator's members a vegetation slot takes, in drawing order. */
 const VEGETATION_MEMBERS = ["trunk.glb", "foliage.glb"] as const;
+/** The largest tonemapped sky JPEG a preview decodes, in megapixels and megabytes. */
+const SKY_SOURCE_MP = 256;
+const SKY_SOURCE_MB = 2048;
 /** A sky preview's size (equirectangular, 2:1). */
 const SKY_PREVIEW = { width: 512, height: 256 } as const;
 
@@ -117,6 +121,24 @@ async function getJson(url: string): Promise<Json> {
   return (await response.json()) as Json;
 }
 
+/** Attempts at one download, and the pause before the next (Poly Haven's CDN answers 5xx now and then). */
+const DOWNLOAD_ATTEMPTS = 5;
+const DOWNLOAD_PAUSE_MS = 3000;
+
+/** `url`'s bytes, retried on a 5xx answer or a dropped connection. */
+async function download(url: string): Promise<Uint8Array> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const response = await fetch(sourceUrl(url), { headers: { "user-agent": USER_AGENT } });
+      if (response.ok) return new Uint8Array(await response.arrayBuffer());
+      if (response.status < 500 || attempt >= DOWNLOAD_ATTEMPTS) throw new Error(MESSAGE.Http(url, response.status));
+    } catch (error) {
+      if (attempt >= DOWNLOAD_ATTEMPTS || (error instanceof Error && error.message.startsWith(url))) throw error;
+    }
+    await setTimeout(DOWNLOAD_PAUSE_MS * attempt);
+  }
+}
+
 /** An upstream file's bytes, from the cache or downloaded, held to its size and md5 pin. */
 async function upstream(file: LibraryUpstreamFile): Promise<Uint8Array> {
   const cached = path.join(CACHE_DIR, file.md5);
@@ -124,9 +146,7 @@ async function upstream(file: LibraryUpstreamFile): Promise<Uint8Array> {
     const bytes = new Uint8Array(await readFile(cached));
     if (bytes.byteLength === file.bytes && md5(bytes) === file.md5) return bytes;
   }
-  const response = await fetch(sourceUrl(file.url), { headers: { "user-agent": USER_AGENT } });
-  if (!response.ok) throw new Error(MESSAGE.Http(file.url, response.status));
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await download(file.url);
   if (bytes.byteLength !== file.bytes || md5(bytes) !== file.md5) throw new Error(MESSAGE.Pin(file.url));
   await mkdir(CACHE_DIR, { recursive: true });
   await writeFile(cached, bytes);
@@ -332,7 +352,14 @@ async function basisOf(bytes: Uint8Array, usage: TextureUsage): Promise<Uint8Arr
 
 /** A box-filtered `width` x `height` JPEG of an equirectangular image. */
 async function skyPreview(bytes: Uint8Array): Promise<Uint8Array> {
-  const image = await decodeImage(bytes);
+  const { default: jpeg } = await import("jpeg-js");
+  // The source's tonemapped JPEG is larger than the importer's texture cap, which a preview does not need.
+  const image = jpeg.decode(bytes, {
+    useTArray: true,
+    formatAsRGBA: true,
+    maxResolutionInMP: SKY_SOURCE_MP,
+    maxMemoryUsageInMB: SKY_SOURCE_MB,
+  });
   const { width, height } = SKY_PREVIEW;
   const out = new Uint8Array(width * height * 4);
   for (let y = 0; y < height; y++) {
@@ -341,7 +368,6 @@ async function skyPreview(bytes: Uint8Array): Promise<Uint8Array> {
       out.set(image.data.subarray(from, from + 4), (y * width + x) * 4);
     }
   }
-  const { default: jpeg } = await import("jpeg-js");
   return new Uint8Array(jpeg.encode({ width, height, data: Buffer.from(out) }, 85).data);
 }
 
@@ -394,11 +420,16 @@ async function buildEntry(
   return build;
 }
 
-async function build(only: ReadonlySet<string> | null, tiers: readonly LibraryTier[], out: string): Promise<void> {
+async function build(
+  only: ReadonlySet<string> | null,
+  tiers: readonly LibraryTier[],
+  out: string,
+  force: boolean,
+): Promise<void> {
   await fetchBasis();
   const catalog = await readCatalog();
   for (const entry of catalog.entries) {
-    if (entry.slot || (only && !only.has(entry.id))) continue;
+    if (entry.slot || (only && !only.has(entry.id)) || (entry.build && !force)) continue;
     const wanted =
       entry.kind === LibraryKind.Model
         ? []
@@ -474,7 +505,13 @@ async function stage(
 async function main(): Promise<void> {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
-    options: { only: { type: "string" }, tiers: { type: "string" }, tier: { type: "string" }, out: { type: "string" } },
+    options: {
+      force: { type: "boolean" },
+      only: { type: "string" },
+      tiers: { type: "string" },
+      tier: { type: "string" },
+      out: { type: "string" },
+    },
   });
   const [command, argument = ""] = positionals;
   const only = values.only
@@ -483,7 +520,7 @@ async function main(): Promise<void> {
   const out = path.resolve(values.out ?? PACK_DIR);
   const tiers = (values.tiers?.split(",") ?? [LibraryTier.TwoK, LibraryTier.FourK]) as LibraryTier[];
   if (command === "pin") return pin(only);
-  if (command === "build") return build(only, tiers, out);
+  if (command === "build") return build(only, tiers, out, values.force === true);
   if (command === "fill") return fill(argument, out);
   if (command === "previews") return previews(path.resolve(argument), out);
   if (command === "stage") return stage(path.resolve(argument), only, values.tier as LibraryTier | undefined, out);
