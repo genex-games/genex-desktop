@@ -73,9 +73,12 @@ function asLoopSetting(value: unknown): LoopSetting | null {
   return { on, hours };
 }
 
-/** The last Loop picked in any chat: on unless turned off, and ∞ unless a time was kept. */
+/**
+ * The last Loop picked in any chat: off until turned on, and ∞ unless a time was kept. A first chat
+ * is the plain agent, which builds a game from a one-line idea in minutes; Loop is the person's pick.
+ */
 export function lastLoop(storage: KeyValueStorage | null): LoopSetting {
-  const on = readText(STORAGE_KEYS.composerLoop, storage) !== "0";
+  const on = readText(STORAGE_KEYS.composerLoop, storage) === "1";
   if (readText(STORAGE_KEYS.autopilotHours, storage) === UNTIL_SATISFIED) return { on, hours: null };
   return { on, hours: readNumber(STORAGE_KEYS.autopilotHours, MIN_LOOP_HOURS, MAX_LOOP_HOURS, storage) };
 }
