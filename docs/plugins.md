@@ -3451,6 +3451,15 @@ an API answer never reaches it. Packs that cannot be fetched under the rules yet
 with a typed reason (`unpinned`: the host is allowed but the pack's sha256 is not recorded yet;
 `zip-nested`: Kenney's kits nest their files in folders).
 
+`cc0__terrain-layer` (`terrain-layer.ts`, no network) packs a scan already in the game (a fetch
+folder, its maps found by Poly Haven's or ambientCG's names, or per-role paths) into the two PNGs a
+Rust `TerrainLayer::textured(albedo, data, tile)` reads, under `assets/terrain/` by default: colour
+with the height in alpha, and the OpenGL normal's x and y (a DirectX green flipped), roughness and
+occlusion (an ARM map's green and red when it has no own maps). Every path is checked by real path
+inside the game, outputs stay under `assets/`, and nothing is written until all maps are packed. Its
+answer carries the Rust line, the `[[texture]]` rows and, from a fetch folder, the delivery's
+source (`derivedFrom`); the packed files get no lock row of their own yet.
+
 ## Deferred work
 
 - Agent behavior extension points beyond [Genex's moments](#hooks-genexs-moments): judges and

@@ -44,6 +44,12 @@ override GX_TOKSVIG: bool = false;
 // disc on desktop, a coarser floor on phones' half-precision paths).
 override GX_ROUGHNESS_FLOOR: f32 = 0.04;
 
+// Which layered-material parts the pipeline draws (AAA materials, `layers::LayerTier`,
+// shaders/lighting/layers.wgsl): 0 the cover alone without its noise (the default, the low
+// presets and the legacy scene), 1 with its noise, the detail maps, the second layer and the
+// lobes, 2 parallax occlusion mapping too (desktop high and ultra).
+override GX_MATERIAL_LAYERS: u32 = 0u;
+
 // The occlusion map's ambient occlusion at the fragment `gx_surface` last built (P2-0.12 LG-09;
 // its strength applied by the caller, which reads the material's extension row): 1 without a map,
 // and for every Level-2 v2 surface (which builds no built-in surface). The ambient chunk takes the

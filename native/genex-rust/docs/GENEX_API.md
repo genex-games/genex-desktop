@@ -48,6 +48,7 @@ change touches (nearly every game needs Ctx and Drawing).
 | Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
 | Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
+| Layered materials, cover and weather | `docs/api/layered-materials.md` | Snow, dust, moss and wet covers, detail maps, a second layer, parallax, clear coat, sheen, anisotropy, glass, and weather presets. |
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
 | Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |

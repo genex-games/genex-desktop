@@ -38,6 +38,7 @@ pub const GRASS: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/lighting/output.wgsl"),
     include_str!("../../shaders/forward_effects.wgsl"),
     include_str!("../../shaders/alpha_mask.wgsl"),
+    include_str!("../../shaders/lighting/layers.wgsl"),
     include_str!("../../shaders/forward.wgsl"),
     include_str!("../../shaders/wind.wgsl"),
     include_str!("../../shaders/foliage/grass_types.wgsl"),

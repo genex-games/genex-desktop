@@ -1026,7 +1026,12 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
             (material.occlusion_texture().map(|(path, _)| path), TextureKind::Data),
             (material.emissive_texture(), TextureKind::Color),
         ];
-        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
+        // The layering's maps (AAA materials): detail, second layer and height.
+        let layered = material.layering().textures().into_iter().map(|(path, color, normal)| {
+            let kind = if color { TextureKind::Color } else if normal { TextureKind::Normal } else { TextureKind::Data };
+            (path, kind)
+        });
+        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind))).chain(layered)
     });
     // The terrain's layers (renderer pass 2 A.7): base colour and height, then the data texture.
     let terrain = frame.drawn_terrain().into_iter().flat_map(|terrain| terrain.layers().iter()).flat_map(|layer| {
@@ -3015,8 +3020,48 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     surface = surface.with_emissive(rgb(material.emissive), intensity(material.emissive_strength));
     surface.emissive_texture = texture(material.emissive_texture(), TextureKind::Color);
     surface.subsurface = material.subsurface();
+    surface.layers = layers_of(material.layering(), assets);
     surface
 }
+
+/// The renderer's layers for a facade material's layering (AAA materials), its maps as `assets`
+/// loaded them: a map not loaded is left out (a detail or layer without any map keeps its tint,
+/// parallax without its height map is off).
+fn layers_of(layering: &crate::layers::Layering, assets: &AssetCache) -> genex_render::layers::MaterialLayers {
+    use genex_render::layers::{Detail, MaterialLayer, MaterialLayers, Parallax};
+    let texture = |path: Option<&str>, kind: TextureKind| path.and_then(|path| assets.texture(path, kind));
+    let detail = layering.detail.as_ref().map(|d| Detail {
+        albedo: texture(d.albedo.as_deref(), TextureKind::Color),
+        normal: texture(d.normal.as_deref(), TextureKind::Normal),
+        tiles: d.tiles,
+        albedo_strength: d.albedo_strength,
+        normal_strength: d.normal_strength,
+        fade_metres: d.fade_metres,
+    });
+    let layer = layering.layer.as_ref().map(|l| {
+        let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+        MaterialLayer {
+            base: texture(l.base.as_deref(), TextureKind::Color),
+            normal: texture(l.normal.as_deref(), TextureKind::Normal),
+            orm: texture(l.orm.as_deref(), TextureKind::Data),
+            height: texture(l.height.as_deref(), TextureKind::Data),
+            tint: [linear(l.tint.r), linear(l.tint.g), linear(l.tint.b)],
+            roughness: l.roughness,
+            tiles: l.tiles,
+            mask: l.mask,
+            mask_metres: l.mask_metres,
+            blend_depth: l.blend_depth,
+        }
+    });
+    let parallax = layering.parallax.as_ref().and_then(|(path, depth)| {
+        let height = texture(Some(&**path), TextureKind::Data)?;
+        Some(Parallax { height, depth: *depth, steps: PARALLAX_STEPS })
+    });
+    MaterialLayers { cover: layering.cover.map(|c| c.render()), detail, layer, parallax, lobes: layering.lobes }
+}
+
+/// The most steps a facade material's parallax search takes at a grazing view.
+const PARALLAX_STEPS: u32 = 32;
 
 /// The renderer's decal for a facade decal (renderer pass 2 A.10), its maps as `assets` loaded
 /// them: `None` while a base-colour texture it names is not loaded (missing, refused or still
@@ -3230,75 +3275,94 @@ impl WorldSink for ImmediateFrame {
 fn write_world(sink: &mut impl WorldSink, frame: &Frame, assets: &AssetCache, drawn: &mut Drawn) {
     *sink.lighting() = lighting(frame.lights());
     sink.lighting().decals = frame.decals().iter().filter_map(|decal| decal_of(decal, assets)).collect();
+    let cover = frame.world_cover().map(|cover| cover.render());
     for draw in frame.draws() {
         sink.tag(&draw.tag);
         sink.id(draw.id);
-        let triangles = if draw.view_model {
-            push_shape(&mut ViewModelSink(&mut *sink), assets, &mut drawn.missing_models, &draw.shape)
-        } else {
-            push_shape(sink, assets, &mut drawn.missing_models, &draw.shape)
+        let triangles = match cover {
+            _ if draw.view_model => push_shape(&mut MaterialSink::new(&mut *sink, view_model_material, true), assets, &mut drawn.missing_models, &draw.shape),
+            Some(cover) => push_shape(&mut MaterialSink::new(&mut *sink, |m| world_covered(m, cover), false), assets, &mut drawn.missing_models, &draw.shape),
+            None => push_shape(sink, assets, &mut drawn.missing_models, &draw.shape),
         };
         note_triangles(drawn, &draw.tag, triangles);
     }
 }
 
-/// A sink drawing everything it is handed as the first-person view model ([`Frame::view_model`]):
-/// each material marked so (`Material::view_model`), everything else passed through.
-struct ViewModelSink<'a, S: WorldSink>(&'a mut S);
+/// A sink handing every material it draws through `map`, everything else passed through: the
+/// first-person view model ([`Frame::view_model`], `Material::view_model`) and the world's cover
+/// ([`Frame::cover_world`]). Skinned draws take `map` only when `skinned` says so.
+struct MaterialSink<'a, S: WorldSink, F: Fn(Material) -> Material> {
+    sink: &'a mut S,
+    map: F,
+    skinned: bool,
+}
+
+impl<'a, S: WorldSink, F: Fn(Material) -> Material> MaterialSink<'a, S, F> {
+    fn new(sink: &'a mut S, map: F, skinned: bool) -> Self {
+        MaterialSink { sink, map, skinned }
+    }
+}
 
 /// `material` as the view model draws it.
 fn view_model_material(material: Material) -> Material {
     Material { view_model: true, ..material }
 }
 
-impl<S: WorldSink> characters::SkinSink for ViewModelSink<'_, S> {
+/// `material` under the world's `cover` when it carries none of its own (AAA materials).
+fn world_covered(mut material: Material, cover: genex_render::layers::Cover) -> Material {
+    material.layers.cover.get_or_insert(cover);
+    material
+}
+
+impl<S: WorldSink, F: Fn(Material) -> Material> characters::SkinSink for MaterialSink<'_, S, F> {
     fn skinned(&mut self, skin: genex_render::skin::SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, materials: Vec<Material>) {
-        self.0.skinned(skin, model, joints, materials.into_iter().map(view_model_material).collect());
+        let materials = if self.skinned { materials.into_iter().map(&self.map).collect() } else { materials };
+        self.sink.skinned(skin, model, joints, materials);
     }
 }
 
-impl<S: WorldSink> WorldSink for ViewModelSink<'_, S> {
+impl<S: WorldSink, F: Fn(Material) -> Material> WorldSink for MaterialSink<'_, S, F> {
     fn tag(&mut self, name: &str) {
-        self.0.tag(name);
+        self.sink.tag(name);
     }
 
     fn id(&mut self, id: Option<DrawId>) {
-        self.0.id(id);
+        self.sink.id(id);
     }
 
     fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
-        self.0.mesh(mesh, model, view_model_material(material));
+        self.sink.mesh(mesh, model, (self.map)(material));
     }
 
     fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
-        self.0.group(group, view_model_material(material));
+        self.sink.group(group, (self.map)(material));
     }
 
     fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
-        self.0.line(from, to, color);
+        self.sink.line(from, to, color);
     }
 
     fn lines(&mut self, vertices: &[LineVertex]) {
-        self.0.lines(vertices);
+        self.sink.lines(vertices);
     }
 
     fn lighting(&mut self) -> &mut Lighting {
-        self.0.lighting()
+        self.sink.lighting()
     }
 
     fn lod(&mut self, lod: DrawLod) {
-        self.0.lod(lod);
+        self.sink.lod(lod);
     }
 
     fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
-        self.0.far_rule(rule)
+        self.sink.far_rule(rule)
     }
 }
 
 /// Add one shape to `sink`; answers its triangles.
 fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, shape: &Shape) -> u32 {
     match shape {
-        Shape::Model { model, transform, tint, material } => {
+        Shape::Model { model, transform, tint, material, cover } => {
             let matrix = transform.to_cols_array();
             // LOD-07: a bias, and a compound's one sphere every part measures from.
             let lod = draw_lod(model, assets);
@@ -3314,11 +3378,14 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                     continue;
                 };
                 for part in &loaded.parts {
-                    let drawn_with = match (material, &part.material) {
+                    let mut drawn_with = match (material, &part.material) {
                         (Some(material), _) => surface(material, *tint, assets),
                         (None, Some(glb)) => glb.to_material(rgba(*tint)),
                         (None, None) => surface(&crate::Material::color(*tint), Color::WHITE, assets),
                     };
+                    if let Some(cover) = cover {
+                        drawn_with.layers.cover = Some(cover.render());
+                    }
                     sink.mesh(part.mesh, matrix, drawn_with);
                 }
                 triangles = triangles.saturating_add(loaded.triangles);

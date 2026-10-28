@@ -218,7 +218,28 @@ pub const MATERIAL_EXT_NO_TEXTURE: f32 = -1.0;
 
 /// The extension row of a material that emits nothing: what every row holds until RQ6.3 fills it.
 pub const MATERIAL_EXT_NONE: GpuMaterialExt =
-    GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0], subsurface: [0.0, 0.0, 0.0, 1.0], transmission: [0.0; 4], uv: [0.0; 4], tiling: [0.0; 4] };
+    {
+    let rows = crate::layers::LAYER_ROWS_NONE;
+    GpuMaterialExt {
+        emissive: [0.0; 4],
+        params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0],
+        subsurface: [0.0, 0.0, 0.0, 1.0],
+        transmission: [0.0; 4],
+        uv: [0.0; 4],
+        tiling: [0.0; 4],
+        cover: rows[0],
+        cover_shape: rows[1],
+        cover_look: rows[2],
+        detail: rows[3],
+        detail_look: rows[4],
+        layer: rows[5],
+        layer_shape: rows[6],
+        layer_tint: rows[7],
+        parallax: rows[8],
+        lobes: rows[9],
+        sheen: rows[10],
+    }
+};
 
 /// One instance in the instance table (`Instance`).
 #[repr(C)]

@@ -113,6 +113,9 @@ impl PartialEq for Particles {
     }
 }
 
+/// Ticks a second: the renderer's velocities and periods are per tick.
+const TICKS_PER_SECOND: f32 = 60.0;
+
 /// The most different emitters a process remembers; past them each new one is another version
 /// (a game making a fresh emitter every frame then fills the renderer's 16 and is refused, logged).
 const REMEMBERED_MAX: usize = 4096;
@@ -141,7 +144,7 @@ fn rgba(color: Color) -> [u8; 4] {
 }
 
 impl Particles {
-    fn of(desc: EmitterDesc) -> Particles {
+    pub(crate) fn of(desc: EmitterDesc) -> Particles {
         let look = ParticlesLook { desc, flipbook: None };
         Particles { inner: Arc::new(ParticlesInner { version: version_of(&look), look }) }
     }
@@ -274,6 +277,41 @@ impl Particles {
         }
         let flipbook = ParticleFlipbook { atlas: Arc::from(atlas), columns, rows, frames: frames.min(columns * rows), cycles, blend };
         Ok(self.changed(|look| look.flipbook = Some(flipbook)))
+    }
+
+    /// Lit by the sun through its shadows and by the sky by `share` (0..1; AAA materials): 1 for
+    /// snow, rain and dust, so a flake under a roof is as dark as the shade it is in; 0 (the
+    /// default) keeps the colour as given, for sparks and anything that glows.
+    pub fn with_lit(&self, share: f32) -> Particles {
+        self.changed(|look| look.desc.lit = share)
+    }
+
+    /// Sizes varied by up to `share` either way (0..0.9; 0.5 is from half to one and a half).
+    pub fn with_size_variance(&self, share: f32) -> Particles {
+        self.changed(|look| look.desc.size_variance = share)
+    }
+
+    /// Carried by gusts: up to `peak` metres a second more wind, swelling and dying every
+    /// `period_seconds` (at least half a second) and sweeping across as a front.
+    pub fn with_gusts(&self, peak: Vec3, period_seconds: f32) -> Particles {
+        self.changed(|look| {
+            look.desc.gust = (peak / TICKS_PER_SECOND).to_array();
+            look.desc.gust_period = period_seconds * TICKS_PER_SECOND;
+        })
+    }
+
+    /// Each particle swaying about its path by up to `reach` metres, one sway every
+    /// `period_seconds` (a snowflake's tumble; 0 reach: straight).
+    pub fn with_flutter(&self, reach: f32, period_seconds: f32) -> Particles {
+        self.changed(|look| look.desc.flutter = [reach, period_seconds * TICKS_PER_SECOND])
+    }
+
+    /// An endless field around the camera when `on` (weather): every particle is wrapped into the
+    /// box of the emitter's half extent around the camera, `origin` then the box centre's offset
+    /// from the camera, so the density holds wherever the camera goes and the emitter never moves.
+    /// [`crate::Weather`]'s layers are made this way.
+    pub fn following_camera(&self, on: bool) -> Particles {
+        self.changed(|look| look.desc.follow_camera = on)
     }
 
     /// Spawned in another pattern: emitters of the same kind with different seeds look different.

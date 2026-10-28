@@ -88,7 +88,10 @@ is judged on captures against it, and a box, capsule or flat-coloured shape on s
   first-person hands and weapon between `frame.view_model()` and `frame.end_view_model()`),
   pure-black outdoor shadows, particles that read as cubes (`Particles::snow(..)`,
   `Particles::dust(..)`), or a texture whose tiling shows at play distance; snow and rain go under
-  `SkyParams::overcast()`.
+  `SkyParams::overcast()`. Weather is `frame.weather(&Weather::heavy_snow(), seconds)` (lit layers
+  around the camera that also lay the snow); snow, moss, dust and wet on props are material covers
+  (`Cover::snow(..)`), never white boxes; a winter ground is a Terrain layer packed by
+  `cc0__terrain_layer` (`docs/examples/exterior-snow/`).
 
 ## Assets
 

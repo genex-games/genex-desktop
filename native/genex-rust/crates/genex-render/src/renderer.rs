@@ -435,6 +435,9 @@ struct SurfaceKey {
     /// Whether the opaque surfaces read the screen reflections at binding 30 (`GX_SSR`, renderer
     /// pass 2 B.9: `ssr::frame_ssr` qualities under TAA); never the transparent pipeline.
     ssr: bool,
+    /// Which layered-material parts the surfaces draw (`GX_MATERIAL_LAYERS`, AAA materials:
+    /// [`crate::layers::LayerTier`]); the legacy scene draws the cover alone.
+    material_layers: crate::layers::LayerTier,
 }
 
 /// The RQ4 screen effects a quality draws, one pipeline constant each (`GX_AO`,
@@ -483,6 +486,7 @@ impl SurfaceKey {
         sun_cascades: SHADOW_CASCADES as u8,
         roughness_floor: LEGACY_ROUGHNESS_FLOOR.to_bits(),
         ssr: false,
+        material_layers: crate::layers::LayerTier::Cover,
     };
 
     /// The key `quality` asks of the HDR scene (`hdr`) or the legacy one, `taa` when TAA resolves
@@ -503,6 +507,7 @@ impl SurfaceKey {
             sun_cascades: quality.shadows.cascades.clamp(1, MAX_CASCADES as u8),
             roughness_floor: if hdr { DESKTOP_ROUGHNESS_FLOOR } else { LEGACY_ROUGHNESS_FLOOR }.to_bits(),
             ssr: temporal && crate::ssr::LANDED && crate::ssr::frame_ssr(quality, hdr),
+            material_layers: if hdr { quality.material_layers } else { crate::layers::LayerTier::Cover },
         }
     }
 
@@ -1412,8 +1417,8 @@ fn forward_equal_pipeline(device: &Device, layouts: &Layouts, format: TextureFor
 /// (`GX_SUN_CASCADES`). An HDR scene stored as `rg11b10ufloat` (`format`) dithers its writes by
 /// half a mantissa step (`GX_SCENE_RG11B10`, renderer pass 2 P2-0.10 C5); every other format writes
 /// as before. The surfaces shade no smoother than the key's roughness floor (`GX_ROUGHNESS_FLOOR`,
-/// P2-0.12 LG-04).
-fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey) -> [(&'static str, f64); 18] {
+/// P2-0.12 LG-04), and draw the layered-material parts the key's tier allows (`GX_MATERIAL_LAYERS`).
+fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey) -> [(&'static str, f64); 19] {
     let effects = surface.effects;
     [
         ("GX_ROUGHNESS_FLOOR", f64::from(f32::from_bits(surface.roughness_floor))),
@@ -1434,6 +1439,7 @@ fn surface_constants(reversed: bool, format: TextureFormat, surface: SurfaceKey)
         ("GX_SHADOW_FILTER", f64::from(surface.shadow_filter.shader_id())),
         ("GX_SHADOW_TEMPORAL", f64::from(u8::from(surface.shadow_temporal))),
         ("GX_SSR", f64::from(u8::from(surface.ssr))),
+        ("GX_MATERIAL_LAYERS", surface.material_layers.constant()),
     ]
 }
 

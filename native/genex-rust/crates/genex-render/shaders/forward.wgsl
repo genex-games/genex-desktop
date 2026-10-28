@@ -217,10 +217,28 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     let ext = material_ext[in.material];
     gx_view_model = (u32(max(ext.params.z, 0.0)) & GX_MATERIAL_VIEW_MODEL) != 0u;
     let mapped = gx_surface_uv(ext.uv, ext.tiling, in.uv, tangent, in.world_pos, in.normal * facing);
-    var s = gx_surface(in.world_pos, in.normal * facing, mapped.uv, mapped.tangent, in.material);
+    // The layered parts' gradients and frame (AAA materials, shaders/lighting/layers.wgsl), taken
+    // here in uniform control flow; parallax moves the base layer's UVs before any fetch.
+    let lod_scale = exp2(gx_texture_lod_bias());
+    let uv_dx = dpdx(mapped.uv) * lod_scale;
+    let uv_dy = dpdy(mapped.uv) * lod_scale;
+    let layer_frame = gx_layer_frame(in.normal * facing, mapped.tangent);
+    let to_camera = frame.camera_pos.xyz - in.world_pos;
+    let base_uv = gx_parallax_uv(ext, mapped.uv, uv_dx, uv_dy, layer_frame, normalize(to_camera));
+    var s = gx_surface(in.world_pos, in.normal * facing, base_uv, mapped.tangent, in.material);
     s.v = normalize(frame.camera_pos.xyz - in.world_pos);
     // The occlusion map eased from 1 by its strength (P2-0.12 LG-09).
     gx_material_ao = mix(1.0, gx_material_ao, ext.emissive.w);
+    // The detail maps, the second layer and the cover, then the extra lobes' state for `shade`
+    // (AAA materials); a material without layers keeps its surface as built.
+    s = gx_layered_surface(s, ext, base_uv, uv_dx, uv_dy, layer_frame, length(to_camera), vec4<f32>(0.0));
+    gx_lobes_begin(ext, layer_frame);
+    // A transmissive material (`KHR_materials_transmission`, thin-walled) shows the background
+    // through by the share it lets pass: its diffuse dims by its transmission.
+    let transmitted = gx_transmitted(ext, dot(s.n, s.v));
+    if transmitted > 0.0 {
+        s.albedo *= 1.0 - ext.transmission.w * (1.0 - s.metallic);
+    }
     // An alpha-tested surface that survived its test is opaque (P2-0.12): its alpha is the
     // cutout's, not a blend's, so it takes the opaque surfaces' AO and contact shadows.
     if ext.params.w > 0.0 {
@@ -252,6 +270,12 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     }
     color += gx_emission(ext, mapped.uv);
     color = gx_forward_fog(color, s.world_pos);
+    if transmitted > 0.0 {
+        // Blended over the frame by `alpha (1 - transmitted)`: the lit colour lands whole and the
+        // background shows through by the transmitted share.
+        let kept = max(1.0 - transmitted, 0.02);
+        return vec4<f32>(color / kept, s.alpha * kept);
+    }
     return vec4<f32>(color, s.alpha);
 }
 
