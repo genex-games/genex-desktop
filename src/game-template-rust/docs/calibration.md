@@ -32,7 +32,7 @@ A spot's cone defaults to 20 and 30 degrees (inner and outer).
 | --- | --- | --- | --- |
 | `exposure` | `manual` | `manual`, `auto` | use `auto` wherever light meets shade |
 | `metering` | `average` | `average`, `center`, `spot`, `ground` | `ground` for open sky over ground |
-| `ev_compensation` | 0 | -10 to 10 | +0.5 sunlit, +1.0 snow, -0.3 to -0.5 night |
+| `ev_compensation` | 0 | -10 to 10 | +0.3 to +0.5 sunlit, +1.0 snow, -0.7 rain, -0.5 to -1.0 night |
 | `ev_min`, `ev_max` | -8, 8 | -16 to 16 | keep the defaults |
 | `adaptation_speed_up`, `adaptation_speed_down` | 4, 3 EV per simulated second | above 0 to 20 | |
 | transition | 0.5 EV | | smoothed near the target |

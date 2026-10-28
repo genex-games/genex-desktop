@@ -131,7 +131,7 @@ fn room(frame: &mut Frame, scene: Scene) {
     let floor = Material::color(Color::rgb(120, 86, 58)).with_roughness(0.55);
     let steel = Material::color(Color::rgb(70, 74, 78)).with_metallic(0.8).with_roughness(0.4);
     let (lo, hi) = (ROOM_MIN, ROOM_MAX);
-    block(frame, vec3(lo.x, -0.05, lo.z), vec3(hi.x, 0.0, hi.z), &floor);
+    block(frame, vec3(lo.x, 0.0, lo.z), vec3(hi.x, 0.03, hi.z), &floor); // above the terrain, never level with it
     block(frame, vec3(lo.x - WALL, hi.y, lo.z - WALL), vec3(hi.x + WALL, hi.y + 0.2, hi.z + WALL), &plaster);
     block(frame, vec3(lo.x - WALL, 0.0, lo.z - WALL), vec3(hi.x + WALL, hi.y, lo.z), &plaster);
     block(frame, vec3(lo.x - WALL, 0.0, lo.z), vec3(lo.x, hi.y, hi.z), &plaster);

@@ -40,15 +40,31 @@ fn started(scene: Scene) -> Runtime<World> {
 }
 
 #[test]
-fn every_scene_draws_the_stage_with_its_room_probe_and_volume() {
+fn every_scene_draws_the_stage_on_a_terrain_with_its_room_probe_and_volume() {
     for scene in Scene::ALL {
         let mut runtime = started(scene);
         let frame = runtime.frame(View::Game).expect("a frame");
         let tags: Vec<&str> = frame.draws().iter().map(|draw| draw.tag.as_str()).collect();
-        for tag in ["ground", "room", "street"] {
+        for tag in ["room", "street"] {
             assert!(tags.contains(&tag), "{} draws {tag}", scene.name());
         }
+        assert!(frame.drawn_terrain().is_some(), "{} stands on a terrain, never a box", scene.name());
+        let lights = frame.lights();
+        assert_eq!((lights.reflection_probes.len(), lights.irradiance_volumes.len()), (1, 1), "{}: one probe and one volume on the room", scene.name());
+        assert!(frame.declared_environment().is_some(), "{} declares its sky", scene.name());
         assert_eq!(runtime.state()["look"]["scene"], scene.name(), "the probe names the scene");
+    }
+}
+
+#[test]
+fn only_snow_and_rain_draw_weather_and_only_the_night_lights_its_lamps() {
+    for scene in Scene::ALL {
+        let mut runtime = started(scene);
+        let frame = runtime.frame(View::Game).expect("a frame");
+        let weather = matches!(scene, Scene::OvercastSnow | Scene::Rain);
+        assert_eq!(frame.drawn_particles().len(), usize::from(weather), "{} weather", scene.name());
+        let lamps = frame.lights().points.len() + frame.lights().spots.len();
+        assert_eq!(lamps > 0, scene.night(), "{} lamps lit only by night ({lamps})", scene.name());
     }
 }
 
@@ -62,15 +78,6 @@ fn a_seed_keeps_the_scene_and_its_weather() {
         assert_eq!(state["look"]["scene"], scene.name());
         let weather = matches!(scene, Scene::OvercastSnow | Scene::Rain);
         assert_eq!(state["look"]["weather"], weather, "{} falls only with weather", scene.name());
-    }
-}
-
-#[test]
-fn only_the_night_scenes_are_lit_by_their_lamps() {
-    for scene in Scene::ALL {
-        let mut runtime = started(scene);
-        let state = runtime.state();
-        assert_eq!(state["look"]["night"], scene.night(), "{}", scene.name());
     }
 }
 

@@ -128,7 +128,7 @@ pub fn interior_night(frame: &mut Frame) {
 
 /// Auto exposure with a curve that keeps a dark meter dark, so night never reads as day.
 pub fn interior_night_look(base: RenderConfig) -> RenderConfig {
-    base.exposure(Exposure::auto().metering(Metering::Center).compensation(-0.3).range(-8.0, 8.0))
+    base.exposure(Exposure::auto().metering(Metering::Center).compensation(-1.0).range(-8.0, 8.0))
         .exposure_curve(&[(-8.0, -2.0), (-3.0, -0.8), (0.0, 0.0)])
         .fog(Fog::default().with_density(0.008).with_height(0.05, 0.0))
         .grading(Grading::NEUTRAL.with_contrast(1.08))
@@ -145,9 +145,9 @@ pub fn exterior_day(frame: &mut Frame) {
     frame.environment(Environment::Sky(SkyParams::default().with_clouds(Some(clouds))));
 }
 
-/// Half a stop over the meter for sunlight, a little aerial haze, a touch of vibrance.
+/// A third of a stop over the meter for sunlight, a little aerial haze, a touch of vibrance.
 pub fn exterior_day_look(base: RenderConfig) -> RenderConfig {
-    base.exposure(Exposure::auto().metering(Metering::Ground).compensation(0.5).range(-8.0, 8.0))
+    base.exposure(Exposure::auto().metering(Metering::Ground).compensation(0.3).range(-8.0, 8.0))
         .fog(Fog::default().with_density(0.002).with_height(0.08, 0.0))
         .grading(Grading::NEUTRAL.with_vibrance(1.1))
 }
@@ -178,9 +178,9 @@ pub fn rain(frame: &mut Frame) {
     frame.environment(Environment::Sky(SkyParams::overcast().with_intensity(0.6)));
 }
 
-/// The meter as it is, thicker low fog, a cooler and less saturated grade.
+/// Two thirds of a stop under the meter (a wet day is dim), thicker low fog, a cooler grade.
 pub fn rain_look(base: RenderConfig) -> RenderConfig {
-    base.exposure(Exposure::auto().metering(Metering::Average).compensation(0.0).range(-8.0, 8.0))
+    base.exposure(Exposure::auto().metering(Metering::Average).compensation(-0.7).range(-8.0, 8.0))
         .fog(Fog::default().with_density(0.02).with_height(0.1, 0.0).with_color([0.6, 0.64, 0.7]))
         .grading(Grading::NEUTRAL.with_contrast(1.05).with_saturation(0.85))
         .temperature(-0.2, 0.0)
@@ -231,9 +231,9 @@ pub fn desert(frame: &mut Frame) {
     frame.environment(Environment::Sky(sky));
 }
 
-/// A third of a stop over the meter for bright sand, warm haze far off, a warm grade.
+/// Half a stop over the meter for bright sand, warm haze far off, a warm grade.
 pub fn desert_look(base: RenderConfig) -> RenderConfig {
-    base.exposure(Exposure::auto().metering(Metering::Ground).compensation(0.3).range(-8.0, 8.0))
+    base.exposure(Exposure::auto().metering(Metering::Ground).compensation(0.5).range(-8.0, 8.0))
         .fog(Fog::default().with_density(0.004).with_height(0.05, 0.0).with_color([1.0, 0.92, 0.8]))
         .temperature(0.2, 0.0)
 }
