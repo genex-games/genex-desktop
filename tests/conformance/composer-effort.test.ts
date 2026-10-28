@@ -1,6 +1,6 @@
 /**
  * The composer's effort control says what a send carries. With no pick, the send names no effort
- * and the provider's own default applies, so the control reads Auto, never its slowest level.
+ * and the provider's own default applies, so the control reads Default, never its slowest level.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -33,12 +33,12 @@ async function effortControl() {
 
 // A fresh profile's composer read "Low" on Opus while its sends named no effort at all: the person
 // saw the slowest level where the CLI's own default ran.
-test("with no pick the effort control reads Auto, and a pick reads as itself", async () => {
+test("with no pick the effort control reads Default, and a pick reads as itself", async () => {
   const { ComposerEffort, createElement, renderToStaticMarkup } = await effortControl();
   const efforts = ["low", "medium", "high", "xhigh", "max"];
   const onChange = () => {};
   const unpicked: string = renderToStaticMarkup(createElement(ComposerEffort, { efforts, value: null, onChange }));
-  assert.match(unpicked, /aria-label="Effort: Auto"/, unpicked);
+  assert.match(unpicked, /aria-label="Effort: Default"/, unpicked);
   const picked: string = renderToStaticMarkup(createElement(ComposerEffort, { efforts, value: "high", onChange }));
   assert.match(picked, /aria-label="Effort: High"/, picked);
 });

@@ -53,10 +53,11 @@ export function ComposerEffort({
   const slider = useRef<HTMLDivElement>(null);
   const [first] = efforts;
   if (first === undefined) return null;
-  // No pick sends no effort, so the provider's own default runs: the control says Auto, and its
-  // slider rests on the first stop until a level is picked.
+  // No pick sends no effort, so the provider's own default runs: the control says Default (never
+  // the slowest level), and its slider rests on the first stop until a level is picked.
   const picked = value && efforts.includes(value) ? value : null;
   const current = picked ?? first;
+  const label = picked ? effortLabel(picked) : t("Default");
   return (
     <Popover
       open={open}
@@ -68,10 +69,10 @@ export function ComposerEffort({
       <PopoverTrigger
         render={<button type="button" />}
         disabled={disabled}
-        aria-label={t("Effort: {effort}", { effort: effortLabel(picked) })}
+        aria-label={t("Effort: {effort}", { effort: label })}
         className="composer-text-button composer-effort shrink-0"
       >
-        {effortLabel(picked)}
+        {label}
       </PopoverTrigger>
       <PopoverContent
         side="top"
@@ -83,7 +84,7 @@ export function ComposerEffort({
       >
         <div className="effort-head">
           <span className="text-ink-3">{t("Effort")}</span>
-          <span>{effortLabel(picked)}</span>
+          <span>{label}</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button type="button" className="effort-help" aria-label={t("About effort")}>
