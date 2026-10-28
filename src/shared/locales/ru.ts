@@ -5162,6 +5162,8 @@ export default {
     "провайдер моделей нас остановил — ждём сброса лимита",
   "the modeller": "моделлер",
   "the must-fix was not fixed": "обязательное исправление не сделано",
+  "it added something below the game's look bar": "добавило то, что ниже визуальной планки игры",
+  "no picture of it could be shown to the judge": "судье не удалось показать ни одного кадра",
   "the plan": "план",
   "the plan is ready — {parts}.": "план готов — {parts}.",
   "the plan is ready.": "план готов.",
