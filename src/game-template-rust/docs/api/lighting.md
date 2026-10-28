@@ -17,8 +17,8 @@ Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emi
 // .with_occlusion_texture(path, strength) .with_emissive(color, strength) .with_emissive_texture(path) .with_untextured_color(color)
 // .with_uv_scale(u, v) .with_world_uv(metres) .with_uv_offset(u, v) .with_uv_rotation(radians) .with_uv_jitter(seed: u32)
 // .with_stochastic_tiling(true) .with_macro_variation(strength, metres) .with_subsurface(Subsurface::WAX)
-frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4));
-frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3));
+frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4)); // .with_intensity(1.0)
+frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3)); // .with_intensity(1.0)
 frame.decal(&Decal::on_wall(center, facing, width, height).with_base_texture(path)); // Decal::on_ground(center, width, length)
 frame.environment(Environment::sky());                      // Environment::Sky(SkyParams), ::hdri(path), ::Hdri(HdriEnvironment), ::Color
 SkyParams::default().with_stars(2e-5).with_moon(Some(Moon::new([x, y, z]))).with_clouds(Some(Clouds::default()));
@@ -108,7 +108,9 @@ pine needles and other dense thin cards glow too brightly with it, so keep them 
 inside it: a leaf's millimetres, a candle's centimetre). The sun's light through it is shadowed by
 whatever stands between it and the sun. A model whose glTF material carries
 `KHR_materials_diffuse_transmission` lets light through the same way with no call (its factor, in
-the base colour).
+the base colour). `KHR_materials_clearcoat`, `sheen`, `specular`, `ior`, `transmission`, `volume`
+and `anisotropy` are read but not shaded yet: a car's lacquer, velvet or glass reads only through its
+base colour, roughness and metalness, so bake the look into those maps.
 
 A room's polished floor reflects the sky until it has a reflection probe:
 `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`
@@ -140,8 +142,11 @@ on phones at `high` and `ultra` only, none at a phone's own `medium` or `low` pr
 low phones); the rest take the sky's light. Give a volume to each
 room or courtyard whose bounced colour matters, alongside its reflection probe. A room's probe and
 volume also steer auto exposure: when the camera crosses into or out of either box, it adapts
-eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once
-(`look.doorway_adaptation`, on by default).
+eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once.
+That is the `doorway_adaptation` field of `genex::render::Look`, on by default and not a
+`[render.look]` key: switch it off in code with `let mut config = RenderConfig::from_build();
+config.look.doorway_adaptation = false;`. Raising `ev_min` to keep a room bright fights it: light
+the room instead (`docs/look-recipes.md`).
 
 Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
 depth and float off it at a distance): `frame.decal(&Decal::on_wall(center, facing, width,
@@ -170,7 +175,7 @@ surfaces both see it through the atmosphere, so a sun 5 to 12 degrees up gives a
 and ground warm alike), a lower one a sunset, and one below the horizon a dusk that no longer
 lights the ground. Keep the sun's intensity at night and let it set: the stars come out as it goes
 down (`.with_stars(2e-5)` is their default brightness, 0 for none), and a moon,
-`.with_moon(Some(Moon::new(direction)))` (`use genex::render::Moon;`; `.with_moonlight(0.004)`, its
+`.with_moon(Some(Moon::new([x, y, z])))` (`use genex::render::Moon;`, a direction as an array; `.with_moonlight(0.004)`, its
 share of the sun's light, `.with_tint(..)`, `.with_earthshine(..)`, `.with_angular_radius_degrees(..)`),
 is lit by that sun with its phase: put it opposite the sun for a full moon. Once the sun has set the
 moon lights the ground and the sky, and reflections see the stars and the moonlit sky. Auto exposure

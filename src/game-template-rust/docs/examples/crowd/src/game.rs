@@ -1,3 +1,7 @@
+//! GREYBOX: replace the primitives before done. The trees are cube trunks under sphere crowns, the
+//! stalls and walls are boxes and the walkers are blocks without `characters/walker.glb`: draw trees
+//! as CC0 models with impostors and stalls as models. Copy the nav loop and the instance groups.
+//!
 //! A crowd on a nav mesh, distilled from the engine's nav-crowd example: 120 walkers wander a
 //! walled market square between its stalls and its fountain, each a nav agent driving its own
 //! character capsule, and 240 trees stand round the walls as two retained instance groups.

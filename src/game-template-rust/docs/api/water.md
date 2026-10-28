@@ -1,5 +1,7 @@
 # Water
 
+Lakes, ponds and rivers are `Water`; there is no open ocean in the facade yet.
+
 Every type and call in one line:
 
 ```rust

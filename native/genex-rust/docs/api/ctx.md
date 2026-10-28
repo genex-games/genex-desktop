@@ -12,6 +12,7 @@ ctx.touches.tapped(); ctx.touches.began();                  // -> bool, any fing
 ctx.pads.down(pad, button); ctx.pads.value(pad, button); ctx.pads.axis(pad, axis); // -> bool, f32, f32
 ctx.pointer; ctx.look; ctx.wheel; ctx.text;                 // Vec2, Vec2, Vec2, &str
 ctx.rng.f32(); ctx.rng.range(lo, hi); ctx.rng.range_i32(lo, hi); // -> f32, f32, i32; a reset's Pcg32 the same
+ctx.rng.unit(); ctx.rng.range_f32(lo, hi);                  // -> f32 in [0, 1), f32 in [lo, hi): what f32 and range alias
 ctx.rng.below(n); ctx.rng.chance(p); ctx.rng.next_u32();    // -> u32, bool, u32
 ctx.dt; ctx.tick; ctx.world_size;                           // f32, u64, [u32; 2]
 ctx.save("progress.json", &bytes); ctx.load("progress.json"); // -> bool, Option<Vec<u8>>
@@ -27,7 +28,8 @@ Input::touch_start(id, x, y); Input::touch_move(id, x, y); Input::touch_end(id, 
 `ctx.pads`, `ctx.pointer` (fraction of the frame, y down), `ctx.look`, `ctx.wheel`,
 `ctx.text`, `ctx.rng` (the only randomness: `ctx.rng.f32()` in `[0, 1)`, `ctx.rng.range(lo, hi)`
 for an `f32` in `[lo, hi)`, `ctx.rng.range_i32(lo, hi)` inclusive, `ctx.rng.below(n)`,
-`ctx.rng.chance(p)`, `ctx.rng.next_u32()`; a reset's `Pcg32` has the same calls), `ctx.dt`
+`ctx.rng.chance(p)`, `ctx.rng.next_u32()`; `unit()` and `range_f32(lo, hi)` are the names
+`f32()` and `range` alias; a reset's `Pcg32` has the same calls), `ctx.dt`
 (1/60), `ctx.tick` (ticks since the last
 seed), `ctx.world_size`, and `ctx.save(file, bytes)` / `ctx.load(file)` for the game's own save
 folder (a safe relative name; a folder the studio gives each run). One save holds at most 16 MiB
@@ -70,23 +72,3 @@ needs only the list. `Input::touch_start(id, x, y)`, `Input::touch_move(id, x, y
 `ctx.actions` are `docs/api/input.md` (the action map, contexts, on-screen touch controls,
 rebinding, prompts and replays). The raw devices above stay for what an action map does not
 cover, such as a finger the touch controls did not take.
-
-**Audio.** The types live in `genex::audio` (the prelude has `Sound`, `Music`, `PlayOpts`, `Bus`,
-`AudioSetup` and the rest):
-
-- `gfx.sound(path)` and `gfx.music(path)` in `on_reset` read a file under `assets/` once (WAV,
-  Ogg Vorbis, MP3, FLAC; Ogg music stays compressed). A refused file is a missing sound:
-  `sound.refusal()` names why (`not-preloaded`, `needs-import`, `malformed`, `memory-limit`) and
-  its play is refused `sound-missing`.
-- The update and UI hooks call `ctx.audio.play(&sound)`, `ctx.audio.play_with(&sound, opts)`
-  (`PlayOpts::ui()` for menus), `ctx.audio.play_at(&sound, position)`, `ctx.audio.stop(..)`,
-  `ctx.audio.set_position(..)`, `ctx.audio.bus_volume(..)` and `ctx.audio.music(&music, opts)`.
-  Commands apply after physics, with the game's own camera as the ears.
-- `ctx.audio.playing(voice)` answers the logical state, the same on every destination; audio
-  never enters the checksum. Check sound through `state().volatile.audio` (voices, events,
-  counts, issues) and `audioLevel`, never by ear.
-- `game.audio(AudioSetup { .. })` adds ducking, reverb zones and collider occlusion. Install
-  refusals: `duplicate-audio`, `audio-zone-limit`.
-- A device plays only in a run a person sees: a desktop window, Studio Live, the web page after
-  its first click or key, a phone while it holds its audio. Headless runs and tests open none
-  (`volatile.audio.device.open` is false); the mix and `audioLevel` are the same either way.

@@ -2,7 +2,8 @@
 
 A rigged GLB animates in three steps. `on_reset` makes the character's animator, `on_update`
 advances it by `ctx.dt`, and `on_draw` draws it. Start with the simple animator; move to a graph
-when you need parameters, layers or blend spaces. The types are in `genex::animation`, and
+when you need parameters or layers (a graph crossfades idle, walk and run on a `speed` parameter;
+the facade has no 1D or 2D blend space yet). The types are in `genex::animation`, and
 `Animator` is also in the prelude. Animation needs no physics: a game with physics off keeps
 all of it. Every type and call in one line:
 

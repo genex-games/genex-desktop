@@ -31,12 +31,32 @@ The player is a `Character` capsule (`docs/api/characters.md`) driven with
 turned by the yaw. The level's boxes are fixed Rapier cuboids from the same numbers that draw
 them, so what the player bumps, what a shot hits and what the picture shows agree.
 
-## The camera: chest-cam bob
+## The camera: field of view and comfort
 
-A bodycam rides on the chest (about 1.4 m) with a wide lens (`fovy` about 72). Keep the metres
-walked in the world (`stride += speed * dt`) and derive the bob from it in the camera hook: a
-sway at the step's rate, a lift at twice it, a slight roll through `Camera::up`, all scaled by the
-speed. A draw or camera hook has no `ctx`, so every motion comes from world state.
+`Camera::fovy` is the vertical field of view in degrees. Keep a first-person game between 55 and
+80 (about 85 to 110 degrees across a 16:9 screen): 70 for a shooter, 72 for a bodycam on the chest
+(about 1.4 m up). A wider lens than 80 stretches the edges and, with any bob, makes people ill; a
+fisheye is a post pass at most, never a wider `fovy`.
+
+Camera motion is judged over time against these caps. The bob comes from the gait, not the clock:
+keep a gait phase in the world (`phase += speed * ctx.dt / stride` in `on_update`), with the
+stride growing with speed (about 0.45 m plus 0.25 m per m/s, so 0.8 m at a walk and 1.75 m at a
+sprint), and derive the bob from it in the camera hook with smooth curves: a sideways sway of
+`sin(phase)`, a lift of `(1 - cos(2 * phase)) / 2` (once per step, never `abs(..)`, whose cusp
+jerks), and a roll through `Camera::up` following the sway, all eased in and out with the speed.
+
+| Motion | Cap |
+| --- | --- |
+| Bob, peak to peak, at a sprint | 3 cm (1.5 cm at a walk) |
+| Roll at a sprint | 1.5 degrees; 2 degrees in all, any cause |
+| Bob cadence (steps per second) | under 3 Hz at a sprint; nothing above 6 Hz |
+| Shake | eased from world state, never a fresh `ctx.rng` value per tick |
+| Sprint field-of-view kick | 5 degrees at most, eased over a quarter second |
+| Reduced motion (the settings menu's Accessibility tab) | a tenth of every amplitude above |
+
+`docs/examples/fps/`'s `bob()` predates these caps (a fixed 0.75 m stride and a lift at four times
+the sway's rate through `abs(..)`): copy the caps and the curves above, not that function. A draw
+or camera hook has no `ctx`, so every motion comes from world state.
 
 ## Hitscan against Rapier colliders
 
@@ -58,13 +78,13 @@ target, and wire the weapon's facet before the enemy's (facets update in wiring 
 
 ## The view model
 
-Build the hands and the gun from parts in the camera's frame before reaching for a model:
-forearms in sleeves rising from below the camera, gloves around the grip and a support hand, a
-slide over a frame, a raked grip, sights. Mid-tone materials (a near-black glove reads as one dark
-slab); draw them all under `frame.tag("hands")` and one `frame.id(..)`, so TAA moves them with the
-camera. The draw hook gets the `Camera`: its right, up and back axes turn a part's place in the
-camera's frame into the world. Swap a part for a GLB later with `frame.model` at the same
-transform.
+The arms and weapon are models: copy `docs/examples/fps-arms/` (rigged gloved arms on a rifle,
+played by an animator) or make yours with `genex__asset` `model`. The FPS set's forearms, gloves
+and pistol built from boxes are a greybox to prove the mechanics, never what ships. Draw them all
+under `frame.tag("hands")` and one `frame.id(..)` between `frame.view_model()` and
+`frame.end_view_model()`, so TAA moves them with the camera; keep their materials mid-tone (a
+near-black glove reads as one dark slab). The draw hook gets the `Camera`: its right, up and back
+axes turn a part's place in the camera's frame into the world.
 
 - **Near plane.** The camera's near plane is 0.1 m: keep every visible part further out (a grip
   about 0.4 m ahead). Facing a wall, cast a short ray ahead each tick and pull the gun back by

@@ -1,3 +1,8 @@
+//! GREYBOX: replace the boxes before done. The hall is boxes that double as colliders and the view
+//! model is built from boxes (`facets/viewmodel.rs`): build the level from a kit and draw the arms
+//! and weapon from `docs/examples/fps-arms/`. The camera bob here predates the comfort caps in
+//! `docs/examples/fps.md`: copy the caps, not `bob()`.
+//!
 //! The FPS set's entry owner: the action map, the player (a character capsule moved by the keys,
 //! a pad or a touch stick), mouse look from the locked pointer, a chest-mounted camera that bobs
 //! and rolls with the walk, a greybox hall whose boxes are both drawn and Rapier colliders, and
