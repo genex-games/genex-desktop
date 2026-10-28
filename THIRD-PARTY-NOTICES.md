@@ -1203,6 +1203,22 @@ stand-ins without them.
 | `metal_grate_rusty` | the drains along the kerbs, the manhole covers, the alley's gutter and the air conditioners' grilles | https://polyhaven.com/a/metal_grate_rusty (`metal_grate_rusty_diff_1k.jpg`, `metal_grate_rusty_nor_gl_1k.jpg`, `metal_grate_rusty_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,774,295 bytes |
 | `kloppenheim_01_puresky` | the overcast dusk sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_01_puresky (`kloppenheim_01_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,187,954 bytes |
 
+## Genex Library pack
+
+The Genex Library (`src/plugins/library/`, `docs/api/library.md`) is not in this repository and
+does not ship inside Genex.app. Its catalog, `src/plugins/library/catalog.json`, names every entry
+with its source page, its authors and each upstream file's URL, size and md5. The entries are
+Poly Haven materials, HDRI skies and models published under CC0 1.0 (Poly Haven's licence,
+https://polyhaven.com/license), plus vegetation made by Genex's own generator. No attribution is
+required; the catalog gives it anyway.
+
+`scripts/library/build-library.ts` builds the pack from those pinned sources: it re-encodes maps as
+Basis KTX2, decimates models and bakes their levels, and records each output file's sha256 in the
+catalog. The `library` plugin downloads an entry's files only when a game adds it, and checks each
+file against that digest. Each delivery records the entry's source and authors. The pack adds no
+code: the encoder, simplifier and decoders it runs are the asset importer's, listed under "Asset
+importer decoders" and "Asset importer packages".
+
 ## Soldier kit
 
 `src/game-template-rust/docs/examples/soldier/soldier.glb` is built by `soldier.py` from Quaternius'

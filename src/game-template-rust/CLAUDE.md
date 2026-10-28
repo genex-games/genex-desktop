@@ -96,8 +96,12 @@ Models, textures and skies live in `assets/`. Studio imports each file when it l
 what the game loads; `docs/api/assets.md`, `docs/api/drawing.md` and `docs/api/genex-toml.md`
 hold the how.
 
-- **CC0 before making.** For a common prop, surface or sky, `cc0__search`, then `cc0__fetch` at
-  `1k` (2k only for what fills the screen). Studio downloads it and records its licence in
+- **The Genex Library first.** For a common surface, sky, prop, rock or tree, `library__search`
+  (any word matches), then `library__add`: pre-processed CC0 entries at real size, within a
+  triangle budget, with no import work. Read one in `on_reset` with `gfx.assets().library(id)`
+  (`docs/api/library.md`; `docs/examples/library-yard/`).
+- **CC0 before making.** For a prop, surface or sky the library lacks, `cc0__search`, then
+  `cc0__fetch` at `1k` (2k only for what fills the screen). Studio downloads it and records its licence in
   `genex-assets.lock`: never download a file, add a licence line or edit the lock yourself. A held
   curated pack answers why: take a Poly Haven or ambientCG asset instead.
 - **Read the import's facts.** After a delivery the lock's rows name `issues` by code

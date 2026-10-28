@@ -22,7 +22,7 @@ fn main() {
 }
 ```
 
-The game folder holds `src/main.rs`, `src/facets/*.rs`, `assets/` and `genex.toml`. It has no
+The game folder holds `src/main.rs`, `src/facets/*.rs`, `assets/` and `genex.toml`, no
 `Cargo.toml`: the host writes the manifest and lock. Game code never uses `unsafe`, build
 scripts, cargo configuration or renderer internals.
 
@@ -36,31 +36,32 @@ change touches (nearly every game needs Ctx and Drawing).
 | Ctx | `docs/api/ctx.md` | Raw keys, touches, pads, pointer, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
 | Input | `docs/api/input.md` | Actions, touch controls, rebinding, prompts, replays. |
 | Drawing | `docs/api/drawing.md` | Tags, models from `assets/`, `gfx.mesh` meshes, cubes, spheres, lines, clear colour. |
-| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, the stable checksum. |
+| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, stable checksum. |
+| Genex Library | `docs/api/library.md` | Ready-made CC0 surfaces, skies, props, trees. |
 | UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |
-| Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
+| Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts, `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
 | Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
-| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
+| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
 | Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
 | Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
-| Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
+| Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading, replay, refusals. |
 | Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
-| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
-| Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
+| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials, emission, reflection probes, irradiance volumes, decals, sky and HDR maps. |
+| Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, settings panel, shadows, draw ids, camera cuts. |
 | Grading and the lens | `docs/api/grading.md` | Build order, grade, white balance, LUTs, depth of field, motion blur. |
 | Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
-| Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once and drawn as a group. |
+| Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once, drawn as a group. |
 | Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
 | Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
 | Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
-| genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: the game, physics, crates, WGSL sources, native features and the web. |
+| genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: game, physics, crates, WGSL, native features, web. |
 
 ## Hooks
 

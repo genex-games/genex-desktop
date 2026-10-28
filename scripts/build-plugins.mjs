@@ -176,6 +176,18 @@ async function buildCc0(root, resources, sdk) {
   });
 }
 
+/** The Genex Library: its manifest and its backend bundled with the catalog (`docs/api/library.md`). */
+async function buildLibrary(root, resources) {
+  const library = path.join(resources, "plugins/library");
+  await mkdir(library, { recursive: true });
+  await cp(path.join(root, "src/plugins/library/plugin.json"), path.join(library, "plugin.json"));
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/library/backend.ts")],
+    outfile: path.join(library, "backend.mjs"),
+  });
+}
+
 async function buildUnreal(root, resources, sdk) {
   const unreal = path.join(resources, "plugins/unreal");
   await mkdir(unreal, { recursive: true });
@@ -442,6 +454,7 @@ export async function buildPlugins(root, resources, { dependencies = true } = {}
   const sdk = path.join(root, "src/plugin-sdk");
   await buildBlender(root, resources, sdk);
   await buildCc0(root, resources, sdk);
+  await buildLibrary(root, resources);
   await buildUnreal(root, resources, sdk);
   await buildGodot(root, resources, sdk);
   await buildUnity(root, resources, sdk);
