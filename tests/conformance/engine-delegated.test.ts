@@ -911,6 +911,30 @@ describe("claude code delegated engine", () => {
     assert.equal(compacted.parts[0]!.text, "x".repeat(5_000));
   });
 
+  // The Agent SDK sends an EMPTY system prompt unless it is asked for Claude Code's: every Genex
+  // session ran without the coding guidance, environment and tool habits plain Claude Code has.
+  it("runs every session on Claude Code's own system prompt, the session's context appended", async () => {
+    const root = await tmpDir("studio-engine-");
+    const { fn, seen } = fakeQuery(successRun);
+    const engine = new ClaudeCodeEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: path.join(root, "claude-home"),
+      systemHome: path.join(root, "no-system-login"),
+      queryFn: fn,
+      platform: "darwin",
+    });
+    await engine.delegate({ prompt: "make a snake game", system: "You are working inside Genex.", cwd: root });
+    await engine.delegate({ prompt: "make it faster", cwd: root });
+
+    assert.deepEqual(seen[0]!.systemPrompt, {
+      type: "preset",
+      preset: "claude_code",
+      append: "You are working inside Genex.",
+    });
+    assert.equal(seen[0]!.prompt, "make a snake game", "the session's context is not repeated in the message");
+    assert.deepEqual(seen[1]!.systemPrompt, { type: "preset", preset: "claude_code" });
+  });
+
   it("confines the contractor: no user config, no cross-session tools, sandboxed shell", async () => {
     const root = await tmpDir("studio-engine-");
     const home = path.join(root, "claude-home");

@@ -937,16 +937,20 @@ export class ChatPermissionService {
     session: ChatSession,
     card: CardTerms = {},
   ): Promise<PermissionReply> {
+    const plan = ask.tool === PLAN_TOOL;
+    const mode = await this.modeOf(threadId);
+    // Bypass asks nothing: the checks Claude Code still asks about in it are answered here, since
+    // the person confirmed Bypass when they picked it. Only a plan waits for its approval.
+    if (mode === PermissionMode.Bypass && !plan) return { decision: PermissionDecision.Allow };
     const requestId = shortId("perm");
     const base = {
       ...permissionRequest({ requestId, project, threadId }, ask),
       ...(card.worker ? { worker: card.worker } : {}),
     };
     const pending: ToolPermissionEvent = { ...base, state: ToolPermissionState.Pending };
-    const bypassAnswers = card.bypassAnswers ?? (await this.modeOf(threadId)) !== PermissionMode.Bypass;
+    const bypassAnswers = card.bypassAnswers ?? mode !== PermissionMode.Bypass;
     await this.#core.append([customEventData(CustomEvent.ToolPermission, { ...pending })], threadId);
     this.#core.emit(UiEvent.ToolPermission, { requestId, threadId, project, state: pending.state });
-    const plan = ask.tool === PLAN_TOOL;
     const { answer: given, by } = await this.#ledger.request({
       requestId,
       project,

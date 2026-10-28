@@ -9025,6 +9025,33 @@ describe("the chat's main agent asked to read the owner's Downloads", () => {
   });
 });
 
+describe("the chat's agent briefed like plain Claude Code (lean chat)", () => {
+  // A one-line "make a tower defense game" reached the model as 25k characters: judge-era template
+  // rules (window.__studio, no Math.random, NOTES.md upkeep, .studio/ helpers, video frames, sandbox
+  // shell syntax for a session with no sandbox), and every follow-up, a question too, ended with
+  // "Pick up exactly where you left off and finish the remaining work" — so a person asking what the
+  // build was doing watched it keep building.
+  it("answers a question to a resumed chat instead of telling it to finish the remaining work", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const facts = [{ id: "web-game", path: "index.html" }];
+    for (const launch of [null, { toolName: "start_autopilot", hours: 1, frameCount: 0, project: "td" }]) {
+      const resumed = buildContractorBrief({ ask: "How do I play it?", resume: true, facts, launch });
+      assert.ok(resumed.startsWith("How do I play it?"), resumed);
+      assert.doesNotMatch(resumed, /left off|remaining work/i, `told to keep going: ${resumed}`);
+    }
+  });
+
+  it("gives a new web game none of the judge-era template rules", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    for (const facts of [[], [{ id: "web-game", path: "index.html" }]]) {
+      const brief = buildContractorBrief({ ask: "Make a 2D platformer where a cat collects fish.", facts, fresh: true });
+      for (const rule of [/__studio/, /Math\.random/, /NOTES\.md/, /\.studio\//, /TMPDIR/, /statically analyze/]) {
+        assert.doesNotMatch(brief, rule, `${rule}: ${brief}`);
+      }
+    }
+  });
+});
+
 describe("an engine's plugin turned on from the chat's card (mp-unity)", () => {
   // A chat asked for a Unity game while the Unity plugin was off; its card turned the plugin on and
   // the same session resumed with "Go on with what I asked". The resumed brief carried no kind rules,

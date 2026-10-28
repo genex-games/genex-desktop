@@ -113,6 +113,7 @@ import type { SessionPort } from "./session-port.ts";
 import { isBelow, isInside, toPosixRelative } from "../../substrate/paths.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { type EngineId, engineOf, isEngineGame } from "../../shared/game-engine.ts";
+import { EngineId as ProviderId } from "../../shared/providers.ts";
 import { readEngineBinding } from "../../substrate/game-engine-binding.ts";
 import { FolderHolds, kindPending, type ProjectFact } from "../../shared/project-facts.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
@@ -133,6 +134,12 @@ import { HookEvent } from "../../shared/plugin-hooks.ts";
  * contractor keeps a workspace locked forever because nobody was watching the clock.
  */
 export const DEFAULT_CHAT_DELEGATION_TIMEOUT_MS = 6 * HOUR_MS;
+
+/** Engines whose own system prompt takes a session's lasting context (`DelegateRequest.system`). */
+const SYSTEM_CONTEXT_ENGINES: ReadonlySet<string> = new Set([ProviderId.ClaudeCode]);
+
+/** A brief's parts as one text, the empty ones left out. */
+const joinParts = (parts: readonly string[]): string => parts.filter(Boolean).join("\n\n");
 
 /** A director tool answers within this (the Codex bridge shim waits ten minutes; a wait is capped at four). */
 export const DIRECTOR_TOOL_TIMEOUT_MS = 11 * MINUTE_MS;
@@ -2594,7 +2601,7 @@ export class DelegationService {
       contextPolicy: (await this.#core.contextPreferences.get(engineId, p.model ?? "", p.threadId)).policy,
       ...(await this.#settingsAndReads(p, session)),
       ...(optimization ? { optimization } : {}),
-      prompt: this.#prompt(p, session, tools, reach),
+      ...this.#brief(p, session, tools, reach, engineId),
       cwd: workCwd,
       signal: session.abort.signal,
       ...(p.model ? { model: p.model } : {}),
@@ -2708,14 +2715,30 @@ export class DelegationService {
    * own session, its jobs that ended since it was last told and those still running; then, to a
    * resumed session, the plugins withdrawn and those turned on since it last ran. A session with host
    * tools reads each plugin it is handed on a line of its own beside their guidance.
+   *
+   * What holds for the session's whole life (where it reaches, its plugins and their guidance) is
+   * its system context on an engine that takes one (`DelegateRequest.system`): said once there, not
+   * again in every message, where it once grew each chat by thousands of words a turn.
    */
-  #prompt(p: DelegateParams, session: DelegationSession, tools: SessionTools, reach: SessionReach): string {
+  #brief(
+    p: DelegateParams,
+    session: DelegationSession,
+    tools: SessionTools,
+    reach: SessionReach,
+    engineId: string,
+  ): Pick<DelegateRequest, "prompt" | "system"> {
+    const turn = this.#turnParts(p, session, tools);
+    const context = this.#contextParts(p, session, tools, reach);
+    if (!SYSTEM_CONTEXT_ENGINES.has(engineId)) return { prompt: joinParts([...turn, ...context]) };
+    const system = joinParts(context);
+    return { prompt: joinParts(turn), ...(system ? { system } : {}) };
+  }
+
+  /** What this turn alone says: notices of what changed since the session last ran, then the brief. */
+  #turnParts(p: DelegateParams, session: DelegationSession, tools: SessionTools): string[] {
     const told = session.hostTools && !p.compact;
     tools.cutOffs = told ? peekCutOffs(this.#x.cutOffCalls, p.threadId) : [];
     tools.unsaved = told ? peekUnsaved(this.#x.unsavedFiles, p.threadId) : [];
-    // A lead of a build elsewhere is told its plugins work there; a lead in place works where it sits.
-    const leadsElsewhere = session.leads !== null && !session.leadsInPlace;
-    const toldWhereLeadToolsWork = session.hostTools && leadsElsewhere && tools.plugins.length > 0;
     return [
       cutOffNotice(tools.cutOffs),
       unsavedFilesNotice(tools.unsaved),
@@ -2725,6 +2748,15 @@ export class DelegationService {
       addedNotice(tools.added),
       p.prompt,
       tools.judgeBrief,
+    ];
+  }
+
+  /** What holds for the session's whole life: where it reaches, its plugins, their guidance and connectors. */
+  #contextParts(p: DelegateParams, session: DelegationSession, tools: SessionTools, reach: SessionReach): string[] {
+    // A lead of a build elsewhere is told its plugins work there; a lead in place works where it sits.
+    const leadsElsewhere = session.leads !== null && !session.leadsInPlace;
+    const toldWhereLeadToolsWork = session.hostTools && leadsElsewhere && tools.plugins.length > 0;
+    return [
       reach.reachesMac ? mainAgentReachNote() : "",
       session.hostTools ? handedPluginsNote(tools.handed) : "",
       session.hostTools ? tools.pluginGuidance : tools.capabilityFacts,
@@ -2732,9 +2764,7 @@ export class DelegationService {
       this.#core.mcp.guidance(tools.mcp),
       tools.cover.length ? COVER_TOOL_GUIDANCE : "",
       appCoverNote(p, session),
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    ];
   }
 
   /** The chat's coordinator: read-only, with the coordinator's own tools. */

@@ -213,6 +213,12 @@ export interface DelegateRequest {
   optimization?: { denyWrites: string[] };
   /** The brief — written by the harness, improved by SkillOpt. */
   prompt: string;
+  /**
+   * What the session should know for its whole life (where it runs, its plugins and their
+   * guidance), said once beside the engine's own system prompt instead of in every message. An
+   * engine with no system prompt of its own to extend reads it ahead of the brief.
+   */
+  system?: string;
   cwd: string;
   model?: string;
   /** Reasoning effort for the contractor's model ("low" | "medium" | "high" | "max"). */

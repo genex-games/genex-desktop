@@ -157,7 +157,8 @@ describe("a delegated session's brief and the plugins turned on", () => {
       status: async () => ({ code: "ready", detail: "fixture" }),
       models: async () => [],
       delegate: async (request: DelegateRequest) => {
-        prompts.push(request.prompt);
+        // What the session reads: this turn's brief, then the context its system prompt carries.
+        prompts.push([request.prompt, request.system].filter(Boolean).join("\n\n"));
         const sessionId = request.resume ?? `s${prompts.length}`;
         return { ok: true, engine: "claude-code", summary: "fixture", turns: 1, usage: {}, sessionId };
       },

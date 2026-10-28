@@ -886,8 +886,9 @@ describe("a build's lead and the run's coordinator ask the person they answer", 
         label,
         asks: Boolean(request.leadAsks),
         permissions: Boolean(request.permissions),
-        // The chat's main agent: told it reaches the person's whole Mac, as the chat's own session is.
-        reachesMac: request.prompt.includes(mainAgentReachNote()),
+        // The chat's main agent: told it reaches the person's whole Mac, as the chat's own session is
+        // (flipped: in its system context, told once).
+        reachesMac: (request.system ?? "").includes(mainAgentReachNote()),
       });
     }
     assert.deepEqual(
@@ -1546,11 +1547,13 @@ describe("a lead has the chat's own session's plugins and connectors, on the bui
       const request = seen.at(-1)!;
       assert.equal(Boolean(request.leadAsks), asks, `${label}: asks as before`);
       assert.deepEqual(offered(request), [PLUGIN_TOOL.name, CONNECTOR_TOOL.name], `${label}: offered`);
-      assert.ok(request.prompt.includes(PLUGIN_GUIDANCE), `${label}: the plugins' guidance`);
-      assert.ok(request.prompt.includes(CONNECTOR_GUIDANCE), `${label}: the connectors' guidance`);
+      // Flipped: the guidance is the session's system context, told once rather than every turn.
+      const context = request.system ?? "";
+      assert.ok(context.includes(PLUGIN_GUIDANCE), `${label}: the plugins' guidance`);
+      assert.ok(context.includes(CONNECTOR_GUIDANCE), `${label}: the connectors' guidance`);
       // It sits in the game folder: told its plugins work on the build, whose path its brief never names.
-      assert.ok(request.prompt.includes(leadToolsNote()), `${label}: told where its plugins work`);
-      assert.equal(request.prompt.includes(built), false, `${label}: never the build's path`);
+      assert.ok(context.includes(leadToolsNote()), `${label}: told where its plugins work`);
+      assert.equal(`${request.prompt}\n${context}`.includes(built), false, `${label}: never the build's path`);
       assert.deepEqual(heard, ["delivered", "found"], `${label}: answered`);
       const [plugin, connector] = calls;
       assert.deepEqual(

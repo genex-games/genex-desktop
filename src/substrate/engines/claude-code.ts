@@ -1342,6 +1342,7 @@ export class ClaudeCodeEngine implements Engine {
       ...claudeLaunchOptions(cliInstallation.path),
       cwd: request.cwd,
       includePartialMessages: true,
+      systemPrompt: claudeCodeSystemPrompt(request.system),
       ...permissionOptions(request, ctx.running),
       // Edit-time ownership: a Write outside the facet's files is refused before it
       // lands, with the reason in the contractor's face — the after-the-fact reviewer once
@@ -2501,6 +2502,15 @@ function ruleFences(request: DelegateRequest): { denyReads: string[]; permission
     denyReads: [...denyReads, ...whole],
     permissions: asks ? { ...asks, protectWrites: [...asks.protectWrites, ...whole] } : undefined,
   };
+}
+
+/**
+ * Claude Code's own system prompt, with what the session should know for its whole life appended.
+ * The Agent SDK sends an empty system prompt unless it is asked for this one, and a session without
+ * it loses Claude Code's coding guidance, tool habits and environment (folder, date, git).
+ */
+export function claudeCodeSystemPrompt(system: string | undefined): Record<string, unknown> {
+  return { type: "preset", preset: "claude_code", ...(system ? { append: system } : {}) };
 }
 
 /**
