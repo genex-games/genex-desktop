@@ -1,4 +1,4 @@
-# Layered materials, cover and weather
+# Layered materials and weather
 
 Snow on a bench, moss on a stone, a wet street, dust on a ledge, mortar between bricks, a car's
 clear coat, velvet, brushed steel, window glass, and the weather that falls and lays it: built
