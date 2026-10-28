@@ -21,6 +21,15 @@ export {
 export { CompletionPolicy } from "../../src/shared/run-state.ts";
 export { ContributionKind, FieldPlatform, RunSharingAsk } from "../../src/shared/run-sharing.ts";
 
+/** How `aaa grade` gets its taste verdict. */
+export const AaaTasteMode = {
+  /** No judge: taste is unmeasured, so no prompt can reach AA+. */
+  Off: "off",
+  /** The pinned families through the eval homes' engines (needs `--live`). */
+  Live: "live",
+} as const;
+export type AaaTasteMode = (typeof AaaTasteMode)[keyof typeof AaaTasteMode];
+
 /** Which agent a lane runs: the Genex app, or a raw coding CLI with no Genex. */
 export const EvalAgent = {
   GenexApp: "genex-app",
@@ -607,5 +616,9 @@ export const EvalCommand = {
   Gc: "gc",
   ValidateLedger: "validate-ledger",
   Diagnostics: "diagnostics",
+  AaaSuite: "aaa suite",
+  AaaCollect: "aaa collect",
+  AaaGrade: "aaa grade",
+  AaaReferences: "aaa references",
 } as const;
 export type EvalCommand = (typeof EvalCommand)[keyof typeof EvalCommand];

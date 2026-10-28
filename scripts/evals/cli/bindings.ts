@@ -50,4 +50,8 @@ export const SYSTEM_HANDLERS: Readonly<Record<EvalCommand, CliRun>> = {
   [EvalCommand.Gc]: async (args, out) => (await import("./gc.ts")).gcCommand(args, out),
   [EvalCommand.ValidateLedger]: async (args, out) => (await import("./ledger.ts")).validateLedgerCommand(args, out),
   [EvalCommand.Diagnostics]: async (args, out) => (await import("../grade/commands.ts")).diagnosticsCommand(args, out),
+  [EvalCommand.AaaSuite]: async (args, out) => (await import("../aaa/command.ts")).aaaSuiteCommand(args, out),
+  [EvalCommand.AaaCollect]: async (args, out) => (await import("../aaa/command.ts")).aaaCollectCommand(args, out),
+  [EvalCommand.AaaGrade]: async (args, out) => (await import("../aaa/command.ts")).aaaGradeCommand(args, out),
+  [EvalCommand.AaaReferences]: async (args, out) => (await import("../aaa/command.ts")).aaaReferencesCommand(args, out),
 };
