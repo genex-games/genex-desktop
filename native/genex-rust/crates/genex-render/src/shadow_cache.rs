@@ -8,7 +8,7 @@
 //! - **Static** is a library batch, plain or a draw variant (no skinning, no levels of detail,
 //!   whose level follows the camera, no far rule, whose thinning follows it too), whose rows
 //!   (model matrix and material, row for row) stood still for [`STILL_FRAMES`] frames. Every other
-//!   caster is the overlay: skinned and moving batches, a batch with levels or rows a far rule
+//!   caster is the overlay: skinned, moving and swaying (model wind) batches, a batch with levels or rows a far rule
 //!   thins, the LOD crossfade's fade twins (game systems LOD-05: they cast through the faded
 //!   casters over the copy), the terrain's and the grass's casters.
 //! - A layer's **key** is its matrix (and cull view), the map's shape and the static set, which
@@ -299,12 +299,15 @@ impl ShadowCache {
             .enumerate()
             .map(|(b, batch)| {
                 let Some(group) = groups[b] else { return false };
-                if batch.lod[0] != 0 || far_ruled(plan, batch) {
+                let first = batch.first_row as usize;
+                let batch_rows = plan.instances.get(first..first + batch.instance_count as usize).unwrap_or(&[]);
+                // Model wind: a swaying row casts a moving shadow every frame.
+                let swaying = batch_rows.iter().any(|row| row.wind != [0; 3]);
+                if batch.lod[0] != 0 || swaying || far_ruled(plan, batch) {
                     return false;
                 }
                 let key = [batch.first_index, batch.index_count, batch.base_vertex as u32, group];
-                let first = batch.first_row as usize;
-                let rows = rows_key(plan.instances.get(first..first + batch.instance_count as usize).unwrap_or(&[]));
+                let rows = rows_key(batch_rows);
                 let still = self.batches.entry(key).or_insert(Still { rows, frames: 0, seen: frame });
                 still.frames = if still.rows == rows && still.seen + 1 >= frame { still.frames.saturating_add(1) } else { 0 };
                 still.rows = rows;

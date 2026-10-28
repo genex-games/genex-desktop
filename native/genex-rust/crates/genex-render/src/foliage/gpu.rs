@@ -39,7 +39,6 @@ pub const GRASS: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/forward_effects.wgsl"),
     include_str!("../../shaders/alpha_mask.wgsl"),
     include_str!("../../shaders/forward.wgsl"),
-    include_str!("../../shaders/wind.wgsl"),
     include_str!("../../shaders/foliage/grass_types.wgsl"),
     include_str!("../../shaders/foliage/grass_core.wgsl"),
     include_str!("../../shaders/foliage/grass.wgsl")
@@ -49,7 +48,6 @@ pub const GRASS: &str = crate::shaders::minify::shipped_wgsl!(concat!(
 pub const GRASS_SHADOW: &str = crate::shaders::minify::shipped_wgsl!(concat!(
     include_str!("../../shaders/common.wgsl"),
     include_str!("../../shaders/shadow_caster.wgsl"),
-    include_str!("../../shaders/wind.wgsl"),
     include_str!("../../shaders/foliage/grass_types.wgsl"),
     include_str!("../../shaders/foliage/grass_core.wgsl"),
     include_str!("../../shaders/foliage/grass_shadow.wgsl")

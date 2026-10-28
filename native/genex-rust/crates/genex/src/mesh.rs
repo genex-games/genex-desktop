@@ -274,7 +274,7 @@ fn box_uv(p: Vec3, normal: Vec3) -> Vec2 {
 /// perpendicular to the normal, with the handedness that points the bitangent where v grows (the
 /// renderer's meshes': `w` -1 for an upright texture). A vertex with no UV direction takes any
 /// perpendicular.
-fn tangents(positions: &[Vec3], normals: &[Vec3], uvs: &[Vec2], indices: &[u32]) -> Vec<[f32; 4]> {
+pub(crate) fn tangents(positions: &[Vec3], normals: &[Vec3], uvs: &[Vec2], indices: &[u32]) -> Vec<[f32; 4]> {
     let mut along_u = vec![Vec3::ZERO; positions.len()];
     let mut along_v = vec![Vec3::ZERO; positions.len()];
     for triangle in indices.as_chunks::<3>().0 {
@@ -305,7 +305,7 @@ fn tangents(positions: &[Vec3], normals: &[Vec3], uvs: &[Vec2], indices: &[u32])
 }
 
 /// The little-endian bytes of `values`.
-fn floats(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
+pub(crate) fn floats(values: impl IntoIterator<Item = f32>) -> Vec<u8> {
     values.into_iter().flat_map(f32::to_le_bytes).collect()
 }
 
@@ -355,7 +355,7 @@ fn glb(positions: &[Vec3], normals: &[Vec3], uvs: &[Vec2], tangents: &[[f32; 4]]
 }
 
 /// `gltf` and `bin` in a GLB container, each chunk padded to four bytes.
-fn container(gltf: &Value, mut bin: Vec<u8>) -> Vec<u8> {
+pub(crate) fn container(gltf: &Value, mut bin: Vec<u8>) -> Vec<u8> {
     let mut json = gltf.to_string().into_bytes();
     while !json.len().is_multiple_of(4) {
         json.push(b' ');
@@ -418,6 +418,14 @@ pub(crate) fn build(data: &MeshData) -> Result<Model, MeshError> {
     let digest = genex_core::digest::fnv1a64(&bytes);
     let path = format!("{MESH_PATH_PREFIX}{digest:016x}.glb");
     Ok(Model::inline(&path, InlineMesh { digest, bytes: Arc::from(bytes) }))
+}
+
+/// The handle of a GLB a game built some other way (`gfx.plant`): its path is the bytes' FNV-1a
+/// 64 under [`MESH_PATH_PREFIX`], like a [`MeshData`]'s.
+pub(crate) fn built_glb(bytes: Vec<u8>) -> Model {
+    let digest = genex_core::digest::fnv1a64(&bytes);
+    let path = format!("{MESH_PATH_PREFIX}{digest:016x}.glb");
+    Model::inline(&path, InlineMesh { digest, bytes: Arc::from(bytes) })
 }
 
 /// Whether `path` names a built mesh (a key the presenter looks up in the frame first).

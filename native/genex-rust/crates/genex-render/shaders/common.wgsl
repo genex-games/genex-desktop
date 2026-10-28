@@ -46,7 +46,8 @@ struct FrameUniforms {
     // gx_sun_cascade_bias (the v2 prelude's reads the shared `shadow_params.x`).
     cascade_bias: vec4<f32>,
     // x: the frame's texture mip bias (`settings::frame_texture_lod_bias`, T-06), read through
-    // gx_texture_lod_bias; y, z, w: reserved (0).
+    // gx_texture_lod_bias; y: the model wind's seconds this frame, z: last frame's (this frame's
+    // after a history reset), read by `gx_row_world`'s callers; w: reserved (0).
     texture_lod: vec4<f32>,
 }
 
@@ -158,9 +159,12 @@ struct Instance {
     // World-space bounding sphere: centre xyz, radius w.
     bounds: vec4<f32>,
     material: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // The model wind's words (`wind::Sway::words`, vegetation lane): half-float pairs, x the
+    // model's height and reach, y the trunk's lean and the branches' bob, z the leaves' flutter
+    // and its rate; all 0 for a row that does not sway (`gx_sway_on`).
+    wind0: u32,
+    wind1: u32,
+    wind2: u32,
 }
 
 struct Material {
@@ -476,4 +480,103 @@ fn gx_view_distance(proj: mat4x4<f32>, depth: f32) -> f32 {
         return (proj[3][2] - depth) / proj[2][2];
     }
     return proj[3][2] / (depth + proj[2][2]);
+}
+
+// --- The shared wind (renderer pass 2, B.7; `wind.rs` holds its CPU twin): one gust and one
+// flutter field over the world, a function of a plant's root and simulated seconds only. Vertex
+// animation evaluates it at this frame's time and at last frame's (`PassFrame::prev_tick`,
+// `GxDrawV2`'s `prev_time`; `GpuFrame::texture_lod` y and z for model wind), so the sway carries
+// its own motion vectors and TAA reprojects it instead of trailing it.
+
+// The wind's direction over the ground (unit, y 0).
+const GX_WIND_DIR: vec3<f32> = vec3<f32>(0.55238038, 0.0, 0.83359218);
+
+// The wind at a plant rooted at `root`, `t` simulated seconds in.
+struct GxWind {
+    // The slow gust, 0.0..1.0 (0.5 on average): how far the wind leans a stem.
+    gust: f32,
+    // The fast flutter, -1.0..1.0: a stem's quick shiver.
+    flutter: f32,
+}
+
+fn gx_wind(root: vec3<f32>, t: f32) -> GxWind {
+    var wind: GxWind;
+    wind.gust = 0.5 + 0.3 * sin(t * 1.6 + root.x * 0.21 + root.z * 0.13) + 0.2 * sin(t * 0.55 + root.x * 0.045 - root.z * 0.03);
+    wind.flutter = sin(t * 4.0 + root.x * 1.7 + root.z * 1.3);
+    return wind;
+}
+
+// --- Model wind (vegetation lane; `wind.rs` `sway_offset` is the CPU twin, sine for sine): a row
+// whose wind words are set bends in the shared wind in every pass that draws it, trunk, branches
+// and leaves, weighted by the vertex's model-space height and reach over the model's.
+// The extent a swaying model keeps (`wind::SWAY_EXTENT_MIN`).
+const GX_SWAY_EXTENT_MIN: f32 = 0.05;
+// The branches' bob rate in radians a second, and the shares of the bob and the flutter that do
+// not wait for a gust (`wind.rs`).
+const GX_SWAY_BRANCH_RATE: f32 = 1.9;
+const GX_SWAY_BRANCH_CALM: f32 = 0.35;
+const GX_SWAY_FLUTTER_CALM: f32 = 0.5;
+const GX_TAU: f32 = 6.28318531;
+
+// The row's wind words.
+fn gx_row_wind(row: Instance) -> vec3<u32> {
+    return vec3<u32>(row.wind0, row.wind1, row.wind2);
+}
+
+// Whether a row sways: a sway's first word is never 0.
+fn gx_sway_on(wind: vec3<u32>) -> bool {
+    return wind.x != 0u;
+}
+
+// How far the vertex at model-space `local` of a copy under `model` moves, `t` wind seconds in.
+fn gx_sway_offset(model: mat4x4<f32>, local: vec3<f32>, wind: vec3<u32>, t: f32) -> vec3<f32> {
+    let extent = unpack2x16float(wind.x);
+    let bend = unpack2x16float(wind.y);
+    let leaf = unpack2x16float(wind.z);
+    let root = model[3].xyz;
+    let scale = length(model[1].xyz);
+    let field = gx_wind(root, t);
+    let height = clamp(local.y / extent.x, 0.0, 1.0);
+    let reach = clamp(length(local.xz) / extent.y, 0.0, 1.0);
+    let lean = bend.x * scale * field.gust * height * height;
+    let branch_phase = 1.3 * (0.7 * local.x + 0.3 * local.y + 1.1 * local.z) + 0.37 * root.x + 0.51 * root.z;
+    let branch_gust = GX_SWAY_BRANCH_CALM + (1.0 - GX_SWAY_BRANCH_CALM) * field.gust;
+    let branch = bend.y * scale * reach * reach * height * branch_gust * sin(t * GX_SWAY_BRANCH_RATE + branch_phase);
+    let leaf_phase = 7.3 * local.x + 5.1 * local.y + 9.7 * local.z;
+    let flutter_gust = GX_SWAY_FLUTTER_CALM + (1.0 - GX_SWAY_FLUTTER_CALM) * field.gust;
+    let flutter = leaf.x * scale * reach * flutter_gust * sin(t * leaf.y * GX_TAU + leaf_phase);
+    // The leaf shivers about an axis of its own; the lean sinks the vertex so the trunk keeps its
+    // length (the circle's sagitta).
+    let axis = vec3<f32>(0.45 * sin(leaf_phase), 0.8, 0.45 * cos(leaf_phase));
+    let standing = max(height * extent.x * scale, GX_SWAY_EXTENT_MIN);
+    let sink = lean * lean / (2.0 * standing);
+    let along = lean + 0.4 * branch;
+    return vec3<f32>(GX_WIND_DIR.x * along, 0.6 * branch - sink, GX_WIND_DIR.z * along) + axis * flutter;
+}
+
+// The world position of model-space `local` of a copy under `model` whose row has `wind`, `t`
+// wind seconds in: `model * local` exactly for a row that does not sway.
+fn gx_sway_world(model: mat4x4<f32>, local: vec3<f32>, wind: vec3<u32>, t: f32) -> vec4<f32> {
+    let world = model * vec4<f32>(local, 1.0);
+    if !gx_sway_on(wind) {
+        return world;
+    }
+    return world + vec4<f32>(gx_sway_offset(model, local, wind, t), 0.0);
+}
+
+// `gx_sway_world` under the row's own model matrix.
+fn gx_row_world(row: Instance, local: vec3<f32>, t: f32) -> vec4<f32> {
+    return gx_sway_world(row.model, local, gx_row_wind(row), t);
+}
+
+// How far a swaying row's vertices may move (world units: its layers' sum times its scale), 0 for
+// a row that does not sway: the meshlet cull grows each cluster's sphere by it.
+fn gx_sway_reach(row: Instance) -> f32 {
+    let wind = gx_row_wind(row);
+    if !gx_sway_on(wind) {
+        return 0.0;
+    }
+    let bend = unpack2x16float(wind.y);
+    let scale = max(max(length(row.model[0].xyz), length(row.model[1].xyz)), length(row.model[2].xyz));
+    return (bend.x + bend.y + unpack2x16float(wind.z).x) * scale;
 }

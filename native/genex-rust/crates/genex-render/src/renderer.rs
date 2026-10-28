@@ -910,6 +910,8 @@ pub struct Renderer {
     grass: Option<crate::foliage::gpu::GrassGpu>,
     grass_pipelines: grass_draw::GrassPipelines,
     grass_time: grass_draw::GrassTime,
+    /// The model wind's clock (`GpuFrame::texture_lod` y and z), advanced once a planned frame.
+    wind_time: grass_draw::GrassTime,
     /// Vertex-shader skinning's tables, draws and pipelines (game systems AN-18).
     skin_vertex: skin_vertex_draw::SkinVertexGpu,
     /// The impostors its pipelines stage baked (game systems LOD-13): the baker, the class's atlas
@@ -2836,6 +2838,7 @@ impl Renderer {
             grass: None,
             grass_pipelines: grass_draw::GrassPipelines::default(),
             grass_time: grass_draw::GrassTime::default(),
+            wind_time: grass_draw::GrassTime::default(),
             skin_vertex: skin_vertex_draw::SkinVertexGpu::default(),
             impostors: crate::impostor::bake::ImpostorStage::default(),
             impostor_draw: None,
@@ -3903,6 +3906,10 @@ impl Renderer {
         } else {
             crate::settings::frame_texture_lod_bias(&self.quality.taa, scene_path.hdr && temporal.taa, easu, self.render_scale)
         };
+        // Model wind: this frame's seconds and last frame's, the swaying rows' motion.
+        let wind_reset = self.frame_index == 0 && !self.temporal_kept;
+        let [wind_now, wind_before] = self.wind_time.advance(self.history_set, wind_reset);
+        (plan.frame.texture_lod[1], plan.frame.texture_lod[2]) = (wind_now, wind_before);
         let previous_skinned = self.plan_motion(&mut plan, temporal);
         let instance_rows = self.instance_rows(&plan);
         let uploads = Uploads::new(&mut plan, path, instance_rows)?;

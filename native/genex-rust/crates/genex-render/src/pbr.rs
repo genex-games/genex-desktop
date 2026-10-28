@@ -11,6 +11,7 @@
 use crate::layout::{GpuMaterial, GpuMaterialExt, MATERIAL_EXT_FLAG_EMISSIVE, MATERIAL_EXT_FLAG_SUBSURFACE, MATERIAL_EXT_FLAG_VIEW_MODEL, MATERIAL_EXT_NO_TEXTURE, NO_TEXTURE};
 use crate::subsurface::Subsurface;
 use crate::texture::{TextureId, TextureKind};
+use crate::wind::Sway;
 
 pub use crate::lights::{DEFAULT_SHADOW_DISTANCE, LightKind, Lighting, PointLight, SpotLight, light_table};
 pub(crate) use crate::lights::radiance;
@@ -66,6 +67,10 @@ pub struct Material {
     /// fill from over the camera's shoulder at the frame's exposure keeps it from going black
     /// against a bright sky. False by default.
     pub view_model: bool,
+    /// How it bends in the shared wind (model wind, [`crate::wind::Sway`]): `None` (the default)
+    /// stands still, drawn exactly as before. It rides in each row's wind words, never in the
+    /// material table.
+    pub sway: Option<Sway>,
 }
 
 /// [`GpuMaterialExt`] `tiling.x` bit: the maps are projected from the world ([`UvMapping::World`]).
@@ -198,6 +203,7 @@ impl Material {
             uv: UvMapping::default(),
             variation: UvVariation::default(),
             view_model: false,
+            sway: None,
         }
     }
 
@@ -268,6 +274,12 @@ impl Material {
     /// This material letting light through as `subsurface` describes (renderer pass 2 B.1).
     pub fn with_subsurface(self, subsurface: Subsurface) -> Material {
         Material { subsurface: Some(subsurface), ..self }
+    }
+
+    /// This material bending in the shared wind as `sway` describes (model wind): a sway that
+    /// would not move ([`Sway::held`]) stands still.
+    pub fn with_sway(self, sway: Sway) -> Material {
+        Material { sway: sway.held(), ..self }
     }
 
     /// Its scattering when it lets any light through ([`Subsurface::is_visible`]), sanitized.

@@ -1,0 +1,31 @@
+# The forest example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Forest"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure carries the camera from the overcast grove to the sunlit forest; a little fog
+# gives the far stands their depth.
+[render.look]
+tonemapper = "khronos-neutral"
+exposure = "auto"
+ev_compensation = 0.3
+fog_density = 0.004
+
+[physics]
+enabled = false
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false
