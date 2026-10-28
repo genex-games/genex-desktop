@@ -9,7 +9,32 @@ where yours go. Keep your own title, and merge `genex.toml` switches rather than
 | `docs/examples/interior-room/` | A classroom and a corridor: walls with window and door openings, CC0 scans at their real size in uneven, seeded panels of close variants (whitewash over a painted dado), a probe and a volume per room, fluorescent tubes paired with lights, decals, the low sun's shafts through the windows, fog and a grade last | any indoor scene, any "photoreal" brief |
 | `docs/examples/interior-kit/` | A school corridor and classroom built from a modular interior kit: 2 m wall modules with real reveals, their dado coat and trims, windows with frames, sashes, broken glass and sunburst or barred grilles, doors, beams, fluorescent fittings, radiators, desks, chairs, lockers, a blackboard and rubble, each piece a small GLB drawn with a CC0 scan at its real size or the kit's trim sheet and props atlas, peeling-paint decals, a collider per solid part | the shell and dressing of a finished level (`docs/examples/rooms-and-buildings.md`) |
 | `docs/examples/fps/` | An FPS facet set: mouse look, a chest camera with bob, a view model of forearms, gloves and a pistol built from parts, hitscan against Rapier colliders, recoil, and a rigged enemy with idle, walk, fire, hit and death | any first-person game (`docs/examples/fps.md` explains each part) |
+| `docs/examples/coming-from.md` | Bevy, Unity, Unreal, three.js and Godot calls mapped to the genex call and the page that teaches it, after the five biggest differences | any habit from another engine, before you guess a name |
 | `docs/examples/fps-arms/` | The first-person arms kit: gloved arms on an AK-pattern rifle as one rigged GLB (`fps-arms.glb`, made by `fps_arms.py`), whose magazine, charging handle and trigger are bones, played by an animator from the rifle's rules: hip, walk, sprint, sights, fire, dry fire, a reload that takes the magazine out, inspect | the arms and gun of any first-person shooter (`docs/examples/fps-arms/README.md`) |
+| `docs/examples/third-person/` | A third-person hero: a rigged character on a Rapier capsule walked along the camera's ground directions and turned to face its walk, an orbit camera on mouse, stick or a dragged finger, a boom that pulls in when a pillar comes behind the hero, and an animator graph with idle, walk and run on a `speed` parameter and a slash on the upper body over the legs, with its `hit` event | any third-person, action or adventure game |
+| `docs/examples/crowd/` | A crowd on a nav mesh: 120 walkers wander a walled market square, each a nav agent driving its own sensor capsule through the documented loop, sent to the least busy stall near the last, animated at their ground speed; 240 trees round the walls as two retained instance groups; a camera that draws the nav mesh | townsfolk, shoppers, zombies, any many-agent scene, and many things that stand still |
+| `docs/examples/explosion/` | An explosion on one tick: an emissive fireball that swells and dies, fire, sparks that fall and bounce, a smoke cloud that thins out, a point light's flash, the bang played where it happened, a radial impulse that throws Rapier crates, and a camera shake, all drawn from the blast's age | any burst effect (a grenade, a spell, a hit, a pickup) with sound and shake |
+| `docs/examples/menus-saves/` | Menus and save slots: a title menu (Continue, New game, Load, Settings), a pause menu, a quit confirm, slot lists that save and load the whole world, an autosave ring, the facade's settings menu and a toast per slot event, all from the kit's menus so keys, a pad and a tap walk them; a HUD with a health bar and the buttons a phone plays with | any game with a title screen, a pause menu or saving |
+
+## Building blocks
+
+What a game is usually made of, and where working code for each is. A gap has no example yet: build
+it from the reference page named, and look at a capture after each step.
+
+| Block | Example | Reference |
+| --- | --- | --- |
+| Interior, architecture | `interior-room/`, `interior-kit/` (`rooms-and-buildings.md`) | `docs/api/lighting.md` |
+| Outdoor terrain and nature | gap: `crowd/` stands trees as instance groups and the yards are open ground under a sky, but no example shapes terrain, water or foliage | `docs/api/terrain.md`, `docs/api/water.md`, `docs/api/instance-groups.md` |
+| Rigged characters, animation | `third-person/` (a graph with a masked layer and an event), `fps/` (an enemy's graph with one-shot clips), `crowd/` (simple animators at ground speed), `fps-arms/` (a weapon rig) | `docs/api/animation.md` |
+| First-person controller and weapon | `fps/`, `fps-arms/` | `docs/api/characters.md`, `docs/api/input.md` |
+| Third-person controller and camera | `third-person/` | `docs/api/characters.md` |
+| Vehicle | gap | `docs/api/physics.md` |
+| Crowds, many entities | `crowd/` (agents that move every tick, things that never move) | `docs/api/navigation.md`, `docs/api/instance-groups.md` |
+| UI, menus, saves | `menus-saves/` (menus, slots, settings, toasts, a HUD), `fps/` (a shooter's HUD) | `docs/api/ui.md`, `docs/api/settings.md`, `docs/api/saves.md` |
+| VFX, particles | `explosion/` (fire, sparks, smoke, a flash), `fps/` (a muzzle flash with its light, bullet-hole decals) | `docs/api/particles.md` |
+| Audio | `explosion/` (one sound played at a place) | `docs/api/audio.md` |
+| Multiplayer | gap | `docs/api/net.md` |
+| Streaming a big world | gap | `docs/api/streaming.md` |
 
 ## What each needs in `assets/`
 
@@ -34,6 +59,16 @@ The interior kit and the arms kit ship their own GLBs.
   makes one from a generated model), and `decals/bullet-hole.png`. Its `studio.json` declares
   `"game": { "kind": "first-person", "hud": true, "mouseLook": true, "keyboardMove": true }`, so
   Live locks the pointer and the checks know how to drive it.
+- **third-person**: a rigged character at `characters/hero.glb` with clips you rename in `CLIPS`
+  (idle, walk, run and a one-shot attack; Uthana makes one from a generated model). Without it the
+  hero is a stand-in block and the `hero` probe's `anim` is null. Its `studio.json` declares
+  `"game": { "kind": "third-person", "hud": true, "mouseLook": true, "keyboardMove": true }`.
+- **crowd**: optionally a rigged character at `characters/walker.glb` with `Idle` and `Walk`
+  clips; without it every walker is a coloured block.
+- **menus-saves**: nothing; a game with locales keys its labels to `assets/lang/<locale>.ftl`
+  lines (`docs/api/text.md`).
+- **explosion**: a short bang at `sfx/explosion.wav` (WAV, Ogg, MP3 or FLAC); without it the blast
+  is silent and the `blast` probe says `"sound": false`.
 
 ## How they are judged
 

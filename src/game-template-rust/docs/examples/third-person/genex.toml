@@ -1,0 +1,32 @@
+# The third-person example's manifest (copy it over the game's own genex.toml, keeping your title).
+# Its studio.json declares the game's traits so Live locks the pointer and the checks drive it:
+# "game": { "kind": "third-person", "hud": true, "mouseLook": true, "keyboardMove": true }.
+[game]
+title = "Third person"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+fog_density = 0.002
+
+# The hero's capsule and the camera's boom are Rapier's; the hero is a rigged GLB.
+[physics]
+enabled = true
+
+[animation]
+enabled = true
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false

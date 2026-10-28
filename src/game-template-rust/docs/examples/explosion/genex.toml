@@ -1,0 +1,32 @@
+# The explosion example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Explosion"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure adapts over about a second, so the flash's few frames still read as a flash; the
+# look's bloom haloes the fireball's emission.
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+fog_density = 0.002
+
+# The crates the blast throws are Rapier bodies; the bang is a sound under assets/sfx/.
+[physics]
+enabled = true
+
+[audio]
+enabled = true
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

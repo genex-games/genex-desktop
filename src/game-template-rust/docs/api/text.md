@@ -6,6 +6,16 @@ the game in another language. Register the locales once with
 is `assets/lang/<locale>.ftl` in the boot group. The person's saved choice wins, then the OS
 locale (the desktop window and the phone shells read it once at start), then the first listed. A
 Genex run ignores both, so a check sees the first locale unless the session sets one (`uiSettings`).
+Every call in one line:
+
+```rust
+use genex::prelude::*;                                         // UiConfig, TextArgs
+use genex::ui::{Locale, PSEUDO_LOCALE};                        // PSEUDO_LOCALE: "xx-pseudo"
+game.ui(UiConfig::new().locales(&["en", "ja"]).font("ja", "fonts/NotoSansJP.ttf").pseudo_locale(true));
+genex::ui::tr("title-new");                                    // -> String: the key itself outside the hooks
+genex::ui::tr_args("toast-saved", &TextArgs::new().str("slot", "quick").num("coins", 3)); // -> String
+genex::ui::locale();                                           // -> Option<Locale>; locale.tag() -> &str
+```
 
 ```ftl
 title-new = New game

@@ -1,5 +1,25 @@
 # Custom GPU passes
 
+Every type and call in one line:
+
+```rust
+use genex::gpu::{GpuError, GpuPass, GpuPassCtx, PassSetup, PassStage, RenderInputs}; // and the wgpu types a pass names
+game.gpu_pass("outline", PassStage::PostHdr, Outline::default());
+// PassStage::BeforeCull | AfterPrepass | AfterOpaque | AfterTransparent | PostHdr | Post
+impl GpuPass<World> for Outline {
+    fn rebuild(&mut self, setup: &mut PassSetup<'_>) -> Result<(), GpuError> { Ok(()) }
+    fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {}
+    fn api(&self) -> u32 { 2 }
+    fn inputs(&self) -> RenderInputs { RenderInputs::DEPTH | RenderInputs::NORMALS } // MOTION, ENVIRONMENT, HDR_SCENE
+}
+setup.create_shader(label, wgsl)?; setup.world_format(); setup.tables_layout(); setup.environment_layout(); // Option
+setup.world_depth(write); setup.world_multisample(); setup.motion_target(); setup.reactive_target();
+setup.temporal_depth(write); setup.temporal_multisample(); // and create_buffer, create_texture, create_render_pipeline ..
+ctx.sim(); ctx.tick(); ctx.prev_tick(); ctx.depth_reversed(); ctx.tables(); ctx.environment(); // &Sim<World> read-only
+ctx.encoder(); ctx.draws(); ctx.motion_draws(); ctx.reactive_draws(); // -> Option<&mut ..>, by stage
+ctx.prepass_depth(); ctx.prepass_normals(); ctx.prepass_motion(); ctx.world_texture(); // -> Option<&..>
+```
+
 `game.gpu_pass(name, stage, pass)` registers raw wgpu work into the frame (extension ladder level
 3). `pass` implements `genex::gpu::GpuPass<World>`: `rebuild(&mut self, setup)` creates its
 shaders, buffers, textures and pipelines through `PassSetup`, at install and again after the GPU

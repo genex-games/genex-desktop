@@ -1,5 +1,20 @@
 # Rendering
 
+Every type and call in one line:
+
+```rust
+use genex::render::{ClassOverride, DeviceClass, Exposure, FormFactor, LodConfig, Metering, PerformanceTier};
+use genex::render::{QualityPreset, RenderConfig, Tonemap, UpscaleMode, lock_upscale, settings_panel};
+game.render_settings(RenderConfig::new().preset(QualityPreset::Medium)); // or RenderConfig::from_build()
+config.tonemap(Tonemap::AgxPunchy).exposure(Exposure::auto().compensation(0.5).metering(Metering::Ground));
+config.upscale(UpscaleMode::Quality); config.upscale_locked(UpscaleMode::Native);
+let class = DeviceClass::new(FormFactor::Mobile, PerformanceTier::Mid);
+config.class(class, ClassOverride { render_scale: Some(0.67), ..Default::default() });
+config.lod_at(class, LodConfig::new().threshold_px(3.0));
+settings_panel(ui); lock_upscale(Some(UpscaleMode::Native));
+frame.id("hero"); frame.end_id(); frame.camera_cut();
+```
+
 The renderer adapts to each desktop, phone and browser; a game states only what is its own. A **look** is the game's art direction, the same on every device. A **quality** belongs to the device: a preset (`auto`, `low`,
 `medium`, `high`, `ultra`), one switch per feature, an upscaling mode, a render scale and a
 frame-rate target. The renderer probes the adapter at boot into a device class (`desktop-ultra`, `desktop-high`,
@@ -10,7 +25,7 @@ hot) and `mobile-low` (0.6, 30 fps); a browser stops at `high`. What does not fi
 class's memory budget turns cheaper or off, is listed in `state().volatile.render.degraded` with a
 typed reason (`budget`, naming the rung or switch dropped; `format-unrenderable`, `pass-over-budget`,
 `pipeline-change-deferred`, `transient-unsupported`, `not-landed`, `custom-pass-v1-in-world`,
-`material-v1-in-hdr`) and never refuses the game. Desktop budgets grow with GPU memory.
+`material-v1-in-hdr`) and never refuses the game.
 
 | preset | anti-aliasing | sun cascades | bloom | AO | contact shadows | lights (shadowed spots) |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -21,7 +36,7 @@ typed reason (`budget`, naming the rung or switch dropped; `format-unrenderable`
 
 Every preset draws HDR, image-based lighting, the sky and fog; below scale 1 it upscales (TAA at
 output size on `high` and `ultra` without lens effects or `post-hdr` passes, else EASU with RCAS;
-bilinear on desktop `low`). Upscaling is on by default: an `UpscaleMode` renders a share of
+bilinear on desktop `low`). An `UpscaleMode` renders a share of
 the window a side, `Native` (all of it, through TAA), `Quality` (0.69), `Balanced` (0.59) or
 `Performance` (0.5). A native desktop starts on what its class and window afford (Quality below
 4K on `desktop-high`), never Native; phones and browsers keep their class's scale. Dynamic
@@ -31,22 +46,20 @@ resolution moves below the mode to hold the frame-rate target (30 or 60: frames 
 256 lights, at most one shadowed spot, TAA only on `mobile-high` at `high` and up, and no AO or contact
 shadows while the world pass is multisampled.
 
-The look maps the HDR scene to the display. `tonemapper`: `khronos-neutral` (default) keeps
+The look's `tonemapper`: `khronos-neutral` (default) keeps
 authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx` is muted;
 `aces` punchier; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
 meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max`,
 adds the compensation and adapts at `adaptation_speed_up` (default 1) and `adaptation_speed_down`
 (3) EV per simulated second. Use `auto` where light meets shade (`ev_compensation = 0.5` when
-sunlit), `manual` for flat, stylized colour. Keep dusk dark with
-`.exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)])` (metered EV, EV added). The rest of
+sunlit), `manual` for flat, stylized colour. The rest of
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (its spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
 `fog_aerial_perspective`; `ao_intensity`, `ao_radius`; `contact_shadow_length`;
-`local_exposure_highlights`, `local_exposure_shadows` (Lighting). In code:
-`RenderConfig::new().tonemap(Tonemap::KhronosNeutral).exposure(Exposure::auto().compensation(0.5))`
-(`genex::render`). The grade, white balance and lens are code only: see Grading and the lens.
+`local_exposure_highlights`, `local_exposure_shadows` (Lighting). The grade, white balance,
+exposure curve and lens are code only: see Grading and the lens.
 
 Each feature has a switch; off is its cheaper variant, never a refusal:
 
@@ -90,20 +103,18 @@ bloom = false               # any switch
 lod_threshold_px = 3.0      # with lod_fade_band, far_density: see Drawing
 ```
 
-The build lane compiles `[render]` into every destination. In code,
-`game.render_settings(RenderConfig::new().preset(QualityPreset::Medium))` replaces `[render]`;
-`RenderConfig::from_build()` starts from it instead. Give the person the last word: call
-`genex::render::settings_panel(ui)` from `on_ui`; it shows the detected class, presets (none
+The build lane compiles `[render]` into every destination; `game.render_settings(..)` replaces
+it, and `RenderConfig::from_build()` starts from it. Give the person the last word: call
+`settings_panel(ui)` from `on_ui`; it shows the detected class, presets (none
 drawing less than the one below; Max is `ultra` at Native), Upscaling, Frame rate, Dynamic
-resolution, the render scale, Detail distance and feature switches (Tab, Space). A preset change
-rebuilds the renderer (a short hitch); a mode change only resizes the next frame. A switch this
-build does not draw reads off, listed `not-landed`. A game may start devices on a mode
-(`RenderConfig::from_build().upscale(UpscaleMode::Native)`), hold one (`.upscale_locked(..)`: the
-panel hides Upscaling), or hold Native in a photo mode:
-`genex::render::lock_upscale(Some(UpscaleMode::Native))` from `on_ui`, `None` after.
+resolution, the render scale, Detail distance and feature switches. A preset change
+rebuilds the renderer; a mode change only resizes the next frame. A switch this
+build does not draw reads off, listed `not-landed`. A game may start devices on a mode (`.upscale(..)`),
+hold one (`.upscale_locked(..)`: the panel hides Upscaling), or hold Native in a photo mode
+(`genex::render::lock_upscale(Some(UpscaleMode::Native))` from `on_ui`, `None` after).
 
-TAA jitters the camera and blends with last frame through motion vectors that match each draw
-(`frame.custom` ones too) to its last frame by id. Name everything that moves
+TAA blends with last frame through motion vectors that match each draw
+(`frame.custom` ones too) by id. Name everything that moves
 on its own with `frame.id(key)` (a stable string or integer) until
 `frame.end_id()` or the next id; unnamed draws match by order within their mesh. Call
 `frame.camera_cut()` on the frame a shot changes (respawn, cutscene, teleport), never every frame:

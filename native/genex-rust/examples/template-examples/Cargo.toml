@@ -4,7 +4,7 @@
 # GPU, `--ignored metal`) writes a capture of each.
 [package]
 name = "template-examples"
-description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set and the first-person arms kit."
+description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit, a third-person character, a crowd, an explosion and menus with save slots."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -33,15 +33,33 @@ path = "../../../../src/game-template-rust/docs/examples/fps/src/main.rs"
 name = "fps-arms"
 path = "../../../../src/game-template-rust/docs/examples/fps-arms/src/main.rs"
 
+[[bin]]
+name = "third-person"
+path = "../../../../src/game-template-rust/docs/examples/third-person/src/main.rs"
+
+[[bin]]
+name = "crowd"
+path = "../../../../src/game-template-rust/docs/examples/crowd/src/main.rs"
+
+[[bin]]
+name = "explosion"
+path = "../../../../src/game-template-rust/docs/examples/explosion/src/main.rs"
+
+[[bin]]
+name = "menus-saves"
+path = "../../../../src/game-template-rust/docs/examples/menus-saves/src/main.rs"
+
 [features]
 default = ["studio"]
 studio = ["genex/studio"]
 
 [dependencies]
-# What the two examples' genex.toml switch on: physics and animation (the FPS set).
-genex = { workspace = true, features = ["physics", "animation"] }
+# What the examples' genex.toml switch on: physics and animation (the FPS set, the third-person
+# hero), navigation (the crowd) and audio (the explosion).
+genex = { workspace = true, features = ["physics", "animation", "nav", "audio"] }
 
 [dev-dependencies]
-# The FPS rows' enemy: the characters example's mannequin GLB, written in code.
+# The FPS rows' enemy and the third-person hero: the characters example's mannequin GLB, written
+# in code.
 characters = { path = "../characters" }
 image = { workspace = true }

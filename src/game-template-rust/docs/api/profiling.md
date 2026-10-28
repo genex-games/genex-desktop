@@ -3,6 +3,16 @@
 A game times its own work with `genex::profile_scope!` and reports a number per frame with
 `genex::profile::counter`. Both are write-only: nothing a tick computes can read them, so the
 checksums are the same with profiling on, off or never started.
+Every call in one line:
+
+```rust
+use genex::profile::ScopeName;
+genex::profile_scope!("enemy_ai");                             // a string literal; times to the end of the block
+const ENEMIES: ScopeName = ScopeName::new("enemies");          // a const, so a bad name fails the build
+genex::profile::counter(ENEMIES, value);                       // value: f64, -> ()
+```
+
+Nothing reads a profile back in game code: the summary is `state().volatile.profile`, for checks.
 
 ```rust
 use genex::profile::ScopeName;

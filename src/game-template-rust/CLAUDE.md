@@ -9,6 +9,8 @@ with a corridor and classroom built from it (`docs/examples/interior-kit/`), an 
 (`docs/examples/fps-arms/`: rigged gloved arms on a rifle whose magazine leaves the well on a
 reload). Start an indoor scene or a first-person game from them, not from a blank file; a
 shooter's arms and gun start from the kit, never from boxes.
+Before writing a Bevy, Unity, Unreal, three.js or Godot habit, find its genex call in
+`docs/examples/coming-from.md`.
 
 1. **Read `.studio/BRIEF.md` first when it exists.**
 2. **Keep the studio contract.** `src/main.rs` ends `main` with `genex::install(game);`. A facet

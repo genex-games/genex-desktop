@@ -1,5 +1,35 @@
 # Lighting, materials and environment
 
+Every type and call in one line (each `frame.*` returns `&mut Frame`; each builder answers a new
+value):
+
+```rust
+use genex::prelude::*;                                      // Material, Color, Frame
+use genex::Subsurface;                                      // ::WAX, ::SKIN, ::LEAF, ::new(color, thickness)
+use genex::render::{Decal, IrradianceVolume, ReflectionProbe, SpotLight};
+use genex::render::{Clouds, Environment, Fog, HdriEnvironment, HdriSun, Moon, SkyMedium, SkyParams};
+use genex::render::{QualityPreset, RenderConfig, ShadowConfig, ShadowFilter};
+frame.sun(direction, color, intensity); frame.ambient(color, intensity);
+frame.point_light(position, range, color, intensity); frame.spot_light(position, direction, range, color, intensity);
+frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity).with_cone_degrees(25.0, 40.0).with_shadow(true));
+Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emissive(color, strength)
+// .with_base_texture(path) .with_normal_texture(path, strength) .with_metal_rough_texture(path) .with_orm_texture(path)
+// .with_occlusion_texture(path, strength) .with_emissive(color, strength) .with_emissive_texture(path) .with_untextured_color(color)
+// .with_uv_scale(u, v) .with_world_uv(metres) .with_uv_offset(u, v) .with_uv_rotation(radians) .with_uv_jitter(seed: u32)
+// .with_stochastic_tiling(true) .with_macro_variation(strength, metres) .with_subsurface(Subsurface::WAX)
+frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4));
+frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3));
+frame.decal(&Decal::on_wall(center, facing, width, height).with_base_texture(path)); // Decal::on_ground(center, width, length)
+frame.environment(Environment::sky());                      // Environment::Sky(SkyParams), ::hdri(path), ::Hdri(HdriEnvironment), ::Color
+SkyParams::default().with_stars(2e-5).with_moon(Some(Moon::new([x, y, z]))).with_clouds(Some(Clouds::default()));
+RenderConfig::new().fog(Fog::default().with_density(0.02)).local_exposure(0.5, 0.8);
+RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4).filter(ShadowFilter::Pcf5x5));
+```
+
+`Moon::new`, the sky's albedo, `Fog::with_color` and `Subsurface::new` take `[f32; 3]` arrays,
+not a `Vec3`; a sphere is `frame.sphere_with(center, radius, &material)`, never a `Transform`.
+There is no `Material::with_double_sided` (`docs/api/drawing.md` says how to draw both faces).
+
 Light a frame with `frame.sun(direction, color, intensity)` (towards the sun; it casts the
 shadows), `frame.ambient(color, intensity)`, `frame.point_light(position, range, color,
 intensity)` and `frame.spot_light(position, direction, range, color, intensity)` (a cone, full

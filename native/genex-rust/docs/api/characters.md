@@ -29,6 +29,11 @@ ragdoll.power(physics, part, strength); ragdoll.recover(physics, part, seconds);
 Exclude the capsule from your own ray casts with
 `QueryFilter::default().exclude_rigid_body(body)` (`docs/api/physics.md`).
 
+Common mistake: a head, hand or weapon socket is not on the `Character` or the `CharacterAsset`
+(neither has a `joint` method). It is the animator's: `animator.socket(joint, model)` answers the
+joint's world `Mat4`, with the `JointId` from `hero.skeleton()`'s `find` by name
+(`docs/api/animation.md`). Place a camera or a gun there after the animator's update.
+
 ## The controller
 
 `Character::spawn(&mut sim.physics, feet, CharacterParams::default())` puts a kinematic capsule

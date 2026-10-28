@@ -3,10 +3,32 @@
 `sim.physics` is a Rapier 3D world (Rapier 0.36's `PhysicsWorld`): crates, barrels, balls on
 ropes, doors on hinges, whatever is pushed, thrown or knocked down. Its bodies, colliders, joints
 and queries are Rapier's own, named through `genex::physics` (Rapier's prelude). The snippets below
-use `use genex::physics::{Ball, ColliderBuilder, Pose, QueryFilter, Ray, RevoluteJointBuilder,
-RigidBody, RigidBodyBuilder, RigidBodyHandle, RopeJointBuilder};` beside `use genex::prelude::*;`
-and `use genex::digest;`. The character controller and ragdolls live in the same world
-(`docs/api/characters.md`).
+use the two `use` lines of the list that follows and `use genex::digest;`. The character controller
+and ragdolls live in the same world (`docs/api/characters.md`).
+
+Every type and call in one line (`body` a `&mut RigidBody` from `physics.bodies.get_mut`):
+
+```rust
+use genex::physics::{Ball, ColliderBuilder, ColliderHandle, Pose, QueryFilter, Ray, RevoluteJointBuilder, RigidBody, RigidBodyBuilder, RigidBodyHandle, RopeJointBuilder};
+use genex::prelude::*;                                         // PhysicsWorld, the type of sim.physics
+physics.insert(RigidBodyBuilder::dynamic().translation(at), ColliderBuilder::cuboid(hx, hy, hz)); // -> (RigidBodyHandle, ColliderHandle)
+physics.insert_body(RigidBodyBuilder::fixed()); physics.remove_body(handle); // -> RigidBodyHandle, Option<RigidBody>
+// bodies: RigidBodyBuilder::kinematic_position_based(), .linvel(v), .linear_damping(d), .ccd_enabled(true)
+// colliders: ColliderBuilder::ball(r), ColliderBuilder::cylinder(half_height, r), .mass(kg), .density(d), .friction(f), .restitution(r)
+physics.bodies.get(handle); physics.bodies.get_mut(handle);   // -> Option<&RigidBody>, Option<&mut RigidBody>
+physics.colliders.get(collider); collider.parent();            // -> Option<&Collider>, Option<RigidBodyHandle>
+body.translation(); body.rotation(); body.linvel(); body.angvel(); // -> Vec3, &Quat, Vec3, Vec3
+body.apply_impulse(impulse, true); body.apply_impulse_at_point(impulse, point, true);
+body.set_next_kinematic_translation(at); body.set_position(Pose::from_parts(at, turn), true);
+body.set_linvel(v, true); body.set_angvel(w, true); body.is_sleeping(); body.is_dynamic();
+physics.cast_ray(&Ray::new(eye, aim), max_toi, true, QueryFilter::default().exclude_rigid_body(me)); // -> Option<(ColliderHandle, f32)>
+ray.point_at(toi);                                             // -> Vec3
+physics.intersect_shape(Pose::from_translation(at), &Ball::new(r), QueryFilter::only_dynamic()); // iter of (ColliderHandle, &Collider)
+physics.active_bodies(); physics.contact_pair(a, b);           // iter of (RigidBodyHandle, &RigidBody); Option<&ContactPair>, then pair.has_any_active_contact()
+physics.insert_impulse_joint(a, b, RopeJointBuilder::new(length));
+physics.insert_impulse_joint(a, b, RevoluteJointBuilder::new(Vec3::Y).local_anchor2(at).limits([min, max])); // a hinge, radians
+handle.into_raw_parts();                                       // -> (u32, u32)
+```
 
 - **When it steps.** The runtime steps it once per tick, after the `on_update` and `on_ui` hooks,
   by 1/60 s. An update hook moves, pushes and adds bodies; what it reads is the last step's world.
