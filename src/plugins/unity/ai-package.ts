@@ -2,7 +2,7 @@
  * Genex's play-time AI package for Unity (`com.genex.ai`, shipped in `packages/`) embedded in a
  * game's Unity project as `Packages/com.genex.ai/`: Unity loads an embedded package with no line in
  * the manifest, and fetches its one dependency (Newtonsoft JSON) itself. Every file is written as
- * shipped; a file the person changed is kept beside it as `.mine`, and their own files stay. Nothing
+ * shipped; a file the person changed is kept beside it as `.mine~`, and their own files stay. Nothing
  * is written through a link.
  */
 import { lstat, mkdir, readdir, readFile } from "node:fs/promises";
@@ -16,7 +16,8 @@ export const AI_PACKAGE = "com.genex.ai";
 export const SHIPPED_AI_PACKAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), "packages", AI_PACKAGE);
 /** Where Unity keeps a project's packages. */
 const PACKAGES_FOLDER = "Packages";
-const MINE_SUFFIX = ".mine";
+/** A changed file is kept under a name Unity never imports. */
+const MINE_SUFFIX = ".mine~";
 /** The largest package file read back from a project: the shipped ones are a few kilobytes. */
 const MAX_FILE_BYTES = 1024 * 1024;
 
@@ -84,7 +85,7 @@ async function folderFor(folder: string, name: string): Promise<string> {
 
 /**
  * Embeds the package in the project at `root` (its real path). Answers whether anything changed and
- * the files kept as `.mine`.
+ * the files kept as `.mine~`.
  */
 export async function embedAiPackage(root: string, source: string): Promise<{ changed: boolean; kept: string[] }> {
   const packages = path.join(root, PACKAGES_FOLDER);

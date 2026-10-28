@@ -1,7 +1,7 @@
 /**
  * Genex's play-time AI package for Unity (`com.genex.ai`) embedded in a game's Unity project:
  * `Packages/com.genex.ai/`, every file as shipped, a file the person changed kept beside it as
- * `.mine`, nothing written through a link, and the agent's `unity__add-ai` tool doing exactly that.
+ * `.mine~`, nothing written through a link, and the agent's `unity__add-ai` tool doing exactly that.
  */
 import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
@@ -52,7 +52,7 @@ describe("Genex's AI package in a Unity project", () => {
     );
   });
 
-  it("keeps a file the person changed beside the shipped one as .mine, and leaves their own files", async () => {
+  it("keeps a file the person changed beside the shipped one as .mine~ (a name Unity never imports), and leaves their own files", async () => {
     const root = await openedProject();
     await embedAiPackage(root, SHIPPED);
     const embedded = path.join(root, "Packages", AI_PACKAGE);
@@ -60,7 +60,7 @@ describe("Genex's AI package in a Unity project", () => {
     await writeFile(path.join(embedded, "Runtime", "Mine.cs"), "// theirs\n");
     assert.equal(await aiPackageState(root, SHIPPED), "outdated");
     assert.deepEqual(await embedAiPackage(root, SHIPPED), { changed: true, kept: ["Runtime/GenexAi.cs"] });
-    assert.equal(await readFile(path.join(embedded, "Runtime", "GenexAi.cs.mine"), "utf8"), "// mine\n");
+    assert.equal(await readFile(path.join(embedded, "Runtime", "GenexAi.cs.mine~"), "utf8"), "// mine\n");
     assert.equal(await readFile(path.join(embedded, "Runtime", "Mine.cs"), "utf8"), "// theirs\n");
   });
 

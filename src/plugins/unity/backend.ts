@@ -261,7 +261,7 @@ const MESSAGE = {
       changed
         ? `Added Genex's play-time AI package (${AI_PACKAGE}) to this project as Packages/${AI_PACKAGE}; Unity imports it, and Newtonsoft JSON with it, when it next comes forward.`
         : `This project already has Genex's play-time AI package (${AI_PACKAGE}) as shipped.`,
-      kept.length ? `Files you had changed are kept beside the new ones as .mine: ${kept.join(", ")}.` : "",
+      kept.length ? `Files you had changed are kept beside the new ones as .mine~: ${kept.join(", ")}.` : "",
       "Ask with GenexAi.Ask<T>(site, prompt, new AiOptions { Fallback = … }) (T a class of public fields; [GenexMaxItems] and [GenexMaxLength] bound lists and strings), Say for streamed text; results reach the game only through GenexAi.Drain(), once at the top of FixedUpdate: clamp every value before it changes the world, and pass player-typed text in AiOptions.Untrusted, never in the prompt. Genex answers while the game plays in this editor; a build outside Genex gets ai_off and plays its fallbacks.",
     ]
       .filter(Boolean)
