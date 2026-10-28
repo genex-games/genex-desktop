@@ -14,6 +14,7 @@ import { Button } from "../ui/Button.tsx";
 import { Input } from "../ui/input.tsx";
 import { AnimateHeight } from "../ui/animate-height.tsx";
 import { Presence } from "../ui/Presence.tsx";
+import { GenexNotice, type GenexNoticeProps } from "../ui/GenexNotice.tsx";
 import { SignInCard } from "../ui/SignInCard.tsx";
 import { CHAT_WORDS, computerNeverWords } from "../words.ts";
 import type { EntryKind } from "../chat-entries.ts";
@@ -137,6 +138,8 @@ interface ComposerDockProps {
   connectModel: boolean;
   /** The selected subscription is signed out: its card instead of a send that would fail. */
   signIn: ComponentProps<typeof SignInCard> | null;
+  /** A Genex model cannot build yet: the Genex notice instead of a send that would fail. */
+  genex: GenexNoticeProps | null;
   /** The intake's questions still waiting for an answer. */
   questions: Question[];
   /** A pressed answer's words, sent as the person's next message. */
@@ -273,7 +276,7 @@ function WaitingCards({ cards, head, still }: { cards: DockCard[]; head: string 
 }
 
 export function ComposerDock(props: ComposerDockProps): JSX.Element {
-  const { connectModel, signIn, children } = props;
+  const { connectModel, signIn, genex, children } = props;
   const cards = waitingCards(props);
   const head = useWaitingHead(cards, props.conversationKey);
   const own = cards.find((card) => card.key === head)?.own ?? null;
@@ -291,8 +294,13 @@ export function ComposerDock(props: ComposerDockProps): JSX.Element {
         </div>
       )}
       {signIn ? <SignInCard {...signIn} /> : null}
+      {genex ? (
+        <div className="mb-2">
+          <GenexNotice {...genex} />
+        </div>
+      ) : null}
       <WaitingCards key={props.conversationKey} cards={cards} head={head} still={Boolean(props.loading)} />
-      {cards.length === 0 && !signIn ? props.steps : null}
+      {cards.length === 0 && !signIn && !genex ? props.steps : null}
       {children(own)}
     </div>
   );

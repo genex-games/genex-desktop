@@ -6,7 +6,7 @@
 import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
-import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { EngineStatusCode, EngineStatusReason } from "../../shared/engine-descriptor.ts";
 import { t } from "../../shared/i18n.ts";
 import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineId, type SubscriptionId } from "../../shared/providers.ts";
@@ -201,6 +201,25 @@ export function markState(view: ConnectView): MarkState {
   if (view.kind === ConnectViewKind.On) return MarkState.On;
   if (view.kind === ConnectViewKind.Busy || view.kind === ConnectViewKind.Code) return MarkState.Busy;
   return installsCli(view) ? MarkState.Missing : MarkState.Idle;
+}
+
+/**
+ * Building with Genex's button (owner, 2026-10-28): Use Genex, then a Genex ready status once
+ * picked. Picking asks nothing: the first message says what is missing (a sign-in, Pro or credits)
+ * and waits for it. While the Claude Code Genex runs is set up, it says so.
+ */
+export function genexChoiceView(choice: {
+  picked: boolean;
+  installing: boolean;
+}): Exclude<ConnectView, { kind: typeof ConnectViewKind.Code }> {
+  if (!choice.picked) return { kind: ConnectViewKind.Action, action: ConnectAction.Connect, label: t("Use Genex") };
+  if (choice.installing) return { kind: ConnectViewKind.Busy, label: t("Getting Genex ready…"), cancel: false };
+  return { kind: ConnectViewKind.On, label: t("Genex ready") };
+}
+
+/** Does genex.games offer building with Genex here? Not while it says it does not, or Genex is not read yet. */
+export function offersGenex(engine: Pick<EngineDescriptor, "status"> | undefined): boolean {
+  return engine !== undefined && engine.status.reason !== EngineStatusReason.NotOffered;
 }
 
 /** Ollama names an untagged pull `:latest`; installed models are compared the same way. */

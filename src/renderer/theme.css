@@ -4445,6 +4445,58 @@ button.chat-header-title:hover {
   background: var(--accent-hover);
 }
 
+/* Building with Genex: the blue notice a Genex model shows while it cannot build yet (ui/GenexNotice.tsx). */
+.genex-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  color: var(--ink);
+}
+.genex-notice-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.genex-notice-body > svg {
+  margin-top: 4px;
+}
+.genex-notice-line {
+  margin: 0;
+  font-size: 14px;
+  line-height: 21px;
+  text-wrap: pretty;
+}
+.genex-notice-problem {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--orange);
+}
+.genex-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.genex-notice-link {
+  height: 32px;
+  padding-inline: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.genex-notice-link:is(:hover, :focus-visible) {
+  color: var(--ink);
+}
+
 /* Only current work animates. History and disclosures mount without entrance choreography. */
 .chat-status-shimmer {
   --shimmer-rest: color-mix(in oklab, var(--ink-3) 82%, var(--background));

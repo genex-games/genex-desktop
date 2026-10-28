@@ -701,6 +701,11 @@ export interface StudioApi {
   genexCancelSignIn(): Promise<GenexAccountView>;
   /** Sign out of Genex once the person confirms in Studio's question; the account as it is after. */
   genexSignOut(): Promise<GenexAccountView>;
+  /**
+   * Building with Genex: its page on genex.games in the browser, signing in there first while the
+   * app is not, then Pro or a credit pack; `idea` is the waiting message it shows back.
+   */
+  genexBuild(idea?: string): Promise<GenexAccountView>;
   /** A macOS notification; clicking it focuses Studio and sends `notification.open` with the id. */
   notify(note: { id?: string; title: string; subtitle?: string; body: string }): Promise<boolean>;
   /** The Dock badge: how much work waits on the person. Zero clears it. */

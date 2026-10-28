@@ -1,6 +1,7 @@
 import { type JSX, useId } from "react";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { GenexNotice, type GenexNoticeProps } from "../ui/GenexNotice.tsx";
 import { CLAUDE_CODE_MARK, CODEX_MARK, type ProviderMark } from "../ui/provider-marks.ts";
 import { HeldState, type HeldFirstSend } from "./use-launch-handover.ts";
 import { UserMessage } from "./UserMessage.tsx";
@@ -43,51 +44,62 @@ function heldWords(state: HeldState, brand: string): { title: string; line: stri
   return null;
 }
 
-/**
- * A game's first message from home while it cannot go yet: the person's bubble, then what it waits
- * for. While the models are read it says so softly; signed out or failed, a card with the
- * provider's mark and one action.
- */
-export function HeldFirstMessage({
-  held,
-  engine,
-  brand,
-  onAct,
-}: {
+/** What the held message waits for, in its block's props. */
+interface HeldProps {
   held: HeldFirstSend;
   engine: string | undefined;
   brand: string;
+  genex: GenexNoticeProps | null;
   onAct: () => void;
-}): JSX.Element {
+}
+
+/**
+ * Under the bubble: the Genex notice (its main step is the block's action), a card with the
+ * provider's mark and one action, or a soft line while the models are read.
+ */
+function HeldWaitsFor({ held, engine, brand, genex, onAct }: HeldProps): JSX.Element {
+  if (genex && held.state === HeldState.SignedOut) return <GenexNotice {...genex} held onPrimary={onAct} />;
   const words = heldWords(held.state, brand);
+  if (!words)
+    return (
+      <p role="status" className="chat-status-shimmer m-0 text-[13px] leading-[18px]">
+        {brand ? t("Checking your {brand} account…", { brand }) : t("Getting your models ready…")}
+      </p>
+    );
   const mark = engine ? MARKS[engine] : undefined;
+  return (
+    <div className="held-send-card" role="status">
+      {mark && <MarkGlyph mark={mark} />}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="held-send-title truncate">{words.title}</span>
+        <span className="held-send-line">{words.line}</span>
+      </div>
+      <button
+        type="button"
+        className="held-send-action"
+        data-held-action={held.state === HeldState.SignedOut ? "sign-in" : "retry"}
+        data-primary={held.state === HeldState.SignedOut || undefined}
+        onClick={onAct}
+      >
+        {words.action}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A game's first message from home while it cannot go yet: the person's bubble, then what it waits
+ * for. While the models are read it says so softly; signed out or failed, a card with the
+ * provider's mark and one action; a Genex model that cannot build yet, the Genex notice.
+ */
+export function HeldFirstMessage(props: HeldProps): JSX.Element {
+  const { held } = props;
   return (
     <div data-held-send={held.state} className="flex min-w-0 flex-col gap-4">
       <div className="flow-root min-w-0">
         <UserMessage text={held.text} frames={held.frames} />
       </div>
-      {words ? (
-        <div className="held-send-card" role="status">
-          {mark && <MarkGlyph mark={mark} />}
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="held-send-title truncate">{words.title}</span>
-            <span className="held-send-line">{words.line}</span>
-          </div>
-          <button
-            type="button"
-            className="held-send-action"
-            data-held-action={held.state === HeldState.SignedOut ? "sign-in" : "retry"}
-            data-primary={held.state === HeldState.SignedOut || undefined}
-            onClick={onAct}
-          >
-            {words.action}
-          </button>
-        </div>
-      ) : (
-        <p role="status" className="chat-status-shimmer m-0 text-[13px] leading-[18px]">
-          {brand ? t("Checking your {brand} account…", { brand }) : t("Getting your models ready…")}
-        </p>
-      )}
+      <HeldWaitsFor {...props} />
     </div>
   );
 }

@@ -30,9 +30,12 @@ export interface GenexAccountPort {
 
 export interface GenexAccountDeps {
   port: GenexAccountPort;
-  /** Open the page that finishes a sign-in in the person's browser. */
+  /** Open a genex.games page in the person's browser: the one that finishes a sign-in, or the build page. */
   openSignIn(url: string): Promise<void>;
 }
+
+/** The page a sign-in opens in place of the account's own, given the sign-in's code (none while signed in). */
+export type SignInPage = (code: string | undefined) => string;
 
 /** A signed-in account, with Genex's updated terms when they still wait for the person. */
 async function signedInView(port: GenexAccountPort): Promise<GenexAccountView> {
@@ -68,8 +71,11 @@ export function createGenexAccount(deps: GenexAccountDeps) {
     return signedIn ? signedInView(port) : { status: GenexAccountStatus.Ended };
   };
 
-  /** Sign in in the browser; a refused token is forgotten first, or the sign-in would reuse it. */
-  const startSignIn = async (): Promise<GenexAccountView> => {
+  /**
+   * Sign in in the browser, on the account's own page or on `page`; a refused token is forgotten
+   * first, or the sign-in would reuse it.
+   */
+  const startSignIn = async (page?: SignInPage): Promise<GenexAccountView> => {
     const mine = ++attempt;
     const token = await port.token();
     if (token && token === refusedToken) await port.disconnect();
@@ -82,15 +88,26 @@ export function createGenexAccount(deps: GenexAccountDeps) {
       return view();
     }
     code = typeof answer.userCode === "string" ? answer.userCode : undefined;
-    if (typeof answer.verifyUrl === "string") await deps.openSignIn(answer.verifyUrl);
+    if (typeof answer.verifyUrl === "string") await deps.openSignIn(page ? page(code) : answer.verifyUrl);
     return view();
   };
 
-  const signIn = (): Promise<GenexAccountView> => {
-    starting ??= startSignIn().finally(() => {
+  const signIn = (page?: SignInPage): Promise<GenexAccountView> => {
+    starting ??= startSignIn(page).finally(() => {
       starting = null;
     });
     return starting;
+  };
+
+  /**
+   * Building with Genex in the browser: `page` signs the app in there first while it is not
+   * (approving this sign-in's code), then the person picks Pro or a credit pack.
+   */
+  const build = async (page: SignInPage): Promise<GenexAccountView> => {
+    const now = await view();
+    if (now.status !== GenexAccountStatus.SignedIn) return signIn(page);
+    await deps.openSignIn(page(undefined));
+    return now;
   };
 
   const cancel = async (): Promise<GenexAccountView> => {
@@ -110,7 +127,8 @@ export function createGenexAccount(deps: GenexAccountDeps) {
 
   return {
     view,
-    signIn,
+    signIn: (): Promise<GenexAccountView> => signIn(),
+    build,
     cancel,
     signOut,
     /** The token Play's calls carry, while signed in. */

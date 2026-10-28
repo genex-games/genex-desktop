@@ -28,6 +28,7 @@ import type { FollowScroll } from "./use-follow-scroll.ts";
 import type { PendingSends } from "./use-pending-sends.ts";
 import type { ThreadTranscript } from "./use-thread-transcript.ts";
 import { UserMessage } from "./UserMessage.tsx";
+import type { GenexNoticeProps } from "../ui/GenexNotice.tsx";
 import { HeldFirstMessage } from "./HeldFirstMessage.tsx";
 import type { HeldFirstSend } from "./use-launch-handover.ts";
 import { PLAN_PROVIDERS } from "../ui/usage-words.ts";
@@ -152,6 +153,8 @@ export function ChatConversation(parts: ChatParts): JSX.Element {
     held: parts.handover.held,
     heldEngine: parts.composer.model.selectedEngine?.id,
     heldBrand: heldBrand(parts.composer.model.selectedEngine),
+    // Only while a message is held: the notice is a new object on every render.
+    heldGenex: parts.handover.held ? parts.composer.gate.genex : null,
     onActOnHeld: actions.actOnHeld,
   });
   return <ConversationContent view={view} context={context} onAsk={actions.ask} onStreaming={actions.streaming} />;
@@ -186,6 +189,8 @@ type ConversationView = {
   held: HeldFirstSend | null;
   heldEngine: string | undefined;
   heldBrand: string;
+  /** The Genex notice the held message shows in place of a sign-in, while a Genex model cannot build yet. */
+  heldGenex: GenexNoticeProps | null;
   onActOnHeld: () => void;
 };
 
@@ -246,6 +251,7 @@ const ConversationContent = memo(function ConversationContent({
               held={view.held}
               engine={view.heldEngine}
               brand={view.heldBrand}
+              genex={view.heldGenex}
               onAct={view.onActOnHeld}
             />
           )}

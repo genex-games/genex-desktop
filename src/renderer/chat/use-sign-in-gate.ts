@@ -1,7 +1,8 @@
 /**
  * The composer's sign-in gate: a send on a subscription that is signed out (or whose CLI is
  * missing) becomes a sign-in instead, and the composer shows the sign-in card. When the harness
- * itself asked for a sign-in mid-turn, the card can also finish the turn on a local model.
+ * itself asked for a sign-in mid-turn, the card can also finish the turn on a local model. A Genex
+ * model that cannot build yet shows the blue Genex notice instead (`genex-build.ts`).
  */
 import type { ComponentProps } from "react";
 import type { ComposerSendOptions } from "../../shared/composer.ts";
@@ -15,9 +16,12 @@ import {
   needsSignIn,
 } from "../../shared/engine-descriptor.ts";
 import type { EventEnvelope } from "../../shared/event-log.ts";
-import { EngineId, isMetered } from "../../shared/providers.ts";
+import { EngineId, isMetered, SUBSCRIPTION_ENGINES } from "../../shared/providers.ts";
+import { type GenexBuild, useGenexBuild } from "../genex-build.ts";
+import { defaultModelKey } from "../model-choices.ts";
 import { modelKey, parseModelKey } from "../model-key.ts";
 import { useSubscriptionAuth } from "../subscription-auth.ts";
+import type { GenexNoticeProps } from "../ui/GenexNotice.tsx";
 import type { SignInCard } from "../ui/SignInCard.tsx";
 import { CHAT_WORDS } from "../words.ts";
 import { engineRef } from "../analytics/chat-properties.ts";
@@ -61,10 +65,43 @@ export const signInRequested = (threadEvents: readonly EventEnvelope[]): boolean
 export interface SignInGate {
   /** A send would start a sign-in instead. */
   needsSignIn: boolean;
-  signIn(): Promise<void>;
+  /** Start the sign-in; for Genex, its main step, with the message that waits for it. */
+  signIn(idea?: string): Promise<void>;
   /** The composer's sign-in card, or null while no sign-in is needed. */
   card: ComponentProps<typeof SignInCard> | null;
+  /** The blue Genex notice while a Genex model cannot build yet, or null. */
+  genex: GenexNoticeProps | null;
 }
+
+/** The gate while a Genex model cannot build yet: the Genex notice in place of a sign-in card. */
+function genexGate(
+  build: GenexBuild & { need: NonNullable<GenexBuild["need"]> },
+  engines: readonly EngineDescriptor[],
+  setModelKey: (key: string | null) => void,
+): SignInGate {
+  return {
+    needsSignIn: true,
+    signIn: (idea) => build.primary(idea),
+    card: null,
+    genex: {
+      need: build.need,
+      waiting: build.waiting,
+      installing: build.installing,
+      problem: build.problem,
+      plans: SUBSCRIPTION_ENGINES.map((engine) => ({
+        engine,
+        ready: engines.some((candidate) => candidate.id === engine && isEngineReady(candidate)),
+      })),
+      onPrimary: () => void build.primary(),
+      // The chat moves onto that plan; a plan still to connect asks for its own sign-in there.
+      onUse: (engine) => setModelKey(defaultModelKey(engine)),
+    },
+  };
+}
+
+/** Narrows a Genex build to one that needs something. */
+const genexNeeds = (build: GenexBuild): build is GenexBuild & { need: NonNullable<GenexBuild["need"]> } =>
+  build.need !== null;
 
 export function useSignInGate({
   engines,
@@ -87,9 +124,11 @@ export function useSignInGate({
   // The composer's sign-in card follows whichever subscription is selected — the studio has
   // two, and a Codex pick must not be met with a Claude sign-in prompt.
   const auth = useSubscriptionAuth(engines, onEnginesRefresh, parseModelKey(selected).engine || EngineId.ClaudeCode);
-  const blocked = subscriptionBlocksSend(selectedEngine, auth.engine);
+  const genex = useGenexBuild(selectedEngine, onEnginesRefresh);
+  if (genexNeeds(genex)) return genexGate(genex, engines, setModelKey);
+  const blocked = selectedEngine?.id !== EngineId.Genex && subscriptionBlocksSend(selectedEngine, auth.engine);
   const signIn = (): Promise<void> => auth.signIn();
-  if (!blocked) return { needsSignIn: false, signIn, card: null };
+  if (!blocked) return { needsSignIn: false, signIn, card: null, genex: null };
   const local = signInRequested(threadEvents) ? localToolModel(engines) : null;
   const continueLocal = (target: { engine: EngineDescriptor; model: EngineModel }): void => {
     track(AnalyticsEvent.SignInCardAction, {
@@ -105,6 +144,7 @@ export function useSignInGate({
   return {
     needsSignIn: true,
     signIn,
+    genex: null,
     card: {
       engine: selectedEngine?.id ?? EngineId.ClaudeCode,
       waiting: auth.waiting,

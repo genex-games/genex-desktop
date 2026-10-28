@@ -5,7 +5,8 @@
  * their marks as collected by lobe-icons (MIT, @lobehub/icons-static-svg 1.95.1: claudecode.svg,
  * codex.svg, openrouter-color.svg, opencode.svg, grok.svg and cursor.svg), unaltered, on a 24-unit
  * grid with even-odd holes. Colours are the ones those files carry; OpenCode's, Grok's and Cursor's
- * files are monochrome, so their face is a grey that reads on light and dark.
+ * files are monochrome, so their face is a grey that reads on light and dark. Genex's own G is the
+ * wordmark's (`ui/GenexLogo.tsx`), fitted to the same grid.
  */
 export interface ProviderMark {
   path: string;
@@ -42,3 +43,15 @@ export const CURSOR_MARK: ProviderMark = {
   path: "M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z",
   colors: ["#B7B4B4", "#4B4646"],
 };
+
+/**
+ * Genex's G, the wordmark's own fitted to the 24-unit grid: silver on a dark theme, graphite on a
+ * light one, as the wordmark takes the theme's ink (owner, 2026-10-28: white in the dark theme).
+ */
+export const GENEX_MARK: ProviderMark = {
+  path: "M17.958 13.553H8.730V12.012H23.000V16.196C23.000 16.196 21.891 20.551 12.208 20.551C12.208 20.551 1.000 20.869 1.000 11.547C1.000 2.909 13.125 3.448 13.125 3.448C22.458 3.448 23.000 7.974 23.000 7.974L20.583 8.366C20.583 8.366 19.833 4.891 12.958 4.891C12.958 4.891 3.750 4.549 3.750 11.718C3.750 11.718 3.542 18.863 12.333 19.059C19.250 19.279 20.250 15.609 20.333 14.973C20.583 14.165 19.500 13.553 17.958 13.553Z",
+  colors: ["#F4F5F8", "#B4B8C2", "#6A6E79"],
+};
+
+/** Genex's G on a light theme. */
+export const GENEX_MARK_ON_LIGHT: ProviderMark = { path: GENEX_MARK.path, colors: ["#5A5E69", "#3A3D45", "#1E2025"] };

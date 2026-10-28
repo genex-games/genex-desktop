@@ -160,6 +160,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
       loading={parts.props.loading}
       connectModel={chat.isStudioThread && !gate.needsSignIn && composer.noModel}
       signIn={heldAsksSignIn(parts) ? null : gate.card}
+      genex={heldAsksSignIn(parts) ? null : gate.genex}
       questions={transcript.interviewQuestions.filter((entry) => entry.kind === EntryKind.Question)}
       questionsDisabled={busy || working}
       onAnswerQuestion={(answer) => submit(answer, undefined, true, SendSource.QuestionCard)}

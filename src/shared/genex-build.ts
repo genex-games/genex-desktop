@@ -34,9 +34,6 @@ export const GenexBuildRoute = {
 /** The genex.games page that signs the person in and lets them pick Pro or a credit pack. */
 export const GENEX_BUILD_PAGE = "/desktop/build";
 
-/** The plans page, for more credits. */
-export const GENEX_PLANS_PAGE = "/plans";
-
 /** The most of the waiting message the build page shows back; the page cuts it there too. */
 export const GENEX_IDEA_MAX_CHARS = 300;
 

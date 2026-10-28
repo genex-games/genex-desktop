@@ -257,6 +257,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:genex-account.sign-in": "genexSignIn",
   "studio:genex-account.cancel": "genexCancelSignIn",
   "studio:genex-account.sign-out": "genexSignOut",
+  "studio:genex-account.build": "genexBuild",
   "studio:notify": "notify",
   "studio:badge": "setBadge",
   "studio:rollback": "rollback",
@@ -543,6 +544,7 @@ export interface StudioInvokePayloads {
   "studio:genex-account.sign-in": undefined;
   "studio:genex-account.cancel": undefined;
   "studio:genex-account.sign-out": undefined;
+  "studio:genex-account.build": { idea?: string };
   "studio:notify": Arg<"notify", 0>;
   "studio:badge": { count: number };
   "studio:rollback": { snapshotId: string };

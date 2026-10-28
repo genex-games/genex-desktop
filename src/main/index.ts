@@ -2230,7 +2230,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerCliInstallIpc(handle, cliInstalls(studio));
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
   registerDataFolderIpc(handle, dataFolderIpc(studio));
-  registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
+  registerGenexAccountIpc(handle, { account: genexAccountFor(studio), web: playOrigin.web });
   registerPlayIpc(handle, playIpcDeps(studio));
   registerStoreIpc(handle, { ...storeFor(studio), coin: plateCoinFor(studio), local: studio.localItems });
   const { library } = playAccountFor(studio);
