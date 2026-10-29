@@ -305,6 +305,8 @@ export const GenexFailureCode = {
   GenerationFailed: "generation-failed",
   /** Genex canceled the generation. */
   GenerationCanceled: "generation-canceled",
+  /** The generation finished, but the body it made fails the character contract and was not delivered. */
+  CharacterRejected: "character-rejected",
 } as const;
 export type GenexFailureCode = (typeof GenexFailureCode)[keyof typeof GenexFailureCode];
 

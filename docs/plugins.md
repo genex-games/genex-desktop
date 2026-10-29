@@ -3831,3 +3831,21 @@ its deadline or its assertion.
 - The curated Quaternius and Kenney packs stay held: Kenney's zips are nested and exceed the CC0 zip
   entry rules, and Quaternius' bytes are not pinned (owner call AN-21); neither can be fetched
   without a recorded sha256, which needs a download this lane did not make.
+
+### Characters: the import contract and the gate
+
+- A one-shot `character` (direct text or an image) or `creature` is asked for `--pose a-pose` unless
+  the agent passed a `pose` (`request.ts`); Meshy rigs it and ships its own clips.
+- `shared/character-contract.ts` is the one contract: a clip's name says its role (`idle`, `walk`,
+  `run`, `crouch`, `aim`, `fire`, `reload`, `hit`, `death`), and `characterVerdict` fails a rig that is
+  not skinned (`not-rigged`), lacks core humanoid bones (`not-humanoid`), rests with arms hanging or
+  raised (`rest-pose`, 25-110° from hanging, measured by `restPoseOf` from the file's rest transforms)
+  or is not person-sized (`scale`, hips 0.2-2.5 m above the feet). Roles no clip covers come back as
+  `missingRoles`, for `character.animate`, `animations.search` or a retargeted library.
+- `plugins/genex/character-gate.ts` runs it on every drawn GLB a character, creature, finalize or
+  import job downloaded, before delivery. A rejected body is not delivered: the job is `failed` with
+  `failure.code` `character-rejected`, the reasons in `failure.providerError` and the call that
+  fixes them in `failure.next`. Regenerating spends credits, so the gate says how and the agent asks
+  for it through the usual quote.
+- Per-clip pose validation (limb length, collapse, feet grounded, hands on the weapon) belongs to the
+  engine side (aaa-motion); a CC0 fallback library (Quaternius' UAL) stays unpinned, see above.

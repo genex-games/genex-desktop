@@ -228,6 +228,22 @@ function approvalArgs(request: GenexRequest, approved: boolean): string[] {
   return ["--user-approved", "--approve-remesh", String(REMESH_FACES)];
 }
 
+/** The pose a body is generated in unless the agent chose: arms at the sides or overhead cannot be retargeted. */
+const DEFAULT_REST_POSE = "a-pose";
+
+/** Whether a request makes a body in one shot, the only route that takes a pose: a creature, or a character with direct text or an image. */
+function isOneShotBody(request: GenexRequest): boolean {
+  if (request.operation === GenexOperation.Creature) return true;
+  const options = request.options ?? {};
+  return request.operation === GenexOperation.Character && Boolean(options["direct-text"] || options.image);
+}
+
+/** The pose flag a one-shot body gets when the agent chose none. */
+function restPoseArgs(request: GenexRequest): string[] {
+  if (!isOneShotBody(request) || request.options?.pose !== undefined) return [];
+  return ["--pose", DEFAULT_REST_POSE];
+}
+
 /**
  * The CLI arguments for a validated request whose job folder is `dir`: game files it names are
  * copied in first, and results land in `dir/output`.
@@ -238,7 +254,7 @@ export async function cliArgsFor(request: GenexRequest, root: string, dir: strin
   if (request.prompt) args.push(await promptArg(request, request.prompt, root, dir));
   for (const [key, value] of Object.entries(request.options ?? {}))
     args.push(...(await optionArgs(key, value, root, dir)));
-  args.push(...approvalArgs(request, approved));
+  args.push(...restPoseArgs(request), ...approvalArgs(request, approved));
   const output = path.join(dir, "output");
   await mkdir(output, { recursive: true });
   if (!NO_OUTPUT_OPERATIONS.has(request.operation)) args.push("--out-dir", output);
