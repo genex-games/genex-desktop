@@ -66,7 +66,7 @@ import {
   GpuTimingMode,
   PROFILE_REPORT_FRAMES_MAX,
 } from "./frame-profile.ts";
-import type { NativeAdmissionFacts, NativeRunStatus } from "./native-contract.ts";
+import type { NativeAdmissionFacts, NativeCaptureLens, NativeCaptureSize, NativeRunStatus } from "./native-contract.ts";
 import type { OptimizationCandidate, ProfileRequest, Revision } from "./optimization.ts";
 import {
   type CheckpointAnswer,
@@ -779,6 +779,13 @@ export interface HarnessHostApi {
       handle?: string;
       page?: boolean;
       surface?: CaptureSurface;
+      /**
+       * Draw at this size (a Rust · wgpu game's native capture, up to `NATIVE_CAPTURE_MAX_PX`): the
+       * saved frame is that size, the inline `base64` a judge-sized copy. A port that cannot draws its own.
+       */
+      size?: NativeCaptureSize;
+      /** The lens a sized capture draws with (depth of field, motion blur). */
+      lens?: NativeCaptureLens;
     };
     result: {
       base64: string;

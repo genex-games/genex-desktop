@@ -49,6 +49,20 @@ export const LookBlocker = {
   ExposurePump: "exposure-pump",
   /** The first-person camera rolls, bobs or shakes past the comfort caps (the harness's `demo:sprint-run` pose log). */
   UncomfortableCamera: "uncomfortable-camera",
+  /** A look feature (fog, a lit volume, shadows, bloom) the accepted build drew that this round switches off at the same preset. */
+  FeatureOff: "feature-off",
+  /** A character whose limbs collapse, fold or stretch, whose feet leave the ground, or whose hands leave the weapon. */
+  BrokenPose: "broken-pose",
+  /** A place that does not make sense: rooms with no way in or out, zones that do not connect, no world boundary. */
+  IncoherentPlace: "incoherent-place",
+  /** A zone the level plan names that the player cannot reach from spawn (the game's `__level` report). */
+  UnreachableZone: "unreachable-zone",
+  /** A level with no way out where its plan names one (the game's `__level` report). */
+  NoExit: "no-exit",
+  /** A corridor or room that ends where the level plan planned no end (the game's `__level` report). */
+  DeadEnd: "dead-end",
+  /** A world the player can walk or fall out of (the game's `__level` report). */
+  Unbounded: "unbounded",
 } as const;
 export type LookBlocker = (typeof LookBlocker)[keyof typeof LookBlocker];
 

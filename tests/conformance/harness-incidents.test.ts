@@ -19381,3 +19381,409 @@ describe("Bodycam rerun: a look gate that blamed every round for the shared worl
     assert.deepEqual([...new Set(plain)], [undefined], "a run with no visual bar keeps the folder's own bootMs");
   });
 });
+
+describe("Plan 2: places that make sense, features the presets own, honest grading (body-cam-6)", () => {
+  // Body-cam-6 spent 3 h polishing one hallway and two rooms with no way in or out, its lead switched
+  // volumetric fog off to pass the determinism check, and its judges passed soldiers whose torsos
+  // collapsed into their legs. Every row here holds for any game a person generates.
+  const lookRun: Run = {
+    runId: "plan2",
+    project: "plan2-game",
+    goal: "Make a photorealistic first-person shooter in an abandoned school.",
+    reference: { name: "a photoreal shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const flipped = { id: "c-door", kind: "state", weight: "identity", what: "the door opens" };
+  /** One facet round of a look-bar run: the judge prefers the challenger and one check flipped. */
+  async function lookRound(
+    challengerState: Record<string, unknown>,
+    incumbentState: Record<string, unknown>,
+    extra: Record<string, unknown> = {},
+  ) {
+    const { FACET_POLICY } = await import("../../src/harness-seed/loop/facet/policy.ts");
+    const { tasteVerdict } = await import("../../src/harness-seed/loop/facet/phases/taste.ts");
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.complete": (params) => {
+          const user = String((params.messages as Array<{ content?: unknown }> | undefined)?.[0]?.content ?? "");
+          const accepted = /build ([AB]) is the one the checks accepted/.exec(user)?.[1] ?? "A";
+          const answer = { pick: accepted, satisfied: true, regression: null, newCheck: null, defects: [], polish: [] };
+          return { message: { content: JSON.stringify({ ...answer, scale: "structural", reason: "the door opens" }) } };
+        },
+      },
+    });
+    const loop: Record<string, any> = {
+      ctx: recorder.ctx,
+      run: lookRun,
+      facet: { id: "hall", title: "The hall" },
+      spec: { id: "hall", title: "The hall", cameras: ["default"], checks: [flipped], milestones: [] },
+      currentMove: null,
+      currentFix: null,
+      board: { [flipped.id]: { ...flipped, pass: false, reason: "shut" } },
+      incumbentEvidence: { eyes: [], state: incumbentState },
+      incumbentMeasured: {},
+      milestonesDone: new Set<string>(),
+      milestonesSetAside: new Set<string>(),
+      rungMisses: {},
+      moves: [],
+      polishStreak: 0,
+      policy: FACET_POLICY,
+      gapHistory: [],
+      biggestGap: "",
+      gapStreak: null,
+      defectList: [],
+      polishList: [],
+      loseStreak: 0,
+      lastFailure: null,
+      lastBigMove: null,
+      appendRun: async () => {},
+      ...extra,
+    };
+    const round: Record<string, any> = {
+      iteration: 2,
+      iterationId: "002",
+      evidence: { eyes: [], state: challengerState },
+      nextBoard: { [flipped.id]: { ...flipped, pass: true, reason: "" } },
+      comparison: { flips: [flipped.id], regressions: [] },
+      challengerBroken: false,
+      defectNotes: [],
+      attemptBranch: null,
+    };
+    await tasteVerdict(loop as never, round as never);
+    return round;
+  }
+  const drawn = (preset: string, fog: boolean) => ({
+    phase: "playing",
+    volatile: { render: { preset, features: { fog: true, shadows: true, bloom: true } } },
+    __render: { look: { tags: {}, features: { "volumetric-fog": fog } } },
+  });
+
+  it("P2-B1. the lead switched volumetric fog off to pass the determinism check: a round that turns a look feature off at the same preset is not kept, and builders are told to report the check", async () => {
+    const { featuresTurnedOff, FEATURE_RULE } = await import("../../src/harness-seed/loop/feature-off.ts");
+    assert.deepEqual(
+      featuresTurnedOff(drawn("ultra", false), drawn("ultra", true)).map((text) =>
+        /^\[([a-z-]+)\] ([a-z-]+):/.exec(text)?.slice(1).join(" "),
+      ),
+      ["feature-off volumetric-fog"],
+    );
+    assert.deepEqual(
+      featuresTurnedOff(drawn("low", false), drawn("ultra", true)),
+      [],
+      "a cheaper preset is the preset's word",
+    );
+    assert.equal(
+      featuresTurnedOff(drawn("ultra", false), drawn("high", true)).length,
+      1,
+      "a higher preset owes every feature",
+    );
+    const pinned = {
+      ...drawn("low", false),
+      __render: { look: { tags: {}, preset: "ultra", features: { "volumetric-fog": false } } },
+    };
+    assert.equal(
+      featuresTurnedOff(pinned, drawn("ultra", true)).length,
+      1,
+      "a capture's pinned preset is the look's own",
+    );
+    assert.deepEqual(
+      featuresTurnedOff({ phase: "playing" }, drawn("ultra", true)),
+      [],
+      "a build that reports nothing is not compared",
+    );
+    const off = await lookRound(drawn("ultra", false), drawn("ultra", true));
+    assert.equal(off.verdictSource, "look-blocked", `refused: ${off.verdict.reason}`);
+    assert.match(off.verdict.biggest_gap, /^\[feature-off\] volumetric-fog/);
+    const kept = await lookRound(drawn("ultra", true), drawn("ultra", true));
+    assert.equal(kept.verdict.pick, "challenger", `kept: ${kept.verdict.reason}`);
+    assert.match(FEATURE_RULE, /reported .*never met by switching a look feature off/);
+  });
+
+  const LEVEL_TEXT = [
+    "# Level",
+    "## Zones",
+    "- hall: the ground-floor corridor",
+    "- classroom: a wrecked classroom off the hall",
+    "- yard: the snowy yard behind the school",
+    "## Connections",
+    "- hall -> classroom: door",
+    "- hall -> yard: door",
+    "## Exits",
+    "- yard: the gate out to the street",
+    "## Spawns",
+    "- hall: the player; classroom: two guards",
+    "## Play loop",
+    "- clear the classroom, take the key, leave by the yard gate",
+    "## Boundary",
+    "- yard: a fence and rubble; the street beyond is a backdrop",
+  ].join("\n");
+  /** A game folder holding the level plan. */
+  async function levelFolder(text: string | null): Promise<string> {
+    const { mkdtemp } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "plan2-level-"));
+    if (text !== null) {
+      await mkdir(path.join(dir, "docs"), { recursive: true });
+      await writeFile(path.join(dir, "docs", "LEVEL.md"), text);
+    }
+    return dir;
+  }
+
+  it("P2-C1. body-cam-6 polished one hallway for 3 h and never built an entrance or exit: a game the player moves through plans its level and blocks it all out first, and every other part waits for that blockout for at most a third of the run, never for one zone's finished look", async () => {
+    const { parseLevelPlan, levelPlanBrief } = await import("../../src/harness-seed/loop/level-plan.ts");
+    const { blockoutRefusal, blockoutGoal, BLOCKOUT_PART } = await import(
+      "../../src/harness-seed/loop/director/blockout.ts"
+    );
+    assert.deepEqual(parseLevelPlan(LEVEL_TEXT), {
+      zones: ["hall", "classroom", "yard"],
+      exits: ["yard"],
+      bounded: ["yard"],
+      missing: [],
+    });
+    assert.deepEqual(parseLevelPlan("## Zones\n- hall: a corridor")?.missing, [
+      "Connections",
+      "Exits",
+      "Spawns",
+      "Play loop",
+      "Boundary",
+    ]);
+    assert.match(levelPlanBrief("racing"), /exits are the finish/, "the plan is said in the kind's own terms");
+    const shortWords = LEVEL_TEXT.replace("## Connections", "## Links")
+      .replace("## Spawns", "## Spawn")
+      .replace("## Play loop", "## Loop");
+    assert.deepEqual(parseLevelPlan(shortWords)?.missing, [], "the template docs' shorter headings read the same");
+    assert.match(
+      blockoutGoal({ game: { kind: "first-person" } }, BLOCKOUT_PART, "block out the school"),
+      /LEVEL FIRST/,
+    );
+    assert.equal(blockoutGoal({ game: { kind: "static-board" } }, BLOCKOUT_PART, "the board"), "the board");
+    const minute = 60_000;
+    const loopRunAt = async (kind: string, level: string | null, workers: Map<string, unknown> = new Map()) =>
+      ({
+        integrationWorktree: await levelFolder(level),
+        run: { ...lookRun, game: { kind } },
+        started: 0,
+        softDeadline: 180 * minute,
+        state: { workers, fromScratch: true },
+      }) as never;
+    const empty = await loopRunAt("first-person", null);
+    assert.match(
+      String(await blockoutRefusal(empty, "classroom", 10 * minute)),
+      /waits for the blockout \(up to 50 more min\).*worker_start id=blockout/,
+    );
+    assert.equal(await blockoutRefusal(empty, BLOCKOUT_PART, 10 * minute), null);
+    assert.equal(await blockoutRefusal(empty, "sourcing", 10 * minute), null, "assets are sourced beside the blockout");
+    assert.equal(
+      await blockoutRefusal(empty, "classroom", 61 * minute),
+      null,
+      "a third of the run, then it spreads anyway",
+    );
+    const building = await loopRunAt("first-person", LEVEL_TEXT, new Map([[BLOCKOUT_PART, { state: "running" }]]));
+    assert.match(String(await blockoutRefusal(building, "classroom", 10 * minute)), /blockout is still building/);
+    const done = await loopRunAt("first-person", LEVEL_TEXT, new Map([[BLOCKOUT_PART, { state: "done" }]]));
+    assert.equal(await blockoutRefusal(done, "classroom", 10 * minute), null);
+    const board = await loopRunAt("static-board", null);
+    assert.equal(await blockoutRefusal(board, "pieces", 10 * minute), null, "a board game has no level to block out");
+    const edit = { ...(empty as Record<string, any>), state: { workers: new Map(), fromScratch: false } } as never;
+    assert.equal(await blockoutRefusal(edit, "classroom", 10 * minute), null, "an edit to a game that has its place");
+  });
+
+  it("P2-C2. one zone's look held every other part, and nothing measured whether the zones connected: the game's reachability report is held to its level plan, a round is blamed only for the place it broke, and a blockout round is never refused for its greybox", async () => {
+    const { placeFindings, parseLevelPlan } = await import("../../src/harness-seed/loop/level-plan.ts");
+    const plan = parseLevelPlan(LEVEL_TEXT);
+    const level = (reachable: string[], extra: Record<string, unknown> = {}) => ({
+      phase: "playing",
+      __level: {
+        version: 1,
+        spawn: "hall",
+        zones: Object.fromEntries(
+          ["hall", "classroom", "yard"].map((zone) => [zone, { reachable: reachable.includes(zone), exits: 1 }]),
+        ),
+        exits: ["yard"],
+        deadEnds: [],
+        bounded: true,
+        ...extra,
+      },
+    });
+    assert.deepEqual(placeFindings(level(["hall", "classroom", "yard"]), plan), []);
+    assert.deepEqual(
+      placeFindings(
+        level(["hall"], { exits: [], deadEnds: [{ zone: "hall", at: [0, 0, 9] }], bounded: false }),
+        plan,
+      ).map((found) => found.key),
+      [
+        "[unreachable-zone] classroom",
+        "[unreachable-zone] yard",
+        "[no-exit] level",
+        "[dead-end] hall",
+        "[unbounded] level",
+      ],
+    );
+    assert.deepEqual(placeFindings({ phase: "playing" }, plan), [], "a game with no report gets no place finding");
+    assert.deepEqual(
+      placeFindings(level(["hall", "classroom", "yard"], { deadEnds: [{ zone: "yard", at: [0, 0, 40] }] }), plan),
+      [],
+      "a dead end where the boundary closes the plan's zone is planned",
+    );
+    const worktree = await levelFolder(LEVEL_TEXT);
+    const walled = await lookRound(level(["hall"]), level(["hall", "classroom", "yard"]), { worktree });
+    assert.equal(walled.verdictSource, "look-blocked", `refused: ${walled.verdict.reason}`);
+    assert.match(walled.verdict.biggest_gap, /^\[unreachable-zone\] classroom/);
+    const unchanged = await lookRound(level(["hall"]), level(["hall"]), { worktree });
+    assert.equal(unchanged.verdict.pick, "challenger", "a zone this round did not wall off is not its fault");
+    // The blockout is greybox by design: its rounds are held to the place, not to art blockers.
+    const greybox = {
+      phase: "playing",
+      __render: { look: { tags: { walls: { coverage: 0.8, flatCoverage: 0.8, draws: 9, primitiveOnly: true } } } },
+    };
+    const measured = { phase: "playing", __render: { look: { tags: {} } } };
+    const art = await lookRound(greybox, measured, { worktree });
+    assert.equal(art.verdictSource, "look-blocked", "a zone's art part is still held to its art");
+    const blockout = await lookRound(greybox, measured, {
+      worktree,
+      facet: { id: "blockout", title: "Blockout" },
+    });
+    assert.equal(blockout.verdict.pick, "challenger", `the blockout is kept on its checks: ${blockout.verdict.reason}`);
+  });
+
+  it("P2-D1. judges passed soldiers whose torsos collapsed into their legs, from small captures with no close-up or map: every whole-game look photographs the capture set the game registers, and the judges read close-ups for pose and the map for the place", async () => {
+    const { CAPTURE_SET, captureRoles, expandCameraSet } = await import("../../src/harness-seed/loop/capture-set.ts");
+    const registered = [
+      "default",
+      "hero:hall",
+      "hero:yard",
+      "map:top",
+      "closeup:soldier:walk",
+      "closeup:soldier:fire",
+      "eye",
+    ];
+    assert.deepEqual(expandCameraSet(["default", ...CAPTURE_SET], registered), [
+      "default",
+      "hero:hall",
+      "hero:yard",
+      "map:top",
+      "closeup:soldier:walk",
+      "closeup:soldier:fire",
+    ]);
+    assert.deepEqual(
+      expandCameraSet(["default", ...CAPTURE_SET], ["default"]),
+      ["default"],
+      "a game without them asks for nothing more",
+    );
+    assert.deepEqual(
+      captureRoles(registered, { "hero:hall": "interior" }),
+      {
+        "hero:hall": "interior-hero",
+        "hero:yard": "exterior-hero",
+        "map:top": "map-topdown",
+        "closeup:soldier:walk": "closeup:soldier/walk",
+        "closeup:soldier:fire": "closeup:soldier/fire",
+      },
+      "the eval grader's roles.json, from the cameras the look photographed",
+    );
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.PreviewLoad]: () => "about:blank",
+        [HostMethod.PreviewReload]: () => true,
+        [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+        [HostMethod.PreviewStatus]: () => ({ crashed: false, unresponsive: false, loadError: null }),
+        [HostMethod.PreviewCall]: (params) => {
+          if (params.method === PageMethod.Cameras) return registered;
+          if (params.method === PageMethod.Demos || params.method === PageMethod.Eyes) return [];
+          return { ok: true };
+        },
+        [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+        [HostMethod.PreviewState]: () => ({ version: 2, player: { x: 1 } }),
+        [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+        [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0.5 }),
+        [HostMethod.PreviewInput]: () => ({ ok: true, applied: 1, width: 800, height: 600 }),
+        [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+        [HostMethod.PreviewScreenshot]: (params) => ({
+          path: `/runs/shots/${String(params.label)}.jpg`,
+          base64: Buffer.from(String(params.label)).toString("base64"),
+          bytes: 12,
+          stats: { canvas: true, litFraction: 0.4, drawCalls: 40 },
+        }),
+        [HostMethod.PreviewConsole]: () => [],
+        [HostMethod.PreviewGpuErrors]: () => [],
+      },
+    });
+    const evidence = await gatherEvidence(
+      recorder.ctx as never,
+      {
+        run: { runId: "plan2", project: "plan2-game" } as never,
+        iterationId: "001",
+        seed: 1,
+        cameras: ["default", ...CAPTURE_SET],
+      } as never,
+    );
+    const shot = evidence.shots.map((s: { camera: string }) => s.camera);
+    for (const camera of ["hero:hall", "map:top", "closeup:soldier:walk", "closeup:soldier:fire"])
+      assert.ok(shot.includes(camera), `${camera} photographed (shots: ${shot.join(", ")})`);
+    assert.ok(!shot.some((camera: string) => camera.endsWith("*")), "a pattern is never a camera of its own");
+    const { SHIP_REVIEW_FALLBACK } = await import("../../src/harness-seed/loop/ship-review-prompts.ts");
+    assert.match(SHIP_REVIEW_FALLBACK, /closeup: camera .*\[broken-pose\].*map:top .*\[incoherent-place\]/);
+  });
+
+  it("P2-D2. body-cam-6 graded 'largest clean capture 960x540': nothing asked the native capture for a size, so every judge and eval shot drew at the game's world size — a whole-game look asks for the judging size with the lens off, and only a shot drawn at it is clean", async () => {
+    const { JUDGE_CAPTURE_SIZE, CLEAN_MIN, CLEAN_LENS } = await import("../../src/harness-seed/loop/capture-set.ts");
+    assert.ok(JUDGE_CAPTURE_SIZE.width >= CLEAN_MIN.width && JUDGE_CAPTURE_SIZE.height >= CLEAN_MIN.height);
+    assert.ok(CLEAN_MIN.width >= 1600 && CLEAN_MIN.height >= 900, "the eval grader's clean floor");
+    const shots = async (drawn: { width: number; height: number }, captureSize: unknown) => {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.PreviewLoad]: () => "about:blank",
+          [HostMethod.PreviewReload]: () => true,
+          [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+          [HostMethod.PreviewStatus]: () => ({ crashed: false, unresponsive: false, loadError: null }),
+          [HostMethod.PreviewCall]: (params) => {
+            if (params.method === PageMethod.Cameras) return ["default", "map:top"];
+            if (params.method === PageMethod.Demos || params.method === PageMethod.Eyes) return [];
+            return { ok: true };
+          },
+          [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+          [HostMethod.PreviewState]: () => ({ version: 2, player: { x: 1 } }),
+          [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+          [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0.5 }),
+          [HostMethod.PreviewInput]: () => ({ ok: true, applied: 1, width: 800, height: 600 }),
+          [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+          [HostMethod.PreviewScreenshot]: (params) => ({
+            path: `/runs/shots/${String(params.label)}.jpg`,
+            base64: Buffer.from(String(params.label)).toString("base64"),
+            bytes: 12,
+            stats: { canvas: true, litFraction: 0.4, drawCalls: 40, ...drawn },
+          }),
+          [HostMethod.PreviewConsole]: () => [],
+          [HostMethod.PreviewGpuErrors]: () => [],
+        },
+      });
+      const evidence = await gatherEvidence(
+        recorder.ctx as never,
+        {
+          run: { runId: "plan2", project: "plan2-game" } as never,
+          iterationId: "001",
+          seed: 1,
+          cameras: ["default", "map:*"],
+          captureSize,
+        } as never,
+      );
+      return { evidence, asked: recorder.paramsOf(HostMethod.PreviewScreenshot) };
+    };
+    const judged = await shots(JUDGE_CAPTURE_SIZE, JUDGE_CAPTURE_SIZE);
+    const sized = judged.asked.filter((params) => params.surface === "canvas");
+    assert.ok(sized.length >= 2, "every camera shot was asked for");
+    for (const params of sized) {
+      assert.deepEqual(params.size, JUDGE_CAPTURE_SIZE, String(params.label));
+      assert.deepEqual(params.lens, CLEAN_LENS, String(params.label));
+    }
+    const map = judged.evidence.shots.find((shot: { camera: string }) => shot.camera === "map:top");
+    assert.equal(map?.clean, true, "drawn at the judging size: clean");
+    const small = await shots({ width: 960, height: 540 }, JUDGE_CAPTURE_SIZE);
+    const smallMap = small.evidence.shots.find((shot: { camera: string }) => shot.camera === "map:top");
+    assert.equal(smallMap?.clean, false, "a game that drew its world size anyway is not clean");
+    const unsized = await shots(JUDGE_CAPTURE_SIZE, undefined);
+    assert.ok(
+      unsized.asked.every((params) => params.size === undefined),
+      "a facet round's look asks no size",
+    );
+  });
+});

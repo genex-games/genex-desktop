@@ -37,6 +37,7 @@ import { templateMainOf } from "./native-review.ts";
 import { weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
 import * as frameVerdicts from "./frame-verdicts.ts";
 import { readyWaitOf } from "./ready-wait.ts";
+import { CLEAN_LENS, expandCameraSet, isCleanShot } from "./capture-set.ts";
 import { slowBootWarning } from "./destination-budgets.ts";
 import { nativeEvidence, withParity } from "./native-evidence.ts";
 import { type CrashFacts, readCrashFacts } from "./crash-facts.ts";
@@ -158,6 +159,11 @@ export interface GatherOptions {
   keepPaths?: string[];
   /** Look at this size: a leased window is sized before it loads (`preview.viewport`), never the live view. */
   viewport?: { width: number; height: number } | null;
+  /**
+   * Ask every camera shot to draw at this size with the clean lens (capture-set.ts): a whole-game
+   * look's frames are the eval grader's clean set. A port that cannot draws its own size.
+   */
+  captureSize?: { width: number; height: number } | null;
   /**
    * The build's camera wiring is this look's to answer for (default): a part that does not own the
    * entry cannot rewire the cameras, so a dead cameras contract is a warning for it, never a failure.
@@ -857,6 +863,7 @@ async function webEvidence(
     inheritedConsole = [],
     keepPaths = [],
     viewport = null,
+    captureSize = null,
     camerasOwned = true,
   }: GatherOptions,
 ): Promise<Evidence> {
@@ -887,6 +894,7 @@ async function webEvidence(
     // The bot's race is read by its position and finish: cut last, like the board's own paths.
     keepPaths: challenge === true ? [...new Set([...kept, ...RACE_PATHS])] : kept,
     viewport,
+    captureSize,
     camerasOwned,
     since: new Date().toISOString(),
   };
@@ -1642,10 +1650,12 @@ async function takeShot(
   }
   askedFor.push(camera);
   if (look.emptyScene && !floor) await recordCameraPose(look, camera);
+  const sized = look.captureSize ? { size: look.captureSize, lens: CLEAN_LENS } : {};
   const shot = await ctx.call(HostMethod.PreviewScreenshot, {
     runId: run.runId,
     label: `${prefix}/screenshots/${label}`,
     surface: "canvas",
+    ...sized,
     ...h,
   });
   // The surface the port says it PHOTOGRAPHED, not the one we asked for: a canvas read that
@@ -1659,6 +1669,8 @@ async function takeShot(
     stats: shot.stats ?? null,
     surface: photographed(shot),
     registered: !unregistered,
+    // A frame asked for at the judging size and drawn at it is the grader's clean capture.
+    ...(look.captureSize ? { clean: isCleanShot(shot.stats) } : {}),
   };
 }
 
@@ -1728,10 +1740,12 @@ async function chooseCameras(look: Look): Promise<void> {
   else if (Array.isArray(cameras) && cameras.length > 0) {
     // A facet's camera that is a demo's end or the drive's corner is a frame the pass takes on its
     // own, never a viewpoint to ask debugCamera for (nor one "not registered in config.cameras").
-    const viewpoints = cameras.map(String).filter((name) => !isPassFrame(name));
+    // A `prefix*` camera is every registered one under it, the whole-game capture set (capture-set.ts).
+    look.registeredCameras = await registeredCameraNames(look);
+    const asked = cameras.map(String).filter((name) => !isPassFrame(name));
+    const viewpoints = expandCameraSet(asked, look.registeredCameras);
     for (const name of [DEFAULT_CAMERA, ...viewpoints]) addCamera(cameraNames, name);
     for (const name of wantEyes) addCamera(cameraNames, name);
-    look.registeredCameras = await registeredCameraNames(look);
   } else {
     await declaredCameraNames(look, cameraNames, floorCameras);
     for (const name of wantEyes) addCamera(cameraNames, name);

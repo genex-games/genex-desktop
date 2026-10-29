@@ -27,6 +27,7 @@
  * so a kept older copy of either never stops it linking.
  */
 import { heroCameras } from "./sourcing.ts";
+import { CAPTURE_SET } from "../capture-set.ts";
 import { asksForLook } from "../look-bar.ts";
 import { shortSha } from "../git.ts";
 import { isRunning, WorkerMode } from "../outcomes.ts";
@@ -98,6 +99,10 @@ export interface LastShip {
   defects: ShipDefect[];
   doNotRegress?: string[];
   at: number;
+  /** The eval grader's role for each capture-set camera the look photographed (capture-set.ts `captureRoles`). */
+  roles?: Record<string, string>;
+  /** The cameras whose frame was drawn at the judging size with the clean lens (capture-set.ts `isCleanShot`). */
+  clean?: string[];
 }
 
 /** When the next regular look is due, as the wake loop keeps it, and the clocks it is read against. */
@@ -565,9 +570,10 @@ export async function artDirectionPass(loopRun: LoopRun, how: ArtDirectionAsk = 
   if (ctx.cancelled) return { head, review: null, skipped: ART_SKIPPED.stopped };
   if (!movedBeyondStart(loopRun, head)) return { head, review: null, skipped: ART_SKIPPED.nothingNew };
   if (state.healthByHead.get(head) === false) return { head, review: null, skipped: ART_SKIPPED.doesNotLoad };
-  // Every part's hero camera is in the look (sourcing.ts `heroCameras`), beside the default view.
+  // Every part's hero camera is in the look (sourcing.ts `heroCameras`), beside the default view,
+  // and the whole-game capture set the game registers: zones, the map, character close-ups (capture-set.ts).
   const heroes = heroCameras(state.plan);
-  const cameras = ask.cameras ?? (heroes.length ? [DEFAULT_CAMERA, ...heroes].join(",") : undefined);
+  const cameras = ask.cameras ?? [DEFAULT_CAMERA, ...heroes, ...CAPTURE_SET].join(",");
   const judged = {
     ...ask,
     ...(cameras ? { cameras } : {}),

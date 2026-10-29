@@ -10,12 +10,14 @@
 import { asksForLook } from "../look-bar.ts";
 import { auditProvenance } from "../provenance.ts";
 import { measuredBlockers, presentOnly } from "../temporal-checks.ts";
+import { placeFindings, type LevelPlan } from "../level-plan.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 
 /** Does this evidence carry anything the harness measures: engine facts, frame statistics or a demo's state. */
 function measurable(evidence: AnyRecord | null | undefined): boolean {
   if (!evidence) return false;
-  if ((evidence.state as AnyRecord | undefined)?.__render) return true;
+  const state = evidence.state as AnyRecord | undefined;
+  if (state?.__render || state?.__level) return true;
   const shots = Array.isArray(evidence.shots) ? (evidence.shots as AnyRecord[]) : [];
   if (shots.some((shot) => shot?.stats)) return true;
   return Object.keys((evidence.demoStates ?? {}) as object).length > 0;
@@ -24,20 +26,23 @@ function measurable(evidence: AnyRecord | null | undefined): boolean {
 /**
  * The incumbent's findings by key and severity: its own evidence measured now, raised by what its
  * kept round recorded; null when neither says anything, so the round is blamed for nothing. Its
- * provenance is audited against `root`, the folder the challenger's files are read from.
+ * provenance is audited against `root`, the folder the challenger's files are read from, and its
+ * place against the same level plan (level-plan.ts).
  */
 export async function incumbentFindings(
   run: AnyRecord,
   evidence: AnyRecord | null | undefined,
   kept: Readonly<Record<string, number>> | null | undefined,
   root: string | null,
+  level: LevelPlan | null = null,
 ): Promise<Record<string, number> | null> {
   const recorded = kept ?? {};
   const seen = measurable(evidence);
   if (!seen && Object.keys(recorded).length === 0) return null;
   const lookBar = asksForLook(run as never);
   const audit = seen && lookBar ? await auditProvenance(run, evidence?.state as AnyRecord, root).catch(() => []) : [];
-  const now = seen ? [...presentOnly(audit), ...measuredBlockers(run, evidence, lookBar)] : [];
+  const place = seen ? placeFindings(evidence?.state as AnyRecord, level) : [];
+  const now = seen ? [...presentOnly(audit), ...measuredBlockers(run, evidence, lookBar), ...place] : [];
   const out: Record<string, number> = Object.fromEntries(now.map((finding) => [finding.key, finding.severity]));
   for (const [key, severity] of Object.entries(recorded)) out[key] = Math.max(out[key] ?? 0, severity);
   return out;

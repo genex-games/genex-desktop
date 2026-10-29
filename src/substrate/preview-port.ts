@@ -4,6 +4,7 @@
  * proof the port carries no Electron dependency.
  */
 import type { CaptureProvenance } from "../shared/build-preview.ts";
+import type { NativeCaptureLens, NativeCaptureSize } from "../shared/native-contract.ts";
 import type { PageUi, PageUiAnswer } from "./page-ui.ts";
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PixelDiff, PixelStats } from "./pixel-stats.ts";
@@ -179,6 +180,15 @@ export interface PreviewPort {
   screenshotWithStats?(
     quality?: number,
     opts?: { page?: boolean; surface?: CaptureSurface },
+  ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface?: CaptureSurface; provenance?: CaptureProvenance }>;
+  /**
+   * Optional: one capture drawn at `size` with `lens` (a Rust · wgpu game's native capture). A port
+   * that draws only its own size has none; a game that refuses the size rejects.
+   */
+  screenshotAt?(
+    size: NativeCaptureSize,
+    quality?: number,
+    lens?: NativeCaptureLens,
   ): Promise<{ jpeg: Buffer; stats: PreviewPixelStats; surface?: CaptureSurface; provenance?: CaptureProvenance }>;
   /**
    * Optional: what the page's own DOM paints over the game — the studio's second eye (M4.5a).

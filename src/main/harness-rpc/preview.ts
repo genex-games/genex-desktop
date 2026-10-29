@@ -58,6 +58,8 @@ import { keptPreRustNotice } from "../seed-upgrade-notice.ts";
 import { seedNightRefusal } from "../../substrate/seed-upgrade.ts";
 
 /** The only stage a profile may be taken for. */
+/** The long side of a sized capture's inline copy: past what a vision model reads, under one request's limit. */
+const SIZED_INLINE_PX = 1920;
 const OPTIMIZATION_STAGE = "optimization";
 /** The one purpose a borrowed window may name: a headless window fit for profiling. */
 const OPTIMIZATION_PURPOSE = "optimization" satisfies NonNullable<
@@ -481,7 +483,8 @@ async function screenshot(core: StudioCore, x: CoreInternals, p: HarnessParams<t
   // game to live on. `page: true` is its permanent alias — an installed harness
   // workspace is an agent-editable copy of the seed and may keep sending it for ever.
   const asked: CaptureSurface = p?.surface ?? (p?.page ? "page" : "canvas");
-  const shot = await captureSurface(preview, quality, asked);
+  const sized = p?.size ? { size: p.size, ...(p.lens ? { lens: p.lens } : {}) } : null;
+  const shot = await captureSurface(preview, quality, asked, sized);
   const { jpeg, stats } = shot;
   const label = p?.label ?? "shot";
   const saved = p?.runId ? await core.saveRunArtifact(p.runId, `${label}.jpg`, jpeg) : null;
@@ -493,7 +496,16 @@ async function screenshot(core: StudioCore, x: CoreInternals, p: HarnessParams<t
   if (p?.runId && shot.provenance) {
     await core.saveRunArtifact(p.runId, `${label}.provenance.json`, Buffer.from(JSON.stringify(shot.provenance)));
   }
-  return { base64: jpeg.toString("base64"), bytes: jpeg.length, path: saved, stats, surface: shot.surface };
+  // A sized frame is saved whole (the eval grader's clean capture, close-up crops); the judge's
+  // inline copy is downscaled, since fourteen 4K frames would outgrow one model request.
+  const inline = sized ? await judgeCopy(preview, jpeg, quality) : jpeg;
+  return { base64: inline.toString("base64"), bytes: inline.length, path: saved, stats, surface: shot.surface };
+}
+
+/** A sized frame's inline copy: its long side at most `SIZED_INLINE_PX`, or the frame when the port cannot resize. */
+async function judgeCopy(preview: PreviewPort, jpeg: Buffer, quality: number): Promise<Buffer> {
+  if (!preview.resizeImage) return jpeg;
+  return preview.resizeImage(jpeg, SIZED_INLINE_PX, quality).catch(() => jpeg);
 }
 
 async function crop(core: StudioCore, x: CoreInternals, p: HarnessParams<typeof HostMethod.PreviewCrop>) {

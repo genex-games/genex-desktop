@@ -16,10 +16,15 @@ import { roundStage } from "../stage.ts";
 import { keptByBlock } from "../build-block.ts";
 import { blockReason } from "../build-block-prompts.ts";
 import { tasteCamerasOf } from "../taste-cameras.ts";
-import { asksForLook } from "../../look-bar.ts";
+import { asksForLook, LookBlocker } from "../../look-bar.ts";
 import { auditProvenance } from "../../provenance.ts";
 import { addedMeasured, measuredBlockers, presentOnly } from "../../temporal-checks.ts";
 import { incumbentFindings } from "../incumbent-findings.ts";
+import { featuresTurnedOff } from "../../feature-off.ts";
+import { LEVEL_PLAN, parseLevelPlan, placeFindings } from "../../level-plan.ts";
+import { BLOCKOUT_PART } from "../../director/blockout.ts";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 /** How much of the move a verdict's reason quotes. */
 const MOVE_QUOTED = 120;
@@ -109,7 +114,7 @@ function tasteReason(loop: FacetLoop, round: FacetRound, decided: Decision): str
 /**
  * What the harness measures itself on the challenger: the provenance audit (provenance.ts) on a run
  * with a visual bar, the luminance band, the doorway's exposure and the sprint's comfort
- * (temporal-checks.ts). A blocking finding the accepted build did not already have is one the round
+ * (temporal-checks.ts), and on a visual bar any look feature it switches off (feature-off.ts). A blocking finding the accepted build did not already have is one the round
  * added; what it already had is its own evidence measured the same way (incumbent-findings.ts).
  * The findings ride on the round by key, and become the incumbent's when it is kept (keep.ts).
  */
@@ -118,14 +123,30 @@ async function measureRound(loop: FacetLoop, round: FacetRound): Promise<void> {
   const lookBar = asksForLook(run);
   const root = loop.worktree ?? loop.workdir;
   const audit = lookBar ? await auditProvenance(run, round.evidence.state, root).catch(() => []) : [];
-  const measured = [...presentOnly(audit), ...measuredBlockers(run, round.evidence, lookBar)];
+  const level = root ? parseLevelPlan(await readFile(path.join(root, LEVEL_PLAN), "utf8").catch(() => null)) : null;
+  const place = placeFindings(round.evidence.state, level);
+  const measured = [...presentOnly(audit), ...measuredBlockers(run, round.evidence, lookBar), ...place];
   round.measured = Object.fromEntries(measured.map((finding) => [finding.key, finding.severity]));
-  const before = await incumbentFindings(run, loop.incumbentEvidence, loop.incumbentMeasured, root);
+  const before = await incumbentFindings(run, loop.incumbentEvidence, loop.incumbentMeasured, root, level);
   const added = before ? addedMeasured(measured, before) : [];
-  if (!added.length) return;
-  round.taste.addedBlockers = [...new Set([...(round.taste.addedBlockers ?? []), ...added])];
-  round.taste.satisfied = false;
+  // A feature switched off is relative to the accepted build by nature (feature-off.ts).
+  if (lookBar) added.push(...featuresTurnedOff(round.evidence.state, loop.incumbentEvidence?.state));
+  const blockers = [...new Set([...(round.taste.addedBlockers ?? []), ...added])];
+  round.taste.addedBlockers = loop.facet?.id === BLOCKOUT_PART ? blockers.filter(holdsBlockout) : blockers;
+  if (round.taste.addedBlockers.length) round.taste.satisfied = false;
 }
+
+/** The blockers that hold a blockout round: the place's and a switched-off feature, never its greybox art. */
+const BLOCKOUT_HOLDS: ReadonlySet<string> = new Set([
+  LookBlocker.FeatureOff,
+  LookBlocker.IncoherentPlace,
+  LookBlocker.UnreachableZone,
+  LookBlocker.NoExit,
+  LookBlocker.DeadEnd,
+  LookBlocker.Unbounded,
+]);
+const holdsBlockout = (text: string): boolean =>
+  [...text.matchAll(/\[([a-z-]+)\]/gi)].some((tag) => BLOCKOUT_HOLDS.has((tag[1] ?? "").toLowerCase()));
 
 /**
  * What a taste-won round says about its move, when it carried one. A move somebody asked for that
