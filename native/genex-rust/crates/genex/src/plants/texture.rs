@@ -169,10 +169,10 @@ fn furrowed(u: f32, v: f32, seed: u32, deep: bool) -> BarkTexel {
     let warp = 0.06 * (fbm(u, v, [4, 4], 3, seed + 3) - 0.5);
     let cells = if deep { [9, 3] } else { [12, 2] };
     let ridge = ridged(u + warp, v, cells, 4, seed);
-    let crack = worley(u, v, [10, 22], seed + 11);
-    let broken = smooth(((crack.1 - crack.0) * 6.0).min(1.0));
+    let crack = worley(u, v, [6, 3], seed + 11);
+    let broken = smooth(((crack.1 - crack.0) * 3.0).min(1.0));
     let height = (libm::powf(ridge, 1.6) * (0.55 + 0.45 * broken)).clamp(0.0, 1.0);
-    let (furrow, top) = if deep { ([0.07, 0.065, 0.06], [0.33, 0.31, 0.28]) } else { ([0.09, 0.075, 0.06], [0.37, 0.32, 0.27]) };
+    let (furrow, top) = if deep { ([0.05, 0.045, 0.04], [0.25, 0.235, 0.21]) } else { ([0.05, 0.04, 0.032], [0.26, 0.225, 0.19]) };
     let grain = fbm(u, v, [48, 96], 2, seed + 19);
     let mut albedo = mix3(furrow, top, smooth(height));
     albedo = scale3(albedo, 0.85 + 0.3 * grain);
@@ -503,8 +503,8 @@ fn paint_leafy_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &m
     };
     let shape = profile(kind);
     let mut stems = vec![([0.5, 0.99], [0.5 + 0.12 * rng.signed(), 0.12], 0.012)];
-    for _ in 0..3 {
-        let t = 0.25 + 0.5 * rng.unit();
+    for _ in 0..4 {
+        let t = 0.2 + 0.55 * rng.unit();
         let from = [lerp(stems[0].0[0], stems[0].1[0], t), lerp(stems[0].0[1], stems[0].1[1], t)];
         let side = if rng.unit() < 0.5 { -1.0 } else { 1.0 };
         stems.push((from, [from[0] + side * (0.25 + 0.15 * rng.unit()), from[1] - 0.25 - 0.2 * rng.unit()], 0.006));
@@ -513,7 +513,7 @@ fn paint_leafy_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &m
         canvas.stroke(*a, *b, [*radius, radius * 0.4], twig);
     }
     for (a, b, _) in &stems {
-        let count = 4 + rng.below(4);
+        let count = 7 + rng.below(4);
         let dir = libm::atan2f(b[0] - a[0], a[1] - b[1]);
         for i in 0..count {
             let t = 0.2 + 0.8 * (i as f32 + rng.unit() * 0.5) / count as f32;
@@ -592,14 +592,14 @@ fn paint_bare_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &mu
 
 /// A conifer spray: a stem with needles on both sides, side shoots with their own.
 fn paint_needles(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &mut Rng, twig: [f32; 3]) {
-    let (needle, spacing) = if kind == LeafKind::Pine { (0.11, 0.012) } else { (0.045, 0.007) };
+    let (needle, spacing) = if kind == LeafKind::Pine { (0.12, 0.007) } else { (0.06, 0.004) };
     let bare = season == Season::Dead;
     let mut stems = vec![([0.5, 0.99], [0.5 + 0.05 * rng.signed(), 0.06], 0.01)];
-    for i in 0..4 {
-        let t = 0.2 + 0.18 * i as f32;
+    for i in 0..7 {
+        let t = 0.12 + 0.11 * i as f32;
         let from = [lerp(stems[0].0[0], stems[0].1[0], t), lerp(stems[0].0[1], stems[0].1[1], t)];
         let side = if i % 2 == 0 { -1.0 } else { 1.0 };
-        stems.push((from, [from[0] + side * (0.3 - 0.05 * i as f32), from[1] - 0.18], 0.005));
+        stems.push((from, [from[0] + side * (0.34 - 0.035 * i as f32), from[1] - 0.16], 0.005));
     }
     for (a, b, radius) in &stems {
         canvas.stroke(*a, *b, [*radius, radius * 0.5], twig);
@@ -617,7 +617,7 @@ fn paint_needles(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &mut 
                 let reach = needle * (0.7 + 0.4 * rng.unit()) * (1.0 - 0.3 * t);
                 let tip = [at[0] + libm::sinf(angle) * reach, at[1] - libm::cosf(angle) * reach];
                 let color = leaf_color(kind, if bare { Season::Dead } else { season }, rng);
-                canvas.stroke(at, tip, [0.0028, 0.0012], color);
+                canvas.stroke(at, tip, [0.0036, 0.0016], color);
             }
         }
     }
@@ -741,9 +741,10 @@ mod tests {
         for kind in [BarkKind::Birch, BarkKind::Furrowed, BarkKind::Plates, BarkKind::Scaly] {
             let maps = bark(kind, Season::Leafy, 64, 7);
             let row = |y: usize| &maps.albedo.rgba[y * 64 * 4..(y + 1) * 64 * 4];
-            let (top, bottom) = (row(0), row(63));
-            let step: i32 = top.iter().zip(bottom).map(|(a, b)| (i32::from(*a) - i32::from(*b)).abs()).sum::<i32>() / 64;
-            assert!(step < 60, "{kind:?}: the wrap from the last row to the first steps by {step}");
+            let step = |a: usize, b: usize| row(a).iter().zip(row(b)).map(|(x, y)| (i32::from(*x) - i32::from(*y)).abs()).sum::<i32>() as f32;
+            let inside = (0..63).map(|y| step(y, y + 1)).sum::<f32>() / 63.0;
+            let wrap = step(63, 0);
+            assert!(wrap < 2.5 * inside, "{kind:?}: the wrap from the last row to the first steps by {wrap} against {inside} inside");
         }
     }
 

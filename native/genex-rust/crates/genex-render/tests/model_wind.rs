@@ -75,7 +75,7 @@ fn every_module_that_draws_instance_rows_sways_them_and_validates() {
     ];
     for (name, source) in modules {
         let module = naga::front::wgsl::parse_str(source).unwrap_or_else(|error| panic!("{name}: {}", error.emit_to_string(source)));
-        let mut validator = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty());
+        let mut validator = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::CUBE_ARRAY_TEXTURES);
         validator.validate(&module).unwrap_or_else(|error| panic!("{name}: {error:?}"));
         let sways = module.functions.iter().any(|(_, function)| function.name.as_deref() == Some("gx_sway_offset"));
         assert!(sways, "{name} carries the sway");

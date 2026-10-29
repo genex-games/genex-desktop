@@ -18,8 +18,8 @@ use game::World;
 
 const GENEX_TOML: &str = include_str!("../../../../../src/game-template-rust/docs/examples/forest/genex.toml");
 const WORLD_SIZE: [u32; 2] = [1600, 900];
-/// The tags every frame draws: the ground, each stand and the heroes.
-const TAGS: [&str; 14] = ["ground", "winter-birch", "dead-birch", "winter-shrub", "straw", "winter-spruce", "oak", "maple", "pine", "willow", "shrub", "grass", "summer-spruce", "heroes"];
+/// The tags every frame draws: each stand and the heroes (the terrain is no tagged draw).
+const TAGS: [&str; 13] = ["winter-birch", "dead-birch", "winter-shrub", "straw", "winter-spruce", "oak", "maple", "pine", "willow", "shrub", "grass", "summer-spruce", "heroes"];
 
 fn forest() -> Game<World> {
     let mut game = Game::new(World::default()).title("Forest").world_size(WORLD_SIZE[0], WORLD_SIZE[1]);
@@ -91,7 +91,6 @@ fn metal_the_grove_and_the_forest_capture_close_wide_and_in_the_wind() {
     let render = &state["__render"];
     assert!(render.get("missingModels").is_none(), "{render:?}");
     assert!(render.get("lodRefused").is_none(), "{render:?}");
-    eprintln!("lod: {}", state["volatile"]["render"]["lod"]);
 }
 
 /// A settled capture of `view` at High, written as `<name>-high.png`; answers its BGRA texels.
