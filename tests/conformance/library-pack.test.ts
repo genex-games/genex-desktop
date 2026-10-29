@@ -69,6 +69,41 @@ describe("Genex Library pack steps", () => {
     assert.equal(primitive?.extras, undefined, "no stale level chain left on the promoted mesh");
   });
 
+  it("cuts a scan of loose triangles (nothing to weld or collapse) under its budget by clustering", async () => {
+    // A bumpy sheet whose every corner has its own UV, as a photogrammetry export has: no two vertices merge.
+    const n = 60;
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const point = (x: number, y: number) => [x / n, 0.1 * Math.sin((x / n) * 9) * Math.cos((y / n) * 7), y / n];
+    let seed = 1;
+    const noise = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        for (const [dx, dy] of [
+          [0, 0],
+          [0, 1],
+          [1, 0],
+          [1, 0],
+          [0, 1],
+          [1, 1],
+        ] as const) {
+          positions.push(...point(x + dx, y + dy));
+          uvs.push(noise(), noise());
+        }
+      }
+    }
+    const indices = Uint32Array.from({ length: positions.length / 3 }, (_, i) => i);
+    const soup = meshToGlb({
+      name: "soup",
+      primitives: [{ positions: new Float32Array(positions), uvs: new Float32Array(uvs), indices }],
+      materials: [],
+    });
+    assert.equal(glbTriangles(soup), 7_200);
+    const { bytes, triangles } = await decimateGlb(soup, 1_500);
+    assert.ok(triangles <= 1_500 && triangles >= 150, `${triangles} triangles`);
+    assert.equal(glbTriangles(bytes), triangles);
+  });
+
   it("leaves a model already within its budget byte for byte", async () => {
     const glb = bumpyGrid(10);
     const { bytes, triangles } = await decimateGlb(glb, 5_000);
