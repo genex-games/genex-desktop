@@ -6,6 +6,8 @@
 //!
 //!   GENEX_REQUIRE_METAL=1 node scripts/toolchains/rust-env.ts -- \
 //!     cargo test -p template-examples --release --offline --locked --test blockout -- --ignored metal --nocapture
+//!
+//! The captures are the example's golden frames (`docs/examples/blockout/captures/{map,player}.jpg`).
 
 #[path = "../../../../../src/game-template-rust/docs/examples/blockout/src/game.rs"]
 mod game;
@@ -62,6 +64,11 @@ fn the_plan_is_walkable_from_the_spawn_with_a_tag_and_a_hero_camera_per_zone() {
     assert_eq!(level["deadEnds"], json!([]), "the office is a dead end the plan means");
     assert_eq!(level["zones"]["hall"]["exits"], 4, "the hall's four ways on");
     assert_eq!(level["bounded"], true, "fences, walls and the gate hold the player in");
+    let plan = runtime.state()["plan"].clone();
+    assert_eq!(plan["connections"][0], "front-yard -> lobby: door", "the plan prints as docs/LEVEL.md's lines");
+    assert_eq!(plan["exits"], json!(["back-yard: gate"]));
+    assert_eq!(plan["spawns"], json!(["front-yard"]));
+    assert_eq!(plan["zones"].as_array().map(Vec::len), Some(PLAN.zones.len()));
     let cameras = runtime.cameras();
     assert!(cameras.iter().any(|name| name == "map:top"), "a top-down map camera: {cameras:?}");
     let frame = runtime.frame(View::Game).expect("a frame");
@@ -72,6 +79,16 @@ fn the_plan_is_walkable_from_the_spawn_with_a_tag_and_a_hero_camera_per_zone() {
     }
 }
 
+/// A broken plan and the report it must give.
+struct Case {
+    name: &'static str,
+    plan: &'static Plan,
+    unreachable: Vec<&'static str>,
+    exits: Value,
+    dead_ends: Value,
+    bounded: bool,
+}
+
 #[test]
 fn a_missing_door_exit_or_fence_or_a_door_off_its_wall_shows_in_the_level_report() {
     let office = PLAN.links.iter().position(|link| link.to == "office").expect("the office door");
@@ -80,21 +97,27 @@ fn a_missing_door_exit_or_fence_or_a_door_off_its_wall_shows_in_the_level_report
     let far_exit = Box::leak(Box::new(Plan { exits: Box::leak(Box::new([Exit { at: vec2(0.0, -30.0), ..PLAN.exits[0] }])), ..PLAN }));
     let east_fence = |edge: &&Boundary| !(edge.zone == "front-yard" && edge.from.x == 12.0);
     let open_side = Box::leak(Box::new(Plan { boundary: PLAN.boundary.iter().filter(east_fence).copied().collect::<Vec<_>>().leak(), ..PLAN }));
-    // (case, plan, unreachable zones, exit zones, unplanned dead ends, bounded)
-    let cases: [(&str, &'static Plan, Vec<&str>, Value, Value, bool); 6] = [
-        ("no back door", without_link("hall", "back-yard"), vec!["back-yard"], json!([]), json!([]), true),
-        ("no front door", without_link("front-yard", "lobby"), vec!["lobby", "workshop", "office", "hall", "back-yard"], json!([]), json!([]), true),
-        ("an exit off the floor, its gate a hole", far_exit, vec![], json!([]), json!([]), false),
-        ("a door off its wall line", with_links(off_wall), vec!["office"], json!(["back-yard"]), json!([]), true),
-        ("no lobby door to the workshop", without_link("lobby", "workshop"), vec![], json!(["back-yard"]), json!([{ "zone": "workshop", "at": [-9.0, 0.0, 7.0] }]), true),
-        ("no fence on the front yard's east side", open_side, vec![], json!(["back-yard"]), json!([]), false),
+    let cases = [
+        Case { name: "no back door", plan: without_link("hall", "back-yard"), unreachable: vec!["back-yard"], exits: json!([]), dead_ends: json!([]), bounded: true },
+        Case { name: "no front door", plan: without_link("front-yard", "lobby"), unreachable: vec!["lobby", "workshop", "office", "hall", "back-yard"], exits: json!([]), dead_ends: json!([]), bounded: true },
+        Case { name: "an exit off the floor, its gate a hole", plan: far_exit, unreachable: vec![], exits: json!([]), dead_ends: json!([]), bounded: false },
+        Case { name: "a door off its wall line", plan: with_links(off_wall), unreachable: vec!["office"], exits: json!(["back-yard"]), dead_ends: json!([]), bounded: true },
+        Case {
+            name: "no lobby door to the workshop",
+            plan: without_link("lobby", "workshop"),
+            unreachable: vec![],
+            exits: json!(["back-yard"]),
+            dead_ends: json!([{ "zone": "workshop", "at": [-9.0, 0.0, 7.0] }]),
+            bounded: true,
+        },
+        Case { name: "no fence on the front yard's east side", plan: open_side, unreachable: vec![], exits: json!(["back-yard"]), dead_ends: json!([]), bounded: false },
     ];
-    for (name, plan, gone, exits, dead_ends, bounded) in cases {
-        let level = level(plan);
-        assert_eq!(unreachable(&level), gone, "{name}: {level:#}");
-        assert_eq!(level["exits"], exits, "{name}: the exits");
-        assert_eq!(level["deadEnds"], dead_ends, "{name}: the dead ends");
-        assert_eq!(level["bounded"], bounded, "{name}: the boundary");
+    for case in cases {
+        let (name, level) = (case.name, level(case.plan));
+        assert_eq!(unreachable(&level), case.unreachable, "{name}: {level:#}");
+        assert_eq!(level["exits"], case.exits, "{name}: the exits");
+        assert_eq!(level["deadEnds"], case.dead_ends, "{name}: the dead ends");
+        assert_eq!(level["bounded"], case.bounded, "{name}: the boundary");
     }
 }
 

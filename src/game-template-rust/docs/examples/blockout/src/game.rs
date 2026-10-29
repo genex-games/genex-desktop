@@ -6,7 +6,8 @@
 //! Everything is built from the plan: floors, walls with an opening at every link, the boundary,
 //! the colliders, a nav baked from those colliders, a `zone:<id>` tag per zone, a `hero:<zone>`
 //! camera per zone, the top-down `map:top` camera, and the `__level` probe that says whether every
-//! zone and exit can be walked to from the spawn and whether the boundary holds.
+//! zone and exit can be walked to from the spawn and whether the boundary holds, beside the `plan`
+//! probe that prints the plan as the lines of `docs/LEVEL.md`.
 
 use genex::nav::{Nav, NavArea, NavConfig, NavFilter, NavInput, NavMesh};
 use genex::physics::ColliderBuilder;
@@ -86,6 +87,7 @@ pub fn wire(game: &mut Game<World>, plan: &'static Plan) {
         game.named_camera(&format!("hero:{}", zone.id), move |_sim| camera);
     }
     game.probe("__level", move |sim| level(&sim.nav, plan));
+    game.probe("plan", move |_sim| plan.lines());
 }
 
 /// The colliders of every solid box, then the nav baked from them.

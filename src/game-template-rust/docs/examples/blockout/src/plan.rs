@@ -40,6 +40,15 @@ pub enum BoundaryKind {
 }
 
 impl BoundaryKind {
+    /// The kind as `docs/LEVEL.md` writes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            BoundaryKind::Fence => "fence",
+            BoundaryKind::LockedDoor => "locked-door",
+            BoundaryKind::Backdrop => "backdrop",
+        }
+    }
+
     /// How high it stands, in metres: above the character's jump (about 1.1 m) where it must hold.
     pub fn height(self) -> f32 {
         match self {
@@ -119,6 +128,18 @@ impl Plan {
     /// How many connections touch zone `id`: its ways in and out.
     pub fn links_of(&self, id: &str) -> usize {
         self.links.iter().filter(|link| link.from == id || link.to == id).count()
+    }
+
+    /// The plan as the `- ` lines of `docs/LEVEL.md`, section by section, so the two can be compared.
+    pub fn lines(&self) -> Value {
+        let spawn = self.zones.iter().find(|zone| zone.holds(self.spawn)).map_or("", |zone| zone.id);
+        json!({
+            "zones": self.zones.iter().map(|zone| format!("{}: {}", zone.id, zone.purpose)).collect::<Vec<_>>(),
+            "connections": self.links.iter().map(|link| format!("{} -> {}: {}", link.from, link.to, link.kind.name())).collect::<Vec<_>>(),
+            "exits": self.exits.iter().map(|exit| format!("{}: {}", exit.zone, exit.kind.name())).collect::<Vec<_>>(),
+            "spawns": [spawn],
+            "boundary": self.boundary.iter().map(|edge| format!("{}: {}", edge.zone, edge.kind.name())).collect::<Vec<_>>(),
+        })
     }
 
     /// Whether zone `id` is a dead end the plan means: one with a boundary or an exit of its own
