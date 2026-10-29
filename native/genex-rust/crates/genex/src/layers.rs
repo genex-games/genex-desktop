@@ -4,7 +4,7 @@
 //! - [`Cover`]: snow, dust, moss or wetness on whatever faces up, by material
 //!   ([`crate::Material::with_cover`]) or on every draw at once ([`crate::Frame::cover_world`]).
 //!   Props get snow this way, never from white boxes laid on top of them.
-//! - [`Layer`]: a second set of maps height-blended in by a mask ([`crate::Material::with_layer`]).
+//! - [`MaterialLayer`]: a second set of maps height-blended in by a mask ([`crate::Material::with_layer`]).
 //! - [`Weather`]: snow, rain or dust falling around the camera in two lit layers with gusts, and
 //!   the cover it lays as it falls ([`crate::Frame::weather`]).
 //!
@@ -95,7 +95,7 @@ impl Cover {
 /// where they have height maps (mortar first fills the joints, moss the low parts of a stone):
 /// [`crate::Material::with_layer`].
 #[derive(Clone, Debug, PartialEq)]
-pub struct Layer {
+pub struct MaterialLayer {
     pub(crate) base: Option<Arc<str>>,
     pub(crate) normal: Option<Arc<str>>,
     pub(crate) orm: Option<Arc<str>>,
@@ -108,18 +108,18 @@ pub struct Layer {
     pub(crate) blend_depth: f32,
 }
 
-impl Layer {
+impl MaterialLayer {
     /// A layer of the game's textures (paths under `assets/`; a missing one is left out): base
     /// colour (sRGB), normal map and ORM (red occlusion, green roughness, blue metallic), repeating
     /// `tiles` times per tile of the material's own maps. Masked by a world noise of 2 m patches
-    /// until [`Layer::masked_by`] says otherwise.
-    pub fn textured(base: &str, normal: &str, orm: &str, tiles: f32) -> Layer {
-        Layer { base: Some(Arc::from(base)), normal: Some(Arc::from(normal)), orm: Some(Arc::from(orm)), tiles, ..Layer::color(Color::WHITE) }
+    /// until [`MaterialLayer::masked_by`] says otherwise.
+    pub fn textured(base: &str, normal: &str, orm: &str, tiles: f32) -> MaterialLayer {
+        MaterialLayer { base: Some(Arc::from(base)), normal: Some(Arc::from(normal)), orm: Some(Arc::from(orm)), tiles, ..MaterialLayer::color(Color::WHITE) }
     }
 
     /// A flat layer of `color` (no maps).
-    pub fn color(color: Color) -> Layer {
-        Layer {
+    pub fn color(color: Color) -> MaterialLayer {
+        MaterialLayer {
             base: None,
             normal: None,
             orm: None,
@@ -134,29 +134,29 @@ impl Layer {
     }
 
     /// This layer with a height map (`assets/<path>`, red, white high): the blend follows it.
-    pub fn with_height(self, path: &str) -> Layer {
-        Layer { height: Some(Arc::from(path)), ..self }
+    pub fn with_height(self, path: &str) -> MaterialLayer {
+        MaterialLayer { height: Some(Arc::from(path)), ..self }
     }
 
     /// This layer blended in by `mask`: [`LayerMask::Noise`] in patches of `metres`,
     /// [`LayerMask::Up`] where the surface faces up.
-    pub fn masked_by(self, mask: LayerMask, metres: f32) -> Layer {
-        Layer { mask, mask_metres: metres, ..self }
+    pub fn masked_by(self, mask: LayerMask, metres: f32) -> MaterialLayer {
+        MaterialLayer { mask, mask_metres: metres, ..self }
     }
 
     /// This layer's colour multiplied in (sRGB; white keeps its texture's).
-    pub fn with_tint(self, tint: Color) -> Layer {
-        Layer { tint, ..self }
+    pub fn with_tint(self, tint: Color) -> MaterialLayer {
+        MaterialLayer { tint, ..self }
     }
 
     /// This layer's roughness factor (times its ORM's green).
-    pub fn with_roughness(self, roughness: f32) -> Layer {
-        Layer { roughness, ..self }
+    pub fn with_roughness(self, roughness: f32) -> MaterialLayer {
+        MaterialLayer { roughness, ..self }
     }
 
     /// How soft the line between the layers is (0.01 crisp along the heights, 1 a wide fade).
-    pub fn with_blend_depth(self, depth: f32) -> Layer {
-        Layer { blend_depth: depth, ..self }
+    pub fn with_blend_depth(self, depth: f32) -> MaterialLayer {
+        MaterialLayer { blend_depth: depth, ..self }
     }
 
     /// The texture paths it names: base colour, normal, ORM, height.
@@ -234,7 +234,7 @@ impl Weather {
 pub(crate) struct Layering {
     pub(crate) cover: Option<Cover>,
     pub(crate) detail: Option<DetailMaps>,
-    pub(crate) layer: Option<Layer>,
+    pub(crate) layer: Option<MaterialLayer>,
     /// The height map's path and the parallax depth in tiles.
     pub(crate) parallax: Option<(Arc<str>, f32)>,
     pub(crate) lobes: genex_render::layers::Lobes,

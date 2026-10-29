@@ -410,11 +410,11 @@ impl Material {
         self
     }
 
-    /// This material with a second `layer` blended over its own maps ([`crate::Layer`]): moss on
+    /// This material with a second `layer` blended over its own maps ([`crate::MaterialLayer`]): moss on
     /// the tops of stones ([`crate::LayerMask::Up`]), mortar and dirt in patches
     /// ([`crate::LayerMask::Noise`]). With [`Material::with_parallax`]'s height map and the
     /// layer's own, the blend follows the heights. Drawn from `medium` up.
-    pub fn with_layer(mut self, layer: crate::Layer) -> Material {
+    pub fn with_layer(mut self, layer: crate::MaterialLayer) -> Material {
         self.layering.layer = Some(layer);
         self
     }

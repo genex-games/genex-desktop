@@ -7,7 +7,7 @@ into `Material` and `Frame`, drawn by every destination at the cost its preset a
 Every type and call in one line:
 
 ```rust
-use genex::prelude::*;                                         // Material, Cover, Layer, Weather
+use genex::prelude::*;                                         // Material, Cover, MaterialLayer, Weather
 use genex::{LayerMask, WeatherKind};
 Cover::snow(amount, slope, noise);                             // ::dust, ::moss, ::wet, ::none(); amount 0..1, slope degrees, noise 0..1
 cover.with_color(color).with_roughness(r).with_amount(a);      // -> Cover
@@ -15,8 +15,8 @@ material.with_cover(cover);                                    // its own cover 
 frame.cover_world(cover);                                      // every draw without its own, GLBs included
 frame.model_with_cover(&model, transform, cover);              // a GLB's own materials, covered
 material.with_detail(albedo_path, normal_path, tiles);         // "" leaves one out; .with_detail_strength(albedo, normal, fade_metres)
-material.with_layer(Layer::textured(base, normal, orm, tiles).with_height(path).masked_by(LayerMask::Up, metres));
-Layer::color(color).with_tint(c).with_roughness(r).with_blend_depth(d);   // LayerMask::Noise or ::Up
+material.with_layer(MaterialLayer::textured(base, normal, orm, tiles).with_height(path).masked_by(LayerMask::Up, metres));
+MaterialLayer::color(color).with_tint(c).with_roughness(r).with_blend_depth(d);   // LayerMask::Noise or ::Up
 material.with_parallax(height_path, depth);                    // depth in tiles, 0.02..0.08
 material.with_clearcoat(strength, roughness).with_sheen(color, roughness).with_anisotropy(strength, radians);
 material.with_transmission(share);                             // glass: draws blended
@@ -94,7 +94,7 @@ darkens, lighter lightens) and a normal map added to the material's own, faded o
 (`.with_detail_strength(albedo, normal, fade_metres)`). Use it for grain the base scan cannot hold
 up close: plaster pores, wood fibre, asphalt grit.
 
-`.with_layer(layer)` blends a second set of maps over the material's own by a mask,
+`.with_layer(layer)` blends a `MaterialLayer`, a second set of maps over the material's own by a mask,
 `LayerMask::Noise` (patches of `metres`) or `LayerMask::Up` (what faces up), through both layers'
 heights: with `.with_parallax(height, ..)` on the material and `.with_height(path)` on the layer, the
 layer fills the low parts first (mortar in a wall's joints, moss in a stone's hollows).

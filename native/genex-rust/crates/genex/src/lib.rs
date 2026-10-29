@@ -120,7 +120,7 @@ pub use frame::{
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use particles::{PARTICLES_MAX, ParticleFlipbook, Particles, ParticlesError, ParticlesErrorCode};
 /// Layered materials and weather (AAA materials lane): cover, a second layer, weather presets.
-pub use layers::{Cover, Layer, LayerMask, Weather};
+pub use layers::{Cover, LayerMask, MaterialLayer, Weather};
 /// Which weather preset a [`Weather`] is.
 pub use genex_render::weather::WeatherKind;
 pub use group::{Far, GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
@@ -250,7 +250,7 @@ pub mod prelude {
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
         Material, MeshData, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
-    pub use crate::{Cover, Layer, Weather};
+    pub use crate::{Cover, MaterialLayer, Weather};
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
     // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.
     pub use serde::{Deserialize, Serialize};
