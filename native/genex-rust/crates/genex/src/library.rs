@@ -1,4 +1,4 @@
-//! The Genex Library (`docs/api/library.md`): pre-processed CC0 materials, skies, models and trees
+//! The Content Library (`docs/api/library.md`): pre-processed CC0 materials, skies, models and trees
 //! that Studio's `library__add` delivers into `assets/library/<folder>/`, each folder holding an
 //! `entry.json` of facts beside its files. `gfx.assets().library(id)` reads those facts at reset
 //! and answers a [`LibraryAsset`] that hands out what the game draws: a [`Material`] at the
@@ -210,7 +210,7 @@ fn malformed(id: &str, detail: &str) -> AssetError {
 }
 
 impl Assets {
-    /// The Genex Library entry `id` (`material/asphalt_01`, `model/painted_wooden_bench`), read
+    /// The Content Library entry `id` (`material/asphalt_01`, `model/painted_wooden_bench`), read
     /// from the `entry.json` Studio's `library__add` delivered, in `on_reset` like
     /// [`Assets::bytes`] (and under its refusals). Refused `unsafe-path` for an id that is not
     /// `<kind>/<slug>`, `missing` for an entry this game has not added (call `library__add`), and

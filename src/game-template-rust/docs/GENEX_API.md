@@ -38,7 +38,7 @@ change touches.
 | Drawing | `docs/api/drawing.md` | Tags, models from `assets/`, `gfx.mesh` meshes, cubes, spheres, lines, clear colour. |
 | Camera | `docs/api/camera.md` | Vertical `fovy`, `FirstPersonRig` and comfort caps. |
 | Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals. |
-| Genex Library | `docs/api/library.md` | Ready-made CC0 surfaces, skies, props, trees. |
+| Content Library | `docs/api/library.md` | Ready-made CC0 surfaces, skies, props, trees. |
 | Mesh builders | `docs/api/meshes.md` | Rounded cuboids, extrude, lathe, sweep, displace. |
 | Set dressing (scatter) | `docs/api/scatter.md` | Seeded clutter, debris, decals on surfaces and paths. |
 | UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |

@@ -1,5 +1,5 @@
 /**
- * The Genex Library (our Quixel equivalent): a catalog of pre-processed CC0 materials, skies,
+ * The Content Library (our Quixel equivalent): a catalog of pre-processed CC0 materials, skies,
  * models and vegetation slots that ships with the Rust stack. The catalog (`src/plugins/library/
  * catalog.json`) names every entry, its upstream source pinned by size and md5, and, once the pack
  * build (`scripts/library/build-library.ts`) has run, every file of the built pack by sha256. The
