@@ -167,7 +167,7 @@ use genex_render::impostor::bake::{
     ATLAS_FORMAT, BakeMaterials, BakeMesh, BakePart, IMPOSTOR_BAKE, IMPOSTOR_COVERAGE_CUTOFF, IMPOSTOR_MIP, IMPOSTOR_PACK, ImpostorAtlases, ImpostorBaker, MipRule,
 };
 use genex_render::impostor::{ImpostorBounds, ImpostorSpec};
-use genex_render::layout::{GpuMaterial, NO_TEXTURE};
+use genex_render::layout::{GpuMaterial, GpuMaterialExt, NO_TEXTURE};
 use genex_render::mesh::MeshData;
 use wgpu::util::DeviceExt;
 
@@ -197,7 +197,8 @@ struct TestMaterials {
 impl TestMaterials {
     fn new(device: &wgpu::Device, rows: &[GpuMaterial]) -> TestMaterials {
         let storage = |label, contents: &[u8]| device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: wgpu::BufferUsages::STORAGE });
-        let ext = vec![0f32; 16 * rows.len()];
+        // One zeroed `GpuMaterialExt` row per material, at the struct's own stride.
+        let ext = vec![0f32; size_of::<GpuMaterialExt>() / size_of::<f32>() * rows.len()];
         let arrays = (0..8)
             .map(|_| {
                 device
