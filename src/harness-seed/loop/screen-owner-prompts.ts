@@ -31,7 +31,7 @@ const NON_OWNER_FINISH_RULES = (owner: string): readonly string[] => [
   "Change how what exists looks, sounds and feels — materials, light, readability, motion — not what exists: no new systems, no new mechanics.",
   `A polish item about the HUD, the menus or the layout is the screen owner ${owner}'s: publish the value it needs and leave the drawing to that part.`,
   "Keep every passing check: a regression still rolls the build back.",
-  "Capture and look at the real window before you stop: the judge picks blind between your build and the accepted one, and a build that adds a system or changes nothing a player can see loses.",
+  "Capture and look at the real window before you stop: the judge looks blind at your build beside the accepted one, and only a regression it names rolls yours back.",
 ];
 
 /** The part that owns the screen while this one does not, read exactly as screen-owner.ts reads it. */
