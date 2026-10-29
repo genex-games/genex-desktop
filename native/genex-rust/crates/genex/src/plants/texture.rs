@@ -575,7 +575,7 @@ fn paint_bare_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &mu
         for c in 0..children {
             let t = 0.3 + 0.7 * (c as f32 + 0.5 * rng.unit()) / children as f32;
             let at = [lerp(shoot.from[0], tip[0], t), lerp(shoot.from[1], tip[1], t)];
-            let side = if (c + shoot.depth as usize) % 2 == 0 { 1.0 } else { -1.0 };
+            let side = if (c + shoot.depth as usize).is_multiple_of(2) { 1.0 } else { -1.0 };
             shoots.push(Shoot { from: at, angle: angle + side * (0.35 + 0.45 * rng.unit()), length: shoot.length * (0.55 + 0.15 * rng.unit()), radius: shoot.radius * 0.6, depth: shoot.depth + 1 });
         }
         shoots.push(Shoot { from: tip, angle, length: shoot.length * 0.6, radius: shoot.radius * 0.6, depth: shoot.depth + 2 });

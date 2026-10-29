@@ -189,7 +189,7 @@ impl PlantSpec {
         low + (high - low) * Rng::new(self.seed ^ 0x5eed_1e57).unit()
     }
 
-    fn key(&self) -> (Species, Season, u32, Option<u32>, u32) {
+    fn key(&self) -> SpecKey {
         (self.species, self.season, self.seed, self.height.map(f32::to_bits), self.texture_size)
     }
 }
@@ -291,9 +291,14 @@ fn level_distances(preset: &Preset, height: f32) -> [f32; PLANT_LEVELS - 1] {
 /// maps each species and season painted (each painted once, whatever the seeds).
 #[derive(Debug, Default)]
 pub(crate) struct PlantCache {
-    grown: RefCell<Vec<((Species, Season, u32, Option<u32>, u32), Model)>>,
-    painted: RefCell<Vec<((Species, Season, u32), Rc<Maps>)>>,
+    grown: RefCell<Vec<(SpecKey, Model)>>,
+    painted: RefCell<Vec<(MapsKey, Rc<Maps>)>>,
 }
+
+/// A spec's identity: species, season, seed, height bits, map size.
+type SpecKey = (Species, Season, u32, Option<u32>, u32);
+/// A painted map set's identity: species, season, map size.
+type MapsKey = (Species, Season, u32);
 
 impl PlantCache {
     /// The model of `spec`, grown on its first ask.

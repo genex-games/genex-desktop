@@ -221,7 +221,7 @@ pub(crate) fn preset(species: Species) -> Preset {
                 NONE,
             ],
             depth: 3,
-            twigs: Twigs { from_level: 1, per_metre: 9.0, start: 0.1, size: [0.6, 0.9], angle: 15.0, hang: 0.25, flat: true },
+            twigs: Twigs { from_level: 1, per_metre: 7.5, start: 0.1, size: [0.65, 0.95], angle: 15.0, hang: 0.25, flat: true },
             bark: BarkKind::Scaly,
             bark_tile: 0.45,
             leaf: LeafKind::Spruce,
