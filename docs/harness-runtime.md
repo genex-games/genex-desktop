@@ -15,9 +15,11 @@ folder whose kind is `engine-export` can be played and photographed but can neve
 The kind of game (`loop/kinds.ts`). Eight kinds — first-person, third-person, top-down, side-2d,
 racing, flight, static-board, free-camera. Each names the traits it implies, the state axes its
 look and move probes read, the eye cameras it wants, its critic and its play script. Every trait is
-OFF until the planner, the director or `studio.json`'s nested `game` block declares it, so a game
-nobody described carries no harness input check at all; a declared kind supplies its traits and an
-explicit boolean beside it wins. The harness drives that kind's play script before every
+OFF until the planner, the director or `studio.json`'s nested `game` block declares it; a declared
+kind supplies its traits and an explicit boolean beside it wins. The harness's one check of its own
+(`spec.ts` `HARNESS_CHECKS`) is `reaches-play`, on the entry owner of a game keys or a mouse drive:
+the game gets past its title into play. Its UI (DOM, `__studio.hud` or both, in any layers), camera
+and controls are the game's, checked only where a plan names a check. The harness drives that kind's play script before every
 judgement (racing and flight then hold W/ArrowUp through the rest of the drive, `cruise`, steered by
 the game's racing line when it has one and released before the cameras; a declared script holds
 nothing; a front-end kept for its owner, `begin:false`, is pressed by nothing, not even a declared
@@ -406,11 +408,12 @@ photographs the first turn faster than 20°/s as `drive:corner` (`loop/pass-fram
 every camera list keeps (`corner` records it or why there is none). A look runs every demo a check
 names — a vision check on `demo:<name>` included — and at most 12 more, demos the compared build
 lacks first; the judge and the builder's next prompt name any it left out (`demoCap`), never as a
-defect. A pass asked for `challenge` (a board carrying `throttle-bot-loses`, every round, or the
-art director's look) races a bot that holds only the kind's throttle, steered by the line, never
-braking, from `seed` in 5 s steps until `race.finished` or six simulated minutes; the probe
-(`after`, `loop/throttle-bot.ts`) reads the state it ends on, and a game reporting no
-`race.position` is not asked. Judges read the steering, corner and race as fact lines
+defect. A pass asked for `challenge` (a board with a check its plan wrote on the race, every
+round, or the art director's look) races a bot that holds only the kind's throttle, steered by the
+line, never braking, from `seed` in 5 s steps until `race.finished` or six simulated minutes; such
+a probe (`after`, `loop/throttle-bot.ts`) reads the state it ends on, and a game reporting no
+`race.position` is not asked. No board carries one unless its plan wrote it: `config.steer` and
+`race` are optional hints. Judges read the steering, corner and race as fact lines
 (`loop/judge-facts.ts`).
 
 What a probe reads. The studio bounds `__studio.state()` by structure, never by cutting its text
@@ -775,8 +778,9 @@ files to that worker (`worker_steer now=yes`).
 
 The studio's look at a running worker (`director/workers.ts` `lookAtWorker`) reads `git status`
 with every untracked file named, so a part's bench page in a new `bench/` folder (`loop/bench.ts`)
-is its own file; the template's rules for game code (one seed, the step clock, tags) skip bench
-files, which the game never loads. A steer that interrupts a worker's review fix or regression
+is its own file; the template's rule for game code (new objects are tagged) skips bench files,
+which the game never loads. A game's randomness and clock are its own: no reviewer finding, prompt
+or check asks for one seed or the step clock. A steer that interrupts a worker's review fix or regression
 revert is handed over in the same session and the turn goes on (`loop/facet/follow-up.ts`); only a
 stop with no steer waiting ends the round. A round the run's own close stops (a pause, the end)
 keeps its work on its `…-stopped` ref with `stopCode: run_ended` on its records; the resumed lead
@@ -872,8 +876,8 @@ Two stages. A worker's `spec.stage` is `build` (the default) or `finish` (`loop/
 `worker_start stage=`, never on a single session, or `worker_steer stage=` from its next round;
 and `worker_steer move=` puts a finisher back to building). A finish round has no move, ladder or
 polish streak: its brief works the taste judge's polish list (up to eight; `judge/taste-finish.md`
-is appended to the taste rubric) and the defect ledger, it wins on the blind pick, a regression
-still rolls it back, and the worker ends once a preferred, unbroken build holds every identity
+is appended to the taste rubric) and the defect ledger, it is kept unless it regresses, and the
+worker ends once a preferred, unbroken build holds every identity
 check. The art director's finish mark (below) is when the lead turns owners to it.
 
 The build block. A director's new loop worker (not a restart: `replaces=` or an id from before a
@@ -887,12 +891,15 @@ on the board — and the taste judge looks once for notes, never a verdict; blin
 two. A finisher and the classic pipeline have no block. Its build time seeds neither the worker's
 round estimate nor the run's median (`facet_iteration.buildBlock`).
 
-Kept fixes. A round the judge preferred that missed a mandatory move is kept when it flipped any of
-the judge's own defect questions (`rules.ts acceptRound`): the move stays owed and its rung is not
-climbed. A judged round undone with flips leaves them, with its attempt ref, in
+Kept rounds. A round's work is kept unless the taste judge vetoes it with a named regression or a
+check that passed on the accepted build now fails (`rules.ts acceptRound`). No check moving, a pick
+of the round before without a named regression, a missed move and a left mandatory THE FIX cost
+nothing: the move stays owed and its rung is not climbed, the fix stays owed and counts towards the
+planner taking it, and a round no camera saw change is kept without a judge call. Such a round is
+`verdictSource: no-regression` (rule `no-regression`); `no-move`, `unfixed` and `invisible` appear
+only in older runs. A judged round undone with flips leaves them, with its attempt ref, in
 `carriedFixes` (`loop/facet/carried-fixes.ts`); every next brief's CARRY OVER section tells the
-builder to re-apply them until the accepted build passes them. A round the judge did not prefer is
-recorded as a taste loss, not `no-move`.
+builder to re-apply them until the accepted build passes them.
 
 Manual SkillOpt resolves the most recent run's model through `modelOn`, as the post-run path does.
 Its mined tasks leave out the `build_observation`s of a game whose Loop works in place

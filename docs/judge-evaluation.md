@@ -24,7 +24,7 @@ comparison. Start with these authored tasks; use the same inputs for every candi
 | Scope | The requested change versus an unrelated attractive addition | Frozen task brief and evidence of the requested behavior |
 | Finish | The same build polished versus with an unfinished new system added | Finish-stage taste rubric; the polished build wins and a regression still loses |
 | Corners | A racer that warns of each corner versus one that does not | The drive's `drive:corner` frame on both sides and its `CORNER:` fact line; a drive that reached no corner says so |
-| Challenge | A field that beats a throttle-only bot versus one that loses to it | The bot's race under one seed (`throttle-bot-loses`, the `CHALLENGE:` line); a game reporting no race is not asked |
+| Challenge | A field that beats a throttle-only bot versus one that loses to it | The bot's race under one seed (the `CHALLENGE:` line, and a plan's own check on the race when it wrote one); a game reporting no race is not asked |
 
 The art director's ship review (`judge/ship-review.md`, `loop/ship-review.ts`) is the one
 absolute judge: one build and no pair, at 1600×900. Evaluate it on single builds that reviewers

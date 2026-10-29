@@ -126,7 +126,7 @@ the kind tool of an engine plugin on offer, from `plugins.tools`' `kinds`, or `p
 engine), and a folder of its own files of a kind no rule knows that it is
 looked through first. A web game's (`holdsWebGame`: `web-game` at its root, a game with no
 kind yet not included) adds `prompts/identity-web.md` (three.js, the preview window), and its rules
-add `prompts/operating-rules-web.md` (the preview's controls, `window.__studio`, determinism) to
+add `prompts/operating-rules-web.md` (the preview's controls, `window.__studio`) to
 `prompts/operating-rules.md`, which every turn reads.
 Interrupted tool calls receive an explicit unknown-result marker and are never replayed
 blindly. History is checkpointed atomically between tool actions. Before inference the pinned

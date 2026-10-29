@@ -670,9 +670,9 @@ pass and close append `director_verdict`. The Builds result panel shows the stag
 record (`headVerdict`); step panels, gate tooltips, the chat and the judges' sheet print its
 sentence. `run-steps.ts` decides a step's state from merges first (`mergedRounds`: a
 loop's merge takes its kept rounds; a lead's merge, by log position, takes the last kept round or,
-with none, every unjudged round started before it) and judges second. A flip counts as proof only when `strongFlips` (a
-scene/pixel/metric/probe/demo/play check, or a vision check the plan wrote); otherwise the blind
-side-by-side pick decides (`acceptRound`). A self-measuring regression counts only if a second
+with none, every unjudged round started before it) and judges second. Rounds stand unless a
+regression is named or measured (`acceptRound`); flips prove only as `strongFlips` (a
+scene/pixel/metric/probe/demo/play check, or a vision check the plan wrote). A self-measuring regression counts only if a second
 look reproduces it; only a judge's own gap (`judgedGap`) grows a check or THE FIX. An unmeasured vision check needs a yes at
 `VISION_FLIP_CONFIDENCE` (0.7). Judge-grown questions are deduplicated (`sameDefectOpening`), a
 reading defect becomes a probe suggestion, and a question hedged twice under 0.5 retires. Counts
