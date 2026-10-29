@@ -1147,24 +1147,20 @@ describe("the move belongs to the director", () => {
       taste,
     });
     assert.equal(invented.missing, true);
-    assert.equal(invented.costsRound, false, "an invented move never resets a build the judge preferred");
     assert.match(String(invented.note), /the move was not delivered, and it did not cost the round: a wet-mud puddle/);
-    assert.equal(
-      acceptRound({ spec: spec(), board, comparison, taste, moveMissing: invented.costsRound }).accepted,
-      true,
-    );
+    assert.equal(acceptRound({ spec: spec(), board, comparison, taste }).accepted, true);
 
-    // The director's own rung still decides: it asked for it, and a build without it is undone.
+    // The director's own rung. Flipped (Loop phase 2): a build without it is kept, and the rung stays owed.
     const asked = moveVerdict({
       move: { what: "mud builds up on the panels", source: "milestone", mandatory: true } as never,
       board,
       taste,
     });
-    assert.equal(asked.costsRound, true);
-    assert.equal(asked.note, null);
-    const decided = acceptRound({ spec: spec(), board, comparison, taste, moveMissing: asked.costsRound });
-    assert.equal(decided.accepted, false);
-    assert.equal(decided.source, "no-move");
+    assert.equal(asked.missing, true);
+    assert.match(String(asked.note), /the move was not delivered and stays owed: mud builds up/);
+    const decided = acceptRound({ spec: spec(), board, comparison, taste });
+    assert.equal(decided.accepted, true);
+    assert.notEqual(decided.source, "no-move");
 
     // Measured by its own check, or answered by a judge that did not answer: not missing.
     const measured = moveVerdict({

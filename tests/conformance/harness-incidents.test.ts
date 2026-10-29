@@ -2237,10 +2237,12 @@ describe("harness incidents", () => {
         (i.move as { delivered?: boolean } | null)?.delivered,
       ]),
     );
-    // Iteration 2: identity holds, the first milestone is the move, nothing flipped, the judge saw polish → a loss with the move named.
-    const lost = water.find((i) => i.verdictSource === "no-move");
-    assert.ok(lost, `a polish-only build without the move lost: ${debug}`);
-    assert.match(String(lost!.reason), /the move was not delivered/);
+    // Iteration 2: identity holds, the first milestone is the move, nothing flipped, the judge saw polish.
+    // Flipped (Loop phase 2): the round is kept, and the move stays owed.
+    const missed = water.find((i) => /the move was not delivered/.test(String(i.reason)));
+    assert.ok(missed, `a polish-only build without the move says so: ${debug}`);
+    assert.equal(missed!.winner, "challenger", `and is kept: ${debug}`);
+    assert.match(String(missed!.reason), /stays owed/);
     // Iteration 3: the milestone check flipped → accepted, the milestone is climbed.
     const climbed = moves.find((m) => m.milestoneId === "three-pools" && m.delivered === true);
     assert.ok(
@@ -2348,12 +2350,13 @@ describe("harness incidents", () => {
       moves.length >= 2 && moves[0]!.what === moves[1]!.what,
       `it is asked again: ${JSON.stringify(moves.map((m) => [m.iteration, m.what, m.mandatory]))}`,
     );
-    // And when two accepted builds in a row have only polished, the escalation bites: the move
-    // is mandatory and the build without it is undone, which is what stops a polish-only run.
+    // And when two accepted builds in a row have only polished, the escalation makes the move
+    // mandatory. Flipped (Loop phase 2): the build without it is kept, and the move stays owed.
     const escalated = asked.find((i) => (i.move as Move).mandatory === true);
     assert.ok(escalated, `after two polish-only accepted builds the move is mandatory again: ${debug}`);
-    assert.equal(escalated!.verdictSource, "no-move", `and the build without it is undone: ${debug}`);
-    assert.equal(escalated!.winner, "incumbent");
+    assert.notEqual(escalated!.verdictSource, "no-move", `and the build without it is kept: ${debug}`);
+    assert.equal(escalated!.winner, "challenger");
+    assert.match(String((escalated!.move as Move).note), /stays owed/);
   });
 
   it("V3. a builder flag naming another facet moves the check there, blocks its class here, and the defect does not re-grow", async () => {
@@ -9147,7 +9150,7 @@ describe("stuck ladders and small reviewers", () => {
     assert.doesNotMatch(asked, /absent from the other/, "and never told a move must be missing from the other build");
 
     const kept = moveVerdict({ move, board: {}, taste, won: true });
-    assert.deepEqual([kept.missing, kept.costsRound, kept.delivered], [false, false, true]);
+    assert.deepEqual([kept.missing, kept.delivered], [false, true]);
     const lost = moveVerdict({ move, board: {}, taste, won: false });
     assert.equal(lost.delivered, true, "the rung climbs even when the round is lost for something else");
     const decided = acceptRound({
@@ -9155,9 +9158,8 @@ describe("stuck ladders and small reviewers", () => {
       board: {},
       comparison: { flips: [], regressions: [] },
       taste,
-      moveMissing: kept.costsRound,
     });
-    assert.equal(decided.source, "taste", "decided by the side-by-side pick, not by a missing move");
+    assert.equal(decided.source, "taste", "kept on the judge's preference, not decided by a missing move");
   });
 
   it("GGR-2. a rung measured by its own check, passing on the accepted build, is climbed before the round picks its move", async () => {
@@ -11819,11 +11821,15 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
   }
 
   /** car-feel at round 5: the spray rung mandatory, both owed defects flipped on its build. */
-  async function sprayRound(pick: "challenger" | "incumbent", extra: Record<string, unknown> = {}) {
+  async function sprayRound(
+    pick: "challenger" | "incumbent",
+    extra: Record<string, unknown> = {},
+    regression: { camera: string; what: string } | null = null,
+  ) {
     const { FACET_POLICY } = await import("../../src/harness-seed/loop/facet/policy.ts");
     const { tasteVerdict } = await import("../../src/harness-seed/loop/facet/phases/taste.ts");
     const { settleMoveAndGap } = await import("../../src/harness-seed/loop/facet/phases/settle.ts");
-    const recorder = tasteJudge(pick, false);
+    const recorder = tasteJudge(pick, false, regression);
     const failing = Object.fromEntries(owedChecks.map((c) => [c.id, { ...c, pass: false, reason: "still there" }]));
     const passing = Object.fromEntries(owedChecks.map((c) => [c.id, { ...c, pass: true, reason: "" }]));
     const appended: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -11884,45 +11890,36 @@ describe("facet rounds: the build block, kept fixes and the lead's merged fixes"
     assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
     assert.equal(round.verdictSource, "taste", "kept on the judge's blind preference, not on the missed move");
     assert.match(round.verdict.reason, /defect-haze-plane/);
-    assert.match(round.verdict.reason, /kept for the 2 owed defects it fixed/);
+    assert.match(round.verdict.reason, /the move was not delivered and stays owed/);
     assert.equal(loop.milestonesDone.has(sprayRung.id), false, "the rung was not delivered: it is not climbed");
     assert.equal(round.moveRecord.delivered, false);
     assert.match(String(round.moveRecord.note), /stays owed/);
   });
 
-  it("FR-5b. polish alone still never wins past a missed move, and the judge's own notes never outvote its pick", async () => {
+  it("FR-5b. a missed move never undoes a round, and only a named regression does (Loop phase 2)", async () => {
     const { acceptRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
     const spec = { checks: owedChecks };
     const flips = owedChecks.map((c) => c.id);
-    const kept = acceptRound({
-      spec,
-      board: {},
-      comparison: { flips },
-      taste: { pick: "challenger" },
-      moveMissing: true,
-    });
+    const kept = acceptRound({ spec, board: {}, comparison: { flips }, taste: { pick: "challenger" } });
     assert.deepEqual([kept.accepted, kept.source], [true, "taste"]);
-    const polish = acceptRound({
-      spec,
-      board: {},
-      comparison: { flips: [] },
-      taste: { pick: "challenger" },
-      moveMissing: true,
-    });
-    assert.deepEqual([polish.accepted, polish.source], [false, "no-move"], "nothing fixed, the move missing: undone");
-    const notPreferred = acceptRound({
-      spec,
-      board: {},
-      comparison: { flips },
-      taste: { pick: "incumbent" },
-      moveMissing: true,
-    });
-    assert.equal(notPreferred.accepted, false, "the judge kept the round before: a taste regression");
+    // Flipped (Loop phase 2): polish without the move is kept, and the move stays owed.
+    const polish = acceptRound({ spec, board: {}, comparison: { flips: [] }, taste: { pick: "challenger" } });
+    assert.deepEqual([polish.accepted, polish.source], [true, "taste"], "nothing regressed: kept");
+    // Flipped (Loop phase 2): a pick of the round before with no named regression keeps the work.
+    const notPreferred = acceptRound({ spec, board: {}, comparison: { flips }, taste: { pick: "incumbent" } });
+    assert.deepEqual([notPreferred.accepted, notPreferred.source], [true, "no-regression"]);
+    const vetoed = acceptRound({ spec, board: {}, comparison: { flips }, taste: { pick: "incumbent", veto: true } });
+    assert.deepEqual([vetoed.accepted, vetoed.source], [false, "taste-veto"], "a named regression undoes it");
   });
 
-  it("FR-6. a round undone for taste leaves its demonstrated fixes to carry over: the next brief and prompt say to re-apply them", async () => {
+  it("FR-6. a round undone for a named regression leaves its demonstrated fixes to carry over: the next brief and prompt say to re-apply them", async () => {
     const { writeBrief } = await import("../../src/harness-seed/loop/facet/phases/brief.ts");
-    const { loop, round } = await sprayRound("incumbent");
+    // Updated (Loop phase 2): a pick of the round before alone keeps the work; a named regression undoes it.
+    const { loop, round } = await sprayRound(
+      "incumbent",
+      {},
+      { camera: "default", what: "the car is hidden in spray" },
+    );
     assert.equal(round.won, false);
     // The next round's brief and prompt, in the same session.
     Object.assign(loop, {
@@ -16476,5 +16473,158 @@ describe("builders build the game, not the harness's checks (Loop phase 2)", () 
     const kept = boardOf({ ownsMain: true, game: firstPersonRacer }, [own]).find((check) => check.id === "single-hud");
     assert.equal(kept?.js, "count('hud') <= 2");
     assert.equal(kept?.origin, "planner");
+  });
+
+  /** A judge that picks `pick` over the build the checks accepted, naming `regression` or none. */
+  function stillJudge(pick: "challenger" | "incumbent", regression: { camera: string; what: string } | null) {
+    return ctxRecorder({
+      handlers: {
+        "engine.complete": (params) => {
+          const user = String((params.messages as Array<{ content?: unknown }> | undefined)?.[0]?.content ?? "");
+          const accepted = /build ([AB]) is the one the checks accepted/.exec(user)?.[1] ?? "A";
+          const other = accepted === "A" ? "B" : "A";
+          const reply = {
+            pick: pick === "challenger" ? accepted : other,
+            satisfied: false,
+            regression,
+            newCheck: null,
+            bigMove: null,
+            defects: ["the rivals' cars are grey boxes"],
+            polish: [],
+            moveDelivered: false,
+            scale: "polish",
+            reason: "the other build reads a little cleaner",
+          };
+          return { message: { content: JSON.stringify(reply) } };
+        },
+      },
+    });
+  }
+
+  /** A round of `car` whose board did not move, its rung mandatory, judged by `stillJudge`. */
+  async function stillRound(
+    pick: "challenger" | "incumbent",
+    regression: { camera: string; what: string } | null = null,
+    extra: Record<string, unknown> = {},
+  ) {
+    const { FACET_POLICY } = await import("../../src/harness-seed/loop/facet/policy.ts");
+    const { tasteVerdict } = await import("../../src/harness-seed/loop/facet/phases/taste.ts");
+    const { settleMoveAndGap } = await import("../../src/harness-seed/loop/facet/phases/settle.ts");
+    const board = { "car-moves": { id: "car-moves", kind: "probe", weight: "identity", pass: true, reason: "" } };
+    const rung = { id: "m2-rivals", what: "Five rival cars race the player" };
+    const loop: Record<string, any> = {
+      ctx: stillJudge(pick, regression).ctx,
+      run: { runId: "run_free", project: "racer", goal: "a night street race", model: "opus" },
+      facet: { id: "car", title: "Car" },
+      spec: {
+        id: "car",
+        title: "Car",
+        cameras: ["default"],
+        checks: [{ id: "car-moves", kind: "probe", expr: "speed > 0", weight: "identity" }],
+        milestones: [rung],
+        moveOwner: "director",
+      },
+      currentMove: { what: rung.what, milestoneId: rung.id, source: "milestone", mandatory: true },
+      currentFix: null,
+      board,
+      incumbentEvidence: { eyes: [], state: { phase: "race" } },
+      milestonesDone: new Set<string>(),
+      milestonesSetAside: new Set<string>(),
+      rungMisses: {},
+      moves: [],
+      polishStreak: 0,
+      policy: FACET_POLICY,
+      gapHistory: [],
+      biggestGap: "",
+      gapStreak: null,
+      defectList: [],
+      polishList: [],
+      loseStreak: 0,
+      lastFailure: null,
+      lastBigMove: null,
+      appendRun: async () => undefined,
+      ...extra,
+    };
+    const round: Record<string, any> = {
+      iteration: 3,
+      iterationId: "003",
+      evidence: { eyes: [], state: { phase: "race" } },
+      nextBoard: board,
+      comparison: { flips: [], regressions: [] },
+      challengerBroken: false,
+      defectNotes: [],
+      attemptBranch: null,
+    };
+    await tasteVerdict(loop as never, round as never);
+    round.won = round.verdict.pick === "challenger";
+    round.attemptBoard = round.nextBoard;
+    await settleMoveAndGap(loop as never, round as never);
+    return { loop, round };
+  }
+
+  it("LP3. a round where no check moved and its rung did not arrive was thrown away: it is kept, the rung stays owed, and the reason says why", async () => {
+    const { loop, round } = await stillRound("incumbent");
+    assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
+    assert.equal(round.verdictSource, "no-regression");
+    assert.match(round.verdict.reason, /nothing regressed/);
+    assert.match(round.verdict.reason, /stays owed/);
+    assert.equal(loop.milestonesDone.has("m2-rivals"), false, "the rung was not delivered: it is not climbed");
+    assert.equal(round.moveRecord.delivered, false);
+    const { roundRule } = await import("../../src/harness-seed/loop/verdict.ts");
+    assert.equal(roundRule({ source: round.verdictSource, won: true }), "no-regression");
+  });
+
+  it("LP4. a veto that names a regression still undoes the round, and so does a check that passed and now fails", async () => {
+    const vetoed = await stillRound("incumbent", { camera: "default", what: "the car lost its wheels" });
+    assert.equal(vetoed.round.won, false);
+    assert.equal(vetoed.round.verdictSource, "taste-veto");
+    const { acceptRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
+    const regressed = acceptRound({
+      spec: { checks: [] },
+      board: {},
+      comparison: { flips: [], regressions: ["car-moves"] },
+      taste: { pick: "challenger" },
+    });
+    assert.deepEqual([regressed.accepted, regressed.source], [false, "checks"]);
+  });
+
+  it("LP5. a round that left the mandatory fix was thrown away though nothing regressed: it is kept and the fix stays owed", async () => {
+    const fix = { what: "the rivals' cars are grey boxes", checkId: null, streak: 3, mandatory: true };
+    const { loop, round } = await stillRound("challenger", null, {
+      currentFix: fix,
+      biggestGap: fix.what,
+      currentMove: null,
+    });
+    assert.equal(round.won, true, `kept: ${round.verdict.reason}`);
+    assert.notEqual(round.verdictSource, "unfixed");
+    assert.match(round.verdict.reason, /the fix stays owed/);
+    assert.equal(
+      loop.gapStreak?.losses,
+      1,
+      "a build that leaves the fix still counts towards handing it to the planner",
+    );
+  });
+
+  it("LP6. a round that changed nothing a camera sees and moved no check was thrown away unjudged: it is kept, still with no judge call", async () => {
+    const { decideOnBoard } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const asked: string[] = [];
+    const loop = {
+      ctx: { call: async (method: string) => void asked.push(method) },
+      facet: { id: "sound", title: "Sound" },
+      facets: [],
+      spec: { id: "sound", checks: [], cameras: ["default"] },
+      incumbentEvidence: { state: {} },
+      biggestGap: "the engine has no sound",
+    };
+    const round: Record<string, any> = {
+      evidence: { ok: true, problems: [], state: {} },
+      comparison: { flips: [], regressions: [] },
+      diffs: { default: { diffFraction: 0, compared: 100 } },
+    };
+    await decideOnBoard(loop as never, round as never);
+    assert.equal(round.verdict.pick, "challenger", `kept: ${round.verdict.reason}`);
+    assert.equal(round.verdictSource, "no-regression");
+    assert.match(round.verdict.reason, /no visible change/);
+    assert.deepEqual(asked, [], "no judge call spent");
   });
 });

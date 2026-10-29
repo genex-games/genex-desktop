@@ -1339,20 +1339,19 @@ describe("judges that keep the right build", () => {
     assert.deepEqual(compareScoreboards(measured, grown(0.5)).flips, ["defect-trunk-flat"]);
   });
 
-  it("only the judge's own note flipping does not outrank the side-by-side pick", () => {
+  it("only the judge's own note flipping is no proof, and a pick of the round before without a named regression keeps the work", () => {
     const board = toScoreboard([
       { id: "defect-trunk-flat", kind: "vision", weight: "normal", pass: true, confidence: 0.8 },
     ] as never);
     const comparison = { flips: ["defect-trunk-flat"], regressions: [] };
     assert.deepEqual(strongFlips(plan, board, comparison.flips), [], "a judge-grown question is a hint, not proof");
     const kept = acceptRound({ spec: plan, board, comparison, taste: { pick: "incumbent", veto: false } });
-    assert.equal(kept.accepted, false, "the judge preferred the round before, and that decides it");
-    assert.equal(kept.source, "taste");
-    // The same round with the judge on its side is still kept — the pick decides, both ways.
-    assert.equal(
-      acceptRound({ spec: plan, board, comparison, taste: { pick: "challenger", veto: false } }).accepted,
-      true,
-    );
+    // Flipped (Loop phase 2): a pick without a named regression no longer undoes the round.
+    assert.equal(kept.accepted, true, "nothing regressed, so the work stands");
+    assert.equal(kept.source, "no-regression");
+    // The same round with the judge on its side is kept on its preference.
+    const preferred = acceptRound({ spec: plan, board, comparison, taste: { pick: "challenger", veto: false } });
+    assert.deepEqual([preferred.accepted, preferred.source], [true, "taste"]);
   });
 
   it("a planner check flipping still wins on its own, and only a named regression undoes it", () => {
@@ -1371,16 +1370,15 @@ describe("judges that keep the right build", () => {
     const vetoed = acceptRound({ spec: plan, board, comparison, taste: { pick: "incumbent", veto: true } });
     assert.equal(vetoed.accepted, false);
     assert.equal(vetoed.source, "taste-veto");
-    // No flip at all and a move that never arrived: the old rule, unchanged.
+    // No flip at all and a move that never arrived. Flipped (Loop phase 2): kept, the move stays owed.
     const nothing = acceptRound({
       spec: plan,
       board: {},
       comparison: { flips: [], regressions: [] },
       taste: { pick: "challenger", veto: false },
-      moveMissing: true,
-    } as never);
-    assert.equal(nothing.accepted, false);
-    assert.equal(nothing.source, "no-move");
+    });
+    assert.equal(nothing.accepted, true);
+    assert.equal(nothing.source, "taste");
   });
 
   it("two wordings of one defect on one camera never grow twins", () => {

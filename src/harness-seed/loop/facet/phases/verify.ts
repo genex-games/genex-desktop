@@ -332,8 +332,11 @@ function followUpPrompt(round: FacetRound): string {
   ].join("\n");
 }
 
-/** The verdict the board gives: a broken follow-up, a regression, no visible change — or, past all three, the taste judge's. */
-async function decideOnBoard(loop: FacetLoop, round: FacetRound): Promise<void> {
+/**
+ * The verdict the board gives: a broken follow-up or a regression undoes the round, a round no
+ * camera saw change is kept without a judge call — or, past all three, the taste judge's.
+ */
+export async function decideOnBoard(loop: FacetLoop, round: FacetRound): Promise<void> {
   const { comparison, evidence } = round;
   const refuse = (source: string, biggestGap: string, reason: string) => {
     round.verdict = { pick: Side.Incumbent, satisfied: false, biggest_gap: biggestGap, reason, defects: [] };
@@ -366,9 +369,24 @@ async function decideOnBoard(loop: FacetLoop, round: FacetRound): Promise<void> 
   const finishing = roundStage(round, loop.spec) === FacetStage.Finish;
   const invisible = finishing ? isZeroDiff(round.diffs) : isInvisibleDiff(round.diffs);
   if (comparison.flips.length === 0 && invisible) {
-    const reason = "no visible change — every camera reads identical to the accepted build (no judge call spent)";
-    refuse(VerdictSource.Invisible, loop.biggestGap, reason);
+    keepUnseen(loop, round);
     return;
   }
   await tasteVerdict(loop, round);
+}
+
+/**
+ * Every camera reads identical to the accepted build and nothing regressed: the round's work —
+ * sound, logic, a feel no frame shows — is kept, and no judge call is spent on a pair it could not
+ * tell apart.
+ */
+function keepUnseen(loop: FacetLoop, round: FacetRound): void {
+  round.verdict = {
+    pick: Side.Challenger,
+    satisfied: false,
+    biggest_gap: loop.biggestGap,
+    reason: "no visible change and nothing regressed — kept without a judge call",
+    defects: [],
+  };
+  round.verdictSource = VerdictSource.NoRegression;
 }

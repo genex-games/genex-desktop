@@ -406,7 +406,7 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     );
     assert.ok(reviewDiffs.length >= 1, "the model reviewer saw the diff");
 
-    // ── sky: a vision check with a crop, and an invisible diff rejected without a judge ──
+    // ── sky: a vision check with a crop, and an invisible diff kept without a judge ──
     assert.ok(sky.length >= 3, `sky ran ${sky.length} iterations`);
     assert.equal(sky[0]!.winner, "challenger");
     assert.ok(board(sky[0]!).results.some((r) => r.id === "sun-visible" && r.pass));
@@ -423,8 +423,9 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     );
     assert.ok(!visionAsks.some((t) => /QUESTIONS \(1\)/.test(t)), "a lone question keeps the single-question prompt");
     assert.ok(rig.preview.crops.length >= 1, "the crop was cut from the judged frame");
-    assert.equal(sky[1]!.winner, "incumbent");
-    assert.equal(sky[1]!.verdictSource, "invisible");
+    // Flipped (Loop phase 2): a round no camera saw change is kept — nothing regressed.
+    assert.equal(sky[1]!.winner, "challenger");
+    assert.equal(sky[1]!.verdictSource, "no-regression");
     assert.equal(tasteCalls.Sky, 2, "the invisible iteration spent no judge call");
     assert.equal(sky.at(-1)!.satisfied, true);
 

@@ -183,12 +183,12 @@ itself and keeps the memory file its brief names current.)
 - A defect a judge names in another worker's files lands on that worker, with a line saying where it
   came from; once its owner has finished it comes back to you — the defects nobody owns are your
   ledger for the integrated build.
-- Every round says what it was asked to build and whether it arrived. A round kept with "the move was
-  not delivered" is the worker choosing something else: say the move again with `worker_steer move=`
-  or let it go. A rung the judge finds built climbs by itself; one missed three judged rounds is set
-  aside so the ladder moves on. A round the judge preferred that fixed owed defects is kept though
-  its move did not arrive — the move stays owed — and an undone round's fixes ride into the next
-  brief to be re-applied.
+- Every round says what it was asked to build and whether it arrived. A round's work is kept unless
+  the judge names a regression or a check that passed now fails; a round kept with "the move was not
+  delivered" is the worker choosing something else, and the move stays owed: say it again with
+  `worker_steer move=` or let it go. A rung the judge finds built climbs by itself; one missed three
+  judged rounds is set aside so the ladder moves on. An undone round's fixes ride into the next brief
+  to be re-applied.
 - Before the finish mark every wake shows each building part's next big step as its reviewers see
   it. When one inside SCOPE is bigger than your next rung, make it the next rung with `worker_steer move=`. Steer the big picture
   — a direction, a priority, the next big step; a single defect is the worker's ledger.

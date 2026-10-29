@@ -332,13 +332,13 @@ function promptInput({
   };
 }
 
-/** THE MOVE this iteration asks for, and whether a build that skips it loses. */
+/** THE MOVE this iteration asks for, and whether it stays owed until a build delivers it. */
 function moveAsk(move: AnyRecord | null): string {
   if (!move?.what) return "";
   const measured = move.check
     ? ` — measured by check ${move.check.id}`
     : " — the taste judge answers whether it is visible";
-  const lead = move.mandatory ? "A build that only tunes what already exists LOSES; make" : "Make";
+  const lead = move.mandatory ? "It stays owed until a build delivers it; make" : "Make";
   const escalate = moveEscalated(move)
     ? ` ESCALATE: your last ${move.polishStreak} accepted builds were polish only.`
     : "";
@@ -349,7 +349,7 @@ function moveAsk(move: AnyRecord | null): string {
 function fixAsk(fix: AnyRecord | null, finishing = false): string {
   if (!fix?.what) return "";
   const weight = fix.mandatory
-    ? "mandatory — a build that leaves it LOSES"
+    ? "mandatory — it stays owed until a build closes it"
     : "the judge has named it " + fix.streak + " times; next time it is mandatory";
   const how = finishing
     ? FINISH_FIX_ASK
@@ -542,7 +542,7 @@ function openingHead(p: PromptInput): string[] {
     p.briefPointer,
     p.legacy || pointsAtBrief
       ? ``
-      : `THE CONTRACT — these checks are verified mechanically after every build; a build is accepted only when it flips at least one to pass and regresses none:\n${renderChecks(p.spec.checks)}`,
+      : `THE CONTRACT — these checks are verified mechanically after every build; a build is kept unless it regresses one that passed (or the judge names a regression):\n${renderChecks(p.spec.checks)}`,
     ``,
     p.worktree
       ? `You are working in an isolated copy of the game. Touch only what this facet needs — other facets are being built in parallel and their accepted work is merged into your copy between iterations.`

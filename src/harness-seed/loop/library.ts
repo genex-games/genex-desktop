@@ -946,7 +946,7 @@ function moveSection(move: AnyRecord | null): string[] {
   if (!move?.what) return [];
   return [
     move.mandatory
-      ? `## THE MOVE this iteration (mandatory — a build that only tunes what already exists is a loss)`
+      ? `## THE MOVE this iteration (mandatory — build it first; it stays owed until a build delivers it)`
       : `## THE MOVE this iteration (asked for — build it first; a build without it is judged on its own merits and the move is asked again)`,
     move.what,
     move.why ? `Why now: ${move.why}` : "",
@@ -955,7 +955,7 @@ function moveSection(move: AnyRecord | null): string[] {
       : "The taste judge answers whether this change is visible in your build; make it unmistakable.",
     `Alongside the move, fix up to three items from the defect ledger below — the move first, the polish second. Never spend the iteration on the ledger alone.`,
     moveEscalated(move)
-      ? `ESCALATE: the last ${move.polishStreak} accepted builds were polish only. The judge now rejects a build without the move.`
+      ? `ESCALATE: the last ${move.polishStreak} accepted builds were polish only. The move is mandatory now, and it stays owed until a build delivers it.`
       : "",
     move.ladder ? `\nThe facet's ladder:\n${move.ladder}` : "",
     ``,
@@ -986,14 +986,14 @@ function finishSection(polish: readonly string[], rules: readonly string[] = FIN
 function fixSection(fix: AnyRecord | null, template: boolean, finishing = false): string[] {
   if (!fix?.what) return [];
   const urgency = fix.mandatory
-    ? "mandatory — a build that leaves it loses, whatever else it flips"
+    ? "mandatory — it stays owed until a build closes it"
     : `named by the judge ${fix.streak} judged builds in a row — mandatory from the next verdict on`;
   return [
     `## THE FIX this iteration (${urgency})`,
     fix.what,
     fix.checkId
       ? `Measured by check ${fix.checkId} on the board below. It fails on the accepted build; your build must flip it.`
-      : "The taste judge answers whether it is gone: if it is still the biggest gap after your build, the build loses.",
+      : "The taste judge answers whether it is gone: if it is still the biggest gap after your build, it stays owed.",
     fix.recipe
       ? `The library has a recipe for exactly this: ${fix.recipe.title} (${fix.recipe.id}) — it is under "Recipes that apply" below. Port it; do not invent a fourth way.`
       : "",

@@ -113,7 +113,7 @@ async function missRung(loop: FacetLoop, move: AnyRecord): Promise<void> {
 /**
  * Polish, build after build, while a move stood undelivered: the next brief escalates, and says so
  * — only where it really will. A director-owned worker past its ladder gets guidance, never a
- * mandate, and a finishing worker takes no move at all; telling either "a build without it loses"
+ * mandate, and a finishing worker takes no move at all; telling either the move is mandatory
  * was false.
  */
 async function warnPolishStreak(loop: FacetLoop, round: FacetRound): Promise<void> {
@@ -124,7 +124,7 @@ async function warnPolishStreak(loop: FacetLoop, round: FacetRound): Promise<voi
   if (round.moveRecord.delivered) return;
   await recordDecision(
     loop,
-    `${facet.id} has polished for ${loop.polishStreak} accepted builds in a row — the next brief escalates: the move is mandatory and a build without it loses`,
+    `${facet.id} has polished for ${loop.polishStreak} accepted builds in a row — the next brief escalates: the move is mandatory and stays owed until a build delivers it`,
   );
 }
 
@@ -169,7 +169,7 @@ function countGapStreak(loop: FacetLoop, round: FacetRound, fixed: boolean | nul
   if (round.gapRouted && loop.gapStreak) loop.gapStreak.routed = true;
 }
 
-/** THE FIX's fate: closed, or one more loss — and a fix that keeps losing goes to the planner instead. */
+/** THE FIX's fate: closed, or left once more — and a fix the builds keep leaving goes to the planner instead. */
 async function settleTheFix(loop: FacetLoop, round: FacetRound, fix: AnyRecord, fixed: boolean | null): Promise<void> {
   const { appendRun, facet, run } = loop;
   if (fixed) {
@@ -196,12 +196,15 @@ async function settleTheFix(loop: FacetLoop, round: FacetRound, fix: AnyRecord, 
   });
 }
 
-/** A round lost to the fix it left counts against the fix; enough of them and the planner takes the check. */
+/**
+ * A round that left the fix counts against it — kept with the fix still owed (taste.ts `holdTheFix`),
+ * or, in an older run, undone for it; enough of them and the planner takes the check.
+ */
 async function countFixLoss(loop: FacetLoop, round: FacetRound, fix: AnyRecord, streak: AnyRecord): Promise<void> {
   const { facet, spec } = loop;
-  if (round.verdictSource === VerdictSource.Unfixed) streak.losses = (streak.losses ?? 0) + 1;
+  if (round.fixLeft === true || round.verdictSource === VerdictSource.Unfixed) streak.losses = (streak.losses ?? 0) + 1;
   if ((streak.losses ?? 0) < FIX_STUCK_LOSSES) return;
-  const why = `the fix "${String(fix.what).slice(0, CLIP_QUOTE)}" lost ${streak.losses} builds in a row — the builder cannot land it as asked`;
+  const why = `the fix "${String(fix.what).slice(0, CLIP_QUOTE)}" was left by ${streak.losses} builds in a row — the builder cannot land it as asked`;
   const plannerMayTake = fix.checkId && spec.checks.find((c) => c.id === fix.checkId)?.origin !== CheckOrigin.Harness;
   if (plannerMayTake) loop.replanRequests.push({ checkId: fix.checkId, reason: why, source: ReplanSource.FixStuck });
   await recordDecision(

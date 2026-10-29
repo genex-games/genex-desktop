@@ -428,6 +428,9 @@ export function wasStopped(source: string | null | undefined): boolean {
   return stoppedSource(source);
 }
 
+/** The harness's verdict source for a round kept because nothing regressed (its `VerdictSource.NoRegression`). */
+const KEPT_UNHARMED = "no-regression";
+
 /** The harness's verdict source for a save point the Unreal lead made itself (its `VerdictSource.Lead`). */
 const LEAD_SAVE = "lead";
 
@@ -569,7 +572,7 @@ export function sideBySideWords(node: { status: IterationStatus; satisfied: bool
     return t("Not needed — the round was undone on the checks.");
   }
   if (node.satisfied) return t("The reviewer is satisfied with this part.");
-  return node.source === "checks"
+  return node.source === "checks" || node.source === KEPT_UNHARMED
     ? t("No objection to the new build.")
     : t("The reviewer preferred the new build to the round before.");
 }

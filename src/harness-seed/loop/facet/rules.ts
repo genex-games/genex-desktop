@@ -271,54 +271,51 @@ export function strongFlips(
 }
 
 /**
- * Whether a round is kept. A strong flip is proof: the build does something measurable it did
- * not do before, and only a named regression (the taste veto) undoes it. Everything else — no
- * flip at all, or only the judge's own notes flipping — is decided by the blind side-by-side
- * pick, which is the one judgement that looked at both builds at once.
+ * Whether a round is kept. Its work stands unless something got worse: the taste judge vetoed it
+ * with a named regression, or a check that passed on the accepted build now fails (the board
+ * refuses such a round before the judge is asked; the rule holds it as well). No check moving,
+ * only the judge's own notes flipping, the judge preferring the round before without naming what
+ * got worse, and a move that did not arrive cost the round nothing — the move stays owed
+ * (`moveVerdict` never climbs it), as THE FIX does (facet/phases/taste.ts `holdTheFix`).
  *
- * A missing move somebody asked for undoes a preferred round only when the round fixed nothing it
- * owed: one that flipped the judge's own defect questions is kept, so its fixes are not thrown
- * away, and its move stays owed (`moveVerdict` never climbs it).
+ * `source` says why: a veto, a regression or a strong flip, the judge's preference, or nothing
+ * regressed (`VerdictSource.NoRegression`).
  */
 export function acceptRound({
   spec,
   board,
   comparison,
   taste,
-  moveMissing = false,
 }: {
   spec: { checks?: AnyRecord[] } | null | undefined;
   board: AnyRecord | null | undefined;
-  comparison?: { flips?: string[] } | null;
+  comparison?: { flips?: string[]; regressions?: string[] } | null;
   taste?: { veto?: boolean; pick?: string | null } | null;
-  moveMissing?: boolean;
 }): { accepted: boolean; strong: string[]; source: string } {
-  const flips = comparison?.flips ?? [];
-  const strong = strongFlips(spec, board, flips);
+  const strong = strongFlips(spec, board, comparison?.flips ?? []);
   const veto = taste?.veto === true;
+  const regressed = (comparison?.regressions ?? []).length > 0;
   const preferred = taste?.pick === Side.Challenger;
-  // The judge's own defect questions that flipped: what the round owed and fixed.
-  const fixedOwed = flips.length > strong.length;
-  const accepted = strong.length > 0 ? !veto : preferred && (!moveMissing || fixedOwed);
-  // Only a round the judge preferred is undone by its missing move; one it did not prefer lost on taste.
-  const lostToMove = moveMissing && preferred && !accepted;
-  return { accepted, strong, source: acceptanceSource({ veto, strong: strong.length > 0, moveMissing: lostToMove }) };
+  const source = acceptanceSource({ veto, regressed, strong: strong.length > 0, preferred });
+  return { accepted: !veto && !regressed, strong, source };
 }
 
-/** Which rule a kept-or-not round was decided by, in `acceptRound`'s order: a veto, a strong flip, a missing move, taste. */
+/** Which rule a kept-or-not round was decided by, in `acceptRound`'s order: a veto, the board, taste, or nothing regressed. */
 function acceptanceSource({
   veto,
+  regressed,
   strong,
-  moveMissing,
+  preferred,
 }: {
   veto: boolean;
+  regressed: boolean;
   strong: boolean;
-  moveMissing: boolean;
+  preferred: boolean;
 }): VerdictSource {
   if (veto) return VerdictSource.TasteVeto;
-  if (strong) return VerdictSource.Checks;
-  if (moveMissing) return VerdictSource.NoMove;
-  return VerdictSource.Taste;
+  if (regressed || strong) return VerdictSource.Checks;
+  if (preferred) return VerdictSource.Taste;
+  return VerdictSource.NoRegression;
 }
 
 /**
@@ -473,10 +470,10 @@ function isOpenMove(move: AnyRecord, policy: FacetPolicy): boolean {
 
 /**
  * What became of the move: measured by its own check when it has one, else answered by the
- * taste judge (a judge that did not answer gives the benefit of the doubt). `costsRound` is the
- * demotion of M3.3 — only a move somebody asked for (`mandatory`) can undo a round the judge
- * preferred; every other miss is `note`, which rides into the round's record and the director's
- * digest so the run can steer instead of the worker losing the work.
+ * taste judge (a judge that did not answer gives the benefit of the doubt). A miss never costs
+ * the round (`acceptRound`): it is `note`, which rides into the round's record and the director's
+ * digest so the run can steer instead of the worker losing the work, and a move somebody asked for
+ * (`mandatory`) stays owed.
  *
  * A move the judge saw already in the accepted build (`moveAlreadyPresent`) was delivered by an
  * earlier round: it is never missing, and its rung climbs whatever this round's fate. Asked
@@ -496,41 +493,36 @@ export function moveVerdict({
 } = {}): {
   measured: boolean;
   missing: boolean;
-  costsRound: boolean;
   delivered: boolean | null;
   already: boolean;
   note: string | null;
 } {
   const what = String(move?.what ?? "");
-  if (!what || !move)
-    return { measured: false, missing: false, costsRound: false, delivered: null, already: false, note: null };
+  if (!what || !move) return { measured: false, missing: false, delivered: null, already: false, note: null };
   const measured = Boolean(move.check && board?.[move.check.id]?.pass === true);
   const already = !measured && taste?.moveAlreadyPresent === true;
   const missing = !measured && !already && taste?.moveDelivered === false;
-  const costsRound = missing && move.mandatory === true;
   // Visible without being asked: a structural change the judge did not say was missing.
   const looksStructural = taste?.moveDelivered !== false && taste?.scale === ChangeScale.Structural;
   const landed = measured || taste?.moveDelivered === true || looksStructural;
   const delivered = won === null ? null : already || Boolean(won && landed);
-  const kept = won === true;
-  const note = moveNote(what, { missing, costsRound, already, kept });
-  return { measured, missing, costsRound, delivered, already, note };
+  const note = moveNote(what, { missing, owed: move.mandatory === true, already });
+  return { measured, missing, delivered, already, note };
 }
 
 /**
- * The round's note about its move: already built by an earlier round, missed without costing the
- * round, or missed by a round kept for what it fixed — whose move is still owed, never climbed.
+ * The round's note about its move: already built by an earlier round, or missed — which never
+ * costs the round; a move somebody asked for stays owed, never climbed.
  */
 function moveNote(
   what: string,
-  { missing, costsRound, already, kept }: { missing: boolean; costsRound: boolean; already: boolean; kept: boolean },
+  { missing, owed, already }: { missing: boolean; owed: boolean; already: boolean },
 ): string | null {
   const quoted = what.slice(0, CLIP_QUOTE);
   if (already) return `the move was already in the accepted build — its rung is climbed: ${quoted}`;
-  if (missing && !costsRound) return `the move was not delivered, and it did not cost the round: ${quoted}`;
-  if (missing && kept)
-    return `the move was not delivered; the round was kept for what it fixed, and the move stays owed: ${quoted}`;
-  return null;
+  if (!missing) return null;
+  if (owed) return `the move was not delivered and stays owed: ${quoted}`;
+  return `the move was not delivered, and it did not cost the round: ${quoted}`;
 }
 
 /**

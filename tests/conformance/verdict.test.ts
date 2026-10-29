@@ -198,6 +198,7 @@ describe("one record, whatever judged the build", () => {
       "the loop calls a regression a checks verdict too",
     );
     assert.equal(roundRule({ source: "taste", won: true }), "judge-preferred");
+    assert.equal(roundRule({ source: "no-regression", won: true }), "no-regression");
     assert.equal(roundRule({ source: "taste", won: false }), "vetoed");
     assert.equal(roundRule({ source: "checks", won: true, satisfied: true }), "satisfied");
     assert.equal(roundRule({ source: "stopped" }), "stopped");

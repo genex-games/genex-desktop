@@ -686,6 +686,11 @@ describe("verdicts", () => {
       sideBySideWords({ status: "accepted", satisfied: false, source: "checks" }),
       "No objection to the new build.",
     );
+    // A round kept because nothing regressed: the reviewer named no regression, whatever it picked.
+    assert.equal(
+      sideBySideWords({ status: "accepted", satisfied: false, source: "no-regression" }),
+      "No objection to the new build.",
+    );
     assert.equal(
       sideBySideWords({ status: "accepted", satisfied: true, source: "taste" }),
       "The reviewer is satisfied with this part.",

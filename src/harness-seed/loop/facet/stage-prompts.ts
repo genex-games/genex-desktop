@@ -1,7 +1,7 @@
 /**
  * What the finish stage (facet/stage.ts) says to its builder and its judge. The build stage's
  * words stay where they are, byte for byte; these replace them only for a worker finishing what
- * exists, where polish is the work and wins on the blind pick.
+ * exists, where polish is the work.
  */
 
 /** The brief's section in place of THE MOVE, for a finishing worker. */
@@ -12,7 +12,7 @@ export const FINISH_RULES: readonly string[] = [
   "This iteration finishes what exists. Work the judge's polish list below and the defect ledger, worst first.",
   "Change how what exists looks, sounds and feels — materials, light, readability, motion, the HUD's craft — not what exists: no new systems, no new mechanics.",
   "Keep every passing check: a regression still rolls the build back.",
-  "Capture and look at the real window before you stop: the judge picks blind between your build and the accepted one, and a build that adds a system or changes nothing a player can see loses.",
+  "Capture and look at the real window before you stop: the judge looks blind at your build beside the accepted one, and only a regression it names rolls yours back.",
 ];
 
 /** The polish list's heading inside the finish section. */
@@ -20,7 +20,7 @@ export const FINISH_POLISH_HEAD = "The judge's polish list (this is the work, wo
 
 /** The one line a finishing builder's prompt carries where THE MOVE's would be. */
 export const FINISH_PROMPT_LINE =
-  "THE FINISH THIS ITERATION: polish what exists — the judge's polish list and defect ledger in the brief, worst first. No new systems. A build a player would rather ship wins on the blind pick; a regression still loses.";
+  "THE FINISH THIS ITERATION: polish what exists — the judge's polish list and defect ledger in the brief, worst first. No new systems. Your build is kept unless it regresses.";
 
 /** THE FIX's last line in a finish-stage brief: tuning is allowed when tuning is what closes it. */
 export const FINISH_FIX_LINE =

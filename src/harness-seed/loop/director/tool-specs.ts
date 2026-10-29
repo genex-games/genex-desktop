@@ -206,7 +206,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         move: {
           type: "string",
           description:
-            "loop only: the ONE structural change it builds first, in a sentence — what the game IS afterwards. A build without it loses. Omitted, the harness's planner invents one.",
+            "loop only: the ONE structural change it builds first, in a sentence — what the game IS afterwards. It stays owed until a round delivers it; a round without it is still kept when nothing regressed. Omitted, the harness's planner invents one.",
         },
         milestones: {
           type: "string",
