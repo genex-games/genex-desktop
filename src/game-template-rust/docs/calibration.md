@@ -10,6 +10,8 @@ Light intensities are scene units. Auto exposure brings the metered scene to a k
 grey), so what matters is each light's ratio to the others; where `docs/api/lighting.md` converts a
 physical value (lux, lumens, candela) into scene units, prefer that conversion to these numbers. The recipes are captured with these values; the desk lamp and the
 candle are starting points to tune against a capture.
+One scene unit is 2844 lux (scene EV 0 = EV100 12); `genex::render::units` converts
+(`docs/api/lighting.md`).
 
 | Light | Call | Value |
 | --- | --- | --- |
