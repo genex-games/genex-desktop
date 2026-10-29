@@ -75,6 +75,11 @@ fn locomotion(set: &AnimSet) -> (AnimGraph, FloatParam, FloatParam) {
     (g.build().expect("the graph builds"), speed, rate)
 }
 
+/// The graph's one layer.
+fn base_layer(animator: &Animator) -> LayerId {
+    animator.graph().layers().next().expect("a layer")
+}
+
 fn marker_height(set: &AnimSet, animator: &Animator) -> f32 {
     let marker = set.skeleton().joints().nth(1).expect("a second joint");
     animator.pose()[usize::from(marker.raw())].translation.y
@@ -91,7 +96,7 @@ fn the_phase_advances_over_the_weighted_cycle_and_the_pose_is_the_weighted_mean(
     for tick in 1..=30 {
         animator.update(TICK);
         let phase = (tick as f32 * TICK / cycle) % 1.0;
-        let time = animator.normalized_time(LayerId(0));
+        let time = animator.normalized_time(base_layer(&animator));
         assert!((time - phase).abs() < 1e-4, "tick {tick}: phase {time}, expected {phase}");
         // Both clips sit at the same phase, mixed half and half.
         let expected = phase * (0.5 * WALK_LIFT + 0.5 * RUN_LIFT);
@@ -138,11 +143,11 @@ fn a_directional_blend_weighs_only_the_velocitys_neighbours() {
     for _ in 0..15 {
         animator.update(TICK);
     }
-    let phase = animator.normalized_time(LayerId(0));
+    let phase = animator.normalized_time(base_layer(&animator));
     assert!((marker_height(&set, &animator) - phase * WALK_LIFT).abs() < 1e-3, "straight ahead plays the forward clip alone");
     animator.set_vec2(velocity, Vec2::new(WALK_SPEED, 0.0));
     animator.update(TICK);
-    let phase = animator.normalized_time(LayerId(0));
+    let phase = animator.normalized_time(base_layer(&animator));
     assert!((marker_height(&set, &animator) - phase * 4.0).abs() < 1e-3, "to the right plays the right clip alone");
 }
 

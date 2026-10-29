@@ -156,7 +156,8 @@ const ADAPTATION_SPEED_MIN: f32 = 0.01;
 fn person_look(look: Look) -> Look {
     let (stops, motion_blur) = crate::settings::picture();
     let ev_compensation = (look.ev_compensation + stops).clamp(-EV_COMPENSATION_LIMIT, EV_COMPENSATION_LIMIT);
-    let look = Look { ev_compensation, ..look };
+    let mut look = look;
+    look.ev_compensation = ev_compensation;
     if motion_blur { look } else { look.with_motion_blur(MotionBlur::OFF) }
 }
 
