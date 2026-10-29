@@ -3848,5 +3848,8 @@ its deadline or its assertion.
   `failure.code` `character-rejected`, the reasons in `failure.providerError` and the call that
   fixes them in `failure.next`. Regenerating spends credits, so the gate says how and the agent asks
   for it through the usual quote.
-- Per-clip pose validation (limb length, collapse, feet grounded, hands on the weapon) belongs to the
-  engine side (aaa-motion); a CC0 fallback library (Quaternius' UAL) stays unpinned, see above.
+- Per-clip pose validation (limb length, collapse, feet grounded, hands on the weapon) is the
+  engine's `character_check` example (aaa-motion; its report is `shared/character-check.ts`).
+  `shared/character-repair.ts` turns a report into the plan: one regeneration for a rig or pose fault,
+  a swap of just the clips at fault, a made clip per missing role. A CC0 fallback library
+  (Quaternius' UAL) stays unpinned, see above.
