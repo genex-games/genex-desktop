@@ -450,19 +450,241 @@ pub fn adapt_ev(ev: f32, target: f32, params: &GpuExposureParams) -> f32 {
 }
 
 /// One simulated tick's step from `ev` towards `target`: linear (`speed` EV a tick) beyond the
-/// transition, `distance × speed / transition` within it, snapped onto the target within
-/// [`ADAPT_SNAP_EV`].
+/// transition, `distance × speed / transition` within it, never past the target (a speed boosted
+/// past the transition, the doorway's, would otherwise overshoot and ring), snapped onto the
+/// target within [`ADAPT_SNAP_EV`].
 pub fn adapt_tick(ev: f32, target: f32, params: &GpuExposureParams) -> f32 {
     let (up, down) = (params.speed[0], params.speed[1]);
     let delta = target - ev;
     let transition = params.speed[2];
     let step = match (transition > 0.0, delta > 0.0) {
         (false, _) => delta.max(-up).min(down),
-        (true, true) => down.min(delta * down / transition),
-        (true, false) => (-up).max(delta * up / transition),
+        (true, true) => down.min(delta * down / transition).min(delta),
+        (true, false) => (-up).max(delta * up / transition).max(delta),
     };
     let next = ev + step;
     if (target - next).abs() < ADAPT_SNAP_EV { target } else { next }
+}
+
+// --- Telemetry (AAA review WP-5: `state().__render.exposure`) ---
+
+/// Bins of the telemetry's histogram (`EXPOSURE_TELEMETRY_BINS` in `src/shared/render-look.ts`):
+/// the GPU's [`EXPOSURE_HISTOGRAM_BINS`] summed in runs of eight.
+pub const TELEMETRY_BINS: usize = 16;
+/// Live frames between two read-backs of the exposure state and histogram.
+pub const READBACK_EVERY: u32 = 4;
+/// Staging buffers in flight at most (a frame whose slot is still mapped skips its read-back).
+const READBACK_RING: usize = 2;
+/// Bytes of one read-back: the state, then the histogram.
+const READBACK_BYTES: u64 = size_of::<GpuExposureState>() as u64 + HISTOGRAM_BYTES;
+
+/// What the engine warns about a look's exposure (`ExposureWarning` in the contract). Wire values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExposureWarning {
+    /// `ev_min` is raised above [`crate::settings::DEFAULT_EV_MIN`] with doorway adaptation on: a
+    /// dark room meters at the floor, so the exposure stops brightening and the room stays dark.
+    EvMinRaisedWithDoorwayAdaptation,
+    /// Doorway adaptation is on under manual exposure, where nothing adapts.
+    DoorwayAdaptationUnderManual,
+}
+
+impl ExposureWarning {
+    /// Its wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ExposureWarning::EvMinRaisedWithDoorwayAdaptation => "ev-min-raised-with-doorway-adaptation",
+            ExposureWarning::DoorwayAdaptationUnderManual => "doorway-adaptation-under-manual",
+        }
+    }
+}
+
+/// What `look` deserves a warning for.
+pub fn exposure_warnings(look: &Look) -> Vec<ExposureWarning> {
+    if !look.doorway_adaptation {
+        return Vec::new();
+    }
+    match look.exposure {
+        ExposureMode::Manual => vec![ExposureWarning::DoorwayAdaptationUnderManual],
+        ExposureMode::Auto if look.ev_min > crate::settings::DEFAULT_EV_MIN => vec![ExposureWarning::EvMinRaisedWithDoorwayAdaptation],
+        ExposureMode::Auto => Vec::new(),
+    }
+}
+
+/// One read-back of an exposure history: its state and histogram after a frame, the doorway boost
+/// that frame adapted at and the frame's number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExposureReading {
+    /// The history's state.
+    pub state: GpuExposureState,
+    /// The metered frame's histogram.
+    pub bins: [u32; EXPOSURE_HISTOGRAM_BINS as usize],
+    /// The doorway boost the frame adapted at (1: none).
+    pub boost: f32,
+    /// The frame it was taken after.
+    pub frame: u64,
+}
+
+/// What the exposure metered and drew (`ExposureTelemetry` in the contract).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExposureTelemetry {
+    /// Auto exposure metered the frame (false: a fixed exposure).
+    pub auto: bool,
+    /// The scene EV metered; `None` under a fixed exposure or before the first read-back.
+    pub metered_ev: Option<f32>,
+    /// The EV it adapts towards; `None` as `metered_ev`.
+    pub target_ev: Option<f32>,
+    /// The EV the frame was drawn at: exposure `2^(compensation - applied_ev)`.
+    pub applied_ev: f32,
+    /// The look's `ev_compensation`.
+    pub compensation: f32,
+    /// The look's metering floor.
+    pub ev_min: f32,
+    /// The look's metering ceiling (at least a span of [`HISTOGRAM_EV_SPAN_MIN`] over the floor).
+    pub ev_max: f32,
+    /// [`TELEMETRY_BINS`] shares summing to 1 over `ev_min..ev_max`; empty without a metered sample.
+    pub histogram: Vec<f32>,
+    /// Whether that frame adapted at the doorway boost.
+    pub doorway_boost: bool,
+    /// Frames between the read-back and the frame described.
+    pub age_frames: u64,
+    /// The frame the read-back was taken after (`None` before the first, or under a fixed
+    /// exposure): a new value is a new reading.
+    pub reading: Option<u64>,
+    /// What the look deserves a warning for.
+    pub warnings: Vec<ExposureWarning>,
+}
+
+/// The telemetry of frame `frame` drawn with `look` from `source`, from the latest `reading` of
+/// its history (auto exposure only).
+pub fn exposure_telemetry(look: &Look, source: ExposureSource, reading: Option<&ExposureReading>, frame: u64) -> ExposureTelemetry {
+    let span = (look.ev_max - look.ev_min).max(HISTOGRAM_EV_SPAN_MIN);
+    let base = ExposureTelemetry {
+        auto: source == ExposureSource::Auto,
+        metered_ev: None,
+        target_ev: None,
+        applied_ev: 0.0,
+        compensation: look.ev_compensation,
+        ev_min: look.ev_min,
+        ev_max: look.ev_min + span,
+        histogram: Vec::new(),
+        doorway_boost: false,
+        age_frames: 0,
+        reading: None,
+        warnings: exposure_warnings(look),
+    };
+    let reading = match source {
+        ExposureSource::Fixed(exposure) => return ExposureTelemetry { applied_ev: look.ev_compensation - libm::log2f(exposure.max(f32::MIN_POSITIVE)), ..base },
+        ExposureSource::Auto => reading,
+    };
+    let Some(reading) = reading else { return base };
+    let params = GpuExposureParams::new(look, 1, 1, false);
+    let metered = meter_ev(&reading.bins, &params);
+    ExposureTelemetry {
+        metered_ev: metered,
+        target_ev: metered.map(|_| reading.state.target_ev),
+        applied_ev: reading.state.ev,
+        histogram: telemetry_bins(&reading.bins),
+        doorway_boost: reading.boost > 1.0,
+        age_frames: frame.saturating_sub(reading.frame),
+        reading: Some(reading.frame),
+        ..base
+    }
+}
+
+/// The GPU's bins summed into [`TELEMETRY_BINS`] shares of their total; empty when it is 0.
+pub fn telemetry_bins(bins: &[u32; EXPOSURE_HISTOGRAM_BINS as usize]) -> Vec<f32> {
+    let total: u64 = bins.iter().map(|&count| u64::from(count)).sum();
+    if total == 0 {
+        return Vec::new();
+    }
+    let run = bins.len() / TELEMETRY_BINS;
+    bins.chunks_exact(run).map(|chunk| (chunk.iter().map(|&count| u64::from(count)).sum::<u64>() as f64 / total as f64) as f32).collect()
+}
+
+/// One staging buffer of the read-back ring.
+struct ReadbackSlot {
+    buffer: Buffer,
+    ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The boost and frame of the copy in flight; `None` when free.
+    pending: Option<(f32, u64)>,
+}
+
+/// The exposure state and histogram copied back from the GPU a few frames late, never stalling a
+/// Live frame (the occlusion feedback's ring); a settled capture waits for its own.
+pub struct ExposureReadback {
+    slots: Vec<ReadbackSlot>,
+    next: usize,
+    latest: Option<ExposureReading>,
+}
+
+impl ExposureReadback {
+    /// An empty ring on `device`.
+    pub fn new(device: &Device) -> Result<ExposureReadback, RenderError> {
+        let slots = (0..READBACK_RING)
+            .map(|_| {
+                Ok(ReadbackSlot {
+                    buffer: buffer(device, "exposure readback", READBACK_BYTES, BufferUsages::MAP_READ | BufferUsages::COPY_DST)?,
+                    ready: std::sync::Arc::default(),
+                    pending: None,
+                })
+            })
+            .collect::<Result<Vec<_>, RenderError>>()?;
+        Ok(ExposureReadback { slots, next: 0, latest: None })
+    }
+
+    /// Copy `history`'s state and histogram after frame `frame` (adapted at `boost`) in a
+    /// submission of its own and map them; `wait` blocks until they are read (a settled capture).
+    /// A frame whose slot is still in flight skips its read-back.
+    pub fn read_back(&mut self, device: &Device, queue: &Queue, history: &ExposureHistory, boost: f32, frame: u64, wait: bool) {
+        let slot = &mut self.slots[self.next];
+        if slot.pending.is_some() {
+            return;
+        }
+        self.next = (self.next + 1) % READBACK_RING;
+        let state_bytes = size_of::<GpuExposureState>() as u64;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("exposure readback") });
+        encoder.copy_buffer_to_buffer(&history.state, 0, &slot.buffer, 0, state_bytes);
+        encoder.copy_buffer_to_buffer(&history.histogram, 0, &slot.buffer, state_bytes, HISTOGRAM_BYTES);
+        queue.submit([encoder.finish()]);
+        slot.pending = Some((boost, frame));
+        slot.ready.store(false, std::sync::atomic::Ordering::SeqCst);
+        let ready = std::sync::Arc::clone(&slot.ready);
+        slot.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| ready.store(result.is_ok(), std::sync::atomic::Ordering::SeqCst));
+        if wait {
+            let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        }
+        self.take(device);
+    }
+
+    /// Read every copy that came back, keeping the newest.
+    pub fn take(&mut self, device: &Device) {
+        let _ = device.poll(wgpu::PollType::Poll);
+        for slot in &mut self.slots {
+            let Some((boost, frame)) = slot.pending.filter(|_| slot.ready.load(std::sync::atomic::Ordering::SeqCst)) else { continue };
+            let words: Vec<u32> = match slot.buffer.slice(..).get_mapped_range() {
+                Ok(range) => bytemuck::pod_collect_to_vec(&range[..]),
+                Err(_) => Vec::new(),
+            };
+            slot.buffer.unmap();
+            slot.pending = None;
+            let Some(reading) = reading_of(&words, boost, frame) else { continue };
+            if self.latest.is_none_or(|latest| latest.frame <= frame) {
+                self.latest = Some(reading);
+            }
+        }
+    }
+
+    /// The newest reading.
+    pub fn latest(&self) -> Option<&ExposureReading> {
+        self.latest.as_ref()
+    }
+}
+
+/// A reading from a read-back's words: the state's four, then the bins.
+fn reading_of(words: &[u32], boost: f32, frame: u64) -> Option<ExposureReading> {
+    let (state, bins) = (words.get(..4)?, words.get(4..4 + EXPOSURE_HISTOGRAM_BINS as usize)?);
+    let state = GpuExposureState { exposure: f32::from_bits(state[0]), ev: f32::from_bits(state[1]), target_ev: f32::from_bits(state[2]), flags: state[3] };
+    Some(ExposureReading { state, bins: bins.try_into().ok()?, boost, frame })
 }
 
 // --- GPU ---
@@ -733,6 +955,68 @@ mod tests {
         assert!(boosted[..ROOM_ADAPT_TICKS as usize].iter().all(|boost| *boost == ROOM_ADAPT_BOOST), "{boosted:?}");
         assert_eq!(boosted[ROOM_ADAPT_TICKS as usize], 1.0, "half a second later the look's speeds again");
         assert_eq!(adaptation.step(0, 1), ROOM_ADAPT_BOOST, "stepping back out to the yard boosts too");
+    }
+
+    #[test]
+    fn warnings_name_a_raised_floor_under_doorway_adaptation_and_doorway_adaptation_under_manual() {
+        let auto = Look { exposure: ExposureMode::Auto, ..Look::default() };
+        let none: [ExposureWarning; 0] = [];
+        assert_eq!(exposure_warnings(&auto), none, "the template's look");
+        assert_eq!(exposure_warnings(&Look { ev_min: -2.5, ..auto }), [ExposureWarning::EvMinRaisedWithDoorwayAdaptation], "gen3's light facet");
+        assert_eq!(exposure_warnings(&Look { ev_min: -2.5, doorway_adaptation: false, ..auto }), none);
+        assert_eq!(exposure_warnings(&Look { ev_min: -12.0, ..auto }), none, "a lower floor is fine");
+        assert_eq!(exposure_warnings(&Look::default()), [ExposureWarning::DoorwayAdaptationUnderManual], "the engine default is manual");
+        assert_eq!(ExposureWarning::EvMinRaisedWithDoorwayAdaptation.wire(), "ev-min-raised-with-doorway-adaptation");
+        assert_eq!(ExposureWarning::DoorwayAdaptationUnderManual.wire(), "doorway-adaptation-under-manual");
+    }
+
+    #[test]
+    fn telemetry_reads_the_metered_target_and_applied_ev_and_sums_the_bins_to_sixteen_shares() {
+        let look = Look { exposure: ExposureMode::Auto, ev_compensation: 0.5, ..Look::default() };
+        let manual = exposure_telemetry(&Look { ev_compensation: 1.0, ..Look::default() }, ExposureSource::Fixed(2.0), None, 9);
+        assert_eq!((manual.auto, manual.metered_ev, manual.applied_ev, manual.histogram.len()), (false, None, 0.0, 0), "manual +1 EV draws at 2x: EV 0");
+        let unread = exposure_telemetry(&look, ExposureSource::Auto, None, 3);
+        assert_eq!((unread.auto, unread.metered_ev, unread.target_ev), (true, None, None));
+        // Every weighted sample in the bin of scene EV -2 (bins of 1/8 EV over -8..8: bin 48).
+        let mut bins = [0u32; EXPOSURE_HISTOGRAM_BINS as usize];
+        bins[48] = 1600;
+        let reading = ExposureReading { state: GpuExposureState { exposure: 1.0, ev: -1.5, target_ev: -1.9375, flags: 0 }, bins, boost: ROOM_ADAPT_BOOST, frame: 7 };
+        let read = exposure_telemetry(&look, ExposureSource::Auto, Some(&reading), 9);
+        assert_eq!(read.metered_ev, Some(-1.9375), "the bin's centre");
+        assert_eq!((read.target_ev, read.applied_ev, read.age_frames, read.doorway_boost), (Some(-1.9375), -1.5, 2, true));
+        assert_eq!(read.histogram.len(), TELEMETRY_BINS);
+        assert_eq!(read.histogram[6], 1.0, "bin 48 is the seventh run of eight");
+        assert_eq!(read.histogram.iter().sum::<f32>(), 1.0);
+        assert_eq!((read.ev_min, read.ev_max, read.compensation), (-8.0, 8.0, 0.5));
+        let words: Vec<u32> = [1.0_f32.to_bits(), (-1.5_f32).to_bits(), (-1.9375_f32).to_bits(), 0].into_iter().chain(bins).collect();
+        assert_eq!(reading_of(&words, ROOM_ADAPT_BOOST, 7), Some(reading), "the read-back's layout: state, then bins");
+        assert_eq!(reading_of(&words[..10], 1.0, 0), None);
+    }
+
+    /// Doorway adaptation under the template's auto exposure (AAA review WP-5): the 8x boost puts
+    /// a tick's speed past the look's transition, where the exponential step (`distance × speed /
+    /// transition`) overshot the target each tick, and a fast look (20 EV/s) rang around it at full
+    /// speed instead of landing. Every step now stops at the target: stepping into a corridor 5 EV
+    /// under the yard, the EV falls monotonically, never passes the target, and is within 1 EV of it
+    /// half a second after the crossing.
+    #[test]
+    fn a_boosted_or_fast_adaptation_never_passes_its_target() {
+        let fast = Look { adaptation_up: crate::settings::ADAPTATION_SPEED_MAX, adaptation_down: crate::settings::ADAPTATION_SPEED_MAX, ..Look::default() };
+        for (name, look) in [("default", Look::default()), ("fastest", fast)] {
+            for target in [-5.0_f32, 5.0] {
+                let params = GpuExposureParams::new(&look, 1, 1, false).boosted(ROOM_ADAPT_BOOST);
+                let mut ev = 0.0_f32;
+                let mut path = vec![ev];
+                for _ in 0..ROOM_ADAPT_TICKS {
+                    let next = adapt_tick(ev, target, &params);
+                    assert!((target - next) * target.signum() >= 0.0, "{name} towards {target}: passed the target at {next} ({path:?})");
+                    assert!((next - ev) * target.signum() >= 0.0, "{name} towards {target}: turned back at {next}");
+                    ev = next;
+                    path.push(ev);
+                }
+                assert!((target - ev).abs() <= 1.0, "{name} towards {target}: {ev} half a second after the crossing");
+            }
+        }
     }
 
     #[test]

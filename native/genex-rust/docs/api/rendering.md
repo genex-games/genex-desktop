@@ -31,8 +31,8 @@ typed reason (`budget`, naming the rung or switch dropped; `format-unrenderable`
 | --- | --- | --- | --- | --- | --- | --- |
 | `low` | MSAA 4x | 2 | off | off | off | 64 (0) |
 | `medium` | MSAA 4x | 2 | on | half size | off | 256 (0) |
-| `high` | TAA | 3 | on | half size, history | on | 1024 (2) |
-| `ultra` | TAA | 4 | on | full size | on | 1024 (4) |
+| `high` | TAA | 3 | on | half size, history, GI | on | 1024 (4) |
+| `ultra` | TAA | 4 | on | full size, GI | on | 1024 (4) |
 
 Every preset draws HDR, image-based lighting, the sky and fog; below scale 1 it upscales (TAA at
 output size on `high` and `ultra` without lens effects or `post-hdr` passes, else EASU with RCAS;
@@ -52,10 +52,10 @@ The look's `tonemapper`: `khronos-neutral` (default) keeps
 authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx` is muted;
 `aces` punchier; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
-meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max` (default -8 and 8),
+meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max` (-8..8),
 adds the compensation and adapts at `adaptation_speed_up` (default 4) and `adaptation_speed_down`
-(3) EV per simulated second. Use `auto` where light meets shade (each scene's compensation is in
-`docs/look-recipes.md`), `manual` for flat, stylized colour. The rest of
+(3) EV per simulated second (`doorway_adaptation`: Lighting): `auto` where light meets shade,
+`manual` for flat colour (`docs/look-recipes.md` calibrates). The rest of
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (its spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and

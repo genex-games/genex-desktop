@@ -741,6 +741,17 @@ describe("genex.toml: the [render] table and [[wgsl]] api (rows shared with mani
     assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same look");
   });
 
+  it("reads doorway adaptation (AAA review LIT-3) and writes it back into the fragment the facade reads", () => {
+    const look = ["[render.look]", 'exposure = "auto"', "doorway_adaptation = false"].join("\n");
+    const manifest = accepted(`${RENDER_ROWS.game}${look}\n`);
+    assert.equal(manifest.render?.look?.doorwayAdaptation, false);
+    assert.ok(manifest.render);
+    const back = accepted(`${RENDER_ROWS.game}${renderTomlFragment(manifest.render)}`);
+    assert.deepEqual(back.render, manifest.render, "the fragment reads back as the same look");
+    const wrong = parseGenexToml(`${RENDER_ROWS.game}[render.look]\ndoorway_adaptation = 1\n`);
+    assert.equal(wrong.ok, false, "a number is not a switch");
+  });
+
   it("reads a class table's LOD keys and switches (LOD-06) and writes them back into the fragment the facade reads", () => {
     const table =
       "[render.class.mobile-mid]\nlod_threshold_px = 3\nlod_fade_band = 0\nfar_density = 0.5\nlod-fade = false\nimpostors = true\n";

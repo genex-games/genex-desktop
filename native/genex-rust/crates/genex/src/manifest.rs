@@ -90,6 +90,7 @@
 //! contact_shadow_length = 0.25  # world units, 0 < length <= 2
 //! local_exposure_highlights = 0.6 # bright regions towards grey, 0.25..=1 (1: off; high and ultra)
 //! local_exposure_shadows = 0.8    # dark regions towards grey, 0.25..=1 (1: off)
+//! doorway_adaptation = true      # auto exposure adapts 8x faster for 0.5 s at a room's doorway
 //!
 //! [render.shadows]          # the sun's shadows on every preset (held to each class's caps)
 //! distance = 80             # world units, 10..=400 (default: each preset's own, 30..80)
@@ -155,8 +156,24 @@ pub const ENVIRONMENT_CALLS: [&str; 5] = ["frame.environment", "Environment::sky
 /// lights on a frame (`frame.spot_light_with(&SpotLight::new(..)..)` for its own cone or a shadow
 /// map), and a glowing surface (`Material::emissive(..)`, `.with_emissive(..)`,
 /// `.with_emissive_texture(..)`).
-pub const LIGHT_CALLS: [&str; 7] =
-    ["frame.point_light", "frame.spot_light", "frame.spot_light_with", "SpotLight::new", "Material::emissive", ".with_emissive", ".with_emissive_texture"];
+/// Physical units (`genex::render::units`, AAA review LIT-3) give those lights their intensity.
+pub const LIGHT_CALLS: [&str; 15] = [
+    "frame.point_light",
+    "frame.spot_light",
+    "frame.spot_light_with",
+    "SpotLight::new",
+    "Material::emissive",
+    ".with_emissive",
+    ".with_emissive_texture",
+    "units::lux",
+    "units::candela",
+    "units::lumens",
+    "units::spot_lumens",
+    "units::ambient_lux",
+    "units::nits",
+    "units::ev_from_ev100",
+    "units::kelvin",
+];
 /// The retained instance group calls of the facade (renderer pass 2 A.0b), as agents call them:
 /// a group made once (`InstanceGroup::cubes(..)`, `::spheres(..)`, `::models(..)`,
 /// `::models_with(..)`), changed by range (`group.update(..)`), drawn each frame
@@ -358,7 +375,7 @@ pub const WEB_WASM_CEILING_MB: i64 = 32;
 /// The `[render.shadows]` keys, in file-documentation order.
 pub const SHADOW_KEYS: [&str; 2] = ["distance", "blend_band"];
 /// The keys of `[render.look]`, in the wire table's order (the host's `LookKey`).
-pub const LOOK_KEYS: [&str; 23] = [
+pub const LOOK_KEYS: [&str; 24] = [
     "tonemapper",
     "exposure",
     "metering",
@@ -382,6 +399,7 @@ pub const LOOK_KEYS: [&str; 23] = [
     "contact_shadow_length",
     "local_exposure_highlights",
     "local_exposure_shadows",
+    "doorway_adaptation",
 ];
 
 /// Declares a `[render]` vocabulary: its values, wire spellings, `ALL`, `as_str` and `from_wire`.
@@ -914,6 +932,9 @@ pub struct LookSection {
     /// Local exposure's contrast below middle grey, `LOCAL_EXPOSURE_CONTRAST_MIN..=1` (1: off).
     #[serde(default)]
     pub local_exposure_shadows: Option<f64>,
+    /// Whether auto exposure adapts faster at a declared room's doorway (`Look::doorway_adaptation`).
+    #[serde(default)]
+    pub doorway_adaptation: Option<bool>,
 }
 
 impl LookSection {
@@ -959,7 +980,9 @@ impl LookSection {
             some(self.local_exposure_highlights, local.highlights),
             some(self.local_exposure_shadows, local.shadows),
         );
-        look.with_local_exposure(local)
+        let mut look = look.with_local_exposure(local);
+        look.doorway_adaptation = self.doorway_adaptation.unwrap_or(look.doorway_adaptation);
+        look
     }
 }
 

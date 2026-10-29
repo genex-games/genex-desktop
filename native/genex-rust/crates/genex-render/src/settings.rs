@@ -1728,6 +1728,18 @@ pub struct EnvironmentQuality {
     /// Whether a volume's lookup hides the cells a point is behind a wall from (eight hand-weighed
     /// cells, `irradiance::grid_irradiance`) instead of the sampler's three trilinear fetches.
     pub irradiance_leak_control: bool,
+    /// Cells of a volume one Live frame bakes (the bake's time slice, at most
+    /// `irradiance::BATCH_CELLS`; AAA review WP-12). A resource knob.
+    pub irradiance_cells_per_frame: u8,
+    /// Whether published volumes are baked again, one after another, for as long as they are held
+    /// (dynamic probe GI, AAA review WP-12): a lamp switched on, a door opened or a sun moved
+    /// reaches the bounced light within one cycle instead of never. Off, a volume is baked once
+    /// and again only when the sky changes. A resource knob.
+    pub irradiance_relight: bool,
+    /// The rooms the renderer lights without the game declaring them ([`crate::irradiance::AutoRooms`],
+    /// AAA review WP-12): a volume for each reflection probe without one and a probe for each
+    /// volume without one, and a volume following the camera wherever no declared room holds it.
+    pub auto_rooms: crate::irradiance::AutoRooms,
     /// The froxel fog's grid (renderer pass 2 A.5, [`crate::froxel`]): the height fog lit per
     /// froxel by the shadowed sun and the binned lights (sun shafts), bound in the aerial volume's
     /// place; None keeps the analytic fog. Desktop and web `high` and `ultra`. A resource knob.
@@ -2084,6 +2096,9 @@ impl Quality {
                 continuous_sky: false,
                 irradiance_volumes: 0,
                 irradiance_leak_control: false,
+                irradiance_cells_per_frame: crate::irradiance::CELLS_PER_FRAME as u8,
+                irradiance_relight: false,
+                auto_rooms: crate::irradiance::AutoRooms::OFF,
                 froxel_fog: None,
                 clouds: None,
             },

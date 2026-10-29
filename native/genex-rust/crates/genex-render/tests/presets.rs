@@ -210,7 +210,8 @@ fn the_preset_table_rows() {
     let ao: Vec<(AoResolution, u8, bool)> = [low, medium, high, ultra].iter().map(|q| (q.ao.resolution, q.ao.slices, q.ao.temporal)).collect();
     assert_eq!(ao, [(AoResolution::Off, 0, false), (AoResolution::Half, 1, false), (AoResolution::Half, 2, true), (AoResolution::Full, 3, true)]);
     let lights: Vec<(u32, u32, u8)> = [low, medium, high, ultra].iter().map(|q| (q.lights.cap, q.lights.tile_px, q.lights.shadowed_spots)).collect();
-    assert_eq!(lights, [(64, 32, 0), (256, 32, 0), (1024, 16, 2), (1024, 16, 4)]);
+    // AAA review WP-15 flipped high's shadowed spots from 2 to 4 (the atlas is one layer either way).
+    assert_eq!(lights, [(64, 32, 0), (256, 32, 0), (1024, 16, 4), (1024, 16, 4)]);
     assert_eq!([low, medium, high, ultra].map(|q| q.exposure_input_divisor), [16, 8, 4, 4]);
     assert_eq!([low, medium, high, ultra].map(|q| q.contact_shadows), [false, false, true, true]);
     // R2 review: meshlets and Hi-Z occlusion measured slower on typical scenes, so no preset
@@ -792,11 +793,13 @@ fn the_ledger_gives_fixed_byte_totals_at_the_reference_resolutions() {
         // (`ao::target_bytes_shaped`, as the pool allocates them): +14_745_600 (was 747_261_812).
         // Release R-13 flips the ultra row (named in the PR): plain TAA at scale 1 draws no RCAS,
         // so its output-size target goes, -14_745_600 (was 762_007_412).
-        ("desktop-high", QualityPreset::High, (2560, 1440), false, 401_053_684),
+        // AAA review WP-12 flips the desktop-high rows (named in the PR): screen-space GI's terms on
+        // high, +18_432_000 at 1440p and +10_368_000 at 1080p (was 401_053_684 and 251_555_164).
+        ("desktop-high", QualityPreset::High, (2560, 1440), false, 419_485_684),
         ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 175_005_928),
         ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 747_261_812),
         ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_260_876),
-        ("desktop-high", QualityPreset::High, (1920, 1080), false, 251_555_164),
+        ("desktop-high", QualityPreset::High, (1920, 1080), false, 261_923_164),
         ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_889_452),
         ("mobile-mid", QualityPreset::Low, (824, 1830), true, 20_668_292),
         ("mobile-mid", QualityPreset::Low, (1080, 2400), true, 33_231_356),

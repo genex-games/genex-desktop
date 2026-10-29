@@ -3891,7 +3891,10 @@ impl Renderer {
         // Binning needs no HDR: the legacy LDR scene (the `hdr` switch off, a v1 material or
         // pass in the world) shades the same binned lights, spots and shadowed spots included.
         if crate::lights::BINNED_SHADING_LANDED && self.quality.lights.clustered {
-            let binned = crate::lights::binned_frame(&scene.lighting, &self.quality.lights, &scene.camera, self.render_size());
+            // AAA review WP-12: the rooms the quality adds (paired probes and volumes, the camera's
+            // own volume) are binned and baked as the declared ones are.
+            let lighting = crate::irradiance::with_auto_rooms(&scene.lighting, &self.quality.environment, scene.camera.eye);
+            let binned = crate::lights::binned_frame(&lighting, &self.quality.lights, &scene.camera, self.render_size());
             plan.lights.clone_from(&binned.lights);
             plan.frame.counts[0] = plan.lights.len() as u32;
             plan.binned = Some(binned);
@@ -5228,7 +5231,7 @@ impl Renderer {
         let shadows = quality.enabled.then(|| ShadowSettings::from_quality(quality, scene.lighting.shadow_distance, self.environment_choice.sun_angular_radius()));
         let plan = FramePlan::build_with(scene, &self.library, aspect, &PlanOptions { shadows, depth_reversed: false, sun: None })?;
         let binned = (crate::lights::BINNED_SHADING_LANDED && self.quality.lights.clustered)
-            .then(|| crate::lights::binned_frame(&scene.lighting, &self.quality.lights, &scene.camera, self.render_size()));
+            .then(|| crate::lights::binned_frame(&crate::irradiance::with_auto_rooms(&scene.lighting, &self.quality.environment, scene.camera.eye), &self.quality.lights, &scene.camera, self.render_size()));
         // The decals (A.10) ride in the `light_ext` table after the lights' rows and every shadowed
         // spot's matrix slot: the table holds `decals::append_rows` of the lights' bytes.
         let ext_bytes = |binned: &crate::lights::BinnedFrame| {

@@ -1051,6 +1051,9 @@ const NUMERIC_LOOK_KEYS = [
   LookKey.LocalExposureShadows,
 ] as const;
 
+/** The `[render.look]` keys whose values are switches. */
+const BOOLEAN_LOOK_KEYS = [LookKey.FogAerialPerspective, LookKey.DoorwayAdaptation] as const;
+
 /** `[render.look]`: its known keys, the vocabulary keys as strings, the switch as a boolean, the colour as numbers and the rest as numbers. */
 function renderLook(value: TomlValue | undefined): RawLook {
   const look: TomlTable = value === undefined ? Object.create(null) : table(value, "[render.look]");
@@ -1062,11 +1065,11 @@ function renderLook(value: TomlValue | undefined): RawLook {
   for (const key of NUMERIC_LOOK_KEYS) {
     if (look[key] !== undefined) raw.numbers.push([key, decimal(look[key], `render.look.${key}`)]);
   }
-  const aerial = look[LookKey.FogAerialPerspective];
-  if (aerial !== undefined) {
-    if (typeof aerial !== "boolean")
-      throw new ShapeError(`render.look.${LookKey.FogAerialPerspective} must be true or false`);
-    raw.booleans.push([LookKey.FogAerialPerspective, aerial]);
+  for (const key of BOOLEAN_LOOK_KEYS) {
+    const on = look[key];
+    if (on === undefined) continue;
+    if (typeof on !== "boolean") throw new ShapeError(`render.look.${key} must be true or false`);
+    raw.booleans.push([key, on]);
   }
   const color = look[LookKey.FogColor];
   if (color !== undefined) {
@@ -1543,8 +1546,11 @@ function effectsOf(raw: RawLook, bad: (key: string, value: unknown) => never): R
     if (!isFogColor(color)) bad(LookKey.FogColor, `[${color.join(", ")}]`);
     look.fogColor = [color[0] ?? 0, color[1] ?? 0, color[2] ?? 0];
   }
-  const aerial = new Map(raw.booleans).get(LookKey.FogAerialPerspective);
+  const booleans = new Map(raw.booleans);
+  const aerial = booleans.get(LookKey.FogAerialPerspective);
   if (aerial !== undefined) look.fogAerialPerspective = aerial;
+  const doorway = booleans.get(LookKey.DoorwayAdaptation);
+  if (doorway !== undefined) look.doorwayAdaptation = doorway;
   return look;
 }
 
@@ -1671,6 +1677,7 @@ function effectLines(look: RenderLook): ReadonlyArray<readonly [string, string |
   const float = (value: number | undefined) => (value === undefined ? undefined : tomlFloat(value));
   const color = look.fogColor === undefined ? undefined : `[${look.fogColor.map(tomlFloat).join(", ")}]`;
   const aerial = look.fogAerialPerspective === undefined ? undefined : String(look.fogAerialPerspective);
+  const doorway = look.doorwayAdaptation === undefined ? undefined : String(look.doorwayAdaptation);
   return [
     [LookKey.BloomThreshold, float(look.bloomThreshold)],
     [LookKey.BloomRadius, float(look.bloomRadius)],
@@ -1686,6 +1693,7 @@ function effectLines(look: RenderLook): ReadonlyArray<readonly [string, string |
     [LookKey.ContactShadowLength, float(look.contactShadowLength)],
     [LookKey.LocalExposureHighlights, float(look.localExposureHighlights)],
     [LookKey.LocalExposureShadows, float(look.localExposureShadows)],
+    [LookKey.DoorwayAdaptation, doorway],
   ];
 }
 

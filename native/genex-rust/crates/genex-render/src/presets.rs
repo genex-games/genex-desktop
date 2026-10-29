@@ -140,6 +140,10 @@ pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
 /// Irradiance volumes baked per desktop and browser preset (low, medium, high and ultra; renderer
 /// pass 2 A.4: medium and up).
 pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
+/// Volume cells a Live frame bakes on `ultra` (AAA review WP-12; the other presets and phones bake
+/// `irradiance::CELLS_PER_FRAME`: two cells measured 0.85 ms a frame at 1080p on an M4 Max with the
+/// four-cell slice, past the bake row's 0.5 ms, so high keeps two).
+pub const ULTRA_CELLS_PER_FRAME: u8 = 4;
 /// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes at `high` and
 /// `ultra` (plan A.4: none on mobile-low, which keeps the sky's SH9; D16: none at a phone's
 /// `medium` or `low`).
@@ -522,6 +526,9 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         continuous_sky: false,
         irradiance_volumes: 0,
         irradiance_leak_control: true,
+        irradiance_cells_per_frame: crate::irradiance::CELLS_PER_FRAME as u8,
+        irradiance_relight: false,
+        auto_rooms: crate::irradiance::AutoRooms::OFF,
         froxel_fog: None,
         clouds: None,
     }
@@ -602,6 +609,9 @@ fn medium_row(quality: &mut Quality) {
     quality.environment.clouds = Some(crate::clouds::MEDIUM_GRID);
     quality.environment.reflection_probes = PROBES_PER_PRESET[1];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[1];
+    // AAA review WP-12: a declared room's probe gets its volume and its volume its probe, baked
+    // once; the camera's own volume and the relight start at high.
+    quality.environment.auto_rooms = crate::irradiance::AutoRooms::PAIRED;
     // 5x5 PCF (release R-13, D22): 3x3 drew a straight edge's texel staircase (0.37 texels off its
     // line against 0.16) for the same nine reads.
     quality.shadows = shadows(2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth32, &MEDIUM_REACH);
@@ -618,6 +628,12 @@ fn high_row(quality: &mut Quality) {
     quality.environment = environment(256, (192, 108), 1, 5, true);
     quality.environment.reflection_probes = PROBES_PER_PRESET[2];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[2];
+    // AAA review WP-12, dynamic probe GI: rooms paired and a volume around the camera wherever
+    // no declared room holds it, baked two cells a frame and baked again for as long as they are
+    // held, a relight batch every `irradiance::RELIGHT_CADENCE` frames (ultra four cells). Software
+    // rays (D8) stay out: their cheapest update measured 10.9 ms on an M1-class GPU.
+    quality.environment.auto_rooms = crate::irradiance::AutoRooms::ALL;
+    quality.environment.irradiance_relight = true;
     // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
     // sample count; phones keep the time-sliced cycle).
     quality.environment.continuous_sky = true;
@@ -631,10 +647,14 @@ fn high_row(quality: &mut Quality) {
     quality.local_exposure = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
-    // B.4: the visibility bitmask (no halo behind thin objects; ultra adds its GI). Medium keeps
-    // XeGTAO's horizons within its 0.6 ms; phones keep them too (`apply_mobile_caps`).
-    quality.ao_method = AoMethod::Bitmask;
-    quality.lights = lights(1024, 16, 2);
+    // B.4: the visibility bitmask with its screen-space GI, the light of what the bitmask hides
+    // (AAA review WP-12: desktop-high too, not only ultra; at half size its terms add a quarter of
+    // ultra's). Medium keeps XeGTAO's horizons within its 0.6 ms; phones keep them too
+    // (`apply_mobile_caps`).
+    quality.ao_method = AoMethod::BitmaskGi;
+    // Four shadowed spots (AAA review WP-15: a room's fixtures cast shadows; was two): the atlas is
+    // one layer whatever the count, so only the four maps' draws are added.
+    quality.lights = lights(1024, 16, 4);
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
     quality.dof = DofTier::Ring;
     quality.motion_blur = MotionBlurTier::Reconstruction;
@@ -661,6 +681,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     quality.environment.hdri_cube_size = ULTRA_HDRI_CUBE_PX;
     quality.environment.reflection_probes = PROBES_PER_PRESET[3];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[3];
+    quality.environment.irradiance_cells_per_frame = ULTRA_CELLS_PER_FRAME;
     quality.environment.froxel_fog = Some(crate::froxel::ULTRA_GRID);
     quality.environment.clouds = Some(crate::clouds::ULTRA_GRID);
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
@@ -670,11 +691,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // slice) costs about a fifth more a step: 3 x 8 measured 1.38 ms (M4 Max, 1080p), so the owner
     // raised ultra's AO budget to 1.5 ms (2026-10-12; plan §2.5 had 1.2) rather than halve the steps.
     quality.ao = AoQuality { resolution: AoResolution::Full, slices: 3, steps: 8, temporal: true };
-    // B.4's screen-space GI, the light of what the bitmask hides (look integration). Not at high:
-    // its terms hold the light (`ao::target_bytes_shaped`), +18.4 MB at 1440p, and desktop-high's
-    // default with its texture arrays would pass its 512 MiB budget (553.7 MB); like D16, a preset
-    // fits its budget by its defaults, not by a larger budget.
-    quality.ao_method = AoMethod::BitmaskGi;
+    // B.4's screen-space GI, inherited from high (look integration, AAA review WP-12).
     quality.lights = lights(1024, 16, 4);
     quality.ssr = crate::ssr::SsrQuality::ULTRA;
 }
@@ -858,6 +875,11 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     let phone_volumes = if preset >= QualityPreset::High { tier_volumes } else { 0 };
     quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(phone_volumes);
     quality.environment.irradiance_leak_control = false;
+    // AAA review WP-12: a phone pairs declared rooms but bakes no camera volume, at the desktop's
+    // medium slice, and never bakes again on its own (D16: the slice alone is +1.9 ms there).
+    quality.environment.auto_rooms = crate::irradiance::AutoRooms { camera: false, ..quality.environment.auto_rooms };
+    quality.environment.irradiance_cells_per_frame = crate::irradiance::CELLS_PER_FRAME as u8;
+    quality.environment.irradiance_relight = false;
     // A.5: phones keep the analytic fog until the froxel fog is measured on them (mobile-high only,
     // behind that measurement).
     quality.environment.froxel_fog = None;

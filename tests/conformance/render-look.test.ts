@@ -10,6 +10,7 @@ import {
   EXPOSURE_TELEMETRY_BINS,
   ExposureWarning,
   parseExposureTelemetry,
+  parseExposureTrace,
   parseRenderLookFacts,
   RENDER_LOOK_VERSION,
 } from "../../src/shared/render-look.ts";
@@ -44,6 +45,9 @@ describe("render look facts", () => {
       { ...fixture.look, tags: { bench: { ...bench, pixelsPerMetre: Number.POSITIVE_INFINITY } } },
       { ...fixture.look, tags: { bench: { ...bench, draws: 1.5 } } },
       { ...fixture.look, tags: { bench: { ...bench, alphaCardShare: "0" } } },
+      { ...fixture.look, tags: { bench: { ...bench, models: "a.glb" } } },
+      { ...fixture.look, tags: { bench: { ...bench, models: [1] } } },
+      { ...fixture.look, tags: { bench: { ...bench, primitiveOnly: undefined } } },
       { ...fixture.look, tags: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`t${i}`, bench])) },
     ];
     for (const value of hostile) assert.equal(parseRenderLookFacts(value), null, JSON.stringify(value)?.slice(0, 80));
@@ -80,5 +84,21 @@ describe("exposure telemetry", () => {
       { ...fixture.exposure, warnings: ["too dark"] },
     ];
     for (const value of hostile) assert.equal(parseExposureTelemetry(value), null, JSON.stringify(value)?.slice(0, 80));
+  });
+});
+
+describe("exposure trace", () => {
+  it("accepts the fixture's points and refuses a malformed one whole", () => {
+    assert.deepEqual(parseExposureTrace(fixture.exposureTrace), fixture.exposureTrace);
+    assert.deepEqual(parseExposureTrace([]), []);
+    for (const value of [
+      null,
+      {},
+      [{ t: 1, appliedEv: "x", meteredEv: null }],
+      [{ t: Number.NaN, appliedEv: 0, meteredEv: 0 }],
+      Array(601).fill({ t: 0, appliedEv: 0, meteredEv: null }),
+    ]) {
+      assert.equal(parseExposureTrace(value), null);
+    }
   });
 });

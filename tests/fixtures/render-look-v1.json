@@ -1,7 +1,10 @@
 {
   "look": {
     "version": 1,
-    "grid": [160, 90],
+    "grid": [
+      160,
+      90
+    ],
     "coverage": 0.82,
     "flatCoverage": 0.031,
     "tags": {
@@ -14,7 +17,9 @@
         "normalMapShare": 0,
         "ormShare": 0,
         "alphaCardShare": 0,
-        "draws": 12
+        "draws": 12,
+        "models": [],
+        "primitiveOnly": true
       },
       "walls": {
         "coverage": 0.61,
@@ -25,7 +30,11 @@
         "normalMapShare": 1,
         "ormShare": 1,
         "alphaCardShare": 0,
-        "draws": 40
+        "draws": 40,
+        "models": [
+          "models/wall_kit.glb"
+        ],
+        "primitiveOnly": false
       }
     }
   },
@@ -38,10 +47,37 @@
     "compensation": 0.5,
     "evMin": -8,
     "evMax": 8,
-    "histogram": [0, 0, 0, 0, 0.05, 0.3, 0.4, 0.15, 0.06, 0.03, 0.01, 0, 0, 0, 0, 0],
-    "histogramEv": [-8, 8],
+    "histogram": [
+      0,
+      0,
+      0,
+      0,
+      0.05,
+      0.3,
+      0.4,
+      0.15,
+      0.06,
+      0.03,
+      0.01,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "histogramEv": [
+      -8,
+      8
+    ],
     "doorwayBoost": false,
     "ageFrames": 2,
     "warnings": []
-  }
+  },
+  "exposureTrace": [
+    {
+      "t": 1,
+      "appliedEv": -2.5,
+      "meteredEv": -2.75
+    }
+  ]
 }

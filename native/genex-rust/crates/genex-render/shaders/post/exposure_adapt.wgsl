@@ -89,7 +89,8 @@ fn gx_compensation(ev: f32) -> f32 {
 }
 
 // One simulated tick's step from `ev` towards `aim` (`post::exposure::adapt_tick`): linear beyond
-// the transition, the distance times speed over transition within it, snapped onto the aim.
+// the transition, the distance times speed over transition within it, never past the aim (a
+// boosted speed would otherwise overshoot and ring), snapped onto the aim.
 fn gx_adapt_tick(ev: f32, aim: f32) -> f32 {
     let up = gx_params.speed.x;
     let down = gx_params.speed.y;
@@ -97,7 +98,7 @@ fn gx_adapt_tick(ev: f32, aim: f32) -> f32 {
     let transition = gx_params.speed.z;
     var step = min(max(delta, -up), down);
     if transition > 0.0 {
-        step = select(max(-up, delta * up / transition), min(down, delta * down / transition), delta > 0.0);
+        step = select(max(max(-up, delta * up / transition), delta), min(min(down, delta * down / transition), delta), delta > 0.0);
     }
     let next = ev + step;
     if abs(aim - next) < GX_ADAPT_SNAP_EV {

@@ -303,7 +303,10 @@ fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};
     use genex_render::texture::TextureFamily;
     let pinned = fixture();
-    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues"]);
+    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues", "look", "exposure"]);
+    use genex_render::post::exposure::ExposureWarning;
+    let warnings = [ExposureWarning::EvMinRaisedWithDoorwayAdaptation, ExposureWarning::DoorwayAdaptationUnderManual];
+    assert_eq!(names(&pinned["runtimeRender"]["exposureWarnings"]), warnings.map(ExposureWarning::wire));
     assert_eq!(names(&pinned["runtimeRender"]["issueCodes"]), AssetIssueCode::ALL.map(AssetIssueCode::wire));
     let families: Vec<&str> = TextureFamily::ALL.into_iter().map(|family| TextureOrigin::Family(family).wire()).chain([TextureOrigin::Source.wire()]).collect();
     assert_eq!(names(&pinned["runtimeRender"]["families"]), families);

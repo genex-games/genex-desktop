@@ -186,6 +186,8 @@ export const LookKey = {
   LocalExposureHighlights: "local_exposure_highlights",
   /** Local exposure: how strongly dark regions come up towards middle grey (1: not at all). */
   LocalExposureShadows: "local_exposure_shadows",
+  /** Auto exposure adapts eight times faster for half a second at a declared room's doorway (on by default). */
+  DoorwayAdaptation: "doorway_adaptation",
 } as const;
 export type LookKey = (typeof LookKey)[keyof typeof LookKey];
 
@@ -472,6 +474,8 @@ export interface RenderLook {
   localExposureHighlights?: number;
   /** Local exposure's contrast below middle grey (lower brings dark regions up more; 1: off). */
   localExposureShadows?: number;
+  /** Whether auto exposure adapts faster at a declared room's doorway (true when absent). */
+  doorwayAdaptation?: boolean;
 }
 
 /** One `[render.class.<class>]` table: the quality a game asks for on that class. */

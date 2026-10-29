@@ -9,7 +9,11 @@ use genex::Subsurface;                                      // ::WAX, ::SKIN, ::
 use genex::render::{Decal, IrradianceVolume, ReflectionProbe, SpotLight};
 use genex::render::{Clouds, Environment, Fog, HdriEnvironment, HdriSun, Moon, SkyMedium, SkyParams};
 use genex::render::{QualityPreset, RenderConfig, ShadowConfig, ShadowFilter};
+use genex::render::units;                                   // physical units: lux, candela, lumens, nits, EV100
 frame.sun(direction, color, intensity); frame.ambient(color, intensity);
+frame.sun(direction, Color::WHITE, units::lux(100_000.0)); frame.ambient(sky, units::ambient_lux(20_000.0));
+units::lux(lux); units::candela(cd); units::lumens(lm); units::spot_lumens(lm, outer_degrees); units::nits(cd_m2);
+units::ambient_lux(lux); units::ev_from_ev100(ev100); units::kelvin(2700.0); // -> [u8; 3], Color::rgb(r, g, b)
 frame.point_light(position, range, color, intensity); frame.spot_light(position, direction, range, color, intensity);
 frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity).with_cone_degrees(25.0, 40.0).with_shadow(true));
 Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emissive(color, strength)
@@ -18,8 +22,8 @@ Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emi
 // .with_uv_scale(u, v) .with_world_uv(metres) .with_uv_offset(u, v) .with_uv_rotation(radians) .with_uv_jitter(seed: u32)
 // .with_stochastic_tiling(true) .with_macro_variation(strength, metres) .with_subsurface(Subsurface::WAX)
 // .with_cover(Cover::snow(amount, slope, noise)) .with_detail(..) .with_layer(..) .with_parallax(..) .with_clearcoat(..) (docs/api/layered-materials.md)
-frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4)); // .with_intensity(1.0)
-frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3)); // .with_intensity(1.0)
+frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4).with_intensity(1.0));
+frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3).with_intensity(1.0));
 frame.decal(&Decal::on_wall(center, facing, width, height).with_base_texture(path)); // Decal::on_ground(center, width, length)
 frame.environment(Environment::sky());                      // Environment::Sky(SkyParams), ::hdri(path), ::Hdri(HdriEnvironment), ::Color
 SkyParams::default().with_stars(2e-5).with_moon(Some(Moon::new([x, y, z]))).with_clouds(Some(Clouds::default()));
@@ -38,8 +42,8 @@ strength within 20 degrees of `direction` and dark past 30); a frame that names 
 defaults (a white sun at 2.5 from `(0.4, 1, 0.3)`, white ambient at 0.08). For another cone or a
 shadow map, `frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity)
 .with_cone_degrees(25.0, 40.0).with_shadow(true))` (`use genex::render::SpotLight;`); the
-device's quality decides how many spots get a shadow map (none on `low` and `medium`, two on
-`high`, four on `ultra`, at most one on a phone), given to the asking spots on screen nearest the
+device's quality decides how many spots get a shadow map (none on `low` and `medium`, four on
+`high` and `ultra`, at most one on a phone), given to the asking spots on screen nearest the
 camera, and the rest light unshadowed. A spot keeps its map until another stays clearly nearer
 for a quarter of a second; the two shadows then cross-fade over a quarter of a second, so none pops
 as the camera moves (a capture gives the maps to the nearest spots). Point and spot lights fade smoothly to nothing
@@ -113,6 +117,35 @@ the base colour). `KHR_materials_clearcoat`, `sheen`, `specular`, `ior`, `transm
 and `anisotropy` are read but not shaded yet: a car's lacquer, velvet or glass reads only through its
 base colour, roughness and metalness, so bake the look into those maps.
 
+Physical units: light a scene from real numbers with `use genex::render::units;`. The renderer's
+units stay relative; `units` fixes their scale so that scene EV 0 is EV100 12 (one scene unit is
+2844 lux, or 2844 cd/m²): a sunlit exterior then meters about +3.5 EV and a lit office about
+-4 EV, both inside auto exposure's default `ev_min`..`ev_max` (-8..8). The engine's default sun
+(2.5) is a bright overcast day (7100 lux). Pass the conversions where an intensity goes:
+
+| light | call | value |
+| --- | --- | --- |
+| sun, clear noon | `frame.sun(dir, Color::WHITE, units::lux(100_000.0))` | 35.2 |
+| sun outside the atmosphere (the physical sky's) | `units::lux(128_000.0)` | 45.0 |
+| overcast day | `units::lux(10_000.0)` | 3.5 |
+| sky fill without an environment | `frame.ambient(sky, units::ambient_lux(20_000.0))` | 2.24 |
+| full moon | `units::lux(0.25)` | 0.0001 |
+| candle (12 lm) | `frame.point_light(p, 2.0, Color::rgb(255, 147, 41), units::lumens(12.0))` | 0.00034 |
+| bulb, 60 W equivalent (800 lm) | `units::lumens(800.0)` | 0.0224 |
+| ceiling tube, 1.2 m (3000 lm, one point per tube end or a spot down) | `units::spot_lumens(3000.0, 60.0)` | 0.168 |
+| desk or wall spot (800 lm in a 40° cone) | `units::spot_lumens(800.0, 40.0)` | 0.191 |
+| street lamp (12 000 lm, a 60° spot down) | `units::spot_lumens(12_000.0, 60.0)` | 0.671 |
+| torch (300 lm in a 15° cone) | `units::spot_lumens(300.0, 15.0)` | 0.493 |
+| phone or monitor screen | `Material::emissive(c, units::nits(300.0))` | 0.105 |
+
+`units::kelvin(k)` is a light's colour (`let [r, g, b] = units::kelvin(2700.0);` then
+`Color::rgb(r, g, b)`): 1900 a candle, 2700 a warm bulb, 4000 a neutral tube, 5600 daylight, 6500
+an overcast sky. `units::reference` holds these levels as constants (`OFFICE_LUX`, `BULB_LUMENS`,
+`TUBE_LUMENS`, ...). Lights in real units pair with auto exposure (Rendering): a manual exposure
+draws one EV, `ev_compensation = units::manual_compensation_for_ev100(ev100)`. Light a room with
+its fixtures at their real flux (a classroom's 12 tubes, not 2), its windows with the sun and
+sky, and never add fill spots to fake bounce: the room's volume (below) carries the bounce.
+
 A room's polished floor reflects the sky until it has a reflection probe:
 `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`
 (`use genex::render::ReflectionProbe;`) covers the axis-aligned box `min..max`, the room's inside
@@ -124,7 +157,8 @@ captured from the scene the first frame the probe appears, and again when the sk
 probe's box or capture point moves: objects that move later are not in it. The device's quality
 gives cubes to the first probes a frame declares (4 on `low`, 8 on `medium`, 16 on `high` and
 `ultra`; 2 to 8 on phones); the rest reflect the sky. Give a probe to each room or courtyard,
-not to open ground (the sky is its reflection already).
+not to open ground (the sky is its reflection already). `.with_intensity(m)` scales what it
+reflects (1, the default, as captured; keep it 1 and fix the room's light instead).
 
 A room's surfaces take the sky's diffuse light through its walls, and a white floor stays white
 beside a sunlit red wall, until it has an irradiance volume:
@@ -141,13 +175,28 @@ that move later do not change it. Only scenes the sky or an HDR map lights take 
 quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`; 2 to 4
 on phones at `high` and `ultra` only, none at a phone's own `medium` or `low` preset or on the
 low phones); the rest take the sky's light. Give a volume to each
-room or courtyard whose bounced colour matters, alongside its reflection probe. A room's probe and
+room or courtyard whose bounced colour matters, alongside its reflection probe, one per room (three
+classrooms are three volumes, never one box over all of them). `.with_intensity(m)` scales its
+light (1, the default, as baked; keep it 1). The renderer adds the rooms a game leaves out, and
+keeps them lit as the scene changes (dynamic probe GI):
+
+| quality | rooms added | Live bake | after the first bake |
+| --- | --- | --- | --- |
+| `low`, phones' own presets | none | none (the sky's light) | none |
+| `medium`, phones at `high`/`ultra` | a volume for each probe without one, a probe for each volume without one | 2 cells a frame | again when the sky changes |
+| `high` | those, and a 24 x 8 x 24 m volume (2 m cells) around the camera wherever no room holds it | 2 cells a frame | baked again, room after room, a batch every 4th frame, for as long as it is held |
+| `ultra` | as `high` | 4 cells a frame | as `high` |
+
+So on `high` and `ultra` a lamp switched on, a door opened or a moving sun reaches a room's bounced
+light within about ten seconds (a 200-cell room), and a volume that moves (the camera's own) keeps showing its last bake where
+it was baked until the new one is ready. A settled capture bakes every volume whole. A room's probe and
 volume also steer auto exposure: when the camera crosses into or out of either box, it adapts
-eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once.
-That is the `doorway_adaptation` field of `genex::render::Look`, on by default and not a
-`[render.look]` key: switch it off in code with `let mut config = RenderConfig::from_build();
-config.look.doorway_adaptation = false;`. Raising `ev_min` to keep a room bright fights it: light
-the room instead (`docs/look-recipes.md`).
+eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once
+(on by default; `[render.look] doorway_adaptation = false` turns it off). It works under auto
+exposure only: under manual exposure nothing adapts and `state().__render.exposure.warnings` says
+`doorway-adaptation-under-manual`. Keep `ev_min` at its default (-8) or lower with it: a raised
+floor stops the exposure brightening a dark room however fast it adapts (the warning
+`ev-min-raised-with-doorway-adaptation`): light the room instead (`docs/look-recipes.md`).
 
 Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
 depth and float off it at a distance): `frame.decal(&Decal::on_wall(center, facing, width,
@@ -207,6 +256,10 @@ behind. Where the device's quality turns image-based lighting on, the environmen
 replaces the clear colour; elsewhere the flat ambient light and the clear colour stay, so keep
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
+
+On desktop `high` and `ultra` screen-space GI adds the light nearby surfaces bounce (a red box
+tints the floor in front of it), beside the volumes' room-scale bounce; phones and `medium` keep
+the volumes alone.
 
 One exposure cannot hold a sunlit window and the dark room around it. On `high` and `ultra` local
 exposure moves each region towards middle grey: bright ones (the yard through a window) by
