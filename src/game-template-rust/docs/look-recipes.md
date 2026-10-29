@@ -206,7 +206,7 @@ pub fn rain_look(base: RenderConfig) -> RenderConfig {
 | --- | --- |
 | Sun | `(-0.3, -0.4, 1.0)`: well below the horizon, intensity 2.5 |
 | Sky | `SkyParams::default().with_moon(Some(Moon::new([0.5, 0.6, -0.6]))).with_stars(2e-5)`; ambient 0.01 |
-| `[render.look]` | `exposure = "auto"`, `metering = "average"`, `ev_compensation = -0.5` |
+| `[render.look]` | `exposure = "auto"`, `metering = "average"`, `ev_compensation = -0.2` |
 | Exposure curve | `.exposure_curve(&[(-8.0, -2.5), (-3.0, -1.0), (0.0, 0.0)])` |
 | Fog | `fog_density = 0.015`, `fog_height_falloff = 0.08`: mist catches the lamps |
 | Bloom | `bloom_intensity = 0.06` |
@@ -227,7 +227,7 @@ pub fn night_street(frame: &mut Frame) {
 
 /// A dark meter stays dark (the curve), lamps bloom a little, mist catches their light.
 pub fn night_street_look(base: RenderConfig) -> RenderConfig {
-    base.exposure(Exposure::auto().metering(Metering::Average).compensation(-0.5).range(-8.0, 8.0))
+    base.exposure(Exposure::auto().metering(Metering::Average).compensation(-0.2).range(-8.0, 8.0))
         .exposure_curve(&[(-8.0, -2.5), (-3.0, -1.0), (0.0, 0.0)])
         .fog(Fog::default().with_density(0.015).with_height(0.08, 0.0))
         .bloom(Bloom::new(0.06))

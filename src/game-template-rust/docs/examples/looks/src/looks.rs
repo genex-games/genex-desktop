@@ -198,7 +198,7 @@ pub fn night_street(frame: &mut Frame) {
 
 /// A dark meter stays dark (the curve), lamps bloom a little, mist catches their light.
 pub fn night_street_look(base: RenderConfig) -> RenderConfig {
-    base.exposure(Exposure::auto().metering(Metering::Average).compensation(-0.5).range(-8.0, 8.0))
+    base.exposure(Exposure::auto().metering(Metering::Average).compensation(-0.2).range(-8.0, 8.0))
         .exposure_curve(&[(-8.0, -2.5), (-3.0, -1.0), (0.0, 0.0)])
         .fog(Fog::default().with_density(0.015).with_height(0.08, 0.0))
         .bloom(Bloom::new(0.06))

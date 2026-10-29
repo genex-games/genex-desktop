@@ -32,6 +32,16 @@ fn stage(scene: Scene) -> Game<World> {
     game
 }
 
+/// The shared rule every judged camera is held to, whatever the recipe (the harness's and the evals'
+/// bands, `docs/calibration.md`): a night look 25 to 95, a bright interior 90 to 130, a bright
+/// exterior 90 to 175.
+fn shared_band(scene: Scene) -> [f32; 2] {
+    if scene.night() {
+        return [25.0, 95.0];
+    }
+    if scene.indoors() { [90.0, 130.0] } else { [90.0, 175.0] }
+}
+
 fn started(scene: Scene) -> Runtime<World> {
     let mut runtime = Runtime::with_assets(stage(scene), Box::new(support::assets(&[]))).expect("the example installs");
     runtime.seed(1);
@@ -100,8 +110,11 @@ fn metal_every_scene_settles_inside_its_luma_band_at_ultra_and_reads_at_low() {
         if !(lo..=hi).contains(&ultra) {
             misses.push(format!("{} at ultra: {ultra:.1} outside {lo}..{hi}", scene.name()));
         }
-        if !(10.0..245.0).contains(&low) {
-            misses.push(format!("{} at low is black or blown out: {low:.1}", scene.name()));
+        let [floor, ceiling] = shared_band(scene);
+        for (preset, luma) in [("ultra", ultra), ("low", low)] {
+            if !(floor..=ceiling).contains(&luma) {
+                misses.push(format!("{} at {preset}: {luma:.1} outside the shared {floor}..{ceiling}", scene.name()));
+            }
         }
     }
     assert!(misses.is_empty(), "{misses:#?}");

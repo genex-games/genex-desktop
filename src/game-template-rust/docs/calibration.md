@@ -32,7 +32,7 @@ A spot's cone defaults to 20 and 30 degrees (inner and outer).
 | --- | --- | --- | --- |
 | `exposure` | `manual` | `manual`, `auto` | use `auto` wherever light meets shade |
 | `metering` | `average` | `average`, `center`, `spot`, `ground` | `ground` for open sky over ground |
-| `ev_compensation` | 0 | -10 to 10 | +0.3 to +0.5 sunlit, +1.0 snow, -0.7 rain, -0.5 to -1.0 night |
+| `ev_compensation` | 0 | -10 to 10 | +0.3 to +0.5 sunlit, +1.0 snow, -0.7 rain, -0.2 to -1.0 night |
 | `ev_min`, `ev_max` | -8, 8 | -16 to 16 | keep the defaults |
 | `adaptation_speed_up`, `adaptation_speed_down` | 4, 3 EV per simulated second | above 0 to 20 | |
 | transition | 0.5 EV | | smoothed near the target |
@@ -48,8 +48,16 @@ same as the keys.
 
 ## Luma bands
 
-The mean Rec. 709 luma (0 to 255) of a settled 1280x720 `ultra` capture of the main camera, lens
-off, that each recipe is captured inside (`docs/examples/looks/`).
+The mean Rec. 709 luma (0 to 255) of a settled capture of a playable camera, lens off. Every judged
+camera, on every preset, is held to one shared rule; a night or horror look is one the game declares.
+
+| Look | Interior | Exterior | Darkest pixels (luma under 8) |
+| --- | --- | --- | --- |
+| Bright | 90 to 130 | 90 to 175 | at most 15% |
+| Dark (night, horror) | 25 to 95 | 25 to 95 | at most 40% |
+
+Inside it, each recipe aims at a tighter band, measured at 1280x720 on the `docs/examples/looks/`
+stage:
 
 | Scene | Band | The `looks` stage at `ultra` (`low`) |
 | --- | --- | --- |
@@ -59,7 +67,7 @@ off, that each recipe is captured inside (`docs/examples/looks/`).
 | Forest | 95 to 140 | 136 (141) |
 | Overcast and snow | 125 to 175 | 155 (169) |
 | Rain | 70 to 110 | 103 (100) |
-| Night street | 25 to 65 | 37 (23) |
+| Night street | 25 to 65 | 42 (27) |
 | Desert and sunny | 115 to 160 | 122 (127) |
 
 A playable camera darker than its band needs more light (a lamp, a window, a volume), not a grade.
