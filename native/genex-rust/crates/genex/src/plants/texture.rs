@@ -454,7 +454,7 @@ fn leaf_color(kind: LeafKind, season: Season, rng: &mut Rng) -> [f32; 3] {
         }
         Season::Winter => match kind {
             LeafKind::Spruce | LeafKind::Pine | LeafKind::Palm => varied(rng, scale3(summer, 0.8), 0.1),
-            _ => varied(rng, [0.42, 0.35, 0.20], 0.15),
+            _ => varied(rng, [0.52, 0.44, 0.28], 0.18),
         },
         Season::Dead => varied(rng, [0.33, 0.20, 0.09], 0.2),
     }
@@ -539,7 +539,14 @@ fn paint_leafy_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &m
     canvas.leaf(b, libm::atan2f(b[0] - a[0], a[1] - b[1]), [leaf_len, leaf_width], color, &shape);
 }
 
-/// A bare twig: a fractal of shoots thinning to a texel, with buds (and a birch's catkins).
+/// The deepest shoot of a bare twig, and the thinnest stroke (cell units) one keeps: about a
+/// texel at a 1024 atlas, so the fine twigs survive the first mips instead of leaving only their
+/// buds as specks.
+const BARE_TWIG_DEPTH: u32 = 5;
+const BARE_TWIG_RADIUS_MIN: f32 = 0.0022;
+
+/// A bare twig: a dense fractal of shoots thinning to a texel, warmer towards their tips, with
+/// small buds (and a few of a birch's catkins), so a bare crown reads as a fine purple-brown haze.
 fn paint_bare_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &mut Rng, twig: [f32; 3]) {
     struct Shoot {
         from: [f32; 2],
@@ -558,27 +565,34 @@ fn paint_bare_twig(canvas: &mut Canvas, kind: LeafKind, season: Season, rng: &mu
         let broken = dead && rng.unit() < 0.2;
         let reach = if broken { 0.15 } else { 0.5 };
         let tip = [mid[0] + libm::sinf(angle) * shoot.length * reach, mid[1] - libm::cosf(angle) * shoot.length * reach];
-        canvas.stroke(shoot.from, mid, [shoot.radius, shoot.radius * 0.8], twig);
-        canvas.stroke(mid, tip, [shoot.radius * 0.8, shoot.radius * 0.45], twig);
+        let young = shoot.depth as f32 / BARE_TWIG_DEPTH as f32;
+        let tone = [twig[0] * (1.0 + 0.5 * young), twig[1] * (1.0 + 0.2 * young), twig[2] * (1.0 + 0.35 * young)];
+        let radius = shoot.radius.max(BARE_TWIG_RADIUS_MIN);
+        canvas.stroke(shoot.from, mid, [radius, (radius * 0.8).max(BARE_TWIG_RADIUS_MIN)], tone);
+        canvas.stroke(mid, tip, [(radius * 0.8).max(BARE_TWIG_RADIUS_MIN), (radius * 0.45).max(BARE_TWIG_RADIUS_MIN)], tone);
         if broken {
             continue;
         }
-        if shoot.depth >= 4 {
-            // Buds; a birch hangs a catkin from some tips.
-            canvas.stroke(tip, [tip[0] + libm::sinf(angle) * 0.008, tip[1] - libm::cosf(angle) * 0.008], [0.0035, 0.002], scale3(twig, 1.3));
-            if kind == LeafKind::Birch && !dead && rng.unit() < 0.25 {
-                canvas.stroke(tip, [tip[0] + 0.01 * rng.signed(), tip[1] + 0.045], [0.004, 0.003], [0.20, 0.12, 0.07]);
+        if shoot.depth >= BARE_TWIG_DEPTH {
+            // A small bud; a birch hangs a catkin from a few tips.
+            canvas.stroke(tip, [tip[0] + libm::sinf(angle) * 0.005, tip[1] - libm::cosf(angle) * 0.005], [BARE_TWIG_RADIUS_MIN, BARE_TWIG_RADIUS_MIN], scale3(tone, 1.2));
+            if kind == LeafKind::Birch && !dead && rng.unit() < 0.08 {
+                canvas.stroke(tip, [tip[0] + 0.01 * rng.signed(), tip[1] + 0.035], [0.003, 0.0025], [0.22, 0.14, 0.08]);
             }
             continue;
         }
-        let children = if shoot.depth == 0 { 4 } else { 2 + rng.below(2) };
+        let children = match shoot.depth {
+            0 => 5,
+            1 => 3,
+            _ => 2 + rng.below(2),
+        };
         for c in 0..children {
             let t = 0.3 + 0.7 * (c as f32 + 0.5 * rng.unit()) / children as f32;
             let at = [lerp(shoot.from[0], tip[0], t), lerp(shoot.from[1], tip[1], t)];
             let side = if (c + shoot.depth as usize).is_multiple_of(2) { 1.0 } else { -1.0 };
-            shoots.push(Shoot { from: at, angle: angle + side * (0.35 + 0.45 * rng.unit()), length: shoot.length * (0.55 + 0.15 * rng.unit()), radius: shoot.radius * 0.6, depth: shoot.depth + 1 });
+            shoots.push(Shoot { from: at, angle: angle + side * (0.35 + 0.45 * rng.unit()), length: shoot.length * (0.55 + 0.15 * rng.unit()), radius: shoot.radius * 0.62, depth: shoot.depth + 1 });
         }
-        shoots.push(Shoot { from: tip, angle, length: shoot.length * 0.6, radius: shoot.radius * 0.6, depth: shoot.depth + 2 });
+        shoots.push(Shoot { from: tip, angle, length: shoot.length * 0.6, radius: shoot.radius * 0.62, depth: shoot.depth + 2 });
     }
     // A few dry leaves cling on to a dead twig.
     if dead {
