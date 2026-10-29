@@ -9094,7 +9094,10 @@ describe("C++ · raylib on the web lane (M3a)", () => {
         }),
         [HostMethod.PreviewState]: () => ({
           player: { x: 0 },
-          __render: { exposure: { appliedEv: -2.5, ageFrames: framesSinceLoad % 4 }, exposureTrace: Array(framesSinceLoad).fill(0) },
+          __render: {
+            exposure: { appliedEv: -2.5, ageFrames: framesSinceLoad % 4 },
+            exposureTrace: Array(framesSinceLoad).fill(0),
+          },
         }),
         [HostMethod.PreviewRelease]: () => true,
       },
