@@ -255,6 +255,28 @@ describe("the AA+ rubric", () => {
     assert.equal(checkOf(AaaFloor.LumaBand, evidence)[0]?.result, CheckResult.Fail);
   });
 
+  const lumaRows: Array<[string, "bright" | "dark", string, number, boolean]> = [
+    ["a snow yard at 155", "bright", "exterior-hero", 155, true],
+    ["a sunny exterior at 175", "bright", "exterior-hero", 175, true],
+    ["an exterior blown past 175", "bright", "exterior-hero", 180, false],
+    ["an interior at 150", "bright", "interior-hero", 150, false],
+    ["an interior at 130", "bright", "interior-hero", 130, true],
+    ["a night street at 25", "dark", "exterior-hero", 25, true],
+    ["a night street below 25", "dark", "exterior-hero", 24, false],
+    ["a dark interior at 95", "dark", "interior-hero", 95, true],
+    ["a dark interior above 95", "dark", "interior-hero", 96, false],
+  ];
+  for (const [name, look, role, luma, passes] of lumaRows)
+    it(`${passes ? "accepts" : "refuses"} ${name} (${look} look)`, () => {
+      const [p] = testSuite(rawPrompt("lumas", { look }), rawPrompt("b"), rawPrompt("c"));
+      if (!p) throw new Error("no prompt");
+      const evidence = passingEvidence(p);
+      const others = look === "dark" ? 50 : 110;
+      for (const c of evidence.captures) Object.assign(c, { meanLuma: c.role === role ? luma : others });
+      const result = rubricChecks(p, evidence, TASTE_AA_PLUS).find((c) => c.floor === AaaFloor.LumaBand)?.result;
+      assert.equal(result, passes ? CheckResult.Pass : CheckResult.Fail);
+    });
+
   it("fails on a reconstructed fact but never certifies one", () => {
     const failing = passingEvidence(PROMPT);
     Object.assign(failing.props?.[0] ?? {}, { origin: PropOrigin.Primitive, source: FactSource.Reconstructed });
