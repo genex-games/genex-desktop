@@ -196,7 +196,7 @@ const MODELS: ModelPick[] = [
   model("wooden_picnic_table", "table", LibraryBudget.Prop, ["park", "outdoor", "bench"]),
   model("WoodenTable_01", "table", LibraryBudget.SmallProp, ["wood", "interior"]),
   model("metal_office_desk", "table", LibraryBudget.Prop, ["desk", "office", "interior"]),
-  model("plastic_monobloc_chair_01", "boulder_01", "chair", LibraryBudget.SmallProp, ["seat", "plastic", "garden"]),
+  model("plastic_monobloc_chair_01", "chair", LibraryBudget.SmallProp, ["seat", "plastic", "garden"]),
   model("sofa_02", "chair", LibraryBudget.SmallProp, ["couch", "living room", "interior"]),
   model("steel_frame_shelves_01", "shelf", LibraryBudget.SmallProp, ["storage", "warehouse", "metal"]),
   model("painted_wooden_cabinet", "shelf", LibraryBudget.SmallProp, ["cupboard", "kitchen", "interior"]),
