@@ -5,6 +5,12 @@
  */
 import { useSyncExternalStore } from "react";
 
+/**
+ * A labelled button in the chat header (the engine's, Free): the strip's button a step smaller,
+ * its name folding away when the header is narrow.
+ */
+export const HEADER_BUTTON = "relative px-2.5 text-body-sm has-[>svg]:px-2.5";
+
 let slot: HTMLElement | null = null;
 const listeners = new Set<() => void>();
 
