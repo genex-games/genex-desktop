@@ -137,7 +137,11 @@ fn the_session_texture_arrays_hold_whatever_the_person_the_verb_or_a_capture_ask
     let mut control = control(RenderConfig::new());
     let session = control.texture_arrays();
     assert_eq!(session.0, class("desktop-high"), "the detected class");
-    assert_eq!(session.1, preset_quality(QualityPreset::High, class("desktop-high")).textures, "the class's own preset");
+    // WP-9: a native desktop's own preset widens to the 4096 class with its share of the budget.
+    let high = class("desktop-high");
+    let budget = genex_render::presets::class_budget_bytes(high, &mac());
+    let native = genex_render::texture::native_textures(preset_quality(QualityPreset::High, high).textures, high, TargetOs::MacOs, budget, None);
+    assert_eq!(session.1, native, "the class's own preset, at the native desktop's class and budget share");
     assert_eq!(control.live_frame().quality.textures, session.1, "Live reports the arrays it draws from");
     control.set_person(person_preset(QualityPreset::Low));
     assert_eq!(control.texture_arrays(), session, "the person's preset keeps them");

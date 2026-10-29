@@ -187,6 +187,7 @@ fn metal_each_resolution_tier_draws_its_whole_output_natively_and_reports_its_gp
                 gpu_ms.extend(landed.unwrap_or_default());
             }
             renderer.render(&gpu, &scene, CullPath::Gpu).expect("timed frame");
+            renderer.finish_frame_timer();
             let _ = gpu.device.poll(wgpu::PollType::wait_indefinitely());
         }
         let capture = renderer.capture(&gpu).expect("capture");
