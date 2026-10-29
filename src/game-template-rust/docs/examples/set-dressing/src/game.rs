@@ -397,6 +397,9 @@ fn dressing(street: &Spline) -> Dressing {
     dressing
 }
 
+/// One dressing layer's name, its draw tag, its models, material and optional far field.
+type Drawn<'a> = (&'static str, &'static str, Vec<Model>, &'a Material, Option<Far>);
+
 /// The dressing's solid layers as instance groups: rubble from smoothed, roughened boxes in three
 /// variants, plaster slabs, papers, lamp posts, bollards, bins and litter, each tinted in buckets;
 /// small things far away thinned by a far field.
@@ -429,7 +432,7 @@ fn groups(gfx: &Gfx, dressed: &Dressed, paints: &Paints) -> Vec<(&'static str, I
     let mut stood_bin = MeshData::new();
     stood_bin.append(&street_bin, Transform::IDENTITY.with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)));
     let near = Far::thin(12.0, 35.0);
-    let layers: [(&'static str, &'static str, Vec<Model>, &Material, Option<Far>); 8] = [
+    let layers: [Drawn<'_>; 8] = [
         ("rubble", "rubble", rocks.clone(), &paints.rubble, None),
         ("plaster", "rubble", vec![mesh(&slab)], &paints.plaster, None),
         ("papers", "rubble", vec![mesh(&sheet)], &paints.paper, None),
