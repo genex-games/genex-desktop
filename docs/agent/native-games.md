@@ -76,13 +76,15 @@ code and web shell), recorded as
 served that admitted output (or waits for its build under way) instead of building. The person's
 Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Clippy denies
 every warning but its style and complexity groups, `approx_constant` and rustc's `unused` group
-(code a game does not use yet; a dropped `Result` stays an error); the store `clippy.toml`'s
+(code a game does not use yet, force-warned so it never fails a build; a dropped `Result` stays an
+error); the store `clippy.toml`'s
 determinism bans stay errors (`CLIPPY_LINT_LEVELS`). A failed step's lines are its first error as
 rustc renders it, empty gutter lines dropped, then how many more errors named a place; the note the
 console and the agents read (`buildFailureNote`) names the exit, never the command and its
 environment, which the stage's Details keep. The computer's `check` (`PreviewService.checkBuild`)
 asks the lane for a check (`GameBuildOptions.check`): identity, lock and clippy on the stage in the
-build's sandbox, whatever the purpose, then nothing is imported, built, admitted or announced; a
+build's sandbox, whatever the purpose, then nothing is imported, built, admitted or announced (a
+clean check lists its unused-code warnings, `RustLaneReport.warnings`); a
 build of the folder never shares a check, and waits for it. Play plays one
 copy per commit (`show/<game>-<commit12>`, `PreviewService.playCopy`), and a healthy integrated Rust
 build is prebuilt there in the background, web and this host's desktop

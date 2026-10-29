@@ -129,6 +129,8 @@ export interface RustLaneReport {
   admission?: RustAdmissionRefusal;
   /** The trust policy a refusal comes from (`unsafe-code`, `build-script-refused`, M7.2), typed; absent otherwise. */
   extension?: ExtensionRefusal;
+  /** The warnings a passing check printed (code the game does not use yet), at most {@link WARNINGS_KEPT}; absent otherwise. */
+  warnings?: RustDiagnostic[];
 }
 
 /** An `out/` file the host's admission refused (`admitRustOutput`): its name, the refusal and the finer problem. */
@@ -142,6 +144,8 @@ export interface RustAdmissionRefusal {
 export interface CargoMessages {
   /** The errors, the first one with spans first, at most {@link DIAGNOSTICS_KEPT}. */
   diagnostics: RustDiagnostic[];
+  /** The warnings that name a place in the code, in order, at most {@link WARNINGS_KEPT}. */
+  warnings: RustDiagnostic[];
   /** The rendered text of the first error with spans (else the first error), split into lines; empty when none. */
   rendered: string[];
   /** How many errors named a place in the code: rustc's closing `aborting due to …` names none. */
@@ -158,6 +162,8 @@ const DIAGNOSTICS_KEPT = 3;
 const MESSAGE_MAX_CHARS = 400;
 /** How many notes one diagnostic keeps. */
 const NOTES_KEPT = 4;
+/** How many warnings a passing check hands the agent: enough to act on, never a wall of text. */
+export const WARNINGS_KEPT = 10;
 /** How many rendered lines a problem keeps. */
 const RENDERED_LINES_KEPT = 12;
 /** The longest line of cargo output the lane reads as a message; anything longer is skipped. */
@@ -180,6 +186,8 @@ const CargoReason = {
 
 /** rustc's diagnostic levels that fail a build. */
 const ERROR_LEVELS: ReadonlySet<string> = new Set(["error", "error: internal compiler error"]);
+/** rustc's diagnostic level that never fails a build. */
+const WARNING_LEVELS: ReadonlySet<string> = new Set(["warning"]);
 
 interface RawSpan {
   file_name?: unknown;
@@ -204,7 +212,7 @@ interface RawMessage {
  * relative to it.
  */
 export function parseCargoMessages(output: string, stageRoot: string, manifest: string): CargoMessages {
-  const read: MessagesRead = { errors: [], executables: [], success: null };
+  const read: MessagesRead = { errors: [], warnings: [], executables: [], success: null };
   for (const line of output.split("\n")) {
     const message = jsonObject(line);
     if (message) readMessage(read, message, stageRoot, manifest);
@@ -215,6 +223,7 @@ export function parseCargoMessages(output: string, stageRoot: string, manifest: 
   const kept = ordered.slice(0, DIAGNOSTICS_KEPT);
   return {
     diagnostics: kept.map((error) => error.diagnostic),
+    warnings: read.warnings.slice(0, WARNINGS_KEPT),
     rendered: kept[0]?.rendered ?? [],
     located: read.errors.filter((error) => error.diagnostic.file !== null).length,
     executables: read.executables,
@@ -225,6 +234,7 @@ export function parseCargoMessages(output: string, stageRoot: string, manifest: 
 /** What the messages read so far said: the errors with their rendered text, the executables and the verdict. */
 interface MessagesRead {
   errors: Array<{ diagnostic: RustDiagnostic; rendered: string[] }>;
+  warnings: RustDiagnostic[];
   executables: string[];
   success: boolean | null;
 }
@@ -236,8 +246,11 @@ function readMessage(read: MessagesRead, message: Record<string, unknown>, stage
   if (message.reason === CargoReason.CompilerArtifact) read.executables.push(...artifactExecutable(message, manifest));
   if (message.reason !== CargoReason.CompilerMessage) return;
   const raw = (message.message ?? null) as RawMessage | null;
-  const diagnostic = raw ? errorDiagnostic(raw, stageRoot) : null;
-  if (raw && diagnostic) read.errors.push({ diagnostic, rendered: renderedLines(raw) });
+  if (!raw) return;
+  const diagnostic = diagnosticAt(raw, stageRoot, ERROR_LEVELS);
+  if (diagnostic) read.errors.push({ diagnostic, rendered: renderedLines(raw) });
+  const warning = diagnosticAt(raw, stageRoot, WARNING_LEVELS);
+  if (warning?.file) read.warnings.push(warning);
 }
 
 /**
@@ -287,9 +300,9 @@ function artifactExecutable(message: Record<string, unknown>, manifest: string):
   return kinds.includes("bin") ? [message.executable] : [];
 }
 
-/** An error-level message as a diagnostic, or null for warnings, notes and malformed messages. */
-function errorDiagnostic(raw: RawMessage, stageRoot: string): RustDiagnostic | null {
-  if (typeof raw.level !== "string" || !ERROR_LEVELS.has(raw.level) || typeof raw.message !== "string") return null;
+/** A message at one of `levels` as a diagnostic, or null for any other level and malformed messages. */
+function diagnosticAt(raw: RawMessage, stageRoot: string, levels: ReadonlySet<string>): RustDiagnostic | null {
+  if (typeof raw.level !== "string" || !levels.has(raw.level) || typeof raw.message !== "string") return null;
   const code = typeof raw.code?.code === "string" ? clip(raw.code.code) : null;
   const span = primarySpan(raw.spans);
   return {

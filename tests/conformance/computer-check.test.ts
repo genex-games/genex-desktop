@@ -19,6 +19,7 @@ import {
   GameBuildLanes,
   type GameBuildOptions,
 } from "../../src/main/game-build.ts";
+import { RustDiagnosticTool } from "../../src/main/rust-build-diagnostics.ts";
 import type { StudioCore } from "../../src/main/studio-core.ts";
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
@@ -110,6 +111,31 @@ describe("the computer's check compiles a builder's edits through the lane, with
     const { tools, opened } = await builderComputer(rust, clean);
     assert.match(text(await tools.onLiveTool("computer", { action: "check" })), /worker-1 compiles clean.*reload/);
     assert.deepEqual(opened, []);
+  });
+
+  it("lists the warnings of a clean check, code the game does not use yet, without calling it failed (#539 review)", async () => {
+    const rust = { ...TEMPLATE_SHAPE, kind: ProjectKind.RustWgpu };
+    const unused = {
+      tool: RustDiagnosticTool.Rustc,
+      code: "dead_code",
+      file: "src/enemy.rs",
+      line: 12,
+      column: 4,
+      message: "function `flank` is never used",
+      notes: [],
+    };
+    const warned = (): BuildOutcome => ({
+      ok: true,
+      output: null,
+      lastGood: null,
+      problem: null,
+      ran: true,
+      rust: { refusal: null, diagnostics: [], receipt: null, warnings: [unused] },
+    });
+    const { tools } = await builderComputer(rust, warned);
+    const answer = text(await tools.onLiveTool("computer", { action: "check" }));
+    assert.match(answer, /^worker-1 compiles clean/);
+    assert.match(answer, /src\/enemy\.rs:12: function `flank` is never used \(dead_code\)/);
   });
 
   it("tells a page game it has nothing to compile, building nothing", async () => {
