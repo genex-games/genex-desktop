@@ -210,6 +210,8 @@ export const GenexOperation = {
   CharacterAnimate: "character.animate",
   CreatureAnimate: "creature.animate",
   CharacterMotions: "character.motions",
+  /** Local and free: reads the engine's character check and says what to do next (`shared/character-loop.ts`). */
+  CharacterVerify: "character.verify",
   AnimationsSearch: "animations.search",
   Wait: "wait",
   Status: "status",

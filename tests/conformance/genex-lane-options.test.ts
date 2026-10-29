@@ -20,7 +20,7 @@ const assetTool = manifest.tools.find((tool) => tool.name === "asset");
 /** Where the options description starts listing operations. */
 const BY_OPERATION = "By operation: ";
 /** The operations the host answers itself, which take no CLI options. */
-const HOST_OPERATIONS = ["status", "inspect_use", "verify_use"];
+const HOST_OPERATIONS = ["status", "inspect_use", "verify_use", "character.verify"];
 
 /** The options description's `operation: key (note), key; …` list, as operation → keys. */
 function documentedOptions(): Map<string, string[]> {

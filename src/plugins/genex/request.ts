@@ -32,7 +32,12 @@ export const OPERATIONS: Record<string, string[]> = {
   [GenexOperation.Wait]: ["wait"],
 };
 /** Every operation the host tool accepts: the CLI operations plus the host-side asset checks. */
-export const TOOL_OPERATIONS = [...Object.keys(OPERATIONS), GenexOperation.InspectUse, GenexOperation.VerifyUse];
+export const TOOL_OPERATIONS = [
+  ...Object.keys(OPERATIONS),
+  GenexOperation.InspectUse,
+  GenexOperation.VerifyUse,
+  GenexOperation.CharacterVerify,
+];
 /** Operations answered by the host itself, from delivered files, never by the CLI. */
 export const USE_OPERATIONS = new Set<string>([GenexOperation.InspectUse, GenexOperation.VerifyUse]);
 

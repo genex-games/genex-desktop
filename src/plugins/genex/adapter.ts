@@ -7,6 +7,7 @@ import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import { SecretStore } from "../../substrate/secrets.ts";
 import { deliverGenexFiles } from "../../substrate/genex-delivery.ts";
 import { gateCharacter, missingRolesOf } from "./character-gate.ts";
+import { verifyCharacter } from "./character-verify.ts";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, lstat, rm } from "node:fs/promises";
@@ -2242,6 +2243,12 @@ export class GenexTools {
     if (request.operation === GenexOperation.InspectUse) await this.#requireFilesIn(cwd, root, job);
     return recordGenexUse({ job, dir, root, request, signal, observe: this.#observe });
   }
+  /** Judge a character's engine check and answer the loop's next step; local, free, the ledger is Studio's. */
+  async #verifyCharacter(project: string, root: string, request: GenexRequest, signal: AbortSignal) {
+    const workspace = await this.#workspace(project);
+    const jobs = await this.#projectJobs(project, false, signal);
+    return verifyCharacter({ workspace, root, request, jobs, now: () => new Date(this.#now()) });
+  }
   async #execute(
     project: string,
     root: string,
@@ -2254,6 +2261,8 @@ export class GenexTools {
     const startedAt = this.#now();
     if (request.operation === GenexOperation.Status) return this.#statusForAgent(project, signal);
     if (USE_OPERATIONS.has(request.operation)) return this.#recordUse(project, root, request, signal);
+    if (request.operation === GenexOperation.CharacterVerify)
+      return this.#verifyCharacter(project, root, request, signal);
     validateGenexRequest(request);
     if (!(await this.#token())) throw new Error(MESSAGE.ConnectToGenerate);
     const cwd = await this.#workspace(project);

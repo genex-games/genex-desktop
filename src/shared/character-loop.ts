@@ -5,7 +5,13 @@
  * fault (`character-repair.ts` says which kind), or a stop with a plain report once an attempt or
  * credit cap is reached. One call per step: the loop re-checks after each action. Browser-safe.
  */
-import { CharacterCheckCause, type CharacterCheckReport, type ClipRole } from "./character-check.ts";
+import {
+  CharacterCheckCause,
+  CharacterCheckCode,
+  type CharacterCheckDiagnostic,
+  type CharacterCheckReport,
+  ClipRole,
+} from "./character-check.ts";
 import { RepairAction, repairPlan } from "./character-repair.ts";
 
 /** What the loop says to do next. Wire values. */
@@ -151,4 +157,30 @@ export function nextStep(
     call: { operation: "character.animate", id: who.id, prompt: ROLE_ACTIONS[role] },
     why: `${step?.action === RepairAction.SwapClips ? "replace" : "make"} the ${role} clip`,
   };
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+const CODES: readonly unknown[] = Object.values(CharacterCheckCode);
+const CAUSES: readonly unknown[] = Object.values(CharacterCheckCause);
+const ROLES: readonly unknown[] = Object.values(ClipRole);
+
+function parseDiagnostic(value: unknown): CharacterCheckDiagnostic | null {
+  if (!isRecord(value)) return null;
+  const { code, cause, clip, role, time, bone, value: measured, limit } = value;
+  const roleOk = role === null || ROLES.includes(role);
+  const boneOk = bone === null || typeof bone === "string";
+  const numbersOk =
+    typeof time === "number" && typeof limit === "number" && (measured === null || typeof measured === "number");
+  if (!CODES.includes(code) || !CAUSES.includes(cause) || typeof clip !== "string" || !roleOk || !boneOk || !numbersOk)
+    return null;
+  return value as unknown as CharacterCheckDiagnostic;
+}
+
+/** The engine's character-check report as a checked value; null for anything that is not one. */
+export function parseCheckReport(value: unknown): CharacterCheckReport | null {
+  if (!isRecord(value) || typeof value.pass !== "boolean" || !Array.isArray(value.diagnostics)) return null;
+  const diagnostics = value.diagnostics.map(parseDiagnostic);
+  if (diagnostics.includes(null) || !isRecord(value.roles) || typeof value.file !== "string") return null;
+  return { ...(value as unknown as CharacterCheckReport), diagnostics: diagnostics as CharacterCheckDiagnostic[] };
 }

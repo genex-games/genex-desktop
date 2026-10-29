@@ -3851,5 +3851,12 @@ its deadline or its assertion.
 - Per-clip pose validation (limb length, collapse, feet grounded, hands on the weapon) is the
   engine's `character_check` example (aaa-motion; its report is `shared/character-check.ts`).
   `shared/character-repair.ts` turns a report into the plan: one regeneration for a rig or pose fault,
-  a swap of just the clips at fault, a made clip per missing role. A CC0 fallback library
-  (Quaternius' UAL) stays unpinned, see above.
+  a swap of just the clips at fault, a made clip per missing role. There is no CC0 animation
+  fallback: clips come from Meshy (the catalog at creation, `character.animate`, `animations.search`)
+  and Uthana (`character.import`).
+- `character.verify` (local, free; `character-verify.ts`, `shared/character-loop.ts`) closes the loop:
+  the agent passes the engine's report, Studio keeps the ledger per character (`characters/<id>.json`
+  in the plugin's workspace: repair calls made, credits the repair jobs were quoted at, a rig already
+  re-imported) and answers `pass`, the one call to make next, or `stop` (3 calls or 100 credits, at
+  `DEFAULT_LOOP_CAPS`) with what still fails. The check itself is Rust, so it runs in the game lane,
+  not in the plugin.
