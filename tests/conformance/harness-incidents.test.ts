@@ -19215,4 +19215,56 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     });
     assert.equal(await usageForecast(silent.ctx, "claude-code", 3), "", "a host with no reports says nothing");
   });
+  it("G3-4e. one luma rule across harness, evals and docs: a snow yard at 155 is correctly exposed, an interior at 150 is blown, and a declared night street at 30 is not crushed", async () => {
+    const { measuredBlockers } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    const shot = (camera: string, meanLuma: number, darkest: number) => ({
+      camera,
+      base64: "px",
+      stats: { meanLuma, histogram: [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)] },
+    });
+    const keys = (run: Run, ...shots: ReturnType<typeof shot>[]) =>
+      measuredBlockers(run, { shots }, true).map((finding) => finding.key);
+    const settings = { ...yard, cameraSettings: { "hero:yard": "exterior", "hero:classroom": "interior" } } as Run;
+    assert.deepEqual(keys(settings, shot("hero:yard", 155, 0.02)), [], "overcast snow outdoors sits inside 90-175");
+    assert.deepEqual(
+      keys(settings, shot("default", 160, 0.02)),
+      [],
+      "a camera of unknown setting is held to the exterior band",
+    );
+    assert.deepEqual(
+      keys(settings, shot("hero:classroom", 150, 0.02)),
+      ["[blown] hero:classroom"],
+      "an interior above 130 is blown",
+    );
+    assert.deepEqual(keys(settings, shot("hero:yard", 190, 0.0)), ["[blown] hero:yard"], "and an exterior above 175");
+    const night = {
+      ...yard,
+      art: {
+        generations: 0,
+        assets: [{ area: "the street", tier: "sky", kind: "atmosphere", asset: "night", source: "scan", night: true }],
+      },
+    } as Run;
+    assert.deepEqual(
+      keys(night, shot("eye:here", 30, 0.35)),
+      [],
+      "a declared night look sits in 25-95 with up to 40% black",
+    );
+    assert.deepEqual(keys(night, shot("eye:here", 20, 0.5)), ["[crushed-shadow] eye:here"]);
+    assert.deepEqual(keys(night, shot("eye:here", 110, 0.05)), ["[blown] eye:here"], "night above 95 is not night");
+    const { cameraSettings } = await import("../../src/harness-seed/loop/director/sourcing.ts");
+    const { compilePlan } = await import("../../src/harness-seed/loop/director/rules.ts");
+    const compiled = compilePlan({
+      summary: "A school and its yard.",
+      workers: JSON.stringify([
+        { id: "yard", hero: "hero:yard", setting: "exterior" },
+        { id: "classroom", hero: "hero:classroom", setting: "interior" },
+        { id: "hud", hero: "hero:hud", setting: "orbit" },
+      ]),
+    });
+    assert.deepEqual(
+      cameraSettings(compiled.plan),
+      { "hero:yard": "exterior", "hero:classroom": "interior" },
+      "a setting it does not know places nothing",
+    );
+  });
 });

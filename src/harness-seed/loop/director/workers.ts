@@ -1,7 +1,7 @@
 import { qualityRefusal } from "../quality-lint.ts";
 import { usageForecast } from "./usage-forecast.ts";
 import { sharedOwnershipNote } from "./ownership.ts";
-import { SOURCING_PART, sourcingRefusal, spreadRefusal } from "./sourcing.ts";
+import { cameraSettings, SOURCING_PART, sourcingRefusal, spreadRefusal } from "./sourcing.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
 import { goalCommission } from "./commission.ts";
@@ -616,6 +616,14 @@ function artPassOf(
   return "problem" in read ? artRefusalWords(read.problem) : read;
 }
 
+/** Where each part's hero camera stands, on the run every worker copies and the journal a Resume reads (sourcing.ts). */
+function keepCameraSettings(loopRun: LoopRun, plan: AnyRecord): void {
+  const settings = cameraSettings(plan);
+  if (!Object.keys(settings).length) return;
+  loopRun.run.cameraSettings = settings;
+  loopRun.journal.run = { ...loopRun.journal.run, cameraSettings: settings };
+}
+
 /** The art pass set on the plan and the run: every builder's brief reads `run.art`, and a Resume brings it back. */
 function keepArtPass(loopRun: LoopRun, plan: AnyRecord, art: ArtPass | null): void {
   if (!art) return;
@@ -642,6 +650,7 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   const additions = await settlePlanScope(loopRun, plan, previous, args);
   keepVision(loopRun, plan, previous);
   keepArtPass(loopRun, plan, artPass.art);
+  keepCameraSettings(loopRun, plan);
   state.plan = plan;
   if (plan.game) await declareGameKind(loopRun, plan.game);
   journal.director.plan = plan;

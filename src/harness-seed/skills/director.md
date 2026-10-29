@@ -64,7 +64,8 @@ itself and keeps the memory file its brief names current.)
    Code-built geometry, a box-and-cone bpy script included, is the last resort and says why. Source
    the planned models first: until `docs/ASSETS.md` lists them (`- <tag>: <file>`) only a
    `id=sourcing` worker starts, and a second part waits for one area's hero shot to pass your
-   `judge ship=yes`. Give each part a `hero` camera. Never ask a builder for billboards, 1k textures
+   `judge ship=yes`. Give each part a `hero` camera and its `setting` (`interior` or `exterior`): an interior's
+   frames are held to mean luma 90-130, an exterior's (snow, daylight) to 90-175. Never ask a builder for billboards, 1k textures
    or camera shake, and never cut maps to save boot: stream asset groups instead. A round that adds
    a look blocker is not kept; a judge that still sees `[primitive]`, a black viewmodel, pure-black
    shadows, cube particles, a sky against the weather or a visible texture repeat

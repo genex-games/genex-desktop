@@ -17,7 +17,7 @@
  */
 import type { AnyRecord } from "../types/harness.d.ts";
 import { LookBlocker, runArtPass, ArtTier } from "./look-bar.ts";
-import { lumaBandDefect } from "./look-facts.ts";
+import { LumaSetting, lumaBandDefect } from "./look-facts.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
 
 /** The demo that walks the player through a doorway from a lit room into a dark one, or back. */
@@ -318,16 +318,32 @@ export function addedMeasured(now: readonly Measured[], before: Readonly<Record<
     .map((finding) => finding.text);
 }
 
-/** Every playable camera outside the luminance band, as blocking findings: the darker, the worse. */
-export function lumaBandDefects(evidence: AnyRecord | null | undefined, night: boolean): Measured[] {
+/** The setting the plan gives each hero camera (`run.cameraSettings`, director/sourcing.ts). */
+function settingOf(run: { readonly [field: string]: unknown } | null | undefined, camera: string): LumaSetting {
+  const settings = (run?.cameraSettings ?? {}) as Record<string, unknown>;
+  return settings[camera] === LumaSetting.Interior ? LumaSetting.Interior : LumaSetting.Exterior;
+}
+
+/** Every playable camera outside its luminance band, as blocking findings: the further out, the worse. */
+export function lumaBandDefects(
+  run: { readonly [field: string]: unknown } | null | undefined,
+  evidence: AnyRecord | null | undefined,
+): Measured[] {
+  const night = declaresNight(run);
   const out: Measured[] = [];
   for (const shot of (evidence?.shots ?? []) as AnyRecord[]) {
     const stats = shot?.stats as AnyRecord | undefined;
-    if (!isPlayable(shot?.camera) || typeof stats?.meanLuma !== "number") continue;
+    const camera = String(shot?.camera ?? "");
+    const placed = Object.hasOwn((run?.cameraSettings ?? {}) as object, camera);
+    if (!(isPlayable(camera) || placed) || typeof stats?.meanLuma !== "number") continue;
     const histogram = Array.isArray(stats.histogram) ? (stats.histogram as number[]) : [];
-    const defect = lumaBandDefect(String(shot.camera), { meanLuma: stats.meanLuma, histogram }, { night });
-    if (defect?.startsWith(`[${LookBlocker.CrushedShadow}]`))
-      out.push({ key: measuredKey(defect), text: defect, severity: Math.max(1, 255 - stats.meanLuma) });
+    const defect = lumaBandDefect(
+      camera,
+      { meanLuma: stats.meanLuma, histogram },
+      { night, setting: settingOf(run, camera) },
+    );
+    if (defect)
+      out.push({ key: measuredKey(defect), text: defect, severity: Math.max(1, Math.abs(128 - stats.meanLuma)) });
   }
   return out;
 }
@@ -348,7 +364,7 @@ export function measuredBlockers(
   const doorwayText = doorwayDefect(states[DOORWAY_DEMO]);
   const sprintText = comfortDefect(states[SPRINT_DEMO], results[SPRINT_DEMO] ?? null);
   return [
-    ...(lookBar ? lumaBandDefects(evidence, declaresNight(run)) : []),
+    ...(lookBar ? lumaBandDefects(run, evidence) : []),
     ...(doorwayText && doorway ? [{ ...flat(doorwayText), severity: doorway.unsettled + doorway.overshoot }] : []),
     ...(sprintText ? [{ ...flat(sprintText), severity: sprint ? comfortSeverity(sprint) : 1 }] : []),
   ];
