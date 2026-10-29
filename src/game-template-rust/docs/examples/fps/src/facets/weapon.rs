@@ -23,6 +23,8 @@ const CLIMB: f32 = 0.014;
 const RECOVER: f32 = 0.12;
 /// How fast the kick settles (kept per tick).
 const RECOIL_KEEP: f32 = 0.82;
+/// How far a shot kicks the camera up (degrees); the rig eases it back and screen shake scales it.
+const KICK_DEGREES: f32 = 1.2;
 /// The bullet holes kept at once, and each one's size (m).
 const HOLES: usize = 24;
 const HOLE: f32 = 0.09;
@@ -95,6 +97,7 @@ fn fire(world: &mut World, physics: &PhysicsWorld, weapon: &mut Weapon, ctx: &Ct
     weapon.cooldown = COOLDOWN;
     weapon.fired += 1;
     world.recoil = 1.0;
+    world.rig.recoil(KICK_DEGREES);
     world.fired_at = Some(world.tick);
     let jitter = vec3(ctx.rng.range_f32(-1.0, 1.0), ctx.rng.range_f32(-1.0, 1.0), ctx.rng.range_f32(-1.0, 1.0)) * SPREAD;
     let aim = (world.forward() + jitter).normalize();

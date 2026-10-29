@@ -266,7 +266,11 @@ write your own system around it.
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
   `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn
   its capsule at the feet, draw the model at the capsule, never placed by its centre, and call
-  `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground.
+  `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground
+  (`docs/api/animation.md`).
+- **Cameras**: `fovy` is vertical (60-80 for first person); a first-person view is
+  `genex::camera::FirstPersonRig` (`docs/api/camera.md`), whose caps hold whatever a milestone
+  asks: never write your own head-bob, roll or shake.
 - **Physics**: crates, debris, a wrecking ball on a rope, a door on a hinge are Rapier bodies in
   `sim.physics`, built in `on_reset` and stepped by the runtime after `on_update`; never step it
   yourself. Draw each moving body in `on_draw` under its own `frame.id(..)`, save each body's pose

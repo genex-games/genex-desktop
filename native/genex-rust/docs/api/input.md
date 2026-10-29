@@ -62,6 +62,9 @@ game.on_ui(|_sim, ui, ctx| { glyph_ui(ui, &ctx.actions.glyph(JUMP)); });
   `Binding::WASD`, `Binding::ARROWS`, `Binding::Keys2`, `Binding::Keys4`, `Binding::Dpad`,
   `Binding::PadAxis`, `Binding::Chord` (up to three inputs together), `Binding::Touch(control)`,
   `Binding::Look` and `Binding::Wheel`. At most 64 actions, 8 contexts and 8 bindings an action.
+  `Binding::Look` is the locked mouse's movement in pixels (x right, y down): turn the view by it
+  every tick, and hand the yaw's change to a first-person camera rig as `RigStep::turn`, positive
+  to the right (`docs/api/camera.md`).
 - **Conditions** count ticks, never seconds: `Condition::Down` (the default), `Press`, `Release`,
   `Hold { ticks, one_shot }`, `Tap { max_ticks }`, `Pulse { first, every }`, `Toggle`,
   `Cooldown { ticks }` and `BlockBy(action)`. Several on one action must all fire.

@@ -2,8 +2,8 @@
 
 A rigged GLB animates in three steps. `on_reset` makes the character's animator, `on_update`
 advances it by `ctx.dt`, and `on_draw` draws it. Start with the simple animator; move to a graph
-when you need parameters or layers (a graph crossfades idle, walk and run on a `speed` parameter;
-the facade has no 1D or 2D blend space yet). The types are in `genex::animation`, and
+when you need parameters, layers or blends (`Motion::blend1d`, `Motion::blend2d`,
+`Motion::directional`). The types are in `genex::animation`, and
 `Animator` is also in the prelude. Animation needs no physics: a game with physics off keeps
 all of it. Every type and call in one line:
 
@@ -17,6 +17,8 @@ Animator::simple(&hero); hero.animator(&graph); // -> Result<Animator, Animation
 let mut g = hero.graph();                  // the builder; g.build() -> Result<AnimGraph, AnimationError>
 g.float("speed", 0.0); g.trigger("attack"); // -> FloatParam, TriggerParam: keep them in the world
 g.layer("base"); g.state(base, "idle", Motion::clip(idle)); // -> LayerId, StateId
+Motion::blend1d(speed, &[(1.4, walk), (4.0, run)]).speed_by(rate); // -> BlendMotion; also Motion::blend2d, Motion::directional
+hero.clip_ground_speed(walk);               // -> Option<f32>, m/s of its root motion
 g.event(clip, 0.3, "hit");                  // -> EventId
 animator.update(ctx.dt);                    // -> AnimatorStep { root_motion, events }
 frame.character_with(&animator, at, &CharacterDraw::new().tint(Color::RED));
@@ -122,6 +124,42 @@ sim.world.hero = Some(animator);
   retargeted, so the files must come from this rig. No merge script is needed. It refuses
   `animation-asset-invalid` for a file the build does not have or a name already taken, and
   `animation-clip-missing` for a file with no animation or none that names a joint.
+
+## Locomotion that does not slide
+
+A walking character's feet slide when the clip's stride does not match the ground the body
+covers. Three calls stop it:
+
+```rust
+// on_reset: extract root motion, then put each clip at its own ground speed.
+let Ok(hero) = hero.with_root_motion(&MotionSettings::DEFAULT) else { return };
+let (Some(walk), Some(run)) = (hero.clip("Walk"), hero.clip("Run")) else { return };
+let (Some(walk_speed), Some(run_speed)) = (hero.clip_ground_speed(walk), hero.clip_ground_speed(run)) else { return };
+let mut g = hero.graph();
+let speed = g.float("speed", 0.0);
+let rate = g.float("rate", 1.0);
+let base = g.layer("base");
+g.state(base, "move", Motion::blend1d(speed, &[(0.0, idle), (walk_speed, walk), (run_speed, run)]).speed_by(rate));
+// on_update: the body's own ground speed; past the fastest clip, play it faster.
+let ground = vec2(velocity.x, velocity.z).length();
+hero.set_float(speed, ground);
+hero.set_float(rate, if ground > run_speed { ground / run_speed } else { 1.0 });
+hero.update(ctx.dt);
+hero.plant_feet(at, height_ground(|x, z| Some(terrain.height(x, z))));
+```
+
+- A blend plays its clips in step: one shared phase, advanced over the weighted mean of the
+  clips' lengths, so walk and run plant the same foot together and the step rate changes
+  smoothly. Author or pick clips that start on the same foot. A blend always loops.
+- `Motion::blend1d(float, points)` weighs clips on a line (outside it the end plays alone);
+  `Motion::blend2d(vec2, points)` over a triangulation (aim pitch and yaw);
+  `Motion::directional(vec2, points)` by velocity, +x right and +y forward in character space
+  (an 8-way strafe set with the idle at the origin). Each refuses `animation-graph-invalid` for
+  no point, more than 32, a point that is not finite, two at one place or a clip it lacks.
+- `.speed_by(param)` multiplies the blend's rate; `.speed(s)` fixes it.
+- `animator.plant_feet(..)` after the update locks a planted foot where it stands and bends the
+  leg onto the ground (below). An NPC on `CharacterMotion::Root(step.root_motion)` moves exactly
+  as its feet do.
 
 ## Advancing (on_update)
 

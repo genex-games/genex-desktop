@@ -36,7 +36,8 @@ change touches.
 | Ctx | `docs/api/ctx.md` | Raw keys, touches, pads, pointer, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
 | Input | `docs/api/input.md` | Actions, touch controls, rebinding, prompts, replays. |
 | Drawing | `docs/api/drawing.md` | Tags, models from `assets/`, `gfx.mesh` meshes, cubes, spheres, lines, clear colour. |
-| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, stable checksum. |
+| Camera | `docs/api/camera.md` | Vertical `fovy`, `FirstPersonRig` and comfort caps. |
+| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals. |
 | Genex Library | `docs/api/library.md` | Ready-made CC0 surfaces, skies, props, trees. |
 | UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |
 | Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts, `xx-pseudo`. |
@@ -44,7 +45,7 @@ change touches.
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
 | Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
-| Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
+| Navigation | `docs/api/navigation.md` | Walkers, bakes, carving, agents, links, queries. |
 | Streaming a large world | `docs/api/streaming.md` | Cells, anchors, sim radius, builders, holds, terrain tiles, refusals. |
 | Terrain | `docs/api/terrain.md` | Heightmap ground across the world. |
 | Vegetation | `docs/api/vegetation.md` | `gfx.plant` trees and grass, `Model::with_wind`. |
@@ -52,7 +53,7 @@ change touches.
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
 | Layered materials and weather | `docs/api/layered-materials.md` | Covers, layers, parallax, lobes, weather. |
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
-| Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading, replay, refusals. |
+| Saves | `docs/api/saves.md` | Save slots, migrations, autosave, replay. |
 | Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
 | Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials, emission, probes, volumes, decals, sky and HDR maps. |
 | Rendering | `docs/api/rendering.md` | Presets, classes, features, `[render]`, settings panel, shadows, draw ids, cuts. |
@@ -63,7 +64,7 @@ change touches.
 | Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once, drawn as a group. |
 | Custom materials and post passes | `docs/api/custom-materials.md` | Ladder level 2: WGSL materials and post passes in `genex.toml`. |
 | Custom GPU passes | `docs/api/gpu-passes.md` | Ladder level 3: raw wgpu through `genex::gpu` at the frame's stages. |
-| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
+| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, the `profile` verb, crashes. |
 | Performance and budgets | `docs/api/performance.md` | Per-class and per-preset budgets, hard caps, content costs. |
 | genex.toml | `docs/api/genex-toml.md` | Every build input key: game, physics, crates, WGSL, native features, web. |
 

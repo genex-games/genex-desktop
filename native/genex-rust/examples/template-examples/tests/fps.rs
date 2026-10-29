@@ -111,6 +111,29 @@ fn mouse_look_turns_the_view_and_the_keys_walk_the_capsule() {
     assert!(moved > 1.5, "a second of W walks the capsule: {moved} m");
 }
 
+/// WP-3: the example's sprint used to bob 4 cm at 14 Hz with a cusp at every step. On
+/// `FirstPersonRig` the camera's probe (`state().volatile.cameraMotion`) stays under the comfort caps on
+/// a held sprint: cadence below 3 Hz, bob at most 3 cm peak to peak, roll at most 1.5°.
+#[test]
+fn a_held_sprint_keeps_the_camera_under_the_comfort_caps() {
+    let mut runtime = started();
+    runtime.inject(Input::key_down(Key::ShiftLeft));
+    runtime.inject(Input::key_down(Key::KeyW));
+    runtime.step(FIXED_STEP_MS * 60.0);
+    let (mut bobs, mut cadence, mut roll) = (Vec::new(), 0.0f64, 0.0f64);
+    for _ in 0..120 {
+        runtime.step(FIXED_STEP_MS);
+        let camera = runtime.state()["volatile"]["cameraMotion"].clone();
+        bobs.push(camera["bobM"].as_f64().expect("the camera probe's bob"));
+        cadence = cadence.max(camera["cadenceHz"].as_f64().expect("its cadence"));
+        roll = roll.max(camera["rollDeg"].as_f64().expect("its roll").abs());
+    }
+    let peak_to_peak = bobs.iter().copied().fold(f64::NEG_INFINITY, f64::max) - bobs.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!(cadence > 2.0 && cadence < 3.0, "the sprint's step rate is {cadence:.2} Hz");
+    assert!(peak_to_peak > 0.01 && peak_to_peak <= 0.03, "the sprint bobs {peak_to_peak:.4} m peak to peak");
+    assert!(roll <= 1.5, "and rolls {roll:.2}°");
+}
+
 #[test]
 fn three_hitscan_shots_drop_the_enemy_into_its_death_clip_and_it_stays_down() {
     let mut runtime = started();

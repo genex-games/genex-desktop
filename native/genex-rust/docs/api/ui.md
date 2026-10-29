@@ -54,7 +54,9 @@ world. `genex::ui::locale()`, `genex::ui::reduced_motion()` and `genex::ui::safe
 the hook's own rect) read the same layers; lay menus out inside `ui`'s rect less that margin. A
 Genex run has no safe area. In a Studio run the `uiSettings` verb sets a session layer (locale,
 scale, safe area, text size) from the next tick. `textSize` is answered back; the hooks read the
-settings menu's text size.
+settings menu's text size. Reduced motion, screen shake and head bob also reach the camera:
+`FirstPersonRig` obeys them in the camera hook (`docs/api/camera.md`), and an animated widget of
+your own checks `genex::ui::reduced_motion()`.
 
 The kit draws in one pass and moves by pad or keys: `Menu::new("pause").item("resume", &tr("resume")).back("resume").show(ui)`
 answers the picked item's key (its `back` key on B or Escape), and `Dialog::new("quit")`,

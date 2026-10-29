@@ -22,7 +22,8 @@ use glam::{Mat4, Vec3};
 
 use crate::animator::{AnimSet, IkRig, Targets};
 use crate::blend::{Layer, additive_delta, apply_additive, apply_override};
-use crate::graph::{AnimGraph, LayerBlend, Motion};
+use crate::blendspace::MAX_BLEND_POINTS;
+use crate::graph::{AnimGraph, BuiltBlend, LayerBlend, Motion};
 use crate::ids::{LayerId, StateId};
 use crate::ik::{DEFAULT_SOFTEN, LookAt, TwoBoneIk, apply_look_at, apply_two_bone};
 use crate::inertial::{floats_digest, vec3_digest};
@@ -99,14 +100,53 @@ pub(crate) struct Inputs<'a> {
     pub(crate) targets: &'a Targets,
 }
 
-/// `state`'s pose at clip `time` written over `pose` (which the caller starts at the rest pose):
-/// a clip state samples its clip (looping or clamped), an empty state writes nothing.
-pub(crate) fn sample_state(set: &AnimSet, graph: &AnimGraph, state: StateId, time: f32, cursors: &mut [SampleCursor], pose: &mut [Trs]) {
-    let Some(Motion::Clip(motion)) = graph.state_motion(state) else { return };
-    let index = motion.clip_id().raw() as usize;
-    let (Some(clip), Some(cursor)) = (set.clips().get(index), cursors.get_mut(index)) else { return };
-    let wrap = if motion.looping() { Wrap::Loop } else { Wrap::Clamp };
-    sample(clip, time, wrap, cursor, pose);
+/// `state`'s pose at its `time` written over `pose` (which the caller starts at the rest pose):
+/// a clip state samples its clip (looping or clamped), a blend samples each clip with weight at
+/// the shared phase and mixes them by the weights `machine`'s parameters give, an empty state
+/// writes nothing.
+pub(crate) fn sample_state(set: &AnimSet, machine: &Machine, state: StateId, time: f32, cursors: &mut [SampleCursor], pose: &mut [Trs]) {
+    let graph = machine.graph();
+    match graph.state_motion(state) {
+        Some(Motion::Clip(motion)) => {
+            let index = motion.clip_id().raw() as usize;
+            let (Some(clip), Some(cursor)) = (set.clips().get(index), cursors.get_mut(index)) else { return };
+            let wrap = if motion.looping() { Wrap::Loop } else { Wrap::Clamp };
+            sample(clip, time, wrap, cursor, pose);
+        }
+        Some(Motion::Blend(_)) => {
+            if let Some(blend) = graph.state_blend(state) {
+                sample_blend(set, blend, machine, time, cursors, pose);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A blend's clips at phase `time`, mixed into `pose` one after another: each clip moves the pose
+/// toward its own by its weight over the weight so far, which is the weighted mean.
+fn sample_blend(set: &AnimSet, blend: &BuiltBlend, machine: &Machine, time: f32, cursors: &mut [SampleCursor], pose: &mut [Trs]) {
+    let mut weights = [0.0; MAX_BLEND_POINTS];
+    let weights = blend.weights(machine.params(), &mut weights);
+    let rest = set.skeleton().rest_pose();
+    // One scratch pose per blended sample; a clip state allocates nothing.
+    let mut scratch: Vec<Trs> = Vec::new();
+    let mut total = 0.0;
+    for ((id, length), weight) in blend.clips().zip(weights) {
+        let index = id.raw() as usize;
+        let (Some(clip), Some(cursor)) = (set.clips().get(index), cursors.get_mut(index)) else { continue };
+        if *weight <= 0.0 {
+            continue;
+        }
+        total += weight;
+        if total == *weight {
+            sample(clip, time * length, Wrap::Loop, cursor, pose);
+            continue;
+        }
+        scratch.clear();
+        scratch.extend_from_slice(rest);
+        sample(clip, time * length, Wrap::Loop, cursor, &mut scratch);
+        apply_override(pose, &Layer::new(&scratch, weight / total));
+    }
 }
 
 /// How much of a layer above the first shows.
@@ -164,7 +204,7 @@ fn stack_layers(inputs: &Inputs<'_>, out: &mut Evaluation) {
             Presence::Full => (player.pose(), 1.0),
             Presence::Partial { share, state, time } => {
                 scratch.copy_from_slice(rest);
-                sample_state(inputs.set, graph, state, time, cursors, scratch);
+                sample_state(inputs.set, machine, state, time, cursors, scratch);
                 (scratch.as_slice(), share)
             }
         };

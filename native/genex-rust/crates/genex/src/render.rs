@@ -158,6 +158,16 @@ const EV_COMPENSATION_LIMIT: f32 = manifest::EV_COMPENSATION_LIMIT as f32;
 /// The slowest auto exposure adaptation a look keeps, in EV per second (genex.toml refuses 0).
 const ADAPTATION_SPEED_MIN: f32 = 0.01;
 
+/// The game's look under the person's picture settings (`graphics.brightness`,
+/// `graphics.motion_blur`): live frames only, so a capture shows the look as the game made it.
+fn person_look(look: Look) -> Look {
+    let (stops, motion_blur) = crate::settings::picture();
+    let ev_compensation = (look.ev_compensation + stops).clamp(-EV_COMPENSATION_LIMIT, EV_COMPENSATION_LIMIT);
+    let mut look = look;
+    look.ev_compensation = ev_compensation;
+    if motion_blur { look } else { look.with_motion_blur(MotionBlur::OFF) }
+}
+
 /// The save file the person's graphics choices and the calibration hint are kept in, per device.
 pub const SETTINGS_FILE: &str = "genex-render.json";
 /// The `[render]` tables a build lane may compile in (a `genex.toml` fragment), read when the game
@@ -1808,7 +1818,7 @@ impl RenderControl {
         // dynamic-resolution step never switches an effect's resolution.
         let nominal = self.drs.steps().steps()[self.drs.nominal_step()];
         let quality = effect_budgeted(&demoted, class, step_size(self.output, nominal));
-        FrameChoice { quality, scale: self.scale, scene_format: self.live.profile.scene_format, look: self.look(), meshlets: self.config.meshlets }
+        FrameChoice { quality, scale: self.scale, scene_format: self.live.profile.scene_format, look: person_look(self.look()), meshlets: self.config.meshlets }
     }
 
     /// Explicit settings changes so far (the probe, a saved choice loaded, the person's panel, the

@@ -199,7 +199,9 @@ position), `mesh-not-finite` and `mesh-too-large` (past `MESH_VERTICES_MAX` or
 `assets/`. A bigger or organic shape (furniture, a radiator, a car) is still a GLB: generated, a
 CC0 download or a Blender script.
 
-`Camera::look_at(position, target)` places a view;
+`Camera::look_at(position, target)` places a view; its `fovy` is the vertical field of view in
+degrees (45 by default; 65-75 for first person, `docs/api/camera.md` has the range and
+`FirstPersonRig`).
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`
 draws it orthographic, `fovy` then being the view's height in world units (a 2D or isometric
 game: an object keeps its size at any distance).
