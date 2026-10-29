@@ -1866,7 +1866,7 @@ describe("harness incidents", () => {
     assert.equal((await unionMergeMain(exec, { main: "src/main.js" })).ok, false);
     assert.equal(commands.length, 1, "with a wiring block it asks git what is unmerged, as before");
 
-    // The four template rules, and the two contract rules that are nobody's option.
+    // The template's rule, and the two contract rules that are nobody's option.
     const spec = { id: "game", owns: ["src/game.ts"], checks: [] };
     const diff = [
       "+++ b/src/game.ts",
@@ -1878,7 +1878,8 @@ describe("harness incidents", () => {
       "+scene.add(new THREE.Mesh(g, m));",
     ].join("\n");
     const onTemplate = mechanicalReview(diff, spec, { ownsMain: true });
-    assert.deepEqual(onTemplate.map((v) => v.category).sort(), ["determinism", "tags", "wall-clock"]);
+    // Flipped (Loop phase 2): randomness and the clock are no rule; the untagged objects still are.
+    assert.deepEqual(onTemplate.map((v) => v.category).sort(), ["tags"]);
     for (const violation of onTemplate) assert.equal(templateOnlyFinding(violation), true, violation.what);
     assert.deepEqual(
       mechanicalReview(diff, spec, { ownsMain: true, template: false }),
@@ -14684,10 +14685,10 @@ describe("a racing build's workers: their bench pages and a steer during the rev
       "",
     ].join("\n");
     const found = mechanicalReview(diff, lookSpec as never, { ownsMain: false });
+    // Flipped (Loop phase 2): the game's own code may time itself too; the clock is no rule.
     assert.deepEqual(
       found.map((v) => `${v.file}:${v.category}`),
-      ["src/look/fx.js:wall-clock"],
-      "only the game's own code keeps the template's rules",
+      [],
     );
   });
 
@@ -16473,6 +16474,56 @@ describe("builders build the game, not the harness's checks (Loop phase 2)", () 
     const kept = boardOf({ ownsMain: true, game: firstPersonRacer }, [own]).find((check) => check.id === "single-hud");
     assert.equal(kept?.js, "count('hud') <= 2");
     assert.equal(kept?.origin, "planner");
+  });
+
+  it("LP2. Math.random and the wall clock in the template's game code were violations every round: a game may use them", () => {
+    const spec = { id: "game", owns: ["src/game.ts"], checks: [] };
+    const diff = [
+      "+++ b/src/game.ts",
+      "@@ -1,0 +1,2 @@",
+      "+const jitter = Math.random();",
+      "+const now = performance.now();",
+    ].join("\n");
+    assert.deepEqual(mechanicalReview(diff, spec, { ownsMain: true }), []);
+  });
+
+  it("LP2b. the model reviewer's rubric listed Math.random and the wall clock: a finding about them, from any rubric, never reaches the builder", async () => {
+    const { reviewAttempt } = await import("../../src/harness-seed/loop/review.ts");
+    const diff = ["+++ b/src/game.ts", "@@ -1,0 +1,1 @@", "+const jitter = Math.random();"].join("\n");
+    const finding = (what: string) => ({ file: "src/game.ts", line: 1, what, fix: "f", gaming: false });
+    const recorder = ctxRecorder({
+      handlers: {
+        "run.exec": (params) => ({ code: 0, stdout: String(params.command).includes("diff") ? diff : "", stderr: "" }),
+        "engine.complete": () => ({
+          message: {
+            content: JSON.stringify({
+              violations: [
+                finding("Math.random() drives gameplay — two builds cannot be compared on one seed"),
+                finding("the build assigns __studioClock, the studio's evidence global, from Date.now"),
+              ],
+              summary: "two findings",
+            }),
+          },
+        }),
+      },
+    });
+    const review = await reviewAttempt(
+      recorder.ctx as never,
+      {
+        run: { runId: "r", project: "p", goal: "g", model: "opus" },
+        spec: { id: "game", owns: ["src/game.ts"], checks: [] },
+        worktree: "/w",
+        incumbentCommit: "abc1234",
+        ownsMain: true,
+      } as never,
+    );
+    assert.deepEqual(
+      review.violations.map((v) => v.what),
+      ["the build assigns __studioClock, the studio's evidence global, from Date.now"],
+      "the evidence globals stay the contract's",
+    );
+    const asked = recorder.paramsOf("engine.complete")[0] as { systemPrompt?: unknown };
+    assert.doesNotMatch(String(asked.systemPrompt), /Math\.random|wall clock/, "the reviewer is asked for neither");
   });
 
   /** A judge that picks `pick` over the build the checks accepted, naming `regression` or none. */

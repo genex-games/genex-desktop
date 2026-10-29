@@ -1581,7 +1581,7 @@ export class GameWorkspaces {
   /**
    * Static check run before every judged build. It catches the two failures that would otherwise
    * waste a whole gauntlet iteration: a missing entry point, and a game that abandoned the
-   * contract (hard-coded `Math.random`, no `window.__studio`).
+   * contract (no `window.__studio`).
    */
   async validate(name: string): Promise<Pick<GameValidation, "ok" | "problems" | "missing" | "warnings" | "contract">> {
     return this.validateAt(this.dirFor(name));

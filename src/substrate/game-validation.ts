@@ -53,7 +53,6 @@ const MESSAGE = {
       )} as packages, and nothing here resolves them — this game needs a build command (studio.json "build") or an import map`,
   TypescriptUnbuilt: (file: string) =>
     `${file} is TypeScript and nothing here builds it — a browser cannot run it as written; this game needs a build command (studio.json "build")`,
-  MathRandom: (file: string) => `${file} uses Math.random() — runs will not be comparable`,
   BootsPaused:
     "studio.js boots paused (`let running = false`) and nothing calls start() — the game will sit on one frozen frame",
   PredatesInspect:
@@ -208,19 +207,16 @@ interface ContractUse {
   hasInspect: boolean;
   bootsPaused: boolean;
   callsStart: boolean;
-  /** Game sources (relative to the folder) that call `Math.random()`, in the order read. */
-  randomUsers: string[];
 }
 
 /** Read every reachable source for the contract's traces: the module itself, and the game's calls into it. */
-async function scanContractUse(dir: string, sources: string[]): Promise<ContractUse> {
+async function scanContractUse(sources: string[]): Promise<ContractUse> {
   const use: ContractUse = {
     installsContract: false,
     hasPlayer: false,
     hasInspect: false,
     bootsPaused: false,
     callsStart: false,
-    randomUsers: [],
   };
   for (const file of sources) {
     const text = await readFile(file, "utf8").catch(() => "");
@@ -228,7 +224,7 @@ async function scanContractUse(dir: string, sources: string[]): Promise<Contract
     // with it, and counting it made every folder holding the file report "loaded" — which is
     // how a game the studio could only attach to was told to install what was never called.
     if (file.endsWith("studio.js")) noteContractModule(use, text);
-    else noteGameSource(use, toPosixRelative(path.relative(dir, file)), text);
+    else noteGameSource(use, text);
   }
   return use;
 }
@@ -239,11 +235,10 @@ function noteContractModule(use: ContractUse, text: string): void {
   if (/let\s+running\s*=\s*false/.test(text)) use.bootsPaused = true;
 }
 
-function noteGameSource(use: ContractUse, rel: string, text: string): void {
+function noteGameSource(use: ContractUse, text: string): void {
   const installs = /installStudio\s*\(/.test(text);
   if (/window\.__studio\s*=/.test(text) || installs) use.installsContract = true;
   if (installs && /\bplayer\s*[:(]/.test(text)) use.hasPlayer = true;
-  if (/\bMath\.random\s*\(/.test(text)) use.randomUsers.push(rel);
   if (/\.start\s*\(/.test(text)) use.callsStart = true;
 }
 
@@ -274,7 +269,7 @@ function contractWarnings(use: ContractUse): string[] {
 /**
  * Static check run before every judged build. It catches the two failures that would otherwise
  * waste a whole gauntlet iteration: a missing entry point, and a game that abandoned the
- * contract (hard-coded `Math.random`, no `window.__studio`).
+ * contract (no `window.__studio`).
  */
 export async function validateGameDir(dir: string): Promise<GameValidation> {
   const warnings: string[] = [];
@@ -301,8 +296,7 @@ export async function validateGameDir(dir: string): Promise<GameValidation> {
   const unresolvedProblem = unresolvedImportsProblem(shape, mapped, unresolved);
   if (unresolvedProblem) problems.push(unresolvedProblem);
 
-  const use = await scanContractUse(dir, sources);
-  warnings.push(...use.randomUsers.map((rel) => MESSAGE.MathRandom(rel)));
+  const use = await scanContractUse(sources);
   const nonExecutable = reach === "none" ? null : nonExecutableSource(sources);
   if (nonExecutable) problems.push(MESSAGE.TypescriptUnbuilt(toPosixRelative(path.relative(dir, nonExecutable))));
   // The one problem the run can do something about on its own: a page that never loads the

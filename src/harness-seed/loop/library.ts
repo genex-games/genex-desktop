@@ -1220,9 +1220,6 @@ function briefRules(
     template
       ? `- Keep window.__studio working (installStudio with scene/renderer/camera/player passed). A build the harness cannot inspect is a loss.`
       : `- Keep the studio able to see this game. It attaches to whatever your three renders — do not fight it; and where the entry calls \`installStudio({ renderer, player })\`, leave those two lines in. A build the harness cannot inspect is a loss.`,
-    template
-      ? `- Determinism: rng from update(), no Math.random, no wall clock.`
-      : `- Determinism: the studio seeds Math.random and owns the clock for this page, so the same seed replays the same run — take time from the delta your own loop already computes, never from a second clock of your own.`,
     `- Capture (${toolCall(roleEngine(run, RoleKey.Builder), "capture")}) after every meaningful change and LOOK before you finish; write what you tried and why in ${facetNotes(spec.id)}.`,
     ...(template ? [benchRule(spec.id)] : []),
     `- A line beginning \`HARNESS:\` in ${facetNotes(spec.id)} is read by the loop, not by the next builder: use it to say a check cannot pass as written (name the check id) or that a camera cannot see what it asks — the planner re-points the check instead of you burning iterations.`,

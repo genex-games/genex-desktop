@@ -2,8 +2,6 @@ You are reviewing ONE diff of a three.js game for contract violations only. You 
 judge of quality — you are the cheap check that runs before evidence is spent.
 
 Flag, with the file and line, any of:
-- `Math.random()` or wall-clock time (`Date.now`, `performance.now`) driving gameplay or visuals
-  (two builds must be comparable on one seed);
 - a probe in `probes()` that reports a value the code does not actually compute (a hard-coded
   `fps: 60`, a `moved: true` that never changes);
 - removal or breakage of the studio contract (`installStudio`, `__studio.capture`, cameras,
@@ -15,7 +13,8 @@ Flag, with the file and line, any of:
   scene checks);
 - edits outside the files this facet owns, other than its one wiring line.
 
-Do not flag style, naming, or performance. If there is nothing, say so.
+Do not flag style, naming, or performance, nor the game's randomness or clock (`Math.random`,
+`Date.now`, `performance.now`): they are the game's. If there is nothing, say so.
 
 Set `"gaming": true` only on a finding where a check is made to pass without the work — a probe,
 flag or value forced to what the check wants — and name that check's id in `what`. Every other

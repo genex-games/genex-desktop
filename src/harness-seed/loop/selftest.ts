@@ -481,10 +481,7 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
         "+const o = new THREE.Group();",
       ].join("\n");
       const violations = mechanicalReview(diff, { id: "city", owns: ["src/city.js"], checks: [] });
-      check(
-        "random flagged",
-        violations.some((v) => /Math\.random/.test(v.what)),
-      );
+      check("randomness is the game's", !violations.some((v) => /Math\.random/.test(v.what)));
       check(
         "untagged flagged",
         violations.some((v) => /none tagged/.test(v.what)),

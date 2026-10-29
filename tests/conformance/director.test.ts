@@ -1601,12 +1601,12 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
     assert.deepEqual(found.files, [".studio/BRIEF.md", "docs/notes/NOTES.plaza.md", "src/plaza.js", "src/sky.js"]);
     assert.deepEqual(found.violations, ["edited a file outside this facet's ownership (src/sky.js)"]);
     // The reviewer's own findings ride along, and a file named by both is said once.
-    const diff =
-      "+++ b/src/plaza.js\n@@ -1,0 +1,1 @@\n+const jitter = Math.random();\n+++ b/src/sky.js\n@@ -1,0 +1,1 @@\n+export const sky = 1;\n";
+    const meshes = "+scene.add(new THREE.Mesh(g, m));\n".repeat(3);
+    const diff = `+++ b/src/plaza.js\n@@ -1,0 +1,3 @@\n${meshes}+++ b/src/sky.js\n@@ -1,0 +1,1 @@\n+export const sky = 1;\n`;
     const both = monitorFindings({ status, diff, spec, ownsMain: false, main: "src/main.js" });
     assert.equal(both.violations.filter((v) => v.includes("src/sky.js")).length, 1, JSON.stringify(both.violations));
     assert.ok(
-      both.violations.some((v) => /Math\.random/.test(v)),
+      both.violations.some((v) => /none tagged/.test(v)),
       JSON.stringify(both.violations),
     );
     // Its own files, its notes and the studio's folder are nobody's business.
@@ -1628,14 +1628,14 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
       checks: [],
     };
     const status = " M app/hud.ts\n?? app/other.ts\n";
-    const diff = "+++ b/app/hud.ts\n@@ -1,0 +1,1 @@\n+const jitter = Math.random();\n";
+    const diff = `+++ b/app/hud.ts\n@@ -1,0 +1,3 @@\n${"+scene.add(new THREE.Mesh(g, m));\n".repeat(3)}`;
     const onTemplate = monitorFindings({ status, diff, spec: own, ownsMain: false, main: "src/main.ts" });
     assert.equal(onTemplate.violations.length, 2, JSON.stringify(onTemplate.violations));
     const ownGame = monitorFindings({ status, diff, spec: own, ownsMain: false, main: "src/main.ts", template: false });
     assert.deepEqual(
       ownGame.violations,
       ["edited a file outside this facet's ownership (app/other.ts)"],
-      "the game's own randomness is the game",
+      "the game's own scene graph is the game",
     );
     assert.deepEqual(ownGame.files, ["app/hud.ts", "app/other.ts"]);
   });
@@ -1680,10 +1680,10 @@ describe("the studio's own look at a running worker, and whose defect it is", ()
         before,
         look({
           minutesInRound: 20,
-          violations: [...before.violations, "Math.random() in game code — two builds cannot be compared on one seed"],
+          violations: [...before.violations, "3 new objects created and none tagged — scene checks cannot see them"],
         }),
       )!.text,
-      /^worker plaza: 20 min into round 1 — Math\.random/,
+      /^worker plaza: 20 min into round 1 — 3 new objects created and none tagged/,
     );
     assert.match(
       monitorNote(before, look({ minutesInRound: 20, violations: [] }))!.text,

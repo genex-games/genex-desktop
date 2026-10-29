@@ -1,8 +1,8 @@
 /**
  * The code reviewer — HARNESS-REWORK.md §4.7. A cheap pass over an attempt's diff for
  * contract violations before any evidence is spent: the mechanical scan finds what a regex
- * can (Math.random, wall clock, a removed installStudio, untagged new meshes, edits outside
- * the facet's files); the model pass, when enabled and the diff is small, finds what a regex
+ * can (a removed installStudio, untagged new meshes, edits outside the facet's files); the
+ * model pass, when enabled and the diff is small, finds what a regex
  * cannot (a probe that lies). Findings are handed back to the builder in the same session.
  */
 import { reviewDiff } from "./judge.ts";
@@ -230,11 +230,12 @@ function recordLine(entry: FileDiff, line: string, newLine: number): number {
 }
 
 /**
- * The four rules the studio owns only inside its own template, as the model half words them.
- * A game the user brought already has its own randomness, its own clock and its own scene
- * graph, and no FACET WIRING block at all: raising these on it tells a worker to break the
- * game it was sent to improve. The mechanical half is gated by `template` below; the model
- * half comes back as free text, so it is gated by matching what it said.
+ * The rules the studio owns only inside its own template, as the model half words them: tags and
+ * the FACET WIRING block, and the randomness and clock rules it once held every game to. A game
+ * the user brought already has its own scene graph and no FACET WIRING block at all: raising
+ * these on it tells a worker to break the game it was sent to improve. The mechanical half is
+ * gated by `template` below; the model half comes back as free text, so it is gated by matching
+ * what it said.
  */
 const TEMPLATE_ONLY_FINDING =
   /Math\.random|wall[- ]clock|Date\.now|performance\.now|untagged|userData\.tag|FACET WIRING|wiring line|not tagged|tag them/i;
@@ -243,6 +244,16 @@ const TEMPLATE_ONLY_FINDING =
 export function templateOnlyFinding(violation: Partial<Violation> | null | undefined): boolean {
   if (violation?.category) return ["determinism", "wall-clock", "tags", "wiring"].includes(violation.category);
   return TEMPLATE_ONLY_FINDING.test(`${violation?.what ?? ""} ${violation?.fix ?? ""}`);
+}
+
+/** What a finding about randomness or the clock says; one about the studio's own evidence globals is the contract's. */
+const DETERMINISM_FINDING = /Math\.random|wall[- ]clock|Date\.now|performance\.now/i;
+const EVIDENCE_GLOBAL = /__studio/;
+
+/** Is this a finding about the game's randomness or clock? No game is held to one any more. */
+function determinismFinding(violation: Partial<Violation>): boolean {
+  const text = `${violation.what ?? ""} ${violation.fix ?? ""}`;
+  return DETERMINISM_FINDING.test(text) && !EVIDENCE_GLOBAL.test(text);
 }
 
 /** The contract methods the harness calls; removing one from the contract module is a finding. */
@@ -300,33 +311,15 @@ function isSourceFile(file: string): boolean {
   return /\.(m?js|ts)$/.test(file);
 }
 
-/** Inside the template's game code (never a bench page's, which the game never loads): no Math.random, no wall clock, and new objects are tagged. */
+/**
+ * Inside the template's game code (never a bench page's, which the game never loads): new objects
+ * are tagged. Randomness and the clock are the game's: a seeded game compares better, and nothing
+ * requires it.
+ */
 function templateFindings({ file, added, template }: FileReview): Violation[] {
   const templateSource = template && isSourceFile(file) && !file.endsWith("studio.js") && !isBenchFile(file);
   if (!templateSource) return [];
   const violations: Violation[] = [];
-  for (const { line, text } of added) {
-    if (/\bMath\.random\s*\(/.test(text)) {
-      violations.push({
-        file,
-        line,
-        category: "determinism",
-        what: "Math.random() in game code — two builds cannot be compared on one seed",
-        fix: "use the rng passed into update() or a generator seeded in reset(seed)",
-        source: "mechanical",
-      });
-    }
-    if (/\b(Date\.now|performance\.now)\s*\(/.test(text) && !/\/\/.*(log|debug)/i.test(text)) {
-      violations.push({
-        file,
-        line,
-        category: "wall-clock",
-        what: "wall-clock time drives the game — judging is stepped, not clocked",
-        fix: "derive time from dt in update() / the frame counter",
-        source: "mechanical",
-      });
-    }
-  }
   const newMeshes = added.filter(({ text }) =>
     /new\s+THREE\.(Mesh|InstancedMesh|SkinnedMesh|Group|Points|Line|Sprite)\b/.test(text),
   ).length;
@@ -582,10 +575,12 @@ async function modelReview(
   try {
     const reviewed = await reviewDiff(ctx, { run, diff, spec: modelReviewSpec(spec, template, main), template });
     for (const v of reviewed.violations) {
-      // The judge's rubric hard-codes the same four template rules, so a worker that followed
-      // the two-line ask would be told to undo it. They are dropped for a game that is not
-      // the template — the same rules the mechanical half above never ran.
+      // The judge's rubric hard-codes the template's rules, so a worker that followed the
+      // two-line ask would be told to undo it. They are dropped for a game that is not the
+      // template — the same rules the mechanical half above never ran — and randomness and the
+      // clock, which a kept older rubric may still raise, are no rule on any game.
       if (template === false && templateOnlyFinding(v)) continue;
+      if (determinismFinding(v)) continue;
       if (!violations.some((m) => m.file === v.file && m.what === v.what)) violations.push(v);
     }
     return reviewed.summary || summary;

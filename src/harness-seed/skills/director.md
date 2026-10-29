@@ -177,7 +177,7 @@ itself and keeps the memory file its brief names current.)
   cannot fit two rounds stops after one.
 - The studio looks into every running worktree every few minutes and wakes you when it sees files
   touched outside the worker's own, an entry module edited beyond its
-  wiring line, `Math.random` in game code, a part drawing on a screen it does not own, or a round
+  wiring line, a part drawing on a screen it does not own, or a round
   that has written nothing. Steer it now: a violation left standing costs the whole round when the
   reviewer reverts it.
 - A defect a judge names in another worker's files lands on that worker, with a line saying where it

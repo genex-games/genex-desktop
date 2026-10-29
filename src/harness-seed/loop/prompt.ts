@@ -474,7 +474,7 @@ async function readIdentity(
 
 /**
  * How the model works: the rules for every turn, plus the web page's (the preview, its controls,
- * `window.__studio`, determinism) only when the turn's game is a web game. A kept copy of the
+ * `window.__studio`) only when the turn's game is a web game. A kept copy of the
  * rules from before they were split still carries the web rules for every turn.
  */
 async function readRules(

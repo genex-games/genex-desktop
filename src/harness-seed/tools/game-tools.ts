@@ -290,7 +290,7 @@ export const tools: HarnessTool[] = [
   {
     name: "check_game",
     description:
-      "Static check of a project before judging it: entry point present, studio contract installed, no Math.random (which would make two builds incomparable).",
+      "Static check of a project before judging it: entry point present, studio contract installed, and the page loads nothing the preview cannot reach.",
     parameters: { type: "object", properties: { project: str("project id; defaults to this chat's folder") } },
     async execute(args, ctx) {
       const pin = pinProject(args, ctx);

@@ -26,10 +26,7 @@ the game, not defects to correct. Change what the brief asks for and leave the r
    create (a group tag covers its children), a probe in `probes()` per mechanic you build, a
    camera that shows it, a demo in `config.demos` when the generic walk cannot reach it. Tag the
    game's existing objects when a check needs them, and no further.
-5. **Deterministic play, and this game's own assets.** Randomness only from the `rng` in
-   `update()` or a generator seeded in `reset(seed)`; time only from `dt`. Two builds that cannot
-   be run on one seed cannot be compared. Whatever this game already loads at run time keeps
-   loading, and new models, textures and sounds come from the studio's tools (`assets/src/<name>.py`
+5. **This game's own assets.** Whatever this game already loads at run time keeps loading, and new models, textures and sounds come from the studio's tools (`assets/src/<name>.py`
    for the `blender` tool when it is offered) or from anywhere their license allows; `references/`
    is for you to LOOK at.
 __BUILD_RULE__
