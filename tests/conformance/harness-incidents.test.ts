@@ -18997,26 +18997,22 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       run: { ...yard, art },
       state: { artPlannedAt: t0, workers: new Map(), lastShip: null } as Record<string, any>,
     };
-    const held = String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000));
+    const held = String(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000));
     assert.match(
       held,
       /^worker_start waits for the sourcing stage \(up to 29 more min\): docs\/ASSETS\.md in the integration names no file for bench, birch\./,
     );
-    assert.equal(
-      await sourcingRefusal(loopRun as never, { sourcing: "yes" }, t0 + 60_000),
-      null,
-      "the sourcing worker starts",
-    );
+    assert.equal(await sourcingRefusal(loopRun as never, "sourcing", t0 + 60_000), null, "the sourcing worker starts");
     await mkdir(path.join(integration, "docs"), { recursive: true });
     await writeFile(path.join(integration, "docs", "ASSETS.md"), "# Assets\n- bench: assets/genex/b1/bench.glb\n");
-    assert.match(String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000)), /names no file for birch\./);
+    assert.match(String(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000)), /names no file for birch\./);
     await writeFile(
       path.join(integration, "docs", "ASSETS.md"),
       "- bench: assets/genex/b1/bench.glb\n- `birch`: assets/cc0/c2/birch.glb\n",
     );
-    assert.equal(await sourcingRefusal(loopRun as never, {}, t0 + 60_000), null, "every planned model is sourced");
+    assert.equal(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000), null, "every planned model is sourced");
     assert.equal(
-      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, {}, t0 + SOURCING_MS),
+      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, "yard", t0 + SOURCING_MS),
       null,
       "the stage is timeboxed",
     );
