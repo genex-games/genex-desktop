@@ -6,9 +6,9 @@ device draws at. Per-class budgets are `docs/api/performance.md`.
 
 ## Light units
 
-The engine's lights are in relative scene units, not lux or lumens: there is no aperture, shutter
-or ISO. Auto exposure brings the metered scene to a key of 0.18 (middle grey), so what matters is
-each light's ratio to the others. The recipes are captured with these values; the desk lamp and the
+Light intensities are scene units. Auto exposure brings the metered scene to a key of 0.18 (middle
+grey), so what matters is each light's ratio to the others; where `docs/api/lighting.md` converts a
+physical value (lux, lumens, candela) into scene units, prefer that conversion to these numbers. The recipes are captured with these values; the desk lamp and the
 candle are starting points to tune against a capture.
 
 | Light | Call | Value |
