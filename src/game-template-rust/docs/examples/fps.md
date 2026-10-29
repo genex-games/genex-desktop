@@ -58,13 +58,13 @@ target, and wire the weapon's facet before the enemy's (facets update in wiring 
 
 ## The view model
 
-Build the hands and the gun from parts in the camera's frame before reaching for a model:
-forearms in sleeves rising from below the camera, gloves around the grip and a support hand, a
-slide over a frame, a raked grip, sights. Mid-tone materials (a near-black glove reads as one dark
-slab); draw them all under `frame.tag("hands")` and one `frame.id(..)`, so TAA moves them with the
-camera. The draw hook gets the `Camera`: its right, up and back axes turn a part's place in the
-camera's frame into the world. Swap a part for a GLB later with `frame.model` at the same
-transform.
+The arms and weapon are models: copy `docs/examples/fps-arms/` (rigged gloved arms on a rifle,
+played by an animator) or make yours with `genex__asset` `model`. The FPS set's forearms, gloves
+and pistol built from boxes are a greybox to prove the mechanics, never what ships. Draw them all
+under `frame.tag("hands")` and one `frame.id(..)` between `frame.view_model()` and
+`frame.end_view_model()`, so TAA moves them with the camera; keep their materials mid-tone (a
+near-black glove reads as one dark slab). The draw hook gets the `Camera`: its right, up and back
+axes turn a part's place in the camera's frame into the world.
 
 - **Near plane.** The camera's near plane is 0.1 m: keep every visible part further out (a grip
   about 0.4 m ahead). Facing a wall, cast a short ray ahead each tick and pull the gun back by

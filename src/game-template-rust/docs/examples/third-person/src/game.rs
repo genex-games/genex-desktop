@@ -1,3 +1,6 @@
+//! GREYBOX: replace the pillars, the ground box and the stand-in block before done: a rigged hero
+//! from `genex__asset` `character`, a `Terrain` for the ground, models for the set.
+//!
 //! A third-person character, distilled from the engine's characters example: a rigged hero on a
 //! character capsule, moved relative to an orbit camera, with an animator graph (idle, walk and
 //! run on a `speed` parameter; a slash on the upper body over the legs, with its `hit` event), and

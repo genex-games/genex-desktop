@@ -147,3 +147,40 @@ data, never prose to match: read the code, then read the run's `problem`.
 | `unknown-op` | The game has no such verb. |
 | `unavailable` | The game knows the verb but this build cannot serve it yet (`renderSettings` before the renderer's settings, `reloadAssets` before its runtime lands). |
 | `busy` | The game is still applying an earlier `reloadAssets`: the studio asks again once it settles. |
+
+## Extension ladder
+
+When the brief needs more than the facade gives, climb one level at a time and stop at the lowest
+level that works. Every level keeps captures, Live, determinism and Stop working, and none loosens
+the sandbox.
+
+0. **Hooks**: `on_reset`, `on_update`, `on_ui`, the draw and probe hooks, demos.
+1. **Your own modules**: any safe Rust in `src/game.rs`, `src/facets/` and modules beside them,
+   against the genex API and the reviewed crates.
+2. **WGSL**: a `[[wgsl]]` source in `genex.toml`, checked by naga against WebGPU core.
+3. **Custom GPU passes**: `game.gpu_pass(..)` through `genex::gpu` (`docs/api/gpu-passes.md`).
+4. **Crate requests**: the `request_crate` tool; only the person approves.
+5. **Eject**: only the person copies the engine into this folder's `engine/`, and only the person
+   sets the game's trust flag for `unsafe` and build scripts, both in Studio's window. You may
+   suggest either in chat with the reason; never ask for `unsafe` or a build script to get past a
+   refusal. After an eject, `engine/` is the entry owner's code (its `Cargo.toml` files are the
+   studio's, so its build scripts never build, trusted or not), engine updates stop, and Live,
+   capture and export wait until the current build passes the `check_conformance` tool: run it
+   after every `engine/` change. Never write or remove the `[engine]` row in `genex.toml`: only
+   the person's eject does, and a build whose row differs from it is refused.
+
+A refusal names its level. Read the code, not the words:
+
+| Code | What to do |
+| --- | --- |
+| `gpu-pass-invalid` | Fix the pass the code names in `state().volatile.customPasses` (its WGSL, layout or limits). |
+| `native-feature-missing`, `native-features-web` | Drop the native feature, or keep it and accept no web build and fewer devices. |
+| `dependency-not-allowed` | Use the facade or a reviewed crate, or ask with `request_crate`. |
+| `crate-declined`, `crate-advisory`, `crate-licence`, `crate-banned`, `crate-build-script`, `crate-proc-macro` | The person or Genex's checks refused the crate (an advisory, a licence or a ban refuses even an approved one): build it from the facade instead. |
+| `crate-unvetted` | From an older ledger: ask for the crate again with `request_crate`; a missing audit no longer refuses. |
+| `crate-checker-unavailable`, `crate-check-failed` | Genex could not check the crate, so nothing was added and the request is still waiting: ask the person to approve it again (once Genex can install its checker, for the first). |
+| `crate-policy-tampered` | Genex's crate policy is not the shipped one, so nothing was added: tell the person what the code says. |
+| `unsafe-code`, `build-script-refused` | Remove the `unsafe` block or the build script; only the person can trust a game. |
+| `trust-person-only` | A game file or `genex.toml` claimed trust: remove the claim. |
+| `conformance-required` | Run `check_conformance` and fix the check it names, then try again. |
+| `eject-target-exists`, `eject-source-tampered`, `eject-lock-missing`, `eject-needs-mac` | The person's eject did nothing; tell them what the code says. |

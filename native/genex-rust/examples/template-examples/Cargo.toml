@@ -4,7 +4,7 @@
 # GPU, `--ignored metal`) writes a capture of each.
 [package]
 name = "template-examples"
-description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit, the soldier kit, a third-person character, a crowd, an explosion and menus with save slots."
+description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit, the soldier kit, a third-person character, a crowd, an explosion, menus with save slots and the look recipes."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -57,6 +57,11 @@ path = "../../../../src/game-template-rust/docs/examples/soldier/src/main.rs"
 [[bin]]
 name = "library-yard"
 path = "../../../../src/game-template-rust/docs/examples/library-yard/src/main.rs"
+
+# The look recipes: one light-and-look pair per scene type on a greybox stage.
+[[bin]]
+name = "looks"
+path = "../../../../src/game-template-rust/docs/examples/looks/src/main.rs"
 
 [features]
 default = ["studio"]

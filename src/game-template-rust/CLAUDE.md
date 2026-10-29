@@ -1,17 +1,15 @@
 This is a Rust game on the studio's `genex` runtime (wgpu on WebGPU core, Rapier 3D physics, egui
-for UI) for the destinations in `studio.json`: desktop, phones and the web, from one source.
-`docs/GENEX_API.md` indexes the whole API it is written against (each topic is a page in
-`docs/api/`), and `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the
-game with and which refusals a run can meet. `docs/examples/README.md` lists working code for this
-engine to copy from: a lit interior room (`docs/examples/interior-room/`), a modular interior kit
-with a corridor and classroom built from it (`docs/examples/interior-kit/`), an FPS facet set
-(`docs/examples/fps/`, explained in `docs/examples/fps.md`), a first-person arms kit
-(`docs/examples/fps-arms/`: rigged gloved arms on a rifle whose magazine leaves the well on a
-reload) and a soldier kit (`docs/examples/soldier/`: a rigged soldier animated from replicated
-state). Copy how their calls fit together; their models are samples, and this game's own content
-is made as Art bar says.
-Before writing a Bevy, Unity, Unreal, three.js or Godot habit, find its genex call in
-`docs/examples/coming-from.md`.
+for UI) for the destinations in `studio.json`: desktop, phones and the web, from one source. No
+model was trained on this engine: these pages are all you know of it, so look a call up before you
+write it. `docs/GENEX_API.md` indexes the API (one topic per page in `docs/api/`),
+`docs/CONTRACT.md` says which file is whose, which verbs the studio drives the game with and what
+each refusal means, `docs/look-recipes.md` gives the light and look of each scene type in numbers,
+`docs/calibration.md` the units, exposure, luma, texel and frame-rate tables, and
+`docs/examples/README.md` lists compiled code to copy. Before writing a Bevy, Unity, Unreal,
+three.js or Godot habit, find its genex call in `docs/examples/coming-from.md`.
+
+**Quality stance: author for `ultra` on desktop; check that `low` and phones stay readable.** The
+presets scale the picture down for a smaller device; nothing scales a cheap picture up.
 
 1. **Read `.studio/BRIEF.md` first when it exists.**
 2. **Keep the studio contract.** `src/main.rs` ends `main` with `genex::install(game);`. A facet
@@ -42,53 +40,90 @@ Before writing a Bevy, Unity, Unreal, three.js or Godot habit, find its genex ca
 
 Draw and probe hooks take `&Sim` and no `ctx`, and cannot change the simulation: animation that
 exists only on screen derives from simulation state (a tick counter the world keeps from
-`on_update`). Models come from `assets/`
-(`gfx.assets().model(..)`); `references/` is for you to LOOK at. A studio run gives the game its
-own `state/` folder to save in, never this one. `target/` is scratch: never committed, served or
-judged.
+`on_update`). Models come from `assets/` (`gfx.assets().model(..)`); `references/` is for you to
+LOOK at. A studio run gives the game its own `state/` folder to save in, never this one. `target/`
+is scratch: never committed, served or judged.
 
 The game fills any window: `main.rs` sets `.fit(Fit::Expand)` and `genex.toml` `fit = "expand"`
 (keep both alike). The 960x540 world stays whole and centred and the scene shows more past it on
 the window's long side, so frame the camera for 16:9 and keep the HUD inside the world; use
-`Fit::Letterbox` only for a fixed picture (`docs/api/ctx.md`).
-
-Every device must offer WebGPU core; there is no WebGL path. A game that names a native-enhanced
-feature in `genex.toml` has no web build, so add one only when the brief needs it. A web export
-over its code budget (4 MB of gzip unless `genex.toml` `[web] wasm_budget_mb` raises it, at most
-32) still exports but loads slower on phones; raise the budget only for a desktop-first brief.
-Past 32 MB the export is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
-`invalid-web-budget`. A system the game does not use stays switched off in `genex.toml`, which
-keeps the web build small: this game starts with `[nav]`, `[streaming]` and `[animation]` off, and
-Game systems below names each switch and what a switched-off system answers.
-Every destination shows a loading screen until the first lit frame; never draw your own. Give it
-the game's look in `genex.toml` `[render.loading]` (title, `#rrggbb` background, accent and text, a
-logo under `assets/`), as `docs/api/loading-screen.md` shows.
-A multiplayer game follows `docs/api/net.md`: no network before the player picks online, Live
-is a loopback room, and online play is proved only on the published draft in two windows.
+`Fit::Letterbox` only for a fixed picture (`docs/api/ctx.md`). Every device must offer WebGPU core;
+there is no WebGL path. A game that names a native-enhanced feature in `genex.toml` has no web
+build, so add one only when the brief needs it. A web export over its code budget (4 MB of gzip
+unless `genex.toml` `[web] wasm_budget_mb` raises it, at most 32) still exports but loads slower;
+past 32 MB it is refused `wasm-over-budget`, and a budget outside 1..=32 is refused
+`invalid-web-budget`. A system the game does not use stays switched off in `genex.toml`: this game
+starts with `[nav]`, `[streaming]` and `[animation]` off (Game systems below). Every destination
+shows a loading screen until the first lit frame; give it the game's look in `[render.loading]`
+(`docs/api/loading-screen.md`), never draw your own. A multiplayer game follows `docs/api/net.md`.
 When a run answers a refusal code (`gpu-unsupported`, `build-failed`, ...), read it in
 `docs/CONTRACT.md` before changing code.
+
+## Route the request
+
+Find the brief's kind, read those pages, copy those examples, start from that look recipe, and
+source its assets as the next table says. Several kinds mix (a horror FPS in a snowed school):
+read each row.
+
+| Kind | Read | Copy from `docs/examples/` | Look recipe | Assets first |
+| --- | --- | --- | --- | --- |
+| First-person shooter, bodycam | `docs/api/characters.md`, `docs/api/input.md`, `docs/api/animation.md`, `docs/examples/fps.md` | `fps/`, `fps-arms/`, `soldier/` | the place's (interior, street) | arms and weapon kit, rigged enemies (`genex__asset character`), props up close |
+| Horror, stealth | as FPS, plus `docs/api/lighting.md` (local lights, fog) | `fps/`, `interior-kit/` | interior night | the kit, scans with normal and ORM, decals for wear |
+| Third-person action, adventure | `docs/api/characters.md`, `docs/api/animation.md` | `third-person/` | the place's | rigged hero (`genex__asset character`), props |
+| Interior, architecture, school, office | `docs/examples/rooms-and-buildings.md`, `docs/api/lighting.md` | `interior-kit/`, `interior-room/`, `looks/` | interior day or night | 2k scans per surface, kit pieces, hero props |
+| Open world, exterior, town | `docs/api/terrain.md`, `docs/api/instance-groups.md`, `docs/api/streaming.md` | `looks/`, `crowd/` | exterior day, overcast and snow, rain, forest, desert | terrain layers from scans, CC0 or generated models, an HDRI or the sky |
+| Night city, street | `docs/api/lighting.md`, `docs/api/particles.md` | `looks/` | night street | lamp and facade models, wet-surface scans |
+| Racing, vehicles | `docs/api/physics.md`, `docs/api/terrain.md` | `looks/` (exterior) | exterior day | vehicle models (`genex__asset model`), track scans |
+| Crowds, many agents | `docs/api/navigation.md`, `docs/api/instance-groups.md` | `crowd/` | the place's | rigged walkers, instanced props |
+| Effects-heavy, combat | `docs/api/particles.md`, `docs/api/audio.md` | `explosion/` | the place's | flipbook atlases, sounds |
+| Menus, saves, settings | `docs/api/ui.md`, `docs/api/settings.md`, `docs/api/saves.md` | `menus-saves/` | none | none |
+
+Budgets per device class are in `docs/api/performance.md`; check them before adding content.
 
 ## Art bar
 
 A brief that asks for a look (realistic, photoreal, AAA, beautiful, or an image in `references/`)
-is judged on captures against it, and a box, capsule or flat-coloured shape on screen fails it.
+is judged on captures against it at `ultra` on desktop. Plan each area as a shot: hero assets near
+the camera, mid-range dressing, ground cover and scatter (dense, varied, never one model in a
+row), a sky and weather that agree with the brief, and a light mood from `docs/look-recipes.md`.
+Compare every camera with `references/` and fix the largest gap first: silhouette, material,
+light, density. A box may stand in while a mechanic is proved inside a round; replace it before
+calling that facet done.
 
-- **Every visible thing is a real asset.** What the camera sees up close (weapon, hands,
-  characters, vehicles, the props the player touches) comes from `genex__asset` (`model` with
-  `auto-size`, `character` or `creature` for anything rigged, `texture` for a surface no scan
-  has) or a CC0 scan; repeated and modular pieces from a `blender__model` script; geometry in code
-  only where neither fits.
-- **Greybox only inside a round.** A box may stand in while a mechanic is proved; replace it
-  before calling that facet done.
-- **Plan each area as a shot.** Hero assets near the camera, mid-range dressing, ground cover and
-  scatter (dense, varied, never one model in a row), a sky and weather that agree with the brief
-  (snow is an overcast sky over white ground), and a light mood.
-- **Compare with the reference.** Look at every camera beside `references/` and fix the largest
-  gap first: silhouette, material, light, density. Never ship a black silhouette (draw
-  first-person hands and weapon between `frame.view_model()` and `frame.end_view_model()`),
-  pure-black outdoor shadows, particles that read as cubes (`Particles::snow(..)`,
-  `Particles::dust(..)`), or a texture whose tiling shows at play distance; snow and rain go under
-  `SkyParams::overcast()`.
+**Source by class.** Fetch or generate assets before building with them, and in parallel.
+
+| Asset class | Route, best first | Never |
+| --- | --- | --- |
+| Hero prop, furniture, vehicle (seen within 10 m) | `cc0__search` a model, else `genex__asset` `model` with `auto-size` (and `face-limit` for a mid prop) | a cube or cone script, a flat-coloured `blender__model` |
+| Character, creature, enemy | `genex__asset` `character` or `creature` (rigged, then `animate`) | a capsule or a mannequin |
+| Weapon and first-person arms | `docs/examples/fps-arms/` kit, else `genex__asset` `model` | arms or a gun built from boxes |
+| Walls, floors, ceilings, ground surfaces | `cc0__fetch` a scan at `2k` with its normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, a 1k or smaller map on a near surface |
+| Modular shell (walls with openings, trims, windows, doors) | `blender__model` kit script textured with scans (`docs/examples/interior-kit/`) | untextured modules, boxes with no reveals |
+| Trees, bushes, foliage | a CC0 tree model (decimated, with its impostor); `genex__asset` `image` (transparent) for leaf and grass cards | a cone, sphere or box tree; one model cloned in a row |
+| Ground across the world | one `Terrain` with scan layers (`docs/api/terrain.md`) | a box or a quad as outdoor ground |
+| Snow, dust, moss on things | a terrain layer and the material's own map; snow falls as `Particles::snow(..)` | a slab or a thin box on top |
+| Posters, grime, cracks, puddles | `frame.decal(..)` with a `genex__asset` `image` or CC0 decal | thin boxes over a surface |
+| Sky and outdoor light | `Environment::sky()` with the recipe's sun, or a CC0 `.hdr` at 4k | a sky-dome texture on a sphere |
+| Sounds | `genex__asset` `sfx`, or CC0 | silence for a mechanic that has sound |
+
+**Never ship.** Each line names the check that refuses it; fix what it names.
+
+- `box-tree`: a tree or bush made of cones, spheres or boxes.
+- `slab-snow`: snow as a slab or box on the ground or on props.
+- `block-furniture`: furniture or props built from cubes in code or a primitive-only script.
+- `flat-prop`: an untextured, flat-coloured surface the camera comes within 10 m of.
+- `scan-missing-maps`: a scan drawn without its normal and ORM maps, or below `2k` up close.
+- `box-ground`: a box or a quad as the outdoor ground.
+- `camera-over-comfort`: head bob over 2.8 cm, roll over 2 degrees or a step cadence over 2.8 Hz.
+- `camera-tick-noise`: camera shake drawn fresh from `ctx.rng` every tick.
+- `fov-out-of-range`: a first-person `fovy` (vertical, degrees) outside 60 to 80.
+- `stacked-darkening`: a dark look made of negative compensation, a raised `ev_min`, a vignette
+  and a dark grade together; a dark room needs less light, not every control turned down.
+- `post-without-clean-tier`: a lens, grain or vignette pass with no way off in the settings.
+- `near-billboard`: a flat card or impostor within 50 m of the camera.
+- `black-silhouette`: hands, a weapon or a character that reads as a black shape; draw
+  first-person parts between `frame.view_model()` and `frame.end_view_model()`.
+- `cube-particles`: particles that read as cubes; use `Particles::snow(..)`, `Particles::dust(..)`.
 
 ## Assets
 
@@ -100,96 +135,81 @@ hold the how.
   (any word matches), then `library__add`: pre-processed CC0 entries at real size, within a
   triangle budget, with no import work. Read one in `on_reset` with `gfx.assets().library(id)`
   (`docs/api/library.md`; `docs/examples/library-yard/`).
-- **CC0 before making.** For a prop, surface or sky the library lacks, `cc0__search`, then
-  `cc0__fetch` at `1k` (2k only for what fills the screen). Studio downloads it and records its licence in
-  `genex-assets.lock`: never download a file, add a licence line or edit the lock yourself. A held
-  curated pack answers why: take a Poly Haven or ambientCG asset instead.
-- **Read the import's facts.** After a delivery the lock's rows name `issues` by code
-  (`triangles-over-budget`, `albedo-out-of-range`, `usage-unknown`): fix the file, never the lock.
-- **Say how a loose texture is used.** A texture a model's material samples needs nothing. A loose
-  image your code samples gets a `[[texture]]` row (`color`, `data` or `normal`); without one it
-  ships uncompressed and `state().__render.assetIssues` names it `texture-uncompressed`. Keep
-  images square with a power-of-two side.
-- **Fit the budgets.** Each destination has one (web 64 MB, phones 200 MB, desktop 2 GB): past it
-  an export still ships but downloads slower, so prefer compressed, fewer and smaller files over
-  raising `[assets] budget_mb`; past 512 MB a web build is refused `assets-over-ceiling`. What the
-  first frame does not need goes in an `[[asset_group]]`, which a reset never reads.
+- **CC0 at full quality.** `cc0__search`, then `cc0__fetch` at `2k` for anything the camera comes
+  near, with every map the scan has (colour, normal, ORM); `4k` only for a hero surface that fills a
+  desktop screen. Studio downloads it and records its licence in `genex-assets.lock`: never
+  download a file, add a licence line or edit the lock yourself.
+- **Read the import's facts.** The lock's rows name `issues` by code (`triangles-over-budget`,
+  `albedo-out-of-range`, `usage-unknown`): fix the file, never the lock.
+- **Say how a loose texture is used.** A loose image your code samples gets a `[[texture]]` row
+  (`color`, `data` or `normal`); without one it ships uncompressed and
+  `state().__render.assetIssues` names it `texture-uncompressed`. Keep images square, power of two.
+- **Budgets are per destination.** Web 64 MB, phones 200 MB, desktop 2 GB (`[assets] budget_mb`);
+  past 512 MB a web build is refused `assets-over-ceiling`. A web or phone budget never lowers the
+  desktop picture: what the first frame does not need goes in an `[[asset_group]]`, and a slow web
+  boot raises `studio.json` `bootMs` (1000 to 60000, default 15000). Never drop maps or shrink
+  scans to pass a web warning.
 - **Check a capture.** `state().__render.missingModels` absent, each texture in
-  `__render.textures` with a compressed `family`, and `assetIssues` absent before calling assets
-  done.
+  `__render.textures` with a compressed `family`, and `assetIssues` absent.
 
 ## Rendering
 
-The game runs on devices from a high-end desktop to an older phone and a browser, and the
-renderer picks each device's quality itself (`docs/api/rendering.md`): you state the look,
+The renderer picks each device's quality itself (`docs/api/rendering.md`): you state the look,
 never the quality.
 
 - **Presets, not numbers.** Never hard-code `ultra`, a resolution, a render scale or an upscaling
   mode (a photo mode alone holds Native: `genex::render::lock_upscale`), and never read render
   settings in `on_update` or a probe. State the look in `genex.toml` `[render]`
   (`preset = "auto"`, `[render.look]`) and a per-device wish only in `[render.class.<class>]`.
-  Offer `genex::render::settings_panel(ui)` in an options menu: the person's choice is saved per
-  device, outside the simulation. Make content cheap at `low` and let presets add to it.
+  Offer the whole settings menu, `genex::settings::menu(ui)` (`docs/api/settings.md`): its
+  Graphics tab is `genex::render::settings_panel(ui)`, which a menu of your own may show alone.
+  The person's choice is saved per device, outside the simulation.
 - **The look.** Frames are HDR. `khronos-neutral` (the default) keeps authored colours;
   `agx-punchy` (this template's) suits bright, high-contrast scenes; plain `agx` greys saturated
-  lights. Use `exposure = "auto"` (with `ev_compensation = 0.5` for a sunlit scene, under any
-  curve) when light and shade sit together. Bloom, height fog, ambient occlusion and contact shadows are the look's and
-  the preset's: set `bloom_*`, `fog_*`, `ao_*` and `contact_shadow_length` in `[render.look]`,
-  never as custom passes.
+  lights. Exposure, fog and grade per scene type are in `docs/look-recipes.md`; bloom, fog,
+  ambient occlusion and contact shadows are `[render.look]` keys, never custom passes.
 - **Light with the built-ins.** `frame.sun`, `frame.ambient`, `frame.point_light` and
   `frame.spot_light` (each with the range it needs), `Material::emissive(color, strength)` for a
   glowing lamp or window (emission lights the picture, not other surfaces: pair it with a light),
-  `frame.environment(Environment::sky())` outdoors (a white sun; the time of day is its elevation)
-  or `Environment::hdri(path)` for a `.hdr` map in `assets/`. Keep `frame.ambient` and
-  `frame.clear` sensible where no sky draws; retune `ev_compensation` against a capture after
-  adding an environment.
+  `frame.environment(Environment::sky())` outdoors or `Environment::hdri(path)` for a `.hdr` map.
 - **Prefer built-ins to custom passes.** A custom material or pass is for what they cannot draw,
   written at `api = 2` (linear, pre-exposed colour; a grade of your own goes at `PostHdr`). A
-  Level-3 pass is not fogged or lit by point or spot lights yet (it shadows itself from
-  `gx_shadow_map`), and a custom material casts no shadow: keep ground and characters built-in
-  or `api = 2` surfaces. v1 work in the world
-  holds the whole frame on the old LDR scene.
-- **Temporal effects.** `high` and `ultra` draw TAA. Draw everything that moves on its own (a
-  character, an enemy, a vehicle) under `frame.id(key)` with a key that stays with it, end it with
-  `frame.end_id()`, and call `frame.camera_cut()` on the frame a shot changes (a camera key, a
-  respawn, a teleport), never every frame. In a shader key per-pixel noise to `frame_index`.
+  Level-3 pass is not fogged or lit by point or spot lights yet, and a custom material casts no
+  shadow: keep ground and characters built-in or `api = 2` surfaces.
+- **Temporal effects.** `high` and `ultra` draw TAA. Draw everything that moves on its own under
+  `frame.id(key)` with a key that stays with it, end it with `frame.end_id()`, and call
+  `frame.camera_cut()` on the frame a shot changes, never every frame.
 - **Shadows scale themselves.** Never switch `shadows` off or fix a cascade count to save time:
   ask for more at one preset with
   `RenderConfig::shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))` and size the
-  reach to the world with `[render.shadows] distance`.
-- **Meshlets** stay off unless the game's own measurement opts a class in (`docs/api/meshlets.md`);
-  crowds of thousands need no switch (`docs/api/drawing.md`).
-- **Test as a phone.** Call `renderSettings` with `{set: {deviceClass: "mobile-mid"}}`, then
-  `{set: {preset: "low"}}`, look at a capture each time and keep the game readable and playable
-  at both before calling it done. A change holds for the session, so give the game's own back:
+  reach to the world with `[render.shadows] distance`. Meshlets stay off unless a measurement opts
+  a class in (`docs/api/meshlets.md`).
+- **Check low and a phone.** Call `renderSettings` with `{set: {deviceClass: "mobile-mid"}}`, then
+  `{set: {preset: "low"}}`, and look at a capture each time: the game must stay readable and
+  playable. Then give the game's own back:
   `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null}}`.
   `state().volatile.render.degraded` names what a device gave up.
 
 ## World look
 
-The renderer lights, fogs and reflects the world itself; build its look from the built-ins in this
-order and look at a capture after each step (`docs/api/lighting.md`, then
-`docs/api/grading.md`).
+Build the look from the built-ins in this order and look at a capture after each step; start from
+your scene's recipe in `docs/look-recipes.md` (`docs/api/lighting.md`, then `docs/api/grading.md`).
 
 - **Sky and sun first.** `frame.environment(Environment::sky())` with a white sun whose elevation
   is the time of day. For night keep the sun and let it set: the stars come out, and
-  `SkyParams::default().with_moon(Some(Moon::new(direction)))` lights the ground. Clouds are
-  `.with_clouds(Some(Clouds::default().with_coverage(0.5)))`, never sky-dome textures.
+  `SkyParams::default().with_moon(Some(Moon::new([x, y, z])))` lights the ground. Snow and rain
+  fall under `SkyParams::overcast()`; clouds are `Clouds::default().with_coverage(0.5)`.
 - **Each room gets a probe and a volume.** Over each room, hall or courtyard declare
   `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye))` and
-  `frame.irradiance_volume(&IrradianceVolume::new(min, max))` on the same box, every frame, so its
-  floor reflects the room and its walls bounce their colour. Open ground needs neither.
+  `frame.irradiance_volume(&IrradianceVolume::new(min, max))` on the same box, every frame.
 - **Surfaces.** Posters, puddles and grime are `frame.decal(&Decal::on_wall(..))` or
-  `Decal::on_ground(..)`, never thin boxes; leaves, wax and skin take
-  `.with_subsurface(Subsurface::LEAF)` (or `WAX`, `SKIN`).
+  `Decal::on_ground(..)`; leaves, wax and skin take `.with_subsurface(Subsurface::LEAF)`.
 - **Air.** Depth and mist are the look's fog: `fog_*` in `[render.look]`, or
-  `RenderConfig::from_build().fog(Fog::default().with_density(0.02))`; `high` and `ultra` light it as a
-  volume with sun shafts (`.with_volumetric(false)` keeps the plain height fog). The near ground
-  keeps its colour; never stack transparent planes for haze.
-- **Grade last.** Exposure first, then the grade in code on top of `genex.toml`'s look:
-  `game.render_settings(RenderConfig::from_build().grading(Grading::NEUTRAL.with_vibrance(1.1)))`
-  (`RenderConfig::new()` would drop `[render]`), `.temperature(0.3, 0.0)` for warmth, a `.cube`
-  LUT only for a strong look. A grade never fixes light: a dark room needs a light, a probe or a
+  `RenderConfig::from_build().fog(Fog::default().with_density(0.02))`; `high` and `ultra` light it
+  as a volume (`.with_volumetric(false)` keeps the plain height fog).
+- **Exposure, then grade last.** Auto exposure with the recipe's compensation and curve; then
+  `.grading(Grading::NEUTRAL.with_vibrance(1.1))` and `.temperature(0.3, 0.0)` on
+  `RenderConfig::from_build()`. A grade never fixes light: a dark room needs a light, a probe or a
   volume.
 - **Lens off in play.** `.depth_of_field(..)` and `.motion_blur(..)` suit cutscenes, photo modes
   and racers, never where the person steers.
@@ -197,16 +217,11 @@ order and look at a capture after each step (`docs/api/lighting.md`, then
 ## Rooms and buildings
 
 A room is built, not boxed: `docs/examples/rooms-and-buildings.md` holds the order. Greybox in code
-with Rapier colliders, fetch a CC0 scan per surface, then build the shell and its dressing as
-`docs/examples/interior-kit/` does: 2 m modules, windows, doors and trims made for this game with
-`blender__model` (its `interior_kit.py` is the method), props and hero pieces from `genex__asset`,
-placed with `frame.model_with` and `frame.model`. Neither stretch a scan nor tile it in a
-grid: `.with_world_uv(metres)` at the scan's real size, `.with_stochastic_tiling(true)` and a macro
-variation, uneven patches each jittered from a seed, close tints of one scan, a second scan only in
-a zone of its own, decals over the rest. Then light it as World look says: a sun that falls in at the windows, every glowing
-fitting paired with a light, a probe and a volume per room, decals for wear, thin fog. Boxes are
-for the greybox: they have no reveals, sills or broken edges, which the kit or a built mesh
-(`gfx.mesh`, `docs/api/drawing.md`) gives.
+with Rapier colliders, fetch a scan per surface, then build the shell from a kit as
+`docs/examples/interior-kit/` does (2 m modules with reveals, sills and trims), hero props from CC0
+or `genex__asset`, scans at their real size with `.with_world_uv(metres)`,
+`.with_stochastic_tiling(true)` and a macro variation, decals over the rest, then light it as
+World look says.
 
 ## Game systems
 
@@ -234,8 +249,8 @@ write your own system around it.
   (`docs/api/ui.md`); the whole settings menu is `genex::settings::menu(ui)`
   (`docs/api/settings.md`). `on_ui` hooks already draw inside the safe area plus a 16 pt margin
   and at the player's text size, so add no edge margin of your own; `genex::ui::safe_area(ui)` is
-  only for a child placed back at the screen edge (zero inside the hook's rect). Give every game
-  option's label key an `.ftl` line: a missing one reads as words and records `text-missing`.
+  only for a child placed back at the screen edge. Give every game option's label key an `.ftl`
+  line: a missing one reads as words and records `text-missing`.
 - **A large world** streams in cells: `game.streaming(..)` (`docs/api/streaming.md`). A
   compiled cell pack is read with `genex::pack::CellPacks::from_table(ASSETS, "<folder>")`, and
   `genex::digest` hashes the game's own data: a game depends on `genex` alone. A level that loads
@@ -247,8 +262,7 @@ write your own system around it.
   `Character::spawn(..)` and ragdolls (`docs/api/characters.md`), `gfx.character(..)` with an
   `Animator` for rigged models (`docs/api/animation.md`). A character stands by its feet: spawn
   its capsule at the feet, draw the model at the capsule, never placed by its centre, and call
-  `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground
-  (`docs/api/animation.md`).
+  `animator.plant_feet(..)` after `animator.update` so both feet meet uneven ground.
 - **Physics**: crates, debris, a wrecking ball on a rope, a door on a hinge are Rapier bodies in
   `sim.physics`, built in `on_reset` and stepped by the runtime after `on_update`; never step it
   yourself. Draw each moving body in `on_draw` under its own `frame.id(..)`, save each body's pose
@@ -275,37 +289,6 @@ write your own system around it.
 
 ## Extension ladder
 
-When the brief needs more than the facade gives, climb one level at a time and stop at the lowest
-level that works. Every level keeps captures, Live, determinism and Stop working, and none loosens
-the sandbox.
-
-0. **Hooks**: `on_reset`, `on_update`, `on_ui`, the draw and probe hooks, demos.
-1. **Your own modules**: any safe Rust in `src/game.rs`, `src/facets/` and modules beside them,
-   against the genex API and the reviewed crates.
-2. **WGSL**: a `[[wgsl]]` source in `genex.toml`, checked by naga against WebGPU core.
-3. **Custom GPU passes**: `game.gpu_pass(..)` through `genex::gpu` (`docs/api/gpu-passes.md`).
-4. **Crate requests**: the `request_crate` tool; only the person approves.
-5. **Eject**: only the person copies the engine into this folder's `engine/`, and only the person
-   sets the game's trust flag for `unsafe` and build scripts, both in Studio's window. You may
-   suggest either in chat with the reason; never ask for `unsafe` or a build script to get past a
-   refusal. After an eject, `engine/` is the entry owner's code (its `Cargo.toml` files are the
-   studio's, so its build scripts never build, trusted or not), engine updates stop, and Live,
-   capture and export wait until the current build passes the `check_conformance` tool: run it
-   after every `engine/` change. Never write or remove the `[engine]` row in `genex.toml`: only
-   the person's eject does, and a build whose row differs from it is refused.
-
-A refusal names its level. Read the code, not the words:
-
-| Code | What to do |
-| --- | --- |
-| `gpu-pass-invalid` | Fix the pass the code names in `state().volatile.customPasses` (its WGSL, layout or limits). |
-| `native-feature-missing`, `native-features-web` | Drop the native feature, or keep it and accept no web build and fewer devices. |
-| `dependency-not-allowed` | Use the facade or a reviewed crate, or ask with `request_crate`. |
-| `crate-declined`, `crate-advisory`, `crate-licence`, `crate-banned`, `crate-build-script`, `crate-proc-macro` | The person or Genex's checks refused the crate (an advisory, a licence or a ban refuses even an approved one): build it from the facade instead. |
-| `crate-unvetted` | From an older ledger: ask for the crate again with `request_crate`; a missing audit no longer refuses. |
-| `crate-checker-unavailable`, `crate-check-failed` | Genex could not check the crate, so nothing was added and the request is still waiting: ask the person to approve it again (once Genex can install its checker, for the first). |
-| `crate-policy-tampered` | Genex's crate policy is not the shipped one, so nothing was added: tell the person what the code says. |
-| `unsafe-code`, `build-script-refused` | Remove the `unsafe` block or the build script; only the person can trust a game. |
-| `trust-person-only` | A game file or `genex.toml` claimed trust: remove the claim. |
-| `conformance-required` | Run `check_conformance` and fix the check it names, then try again. |
-| `eject-target-exists`, `eject-source-tampered`, `eject-lock-missing`, `eject-needs-mac` | The person's eject did nothing; tell them what the code says. |
+When the facade is not enough, climb one level at a time (hooks, own modules, WGSL, GPU passes,
+`request_crate`, the person's eject) and stop at the lowest that works: `docs/CONTRACT.md`
+(Extension ladder) holds each level, who decides, `check_conformance` and every refusal code.
