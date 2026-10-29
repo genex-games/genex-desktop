@@ -1,4 +1,7 @@
 import { keepCheckpoint } from "./progress.ts";
+import { closeUps } from "../close-ups.ts";
+import { asksForLook } from "../look-bar.ts";
+import { heroCameras } from "./sourcing.ts";
 import { qualityRefusal } from "../quality-lint.ts";
 import { retainSpan, timedOperation } from "./timing.ts";
 import { capRefusesWorker, runNow } from "./cap-lines.ts";
@@ -600,6 +603,13 @@ async function shipStep(loopRun: LoopRun, pass: JudgePass): Promise<void> {
   }
   // Only a leased window is sized (evidence.ts `sizeWindow`): a look with none was taken at its own size.
   const view = handle ? SHIP_VIEW : null;
+  // On a look bar the art director also sees close-ups of where the nearest props stand (close-ups.ts).
+  if (asksForLook(run) && !evidence.closeUps) {
+    const heroes = heroCameras(state.plan);
+    evidence.closeUps = await closeUps(ctx, { run, evidence, heroes, label: `director/judge_${pass.n}`, handle }).catch(
+      () => [],
+    );
+  }
   const asking = () => shipReview(ctx, { run: judgeRun(loopRun, pass), evidence, parts: shipParts(state.plan), view });
   const patience = { deadline: judgeDeadline(loopRun, pass), delays: outageDelays(run), label: "the art director" };
   const review = await withProviderPatience(ctx, asking, patience).catch(unreadShip);
