@@ -3749,6 +3749,19 @@ impl Renderer {
         self.textures.add_compressed(&gpu.device, &gpu.queue, texture, kind)
     }
 
+    /// One more reference to texture `id` (another model sharing it, STR-3): its count after.
+    /// Refused `texture-invalid` when its layer holds no texture.
+    pub fn retain_texture(&mut self, id: TextureId) -> Result<u32, RenderError> {
+        self.textures.retain(id)
+    }
+
+    /// Drop one reference to texture `id` ([`ClassArrays::remove`], STR-3): the count left. At 0
+    /// its layer is free and the next texture of that array takes it. Refused `texture-invalid`
+    /// when its layer holds no texture.
+    pub fn remove_texture(&mut self, id: TextureId) -> Result<u32, RenderError> {
+        self.textures.remove(id)
+    }
+
     /// The device class and texture quality the material arrays are fixed to (None until the
     /// first texture, while the quality in effect may still choose them).
     pub fn texture_arrays(&self) -> Option<(DeviceClass, crate::settings::TextureQuality)> {

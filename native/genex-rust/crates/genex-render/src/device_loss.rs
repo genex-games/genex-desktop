@@ -168,6 +168,12 @@ enum Upload {
     Vacant(u32),
     /// A removal (STR-2): every id it freed, the mesh's first, freed again at a replay.
     Removed(Vec<MeshId>),
+    /// One more reference to a texture (STR-3), taken again at a replay.
+    TextureRetained(TextureId),
+    /// One reference fewer to a texture (STR-3), dropped again at a replay so the layers it frees
+    /// are free again and the ids after it come back the same. The texture's own upload keeps its
+    /// data (its layer's texels are written again before it is freed).
+    TextureReleased(TextureId),
 }
 
 /// A Level-2 source as it was admitted: its API, WGSL, uniform bytes and game textures.
@@ -225,6 +231,7 @@ impl Upload {
             Upload::ParticleAtlas(atlas) => texture_bytes(&atlas.image),
             Upload::Compressed(texture, _) => texture.levels().iter().map(|level| level.len() as u64).sum(),
             Upload::Removed(ids) => std::mem::size_of_val(ids.as_slice()) as u64,
+            Upload::TextureRetained(id) | Upload::TextureReleased(id) => std::mem::size_of_val(id) as u64,
             Upload::MeshesFrom(_) | Upload::TextureFrom(..) | Upload::CompressedFrom(..) | Upload::Vacant(_) => 0,
         }
     }
@@ -248,6 +255,8 @@ impl std::fmt::Debug for Upload {
             Upload::ParticleAtlas(atlas) => f.debug_tuple("ParticleAtlas").field(&(atlas.image.width(), atlas.image.height(), atlas.columns, atlas.rows)).finish(),
             Upload::Vacant(slots) => f.debug_tuple("Vacant").field(slots).finish(),
             Upload::Removed(ids) => f.debug_tuple("Removed").field(&ids.len()).finish(),
+            Upload::TextureRetained(id) => f.debug_tuple("TextureRetained").field(id).finish(),
+            Upload::TextureReleased(id) => f.debug_tuple("TextureReleased").field(id).finish(),
         }
     }
 }
@@ -557,6 +566,19 @@ impl Resilient {
     /// [`Resilient::add_meshes_from`]): nothing is kept.
     pub fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
         self.upload(Upload::TextureFrom(source, kind), |r, gpu| r.add_texture(gpu, &capped_source(data, kind), kind))
+    }
+
+    /// One more reference to texture `id` ([`crate::Renderer::retain_texture`], STR-3), logged
+    /// for replay: its count after; `device-lost` while the device is lost.
+    pub fn retain_texture(&mut self, id: TextureId) -> Result<u32, RenderError> {
+        self.upload(Upload::TextureRetained(id), |r, _| r.renderer_mut().retain_texture(id))
+    }
+
+    /// Drop one reference to texture `id` ([`crate::Renderer::remove_texture`], STR-3), logged
+    /// for replay, so a replay frees the same layers and every later id comes back the same: the
+    /// count left; `device-lost` while the device is lost.
+    pub fn remove_texture(&mut self, id: TextureId) -> Result<u32, RenderError> {
+        self.upload(Upload::TextureReleased(id), |r, _| r.renderer_mut().remove_texture(id))
     }
 
     /// Store the larger size classes in `family` (renderer pass 2 A6.4,
@@ -900,5 +922,7 @@ fn replay(renderer: &mut FrameRenderer, gpu: &Gpu, upload: &Upload) -> Result<()
             }
             Ok(())
         }
+        Upload::TextureRetained(id) => renderer.renderer_mut().retain_texture(*id).map(drop),
+        Upload::TextureReleased(id) => renderer.renderer_mut().remove_texture(*id).map(drop),
     }
 }

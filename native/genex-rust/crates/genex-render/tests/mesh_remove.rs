@@ -1,7 +1,8 @@
 //! Mesh removal, arena growth and device-loss replay (game systems STR-2): a removed mesh's rows
 //! go to the next mesh that fits, a stale id draws nothing and is counted, the arena grows by GPU
 //! copy between frames within its peak limit, and a forced device loss replays the same ids and
-//! the same picture.
+//! the same picture. A released texture (STR-3) frees its layer for the next once its last
+//! reference goes, and the replay frees it again.
 //!
 //! The pure rows drive `MeshLibrary` and `MeshArena` through a counting device (no GPU). The
 //! `metal_` rows draw:
@@ -16,6 +17,7 @@ use genex_render::mesh_arena::{ArenaDevice, ArenaSources, ArenaStream, MeshArena
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, MeshletState, ModelPart, Scene, translation};
 use genex_render::settings::Meshlets;
 use genex_render::skin::{Skeleton, SkeletonNode, SkinnedMeshData, Trs};
+use genex_render::texture::{TextureData, TextureKind};
 use genex_render::{CullPath, Gpu, RenderCode, RenderError, RenderOptions, Renderer};
 
 const WIDTH: u32 = 96;
@@ -529,4 +531,30 @@ fn metal_a_forced_device_loss_replays_the_same_live_ids_and_the_same_picture() {
     let f = resilient.add_mesh(grid(3, 0.0)).expect("f after recovery");
     assert_eq!((f.raw(), f.generation()), (6, 0), "no slot is free: the next one after a, the model's two and c, then d and e reused theirs");
     assert!(resilient.kept_bytes() > kept_now);
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --include-ignored"]
+fn metal_a_released_texture_frees_its_layer_for_the_next_and_a_device_loss_replays_the_same_ids() {
+    let Some(gpu) = gpu() else { return };
+    let mut resilient = Resilient::new(gpu, WIDTH, HEIGHT, RenderOptions::default(), Gpu::headless).expect("resilient");
+    let image = |shade: u8| TextureData::rgba8(64, 64, vec![shade; 64 * 64 * 4]).expect("an image");
+    let a = resilient.add_texture(&image(10), TextureKind::Color).expect("a");
+    let b = resilient.add_texture(&image(20), TextureKind::Color).expect("b");
+    assert_eq!(resilient.retain_texture(b).expect("a second user of b"), 2);
+    assert_eq!(resilient.remove_texture(b).expect("b's first user leaves"), 1);
+    let c = resilient.add_texture(&image(30), TextureKind::Color).expect("c");
+    assert_ne!(c, b, "b is still held, so c takes a new layer");
+    assert_eq!(resilient.remove_texture(b).expect("b's last user leaves"), 0);
+    let d = resilient.add_texture(&image(40), TextureKind::Color).expect("d, in b's freed layer");
+    assert_eq!(d, b, "the next texture of the array takes the freed layer");
+    assert_eq!(resilient.remove_texture(a).expect("a's only user leaves"), 0);
+    let twice = resilient.remove_texture(a).map_err(|error| error.code());
+    assert_eq!(twice, Err(RenderCode::TextureInvalid), "a free layer is not released twice");
+    resilient.force_device_loss();
+    assert!(resilient.recover().expect("recovered"));
+    let e = resilient.add_texture(&image(50), TextureKind::Color).expect("e after recovery");
+    assert_eq!(e, a, "the replay freed a's layer again, so e takes it as it would have without the loss");
+    assert_eq!(resilient.retain_texture(c).expect("c is held after the replay"), 2);
+    assert_eq!(resilient.retain_texture(d).expect("d is held after the replay"), 2);
 }

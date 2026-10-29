@@ -382,6 +382,16 @@ pub trait Uploads {
     fn remove_mesh(&mut self, _id: MeshId) -> Result<(), RenderError> {
         Ok(())
     }
+    /// One more reference to texture `id`: another model holds it (STR-3). The default holds no
+    /// textures, so it counts nothing.
+    fn retain_texture(&mut self, _id: TextureId) -> Result<(), RenderError> {
+        Ok(())
+    }
+    /// One reference fewer to texture `id` (an evicted streamed model's, STR-3): its layer is
+    /// free once the last goes. The default holds no textures, so it frees nothing.
+    fn remove_texture(&mut self, _id: TextureId) -> Result<(), RenderError> {
+        Ok(())
+    }
     /// [`Uploads::add_meshes_with_meshlets`] for parts `source` decodes again from bytes the
     /// program holds for its whole life: a renderer that replays uploads keeps the source, not the
     /// parts (the default adds them as any other).
@@ -449,6 +459,14 @@ impl Uploads for Resilient {
 
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
         Resilient::remove_mesh(self, id).map(drop)
+    }
+
+    fn retain_texture(&mut self, id: TextureId) -> Result<(), RenderError> {
+        Resilient::retain_texture(self, id).map(drop)
+    }
+
+    fn remove_texture(&mut self, id: TextureId) -> Result<(), RenderError> {
+        Resilient::remove_texture(self, id).map(drop)
     }
 
     fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {

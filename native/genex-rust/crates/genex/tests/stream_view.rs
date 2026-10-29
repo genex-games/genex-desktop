@@ -3,7 +3,8 @@
 //! call. The cells within the view radius build on the job pool, their models stream in under the
 //! class's content pool, loads in flight, finish milliseconds and upload bytes, and leave when the
 //! pool needs the room. A model still loading draws nothing and is never named a missing model; a
-//! refused one draws the checker and is.
+//! refused one draws the checker and is. An evicted model gives its textures back (STR-3): a texture
+//! several resident models share stays until the last of them leaves.
 //!
 //! The rows drive `genex::present::StreamView` with a fake clock, a fake renderer and a fake async
 //! source; the GPU row is `#[ignore]`d and its name contains `metal`:
@@ -43,6 +44,13 @@ const READ_FRAMES: u64 = 3;
 const RANGE_FRAMES: u64 = 2;
 /// Models the rows' pool holds: fewer than the view wants at once, so the fly must evict.
 const POOL_MODELS: u64 = 30;
+/// A 2x2 white RGBA PNG.
+const WHITE_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+    0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x1d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x01, 0x01,
+    0x12, 0x00, 0xed, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x8f, 0x82, 0x0f, 0xf1, 0x6d, 0x9e, 0x54, 0xf2, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
 
 #[derive(Default)]
 struct World;
@@ -80,6 +88,18 @@ fn bin_start(glb: &[u8]) -> u64 {
 
 /// [`quad_glb`], with a `genex_lods` chain of one level (one triangle) when `lods`.
 fn quad_glb_with(lods: bool) -> Vec<u8> {
+    quad_glb_of(lods, false)
+}
+
+/// [`quad_glb`] whose material samples an embedded [`WHITE_PNG`] as its base colour, so every
+/// cell's model holds the same image.
+fn textured_quad_glb() -> Vec<u8> {
+    quad_glb_of(false, true)
+}
+
+/// The quad, with a one-level chain when `lods` and a base colour image when `textured` (its UVs
+/// and image follow the chain's indices, so the chain's offsets hold either way).
+fn quad_glb_of(lods: bool, textured: bool) -> Vec<u8> {
     let positions: [f32; 12] = [-1.0, 0.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, 1.0];
     let normals: [f32; 12] = [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0];
     let indices: [u16; 6] = [0, 2, 1, 0, 3, 2];
@@ -91,7 +111,7 @@ fn quad_glb_with(lods: bool) -> Vec<u8> {
     if lods {
         primitive["extras"] = serde_json::json!({ "genex_lods": { "version": 1, "indices": 3, "levels": [{ "first": 0, "count": 3, "error": 0.5 }] } });
     }
-    let gltf = serde_json::json!({
+    let mut gltf = serde_json::json!({
         "asset": { "version": "2.0" },
         "buffers": [{ "byteLength": bin.len() }],
         "bufferViews": [
@@ -110,6 +130,9 @@ fn quad_glb_with(lods: bool) -> Vec<u8> {
         "scenes": [{ "nodes": [0] }],
         "scene": 0,
     });
+    if textured {
+        texture_quad(&mut gltf, &mut bin);
+    }
     let mut json = gltf.to_string().into_bytes();
     while !json.len().is_multiple_of(4) {
         json.push(b' ');
@@ -125,6 +148,30 @@ fn quad_glb_with(lods: bool) -> Vec<u8> {
     out.extend(b"BIN\0");
     out.extend(bin);
     out
+}
+
+/// Give the quad of `gltf` UVs and a material sampling [`WHITE_PNG`], both appended to `bin`.
+fn texture_quad(gltf: &mut serde_json::Value, bin: &mut Vec<u8>) {
+    let uvs: [f32; 8] = [0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0];
+    let uv_at = bin.len();
+    bin.extend(uvs.iter().flat_map(|f| f.to_le_bytes()));
+    let image_at = bin.len();
+    bin.extend(WHITE_PNG);
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    gltf["buffers"][0]["byteLength"] = bin.len().into();
+    let views = gltf["bufferViews"].as_array_mut().expect("views");
+    views.push(serde_json::json!({ "buffer": 0, "byteOffset": uv_at, "byteLength": 32 }));
+    views.push(serde_json::json!({ "buffer": 0, "byteOffset": image_at, "byteLength": WHITE_PNG.len() }));
+    let uv_view = views.len() - 2;
+    gltf["accessors"].as_array_mut().expect("accessors").push(serde_json::json!({ "bufferView": uv_view, "componentType": 5126, "count": 4, "type": "VEC2" }));
+    gltf["images"] = serde_json::json!([{ "bufferView": uv_view + 1, "mimeType": "image/png" }]);
+    gltf["textures"] = serde_json::json!([{ "source": 0 }]);
+    gltf["materials"] = serde_json::json!([{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } }]);
+    let primitive = &mut gltf["meshes"][0]["primitives"][0];
+    primitive["attributes"]["TEXCOORD_0"] = 3.into();
+    primitive["material"] = 0.into();
 }
 
 /// The rows' game files: every cell's model is the quad, except the `missing` cells'.
@@ -193,17 +240,27 @@ impl FakeTime {
 }
 
 /// A renderer stand-in: each model it uploads costs [`UPLOAD_MS`] on the fake clock; it records the
-/// meshes it holds.
+/// meshes it holds and each texture layer's references.
 struct FakeRenderer {
     time: FakeTime,
     next: u32,
     held: BTreeSet<u32>,
     removed: u32,
+    /// References by texture layer (a layer leaves at its last release).
+    texture_refs: BTreeMap<u32, u32>,
+    next_layer: u32,
+    /// Texture references given back.
+    texture_releases: u32,
 }
 
 impl FakeRenderer {
     fn new(time: &FakeTime) -> FakeRenderer {
-        FakeRenderer { time: time.clone(), next: 100, held: BTreeSet::new(), removed: 0 }
+        FakeRenderer { time: time.clone(), next: 100, held: BTreeSet::new(), removed: 0, texture_refs: BTreeMap::new(), next_layer: 0, texture_releases: 0 }
+    }
+
+    /// Every live texture reference.
+    fn texture_references(&self) -> u32 {
+        self.texture_refs.values().sum()
     }
 }
 
@@ -216,7 +273,25 @@ impl Uploads for FakeRenderer {
     }
 
     fn add_texture(&mut self, _data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
-        Ok(TextureId::new(kind, 0))
+        self.next_layer += 1;
+        self.texture_refs.insert(self.next_layer, 1);
+        Ok(TextureId::new(kind, self.next_layer))
+    }
+
+    fn retain_texture(&mut self, id: TextureId) -> Result<(), RenderError> {
+        let refs = self.texture_refs.get_mut(&id.layer()).ok_or_else(|| RenderError::refused(RenderCode::TextureInvalid, "not held"))?;
+        *refs += 1;
+        Ok(())
+    }
+
+    fn remove_texture(&mut self, id: TextureId) -> Result<(), RenderError> {
+        let refs = self.texture_refs.get_mut(&id.layer()).ok_or_else(|| RenderError::refused(RenderCode::TextureInvalid, "not held"))?;
+        *refs -= 1;
+        if *refs == 0 {
+            self.texture_refs.remove(&id.layer());
+        }
+        self.texture_releases += 1;
+        Ok(())
     }
 
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
@@ -403,6 +478,27 @@ fn a_600_frame_fly_over_49_cells_holds_the_pool_and_the_finish_budget_at_desktop
 fn a_600_frame_fly_over_49_cells_holds_the_pool_and_the_finish_budget_at_mobile_mid() {
     // The mobile-mid proxy: 1.0 ms of finishing, 4 loads in flight, the 3 MiB upload row.
     fly(DeviceClass::new(FormFactor::Mobile, PerformanceTier::Mid));
+}
+
+// New behaviour (STR-3 in the view set): an evicted model's textures used to stay in their layers
+// for the program's life, so a long walk filled the arrays.
+#[test]
+fn an_evicted_model_gives_its_textures_back_and_a_shared_one_stays_while_a_resident_model_holds_it() {
+    let runtime = runtime();
+    let mut io = Io::with_files(Files { glb: textured_quad_glb(), missing: BTreeSet::new(), index: None });
+    let glb_bytes = io.files.glb.len() as u64;
+    let mut view = view_for(DeviceClass::new(FormFactor::Desktop, PerformanceTier::High), glb_bytes);
+    view.set_source(Box::new(SlowReads::new(Arc::clone(&io.files))));
+    for n in 0..FLY_FRAMES {
+        frame(&mut view, &runtime, fly_point(n, FLY_FRAMES), &mut io);
+        let resident = view.stats().residency.resident_bytes / glb_bytes;
+        assert_eq!(u64::from(io.renderer.texture_references()), resident, "frame {n}: one reference per resident model");
+        assert!(io.renderer.texture_refs.len() <= 1, "frame {n}: every model shares the one image's layer: {:?}", io.renderer.texture_refs);
+    }
+    let evicted = view.stats().residency.evicted;
+    assert!(evicted > 0, "the pool evicted as the view moved");
+    assert_eq!(u64::from(io.renderer.texture_releases), evicted, "each evicted model gave its one texture back");
+    assert!(io.log.is_empty(), "nothing was refused: {:?}", io.log);
 }
 
 #[test]
