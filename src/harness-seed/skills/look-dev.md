@@ -22,8 +22,9 @@ builds breadth: an area that only exists is not a look.
    snow, rain, night street, forest, desert. In a Rust game folder its numbers are a block in
    `docs/look-recipes.md` and code in `docs/examples/looks/src/looks.rs`; tell the worker which
    block, and that it copies the block's `light` and `look` pair first.
-2. **Place one hero camera** per area (a `named_camera`) where the person plays: the shot the
-   judges compare with the references. Keep the camera, and name it in every brief for the area.
+2. **Place one hero camera** per area where the person plays (in a Rust game
+   `game.named_camera("hero:<area>", ..)`): the shot the judges compare with the references. Keep
+   the camera, and name it in every brief for the area.
 3. **Light before materials.** Sky and sun, the room's lights paired with their emissive
    fittings, one reflection probe and one irradiance volume per room, fog, exposure, then the
    grade. Never darken a room by stacking controls (negative compensation, a raised `ev_min`, a
