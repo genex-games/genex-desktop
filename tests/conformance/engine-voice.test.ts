@@ -660,7 +660,8 @@ const PRE_NATIVE_BRIEFS = {
     contractorResume: "aa77e9e84b29a6cf",
     interview: "ccfc8e18264c12f3",
     spikeBrief: "3981c09354d6e4f8",
-    facetPrompt: "1597ab4163ef756b",
+    // Flipped (Plan 2 Track B): the facet prompt gains FEATURE_RULE, report a failing check, never switch a feature off.
+    facetPrompt: "a03579f1fc7d5f04",
     contractBrief: "4fd6edf2d2afabe1",
     singleWorkerBrief: "cce08ab7b3129366",
   },
@@ -675,7 +676,8 @@ const PRE_NATIVE_BRIEFS = {
     contractorResume: "aa77e9e84b29a6cf",
     interview: "ccfc8e18264c12f3",
     spikeBrief: "7279d5ca7f175080",
-    facetPrompt: "a5717393b3494bea",
+    // Flipped (Plan 2 Track B): the facet prompt gains FEATURE_RULE, report a failing check, never switch a feature off.
+    facetPrompt: "7ccadf8188245653",
     contractBrief: "cf35637b1216e916",
     singleWorkerBrief: "2814ded529c131ff",
   },
