@@ -11,12 +11,18 @@
  * around them the CLI's.
  */
 import assert from "node:assert/strict";
-import { constants } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import { access, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { grokEnv, grokTurnArgv, parseGrokProbe, type GrokProbe } from "../../src/substrate/engines/grok-cli.ts";
+import {
+  grokEnv,
+  grokTurnArgv,
+  parseGrokProbe,
+  sessionSignIn,
+  type GrokProbe,
+} from "../../src/substrate/engines/grok-cli.ts";
 import { grokStderrStatus, grokStream, parseGrokLine } from "../../src/substrate/engines/grok-events.ts";
 import { GrokEngine, grokEvents, type GrokExec, type GrokInvocation } from "../../src/substrate/engines/grok.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
@@ -218,7 +224,7 @@ async function* replay(list: Array<Record<string, unknown>>): AsyncGenerator<Rec
 /** An engine whose sessions replay `stream`, recording each invocation and the prompt it was handed. */
 async function engineWith(
   stream: (invocation: GrokInvocation) => AsyncIterable<Record<string, unknown>>,
-  options: { probe?: string; home?: string } = {},
+  options: { probe?: string; home?: string; platform?: NodeJS.Platform } = {},
 ) {
   const root = await tmpDir("grok-engine-");
   const seen: GrokInvocation[] = [];
@@ -240,6 +246,7 @@ async function engineWith(
     execFn,
     resolveCli: ready,
     probe: () => probed(options.probe ?? SIGNED_IN),
+    ...(options.platform ? { platform: options.platform } : {}),
   });
   return { engine, seen, prompts, beside, root };
 }
@@ -422,6 +429,69 @@ describe("Grok Build sessions", () => {
       sandbox?.denyWrite?.some((dir) => dir.endsWith(`${path.sep}.grok`)),
       "a game's own Grok settings stay as they are",
     );
+  });
+
+  it("on Windows reads a copy of Grok's sign-in in the run's own folder, without its refresh tokens, gone after (#531)", async () => {
+    // Grok gives `auth.json` to the Windows user who signed in alone, on every read and write; a
+    // session runs as the sandbox's own user, which could not open it.
+    const home = path.join(await tmpDir("grok-sign-in-"), ".grok");
+    await mkdir(home, { recursive: true });
+    const signIn = JSON.stringify({
+      "grok.com": { key: "access-1", auth_mode: "oidc", user_id: "u1", refresh_token: "refresh-1", expires_at: "x" },
+      "api.x.ai": { key: "access-2", auth_mode: "external", user_id: "u1" },
+    });
+    await writeFile(path.join(home, "auth.json"), signIn);
+    const copies: Array<{ copy: string | undefined; text: string; prompt: string | undefined }> = [];
+    const stream = async function* (invocation: GrokInvocation) {
+      const copy = invocation.env.GROK_AUTH_PATH;
+      copies.push({
+        copy,
+        text: copy ? await readFile(copy, "utf8") : "",
+        prompt: flag(invocation.argv, "--prompt-file"),
+      });
+      yield* replay([]);
+    };
+    const { engine } = await engineWith(stream, { home, platform: "win32" });
+    await engine.delegate({ cwd: await game(), prompt: "x" });
+    await engine.delegate({ cwd: await game(), prompt: "", compact: true, resume: "s" });
+    assert.equal(copies.length, 2, "a turn and a compaction");
+    for (const { copy, text } of copies) {
+      assert.ok(copy, "the session is pointed at the copy");
+      assert.deepEqual(JSON.parse(text), {
+        "grok.com": { key: "access-1", auth_mode: "oidc", user_id: "u1", expires_at: "x" },
+        "api.x.ai": { key: "access-2", auth_mode: "external", user_id: "u1" },
+      });
+      assert.equal(existsSync(copy), false, "the copy goes with the run");
+    }
+    assert.equal(path.dirname(copies[0]?.copy ?? ""), path.dirname(copies[0]?.prompt ?? "-"), "beside its prompt");
+    assert.equal(await readFile(path.join(home, "auth.json"), "utf8"), signIn, "the person's own sign-in as it was");
+
+    const mac = await engineWith(stream, { home, platform: "darwin" });
+    await mac.engine.delegate({ cwd: await game(), prompt: "x" });
+    assert.equal(copies.at(-1)?.copy, undefined, "a Mac session runs as the person and reads Grok's own file");
+  });
+
+  it("copies no sign-in for a session when Grok's file is missing or is not one, and writes nothing", async () => {
+    const hostile = ["", "not json", "null", "[]", '"text"', '{"grok.com": "access"}', '{"grok.com": null}'];
+    for (const text of hostile) assert.equal(sessionSignIn(text), null, JSON.stringify(text));
+    const home = path.join(await tmpDir("grok-no-sign-in-"), ".grok");
+    await mkdir(home, { recursive: true });
+    const seen: Array<{ copy: string | undefined; beside: string[] }> = [];
+    const { engine } = await engineWith(
+      async function* (invocation) {
+        const prompt = flag(invocation.argv, "--prompt-file") ?? "";
+        seen.push({ copy: invocation.env.GROK_AUTH_PATH, beside: await readdir(path.dirname(prompt)) });
+        yield* replay([]);
+      },
+      { home, platform: "win32" },
+    );
+    await engine.delegate({ cwd: await game(), prompt: "x" });
+    await writeFile(path.join(home, "auth.json"), "not json");
+    await engine.delegate({ cwd: await game(), prompt: "x" });
+    assert.deepEqual(seen, [
+      { copy: undefined, beside: ["prompt.json"] },
+      { copy: undefined, beside: ["prompt.json"] },
+    ]);
   });
 
   it("puts a picked model, an effort it offers and the pictures into the turn; an effort it does not offer stays out", async () => {

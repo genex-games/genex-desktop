@@ -2,14 +2,15 @@
  * What the studio reads from the `grok` CLI (Grok Build) outside a session, and how it starts one.
  *
  * Grok Build keeps its own sign-in (`grok login`, a Grok account in the browser) in its home,
- * which the studio never reads. Whether it is signed in, and the models it can run, the studio
- * asks the CLI itself: `grok agent stdio` speaks the Agent Client Protocol (JSON-RPC on stdin and
- * stdout), and its `_x.ai/auth/info` and `_x.ai/models/list` methods answer in typed fields
- * without opening a session or calling a model (`probeGrok`). Sessions run through its headless
- * mode instead (`grok.ts`): one `grok --prompt-file … --output-format streaming-json` per turn,
- * resumed by its session id.
+ * which the studio only copies for a session on Windows (`copySessionSignIn`). Whether it is
+ * signed in, and the models it can run, the studio asks the CLI itself: `grok agent stdio` speaks
+ * the Agent Client Protocol (JSON-RPC on stdin and stdout), and its `_x.ai/auth/info` and
+ * `_x.ai/models/list` methods answer in typed fields without opening a session or calling a model
+ * (`probeGrok`). Sessions run through its headless mode instead (`grok.ts`): one `grok
+ * --prompt-file … --output-format streaming-json` per turn, resumed by its session id.
  * Recorded answers: `tests/fixtures/transcripts/grok-probe-*.jsonl` (Grok Build 1.0.70).
  */
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { picturesNote } from "./grok-prompts.ts";
@@ -35,6 +36,10 @@ const ACP_PROTOCOL_VERSION = 1;
 export const GROK_MIN_VERSION = "1.0.13";
 /** The HTTP status xAI refuses an outdated CLI with. */
 export const GROK_OUTDATED_STATUS = 426;
+/** Grok Build's sign-in, one entry per account, in its home. */
+const AUTH_FILE = "auth.json";
+/** What an account's entry renews its access token with. Grok's own spelling: never rename it. */
+const REFRESH_TOKEN = "refresh_token";
 
 /** The probe's JSON-RPC requests, by id: `initialize` first, then the two questions. */
 const ProbeRequest = {
@@ -139,8 +144,10 @@ export interface GrokProbe {
 
 type Record_ = Record<string, unknown>;
 
-const record = (value: unknown): Record_ =>
-  value && typeof value === "object" && !Array.isArray(value) ? (value as Record_) : {};
+const isRecord = (value: unknown): value is Record_ =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const record = (value: unknown): Record_ => (isRecord(value) ? value : {});
 
 const text = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 
@@ -374,7 +381,8 @@ export function grokCompactArgv(resume: string, cwd: string): string[] {
 /**
  * The variables every `grok` run starts with, over the contractor's environment (which never
  * carries an xAI key: a session runs on the person's own Grok sign-in). Its home is named outright,
- * so the sign-in is found whoever the sandbox runs it as (on Windows, the sandbox's own user). It
+ * so its sessions and settings are found whoever the sandbox runs it as (on Windows, the sandbox's
+ * own user, which reads a copy of the sign-in instead: `copySessionSignIn`). It
  * never updates itself, keeps no memory between games, and loads none of the person's Claude or
  * Cursor MCP servers, hooks or skills; its error log names the HTTP status of a failed call.
  */
@@ -393,6 +401,44 @@ export function grokEnv(home: string): Record<string, string> {
     RUST_LOG: "error",
     NO_COLOR: "1",
   };
+}
+
+/**
+ * Grok Build's sign-in (`auth.json`) as a session run as another user holds it: every account's
+ * entry without its refresh token, so the session calls xAI with the access token it finds and can
+ * never renew it. xAI takes each refresh token once, and a renewal kept in the session's copy
+ * would leave the person's own sign-in holding a spent one. Null for a file that is no such sign-in.
+ */
+export function sessionSignIn(text: string): string | null {
+  let store: unknown;
+  try {
+    store = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(store)) return null;
+  const accounts = Object.entries(store);
+  if (!accounts.every(([, entry]) => isRecord(entry))) return null;
+  const kept = accounts.map(([scope, entry]) => [
+    scope,
+    Object.fromEntries(Object.entries(record(entry)).filter(([field]) => field !== REFRESH_TOKEN)),
+  ]);
+  return JSON.stringify(Object.fromEntries(kept));
+}
+
+/**
+ * Grok's sign-in in `home`, copied into `folder` for a session the Windows sandbox runs as its own
+ * user (`sessionSignIn`): Grok gives its file to the Windows user who signed in alone, on every
+ * read and write, so that user never opens the original. The session reads the copy through
+ * `GROK_AUTH_PATH`. Null, and nothing written, when there is no sign-in to copy.
+ */
+export async function copySessionSignIn(home: string, folder: string): Promise<string | null> {
+  const text = await readFile(path.join(home, AUTH_FILE), "utf8").catch(() => null);
+  const store = text === null ? null : sessionSignIn(text);
+  if (store === null) return null;
+  const copy = path.join(folder, AUTH_FILE);
+  await writeFile(copy, store, { encoding: "utf8", flag: "wx" });
+  return copy;
 }
 
 /** The sandbox a session runs in: the folder it works in, Grok's own home, and nothing it must not read. */

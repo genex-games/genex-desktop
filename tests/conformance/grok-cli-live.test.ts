@@ -86,15 +86,6 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     process.env.GROK_XAI_API_BASE_URL = fake.proxyUrl.replace("/proxy/v1", "/v1");
     await mkdir(process.env.GROK_HOME, { recursive: true });
     await signIn(binary, root);
-    // TEMPORARY diagnostics for #531: what Grok did to its sign-in file's permissions.
-    if (process.platform === "win32") {
-      const { execFileSync } = await import("node:child_process");
-      const auth = path.join(process.env.GROK_HOME, "auth.json");
-      console.log(execFileSync("icacls", [auth], { encoding: "utf8" }));
-      const store = JSON.parse(await readFile(auth, "utf8")) as Record<string, Record<string, unknown>>;
-      for (const [scope, entry] of Object.entries(store))
-        console.log(`scope ${scope}: ${Object.keys(entry).join(", ")}`);
-    }
   });
 
   after(async () => {
