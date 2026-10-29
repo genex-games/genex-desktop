@@ -23,7 +23,7 @@ night street) takes the recipe of the camera the person plays from, and the othe
   blows the next sunlit window out. Night keeps its dark through `.exposure_curve(..)`, never
   through a low `ev_max` or a dark grade.
 - **One darkening control at a time.** Negative compensation, a raised `ev_min`, a vignette and a
-  dark grade together crush a room to black (`stacked-darkening`).
+  dark grade together crush a room to black: light the room less instead.
 - **Probes and volumes.** Each room, hall or courtyard: one `ReflectionProbe` and one
   `IrradianceVolume` on the same box, every frame, blend about the wall's thickness. Open ground
   needs neither.
