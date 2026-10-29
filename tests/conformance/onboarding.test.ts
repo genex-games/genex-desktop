@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   connectView,
+  genexChoiceView,
   markState,
   shouldWelcome,
   startTrouble,
@@ -14,6 +15,7 @@ import {
   type ConnectInput,
 } from "../../src/renderer/onboarding/state.ts";
 import { composerOpening } from "../../src/renderer/chat/use-composer-model.ts";
+import { offersGenex } from "../../src/renderer/genex-build.ts";
 import { resolveChoice, toChoices } from "../../src/renderer/model-choices.ts";
 import { rememberWelcomeModel } from "../../src/renderer/stored-model.ts";
 import type { EngineDescriptor } from "../../src/renderer/types.ts";
@@ -187,6 +189,27 @@ describe("first launch", () => {
     assert.equal(markState({ kind: "code" }), "busy");
     assert.equal(markState({ kind: "action", action: "install", label: "" }), "missing");
     assert.equal(markState({ kind: "action", action: "connect", label: "" }), "idle");
+  });
+
+  it("offers Use Genex, which asks for nothing and reads Genex ready once picked", () => {
+    assert.deepEqual(genexChoiceView({ picked: false, installing: false }), {
+      kind: "action",
+      action: "connect",
+      label: "Use Genex",
+    });
+    const setting = genexChoiceView({ picked: true, installing: true });
+    assert.deepEqual(setting, { kind: "busy", label: "Getting Genex ready…", cancel: false });
+    assert.equal(markState(setting), "busy");
+    const ready = genexChoiceView({ picked: true, installing: false });
+    assert.deepEqual(ready, { kind: "on", label: "Genex ready" });
+    assert.equal(markState(ready), "on", "its mark lights once picked");
+  });
+
+  it("offers Genex only where genex.games offers building with it", () => {
+    assert.equal(offersGenex({ status: { code: "needs_login", detail: "", reason: "not_signed_in" } }), true);
+    assert.equal(offersGenex({ status: { code: "error", detail: "", reason: "check_failed" } }), true);
+    assert.equal(offersGenex({ status: { code: "not_installed", detail: "", reason: "not_offered" } }), false);
+    assert.equal(offersGenex(undefined), false, "a build without Genex never shows it");
   });
 });
 
@@ -380,6 +403,43 @@ describe("the free model first launch builds with", () => {
     rememberWelcomeModel(storage, "opencode::opencode/big-pickle");
     assert.equal(resolveChoice(toChoices([freeOpenCode]), composerOpening(storage, home).modelKey)?.name, "Big Pickle");
   });
+
+  it("seeds the first game's chat with Genex's Sonnet once Use Genex is picked, before any sign-in", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+      removeItem: (key: string) => void values.delete(key),
+    };
+    const genex = {
+      id: "genex",
+      label: "Genex",
+      kind: "delegated",
+      status: { code: "needs_login", detail: "", reason: "not_signed_in" },
+      models: [
+        {
+          id: "sonnet-5.5-medium-or",
+          label: "Sonnet 5.5",
+          contextWindow: 200_000,
+          supportsTools: true,
+          supportsVision: true,
+        },
+        {
+          id: "opus-5.5-medium-or",
+          label: "Opus 5.5",
+          contextWindow: 200_000,
+          supportsTools: true,
+          supportsVision: true,
+        },
+      ],
+      defaultModel: "sonnet-5.5-medium-or",
+    } satisfies EngineDescriptor;
+    rememberWelcomeModel(storage, "genex::sonnet-5.5-medium-or");
+    const home = { id: "home", meta: { kind: "game" as const, project: null } };
+    const chosen = resolveChoice(toChoices([genex]), composerOpening(storage, home).modelKey);
+    assert.equal(chosen?.name, "Sonnet 5.5");
+    assert.notEqual(chosen?.disabled, true, "the first message goes there and asks for the sign-in itself");
+  });
 });
 
 /** A 2D context that records what is drawn and refuses a non-finite coordinate. */
@@ -458,13 +518,22 @@ describe("first-launch art", () => {
       for (const tg of [0, 0.3, 2, 7.5]) {
         drawMarks(
           recorder().ctx,
-          { claude: state, codex: state },
+          { claude: state, codex: state, genex: state },
           tg,
-          { claude: tg < 1 ? tg : -1, codex: -1 },
-          { claude: 192, codex: 448 },
+          { claude: tg < 1 ? tg : -1, codex: -1, genex: -1 },
+          { claude: 152, codex: 320, genex: 488 },
           palette,
         );
       }
+    const fills = (states: Parameters<typeof drawMarks>[1]) => {
+      const { ctx, calls } = recorder();
+      drawMarks(ctx, states, 1, { claude: -1, codex: -1, genex: -1 }, { claude: 152, codex: 320, genex: 488 }, palette);
+      return calls.filter((call) => call.name === "fill").length;
+    };
+    assert.ok(
+      fills({ claude: "on", codex: "on" }) < fills({ claude: "on", codex: "on", genex: "on" }),
+      "a mark with no state is left out",
+    );
     for (const id of ["openrouter", "opencode", "grok", "cursor"] as const)
       for (const state of ["idle", "busy", "on", "missing"] as const)
         for (const tg of [0, 0.3, 2, 7.5]) drawMeteredMark(recorder().ctx, id, state, tg, tg < 1 ? tg : -1, palette);

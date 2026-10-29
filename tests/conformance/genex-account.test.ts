@@ -119,6 +119,27 @@ test("a refusal of another token never ends the account signed in now", async ()
   assert.deepEqual(await service.view(), { status: GenexAccountStatus.SignedIn });
 });
 
+test("building with Genex signs in on the build page with the sign-in's code, while signed out", async () => {
+  const fake = fakePort({ state: PluginAccountState.NotConnected });
+  const { service, opened } = account(fake.port);
+  const page = (code: string | undefined) => `https://genex.games/desktop/build${code ? `?code=${code}` : ""}`;
+  assert.deepEqual(await service.build(page), { status: GenexAccountStatus.SigningIn, code: "ABCD-1234" });
+  assert.deepEqual(opened, ["https://genex.games/desktop/build?code=ABCD-1234"], "never the account's own page");
+  fake.approve("token-1");
+  assert.deepEqual(await service.build(page), { status: GenexAccountStatus.SignedIn });
+  assert.deepEqual(opened.at(-1), "https://genex.games/desktop/build", "signed in, the page needs no code");
+  assert.deepEqual(fake.calls, ["connect", "signed in"], "no second sign-in starts");
+});
+
+test("building with Genex after genex.games ended the sign-in starts a fresh one", async () => {
+  const fake = fakePort({ state: PluginAccountState.Unlocked, token: "old" });
+  const { service, opened } = account(fake.port);
+  service.refused("old");
+  await service.build((code) => `https://genex.games/desktop/build?code=${code}`);
+  assert.deepEqual(fake.calls, ["disconnect", "connect"]);
+  assert.deepEqual(opened, ["https://genex.games/desktop/build?code=ABCD-1234"]);
+});
+
 test("signing in while signed in opens nothing", async () => {
   const fake = fakePort({ state: PluginAccountState.Unlocked, token: "current" });
   const { service, opened } = account(fake.port);

@@ -4,7 +4,9 @@
  * and the fall back to today's preset are tested without a browser
  * (tests/conformance/engines.test.ts).
  */
+import { GENEX_HELPER_MODEL } from "../shared/genex-build.ts";
 import { normalizeRoles, resolveRoles } from "../shared/model-roles.ts";
+import { EngineId } from "../shared/providers.ts";
 import { modelKey, parseModelKey } from "./model-key.ts";
 import { migrateStoredRoles, packStoredRoles, storedRolesKey } from "./stored-roles.ts";
 import type { ModelChoice, RoleRecord } from "./ui/ModelMenu.tsx";
@@ -33,7 +35,8 @@ const blindLocal = (choice: ModelChoice | undefined): boolean =>
   choice !== undefined && choice.supportsSessions === false && choice.supportsVision === false;
 
 /**
- * What a pick fills the three jobs with: the pick in every one, as the policy table says. On a
+ * What a pick fills the three jobs with: the pick in every one, as the policy table says, but on
+ * Genex, whose workers and reviewers run on its default model. On a
  * local engine a reviewer looks at screenshots, so a pick that cannot see images leaves reviewing
  * to the first installed model there that calls tools and can; with none, the pick reviews.
  */
@@ -43,6 +46,8 @@ export function presetRoles(
   choices: readonly ModelChoice[] = [],
 ): RoleRecord {
   const preset = resolveRoles(engineId, pickedModel);
+  // Genex: the workers and reviewers run on Sonnet whatever the lead runs on (owner, 2026-10-28).
+  if (engineId === EngineId.Genex) return { ...preset, builder: GENEX_HELPER_MODEL, judge: GENEX_HELPER_MODEL };
   const picked = choices.find((choice) => choice.key === modelKey(engineId, pickedModel ?? ""));
   if (!blindLocal(picked)) return preset;
   const sees = choices.find(

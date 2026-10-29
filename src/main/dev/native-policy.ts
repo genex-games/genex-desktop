@@ -23,6 +23,9 @@ const NATIVE_CHANNELS = [
   "studio:plugins.genex-publish-apps",
   "studio:subscription.signin",
   "studio:subscription.forget-studio-login",
+  // Building with Genex opens genex.games's build page in the person's browser, where it signs the
+  // app in to their real account and they pick Pro or a credit pack.
+  "studio:genex-account.build",
   // A subscription's accounts: listing asks each account's CLI for its email; choosing one changes
   // the account every run signs in with.
   "studio:subscription.accounts",

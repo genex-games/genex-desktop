@@ -94,13 +94,16 @@ export interface LaunchHandover {
   act(): void;
 }
 
-/** The held block's one action, counted: Try again puts a failed send back to wait; Sign in starts the sign-in again. */
-function actOnHeld(held: Held, retry: () => void, signIn: () => Promise<void>): void {
+/**
+ * The held block's one action, counted: Try again puts a failed send back to wait; Sign in starts
+ * the sign-in again (Genex's shows the waiting message on its page).
+ */
+function actOnHeld(held: Held, retry: () => void, signIn: (idea?: string) => Promise<void>): void {
   if (held.state === HeldState.Failed) {
     retry();
     trackFirstMessageAction(FirstMessageAction.Retry, held.state);
   } else if (held.state === HeldState.SignedOut) {
-    void signIn().catch(() => {});
+    void signIn(held.text).catch(() => {});
     trackFirstMessageAction(FirstMessageAction.SignIn, held.state);
   }
 }
@@ -132,7 +135,7 @@ export function useLaunchHandover({
   send: SendAnswered;
   composer: RefObject<PromptBarHandle | null>;
   ready: HandoverReadiness;
-  signIn: () => Promise<void>;
+  signIn: (idea?: string) => Promise<void>;
 }): LaunchHandover {
   const launch = useLaunch((s) => s.launch);
   const handing = useRef<string | null>(null);

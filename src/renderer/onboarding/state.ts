@@ -203,5 +203,19 @@ export function markState(view: ConnectView): MarkState {
   return installsCli(view) ? MarkState.Missing : MarkState.Idle;
 }
 
+/**
+ * Building with Genex's button (owner, 2026-10-28): Use Genex, then a Genex ready status once
+ * picked. Picking asks nothing: the first message says what is missing (a sign-in, Pro or credits)
+ * and waits for it. While the Claude Code Genex runs is set up, it says so.
+ */
+export function genexChoiceView(choice: {
+  picked: boolean;
+  installing: boolean;
+}): Exclude<ConnectView, { kind: typeof ConnectViewKind.Code }> {
+  if (!choice.picked) return { kind: ConnectViewKind.Action, action: ConnectAction.Connect, label: t("Use Genex") };
+  if (choice.installing) return { kind: ConnectViewKind.Busy, label: t("Getting Genex ready…"), cancel: false };
+  return { kind: ConnectViewKind.On, label: t("Genex ready") };
+}
+
 /** Ollama names an untagged pull `:latest`; installed models are compared the same way. */
 export const canonicalModel = (id: string): string => (id.includes(":") ? id : `${id}:latest`);

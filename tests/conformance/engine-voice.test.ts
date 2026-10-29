@@ -181,6 +181,9 @@ describe("one engine voice", () => {
     assert.match(toolSyntax("opencode"), /tool\.mjs <name> --field=value/);
     // OpenRouter's tools run in the studio's own session loop, by their bare names.
     assert.equal(toolCall("openrouter", "computer"), "computer");
+    // Genex runs Claude Code on Genex credits: the studio's tools are its MCP tools, as Claude's are.
+    assert.equal(toolCall("genex", "computer"), "mcp__studio__computer");
+    assert.match(toolSyntax("genex"), /mcp__studio__<name>/);
     assert.equal(toolCall(undefined, "capture"), "capture");
     assert.match(toolSyntax(CLAUDE), /mcp__studio__<name>/);
     assert.doesNotMatch(toolSyntax(CLAUDE), /tool\.mjs/);

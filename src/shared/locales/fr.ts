@@ -6285,4 +6285,37 @@ export default {
   "Show us where Genex gets in your way.": "Montre-nous où Genex te gêne.",
   "Where you go, what fails and how long it takes": "Où tu vas, ce qui plante et combien de temps ça prend",
   "usage data\u0004Share": "Partager",
+  "Building with Genex is paused for now.": "Créer avec Genex est en pause pour le moment.",
+  "Building with Genex isn’t available yet.": "Créer avec Genex n’est pas encore disponible.",
+  "Builds with your Genex credits.": "Crée avec tes crédits Genex.",
+  "Choose how Genex builds": "Choisis comment Genex crée",
+  "Connect Codex": "Connecter Codex",
+  "Connect the Claude or ChatGPT plan you already pay for, or build with Genex credits.":
+    "Connecte le forfait Claude ou ChatGPT que tu paies déjà, ou crée avec des crédits Genex.",
+  "Continue in browser": "Continuer dans le navigateur",
+  "Continue on ChatGPT plan": "Continuer avec le forfait ChatGPT",
+  "Continue on Claude plan": "Continuer avec le forfait Claude",
+  "Everything so far is saved.": "Tout ce qui est fait est enregistré.",
+  "Finish on genex.games in your browser.": "Termine sur genex.games dans ton navigateur.",
+  "Genex needs a minute to get ready on this computer.":
+    "Genex a besoin d’une minute pour se préparer sur cet ordinateur.",
+  "Genex ready": "Genex prêt",
+  "Getting Genex ready on this computer. This takes a minute.":
+    "Préparation de Genex sur cet ordinateur. Ça prend une minute.",
+  "Getting Genex ready…": "Préparation de Genex…",
+  "Monthly credits": "Crédits du mois",
+  "No credits yet": "Pas encore de crédits",
+  "Out of credits": "Plus de crédits",
+  "Pick Pro or a credit pack on genex.games to start building.":
+    "Choisis Pro ou un pack de crédits sur genex.games pour commencer à créer.",
+  "Pro or a credit pack on genex.games": "Pro ou un pack de crédits sur genex.games",
+  "Setting up…": "Configuration…",
+  "Sign in to Genex and pick Pro or a credit pack to start building.":
+    "Connecte-toi à Genex et choisis Pro ou un pack de crédits pour commencer à créer.",
+  "Use Genex": "Utiliser Genex",
+  "Verify email": "Vérifier l’e-mail",
+  "Verify your email on genex.games to start building.": "Vérifie ton e-mail sur genex.games pour commencer à créer.",
+  "Your idea waits here.": "Ton idée t’attend ici.",
+  "You’re out of Genex credits.": "Tu n’as plus de crédits Genex.",
+  "genex.games couldn’t be reached.": "Impossible de joindre genex.games.",
 } satisfies LocaleCatalog;

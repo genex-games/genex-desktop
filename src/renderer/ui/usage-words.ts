@@ -6,7 +6,7 @@ import { MINUTE_MS } from "../../shared/duration.ts";
 import { intlLocale, t } from "../../shared/i18n.ts";
 import { type ContextUsage, measuresPick } from "../../shared/context.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { MODEL_LIMIT_PREFIX, type ProviderUsage } from "../../shared/provider-usage.ts";
+import { MODEL_LIMIT_PREFIX, type ProviderUsage, type ProviderUsageReport } from "../../shared/provider-usage.ts";
 import { MODEL_KEY_SEPARATOR } from "../model-key.ts";
 import { durationText, MINUTES_PER_HOUR } from "./loop-duration.ts";
 
@@ -21,6 +21,8 @@ const LIMIT_FULL = 90;
 const LIMIT_HIGH = 75;
 /** A reset further off than this is said as a day and time, not a countdown. */
 const COUNTDOWN_MINUTES = 24 * MINUTES_PER_HOUR;
+/** A reset further off than this is said by its date: a weekday would name the wrong week. */
+const WEEK_MINUTES = 7 * COUNTDOWN_MINUTES;
 /** Model-scoped weekly limits (such as Fable's) stay off the panel for now; true shows them again. */
 const SHOW_MODEL_LIMITS = false;
 
@@ -34,8 +36,12 @@ export function pendingPlans(usedBy: Readonly<Record<string, readonly string[]>>
   return engines.length ? [...engines].sort((a, b) => leadFirst(a) - leadFirst(b)) : [null];
 }
 
-/** "Claude Max plan", "ChatGPT Plus plan", or the brand alone when the plan is not reported. */
+/**
+ * "Claude Max plan", "ChatGPT Plus plan", or the brand alone when the plan is not reported. Genex's
+ * plan is said by the name genex.games gives it ("Genex Pro"), or as Genex.
+ */
 export function planWords(engine: string, plan?: string): string {
+  if (engine === EngineId.Genex) return plan?.trim() || "Genex";
   const brand = PLAN_PROVIDERS[engine]?.brand ?? engine;
   const word = plan
     ?.replace(/^claude[_-]?/i, "")
@@ -46,12 +52,19 @@ export function planWords(engine: string, plan?: string): string {
     : t("{brand} plan", { brand });
 }
 
-/** "Resets in 2 h 30 m" within a day, "Resets Tue 9:00 AM" after, or null without a reset time. */
+/**
+ * "Resets in 2 h 30 m" within a day, "Resets Tue 9:00 AM" within a week, "Resets Nov 12" after, or
+ * null without a reset time.
+ */
 export function resetWords(resetsAt: string | undefined, now = Date.now()): string | null {
   const at = resetsAt ? Date.parse(resetsAt) : Number.NaN;
   if (!Number.isFinite(at)) return null;
   const minutes = Math.round((at - now) / MINUTE_MS);
   if (minutes < COUNTDOWN_MINUTES) return t("Resets in {time}", { time: durationText(Math.max(1, minutes)) });
+  if (minutes > WEEK_MINUTES)
+    return t("Resets {when}", {
+      when: new Date(at).toLocaleDateString(intlLocale(), { month: "short", day: "numeric" }),
+    });
   const when = new Date(at).toLocaleString(intlLocale(), { weekday: "short", hour: "numeric", minute: "2-digit" });
   return t("Resets {when}", { when });
 }
@@ -109,4 +122,13 @@ export function contextReading(input: {
   const summary =
     measured?.source === "estimated" ? t("About {percent}% used", { percent }) : t("{percent}% used", { percent });
   return { engine, used, capacity, percent, summary };
+}
+
+/**
+ * The plans the panel lists. Genex's shows only with a Pro member's monthly credits: without Pro
+ * there is no month to show, and its sign-in and credits are the chat's Genex notice's, not a plan
+ * account's to sign in again here.
+ */
+export function shownPlans(reports: readonly ProviderUsageReport[]): ProviderUsageReport[] {
+  return reports.filter((report) => report.engine !== EngineId.Genex || Boolean(report.usage?.windows.length));
 }

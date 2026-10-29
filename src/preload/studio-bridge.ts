@@ -355,6 +355,7 @@ function studioCalls(bridge: BridgeCalls) {
     genexAccount: () => invoke("studio:genex-account.read"),
     genexSignIn: () => invoke("studio:genex-account.sign-in"),
     genexCancelSignIn: () => invoke("studio:genex-account.cancel"),
+    genexBuild: (idea) => invoke("studio:genex-account.build", idea ? { idea } : {}),
     genexSignOut: () => invoke("studio:genex-account.sign-out"),
     notify: (note) => invoke("studio:notify", note),
     setBadge: (count) => invoke("studio:badge", { count }),

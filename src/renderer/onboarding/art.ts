@@ -5,7 +5,7 @@
  * down with three tasks and ticks them off; the Workers' crane stacks blocks; the Reviewers' screen
  * plays the prompt's game (a space shooter), a scan passes and a stamp lands. Every second round the
  * stamp is a ✕: the screen glitches, redraws, is scanned again and passes.
- * Connect: the Claude Code and Codex marks, extruded, rocking over their buttons; OpenRouter's and
+ * Connect: the Claude Code, Codex and Genex marks, extruded, rocking over their buttons; OpenRouter's and
  * OpenCode's screens each show their own mark the same way, alone.
  * Local: a chip whose pins and layers fill while a model downloads.
  *
@@ -16,6 +16,8 @@ import { crane } from "../ui/wire-art.ts";
 import {
   CLAUDE_CODE_MARK,
   CODEX_MARK,
+  GENEX_MARK,
+  GENEX_MARK_ON_LIGHT,
   CURSOR_MARK,
   GROK_MARK,
   OPENCODE_MARK,
@@ -1319,10 +1321,10 @@ function approach(key: string, target: number, tg: number): number {
 export const MarkState = { Idle: "idle", Busy: "busy", On: "on", Missing: "missing" } as const;
 export type MarkState = (typeof MarkState)[keyof typeof MarkState];
 /** Whose mark it is. */
-export const Provider = { Claude: "claude", Codex: "codex" } as const;
+export const Provider = { Claude: "claude", Codex: "codex", Genex: "genex" } as const;
 export type Provider = (typeof Provider)[keyof typeof Provider];
-/** Both marks, left to right. */
-export const MARK_PROVIDERS: readonly Provider[] = [Provider.Claude, Provider.Codex];
+/** The connect screen's marks, left to right. */
+export const MARK_PROVIDERS: readonly Provider[] = [Provider.Claude, Provider.Codex, Provider.Genex];
 /** The metered providers' marks, each alone on its own screen. */
 export const MeteredMark = { OpenRouter: "openrouter", OpenCode: "opencode", Grok: "grok", Cursor: "cursor" } as const;
 export type MeteredMark = (typeof MeteredMark)[keyof typeof MeteredMark];
@@ -1353,7 +1355,7 @@ interface MarkFrame {
   state: MarkState;
   tg: number;
   age: number;
-  /** 0 for the left mark, 1 for the right: offsets its sway so the two never move together. */
+  /** The mark's place from the left (a metered mark's is 1): offsets its sway so no two move together. */
   idx: number;
   P: Palette;
   lit: number;
@@ -1382,7 +1384,8 @@ function markFrame(
   x: number,
   P: Palette,
 ): MarkFrame {
-  const idx = id === Provider.Claude ? 0 : 1;
+  const place = MARK_PROVIDERS.findIndex((provider) => provider === id);
+  const idx = place < 0 ? 1 : place;
   const lit = approach(`lit-${id}`, state === MarkState.On ? 1 : 0, tg);
   const busy = approach(`busy-${id}`, state === MarkState.Busy ? 1 : 0, tg);
   const pop = age >= 0 && age < 0.6 ? 1 + 0.14 * Math.sin((age / 0.6) * Math.PI) : 1;
@@ -1572,20 +1575,31 @@ function drawMark(
   connectBurst(f);
 }
 
+/** Does the palette draw on a light theme (its ink is dark)? */
+const onLight = (P: Palette): boolean => P.ink[0] + P.ink[1] + P.ink[2] < 3 * 128;
+
 /**
- * Both marks, each centred over `x` (its button's centre on the canvas, in pixels); `ages` is how
- * long ago each one connected (negative: not in this visit).
+ * The connect screen's marks, each centred over `x` (its button's centre on the canvas, in
+ * pixels); `ages` is how long ago each one connected (negative: not in this visit). A mark with no
+ * state is left out (Genex's, where genex.games does not offer building with it).
  */
 export function drawMarks(
   ctx: CanvasRenderingContext2D,
-  states: Record<Provider, MarkState>,
+  states: Partial<Record<Provider, MarkState>>,
   tg: number,
   ages: Record<Provider, number>,
   x: Record<Provider, number>,
   P: Palette,
 ) {
-  drawMark(ctx, Provider.Claude, CLAUDE_CODE_MARK, states.claude, tg, ages.claude, x.claude, P);
-  drawMark(ctx, Provider.Codex, CODEX_MARK, states.codex, tg, ages.codex, x.codex, P);
+  const marks: Record<Provider, ProviderMark> = {
+    [Provider.Claude]: CLAUDE_CODE_MARK,
+    [Provider.Codex]: CODEX_MARK,
+    [Provider.Genex]: onLight(P) ? GENEX_MARK_ON_LIGHT : GENEX_MARK,
+  };
+  for (const id of MARK_PROVIDERS) {
+    const state = states[id];
+    if (state) drawMark(ctx, id, marks[id], state, tg, ages[id], x[id], P);
+  }
 }
 
 /**

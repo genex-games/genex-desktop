@@ -24,6 +24,7 @@ import {
   isMetered,
   loginKind,
   providerInfo,
+  runsClaudeCode,
   type RoleSupport,
 } from "../../src/shared/providers.ts";
 import { EngineRegistry } from "../../src/substrate/engines/registry.ts";
@@ -85,6 +86,14 @@ describe("provider table", () => {
     assert.equal(providerInfo("constructor"), undefined);
   });
 
+  it("names the engines whose sessions are Claude Code's: Claude Code and Genex", () => {
+    assert.deepEqual(
+      PROVIDERS.filter((provider) => runsClaudeCode(provider.id)).map((provider) => provider.id),
+      ["claude-code", "genex"],
+    );
+    assert.equal(runsClaudeCode(null), false);
+  });
+
   it("says who pays for each provider, and never calls an unknown engine local or metered", () => {
     const table = Object.fromEntries(PROVIDERS.map((provider) => [provider.id, provider.billing]));
     assert.deepEqual(table, {
@@ -102,8 +111,10 @@ describe("provider table", () => {
       // Flipped (Cursor): third-party models in Cursor, and Cursor's own past the plan's pool, are paid
       // from the account's credit, so the app never picks it by itself.
       cursor: "metered",
+      // Genex bills the person's Genex credits per call: only their own pick runs on it.
+      genex: "metered",
     });
-    for (const id of ["openrouter", "opencode", "grok", "cursor"]) assert.equal(isMetered(id), true, id);
+    for (const id of ["openrouter", "opencode", "grok", "cursor", "genex"]) assert.equal(isMetered(id), true, id);
     for (const id of ["bonsai", "ollama", "local-server"]) assert.equal(isLocalEngine(id), true, id);
     for (const id of ["claude-code", "codex", "gemini-cli", "constructor", null, undefined]) {
       assert.equal(isMetered(id), false, String(id));

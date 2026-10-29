@@ -320,6 +320,46 @@ else ends the build with the CLI's words, its session kept. A turn that prints n
 stopped and kept; either way its process group goes with it. Compact now is refused: Cursor compacts
 its own sessions. Tests: `engine-cursor.test.ts` on `tests/fixtures/transcripts/cursor-*`.
 
+## Build with Genex credits
+
+**Genex** (`genex` in the provider table, `billing: "metered"`, `runsClaudeCode`) lets someone with
+no Claude or ChatGPT plan build on their Genex credits. It is `ClaudeCodeEngine` with a `gateway`:
+the same Claude Code runs, in the studio's home, without any of the computer's own Claude variables,
+and every call goes through the app's relay ([genex-relay.ts](../src/substrate/engines/genex-relay.ts))
+to genex.games, which runs it and bills the person's credits. The relay listens on 127.0.0.1 and
+gives each session a lease, a key that works for that session only (`ANTHROPIC_BASE_URL` and the key
+are the session's whole account); it takes the key off, puts the person's Genex token on, names the
+model and the chat (`x-genex-model`, `x-genex-chat`) and passes only the two Messages routes
+(`GenexBuildRoute`). The token never enters an agent's environment, and nothing a session holds can
+spend once it ends. genex.games owns the price, the plan and the models; the app shows the three it
+ships with (`GENEX_MODELS`, Sonnet first) until genex.games lists its own, and helpers run on Sonnet.
+
+The lane ([genex.ts](../src/substrate/engines/genex.ts)) reads `GET /api/desktop/llm/status` (reused
+for 5 seconds, joined while in flight) and maps its access word to the engine's status: ready, or a
+sign-in, Pro or a credit pack, a verified email, more credits, or paused. A 404 means genex.games does
+not offer building with credits on that stand: the engine reads `not_offered` and the app hides Genex
+everywhere (picker, first launch, Settings, the usage panel). A call genex.games refuses moves the
+status at once, so the chat follows the refusal rather than the next read.
+
+What a Genex model still needs is the chat's blue notice
+([genex-build.ts](../src/renderer/genex-build.ts), [GenexNotice](../src/renderer/ui/GenexNotice.tsx)):
+Genex's G, one line, one step, and the person's own plans as quiet links (Connect Claude Code,
+Connect Codex) that move the chat onto them. Signed out, without Pro or credits, or with an
+unverified email, **Continue in browser** opens genex.games's build page through
+`studio:genex-account.build` (native): it signs the person in with the app's device code, offers Pro
+or a credit pack, and shows the waiting idea back; the app asks Genex again every 3 seconds for 15
+minutes, and a game's first message held above the notice sends itself once Genex is ready. Out of
+credits, the step is **Get credits**, beside **Continue on Claude plan** (or ChatGPT) when that plan is
+connected. Claude Code missing or too old is **Set up**, which installs it in the app.
+
+First launch offers **Use Genex** beside the two plans where genex.games offers it; it asks for
+nothing then and becomes Genex ready (setting up Claude Code first when it is missing). Settings →
+Model Providers shows Genex's row after the plans ([GenexBuildRow](../src/renderer/panels/GenexBuildRow.tsx)):
+the notice's line and step while something is missing; once ready, Connected, an Account menu
+(Check connection, Get credits) and its models. A Genex Pro member's monthly credits show in the
+usage panel ([Plan limits](#plan-limits)). Tests: `genex-relay.test.ts`, `genex-engine.test.ts`,
+`genex-notice.test.ts`, `genex-settings-row.test.ts`, `onboarding.test.ts`.
+
 ## Your own model server
 
 **Local server** ([local-server.ts](../src/substrate/engines/local-server.ts)) connects a model
@@ -613,7 +653,11 @@ hovered, and every minute while open; until the first answer it draws each plan 
 at full size with shimmering bars, and a plan being read with no numbers yet does the same. A
 failed read shows one orange line with Try again, a signed-out plan Sign in again. The panel leaves the
 `model_scoped` windows out (`shownLimits`; `SHOW_MODEL_LIMITS` in `usage-words.ts` brings them back). Its
-last row opens Settings → Model Providers. Fixture engines report fixed limits.
+last row opens Settings → Model Providers. Genex is read after the plans: a Pro member's monthly
+credits, one window under the plan's name from `GET /api/plans/me` (its allowance and renewal) and
+the balance from `GET /api/credits/me`; without Pro there is no month to show and the panel leaves
+Genex out (`shownPlans`), as it does a signed-out Genex, whose sign-in is the chat notice's. A reset
+more than a week off is said by its date. Fixture engines report fixed limits.
 `promptbar-redesign.test.ts` covers both normalizers; account access is proven only against a
 real login.
 

@@ -17,7 +17,7 @@ export interface UsageSource {
 }
 
 export interface ProviderUsageDeps {
-  /** The subscription engines, in the order the panel lists them. */
+  /** The engines whose limits the panel lists (the subscriptions, then Genex), in its order. */
   engines: readonly string[];
   source(id: string): UsageSource | null;
   push(reports: ProviderUsageReport[]): void;

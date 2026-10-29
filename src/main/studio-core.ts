@@ -94,6 +94,7 @@ import { latestBuildPreview } from "../substrate/build-preview.ts";
 import { ContextPreferences } from "../substrate/context-settings.ts";
 import { BonsaiEngine } from "../substrate/engines/bonsai.ts";
 import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
+import { createGenexLane, type GenexLaneDeps } from "../substrate/engines/genex.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
 import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
@@ -247,6 +248,8 @@ const HARNESS_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 const GAMES_ROOT_FILE = "games-root.json";
 /** The folder in the sandbox's scratch where each engine plugin's sandbox job keeps its own. */
 const PLUGIN_JOBS_FOLDER = "plugin-jobs";
+/** The Genex engine's Claude Code config home under the engine homes; `genex` is the Genex plugin's. */
+const GENEX_BUILD_HOME = "genex-build";
 /** The folder in the sandbox's scratch where an engine game's cover reel is staged for a still or clip. */
 const COVER_REEL_FOLDER = "cover-reels";
 /** The folder in the sandbox's scratch where Node keeps the harness's compiled modules between boots. */
@@ -374,6 +377,9 @@ export interface StudioPaths {
   resources: string;
 }
 
+/** What the Genex engine needs from the app (`StudioCoreOptions.genexBuild`). */
+export type GenexBuildOptions = Pick<GenexLaneDeps, "api" | "token" | "refused">;
+
 export interface StudioCoreOptions {
   renderGameCover?: (surface: string, seed: number) => Promise<string>;
   /** Computer control (`desktop-control.ts`): absent where no desktop driver can be reached, and in tests. */
@@ -408,6 +414,11 @@ export interface StudioCoreOptions {
   claudeExecutable?: string;
   /** `codex` binary to spawn; unset = whatever is on PATH or in the usual install locations. */
   codexExecutable?: string;
+  /**
+   * Building with Genex: genex.games's API and the app's Genex sign-in, which the Genex engine runs
+   * Claude Code on (`substrate/engines/genex.ts`). Unset (tests, smoke runs) = no Genex engine.
+   */
+  genexBuild?: GenexBuildOptions;
   /** Disable the sandbox only in tests that assert the unsandboxed path. */
   sandbox?: boolean;
   /** The self-edit gate's type check (substrate/type-gate.ts); the time limit is a test seam. */
@@ -1486,6 +1497,7 @@ export class StudioCore {
       EngineId.OpenCode,
       EngineId.Grok,
       EngineId.Cursor,
+      EngineId.Genex,
       EngineId.OpenRouter,
     ]);
   }
@@ -1558,6 +1570,8 @@ export class StudioCore {
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Grok }),
       }),
+      // Genex: the same Claude Code on the person's Genex credits, when the app says where genex.games is.
+      ...(this.options.genexBuild ? [this.#genexEngine(this.options.genexBuild)] : []),
       new OpenRouterEngine({
         root: path.join(this.layout.engineHomes, EngineId.OpenRouter),
         scratchRoot: path.join(this.layout.scratch, EngineId.OpenRouter),
@@ -1567,6 +1581,25 @@ export class StudioCore {
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenRouter }),
       }),
     ];
+  }
+
+  /**
+   * Claude Code on genex.games instead of a plan, in a config home of its own that never holds a
+   * Claude sign-in (`genex-build`: the Genex plugin keeps `engineHomes/genex`).
+   */
+  #genexEngine(build: GenexBuildOptions): Engine {
+    const changed = (): void => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Genex });
+    return new ClaudeCodeEngine({
+      gateway: createGenexLane({ ...build, onChange: changed }),
+      onModelsChanged: changed,
+      engineHome: path.join(this.layout.engineHomes, GENEX_BUILD_HOME),
+      protectedPaths: this.#protectedPaths(),
+      scratchRoot: path.join(this.layout.scratch, EngineId.Genex),
+      toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+      sessionCosts: path.join(this.layout.engineHomes, "session-costs", `${EngineId.Genex}.json`),
+      sweepOnBoot: true,
+      ...(this.options.claudeExecutable ? { executable: this.options.claudeExecutable } : {}),
+    });
   }
 
   #createHarnessHost(): HarnessHost {

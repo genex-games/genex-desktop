@@ -15,16 +15,16 @@ Tabs switch [accounts](../connections-and-context.md#several-accounts-per-subscr
 Unavailable picks block sends; without models, Connect AI model replaces the pill. A
 listing proves no access.
 
-Each chat keeps its model, effort and Loop; fresh games inherit the last picks. One effort, on the
+Chats keep model, effort and Loop; fresh games inherit the last picks. One effort, on the
 main agent's levels, serves every role (Workers and Reviewers at most high).
 Workers and Reviewers run only in Loop,
-surviving a main-agent change. Each Ollama job takes its own model; Reviewers must see images and
+surviving main-agent changes. Each Ollama job takes its own model; Reviewers must see images and
 check a Loop's finish.
 
 Local Models (Bonsai/Ollama) downloads and deletes. Metered
 [OpenRouter, OpenCode](../connections-and-context.md#openrouter-and-opencode),
-[Grok Build](../connections-and-context.md#grok-build) and [Cursor](../connections-and-context.md#cursor)
-are never auto-chosen unless Free and alone; OpenRouter, OpenCode and Cursor show three. Local server connects your LM
+[Grok Build](../connections-and-context.md#grok-build), [Cursor](../connections-and-context.md#cursor) and
+[Genex](../connections-and-context.md#build-with-genex-credits) are never auto-chosen unless Free and alone; OpenRouter, OpenCode and Cursor show three. Local server connects your LM
 Studio, llama.cpp or TabbyAPI ([details](../connections-and-context.md#your-own-model-server)).
 
 ## What the model knows
