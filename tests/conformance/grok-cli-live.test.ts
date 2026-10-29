@@ -81,6 +81,20 @@ async function signIn(binary: string, home: string, token: string): Promise<void
   assert.equal(code, 0, "grok login with the made-up token");
 }
 
+/** `use` run with `vars` in the test's own environment, which is then as it was. */
+async function withEnv<T>(vars: Record<string, string>, use: () => Promise<T>): Promise<T> {
+  const saved = Object.keys(vars).map((name) => [name, process.env[name]] as const);
+  Object.assign(process.env, vars);
+  try {
+    return await use();
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
 describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_TESTS=1" }, () => {
   let fake: FakeXai;
   let root: string;
@@ -181,18 +195,14 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     assert.deepEqual(await keys(), ["renewed-1"], "signed in, ten minutes left");
     const dir = await game("renewing-build");
     const sentBefore = fake.modelRequestHeaders().length;
-    // The person's own Grok renews through the provider command it signed in with.
-    const saved = process.env.GROK_AUTH_PROVIDER_COMMAND;
-    process.env.GROK_AUTH_PROVIDER_COMMAND = providerCommand(token);
-    try {
-      const result = await engine(home).delegate({ cwd: dir, prompt: "Run the probe." });
-      assert.equal(result.ok, true, result.errorText);
-    } finally {
-      if (saved === undefined) delete process.env.GROK_AUTH_PROVIDER_COMMAND;
-      else process.env.GROK_AUTH_PROVIDER_COMMAND = saved;
-    }
-    assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
+    // Grok's home is the one sessions may use, as the app's own is; the person's own Grok renews
+    // through the provider command it signed in with.
+    const result = await withEnv({ GROK_HOME: home, GROK_AUTH_PROVIDER_COMMAND: providerCommand(token) }, () =>
+      engine(home).delegate({ cwd: dir, prompt: "Run the probe." }),
+    );
     assert.deepEqual(await keys(), ["renewed-2"], "the person's own sign-in, renewed");
+    assert.equal(result.ok, true, result.errorText);
+    assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
     const sent = fake.modelRequestHeaders().slice(sentBefore);
     assert.ok(sent.length > 0 && sent.every((headers) => headers.includes("renewed-2")), "the build ran on it");
   });
