@@ -2505,6 +2505,7 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode 会记住每次登录",
   "OpenCode ready": "OpenCode 已就绪",
   "OpenCode ready · free models": "OpenCode 已就绪 · 免费模型",
+  "Pi sign-in": "Pi 登录",
   "OpenCode sign-in": "OpenCode 登录",
   "OpenCode {version}, {count, plural, other {# model(s)}}": "OpenCode {version}，{count, plural, other {# 个模型}}",
   "OpenCode's model list could not be read.": "无法读取 OpenCode 的模型列表。",

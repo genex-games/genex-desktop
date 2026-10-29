@@ -2436,6 +2436,7 @@ export const MESSAGES = [
   "Phosphor",
   "Photo",
   "Physics",
+  "Pi sign-in",
   "Pick a drive inside this computer, not a USB stick.",
   "Pick a folder on this computer, not on a network drive.",
   "Pick a folder outside Genex’s files, your games and Genex’s install.",

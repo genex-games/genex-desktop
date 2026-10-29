@@ -97,6 +97,7 @@ import { ClaudeCodeEngine } from "../substrate/engines/claude-code.ts";
 import { CodexEngine } from "../substrate/engines/codex.ts";
 import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
 import { OpenCodeEngine, openCodeSessionFolders } from "../substrate/engines/opencode.ts";
+import { PiEngine } from "../substrate/engines/pi.ts";
 import { CursorEngine } from "../substrate/engines/cursor.ts";
 import { GrokEngine } from "../substrate/engines/grok.ts";
 import { cursorHomes, grokHome } from "../substrate/credential-homes.ts";
@@ -1487,6 +1488,7 @@ export class StudioCore {
       EngineId.Grok,
       EngineId.Cursor,
       EngineId.OpenRouter,
+      EngineId.Pi,
     ]);
   }
 
@@ -1541,14 +1543,21 @@ export class StudioCore {
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Cursor }),
       }),
-      // Metered: OpenCode on whatever the person signed it in to, OpenRouter on the key pasted in
-      // Settings. Registered like the subscriptions, so the picker can offer them.
+      // Metered: OpenCode, Pi or Grok Build on whatever the person signed them in to, OpenRouter on
+      // the key pasted in Settings. Registered like the subscriptions, so the picker can offer them.
       new OpenCodeEngine({
         scratchRoot: path.join(this.layout.scratch, EngineId.OpenCode),
         protectedPaths: this.#protectedPaths(),
         toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
+      }),
+      new PiEngine({
+        scratchRoot: path.join(this.layout.scratch, EngineId.Pi),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.Pi }),
       }),
       // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is.
       new GrokEngine({

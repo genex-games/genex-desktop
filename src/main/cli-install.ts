@@ -51,9 +51,11 @@ const INSTALLABLE: readonly CodingProvider[] = [
   EngineId.Grok,
   EngineId.Cursor,
 ];
+/** Account can update these; Pi has no vendor HTTPS installer but `pi update` still works. */
+const UPDATABLE: readonly CodingProvider[] = [...INSTALLABLE, EngineId.Pi];
 
-const isInstallable = (value: unknown): value is CodingProvider =>
-  typeof value === "string" && (INSTALLABLE as readonly string[]).includes(value);
+const isListed = (value: unknown, list: readonly CodingProvider[]): value is CodingProvider =>
+  typeof value === "string" && (list as readonly string[]).includes(value);
 
 /** The install jobs: start one, join one, and read the latest of each. */
 export function createCliInstalls(deps: CliInstallsDeps) {
@@ -103,7 +105,8 @@ export function createCliInstalls(deps: CliInstallsDeps) {
   return {
     /** Start `provider`'s install, or return the one already running. Anything else is refused. */
     start(provider: unknown, operation: CliInstallOperation = CliInstallOperation.Install): CliInstallJob {
-      if (!isInstallable(provider))
+      const allowed = operation === CliInstallOperation.Update ? UPDATABLE : INSTALLABLE;
+      if (!isListed(provider, allowed))
         throw new CodedError(CliInstallRefusal.UnknownProvider, MESSAGE.unknownProvider(provider));
       const current = jobs.get(provider);
       if (current?.phase === CliInstallPhase.Installing) return current;

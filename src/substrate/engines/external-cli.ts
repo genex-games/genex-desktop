@@ -52,6 +52,7 @@ const CLI_BINARY = {
   [EngineId.Codex]: "codex",
   [EngineId.ClaudeCode]: "claude",
   [EngineId.OpenCode]: "opencode",
+  [EngineId.Pi]: "pi",
   [EngineId.Grok]: "grok",
   [EngineId.Cursor]: "cursor-agent",
 } as const satisfies Record<CodingProvider, string>;
@@ -62,12 +63,14 @@ const CLI_VENDOR = {
   [EngineId.OpenCode]: "opencode",
   [EngineId.Grok]: "grok",
   [EngineId.Cursor]: "cursor",
+  [EngineId.Pi]: "pi",
 } as const satisfies Record<CodingProvider, string>;
 /** Where the user is sent to install each CLI. */
 const GUIDANCE_URL = {
   [EngineId.Codex]: "https://developers.openai.com/codex/cli/",
   [EngineId.ClaudeCode]: "https://code.claude.com/docs/en/setup",
   [EngineId.OpenCode]: "https://opencode.ai/docs/",
+  [EngineId.Pi]: "https://www.npmjs.com/package/@earendil-works/pi-coding-agent",
   [EngineId.Grok]: "https://docs.x.ai/build/overview",
   [EngineId.Cursor]: "https://cursor.com/docs/cli/installation",
 } as const satisfies Record<CodingProvider, string>;
@@ -76,6 +79,7 @@ const HELP_ARGS: Record<CodingProvider, string[]> = {
   [EngineId.Codex]: ["exec", "--help"],
   [EngineId.ClaudeCode]: ["--help"],
   [EngineId.OpenCode]: ["run", "--help"],
+  [EngineId.Pi]: ["--help"],
   [EngineId.Grok]: ["--help"],
   [EngineId.Cursor]: ["--help"],
 };
@@ -91,6 +95,7 @@ const REQUIRED_FLAGS: Record<Exclude<CodingProvider, typeof EngineId.OpenCode>, 
     "--allowedTools",
     "--disallowedTools",
   ],
+  [EngineId.Pi]: ["--mode", "--session-id", "--model", "--list-models", "--thinking"],
   // Its help lists these; `grok.ts` also passes `--no-wait-for-background`, which only its manual names.
   [EngineId.Grok]: [
     "--prompt-file",
@@ -731,7 +736,8 @@ async function externalExecutables(
  */
 function belongsToStudioOrGame(candidate: string, target: string, roots: string[], manual: boolean): boolean {
   const slashed = target.replaceAll("\\", "/");
-  const dependency = !manual && slashed.includes("/node_modules/") && !/\/(?:lib|share)\/node_modules\//.test(slashed);
+  const dependency =
+    !manual && slashed.includes("/node_modules/") && !/\/(?:lib|share|install\/global)\/node_modules\//.test(slashed);
   const insideExcluded = roots.some((root) => within(target, root) || within(candidate, root));
   const packaged = /(?:app\.asar(?:\.unpacked)?|claude-agent-sdk-[^/]+)\//.test(slashed);
   return dependency || insideExcluded || packaged;

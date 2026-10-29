@@ -2720,6 +2720,7 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode guarda cada sesión",
   "OpenCode ready": "OpenCode listo",
   "OpenCode ready · free models": "OpenCode listo · modelos gratis",
+  "Pi sign-in": "Inicio de sesión de Pi",
   "OpenCode sign-in": "Inicio de sesión de OpenCode",
   "OpenCode {version}, {count, plural, other {# model(s)}}":
     "OpenCode {version}, {count, plural, one {# modelo} other {# modelos}}",

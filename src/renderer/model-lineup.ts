@@ -34,6 +34,7 @@ const DEFAULT_MODEL = "default";
 const FIRST_FEW: Partial<Record<string, number>> = {
   [EngineId.OpenRouter]: 3,
   [EngineId.OpenCode]: 3,
+  [EngineId.Pi]: 3,
   [EngineId.Cursor]: 3,
 };
 

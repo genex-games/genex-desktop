@@ -83,9 +83,10 @@ interface EnginePermissions {
  * has no Bypass. Codex (`codex exec`) cannot ask mid-turn: Auto keeps its sandbox, Plan only reads,
  * Bypass drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
  * loop, as Bonsai's do.
- * OpenCode (`opencode run`), Grok Build (`grok -p`) and Cursor (`cursor-agent --print`) cannot ask
- * mid-turn and always run in the studio's sandbox: Auto, or Plan (read only). Any other engine (Ollama, whose tools run in the harness, or one added later) keeps its
- * own sandboxed contract, which is Auto.
+ * OpenCode (`opencode run`), Pi (`pi --mode json`), Grok Build (`grok -p`) and Cursor
+ * (`cursor-agent --print`) cannot ask mid-turn and always run in the studio's sandbox: Auto, or
+ * Plan (read only). Any other engine (Ollama, whose tools run in the harness, or one added later)
+ * keeps its own sandboxed contract, which is Auto.
  */
 const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
   [EngineId.ClaudeCode]: { modes: PERMISSION_MODES, withheld: UnavailableModeReason.CannotAsk, plansMidTurn: true },
@@ -106,6 +107,10 @@ const ENGINE_PERMISSIONS: Readonly<Record<string, EnginePermissions>> = {
     withheld: UnavailableModeReason.AlwaysSandboxed,
   },
   [EngineId.OpenCode]: {
+    modes: [PermissionMode.Auto, PermissionMode.Plan],
+    withheld: UnavailableModeReason.CannotAsk,
+  },
+  [EngineId.Pi]: {
     modes: [PermissionMode.Auto, PermissionMode.Plan],
     withheld: UnavailableModeReason.CannotAsk,
   },

@@ -2657,6 +2657,7 @@ export default {
   "OpenCode keeps each sign-in": "OpenCode запоминает каждый вход",
   "OpenCode ready": "OpenCode готов",
   "OpenCode ready · free models": "OpenCode готов · бесплатные модели",
+  "Pi sign-in": "Вход в Pi",
   "OpenCode sign-in": "Вход в OpenCode",
   "OpenCode {version}, {count, plural, other {# model(s)}}":
     "OpenCode {version}, {count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}",

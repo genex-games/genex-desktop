@@ -12,6 +12,7 @@ const UPDATE_ARGS: Record<CodingProvider, readonly string[]> = {
   [EngineId.ClaudeCode]: ["update"],
   [EngineId.Codex]: ["update"],
   [EngineId.OpenCode]: ["upgrade"],
+  [EngineId.Pi]: ["update"],
   [EngineId.Grok]: ["update"],
   [EngineId.Cursor]: ["update"],
 };

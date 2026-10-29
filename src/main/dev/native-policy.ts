@@ -29,6 +29,8 @@ const NATIVE_CHANNELS = [
   "studio:subscription.use-account",
   // OpenCode's sign-in runs its CLI in a terminal and reaches the provider the person picks.
   "studio:opencode.signin",
+  // Pi's sign-in runs its TUI in a terminal so the person can `/login`.
+  "studio:pi.signin",
   // Grok Build's sign-in runs its CLI in a terminal and signs in to the person's Grok account.
   "studio:grok.signin",
   // Cursor's sign-in runs its CLI in a terminal and opens Cursor in the browser; signing out has

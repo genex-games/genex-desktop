@@ -2598,6 +2598,7 @@ export default {
   "OpenCode keeps each sign-in": "로그인 정보는 각각 OpenCode가 보관해요",
   "OpenCode ready": "OpenCode 준비됨",
   "OpenCode ready · free models": "OpenCode 준비됨 · 무료 모델",
+  "Pi sign-in": "Pi 로그인",
   "OpenCode sign-in": "OpenCode 로그인",
   "OpenCode {version}, {count, plural, other {# model(s)}}": "OpenCode {version}, 모델 {count, plural, other {#개}}",
   "OpenCode's model list could not be read.": "OpenCode의 모델 목록을 읽을 수 없어요.",

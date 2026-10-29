@@ -516,6 +516,7 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | Bonsai, OpenRouter, Local server | Auto, Manual, Accept edits, Plan | the studio runs its tools and asks before each change |
 | Codex | Auto, Plan, Bypass | `codex exec` cannot ask mid-turn; the mode picks its sandbox |
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
+| Pi | Auto, Plan | `pi --mode json` cannot ask mid-turn and always runs in the studio's sandbox |
 | Grok Build | Auto, Plan | `grok -p` cannot ask mid-turn and always runs in the studio's sandbox; Plan reads from a folder of its own |
 | Cursor | Auto, Plan | `cursor-agent --print` cannot ask mid-turn and always runs in the studio's sandbox |
 | Ollama, a new engine | Auto | its harness tool loop keeps its sandbox |

@@ -432,6 +432,7 @@ function accountCalls(bridge: BridgeCalls) {
     claudeLoginOpenBrowser: () => invoke("studio:claude-login.browser"),
     claudeLoginCancel: () => invoke("studio:claude-login.cancel"),
     openCodeSignIn: () => invoke("studio:opencode.signin"),
+    piSignIn: () => invoke("studio:pi.signin"),
     grokSignIn: () => invoke("studio:grok.signin"),
     cursorSignIn: () => invoke("studio:cursor.signin"),
     cursorSignOut: () => invoke("studio:cursor.signout"),

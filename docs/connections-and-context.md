@@ -135,7 +135,7 @@ A failure says why; Settings then adds the vendor's install guide.
 
 ## OpenRouter and OpenCode
 
-Both are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
+OpenRouter, OpenCode and Pi are metered (`billing: "metered"` in `shared/providers.ts`): every token is paid to someone,
 so `EngineRegistry` never offers one as a fallback or a first ready engine, and the sign-in gate's
 local finish and the reference judge never pick one. Only the person's explicit pick runs on them.
 
@@ -220,6 +220,18 @@ lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, s
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
 (OpenCode 1.18 and 2.0.20).
+
+**Pi** ([pi.ts](../src/substrate/engines/pi.ts)) is the Pi coding agent (`pi --mode json`, resume
+`--session-id`), not the `pi-ai` HTTP client. Sign in and `--list-models` run with
+`--no-extensions --offline`; studio never reads `~/.pi`. Ready once `--list-models` lists a model.
+Sessions run in `ProcessSandbox` (`readableHome`: `~/.pi`) with `--no-extensions`. Pi's home
+is a read exemption, not a write grant: `~/.pi` stays read-only except `agent/sessions` and
+`agent/auth.json.lock`, so `agent/bin`, `agent/tools`, `agent/prompts` and `AGENTS.md` — which a
+sign-in runs outside the sandbox — are never a session's to write. A provider status is read at the
+head of Pi's error (`401: {...}`), never a number inside the body it quotes, and an expired sign-in
+or a refresh the credential store cannot write (a 401, or `EPERM` naming `auth.json`) says to sign
+in again. An unknown provider reaches only its `models.json` host. No in-app installer; Account can
+run `pi update`. Streams: `tests/fixtures/transcripts/pi-*`.
 
 ## Grok Build
 

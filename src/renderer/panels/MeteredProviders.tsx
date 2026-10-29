@@ -1,7 +1,7 @@
 /**
  * Settings → Model Providers, the metered rows: OpenCode, which signs in to providers itself in
- * Studio's terminal, Grok Build and Cursor, which sign in to the person's account there the same way,
- * and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
+ * Studio's terminal, Pi and Grok Build and Cursor, which sign in to the person's account there the
+ * same way, and OpenRouter, whose API key is pasted here. Each row keeps the shape of a
  * subscription's (`ModelsSection.tsx`): one status plate, one line, at most one visible action, an
  * Account menu once connected, and the picker's model list under it. The OpenRouter key goes
  * straight to main, which checks it with OpenRouter and keeps it in the OS secret store; it is
@@ -316,6 +316,7 @@ function OpenRouterRow({
 /** The metered rows, under the subscriptions: each only when its engine is registered. */
 export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProviderProps): JSX.Element {
   const openCode = engines.find((engine) => engine.id === EngineId.OpenCode);
+  const pi = engines.find((engine) => engine.id === EngineId.Pi);
   const grok = engines.find((engine) => engine.id === EngineId.Grok);
   const cursor = engines.find((engine) => engine.id === EngineId.Cursor);
   const openRouter = engines.find((engine) => engine.id === EngineId.OpenRouter);
@@ -326,6 +327,7 @@ export function MeteredProviderRows({ engines, onEnginesRefresh }: MeteredProvid
         {openCode && (
           <CliSignInRow engine={openCode} onEnginesRefresh={onEnginesRefresh} provider={EngineId.OpenCode} />
         )}
+        {pi && <CliSignInRow engine={pi} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Pi} />}
         {grok && <CliSignInRow engine={grok} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Grok} />}
         {cursor && <CliSignInRow engine={cursor} onEnginesRefresh={onEnginesRefresh} provider={EngineId.Cursor} />}
       </Suspense>

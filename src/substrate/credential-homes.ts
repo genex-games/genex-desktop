@@ -4,9 +4,9 @@
  * `~/.codex` holds a ChatGPT refresh token when Codex uses its file store, `~/.claude` holds
  * Claude Code's settings and transcripts, OpenCode keeps every provider it signs in to in
  * `auth.json` under its data folder (`$XDG_DATA_HOME/opencode`, default `~/.local/share/opencode`),
- * Grok Build keeps its Grok sign-in in `auth.json` under its home (`$GROK_HOME`, default `~/.grok`),
- * and Cursor's CLI keeps its settings and chats in `~/.cursor` and the sign-in Genex has it write
- * to a file in `auth.json` (`cursorHomes`).
+ * Pi keeps its own sign-ins under `~/.pi`, Grok Build keeps its Grok sign-in in `auth.json` under
+ * its home (`$GROK_HOME`, default `~/.grok`), and Cursor's CLI keeps its settings and chats in
+ * `~/.cursor` and the sign-in Genex has it write to a file in `auth.json` (`cursorHomes`).
  * Studio borrows either subscription as the 'system' login, and `CODEX_HOME` / `CLAUDE_CONFIG_DIR`
  * can move them. No agent process reads or writes any of
  * them: the sandbox denies them, and every contractor is told (Codex) or ruled (Claude) off.
@@ -73,6 +73,7 @@ export function credentialHomes(
   const candidates = [
     path.join(home, ".codex"),
     path.join(home, ".claude"),
+    piAgentHome(home),
     openCodeDataHome({}, home),
     grokHome({}, home),
     ...cursorHomes({}, home, platform),
@@ -93,6 +94,11 @@ export function credentialHomes(
     out.push(dir);
   }
   return out;
+}
+
+/** Where Pi keeps its sign-ins and models (`auth.json`, `models.json`): `~/.pi`. */
+export function piAgentHome(home: string = os.homedir()): string {
+  return path.join(home, ".pi");
 }
 
 /** Where OpenCode keeps its sign-ins (`auth.json`): `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`. */
@@ -168,5 +174,5 @@ export function sandboxedCliHomes(
   home: string = os.homedir(),
   platform: NodeJS.Platform = process.platform,
 ): string[] {
-  return [openCodeDataHome(env, home), grokHome(env, home), ...cursorHomes(env, home, platform)];
+  return [openCodeDataHome(env, home), grokHome(env, home), piAgentHome(home), ...cursorHomes(env, home, platform)];
 }

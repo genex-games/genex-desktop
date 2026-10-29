@@ -2663,6 +2663,7 @@ export default {
   "OpenCode keeps each sign-in": "サインイン情報はそれぞれOpenCodeが保持します",
   "OpenCode ready": "OpenCodeの準備ができました",
   "OpenCode ready · free models": "OpenCode準備完了 · 無料モデル",
+  "Pi sign-in": "Piへのサインイン",
   "OpenCode sign-in": "OpenCodeへのサインイン",
   "OpenCode {version}, {count, plural, other {# model(s)}}": "OpenCode {version}、モデル{count, plural, other {#個}}",
   "OpenCode's model list could not be read.": "OpenCodeのモデル一覧を読み取れませんでした。",
