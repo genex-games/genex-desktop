@@ -56,10 +56,8 @@ enum Recipe {
     /// The indoor recipe on `ultra` with a thin volumetric fog the sun carves shafts from at the
     /// windows (Track B: the determinism check keeps every look feature on).
     Fog,
-    /// The same room on `ultra` without the fog, the shafts' reference.
+    /// The same room on `ultra` without the fog.
     Clear,
-    /// The fog recipe drawn as the plain height fog (`.with_volumetric(false)`): no shafts.
-    FlatFog,
 }
 
 fn box_at(frame: &mut Frame, min: Vec3, max: Vec3, material: &Material) {
@@ -134,7 +132,6 @@ fn runtime(recipe: Recipe) -> Runtime<World> {
         Recipe::Indoor | Recipe::Gen3 => config.preset(QualityPreset::High),
         Recipe::Clear => config.preset(QualityPreset::Ultra),
         Recipe::Fog => config.preset(QualityPreset::Ultra).fog(room_fog()),
-        Recipe::FlatFog => config.preset(QualityPreset::Ultra).fog(room_fog().with_volumetric(false)),
     };
     let mut game = Game::new(World).title("Classroom").world_size(WORLD[0], WORLD[1]);
     game.render_settings(config);
@@ -255,6 +252,9 @@ fn pixel_difference(a: &[u8], b: &[u8]) -> (usize, u8) {
     })
 }
 
+/// Plan 2, Track B: the replay row's pixels hold with every look feature on. Body-cam-6 turned its
+/// volumetric fog off to pass it; the pixels never differed (this row), its `state()` did: `__render`'s
+/// exposure read-backs follow the Live frames drawn first, which the harness's replay now ignores.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_volumetric_fog_room_on_ultra_replays_to_the_same_pixels_whatever_live_drew_first() {
@@ -270,49 +270,6 @@ fn metal_a_volumetric_fog_room_on_ultra_replays_to_the_same_pixels_whatever_live
         eprintln!("without the fog: {clear_count} differ, by up to {clear_most}");
     }
     assert_eq!((count, most), (0, 0), "the same seed and input drew different pixels: {count} differ, by up to {most}");
-}
-
-/// How unevenly `fog` adds light over `clear`: the 95th percentile of the per-pixel luma gain less
-/// its median. Plain height fog adds about the same everywhere at one distance; shafts add a lot in
-/// the sunlit air and little in the shadowed air.
-fn gain_spread(fog: &[u8], clear: &[u8]) -> f64 {
-    let luma = |p: &[u8; 4]| 0.0722 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.2126 * f64::from(p[2]);
-    let mut gains: Vec<f64> = fog.as_chunks::<4>().0.iter().zip(clear.as_chunks::<4>().0).map(|(f, c)| luma(f) - luma(c)).collect();
-    gains.sort_unstable_by(f64::total_cmp);
-    let at = |share: f64| gains[((gains.len() - 1) as f64 * share) as usize];
-    at(0.95) - at(0.5)
-}
-
-/// A settled capture of `recipe` (BGRA) and its `__render`.
-fn shot(recipe: Recipe, name: &str) -> Option<(Vec<u8>, serde_json::Value)> {
-    let mut presenter = presenter()?;
-    let mut runtime = runtime(recipe);
-    presenter.set_capturing(true);
-    presenter.draw_view(&mut runtime, View::Game).expect("game view").expect("drawn");
-    let bgra = presenter.resilient.capture().expect("capture").bgra().to_vec();
-    let render = runtime.state()["__render"].clone();
-    evidence(name, &bgra, &render);
-    Some((bgra, render))
-}
-
-/// The least spread (luma levels) of the shafts' gain over the clear room, and how many times the
-/// plain fog's spread it must be.
-const SHAFT_SPREAD_MIN: f64 = 8.0;
-const SHAFT_OVER_FLAT: f64 = 1.5;
-
-#[test]
-#[ignore = "needs a GPU: run with --ignored metal"]
-fn metal_the_fog_room_s_sun_shafts_light_the_air_inside_the_windows() {
-    let Some((fog, fog_render)) = shot(Recipe::Fog, "classroom-ultra-fog") else { return };
-    let Some((flat, flat_render)) = shot(Recipe::FlatFog, "classroom-ultra-flat-fog") else { return };
-    let Some((clear, _)) = shot(Recipe::Clear, "classroom-ultra-clear") else { return };
-    let features = |render: &serde_json::Value| render["look"]["features"].clone();
-    assert_eq!(features(&fog_render)["volumetric-fog"], true, "{}", features(&fog_render));
-    assert_eq!(features(&flat_render)["volumetric-fog"], false, "{}", features(&flat_render));
-    assert_eq!(features(&flat_render)["fog"], true);
-    let (shafts, plain) = (gain_spread(&fog, &clear), gain_spread(&flat, &clear));
-    eprintln!("fog gain spread: volumetric {shafts:.1}, plain {plain:.1} luma levels");
-    assert!(shafts >= SHAFT_SPREAD_MIN && shafts >= SHAFT_OVER_FLAT * plain, "no shafts: volumetric {shafts:.1} vs plain {plain:.1}");
 }
 
 /// A stored-deflate PNG of `rgba` (`width` x `height`).

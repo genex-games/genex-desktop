@@ -162,11 +162,12 @@ mod tests {
         let quality = preset(QualityPreset::Ultra);
         let foggy = Look::default().with_fog(Fog::default().with_density(0.05));
         let drawn = on(&quality, &foggy, ASKS);
-        for feature in ["volumetric-fog", "fog", "shadows", "ao", "ssgi", "taa", "ibl", "auto-exposure"] {
+        for feature in ["volumetric-fog", "fog", "shadows", "ao", "ssgi", "taa", "ibl", "local-exposure"] {
             assert!(drawn.contains(&feature), "{feature} missing from {drawn:?}");
         }
         let flat = on(&quality, &foggy.with_fog(Fog::default().with_density(0.05).with_volumetric(false)), ASKS);
         assert!(flat.contains(&"fog") && !flat.contains(&"volumetric-fog"), "{flat:?}");
+        assert!(!drawn.contains(&"auto-exposure"), "the default look's exposure is manual");
         let clear = on(&quality, &Look::default(), ASKS);
         assert!(!clear.contains(&"fog") && !clear.contains(&"volumetric-fog"), "{clear:?}");
     }
