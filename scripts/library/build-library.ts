@@ -434,7 +434,13 @@ async function build(
       entry.kind === LibraryKind.Model
         ? []
         : tiers.filter((tier) => entry.material?.tiers.includes(tier) || entry.sky?.tiers.includes(tier));
-    entry.build = await buildEntry(entry, out, catalog.pack.version, wanted);
+    try {
+      entry.build = await buildEntry(entry, out, catalog.pack.version, wanted);
+    } catch (error) {
+      console.error(`FAILED ${entry.id}: ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+      continue;
+    }
     await writeCatalog(catalog);
   }
 }

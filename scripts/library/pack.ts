@@ -4,13 +4,13 @@
  * taken from an image, and the `entry.json` facts of each kind. `build-library.ts` drives them over
  * downloaded sources; tests drive them over synthetic ones.
  */
-import { addLodExtras, readLodSet } from "../../src/substrate/asset-import/lods.ts";
+import { addLodExtras, simplifyInputs, simplifyTo } from "../../src/substrate/asset-import/lods.ts";
+import { type Geometry, readGeometry } from "../../src/substrate/asset-import/meshlets.ts";
 import { GltfComponent, readGlb } from "../../src/substrate/asset-import/glb.ts";
 import { index, isObject, type Json, objects } from "../../src/substrate/asset-import/gltf-json.ts";
 import { type PackDoc, packGlb, pruneAccessors } from "../../src/substrate/asset-import/prune.ts";
 import { type RgbaImage, resampleSquare } from "../../src/substrate/asset-import/resample.ts";
 import { TextureUsage } from "../../src/substrate/asset-import/basis-encoder.ts";
-import { LODS_EXTRAS_KEY } from "../../src/shared/render-quality.ts";
 import {
   LIBRARY_ENTRY_SCHEMA,
   LIBRARY_IMPOSTOR_BUDGETS,
@@ -21,8 +21,6 @@ import {
   type LibraryTier,
 } from "../../src/shared/genex-library.ts";
 
-/** How many simplify-and-promote rounds a decimation may take before it gives up. */
-const DECIMATE_ROUNDS_MAX = 8;
 /** glTF's TRIANGLES mode, the default. */
 const MODE_TRIANGLES = 4;
 const TRIANGLE = 3;
@@ -68,58 +66,67 @@ export function glbTriangles(glb: Uint8Array): number {
   return triangles;
 }
 
-/** The finest level (past the casters-only ones) whose triangles across every primitive fit `cap`, else the coarsest. */
-function levelFor(sets: Array<{ levels: Array<{ indices: Uint32Array }>; casters: number }>, cap: number): number {
-  const count = sets[0]?.levels.length ?? 0;
-  const first = Math.max(...sets.map((set) => set.casters));
-  for (let level = first; level < count; level++) {
-    const triangles = sets.reduce((sum, set) => sum + (set.levels[level]?.indices.length ?? 0) / TRIANGLE, 0);
-    if (triangles <= cap) return level;
-  }
-  return count - 1;
+/** Primitives too small to shrink leave the total over its share, so a cut aims a little under the cap. */
+const AIM_AT_CAP = 0.92;
+/** The relative errors a decimation tries in turn, tightest first (share of the mesh's extent). */
+const DECIMATE_ERRORS = [0.02, 0.05, 0.1, 0.2] as const;
+
+/** The geometry and simplifier inputs of every primitive of the GLB document `doc`. */
+function inputsOf(doc: PackDoc) {
+  const primitives = primitivesOf(doc.json);
+  const geometry = primitives.map((primitive) => readGeometry(doc.json, doc.bin, primitive));
+  if (geometry.some((each) => each === null)) throw new DecimateError(MESSAGE.NotTriangles);
+  // Primitives that share positions (a model's LOD copies, a mesh split by material) lock every shared
+  // vertex in the importer's level chain, which would stop a cut to budget; seams may move here.
+  const inputs = simplifyInputs(doc, primitives, geometry as Geometry[]).map((input) => ({
+    ...input,
+    lock: new Uint8Array(input.lock.length),
+  }));
+  return { primitives, inputs };
 }
 
-/** `glb` (with fresh `genex_lods` extras) with each primitive's `level` promoted to its own indices and the extras dropped. */
-function promote(glb: Uint8Array, cap: number): Uint8Array {
-  const parts = readGlb(glb);
-  const json = parts.json as Json;
-  const primitives = primitivesOf(json);
-  const sets = primitives.map((primitive) => readLodSet(json, parts.bin, primitive).set);
-  if (sets.some((set) => set === null)) throw new DecimateError(MESSAGE.CannotReach(glbTriangles(glb), cap));
-  const known = sets as NonNullable<(typeof sets)[number]>[];
-  const level = levelFor(known, cap);
-  const doc: PackDoc = { json, bin: parts.bin, data: new Map() };
-  const accessors = objects(json.accessors);
-  primitives.forEach((primitive, at) => {
-    const indices = known[at]?.levels[level]?.indices ?? new Uint32Array(0);
-    accessors.push({ componentType: GltfComponent.UnsignedInt, count: indices.length, type: "SCALAR" });
-    doc.data.set(accessors.length - 1, new Uint8Array(indices.buffer, indices.byteOffset, indices.byteLength));
-    primitive.indices = accessors.length - 1;
-    if (isObject(primitive.extras)) delete primitive.extras[LODS_EXTRAS_KEY];
-    if (isObject(primitive.extras) && Object.keys(primitive.extras).length === 0) delete primitive.extras;
-  });
-  json.accessors = accessors;
-  pruneAccessors(doc);
-  return packGlb(doc);
+/** Every primitive simplified so that all together keep at most `cap` triangles, at `maxError`. */
+async function simplifiedWithin(
+  inputs: ReturnType<typeof inputsOf>["inputs"],
+  cap: number,
+  maxError: number,
+): Promise<Uint32Array[]> {
+  const total = inputs.reduce((sum, each) => sum + each.geometry.indices.length / TRIANGLE, 0);
+  const share = Math.min(1, (cap * AIM_AT_CAP) / total);
+  const out: Uint32Array[] = [];
+  for (const input of inputs) out.push((await simplifyTo(input, input.geometry.indices, share, 1, maxError))[0]);
+  return out;
 }
 
 /**
- * `glb` with at most `cap` triangles: the importer's simplifier run on it and its finest level
- * that fits promoted to the mesh, again until it fits; unchanged when it already fits. Throws
- * {@link DecimateError} when the simplifier cannot get under `cap`.
+ * `glb` with at most `cap` triangles: each primitive simplified to its share of the budget by
+ * meshoptimizer (normals and UVs weighed, where primitives meet locked), at the tightest error
+ * that gets under `cap`. Unchanged when it already fits. Throws {@link DecimateError} when even
+ * the loosest error stays over `cap`.
  */
 export async function decimateGlb(glb: Uint8Array, cap: number): Promise<{ bytes: Uint8Array; triangles: number }> {
-  let bytes = glb;
-  for (let round = 0; round < DECIMATE_ROUNDS_MAX; round++) {
-    const triangles = glbTriangles(bytes);
-    if (triangles <= cap) return { bytes, triangles };
-    const outcome = await addLodExtras(bytes, { minTriangles: 1 });
-    if (!outcome.simplified) throw new DecimateError(MESSAGE.CannotReach(triangles, cap));
-    const next = promote(outcome.bytes, cap);
-    if (glbTriangles(next) >= triangles) throw new DecimateError(MESSAGE.CannotReach(triangles, cap));
-    bytes = next;
+  const before = glbTriangles(glb);
+  if (before <= cap) return { bytes: glb, triangles: before };
+  const parts = readGlb(glb);
+  const doc: PackDoc = { json: parts.json as Json, bin: parts.bin, data: new Map() };
+  const { primitives, inputs } = inputsOf(doc);
+  for (const maxError of DECIMATE_ERRORS) {
+    const kept = await simplifiedWithin(inputs, cap, maxError);
+    const triangles = kept.reduce((sum, indices) => sum + indices.length / TRIANGLE, 0);
+    if (triangles > cap) continue;
+    const accessors = objects(doc.json.accessors);
+    primitives.forEach((primitive, at) => {
+      const indices = kept[at] ?? new Uint32Array(0);
+      accessors.push({ componentType: GltfComponent.UnsignedInt, count: indices.length, type: "SCALAR" });
+      doc.data.set(accessors.length - 1, new Uint8Array(indices.buffer, indices.byteOffset, indices.byteLength));
+      primitive.indices = accessors.length - 1;
+    });
+    doc.json.accessors = accessors;
+    pruneAccessors(doc);
+    const bytes = packGlb(doc);
+    return { bytes, triangles: glbTriangles(bytes) };
   }
-  throw new DecimateError(MESSAGE.CannotReach(glbTriangles(bytes), cap));
+  throw new DecimateError(MESSAGE.CannotReach(before, cap));
 }
 
 /** `glb` with the runtime's level chain baked in (what the import step would add), so a delivery needs no import work. */

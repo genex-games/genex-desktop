@@ -6559,9 +6559,9 @@
         "files": [
           {
             "name": "sky.2k.hdr",
-            "tier": "2k",
             "sha256": "5244534e9cf5b606f2ff513aa00ddb161b0a4826ffd88a0d3bd03ac29247d198",
-            "bytes": 5451493
+            "bytes": 5451493,
+            "tier": "2k"
           },
           {
             "name": "preview.jpg",
@@ -6633,9 +6633,9 @@
         "files": [
           {
             "name": "sky.2k.hdr",
-            "tier": "2k",
             "sha256": "cddea890d57b7af3a8fac35a06285d7efc810a12cac521a4e0f286fdcaaca87c",
-            "bytes": 6367923
+            "bytes": 6367923,
+            "tier": "2k"
           },
           {
             "name": "preview.jpg",
@@ -6752,7 +6752,28 @@
           "bytes": 13198100,
           "md5": "6e690e8cd4e7aef6f5c04cca62619331"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "sky.2k.hdr",
+            "tier": "2k",
+            "sha256": "5414e1ac0c35e451d28595b2a2cba05e2ca301fdeb755b0a469408443093dafc",
+            "bytes": 4568000
+          },
+          {
+            "name": "preview.jpg",
+            "sha256": "a80637229feeac3a59a5d6d07091cb68afb8aaebb06be9432c03bfae428f5ea7",
+            "bytes": 14614
+          },
+          {
+            "name": "entry.json",
+            "sha256": "6ee5e5eefe5b2454041b433bc2706ee53337df35438b26e72b42ab46f9080a13",
+            "bytes": 538
+          }
+        ]
+      }
     },
     {
       "id": "sky/snowy_park_01",
@@ -6804,7 +6825,28 @@
           "bytes": 5124952,
           "md5": "c2489034fb47db1953d382fc89c833d5"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "sky.2k.hdr",
+            "tier": "2k",
+            "sha256": "b390ca5fedcf1cb5e90eab7159605e061383c247a40331c8b880357c917fddb5",
+            "bytes": 4998322
+          },
+          {
+            "name": "preview.jpg",
+            "sha256": "cb4cc4daf850bc50498c7063aa4133d8c4dd8a8c26188f92e44ea04f0ef72a6d",
+            "bytes": 39236
+          },
+          {
+            "name": "entry.json",
+            "sha256": "ecbd600606a37151cc56245f53b3a43968514efa723e4fa659eead95827c04db",
+            "bytes": 482
+          }
+        ]
+      }
     },
     {
       "id": "sky/snowy_field",
@@ -6912,7 +6954,28 @@
           "bytes": 9820679,
           "md5": "ec0101625ef45d9b589ee7dfa91d5abf"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "sky.2k.hdr",
+            "tier": "2k",
+            "sha256": "56cb0e54c6d8ae869236ec4a027441f49b42fcb6398ed0354815fc053cad4224",
+            "bytes": 6953927
+          },
+          {
+            "name": "preview.jpg",
+            "sha256": "54e75cf74a71a94d17eccf9164efcbdefc3fe7a36e96bca00ce9b15e8137cd8d",
+            "bytes": 58911
+          },
+          {
+            "name": "entry.json",
+            "sha256": "4eeb3fa87a14e633616955bb05fa9dc27204680c091d6804eb6218152622d9fc",
+            "bytes": 520
+          }
+        ]
+      }
     },
     {
       "id": "sky/spruit_sunrise",
@@ -7076,7 +7139,28 @@
           "bytes": 7035933,
           "md5": "e4d8551d94f23d42b1b25112c080f367"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "sky.2k.hdr",
+            "tier": "2k",
+            "sha256": "c119c42e55d1df602e820f1a0234ccab7714cdf56afc3ca9d44543ad58492767",
+            "bytes": 6936669
+          },
+          {
+            "name": "preview.jpg",
+            "sha256": "1412a5eb099be3a47b60f7465a3d3aaa85f83b1001a6f79b39b24ae22c554280",
+            "bytes": 48929
+          },
+          {
+            "name": "entry.json",
+            "sha256": "9af2985d93b013866d0754ffefc0caa2dd8042806927399eedf5e716e49764a4",
+            "bytes": 469
+          }
+        ]
+      }
     },
     {
       "id": "sky/moonless_golf",
@@ -7316,7 +7400,23 @@
           "bytes": 25444,
           "md5": "ed331b50f955852f007313c1a75c2e2d"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "842712345c52bcff577a05ab401cb7c7239b59e4e84c16052153ba8793a7a749",
+            "bytes": 7999756
+          },
+          {
+            "name": "entry.json",
+            "sha256": "32cc38161f7b26773fc3020320a8a81105545d4e3e2f2b4680137ef420b51afb",
+            "bytes": 631
+          }
+        ],
+        "triangles": 630
+      }
     },
     {
       "id": "model/modular_street_seating",
@@ -7510,7 +7610,23 @@
           "bytes": 748908,
           "md5": "324bc6295e3962322514ddcfc7037b23"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "64149bae6199ee2bca650e083ef1ebf015642134a32f6b02054aaaa537f612f6",
+            "bytes": 7247448
+          },
+          {
+            "name": "entry.json",
+            "sha256": "ce0bc240ed2ccce84d951b576d9f8682143da5cec05a5871915ca90737794c73",
+            "bytes": 588
+          }
+        ],
+        "triangles": 30610
+      }
     },
     {
       "id": "model/street_lamp_02",
@@ -7667,7 +7783,23 @@
           "bytes": 3034809,
           "md5": "a2a82099a9f7330a852047a24b1dcabe"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "b3e14f7b647bc73dd768e141d482a58eaa03a2efec697738fc0742961b25b39d",
+            "bytes": 17654988
+          },
+          {
+            "name": "entry.json",
+            "sha256": "2769a714a14684983963e12d59f35207f6d51e077a84b242925ea8731a8df64c",
+            "bytes": 582
+          }
+        ],
+        "triangles": 13960
+      }
     },
     {
       "id": "model/trashbag",
@@ -7809,7 +7941,23 @@
           "bytes": 875565,
           "md5": "8018e6790829cbbe453de4f25f314362"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "9aac264bb6fef5305dd66ec5d57be55e2d0db6e443ac02ec4697eee9724df60b",
+            "bytes": 2414644
+          },
+          {
+            "name": "entry.json",
+            "sha256": "1449e805cdf88348aaad2253c4fb646b65e8f898c0b35f94188630bb8f28f9c9",
+            "bytes": 609
+          }
+        ],
+        "triangles": 2682
+      }
     },
     {
       "id": "model/barrel_03",
@@ -7948,7 +8096,23 @@
           "bytes": 2728494,
           "md5": "d4e0552359a0e8fddcb15827f9781cef"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "9a84a4f5f653e4a6ac323bfa26c5c5bfec29174d959246c94a7e86855ee94bc8",
+            "bytes": 8365476
+          },
+          {
+            "name": "entry.json",
+            "sha256": "ac535dde3f29fa78e28add2c223ac383da874260c1c1fab44f0282aad6ba7091",
+            "bytes": 603
+          }
+        ],
+        "triangles": 6576
+      }
     },
     {
       "id": "model/wooden_crate_02",
@@ -8089,7 +8253,23 @@
           "bytes": 186848,
           "md5": "a91c131589eae7242c162782cff0290a"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "b4789884d67cf26f83daf9624130a7bfc33e06f2d91b5e475776375efc54eec5",
+            "bytes": 5343676
+          },
+          {
+            "name": "entry.json",
+            "sha256": "e80a073be063ab2169ae26904daad2959ed867358af83780ef9d912e925eee48",
+            "bytes": 590
+          }
+        ],
+        "triangles": 5840
+      }
     },
     {
       "id": "model/cardboard_box_01",
@@ -8248,7 +8428,23 @@
           "bytes": 1869713,
           "md5": "4b4b4d3d4d61d9e27141f5ffe2abe872"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "d28ccbd2fe6e16e9db0fb0bf46c00859d815280591730be1009c20ed0a4c3bec",
+            "bytes": 16806104
+          },
+          {
+            "name": "entry.json",
+            "sha256": "80da6b9ac10734ca75a29f2c8a931d5d15f57eab287a6838956474d0d578e65a",
+            "bytes": 661
+          }
+        ],
+        "triangles": 49346
+      }
     },
     {
       "id": "model/concrete_road_barrier",
@@ -8318,7 +8514,23 @@
           "bytes": 1374016,
           "md5": "f256cb4d2bd9e5623b062502605dfcf2"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "b968b63238a29898dd81fe723d5902149b37d51c9d1abf17ad9a77a7817e5a79",
+            "bytes": 10958312
+          },
+          {
+            "name": "entry.json",
+            "sha256": "68545b2a9ee56bb3837f53c992e8c64af1d5b0b1dc7a101e4700f0207a87aee6",
+            "bytes": 661
+          }
+        ],
+        "triangles": 15232
+      }
     },
     {
       "id": "model/fire_hydrant",
