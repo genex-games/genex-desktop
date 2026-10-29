@@ -2,7 +2,7 @@
 
 Shapes built in code that do not read as boxes: soft edges, turned and swept profiles, smoothed
 and roughened solids. Build in `on_reset`, turn the data into a model once with `gfx.mesh(&data)`
-(see Drawing, Built meshes) and draw it every frame. A real edge is never a knife edge: round it
+(`docs/api/drawing.md`) and draw it every frame. A real edge is never a knife edge: round it
 (a few millimetres on furniture, 1 to 2 cm on plaster and stone) so it catches a highlight.
 
 Every call in one line:
@@ -68,7 +68,7 @@ let desk = gfx.mesh(&desk).expect("a desk"); // in on_reset; keep it in the worl
   pipe, a cable, a gutter, a kerb along a street, a moulding round a room. The profile's x is the
   path's right and its y the path's up (the world's up across the first segment, then turned as
   little as possible), and it widens through a sharp corner to keep its thickness. Smooth a path
-  first with `Spline::new(&points).points()` (see Set dressing).
+  first with `Spline::new(&points).points()` (`docs/api/scatter.md`).
 
 ## Operations
 

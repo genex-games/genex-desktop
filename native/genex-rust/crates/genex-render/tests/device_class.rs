@@ -81,12 +81,12 @@ fn a_phone_never_becomes_mobile_ultra() {
     assert_eq!(classify_calibrated(&ios, Some(top)), class("mobile-high"));
 }
 
+// WP-9 flipped: a native desktop (macOS, Windows, Linux) now moves to its score's tier whatever
+// the distance, so a strong Windows or Linux GPU (desktop-mid by default) reaches ultra; phones and
+// browsers still move one tier at most.
 #[test]
-fn calibration_never_moves_a_class_more_than_one_tier() {
+fn calibration_moves_phones_and_browsers_at_most_one_tier() {
     let defaults = [
-        mac_integrated(),
-        DeviceFacts::new(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu),
-        DeviceFacts::new(TargetOs::Linux, Backend::Vulkan, DeviceType::Cpu),
         DeviceFacts::new(TargetOs::Ios, Backend::Metal, DeviceType::IntegratedGpu),
         android_vulkan(),
         web(None),
@@ -100,6 +100,23 @@ fn calibration_never_moves_a_class_more_than_one_tier() {
             assert_eq!(moved.form, start.form, "calibration never changes the form factor");
             assert!((index(moved.tier) - index(start.tier)).abs() <= 1, "{} -> {} at level {level}", start.wire(), moved.wire());
             assert!(DeviceClass::ALL.contains(&moved), "{} is a named class", moved.wire());
+        }
+    }
+}
+
+#[test]
+fn a_native_desktop_takes_its_scores_tier_so_windows_and_linux_reach_ultra() {
+    let natives = [
+        mac_integrated(),
+        DeviceFacts::new(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu),
+        DeviceFacts::new(TargetOs::Linux, Backend::Vulkan, DeviceType::DiscreteGpu),
+        DeviceFacts::new(TargetOs::Linux, Backend::Vulkan, DeviceType::Cpu),
+    ];
+    for facts in natives {
+        for tier in PerformanceTier::ALL {
+            let level = ScoreLevel::quantize(score_in(FormFactor::Desktop, tier), None);
+            let moved = classify_calibrated(&facts, Some(level));
+            assert_eq!(moved, DeviceClass::new(FormFactor::Desktop, tier), "{:?} {:?} at a {} score", facts.os, facts.device_type, tier.wire());
         }
     }
 }

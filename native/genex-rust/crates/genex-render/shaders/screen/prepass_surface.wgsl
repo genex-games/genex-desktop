@@ -35,11 +35,11 @@ fn vs_prepass_surface(in: VsIn, @builtin(instance_index) instance: u32, @builtin
     let index = visible[visible_row(pass_view.view, pass_view.direct, pass_view.base, start, instance, frame.counts.w)];
     let row = instances[index];
     let prev = prev_models[index];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     // A still row skips the second transform (uniform across the instance's vertices).
     var prev_world = world;
     if (prev.flags.x & GX_MOTION_STILL) == 0u {
-        prev_world = prev.model * vec4<f32>(gx_motion_prev_local(in.position, prev.flags, vertex), 1.0);
+        prev_world = gx_sway_world(prev.model, gx_motion_prev_local(in.position, prev.flags, vertex), gx_row_wind(row), frame.texture_lod.z);
     }
     var out: PrepassSurfaceOut;
     out.clip = gx_clip_position(frame.view_proj, world, motion_frame.jitter.xy);

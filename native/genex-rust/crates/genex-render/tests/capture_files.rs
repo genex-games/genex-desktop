@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use genex_render::capture::{CAPTURE_FORMAT, CAPTURES_KEPT, Capture, CaptureFiles, fnv1a64, hex64};
+use genex_render::caps::NATIVE_MAX_WORLD_PX;
 use genex_render::{CAPTURE_MAX_BYTES, RenderCode};
 
 fn scratch(name: &str) -> PathBuf {
@@ -42,7 +43,7 @@ fn padded_readback_rows_are_stripped_without_reordering_or_swizzling() {
 fn a_capture_of_the_wrong_size_or_above_the_memory_cap_is_refused() {
     assert_eq!(Capture::new(2, 2, vec![0; 15]).expect_err("short").code(), RenderCode::CaptureFailed);
     assert_eq!(Capture::from_padded_rows(2, 2, 4, &[0; 8]).expect_err("row too small").code(), RenderCode::CaptureFailed);
-    let side = 4097;
+    let side = NATIVE_MAX_WORLD_PX + 1;
     assert!(u64::from(side) * u64::from(side) * 4 > CAPTURE_MAX_BYTES);
     assert_eq!(Capture::from_padded_rows(side, side, side * 4, &[]).expect_err("cap").code(), RenderCode::CaptureTooLarge);
 }

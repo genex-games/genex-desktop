@@ -384,7 +384,9 @@ fn the_world_target_scales_by_the_device_pixel_ratio_up_to_two() {
     }
     assert_eq!(physical_world_size((640, 360), 2.0), (1280, 720));
     assert_eq!(physical_world_size((640, 360), 1.5), (960, 540));
-    assert_eq!(physical_world_size((3000, 2000), 2.0), (4096, 4000), "each side stays within MAX_WORLD_PX");
+    // WP-9 flipped (4096, 4000) -> (6000, 4000): a native target reaches 8192 a side.
+    assert_eq!(physical_world_size((3000, 2000), 2.0), (6000, 4000), "each side stays within MAX_WORLD_PX");
+    assert_eq!(physical_world_size((6000, 2000), 2.0), (8192, 4000), "each side stays within MAX_WORLD_PX");
 }
 
 #[test]

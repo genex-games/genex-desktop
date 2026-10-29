@@ -20,9 +20,8 @@ override GX_DECALS: bool = true;
 const GX_DECAL_KIND: u32 = 1u;
 // `vec4<f32>`s one decal's row takes (`decals::DECAL_ROW_VEC4S`).
 const GX_DECAL_ROW_VEC4S: u32 = 7u;
-// The shadowed spots' matrix slots the decal rows follow, filled or not
-// (`layout::MAX_SHADOWED_SPOTS`).
-const GX_DECAL_SPOT_SLOTS: u32 = 4u;
+// The shadow slots' matrices the decal rows follow, filled or not (`layout::MAX_SHADOW_SLOTS`).
+const GX_DECAL_SPOT_SLOTS: u32 = 16u;
 // The side of the material arrays' size class 0 (`layout::TEXTURE_SIZE_CLASSES`): class k's is this
 // times 2^k.
 const GX_DECAL_CLASS_SIDE_0: u32 = 256u;

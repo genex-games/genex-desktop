@@ -78,6 +78,8 @@ export const ImportIssueCode = {
   IorOutOfRange: "ior-out-of-range",
   /** A model has more triangles than its class's budget (detail: `<triangles>/<budget>`). */
   TrianglesOverBudget: "triangles-over-budget",
+  /** A static model over its triangle budget was decimated to it at import (detail: `<before>/<after>`). */
+  Decimated: "decimated",
 } as const;
 export type ImportIssueCode = (typeof ImportIssueCode)[keyof typeof ImportIssueCode];
 

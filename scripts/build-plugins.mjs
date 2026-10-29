@@ -139,7 +139,8 @@ async function buildGenex(root, resources, { dependencies }) {
 async function buildBlender(root, resources, sdk) {
   const blender = path.join(resources, "plugins/blender");
   await mkdir(blender, { recursive: true });
-  for (const file of ["plugin.json", "icon.png"])
+  // genex_bpy.py: the helper library every job puts on its scripts' import path (`--helpers`).
+  for (const file of ["plugin.json", "icon.png", "genex_bpy.py"])
     await cp(path.join(root, "src/plugins/blender", file), path.join(blender, file));
   await copyLocales(path.join(root, "src/plugins/blender"), blender);
   await writeFile(
@@ -173,6 +174,18 @@ async function buildCc0(root, resources, sdk) {
     ...NODE_BACKEND,
     entryPoints: [path.join(root, "src/plugins/cc0/backend.ts")],
     outfile: path.join(cc0, "backend.mjs"),
+  });
+}
+
+/** The Genex Library: its manifest and its backend bundled with the catalog (`docs/api/library.md`). */
+async function buildLibrary(root, resources) {
+  const library = path.join(resources, "plugins/library");
+  await mkdir(library, { recursive: true });
+  await cp(path.join(root, "src/plugins/library/plugin.json"), path.join(library, "plugin.json"));
+  await build({
+    ...NODE_BACKEND,
+    entryPoints: [path.join(root, "src/plugins/library/backend.ts")],
+    outfile: path.join(library, "backend.mjs"),
   });
 }
 
@@ -442,6 +455,7 @@ export async function buildPlugins(root, resources, { dependencies = true } = {}
   const sdk = path.join(root, "src/plugin-sdk");
   await buildBlender(root, resources, sdk);
   await buildCc0(root, resources, sdk);
+  await buildLibrary(root, resources);
   await buildUnreal(root, resources, sdk);
   await buildGodot(root, resources, sdk);
   await buildUnity(root, resources, sdk);

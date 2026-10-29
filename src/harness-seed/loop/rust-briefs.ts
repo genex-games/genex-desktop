@@ -12,6 +12,7 @@
  * branch on it carry `SERVES_RUST`, so a Rust night never runs on a kept copy that speaks only
  * JavaScript or C++.
  */
+import { asksForLook } from "./look-bar.ts";
 import { roleEngine, RoleKey, toolCall } from "./model-roles.ts";
 import { CPP_FACET, cppPlannerLines } from "./native-briefs.ts";
 import { CheckSupport, GameStack, ProjectKind, STACK_CHECK_SUPPORT } from "./native-contract.ts";
@@ -219,6 +220,17 @@ export function rustBaseBrief({
   ].join("\n");
 }
 
+/**
+ * How the starting scene shows its subject. A run whose ask sets a visual bar starts from sourced
+ * models and scans, never from boxes: gen3's scaffold was told "frame.cube … or procedural shapes",
+ * and the boxes were never replaced.
+ */
+function startingSubjectLine(run: BriefRun): string {
+  if (asksForLook(run))
+    return "This ask sets a visual bar: show the requested subject with models from assets/ (a Genex generation or a CC0 model through gfx.assets().model(..)) wearing PBR scans with their normal and ORM maps, lit by a sky. frame.cube or frame.sphere is a greybox step inside this stage, never what it ends on: a box, a cone or a flat colour on screen is a defect a judge holds the game open for.";
+  return "Make the requested subject visible with frame.cube, frame.sphere and frame.model first, lit and coloured: a flat grey placeholder is a defect (models from assets/ through gfx.assets().model(..), or procedural shapes).";
+}
+
 /** A director's night from scratch on a Rust game: one visible, working first version. */
 function rustStartingScene(run: BriefRun, projectLabel: string, setup: AnyRecord | null): string {
   const engine = roleEngine(run, RoleKey.Builder);
@@ -229,7 +241,7 @@ function rustStartingScene(run: BriefRun, projectLabel: string, setup: AnyRecord
     `${RUST_GAME} Read ${RUST_ENTRY_MAIN} and src/game.rs first, then edit them. ${RUST_API_DOC} is the whole API the game is written against: read it for a specific question, never edit it. ${RUST_BUILD}`,
     `Integration guide: build the Game in ${RUST_ENTRY_MAIN} and keep genex::install(game) at the end of main(). Load models once in on_reset through gfx.assets().model("…") from assets/. Name what you draw with frame.tag("name") just before drawing it in on_draw. game.camera returns the framing view; register named views with game.named_camera. Keep the FACET WIRING markers for later edits.`,
     `Input/UI API when the goal needs it: on_update(sim, ctx) is one fixed 1/60 s tick and reads input only from ctx — ctx.keys by DOM code (Key::KeyW, Key::Space, Key::ArrowUp), ctx.touches (the mouse's first button arrives as touch 0, so one touch path serves desktop and phone), ctx.pointer, ctx.look, ctx.pads. Draw all UI with egui in on_ui: one egui point is one world pixel, y down, and a widget's label is how checks find it. Randomness only from ctx.rng or the reset rng; time only from ctx.tick and ctx.dt; transcendental math from genex::math; genex::Map and genex::Set instead of HashMap and HashSet — never std::time, threads or thread_rng. For a scene without gameplay, omit input and UI.`,
-    `Do not invent helpers or controls you have not implemented. Make the requested subject visible with frame.cube, frame.sphere and frame.model first, lit and coloured: a flat grey placeholder is a defect (models from assets/ through gfx.assets().model(..), or procedural shapes).`,
+    `Do not invent helpers or controls you have not implemented. ${startingSubjectLine(run)}`,
     `After writing, call ${toolCall(engine, "capture")}: it builds this folder for its destination through the studio's Rust lane and photographs it. Fix a failed build's first error, then fix what you see. The host commits and validates your changes. No git commit is needed.`,
     setup ? `Requested inspection state: ${JSON.stringify(setup)}` : "",
   ]
@@ -374,6 +386,13 @@ const RUST_HOST_FILES = `genex.toml and ${RUST_API_DOC}`;
 const RUST_DEMO_ASK =
   "If this facet is behavioural (an interaction, a move, a beat), expose a deterministic demo of it via the studio contract (a game.demo entry registered in its wire) — demo checks run it and photograph its end frame.";
 
+/**
+ * How a look is tuned without a rebuild per try: the running game overlays `[render.look]` keys
+ * from `renderSettings {set: {look}}` (Live and captures), so values are settled live and written once.
+ */
+const RUST_LOOK_TUNE =
+  "Tune the look live, not by rebuilding: renderSettings {set: {look: {<[render.look] keys>}}} changes the running game's look for Live and captures; settle the values against the references, write them into genex.toml [render.look] once, then give the overlay back with {set: {look: null}}. A game that refuses it (invalid-look, or an older renderSettings) takes the genex.toml edit and a rebuild.";
+
 /** The facet builder's lines for a Rust · wgpu game: the Rust twins of `CPP_FACET`. */
 export const RUST_FACET = {
   module: facetModule,
@@ -382,9 +401,9 @@ export const RUST_FACET = {
   files: (owned: string) =>
     `- YOUR FILES: put this facet's work in its own module — ${owned}, with \`pub fn wire(game: &mut Game<super::World>)\` and its own state through game.facet_state::<T>() (split further into private items of that module if it grows).`,
   ownsEntry: (entryMain: string) =>
-    `- This worker OWNS ${entryMain}, src/game.rs and genex.toml — you may restructure them, and you wire in other workers' modules when they appear. ${RUST_API_DOC} stays read-only.`,
+    `- This worker OWNS ${entryMain}, src/game.rs and genex.toml — you may restructure them, and you wire in other workers' modules when they appear. ${RUST_API_DOC} stays read-only. ${RUST_LOOK_TUNE}`,
   notOwnEntry: (entryMain: string) =>
-    `- This worker does NOT own ${entryMain} or ${RUST_HOST_FILES}. If your work needs a change in one of them, say so in your summary and leave it: the director makes that edit, or gives it to whoever owns the entry.`,
+    `- This worker does NOT own ${entryMain} or ${RUST_HOST_FILES}. If your work needs a change in one of them, say so in your summary and leave it: the director makes that edit, or gives it to whoever owns the entry. For a look, settle [render.look] values live with renderSettings {set: {look}} and name the settled keys in your summary.`,
   wiringOnly: (entryMain: string) =>
     `- This facet does NOT own ${entryMain}, src/game.rs or ${RUST_HOST_FILES}. Touch ${entryMain} ONLY to add your two wiring lines inside the "FACET WIRING" marker block (${RUST_WIRING_LINES}; add the marker block if it is missing); never reformat or reorganise anything else.`,
   demoAsk: RUST_DEMO_ASK,

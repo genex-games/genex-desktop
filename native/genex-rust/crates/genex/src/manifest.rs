@@ -90,6 +90,7 @@
 //! contact_shadow_length = 0.25  # world units, 0 < length <= 2
 //! local_exposure_highlights = 0.6 # bright regions towards grey, 0.25..=1 (1: off; high and ultra)
 //! local_exposure_shadows = 0.8    # dark regions towards grey, 0.25..=1 (1: off)
+//! doorway_adaptation = true      # auto exposure adapts 8x faster for 0.5 s at a room's doorway
 //!
 //! [render.shadows]          # the sun's shadows on every preset (held to each class's caps)
 //! distance = 80             # world units, 10..=400 (default: each preset's own, 30..80)
@@ -122,7 +123,7 @@
 //! it for this game is the host build's check, never this file's (the crate request flow, M3.15).
 
 use crate::map::Map;
-use genex_core::protocol::{MAX_WORLD_PX, MIN_WORLD_PX};
+use genex_core::protocol::{MIN_WORLD_PX, WEB_MAX_WORLD_PX};
 use genex_render::EXTENSION_APIS;
 use serde::Deserialize;
 use std::fmt;
@@ -155,8 +156,26 @@ pub const ENVIRONMENT_CALLS: [&str; 5] = ["frame.environment", "Environment::sky
 /// lights on a frame (`frame.spot_light_with(&SpotLight::new(..)..)` for its own cone or a shadow
 /// map), and a glowing surface (`Material::emissive(..)`, `.with_emissive(..)`,
 /// `.with_emissive_texture(..)`).
-pub const LIGHT_CALLS: [&str; 7] =
-    ["frame.point_light", "frame.spot_light", "frame.spot_light_with", "SpotLight::new", "Material::emissive", ".with_emissive", ".with_emissive_texture"];
+/// Physical units (`genex::render::units`, AAA review LIT-3) give those lights their intensity.
+pub const LIGHT_CALLS: [&str; 17] = [
+    "frame.point_light",
+    "frame.point_light_with",
+    "PointLight::new",
+    "frame.spot_light",
+    "frame.spot_light_with",
+    "SpotLight::new",
+    "Material::emissive",
+    ".with_emissive",
+    ".with_emissive_texture",
+    "units::lux",
+    "units::candela",
+    "units::lumens",
+    "units::spot_lumens",
+    "units::ambient_lux",
+    "units::nits",
+    "units::ev_from_ev100",
+    "units::kelvin",
+];
 /// The retained instance group calls of the facade (renderer pass 2 A.0b), as agents call them:
 /// a group made once (`InstanceGroup::cubes(..)`, `::spheres(..)`, `::models(..)`,
 /// `::models_with(..)`), changed by range (`group.update(..)`), drawn each frame
@@ -217,7 +236,7 @@ pub const FOG_CALLS: [&str; 8] =
 /// graph's conditions, transition options, layers, parameters, IK and sockets the page teaches, and
 /// a ragdoll view's `.apply`, pinned at gate GI; the planted feet, release R-22; clip files on one
 /// rig and the armature's frame, B8).
-pub const ANIMATION_CALLS: [&str; 90] = [
+pub const ANIMATION_CALLS: [&str; 95] = [
     "gfx.character", ".joint_count", ".skeleton", ".path", ".wire", "Character::spawn", "Character::on_ground",
     ".drive", ".drive_on", ".ground_ray", ".remove", ".feet", ".facing", ".transform", ".velocity", ".grounded",
     ".nav_config", ".snapshot", ".restore", "Ragdoll::build", ".follow", ".go_limp", ".power", ".recover", ".view",
@@ -230,6 +249,7 @@ pub const ANIMATION_CALLS: [&str; 90] = [
     ".jump_to", ".set_layer_weight", ".state_name", ".normalized_time", ".in_transition", ".reach", ".look_at",
     ".socket", ".apply", "gfx.node_clips", "frame.model_posed", ".stop", ".finished", ".clips", ".plant_feet",
     "animation::height_ground", ".with_clip_files", ".mesh_frame",
+    "Motion::blend1d", "Motion::blend2d", "Motion::directional", ".speed_by", ".clip_ground_speed",
 ];
 /// The streaming calls of the facade (STR-9; the view set, STR-16; kept cells and saves, STR-12;
 /// terrain tiles, STR-23; cell groups and scatter, STR-20; the cell inputs, entered cells, the
@@ -288,11 +308,15 @@ pub const LOD_CALLS: [&str; 12] = [
 ];
 /// The level-of-detail refusals (`__render.lodRefused` codes): [`crate::LodRefusalCode::ALL`]'s.
 pub const LOD_REFUSALS: [&str; 5] = ["levels-invalid", "levels-mismatch", "compound-invalid", "impostor-invalid", "impostor-not-baked"];
+/// The camera rig's calls (WP-3, `docs/api/camera.md`).
+pub const CAMERA_CALLS: [&str; 14] = [
+    "FirstPersonRig::new", ".with_speeds", ".update", "RigStep::from", ".recoil", ".impulse", ".camera", ".camera_with", ".pose", ".cadence", ".probe", "Comfort::current", ".bob_share", ".shake_share",
+];
 /// The settings menu's calls (UIS-11).
-pub const SETTINGS_CALLS: [&str; 12] = [
+pub const SETTINGS_CALLS: [&str; 13] = [
     "game.settings", "SettingsConfig::new", ".option", ".preset", "SettingDef::toggle", "SettingDef::slider",
     "SettingDef::choice", "genex::settings::menu", "genex::settings::menu_answer", "genex::settings::value",
-    "genex::settings::number", "genex::settings::flag",
+    "genex::settings::number", "genex::settings::flag", "genex::settings::comfort",
 ];
 /// The `[[wgsl]] api` versions the facade has defined; the runtime admits those genex-render
 /// serves (`EXTENSION_APIS`; `extension-api-unavailable` for the rest).
@@ -358,7 +382,7 @@ pub const WEB_WASM_CEILING_MB: i64 = 32;
 /// The `[render.shadows]` keys, in file-documentation order.
 pub const SHADOW_KEYS: [&str; 2] = ["distance", "blend_band"];
 /// The keys of `[render.look]`, in the wire table's order (the host's `LookKey`).
-pub const LOOK_KEYS: [&str; 23] = [
+pub const LOOK_KEYS: [&str; 24] = [
     "tonemapper",
     "exposure",
     "metering",
@@ -382,6 +406,7 @@ pub const LOOK_KEYS: [&str; 23] = [
     "contact_shadow_length",
     "local_exposure_highlights",
     "local_exposure_shadows",
+    "doorway_adaptation",
 ];
 
 /// Declares a `[render]` vocabulary: its values, wire spellings, `ALL`, `as_str` and `from_wire`.
@@ -914,6 +939,9 @@ pub struct LookSection {
     /// Local exposure's contrast below middle grey, `LOCAL_EXPOSURE_CONTRAST_MIN..=1` (1: off).
     #[serde(default)]
     pub local_exposure_shadows: Option<f64>,
+    /// Whether auto exposure adapts faster at a declared room's doorway (`Look::doorway_adaptation`).
+    #[serde(default)]
+    pub doorway_adaptation: Option<bool>,
 }
 
 impl LookSection {
@@ -959,7 +987,9 @@ impl LookSection {
             some(self.local_exposure_highlights, local.highlights),
             some(self.local_exposure_shadows, local.shadows),
         );
-        look.with_local_exposure(local)
+        let mut look = look.with_local_exposure(local);
+        look.doorway_adaptation = self.doorway_adaptation.unwrap_or(look.doorway_adaptation);
+        look
     }
 }
 
@@ -1186,7 +1216,7 @@ pub enum ManifestErrorCode {
     Syntax,
     /// An empty or overlong title.
     InvalidTitle,
-    /// A world size side outside 64..=4096 (genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`).
+    /// A world size side outside 64..=4096 (genex-core's `MIN_WORLD_PX..=WEB_MAX_WORLD_PX`).
     InvalidWorldSize,
     /// A save name with characters outside letters, digits, space, `_`, `-`, `.`.
     InvalidSaveName,
@@ -1459,7 +1489,7 @@ fn check_game(game: &GameSection) -> Result<(), ManifestError> {
     if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
         return Err(ManifestError::new(ManifestErrorCode::InvalidTitle, format!("{:?}", game.title)));
     }
-    if !game.world_size.iter().all(|side| (MIN_WORLD_PX..=MAX_WORLD_PX).contains(side)) {
+    if !game.world_size.iter().all(|side| (MIN_WORLD_PX..=WEB_MAX_WORLD_PX).contains(side)) {
         let [w, h] = game.world_size;
         return Err(ManifestError::new(ManifestErrorCode::InvalidWorldSize, format!("{w}x{h}")));
     }

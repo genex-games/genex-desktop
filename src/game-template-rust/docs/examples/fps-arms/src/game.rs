@@ -9,6 +9,7 @@
 //! lock, or the checks' injected look cannot turn the camera.
 
 use genex::actions::{ActionId, Anchor, ContextId, ControlId, ShowWhen, StickMode};
+use genex::camera::{Comfort, FirstPersonRig, RigStep};
 use genex::math::{self, Vec3, vec3};
 use genex::physics::{ColliderBuilder, QueryFilter, Ray, RigidBodyBuilder};
 use genex::prelude::*;
@@ -43,9 +44,6 @@ const EYE_HEIGHT: f32 = 1.62;
 const FOVY: f32 = 70.0;
 const FOVY_AIMED: f32 = 52.0;
 const AIM_FOLLOW: f32 = 0.25;
-/// One step's length (m) and the eye's bob at a walk.
-const STEP: f32 = 0.75;
-const BOB: f32 = 0.012;
 /// How far ahead the rifle reaches from the eye (m); nearer a wall it pulls back.
 pub const REACH: f32 = 0.9;
 const SPAWN: Vec3 = vec3(0.0, 0.0, -10.0);
@@ -75,8 +73,9 @@ pub struct World {
     pub pitch: f32,
     /// This tick's turn (radians, yaw and pitch): the view model sways against it.
     pub turned: Vec2,
-    /// Metres walked (the bob's phase) and the planar speed.
-    pub stride: f32,
+    /// The camera's motion: bob, roll, landings and recoil (display only, never probed).
+    pub rig: FirstPersonRig,
+    /// The planar speed (m/s).
     pub speed: f32,
     /// Holding the aim, and how far down the sights the view is (0 at the hip, 1 aimed).
     pub aiming: bool,
@@ -112,12 +111,12 @@ impl World {
         self.player.as_ref().map_or(SPAWN, Character::feet) + Vec3::Y * EYE_HEIGHT
     }
 
-    /// The camera: the eye with a walk's bob (none down the sights), the lens narrowing as it aims.
+    /// The camera: the eye moved by the rig under the person's comfort settings, with no walk bob
+    /// down the sights, the lens narrowing as it aims.
     pub fn camera(&self) -> Camera {
-        let phase = self.stride / STEP * std::f32::consts::PI;
-        let bob = math::cos(phase * 2.0).abs() * BOB * (self.speed / WALK).min(1.5) * (1.0 - self.aim);
-        let eye = self.eye() + Vec3::Y * bob;
-        Camera { fovy: FOVY + (FOVY_AIMED - FOVY) * self.aim, ..Camera::look_at(eye, eye + self.forward()) }
+        let comfort = Comfort::current();
+        let aimed = Comfort { head_bob: comfort.head_bob * (1.0 - self.aim), ..comfort };
+        self.rig.camera_with(self.eye(), self.forward(), FOVY + (FOVY_AIMED - FOVY) * self.aim, &aimed)
     }
 }
 
@@ -153,6 +152,7 @@ pub fn wire(game: &mut Game<World>) {
             physics.insert(RigidBodyBuilder::fixed().translation(min + half), ColliderBuilder::cuboid(half.x, half.y, half.z));
         }
         world.player = Character::spawn(physics, SPAWN, CharacterParams::default()).ok();
+        world.rig = FirstPersonRig::new().with_speeds(WALK, SPRINT);
         world.yaw = std::f32::consts::FRAC_PI_2;
     });
     game.on_update(update);
@@ -164,6 +164,8 @@ pub fn wire(game: &mut Game<World>) {
         let at = sim.world.player.as_ref().map_or(SPAWN, Character::feet);
         json!({ "x": at.x, "z": at.z, "yaw": sim.world.yaw, "pitch": sim.world.pitch, "aim": sim.world.aim, "sprinting": sim.world.sprinting })
     });
+    // The camera's motion per tick for a comfort check (bob, roll, cadence), outside the checksum.
+    game.probe_volatile("cameraMotion", |sim| sim.world.rig.probe());
 }
 
 /// Turn, walk or sprint the capsule, ease the aim, and measure the wall in front of the rifle.
@@ -186,10 +188,10 @@ fn update(sim: &mut Sim<World>, ctx: &Ctx<'_>) {
     let right = forward.cross(Vec3::Y);
     let pace = if world.sprinting { SPRINT } else if world.aiming { AIM_WALK } else { WALK };
     let wish = (right * walk.x + forward * ahead) * pace;
-    player.drive(physics, CharacterMotion::Velocity { wish, jump: false }, ctx.dt);
+    let step = player.drive(physics, CharacterMotion::Velocity { wish, jump: false }, ctx.dt);
     let velocity = player.velocity();
     world.speed = vec2(velocity.x, velocity.z).length();
-    world.stride += world.speed * ctx.dt;
+    world.rig.update(ctx.dt, RigStep { velocity, turn: turn.x, ..RigStep::from(&step) });
     let exclude = player.body().map_or(QueryFilter::default(), |body| QueryFilter::default().exclude_rigid_body(body));
     let reach = physics.cast_ray(&Ray::new(world.eye(), world.forward()), REACH, true, exclude).map_or(REACH, |(_, toi)| toi);
     world.wall_pull = REACH - reach;

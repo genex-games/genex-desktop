@@ -25,7 +25,7 @@ data.cuboid(min, max, metres).quad(corners, metres);        // data: MeshData::n
 model.with_levels(&[(lod1, 24.0)]).with_lod_bias(2.0).with_impostor(Impostor::hemi()); // -> Model
 model.impostor(); model.lod_refusal();                      // -> Option<Impostor>, Option<LodRefusalCode>
 gfx.assets().compound(&[&wood, &foliage]);                  // -> Model
-Camera::look_at(position, target);                          // Camera { projection: Projection::Orthographic, fovy, .. }
+Camera::look_at(position, target);                          // Camera { projection: Projection::Orthographic, fovy, .. }; fovy: vertical, degrees
 ```
 
 Draw a first-person game's arms and weapon between `frame.view_model()` and
@@ -83,6 +83,18 @@ model of 512 or more triangles gets simplified levels at import, and each drawn 
 camera draws a coarser one, in its shadows too. A GLB that reaches the game without them (it
 skipped the import step) gets them at load the same way, up to 100,000 triangles; a bigger one
 draws whole and the load's log says so.
+
+`state().__render.look` says how the last frame looks, per tag (`frame.tag(name)`), from a coarse
+raster of the world draws (160 cells across, after occlusion; the same on every device):
+`coverage` and `flatCoverage` (its share of the screen, and the share drawn with neither a base
+colour nor an emissive map: a coloured box), `texelsPerMetre` (the median base-colour texels a
+metre of its visible surface gets), `pixelsPerMetre` (the screen pixels a metre of it covers),
+`trianglesPerSquareMetre`, `normalMapShare`, `ormShare`, `alphaCardShare` (shares of its visible
+cells), `draws`, `models` (the model paths it drew) and `primitiveOnly` (cubes and spheres alone);
+the top level adds `coverage` and `flatCoverage` over every draw, tagged or not. Live measures it
+every 15 frames, a capture every time; custom materials, characters, terrain, grass, water and
+particles are not rasterised. A look-bar pass reads it: keep total `flatCoverage` under 0.02,
+near surfaces at 512 texels a metre or more, and textured tags at `normalMapShare` 1.
 
 A game names its own levels with `model.with_levels(&[(lod1, 24.0), (lod2, 58.0)])` (each level a
 GLB with the model's part count, its parts drawn with the model's parts' materials, at most
@@ -189,7 +201,9 @@ rocks) have builders: `docs/api/meshes.md`; filling a level with clutter, debris
 `docs/api/scatter.md`. A bigger or organic shape (a car, a sofa, a tree) is still a GLB: generated,
 a CC0 download or a Blender script.
 
-`Camera::look_at(position, target)` places a view;
+`Camera::look_at(position, target)` places a view; its `fovy` is the vertical field of view in
+degrees (45 by default; 65-75 for first person, `docs/api/camera.md` has the range and
+`FirstPersonRig`).
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`
 draws it orthographic, `fovy` then being the view's height in world units (a 2D or isometric
 game: an object keeps its size at any distance).

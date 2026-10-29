@@ -178,7 +178,42 @@ fn the_graphics_tab_draws_todays_render_settings_panel() {
     let tabs = ["Graphics", "Audio", "Language & Accessibility"];
     let items = hud_items(&menu);
     assert_eq!(&items[..tabs.len()], tabs, "the tab row comes first and opens on Graphics: {items:?}");
-    assert_eq!(items[tabs.len()..], hud_items(&panel)[..], "the Graphics tab is today's panel, item for item");
+    // Flipped on purpose (WP-14): the tab was the render panel alone; the person's display rows
+    // (field of view, brightness, motion blur) and their Reset now sit above it.
+    let rows = ["Field of view: 0", "Brightness: 0", "Motion blur: On", "Reset"];
+    assert_eq!(&items[tabs.len()..tabs.len() + rows.len()], rows, "the display rows: {items:?}");
+    assert_eq!(items[tabs.len() + rows.len()..], hud_items(&panel)[..], "then today's panel, item for item");
+}
+
+/// LOC-3: settings read 0 in the camera hook, so a game could not obey the person's screen shake,
+/// head bob or field of view where the camera is made. The read hooks now see the settings as
+/// routed, and nothing the person picked moves the checksum.
+#[test]
+fn the_camera_hook_reads_the_persons_comfort_settings_outside_the_checksum() {
+    let game = || {
+        let mut game = Game::new(World::default()).world_size(WORLD[0], WORLD[1]);
+        game.on_update(|sim, _| sim.world.ticks += 1);
+        game.camera(|_| {
+            let comfort = genex::camera::Comfort::current();
+            let shake = if comfort.reduced_motion { 0.0 } else { comfort.screen_shake };
+            Camera { fovy: 60.0 + comfort.fov_offset + shake, ..Camera::look_at(vec3(0.0, 2.0, 6.0), Vec3::ZERO) }
+        });
+        game
+    };
+    let mut defaults = runtime(game());
+    defaults.step(FIXED_STEP_MS);
+    assert_eq!(defaults.camera(View::Game).expect("a camera").fovy, 61.0, "the defaults: no offset, full shake");
+
+    let dir = temp_dir("comfort");
+    let mut person = runtime(game());
+    person.use_android_data(&dir);
+    let comfort = br#"{"format":1,"presets":{},"values":{"graphics.fov_offset":10,"ui.screen_shake":0.5,"ui.head_bob":false}}"#;
+    assert!(person.saves().save(SETTINGS_FILE, comfort));
+    person.use_android_data(&dir);
+    person.step(FIXED_STEP_MS);
+    assert_eq!(person.camera(View::Game).expect("a camera").fovy, 70.5, "the camera hook reads the person's offset and shake");
+    assert_eq!(genex::settings::comfort().head_bob, 0.0, "and the head bob toggle");
+    assert_eq!(person.checksum(), defaults.checksum(), "the person's comfort never reaches the checksum");
 }
 
 #[test]

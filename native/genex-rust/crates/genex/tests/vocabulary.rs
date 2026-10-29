@@ -178,7 +178,8 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
 #[test]
 fn the_game_systems_blocks_are_the_fixtures() {
     use genex::manifest::{
-        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS, STREAM_CALLS,
+        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, CAMERA_CALLS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS,
+        STREAM_CALLS,
     };
     let pinned = fixture();
     let animation: Vec<&str> = genex_anim::AnimationErrorCode::ALL
@@ -194,7 +195,7 @@ fn the_game_systems_blocks_are_the_fixtures() {
     let lod = genex::LodRefusalCode::ALL.map(genex::LodRefusalCode::wire);
     assert_eq!(LOD_REFUSALS, lod, "the manifest's lod refusals are LodRefusalCode's");
     let settings: Vec<&str> = genex::settings::SettingsErrorCode::ALL.iter().map(|code| code.wire()).collect();
-    let blocks: [(&str, &[&str], &[&str]); 7] = [
+    let blocks: [(&str, &[&str], &[&str]); 8] = [
         ("animation", &ANIMATION_CALLS, &animation[..]),
         ("stream", &STREAM_CALLS, &stream),
         ("nav", &NAV_CALLS, &nav),
@@ -202,6 +203,7 @@ fn the_game_systems_blocks_are_the_fixtures() {
         ("assets", &ASSET_CALLS, &ASSET_REFUSALS),
         ("lod", &LOD_CALLS, &LOD_REFUSALS),
         ("settings", &SETTINGS_CALLS, &settings),
+        ("cameraRig", &CAMERA_CALLS, &[]),
     ];
     for (key, calls, refusals) in blocks {
         assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");
@@ -303,7 +305,10 @@ fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};
     use genex_render::texture::TextureFamily;
     let pinned = fixture();
-    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues"]);
+    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues", "look", "exposure"]);
+    use genex_render::post::exposure::ExposureWarning;
+    let warnings = [ExposureWarning::EvMinRaisedWithDoorwayAdaptation, ExposureWarning::DoorwayAdaptationUnderManual];
+    assert_eq!(names(&pinned["runtimeRender"]["exposureWarnings"]), warnings.map(ExposureWarning::wire));
     assert_eq!(names(&pinned["runtimeRender"]["issueCodes"]), AssetIssueCode::ALL.map(AssetIssueCode::wire));
     let families: Vec<&str> = TextureFamily::ALL.into_iter().map(|family| TextureOrigin::Family(family).wire()).chain([TextureOrigin::Source.wire()]).collect();
     assert_eq!(names(&pinned["runtimeRender"]["families"]), families);

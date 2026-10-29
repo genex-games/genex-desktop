@@ -38,6 +38,10 @@ use crate::shadow::SHADOW_MAP_PX;
 pub const MAX_CASCADES: u8 = crate::layout::MAX_CASCADES as u8;
 /// The smallest render scale a device class steps down to.
 pub const RENDER_SCALE_MIN: f32 = 0.5;
+/// The largest render scale anything draws at (WP-9: supersampling, native desktop-ultra only,
+/// `presets::render_scale_max`): the scene at twice the output a side, resolved by the tonemap's
+/// luminance-weighted bilinear filter (a weighted 2x2 box at exactly 2).
+pub const RENDER_SCALE_SUPERSAMPLE_MAX: f32 = 2.0;
 /// Samples per pixel with MSAA on (where the formats take it).
 pub const MSAA_SAMPLE_COUNT: u32 = MSAA_SAMPLES;
 
@@ -1267,6 +1271,13 @@ pub fn frame_texture_lod_bias(taa: &TaaQuality, temporal: bool, easu: bool, rend
     libm::log2f(held_render_scale(render_scale)).max(TAA_LOD_BIAS_MIN)
 }
 
+/// The longest side a scene drawn for an output side of `px` may have: the output's own below
+/// scale 1, twice it supersampled ([`RENDER_SCALE_SUPERSAMPLE_MAX`]), never past the target cap.
+pub(crate) fn supersampled_side_max(px: u32) -> u32 {
+    let px = px.max(1);
+    px.saturating_mul(2).min(crate::caps::MAX_WORLD_PX).max(px)
+}
+
 /// `render_scale` held to `RENDER_SCALE_MIN..=1` (NaN: 1), as the mip biases read it.
 fn held_render_scale(render_scale: f32) -> f32 {
     if render_scale.is_nan() { 1.0 } else { render_scale.clamp(RENDER_SCALE_MIN, 1.0) }
@@ -1717,6 +1728,18 @@ pub struct EnvironmentQuality {
     /// Whether a volume's lookup hides the cells a point is behind a wall from (eight hand-weighed
     /// cells, `irradiance::grid_irradiance`) instead of the sampler's three trilinear fetches.
     pub irradiance_leak_control: bool,
+    /// Cells of a volume one Live frame bakes (the bake's time slice, at most
+    /// `irradiance::BATCH_CELLS`; AAA review WP-12). A resource knob.
+    pub irradiance_cells_per_frame: u8,
+    /// Whether published volumes are baked again, one after another, for as long as they are held
+    /// (dynamic probe GI, AAA review WP-12): a lamp switched on, a door opened or a sun moved
+    /// reaches the bounced light within one cycle instead of never. Off, a volume is baked once
+    /// and again only when the sky changes. A resource knob.
+    pub irradiance_relight: bool,
+    /// The rooms the renderer lights without the game declaring them ([`crate::irradiance::AutoRooms`],
+    /// AAA review WP-12): a volume for each reflection probe without one and a probe for each
+    /// volume without one, and a volume following the camera wherever no declared room holds it.
+    pub auto_rooms: crate::irradiance::AutoRooms,
     /// The froxel fog's grid (renderer pass 2 A.5, [`crate::froxel`]): the height fog lit per
     /// froxel by the shadowed sun and the binned lights (sun shafts), bound in the aerial volume's
     /// place; None keeps the analytic fog. Desktop and web `high` and `ultra`. A resource knob.
@@ -1738,6 +1761,8 @@ pub struct LightQuality {
     pub tile_px: u32,
     /// Spot lights with shadow maps.
     pub shadowed_spots: u8,
+    /// Point lights with cube shadow maps (AAA review WP-15; at most `layout::MAX_SHADOWED_POINTS`).
+    pub shadowed_points: u8,
     /// Most projected decals drawn (renderer pass 2 A.10, `decals::held_decals`: nearest first,
     /// the last ones faded towards the cut); 0 draws none. Decals are binned with the lights, so
     /// only a `clustered` quality draws them.
@@ -1745,8 +1770,11 @@ pub struct LightQuality {
 }
 
 /// A material texture size class (RQ6): the side of the texture arrays a texture is stored in.
-/// Each class is its own pair of arrays (`layout::TEXTURE_SIZE_CLASSES`); a texture goes in the
-/// smallest class that holds its source size, capped at [`TextureQuality::max_class`].
+/// A texture goes in the smallest class that holds its source size, capped at
+/// [`TextureQuality::max_class`]. The shaders bind four class slots
+/// (`layout::TEXTURE_CLASS_SLOTS`); which class each slot holds is the max class's ladder
+/// (`texture::class_ladder`): the web's 256/512/1024/2048, and on a native desktop the 4096 and
+/// 8192 classes in the top slots (WP-9).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TextureClass {
@@ -1758,25 +1786,34 @@ pub enum TextureClass {
     S1024,
     /// 2048 texels.
     S2048,
+    /// 4096 texels: native desktops only (WP-9).
+    S4096,
+    /// 8192 texels: native desktops only, on an explicit choice (WP-9's cinematic tier).
+    S8192,
 }
 
 impl TextureClass {
     /// Every class, smallest first.
-    pub const ALL: [TextureClass; 4] = [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048];
+    pub const ALL: [TextureClass; 6] =
+        [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048, TextureClass::S4096, TextureClass::S8192];
 
-    /// The class index a material texture reference carries (`layout::texture_ref`).
+    /// The class's index, smallest first (`layout::TEXTURE_CLASS_SIDES`). A material texture
+    /// reference carries the class's slot instead (`texture::class_ladder`), which is this index
+    /// on the web's ladder.
     pub const fn index(self) -> u32 {
         match self {
             TextureClass::S256 => 0,
             TextureClass::S512 => 1,
             TextureClass::S1024 => 2,
             TextureClass::S2048 => 3,
+            TextureClass::S4096 => 4,
+            TextureClass::S8192 => 5,
         }
     }
 
     /// The arrays' side in texels.
     pub const fn side(self) -> u32 {
-        crate::layout::TEXTURE_SIZE_CLASSES[self.index() as usize]
+        crate::layout::TEXTURE_CLASS_SIDES[self.index() as usize]
     }
 }
 
@@ -1790,11 +1827,15 @@ pub struct TextureQuality {
     /// Whether normal-map mips are renormalized with the lost length folded into roughness
     /// (Toksvig); off keeps today's mips.
     pub toksvig: bool,
+    /// The MiB the material arrays may take (WP-9: a native desktop's share of its memory budget,
+    /// `texture::native_textures`), which scales each class's layer cap; 0 keeps the device
+    /// class's fixed rows (the web, phones and captures pinned before WP-9).
+    pub layer_budget_mib: u32,
 }
 
 impl TextureQuality {
     /// Today's textures: one 256 class, today's mips.
-    pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false };
+    pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false, layer_budget_mib: 0 };
 }
 
 /// The finest LOD error threshold anything may ask for, in output pixels (game systems LOD-06).
@@ -1903,7 +1944,7 @@ const fn textures_switched(textures: TextureQuality, on: bool) -> TextureQuality
     if textures.toksvig || !matches!(textures.max_class, TextureClass::S256) {
         return textures;
     }
-    TextureQuality { max_class: TextureClass::S1024, toksvig: true }
+    TextureQuality { max_class: TextureClass::S1024, toksvig: true, layer_budget_mib: 0 }
 }
 
 /// `spots` shadowed spots with the spot-shadows switch `on`.
@@ -1999,6 +2040,11 @@ pub struct Quality {
     /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
     /// renderer.
     pub grass: crate::foliage::GrassQuality,
+    /// Which layered-material parts the surfaces draw (AAA materials lane, [`crate::layers`]):
+    /// cover alone on `low` and the legacy renderer, cover noise, detail maps, the second layer and
+    /// the lobes from `medium` (and on the high phones), parallax occlusion mapping on desktop
+    /// `high` and `ultra`. A pipeline constant (`GX_MATERIAL_LAYERS`).
+    pub material_layers: crate::layers::LayerTier,
     /// Levels of detail (game systems LOD-06): the threshold, the crossfade band, impostors and the
     /// far-field density. Resource knobs; the presets set them per class (owner call L6).
     pub lod: LodQuality,
@@ -2052,10 +2098,13 @@ impl Quality {
                 continuous_sky: false,
                 irradiance_volumes: 0,
                 irradiance_leak_control: false,
+                irradiance_cells_per_frame: crate::irradiance::CELLS_PER_FRAME as u8,
+                irradiance_relight: false,
+                auto_rooms: crate::irradiance::AutoRooms::OFF,
                 froxel_fog: None,
                 clouds: None,
             },
-            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 },
+            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, shadowed_points: 0, decals: 0 },
             textures: TextureQuality::OFF,
             prepass: false,
             meshlets: false,
@@ -2068,6 +2117,7 @@ impl Quality {
             ssr: crate::ssr::SsrQuality::OFF,
             taau: false,
             grass: crate::foliage::GrassQuality::OFF,
+            material_layers: crate::layers::LayerTier::Cover,
             lod: LodQuality::LEGACY,
         }
     }
@@ -2092,7 +2142,7 @@ impl Quality {
             RenderFeature::Occlusion => self.occlusion,
             RenderFeature::Prepass => self.prepass,
             RenderFeature::TextureQuality => self.textures != TextureQuality::OFF,
-            RenderFeature::SpotShadows => self.lights.shadowed_spots > 0,
+            RenderFeature::SpotShadows => self.lights.shadowed_spots > 0 || self.lights.shadowed_points > 0,
             RenderFeature::LodFade => self.lod.fade_band > 0.0,
             RenderFeature::Impostors => self.lod.impostors,
         }
@@ -2124,7 +2174,14 @@ impl Quality {
             RenderFeature::Occlusion => self.occlusion = on,
             RenderFeature::Prepass => self.prepass = on,
             RenderFeature::TextureQuality => self.textures = textures_switched(self.textures, on),
-            RenderFeature::SpotShadows => self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on),
+            RenderFeature::SpotShadows => {
+                self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on);
+                // The switch covers point lights' cube maps too (AAA review WP-15): off drops them,
+                // on keeps the preset's.
+                if !on {
+                    self.lights.shadowed_points = 0;
+                }
+            }
             RenderFeature::LodFade => self.lod.fade_band = fade_band_switched(self.lod.fade_band, on),
             RenderFeature::Impostors => self.lod.impostors = on,
         }
@@ -2154,6 +2211,7 @@ impl Quality {
             meshlets: self.meshlets,
             occlusion: self.occlusion,
             specular_aa: self.specular_aa,
+            material_layers: self.material_layers,
         }
     }
 
@@ -2213,6 +2271,8 @@ pub struct PipelineKey {
     pub occlusion: bool,
     /// [`Quality::specular_aa`].
     pub specular_aa: bool,
+    /// [`Quality::material_layers`].
+    pub material_layers: crate::layers::LayerTier,
 }
 
 /// A per-feature switch id (`RenderFeature` on the wire).
@@ -2407,7 +2467,7 @@ pub enum QualityKnob {
     Clustered,
     /// [`LightQuality::tile_px`].
     LightTile,
-    /// [`LightQuality::shadowed_spots`].
+    /// [`LightQuality::shadowed_spots`] and [`LightQuality::shadowed_points`].
     ShadowedSpots,
     /// [`Quality::prepass`].
     Prepass,
@@ -2571,8 +2631,8 @@ impl RenderSettings {
     /// frame index temporal effects are keyed to and whether their history was reset. The jitter
     /// is TAA's position for `frame_index` when this build draws TAA, else zero.
     pub fn frame_config(&self, output: (u32, u32), scale: f32, frame_index: u64, history_reset: bool) -> FrameConfig {
-        let scale = scale.clamp(RENDER_SCALE_MIN, 1.0);
-        let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, px.max(1));
+        let scale = if scale.is_nan() { 1.0 } else { scale.clamp(RENDER_SCALE_MIN, RENDER_SCALE_SUPERSAMPLE_MAX) };
+        let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, supersampled_side_max(px));
         let taa = crate::graph::feature_drawn(&self.quality, RenderFeature::Taa);
         let jitter = if taa { crate::jitter::offset_px(frame_index, self.quality.taa.jitter_cycle) } else { crate::jitter::NO_JITTER };
         FrameConfig {
@@ -2664,9 +2724,10 @@ mod tests {
     #[test]
     fn texture_classes_are_the_layout_sizes_smallest_first() {
         let sides: Vec<u32> = TextureClass::ALL.iter().map(|class| class.side()).collect();
-        assert_eq!(sides, crate::layout::TEXTURE_SIZE_CLASSES);
+        // WP-9 flipped: six classes, 4096 and 8192 past the web's four.
+        assert_eq!(sides, crate::layout::TEXTURE_CLASS_SIDES);
         assert!(TextureClass::ALL.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(TextureClass::ALL.map(TextureClass::index), [0, 1, 2, 3]);
+        assert_eq!(TextureClass::ALL.map(TextureClass::index), [0, 1, 2, 3, 4, 5]);
     }
 
     #[test]

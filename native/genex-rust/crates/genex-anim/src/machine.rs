@@ -332,10 +332,18 @@ fn param_value(value: ParamValue) -> Value {
     }
 }
 
-/// A state's clip speed this tick: its fixed speed times its parameter, 0 when not finite.
-fn speed(state: &StateInfo, params: &Params) -> f32 {
-    let Motion::Clip(motion) = &state.motion else { return 0.0 };
-    let speed = motion.fixed_speed() * motion.speed_param().map_or(1.0, |param| params.float(param));
+/// A state's clip speed this tick: its fixed speed times its parameter, 0 when not finite. A
+/// blend's time is its phase, so its speed is over one cycle: the weighted mean of its clips'
+/// lengths under `params` (0 for a cycle with no length).
+pub(crate) fn speed(state: &StateInfo, params: &Params) -> f32 {
+    let (fixed, by) = match &state.motion {
+        Motion::Clip(motion) => (motion.fixed_speed(), motion.speed_param()),
+        Motion::Blend(motion) => (motion.fixed_speed(), motion.speed_param()),
+        _ => return 0.0,
+    };
+    let speed = fixed * by.map_or(1.0, |param| params.float(param));
+    let cycle = state.blend.as_ref().map_or(1.0, |blend| blend.cycle(params));
+    let speed = if cycle > 0.0 { speed / cycle } else { 0.0 };
     if speed.is_finite() { speed } else { 0.0 }
 }
 

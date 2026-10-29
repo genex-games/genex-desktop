@@ -95,6 +95,10 @@ pub mod flags {
     pub const FLIPBOOK: u32 = 2;
     /// The flipbook cross-fades between frames.
     pub const BLEND_FRAMES: u32 = 4;
+    /// Lit by the sun and the sky (`EmitterDesc::lit` above 0).
+    pub const LIT: u32 = 8;
+    /// Wrapped into its box around the camera (`EmitterDesc::follow_camera`).
+    pub const FOLLOW_CAMERA: u32 = 16;
 }
 
 /// The particles a frame of `class` draws at most (the per-class cap): a frame whose emitters hold
@@ -241,6 +245,26 @@ pub struct EmitterDesc {
     pub flipbook: Option<Flipbook>,
     /// Stopped by the opaque scene the camera sees.
     pub collision: Option<DepthCollision>,
+    /// Each particle's size varies by up to this fraction either way, `0..=0.9` (0: all one
+    /// size; 0.5: from half to one and a half; AAA materials, review WP-13).
+    pub size_variance: f32,
+    /// How much the sun (through its cascaded shadows) and the sky light the particles, `0..=1`
+    /// (0: their colour as given, unlit, as before; 1: a white flake in shade is as dark as the
+    /// shade). Lit once per billboard at its centre.
+    pub lit: f32,
+    /// The wind's gusts: the peak extra velocity (world units a tick) a gust adds, swelling and
+    /// dying over `gust_period` ticks and moving across the box as a front (0: steady air).
+    pub gust: [f32; 3],
+    /// Ticks between one gust's peak and the next (≥ 30 when there are gusts).
+    pub gust_period: f32,
+    /// Flutter: each particle sways about its path by up to `flutter[0]` world units, one sway
+    /// every `flutter[1]` ticks (a snowflake's tumble; 0: straight).
+    pub flutter: [f32; 2],
+    /// An endless field that follows the view (weather): every particle is wrapped into the box of
+    /// half sides `extent` around the camera, so the density holds wherever the camera goes, and
+    /// fades out over the box's outer tenth and its first and last twentieth of a life. `origin`
+    /// is then the box centre's offset from the camera ([`crate::weather`]).
+    pub follow_camera: bool,
 }
 
 impl EmitterDesc {
@@ -268,6 +292,12 @@ impl EmitterDesc {
             sorted: false,
             flipbook: None,
             collision: None,
+            size_variance: 0.0,
+            lit: 0.0,
+            gust: [0.0; 3],
+            gust_period: 0.0,
+            flutter: [0.0; 2],
+            follow_camera: false,
         }
     }
 
@@ -422,6 +452,13 @@ impl EmitterDesc {
         let [gx, gy, gz] = self.gravity;
         let collision = self.collision.unwrap_or(DepthCollision { thickness: 0.0, rest_ticks: 0 });
         let mut bits = if self.sorted { flags::SORTED } else { 0 };
+        let lit = finite_unit(self.lit);
+        if lit > 0.0 {
+            bits |= flags::LIT;
+        }
+        if self.follow_camera {
+            bits |= flags::FOLLOW_CAMERA;
+        }
         let mut book = [0.0; 4];
         if let Some(flipbook) = self.flipbook {
             bits |= flags::FLIPBOOK;
@@ -444,8 +481,35 @@ impl EmitterDesc {
             book,
             flags: [bits, stride.max(1), 0, 0],
             extent: [self.extent[0], self.extent[1], self.extent[2], 0.0],
+            weather: self.gust_row(),
+            flutter: [finite_or_zero(self.flutter[0]).max(0.0), finite_or_zero(self.flutter[1]).max(0.0), finite_or_zero(self.size_variance).clamp(0.0, SIZE_VARIANCE_MAX), lit],
         }
     }
+
+    /// The gusts' row: their peak velocity and period, zero without gusts (a period under
+    /// [`GUST_PERIOD_MIN_TICKS`] reads as that).
+    fn gust_row(&self) -> [f32; 4] {
+        let [x, y, z] = self.gust.map(finite_or_zero);
+        if x == 0.0 && y == 0.0 && z == 0.0 {
+            return [0.0; 4];
+        }
+        [x, y, z, finite_or_zero(self.gust_period).max(GUST_PERIOD_MIN_TICKS)]
+    }
+}
+
+/// The largest size variance an emitter keeps (a flake is never smaller than a tenth of its size).
+pub const SIZE_VARIANCE_MAX: f32 = 0.9;
+/// The shortest gust period an emitter keeps, in ticks (half a second).
+pub const GUST_PERIOD_MIN_TICKS: f32 = 30.0;
+
+/// `value`, or 0 when it is not finite.
+fn finite_or_zero(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+/// `value` held to `0..=1`, 0 when it is not finite.
+fn finite_unit(value: f32) -> f32 {
+    finite_or_zero(value).clamp(0.0, 1.0)
 }
 
 /// An emitter's uniforms for one tick (`Emitter`).
@@ -476,6 +540,11 @@ pub struct GpuEmitter {
     pub flags: [u32; 4],
     /// xyz: half the spawn box's sides; w 0.
     pub extent: [f32; 4],
+    /// xyz: the gusts' peak extra velocity; w: their period in ticks (0: no gusts).
+    pub weather: [f32; 4],
+    /// x: the flutter's reach (world units), y: its period in ticks, z: the size variance, w: how
+    /// lit the particles are (0..1).
+    pub flutter: [f32; 4],
 }
 
 /// One particle row (`Particle`).
@@ -754,7 +823,7 @@ fn make_layouts(device: &Device) -> Layouts {
     );
     // The vertex stage reads the fog row, the environment's prefiltered cube (the fog's in-scatter
     // under a sky or a map) and the aerial-perspective volume at each billboard's centre; the soft
-    // fade the scene's view depth.
+    // fade the scene's view depth; a lit emitter's vertices the sun's cascaded shadow maps.
     let both = ShaderStages::VERTEX_FRAGMENT;
     let frame = layout(
         device,
@@ -766,6 +835,8 @@ fn make_layouts(device: &Device) -> Layouts {
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: both, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
             texture_entry(4, both, filterable, wgpu::TextureViewDimension::D3),
             texture_entry(5, fragment, unfilterable, d2),
+            texture_entry(6, ShaderStages::VERTEX, wgpu::TextureSampleType::Depth, wgpu::TextureViewDimension::D2Array),
+            wgpu::BindGroupLayoutEntry { binding: 7, visibility: ShaderStages::VERTEX, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
         ],
     );
     let rows = layout(
@@ -1199,6 +1270,8 @@ impl ParticlePass {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&world.env_sampler) },
                 view_entry(4, &world.aerial),
                 view_entry(5, &view_depth),
+                view_entry(6, world.shadow_map),
+                wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::Sampler(world.shadow_sampler) },
             ],
         }));
     }

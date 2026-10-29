@@ -1,7 +1,8 @@
 //! GPU bounds. ProcessSandbox bounds CPU, memory and files, not GPU work, so the renderer checks
 //! every shader, buffer, texture, frame upload and capture against these caps before the GPU sees
-//! it. Each cap fits inside WebGPU's default limits, so a game that runs on the Mac cannot exceed
-//! what the web allows.
+//! it. Each cap fits inside WebGPU's default limits. The texture and target caps are split by
+//! destination (WP-9): a native build takes 8K targets and 8192 textures (WebGPU's default
+//! `max_texture_dimension_2d`), a browser keeps 4096; everything else is one number everywhere.
 
 use crate::error::{RenderCode, RenderError};
 
@@ -9,18 +10,30 @@ use crate::error::{RenderCode, RenderError};
 pub const WGSL_MAX_BYTES: usize = 256 * 1024;
 /// The largest buffer: WebGPU core's `max_storage_buffer_binding_size` (128 MiB).
 pub const BUFFER_MAX_BYTES: u64 = 128 * 1024 * 1024;
-/// The largest texture: a 4096 × 4096 RGBA8 image.
-pub const TEXTURE_MAX_BYTES: u64 = 4096 * 4096 * 4;
+/// The largest texture in a browser: a 4096 × 4096 RGBA8 image.
+pub const WEB_TEXTURE_MAX_BYTES: u64 = 4096 * 4096 * 4;
+/// The largest texture on a native build (WP-9): an 8192 × 8192 RGBA8 image, the 8192 size class
+/// and an 8K target.
+pub const NATIVE_TEXTURE_MAX_BYTES: u64 = 8192 * 8192 * 4;
+/// The largest texture this build takes: [`NATIVE_TEXTURE_MAX_BYTES`] natively,
+/// [`WEB_TEXTURE_MAX_BYTES`] in a browser.
+#[cfg(not(target_arch = "wasm32"))]
+pub const TEXTURE_MAX_BYTES: u64 = NATIVE_TEXTURE_MAX_BYTES;
+/// The largest texture this build takes: [`NATIVE_TEXTURE_MAX_BYTES`] natively,
+/// [`WEB_TEXTURE_MAX_BYTES`] in a browser.
+#[cfg(target_arch = "wasm32")]
+pub const TEXTURE_MAX_BYTES: u64 = WEB_TEXTURE_MAX_BYTES;
 /// Bytes one frame may write to GPU buffers (instance, material, batch, line tables): a hard
 /// refusal ([`UploadBudget`]). Streamed assets go through the soft upload queue instead
 /// ([`crate::upload_queue`]), which spreads them over frames under the class's smaller budget
 /// ([`crate::presets::stream_budget`]); this cap does not move for them.
 pub const UPLOAD_MAX_BYTES_PER_FRAME: u64 = 32 * 1024 * 1024;
-/// The largest capture, equal to the host's `NATIVE_CAPTURE_MAX_BYTES`.
-pub const CAPTURE_MAX_BYTES: u64 = 4096 * 4096 * 4;
+/// The largest capture, equal to the host's `NATIVE_CAPTURE_MAX_BYTES` (an 8K frame, WP-9).
+pub const CAPTURE_MAX_BYTES: u64 = 8192 * 8192 * 4;
 /// The world target's side is kept between these, as the C++ runtime's `MIN_WORLD_PX`/`MAX_WORLD_PX`:
-/// genex-core's values, so the facade's install check, the renderer and `ready` agree.
-pub use genex_core::protocol::{MAX_WORLD_PX, MIN_WORLD_PX};
+/// genex-core's values, so the facade's install check, the renderer and `ready` agree. The largest
+/// is split by destination (WP-9): 8192 natively, 4096 in a browser.
+pub use genex_core::protocol::{MAX_WORLD_PX, MIN_WORLD_PX, NATIVE_MAX_WORLD_PX, WEB_MAX_WORLD_PX};
 
 /// Refuse a WGSL source above [`WGSL_MAX_BYTES`].
 pub fn check_wgsl(source: &str) -> Result<(), RenderError> {

@@ -12,6 +12,7 @@
  *
  * It imports no part of the run, so the parts can use it without an import cycle.
  */
+import { LumaSetting } from "../look-facts.ts";
 import { shortSha } from "../git.ts";
 import { Side } from "../judge.ts";
 import { GameTrait, isGameKind, KIND_NAMES, normalizePlayScript } from "../kinds.ts";
@@ -241,6 +242,10 @@ export interface PlanPart {
   title: string;
   seam: string;
   owns: string[];
+  /** The registered camera that shows the part's area finished: every whole-game look photographs it (sourcing.ts). */
+  hero?: string;
+  /** Where the part's area stands (`interior` or `exterior`): its hero camera's luma band (look-facts.ts). */
+  setting?: string;
   done: string[];
   minutes: number | null;
   /** A part beyond what the user asked for (scope.ts): in goal mode an optional goal, never required. */
@@ -321,6 +326,10 @@ function planGame(
   };
 }
 
+/** Is this a setting a part may name (look-facts.ts `LumaSetting`)? */
+const isLumaSetting = (value: unknown): value is LumaSetting =>
+  (Object.values(LumaSetting) as unknown[]).includes(value);
+
 /** One part as the director wrote it: a bare id is a part too; everything else about it is optional. */
 function planPart(entry: unknown, id: string): PlanPart {
   const raw: AnyRecord = typeof entry === "string" ? { id: entry } : (entry ?? {});
@@ -334,6 +343,8 @@ function planPart(entry: unknown, id: string): PlanPart {
       .trim()
       .slice(0, PART_SEAM),
     owns: entries(raw.owns, list),
+    ...(String(raw.hero ?? "").trim() ? { hero: String(raw.hero).trim().slice(0, PART_SEAM) } : {}),
+    ...(isLumaSetting(raw.setting) ? { setting: raw.setting } : {}),
     done: scenarios(raw.done).slice(0, PART_DONE),
     ...(raw.multiplayer === true ? { multiplayer: true } : {}),
     ...(singlePart(raw) ? { single: true } : {}),

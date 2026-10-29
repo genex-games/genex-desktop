@@ -64,6 +64,8 @@ async function keepWinner(loop: FacetLoop, round: FacetRound): Promise<void> {
   // The game's declared demos (not the ones the capture happened to photograph): what
   // integration must not lose.
   result.demos = Array.isArray(round.evidence.registeredDemos) ? [...round.evidence.registeredDemos] : [];
+  // What the harness measured blocking on the accepted build is what the next round is held to adding to (taste.ts).
+  if (round.measured && typeof round.measured === "object") loop.incumbentMeasured = { ...round.measured };
   if (worktree) {
     await commitAll(
       ctx,

@@ -210,7 +210,8 @@ fn the_preset_table_rows() {
     let ao: Vec<(AoResolution, u8, bool)> = [low, medium, high, ultra].iter().map(|q| (q.ao.resolution, q.ao.slices, q.ao.temporal)).collect();
     assert_eq!(ao, [(AoResolution::Off, 0, false), (AoResolution::Half, 1, false), (AoResolution::Half, 2, true), (AoResolution::Full, 3, true)]);
     let lights: Vec<(u32, u32, u8)> = [low, medium, high, ultra].iter().map(|q| (q.lights.cap, q.lights.tile_px, q.lights.shadowed_spots)).collect();
-    assert_eq!(lights, [(64, 32, 0), (256, 32, 0), (1024, 16, 2), (1024, 16, 4)]);
+    // AAA review WP-15 flipped high's shadowed spots from 2 to 4 (the atlas is one layer either way).
+    assert_eq!(lights, [(64, 32, 0), (256, 32, 0), (1024, 16, 4), (1024, 16, 4)]);
     assert_eq!([low, medium, high, ultra].map(|q| q.exposure_input_divisor), [16, 8, 4, 4]);
     assert_eq!([low, medium, high, ultra].map(|q| q.contact_shadows), [false, false, true, true]);
     // R2 review: meshlets and Hi-Z occlusion measured slower on typical scenes, so no preset
@@ -638,8 +639,9 @@ fn the_class_budget_on_the_web_is_capped_by_device_memory() {
     assert_eq!(class_budget_bytes(class("mobile-low"), &web(Some(eight))), 48 * MIB, "never above the class");
 }
 
-/// Owner decision 2026-10-12 (2): on a native desktop the budget is max(class default, min(GPU-visible
-/// memory / 8, 2 GiB)); unknown memory keeps the class default; phones and the web keep theirs.
+/// Owner decision 2026-10-12 (2), WP-9 flipped: on a native desktop the budget is max(class
+/// default, min(GPU-visible memory / 3, 12 GiB)) (was / 8 up to 2 GiB); unknown memory keeps the
+/// class default; phones and the web keep theirs.
 #[test]
 fn a_native_desktop_budget_scales_with_the_gpu_visible_memory_the_platform_reports() {
     const GIB: u64 = 1024 * MIB;
@@ -649,19 +651,20 @@ fn a_native_desktop_budget_scales_with_the_gpu_visible_memory_the_platform_repor
     let pc = |os: TargetOs, backend: Backend, device_type: DeviceType, bytes: Option<u64>| {
         DeviceFacts::new(os, backend, device_type).with_gpu_visible_memory(bytes)
     };
-    // A 36 GB M-series Mac: Metal recommends about 27 GB, an eighth is past the 2 GiB ceiling.
+    // A 36 GB M-series Mac: Metal recommends about 27 GB, a third is 9 GiB.
     let large_mac = mac(Some(27 * GIB));
-    // An 8 GB MacBook Air: Metal recommends two thirds of it, an eighth of that is about 683 MiB.
+    // An 8 GB MacBook Air: Metal recommends two thirds of it, a third of that is about 1.8 GiB.
     let small_mac = mac(Some(8 * GIB / 3 * 2));
     let rows = [
-        ("36 GB Mac", "desktop-high", large_mac.clone(), 2 * GIB),
-        ("36 GB Mac", "desktop-ultra", large_mac.clone(), 2 * GIB),
-        ("36 GB Mac", "desktop-low", large_mac, 2 * GIB),
-        ("8 GB MacBook Air", "desktop-high", small_mac.clone(), 8 * GIB / 3 * 2 / 8),
-        ("8 GB MacBook Air", "desktop-ultra", small_mac, 1024 * MIB),
+        ("36 GB Mac", "desktop-high", large_mac.clone(), 9 * GIB),
+        ("36 GB Mac", "desktop-ultra", large_mac.clone(), 9 * GIB),
+        ("36 GB Mac", "desktop-low", large_mac, 9 * GIB),
+        ("128 GB Mac", "desktop-ultra", mac(Some(96 * GIB)), 12 * GIB),
+        ("8 GB MacBook Air", "desktop-high", small_mac.clone(), 8 * GIB / 3 * 2 / 3),
+        ("8 GB MacBook Air", "desktop-ultra", small_mac, 8 * GIB / 3 * 2 / 3),
         ("unknown Mac", "desktop-high", mac(None), 512 * MIB),
-        ("8 GB discrete PC", "desktop-mid", pc(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu, Some(8 * GIB)), GIB),
-        ("8 GB discrete Linux box", "desktop-mid", pc(TargetOs::Linux, Backend::Vulkan, DeviceType::DiscreteGpu, Some(8 * GIB)), GIB),
+        ("8 GB discrete PC", "desktop-mid", pc(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu, Some(8 * GIB)), 8 * GIB / 3),
+        ("8 GB discrete Linux box", "desktop-mid", pc(TargetOs::Linux, Backend::Vulkan, DeviceType::DiscreteGpu, Some(8 * GIB)), 8 * GIB / 3),
         ("2 GB discrete PC", "desktop-ultra", pc(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu, Some(2 * GIB)), 1024 * MIB),
         ("128 MB integrated PC", "desktop-mid", pc(TargetOs::Windows, Backend::Dx12, DeviceType::IntegratedGpu, Some(128 * MIB)), 256 * MIB),
         ("unknown PC", "desktop-mid", pc(TargetOs::Windows, Backend::Vulkan, DeviceType::DiscreteGpu, None), 256 * MIB),
@@ -1229,7 +1232,7 @@ fn knob_differs(knob: QualityKnob, a: &Quality, b: &Quality) -> bool {
         QualityKnob::LightCap => a.lights.cap != b.lights.cap,
         QualityKnob::Clustered => a.lights.clustered != b.lights.clustered,
         QualityKnob::LightTile => a.lights.tile_px != b.lights.tile_px,
-        QualityKnob::ShadowedSpots => a.lights.shadowed_spots != b.lights.shadowed_spots,
+        QualityKnob::ShadowedSpots => a.lights.shadowed_spots != b.lights.shadowed_spots || a.lights.shadowed_points != b.lights.shadowed_points,
         QualityKnob::Prepass => a.prepass != b.prepass,
         QualityKnob::Meshlets => a.meshlets != b.meshlets,
         QualityKnob::Occlusion => a.occlusion != b.occlusion,

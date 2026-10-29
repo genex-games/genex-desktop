@@ -389,6 +389,10 @@ fn grid_quality(leak_control: bool) -> Quality {
     quality.exposure = true;
     quality.environment = high.environment;
     quality.environment.irradiance_leak_control = leak_control;
+    // These rows characterize the volumes a scene declares: no rooms added, no relight (AAA
+    // review WP-12's auto rooms have their own rows).
+    quality.environment.auto_rooms = genex_render::irradiance::AutoRooms::OFF;
+    quality.environment.irradiance_relight = false;
     quality.lights = high.lights;
     quality.shadows = high.shadows;
     quality

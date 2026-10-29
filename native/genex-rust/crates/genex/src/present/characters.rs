@@ -383,7 +383,7 @@ pub(super) fn push(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut
     let path = animator.asset().path();
     let skinned = assets.characters.skin(path).filter(|skin| skin.skin.joint_count() as usize == animator.set().skeleton().skin_order().len());
     let Some(skin) = skinned else {
-        let model = Shape::Model { model: animator.model(), transform, tint, material: material.cloned() };
+        let model = Shape::Model { model: animator.model(), transform, tint, material: material.cloned(), cover: None };
         return push_shape(sink, assets, missing, &model);
     };
     let joints = assets.characters.posed(animator).map_or_else(|| evaluated_palette(animator), <[_]>::to_vec);

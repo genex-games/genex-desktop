@@ -261,6 +261,8 @@ pub struct RetainedSpan {
     pub bounds: ([f32; 3], f32),
     /// The draw LOD its LOD rows were computed with (game systems LOD-02).
     pub lod: DrawLod,
+    /// The wind words its rows carry (model wind; 0 for a group that does not sway).
+    pub wind: [u32; 3],
 }
 
 impl RetainedSpan {
@@ -270,7 +272,7 @@ impl RetainedSpan {
     /// all of it.
     pub fn changed_since(&self, last: &RetainedSpan) -> Range<u32> {
         let placed = self.group.id() == last.group.id() && self.first_row == last.first_row && self.rows == last.rows;
-        let same = placed && self.material == last.material && self.bounds == last.bounds && self.lod == last.lod;
+        let same = placed && self.material == last.material && self.bounds == last.bounds && self.lod == last.lod && self.wind == last.wind;
         if !same {
             return 0..self.rows;
         }

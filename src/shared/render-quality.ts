@@ -186,6 +186,8 @@ export const LookKey = {
   LocalExposureHighlights: "local_exposure_highlights",
   /** Local exposure: how strongly dark regions come up towards middle grey (1: not at all). */
   LocalExposureShadows: "local_exposure_shadows",
+  /** Auto exposure adapts eight times faster for half a second at a declared room's doorway (on by default). */
+  DoorwayAdaptation: "doorway_adaptation",
 } as const;
 export type LookKey = (typeof LookKey)[keyof typeof LookKey];
 
@@ -290,6 +292,8 @@ export const RenderSettingsRefusal = {
   InvalidScale: "invalid-render-scale",
   /** A frame budget outside `FRAME_BUDGET_MS_MIN..=FRAME_BUDGET_MS_MAX`. */
   InvalidFrameBudget: "invalid-frame-budget",
+  /** A `look` the game cannot read as `[render.look]` keys (an unknown key, a wrong value). */
+  InvalidLook: "invalid-look",
 } as const;
 export type RenderSettingsRefusal = (typeof RenderSettingsRefusal)[keyof typeof RenderSettingsRefusal];
 
@@ -470,6 +474,8 @@ export interface RenderLook {
   localExposureHighlights?: number;
   /** Local exposure's contrast below middle grey (lower brings dark regions up more; 1: off). */
   localExposureShadows?: number;
+  /** Whether auto exposure adapts faster at a declared room's doorway (true when absent). */
+  doorwayAdaptation?: boolean;
 }
 
 /** One `[render.class.<class>]` table: the quality a game asks for on that class. */
@@ -523,6 +529,8 @@ export interface RenderSettingsChange {
   renderScaleLock?: number | null;
   /** The frame time, in ms, dynamic resolution holds instead of the class's; null gives the class's back. */
   frameBudgetMs?: number | null;
+  /** `[render.look]` keys the game overlays on its look, no rebuild (the game checks them); null gives its look back. */
+  look?: Record<string, unknown> | null;
 }
 
 /** What `renderSettings` answers: the settings in force after the call. */

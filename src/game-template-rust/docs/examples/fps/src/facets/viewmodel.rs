@@ -1,11 +1,14 @@
+//! GREYBOX: replace before done with the arms kit (`docs/examples/fps-arms/`) or a generated model.
+//!
 //! The view model: two forearms in jacket sleeves, two gloved hands and a pistol, built from
 //! boxes in the camera's frame and drawn under the `hands` tag. Nothing here is a model file, so
 //! it reads at every preset and never comes out as a dark slab; swap any part for a GLB later
 //! (`frame.model` at the same transform). It moves only from simulation state: sway against the
-//! turn, bob from the stride, kick and a slide that cycles from the recoil, and a pull-back from
+//! turn, a lag behind the camera rig's bob, kick and a slide that cycles from the recoil, and a pull-back from
 //! the wall in front. All of it stays further out than the camera's near plane (0.1 m).
 
-use genex::math::{self, Mat3, Quat, Vec3, vec3};
+use genex::camera::Comfort;
+use genex::math::{Mat3, Quat, Vec3, vec3};
 use genex::prelude::*;
 
 use super::World;
@@ -21,6 +24,8 @@ const SWAY_FOLLOW: f32 = 0.2;
 /// The kick: back along the barrel (m) and up about the grip (radians) at full recoil.
 const KICK_BACK: f32 = 0.06;
 const KICK_UP: f32 = 0.22;
+/// The share of the camera's bob the gun lags behind (the arms' inertia).
+const GUN_BOB_LAG: f32 = 0.25;
 /// The muzzle flash lasts this many ticks after a shot.
 const FLASH_TICKS: u64 = 2;
 
@@ -69,11 +74,11 @@ fn view_turn(camera: &Camera) -> Quat {
     Quat::from_mat3(&Mat3::from_cols(right, back.cross(right), back))
 }
 
-/// Where the gun is in the camera's frame this tick, and its turn there.
+/// Where the gun is in the camera's frame this tick, and its turn there. It rides the camera's bob
+/// and lags a quarter of it, under the person's head-bob setting.
 fn gun_pose(world: &World, sway: Vec2) -> (Vec3, Quat) {
-    let phase = world.stride / 0.75 * std::f32::consts::PI;
-    let size = (world.speed / 3.0).min(1.5);
-    let bob = vec3(math::sin(phase) * 0.006, -math::cos(phase * 2.0).abs() * 0.008, 0.0) * size;
+    let pose = world.rig.pose();
+    let bob = vec3(-pose.bob[0], -pose.bob[1], 0.0) * GUN_BOB_LAG * Comfort::current().bob_share();
     let pull = vec3(0.0, -world.wall_pull * 0.4, world.wall_pull);
     let at = GRIP + vec3(sway.x, sway.y, 0.0) + bob + pull + Vec3::Z * KICK_BACK * world.recoil;
     let turn = Quat::from_rotation_x(KICK_UP * world.recoil) * Quat::from_rotation_y(-0.04);

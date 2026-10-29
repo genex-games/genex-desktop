@@ -16,6 +16,7 @@ use genex_gpu_memory::MemoryFacts;
 use crate::post::bloom::CHAIN_RESOLUTION;
 use crate::post::dof::DofTier;
 use crate::foliage::GrassQuality;
+use crate::layers::LayerTier;
 use crate::post::motion_blur::MotionBlurTier;
 use crate::screen_inputs::ScreenInputs;
 use crate::settings::{
@@ -28,11 +29,12 @@ use crate::settings::{
 const MIB: u64 = 1024 * 1024;
 /// One GiB.
 const GIB: u64 = 1024 * MIB;
-/// A native desktop's budget may grow to this share of its GPU-visible memory (one eighth)...
-pub const DESKTOP_BUDGET_MEMORY_DIVISOR: u64 = 8;
-/// ...up to this ceiling (owner decision 2026-10-12 (2): a 36 GB M-series Mac gets 2 GiB, an 8 GB
-/// MacBook Air about 680 MiB, an 8 GB discrete PC 1 GiB).
-pub const DESKTOP_BUDGET_MEMORY_CAP_BYTES: u64 = 2 * GIB;
+/// A native desktop's budget may grow to this share of its GPU-visible memory (a third, WP-9: an
+/// eighth up to 2 GiB held 4096 textures and 8K targets out of every native desktop)...
+pub const DESKTOP_BUDGET_MEMORY_DIVISOR: u64 = 3;
+/// ...up to this ceiling: a 36 GB M-series Mac gets 9 GiB, an 8 GB MacBook Air about 1.8 GiB, an
+/// 8 GB discrete PC about 2.7 GiB, a 128 GB Mac the ceiling.
+pub const DESKTOP_BUDGET_MEMORY_CAP_BYTES: u64 = 12 * GIB;
 /// A phone browser's memory budget never exceeds this, whatever the class.
 pub const WEB_BUDGET_CAP_BYTES: u64 = 256 * MIB;
 /// A phone browser's budget per GB of `navigator.deviceMemory`.
@@ -138,6 +140,10 @@ pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
 /// Irradiance volumes baked per desktop and browser preset (low, medium, high and ultra; renderer
 /// pass 2 A.4: medium and up).
 pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
+/// Volume cells a Live frame bakes on `ultra` (AAA review WP-12; the other presets and phones bake
+/// `irradiance::CELLS_PER_FRAME`: two cells measured 0.85 ms a frame at 1080p on an M4 Max with the
+/// four-cell slice, past the bake row's 0.5 ms, so high keeps two).
+pub const ULTRA_CELLS_PER_FRAME: u8 = 4;
 /// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes at `high` and
 /// `ultra` (plan A.4: none on mobile-low, which keeps the sky's SH9; D16: none at a phone's
 /// `medium` or `low`).
@@ -222,8 +228,15 @@ pub fn reference_resolution(class: DeviceClass) -> (u32, u32) {
 /// The exact target size of a frame rendered at `scale` of `output` (the rule
 /// [`RenderSettings::frame_config`] uses).
 pub fn step_size(output: (u32, u32), scale: f32) -> (u32, u32) {
-    let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, px.max(1));
+    let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, crate::settings::supersampled_side_max(px));
     (side(output.0), side(output.1))
+}
+
+/// The largest render scale `class` draws at under `os` (WP-9): 2 (supersampled,
+/// [`crate::settings::RENDER_SCALE_SUPERSAMPLE_MAX`]) on a native desktop-ultra, 1 everywhere else.
+pub fn render_scale_max(class: DeviceClass, os: TargetOs) -> f32 {
+    let native_ultra = matches!(os, TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux) && class.form == FormFactor::Desktop && class.tier == PerformanceTier::Ultra;
+    if native_ultra { crate::settings::RENDER_SCALE_SUPERSAMPLE_MAX } else { 1.0 }
 }
 
 /// The target size of each of `class`'s DRS steps at `output`, lowest first.
@@ -477,6 +490,12 @@ fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
         QualityPreset::High => GrassQuality::HIGH,
         QualityPreset::Ultra => GrassQuality::ULTRA,
     };
+    // AAA materials: layered materials by preset (phones' caps lower it, `apply_mobile_caps`).
+    quality.material_layers = match preset {
+        QualityPreset::Low => LayerTier::Cover,
+        QualityPreset::Medium => LayerTier::Layers,
+        QualityPreset::High | QualityPreset::Ultra => LayerTier::Parallax,
+    };
     // Game systems LOD-06 (owner call L6): 1 px on high and ultra, coarser below (phones take
     // their tier's floor, `apply_mobile_caps`).
     quality.lod = match preset {
@@ -507,6 +526,9 @@ fn environment(cube_size: u32, sky_lut: (u32, u32), cadence: u8, sun_rebake_tent
         continuous_sky: false,
         irradiance_volumes: 0,
         irradiance_leak_control: true,
+        irradiance_cells_per_frame: crate::irradiance::CELLS_PER_FRAME as u8,
+        irradiance_relight: false,
+        auto_rooms: crate::irradiance::AutoRooms::OFF,
         froxel_fog: None,
         clouds: None,
     }
@@ -529,7 +551,7 @@ fn shadows(cascades: u8, map_size: u32, filter: ShadowFilter, format: ShadowForm
 }
 
 fn lights(cap: u32, tile_px: u32, shadowed_spots: u8) -> LightQuality {
-    LightQuality { cap, clustered: true, tile_px, shadowed_spots, decals: crate::decals::DESKTOP_DECALS }
+    LightQuality { cap, clustered: true, tile_px, shadowed_spots, shadowed_points: 0, decals: crate::decals::DESKTOP_DECALS }
 }
 
 /// The material sampler's anisotropy per preset and class (P2-0.12 LG-02): desktop high and ultra
@@ -587,6 +609,9 @@ fn medium_row(quality: &mut Quality) {
     quality.environment.clouds = Some(crate::clouds::MEDIUM_GRID);
     quality.environment.reflection_probes = PROBES_PER_PRESET[1];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[1];
+    // AAA review WP-12: a declared room's probe gets its volume and its volume its probe, baked
+    // once; the camera's own volume and the relight start at high.
+    quality.environment.auto_rooms = crate::irradiance::AutoRooms::PAIRED;
     // 5x5 PCF (release R-13, D22): 3x3 drew a straight edge's texel staircase (0.37 texels off its
     // line against 0.16) for the same nine reads.
     quality.shadows = shadows(2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth32, &MEDIUM_REACH);
@@ -603,6 +628,12 @@ fn high_row(quality: &mut Quality) {
     quality.environment = environment(256, (192, 108), 1, 5, true);
     quality.environment.reflection_probes = PROBES_PER_PRESET[2];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[2];
+    // AAA review WP-12, dynamic probe GI: rooms paired and a volume around the camera wherever
+    // no declared room holds it, baked two cells a frame and baked again for as long as they are
+    // held, a relight batch every `irradiance::RELIGHT_CADENCE` frames (ultra four cells). Software
+    // rays (D8) stay out: their cheapest update measured 10.9 ms on an M1-class GPU.
+    quality.environment.auto_rooms = crate::irradiance::AutoRooms::ALL;
+    quality.environment.irradiance_relight = true;
     // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
     // sample count; phones keep the time-sliced cycle).
     quality.environment.continuous_sky = true;
@@ -619,7 +650,11 @@ fn high_row(quality: &mut Quality) {
     // B.4: the visibility bitmask (no halo behind thin objects; ultra adds its GI). Medium keeps
     // XeGTAO's horizons within its 0.6 ms; phones keep them too (`apply_mobile_caps`).
     quality.ao_method = AoMethod::Bitmask;
-    quality.lights = lights(1024, 16, 2);
+    // Four shadowed spots (AAA review WP-15: a room's fixtures cast shadows; was two): the atlas is
+    // one layer whatever the count, so only the four maps' draws are added. One shadowed point
+    // light (a bare bulb, a lantern): six faces in the point layer after the spot atlas.
+    quality.lights = lights(1024, 16, 4);
+    quality.lights.shadowed_points = 1;
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
     quality.dof = DofTier::Ring;
     quality.motion_blur = MotionBlurTier::Reconstruction;
@@ -646,6 +681,7 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     quality.environment.hdri_cube_size = ULTRA_HDRI_CUBE_PX;
     quality.environment.reflection_probes = PROBES_PER_PRESET[3];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[3];
+    quality.environment.irradiance_cells_per_frame = ULTRA_CELLS_PER_FRAME;
     quality.environment.froxel_fog = Some(crate::froxel::ULTRA_GRID);
     quality.environment.clouds = Some(crate::clouds::ULTRA_GRID);
     let map_size = if form == FormFactor::Desktop { 4096 } else { 2048 };
@@ -658,9 +694,12 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // B.4's screen-space GI, the light of what the bitmask hides (look integration). Not at high:
     // its terms hold the light (`ao::target_bytes_shaped`), +18.4 MB at 1440p, and desktop-high's
     // default with its texture arrays would pass its 512 MiB budget (553.7 MB); like D16, a preset
-    // fits its budget by its defaults, not by a larger budget.
+    // fits its budget by its defaults, not by a larger budget (AAA review WP-12 tried high and the
+    // integrator kept it on ultra until the owner measures a larger budget).
     quality.ao_method = AoMethod::BitmaskGi;
+    // Two shadowed point lights (AAA review WP-15).
     quality.lights = lights(1024, 16, 4);
+    quality.lights.shadowed_points = crate::layout::MAX_SHADOWED_POINTS as u8;
     quality.ssr = crate::ssr::SsrQuality::ULTRA;
 }
 
@@ -797,6 +836,8 @@ pub fn cap_lights(lights: &mut LightQuality, class: DeviceClass) {
     }
     let spots = if class.tier >= PerformanceTier::High { 1 } else { 0 };
     lights.shadowed_spots = lights.shadowed_spots.min(spots);
+    // A phone draws no point light's cube (six maps; unmeasured there, D16).
+    lights.shadowed_points = 0;
     lights.decals = lights.decals.min(crate::decals::MOBILE_DECALS);
 }
 
@@ -843,6 +884,11 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     let phone_volumes = if preset >= QualityPreset::High { tier_volumes } else { 0 };
     quality.environment.irradiance_volumes = quality.environment.irradiance_volumes.min(phone_volumes);
     quality.environment.irradiance_leak_control = false;
+    // AAA review WP-12: a phone pairs declared rooms but bakes no camera volume, at the desktop's
+    // medium slice, and never bakes again on its own (D16: the slice alone is +1.9 ms there).
+    quality.environment.auto_rooms = crate::irradiance::AutoRooms { camera: false, ..quality.environment.auto_rooms };
+    quality.environment.irradiance_cells_per_frame = crate::irradiance::CELLS_PER_FRAME as u8;
+    quality.environment.irradiance_relight = false;
     // A.5: phones keep the analytic fog until the froxel fog is measured on them (mobile-high only,
     // behind that measurement).
     quality.environment.froxel_fog = None;
@@ -864,6 +910,8 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     // tile GPU's cost); none elsewhere on phones.
     let phone_grass = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
     quality.grass = if phone_grass { GrassQuality::MOBILE } else { GrassQuality::OFF };
+    // AAA materials: no parallax search on phones; the low phones draw the cover alone.
+    quality.material_layers = if class.tier == PerformanceTier::Low { LayerTier::Cover } else { quality.material_layers.min(LayerTier::Layers) };
     cap_lod(&mut quality.lod, class);
 }
 
@@ -1105,8 +1153,9 @@ impl LodOverride {
 pub struct ClassOverride {
     /// The preset.
     pub preset: Option<QualityPreset>,
-    /// The nominal render scale (clamped to [`RENDER_SCALE_MIN`]..=1): of the output, or with an
-    /// upscaling mode in force ([`ClassOverride::upscale`]) of the mode's share.
+    /// The nominal render scale (clamped to [`RENDER_SCALE_MIN`]..=[`render_scale_max`]: 2,
+    /// supersampled, on a native desktop-ultra, else 1): of the output, or with an upscaling mode in
+    /// force ([`ClassOverride::upscale`]) of the mode's share.
     pub render_scale: Option<f32>,
     /// The frame-rate target dynamic resolution holds, one of [`crate::drs::FRAME_RATE_TARGETS`].
     pub fps: Option<u32>,
@@ -1126,6 +1175,11 @@ pub struct ClassOverride {
     /// Level-of-detail choices (game systems LOD-06): applied after the preset and before the
     /// switches, held to their ranges and the class's floor.
     pub lod: LodOverride,
+    /// The largest material texture class (WP-9; the cinematic tier's 8192), held to the
+    /// destination's ([`crate::texture::destination_max_class`]: 8192 on a native desktop, 2048 in
+    /// a browser, 1024 on a phone). None keeps the preset's (4096 at `high` and `ultra` on a native
+    /// desktop).
+    pub max_texture_class: Option<crate::settings::TextureClass>,
 }
 
 /// A game's genex.toml `[render]` quality: its preset and its per-class tables.
@@ -1202,8 +1256,11 @@ pub fn profile(facts: &DeviceFacts, class: DeviceClass, game: &RenderOverrides, 
     // pass ([`occlusion_runs_with`]). The settings must not claim it runs.
     quality.occlusion &= occlusion_runs_with(&quality);
     if let Some(scale) = layers.iter().flatten().filter_map(|layer| layer.render_scale).next_back() {
-        quality.render_scale = scale.clamp(RENDER_SCALE_MIN, 1.0);
+        quality.render_scale = scale.clamp(RENDER_SCALE_MIN, render_scale_max(class, facts.os));
     }
+    let budget_bytes = class_budget_bytes(class, facts);
+    let asked_class = layers.iter().flatten().filter_map(|layer| layer.max_texture_class).next_back();
+    quality.textures = crate::texture::native_textures(quality.textures, class, facts.os, budget_bytes, asked_class);
     let target_fps = layers.iter().flatten().filter_map(|layer| layer.fps).next_back().unwrap_or(defaults.target_fps);
     RenderProfile {
         class,
@@ -1212,8 +1269,77 @@ pub fn profile(facts: &DeviceFacts, class: DeviceClass, game: &RenderOverrides, 
         target_fps,
         sustained_fps: defaults.sustained_fps.filter(|fps| *fps < target_fps),
         scene_format: scene_format(class, facts.rg11b10_renderable()),
-        budget_bytes: class_budget_bytes(class, facts),
+        budget_bytes,
         drs_steps: defaults.drs_steps,
+    }
+}
+
+/// An explicit resolution tier (WP-9; `ResolutionPreset` on the wire): every output pixel rendered
+/// natively through TAA, `ultra`, no dynamic resolution, and the texture class the tier names. A
+/// native desktop draws it as named; a browser or a phone holds it to its own caps (2048 or 1024
+/// textures, its budget), so one config is right everywhere.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResolutionPreset {
+    /// A 3840x2160 output drawn natively, 4096 textures, 60 fps.
+    Native4k,
+    /// A 7680x4320 output drawn natively, 8192 textures, 30 fps: stills, trailers and photo modes.
+    Cinematic8k,
+}
+
+impl ResolutionPreset {
+    /// Every tier, smallest first.
+    pub const ALL: [ResolutionPreset; 2] = [ResolutionPreset::Native4k, ResolutionPreset::Cinematic8k];
+
+    /// The wire spelling.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            ResolutionPreset::Native4k => "native-4k",
+            ResolutionPreset::Cinematic8k => "cinematic-8k",
+        }
+    }
+
+    /// The tier spelled `wire`, if any.
+    pub fn from_wire(wire: &str) -> Option<ResolutionPreset> {
+        ResolutionPreset::ALL.into_iter().find(|tier| tier.wire() == wire)
+    }
+
+    /// The output the tier is measured and captured at (`capture --size`).
+    pub const fn output(self) -> (u32, u32) {
+        match self {
+            ResolutionPreset::Native4k => (3840, 2160),
+            ResolutionPreset::Cinematic8k => (7680, 4320),
+        }
+    }
+
+    /// The largest material texture class the tier asks for.
+    pub const fn texture_class(self) -> crate::settings::TextureClass {
+        match self {
+            ResolutionPreset::Native4k => crate::settings::TextureClass::S4096,
+            ResolutionPreset::Cinematic8k => crate::settings::TextureClass::S8192,
+        }
+    }
+
+    /// The frame rate the tier holds.
+    pub const fn target_fps(self) -> u32 {
+        match self {
+            ResolutionPreset::Native4k => 60,
+            ResolutionPreset::Cinematic8k => 30,
+        }
+    }
+
+    /// The class table the tier is ([`profile`] merges it like any other): `ultra`, render scale 1
+    /// under the Native upscaling mode, dynamic resolution off, the tier's texture class and rate.
+    pub fn class_override(self) -> ClassOverride {
+        ClassOverride {
+            preset: Some(QualityPreset::Ultra),
+            render_scale: Some(1.0),
+            fps: Some(self.target_fps()),
+            upscale: Some(crate::upscale::UpscaleMode::Native),
+            dynamic_resolution: Some(false),
+            max_texture_class: Some(self.texture_class()),
+            ..ClassOverride::default()
+        }
     }
 }
 

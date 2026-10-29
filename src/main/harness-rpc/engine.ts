@@ -132,5 +132,6 @@ export function engineRpc(core: StudioCore, x: CoreInternals) {
           startedAt: d.startedAt,
         })),
     [HostMethod.EngineHardware]: async () => hardwareReport(),
+    [HostMethod.EngineUsage]: async () => core.options.providerUsage?.() ?? [],
   } satisfies Partial<HarnessHostHandlers>;
 }

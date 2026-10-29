@@ -84,7 +84,17 @@ type CustomBody<'a> = Box<dyn FnMut(&mut egui::Ui) -> bool + 'a>;
 /// panel(ui)).schema_tab(SettingsTab::Audio).show(ui, &mut store, &tr)`.
 pub struct SettingsMenu<'a> {
     key: &'a str,
-    tabs: Vec<(SettingsTab, Option<CustomBody<'a>>)>,
+    tabs: Vec<(SettingsTab, Body<'a>)>,
+}
+
+/// What a tab draws.
+enum Body<'a> {
+    /// The store's schema: presets, options, Reset.
+    Schema,
+    /// The caller's closure.
+    Custom(CustomBody<'a>),
+    /// The schema's option rows and their Reset, then the caller's closure.
+    Both(CustomBody<'a>),
 }
 
 impl<'a> SettingsMenu<'a> {
@@ -96,14 +106,22 @@ impl<'a> SettingsMenu<'a> {
     /// A tab drawn from the store's schema: presets, options, Reset.
     #[must_use]
     pub fn schema_tab(mut self, tab: SettingsTab) -> SettingsMenu<'a> {
-        self.tabs.push((tab, None));
+        self.tabs.push((tab, Body::Schema));
         self
     }
 
     /// A tab the caller draws.
     #[must_use]
     pub fn custom_tab(mut self, tab: SettingsTab, body: impl FnMut(&mut egui::Ui) -> bool + 'a) -> SettingsMenu<'a> {
-        self.tabs.push((tab, Some(Box::new(body))));
+        self.tabs.push((tab, Body::Custom(Box::new(body))));
+        self
+    }
+
+    /// A tab that draws the schema's rows for `tab` (presets, options and Reset, when the schema
+    /// has any), then the caller's closure: the Graphics tab's display rows over the render panel.
+    #[must_use]
+    pub fn schema_and_custom_tab(mut self, tab: SettingsTab, body: impl FnMut(&mut egui::Ui) -> bool + 'a) -> SettingsMenu<'a> {
+        self.tabs.push((tab, Body::Both(Box::new(body))));
         self
     }
 
@@ -132,8 +150,17 @@ impl<'a> SettingsMenu<'a> {
         let key = self.key;
         let (tab, body) = &mut self.tabs[open];
         let changed = match body {
-            Some(custom) => custom(ui),
-            None => schema_body(ui, key, *tab, store, tr),
+            Body::Custom(custom) => custom(ui),
+            Body::Schema => schema_body(ui, key, *tab, store, tr),
+            Body::Both(custom) => {
+                let has_rows = store.schema().tab_options(*tab).next().is_some();
+                let rows = has_rows && schema_body(ui, key, *tab, store, tr);
+                if has_rows {
+                    ui.separator();
+                }
+                // Both run on every pass: `|` keeps the closure from being skipped.
+                rows | custom(ui)
+            }
         };
         MenuAnswer { tab: *tab, changed, back }
     }

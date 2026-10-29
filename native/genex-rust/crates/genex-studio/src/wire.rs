@@ -474,6 +474,8 @@ vocabulary! {
         InvalidScale => "invalid-render-scale",
         /// A frame budget outside [`FRAME_BUDGET_MS_MIN`]..=[`FRAME_BUDGET_MS_MAX`].
         InvalidFrameBudget => "invalid-frame-budget",
+        /// A `look` the game cannot read as `[render.look]` keys (an unknown key, a wrong value).
+        InvalidLook => "invalid-look",
     }
 }
 
@@ -1006,6 +1008,9 @@ pub struct RenderSettingsChange {
     /// `Some(Some(ms))` makes dynamic resolution hold `ms` per frame, `Some(None)` gives the
     /// class's frame time back.
     pub frame_budget_ms: Option<Option<f64>>,
+    /// `Some(Some(json))`: `[render.look]` keys (a JSON object's text) the game overlays on its
+    /// look, no rebuild; `Some(None)` gives the game's look back. The game checks the keys.
+    pub look: Option<Option<String>>,
 }
 
 /// Why a `renderSettings` argument was refused: a typed refusal, or a value outside its shape
@@ -1061,6 +1066,15 @@ fn scale_lock(set: &Value) -> Result<Option<Option<f64>>, SettingsArgError> {
     }
 }
 
+fn look_keys(set: &Value) -> Result<Option<Option<String>>, SettingsArgError> {
+    match set.get("look") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(look @ Value::Object(_)) => Ok(Some(Some(String::from_utf8_lossy(&look.dump()).into_owned()))),
+        Some(_) => Err(SettingsArgError::Bad(BadField("look"))),
+    }
+}
+
 fn frame_budget(set: &Value) -> Result<Option<Option<f64>>, SettingsArgError> {
     match set.get("frameBudgetMs") {
         None => Ok(None),
@@ -1089,6 +1103,7 @@ pub fn parse_render_settings(arg: &Value) -> Result<Option<RenderSettingsChange>
         reset_features: matches!(set.get("features"), Some(Value::Null)),
         render_scale_lock: scale_lock(set)?,
         frame_budget_ms: frame_budget(set)?,
+        look: look_keys(set)?,
     }))
 }
 

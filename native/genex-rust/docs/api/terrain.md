@@ -44,7 +44,9 @@ samples a side. A layer is `TerrainLayer::textured(albedo, data, tile)` (two fil
 `assets/`: the base colour with the layer's height in alpha, and a data texture with the normal's
 x and y in red and green, roughness in blue and occlusion in alpha, one tile every `tile` metres,
 `.with_tint(..)`, `.with_fallback(..)` for the colour it draws without its texture) or
-`TerrainLayer::flat(color)`. `terrain.with_layers(..)` sets them; without a control map every
+`TerrainLayer::flat(color)`. Make the two files from a CC0 scan with the `cc0__terrain-layer` tool
+(`cc0__fetch` a texture, then `cc0__terrain-layer` with its folder and a name): it answers the
+`TerrainLayer::textured(..)` line to paste and the `[[texture]]` rows; never pack them by hand. `terrain.with_layers(..)` sets them; without a control map every
 sample is layer 0. `TerrainTexel::layer(i)`, `TerrainTexel::blend(base, overlay, amount)` and
 `.with_wetness(..)` make one control texel per height sample for `terrain.with_control(..)`; the
 renderer blends the texels around each pixel by weight and by each layer's height, and hex-tiles

@@ -119,11 +119,9 @@ device class (48 rendered voices on desktop, 32 on the web, 24 on phones, 64 log
 are virtual and resume at the right offset). Rendered samples differ by target and are display
 only.
 
-`native/genex-rust/examples/audio-yard` plays every call on this page along a 20 s walk: footsteps
-and a gun burst capped by `max_instances`, dialogue ducking the music, a crossfade at a cave's
-reverb zone, a wall occluding a generator, a Doppler fly-by and UI clicks. Its rows pin one logical
-digest that native, x86_64 and wasm32 reach at all three pool sizes, and its captures equal those of
-the same game with every audio call left out.
+`docs/examples/explosion/` loads one sound in `on_reset` and plays it where the blast happened;
+the engine's own audio rows pin one logical digest that native, x86_64 and wasm32 reach at all three
+pool sizes, and captures that equal those of the same game with every audio call left out.
 
 ## Checking sound
 

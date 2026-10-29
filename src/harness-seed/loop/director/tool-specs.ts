@@ -126,7 +126,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         art: {
           type: "string",
           description:
-            'Required when the ask sets a visual bar (photoreal, AAA, reference stills): every area\'s assets, JSON [{"area","tier","asset","source","why"}], sourced from Genex, scans or Blender; a refusal gives the grammar.',
+            'Required when the ask sets a visual bar (photoreal, AAA, reference stills): every area\'s assets, JSON [{"area","tier","kind","asset","source","tags","why"}]; a refusal gives the grammar.',
         },
         start: {
           type: "string",

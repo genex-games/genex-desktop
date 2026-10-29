@@ -3375,8 +3375,12 @@ Genex:
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
   its description says which (the `model` lanes are Tripo; `character` and `creature` are Meshy;
-  `character.import` is Uthana), with Local Blender first for hard-surface models when it is on; a
-  chat's coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
+  `character.import` is Uthana). Where an asset comes from is one table, `shared/asset-routing.ts`:
+  sourced geometry (a CC0 model, else a Tripo `model`) for props and organic shapes, `texture` for
+  surfaces, a transparent `image` for cards and decals, and Local Blender only for scan-textured
+  kits and finishing heavy models; `assetRoutingText()` is the paragraph the genex, blender and cc0
+  skills carry (`asset-routing.test.ts`). A chat's coordinator promises no provider a lane lacks
+  (`coordinator-prompts.ts`).
 - Genex's guide, seven platform cards and five lane cards (model, character, texture, audio,
   image) are vendored behind Studio-written prefaces in
   `src/plugins/genex/skills` (`vendor.json` pins each source and hash; `npm run genex:skills`
@@ -3450,6 +3454,15 @@ curated host, `opengameart.org`, where Quaternius publishes the Universal Animat
 an API answer never reaches it. Packs that cannot be fetched under the rules yet are listed as held
 with a typed reason (`unpinned`: the host is allowed but the pack's sha256 is not recorded yet;
 `zip-nested`: Kenney's kits nest their files in folders).
+
+`cc0__terrain-layer` (`terrain-layer.ts`, no network) packs a scan already in the game (a fetch
+folder, its maps found by Poly Haven's or ambientCG's names, or per-role paths) into the two PNGs a
+Rust `TerrainLayer::textured(albedo, data, tile)` reads, under `assets/terrain/` by default: colour
+with the height in alpha, and the OpenGL normal's x and y (a DirectX green flipped), roughness and
+occlusion (an ARM map's green and red when it has no own maps). Every path is checked by real path
+inside the game, outputs stay under `assets/`, and nothing is written until all maps are packed. Its
+answer carries the Rust line, the `[[texture]]` rows and, from a fetch folder, the delivery's
+source (`derivedFrom`); the packed files get no lock row of their own yet.
 
 ## Deferred work
 
@@ -3801,3 +3814,20 @@ background opacity or readable layout.
 Hot reload is best-effort: the watch case in `plugins.test.ts` is deadline-based because recursive
 file watching coalesces events on macOS. If it ever flakes, raise the test's nudge cadence — never
 its deadline or its assertion.
+
+### CC0 search, tiers and the heavy-model path
+
+- `cc0__search` ranks Poly Haven by any whole word (plurals as singulars; more words, then a name
+  before a tag, then downloads) and gives a model its `triangles`, a `budget` (`within`, or
+  `over-import-cap` past 250k, `shared/model-budget.ts`) and a hint.
+- `cc0__fetch` takes a `tier` (`hero` 250k, `vegetation` 40k, `prop` 30k, `clutter` 5k) and
+  delivers a heavier model decimated to it (`asset-import/decimate.ts`, `decimated` in the answer);
+  without a tier only a model past 250k is decimated, to it. The import step runs the same
+  decimation before tangents and LODs (receipt issue `decimated`, `<before>/<after>`), so LODs and
+  a game's `Impostor::hemi()` start from LOD0 at the budget.
+- Every `blender__model` job puts `genex_bpy` (`plugins/blender/genex_bpy.py`) on the import path
+  (`--helpers`): scan-fed PBR, bevel, weighted normals, UVs, a curvature-wear atlas bake and
+  decimation. The result's `untextured` lists flat-colour materials and the guidance says so.
+- The curated Quaternius and Kenney packs stay held: Kenney's zips are nested and exceed the CC0 zip
+  entry rules, and Quaternius' bytes are not pinned (owner call AN-21); neither can be fetched
+  without a recorded sha256, which needs a download this lane did not make.

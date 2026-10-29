@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use genex_render::capture::Capture;
+use genex_render::caps::MAX_WORLD_PX;
 use genex_render::layout::{MAX_LIGHTS, NO_TEXTURE};
 use genex_render::mesh::{MeshData, Vertex};
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, PointLight, Scene, scaled, translation};
@@ -376,7 +377,8 @@ fn part1_mip_chains_of_256_sources_keep_their_bytes() {
 fn texture_data_is_refused_when_its_bytes_do_not_match_or_it_is_too_large() {
     assert_eq!(TextureData::rgba8(4, 4, vec![0; 63]).expect_err("short").code(), RenderCode::TextureInvalid);
     assert_eq!(TextureData::rgba8(0, 4, Vec::new()).expect_err("empty").code(), RenderCode::TextureInvalid);
-    assert_eq!(TextureData::rgba8(8192, 1, vec![0; 8192 * 4]).expect_err("too wide").code(), RenderCode::TextureTooLarge);
+    let wide = MAX_WORLD_PX + 1;
+    assert_eq!(TextureData::rgba8(wide, 1, vec![0; wide as usize * 4]).expect_err("too wide").code(), RenderCode::TextureTooLarge);
 }
 
 #[test]

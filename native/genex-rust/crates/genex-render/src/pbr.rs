@@ -9,8 +9,10 @@
 //! pre-exposed with it, so auto exposure meters it and bloom spreads it.
 
 use crate::layout::{GpuMaterial, GpuMaterialExt, MATERIAL_EXT_FLAG_EMISSIVE, MATERIAL_EXT_FLAG_SUBSURFACE, MATERIAL_EXT_FLAG_VIEW_MODEL, MATERIAL_EXT_NO_TEXTURE, NO_TEXTURE};
+use crate::layers::{LAYER_KEY_WORDS, MaterialLayers};
 use crate::subsurface::Subsurface;
 use crate::texture::{TextureId, TextureKind};
+use crate::wind::Sway;
 
 pub use crate::lights::{DEFAULT_SHADOW_DISTANCE, LightKind, Lighting, PointLight, SpotLight, light_table};
 pub(crate) use crate::lights::radiance;
@@ -66,6 +68,13 @@ pub struct Material {
     /// fill from over the camera's shoulder at the frame's exposure keeps it from going black
     /// against a bright sky. False by default.
     pub view_model: bool,
+    /// Cover, detail maps, a second layer, parallax and the extra lobes (AAA materials lane;
+    /// [`crate::layers`]): none by default.
+    pub layers: MaterialLayers,
+    /// How it bends in the shared wind (model wind, [`crate::wind::Sway`]): `None` (the default)
+    /// stands still, drawn exactly as before. It rides in each row's wind words, never in the
+    /// material table.
+    pub sway: Option<Sway>,
 }
 
 /// [`GpuMaterialExt`] `tiling.x` bit: the maps are projected from the world ([`UvMapping::World`]).
@@ -198,6 +207,8 @@ impl Material {
             uv: UvMapping::default(),
             variation: UvVariation::default(),
             view_model: false,
+            layers: MaterialLayers::default(),
+            sway: None,
         }
     }
 
@@ -265,9 +276,20 @@ impl Material {
         Material { variation, ..self }
     }
 
+    /// This material with `layers` (cover, detail, a second layer, parallax, lobes; AAA materials).
+    pub fn with_layers(self, layers: MaterialLayers) -> Material {
+        Material { layers, ..self }
+    }
+
     /// This material letting light through as `subsurface` describes (renderer pass 2 B.1).
     pub fn with_subsurface(self, subsurface: Subsurface) -> Material {
         Material { subsurface: Some(subsurface), ..self }
+    }
+
+    /// This material bending in the shared wind as `sway` describes (model wind): a sway that
+    /// would not move ([`Sway::held`]) stands still.
+    pub fn with_sway(self, sway: Sway) -> Material {
+        Material { sway: sway.held(), ..self }
     }
 
     /// Its scattering when it lets any light through ([`Subsurface::is_visible`]), sanitized.
@@ -295,9 +317,10 @@ impl Material {
     }
 
     /// Whether its draws are blended (sorted, direct) rather than batched and culled on the GPU:
-    /// an alpha below 255 that is not alpha-tested.
+    /// an alpha below 255 or a transmission above 0 (`KHR_materials_transmission`), when it is
+    /// not alpha-tested.
     pub fn is_transparent(&self) -> bool {
-        self.alpha_cutoff.is_none() && self.base_color[3] < 255
+        self.alpha_cutoff.is_none() && (self.base_color[3] < 255 || self.layers.lobes.transmission() > 0.0)
     }
 
     /// Its alpha cutoff as the extension row holds it (0: not alpha-tested), held to 0..=1.
@@ -331,6 +354,7 @@ impl Material {
             subsurface: self.visible_subsurface().map(Subsurface::key),
             uv: uv_bits(uv_rows(self.uv, self.variation)),
             view_model: self.view_model,
+            layers: self.layers.key(),
         }
     }
 
@@ -345,7 +369,8 @@ impl Material {
     /// the emitted radiance, the emissive map's layer and its size class, the occlusion map's
     /// strength (`emissive.w`), the alpha cutoff (`params.w`; P2-0.12) and the scattering
     /// (`subsurface`, `transmission`; renderer pass 2 B.1), each part's flag in `params.z`, and the
-    /// UV mapping (`uv`, Bodycam B2b). A material that emits nothing, has no occlusion map, is not
+    /// UV mapping (`uv`, Bodycam B2b), and the layer rows after `tiling` with their flags
+    /// ([`MaterialLayers::rows`]) and the transmission (`transmission.w`). A material that emits nothing, has no occlusion map, is not
     /// alpha-tested, lets no light through and samples its mesh's UVs as authored has
     /// [`crate::layout::MATERIAL_EXT_NONE`]'s row.
     pub fn to_gpu_ext(self) -> GpuMaterialExt {
@@ -362,6 +387,10 @@ impl Material {
         if self.view_model {
             flags |= MATERIAL_EXT_FLAG_VIEW_MODEL;
         }
+        let (layers, layer_flags) = self.layers.rows();
+        [row.cover, row.cover_shape, row.cover_look, row.detail, row.detail_look, row.layer, row.layer_shape, row.layer_tint, row.parallax, row.lobes, row.sheen] = layers;
+        row.transmission[3] = self.layers.lobes.transmission();
+        flags |= layer_flags;
         row.params[2] = flags as f32;
         if !self.is_emissive() {
             return row;
@@ -419,6 +448,8 @@ pub(crate) struct MaterialKey {
     uv: [u32; 8],
     /// A view model's (Bodycam light fix).
     view_model: bool,
+    /// The layer rows' bits, flags and transmission (AAA materials lane).
+    layers: [u32; LAYER_KEY_WORDS],
 }
 
 /// The bits of a material's UV rows ([`uv_rows`]), for its key.

@@ -62,6 +62,9 @@ game.on_ui(|_sim, ui, ctx| { glyph_ui(ui, &ctx.actions.glyph(JUMP)); });
   `Binding::WASD`, `Binding::ARROWS`, `Binding::Keys2`, `Binding::Keys4`, `Binding::Dpad`,
   `Binding::PadAxis`, `Binding::Chord` (up to three inputs together), `Binding::Touch(control)`,
   `Binding::Look` and `Binding::Wheel`. At most 64 actions, 8 contexts and 8 bindings an action.
+  `Binding::Look` is the locked mouse's movement in pixels (x right, y down): turn the view by it
+  every tick, and hand the yaw's change to a first-person camera rig as `RigStep::turn`, positive
+  to the right (`docs/api/camera.md`).
 - **Conditions** count ticks, never seconds: `Condition::Down` (the default), `Press`, `Release`,
   `Hold { ticks, one_shot }`, `Tap { max_ticks }`, `Pulse { first, every }`, `Toggle`,
   `Cooldown { ticks }` and `BlockBy(action)`. Several on one action must all fire.
@@ -142,5 +145,5 @@ world or a repeated id). The player's file answers `input-bindings-invalid`,
 `input-track-mismatch`, and a remote player's actions that do not read against the map
 `input-wire-invalid`.
 
-`native/genex-rust/examples/input-twinstick` plays with keys and mouse, a pad or touch, rebinds in
-its pause menu and replays a recorded session to an equal checksum.
+`docs/examples/fps/` and `docs/examples/third-person/` read their moves and buttons as actions;
+`docs/examples/menus-saves/` walks its menus by the same keys, pad and taps.

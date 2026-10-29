@@ -37,7 +37,8 @@ use wgpu::{BindGroup, BindGroupLayout, Buffer, Device, RenderPipeline, TextureFo
 use crate::cull::{active_views, frustum_planes};
 use crate::error::RenderError;
 use crate::layout::{
-    GpuCullViews, GpuFrame, GpuLight, GpuLightExt, LIGHT_EXT_VEC4S, LIGHT_KIND_SPOT, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS, NO_SHADOW_SLOT,
+    GpuCullViews, GpuFrame, GpuLight, GpuLightExt, LIGHT_EXT_VEC4S, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, MAX_CASCADES, MAX_SHADOW_SLOTS, MAX_SHADOWED_POINTS, MAX_SHADOWED_SPOTS,
+    MAX_VIEWS, NO_SHADOW_SLOT, POINT_SHADOW_FACES,
     SPOT_MATRIX_VEC4S, SPOT_SHADOW_UNFADED,
 };
 use crate::lights::{BinnedFrame, SPOT_OUTER_ANGLE_MAX};
@@ -70,7 +71,13 @@ pub const SPOT_EDGE_TEXELS: f32 = 2.0;
 /// projection stays finite whatever the cone; [`SPOT_OUTER_ANGLE_MAX`] keeps cones inside it).
 const SPOT_HALF_FOV_MAX: f32 = 1.5621; // 89.5 degrees
 
+/// Tiles across (and down) the point layer (AAA review WP-15): 4 x 4 tiles hold the six faces of
+/// [`MAX_SHADOWED_POINTS`] point lights, each a quarter of the shared array's side
+/// (`GX_POINT_ATLAS_TILES` in local_lights.wgsl).
+pub const POINT_ATLAS_TILES: u32 = 4;
+
 const _: () = assert!(SPOT_ATLAS_TILES * SPOT_ATLAS_TILES >= MAX_SHADOWED_SPOTS as u32);
+const _: () = assert!(POINT_ATLAS_TILES * POINT_ATLAS_TILES >= (MAX_SHADOW_SLOTS - MAX_SHADOWED_SPOTS) as u32);
 const _: () = assert!(SPOT_OUTER_ANGLE_MAX < SPOT_HALF_FOV_MAX);
 
 /// The shared shadow array's layer the spot atlas takes when `cascades` sun cascades are drawn:
@@ -83,6 +90,23 @@ pub const fn spot_layer(cascades: u32) -> u32 {
 /// atlas layer whatever the spot count, none without spots.
 pub const fn shadow_array_layers(cascades: u32, spots: u32) -> u32 {
     cascades + if spots > 0 { 1 } else { 0 }
+}
+
+/// The shared shadow array's layer shadow slot `slot` is drawn in when `cascades` sun cascades are:
+/// a spot's ([`MAX_SHADOWED_SPOTS`] first slots) the spot atlas after the cascades, a point light's
+/// face the point layer after it.
+pub const fn slot_layer(cascades: u32, slot: u32) -> u32 {
+    if slot < MAX_SHADOWED_SPOTS as u32 { cascades } else { cascades + 1 }
+}
+
+/// Whether shadow slot `slot` is a point light's face.
+pub const fn is_point_slot(slot: u32) -> bool {
+    slot >= MAX_SHADOWED_SPOTS as u32
+}
+
+/// The first slot of the `point`th shadowed point light's six faces.
+pub const fn point_base_slot(point: u32) -> u32 {
+    MAX_SHADOWED_SPOTS as u32 + point * POINT_SHADOW_FACES as u32
 }
 
 /// The cull view of shadow slot `slot`: after the camera (view 0) and the drawn cascades.
@@ -101,14 +125,25 @@ pub const fn tile_side(side: u32) -> u32 {
     side / SPOT_ATLAS_TILES
 }
 
-/// Shadow slot `slot`'s tile in an array of side `side`: its top-left texel and its side.
+/// The side, in texels, of each point light face's tile in an array of side `side`.
+pub const fn point_tile_side(side: u32) -> u32 {
+    side / POINT_ATLAS_TILES
+}
+
+/// Shadow slot `slot`'s tile in an array of side `side`: its top-left texel and its side, in the
+/// slot's layer ([`slot_layer`]).
 pub const fn tile_rect(slot: u32, side: u32) -> (u32, u32, u32) {
+    if is_point_slot(slot) {
+        let tile = point_tile_side(side);
+        let face = slot - MAX_SHADOWED_SPOTS as u32;
+        return ((face % POINT_ATLAS_TILES) * tile, (face / POINT_ATLAS_TILES) * tile, tile);
+    }
     let tile = tile_side(side);
     ((slot % SPOT_ATLAS_TILES) * tile, (slot / SPOT_ATLAS_TILES) * tile, tile)
 }
 
 // Every cascade and every shadowed spot has a reserved cull view.
-const _: () = assert!(spot_view(MAX_CASCADES as u32, MAX_SHADOWED_SPOTS as u32 - 1) < MAX_VIEWS as u32);
+const _: () = assert!(spot_view(MAX_CASCADES as u32, MAX_SHADOW_SLOTS as u32 - 1) < MAX_VIEWS as u32);
 
 /// One shadowed spot of a frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -144,6 +179,62 @@ pub fn spot_view_proj(light: &GpuLight, ext: &GpuLightExt, tile_px: u32) -> Mat4
     let depth = far / (near - far);
     let proj = Mat4::from_cols_array(&[focal, 0.0, 0.0, 0.0, 0.0, focal, 0.0, 0.0, 0.0, 0.0, depth, -1.0, 0.0, 0.0, depth * near, 0.0]);
     proj * view
+}
+
+/// The direction each face of a point light's cube looks along, in slot order: +x, -x, +y, -y, +z,
+/// -z (`gx_point_face` in local_lights.wgsl picks a face by the same order).
+pub const POINT_FACE_AXES: [[f32; 3]; 6] = [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]];
+
+/// The light view-projection of face `face` of the point light `light` with tiles of `tile_px`
+/// texels: a right-handed look along [`POINT_FACE_AXES`] and a square perspective over 90 degrees
+/// widened by [`SPOT_EDGE_TEXELS`] texels each side (the faces overlap there, so the 3x3 filter
+/// never reads past a face's tile), depth 0..1 as a spot's. libm f32.
+pub fn point_face_view_proj(light: &GpuLight, face: usize, tile_px: u32) -> Mat4 {
+    let [x, y, z, range] = light.position_range;
+    let eye = Vec3::new(x, y, z);
+    let axis = Vec3::from(POINT_FACE_AXES[face.min(POINT_SHADOW_FACES - 1)]);
+    let up = if libm::fabsf(axis.y) > 0.5 { Vec3::Z } else { Vec3::Y };
+    let view = glam::camera::rh::view::look_at_mat4(eye, eye + axis, up);
+    let tan_half = 1.0 + 2.0 * SPOT_EDGE_TEXELS / tile_px.max(1) as f32;
+    let far = range.max(f32::MIN_POSITIVE);
+    let near = (far * SPOT_NEAR_SHARE).max(SPOT_NEAR_MIN).min(far * 0.5);
+    let focal = 1.0 / tan_half;
+    let depth = far / (near - far);
+    let proj = Mat4::from_cols_array(&[focal, 0.0, 0.0, 0.0, 0.0, focal, 0.0, 0.0, 0.0, 0.0, depth, -1.0, 0.0, 0.0, depth * near, 0.0]);
+    proj * view
+}
+
+/// Whether `ext` is a point light asking for (or holding) a shadow.
+fn point_request(ext: &GpuLightExt) -> bool {
+    ext.params[1] == LIGHT_KIND_POINT && ext.params[2] >= 0.0
+}
+
+/// The frame's shadowed point lights (AAA review WP-15) from its binned local lights, after the
+/// spots' grant: every point light marked as a shadow request (`lights::local_lights`) loses its
+/// mark; with `map_side` (the frame draws shadow maps of that side), up to `points` (and
+/// [`MAX_SHADOWED_POINTS`]) of them whose spheres reach the screen, nearest the camera at `eye`
+/// first, get six faces each from [`point_base_slot`], their rows' slot set to the first. Granted
+/// afresh every frame (a point light's shadow appears whole). Deterministic.
+pub fn grant_points(binned: &mut BinnedFrame, map_side: Option<u32>, points: usize, eye: [f32; 3]) -> Vec<SpotShadow> {
+    let requests: Vec<(f32, usize)> = binned.ext.iter().enumerate().filter(|(_, ext)| point_request(ext)).map(|(row, ext)| (ext.params[2], row)).collect();
+    for (_, row) in &requests {
+        binned.ext[*row].params[2] = NO_SHADOW_SLOT;
+    }
+    let Some(side) = map_side else { return Vec::new() };
+    let tile = point_tile_side(side);
+    let visible = visible_requests(binned, &requests, eye);
+    let mut faces = Vec::new();
+    for (point, candidate) in visible.iter().take(points.min(MAX_SHADOWED_POINTS)).enumerate() {
+        let base = point_base_slot(point as u32);
+        let (Some(light), Some(ext)) = (binned.lights.get(candidate.row).copied(), binned.ext.get_mut(candidate.row)) else { continue };
+        ext.params[2] = base as f32;
+        ext.params[3] = SPOT_SHADOW_UNFADED;
+        for face in 0..POINT_SHADOW_FACES {
+            let view_proj = point_face_view_proj(&light, face, tile);
+            faces.push(SpotShadow { slot: base + face as u32, row: candidate.row as u32, view_proj: view_proj.to_cols_array(), planes: frustum_planes(view_proj) });
+        }
+    }
+    faces
 }
 
 /// Whether `ext` is a spot holding a shadow slot.
@@ -391,7 +482,13 @@ fn reach_distance(light: &GpuLight, eye: [f32; 3]) -> f32 {
 /// `cascades` sun cascades: the active views (the camera, the cascades, then one per spot), each
 /// spot's cull planes at [`spot_view`], and the spot count (`shadow_counts.y`).
 pub fn apply_views(frame: &mut GpuFrame, cull: &mut GpuCullViews, cascades: usize, spots: &[SpotShadow]) -> u32 {
-    let views = active_views(cascades, spots.len());
+    let slots = spots.iter().map(|spot| spot.slot as usize + 1).max().unwrap_or(0);
+    let views = active_views(cascades, slots);
+    // Slots between the drawn ones (a point light's faces after fewer spots than the reserve) are
+    // views no draw reads: planes that reject every sphere, so their cull keeps nothing.
+    for slot in 0..slots.min(MAX_SHADOW_SLOTS) {
+        cull.planes[spot_view(cascades as u32, slot as u32) as usize] = REJECT_PLANES;
+    }
     for spot in spots {
         cull.planes[spot_view(cascades as u32, spot.slot) as usize] = spot.planes;
     }
@@ -401,14 +498,18 @@ pub fn apply_views(frame: &mut GpuFrame, cull: &mut GpuCullViews, cascades: usiz
     views
 }
 
-/// The `light_ext` table's bytes: every local light's extension row, then each shadowed spot's
-/// light view-projection by slot ([`spot_matrix_vec4`]).
+/// Cull planes no sphere is inside of (a view drawing nothing).
+const REJECT_PLANES: [[f32; 4]; 6] = [[0.0, 0.0, 0.0, -1.0e30]; 6];
+
+/// The `light_ext` table's bytes: every local light's extension row, then each shadow slot's
+/// light view-projection at its slot ([`spot_matrix_vec4`]; a slot no light holds below the
+/// highest one drawn is zeros).
 pub fn light_ext_bytes(ext: &[GpuLightExt], spots: &[SpotShadow]) -> Vec<u8> {
     let mut bytes = bytemuck::cast_slice(ext).to_vec();
-    let mut ordered: Vec<&SpotShadow> = spots.iter().collect();
-    ordered.sort_by_key(|spot| spot.slot);
-    for spot in ordered {
-        bytes.extend_from_slice(bytemuck::cast_slice(&spot.view_proj));
+    let slots = spots.iter().map(|spot| spot.slot as usize + 1).max().unwrap_or(0);
+    for slot in 0..slots {
+        let matrix = spots.iter().find(|spot| spot.slot as usize == slot).map_or([0.0; 16], |spot| spot.view_proj);
+        bytes.extend_from_slice(bytemuck::cast_slice(&matrix));
     }
     bytes
 }
@@ -417,10 +518,26 @@ pub fn light_ext_bytes(ext: &[GpuLightExt], spots: &[SpotShadow]) -> Vec<u8> {
 /// shadows) plus the spot atlas layer when `spots` > 0, at the cascades' side and format, or at
 /// `settings`' when only spots are shadowed (an unlit sun at night); the placeholder with neither.
 pub fn map_desc(cascades: Option<ShadowMapDesc>, settings: &ShadowSettings, spots: usize) -> ShadowMapDesc {
-    match (cascades, spots) {
+    map_desc_layers(cascades, settings, u32::from(spots > 0))
+}
+
+/// [`map_desc`] with `atlas_layers` after the cascades: 0, 1 (the spot atlas) or 2 (the point
+/// layer after it, AAA review WP-15).
+pub fn map_desc_layers(cascades: Option<ShadowMapDesc>, settings: &ShadowSettings, atlas_layers: u32) -> ShadowMapDesc {
+    match (cascades, atlas_layers) {
         (cascades, 0) => cascades.unwrap_or(ShadowMapDesc::PLACEHOLDER),
-        (Some(desc), _) => ShadowMapDesc { layers: shadow_array_layers(desc.layers, 1), ..desc },
-        (None, _) => ShadowMapDesc { layers: shadow_array_layers(0, 1), ..ShadowMapDesc::for_settings(settings) },
+        (Some(desc), _) => ShadowMapDesc { layers: desc.layers + atlas_layers, ..desc },
+        (None, _) => ShadowMapDesc { layers: atlas_layers, ..ShadowMapDesc::for_settings(settings) },
+    }
+}
+
+/// The atlas layers `slots` need after the cascades: the spot atlas for any slot, and the point
+/// layer after it for any point light's face.
+pub fn atlas_layers(slots: &[SpotShadow]) -> u32 {
+    if slots.iter().any(|slot| is_point_slot(slot.slot)) {
+        2
+    } else {
+        u32::from(!slots.is_empty())
     }
 }
 
@@ -597,6 +714,78 @@ mod tests {
             bounds: Vec::new(),
         };
         BinnedFrame { lights, ext, bins, reflection_probes: Vec::new(), irradiance_volumes: Vec::new(), decals: Vec::new() }
+    }
+
+    /// The shader's face choice (`gx_point_face`): the largest component's axis, in
+    /// [`POINT_FACE_AXES`] order.
+    fn point_face(to_surface: Vec3) -> usize {
+        let a = to_surface.abs();
+        if a.x >= a.y && a.x >= a.z {
+            return if to_surface.x >= 0.0 { 0 } else { 1 };
+        }
+        if a.y >= a.z {
+            return if to_surface.y >= 0.0 { 2 } else { 3 };
+        }
+        if to_surface.z >= 0.0 { 4 } else { 5 }
+    }
+
+    /// AAA review WP-15: a point light's six faces cover every direction; the face the shader picks
+    /// for a surface sees it inside its map, and the faces' tiles sit in the point layer after the
+    /// spot atlas.
+    #[test]
+    fn a_point_lights_faces_cover_every_direction_in_the_layer_after_the_spots() {
+        let light = GpuLight { position_range: [1.0, 2.0, -3.0, 8.0], color: [1.0; 4] };
+        let faces: Vec<Mat4> = (0..POINT_SHADOW_FACES).map(|face| point_face_view_proj(&light, face, 512)).collect();
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as f32 / u32::MAX as f32 * 2.0 - 1.0
+        };
+        for _ in 0..2000 {
+            let direction = Vec3::new(next(), next(), next()).normalize_or(Vec3::X);
+            let surface = Vec3::new(1.0, 2.0, -3.0) + direction * 5.0;
+            let ndc = project(faces[point_face(direction)], surface);
+            assert!(ndc.x.abs() <= 1.0 && ndc.y.abs() <= 1.0 && (0.0..=1.0).contains(&ndc.z), "{direction:?}: {ndc:?}");
+        }
+        assert_eq!((slot_layer(3, 0), slot_layer(3, 3), slot_layer(3, 4), slot_layer(3, 15)), (3, 3, 4, 4));
+        assert_eq!((point_base_slot(0), point_base_slot(1)), (4, 10));
+        assert_eq!([4, 5, 7, 8, 15].map(|slot| tile_rect(slot, 2048)), [(0, 0, 512), (512, 0, 512), (1536, 0, 512), (0, 512, 512), (1536, 1024, 512)]);
+        assert_eq!(spot_view(4, 15) as usize, MAX_VIEWS - 1, "the last face has the last view");
+    }
+
+    /// Point requests become six consecutive slots from the first point slot, nearest first up to
+    /// the quality; the rest are cleared, and nothing is granted without maps.
+    #[test]
+    fn point_lights_asking_for_shadows_get_six_faces_each_nearest_first() {
+        let point = |request: f32| GpuLightExt { params: [-1.0, LIGHT_KIND_POINT, request, 0.0], ..GpuLightExt::POINT };
+        let rows = vec![point(0.0), GpuLightExt::POINT, point(1.0), point(2.0)];
+        let mut frame = binned(rows.clone());
+        frame.lights[3].position_range = [0.0, 3.0, 40.0, 8.0];
+        let faces = grant_points(&mut frame, Some(2048), 2, [0.0; 3]);
+        assert_eq!(faces.len(), 12);
+        assert_eq!(faces.iter().map(|face| face.slot).collect::<Vec<_>>(), (4..16).collect::<Vec<_>>());
+        let slots: Vec<f32> = frame.ext.iter().map(|ext| ext.params[2]).collect();
+        assert_eq!(slots, [4.0, -1.0, 10.0, -1.0], "the far point light is past the quality's two");
+        let mut one = binned(rows.clone());
+        assert_eq!(grant_points(&mut one, Some(2048), 1, [0.0; 3]).len(), 6);
+        let mut off = binned(rows);
+        assert!(grant_points(&mut off, None, 2, [0.0; 3]).is_empty());
+        assert!(off.ext.iter().all(|ext| ext.params[2] == NO_SHADOW_SLOT), "no map, no slot");
+        // The matrices sit at their slots, zeros between; the views between reject everything.
+        let spot_face = SpotShadow { slot: 0, row: 0, view_proj: [1.0; 16], planes: [[0.0; 4]; 6] };
+        let shadows: Vec<SpotShadow> = std::iter::once(spot_face).chain(faces.iter().take(6).copied()).collect();
+        let bytes = light_ext_bytes(&[GpuLightExt::POINT], &shadows);
+        assert_eq!(bytes.len(), size_of::<GpuLightExt>() + 10 * 64, "slots 0..=9");
+        assert!(bytes[size_of::<GpuLightExt>() + 64..size_of::<GpuLightExt>() + 4 * 64].iter().all(|byte| *byte == 0));
+        let (mut uniforms, mut cull) = (GpuFrame::default(), GpuCullViews::default());
+        let views = apply_views(&mut uniforms, &mut cull, 2, &shadows);
+        assert_eq!(views, 1 + 2 + 10);
+        assert_eq!(cull.planes[spot_view(2, 2) as usize], REJECT_PLANES);
+        assert_eq!(cull.planes[spot_view(2, 4) as usize], faces[0].planes);
+        assert_eq!(atlas_layers(&shadows), 2);
+        assert_eq!(atlas_layers(&shadows[..1]), 1);
     }
 
     #[test]

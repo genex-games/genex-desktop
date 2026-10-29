@@ -18,11 +18,18 @@ pub const SHADOW_CASCADES: usize = 2;
 pub const MAX_CASCADES: usize = 4;
 /// Most spot lights with a shadow map a frame draws (RQ6.5), each one cull view.
 pub const MAX_SHADOWED_SPOTS: usize = 4;
+/// Most point lights with a shadow map a frame draws (AAA review WP-15), each six cull views (a cube).
+pub const MAX_SHADOWED_POINTS: usize = 2;
+/// Faces of a shadowed point light's cube.
+pub const POINT_SHADOW_FACES: usize = 6;
+/// Shadow slots a frame holds: the spots' (0..[`MAX_SHADOWED_SPOTS`]), then each shadowed point
+/// light's six faces. Each slot is one matrix in `light_ext` and one cull view.
+pub const MAX_SHADOW_SLOTS: usize = MAX_SHADOWED_SPOTS + MAX_SHADOWED_POINTS * POINT_SHADOW_FACES;
 /// Cull views reserved per frame: the camera (view 0), then one per drawn cascade, then one per
-/// shadowed spot. The cull views uniform reserves all of them; the visible list and the indirect
+/// shadow slot. The cull views uniform reserves all of them; the visible list and the indirect
 /// arguments are sized per *active* view ([`crate::scene::FramePlan::views`]), so an unused view
 /// allocates nothing.
-pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOWED_SPOTS;
+pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOW_SLOTS;
 /// The non-filtering sampler PCSS's blocker search gathers the shadow map with (RQ3.2), as
 /// (forward frame binding, WGSL name): the RQ4 `point_sampler` slot of
 /// [`FRAME_EFFECT_BINDINGS`], which the forward frame binds ([`FRAME_EFFECT_BOUND`], renderer
@@ -31,10 +38,17 @@ pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOWED_SPOTS;
 pub const SHADOW_BLOCKER_SAMPLER: (u32, &str) = (18, "point_sampler");
 /// The texture index that names no texture (`NO_TEXTURE` in the shaders).
 pub const NO_TEXTURE: u32 = u32::MAX;
-/// The material texture size classes, by class index (RQ6.0): each class is its own pair of
-/// texture arrays (sRGB colour, data) of this side. Class 0 is today's 256-texel array pair.
-pub const TEXTURE_SIZE_CLASSES: [u32; 4] = [256, 512, 1024, 2048];
-/// Where a material texture reference keeps its size class: the class in the bits from here up,
+/// The material texture size class slots by slot index (RQ6.0) on the web's ladder: each slot is
+/// its own pair of texture arrays (sRGB colour, data) of this side. Slot 0 is today's 256-texel
+/// array pair. A native desktop's 4096 and 8192 classes take the top slots instead (WP-9,
+/// `texture::class_ladder`); the shaders bind the slots, never a side.
+pub const TEXTURE_SIZE_CLASSES: [u32; TEXTURE_CLASS_SLOTS] = [256, 512, 1024, 2048];
+/// The class slots the forward, prepass, shadow, alpha-mask and impostor shaders bind (four colour
+/// and data array pairs, within WebGPU core's 16 sampled textures a stage).
+pub const TEXTURE_CLASS_SLOTS: usize = 4;
+/// Every material texture size class's side, by class index (`settings::TextureClass::index`).
+pub const TEXTURE_CLASS_SIDES: [u32; 6] = [256, 512, 1024, 2048, 4096, 8192];
+/// Where a material texture reference keeps its size class slot: the slot in the bits from here up,
 /// the layer below. Class 0 references are the bare layer, so tables written before size classes
 /// keep their bytes; [`NO_TEXTURE`] has every bit set and is never a class-15 reference.
 pub const TEXTURE_CLASS_SHIFT: u32 = 28;
@@ -124,7 +138,9 @@ pub struct GpuFrame {
     /// x: the mip bias material textures sample with this frame
     /// ([`crate::settings::frame_texture_lod_bias`]: TAA's, FSR1's upscale's, else 0; renderer pass
     /// 2, P2-0.8b T-06), added to the pipeline's `GX_TEXTURE_LOD_BIAS` by `gx_texture_lod_bias`;
-    /// a uniform, so a dynamic-resolution step moves it without a pipeline. y, z, w: reserved (0).
+    /// a uniform, so a dynamic-resolution step moves it without a pipeline. y: the model wind's
+    /// seconds this frame, z: last frame's (this frame's after a history reset; [`crate::wind`]).
+    /// w: reserved (0).
     pub texture_lod: [f32; 4],
 }
 
@@ -163,10 +179,10 @@ pub struct GpuLightExt {
     /// cone's outer half-angle (-1 for a point: no cone).
     pub spot: [f32; 4],
     /// x: the cosine of the cone's inner half-angle (-1 for a point); y: the kind
-    /// ([`LIGHT_KIND_POINT`], [`LIGHT_KIND_SPOT`]); z: the shadow slot (0 to
-    /// [`MAX_SHADOWED_SPOTS`] - 1, [`NO_SHADOW_SLOT`] without a shadow map; its layer of the
-    /// shared shadow array is the spot atlas after the drawn cascades, its tile the slot's,
-    /// `spot_shadow::tile_rect`); w: how far the spot's shadow has faded out as its slot changes
+    /// ([`LIGHT_KIND_POINT`], [`LIGHT_KIND_SPOT`]); z: the shadow slot ([`NO_SHADOW_SLOT`] without
+    /// a shadow map): a spot's is 0 to [`MAX_SHADOWED_SPOTS`] - 1 (a tile of the spot atlas layer
+    /// after the drawn cascades), a point light's the first of its six faces' (tiles of the point
+    /// layer after it; `spot_shadow::slot_layer`, `spot_shadow::tile_rect`); w: how far the spot's shadow has faded out as its slot changes
     /// hands, 0 (whole, [`SPOT_SHADOW_UNFADED`]) to 1 (none): every row writes 0 until spot slots
     /// fade, and the shading reads it from then on.
     pub params: [f32; 4],
@@ -218,7 +234,28 @@ pub const MATERIAL_EXT_NO_TEXTURE: f32 = -1.0;
 
 /// The extension row of a material that emits nothing: what every row holds until RQ6.3 fills it.
 pub const MATERIAL_EXT_NONE: GpuMaterialExt =
-    GpuMaterialExt { emissive: [0.0; 4], params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0], subsurface: [0.0, 0.0, 0.0, 1.0], transmission: [0.0; 4], uv: [0.0; 4], tiling: [0.0; 4] };
+    {
+    let rows = crate::layers::LAYER_ROWS_NONE;
+    GpuMaterialExt {
+        emissive: [0.0; 4],
+        params: [MATERIAL_EXT_NO_TEXTURE, 0.0, 0.0, 0.0],
+        subsurface: [0.0, 0.0, 0.0, 1.0],
+        transmission: [0.0; 4],
+        uv: [0.0; 4],
+        tiling: [0.0; 4],
+        cover: rows[0],
+        cover_shape: rows[1],
+        cover_look: rows[2],
+        detail: rows[3],
+        detail_look: rows[4],
+        layer: rows[5],
+        layer_shape: rows[6],
+        layer_tint: rows[7],
+        parallax: rows[8],
+        lobes: rows[9],
+        sheen: rows[10],
+    }
+};
 
 /// One instance in the instance table (`Instance`).
 #[repr(C)]
@@ -232,8 +269,8 @@ pub struct GpuInstance {
     pub bounds: [f32; 4],
     /// Index into the material table.
     pub material: u32,
-    /// Padding to 16 bytes.
-    pub pad: [u32; 3],
+    /// The model wind's words ([`crate::wind::Sway::words`]): 0 for a row that does not sway.
+    pub wind: [u32; 3],
 }
 
 /// One material in the material table (`Material`).

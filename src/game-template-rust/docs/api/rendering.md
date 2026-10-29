@@ -4,7 +4,7 @@ Every type and call in one line:
 
 ```rust
 use genex::render::{ClassOverride, DeviceClass, Exposure, FormFactor, LodConfig, Metering, PerformanceTier};
-use genex::render::{QualityPreset, RenderConfig, Tonemap, UpscaleMode, lock_upscale, settings_panel};
+use genex::render::{QualityPreset, RenderConfig, ResolutionPreset, Tonemap, UpscaleMode, lock_upscale, settings_panel};
 game.render_settings(RenderConfig::new().preset(QualityPreset::Medium)); // or RenderConfig::from_build()
 config.tonemap(Tonemap::AgxPunchy).exposure(Exposure::auto().compensation(0.5).metering(Metering::Ground));
 config.upscale(UpscaleMode::Quality); config.upscale_locked(UpscaleMode::Native);
@@ -31,8 +31,8 @@ typed reason (`budget`, naming the rung or switch dropped; `format-unrenderable`
 | --- | --- | --- | --- | --- | --- | --- |
 | `low` | MSAA 4x | 2 | off | off | off | 64 (0) |
 | `medium` | MSAA 4x | 2 | on | half size | off | 256 (0) |
-| `high` | TAA | 3 | on | half size, history | on | 1024 (2) |
-| `ultra` | TAA | 4 | on | full size | on | 1024 (4) |
+| `high` | TAA | 3 | on | half size, history | on | 1024 (4) |
+| `ultra` | TAA | 4 | on | full size, GI | on | 1024 (4) |
 
 Every preset draws HDR, image-based lighting, the sky and fog; below scale 1 it upscales (TAA at
 output size on `high` and `ultra` without lens effects or `post-hdr` passes, else EASU with RCAS;
@@ -46,14 +46,16 @@ resolution moves below the mode to hold the frame-rate target (30 or 60: frames 
 256 lights, at most one shadowed spot, TAA only on `mobile-high` at `high` and up, and no AO or contact
 shadows while the world pass is multisampled.
 
+Sides, texture classes, budgets: `docs/api/resolution.md`.
+
 The look's `tonemapper`: `khronos-neutral` (default) keeps
 authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx` is muted;
 `aces` punchier; `none` clamps.
 `exposure`: `manual` (default) is fixed at `ev_compensation` EV (0 is 1.0, +1 doubles it); `auto`
-meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max`,
+meters the scene (`metering`: `average`, `center`, `spot`, sky-aware `ground`), holds it within `ev_min..=ev_max` (-8..8),
 adds the compensation and adapts at `adaptation_speed_up` (default 4) and `adaptation_speed_down`
-(3) EV per simulated second. Use `auto` where light meets shade (`ev_compensation = 0.5` when
-sunlit), `manual` for flat, stylized colour. The rest of
+(3) EV per simulated second (`doorway_adaptation`: Lighting): `auto` where light meets shade,
+`manual` for flat colour (`docs/look-recipes.md` calibrates). The rest of
 `[render.look]` is equal on every preset: `bloom_intensity` (default 0.04, threshold-free),
 `bloom_threshold`, `bloom_radius` (its spread); fog lit by the sky, off at `fog_density` 0, shaped by
 `fog_height_falloff`, `fog_base_height`, `fog_start`, `fog_max_opacity`, `fog_color` and
@@ -100,12 +102,12 @@ blend_band = 0.1            # of each cascade, 0..=0.5
 render_scale = 0.67         # 0.5..=1
 fps = 30                    # 30 | 60
 bloom = false               # any switch
-lod_threshold_px = 3.0      # with lod_fade_band, far_density: see Drawing
+lod_threshold_px = 3.0      # with lod_fade_band, far_density (docs/api/drawing.md)
 ```
 
 The build lane compiles `[render]` into every destination; `game.render_settings(..)` replaces
-it, and `RenderConfig::from_build()` starts from it. Give the person the last word: call
-`settings_panel(ui)` from `on_ui`; it shows the detected class, presets (none
+it, and `RenderConfig::from_build()` starts from it. Give the person the last word:
+`genex::settings::menu(ui)` holds `settings_panel(ui)`; it shows the detected class, presets (none
 drawing less than the one below; Max is `ultra` at Native), Upscaling, Frame rate, Dynamic
 resolution, the render scale, Detail distance and feature switches. A preset change
 rebuilds the renderer; a mode change only resizes the next frame. A switch this
@@ -140,14 +142,14 @@ in a few pixels). `state().volatile.render` (class, preset, scale, `features`,
 Rules for agents:
 
 - Never hard-code `ultra`, a resolution, a render scale or an upscaling mode (only a photo mode
-  holds Native), and never read render settings in a simulation hook. Make content cheap at `low`
-  and let presets add to it.
+  or a resolution tier holds Native); never read render settings in simulation. Author
+  for desktop `ultra`; check `low` and phones.
 - Never switch `shadows`, `meshlets` or `occlusion` off to save frame time, nor ask for more
-  cascades than a preset has outside `shadows_at`: presets and class caps already scale them.
+  cascades than a preset has outside `shadows_at`: presets and class caps scale them.
 - Test as a phone: `renderSettings` `{set: {deviceClass: "mobile-mid"}}`, `{set: {preset: "low"}}`,
   `{set: {features: {bloom: false}}}` or `{set: {renderScaleLock: 0.75}}` answer the settings in
   force (`features` as of the last drawn frame: capture, then read); a capture shows the game as
   that class draws it; `{set: {frameBudgetMs: 4}}` makes dynamic resolution hold 4 ms.
-  Check `mobile-mid` and `low` before calling it done: the picture must read as the same game;
+  Check `mobile-mid` and `low` before done: the picture must read as the same game;
   `{set: {features: {hdr: false}}}` compares the look with the old LDR scene. `{set: {preset: null, features: null, deviceClass: null,
   renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back.

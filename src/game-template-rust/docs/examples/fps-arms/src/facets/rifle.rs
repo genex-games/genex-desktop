@@ -28,6 +28,8 @@ const CLIMB: f32 = 0.006;
 const RECOVER: f32 = 0.1;
 /// How fast the kick settles (kept per tick).
 const RECOIL_KEEP: f32 = 0.8;
+/// How far a shot kicks the camera up at the hip (degrees); the rig eases it back.
+const KICK_DEGREES: f32 = 0.8;
 
 /// The rifle's own counters.
 #[derive(Default)]
@@ -95,6 +97,8 @@ fn update(sim: &mut Sim<World>, ctx: &Ctx<'_>) {
 fn fire(world: &mut World, physics: &PhysicsWorld, rifle: &mut Rifle, ctx: &Ctx<'_>) {
     world.rounds -= 1;
     world.recoil = 1.0;
+    // Down the sights the camera barely kicks; the rifle's own kick shows the shot.
+    world.rig.recoil(KICK_DEGREES * (1.0 - 0.7 * world.aim));
     world.fired_at = Some(world.tick);
     world.inspect_at = None;
     rifle.fired += 1;

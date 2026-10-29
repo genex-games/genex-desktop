@@ -143,7 +143,8 @@ fn plan_with(shadows: Option<ShadowSettings>) -> FramePlan {
 
 #[test]
 fn the_cull_views_reserve_nine_views_and_a_plan_activates_one_per_drawn_cascade() {
-    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 9));
+    // AAA review WP-15 flipped MAX_VIEWS 9 -> 21 (sixteen shadow slots: four spots, two points' faces).
+    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 21));
     let plan = plan_with(Some(shadows_asking(SHADOW_CASCADES as u8)));
     let drawn = plan.cascades_drawn();
     assert!((1..=MAX_CASCADES).contains(&drawn), "{drawn} cascades");

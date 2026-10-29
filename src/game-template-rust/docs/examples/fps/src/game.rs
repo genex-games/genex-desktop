@@ -1,6 +1,12 @@
+//! GREYBOX: replace the boxes before done. The hall is boxes that double as colliders and the view
+//! model is built from boxes (`facets/viewmodel.rs`): build the level from a kit and draw the arms
+//! and weapon from `docs/examples/fps-arms/`. The camera's `bob()` is greybox too: follow
+//! `docs/examples/fps.md` (The camera).
+//!
 //! The FPS set's entry owner: the action map, the player (a character capsule moved by the keys,
-//! a pad or a touch stick), mouse look from the locked pointer, a chest-mounted camera that bobs
-//! and rolls with the walk, a greybox hall whose boxes are both drawn and Rapier colliders, and
+//! a pad or a touch stick), mouse look from the locked pointer, a chest-mounted camera moved by
+//! `genex::camera::FirstPersonRig` (bob, roll, landings and recoil under the person's comfort
+//! settings and the engine's caps), a greybox hall whose boxes are both drawn and Rapier colliders, and
 //! the HUD. The facets add the rest: `viewmodel.rs` (forearms, gloves and a pistol from parts),
 //! `weapon.rs` (hitscan against the colliders, recoil, impacts) and `enemy.rs` (a rigged enemy).
 //!
@@ -10,6 +16,7 @@
 //! not take drags the view on a phone, and the right stick turns it on a pad.
 
 use genex::actions::{ActionId, Anchor, ContextId, ControlId, ShowWhen, StickMode};
+use genex::camera::{FirstPersonRig, RigStep};
 use genex::math::{self, Vec3, vec3};
 use genex::physics::{ColliderBuilder, QueryFilter, Ray, RigidBodyBuilder};
 use genex::prelude::*;
@@ -36,13 +43,10 @@ const PITCH_LIMIT: f32 = 1.45;
 /// Walking and running speeds (m/s).
 const WALK: f32 = 3.0;
 const SPRINT: f32 = 5.2;
-/// A bodycam rides on the chest, below the eyes, with a wide lens.
+/// A bodycam rides on the chest, below the eyes, with a wide lens: 72° vertical is about 104°
+/// horizontal at 16:9 (keep a first-person fovy within 60-80).
 const CAMERA_HEIGHT: f32 = 1.42;
 const FOVY: f32 = 72.0;
-/// One step's length (m) and the chest's bob and roll at a walk.
-const STEP: f32 = 0.75;
-const BOB: f32 = 0.025;
-const ROLL: f32 = 0.012;
 /// How far ahead the view model reaches from the camera (m); nearer a wall it pulls back.
 pub const REACH: f32 = 0.55;
 /// Where the player starts, and its health.
@@ -84,8 +88,9 @@ pub struct World {
     pub pitch: f32,
     /// This tick's turn (radians, yaw and pitch): the view model sways against it.
     pub turned: Vec2,
-    /// Metres walked (the bob's phase) and the planar speed (its size).
-    pub stride: f32,
+    /// The camera's motion: bob, roll, landings and recoil (display only, never probed).
+    pub rig: FirstPersonRig,
+    /// The planar speed (m/s).
     pub speed: f32,
     /// How far the view model pulls back from a wall in front of it (m).
     pub wall_pull: f32,
@@ -112,22 +117,10 @@ impl World {
         self.player.as_ref().map_or(SPAWN, Character::feet) + Vec3::Y * CAMERA_HEIGHT
     }
 
-    /// The walk's bob: (sideways, up, roll), from the stride and the speed.
-    fn bob(&self) -> Vec3 {
-        let phase = self.stride / STEP * std::f32::consts::PI;
-        let size = (self.speed / WALK).min(1.5);
-        vec3(math::sin(phase) * BOB * 0.6, math::cos(phase * 2.0).abs() * BOB, math::sin(phase) * ROLL) * size
-    }
-
-    /// The camera: the eye, bobbed and rolled, kicked up by the recoil.
+    /// The camera: the eye moved by the rig, which reads the person's head-bob, screen-shake,
+    /// reduced-motion and field of view settings here, in the camera hook.
     pub fn camera(&self) -> Camera {
-        let bob = self.bob();
-        let forward = self.forward();
-        let right = forward.cross(Vec3::Y).normalize_or(Vec3::Z);
-        let kick = Vec3::Y * self.recoil * 0.03;
-        let eye = self.eye() + right * bob.x + Vec3::Y * bob.y;
-        let up = (Vec3::Y + right * bob.z).normalize();
-        Camera { up, fovy: FOVY, ..Camera::look_at(eye, eye + forward + kick) }
+        self.rig.camera(self.eye(), self.forward(), FOVY)
     }
 }
 
@@ -160,6 +153,7 @@ pub fn wire(game: &mut Game<World>) {
             physics.insert(RigidBodyBuilder::fixed().translation(min + half), ColliderBuilder::cuboid(half.x, half.y, half.z));
         }
         world.player = Character::spawn(physics, SPAWN, CharacterParams::default()).ok();
+        world.rig = FirstPersonRig::new().with_speeds(WALK, SPRINT);
         world.yaw = std::f32::consts::FRAC_PI_2;
         world.health = HEALTH;
     });
@@ -172,6 +166,8 @@ pub fn wire(game: &mut Game<World>) {
         let at = sim.world.player.as_ref().map_or(SPAWN, Character::feet);
         json!({ "x": at.x, "z": at.z, "yaw": sim.world.yaw, "pitch": sim.world.pitch, "health": sim.world.health })
     });
+    // The camera's motion per tick for a comfort check (bob, roll, cadence), outside the checksum.
+    game.probe_volatile("cameraMotion", |sim| sim.world.rig.probe());
 }
 
 /// Turn from the mouse, a stick or a dragging finger; walk the capsule; measure the bob and the wall.
@@ -191,10 +187,11 @@ fn update(sim: &mut Sim<World>, ctx: &Ctx<'_>) {
     let pace = if ctx.actions.down(RUN) { SPRINT } else { WALK };
     let wish = (right * walk.x - forward * walk.y) * pace;
     let jump = ctx.actions.pressed(JUMP);
-    player.drive(physics, CharacterMotion::Velocity { wish, jump }, ctx.dt);
+    let step = player.drive(physics, CharacterMotion::Velocity { wish, jump }, ctx.dt);
     let velocity = player.velocity();
     world.speed = vec2(velocity.x, velocity.z).length();
-    world.stride += world.speed * ctx.dt;
+    // The rig eases the step up a stair, dips on a landing and leans into the turn.
+    world.rig.update(ctx.dt, RigStep { velocity, turn: turn.x, ..RigStep::from(&step) });
     // The view model pulls back from a wall rather than poke through it (the near plane is 0.1 m).
     let exclude = player.body().map_or(QueryFilter::default(), |body| QueryFilter::default().exclude_rigid_body(body));
     let reach = physics.cast_ray(&Ray::new(world.eye(), world.forward()), REACH, true, exclude).map_or(REACH, |(_, toi)| toi);

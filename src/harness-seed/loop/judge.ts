@@ -43,8 +43,11 @@ import { MINUTE_MS, SECOND_MS, sleep } from "./time.ts";
 import { workingGoal } from "./goal-prompts.ts";
 import { judgeScopeLines, LIVENESS_SCOPE_RULE, PROPOSAL_SCOPE_RULE } from "./scope-prompts.ts";
 import { visionJudgeLines } from "./vision-prompts.ts";
-import { asksForLook, genreOf, lookBlockersIn, notShippedDefects } from "./look-bar.ts";
+import { asksForLook, genreOf, LookBlocker, lookBlockersIn, notShippedDefects } from "./look-bar.ts";
+import { organicTags } from "./art-kinds.ts";
+import { addedFactBlockers } from "./look-facts.ts";
 import { shippedLookLine } from "./look-bar-prompts.ts";
+import { artBarLine } from "./look-bar-rules.ts";
 import { runScope } from "./scope.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { CompleteResponse, HarnessCompleteParams, MessageImage, StillSource } from "../types/host-api.d.ts";
@@ -418,6 +421,8 @@ interface JudgeAsk {
   userContent: string;
   images?: MessageImage[];
   effort?: string;
+  /** Ask this engine rather than the workspace's pin (the second taste judge). */
+  pin?: JudgePin;
 }
 
 /** The engine a verdict is asked of, whether it is already the fallback, and whether it may become one. */
@@ -468,7 +473,7 @@ async function askJudge(ctx: HarnessCtx, ask: JudgeAsk): Promise<AnyRecord> {
  */
 export async function askJudgeFor(ctx: HarnessCtx, ask: JudgeAsk): Promise<JudgeAnswer> {
   const { run } = ask;
-  const using = judgeEngineFor(run, await readJudgePin(ctx.workspace));
+  const using = judgeEngineFor(run, await pinFor(ctx, ask));
   const sha = promptSha256(ask.systemPrompt);
   let reasks = 0;
   for (let attempt = 0; ; attempt++) {
@@ -495,6 +500,11 @@ export async function askJudgeFor(ctx: HarnessCtx, ask: JudgeAsk): Promise<Judge
     reasks += 1;
     ctx.notify("judge.retry", { engine: using.engine, kind: JUDGE_UNUSABLE, attempt: reasks, waitMs: 0, message: "" });
   }
+}
+
+/** The pin a judge call is made under: the ask's own (the second taste judge), else the workspace's. */
+async function pinFor(ctx: HarnessCtx, ask: JudgeAsk): Promise<JudgePin | null> {
+  return ask.pin ?? readJudgePin(ctx.workspace);
 }
 
 /** The engine a verdict starts on: the pin's, else the run's judge, else the run's own engine. */
@@ -1611,13 +1621,13 @@ function tasteCheck(raw: unknown, regression: { camera: string; what: string } |
 
 /** The JSON a taste judge answers with, as both its rubric and its user content spell it. */
 const TASTE_REPLY =
-  '{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"…","camera":"…","ask":"…"}|null,"bigMove":{"what":"…","why":"…"}|null,"defects":["…"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}';
+  '{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"…","camera":"…","ask":"…"}|null,"bigMove":{"what":"…","why":"…"}|null,"defects":["…"],"polish":["…"],"added":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}';
 /**
  * The same reply for a run with a scope: the big move carries its typed scope (scope.ts
  * `MoveScope`) in the shape itself, since a model copies the last shape it reads.
  */
 const TASTE_REPLY_SCOPED =
-  '{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"…","camera":"…","ask":"…"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"}|null,"defects":["…"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}';
+  '{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"…","camera":"…","ask":"…"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"}|null,"defects":["…"],"polish":["…"],"added":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","reason":"…"}';
 
 /**
  * The taste veto. Runs on an attempt the scoreboard already accepted: blind A/B over the
@@ -1692,20 +1702,67 @@ export async function tasteVeto(
     describeCandidate(B, hudBudget),
     "",
     lookBar ? shippedLookLine(genreOf(run), Boolean(run.reference?.frames?.length)) : "",
+    lookBar ? artBarLine(side(true)) : "",
     `Reply with JSON only: ${runScope(run) ? TASTE_REPLY_SCOPED : TASTE_REPLY}`,
   ]
     .filter(Boolean)
     .join("\n");
 
   const answer = await askJudgeFor(ctx, { run, systemPrompt: system, userContent, images });
+  // What the engine's own look facts say the round added, judge or no judge (look-facts.ts).
+  const factAdded = lookBar ? addedFactBlockers(challenger.state, incumbentEvidence?.state, organicTags(run)) : [];
+  const polishCap = finishing ? FINISH_POLISH_NOTES : MAX_POLISH_NOTES;
+  const second = lookBar ? await secondTaste(ctx, { run, systemPrompt: system, userContent, images }) : null;
+  const secondWord = second ? tasteVerdictOf(second.answer, challengerIsA, move, polishCap, lookBar, factAdded) : null;
   const verdict = {
-    ...tasteVerdictOf(answer, challengerIsA, move, finishing ? FINISH_POLISH_NOTES : MAX_POLISH_NOTES, lookBar),
+    ...withSecondTaste(
+      tasteVerdictOf(answer, challengerIsA, move, polishCap, lookBar, factAdded),
+      secondWord,
+      second?.engine,
+    ),
     facetId: facet.id,
     iterationId,
     ...provenanceOf(answer, answer.judged.parse, challengerIsA),
   };
   ctx.notify("judge.taste", verdict);
   return verdict;
+}
+
+/**
+ * The second taste judge's answer, when `judge/pin.json` names one (`second`); null otherwise, or
+ * when it could not be asked — the first judge's word then stands alone.
+ */
+async function secondTaste(ctx: HarnessCtx, ask: JudgeAsk): Promise<{ answer: JudgeAnswer; engine: string } | null> {
+  const pin = await readJudgePin(ctx.workspace);
+  if (!pin?.second) return null;
+  const second: JudgePin = { engine: pin.second.engine, model: pin.second.model, fallback: false };
+  const answer = await askJudgeFor(ctx, { ...ask, pin: second }).catch(() => null);
+  return answer && answer.judged.parse === JudgeParse.Valid ? { answer, engine: pin.second.engine } : null;
+}
+
+/**
+ * One verdict from two taste judges: the first's pick, and both judges' blockers. Either one's
+ * "not satisfied", added blocker or named regression holds — two eyes are stricter than one.
+ */
+function withSecondTaste<T extends ReturnType<typeof tasteVerdictOf>>(
+  first: T,
+  second: ReturnType<typeof tasteVerdictOf> | null,
+  engine: string | undefined,
+): T & { secondJudge?: AnyRecord } {
+  if (!second) return first;
+  const union = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
+  const vetoBySecond = !first.veto && second.veto;
+  return {
+    ...first,
+    satisfied: first.satisfied && second.satisfied,
+    addedBlockers: union(first.addedBlockers, second.addedBlockers),
+    lookBlockers: union(first.lookBlockers, second.lookBlockers),
+    defects: union(first.defects, second.defects),
+    veto: first.veto || second.veto,
+    regression: vetoBySecond ? second.regression : first.regression,
+    newCheck: first.newCheck ?? second.newCheck,
+    secondJudge: { engine, pick: second.pick, satisfied: second.satisfied, veto: second.veto },
+  };
 }
 
 /**
@@ -1722,7 +1779,7 @@ async function tasteSystemPrompt(ctx: HarnessCtx, run: Run, finishing: boolean):
       "Pick the side with the better feel, or tie. If you pick the side that lost on the checks you MUST name the one regression that justifies it and phrase it as a new yes/no vision check.",
       'Name `bigMove`: the ONE bold step inside SCOPE (what the user asked for) that would most close the gap to the goal and the reference — deeper, reworked, a better feel of what they asked for; a new system only when SCOPE names it; never a tweak. When several problems share a root cause, name the cause. Its "scope" is "deepens", or "adds" when it needs something SCOPE does not name.',
       "List in `defects` what is broken, missing or unreadable in the better build, worst first; at most three small cosmetic nits go in `polish`, never in `defects`. `satisfied` = the facet genuinely delivers its brief; be strict.",
-      "A look blocker — [primitive], [dark-viewmodel], [crushed-shadow], [placeholder-particles], [sky-contradicts], [visible-tiling], [not-shipped] — is a tagged defect, never polish, and holds `satisfied` false. When asked SHIPPED LOOK, answer `shipped` per scene camera.",
+      `A look blocker — [${Object.values(LookBlocker).join("], [")}] — is a tagged defect, never polish, and holds \`satisfied\` false. When asked SHIPPED LOOK, answer \`shipped\` per scene camera. When asked ART BAR, list in \`added\` the look blockers the accepted build shows that the other does not; "worse against the art bar" is a regression.`,
       "When the user content names THE MOVE the builder was asked to make, answer `moveDelivered`: is that structural change there in the build the checks accepted (true even when the other build has it too — then `moveAlreadyPresent` is true)? And `scale`: is the difference between the two builds structural (extent, a system, a mechanic, the player's path, the UI) or polish (materials, lighting, parameters)?",
       `Reply with JSON only: ${TASTE_REPLY}`,
     ].join("\n"),
@@ -1752,6 +1809,7 @@ function tasteVerdictOf(
   move: string | null,
   polishCap = MAX_POLISH_NOTES,
   lookBar = false,
+  factAdded: readonly string[] = [],
 ) {
   const readable = answer.judged.parse === JudgeParse.Valid;
   const raw: AnyRecord = readable ? answer.raw : {};
@@ -1764,6 +1822,10 @@ function tasteVerdictOf(
   const lookBlockers = lookBlockersIn(defects);
   const regression = namedRegression(raw.regression);
   const newCheck = tasteCheck(raw.newCheck, regression);
+  // The look blockers the round added: the judge's word for the build the checks accepted, and the
+  // engine's facts. On a run with a visual bar a round that adds one is not kept (facet/rules.ts).
+  const said = Array.isArray(raw.added) ? raw.added.filter((entry: unknown) => typeof entry === "string") : [];
+  const addedBlockers = lookBar ? [...new Set([...lookBlockersIn(said).map((text) => text.trim()), ...factAdded])] : [];
   return {
     pick: pick === Side.Challenger ? Side.Challenger : Side.Incumbent,
     tie: readable && pick === Side.Tie,
@@ -1772,8 +1834,9 @@ function tasteVerdictOf(
     regression,
     newCheck,
     // A look blocker on screen holds the facet open, whatever the judge said (look-bar.ts).
-    satisfied: raw.satisfied === true && lookBlockers.length === 0,
+    satisfied: raw.satisfied === true && lookBlockers.length === 0 && addedBlockers.length === 0,
     lookBlockers,
+    addedBlockers,
     defects,
     polish: polishNotes(raw.polish, defects, polishCap),
     bigMove: normalizeBigMove(raw.bigMove),

@@ -140,7 +140,7 @@ export function validateLodSet(set: LodSet, vertexCount: number): LodFault | nul
 }
 
 /** One primitive as the simplifier takes it: geometry, weighed attributes, locks and flags. */
-interface SimplifyInput {
+export interface SimplifyInput {
   geometry: Geometry;
   /** Per vertex: the normal (when the primitive has one), then UV0 (when it has one). */
   attributes: Float32Array;
@@ -255,11 +255,12 @@ function flagsFor(input: SimplifyInput, level: number): MeshoptSimplifyFlag[] {
 }
 
 /** One simplification of `indices` to `share` of its triangles: the indices and the relative error. */
-async function simplifyTo(
+export async function simplifyTo(
   input: SimplifyInput,
   indices: Uint32Array,
   share: number,
   level: number,
+  maxError: number = LOD_MAX_RELATIVE_ERROR,
 ): Promise<[Uint32Array, number]> {
   const simplifier = await meshoptSimplifier();
   const target = Math.floor((indices.length * share) / TRIANGLE) * TRIANGLE;
@@ -272,7 +273,7 @@ async function simplifyTo(
     input.weights,
     input.lock,
     target,
-    LOD_MAX_RELATIVE_ERROR,
+    maxError,
     flagsFor(input, level),
   );
 }
@@ -424,13 +425,18 @@ async function fineBoundFor(inputs: SimplifyInput[], count: number): Promise<num
 }
 
 /** Each primitive's simplifier input, its attributes read from `doc`. */
-function simplifyInputs(doc: PackDoc, primitives: Json[], geometry: Geometry[]): SimplifyInput[] {
+export function simplifyInputs(
+  doc: PackDoc,
+  primitives: Json[],
+  geometry: Geometry[],
+  options: { lockCards?: boolean } = {},
+): SimplifyInput[] {
   const locks = sharedVertexLocks(geometry);
   return geometry.map((each, at) => {
     const primitive = primitives[at] ?? {};
     const count = each.positions.length / 3;
     const lock = locks[at] ?? new Uint8Array(count);
-    lockCards(each, lock);
+    if (options.lockCards !== false) lockCards(each, lock);
     return {
       geometry: each,
       ...weighedAttributes(doc, primitive, count),

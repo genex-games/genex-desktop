@@ -29,6 +29,7 @@ fn frame(stream: &mut TextureStream, id: StreamedId, pixels_per_metre: f32) -> u
 #[test]
 fn the_rungs_are_the_tail_then_the_size_classes_up_to_the_texture() {
     assert_eq!(rungs(2048), [TAIL_SIDE, 256, 512, 1024, 2048]);
+    assert_eq!(rungs(8192), [TAIL_SIDE, 256, 512, 1024, 2048, 4096, 8192], "a native 8K map streams to its own side (WP-9)");
     assert_eq!(rungs(1024), [64, 256, 512, 1024]);
     assert_eq!(rungs(32), [32]);
     assert_eq!(wanted_rung(1024, 0.0), 64);

@@ -4,7 +4,8 @@
 //! that moves a type or a call breaks this build before it misleads a game.
 
 use genex::actions::{ActionId, Anchor, ContextId, ControlId, Device, Modifier, ShowWhen, StickMode, controls_panel, glyph_ui};
-use genex::animation::{AnimatorStep, BodyPart, ClipId, EventId, FloatParam, Mask, Motion, TriggerParam};
+use genex::animation::{AnimatorStep, BlendMotion, BodyPart, ClipId, EventId, FloatParam, Mask, Motion, TriggerParam};
+use genex::camera::{Comfort, FirstPersonRig, RigPose, RigStep};
 use genex::net::{NetConfig, NetError, NetEvent, NetStatus, NetTicket, PlayerId};
 use genex::physics::{ColliderHandle, RigidBodyHandle};
 use genex::prelude::*;
@@ -130,6 +131,11 @@ fn animation(gfx: &Gfx, frame: &mut Frame) -> Option<(Animator, FloatParam, Trig
     let upper = g.layer("upper");
     g.layer_mask(upper, Mask::Humanoid(BodyPart::UpperBody));
     let hit: EventId = g.event(walk, 0.3, "hit");
+    let rate: FloatParam = g.float("rate", 1.0);
+    let blend: BlendMotion = Motion::blend1d(speed, &[(1.4, walk)]).speed_by(rate);
+    let _: (BlendMotion, BlendMotion) = (Motion::blend2d(g.vec2("aim", Vec2::ZERO), &[]), Motion::directional(g.vec2("velocity", Vec2::ZERO), &[]));
+    g.state(base, "move", blend);
+    let _: Option<f32> = hero.clip_ground_speed(walk);
     let graph = g.build().ok()?;
     let mut animator: Animator = hero.animator(&graph).ok()?;
     let _: Result<Animator, AnimationError> = Animator::simple(&hero);
@@ -137,6 +143,19 @@ fn animation(gfx: &Gfx, frame: &mut Frame) -> Option<(Animator, FloatParam, Trig
     let _ = (step.root_motion, step.events.iter().any(|event| event.event == hit));
     frame.character_with(&animator, Transform::IDENTITY, &CharacterDraw::new().tint(Color::RED));
     Some((animator, speed, attack, hit))
+}
+
+/// camera.md: the rig in the world, advanced from a drive, and its camera under the person's comfort.
+fn camera(step: &CharacterStep, velocity: Vec3, turn: f32) -> Camera {
+    let mut rig: FirstPersonRig = FirstPersonRig::new().with_speeds(3.0, 5.5);
+    rig.update(1.0 / 60.0, RigStep { velocity, turn, ..RigStep::from(step) });
+    rig.recoil(1.2);
+    rig.impulse(0.5);
+    let comfort: Comfort = Comfort::current();
+    let _: (f32, f32, Comfort) = (comfort.bob_share(), comfort.shake_share(), genex::settings::comfort());
+    let _: (RigPose, f32, Value) = (rig.pose(), rig.cadence(), rig.probe());
+    let _: Camera = rig.camera_with(Vec3::Y, Vec3::NEG_Z, 72.0, &comfort);
+    rig.camera(Vec3::Y, Vec3::NEG_Z, 72.0)
 }
 
 /// assets.md: a reset's reads and their refusal.
@@ -155,7 +174,7 @@ fn assets(gfx: &Gfx, model: &Model) -> Result<(), AssetError> {
 /// What each page's code reaches is named where the page says it is.
 #[test]
 fn the_reference_pages_name_real_paths_and_shapes() {
-    let _ = (particles, characters, ragdoll, net, input, animation, assets);
+    let _ = (particles, characters, ragdoll, net, input, animation, camera, assets);
     let jump = CharacterParams { jump_speed: 9.0, ..CharacterParams::default() };
     assert_eq!(jump.jump_speed, 9.0, "the jump is jump_speed");
     assert!(Particles::steam(Vec3::ZERO).with_rate(0, 60).is_err(), "with_rate refuses none alive");

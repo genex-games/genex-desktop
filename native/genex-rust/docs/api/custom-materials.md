@@ -19,7 +19,8 @@ RenderConfig::new().class(class, ClassOverride { taa: Some(TaaQuality::DEFAULT.w
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,
 `kind = "material"` or `"post"`, `api = 1`) and compile it in with
 `game.wgsl("shaders/glow.wgsl", include_str!("../shaders/glow.wgsl"))`: web, phone and export builds
-have no game folder to read it from. In `on_reset`, `gfx.material(path, &uniforms)` returns a
+have no game folder to read it from. A game run by cargo (`cargo run`, its tests) reads the folder.s copy instead: edit the shader and
+the next reset reads it again, no rebuild. Live runs the built game: rebuild there. In `on_reset`, `gfx.material(path, &uniforms)` returns a
 `CustomMaterial` you draw with `frame.custom(mesh, transform, &material, tint)` (`mesh` is a `Model`,
 `CustomMesh::Cube` or `CustomMesh::Sphere`, radius 1; change its uniforms later with
 `gfx.set_material_uniforms(&material, &uniforms)`), and `gfx.post_pass(path)`, or
@@ -86,3 +87,11 @@ canvas size whose budget changes the samples rebuilds the world pass for them. T
 them per class from code only: `RenderConfig::new().class(class, ClassOverride { taa:
 Some(TaaQuality::DEFAULT.with_jitter_cycle(JitterCycle::Sixteen)), ..Default::default() })`
 (`.with_alpha_min(..)` for a steadier history, `.with_lod_bias(..)` for sharper textures).
+
+A stylised post pass (a bodycam lens, grain, a vignette, scan lines) is the game's look, so it is
+the same on every preset; keep three things true of it. It runs after the world and before the
+HUD (`frame.post_pass`), so text stays sharp. The person can turn it off: give it a game option
+(`docs/api/settings.md`), and look at a capture with it off too, which is how the judges see the
+world. And it never carries the exposure: a vignette or grain darkens the frame, so keep the
+recipe's compensation (`docs/look-recipes.md`) and keep the vignette's corners above a third of
+the centre's brightness, rather than lowering exposure under it.

@@ -6,6 +6,7 @@
 use glam::{Mat4, Vec3};
 
 use crate::layout::GpuInstance;
+use crate::wind::Sway;
 
 /// The row for a draw of a mesh whose model-space bounding sphere is `center`/`radius`.
 pub fn instance_row(model: &[f32; 16], center: [f32; 3], radius: f32, material: u32) -> GpuInstance {
@@ -16,8 +17,20 @@ pub fn instance_row(model: &[f32; 16], center: [f32; 3], radius: f32, material: 
         normal: normal.to_cols_array(),
         bounds: crate::lod_rows::world_sphere(model, center, radius),
         material,
-        pad: [0; 3],
+        wind: [0; 3],
     }
+}
+
+/// `row` swaying as `sway` says (model wind, [`crate::wind`]): its wind words, and its bounding
+/// sphere grown by the farthest a vertex of the copy moves, so the cull never cuts a swaying tip.
+/// `None`, or a sway that would not move, gives the row back bit for bit.
+pub fn swaying(row: GpuInstance, sway: Option<Sway>) -> GpuInstance {
+    let Some(sway) = sway.and_then(Sway::held) else { return row };
+    let model = Mat4::from_cols_array(&row.model);
+    let scale = model.x_axis.truncate().length().max(model.y_axis.truncate().length()).max(model.z_axis.truncate().length());
+    let mut bounds = row.bounds;
+    bounds[3] += sway.reach() * scale;
+    GpuInstance { wind: sway.words(), bounds, ..row }
 }
 
 /// The normal matrix of `matrix`: its inverse-transpose (the published v1 `GxInstance::normal`),
@@ -102,6 +115,21 @@ mod tests {
             let (a, b) = (got.transform_vector3(n).normalize(), want.transform_vector3(n).normalize());
             assert!(a.dot(b) > 1.0 - 1.0e-6, "seed {seed}: the shaded normal turns ({a} against {b})");
         }
+    }
+
+    #[test]
+    fn a_still_row_is_unchanged_and_a_swaying_row_carries_its_words_and_wider_bounds() {
+        let model = Mat4::from_scale_rotation_translation(glam::Vec3::splat(2.0), glam::Quat::from_rotation_y(0.4), glam::Vec3::new(5.0, 0.0, -3.0)).to_cols_array();
+        let row = instance_row(&model, [0.0, 6.0, 0.0], 6.5, 3);
+        assert_eq!(swaying(row, None), row, "no sway: the row bit for bit");
+        let still = Sway { height: 12.0, reach: 4.0, trunk: 0.0, branch: 0.0, flutter: 0.0, flutter_hz: 3.0 };
+        assert_eq!(swaying(row, Some(still)), row, "a sway that does not move: the row bit for bit");
+        let tree = Sway { trunk: 0.3, branch: 0.1, flutter: 0.02, ..still };
+        let swayed = swaying(row, Some(tree));
+        assert_eq!(swayed.wind, tree.words());
+        assert_eq!((swayed.model, swayed.normal, swayed.material), (row.model, row.normal, row.material));
+        assert_eq!(swayed.bounds[..3], row.bounds[..3], "the centre stays");
+        assert!((swayed.bounds[3] - row.bounds[3] - tree.reach() * 2.0).abs() < 1.0e-4, "the radius grows by the reach of a copy of scale 2");
     }
 
     #[test]

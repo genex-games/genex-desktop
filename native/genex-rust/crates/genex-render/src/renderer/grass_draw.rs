@@ -53,8 +53,8 @@ pub(super) struct GrassPipelines {
     casters: Option<[Compiled<RenderPipeline>; 2]>,
 }
 
-/// The simulated time the grass sways at: the next frame's seconds and each history set's last
-/// frame's (its motion sways from there).
+/// The simulated time the grass (and, in a clock of its own, model wind) sways at: the next
+/// frame's seconds and each history set's last frame's (its motion sways from there).
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct GrassTime {
     seconds: f32,
@@ -65,7 +65,7 @@ pub(super) struct GrassTime {
 impl GrassTime {
     /// This frame's seconds and last frame's on history set `set` (this frame's on a history
     /// reset: no sway of its own), remembered for the next frame.
-    fn advance(&mut self, set: HistorySet, reset: bool) -> [f32; 2] {
+    pub(super) fn advance(&mut self, set: HistorySet, reset: bool) -> [f32; 2] {
         let at = usize::from(set != HistorySet::Live);
         let before = if reset { self.seconds } else { self.last[at].unwrap_or(self.seconds) };
         self.last[at] = Some(self.seconds);
@@ -116,10 +116,12 @@ fn grass_pipeline(device: &wgpu::Device, spec: &GrassSpec<'_>) -> Compiled<Rende
 }
 
 impl Renderer {
-    /// The simulated seconds the next frames' grass sways at (the tick's, never the wall clock;
-    /// 0 until set). Its motion sways from the history set's last frame's.
+    /// The simulated seconds the next frames' grass and swaying models sway at (the tick's, never
+    /// the wall clock; 0 until set). Their motion sways from the history set's last frame's.
     pub fn set_foliage_seconds(&mut self, seconds: f32) {
-        self.grass_time.seconds = if seconds.is_finite() { seconds } else { 0.0 };
+        let seconds = if seconds.is_finite() { seconds } else { 0.0 };
+        self.grass_time.seconds = seconds;
+        self.wind_time.seconds = seconds;
     }
 
     /// The grass quality frames draw with.

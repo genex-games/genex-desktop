@@ -8,10 +8,12 @@
 //! Each value takes the specification's default when the file leaves it out or states something
 //! that is not one (a string, a non-finite number, the wrong length), and is clamped into its range
 //! otherwise; nothing here refuses a model. A texture is named by the image its texture samples,
-//! and only on TEXCOORD_0, the one uv set a vertex carries. Shading these terms is the materials
-//! tier's: until then they ride along on each [`crate::mesh::GlbPart`]. The one shaded today is
-//! diffuse transmission: [`GlbMaterialExt::subsurface`] turns it into the material's
-//! [`Subsurface`] (renderer pass 2 B.1), which [`crate::mesh::GlbMaterial::to_material`] applies.
+//! and only on TEXCOORD_0, the one uv set a vertex carries. Diffuse transmission is shaded as the
+//! material's [`Subsurface`] ([`GlbMaterialExt::subsurface`], renderer pass 2 B.1); the clearcoat,
+//! sheen, anisotropy and transmission factors as its [`crate::layers::Lobes`]
+//! ([`GlbMaterialExt::lobes`], AAA materials), both applied by
+//! [`crate::mesh::GlbMaterial::to_material`]. `ior`, `specular` and `volume` and every
+//! extension's textures still ride along unshaded on each [`crate::mesh::GlbPart`].
 
 use crate::subsurface::{DEFAULT_SUBSURFACE_POWER, Subsurface};
 use gltf::json::Value;
@@ -147,6 +149,26 @@ impl GlbMaterialExt {
         let volume = self.volume.map(|v| [v.attenuation_distance, v.thickness]).unwrap_or([f32::INFINITY, 0.0]);
         let depth = volume.into_iter().find(|d| d.is_finite() && *d > 0.0).unwrap_or(Subsurface::LEAF.depth);
         Some(Subsurface { color: [0.0; 3], thickness: 1.0, power: DEFAULT_SUBSURFACE_POWER, transmission, depth })
+    }
+}
+
+impl GlbMaterialExt {
+    /// Its clearcoat, sheen, anisotropy and transmission factors as the forward pass shades them
+    /// (AAA materials, [`crate::layers::Lobes`]); their textures ride along unshaded. A material
+    /// carrying none of them has none.
+    pub fn lobes(&self) -> crate::layers::Lobes {
+        let mut lobes = crate::layers::Lobes::default();
+        if let Some(coat) = self.clearcoat {
+            (lobes.clearcoat, lobes.clearcoat_roughness) = (coat.factor, coat.roughness);
+        }
+        if let Some(sheen) = self.sheen {
+            (lobes.sheen_color, lobes.sheen_roughness) = (sheen.color, sheen.roughness);
+        }
+        if let Some(anisotropy) = self.anisotropy {
+            (lobes.anisotropy, lobes.anisotropy_rotation) = (anisotropy.strength, anisotropy.rotation);
+        }
+        lobes.transmission = self.transmission.unwrap_or(0.0);
+        lobes
     }
 }
 

@@ -24,6 +24,7 @@
  * A new module on purpose: a seed upgrade keeps any older module the agent edited, so it imports
  * the frame verdicts from their own module and only names its neighbours have always exported.
  */
+import { readyWaitOf } from "./ready-wait.ts";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -743,7 +744,7 @@ async function readyRow(gate: GateRun): Promise<boolean> {
       ...(request.root ? { root: request.root } : {}),
       ...h,
     });
-    const ready = await ctx.call(HostMethod.PreviewReady, { ...h });
+    const ready = await ctx.call(HostMethod.PreviewReady, { ...h, ...readyWaitOf(request.run) });
     if (ready?.ready !== true) {
       gate.rows.push(
         failed(
@@ -1416,7 +1417,7 @@ async function loadNative(look: NativeLook): Promise<boolean> {
       ...(options.root ? { root: options.root } : {}),
       ...h,
     });
-    look.ready = await ctx.call(HostMethod.PreviewReady, { ...h });
+    look.ready = await ctx.call(HostMethod.PreviewReady, { ...h, ...readyWaitOf(options.run) });
   } catch (error) {
     problems.push(MESSAGE.notReady(messageOf(error)));
     return false;
