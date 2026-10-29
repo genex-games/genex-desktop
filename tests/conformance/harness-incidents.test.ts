@@ -19268,3 +19268,116 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     );
   });
 });
+
+describe("Bodycam rerun: a look gate that blamed every round for the shared world (run_mvta2ggcw68k)", () => {
+  // The rerun's title and combat rounds were refused for the greybox world the map builder was
+  // still texturing, and the map's first round broke on the 15 s web boot gate.
+  const look: Run = {
+    runId: "rerun-yard",
+    project: "body-cam-3",
+    goal: "Make the photorealistic bodycam fps shooter in a snowy post-soviet yard.",
+    reference: { name: "a photoreal bodycam shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const facet = { id: "screen", title: "Title and overlay", intent: "a title screen and the bodycam overlay" };
+  /** The shared world as the engine reported it: every mesh an untouched primitive, 78% flat. */
+  const GREYBOX_WORLD = {
+    coverage: 0.9,
+    flatCoverage: 0.782,
+    texelsPerMetre: null,
+    pixelsPerMetre: 640,
+    trianglesPerSquareMetre: 2,
+    normalMapShare: 0,
+    ormShare: 0,
+    alphaCardShare: 0,
+    draws: 40,
+    primitiveOnly: true,
+  };
+  const greybox = { phase: "playing", __render: { look: { tags: { world: GREYBOX_WORLD } } } };
+  const shotAt = (meanLuma: number, darkest: number) => ({
+    shots: [
+      {
+        camera: "eye:here",
+        base64: "px",
+        stats: { meanLuma, histogram: [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)] },
+      },
+    ],
+  });
+
+  it("RR-1. screen it1, combat it1 and screen it2 were refused for [primitive] and [flat-material] on the greybox world they do not own, because the incumbent carried no look facts: a blocker is the round's only when the incumbent was measured without it", async () => {
+    const { addedFactBlockers } = await import("../../src/harness-seed/loop/look-facts.ts");
+    const { incumbentFindings } = await import("../../src/harness-seed/loop/facet/incumbent-findings.ts");
+    const { addedMeasured, measuredBlockers } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    assert.deepEqual(
+      addedFactBlockers(greybox, { phase: "playing" }),
+      [],
+      "an incumbent with no look facts blames nothing",
+    );
+    assert.deepEqual(addedFactBlockers(greybox, greybox), [], "the shared world's own blockers, unchanged");
+    assert.equal(
+      addedFactBlockers(greybox, { phase: "playing", __render: { look: { tags: {} } } }).length,
+      2,
+      "an incumbent measured with nothing drawn: this round drew the greybox",
+    );
+    const answer = {
+      pick: "A",
+      satisfied: true,
+      regression: null,
+      newCheck: null,
+      defects: [],
+      polish: [],
+      scale: "structural",
+      reason: "the title reads",
+    };
+    const recorder = ctxRecorder({
+      handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(answer) } }) },
+    });
+    const taste = await tasteVeto(recorder.ctx as never, {
+      run: look,
+      facet,
+      challenger: { state: greybox },
+      incumbentEvidence: { state: { phase: "playing" } },
+      random: () => 0.1,
+    });
+    assert.deepEqual(taste.addedBlockers, [], "the title round is judged on its checks, not the world's greybox");
+    // Measured findings before the first keep: the incumbent's own frames are what it had.
+    const dark = shotAt(28, 0.41);
+    const found = measuredBlockers(look, dark, true);
+    assert.equal(found.length, 1, "the shared world's dark camera is measured on the round");
+    assert.deepEqual(
+      addedMeasured(found, (await incumbentFindings(look, dark, {}, null)) ?? {}),
+      [],
+      "but it is not the round's",
+    );
+    assert.equal(await incumbentFindings(look, null, {}, null), null, "an incumbent nothing measured blames nothing");
+    assert.equal(await incumbentFindings(look, { state: { phase: "playing" }, shots: [] }, {}, null), null);
+    const lit = (await incumbentFindings(look, shotAt(110, 0.05), {}, null)) ?? {};
+    assert.equal(addedMeasured(found, lit).length, 1, "a camera the round darkened is still the round's");
+  });
+
+  it("RR-2. map it1 broke on 'the page never reported itself ready within 15.0 s … (pipelines)': no studio.json declared bootMs, so the look on a visual bar waits for the boot its brief asks for", async () => {
+    const { LOOK_BAR_BOOT_MS } = await import("../../src/harness-seed/loop/destination-budgets.ts");
+    const waits = async (run: Run) => {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.PreviewReload]: () => ({}),
+          [HostMethod.PreviewReady]: () => ({
+            ready: true,
+            via: "shim",
+            pageMs: 900,
+            timedOut: false,
+            phase: "ready",
+            budgetMs: 15_000,
+          }),
+        },
+      });
+      await gatherEvidence(recorder.ctx as never, { run, iterationId: "001", seed: 1 } as never).catch(() => null);
+      return recorder.paramsOf(HostMethod.PreviewReady).map((params) => params.timeoutMs);
+    };
+    const looked = await waits(look);
+    assert.ok(looked.length > 0, "the look asked whether the page was ready");
+    assert.deepEqual([...new Set(looked)], [LOOK_BAR_BOOT_MS]);
+    const plain = await waits({ ...look, goal: "a chess board", reference: { name: "", shots: [] } } as Run);
+    assert.deepEqual([...new Set(plain)], [undefined], "a run with no visual bar keeps the folder's own bootMs");
+  });
+});

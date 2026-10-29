@@ -74,7 +74,9 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
   in `added` under its ART BAR line ("worse against the art bar" is a regression, even where the
   other build lacks the thing), the engine's look facts show it (`loop/look-facts.ts`, reading
   `state().__render.look`), or the harness measures it (`loop/provenance.ts`, `loop/temporal-checks.ts`)
-  where the accepted build did not have it or had it less badly.
+  where the accepted build did not have it or had it less badly. The accepted build is measured on its
+  own evidence (`facet/incumbent-findings.ts`); one that reported no look facts, or that nothing was
+  measured on, makes no finding the round's.
 - Eyes. Facet rounds are captured at 1600×900, like the art director's look. A round with no frame a
   judge can be shown is captured once more, then left Unmeasured (`unseen`), never judged blind.
   `references/*` load onto every run that brought no stills (`loop/reference-stills.ts`). A demo whose
@@ -107,7 +109,8 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
 - Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
   textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
   answered with a warning naming them (`director/ownership.ts`). Budgets are said per destination: a native game's slow web preview is the preview's boot,
-  and no judge or director meets a budget by dropping maps.
+  and no judge or director meets a budget by dropping maps. The harness's own look on such a run waits
+  45 s for the page to say it is ready, whatever `studio.json` declares (`loop/ready-wait.ts`).
 
 Builder sessions are rotated every three rounds (`facet/session-rotation.ts`); the round after is briefed
 whole. `worker_start` weighs the builder's plan limits, the same reports the app's usage panel shows
