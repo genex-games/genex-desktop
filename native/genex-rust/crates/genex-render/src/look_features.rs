@@ -68,22 +68,22 @@ impl LookFeature {
     /// The wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
-            LookFeature::VolumetricFog => "volumetricFog",
+            LookFeature::VolumetricFog => "volumetric-fog",
             LookFeature::Fog => "fog",
             LookFeature::Shadows => "shadows",
-            LookFeature::SpotShadows => "spotShadows",
-            LookFeature::PointShadows => "pointShadows",
-            LookFeature::ContactShadows => "contactShadows",
+            LookFeature::SpotShadows => "spot-shadows",
+            LookFeature::PointShadows => "point-shadows",
+            LookFeature::ContactShadows => "contact-shadows",
             LookFeature::Ao => "ao",
             LookFeature::Ssgi => "ssgi",
             LookFeature::Ssr => "ssr",
             LookFeature::Bloom => "bloom",
             LookFeature::Taa => "taa",
             LookFeature::Ibl => "ibl",
-            LookFeature::LocalExposure => "localExposure",
-            LookFeature::AutoExposure => "autoExposure",
-            LookFeature::DepthOfField => "depthOfField",
-            LookFeature::MotionBlur => "motionBlur",
+            LookFeature::LocalExposure => "local-exposure",
+            LookFeature::AutoExposure => "auto-exposure",
+            LookFeature::DepthOfField => "depth-of-field",
+            LookFeature::MotionBlur => "motion-blur",
         }
     }
 }
@@ -162,22 +162,22 @@ mod tests {
         let quality = preset(QualityPreset::Ultra);
         let foggy = Look::default().with_fog(Fog::default().with_density(0.05));
         let drawn = on(&quality, &foggy, ASKS);
-        for feature in ["volumetricFog", "fog", "shadows", "ao", "ssgi", "taa", "ibl", "autoExposure"] {
+        for feature in ["volumetric-fog", "fog", "shadows", "ao", "ssgi", "taa", "ibl", "auto-exposure"] {
             assert!(drawn.contains(&feature), "{feature} missing from {drawn:?}");
         }
         let flat = on(&quality, &foggy.with_fog(Fog::default().with_density(0.05).with_volumetric(false)), ASKS);
-        assert!(flat.contains(&"fog") && !flat.contains(&"volumetricFog"), "{flat:?}");
+        assert!(flat.contains(&"fog") && !flat.contains(&"volumetric-fog"), "{flat:?}");
         let clear = on(&quality, &Look::default(), ASKS);
-        assert!(!clear.contains(&"fog") && !clear.contains(&"volumetricFog"), "{clear:?}");
+        assert!(!clear.contains(&"fog") && !clear.contains(&"volumetric-fog"), "{clear:?}");
     }
 
     #[test]
     fn a_feature_the_preset_does_not_draw_or_the_frame_does_not_ask_for_stays_off() {
         let foggy = Look::default().with_fog(Fog::default().with_density(0.05));
         let low = on(&preset(QualityPreset::Low), &foggy, ASKS);
-        assert!(low.contains(&"fog") && !low.contains(&"volumetricFog") && !low.contains(&"ssgi"), "{low:?}");
+        assert!(low.contains(&"fog") && !low.contains(&"volumetric-fog") && !low.contains(&"ssgi"), "{low:?}");
         let unlit = on(&preset(QualityPreset::Ultra), &foggy, FrameAsks { hdr: true, ..FrameAsks::default() });
-        for feature in ["shadows", "spotShadows", "pointShadows", "contactShadows", "ibl"] {
+        for feature in ["shadows", "spot-shadows", "point-shadows", "contact-shadows", "ibl"] {
             assert!(!unlit.contains(&feature), "{feature} drawn with nothing asking: {unlit:?}");
         }
     }

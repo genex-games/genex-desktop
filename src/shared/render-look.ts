@@ -22,13 +22,13 @@ export const RENDER_LOOK_VERSION = 1;
  */
 export const LookFeature = {
   /** The fog as a lit volume: the sun's shadows carve shafts in it, local lights glow in it. */
-  VolumetricFog: "volumetricFog",
+  VolumetricFog: "volumetric-fog",
   /** Any fog (the volume or the plain height fog). */
   Fog: "fog",
   Shadows: "shadows",
-  SpotShadows: "spotShadows",
-  PointShadows: "pointShadows",
-  ContactShadows: "contactShadows",
+  SpotShadows: "spot-shadows",
+  PointShadows: "point-shadows",
+  ContactShadows: "contact-shadows",
   Ao: "ao",
   /** Screen-space global illumination. */
   Ssgi: "ssgi",
@@ -38,10 +38,10 @@ export const LookFeature = {
   Taa: "taa",
   /** Image-based lighting from the environment. */
   Ibl: "ibl",
-  LocalExposure: "localExposure",
-  AutoExposure: "autoExposure",
-  DepthOfField: "depthOfField",
-  MotionBlur: "motionBlur",
+  LocalExposure: "local-exposure",
+  AutoExposure: "auto-exposure",
+  DepthOfField: "depth-of-field",
+  MotionBlur: "motion-blur",
 } as const;
 export type LookFeature = (typeof LookFeature)[keyof typeof LookFeature];
 

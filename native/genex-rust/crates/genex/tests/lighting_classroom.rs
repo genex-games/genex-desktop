@@ -58,6 +58,8 @@ enum Recipe {
     Fog,
     /// The same room on `ultra` without the fog, the shafts' reference.
     Clear,
+    /// The fog recipe drawn as the plain height fog (`.with_volumetric(false)`): no shafts.
+    FlatFog,
 }
 
 fn box_at(frame: &mut Frame, min: Vec3, max: Vec3, material: &Material) {
@@ -117,6 +119,11 @@ fn light_room(frame: &mut Frame) {
     frame.reflection_probe(&ReflectionProbe::new(Vec3::ZERO, Vec3::new(x, y, z)).with_capture(Vec3::new(x * 0.5, 1.6, z * 0.5)));
 }
 
+/// The fog recipe's fog: uniform in height, so only the light in it varies.
+fn room_fog() -> Fog {
+    Fog::default().with_density(FOG_DENSITY).with_height(0.0, 0.0)
+}
+
 fn runtime(recipe: Recipe) -> Runtime<World> {
     let exposure = match recipe {
         Recipe::Gen3 => Exposure::auto().compensation(-0.75).metering(Metering::Average).range(-2.5, 8.0),
@@ -126,7 +133,8 @@ fn runtime(recipe: Recipe) -> Runtime<World> {
     let config = match recipe {
         Recipe::Indoor | Recipe::Gen3 => config.preset(QualityPreset::High),
         Recipe::Clear => config.preset(QualityPreset::Ultra),
-        Recipe::Fog => config.preset(QualityPreset::Ultra).fog(Fog::default().with_density(FOG_DENSITY).with_height(0.0, 0.0)),
+        Recipe::Fog => config.preset(QualityPreset::Ultra).fog(room_fog()),
+        Recipe::FlatFog => config.preset(QualityPreset::Ultra).fog(room_fog().with_volumetric(false)),
     };
     let mut game = Game::new(World).title("Classroom").world_size(WORLD[0], WORLD[1]);
     game.render_settings(config);
@@ -210,7 +218,7 @@ fn metal_the_classroom_under_gen3_s_exposure_warns_of_its_raised_floor() {
 /// on its seed, [`REPLAY_TICKS`] steps, then a settled capture. Between the reload and the capture
 /// the window draws Live frames at its own pace, so the two runs the row compares draw different
 /// counts: `live_frames` Live frames, spread over the steps.
-fn replay_capture(recipe: Recipe, live_frames: usize) -> Option<Vec<u8>> {
+fn replay_capture(recipe: Recipe, live_frames: usize) -> Option<(Vec<u8>, serde_json::Value)> {
     let mut presenter = presenter()?;
     let mut runtime = runtime(recipe);
     runtime.pause();
@@ -222,9 +230,20 @@ fn replay_capture(recipe: Recipe, live_frames: usize) -> Option<Vec<u8>> {
         }
         runtime.step(FIXED_STEP_MS);
     }
+    // The row reads `state()` before the screenshot, as `replayRow` does.
+    let render = runtime.state()["__render"].clone();
     presenter.set_capturing(true);
     presenter.draw_view(&mut runtime, View::Game).expect("game view").expect("drawn");
-    Some(presenter.resilient.capture().expect("capture").bgra().to_vec())
+    Some((presenter.resilient.capture().expect("capture").bgra().to_vec(), render))
+}
+
+/// The keys of two `__render` objects whose values differ.
+fn differing_keys(a: &serde_json::Value, b: &serde_json::Value) -> Vec<String> {
+    let keys = a.as_object().into_iter().chain(b.as_object()).flat_map(|object| object.keys().cloned());
+    let mut keys: Vec<String> = keys.filter(|key| a.get(key) != b.get(key)).collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys
 }
 
 /// How many pixels of `a` and `b` differ, and by at most how much in one channel.
@@ -239,27 +258,61 @@ fn pixel_difference(a: &[u8], b: &[u8]) -> (usize, u8) {
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_a_volumetric_fog_room_on_ultra_replays_to_the_same_pixels_whatever_live_drew_first() {
-    let Some(few) = replay_capture(Recipe::Fog, 1) else { return };
-    let Some(many) = replay_capture(Recipe::Fog, 3 * REPLAY_TICKS) else { return };
-    let render = serde_json::Value::Null;
-    evidence("classroom-ultra-fog-replay-a", &few, &render);
-    evidence("classroom-ultra-fog-replay-b", &many, &render);
+    let Some((few, few_render)) = replay_capture(Recipe::Fog, 1) else { return };
+    let Some((many, many_render)) = replay_capture(Recipe::Fog, 3 * REPLAY_TICKS) else { return };
+    evidence("classroom-ultra-fog-replay-a", &few, &few_render);
+    evidence("classroom-ultra-fog-replay-b", &many, &many_render);
+    eprintln!("__render keys that differ between the runs: {:?}", differing_keys(&few_render, &many_render));
     let (count, most) = pixel_difference(&few, &many);
     if count > 0 {
         let clear = replay_capture(Recipe::Clear, 1).zip(replay_capture(Recipe::Clear, 3 * REPLAY_TICKS));
-        let (clear_count, clear_most) = clear.map_or((0, 0), |(a, b)| pixel_difference(&a, &b));
+        let (clear_count, clear_most) = clear.map_or((0, 0), |((a, _), (b, _))| pixel_difference(&a, &b));
         eprintln!("without the fog: {clear_count} differ, by up to {clear_most}");
     }
     assert_eq!((count, most), (0, 0), "the same seed and input drew different pixels: {count} differ, by up to {most}");
 }
 
+/// How unevenly `fog` adds light over `clear`: the 95th percentile of the per-pixel luma gain less
+/// its median. Plain height fog adds about the same everywhere at one distance; shafts add a lot in
+/// the sunlit air and little in the shadowed air.
+fn gain_spread(fog: &[u8], clear: &[u8]) -> f64 {
+    let luma = |p: &[u8; 4]| 0.0722 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.2126 * f64::from(p[2]);
+    let mut gains: Vec<f64> = fog.as_chunks::<4>().0.iter().zip(clear.as_chunks::<4>().0).map(|(f, c)| luma(f) - luma(c)).collect();
+    gains.sort_unstable_by(f64::total_cmp);
+    let at = |share: f64| gains[((gains.len() - 1) as f64 * share) as usize];
+    at(0.95) - at(0.5)
+}
+
+/// A settled capture of `recipe` (BGRA) and its `__render`.
+fn shot(recipe: Recipe, name: &str) -> Option<(Vec<u8>, serde_json::Value)> {
+    let mut presenter = presenter()?;
+    let mut runtime = runtime(recipe);
+    presenter.set_capturing(true);
+    presenter.draw_view(&mut runtime, View::Game).expect("game view").expect("drawn");
+    let bgra = presenter.resilient.capture().expect("capture").bgra().to_vec();
+    let render = runtime.state()["__render"].clone();
+    evidence(name, &bgra, &render);
+    Some((bgra, render))
+}
+
+/// The least spread (luma levels) of the shafts' gain over the clear room, and how many times the
+/// plain fog's spread it must be.
+const SHAFT_SPREAD_MIN: f64 = 8.0;
+const SHAFT_OVER_FLAT: f64 = 1.5;
+
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_fog_room_s_sun_shafts_light_the_air_inside_the_windows() {
-    let Some((fog_mean, _, fog)) = capture(Recipe::Fog, "classroom-ultra-fog") else { return };
-    let Some((clear_mean, _, _)) = capture(Recipe::Clear, "classroom-ultra-clear") else { return };
-    eprintln!("fog {fog_mean:.1} vs clear {clear_mean:.1}");
-    assert!(fog["exposure"]["warnings"].as_array().is_some_and(Vec::is_empty), "{}", fog["exposure"]);
+    let Some((fog, fog_render)) = shot(Recipe::Fog, "classroom-ultra-fog") else { return };
+    let Some((flat, flat_render)) = shot(Recipe::FlatFog, "classroom-ultra-flat-fog") else { return };
+    let Some((clear, _)) = shot(Recipe::Clear, "classroom-ultra-clear") else { return };
+    let features = |render: &serde_json::Value| render["look"]["features"].clone();
+    assert_eq!(features(&fog_render)["volumetric-fog"], true, "{}", features(&fog_render));
+    assert_eq!(features(&flat_render)["volumetric-fog"], false, "{}", features(&flat_render));
+    assert_eq!(features(&flat_render)["fog"], true);
+    let (shafts, plain) = (gain_spread(&fog, &clear), gain_spread(&flat, &clear));
+    eprintln!("fog gain spread: volumetric {shafts:.1}, plain {plain:.1} luma levels");
+    assert!(shafts >= SHAFT_SPREAD_MIN && shafts >= SHAFT_OVER_FLAT * plain, "no shafts: volumetric {shafts:.1} vs plain {plain:.1}");
 }
 
 /// A stored-deflate PNG of `rgba` (`width` x `height`).

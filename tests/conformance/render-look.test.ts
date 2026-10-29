@@ -63,7 +63,7 @@ describe("render look facts", () => {
       { ...fixture.look, preset: "epic" },
       { ...fixture.look, preset: "auto" },
       { ...fixture.look, features: [] },
-      { ...fixture.look, features: { ...fixture.look.features, volumetricFog: 1 } },
+      { ...fixture.look, features: { ...fixture.look.features, "volumetric-fog": 1 } },
       { ...fixture.look, features: { ...fixture.look.features, warp: true } },
       { ...fixture.look, features: { fog: true } },
       { ...fixture.look, tags: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`t${i}`, bench])) },

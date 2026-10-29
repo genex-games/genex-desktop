@@ -96,9 +96,9 @@ every 15 frames, a capture every time; custom materials, characters, terrain, gr
 particles are not rasterised. A look-bar pass reads it: keep total `flatCoverage` under 0.02,
 near surfaces at 512 texels a metre or more, and textured tags at `normalMapShare` 1.
 It also names the `preset` the frame drew (a capture's pinned one) and `features`: each look
-feature (`volumetricFog`, `fog`, `shadows`, `spotShadows`, `pointShadows`, `contactShadows`, `ao`,
-`ssgi`, `ssr`, `bloom`, `taa`, `ibl`, `localExposure`, `autoExposure`, `depthOfField`,
-`motionBlur`), true where the frame draws it. The preset owns them: when a check fails with one on,
+feature (`volumetric-fog`, `fog`, `shadows`, `spot-shadows`, `point-shadows`, `contact-shadows`, `ao`,
+`ssgi`, `ssr`, `bloom`, `taa`, `ibl`, `local-exposure`, `auto-exposure`, `depth-of-field`,
+`motion-blur`), true where the frame draws it. The preset owns them: when a check fails with one on,
 report the check; never turn the feature off to pass it.
 
 A game names its own levels with `model.with_levels(&[(lod1, 24.0), (lod2, 58.0)])` (each level a

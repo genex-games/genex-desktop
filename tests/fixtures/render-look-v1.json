@@ -9,22 +9,22 @@
     "flatCoverage": 0.031,
     "preset": "ultra",
     "features": {
-      "volumetricFog": true,
+      "volumetric-fog": true,
       "fog": true,
       "shadows": true,
-      "spotShadows": true,
-      "pointShadows": true,
-      "contactShadows": true,
+      "spot-shadows": true,
+      "point-shadows": true,
+      "contact-shadows": true,
       "ao": true,
       "ssgi": true,
       "ssr": true,
       "bloom": true,
       "taa": true,
       "ibl": true,
-      "localExposure": true,
-      "autoExposure": true,
-      "depthOfField": false,
-      "motionBlur": false
+      "local-exposure": true,
+      "auto-exposure": true,
+      "depth-of-field": false,
+      "motion-blur": false
     },
     "tags": {
       "bench": {

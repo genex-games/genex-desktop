@@ -9068,6 +9068,50 @@ describe("C++ · raylib on the web lane (M3a)", () => {
     assert.equal(replay?.pass, true, JSON.stringify(replay));
   });
 
+  it("PARITY-REPLAY-RENDER. body-cam-6's lead turned volumetric fog off to pass the replay row, which compared all of `state()` exactly, `__render` included: its exposure read-backs and trace follow the Live frames the window drew between the reload and the capture, a count no seed fixes. The replay compares gameplay state and the settled capture's pixels, never the render telemetry", async () => {
+    let framesSinceLoad = 0;
+    const recorder = ctxRecorder({
+      handlers: {
+        [HostMethod.NativeBuild]: () => ({
+          ok: true,
+          admission: { target: BuildTarget.Mac, refusal: null, detail: null, imports: [], rpaths: [] },
+        }),
+        [HostMethod.PreviewAcquire]: () => ({ handle: "native" }),
+        [HostMethod.PreviewReady]: () => ({ ready: true }),
+        [HostMethod.PreviewLoad]: () => true,
+        [HostMethod.PreviewReload]: () => {
+          // The second run's window draws more Live frames before the drive than the first's.
+          framesSinceLoad += 7;
+          return true;
+        },
+        [HostMethod.PreviewCall]: () => ({ ok: true }),
+        [HostMethod.PreviewInput]: () => ({ ok: true }),
+        [HostMethod.PreviewWitness]: () => ({ frameBefore: 0, frameAfter: 1, simulatedMs: 16, drawCalls: 4 }),
+        // A settled capture: the same pixels whatever Live drew first.
+        [HostMethod.PreviewScreenshot]: () => ({
+          base64: Buffer.from("settled").toString("base64"),
+          stats: { litFraction: 0.4, meanLuma: 0.5, canvas: true, drawCalls: 4 },
+        }),
+        [HostMethod.PreviewState]: () => ({
+          player: { x: 0 },
+          __render: { exposure: { appliedEv: -2.5, ageFrames: framesSinceLoad % 4 }, exposureTrace: Array(framesSinceLoad).fill(0) },
+        }),
+        [HostMethod.PreviewRelease]: () => true,
+      },
+    });
+    const verdict = await runParityGate(recorder.ctx as never, {
+      run: { runId: "run_bodycam", project: "body-cam", stack: GameStack.RustWgpu } as never,
+      target: BuildTarget.Mac,
+      webHandle: "web",
+      seed: 1234,
+      cameras: ["default"],
+      retriesMs: [],
+      tolerances: { read: async () => null, write: async () => {} },
+    });
+    const replay = verdict.rows.find((row) => row.row === ParityRow.Replay);
+    assert.equal(replay?.pass, true, JSON.stringify(replay));
+  });
+
   it('PARITY-REPLAY-CAMERA. the parity gate stepped its first replay run on the last camera the captures left ("top") and the second on the default, so a game whose frame depends on the camera it ran under never matched: both replay runs step on the default camera', async () => {
     let camera = "default";
     let steppedUnder = "default";
