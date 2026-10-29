@@ -101,6 +101,8 @@ export interface LastShip {
   at: number;
   /** The eval grader's role for each capture-set camera the look photographed (capture-set.ts `captureRoles`). */
   roles?: Record<string, string>;
+  /** The cameras whose frame was drawn at the judging size with the clean lens (capture-set.ts `isCleanShot`). */
+  clean?: string[];
 }
 
 /** When the next regular look is due, as the wake loop keeps it, and the clocks it is read against. */

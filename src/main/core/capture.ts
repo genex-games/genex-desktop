@@ -5,6 +5,7 @@
 import type { CaptureProvenance } from "../../shared/build-preview.ts";
 import type { PreviewPixelStats, PreviewPort } from "../../substrate/preview-port.ts";
 import { CaptureSurface, StillMimeType } from "../../shared/preview-contract.ts";
+import type { NativeCaptureLens, NativeCaptureSize } from "../../shared/native-contract.ts";
 
 /** JPEG quality of a look at the game, when the caller names none. */
 export const DEFAULT_SHOT_QUALITY = 80;
@@ -46,12 +47,15 @@ export async function captureSurface(
   port: PreviewPort,
   quality: number,
   surface: CaptureSurface,
+  sized: SizedCapture | null = null,
 ): Promise<{
   jpeg: Buffer;
   stats: PreviewPixelStats | null;
   surface: CaptureSurface | null;
   provenance: CaptureProvenance | null;
 }> {
+  const drawn = sized ? await sizedCapture(port, quality, sized) : null;
+  if (drawn) return drawn;
   if (!port.screenshotWithStats)
     return { jpeg: await port.screenshot(quality), stats: null, surface: null, provenance: null };
   const shot = await port.screenshotWithStats(quality, {
@@ -61,6 +65,32 @@ export async function captureSurface(
   const took = shot.surface ?? (surface === CaptureSurface.Auto ? null : surface);
   // Where the frame came from rides along when the port knows it, never guessed where it does not.
   return { jpeg: shot.jpeg, stats: shot.stats ?? null, surface: took, provenance: shot.provenance ?? null };
+}
+
+/** A capture drawn at a size with a lens: a native game's judging size (the seed's `JUDGE_CAPTURE_SIZE`). */
+export interface SizedCapture {
+  size: NativeCaptureSize;
+  lens?: NativeCaptureLens;
+}
+
+/**
+ * The frame drawn at `sized`, when the port draws sizes (a Rust · wgpu game): null for a port
+ * that cannot (the web, a C++ game's world size), and for a size the game refuses, so the caller
+ * takes its plain capture instead of losing the frame.
+ */
+async function sizedCapture(port: PreviewPort, quality: number, sized: SizedCapture) {
+  if (!port.screenshotAt) return null;
+  try {
+    const shot = await port.screenshotAt(sized.size, quality, sized.lens);
+    return {
+      jpeg: shot.jpeg,
+      stats: shot.stats ?? null,
+      surface: shot.surface ?? null,
+      provenance: shot.provenance ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**

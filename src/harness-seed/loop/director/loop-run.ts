@@ -780,6 +780,7 @@ export async function evidenceOf(
     inheritedConsole = [],
     keepPaths = boardStatePaths(loopRun),
     viewport = null,
+    captureSize = null,
     maxDemos = Infinity,
     requiredDemos = [],
     challenge = false,
@@ -796,6 +797,8 @@ export async function evidenceOf(
     keepPaths?: string[];
     /** Look at this size (the art director's 1600×900): the leased window only. */
     viewport?: { width: number; height: number } | null;
+    /** Ask each camera shot to draw at this size with the clean lens: the whole-game look (capture-set.ts). */
+    captureSize?: { width: number; height: number } | null;
     /**
      * Demos beyond `requiredDemos` this look runs: every one, unless a pass says otherwise — a
      * health pass inside a wave runs the demos workers' checks name (integrate.ts).
@@ -812,6 +815,7 @@ export async function evidenceOf(
   return gatherEvidence(ctx, {
     keepPaths,
     ...(viewport ? { viewport } : {}),
+    ...(captureSize ? { captureSize } : {}),
     run,
     iterationId: scaffold ? "base" : label,
     seed: PAGE_SEED,

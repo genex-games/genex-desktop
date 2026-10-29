@@ -1424,6 +1424,8 @@ export async function closeRun(loopRun: LoopRun, landed: AnyRecord): Promise<voi
   // The camera → role map the eval grader reads as its roles.json (capture-set.ts).
   const roles = state.lastShip?.roles;
   if (roles && Object.keys(roles).length) report.captureRoles = roles;
+  // Which of them were drawn clean at the judging size, so the grader never grades a world-size frame as one.
+  if (state.lastShip?.clean) report.captureClean = state.lastShip.clean;
   // The run's last verdict, in the same shape as every other: what became of the build, and
   // whether anybody preferred it. Emitted here rather than at each caller so a close by finish,
   // by the clock, by a limit, by a quit or by a crash all leave one.

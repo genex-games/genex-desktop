@@ -33,6 +33,7 @@ import {
   NATIVE_START_MAX_MS,
   NATIVE_STDERR_LINE_MAX_CHARS,
   type NativeCaptureReply,
+  type NativeCaptureLens,
   type NativeCaptureSize,
   NativeError,
   NativeEvent,
@@ -593,9 +594,13 @@ export class NativeGamePort implements PreviewPort {
    * `unsupported` before anything is sent; a game that answers another size (a C++ game draws its
    * world size only) is refused `unsupported` before its file is read.
    */
-  async screenshotAt(size: NativeCaptureSize, quality = DEFAULT_CAPTURE_QUALITY): Promise<NativeCapture> {
+  async screenshotAt(
+    size: NativeCaptureSize,
+    quality = DEFAULT_CAPTURE_QUALITY,
+    lens?: NativeCaptureLens,
+  ): Promise<NativeCapture> {
     if (!isNativeCaptureSize(size)) throw new NativeError(NativeRefusal.Unsupported, MESSAGE.captureSizeRefused);
-    return this.#capture({ size: { width: size.width, height: size.height } }, quality);
+    return this.#capture({ size: { width: size.width, height: size.height }, ...(lens ? { lens } : {}) }, quality);
   }
 
   async #capture(arg: NativeOpArgs[typeof NativeOp.Capture], quality: number): Promise<NativeCapture> {
@@ -1197,8 +1202,8 @@ export class NativeLeasePort implements PreviewPort {
     return this.#port().screenshotWithStats(quality);
   }
 
-  screenshotAt(size: NativeCaptureSize, quality?: number): Promise<NativeCapture> {
-    return this.#port().screenshotAt(size, quality);
+  screenshotAt(size: NativeCaptureSize, quality?: number, lens?: NativeCaptureLens): Promise<NativeCapture> {
+    return this.#port().screenshotAt(size, quality, lens);
   }
 
   evaluate(): Promise<unknown> {

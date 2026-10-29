@@ -74,3 +74,21 @@ export function captureRoles(
   }
   return out;
 }
+
+/**
+ * The size a whole-game look asks a native capture to draw at. A Rust game draws its captures at
+ * its world size (960×540 in the template) unless asked: body-cam-6 was graded on 960×540 frames.
+ * A host or game that cannot draw it answers its own size, and that shot is simply not clean.
+ */
+export const JUDGE_CAPTURE_SIZE = { width: 3840, height: 2160 } as const;
+/** The smallest frame the eval grader counts as a clean capture. */
+export const CLEAN_MIN = { width: 1600, height: 900 } as const;
+/** The lens a clean capture is drawn with: no depth of field, no motion blur. */
+export const CLEAN_LENS = { depthOfField: false, motionBlur: false } as const;
+
+/** Was a shot drawn at a clean size: its own pixels at least the grader's floor. */
+export function isCleanShot(stats: { width?: unknown; height?: unknown } | null | undefined): boolean {
+  const width = Number(stats?.width);
+  const height = Number(stats?.height);
+  return width >= CLEAN_MIN.width && height >= CLEAN_MIN.height;
+}

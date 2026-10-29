@@ -116,6 +116,11 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
   (`volatile.render.features`, `__render.look.features`) adds `[feature-off]` (`loop/feature-off.ts`);
   builders are told to report a failing check instead. Judges tag `[broken-pose]` on close-ups and
   `[incoherent-place]` on `map:top`.
+- Clean captures. The whole-game look asks each camera shot for 3840×2160 with the clean lens
+  (`preview.screenshot` `size`, `lens`; `JUDGE_CAPTURE_SIZE` in `loop/capture-set.ts`). A native Rust game
+  draws it and the host saves it whole, while the judge's inline copy is downscaled to 1920 px. A web page
+  or a game that refuses the size gives its own frame, which is not clean. The close lists the clean
+  cameras in `report.captureClean` beside `report.captureRoles`.
 - Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
   textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
   answered with a warning naming them (`director/ownership.ts`). Budgets are said per destination: a native game's slow web preview is the preview's boot,

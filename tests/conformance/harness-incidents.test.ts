@@ -19723,4 +19723,67 @@ describe("Plan 2: places that make sense, features the presets own, honest gradi
     const { SHIP_REVIEW_FALLBACK } = await import("../../src/harness-seed/loop/ship-review-prompts.ts");
     assert.match(SHIP_REVIEW_FALLBACK, /closeup: camera .*\[broken-pose\].*map:top .*\[incoherent-place\]/);
   });
+
+  it("P2-D2. body-cam-6 graded 'largest clean capture 960x540': nothing asked the native capture for a size, so every judge and eval shot drew at the game's world size — a whole-game look asks for the judging size with the lens off, and only a shot drawn at it is clean", async () => {
+    const { JUDGE_CAPTURE_SIZE, CLEAN_MIN, CLEAN_LENS } = await import("../../src/harness-seed/loop/capture-set.ts");
+    assert.ok(JUDGE_CAPTURE_SIZE.width >= CLEAN_MIN.width && JUDGE_CAPTURE_SIZE.height >= CLEAN_MIN.height);
+    assert.ok(CLEAN_MIN.width >= 1600 && CLEAN_MIN.height >= 900, "the eval grader's clean floor");
+    const shots = async (drawn: { width: number; height: number }, captureSize: unknown) => {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.PreviewLoad]: () => "about:blank",
+          [HostMethod.PreviewReload]: () => true,
+          [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+          [HostMethod.PreviewStatus]: () => ({ crashed: false, unresponsive: false, loadError: null }),
+          [HostMethod.PreviewCall]: (params) => {
+            if (params.method === PageMethod.Cameras) return ["default", "map:top"];
+            if (params.method === PageMethod.Demos || params.method === PageMethod.Eyes) return [];
+            return { ok: true };
+          },
+          [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+          [HostMethod.PreviewState]: () => ({ version: 2, player: { x: 1 } }),
+          [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+          [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0.5 }),
+          [HostMethod.PreviewInput]: () => ({ ok: true, applied: 1, width: 800, height: 600 }),
+          [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+          [HostMethod.PreviewScreenshot]: (params) => ({
+            path: `/runs/shots/${String(params.label)}.jpg`,
+            base64: Buffer.from(String(params.label)).toString("base64"),
+            bytes: 12,
+            stats: { canvas: true, litFraction: 0.4, drawCalls: 40, ...drawn },
+          }),
+          [HostMethod.PreviewConsole]: () => [],
+          [HostMethod.PreviewGpuErrors]: () => [],
+        },
+      });
+      const evidence = await gatherEvidence(
+        recorder.ctx as never,
+        {
+          run: { runId: "plan2", project: "plan2-game" } as never,
+          iterationId: "001",
+          seed: 1,
+          cameras: ["default", "map:*"],
+          captureSize,
+        } as never,
+      );
+      return { evidence, asked: recorder.paramsOf(HostMethod.PreviewScreenshot) };
+    };
+    const judged = await shots(JUDGE_CAPTURE_SIZE, JUDGE_CAPTURE_SIZE);
+    const sized = judged.asked.filter((params) => params.surface === "canvas");
+    assert.ok(sized.length >= 2, "every camera shot was asked for");
+    for (const params of sized) {
+      assert.deepEqual(params.size, JUDGE_CAPTURE_SIZE, String(params.label));
+      assert.deepEqual(params.lens, CLEAN_LENS, String(params.label));
+    }
+    const map = judged.evidence.shots.find((shot: { camera: string }) => shot.camera === "map:top");
+    assert.equal(map?.clean, true, "drawn at the judging size: clean");
+    const small = await shots({ width: 960, height: 540 }, JUDGE_CAPTURE_SIZE);
+    const smallMap = small.evidence.shots.find((shot: { camera: string }) => shot.camera === "map:top");
+    assert.equal(smallMap?.clean, false, "a game that drew its world size anyway is not clean");
+    const unsized = await shots(JUDGE_CAPTURE_SIZE, undefined);
+    assert.ok(
+      unsized.asked.every((params) => params.size === undefined),
+      "a facet round's look asks no size",
+    );
+  });
 });
