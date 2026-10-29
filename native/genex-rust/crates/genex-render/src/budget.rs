@@ -425,7 +425,7 @@ fn shadow_texel(quality: &Quality) -> u64 {
 /// use shadowed spots: as the renderer holds it (sticky once a shadowed spot is asked for), only
 /// while the quality bins lights, draws shadows and grants spot slots.
 fn spot_atlas_held(quality: &Quality, used: bool) -> bool {
-    used && quality.shadows.enabled && quality.lights.clustered && quality.lights.shadowed_spots > 0
+    used && quality.shadows.enabled && quality.lights.clustered && (quality.lights.shadowed_spots > 0 || quality.lights.shadowed_points > 0)
 }
 
 fn shadow_bytes(quality: &Quality, spot_atlas: bool) -> (u64, u64) {
@@ -435,8 +435,10 @@ fn shadow_bytes(quality: &Quality, spot_atlas: bool) -> (u64, u64) {
     let texel = shadow_texel(quality);
     let side = u64::from(quality.shadows.map_size);
     let cascades = u64::from(quality.shadows.cascades) * side * side * texel;
-    // Every shadowed spot is a tile of one atlas layer at the cascades' side (`spot_shadow::map_desc`).
-    let spots = if spot_atlas { side * side * texel } else { 0 };
+    // Every shadowed spot is a tile of one atlas layer at the cascades' side (`spot_shadow::map_desc`),
+    // and a quality granting point lights' cubes holds the point layer after it (AAA review WP-15).
+    let layers = 1 + u64::from(quality.lights.shadowed_points > 0);
+    let spots = if spot_atlas { layers * side * side * texel } else { 0 };
     (cascades, spots)
 }
 
@@ -933,11 +935,12 @@ fn step_froxel_fog(quality: &mut Quality) -> Option<(u32, u32)> {
 }
 
 fn step_spot_shadows(quality: &mut Quality) -> Option<(u32, u32)> {
-    let spots = quality.lights.shadowed_spots;
+    let spots = quality.lights.shadowed_spots + quality.lights.shadowed_points;
     if spots == 0 {
         return None;
     }
     quality.lights.shadowed_spots = 0;
+    quality.lights.shadowed_points = 0;
     Some((u32::from(spots), 0))
 }
 

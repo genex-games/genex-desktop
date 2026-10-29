@@ -536,7 +536,7 @@ fn shadows(cascades: u8, map_size: u32, filter: ShadowFilter, format: ShadowForm
 }
 
 fn lights(cap: u32, tile_px: u32, shadowed_spots: u8) -> LightQuality {
-    LightQuality { cap, clustered: true, tile_px, shadowed_spots, decals: crate::decals::DESKTOP_DECALS }
+    LightQuality { cap, clustered: true, tile_px, shadowed_spots, shadowed_points: 0, decals: crate::decals::DESKTOP_DECALS }
 }
 
 /// The material sampler's anisotropy per preset and class (P2-0.12 LG-02): desktop high and ultra
@@ -638,8 +638,10 @@ fn high_row(quality: &mut Quality) {
     // (`apply_mobile_caps`).
     quality.ao_method = AoMethod::BitmaskGi;
     // Four shadowed spots (AAA review WP-15: a room's fixtures cast shadows; was two): the atlas is
-    // one layer whatever the count, so only the four maps' draws are added.
+    // one layer whatever the count, so only the four maps' draws are added. One shadowed point
+    // light (a bare bulb, a lantern): six faces in the point layer after the spot atlas.
     quality.lights = lights(1024, 16, 4);
+    quality.lights.shadowed_points = 1;
     // Filament's ring gather (A.9; ultra inherits it): the look's switch decides whether it runs.
     quality.dof = DofTier::Ring;
     quality.motion_blur = MotionBlurTier::Reconstruction;
@@ -676,8 +678,10 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // slice) costs about a fifth more a step: 3 x 8 measured 1.38 ms (M4 Max, 1080p), so the owner
     // raised ultra's AO budget to 1.5 ms (2026-10-12; plan §2.5 had 1.2) rather than halve the steps.
     quality.ao = AoQuality { resolution: AoResolution::Full, slices: 3, steps: 8, temporal: true };
-    // B.4's screen-space GI, inherited from high (look integration, AAA review WP-12).
+    // B.4's screen-space GI, inherited from high (look integration, AAA review WP-12). Two shadowed
+    // point lights (AAA review WP-15).
     quality.lights = lights(1024, 16, 4);
+    quality.lights.shadowed_points = crate::layout::MAX_SHADOWED_POINTS as u8;
     quality.ssr = crate::ssr::SsrQuality::ULTRA;
 }
 
@@ -814,6 +818,8 @@ pub fn cap_lights(lights: &mut LightQuality, class: DeviceClass) {
     }
     let spots = if class.tier >= PerformanceTier::High { 1 } else { 0 };
     lights.shadowed_spots = lights.shadowed_spots.min(spots);
+    // A phone draws no point light's cube (six maps; unmeasured there, D16).
+    lights.shadowed_points = 0;
     lights.decals = lights.decals.min(crate::decals::MOBILE_DECALS);
 }
 

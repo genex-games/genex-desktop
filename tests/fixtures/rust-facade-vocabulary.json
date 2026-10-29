@@ -72,6 +72,8 @@
   "lights": {
     "calls": [
       "frame.point_light",
+      "frame.point_light_with",
+      "PointLight::new",
       "frame.spot_light",
       "frame.spot_light_with",
       "SpotLight::new",

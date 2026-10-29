@@ -157,8 +157,10 @@ pub const ENVIRONMENT_CALLS: [&str; 5] = ["frame.environment", "Environment::sky
 /// map), and a glowing surface (`Material::emissive(..)`, `.with_emissive(..)`,
 /// `.with_emissive_texture(..)`).
 /// Physical units (`genex::render::units`, AAA review LIT-3) give those lights their intensity.
-pub const LIGHT_CALLS: [&str; 15] = [
+pub const LIGHT_CALLS: [&str; 17] = [
     "frame.point_light",
+    "frame.point_light_with",
+    "PointLight::new",
     "frame.spot_light",
     "frame.spot_light_with",
     "SpotLight::new",

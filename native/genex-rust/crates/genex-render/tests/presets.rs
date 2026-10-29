@@ -1232,7 +1232,7 @@ fn knob_differs(knob: QualityKnob, a: &Quality, b: &Quality) -> bool {
         QualityKnob::LightCap => a.lights.cap != b.lights.cap,
         QualityKnob::Clustered => a.lights.clustered != b.lights.clustered,
         QualityKnob::LightTile => a.lights.tile_px != b.lights.tile_px,
-        QualityKnob::ShadowedSpots => a.lights.shadowed_spots != b.lights.shadowed_spots,
+        QualityKnob::ShadowedSpots => a.lights.shadowed_spots != b.lights.shadowed_spots || a.lights.shadowed_points != b.lights.shadowed_points,
         QualityKnob::Prepass => a.prepass != b.prepass,
         QualityKnob::Meshlets => a.meshlets != b.meshlets,
         QualityKnob::Occlusion => a.occlusion != b.occlusion,

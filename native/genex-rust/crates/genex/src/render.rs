@@ -132,7 +132,7 @@ pub use genex_render::settings::Fog;
 /// cone [`crate::Frame::spot_light`] gives one by default; a reflection probe
 /// ([`crate::Frame::reflection_probe`], A.3) and an irradiance volume
 /// ([`crate::Frame::irradiance_volume`], A.4).
-pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
+pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, PointLight, ReflectionProbe, SpotLight};
 /// Physical light units: lux, candela, lumens, nits and EV100 in the renderer's scene units
 /// (`genex::render::units::lumens(800.0)`; docs/api/lighting.md, "Physical units").
 #[path = "light_units.rs"]

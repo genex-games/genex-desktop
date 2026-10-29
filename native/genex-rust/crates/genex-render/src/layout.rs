@@ -18,11 +18,18 @@ pub const SHADOW_CASCADES: usize = 2;
 pub const MAX_CASCADES: usize = 4;
 /// Most spot lights with a shadow map a frame draws (RQ6.5), each one cull view.
 pub const MAX_SHADOWED_SPOTS: usize = 4;
+/// Most point lights with a shadow map a frame draws (AAA review WP-15), each six cull views (a cube).
+pub const MAX_SHADOWED_POINTS: usize = 2;
+/// Faces of a shadowed point light's cube.
+pub const POINT_SHADOW_FACES: usize = 6;
+/// Shadow slots a frame holds: the spots' (0..[`MAX_SHADOWED_SPOTS`]), then each shadowed point
+/// light's six faces. Each slot is one matrix in `light_ext` and one cull view.
+pub const MAX_SHADOW_SLOTS: usize = MAX_SHADOWED_SPOTS + MAX_SHADOWED_POINTS * POINT_SHADOW_FACES;
 /// Cull views reserved per frame: the camera (view 0), then one per drawn cascade, then one per
-/// shadowed spot. The cull views uniform reserves all of them; the visible list and the indirect
+/// shadow slot. The cull views uniform reserves all of them; the visible list and the indirect
 /// arguments are sized per *active* view ([`crate::scene::FramePlan::views`]), so an unused view
 /// allocates nothing.
-pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOWED_SPOTS;
+pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOW_SLOTS;
 /// The non-filtering sampler PCSS's blocker search gathers the shadow map with (RQ3.2), as
 /// (forward frame binding, WGSL name): the RQ4 `point_sampler` slot of
 /// [`FRAME_EFFECT_BINDINGS`], which the forward frame binds ([`FRAME_EFFECT_BOUND`], renderer
@@ -163,10 +170,10 @@ pub struct GpuLightExt {
     /// cone's outer half-angle (-1 for a point: no cone).
     pub spot: [f32; 4],
     /// x: the cosine of the cone's inner half-angle (-1 for a point); y: the kind
-    /// ([`LIGHT_KIND_POINT`], [`LIGHT_KIND_SPOT`]); z: the shadow slot (0 to
-    /// [`MAX_SHADOWED_SPOTS`] - 1, [`NO_SHADOW_SLOT`] without a shadow map; its layer of the
-    /// shared shadow array is the spot atlas after the drawn cascades, its tile the slot's,
-    /// `spot_shadow::tile_rect`); w: how far the spot's shadow has faded out as its slot changes
+    /// ([`LIGHT_KIND_POINT`], [`LIGHT_KIND_SPOT`]); z: the shadow slot ([`NO_SHADOW_SLOT`] without
+    /// a shadow map): a spot's is 0 to [`MAX_SHADOWED_SPOTS`] - 1 (a tile of the spot atlas layer
+    /// after the drawn cascades), a point light's the first of its six faces' (tiles of the point
+    /// layer after it; `spot_shadow::slot_layer`, `spot_shadow::tile_rect`); w: how far the spot's shadow has faded out as its slot changes
     /// hands, 0 (whole, [`SPOT_SHADOW_UNFADED`]) to 1 (none): every row writes 0 until spot slots
     /// fade, and the shading reads it from then on.
     pub params: [f32; 4],

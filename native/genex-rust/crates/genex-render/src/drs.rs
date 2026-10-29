@@ -730,6 +730,7 @@ pub fn demote_quality(current: &Quality, lower: &Quality) -> Quality {
         quality.lights.tile_px = current.lights.tile_px.max(lower.lights.tile_px);
     }
     quality.lights.shadowed_spots = current.lights.shadowed_spots.min(lower.lights.shadowed_spots);
+    quality.lights.shadowed_points = current.lights.shadowed_points.min(lower.lights.shadowed_points);
     debug_assert!(current.resource_change_only(&quality), "a demotion changed a pipeline knob");
     quality
 }

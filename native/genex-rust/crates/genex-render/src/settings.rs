@@ -1750,6 +1750,8 @@ pub struct LightQuality {
     pub tile_px: u32,
     /// Spot lights with shadow maps.
     pub shadowed_spots: u8,
+    /// Point lights with cube shadow maps (AAA review WP-15; at most `layout::MAX_SHADOWED_POINTS`).
+    pub shadowed_points: u8,
     /// Most projected decals drawn (renderer pass 2 A.10, `decals::held_decals`: nearest first,
     /// the last ones faded towards the cut); 0 draws none. Decals are binned with the lights, so
     /// only a `clustered` quality draws them.
@@ -2070,7 +2072,7 @@ impl Quality {
                 froxel_fog: None,
                 clouds: None,
             },
-            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 },
+            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, shadowed_points: 0, decals: 0 },
             textures: TextureQuality::OFF,
             prepass: false,
             meshlets: false,
@@ -2107,7 +2109,7 @@ impl Quality {
             RenderFeature::Occlusion => self.occlusion,
             RenderFeature::Prepass => self.prepass,
             RenderFeature::TextureQuality => self.textures != TextureQuality::OFF,
-            RenderFeature::SpotShadows => self.lights.shadowed_spots > 0,
+            RenderFeature::SpotShadows => self.lights.shadowed_spots > 0 || self.lights.shadowed_points > 0,
             RenderFeature::LodFade => self.lod.fade_band > 0.0,
             RenderFeature::Impostors => self.lod.impostors,
         }
@@ -2139,7 +2141,14 @@ impl Quality {
             RenderFeature::Occlusion => self.occlusion = on,
             RenderFeature::Prepass => self.prepass = on,
             RenderFeature::TextureQuality => self.textures = textures_switched(self.textures, on),
-            RenderFeature::SpotShadows => self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on),
+            RenderFeature::SpotShadows => {
+                self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on);
+                // The switch covers point lights' cube maps too (AAA review WP-15): off drops them,
+                // on keeps the preset's.
+                if !on {
+                    self.lights.shadowed_points = 0;
+                }
+            }
             RenderFeature::LodFade => self.lod.fade_band = fade_band_switched(self.lod.fade_band, on),
             RenderFeature::Impostors => self.lod.impostors = on,
         }
@@ -2422,7 +2431,7 @@ pub enum QualityKnob {
     Clustered,
     /// [`LightQuality::tile_px`].
     LightTile,
-    /// [`LightQuality::shadowed_spots`].
+    /// [`LightQuality::shadowed_spots`] and [`LightQuality::shadowed_points`].
     ShadowedSpots,
     /// [`Quality::prepass`].
     Prepass,

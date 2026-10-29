@@ -423,6 +423,22 @@ pub struct PointLight {
     pub color: Color,
     /// Radiance multiplier.
     pub intensity: f32,
+    /// Whether it asks for a cube shadow map (AAA review WP-15): the device's quality decides how
+    /// many point lights get one (none on low, medium and phones, one on high, two on ultra), the
+    /// nearest on screen first; one without lights unshadowed.
+    pub shadow: bool,
+}
+
+impl PointLight {
+    /// A point light at `position` fading out at `range`, with no shadow map.
+    pub fn new(position: Vec3, range: f32, color: Color, intensity: f32) -> PointLight {
+        PointLight { position, range, color, intensity, shadow: false }
+    }
+
+    /// This point light asking for a cube shadow map, or not.
+    pub fn with_shadow(self, shadow: bool) -> PointLight {
+        PointLight { shadow, ..self }
+    }
 }
 
 /// A light at a point shining inside a cone (a torch, a street lamp, light through a window): full
@@ -970,7 +986,13 @@ impl Frame {
 
     /// Add a point light at `position`, fading out at `range`. Not a draw.
     pub fn point_light(&mut self, position: Vec3, range: f32, color: Color, intensity: f32) -> &mut Self {
-        self.lights.points.push(PointLight { position, range, color, intensity });
+        self.point_light_with(&PointLight::new(position, range, color, intensity))
+    }
+
+    /// Add `light` (`PointLight::new(..).with_shadow(true)` for one casting a cube shadow map). Not
+    /// a draw.
+    pub fn point_light_with(&mut self, light: &PointLight) -> &mut Self {
+        self.lights.points.push(*light);
         self
     }
 

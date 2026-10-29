@@ -3130,6 +3130,10 @@ fn lighting(lights: &Lights) -> Lighting {
         .filter(|light| usable_light(light.position, light.range))
         .map(|light| PointLight { position: light.position.to_array(), range: light.range, color: rgb(light.color), intensity: intensity(light.intensity) })
         .collect();
+    // The point lights asking for a cube shadow map, by their index among the kept ones (AAA review
+    // WP-15).
+    lighting.shadowed_points =
+        lights.points.iter().filter(|light| usable_light(light.position, light.range)).enumerate().filter(|(_, light)| light.shadow).map(|(index, _)| index).collect();
     lighting.spots = lights.spots.iter().filter(|light| usable_light(light.position, light.range)).map(spot_light).collect();
     // The renderer holds or drops a hostile probe (`probes::ReflectionProbe::held`).
     lighting.reflection_probes = lights
