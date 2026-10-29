@@ -121,7 +121,9 @@ highlights; the background is not tinted or refracted. A GLB's `KHR_materials_cl
 | Parallax | off (flat maps) | off (flat maps) | on, up to 32 steps by view angle, no finer than a pixel |
 | Weather | both layers, lit | both layers, lit | both layers, lit |
 
-Measured on the owner's Apple Silicon Mac at 2560×1440 `high`: see the numbers in
-`docs/api/layered-materials.md`'s tests (`layered_materials`, `weather`), held to a budget of
-0.25 ms for a screen of covered floor, 1.5 ms for every layered part at once on a screen of floor,
-and 0.6 ms for `heavy_snow`'s 27 840 flakes.
+Measured on an Apple Silicon Mac at 2560×1440 `high`, over the same frame without the part
+(`tests/layered_materials.rs`, `tests/weather.rs`): a screen of snow-covered floor costs 0.03-0.12 ms
+(budget 0.25), a screen of floor with every layered part at once (cover, detail, second layer, 32-step
+parallax and a clear coat) about 1.5 ms (budget 1.5), and `heavy_snow`'s 27 840 lit flakes 0.15 ms
+(budget 0.6). A layer or detail map fetches nothing where it cannot change the pixel (its mask 0,
+past its fade), and parallax takes no more steps than the pixels it shifts.
