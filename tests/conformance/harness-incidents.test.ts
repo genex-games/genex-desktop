@@ -18872,10 +18872,10 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     const rows = gen3.__camera.trace.map(({ t, y, roll_deg }) => ({ t, bobM: y - 1.7, rollDeg: roll_deg }));
     assert.match(String(comfortDefect({}, { ok: true, trace: rows })), /roll ±5\.8°/);
     assert.match(
-      String(comfortDefect({ volatile: { camera: { cadenceHz: 7.5, bobM: 0.01, rollDeg: 0.4 } } })),
+      String(comfortDefect({ volatile: { cameraMotion: { cadenceHz: 7.5, bobM: 0.01, rollDeg: 0.4 } } })),
       /steps at 7\.5 Hz/,
     );
-    assert.equal(comfortDefect({ volatile: { camera: { cadenceHz: 2.2 } } }), null);
+    assert.equal(comfortDefect({ volatile: { cameraMotion: { cadenceHz: 2.2 } } }), null);
     // A rig inside the caps: 1° roll and a 2.4 cm bob at 2.2 Hz, the slope of a ramp removed.
     assert.equal(comfortDefect(pose(1, 1.1, 0.024, 2.2)), null);
     assert.ok(
@@ -19169,7 +19169,7 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
         frames: [1, 2, 3].map((n) => ({ label: `ref${n}`, data: "iVBOR", mimeType: "image/png" })),
       },
     } as Run;
-    const labels = shipImages(refs, evidence).map((image) => image.label);
+    const labels = shipImages(refs, evidence).map((image) => image.label ?? "");
     assert.equal(labels.length, 14);
     assert.deepEqual(
       labels.filter((label) => label.startsWith("REFERENCE")),

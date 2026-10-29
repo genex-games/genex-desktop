@@ -86,7 +86,7 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
 - Measured. Every playable camera sits in a luminance band (mean luma 90-130, darkest bin ≤ 15%; a sky
   row with `"night": true` lowers it); `demo:doorway`'s exposure trace moves at most 1 EV per half
   second with no overshoot; `demo:sprint-run`'s pose (the trace the demo returns, or the rig's
-  `volatile.camera`) stays inside the engine rig's comfort caps. The doorway and sprint checks run on
+  `volatile.cameraMotion`) stays inside the engine rig's comfort caps. The doorway and sprint checks run on
   every run whose game has those demos.
 - The art pass. The director's `plan` refuses such a run without `art=`: every area's assets by tier
   (hero, mid, scatter, sky), each with its `kind`, its draw `tags` and its source — a Genex generation,
