@@ -236,17 +236,21 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     });
     assert.equal(bypass.ok, true, bypass.errorText);
     assert.equal(await readFile(outside, "utf8"), "ok", "no sandbox held a write outside the game");
-    fake.next("node probe.mjs");
     // On Windows the sandbox runs as its own user: the session the person's Grok kept must open to it.
+    const sentBefore = fake.requests.length;
     const auto = await engine().delegate({
       cwd: dir,
-      prompt: "Run the probe.",
+      prompt: "Say what you did.",
       resume: bypass.sessionId,
       permissions: chat("auto"),
     });
     assert.equal(auto.ok, true, auto.errorText);
     assert.equal(auto.sessionId, bypass.sessionId, "the same session, resumed in the sandbox");
-    assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
+    const resumed = fake.requests.slice(sentBefore).some((body) => {
+      const sent = JSON.stringify(body);
+      return sent.includes("Say what you did.") && sent.includes("Write outside the game.");
+    });
+    assert.ok(resumed, "the sandboxed turn sent the Bypass turn's history: it read the kept session");
   });
 
   it("a judge's picture reaches the model: Grok opens the file its prompt names, in the real sandbox", {
