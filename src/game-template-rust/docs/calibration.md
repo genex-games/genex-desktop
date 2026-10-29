@@ -89,7 +89,9 @@ and 120 at 10 m.
 | 4k | 2 m | 2048 | a hero surface the camera touches |
 
 Aim for at least 512 texels per metre on every surface within 3 m and 1024 on hero props. The
-engine keeps textures up to 2048 a side today; a larger source is reduced to 2048 on import.
+largest class a device keeps: 4096 a side on a native desktop at `high` and `ultra` (8192 when the
+game or the person asks for that class), 2048 in a browser and 1024 on a phone; a larger source is
+reduced to fit there.
 
 ## Resolution and frame rate
 
@@ -106,4 +108,4 @@ engine keeps textures up to 2048 a side today; a larger source is reduced to 204
 The budgets are sized for a reference picture: a desktop monitor at 2560x1440, a laptop panel or a
 browser window at 1920x1080, a phone at about 800x1750. On a native desktop at `high` and `ultra` (temporal upscaling on), Live draws at the window's own
 pixels up to four times the reference's; elsewhere it draws at the reference size and the window
-upscales. A frame rate is 30 or 60. A capture is at most 4096 pixels a side.
+upscales. A frame rate is 30 or 60. A capture is at most 8192 pixels a side natively, 4096 in a browser.

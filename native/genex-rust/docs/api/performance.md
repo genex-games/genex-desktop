@@ -18,7 +18,7 @@ Measure before cutting (`docs/api/profiling.md`); the units and frame-rate table
 | `mobile-mid` | `low` | 96 MiB | 60, 30 sustained | 0.67 |
 | `mobile-low` | `low` | 48 MiB | 30 | 0.6 |
 
-A native desktop's budget is also held to an eighth of the GPU's memory and at most 2 GiB; a web
+A native desktop's budget is also held to a third of the GPU's memory and at most 12 GiB; a web
 page's to 1024 MiB on a desktop and 256 MiB on a phone, and the web runs at most `high`.
 
 ## Per preset
@@ -29,7 +29,7 @@ page's to 1024 MiB on a desktop and 256 MiB on a phone, and the web runs at most
 | Shadowed spot lights | 0 | 0 | 2 | 4 |
 | Sun cascades, map side | 2, 1024 | 2, 1536 | 3, 2048 | 4, 4096 |
 | Anti-aliasing | MSAA 4x | MSAA 4x | TAA, upscaling | TAA, upscaling |
-| Largest texture class on desktop | 512 | 1024 | 2048 | 2048 |
+| Largest texture class, native desktop (browser) | 512 | 1024 | 4096 (2048) | 4096 (2048) |
 | Irradiance volumes baked | none | 4 | 8 | 8 |
 | LOD threshold (px), far density | 2.0, 0.5 | 1.5, 0.75 | 1.0, 1.0 | 1.0, 1.0 |
 
@@ -42,11 +42,11 @@ draw the nearest 16 decals (64 on desktop).
 | What | Cap | Past it |
 | --- | --- | --- |
 | Triangles in one mesh or imported model level | 262,144 | `triangles-over-budget` on import |
-| Texture side | 2048 (the importer reduces a larger source) | reduced |
+| Texture side | 8192 native (when asked; 4096 by default), 2048 in a browser, 1024 on a phone | reduced to fit |
 | Particle emitters drawn, particles per emitter | 16, 16,384 | the rest are not drawn |
 | Particles per frame | 262,144 desktop, 32,768 `mobile-high`, 8,192 other phones | thinned |
 | Custom materials, post passes | 32, 8 | registration refused |
-| A capture's side | 4096 px | the largest a check can ask |
+| A capture's side | 8192 px natively, 4096 in a browser | the largest a check can ask |
 | Assets per destination | web 64 MB, phones 200 MB, desktop 2 GB (`[assets] budget_mb`) | slower download; past 512 MB a web build is refused `assets-over-ceiling` |
 | Web code | 4 MB of gzip (`[web] wasm_budget_mb`, at most 32) | slower load; past 32 MB refused `wasm-over-budget` |
 | Web boot | `studio.json` `bootMs`, default 15000, 1000 to 60000 | the preview looks anyway |
