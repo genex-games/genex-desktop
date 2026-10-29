@@ -86,3 +86,74 @@ fn a_model_with_its_own_cover_keeps_the_cover_on_its_glb_materials() {
     }
     let _ = Vec3::ZERO;
 }
+
+/// The cover drawn through the presenter, as a game draws it: a wooden slab's top seen from
+/// above, bare, under its own snow and under the world's.
+mod gpu {
+    use genex::present::Presenter;
+    use genex::prelude::*;
+    use genex::render::{Exposure, QualityPreset, RenderConfig};
+    use genex::{FIXED_STEP_MS, Runtime, View};
+
+    const WORLD: [u32; 2] = [128, 96];
+    const WOOD: Color = Color::rgb(120, 72, 40);
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum Snow {
+        Bare,
+        Own,
+        World,
+    }
+
+    fn runtime(snow: Snow, preset: QualityPreset) -> Runtime<()> {
+        let mut game = Game::new(()).title("Cover").world_size(WORLD[0], WORLD[1]);
+        game.render_settings(RenderConfig::new().preset(preset).exposure(Exposure::manual(0.0)));
+        game.camera(|_| Camera::look_at(vec3(0.0, 4.0, 0.01), Vec3::ZERO));
+        game.on_draw(move |_sim, frame, _| {
+            frame.clear(Color::BLACK).sun(vec3(0.2, 1.0, 0.3), Color::WHITE, 3.0).ambient(Color::WHITE, 0.3);
+            if snow == Snow::World {
+                frame.cover_world(Cover::snow(1.0, 45.0, 0.0));
+            }
+            let wood = Material::color(WOOD).with_roughness(0.8);
+            let wood = if snow == Snow::Own { wood.with_cover(Cover::snow(1.0, 45.0, 0.0)) } else { wood };
+            frame.cube_with(Transform::IDENTITY.with_scale(vec3(6.0, 0.2, 6.0)), &wood);
+        });
+        let mut runtime = Runtime::new(game).expect("valid registrations");
+        runtime.seed(7);
+        runtime.start();
+        runtime.step(5.0 * FIXED_STEP_MS);
+        runtime
+    }
+
+    /// The mean luma (0..255) of `snow`'s game view at `preset`, or None without a GPU.
+    fn luma(snow: Snow, preset: QualityPreset) -> Option<f32> {
+        let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
+        let mut presenter = match Presenter::open_with_root(WORLD, &[], None) {
+            Ok(presenter) => presenter,
+            Err(error) if require => panic!("GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}"),
+            Err(_) => return None,
+        };
+        let mut runtime = runtime(snow, preset);
+        presenter.set_capturing(true);
+        for _ in 0..8 {
+            presenter.draw_view(&mut runtime, View::Game).expect("game view").expect("drawn");
+        }
+        assert_eq!(presenter.failure(), None);
+        let bgra = presenter.resilient.capture().expect("capture").bgra().to_vec();
+        let sum: f32 = bgra.chunks(4).map(|p| 0.0722 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.2126 * f32::from(p[2])).sum();
+        Some(sum / (bgra.len() / 4) as f32)
+    }
+
+    #[test]
+    #[ignore = "needs a GPU: run with --ignored metal"]
+    fn metal_a_game_s_own_and_world_cover_whiten_a_slab_through_the_presenter() {
+        for preset in [QualityPreset::Low, QualityPreset::High] {
+            let Some(bare) = luma(Snow::Bare, preset) else { return };
+            let own = luma(Snow::Own, preset).expect("a presenter");
+            let world = luma(Snow::World, preset).expect("a presenter");
+            println!("{}: bare {bare:.1}, own cover {own:.1}, world cover {world:.1}", preset.wire());
+            assert!(own > 1.5 * bare, "a material's own cover whitens the slab at {}", preset.wire());
+            assert!(world > 1.5 * bare, "the world's cover whitens the slab at {}", preset.wire());
+        }
+    }
+}

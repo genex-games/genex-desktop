@@ -19,7 +19,7 @@ const GX_LAYER_CLASS_STEP: u32 = 65536u;
 // A detail albedo's mid-grey (sRGB 128) in linear light, inverted: it multiplies the base colour
 // by 1 (Unity's linear "colour space double", 2^2.2).
 const GX_DETAIL_GREY: f32 = 4.5947938;
-// How wide the cover's edge is in its coverage field (`gx_cover`): wider is softer.
+// How wide a noisy cover's patch edge is in amount units (`gx_cover`): wider is softer.
 const GX_COVER_EDGE: f32 = 0.12;
 // A parallax search's least view cosine (a grazing view would push the shift without bound).
 const GX_PARALLAX_GRAZE: f32 = 0.2;
@@ -71,9 +71,15 @@ fn gx_parallax_uv(ext: GxMaterialExt, uv: vec2<f32>, uv_dx: vec2<f32>, uv_dy: ve
     if v_ts.z <= 0.0 || height == NO_TEXTURE {
         return uv;
     }
-    let most = max(ext.parallax.z, 4.0);
-    let count = u32(mix(most, max(most * 0.25, 4.0), v_ts.z));
     let shift = -v_ts.xy / max(v_ts.z, GX_PARALLAX_GRAZE) * ext.parallax.y;
+    // No finer steps than the pixels the shift crosses: a far or sub-pixel parallax is cheap.
+    let pixels = length(shift) / max(max(length(uv_dx), length(uv_dy)), 1e-6);
+    if pixels < 1.0 {
+        return uv;
+    }
+    let most = max(ext.parallax.z, 4.0);
+    let by_angle = mix(most, max(most * 0.25, 4.0), v_ts.z);
+    let count = u32(clamp(min(by_angle, ceil(pixels)), 4.0, most));
     let step = 1.0 / f32(count);
     var depth = 0.0;
     var previous = 1.0 - gx_class_texel(false, height, uv, uv_dx, uv_dy).r;
@@ -195,13 +201,18 @@ fn gx_second_layer(s: Surface, ext: GxMaterialExt, uv: vec2<f32>, uv_dx: vec2<f3
 fn gx_cover(s: Surface, ext: GxMaterialExt, g: vec3<f32>) -> Surface {
     var out = s;
     let up = normalize(g + s.n).y;
-    let coverage = clamp((up - ext.cover_shape.x) / max(ext.cover_shape.y, 1e-3), 0.0, 1.0);
-    var field = coverage;
+    let slope = clamp((up - ext.cover_shape.x) / max(ext.cover_shape.y, 1e-3), 0.0, 1.0);
+    // The amount is the covered share: a noise of strength k breaks it into patches (a point is
+    // covered where its noise, pulled toward 0.5 by 1 - k, is below the amount), and with no noise
+    // (or on the cheapest tier) the amount fades the cover evenly. 0 lies nowhere, 1 everywhere.
+    var k = 0.0;
+    var noise = 0.5;
     if GX_MATERIAL_LAYERS >= 1u && ext.cover_look.x > 0.0 {
-        field = coverage - ext.cover_look.x * gx_layer_noise(s.world_pos, ext.cover_look.y);
+        k = ext.cover_look.x;
+        noise = mix(0.5, gx_layer_noise(s.world_pos, ext.cover_look.y), k);
     }
-    let threshold = 1.0 - ext.cover.a;
-    let m = smoothstep(threshold, threshold + GX_COVER_EDGE, field);
+    let width = mix(GX_COVER_EDGE * 0.5, 0.5, (1.0 - k) * (1.0 - k));
+    let m = slope * smoothstep(noise - width, noise + width, ext.cover.a);
     let opacity = ext.cover_look.w * m;
     out.albedo = mix(out.albedo * (1.0 - ext.cover_look.z * m), ext.cover.rgb, opacity);
     out.roughness = mix(out.roughness, clamp(ext.cover_shape.z, GX_ROUGHNESS_FLOOR, 1.0), m);

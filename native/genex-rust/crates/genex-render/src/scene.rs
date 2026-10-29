@@ -1517,6 +1517,9 @@ fn same_bits(a: &Material, b: &Material) -> bool {
         && bits(a.occlusion_strength, b.occlusion_strength)
         && a.uv == b.uv
         && a.variation == b.variation
+        && a.subsurface == b.subsurface
+        && a.view_model == b.view_model
+        && a.layers == b.layers
 }
 
 /// A transparent instance before sorting.
