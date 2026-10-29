@@ -265,10 +265,12 @@ read and write (#531): each run reads a copy in its own folder instead (`GROK_AU
 `copySessionSignIn`), every account's entry without its refresh token, removed after the run (and,
 after a crash, before the next one). A run never renews the sign-in: xAI takes each refresh token
 once, and a renewal kept in the copy would leave the person's own file holding a spent one. So when
-an account's token would expire within two hours, the person's own Grok renews it on the host
-first (`renewGrokSignIn`: `grok agent stdio`, with Grok's early-renewal lead
-`GROK_AUTH_EARLY_INVALIDATION_SECS` reaching that expiry), and the run copies the renewed file; a
-sign-in that renewal leaves unchanged is not retried until the file changes. Status codes decide failures
+an account's token has less than two hours (or half its life) left, the person's own Grok renews it
+on the host first (`renewGrokSignIn`: `grok agent stdio`, with Grok's early-renewal lead
+`GROK_AUTH_EARLY_INVALIDATION_SECS` reaching just past that expiry, short of a new token's life),
+and the run copies the renewed file. A run waits 20 s at most; Grok gets two minutes and is never
+stopped between xAI's answer and its write, which would leave a spent token. A sign-in a renewal
+left unchanged waits five minutes before another try. Status codes decide failures
 (401/403 sign-in, 429 rate limit, 400/404 the picked model refused); a failure with none is a
 sign-in failure only when the probe then finds Grok signed out. xAI refuses a CLI older than 1.0.13
 with 426: discovery calls it outdated, and so does a 426 mid-session until the CLI changes, and the
@@ -280,7 +282,7 @@ On Windows the real CLI runs in the real sandbox on the Windows runner with a ma
 (`windows.yml` dispatched with `grok`), including a renewal through a provider-command sign-in.
 Unproven: a real plan's usage limit (Genex does not read plan limits yet), a real Grok account on
 Windows, a renewal of xAI's own sign-in (its OIDC refresher; the provider-command one is proven),
-and a Windows run that outlives the two hours its copy is sure to hold.
+and a Windows run that outlives what its copy has left.
 
 Residual risk, as for OpenCode: Grok Build must read its own `auth.json` and its shell shares its
 sandbox, so a Grok session can read Grok's sign-in; every other sandbox denies `~/.grok`. On

@@ -16,12 +16,14 @@ import { access, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/p
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   grokEnv,
   grokTurnArgv,
   parseGrokProbe,
+  renewGrokSignIn,
   sessionSignIn,
-  signInRenewalLead,
+  signInRenewal,
   type GrokProbe,
 } from "../../src/substrate/engines/grok-cli.ts";
 import { grokStderrStatus, grokStream, parseGrokLine } from "../../src/substrate/engines/grok-events.ts";
@@ -229,7 +231,8 @@ async function engineWith(
     probe?: string;
     home?: string;
     platform?: NodeJS.Platform;
-    renewSignIn?: (leadSeconds: number) => Promise<void>;
+    renewSignIn?: (renewal: { scope: string; leadSeconds: number }) => Promise<void>;
+    clock?: () => number;
   } = {},
 ) {
   const root = await tmpDir("grok-engine-");
@@ -254,6 +257,7 @@ async function engineWith(
     probe: () => probed(options.probe ?? SIGNED_IN),
     ...(options.platform ? { platform: options.platform } : {}),
     ...(options.renewSignIn ? { renewSignIn: options.renewSignIn } : {}),
+    ...(options.clock ? { clock: options.clock } : {}),
   });
   return { engine, seen, prompts, beside, root };
 }
@@ -481,21 +485,29 @@ describe("Grok Build sessions", () => {
   it("knows when a sign-in would not outlast a session, and how early Grok must count it due to renew it now", () => {
     const now = Date.parse("2026-10-29T12:00:00Z");
     const at = (offsetMs: number) => new Date(now + offsetMs).toISOString();
-    const entry = (fields: Record<string, unknown>) => JSON.stringify({ "grok.com": { key: "access", ...fields } });
-    const lead = (fields: Record<string, unknown>) => signInRenewalLead(entry(fields), now);
-    const soon = lead({ refresh_token: "r", expires_at: at(10 * 60_000) });
-    assert.ok(soon !== null && soon >= 10 * 60, "ten minutes left: due at once");
-    assert.equal(lead({ refresh_token: "r", expires_at: at(-60 * 60_000) }), 300, "expired: Grok's own lead does it");
-    assert.equal(lead({ refresh_token: "r", expires_at: at(3 * 24 * 60 * 60_000) }), null, "three days left");
-    assert.equal(lead({ expires_at: at(60_000) }), null, "no refresh token: nothing can renew it");
-    assert.equal(lead({ refresh_token: "r" }), null, "no expiry: Grok's own clock");
-    assert.equal(lead({ refresh_token: "r", expires_at: "soon" }), null);
-    for (const text of ["", "not json", "[]", '{"grok.com": null}']) assert.equal(signInRenewalLead(text, now), null);
+    const DAY = 24 * 60 * 60_000;
+    const entry = (fields: Record<string, unknown>) =>
+      JSON.stringify({ "grok.com": { key: "access", create_time: at(-DAY), refresh_token: "r", ...fields } });
+    const renewal = (fields: Record<string, unknown>) => signInRenewal(entry(fields), now);
+    const soon = renewal({ expires_at: at(10 * 60_000) });
+    assert.equal(soon?.scope, "grok.com");
+    assert.ok((soon?.leadSeconds ?? 0) >= 10 * 60, "ten minutes left of a day: due at once");
+    assert.equal(renewal({ expires_at: at(-60 * 60_000) })?.leadSeconds, 300, "expired: Grok's own lead does it");
+    assert.equal(renewal({ expires_at: at(3 * DAY) }), null, "three days left");
+    // An hour-long token is renewed with half of it left, so the lead stays short of a new one's life.
+    const hour = { create_time: at(-40 * 60_000), expires_at: at(20 * 60_000) };
+    const hourly = renewal(hour)?.leadSeconds ?? 0;
+    assert.ok(hourly >= 20 * 60 && hourly < 30 * 60, `twenty minutes left of an hour: ${hourly}`);
+    assert.equal(renewal({ create_time: at(0), expires_at: at(60 * 60_000) }), null, "an hour just minted");
+    assert.equal(renewal({ refresh_token: undefined, expires_at: at(60_000) }), null, "no refresh token to renew with");
+    for (const fields of [{}, { expires_at: "soon" }, { expires_at: at(60_000), create_time: "then" }])
+      assert.equal(renewal(fields), null, JSON.stringify(fields));
+    for (const text of ["", "not json", "[]", '{"grok.com": null}']) assert.equal(signInRenewal(text, now), null);
     const two = JSON.stringify({
-      "api.x.ai": { key: "k", refresh_token: "r", expires_at: at(5 * 24 * 60 * 60_000) },
-      "grok.com": { key: "a", refresh_token: "r", expires_at: at(30 * 60_000) },
+      "api.x.ai": { key: "k", create_time: at(-DAY), refresh_token: "r", expires_at: at(60 * 60_000) },
+      "grok.com": { key: "a", create_time: at(-DAY), refresh_token: "r", expires_at: at(30 * 60_000) },
     });
-    assert.ok((signInRenewalLead(two, now) ?? 0) >= 30 * 60, "the account that expires first counts");
+    assert.equal(signInRenewal(two, now)?.scope, "grok.com", "the account that expires first counts");
   });
 
   it("on Windows has the person's own Grok renew a sign-in about to expire before a session copies it, once", async () => {
@@ -503,15 +515,22 @@ describe("Grok Build sessions", () => {
     const home = path.join(await tmpDir("grok-renew-"), ".grok");
     await mkdir(home, { recursive: true });
     const file = path.join(home, "auth.json");
-    const signIn = (key: string, offsetMs: number) =>
+    let now = Date.now();
+    const signIn = (key: string, ageMs: number, leftMs: number) =>
       JSON.stringify({
-        "grok.com": { key, refresh_token: `refresh-${key}`, expires_at: new Date(Date.now() + offsetMs).toISOString() },
+        "grok.com": {
+          key,
+          refresh_token: `refresh-${key}`,
+          create_time: new Date(now - ageMs).toISOString(),
+          expires_at: new Date(now + leftMs).toISOString(),
+        },
       });
-    await writeFile(file, signIn("access-1", 10 * 60_000));
-    const leads: number[] = [];
-    const renewSignIn = async (lead: number) => {
-      leads.push(lead);
-      await writeFile(file, signIn("access-2", 7 * 24 * 60 * 60_000));
+    const DAY = 24 * 60 * 60_000;
+    await writeFile(file, signIn("access-1", DAY, 10 * 60_000));
+    const asked: Array<{ scope: string; leadSeconds: number }> = [];
+    const renewSignIn = async (renewal: { scope: string; leadSeconds: number }) => {
+      asked.push(renewal);
+      await writeFile(file, signIn("access-2", 0, 7 * DAY));
     };
     const keys: Array<string | undefined> = [];
     const stream = async function* (invocation: GrokInvocation) {
@@ -526,25 +545,74 @@ describe("Grok Build sessions", () => {
     ]);
     await engine.delegate({ cwd: await game(), prompt: "z" });
     assert.deepEqual(keys, ["access-2", "access-2", "access-2"], "every session reads the renewed sign-in");
-    assert.equal(leads.length, 1, "one renewal for the runs that waited on it, none once renewed");
-    assert.ok((leads[0] ?? 0) >= 10 * 60, "early enough that Grok renews it at once");
+    assert.equal(asked.length, 1, "one renewal for the runs that waited on it, none once renewed");
+    assert.equal(asked[0]?.scope, "grok.com");
+    assert.ok((asked[0]?.leadSeconds ?? 0) >= 10 * 60, "early enough that Grok renews it at once");
 
-    await writeFile(file, signIn("dead", -60_000));
+    await writeFile(file, signIn("dead", DAY, -60_000));
     const stuck = await engineWith(stream, {
       home,
       platform: "win32",
-      renewSignIn: async (lead) => {
-        leads.push(lead);
+      clock: () => now,
+      renewSignIn: async (renewal) => {
+        asked.push(renewal);
       },
     });
     await stuck.engine.delegate({ cwd: await game(), prompt: "x" });
     await stuck.engine.delegate({ cwd: await game(), prompt: "x" });
-    assert.equal(leads.length, 2, "a sign-in a renewal left as it was is not tried again");
+    assert.equal(asked.length, 2, "a sign-in a renewal left as it was waits before it is tried again");
     assert.deepEqual(keys.slice(-2), ["dead", "dead"], "the session still gets what there is");
+    now += 10 * 60_000;
+    await stuck.engine.delegate({ cwd: await game(), prompt: "x" });
+    assert.equal(asked.length, 3, "and is tried again later: the failure may have passed");
 
     const mac = await engineWith(stream, { home, platform: "darwin", renewSignIn });
     await mac.engine.delegate({ cwd: await game(), prompt: "x" });
-    assert.equal(leads.length, 2, "a Mac session renews its sign-in itself");
+    assert.equal(asked.length, 3, "a Mac session renews its sign-in itself");
+  });
+
+  it("waits only so long on a renewal, which Grok finishes and writes before it is asked to stop", {
+    skip: process.platform === "win32" && "a shell script stands in for grok",
+  }, async () => {
+    // Stopping Grok between xAI's answer and its write would leave the person a spent refresh token.
+    const root = await tmpDir("grok-renewal-");
+    const home = path.join(root, ".grok");
+    await mkdir(home, { recursive: true });
+    const file = path.join(home, "auth.json");
+    const expiring = (offsetMs: number) =>
+      JSON.stringify({ "grok.com": { key: "k", expires_at: new Date(Date.now() + offsetMs).toISOString() } });
+    await writeFile(file, expiring(60_000));
+    const log = path.join(root, "log.txt");
+    const script = path.join(root, "grok.mjs");
+    await writeFile(
+      script,
+      `import { appendFileSync, writeFileSync } from "node:fs";
+const log = (line) => appendFileSync(${JSON.stringify(log)}, line + "\\n");
+log("lead " + process.env.GROK_AUTH_EARLY_INVALIDATION_SECS + " " + process.argv.slice(2).join(" "));
+process.stdin.on("end", () => { log("input closed"); process.exit(0); });
+process.stdin.resume();
+setTimeout(() => { writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(expiring(7 * 24 * 60 * 60_000))}); log("renewed"); }, 800);
+`,
+    );
+    const grok = path.join(root, "grok");
+    await writeFile(grok, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+    const started = Date.now();
+    await renewGrokSignIn(grok, {
+      env: { PATH: process.env.PATH ?? "" },
+      cwd: root,
+      home,
+      renewal: { scope: "grok.com", leadSeconds: 120 },
+      waitMs: 200,
+    });
+    assert.ok(Date.now() - started < 700, "the run went on without the renewal");
+    const deadline = Date.now() + 5_000;
+    while (!(await readFile(log, "utf8").catch(() => "")).includes("input closed") && Date.now() < deadline)
+      await sleep(50);
+    assert.deepEqual((await readFile(log, "utf8")).trim().split("\n"), [
+      "lead 120 agent stdio",
+      "renewed",
+      "input closed",
+    ]);
   });
 
   it("clears the run folders a run that never finished left behind, before its first run", async () => {

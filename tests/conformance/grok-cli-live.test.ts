@@ -55,13 +55,14 @@ function providerCommand(token: string): string {
 
 /**
  * A script printing made-up tokens, each a new name: the first expires in ten minutes, every one it
- * renews to in a week. It counts what it minted in `minted`.
+ * renews to in an hour (so a renewal's lead must stay short of a new token's life). It counts what
+ * it minted in `minted`.
  */
 const renewingToken = (minted: string) => `import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const file = ${JSON.stringify(minted)};
 const count = existsSync(file) ? Number(readFileSync(file, "utf8")) + 1 : 1;
 writeFileSync(file, String(count));
-const expires_in = count === 1 ? 600 : 7 * 24 * 3600;
+const expires_in = count === 1 ? 600 : 3600;
 console.log(JSON.stringify({ access_token: \`renewed-\${count}\`, refresh_token: \`refresh-\${count}\`, expires_in }));
 `;
 
@@ -188,23 +189,31 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     const token = path.join(folder, "token.mjs");
     await writeFile(token, renewingToken(path.join(folder, "minted.txt")));
     await signIn(binary, home, token);
+    const file = path.join(home, "auth.json");
     const keys = async () =>
-      Object.values(JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"))).map((entry) => {
-        return (entry as { key?: unknown }).key;
-      });
+      Object.values(JSON.parse(await readFile(file, "utf8"))).map((entry) => (entry as { key?: unknown }).key);
     assert.deepEqual(await keys(), ["renewed-1"], "signed in, ten minutes left");
-    const dir = await game("renewing-build");
+    // A sign-in from yesterday with ten minutes left, as a week-old one ends.
+    const store = JSON.parse(await readFile(file, "utf8")) as Record<string, Record<string, unknown>>;
+    for (const entry of Object.values(store)) entry.create_time = new Date(Date.now() - 24 * 3600_000).toISOString();
+    await writeFile(file, JSON.stringify(store));
     const sentBefore = fake.modelRequestHeaders().length;
     // Grok's home is the one sessions may use, as the app's own is; the person's own Grok renews
     // through the provider command it signed in with.
-    const result = await withEnv({ GROK_HOME: home, GROK_AUTH_PROVIDER_COMMAND: providerCommand(token) }, () =>
-      engine(home).delegate({ cwd: dir, prompt: "Run the probe." }),
-    );
+    const build = async (name: string) => {
+      const dir = await game(name);
+      const result = await withEnv({ GROK_HOME: home, GROK_AUTH_PROVIDER_COMMAND: providerCommand(token) }, () =>
+        engine(home).delegate({ cwd: dir, prompt: "Run the probe." }),
+      );
+      assert.equal(result.ok, true, result.errorText);
+      assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
+    };
+    await build("renewing-build");
     assert.deepEqual(await keys(), ["renewed-2"], "the person's own sign-in, renewed");
-    assert.equal(result.ok, true, result.errorText);
-    assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
+    await build("renewed-build");
+    assert.equal(await readFile(path.join(folder, "minted.txt"), "utf8"), "2", "renewed once, its new hour left alone");
     const sent = fake.modelRequestHeaders().slice(sentBefore);
-    assert.ok(sent.length > 0 && sent.every((headers) => headers.includes("renewed-2")), "the build ran on it");
+    assert.ok(sent.length > 0 && sent.every((headers) => headers.includes("renewed-2")), "both builds ran on it");
   });
 
   it("a judge's picture reaches the model: Grok opens the file its prompt names, in the real sandbox", {

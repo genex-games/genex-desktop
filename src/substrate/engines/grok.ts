@@ -46,7 +46,8 @@ import {
   probeGrok,
   readSignIn,
   renewGrokSignIn,
-  signInRenewalLead,
+  type SignInRenewal,
+  signInRenewal,
 } from "./grok-cli.ts";
 import { grokStderrStatus, grokStream, parseGrokLine, type Translated } from "./grok-events.ts";
 import {
@@ -93,6 +94,8 @@ const STDERR_TAIL_CHARS = 4_000;
 const PROMPT_FILE = "prompt.json";
 /** How a run's own folder in the sandbox's temporary folder is named. */
 const RUN_FOLDER_PREFIX = "prompt-";
+/** How long a sign-in a renewal left as it was waits before it is tried again: offline, xAI down. */
+const RENEWAL_RETRY_MS = 5 * MINUTE_MS;
 /** The sandbox's temporary folder under the engine's scratch root. */
 const TEMPORARY_DIR = "tmp";
 /** The usage counts each model response reports, added up over a run cut short before its end. */
@@ -182,8 +185,10 @@ export interface GrokEngineOptions {
   probe?: () => Promise<GrokProbe>;
   /** Test seam: where the CLI is and whether it works. */
   resolveCli?: () => Promise<ResolvedCli>;
-  /** Test seam: the person's own Grok renewing its sign-in (`renewGrokSignIn`), with this lead. */
-  renewSignIn?: (leadSeconds: number) => Promise<void>;
+  /** Test seam: the person's own Grok renewing its sign-in (`renewGrokSignIn`). */
+  renewSignIn?: (renewal: SignInRenewal) => Promise<void>;
+  /** Test seam: the time now, in milliseconds. */
+  clock?: () => number;
 }
 
 /** What a session has done so far. */
@@ -238,11 +243,12 @@ export class GrokEngine implements Engine {
   readonly #lockRecovery: string | undefined;
   readonly #home: string;
   readonly #platform: NodeJS.Platform;
-  readonly #renewSignIn: ((leadSeconds: number) => Promise<void>) | undefined;
+  readonly #renewSignIn: ((renewal: SignInRenewal) => Promise<void>) | undefined;
+  readonly #clock: () => number;
   /** The renewal of the person's sign-in under way, which every run starting meanwhile waits on. */
   #renewal: Promise<void> | null = null;
-  /** The sign-in a renewal left as it was: not tried again until Grok's file changes. */
-  #unrenewed: string | null = null;
+  /** The sign-in a renewal left as it was, and when: not tried again until it changes or a while passed. */
+  #unrenewed: { text: string; at: number } | null = null;
   /** Clearing the run folders a run that never finished left, which every run waits on first. */
   #cleared: Promise<void> | null = null;
   /** Whose sign-in the probe the picker shows found; none before the first one. */
@@ -262,6 +268,7 @@ export class GrokEngine implements Engine {
     this.#home = options.home ?? grokHome();
     this.#platform = options.platform ?? process.platform;
     this.#renewSignIn = options.renewSignIn;
+    this.#clock = options.clock ?? Date.now;
   }
 
   async status(): Promise<EngineStatus> {
@@ -564,29 +571,37 @@ export class GrokEngine implements Engine {
 
   /**
    * Has the person's own Grok renew its sign-in when an account's would not outlast a session
-   * (`signInRenewalLead`): a session's copy can never renew itself. Runs starting meanwhile wait on
-   * the same renewal; a sign-in a renewal could not change is left to the person's own Grok.
+   * (`signInRenewal`): a session's copy can never renew itself. Runs starting meanwhile wait on the
+   * same renewal; a sign-in a renewal left as it was waits `RENEWAL_RETRY_MS` before another try.
    */
   async #renewDue(): Promise<void> {
     const text = await readSignIn(this.#home);
-    const lead = text === null ? null : signInRenewalLead(text, Date.now());
-    if (lead === null || text === this.#unrenewed) return;
-    this.#renewal ??= this.#renew(lead).finally(async () => {
+    if (text === null) return;
+    const now = this.#clock();
+    const renewal = signInRenewal(text, now);
+    if (!renewal || this.#waitsToRetry(text, now)) return;
+    this.#renewal ??= this.#renew(renewal).finally(async () => {
       const after = await readSignIn(this.#home);
-      this.#unrenewed = after === text ? text : null;
+      this.#unrenewed = after === text ? { text, at: now } : null;
       this.#renewal = null;
     });
     await this.#renewal;
   }
 
+  /** Is `text` the sign-in a renewal left as it was, too lately to try again? */
+  #waitsToRetry(text: string, now: number): boolean {
+    const last = this.#unrenewed;
+    return last !== null && last.text === text && now - last.at < RENEWAL_RETRY_MS;
+  }
+
   /** The person's own Grok, on the host with the probe's environment, renewing its sign-in. */
-  async #renew(leadSeconds: number): Promise<void> {
-    if (this.#renewSignIn) return this.#renewSignIn(leadSeconds);
+  async #renew(renewal: SignInRenewal): Promise<void> {
+    if (this.#renewSignIn) return this.#renewSignIn(renewal);
     const cli = await this.#resolveCli();
     if (!cli.path) return;
     await mkdir(this.#scratchRoot, { recursive: true });
     const env = childEnv(process.env, { base: "contractor", vendor: "grok", set: grokEnv(this.#home) });
-    await renewGrokSignIn(cli.path, { env, cwd: this.#scratchRoot, home: this.#home, leadSeconds });
+    await renewGrokSignIn(cli.path, { env, cwd: this.#scratchRoot, home: this.#home, renewal });
   }
 
   /** A new folder of its own under the engine's scratch root. */
