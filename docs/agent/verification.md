@@ -180,7 +180,8 @@ app, and with `ANDROID_HOME` also builds on the Android lane and packages a dev 
 installed NDK stands in for the pinned r30); `android-package-real` needs `ANDROID_HOME` with
 Build-Tools 36 and android-36. `npm run test:ui -- export-ui` and `export-mobile-ui` render the
 export menu, its phone labels and the export sheet. `rust-mobile.yml` runs the Android emulator
-smoke on Linux; its macOS iOS Simulator job is owner-dispatched. No agent runs a phone build on
+smoke on Linux, on the pinned emulator build `scripts/ci/android-emulator.sh` installs (the runner's
+own moved to one that stalled the smoke, #539); its macOS iOS Simulator job is owner-dispatched. No agent runs a phone build on
 a Simulator, emulator or device: device evidence is the owner's (iPhone budgets, signed
 distribution, Android real devices or a recorded `deferred`), written with device, OS version
 and build digest under `.studio-dev/evidence/rust-mobile/`; until a device row passes, phone exports stay

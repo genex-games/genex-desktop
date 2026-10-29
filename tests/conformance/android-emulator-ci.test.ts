@@ -2,10 +2,13 @@
  * The CI emulator boot (`scripts/ci/android-emulator.sh`, used by rust-mobile.yml's 16 KB emulator
  * job and native-destinations.yml's rust-android job) against stub Android tools: the AVD folder is
  * named for avdmanager and the emulator alike, and every way the emulator can fail to boot ends the
- * script within its deadline with the emulator's own log, never an unbounded wait.
+ * script within its deadline with the emulator's own log, never an unbounded wait. The emulator is
+ * the pinned build (37.2.12, the last one CI's smoke passed on; 37.2.13 stalled the app before its
+ * first resume, #539): a runner's other build is replaced from the pinned archive, held to its sha256.
  */
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { execFile, execFileSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -20,6 +23,10 @@ const BOOT_SECONDS = "4";
 /** A failing boot ends well before the job would, and soon after its deadline. */
 const FAST_FAIL_MS = 15 * SECOND_MS;
 const SKIP = { skip: process.platform === "win32" ? "bash script (Linux CI)" : false };
+/** The emulator build the script pins (scripts/ci/android-emulator.sh EMULATOR_BUILD). */
+const PINNED_BUILD = "16428233";
+/** The build GitHub's runners shipped on 10-29 (#539's stalled rust-android). */
+const RUNNER_BUILD = "16740729";
 
 /** How the stub avdmanager and emulator behave. */
 const Stub = {
@@ -85,12 +92,40 @@ async function stopEmulator(evidence: string): Promise<void> {
   }
 }
 
-async function boot(mode: Stub): Promise<Run> {
+/** An emulator folder as an SDK holds it: the stub binary and the package's build id. */
+async function emulatorFolder(parent: string, build: string): Promise<void> {
+  await tool(path.join(parent, "emulator", "emulator"), EMULATOR);
+  await writeFile(path.join(parent, "emulator", "source.properties"), `Pkg.Revision=37.2\nPkg.BuildId=${build}\n`);
+}
+
+/** The pinned archive as Google serves it (an `emulator/` folder), its file URL and sha256. */
+async function pinnedArchive(dir: string): Promise<{ url: string; sha256: string }> {
+  const staging = path.join(dir, "archive");
+  await emulatorFolder(staging, PINNED_BUILD);
+  const zip = path.join(dir, `emulator-linux_x64-${PINNED_BUILD}.zip`);
+  execFileSync("zip", ["-qr", zip, "emulator"], { cwd: staging });
+  return {
+    url: `file://${zip}`,
+    sha256: createHash("sha256")
+      .update(await readFile(zip))
+      .digest("hex"),
+  };
+}
+
+interface BootOptions {
+  /** The build the runner's SDK ships; the pinned one unless a test says otherwise. */
+  installed?: string;
+  /** The archive the script downloads and the sha256 it holds it to. */
+  archive?: { url: string; sha256: string };
+}
+
+async function boot(mode: Stub, options: BootOptions = {}): Promise<Run> {
   const dir = await tmpDir("android-emulator-");
   const sdk = path.join(dir, "sdk");
   await tool(path.join(sdk, "cmdline-tools", "latest", "bin", "avdmanager"), AVDMANAGER);
-  await tool(path.join(sdk, "emulator", "emulator"), EMULATOR);
+  await emulatorFolder(sdk, options.installed ?? PINNED_BUILD);
   await tool(path.join(sdk, "platform-tools", "adb"), ADB);
+  const archive = options.archive ?? (await pinnedArchive(dir));
   const evidence = path.join(dir, "evidence");
   const avdHome = path.join(dir, "runner-temp", "android-avd");
   const started = Date.now();
@@ -109,6 +144,8 @@ async function boot(mode: Stub): Promise<Run> {
           GENEX_EMULATOR_BOOT_SECONDS: BOOT_SECONDS,
           STUB_DIR: dir,
           STUB_MODE: mode,
+          GENEX_EMULATOR_URL: archive.url,
+          GENEX_EMULATOR_SHA256: archive.sha256,
         },
       },
       (error, stdout, stderr) => {
@@ -146,6 +183,25 @@ describe("the CI emulator boot", SKIP, () => {
     assert.match(run.out, /did not finish booting within 4s/);
     assert.match(run.out, /INFO \| booting/);
     assert.ok(run.ms < FAST_FAIL_MS, `${run.ms} ms`);
+  });
+
+  it("replaces a runner's other emulator build with the pinned one, held to its sha256, and boots it", async () => {
+    const run = await boot(Stub.Boots, { installed: RUNNER_BUILD });
+    assert.equal(run.code, 0, run.out);
+    const properties = await readFile(path.join(run.dir, "sdk", "emulator", "source.properties"), "utf8");
+    assert.match(properties, new RegExp(`Pkg.BuildId=${PINNED_BUILD}`));
+    assert.match(run.out, /the emulator booted/);
+  });
+
+  it("refuses an archive that is not the pinned one, and leaves the runner's emulator as it was", async () => {
+    const dir = await tmpDir("android-emulator-archive-");
+    const { url } = await pinnedArchive(dir);
+    const run = await boot(Stub.Boots, { installed: RUNNER_BUILD, archive: { url, sha256: "0".repeat(64) } });
+    assert.equal(run.code, 1, run.out);
+    assert.match(run.out, /not the pinned emulator/);
+    const properties = await readFile(path.join(run.dir, "sdk", "emulator", "source.properties"), "utf8");
+    assert.match(properties, new RegExp(`Pkg.BuildId=${RUNNER_BUILD}`));
+    assert.ok(!(await calls(run)).includes("emulator -avd"), await calls(run));
   });
 
   it("refuses an AVD made anywhere but the named folder, before any emulator starts", async () => {
