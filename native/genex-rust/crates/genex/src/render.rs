@@ -2783,7 +2783,8 @@ mod tests {
         }
         mac.set_person(ClassOverride::default());
         assert_eq!(mac.panel_offered(), QualityPreset::ALL.to_vec());
-        assert_eq!(mac.live.profile.budget_bytes, 2 * GIB, "an eighth of 27 GB, at most 2 GiB");
+        // WP-9 flipped 2 GiB -> 9 GiB: a third of the GPU-visible memory, at most 12 GiB.
+        assert_eq!(mac.live.profile.budget_bytes, LARGE_MAC_MEMORY / 3, "a third of 27 GB");
     }
 
     /// Renderer pass 2, P2-0.9 step B (F1/RC-03): Live is fitted at the output it draws (the

@@ -17,7 +17,6 @@ use crate::impostor::{GpuImpostor, ImpostorBounds, ImpostorClass, ImpostorLayout
 use crate::layout::{GpuMaterial, GpuMaterialExt};
 use crate::mesh::{LOD_IMPOSTOR_MESH_LEVELS, impostor_level_error};
 use crate::scene::{Material, MeshId, MeshImpostor};
-use crate::texture::TextureKind;
 
 /// One impostor to install: the model's parts with the materials they draw with, its layout, the
 /// radius of the sphere its levels are measured from (the model's, a compound's around all its

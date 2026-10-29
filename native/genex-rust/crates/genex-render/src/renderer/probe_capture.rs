@@ -341,7 +341,7 @@ impl Renderer {
         ]);
         let [light_ext, light_bins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
         entries.extend([entry(light_ext, t.light_ext.get()), entry(light_bins, t.light_bins.get()), entry(material_ext, t.material_ext.get())]);
-        let class_views = MATERIAL_CLASS_ARRAYS.map(|(class, kind)| self.textures.view(class, kind));
+        let class_views = MATERIAL_CLASS_ARRAYS.map(|(slot, kind)| self.textures.slot_view(slot, kind));
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }));
         let neutral = self.ssr.borrow().neutral().clone();
         entries.push(wgpu::BindGroupEntry { binding: crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, resource: wgpu::BindingResource::TextureView(&neutral) });
