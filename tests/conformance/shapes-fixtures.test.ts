@@ -14,7 +14,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { GameWorkspaces, detectProjectShape } from "../../src/substrate/game-workspace.ts";
 import { MAX_INPUT_ACTIONS, capActions } from "../../src/substrate/preview-input.ts";
-import { normalizeGameTraits, withHarnessChecks } from "../../src/harness-seed/loop/spec.ts";
+import { normalizeGameTraits } from "../../src/harness-seed/loop/spec.ts";
+import { inputProbesFor } from "../../src/harness-seed/loop/kinds.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { MACHINE_WARNINGS, missingWarnings, undeclaredWarnings } from "../../tests/e2e/warning-policy.ts";
 
@@ -87,20 +88,18 @@ function importMapKeys(html: string): string[] {
 }
 
 /**
- * The state paths the harness's own input probes name for this game. `delta` entries have to be
- * paths something actually measures; deriving them from `withHarnessChecks` rather than from a
- * list in this file means the fixtures follow the kinds table wherever it goes.
+ * The state paths the kinds table's input probes name for this game, for the traits it declares.
+ * `delta` entries have to be paths something actually measures; deriving them from
+ * `inputProbesFor` rather than from a list in this file means the fixtures follow the kinds table
+ * wherever it goes.
  */
-const harnessChecks = withHarnessChecks as unknown as (
-  spec: { checks: unknown[] },
-  options: Record<string, unknown>,
-) => { checks?: Array<{ expr?: unknown }> };
-
 function probePaths(game: unknown): Set<string> {
-  const spec = harnessChecks({ checks: [] }, { ownsMain: true, role: "facet", game, screen: true });
+  const traits = normalizeGameTraits(game as never);
+  const probes = inputProbesFor(game as never);
+  const declared = [traits.mouseLook ? probes.look : null, traits.keyboardMove ? probes.move : null];
   const paths = new Set<string>();
-  for (const check of spec.checks ?? []) {
-    for (const match of String(check.expr ?? "").matchAll(/delta\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+  for (const probe of declared) {
+    for (const match of String(probe?.expr ?? "").matchAll(/delta\(\s*['"]([^'"]+)['"]\s*\)/g)) {
       paths.add(match[1]!);
     }
   }

@@ -1,5 +1,5 @@
 /**
- * The one-screen rule for a game that keeps an older, edited `src/hud.js` (loop/held-hud.ts): the
+ * The screen line for a game that keeps an older, edited `src/hud.js` (loop/held-hud.ts): the
  * brief and the prompt name only what that HUD draws, and say the rest is skipped. A run holding
  * the template's HUD gets null from both, and its brief and prompt stay byte-identical. A new
  * module; it imports only from held-hud.ts, which is as new.
@@ -13,16 +13,16 @@ function skippedCalls(generation: number): string {
     : "a newer call is skipped with a console warning, so do not build the HUD on one";
 }
 
-/** The brief's ONE SCREEN rule for a game holding an older HUD, or null when it holds the template's. */
+/** The brief's screen line for a game holding an older HUD, or null when it holds the template's. */
 export function heldHudBriefRule(run: unknown): string | null {
   const generation = heldHudGeneration(run);
   if (generation === null) return null;
-  return `- ONE SCREEN: all UI goes through \`__studio.hud\`, drawn into the canvas. This game keeps its own edited src/hud.js (HUD generation ${generation}, older than the studio's), so \`__studio.hud\` draws ${heldHudDraws(generation)} — ${skippedCalls(generation)}. Keep the middle of the view for the game. No DOM elements, no second HUD quad or canvas, no camera-parented panels — the harness-owned checks no-dom-ui and single-hud fail the build otherwise.`;
+  return `- THE SCREEN IS THE GAME'S: build its UI however it looks best — DOM and CSS, \`__studio.hud\` drawn into the canvas, or both, in as many layers as it needs. This game keeps its own edited src/hud.js (HUD generation ${generation}, older than the studio's), so \`__studio.hud\` draws ${heldHudDraws(generation)} — ${skippedCalls(generation)}.`;
 }
 
-/** What the prompt's ONE SCREEN rule says `__studio.hud` draws on an older HUD, or null when it holds the template's. */
+/** What the prompt's screen line says `__studio.hud` draws on an older HUD, or null when it holds the template's. */
 export function heldHudPromptDraws(run: unknown): string | null {
   const generation = heldHudGeneration(run);
   if (generation === null) return null;
-  return `drawn into the canvas: ${heldHudDraws(generation)} — this game keeps its own edited src/hud.js (HUD generation ${generation}) and ${skippedCalls(generation)}; keep the middle of the view for the game`;
+  return `drawn into the canvas: ${heldHudDraws(generation)} — this game keeps its own edited src/hud.js (HUD generation ${generation}) and ${skippedCalls(generation)}`;
 }

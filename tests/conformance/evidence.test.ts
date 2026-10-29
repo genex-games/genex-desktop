@@ -23,7 +23,7 @@ import {
   withObservationPatience,
 } from "../../src/harness-seed/loop/gauntlet.ts";
 import { observationOnlyFailure } from "../../src/harness-seed/loop/autopilot.ts";
-import { demosNamedByChecks, HARNESS_CHECKS, withHarnessChecks } from "../../src/harness-seed/loop/spec.ts";
+import { demosNamedByChecks, withHarnessChecks } from "../../src/harness-seed/loop/spec.ts";
 import type { Check } from "../../src/harness-seed/loop/spec.ts";
 import { evaluateProbeCheck, evaluateSceneCheck, sceneCheckExpression } from "../../src/harness-seed/loop/checks.ts";
 import {
@@ -325,7 +325,7 @@ describe("gatherEvidence after the stale-frame run", () => {
     assert.equal(order.at(-1), "state", "the late sample comes after the controls");
   });
 
-  it("a state the studio bounded flows through the pass, and keys-move-player is measured over it", async () => {
+  it("a state the studio bounded flows through the pass, and a move probe is measured over it", async () => {
     // AUDIT-STATE-STUB: what the host's bounder hands back — the HUD list a stub, the player whole.
     const bounded = (call: number) => ({
       player: { x: call, z: 0, yaw: 0 },
@@ -334,10 +334,12 @@ describe("gatherEvidence after the stale-frame run", () => {
     });
     const { ctx } = stubCtx({ frames: ["a", "b", "c"], cameras: ["default"], state: bounded });
     const evidence = (await gather(ctx)) as never as Parameters<typeof evaluateProbeCheck>[1];
-    const keysMove = withHarnessChecks({ id: "f", checks: [] as Check[], cameras: [] }, {
-      ownsMain: true,
-      game: { keyboardMove: true },
-    } as never).checks.find((check: { id: string }) => check.id === "keys-move-player") as Check;
+    const keysMove = {
+      id: "keys-move-player",
+      kind: "probe",
+      expr: inputProbesFor({ keyboardMove: true }).move.expr,
+      needs: ["player.x", "player.z"],
+    } as Check;
     const outcome = evaluateProbeCheck(keysMove, evidence);
     assert.equal(outcome.pass, true, outcome.reason);
     assert.equal(outcome.stateTooLarge, undefined);
@@ -613,18 +615,15 @@ describe("the kind a game declares, and what the harness assumes without one", (
         assert.equal(outcome.pass, false, `${which} on ${JSON.stringify(game)}: ${probes[which].expr}`);
       }
     }
-    // And the check the harness actually installs carries the fixed expression, at identity
-    // weight, on the facet that owns main.js.
+    // The harness installs no input check of its own: how a game is controlled is the game's.
     const spec = withHarnessChecks({ id: "f", checks: [] as Check[], cameras: [] }, {
       ownsMain: true,
       game: { keyboardMove: true },
     } as never);
-    const installed = spec.checks.find((check: { id: string }) => check.id === "keys-move-player");
-    assert.ok(installed, JSON.stringify(spec.checks));
-    assert.equal(installed.weight, "identity");
-    // Never green: false when the expression is all there is to go on, unmeasured when the
-    // check names the paths it needs and the build reports none of them.
-    assert.notEqual(evaluateProbeCheck(installed, board).pass, true, installed.expr);
+    assert.deepEqual(
+      spec.checks.map((check: { id: string }) => check.id),
+      ["reaches-play"],
+    );
   });
 });
 
@@ -656,11 +655,21 @@ describe("the harness's own checks on the result a player gets", () => {
     assert.equal(harnessCheck("reaches-play", { ownsMain: true, game: { kind: "static-board" } }), undefined);
   });
 
-  it("hud-coverage and hud-overlap read the HUD's own measurements, unmeasured on a HUD that takes none", () => {
-    const coverage = harnessCheck("hud-coverage", { ownsMain: false, game: { kind: "racing" } });
-    const overlap = harnessCheck("hud-overlap", { ownsMain: false, game: { kind: "racing" } });
-    assert.ok(coverage && overlap);
-    assert.equal(coverage.weight, "normal");
+  it("no HUD check rides on a game's board; a plan's own reads the HUD's measurements, unmeasured on a HUD that takes none", () => {
+    for (const id of ["no-dom-ui", "single-hud", "hud-coverage", "hud-overlap"])
+      assert.equal(harnessCheck(id, { ownsMain: true, game: { kind: "racing" } }), undefined, id);
+    const coverage = {
+      id: "hud-coverage",
+      kind: "probe",
+      expr: "hud.coverage <= 0.22",
+      needs: ["hud.coverage"],
+    } as Check;
+    const overlap = {
+      id: "hud-overlap",
+      kind: "probe",
+      expr: "len(hud.overlaps) == 0",
+      needs: ["hud.overlaps"],
+    } as Check;
     assert.equal(evaluateProbeCheck(coverage, { state: { hud: { coverage: 0.35, overlaps: [] } } }).pass, false);
     assert.equal(evaluateProbeCheck(coverage, { state: { hud: { coverage: 0.1, overlaps: [] } } }).pass, true);
     assert.equal(evaluateProbeCheck(coverage, { state: { hud: { items: ["speed"] } } }).pass, null);
@@ -2239,7 +2248,17 @@ function racer({
 const racingRun = { run: { ...run, game: { kind: "racing" } } };
 /** The frame the drive takes of a corner, in its wire spelling (pass-frames.ts `CORNER_CAMERA`). */
 const CORNER_CAMERA = "drive:corner";
-const throttleBot = (): Check => ({ id: "throttle-bot-loses", ...HARNESS_CHECKS["throttle-bot-loses"] }) as Check;
+/** A plan's own check on the throttle-only bot's race: no board carries one unless its plan wrote it. */
+const throttleBot = (): Check =>
+  ({
+    id: "throttle-bot-loses",
+    kind: "probe",
+    weight: "normal",
+    origin: "planner",
+    after: "throttle-bot",
+    expr: "race.position > 1",
+    needs: ["race.position"],
+  }) as Check;
 
 describe("judges get the evidence they need", () => {
   it("photographs the end of every registered demo", async () => {
@@ -2378,7 +2397,7 @@ describe("judges get the evidence they need", () => {
     assert.deepEqual(pageCalls(walker.calls, "assist"), []);
   });
 
-  it("races the throttle-only bot, and the harness check fails when it wins", async () => {
+  it("races the throttle-only bot, and a plan's check on the race fails when it wins", async () => {
     const game = racer({ cornerAfter: 1_000, raceMs: 226_600, position: 1 });
     const { ctx, calls } = stubCtx({ frames: uniqueFrames(20), ...game });
     const evidence = await gather(ctx, { ...racingRun, challenge: true });

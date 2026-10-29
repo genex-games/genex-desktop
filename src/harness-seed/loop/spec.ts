@@ -17,18 +17,11 @@ import path from "node:path";
 import { dryRunChecks, parseExpr } from "./checks.ts";
 import { lintCheck } from "./check-lint.ts";
 import { notThisBuildsQuestion } from "./harness-needs.ts";
-import { DEFAULT_HUD_BUDGET, hudBudgetFor } from "./hud-budget.ts";
-import { criticFor, inputProbesFor, isGameKind, normalizeGameTraits, wantsEyeCameras } from "./kinds.ts";
-import { isRecord } from "./json.ts";
-import { hasText } from "./text.ts";
+import { criticFor, isGameKind, normalizeGameTraits, wantsEyeCameras } from "./kinds.ts";
 import { DEFAULT_CAMERA } from "./cameras.ts";
 import { demoOfFrame, isPassFrame } from "./pass-frames.ts";
 import { ProbeAfter } from "./throttle-bot.ts";
 import { PlayReaches } from "./quest.ts";
-import { HUD_LAYOUT_CHECKS } from "./hud-layout.ts";
-// A namespace for what kinds.ts gained later: a seed upgrade keeps a kinds.ts the agent edited, and
-// a named import it lacks would stop this file loading.
-import * as kinds from "./kinds.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 
 /** The most checks one facet's board carries. */
@@ -73,8 +66,6 @@ const STATE_KEYS_NAMED = 8;
 const CATALOGUE_LIMIT = 40;
 const MAX_ENTRY_RUNS = 8;
 const MAX_ENTRY_GENRES = 6;
-/** The most `delta(...)` paths one check says it needs. */
-const MAX_DELTA_PATHS = 4;
 /** A hand-seeded check the runs never satisfied: after this many uses it stops reaching the planner. */
 const STALE_SEED_USES = 3;
 /** A check the judge grew reaches the planner once it caught a defect this often, across this many runs. */
@@ -937,69 +928,16 @@ export function renderMilestones(
 // ── harness-owned checks ───────────────────────────────────────────────────────────────────
 
 /**
- * Checks the loop itself puts on every plan (HARNESS-POSTMORTEM-SHOOTER.md §4.2–4.3). They
- * prove the two things the user notices first and no planner check ever covered: the screen
- * the user sees is the screen the judge sees (one HUD, drawn into the canvas, no DOM UI), and
- * a human's input reaches the game (the mouse turns the camera, the keys move the player).
- * `origin: "harness"`; a planner re-ask cannot drop them and a builder cannot edit them.
+ * The one check the loop itself puts on a plan: liveness, not design. A game whose controls are
+ * keys or a mouse gets past its title into play — anything about how it looks or plays (its UI,
+ * its HUD, its camera, its controls, how hard its race is) is the game's, and a plan names a
+ * check for it when it wants one. The screen, HUD, input and racing checks the loop once forced
+ * on every plan (`no-dom-ui`, `single-hud`, `hud-coverage`, `hud-overlap`, `look-turns-camera`,
+ * `keys-move-player`, `throttle-bot-loses`) had builders spending their rounds on the harness's
+ * rules instead of the game; a plan may still name a check under one of those ids, with its own body.
+ * `origin: "harness"`; a planner re-ask cannot drop it and a builder cannot edit it.
  */
 export const HARNESS_CHECKS: Record<string, AnyRecord & { expr?: string; note: string; needs?: string[] }> = {
-  "no-dom-ui": {
-    kind: CheckKind.Scene,
-    weight: CheckWeight.Identity,
-    origin: CheckOrigin.Harness,
-    js: "domUi().length === 0",
-    detail: "'visible DOM elements outside the canvas: ' + domUi().join(', ')",
-    note: "harness-owned: every visible element must be drawn into the canvas (use __studio.hud); the judge never sees DOM",
-  },
-  "single-hud": {
-    kind: CheckKind.Scene,
-    weight: CheckWeight.Identity,
-    origin: CheckOrigin.Harness,
-    js: "count('hud') === 1",
-    detail: "'hud-tagged objects: ' + objects('hud').map(o => o.type + (o.name ? '#' + o.name : '')).join(', ')",
-    note: "harness-owned: exactly one object tagged hud — the template's overlay; a second HUD is a duplicate the user sees twice",
-  },
-  "look-turns-camera": {
-    kind: CheckKind.Probe,
-    weight: CheckWeight.Identity,
-    origin: CheckOrigin.Harness,
-    expr: "abs(delta('player.yaw')) > 0.01",
-    note: "harness-owned: after the scripted look (56 px right) player().yaw changed — the mouse path from ctx.look to the camera works",
-  },
-  "keys-move-player": {
-    kind: CheckKind.Probe,
-    weight: CheckWeight.Identity,
-    origin: CheckOrigin.Harness,
-    // `abs(delta(path)) > 0` and not `delta(path) != 0`: an axis the game does not report reads
-    // undefined, and `undefined != 0` is true — the old body passed on a game with no player at
-    // all. `needs` names the same two paths, so a build whose player only exists after the play
-    // script (a title screen) is reported unmeasured instead of green (checks.ts
-    // needsNotReported compares needs against the paths delta() itself names).
-    expr: "abs(delta('player.x')) > 0 || abs(delta('player.z')) > 0",
-    needs: ["player.x", "player.z"],
-    note: "harness-owned: after the scripted W/A hold player().x or .z changed — the key path from ctx.keys to the controller works",
-  },
-  // The HUD's own measurements (template hud.js generation 2): what a player notices about a HUD
-  // is how much of the view it takes and whether its pieces run into each other — never how many
-  // pieces it is drawn from. `needs` keeps an older HUD that measures nothing unmeasured, not
-  // failed. The budget is the declared kind's (loop/hud-budget.ts); withHarnessChecks fills it in.
-  "hud-coverage": {
-    kind: CheckKind.Probe,
-    weight: CheckWeight.Normal,
-    origin: CheckOrigin.Harness,
-    expr: `hud.coverage <= ${DEFAULT_HUD_BUDGET}`,
-    needs: ["hud.coverage"],
-    note: "harness-owned: the HUD covers at most its kind's share of the frame — keep the middle of the view for the game",
-  },
-  "hud-overlap": {
-    kind: CheckKind.Probe,
-    weight: CheckWeight.Normal,
-    origin: CheckOrigin.Harness,
-    expr: "len(hud.overlaps) == 0",
-    needs: ["hud.overlaps"],
-    note: "harness-owned: no two HUD items run into each other",
-  },
   // A game with a front-end (title → start → countdown) declares `config.flow()`; the evidence
   // pass begins it, and this asks whether that put the game into play. It reads the early sample
   // (the state reachPlay left, before the drive): a race that ends or a player who dies during
@@ -1013,113 +951,31 @@ export const HARNESS_CHECKS: Record<string, AnyRecord & { expr?: string; note: s
     needs: ["flow.playing"],
     note: "harness-owned: after begin the game is in play (state().flow.playing) — the front-end hands the player the controls",
   },
-  // A race a bot that only holds the throttle can win is no challenge. The evidence pass races that
-  // bot when the board carries this check (evidence.ts `raceThrottleBot`: the throttle held, the game's racing
-  // line steering, never a brake) and the probe reads the state the race left. A game that reports
-  // no `race.position` is not asked (`needs`); a race the pass did not run is unmeasured.
-  "throttle-bot-loses": {
-    kind: CheckKind.Probe,
-    weight: CheckWeight.Normal,
-    origin: CheckOrigin.Harness,
-    after: ProbeAfter.ThrottleBot,
-    expr: "race.position > 1",
-    needs: ["race.position"],
-    note: "harness-owned: a bot that only holds the throttle (steered by the game's racing line, never braking) must not win the race — report race.position (1 = leading) and race.finished in state()",
-  },
 };
 
 /** The harness checks that only hold once the game is in play: off the front-end owner's board. */
-const IN_PLAY_CHECKS: ReadonlySet<string> = new Set([
-  "reaches-play",
-  "hud-coverage",
-  "keys-move-player",
-  "look-turns-camera",
-  "throttle-bot-loses",
-]);
-
-/** The kind's throttle, from a kinds.ts that may predate `throttleFor` (an edited copy an upgrade kept). */
-function throttleOf(game: AnyRecord | null): string[] {
-  return typeof kinds.throttleFor === "function" ? kinds.throttleFor(game) : [];
-}
-
-/** The `hud-coverage` body for a HUD whose kind allows `budget` of the frame. */
-function hudCoverage(budget: number): AnyRecord {
-  return {
-    expr: `hud.coverage <= ${budget}`,
-    note: `harness-owned: the HUD covers at most ${Math.round(budget * 100)}% of the frame — keep the middle of the view for the game`,
-  };
-}
-
-/**
- * One input probe as `{ expr, note }`, from whatever `inputProbesFor` answered: a kind may
- * describe its axes as a string or as the whole check body. A trait that is declared but whose
- * kind names no axis falls back to the template's own expression rather than dropping the
- * check silently — "declare mouseLook: true" is the documented remedy and must do something.
- */
-function inputProbe(raw: unknown, fallbackId: string): { expr: string; note: string; needs?: string[] } {
-  const body = HARNESS_CHECKS[fallbackId]!;
-  let expr = body.expr as string;
-  let note = body.note;
-  if (hasText(raw)) {
-    expr = raw.trim();
-  } else if (isRecord(raw) && hasText(raw.expr)) {
-    expr = raw.expr.trim();
-    if (hasText(raw.note)) note = raw.note.trim();
-  }
-  // `needs` is read off the expression the check actually carries, never inherited: a kind that
-  // moves on x and y must not be asked for the template's x and z, and a check whose needs name
-  // a path its own delta() does not can never report the early state missing (checks.ts
-  // needsNotReported), or "this game has no player yet" would read as "the controls work". Only a check whose harness body declares needs gets them.
-  const needs = body.needs ? deltaPathsIn(expr) : [];
-  return { expr, note, ...(needs.length ? { needs } : {}) };
-}
-
-/** The dotted paths an expression reads through `delta(...)`, in order, at most four. */
-function deltaPathsIn(expr: unknown): string[] {
-  const found = [...String(expr).matchAll(/delta\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]!);
-  return [...new Set(found)].slice(0, MAX_DELTA_PATHS);
-}
+const IN_PLAY_CHECKS: ReadonlySet<string> = new Set(["reaches-play"]);
 
 /** The harness checks a board of this game carries, by id, before the front-end owner's are left off. */
-function harnessCheckIds(
-  game: AnyRecord | null,
-  { owner, screen, drawsHud }: { owner: boolean; screen: boolean; drawsHud: boolean },
-): string[] {
+function harnessCheckIds(game: AnyRecord | null, { owner }: { owner: boolean }): string[] {
   const traits = normalizeGameTraits(game);
-  // `screen: false` — a game the user brought with its own UI (DOM menus, its own HUD) keeps
-  // it; the one-screen checks describe the template's screen, not this game's.
   const driven = traits.keyboardMove || traits.mouseLook;
-  // Any part can paint a second HUD; only the part that draws the HUD answers for its size and layout.
-  const layout = drawsHud ? HUD_LAYOUT_CHECKS : [];
-  return [
-    ...(screen && traits.hud ? ["no-dom-ui", "single-hud", ...layout] : []),
-    ...(owner && traits.mouseLook ? ["look-turns-camera"] : []),
-    ...(owner && traits.keyboardMove ? ["keys-move-player"] : []),
-    ...(owner && driven ? ["reaches-play"] : []),
-    // A kind with a throttle (a racer, a craft) races the throttle-only bot on the entry owner's board.
-    ...(owner && throttleOf(game).length ? ["throttle-bot-loses"] : []),
-  ];
+  return owner && driven ? ["reaches-play"] : [];
 }
 
 /**
- * The harness-owned checks a facet carries, conditional on what the plan says the game IS:
- * the screen checks on every facet of a game with a HUD (any facet can paint a second one, or
- * crowd the frame), the input checks on the facet that owns main.js and on the integration
- * facet (they own the player) when the game is mouse-looked / keyboard-moved, and with them
- * `reaches-play` — and, for a kind with a throttle, `throttle-bot-loses`. Existing ids are
- * replaced by the harness definition, never duplicated.
+ * The harness-owned check a facet carries, conditional on what the plan says the game IS:
+ * `reaches-play` on the facet that owns main.js and on the integration facet (they own the
+ * player) when keys or a mouse drive the game. An existing id is replaced by the harness
+ * definition, never duplicated; every other check a plan names keeps its own body.
  *
  * Every trait is off until something declares it (loop/kinds.ts), so a game nobody described
- * carries no harness check at all: the four checks describe the template's screen and the
- * template's controls, and a board game or a builder has neither. The two input checks read
- * the declared kind's own axes, so a top-down game is asked whether x, y or z moved and not
- * whether the first-person controller's x or z did.
+ * carries no harness check at all.
  *
  * `keepsFrontEnd` is the worker that owns the front-end (`setup {"begin":false}`): its evidence
- * and judges stay on the title (evidence.ts reachPlay), so the checks that only hold in play —
- * in play, the controls move the player, the in-play HUD budget — are left off its board.
- * `drawsHud` false is a part another part draws the HUD for: it is never failed for the HUD's
- * coverage or overlap, which it cannot change.
+ * and judges stay on the title (evidence.ts reachPlay), so the check that only holds in play is
+ * left off its board. `screen` and `drawsHud` chose the screen and HUD-layout checks the harness
+ * no longer forces: callers, and copies of them a seed upgrade kept, still pass them.
  */
 export function withHarnessChecks<S extends { checks?: Check[] }>(
   spec: S,
@@ -1127,9 +983,7 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
     ownsMain = false,
     role = "facet",
     game = null,
-    screen = true,
     keepsFrontEnd = false,
-    drawsHud = true,
   }: {
     ownsMain?: boolean;
     role?: string;
@@ -1139,20 +993,13 @@ export function withHarnessChecks<S extends { checks?: Check[] }>(
     drawsHud?: boolean;
   } = {},
 ): S & { checks: Check[] } {
-  const traits = normalizeGameTraits(game);
   const owner = ownsMain || role === "integration";
-  const probes = inputProbesFor(game) ?? {};
-  const wanted = harnessCheckIds(game, { owner, screen, drawsHud }).filter(
-    (id) => !keepsFrontEnd || !IN_PLAY_CHECKS.has(id),
-  );
-  const overrides: Record<string, AnyRecord> = {
-    "look-turns-camera": inputProbe(probes.look, "look-turns-camera"),
-    "keys-move-player": inputProbe(probes.move, "keys-move-player"),
-    "hud-coverage": hudCoverage(hudBudgetFor(traits) ?? DEFAULT_HUD_BUDGET),
-  };
+  const wanted = harnessCheckIds(game, { owner }).filter((id) => !keepsFrontEnd || !IN_PLAY_CHECKS.has(id));
   const checks = (spec.checks ?? []).filter((c) => !wanted.includes(c.id));
-  for (const id of wanted)
-    checks.push(normalizeCheck({ id, ...HARNESS_CHECKS[id], ...(overrides[id] ?? {}) }, checks.length)!);
+  for (const id of wanted) {
+    const check = normalizeCheck({ id, ...HARNESS_CHECKS[id] }, checks.length);
+    if (check) checks.push(check);
+  }
   return { ...spec, checks };
 }
 
@@ -1369,13 +1216,9 @@ export function renderCatalogueForPlanner(
   catalogue: Pick<Catalogue, "checks"> | null | undefined,
   options: number | { limit?: number; game?: AnyRecord | null; screen?: boolean } | null = {},
 ): string {
-  const {
-    limit = CATALOGUE_LIMIT,
-    game = null,
-    screen = true,
-  }: { limit?: number; game?: AnyRecord | null; screen?: boolean } = typeof options === "number"
-    ? { limit: options }
-    : (options ?? {});
+  // `screen` chose which harness checks rode on the board; none depends on it now, and callers still pass it.
+  const { limit = CATALOGUE_LIMIT, game = null }: { limit?: number; game?: AnyRecord | null } =
+    typeof options === "number" ? { limit: options } : (options ?? {});
   const wantedFamily = kindFamily(game?.kind ?? null);
   const all = Object.entries(catalogue?.checks ?? {}).filter(
     ([id, c]) => !HARNESS_CHECKS[id] && catalogueEntryEarned(c) && forFamily(c, wantedFamily) && !lintCheck(c),
@@ -1395,7 +1238,7 @@ export function renderCatalogueForPlanner(
       ...entries.slice(0, limit).map(catalogueLine),
     );
   }
-  lines.push("", ridingLine(game, screen));
+  lines.push("", ridingLine(game));
   return lines.join("\n");
 }
 
@@ -1452,34 +1295,16 @@ const learnedByRuns = (entry: { origin?: string }): boolean =>
   entry.origin === CheckOrigin.Judge || entry.origin === CheckOrigin.Spike;
 
 /**
- * What actually rides on THIS game's board, not the four ids the table happens to hold: a game
- * that declared nothing carries none of them, and telling the planner otherwise is the lie that
- * made every plan re-declare a HUD rule its game does not have.
+ * What actually rides on THIS game's board: a game that declared nothing carries nothing of the
+ * harness's, and telling the planner otherwise is the lie that made every plan re-declare a rule
+ * its game does not have.
  */
-function ridingLine(game: AnyRecord | null, screen: boolean): string {
-  const riding = withHarnessChecks({ id: "board", checks: [] as Check[] }, { ownsMain: true, game, screen }).checks.map(
+function ridingLine(game: AnyRecord | null): string {
+  const riding = withHarnessChecks({ id: "board", checks: [] as Check[] }, { ownsMain: true, game }).checks.map(
     (c) => c.id,
   );
-  if (!riding.length)
-    return `No harness-owned checks ride on this game's board — declare hud, mouseLook or keyboardMove in game if it has them.`;
-  return `Already on this game's board (harness-owned, do not re-declare): ${riding.join(", ")}.${ridingWords(riding, hudBudgetFor(game))}`;
-}
-
-/** What the harness checks riding on a board ask, a sentence each, for the planner. */
-function ridingWords(riding: readonly string[], budget: number | null): string {
-  const screenRides = riding.includes("no-dom-ui") || riding.includes("single-hud");
-  const inputRides = riding.includes("look-turns-camera") || riding.includes("keys-move-player");
-  const hudRides = riding.includes("hud-coverage") && budget !== null;
-  return [
-    screenRides ? " Every visible element is drawn into the canvas — no DOM UI, one HUD." : "",
-    hudRides
-      ? ` The HUD covers at most ${Math.round((budget ?? 0) * 100)}% of the frame and its items do not overlap.`
-      : "",
-    inputRides ? " The input checks and reaches-play ride on the facet that owns main." : "",
-    riding.includes("throttle-bot-loses")
-      ? " On the facet that owns main, a bot that only holds the throttle must not win the race (throttle-bot-loses: report race.position and race.finished)."
-      : "",
-  ].join("");
+  if (!riding.length) return `No harness-owned check rides on this game's board.`;
+  return `Already on this game's board (harness-owned, do not re-declare): ${riding.join(", ")} — on the facet that owns main, the game gets past its title into play. Its UI, HUD, camera and controls are the plan's to check, or not.`;
 }
 
 /**

@@ -108,7 +108,7 @@ function raceTime(ms: number): string {
 }
 
 /**
- * The judge's challenge line (evidence.ts `challenge`, the race `throttle-bot-loses` reads): where a
+ * The judge's challenge line (evidence.ts `challenge`, the throttle-only bot's race): where a
  * bot that only holds the throttle placed, and after how much racing. No line when it did not race.
  */
 export function challengeFactLines(challenge: unknown): string[] {

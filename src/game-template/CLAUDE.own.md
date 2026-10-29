@@ -19,7 +19,7 @@ the game, not defects to correct. Change what the brief asks for and leave the r
    is a loss.
 3. **Keep this game's screen and its controls.** Its UI is its own — DOM, its own canvas overlay,
    whatever it already uses. Do not move it into `__studio.hud`, do not add a second HUD, and do
-   not re-route its input: the one-screen checks do not apply here. The harness drives the game
+   not re-route its input. The harness drives the game
    with real key and mouse events, so keep it playable from the keyboard and mouse, and keep
    `player()` reporting where the player actually is.
 4. **Tag what you add, make it measurable.** `obj.userData.tag = "<tag>"` on every object you

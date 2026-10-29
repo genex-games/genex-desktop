@@ -66,6 +66,7 @@ import {
   withCraftChecks,
 } from "../../src/harness-seed/loop/library.ts";
 import { mechanicalReview, parseDiff } from "../../src/harness-seed/loop/review.ts";
+import { inputProbesFor } from "../../src/harness-seed/loop/kinds.ts";
 import { CheckLintCode, lintCheck } from "../../src/harness-seed/loop/check-lint.ts";
 import { appliesToBuild } from "../../src/harness-seed/loop/applies-to-build.ts";
 import { mineValidationTasks } from "../../src/harness-seed/loop/skillopt.ts";
@@ -670,9 +671,8 @@ describe("facet specs", () => {
 });
 
 describe("the board a game actually carries", () => {
-  it("puts no harness check on a game nobody described, and the kind's own axes on one they did", () => {
-    // Every trait is off until something declares it: the four harness checks describe the
-    // template's screen and the template's controls, and a game nobody described has neither.
+  it("puts no harness check on a game nobody described, and only reaches-play on the entry owner of one keys or a mouse drive", () => {
+    // Every trait is off until something declares it, and a game nobody described carries nothing.
     assert.deepEqual(withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true }).checks, []);
     assert.deepEqual(normalizeGameTraits(undefined), {
       kind: null,
@@ -682,119 +682,51 @@ describe("the board a game actually carries", () => {
       playScript: null,
     });
 
-    // A board game declares a kind and still carries nothing: no HUD rule, no look, no move.
+    // A board game declares a kind and still carries nothing: no look, no move, no play to reach.
     assert.deepEqual(
       withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true, game: { kind: "static-board" } as never }).checks,
       [],
     );
 
-    // The template's own shape keeps all four.
-    const firstPerson = withHarnessChecks(
-      { id: "f", checks: [] },
-      { ownsMain: true, game: { kind: "first-person" } as never },
-    ).checks;
-    assert.deepEqual(firstPerson.map((c: { id: string }) => c.id).sort(), [
-      "hud-coverage",
-      "hud-overlap",
-      "keys-move-player",
-      "look-turns-camera",
-      "no-dom-ui",
-      "reaches-play",
-      "single-hud",
-    ]);
-
-    // A top-down game has a HUD and keys but no mouse look, and its move check asks about the
-    // axes it actually moves on — x, y or z — not the first-person controller's x and z.
-    const topDown = withHarnessChecks(
-      { id: "f", checks: [] as Check[] },
-      { ownsMain: true, game: { kind: "top-down" } as never },
-    ).checks as { id: string; expr?: string }[];
-    assert.deepEqual(topDown.map((c) => c.id).sort(), [
-      "hud-coverage",
-      "hud-overlap",
-      "keys-move-player",
-      "no-dom-ui",
-      "reaches-play",
-      "single-hud",
-    ]);
-    const move = topDown.find((c) => c.id === "keys-move-player");
-    assert.match(String(move!.expr), /player\.y/);
-    assert.doesNotMatch(String(move!.expr), /player\.yaw/);
-    assert.equal(topDown.find((c) => c.id === "hud-coverage")!.expr, "hud.coverage <= 0.22");
-
-    // The HUD's share of the frame is the kind's: a racer's dashboard may take more of it than
-    // a first-person crosshair and ammo count.
-    const racing = withHarnessChecks(
-      { id: "f", checks: [] as Check[] },
-      { ownsMain: true, game: { kind: "racing" } as never },
-    ).checks as { id: string; expr?: string; needs?: string[]; weight: string }[];
-    // Flipped: the entry owner of a racer also carries the race a throttle-only bot must not win.
-    assert.deepEqual(racing.map((c) => c.id).sort(), [
-      "hud-coverage",
-      "hud-overlap",
-      "keys-move-player",
-      "no-dom-ui",
-      "reaches-play",
-      "single-hud",
-      "throttle-bot-loses",
-    ]);
-    const coverage = racing.find((c) => c.id === "hud-coverage")!;
-    assert.equal(coverage.expr, "hud.coverage <= 0.18");
-    assert.deepEqual(coverage.needs, ["hud.coverage"]);
-    assert.equal(coverage.weight, "normal");
-    const firstPersonCoverage = (firstPerson as { id: string; expr?: string }[]).find((c) => c.id === "hud-coverage");
-    assert.equal(firstPersonCoverage?.expr, "hud.coverage <= 0.12");
-    // A part that does not own main still carries the screen checks, never the play check.
-    const part = withHarnessChecks({ id: "f", checks: [] }, { game: { kind: "racing" } as never }).checks;
-    assert.deepEqual(part.map((c: { id: string }) => c.id).sort(), [
-      "hud-coverage",
-      "hud-overlap",
-      "no-dom-ui",
-      "single-hud",
-    ]);
+    // Flipped (Loop phase 2): the screen, HUD, input and racing checks are no longer forced. A
+    // first-person game, a top-down game and a racer's entry owner each carry only reaches-play.
+    for (const kind of ["first-person", "top-down", "racing"]) {
+      const board = withHarnessChecks(
+        { id: "f", checks: [] as Check[] },
+        { ownsMain: true, game: { kind } as never },
+      ).checks;
+      assert.deepEqual(
+        board.map((c: { id: string }) => c.id),
+        ["reaches-play"],
+        kind,
+      );
+    }
+    // A part that does not own main carries nothing of the harness's.
+    assert.deepEqual(withHarnessChecks({ id: "f", checks: [] }, { game: { kind: "racing" } as never }).checks, []);
   });
 
-  it("puts the throttle-only bot's race on the entry owner of a racer or a craft, never a part or the front-end's owner", () => {
-    const owned = (game: Record<string, unknown>, options: Record<string, unknown> = {}) =>
-      withHarnessChecks({ id: "f", checks: [] as Check[] }, { ownsMain: true, game, ...options } as never).checks;
-    const bot = owned({ kind: "racing" }).find((c: Check) => c.id === "throttle-bot-loses");
-    assert.ok(bot, "the entry owner of a racer carries the challenge");
-    assert.equal(bot.kind, "probe");
-    assert.equal(bot.after, "throttle-bot", "it reads the state the throttle-only bot's race left");
-    assert.equal(bot.expr, "race.position > 1");
-    assert.deepEqual(bot.needs, ["race.position"], "a game that reports no race is not asked");
-    assert.equal(bot.weight, "normal", "the challenge never decides whether a part is done");
-    assert.ok(owned({ kind: "flight" }).some((c: Check) => c.id === "throttle-bot-loses"));
-    const ownScript = { kind: "racing", playScript: [{ type: "tap", keys: ["x"] }] };
-    assert.ok(
-      owned(ownScript).some((c: Check) => c.id === "throttle-bot-loses"),
-      "the bot holds the kind's throttle",
-    );
-    for (const game of [{ kind: "first-person" }, { kind: "top-down" }, {}]) {
+  it("puts the throttle-only bot's race on no board; a plan's own check on it keeps what it reads", () => {
+    const owned = (game: Record<string, unknown>) =>
+      withHarnessChecks({ id: "f", checks: [] as Check[] }, { ownsMain: true, game } as never).checks;
+    for (const game of [{ kind: "racing" }, { kind: "flight" }, { kind: "first-person" }, {}])
       assert.ok(!owned(game).some((c: Check) => c.id === "throttle-bot-loses"), JSON.stringify(game));
-    }
-    const part = withHarnessChecks({ id: "f", checks: [] }, { game: { kind: "racing" } as never }).checks;
-    assert.ok(!part.some((c: Check) => c.id === "throttle-bot-loses"), "a part that does not own main is not asked");
-    const frontEnd = owned({ kind: "racing" }, { keepsFrontEnd: true });
-    assert.ok(!frontEnd.some((c: Check) => c.id === "throttle-bot-loses"), "the title's owner is judged on its menu");
-    // The normalised check keeps what it reads.
-    assert.equal(normalizeCheck({ ...bot } as never)?.after, "throttle-bot");
+    const planned = { id: "throttle-bot-loses", kind: "probe", after: "throttle-bot", expr: "race.position > 1" };
+    assert.equal(normalizeCheck(planned as never)?.after, "throttle-bot");
   });
 
   it("a harness check whose needs the build does not report is not its question: no nudge, no count, no lost lesson", () => {
-    // A racer with no front-end and an older HUD: reaches-play and the two HUD measurements have
-    // nothing to read. The template declares no flow, and a kept hud.js measures nothing.
+    // A racer with no front-end: reaches-play has nothing to read. The template declares no flow.
     const state = { player: { x: 0, y: 0, z: 0 }, hud: { items: ["speed"] } };
     const driven = { player: { x: 3, y: 0, z: 0 }, hud: { items: ["speed"] } };
     const director = { id: "lap-time", kind: "probe", expr: "race.lap > 0", needs: ["race.lap"] };
+    const moved = { id: "car-moved", kind: "probe", expr: "abs(delta('player.x')) > 0", weight: "identity" };
     const board = withHarnessChecks(
-      normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director] }),
+      normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director, moved] }),
       { ownsMain: true, game: { kind: "racing" } as never },
     );
     const validated = validateFacetSpec(board, { state });
     const notes = (id: string) => String(validated.spec.checks.find((c: { id: string }) => c.id === id)?.note);
     assert.doesNotMatch(notes("reaches-play"), /expose it/);
-    assert.doesNotMatch(notes("hud-coverage"), /expose it/);
     assert.ok(!validated.unsatisfiable.some((u: { id: string }) => u.id === "reaches-play"));
     // The director's own contract still asks the build to report what it names.
     assert.match(notes("lap-time"), /does not report race\.lap yet — expose it/);
@@ -833,8 +765,9 @@ describe("the board a game actually carries", () => {
     const state = { player: { x: 0, y: 0, z: 0 }, hud: { items: ["speed"] } };
     const driven = { player: { x: 3, y: 0, z: 0 }, hud: { items: ["speed"] } };
     const director = { id: "lap-time", kind: "probe", expr: "race.lap > 0", needs: ["race.lap"] };
+    const moved = { id: "car-moved", kind: "probe", expr: "abs(delta('player.x')) > 0", weight: "identity" };
     const validated = validateFacetSpec(
-      withHarnessChecks(normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director] }), {
+      withHarnessChecks(normalizeFacetSpec({ id: "car", intent: "a car that drives", checks: [director, moved] }), {
         ownsMain: true,
         game: { kind: "racing" } as never,
       }),
@@ -845,13 +778,11 @@ describe("the board a game actually carries", () => {
     const applying = Object.values(board)
       .filter((e) => appliesToBuild(e, validated.spec))
       .map((e) => e.id);
-    for (const harness of ["reaches-play", "hud-coverage", "hud-overlap"]) {
-      assert.ok(board[harness], `${harness} is on the board`);
-      assert.ok(!applying.includes(harness), `${harness} is not this build's question`);
-    }
+    assert.ok(board["reaches-play"], "reaches-play is on the board");
+    assert.ok(!applying.includes("reaches-play"), "reaches-play is not this build's question");
     // The director's own contract applies even unmeasured, and so does everything measured.
     assert.ok(applying.includes("lap-time"));
-    assert.ok(applying.includes("keys-move-player"));
+    assert.ok(applying.includes("car-moved"));
     const summary = summarizeScoreboard(board, validated.spec);
     assert.equal(summary.total, applying.length);
     // reaches-play is an identity check: it is in no identity count either, and blocks nothing.
@@ -936,17 +867,12 @@ describe("the board a game actually carries", () => {
     const board = renderCatalogueForPlanner(catalogue, { game: { kind: "static-board" } } as never);
     assert.doesNotMatch(board, /lap-time-drops/);
     assert.match(board, /grade-band/);
-    assert.match(
-      board,
-      /No harness-owned checks ride on this game's board — declare hud, mouseLook or keyboardMove in game if it has them\.$/,
-    );
+    assert.match(board, /No harness-owned check rides on this game's board\.$/);
     // A game of the family that learned it still sees it, and its own board is named honestly.
     const racer = renderCatalogueForPlanner(catalogue, { game: { kind: "racing" } } as never);
     assert.match(racer, /lap-time-drops/);
-    assert.match(
-      racer,
-      /Already on this game's board \(harness-owned, do not re-declare\): no-dom-ui, single-hud, hud-coverage, hud-overlap, keys-move-player, reaches-play, throttle-bot-loses\./,
-    );
+    // Flipped (Loop phase 2): only reaches-play rides on it now.
+    assert.match(racer, /Already on this game's board \(harness-owned, do not re-declare\): reaches-play — /);
     // Two families have recorded it: it has stopped being one genre's opinion.
     catalogue.checks["lap-time-drops"].kinds = ["racing", "static-board"];
     assert.match(renderCatalogueForPlanner(catalogue, { game: { kind: "first-person" } } as never), /lap-time-drops/);
@@ -1134,48 +1060,33 @@ describe("craft leaves the law", () => {
     assert.deepEqual(seeded.check!.needs, ["player.x", "player.z"]);
   });
 
-  it("gives the harness-owned move probe the same guard, on the axes the kind actually moves on", () => {
-    // The harness's own copy of the same check: identity weight, on every keyboard-moved game.
-    const template = withHarnessChecks({ id: "f", checks: [] as Check[] }, {
+  it("installs no move probe of its own; the kind's move expression keeps the guard, on the axes the kind moves on", () => {
+    // Flipped (Loop phase 2): keys-move-player no longer rides on a keyboard-moved game's board.
+    const board = withHarnessChecks({ id: "f", checks: [] as Check[] }, {
       ownsMain: true,
       game: { kind: "first-person" },
-    } as never).checks.find((c: { id: string }) => c.id === "keys-move-player") as { expr: string; needs?: string[] };
-    assert.deepEqual(template.needs, ["player.x", "player.z"]);
+    } as never).checks;
+    assert.deepEqual(
+      board.map((c: { id: string }) => c.id),
+      ["reaches-play"],
+    );
+    const expr = inputProbesFor({ kind: "first-person" }).move.expr;
     assert.doesNotMatch(
-      template.expr,
+      expr,
       /!= 0/,
       "abs(delta(path)) > 0: `undefined != 0` is true and would pass a game with no player",
     );
+    const moved = { id: "moved", kind: "probe", expr, needs: ["player.x", "player.z"] } as never;
     assert.equal(
-      evaluateProbeCheck({ id: "keys-move-player", kind: "probe", ...template } as never, {
-        stateEarly: { phase: "menu" },
-        state: { player: { x: 1, z: 1 } },
-      }).pass,
+      evaluateProbeCheck(moved, { stateEarly: { phase: "menu" }, state: { player: { x: 1, z: 1 } } }).pass,
       null,
     );
     assert.equal(
-      evaluateProbeCheck({ id: "keys-move-player", kind: "probe", ...template } as never, {
-        stateEarly: { player: { x: 0, z: 0 } },
-        state: { player: { x: 1, z: 0 } },
-      }).pass,
+      evaluateProbeCheck(moved, { stateEarly: { player: { x: 0, z: 0 } }, state: { player: { x: 1, z: 0 } } }).pass,
       true,
     );
-
-    // needs follows the expression, never the template: a top-down game moves on x and y, and
-    // asking it for the first-person controller's z would report every build unmeasured.
-    const topDown = withHarnessChecks({ id: "f", checks: [] as Check[] }, {
-      ownsMain: true,
-      game: { kind: "top-down" },
-    } as never).checks.find((c: { id: string }) => c.id === "keys-move-player") as { expr: string; needs?: string[] };
-    assert.deepEqual(topDown.needs, [...new Set([...topDown.expr.matchAll(/delta\('([^']+)'\)/g)].map((m) => m[1]))]);
-    assert.ok(topDown.needs!.includes("player.y"), JSON.stringify(topDown));
-    assert.equal(
-      evaluateProbeCheck({ id: "keys-move-player", kind: "probe", ...topDown } as never, {
-        stateEarly: {},
-        state: { player: { x: 1, y: 1, z: 1 } },
-      }).pass,
-      null,
-    );
+    // A top-down game moves on x and y, not the first-person controller's x and z.
+    assert.match(inputProbesFor({ kind: "top-down" }).move.expr, /player\.y/);
   });
 
   it("retrieves a recipe from the judge's prose, and an exact failing check still wins", async () => {

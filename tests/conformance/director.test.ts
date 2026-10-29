@@ -744,14 +744,15 @@ describe("a worker's contract: done, compiled and dry-run", () => {
       null,
     );
     const ids = checksOf(front.spec).map((c) => c.id);
-    for (const inPlay of ["reaches-play", "hud-coverage", "keys-move-player"])
-      assert.ok(!ids.includes(inPlay), `${inPlay} is not on the front-end owner's board: ${ids.join(", ")}`);
-    assert.ok(ids.includes("hud-overlap"), "a menu's pieces still must not run into each other");
-    assert.ok(ids.includes("no-dom-ui"));
+    assert.ok(!ids.includes("reaches-play"), `reaches-play is not on the front-end owner's board: ${ids.join(", ")}`);
+    // Flipped (Loop phase 2): no HUD or screen check of the harness's rides on the menu's board.
+    for (const forced of ["hud-overlap", "no-dom-ui"]) assert.ok(!ids.includes(forced), forced);
 
     const car = compileWorkerSpec({ id: "car", brief: "a car", kind: "racing" } as never, null);
-    for (const inPlay of ["reaches-play", "hud-coverage", "keys-move-player"])
-      assert.ok(checkNamed(car.spec, inPlay), `${inPlay} is on a normal worker's board`);
+    assert.ok(checkNamed(car.spec, "reaches-play"), "reaches-play is on a normal worker's board");
+    // Flipped (Loop phase 2): the HUD budget and the move probe are no longer forced on it.
+    for (const forced of ["hud-coverage", "keys-move-player"])
+      assert.ok(!checkNamed(car.spec, forced), `${forced} is not on a normal worker's board`);
 
     // A harness check the ledger saw unmeasured is not the director's to re-point or drop.
     const rarely = compileWorkerSpec({ id: "car", brief: "a car", kind: "racing" } as never, null, {

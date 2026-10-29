@@ -68,7 +68,7 @@ async function gatherOnce(loop: FacetLoop, round: FacetRound): Promise<AnyRecord
       // before the ones the accepted build already showed.
       requiredDemos: demosNamedByChecks(spec.checks),
       knownDemos: loop.incumbentEvidence?.registeredDemos ?? null,
-      // A board that carries `throttle-bot-loses` races the throttle-only bot (evidence.ts).
+      // A board with a check on the throttle-only bot's race (`after: "throttle-bot"`) races it (evidence.ts).
       challenge: racesThrottleBot(spec.checks),
       // The paths the board reads are cut last when the state is over the studio's budget.
       keepPaths: statePathsNamedByChecks(spec.checks),

@@ -1,11 +1,11 @@
 /**
  * When a harness-owned check is not this build's question.
  *
- * The harness puts its own checks on a board from what the plan says the game is (spec.ts
- * HARNESS_CHECKS): `reaches-play` on every keyboard or mouse game, `hud-coverage` and
- * `hud-overlap` on every HUD game. Some of them read something only some builds have — a
- * front-end that reports `flow.playing`, a HUD that measures its own coverage — and name it under
- * `needs`. A build without it is not failing that check and is not hiding an answer either: the
+ * The harness puts its own check on a board from what the plan says the game is (spec.ts
+ * HARNESS_CHECKS): `reaches-play` on every keyboard or mouse game. It reads something only some
+ * builds have — a front-end that reports `flow.playing` — and names it under `needs`. A board
+ * from an older run may still carry the harness checks it once forced, each with its own `needs`.
+ * A build without what a check needs is not failing that check and is not hiding an answer either: the
  * check simply does not apply. Counted as unmeasured it cost real things — every lesson of a round
  * (skillopt keeps only fully measured rounds), a "re-point it or drop it" the director cannot act
  * on, and an "expose it" note that pushed every builder to add a menu nobody asked for. A check

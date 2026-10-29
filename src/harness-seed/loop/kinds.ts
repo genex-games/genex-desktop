@@ -65,8 +65,8 @@ export interface GameKind {
    */
   corners?: boolean;
   /**
-   * The share of the frame a HUD of this kind may cover (`hud-coverage`, loop/hud-budget.ts):
-   * only kinds with a HUD carry one.
+   * The share of the frame a HUD of this kind may cover (loop/hud-budget.ts), as the judges read
+   * the HUD's coverage: only kinds with a HUD carry one.
    */
   hudBudget?: number;
 }
@@ -286,7 +286,7 @@ export function cruiseFor(game: AnyRecord | null | undefined): string[] {
 
 /**
  * The throttle of a kind that has one, whatever script its plan wrote: what the throttle-only bot
- * holds through its race (evidence.ts), and what puts `throttle-bot-loses` on a board (spec.ts).
+ * holds through its race (evidence.ts).
  */
 export function throttleFor(game: AnyRecord | null | undefined): string[] {
   const { kind } = normalizeGameTraits(game);

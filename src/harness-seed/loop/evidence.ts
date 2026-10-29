@@ -116,7 +116,7 @@ export interface GatherOptions {
    * added runs before the ones the other already showed.
    */
   knownDemos?: string[] | null;
-  /** Race the throttle-only bot after the demos (`raceThrottleBot`): a board carries `throttle-bot-loses`, or a ship look. */
+  /** Race the throttle-only bot after the demos (`raceThrottleBot`): a board has a check on its race, or a ship look. */
   challenge?: boolean;
   userView?: boolean;
   scaffold?: boolean;
@@ -1914,8 +1914,8 @@ async function runDemos(look: Look): Promise<LookEnd> {
 }
 
 /**
- * The throttle-only bot's race (`throttle-bot-loses`), after the demos because it moves the game
- * to wherever the race ends. Asked for by a board that carries the check, or a ship look; a race
+ * The throttle-only bot's race, after the demos because it moves the game to wherever the race
+ * ends. Asked for by a board with a check on it (`after: "throttle-bot"`), or a ship look; a race
  * that throws is a reading the pass could not take, never a voided challenger.
  */
 async function runChallenge(look: Look): Promise<LookEnd> {
@@ -1937,7 +1937,7 @@ function raceOf(state: unknown): AnyRecord | null {
  * A bot that holds the throttle, lets the game's racing line steer when it has one, and never
  * brakes, from the game's first screen through its race: a race it wins is no challenge. Stepped in
  * `CHALLENGE_STEP_MS` until the game says the race is finished or `CHALLENGE_MAX_MS` of racing
- * have passed; the state it ends on is what `throttle-bot-loses` reads.
+ * have passed; the state it ends on is what a check on the race reads, and the judge's challenge line.
  */
 async function raceThrottleBot(look: Look): Promise<AnyRecord> {
   const { ctx, h, run, seed } = look;

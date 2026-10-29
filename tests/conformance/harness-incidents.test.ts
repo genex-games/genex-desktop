@@ -85,6 +85,7 @@ import {
   normalizeFacetSpec,
   renderMilestones,
   validateFacetSpec,
+  withHarnessChecks,
   withStyleMetric,
 } from "../../src/harness-seed/loop/spec.ts";
 import type { Check } from "../../src/harness-seed/loop/spec.ts";
@@ -295,7 +296,12 @@ describe("readiness judge incidents", () => {
   };
 
   it("AUDIT-STATE-STUB: an 82 KB state() cuts its largest list and every probe over the rest is still read", () => {
-    const keysMove = { id: "keys-move-player", ...HARNESS_CHECKS["keys-move-player"] } as Check;
+    const keysMove = {
+      id: "keys-move-player",
+      kind: "probe",
+      expr: "abs(delta('player.x')) > 0 || abs(delta('player.z')) > 0",
+      needs: ["player.x", "player.z"],
+    } as Check;
     // An older host (and every journal it wrote) cut the state's JSON text: a string head, not
     // a state. Every probe read it as a build that reports nothing and told the builder to add more.
     const head = { __truncated: true, length: 82_303, head: '{"hud":{"items":["hud.speedo.segment.0000"' };
@@ -15827,17 +15833,14 @@ describe("defects a part could not have made", () => {
     assert.doesNotMatch(String(call.systemPrompt), /UI the canvas frame lacks/);
   });
 
-  it("FD2. only the part that draws the HUD is held to its coverage and overlap; every part still keeps to one HUD", async () => {
+  it("FD2. a part that draws no HUD is never failed for the HUD's size; since Loop phase 2 no part is held to a HUD rule of the harness's", async () => {
     const { withHarnessChecks } = await import("../../src/harness-seed/loop/spec.ts");
     const game = { kind: "racing", hud: true };
     const ids = (drawsHud: boolean) =>
       withHarnessChecks({ id: "world", checks: [] as Check[] }, { game, drawsHud }).checks.map((check) => check.id);
-    assert.deepEqual(
-      ids(false).filter((id) => id.startsWith("hud") || id === "single-hud" || id === "no-dom-ui"),
-      ["no-dom-ui", "single-hud"],
-      "a part that draws no HUD is never failed for the HUD's size",
-    );
-    assert.ok(ids(true).includes("hud-coverage") && ids(true).includes("hud-overlap"));
+    assert.deepEqual(ids(false), [], "a part that draws no HUD is never failed for the HUD's size");
+    // Flipped (Loop phase 2): the part that draws the HUD is not held to its coverage, its overlap or one HUD either.
+    assert.deepEqual(ids(true), []);
   });
 
   it("FD4. a restart of the part that draws the HUD draws it too, started with critic=screen or not; the entry's owner does only while no part of the run owns the screen", async () => {
@@ -16451,5 +16454,27 @@ describe("a new Loop a plugin held back before its first turn", () => {
       record("4", "run_finished", { runId: "r2", stoppedBecause: because, startHeld: true }),
     ];
     assert.equal(heldStartAsk("t1", again, "r2"), null, "held again: it waits for the person");
+  });
+});
+
+describe("builders build the game, not the harness's checks (Loop phase 2)", () => {
+  const firstPersonRacer = { kind: "racing", hud: true, mouseLook: true, keyboardMove: true };
+  const boardOf = (options: Record<string, unknown>, checks: Check[] = []) =>
+    withHarnessChecks({ id: "car", checks }, options as never).checks;
+
+  it("LP1. every plan carried the harness's own screen, HUD, camera, controls and racing rules: the entry's owner gets only reaches-play, and a part gets none", () => {
+    const owner = boardOf({ ownsMain: true, game: firstPersonRacer });
+    assert.deepEqual(
+      owner.map((check) => check.id),
+      ["reaches-play"],
+      "liveness only: the game gets past its title into play",
+    );
+    assert.deepEqual(boardOf({ ownsMain: false, game: firstPersonRacer }), [], "a part is held to nothing of ours");
+    assert.deepEqual(Object.keys(HARNESS_CHECKS), ["reaches-play"]);
+    // A plan may still name its own check under an id the harness once owned: it keeps the plan's body.
+    const own = { id: "single-hud", kind: "scene", js: "count('hud') <= 2", origin: "planner" } as Check;
+    const kept = boardOf({ ownsMain: true, game: firstPersonRacer }, [own]).find((check) => check.id === "single-hud");
+    assert.equal(kept?.js, "count('hud') <= 2");
+    assert.equal(kept?.origin, "planner");
   });
 });

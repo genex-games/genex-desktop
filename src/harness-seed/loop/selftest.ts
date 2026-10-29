@@ -333,51 +333,54 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
   ],
 
   [
-    "harness-owned checks ride on every plan; judge defects become checks",
+    "the harness's one check rides on the main owner's plan; judge defects become checks",
     () => {
       // Every trait is off until a kind (or an explicit flag) declares it, so each of these
       // says which game it is talking about; a spec with no game carries no harness check.
       const firstPerson = { kind: "first-person" };
       const spec = withHarnessChecks(
-        normalizeFacetSpec({ id: "gun", intent: "a gun", checks: [{ id: "single-hud", kind: "scene", js: "true" }] }),
+        normalizeFacetSpec({
+          id: "gun",
+          intent: "a gun",
+          checks: [
+            { id: "single-hud", kind: "scene", js: "true" },
+            { id: "reaches-play", kind: "scene", js: "true" },
+          ],
+        }),
         { ownsMain: true, game: firstPerson },
       );
-      // A racer's main owner carries the one a first-person game cannot (the throttle-only bot's race).
-      const racer = withHarnessChecks(
-        { id: "car", checks: [] as Check[], cameras: [] },
-        { ownsMain: true, game: { kind: "racing" } },
-      );
-      const ridesOnce = (id: string, board: { checks: Check[] }) => board.checks.filter((c) => c.id === id).length;
+      const ridesOnce = (id: string) => spec.checks.filter((c) => c.id === id).length;
       check(
         "every harness check, no duplicate",
-        Object.keys(HARNESS_CHECKS).every((id) => Math.max(ridesOnce(id, spec), ridesOnce(id, racer)) === 1),
+        Object.keys(HARNESS_CHECKS).every((id) => ridesOnce(id) === 1),
       );
       check(
-        "the HUD budget is the kind's",
-        spec.checks.find((c) => c.id === "hud-coverage")?.expr === "hud.coverage <= 0.12",
+        "harness origin wins its own id",
+        spec.checks.find((c) => c.id === "reaches-play")?.origin === "harness" &&
+          spec.checks.find((c) => c.id === "reaches-play")?.expr === HARNESS_CHECKS["reaches-play"].expr,
       );
       check(
-        "harness origin wins",
-        spec.checks.find((c) => c.id === "single-hud")!.js === HARNESS_CHECKS["single-hud"].js &&
-          spec.checks.find((c) => c.id === "single-hud")!.origin === "harness",
+        "a plan's own check keeps its body",
+        spec.checks.find((c) => c.id === "single-hud")?.js === "true" &&
+          spec.checks.find((c) => c.id === "single-hud")?.origin !== "harness",
       );
       check(
-        "input checks and reaches-play only for the main owner",
+        "reaches-play only for the main owner",
         withHarnessChecks({ id: "x", checks: [], cameras: [] }, { ownsMain: false, game: firstPerson }).checks
-          .length === 4,
+          .length === 0,
       );
       check(
         "a game that declares nothing carries no harness check",
         withHarnessChecks({ id: "x", checks: [], cameras: [] }, { ownsMain: true }).checks.length === 0,
       );
       check(
-        "a game without a HUD or mouse look gets no such checks",
+        "a racer with a HUD, mouse look and keys gets nothing but reaches-play",
         withHarnessChecks(
-          { id: "x", checks: [] as Check[], cameras: [] },
-          { ownsMain: true, game: { ...firstPerson, hud: false, mouseLook: false } },
+          { id: "car", checks: [] as Check[], cameras: [] },
+          { ownsMain: true, game: { kind: "racing", hud: true, mouseLook: true, keyboardMove: true } },
         )
           .checks.map((c) => c.id)
-          .join(",") === "keys-move-player,reaches-play",
+          .join(",") === "reaches-play",
       );
       const grown = defectsToChecks(
         { id: "gun", checks: [], cameras: ["default", "camGun"] },

@@ -3,9 +3,9 @@
  *
  * The template's HUD measures the share of the frame its items cover (`state().hud.coverage`).
  * A racer's dashboard may take more of the view than a first-person crosshair and ammo count; a
- * top-down map more than either. The harness-owned `hud-coverage` check and the judge's HUD fact
- * line both read the budget from here, so the number a builder is held to and the number a judge
- * is told are the same. It lives in its own module so an upgraded spec.ts or judge.ts never asks
+ * top-down map more than either. The judge's HUD fact line reads the budget from here: it is a
+ * number the judge is told, never a check a builder is held to. It lives in its own module so an
+ * upgraded spec.ts or judge.ts never asks
  * a kept, older kinds.ts for a name it does not export.
  */
 import { GAME_KINDS, normalizeGameTraits } from "./kinds.ts";

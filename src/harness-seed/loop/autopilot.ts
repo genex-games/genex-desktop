@@ -330,15 +330,15 @@ export function makeLock(): () => Promise<() => void> {
  * shape, because a planner copies this line as it stands. Printed as `"hud":false,
  * "mouseLook":false,"keyboardMove":false` they were copied through as declarations, and an
  * explicit false outranks the kind's own traits — so a first-person game arrived declaring it
- * has no HUD, no mouse look and no keyboard movement, and the four harness-owned checks that
- * kind exists to bring were dropped from every board with nothing said. Absent, each trait
+ * has no HUD, no mouse look and no keyboard movement, and the harness's own check that kind
+ * brings was dropped from every board with nothing said. Absent, each trait
  * takes the declared kind's own value; a plan that declares no kind is still assumed nothing.
  */
 const GAME_DECLARATION = `"game":{"kind":"<one of ${KIND_NAMES.join(", ")}, or null>","playScript":null}`;
 
 /** The same declaration, said in words, for the planner that reads the shape line above. */
 const GAME_EXPLANATION =
-  "`genres` names the genre groups of the catalogue that apply (what the run learns is filed under them); `game` declares what the game IS — its `kind` (one of the names above). The kind carries whether the game has a HUD, mouse look and keyboard movement; add the booleans `hud`, `mouseLook`, `keyboardMove` beside it ONLY where this game differs from its kind, and remember that `false` is a declaration too — it takes that check off every board. With no kind and no trait nothing is assumed: the harness adds its own checks only for what the game can pass, and drives that kind's play script before every judgement. `playScript` overrides that script with your own actions; `craft` names the craft recipe packs this game needs.";
+  "`genres` names the genre groups of the catalogue that apply (what the run learns is filed under them); `game` declares what the game IS — its `kind` (one of the names above). The kind carries whether the game has a HUD, mouse look and keyboard movement; add the booleans `hud`, `mouseLook`, `keyboardMove` beside it ONLY where this game differs from its kind, and remember that `false` is a declaration too. With no kind and no trait nothing is assumed: the harness adds its one check (`reaches-play`, the game gets past its title into play) only to a game keys or a mouse drive, and drives that kind's play script before every judgement. `playScript` overrides that script with your own actions; `craft` names the craft recipe packs this game needs.";
 
 /**
  * The check vocabulary, for a planner whose skill file predates typed specs (an install whose
@@ -1016,9 +1016,9 @@ function stampRunFromPlan(run: Run, plan: AnyRecord, ownShape: boolean): void {
 
 /**
  * The harness's own checks on every typed facet. Older journals carry prose facets; the loop
- * wants specs. One screen (no DOM UI, one HUD) on all of them, one input path (look turns the
- * camera, keys move the player) on the facet that owns main.js; a prose-only plan is left to the
- * taste judge, as before. And the requested state on every board, when the scout wrote a probe.
+ * wants specs. The harness's one check (`reaches-play`) on the facet that owns main.js; a
+ * prose-only plan is left to the taste judge, as before. And the requested state on every board,
+ * when the scout wrote a probe.
  */
 function addHarnessBoards(pipeline: Pipeline, plan: AnyRecord): void {
   const { ownShape } = pipeline;

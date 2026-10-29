@@ -1,6 +1,6 @@
 /**
- * Which part draws the HUD, and so answers for its layout (`HUD_LAYOUT_CHECKS`): a new module, so a
- * kept older workers.ts or screen-owner.ts never hides it from the other.
+ * Which part draws the HUD, and so answers for its layout when a plan checks it (`HUD_LAYOUT_CHECKS`):
+ * a new module, so a kept older workers.ts or screen-owner.ts never hides it from the other.
  */
 import { SCREEN_CRITIC, type ScreenSpec } from "../screen-owner.ts";
 

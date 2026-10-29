@@ -33,7 +33,7 @@ function promptFor(run: Record<string, unknown>): string {
 
 /** The brief's or prompt's one-screen rule, alone. */
 function screenRule(text: string): string {
-  return text.split("\n").find((line) => line.startsWith("- ONE SCREEN")) ?? "";
+  return text.split("\n").find((line) => line.startsWith("- THE SCREEN IS THE GAME'S")) ?? "";
 }
 
 describe("an edited first-generation HUD the studio keeps", () => {
@@ -73,7 +73,9 @@ describe("an edited first-generation HUD the studio keeps", () => {
     const held = screenRule(briefFor(run));
     assert.match(held, /text, bars and the crosshair/, held);
     assert.ok(!/arcs and gauges/.test(held), held);
-    assert.match(held, /no-dom-ui and single-hud/, "the screen checks still hold");
+    // Flipped (Loop phase 2): no screen check holds any more; DOM UI and more layers are welcome.
+    assert.doesNotMatch(held, /no-dom-ui|single-hud/);
+    assert.match(held, /DOM and CSS/);
     // The template's HUD keeps the rule it always had.
     assert.match(screenRule(briefFor({})), /arcs and gauges, vector paths, images/);
   });
@@ -82,7 +84,7 @@ describe("an edited first-generation HUD the studio keeps", () => {
     const run: Record<string, unknown> = {};
     noteHudUpgrade(run, LEFT_ALONE);
     const held = screenRule(promptFor(run));
-    assert.match(held, /ONE SCREEN, ONE INPUT PATH/);
+    assert.match(held, /THE SCREEN IS THE GAME'S/);
     assert.match(held, /text, bars and the crosshair/, held);
     assert.ok(!/arcs and gauges/.test(held), held);
     assert.match(screenRule(promptFor({})), /text, bars, arcs and gauges, paths, images, panels and fonts/);

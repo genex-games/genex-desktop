@@ -928,18 +928,20 @@ describe("a project's own shape", () => {
     assert.match(failed, /error TS2307|error TS7016/, failed);
   });
 
-  it("drops the one-screen checks for a game with its own UI, and keeps the input checks", () => {
-    // Traits default OFF unless declared (M4.4): the movement and look checks ride on a game
-    // that says it has them, not on every board.
-    const own = withHarnessChecks(
-      { id: "f", checks: [] },
-      { ownsMain: true, game: { hud: true, mouseLook: true, keyboardMove: true } as never, screen: false },
+  it("puts no screen or input check on a game with its own UI, nor on the template's", () => {
+    // Flipped (Loop phase 2): the one-screen and input checks are no longer forced on any game;
+    // a game keys or a mouse drive carries only reaches-play on its entry owner's board.
+    const game = { hud: true, mouseLook: true, keyboardMove: true } as never;
+    const own = withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true, game, screen: false });
+    assert.deepEqual(
+      own.checks.map((c: { id: string }) => c.id),
+      ["reaches-play"],
     );
-    const ids = own.checks.map((c: { id: string }) => c.id);
-    assert.ok(!ids.includes("no-dom-ui") && !ids.includes("single-hud"), ids.join(","));
-    assert.ok(ids.includes("look-turns-camera") && ids.includes("keys-move-player"));
-    const template = withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true, game: { hud: true } as never });
-    assert.ok(template.checks.some((c: { id: string }) => c.id === "no-dom-ui"));
+    const template = withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true, game });
+    assert.deepEqual(
+      template.checks.map((c: { id: string }) => c.id),
+      ["reaches-play"],
+    );
   });
 
   it("union-merges the real entry, not src/main.js", async () => {
@@ -981,9 +983,9 @@ describe("a project's own shape", () => {
     assert.match(own, /src\/main\.ts/);
     assert.match(own, /npm run build/);
     assert.match(own, /dist\/index\.html/);
-    assert.ok(!/ONE SCREEN, ONE INPUT PATH/.test(own), "the template's screen rule is not this game's");
+    assert.ok(!/THE SCREEN IS THE GAME'S/.test(own), "the template's screen line is not this game's");
     const template = facetPrompt(base);
-    assert.match(template, /ONE SCREEN, ONE INPUT PATH/);
+    assert.match(template, /THE SCREEN IS THE GAME'S/);
     assert.match(template, /src\/main\.js/);
   });
 

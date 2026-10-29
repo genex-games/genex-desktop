@@ -624,15 +624,15 @@ export interface WorkerSpecInput {
   forkedFrom?: string | null;
   /** "finish" for a worker that finishes what exists (facet/stage.ts); absent or anything else, the build stage. */
   stage?: string | null;
-  /** This part draws the HUD (spec.ts `withHarnessChecks`): its coverage and overlap are its own; absent, it does. */
+  /** This part draws the HUD (director/hud-owner.ts); absent, it does. No harness check reads it any more. */
   drawsHud?: boolean;
 }
 
 /**
- * The harness's own checks for the kind and the traits the director named. Only what it named: a
+ * The harness's own check for the kind and the traits the director named. Only what it named: a
  * trait it did not mention is not declared false — it is simply not declared, and the kind (the
  * run's, unless this part differs) decides. The front-end's owner (`keepsFrontEnd`) is judged on
- * its menu, so the checks that only hold in play stay off its board.
+ * its menu, so the check that only holds in play stays off its board.
  */
 function withDeclaredGame<S extends FacetSpec>(
   spec: S,

@@ -847,7 +847,7 @@ function renderBriefSections(
     liveness = null,
     /** THE FIX: a biggest gap the judge repeated — `{ what, checkId?, streak, mandatory, recipe? }`; `recipe` is the craft recipe retrieved for the defect sentence. */
     fix = null,
-    /** false for a game the user brought with its own UI and input handling — the one-screen rule is the template's, not this game's. */
+    /** false for a game the user brought with its own UI and input handling — the screen line is the template's, not this game's. */
     screen = true,
     /** Which critic asked the liveness question — "place" (a world you stand in) or "screen" (a board, a puzzle, a builder). */
     critic = "place",
@@ -1210,12 +1210,12 @@ function briefRules(
     // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
     screen
       ? (heldHudBriefRule(run) ??
-        `- ONE SCREEN: all UI goes through \`__studio.hud\`, drawn into the canvas: text, bars, arcs and gauges, vector paths, images, rounded panels and bundled fonts, anchored to the frame in frame fractions (a bar's length is a fraction of the frame's width and its thickness of its height; arcs, paths, panels and images are sized in frame heights, so a curve stays round and sharp — never build one out of rectangles). Keep the middle of the view for the game: the harness measures how much of the frame the HUD covers and which items run into each other. No DOM elements, no second HUD quad or canvas, no camera-parented panels — the harness-owned checks no-dom-ui and single-hud fail the build otherwise.`)
+        `- THE SCREEN IS THE GAME'S: build its UI however it looks best — DOM and CSS, \`__studio.hud\`, or both, in as many layers as it needs. \`__studio.hud\` draws into the canvas: text, bars, arcs and gauges, vector paths, images, rounded panels and bundled fonts, anchored to the frame in frame fractions (a bar's length is a fraction of the frame's width and its thickness of its height; arcs, paths, panels and images are sized in frame heights, so a curve stays round and sharp).`)
       : `- THE GAME'S OWN SCREEN: this game has its own UI and input handling — keep them as they are; do not add __studio.hud overlays or a second input path.`,
     // Who owns that screen (loop/screen-owner.ts), where the rule holds: nothing when no part does.
     ...briefScreenOwner(spec, screen && template),
     template
-      ? `- ONE INPUT PATH: read keys from ctx.keys (Mouse1/Mouse2 included), mouse look from ctx.look, wheel from ctx.wheel — never add your own pointer-lock or mousemove listeners; studio.js owns them and feeds the same ctx a human's mouse does.`
+      ? `- INPUT: read keys from ctx.keys (Mouse1/Mouse2 included), mouse look from ctx.look, wheel from ctx.wheel — studio.js owns pointer lock and the mouse and feeds the same ctx a human's mouse does, so the studio's scripted play reaches the game this way.`
       : `- THIS GAME'S INPUT PATH: it already reads its own keys and mouse — leave that alone. The studio's input arrives as real DOM events on the page, so the listeners this game has are the ones that get it.`,
     template
       ? `- Keep window.__studio working (installStudio with scene/renderer/camera/player passed). A build the harness cannot inspect is a loss.`

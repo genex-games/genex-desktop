@@ -1,5 +1,5 @@
 /** What the facet loop says to its builder: the prompt, the steer, the wind-down ask, the images and the brief's moved sections. */
-import { CheckKind, CheckWeight, HARNESS_CHECKS, renderChecks } from "../spec.ts";
+import { CheckKind, CheckWeight, renderChecks } from "../spec.ts";
 import { GAME_KINDS, describePlayScript, playScriptFor } from "../kinds.ts";
 import { roleEngine, RoleKey, toolCall } from "../model-roles.ts";
 import { facetNotes } from "../repo.ts";
@@ -584,7 +584,7 @@ function templateOwnership({ spec: facet, entryMain, ownsMain }: PromptInput): s
   ];
 }
 
-/** Notes, tags and the one-screen rule: the conventions the brief carries when there is one. */
+/** Notes, tags and the screen line: the conventions the brief carries when there is one. */
 function conventionLines(p: PromptInput): string[] {
   if (p.pointsAtBrief) return [];
   return [
@@ -612,21 +612,17 @@ function ownShapeLine({ entryMain, shape }: PromptInput): string {
   return `- THIS GAME HAS ITS OWN SHAPE: its entry is ${entryMain}${built} and the studio serves ${shape?.entry ?? "index.html"}. Keep its UI and input handling as they are — no __studio.hud overlays, no second input path. Keep window.__studio working (installStudio in ${entryMain}).${runBuild}`;
 }
 
-function oneScreenLine({ spec: facet, run }: PromptInput): string {
-  // Only the harness-owned checks this facet actually carries — under the declared-only rule a
-  // board may carry none of them, and naming a check nobody scores teaches the wrong lesson.
-  const harnessOnBoard = (facet.checks ?? [])
-    .filter((c: AnyRecord) => HARNESS_CHECKS[c.id])
-    .map((c: AnyRecord) => c.id);
-  const one = harnessOnBoard.length === 1;
-  const enforced = harnessOnBoard.length
-    ? ` The harness-owned check${one ? "" : "s"} ${harnessOnBoard.join(", ")} enforce${one ? "s" : ""} this.`
-    : "";
+/**
+ * A template game's screen and input, as its builder reads them: the UI is the game's to build
+ * however it looks best, and the one thing asked is the input path the studio's scripted play
+ * drives the game through.
+ */
+function oneScreenLine({ run }: PromptInput): string {
   // A game keeping an edited older HUD (held-hud.ts) is told only what that HUD draws.
   const draws =
     heldHudPromptDraws(run) ??
-    "drawn into the canvas: text, bars, arcs and gauges, paths, images, panels and fonts, anchored in frame fractions; keep the middle of the view for the game — the harness measures the HUD's coverage and overlap";
-  return `- ONE SCREEN, ONE INPUT PATH: all UI through __studio.hud (${draws}; no DOM, no second HUD); all input from ctx.keys / ctx.look / ctx.wheel (studio.js owns pointer lock and the mouse).${enforced} A label that belongs to something in the world — a player's name, a marker over a target — is a sprite or mesh in the scene, attached to that object and tagged with it (never hud), so it moves and hides with it; __studio.hud holds only what stays on the screen.`;
+    "drawn into the canvas: text, bars, arcs and gauges, paths, images, panels and fonts, anchored in frame fractions";
+  return `- THE SCREEN IS THE GAME'S: build its UI however it looks best — DOM and CSS, __studio.hud (${draws}), or both, in as many layers as it needs. Read input from ctx.keys / ctx.look / ctx.wheel (studio.js owns pointer lock and the mouse): it is the path the studio's scripted play reaches the game by.`;
 }
 
 /** The last build's news: its failure, the legacy gap, or the board. */

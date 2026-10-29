@@ -1,7 +1,8 @@
 /**
  * The throttle-only bot: a race that a bot holding only the throttle can win is no challenge. The
- * evidence pass races it when a board asks (evidence.ts `raceThrottleBot`), and the
- * harness check `throttle-bot-loses` (spec.ts HARNESS_CHECKS) reads the state its race left.
+ * evidence pass races it when a board asks (evidence.ts `raceThrottleBot`) — a check a plan named
+ * with `after: "throttle-bot"` reads the state its race left — and the art director's look races it
+ * for the judge's facts. No board carries such a check unless its plan wrote one.
  *
  * A module of its own: a seed upgrade keeps a spec.ts the agent edited, and a name added there would
  * stop every importer linking beside that older copy.

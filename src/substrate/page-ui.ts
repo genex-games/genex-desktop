@@ -11,8 +11,8 @@
  * folding of its untrusted answer is a pure function, and the surface choice is a pure ladder
  * over four callbacks. All three are testable under `node --test` with no window at all.
  *
- * `domUi()` in `src/page/hook.ts` stays the source for the `no-dom-ui` CHECK — what a game
- * declares about itself. `PAGE_UI_PROBE` is the source for the EYES — what the studio decides to
+ * `domUi()` in `src/page/hook.ts` stays the source for a scene check on the page's DOM — what a
+ * game declares about itself. `PAGE_UI_PROBE` is the source for the EYES — what the studio decides to
  * photograph. Both live in the studio so they cannot drift apart per game.
  */
 import { isJsonObject } from "./fsx.ts";
@@ -68,7 +68,7 @@ export interface PageUi {
  *
  * One rule runs the other way and is not mirrored here: `domUi()` names a second visible canvas
  * over the game's (a HUD painted beside the contract's), while this probe skips every canvas, so
- * that canvas reaches the no-dom-ui check and never this coverage.
+ * that canvas reaches a scene check on `domUi()` and never this coverage.
  *
  * The canvases are collected ONCE and containment is tested against that list, rather than a
  * `querySelector` per element; the entry cap stops the naming, never the area sum. The probe

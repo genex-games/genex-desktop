@@ -67,13 +67,13 @@ Rules that never change:
   game IS — its `kind`, one of the names the ask lists. The kind already carries whether the game
   has a HUD, mouse look and keyboard movement; add the booleans `hud`, `mouseLook`,
   `keyboardMove` beside it ONLY where this game differs from its kind, and remember that `false`
-  is a declaration too — it takes that check off every board. The harness adds its own checks
-  only for what is declared: `no-dom-ui`, `single-hud`, `hud-coverage` (the kind's share of the
-  frame) and `hud-overlap` when there is a HUD, `look-turns-camera` when the mouse looks,
-  `keys-move-player` when keys move, `reaches-play` with either. Do not re-declare those ids. All UI goes through `__studio.hud`
-  (drawn into the canvas: text, bars, arcs, paths, images, panels and fonts, anchored in frame
-  fractions; the middle of the view stays the game's, and the harness measures the HUD's coverage
-  and overlap); all input comes from `ctx.keys` / `ctx.look` / `ctx.wheel`. ONE facet owns the
+  is a declaration too. The harness adds one check of its own, on the facet that owns main, when
+  keys or the mouse drive the game: `reaches-play` (the game gets past its title into play). Do
+  not re-declare it. Everything else about the screen and the controls is the game's: its UI may
+  be DOM and CSS, `__studio.hud` (drawn into the canvas: text, bars, arcs, paths, images, panels
+  and fonts, anchored in frame fractions), or both, and it is checked only where this plan names a
+  check for it. Input read from `ctx.keys` / `ctx.look` / `ctx.wheel` is what the studio's scripted
+  play reaches. ONE facet owns the
   screen — the HUD, the title, the start on a key, the countdown and the results — and every other
   facet publishes its values in `__studio.state()` for it, never drawing them. A name or marker
   over something in the world belongs to the scene, attached to that object — give it to the part

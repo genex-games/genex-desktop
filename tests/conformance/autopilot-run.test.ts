@@ -355,9 +355,8 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
     const facetIterations = iterations.filter((i) => i.facetId !== "integration");
     assert.ok(facetIterations.every((i) => i.winner === "challenger" && i.satisfied === true));
     assert.deepEqual(order, ["terrain", "lighting"], "facets built strictly one at a time");
-    // Verified scoreboard: the planner's identity check passed and flipped on the first build,
-    // beside the harness-owned checks (one screen on every facet, one input path on the
-    // facet that owns main.js) — all measured, all passing on the fake game.
+    // Verified scoreboard: the planner's identity check passed and flipped on the first build —
+    // all measured, all passing on the fake game. The harness forces no screen or input check.
     for (const record of facetIterations) {
       const board = record.scoreboard as {
         total: number;
@@ -383,15 +382,9 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
       );
       assert.equal(board.unmeasured, 0);
       assert.equal(board.identityPassing, board.identityTotal);
-      assert.ok(
-        board.results.some((r) => r.id === "single-hud" && r.pass === true),
-        "the harness-owned screen check rides on every facet",
-      );
-      assert.equal(
-        board.results.some((r) => r.id === "look-turns-camera"),
-        record.facetId === "terrain",
-        "the input checks ride on the main owner only",
-      );
+      // Flipped (Loop phase 2): no screen or input check of the harness's rides on any facet.
+      for (const forced of ["no-dom-ui", "single-hud", "look-turns-camera", "keys-move-player"])
+        assert.ok(!board.results.some((r) => r.id === forced), `${forced} is on ${record.facetId}'s board`);
       assert.equal(record.verdictSource, "checks");
     }
     const integration = iterations.find((i) => i.facetId === "integration")!;

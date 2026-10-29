@@ -279,15 +279,9 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     assert.equal(water[0]!.winner, "challenger");
     assert.equal(water[0]!.verdictSource, "checks");
     assert.ok(board(water[0]!).flips.includes("lit"));
-    // The harness's own checks ride on the board from the first iteration.
-    assert.ok(
-      board(water[0]!).results.some((r) => r.id === "single-hud" && r.pass),
-      "one screen is on the board",
-    );
-    assert.ok(
-      board(water[0]!).results.some((r) => r.id === "keys-move-player" && r.pass),
-      "one input path is on the main owner's board",
-    );
+    // Flipped (Loop phase 2): the harness forces no screen or input check on the board.
+    for (const forced of ["single-hud", "keys-move-player"])
+      assert.ok(!board(water[0]!).results.some((r) => r.id === forced), `${forced} is on the board`);
     // Which checks measured nothing, by id and not just by count: the run ledger keeps these,
     // and `rarelyMeasurable` can only warn about a check on real data.
     for (const round of water) {
@@ -561,7 +555,7 @@ describe("the diet: every section reaches a worker once", () => {
       ["the reference bullets", /reference stills in references\//],
       ["the behavioural demo", /expose a deterministic demo/],
       ["the keep-__studio bullet", /window\.__studio still works/],
-      ["one screen one input path", /ONE SCREEN, ONE INPUT PATH/],
+      ["the screen line", /THE SCREEN IS THE GAME'S/],
     ] as const) {
       assert.doesNotMatch(prompt, pattern, `${what} is in the brief, not in the prompt`);
     }
