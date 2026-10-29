@@ -143,10 +143,11 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     assert.ok(result.sessionId, "a session Continue can resume");
     assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
     assert.match(fake.commandOutput() ?? "", /probe ran/);
+    const left = await readdir(path.join(root, "scratch"), { recursive: true });
     assert.deepEqual(
-      await readdir(path.join(root, "scratch", "tmp")),
+      left.filter((name) => path.basename(name) === "auth.json"),
       [],
-      "the turn's folder (on Windows, its sign-in copy) is gone",
+      "no copy of the sign-in outlives the turn (Windows hands each turn one)",
     );
   });
 
@@ -168,7 +169,9 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
   }, async () => {
     const dir = path.join(root, "judge");
     const target = path.join(dir, PROOF.file);
-    const write = `node -e ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(target)}, "ok")`)}`;
+    // Single quotes inside double ones, and forward slashes: Grok's shell on Windows reads `\"` as
+    // the end of the string, not a quote in it, and every shell passes `D:/…` to node as it is.
+    const write = `node -e "require('node:fs').writeFileSync('${target.replaceAll("\\", "/")}', 'ok')"`;
     await game("judge", write);
     const result = await engine().delegate({ cwd: dir, prompt: "Write into the game.", readOnly: true });
     assert.equal(result.ok, true, result.errorText);
