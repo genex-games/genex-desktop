@@ -18,12 +18,25 @@ import { LookBlocker } from "./look-bar.ts";
 export const FLAT_COVERAGE_MAX = 0.02;
 /** A tag smaller than this share of the frame is not judged by its facts: too few pixels to say. */
 const MIN_TAG_COVERAGE = 0.002;
-/** The settled mean luma (0-255) a playable camera sits in, unless the game declares a night look (WP-5, proposed). */
-export const LUMA_BAND = { min: 90, max: 130 } as const;
-/** The most of the frame the darkest histogram bin may hold on a playable camera. */
-export const DARKEST_BIN_MAX = 0.15;
-/** How much a night or horror look may sit below the band before it is crushed, in luma. */
-const NIGHT_LUMA_FLOOR = 35;
+/**
+ * Where a camera stands, which decides its luma band: an interior is held to a lower ceiling than
+ * daylight or snow outdoors. A camera the plan does not place is held to the exterior band.
+ */
+export const LumaSetting = { Interior: "interior", Exterior: "exterior" } as const;
+export type LumaSetting = (typeof LumaSetting)[keyof typeof LumaSetting];
+
+/**
+ * The settled mean luma (0-255, Rec.709, clean capture) a playable camera sits in, and the most of
+ * its frame the darkest bin may hold: one rule with the eval rubric and the docs' calibration page
+ * (bright interior 90-130, bright exterior 90-175, a declared night or horror look 25-95).
+ */
+export const LUMA_BANDS = {
+  [LumaSetting.Interior]: { min: 90, max: 130, darkest: 0.15 },
+  [LumaSetting.Exterior]: { min: 90, max: 175, darkest: 0.15 },
+  night: { min: 25, max: 95, darkest: 0.4 },
+} as const;
+/** The artefact class of a frame clipped bright (judge/artefact-classes.md): a measured one blocks the round that adds it. */
+export const BLOWN = "blown";
 /** How many decimals a share is quoted with. */
 const SHARE_DIGITS = 1;
 
@@ -153,26 +166,26 @@ export interface FrameLuma {
   histogram: number[];
 }
 
-/** What a playable camera's exposure is held to: the band, or a night look's floor. */
+/** What a playable camera's exposure is held to: where it stands, and whether the game declares a night look. */
 export interface LumaRule {
-  /** The game declares a night or horror look: the band's floor drops, crushed blacks still fail. */
+  /** The game declares a night or horror look: the night band, whatever the setting. */
   night: boolean;
+  setting?: LumaSetting;
 }
 
 /**
- * A playable camera's settled exposure against the luminance band, as a blocking defect, or null
- * when it sits inside (or reports nothing). Gen3's classroom settled at mean luma 28 with 41% of
- * the frame in the darkest bin, and `[crushed-shadow]` never stopped a keep.
+ * A playable camera's settled exposure against its luminance band, as a defect (`[crushed-shadow]`
+ * below it, `[blown]` above it), or null when it sits inside (or reports nothing). Gen3's classroom
+ * settled at mean luma 28 with 41% of the frame in the darkest bin, and nothing stopped a keep.
  */
 export function lumaBandDefect(camera: string, exposure: FrameLuma | null, rule: LumaRule): string | null {
   const luma = exposure?.meanLuma ?? null;
   if (luma === null) return null;
   const darkest = exposure?.histogram[0] ?? 0;
-  const floor = rule.night ? NIGHT_LUMA_FLOOR : LUMA_BAND.min;
-  const crushed = darkest > DARKEST_BIN_MAX && !rule.night;
-  if (luma < floor || crushed)
-    return `[${LookBlocker.CrushedShadow}] ${camera}: settles at mean luma ${Math.round(luma)} with ${percent(darkest)} of the frame in the darkest bin (band ${floor}-${LUMA_BAND.max}, darkest ≤ ${percent(DARKEST_BIN_MAX)}) — ${camera}`;
-  if (luma > LUMA_BAND.max && !rule.night)
-    return `[blown] ${camera}: settles at mean luma ${Math.round(luma)}, above the band's ${LUMA_BAND.max} — ${camera}`;
+  const band = rule.night ? LUMA_BANDS.night : LUMA_BANDS[rule.setting ?? LumaSetting.Exterior];
+  const range = `band ${band.min}-${band.max}, darkest ≤ ${percent(band.darkest)}`;
+  if (luma < band.min || darkest > band.darkest)
+    return `[${LookBlocker.CrushedShadow}] ${camera}: settles at mean luma ${Math.round(luma)} with ${percent(darkest)} of the frame in the darkest bin (${range}) — ${camera}`;
+  if (luma > band.max) return `[${BLOWN}] ${camera}: settles at mean luma ${Math.round(luma)} (${range}) — ${camera}`;
   return null;
 }

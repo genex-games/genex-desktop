@@ -90,3 +90,13 @@ export function heroCameras(plan: AnyRecord | null | undefined): string[] {
   const parts = Array.isArray(plan?.workers) ? (plan.workers as AnyRecord[]) : [];
   return [...new Set(parts.map((part) => String(part?.hero ?? "").trim()).filter(Boolean))];
 }
+
+/**
+ * The setting each part's hero camera stands in (`hero` with `setting`), for the luma band
+ * (temporal-checks.ts): an interior is held to a lower ceiling than snow or daylight outdoors.
+ */
+export function cameraSettings(plan: AnyRecord | null | undefined): Record<string, string> {
+  const parts = Array.isArray(plan?.workers) ? (plan.workers as AnyRecord[]) : [];
+  const placed = parts.filter((part) => typeof part?.hero === "string" && typeof part?.setting === "string");
+  return Object.fromEntries(placed.map((part) => [part.hero, part.setting]));
+}

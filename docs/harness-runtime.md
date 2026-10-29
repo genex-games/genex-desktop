@@ -83,8 +83,11 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
 - The close. The head a run lands always gets the art director's look against the references (in
   the close's own judge when that judge asks a question); a report with none says it has no art
   verdict (`shipReview.judged: false`).
-- Measured. Every playable camera sits in a luminance band (mean luma 90-130, darkest bin ≤ 15%; a sky
-  row with `"night": true` lowers it); `demo:doorway`'s exposure trace moves at most 1 EV per half
+- Measured. Every playable camera (the default view, the harness's eyes and each part's `hero`) sits in
+  its luminance band, the rule the eval rubric and the docs' calibration page share: mean luma 90-130 for
+  an interior, 90-175 outdoors or where the plan does not say, darkest bin ≤ 15%; 25-95 with up to 40%
+  black for a night or horror look (`"night": true` on the sky row). A plan part's `setting`
+  (`interior`, `exterior`) places its hero camera. Below the band is `[crushed-shadow]`, above it `[blown]`; `demo:doorway`'s exposure trace moves at most 1 EV per half
   second with no overshoot; `demo:sprint-run`'s pose (the trace the demo returns, or the rig's
   `volatile.cameraMotion`) stays inside the engine rig's comfort caps. The doorway and sprint checks run on
   every run whose game has those demos.
