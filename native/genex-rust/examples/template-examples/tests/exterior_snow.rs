@@ -144,6 +144,10 @@ fn generated_layers() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
+/// An overcast snow yard's mean luma (0..255): near white, neither grey nor blown out.
+const SNOW_LUMA_MIN: f32 = 125.0;
+const SNOW_LUMA_MAX: f32 = 200.0;
+
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_yard_captures_at_low_and_high_from_each_camera() {
@@ -155,7 +159,7 @@ fn metal_the_yard_captures_at_low_and_high_from_each_camera() {
         for preset in [QualityPreset::Low, QualityPreset::High] {
             let luma = support::shoot(&mut presenter, &mut runtime, view, preset, name);
             eprintln!("{name} {}: mean luma {luma:.1}", preset.wire());
-            assert!((40.0..245.0).contains(&luma), "{name} at {} is neither black nor blown out: {luma}", preset.wire());
+            assert!((SNOW_LUMA_MIN..SNOW_LUMA_MAX).contains(&luma), "{name} at {} reads as an overcast snow yard (mean luma {luma})", preset.wire());
         }
     }
 }
