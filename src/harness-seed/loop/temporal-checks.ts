@@ -8,7 +8,7 @@
  * - `demo:doorway`: the per-tick exposure trace the engine keeps (`__render.exposure_trace`), held
  *   to a smooth transition with no overshoot;
  * - `demo:sprint-run`: the per-tick camera pose the demo returns (`{ ok, trace }`, the rig's probe
- *   row `state().volatile.camera` collected each tick, or the eye's height and roll for a camera
+ *   row `state().volatile.cameraMotion` collected each tick, or the eye's height and roll for a camera
  *   of the game's own), held to the comfort caps the engine's first-person rig enforces.
  *
  * Each finding is a tagged blocking defect; a round that adds one is not kept (facet/phases/taste.ts).
@@ -203,7 +203,7 @@ function detrended(times: readonly number[], values: readonly number[]): number[
 
 /**
  * One pose sample: the eye's height (`y`), or the engine rig's own bob offset (`bobM`, its probe row
- * `state().volatile.camera`), with its roll.
+ * `state().volatile.cameraMotion`), with its roll.
  */
 function poseOf(entry: unknown): AnyRecord | null {
   if (!entry || typeof entry !== "object") return null;
@@ -220,10 +220,10 @@ function sprintTrace(state: AnyRecord | null | undefined, result: AnyRecord | nu
   return fieldOf(state?.__camera, "trace");
 }
 
-/** The rig's own cadence at the demo's end (`state().volatile.camera.cadenceHz`), when the game probes it. */
+/** The rig's own cadence at the demo's end (`state().volatile.cameraMotion.cadenceHz`), when the game probes it. */
 function rigCadence(state: AnyRecord | null | undefined): number | null {
-  const camera = (state?.volatile as AnyRecord | undefined)?.camera as AnyRecord | undefined;
-  return camera ? num(field(camera, "cadenceHz")) : null;
+  const motion = (state?.volatile as AnyRecord | undefined)?.cameraMotion as AnyRecord | undefined;
+  return motion ? num(field(motion, "cadenceHz")) : null;
 }
 
 /** The comfort reading of a per-tick camera pose trace, or null when it is too short to read. */
