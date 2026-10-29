@@ -4,7 +4,8 @@ model was trained on this engine: these pages are all you know of it, so look a 
 write it. `docs/GENEX_API.md` indexes the API (one topic per page in `docs/api/`),
 `docs/CONTRACT.md` says which file is whose, which verbs the studio drives the game with and what
 each refusal means, `docs/look-recipes.md` gives the light and look of each scene type in numbers,
-`docs/calibration.md` the units, exposure, luma, texel and frame-rate tables, and
+`docs/calibration.md` the units, exposure, luma, texel and frame-rate tables,
+`docs/level-plan.md` how to plan a place that makes sense, and
 `docs/examples/README.md` lists compiled code to copy. Before writing a Bevy, Unity, Unreal,
 three.js or Godot habit, find its genex call in `docs/examples/coming-from.md`.
 
@@ -33,14 +34,25 @@ presets scale the picture down for a smaller device; nothing scales a cheap pict
 5. **Tag and measure.** `frame.tag("<name>")` before what you draw, a `probe` per mechanic, a
    camera that shows it, a `demo` when a generic walk cannot reach it. The checks see the game only
    through these: a mechanic with no probe, tag or camera is unmeasured, and an unmeasured
-   mechanic does not count as built. Three names the harness looks for: a
-   `game.named_camera("hero:<area>", ..)` per area, the shot judged against `references/`; a
+   mechanic does not count as built. Names the harness looks for: a
+   `game.named_camera("hero:<zone>", ..)` per zone of `docs/LEVEL.md`, the shot judged against
+   `references/`; `map:top`, straight down over the whole level; a
+   `closeup:<character>:<clip>` camera framed on the body for each clip a character plays; a
    `game.demo("sprint-run", ..)` in a first-person game, sprinting straight ahead for a few
    seconds; and a `game.demo("doorway", ..)` where rooms meet, walking from a lit room into a
    darker one. The harness measures camera comfort and exposure over time on those two demos.
 6. **Deterministic.** Randomness only from `ctx.rng` or the reset `rng`; time only from `ctx.tick`
    and `ctx.dt`; transcendental math from `genex::math`; `genex::Map`/`genex::Set` instead of
    `HashMap`/`HashSet`; no `std::time`, threads or OS entropy. The studio's build refuses them.
+   Determinism is the simulation's, never a reason to draw less: volumetric fog, light shafts and
+   TAA stay on.
+7. **Presets own features; a check never removes one.** Which features a device draws is its
+   preset's (`docs/api/rendering.md`); `state().__render.look.features` names each look feature
+   the frame drew (`docs/api/drawing.md`). When a check fails because of a feature (two runs that do
+   not match, a frame-time miss, a boot deadline), say so in your result with the check's code and
+   keep the feature: a switch off in `genex.toml`, `[render.look]` or code that holds on every
+   device is a defect, not a fix. A miss on one device class is answered in that class's
+   `[render.class.<class>]` or by drawing less there (`docs/api/performance.md`).
 
 Draw and probe hooks take `&Sim` and no `ctx`, and cannot change the simulation: animation that
 exists only on screen derives from simulation state (a tick counter the world keeps from
@@ -83,6 +95,19 @@ read each row.
 | Menus, saves, settings | `docs/api/ui.md`, `docs/api/settings.md`, `docs/api/saves.md` | `menus-saves/` | none | none |
 
 Budgets per device class are in `docs/api/performance.md`; check them before adding content.
+
+## Plan the place
+
+A level is a place a person can cross, never one finished room. Before building any area, write
+`docs/LEVEL.md`: its zones and what the player does in each, the connections between them (doors,
+stairs, gates), the exits, the spawns, the play loop and the boundary at every edge
+(`docs/level-plan.md` has the rules, a row per kind of game and real sizes). Then block the whole
+plan out in grey with colliders in about the first third of the build, as
+`docs/examples/blockout/` does: a `frame.tag("zone:<id>")` and a `hero:<zone>` camera per zone,
+the `map:top` camera, and a `state().__level` report (`game.probe("__level", ..)`) of whether each
+zone and exit can be walked to from the spawn, the unplanned dead ends and whether the boundary
+holds. Art goes on zone by zone only after every zone is reachable; a zone in greybox never holds
+up another.
 
 ## Art bar
 
@@ -132,10 +157,18 @@ list each sourced model in `docs/ASSETS.md` as `- <tag>: <file>` (its draw tag, 
   shake drawn fresh from `ctx.rng` every tick, or a first-person `fovy` (vertical) outside 60 to 80
   (the `sprint-run` demo).
 - `not-shipped`: a camera that would not pass as a screenshot from a shipped game of its genre.
+- `feature-off`: a look feature (volumetric fog, light shafts, shadows, bloom, ambient occlusion)
+  drawn by the last kept build and switched off at the same preset (rule 7).
+- `broken-pose`: a character whose limbs collapse, fold into the body or leave the ground, or
+  whose hands leave the weapon, in any clip.
+- `incoherent-place`: zones that do not connect, no entrance or exit, a world with no boundary.
+- `unreachable-zone`, `no-exit`, `dead-end`, `unbounded`: what `state().__level` reports (Plan
+  the place).
 
 Also never: a dark look made by stacking negative compensation, a raised `ev_min`, a vignette and a
 dark grade (light the room less instead); a lens, grain or vignette pass with no way off in the
-settings; a flat card or impostor within 50 m of the camera.
+settings; a flat card or impostor within 50 m of the camera; a texture size cut for every device
+to pass a check.
 
 ## Assets
 
@@ -191,8 +224,8 @@ never the quality.
 - **Temporal effects.** `high` and `ultra` draw TAA. Draw everything that moves on its own under
   `frame.id(key)` with a key that stays with it, end it with `frame.end_id()`, and call
   `frame.camera_cut()` on the frame a shot changes, never every frame.
-- **Shadows scale themselves.** Never switch `shadows` off or fix a cascade count to save time:
-  ask for more at one preset with
+- **Shadows scale themselves.** Never switch `shadows` off or fix a cascade count to save time
+  or pass a check: ask for more at one preset with
   `RenderConfig::shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4))` and size the
   reach to the world with `[render.shadows] distance`. Meshlets stay off unless a measurement opts
   a class in (`docs/api/meshlets.md`).
