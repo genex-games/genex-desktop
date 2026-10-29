@@ -181,11 +181,11 @@ keeps them lit as the scene changes (dynamic probe GI):
 | --- | --- | --- | --- |
 | `low`, phones' own presets | none | none (the sky's light) | none |
 | `medium`, phones at `high`/`ultra` | a volume for each probe without one, a probe for each volume without one | 2 cells a frame | again when the sky changes |
-| `high` | those, and a 24 x 8 x 24 m volume (2 m cells) around the camera wherever no room holds it | 4 cells a frame | baked again, room after room, for as long as it is held |
-| `ultra` | as `high` | 8 cells a frame | as `high` |
+| `high` | those, and a 24 x 8 x 24 m volume (2 m cells) around the camera wherever no room holds it | 2 cells a frame | baked again, room after room, a batch every 4th frame, for as long as it is held |
+| `ultra` | as `high` | 4 cells a frame | as `high` |
 
-So on `high` and `ultra` a lamp switched on, a door opened or a moving sun reaches the bounced light
-within a few seconds, and a volume that moves (the camera's own) keeps showing its last bake where
+So on `high` and `ultra` a lamp switched on, a door opened or a moving sun reaches a room's bounced
+light within about ten seconds (a 200-cell room), and a volume that moves (the camera's own) keeps showing its last bake where
 it was baked until the new one is ready. A settled capture bakes every volume whole. A room's probe and
 volume also steer auto exposure: when the camera crosses into or out of either box, it adapts
 eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once

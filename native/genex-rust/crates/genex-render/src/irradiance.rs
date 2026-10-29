@@ -81,6 +81,10 @@ pub const VOLUME_INTENSITY_MAX: f32 = 64.0;
 pub const CAPTURE_SIDE: u32 = 16;
 /// Cells one Live frame bakes (the bake's time slice).
 pub const CELLS_PER_FRAME: usize = 2;
+/// Frames between two batches of a relight (dynamic GI, AAA review WP-12): a relight runs for as
+/// long as a volume is held, so it pays a quarter of a slice's cost a frame; a first or stale bake
+/// keeps the full slice.
+pub const RELIGHT_CADENCE: u64 = 4;
 /// Cells one batch of a settled capture's bake draws before its commands are submitted (the
 /// capture targets and per-face rows hold this many cells).
 pub const BATCH_CELLS: usize = 8;
@@ -950,6 +954,9 @@ impl GridSchedule {
         if slot.published && !crate::sky::lut_due(frame.frame_index, frame.cadence) {
             return GridWork::new();
         }
+        if slot.relighting && frame.frame_index % RELIGHT_CADENCE != 0 {
+            return GridWork::new();
+        }
         let count = slot.volume.cell_count();
         let slice = frame.cells_per_frame.clamp(1, BATCH_CELLS) as u32;
         let end = (slot.next + slice).min(count);
@@ -1709,13 +1716,18 @@ mod tests {
         }
         assert_eq!(index, 1 + u64::from(room().cell_count()).div_ceil(4));
         let mut relit_slots = Vec::new();
-        for _ in 0..(small.cell_count() + room().cell_count()) {
+        let mut batches = 0;
+        let relight_frames = RELIGHT_CADENCE * u64::from(small.cell_count() + room().cell_count());
+        for _ in 0..relight_frames {
             let work = schedule.advance(&relit(index));
+            assert!(work.is_empty() || index % RELIGHT_CADENCE == 0, "a relight batch only every {RELIGHT_CADENCE} frames");
             index += 1;
+            batches += work.len();
             relit_slots.extend(work.iter().filter(|batch| batch.publish).map(|batch| batch.slot));
             assert!(schedule.settled(), "a relight never reads as unsettled");
             assert!(schedule.published(0) && schedule.published(1));
         }
+        assert!(batches > 0 && batches as u64 <= relight_frames / RELIGHT_CADENCE + 1);
         assert_eq!(&relit_slots[..2], [0, 1], "round robin");
         let still = GridFrame { relight: false, ..relit(index) };
         let mut idle = GridSchedule::default();

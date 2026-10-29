@@ -138,11 +138,10 @@ pub const MOBILE_PROBES_PER_TIER: [u8; 4] = [2, 4, 8, 8];
 /// Irradiance volumes baked per desktop and browser preset (low, medium, high and ultra; renderer
 /// pass 2 A.4: medium and up).
 pub const VOLUMES_PER_PRESET: [u8; 4] = [0, 4, 8, 8];
-/// Volume cells a Live frame bakes on desktop `high` and on `ultra` (AAA review WP-12; `medium`
-/// and phones bake `irradiance::CELLS_PER_FRAME`).
-pub const HIGH_CELLS_PER_FRAME: u8 = 4;
-/// Volume cells a Live frame bakes on `ultra`.
-pub const ULTRA_CELLS_PER_FRAME: u8 = 8;
+/// Volume cells a Live frame bakes on `ultra` (AAA review WP-12; the other presets and phones bake
+/// `irradiance::CELLS_PER_FRAME`: two cells measured 0.85 ms a frame at 1080p on an M4 Max with the
+/// four-cell slice, past the bake row's 0.5 ms, so high keeps two).
+pub const ULTRA_CELLS_PER_FRAME: u8 = 4;
 /// The most irradiance volumes a phone of each tier (low, mid, high, ultra) bakes at `high` and
 /// `ultra` (plan A.4: none on mobile-low, which keeps the sky's SH9; D16: none at a phone's
 /// `medium` or `low`).
@@ -615,11 +614,10 @@ fn high_row(quality: &mut Quality) {
     quality.environment.reflection_probes = PROBES_PER_PRESET[2];
     quality.environment.irradiance_volumes = VOLUMES_PER_PRESET[2];
     // AAA review WP-12, dynamic probe GI: rooms paired and a volume around the camera wherever
-    // no declared room holds it, baked four cells a frame and baked again for as long as they are
-    // held (ultra eight). Software rays (D8) stay out: their cheapest update measured 10.9 ms on
-    // an M1-class GPU, these slices a fraction of that.
+    // no declared room holds it, baked two cells a frame and baked again for as long as they are
+    // held, a relight batch every `irradiance::RELIGHT_CADENCE` frames (ultra four cells). Software
+    // rays (D8) stay out: their cheapest update measured 10.9 ms on an M1-class GPU.
     quality.environment.auto_rooms = crate::irradiance::AutoRooms::ALL;
-    quality.environment.irradiance_cells_per_frame = HIGH_CELLS_PER_FRAME;
     quality.environment.irradiance_relight = true;
     // SI-02 step 2: a moving sun's cube follows it every frame (a whole rebake at the continuous
     // sample count; phones keep the time-sliced cycle).

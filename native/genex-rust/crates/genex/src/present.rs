@@ -3373,9 +3373,9 @@ fn shape_models(shape: &Shape) -> Vec<Option<Option<&str>>> {
     match shape {
         Shape::Cube { .. } | Shape::Sphere { .. } => vec![None],
         Shape::Line { .. } | Shape::Lines { .. } => Vec::new(),
-        Shape::Model { model, .. } | Shape::Posed { model, .. } => model_paths(model),
+        Shape::Model { model, .. } | Shape::Posed { model, .. } => drawn_model_paths(model),
         Shape::Group { group } => match group.shape() {
-            crate::GroupShape::Model(model) => model_paths(model),
+            crate::GroupShape::Model(model) => drawn_model_paths(model),
             _ => vec![None],
         },
         Shape::Character { .. } => vec![Some(None)],
@@ -3383,7 +3383,7 @@ fn shape_models(shape: &Shape) -> Vec<Option<Option<&str>>> {
 }
 
 /// Each drawn member's path of `model`, as [`shape_models`] lists it.
-fn model_paths(model: &Model) -> Vec<Option<Option<&str>>> {
+fn drawn_model_paths(model: &Model) -> Vec<Option<Option<&str>>> {
     model.drawn_members().iter().map(|member| Some(member.path())).collect()
 }
 
