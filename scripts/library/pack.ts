@@ -8,6 +8,7 @@ import { addLodExtras, simplifyInputs, simplifyTo } from "../../src/substrate/as
 import { type Geometry, readGeometry } from "../../src/substrate/asset-import/meshlets.ts";
 import { GltfComponent, readGlb } from "../../src/substrate/asset-import/glb.ts";
 import { index, isObject, type Json, objects } from "../../src/substrate/asset-import/gltf-json.ts";
+import { weldGlb } from "../../src/substrate/asset-import/weld.ts";
 import { type PackDoc, packGlb, pruneAccessors } from "../../src/substrate/asset-import/prune.ts";
 import { type RgbaImage, resampleSquare } from "../../src/substrate/asset-import/resample.ts";
 import { TextureUsage } from "../../src/substrate/asset-import/basis-encoder.ts";
@@ -68,8 +69,15 @@ export function glbTriangles(glb: Uint8Array): number {
 
 /** Primitives too small to shrink leave the total over its share, so a cut aims a little under the cap. */
 const AIM_AT_CAP = 0.92;
+/** The importer level a cut asks for: one that may drop small disconnected pieces (`Prune`), as a scan needs. */
+const DECIMATE_LEVEL = 9;
 /** The relative errors a decimation tries in turn, tightest first (share of the mesh's extent). */
 const DECIMATE_ERRORS = [0.02, 0.05, 0.1, 0.2] as const;
+/** The errors tried with normals and UVs ignored, when the weighed passes stay over the cap. */
+const DECIMATE_ERRORS_LOOSE = [0.1, 0.2, 0.35] as const;
+
+/** `input` with its attribute weights zeroed: positions alone decide what collapses. */
+const unweighed = <T extends { weights: number[] }>(input: T): T => ({ ...input, weights: input.weights.map(() => 0) });
 
 /** The geometry and simplifier inputs of every primitive of the GLB document `doc`. */
 function inputsOf(doc: PackDoc) {
@@ -94,7 +102,8 @@ async function simplifiedWithin(
   const total = inputs.reduce((sum, each) => sum + each.geometry.indices.length / TRIANGLE, 0);
   const share = Math.min(1, (cap * AIM_AT_CAP) / total);
   const out: Uint32Array[] = [];
-  for (const input of inputs) out.push((await simplifyTo(input, input.geometry.indices, share, 1, maxError))[0]);
+  for (const input of inputs)
+    out.push((await simplifyTo(input, input.geometry.indices, share, DECIMATE_LEVEL, maxError))[0]);
   return out;
 }
 
@@ -107,11 +116,17 @@ async function simplifiedWithin(
 export async function decimateGlb(glb: Uint8Array, cap: number): Promise<{ bytes: Uint8Array; triangles: number }> {
   const before = glbTriangles(glb);
   if (before <= cap) return { bytes: glb, triangles: before };
-  const parts = readGlb(glb);
+  // A scan exported as a triangle soup has nothing to collapse until identical vertices are merged.
+  const parts = readGlb(weldGlb(glb).bytes);
   const doc: PackDoc = { json: parts.json as Json, bin: parts.bin, data: new Map() };
   const { primitives, inputs } = inputsOf(doc);
-  for (const maxError of DECIMATE_ERRORS) {
-    const kept = await simplifiedWithin(inputs, cap, maxError);
+  // Seams (normals, UVs) hold vertices in place: a scan that cannot reach the cap with them weighed is cut without.
+  const passes = [
+    ...DECIMATE_ERRORS.map((maxError) => ({ inputs, maxError })),
+    ...DECIMATE_ERRORS_LOOSE.map((maxError) => ({ inputs: inputs.map(unweighed), maxError })),
+  ];
+  for (const { inputs: pass, maxError } of passes) {
+    const kept = await simplifiedWithin(pass, cap, maxError);
     const triangles = kept.reduce((sum, indices) => sum + indices.length / TRIANGLE, 0);
     if (triangles > cap) continue;
     const accessors = objects(doc.json.accessors);

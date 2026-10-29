@@ -6079,9 +6079,9 @@
         "files": [
           {
             "name": "sky.2k.hdr",
-            "tier": "2k",
             "sha256": "5414e1ac0c35e451d28595b2a2cba05e2ca301fdeb755b0a469408443093dafc",
-            "bytes": 4568000
+            "bytes": 4568000,
+            "tier": "2k"
           },
           {
             "name": "preview.jpg",
@@ -6141,9 +6141,9 @@
         "files": [
           {
             "name": "sky.2k.hdr",
-            "tier": "2k",
             "sha256": "b390ca5fedcf1cb5e90eab7159605e061383c247a40331c8b880357c917fddb5",
-            "bytes": 4998322
+            "bytes": 4998322,
+            "tier": "2k"
           },
           {
             "name": "preview.jpg",
@@ -6244,9 +6244,9 @@
         "files": [
           {
             "name": "sky.2k.hdr",
-            "tier": "2k",
             "sha256": "56cb0e54c6d8ae869236ec4a027441f49b42fcb6398ed0354815fc053cad4224",
-            "bytes": 6953927
+            "bytes": 6953927,
+            "tier": "2k"
           },
           {
             "name": "preview.jpg",
@@ -6388,9 +6388,9 @@
         "files": [
           {
             "name": "sky.2k.hdr",
-            "tier": "2k",
             "sha256": "c119c42e55d1df602e820f1a0234ccab7714cdf56afc3ca9d44543ad58492767",
-            "bytes": 6936669
+            "bytes": 6936669,
+            "tier": "2k"
           },
           {
             "name": "preview.jpg",
@@ -7715,7 +7715,23 @@
           "bytes": 2191944,
           "md5": "6de3683836cd0e6a39fdc58df2d61bf0"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "a3f9abaa7d14ea4404b857eed1045c32955050ec65fe06a910682323571ae64c",
+            "bytes": 14645228
+          },
+          {
+            "name": "entry.json",
+            "sha256": "1be72a3a01ddc3a4d5b347f0fa7a56d424bb73658ed1e072fea8a22fcd997622",
+            "bytes": 587
+          }
+        ],
+        "triangles": 18514
+      }
     },
     {
       "id": "model/utility_box_02",
@@ -7965,7 +7981,23 @@
           "bytes": 2284955,
           "md5": "da0f9ec575f447db858c311fa3c5ec6d"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "ae4ca9c6d6753d35e69926b393d048e1f61b01872fd0470203f92719013bae62",
+            "bytes": 8663456
+          },
+          {
+            "name": "entry.json",
+            "sha256": "ff350331cc82fe7f8d91fd22d8fa42f92890a91377b12fffa3feed8734eb8aae",
+            "bytes": 618
+          }
+        ],
+        "triangles": 1104
+      }
     },
     {
       "id": "model/large_castle_door",
@@ -8297,7 +8329,23 @@
           "bytes": 3135590,
           "md5": "95fc5e6a6ebc1c9f6ce36689bf748403"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "d3a7d1813f0a316be6af9299a7e91d90fdbfcc0135c0eebec816692f7b6de0fc",
+            "bytes": 17763292
+          },
+          {
+            "name": "entry.json",
+            "sha256": "3b96ea2659a7055f331cf5a422fffbf267428736c6e10d1df9ae55adc25fa95e",
+            "bytes": 594
+          }
+        ],
+        "triangles": 10210
+      }
     },
     {
       "id": "model/woodentable_01",
@@ -8349,7 +8397,23 @@
           "bytes": 744344,
           "md5": "e95bfdaafd43d7e90ba4f34fe33e4d5e"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "95346226721bb7a78ccd8fd458f99f13722d1d1a48f9f17d4b6894da41692778",
+            "bytes": 1830592
+          },
+          {
+            "name": "entry.json",
+            "sha256": "e2eb476cbadc3c622fe40dbe94c70448220ae75ee5b4113304ec07620fd071bd",
+            "bytes": 548
+          }
+        ],
+        "triangles": 952
+      }
     },
     {
       "id": "model/metal_office_desk",
@@ -8464,7 +8528,23 @@
           "bytes": 2136069,
           "md5": "80910ea254aac1cdf7de7ffe0dccc50d"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "dfab5958ae1374313f9a44c429ba45f3e3abe72b3d2e5aa718ffd311f0f2cc69",
+            "bytes": 6694696
+          },
+          {
+            "name": "entry.json",
+            "sha256": "911d254b85dc21936a397a42eedd6dd7c0171d511b4b90070fde6e94e576597c",
+            "bytes": 601
+          }
+        ],
+        "triangles": 3356
+      }
     },
     {
       "id": "model/sofa_02",
@@ -8568,7 +8648,23 @@
           "bytes": 2393901,
           "md5": "08fb268ae9d50baac81cd5e90cc89c3e"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "a85ede64dc2eeb10d8f6188933636e169a74863f79ef9bcf46eadb4892912bc2",
+            "bytes": 5607244
+          },
+          {
+            "name": "entry.json",
+            "sha256": "d0e5007f0969151ded50cd9b706005290f451bbbfaed6b416a35e40da7f4d976",
+            "bytes": 587
+          }
+        ],
+        "triangles": 4348
+      }
     },
     {
       "id": "model/painted_wooden_cabinet",

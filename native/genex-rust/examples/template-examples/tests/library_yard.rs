@@ -19,7 +19,7 @@ use game::World;
 const GENEX_TOML: &str = include_str!("../../../../../src/game-template-rust/docs/examples/library-yard/genex.toml");
 const WORLD_SIZE: [u32; 2] = [1600, 900];
 /// Every entry the yard reads.
-const ENTRIES: [&str; 7] = [game::ASPHALT, game::BRICK, game::SNOW, game::BENCH, game::BARREL, game::BOULDER, game::SKY];
+const ENTRIES: [&str; 7] = [game::ASPHALT, game::BRICK, game::SNOW, game::BENCH, game::BARREL, game::CRATE, game::SKY];
 
 fn yard() -> Game<World> {
     let mut game = Game::new(World::default()).title("Library yard").world_size(WORLD_SIZE[0], WORLD_SIZE[1]);

@@ -1,12 +1,12 @@
 //! A yard dressed entirely from the Genex Library (`docs/api/library.md`): an asphalt yard with a
-//! snow-covered strip, a brick wall, a bench, a barrel and a boulder under an HDRI sky. Nothing is
+//! snow-covered strip, a brick wall, a bench, a barrel and a crate under an HDRI sky. Nothing is
 //! modelled or imported by hand: each entry was added with `library__add` and is read here in
 //! `on_reset` with `gfx.assets().library(id)`, which hands out a material at its real size, a model
-//! in metres with its levels (and the boulder's impostor), and the sky's environment.
+//! in metres with its levels, and the sky's environment.
 //!
 //! Add the entries to a game with:
 //!   library__add material/asphalt_01, material/red_brick, material/snow_02,
-//!   model/painted_wooden_bench, model/barrel_01, model/boulder_01,
+//!   model/painted_wooden_bench, model/barrel_01, model/wooden_crate_01,
 //!   sky/kloofendal_48d_partly_cloudy_puresky
 //! An entry that was not added refuses `missing`: the yard then draws its stand-in colour (a
 //! material), the checker (a model) or the physical sky, and `state().library.missing` names it.
@@ -20,7 +20,7 @@ pub const BRICK: &str = "material/red_brick";
 pub const SNOW: &str = "material/snow_02";
 pub const BENCH: &str = "model/painted_wooden_bench";
 pub const BARREL: &str = "model/barrel_01";
-pub const BOULDER: &str = "model/boulder_01";
+pub const CRATE: &str = "model/wooden_crate_01";
 pub const SKY: &str = "sky/kloofendal_48d_partly_cloudy_puresky";
 
 /// The yard's ground (x and z from, to), a strip of snow across it, and the wall behind.
@@ -30,11 +30,11 @@ const WALL: (Vec3, Vec3) = (vec3(-8.0, 0.0, 6.0), vec3(8.0, 2.6, 6.4));
 /// Where the props stand (metres) and which way they face (degrees about +y).
 const BENCH_AT: Vec3 = vec3(-1.4, 0.0, 4.6);
 const BARREL_AT: Vec3 = vec3(1.2, 0.0, 5.2);
-const BOULDER_AT: Vec3 = vec3(3.6, 0.0, 3.4);
+const CRATE_AT: Vec3 = vec3(3.6, 0.0, 3.4);
 /// Towards the sun: about 35 degrees up, from the camera's left.
 const SUN_TOWARDS: Vec3 = vec3(-0.6, 0.7, -0.4);
 const SUN_INTENSITY: f32 = 3.0;
-/// The camera: a person's eye height, looking at the bench past the boulder.
+/// The camera: a person's eye height, looking at the bench past the crate.
 const EYE: Vec3 = vec3(1.5, 1.6, -3.5);
 const LOOK_AT: Vec3 = vec3(0.0, 0.9, 4.8);
 
@@ -46,7 +46,7 @@ pub struct World {
     pub snow: Material,
     pub bench: Model,
     pub barrel: Model,
-    pub boulder: Model,
+    pub crate_box: Model,
     pub sky: Option<Environment>,
     /// The entries this game has not added (each refused `missing`).
     pub missing: Vec<&'static str>,
@@ -66,14 +66,14 @@ fn read_library(world: &mut World, assets: &Assets) {
     let snow = read(SNOW).map(|asset| asset.material());
     let bench = read(BENCH).map(|asset| asset.model());
     let barrel = read(BARREL).map(|asset| asset.model());
-    let boulder = read(BOULDER).map(|asset| asset.model());
+    let crate_box = read(CRATE).map(|asset| asset.model());
     let sky = read(SKY).map(|asset| asset.environment());
     world.asphalt = asphalt.unwrap_or_else(|| Material::color(Color::rgb(70, 70, 72)));
     world.brick = brick.unwrap_or_else(|| Material::color(Color::rgb(140, 70, 55)));
     world.snow = snow.unwrap_or_else(|| Material::color(Color::rgb(230, 235, 240)));
     world.bench = bench.unwrap_or_default();
     world.barrel = barrel.unwrap_or_default();
-    world.boulder = boulder.unwrap_or_default();
+    world.crate_box = crate_box.unwrap_or_default();
     world.sky = sky;
 }
 
@@ -107,5 +107,5 @@ fn draw(world: &World, frame: &mut Frame) {
     frame.tag("props");
     frame.model(&world.bench, standing(BENCH_AT, 180.0));
     frame.model(&world.barrel, standing(BARREL_AT, 20.0));
-    frame.model(&world.boulder, standing(BOULDER_AT, -35.0));
+    frame.model(&world.crate_box, standing(CRATE_AT, -35.0));
 }
