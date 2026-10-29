@@ -469,6 +469,27 @@ floor unknown, which never passes.
 A grade is the highest tier whose checks, and every lower tier's, all pass; the report lists the
 checks blocking the next one. Without a taste verdict no prompt reaches AA+.
 
+**Honest grading** (`honest.ts`, `vision.ts`; thresholds proposed): small captures and a missing
+close-up once let a game with collapsed torsos pass, so a run is also held to a fixed capture set
+and to facts about the people and the place in it. The set holds the prompt's views, a top-down
+map (role `map-topdown`) and one close-up per animation clip the game plays (role
+`closeup:<character>/<clip>`), each clean and at least 1600×900, the close-up filling at least half
+the frame height. `characters` lists the clips (empty for a game with none), and the facts file
+names each camera's `subjectFractions`.
+
+| Floor | Needed for | Passes when |
+| --- | --- | --- |
+| `capture-set` | AA | the map and every clip's close-up are in the set at full size |
+| `anatomy-pose` | AA | per clip: bones within 5% of their rest length, torso at least 85%, ≤2% of the body inside itself, feet grounded |
+| `place-coherence` | AA | every zone reachable, no unplanned dead end, at least the planned zones and exits (no plan leaves it unmeasured) |
+| `look-features` | AA | no feature the quality preset owns is off in the graded build |
+| `store-fresh` | AA | the run's dev store was built from the integration head given with `--head` |
+| `anatomy-judge`, `place-judge` | AA+ | a vision judge passes every close-up (anatomy and pose) and the map beside the views (a coherent place) |
+
+The judges (`anatomy-prompt.md`, `place-prompt.md`) use the taste pins: a family passes a capture
+on most of its `--votes`, a tie fails, and every family must pass. A game with no animated
+characters needs no anatomy verdict. Bundles from before these fields grade them unmeasured.
+
 **Taste** (`taste.ts`, `taste-prompt.md`): per view, the largest clean capture of at least
 1600×900 beside that role's reference stills, judged blind on four anchored tiers. It speaks
 through the checklist graders' model seam; `--taste-family` picks the families (default `gpt`,
@@ -539,7 +560,7 @@ exit 64, and with it they exit 1 in CI.
 | `validate-ledger` | | Checks every ledger line | |
 | `aaa suite` | | Lists the [AA+ suite](#the-aa-release-gate) | |
 | `aaa collect --prompt <id> --run <dir> --roles <file> --out <dir> [--shots <dir>] [--facts <file>] [--clean yes\|no]` | | Writes an evidence bundle | |
-| `aaa grade <bundle>... --out <dir> [--taste off\|live] [--taste-family …] [--builder-family …] [--votes n] [--references <dir>]` | with `--taste live` | Grades bundles and judges the gate | 1 also a failed gate, 2 references not fetched |
+| `aaa grade <bundle>... --out <dir> [--taste off\|live] [--taste-family …] [--builder-family …] [--votes n] [--references <dir>] [--head <sha>]` | with `--taste live` | Grades bundles and judges the gate | 1 also a failed gate, 2 references not fetched |
 | `aaa compare <bundle> --baseline <bundle> --out <dir> [--taste off\|live] [--taste-family …] [--references <dir>]` | with `--taste live` | Candidate against a baseline run, side by side | 1 also not clearly better, 2 references not fetched |
 | `aaa references [--dir <dir>]` | yes | Fetches the CC0 reference stills | |
 

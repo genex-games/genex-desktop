@@ -12,7 +12,7 @@ import { AaaFloor, AaaGrade, rubricChecks, type TasteSummary } from "../../scrip
 import { comfortMetrics, exposureMetrics } from "../../scripts/evals/aaa/signals.ts";
 import { AaaSuiteError, parseAaaSuite, readAaaSuite } from "../../scripts/evals/aaa/suite.ts";
 import { CheckResult } from "../../scripts/evals/vocabulary.ts";
-import { evRamp, passingEvidence, rawPrompt, sineTrack, testSuite } from "../helpers/aaa-evidence.ts";
+import { evRamp, PASSING_CONTEXT, passingEvidence, rawPrompt, sineTrack, testSuite } from "../helpers/aaa-evidence.ts";
 
 const REPO = new URL("../..", import.meta.url).pathname;
 const TASTE_AA_PLUS: TasteSummary = { grade: AaaGrade.AaPlus, sameFamily: false, detail: [] };
@@ -21,7 +21,7 @@ const [PROMPT] = testSuite();
 if (!PROMPT) throw new Error("test suite is empty");
 
 const grade = (evidence = passingEvidence(PROMPT), taste: TasteSummary | null = TASTE_AA_PLUS) =>
-  gradePrompt(PROMPT, evidence, { summary: taste, missing: [] });
+  gradePrompt(PROMPT, evidence, { summary: taste, missing: [] }, PASSING_CONTEXT);
 const checkOf = (floor: AaaFloor, evidence = passingEvidence(PROMPT), taste: TasteSummary | null = TASTE_AA_PLUS) =>
   rubricChecks(PROMPT, evidence, taste).filter((c) => c.floor === floor);
 
@@ -336,7 +336,7 @@ describe("the release gate", () => {
   const at = (index: number, taste: TasteSummary | null) => {
     const prompt = prompts[index];
     if (!prompt) throw new Error("no prompt");
-    return gradePrompt(prompt, passingEvidence(prompt), { summary: taste, missing: [] });
+    return gradePrompt(prompt, passingEvidence(prompt), { summary: taste, missing: [] }, PASSING_CONTEXT);
   };
 
   it("passes three different prompts at AA+ and fails when one is lower or missing", () => {

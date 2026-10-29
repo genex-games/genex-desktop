@@ -35,7 +35,7 @@ import { AAA_SUITE_FILE, AAA_SUITE_SCHEMA } from "../../scripts/evals/aaa/suite.
 import type { GraderComplete } from "../../scripts/evals/grade/checklist/complete.ts";
 import { CliExit } from "../../scripts/evals/cli/exit.ts";
 import { CheckResult, GraderFamily } from "../../scripts/evals/vocabulary.ts";
-import { passingEvidence, rawPrompt, testSuite } from "../helpers/aaa-evidence.ts";
+import { HEAD, PASSING_CONTEXT, passingEvidence, rawPrompt, testSuite } from "../helpers/aaa-evidence.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const [PROMPT] = testSuite();
@@ -167,7 +167,7 @@ describe("the pairwise look judge", () => {
     };
     const base = withImage(weakEvidence());
     const cand = withImage(passingEvidence(PROMPT));
-    const graded = (e: AaaEvidence) => gradePrompt(PROMPT, e, { summary: null, missing: [] });
+    const graded = (e: AaaEvidence) => gradePrompt(PROMPT, e, { summary: null, missing: [] }, PASSING_CONTEXT);
     return {
       dir,
       base: { dir: sides.base, evidence: base, report: graded(base) },
@@ -261,7 +261,7 @@ describe("aaa compare", () => {
     bundle(path.join(work, "base"), weakEvidence(), 40);
     bundle(path.join(work, "cand"), passingEvidence(PROMPT), 200);
     const code = await aaaCompareCommand(
-      [path.join(work, "cand"), "--baseline", path.join(work, "base"), "--out", path.join(work, "out")],
+      [path.join(work, "cand"), "--baseline", path.join(work, "base"), "--out", path.join(work, "out"), "--head", HEAD],
       out,
       deps(repo),
     );

@@ -15,6 +15,7 @@ import {
   FactSource,
   parseEvidence,
 } from "./evidence.ts";
+import { isFixedRole } from "./honest.ts";
 import type { AaaPrompt } from "./suite.ts";
 
 /** The schema tag a facts file carries. */
@@ -88,7 +89,12 @@ function defaultShotsDir(runDir: string, head: string | null): string {
 }
 
 /** One verdict shot as a capture, its image copied into the bundle; null when its files are missing. */
-function shotCapture(shot: Json, shotsDir: string, input: CollectInput): AaaCapture | null {
+function shotCapture(
+  shot: Json,
+  shotsDir: string,
+  input: CollectInput,
+  fractions: Readonly<Record<string, number>>,
+): AaaCapture | null {
   const camera = typeof shot.camera === "string" ? shot.camera : null;
   const base = typeof shot.path === "string" ? path.basename(shot.path) : "";
   if (!camera || !SHOT_FILE.test(base)) return null;
@@ -108,13 +114,14 @@ function shotCapture(shot: Json, shotsDir: string, input: CollectInput): AaaCapt
     height: Number(stats.height),
     clean: input.clean,
     native: null,
+    subjectFraction: fractions[camera] ?? null,
     meanLuma: Number(stats.meanLuma),
     darkFraction: typeof dark === "number" ? dark : 0,
     source: FactSource.Probe,
   };
 }
 
-function readShots(shotsDir: string, input: CollectInput): AaaCapture[] {
+function readShots(shotsDir: string, input: CollectInput, fractions: Readonly<Record<string, number>>): AaaCapture[] {
   const verdictFile = path.join(shotsDir, "verdict.json");
   if (!fs.existsSync(verdictFile))
     throw new CollectError(CollectProblem.NoShots, "the shot folder has no verdict.json");
@@ -122,7 +129,7 @@ function readShots(shotsDir: string, input: CollectInput): AaaCapture[] {
   const shots = isObject(verdict) && Array.isArray(verdict.shots) ? verdict.shots : [];
   const captures = shots
     .filter(isObject)
-    .map((shot) => shotCapture(shot, shotsDir, input))
+    .map((shot) => shotCapture(shot, shotsDir, input, fractions))
     .filter((capture) => capture !== null);
   if (!captures.length) throw new CollectError(CollectProblem.NoShots, "no shot has both an image and its stats");
   return captures;
@@ -130,7 +137,7 @@ function readShots(shotsDir: string, input: CollectInput): AaaCapture[] {
 
 function checkRoles(prompt: AaaPrompt, roles: Readonly<Record<string, string>>): void {
   const known = new Set(prompt.views.map((view) => view.role));
-  const unknown = Object.values(roles).filter((role) => !known.has(role));
+  const unknown = Object.values(roles).filter((role) => !known.has(role) && !isFixedRole(role));
   if (unknown.length)
     throw new CollectError(CollectProblem.BadRoles, `not a view of ${prompt.id}: ${unknown.join(", ")}`);
 }
@@ -153,18 +160,36 @@ export function collectEvidence(input: CollectInput): AaaEvidence {
   const facts = factsOf(input.facts);
   const report = readRunReport(input.runDir);
   const shotsDir = input.shotsDir ?? defaultShotsDir(input.runDir, report.head);
-  const captures = [...readShots(shotsDir, input), ...((facts.captures as AaaCapture[] | undefined) ?? [])];
+  const captures = [
+    ...readShots(
+      shotsDir,
+      input,
+      isObject(facts.subjectFractions) ? (facts.subjectFractions as Record<string, number>) : {},
+    ),
+    ...((facts.captures as AaaCapture[] | undefined) ?? []),
+  ];
   const evidence = parseEvidence({
     schema: AAA_EVIDENCE_SCHEMA,
     promptId: input.prompt.id,
     promptVersion: briefOf(report.goal, input.prompt) ? input.prompt.version : null,
-    subject: { game: report.game, head: report.head, runId: report.runId, preset: null, destination: null },
+    subject: {
+      game: report.game,
+      head: report.head,
+      runId: report.runId,
+      preset: typeof facts.preset === "string" ? facts.preset : null,
+      destination: null,
+    },
     captures,
     surfaces: facts.surfaces ?? null,
     props: facts.props ?? null,
     flatCoverage: facts.flatCoverage ?? null,
     motion: facts.motion ?? [],
     exposure: facts.exposure ?? [],
+    characters: facts.characters ?? null,
+    poses: facts.poses ?? null,
+    place: facts.place ?? null,
+    lookFeatures: facts.lookFeatures ?? null,
+    store: facts.store ?? null,
   });
   fs.writeFileSync(path.join(input.outDir, EVIDENCE_FILE), `${JSON.stringify(evidence, null, 2)}\n`);
   return evidence;
