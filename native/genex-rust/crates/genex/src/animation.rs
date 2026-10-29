@@ -48,12 +48,15 @@ use crate::gfx::{Assets, CharacterAsset, Model};
 use crate::math::{Mat4, Vec3};
 
 pub use genex_anim::animator::{AnimEvent, AnimatorStep, Limb, LimbTarget, LookTarget};
+pub use genex_anim::clip_set::{CLIP_ROLES, ClipRole, ClipSet};
 pub use genex_anim::events::EventFilter;
 pub use genex_anim::foot::{Foot, FootGoal, FootPlan, height_ground};
 pub use genex_anim::graph::{AnimGraph, AnimGraphBuilder, BlendMotion, ClipMotion, DEFAULT_BLEND_SECONDS, Motion, TransitionBlend, TransitionBuilder};
 pub use genex_anim::ids::{ClipId, EventId, JointId, LayerId, StateId};
 pub use genex_anim::mask::{BodyPart, Mask};
 pub use genex_anim::params::{BoolParam, Condition, FloatParam, TriggerParam, Vec2Param};
+pub use genex_anim::pose_check::{CharacterReport, PoseCause, PoseCheck, PoseCode, PoseDiagnostic, PoseLimits};
+pub use genex_anim::weapon::{HOLD_TOLERANCE, HoldResult, Socket, WeaponHold, WeaponSockets, hold_weapon};
 pub use genex_anim::root_motion::{MotionAxes, MotionSettings, RootMotion};
 pub use genex_anim::simple::{CROSSFADE_LADDER_SECONDS, SIMPLE_CLIPS_MAX};
 
@@ -94,6 +97,21 @@ impl CharacterAsset {
         let travel = track.displacement();
         let duration = track.duration();
         (duration > 0.0).then(|| (travel.x * travel.x + travel.z * travel.z).sqrt() / duration)
+    }
+
+    /// Check the rig and every clip as a playable humanoid: the clip each [`ClipRole`] gets and
+    /// what is wrong (a folded torso, knotted arms, stretched limbs, feet off the floor, hands that
+    /// cannot hold a rifle). A character with a diagnostic should not reach a game; the report
+    /// says which clip and bone, and whether the rig, its pose or the clip's bones are at fault.
+    pub fn check(&self) -> CharacterReport {
+        let set = self.set();
+        PoseCheck::new(set.skeleton()).check(set.clips())
+    }
+
+    /// The weapon grips on this character's hands, None for a rig without both arms.
+    pub fn sockets(&self) -> Option<WeaponSockets> {
+        let set = self.set();
+        WeaponSockets::of(set.skeleton(), &genex_anim::humanoid::HumanoidMap::of(set.skeleton()))
     }
 
     /// The file's clip names, in file order (a [`ClipId`] is the index).
@@ -312,6 +330,19 @@ impl Animator {
     /// The planted pose, when `plant_feet` ran since the last update.
     fn posed(&self) -> Option<&Posed> {
         self.feet.as_ref().and_then(|feet| feet.posed.as_ref())
+    }
+
+    /// Hold a weapon with both hands from the next update on: both arms reach so each grip
+    /// ([`CharacterAsset::sockets`]) meets `hold`, in character (model) space. False for a rig
+    /// without both arms. Call it each tick, after `update`, with the weapon's grips for the pose
+    /// the animator is in; `reach(limb, None)` lets an arm go.
+    pub fn hold_weapon(&mut self, hold: &WeaponHold) -> bool {
+        let Some(sockets) = self.asset.sockets() else { return false };
+        let Some(targets) = sockets.limb_targets(self.rig.model_pose(), hold) else { return false };
+        for (limb, target) in targets {
+            self.rig.reach(limb, Some(target));
+        }
+        true
     }
 
     /// The local pose as drawn: planted after `plant_feet`, otherwise genex-anim's evaluation.

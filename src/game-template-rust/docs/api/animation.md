@@ -26,6 +26,12 @@ use genex::animation::{JointId, Limb, LimbTarget, LookTarget}; // sockets and IK
 animator.socket(joint, model);              // joint: JointId, model: Mat4 -> Mat4, the joint in the world
 animator.look_at(Some(LookTarget { target, weight: 1.0 })); // character space; None lets go
 animator.reach(Limb::RightArm, Some(LimbTarget { target, pole, weight: 1.0 }));
+use genex::animation::{CharacterReport, ClipRole, WeaponHold, WeaponSockets}; // a playable character
+hero.check();                               // -> CharacterReport { set: ClipSet, diagnostics } (no diagnostics when it is fine)
+hero.sockets();                             // -> Option<WeaponSockets>: the grips on the two hands
+animator.hold_weapon(&WeaponHold { primary, support, weight: 1.0 }); // -> bool; model-space grip points
+ClipSet::of(&clips); PoseCheck::new(&skeleton); // the same check on clips and a skeleton you hold
+sockets.limb_targets(model, &hold);         // -> Option<[(Limb, LimbTarget); 2]>, for animator.reach
 ```
 
 A `CharacterAsset` keeps its fields private: read it through the calls above. An
@@ -160,6 +166,24 @@ hero.plant_feet(at, height_ground(|x, z| Some(terrain.height(x, z))));
 - `animator.plant_feet(..)` after the update locks a planted foot where it stands and bends the
   leg onto the ground (below). An NPC on `CharacterMotion::Root(step.root_motion)` moves exactly
   as its feet do.
+
+## A character that is playable
+
+A generated or imported humanoid is checked before a game plays it: `hero.check()` maps its clips
+onto nine roles (`ClipRole`: idle, walk, run, crouch, aim, fire, reload, hit, death, found by name
+and shown in `report.set`) and measures every clip against the rig's rest pose. Each diagnostic
+has a `code` (`limb-stretch`, `torso-collapse`, `limbs-knotted`, `feet-floating`, `feet-sunk`,
+`hands-off-weapon`, `bone-missing`, `clip-role-missing`), the clip, the bone, the worst time and a
+likely `cause`: `BadRig` (regenerate), `WrongPose` (an A pose against a T pose) or `BoneMismatch`
+(retarget again or pick other clips). Fix or regenerate until `report.diagnostics` is empty; a failing character
+never goes in a game. The same check runs from a shell, for a model and its clip files:
+`cargo run -p genex-anim --example character_check -- model.glb clips.glb` prints the report as
+JSON (`src/shared/character-check.ts`).
+
+Two-handed weapons: after `update`, `animator.hold_weapon(&hold)` reaches both arms so each grip
+(`hero.sockets()`, on the palm of each hand) meets the weapon's grip points, given in character
+space. It is how an aim, fire or reload clip keeps the hands on the rifle whatever the clip did.
+`WeaponSockets::limb_targets` gives the same as `reach` targets.
 
 ## Advancing (on_update)
 
