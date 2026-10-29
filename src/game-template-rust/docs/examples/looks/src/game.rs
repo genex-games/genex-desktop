@@ -61,7 +61,16 @@ pub fn wire(game: &mut Game<World>, scene: Scene) {
     game.camera(move |_sim| main_camera(scene));
     game.named_camera("room", |_sim| Camera { fovy: 62.0, ..Camera::look_at(vec3(-3.2, 1.6, -2.4), vec3(1.0, 1.2, 3.0)) });
     game.named_camera("street", |_sim| Camera { fovy: 60.0, ..Camera::look_at(vec3(-14.0, 1.7, STREET_Z), vec3(4.0, 2.0, 12.0)) });
-    game.probe("look", move |sim| json!({ "scene": scene.name(), "weather": sim.world.weather.is_some(), "night": scene.night() }));
+    // The scene, its luma band and every recipe this module has, so a check reads what to hold it to.
+    game.probe("look", move |sim| {
+        json!({
+            "scene": scene.name(),
+            "band": scene.luma(),
+            "recipes": Scene::ALL.map(Scene::name),
+            "weather": sim.world.weather.is_some(),
+            "night": scene.night(),
+        })
+    });
 }
 
 /// Where a scene is judged from: inside the room for an interior, down the street outside.
