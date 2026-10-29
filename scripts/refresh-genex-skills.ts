@@ -50,7 +50,14 @@ export const GENEX_CARDS = [
   "genex-tool-image",
 ] as const;
 /** Skills Studio writes itself beside the vendored ones: never fetched, never in `vendor.json`. */
-export const STUDIO_SKILLS: readonly string[] = ["plugin-author"];
+export const STUDIO_SKILLS: readonly string[] = [
+  "plugin-author",
+  "creator-mcp",
+  "asset-preference",
+  "publishing",
+  "publishing-apps",
+  "cover",
+];
 /** The CLI's own license, copied beside the cards so every build of the payload carries it. */
 export const CARDS_LICENSE = "LICENSE-cards";
 const CLI_PACKAGE = "@genex-ai/cli-demo";
