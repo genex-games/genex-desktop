@@ -11,6 +11,7 @@ written against; this page says which file is whose.
 | `src/facets/<slug>.rs` | One facet each: `pub fn wire(game: &mut Game<super::World>)`, its own state through `game.facet_state::<T>()`. |
 | `assets/` | Models, textures and sounds the game loads, committed with it. |
 | `web/shell.html` | The studio's page around the browser build. Not edited by the game. |
+| `docs/ASSETS.md` | The game's asset ledger: one `- <tag>: <file>` line per sourced model, added by whoever delivers it. |
 | `docs/GENEX_API.md` | The facade's reference, read-only. |
 | `docs/api/` | The reference's topic pages, read-only. |
 | `engine/` | Only after the person ejected the engine: the game's own copy of the genex crates, the entry owner's code. The studio writes its `Cargo.toml` files (so its build scripts never build, trusted or not) and the `[engine]` row of `genex.toml`; a build whose row differs from the person's eject is refused `engine-unrecorded`. |

@@ -94,7 +94,8 @@ Compare every camera with `references/` and fix the largest gap first: silhouett
 light, density. A box may stand in while a mechanic is proved inside a round; replace it before
 calling that facet done.
 
-**Source by class.** Fetch or generate assets before building with them, and in parallel.
+**Source by class.** Fetch or generate assets before building with them, and in parallel, and
+list each sourced model in `docs/ASSETS.md` as `- <tag>: <file>` (its draw tag, its file).
 
 | Asset class | Route, best first | Never |
 | --- | --- | --- |

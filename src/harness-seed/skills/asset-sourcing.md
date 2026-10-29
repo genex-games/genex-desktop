@@ -40,9 +40,10 @@ request in parallel, before any facet builds an area's content. Again when an ar
   by smaller maps or fewer of them.
 - **Heavy models.** A CC0 model over the import's triangle cap is decimated (Blender) with its
   levels and an impostor, never replaced by a primitive.
-- **Record the plan.** For each area, the list of assets by class, each with its route and where
-  it landed, so builders place delivered files and the judges can check provenance: a row planned
-  as a model that ships as a box is a defect.
+- **Record what landed.** Each sourced model gets a `- <tag>: <file>` line in the game's
+  `docs/ASSETS.md` (its draw tag and its file under `assets/`), so builders place delivered files,
+  the sourcing hold knows when to let them start, and the judges check provenance: a row planned as
+  a model that ships as a box is a defect.
 - **Blender is for kits and preparation.** Modular pieces textured with scans, decimation, levels
   and impostors of heavy models. A `blender__model` script of cubes and flat colours is greybox,
   whatever the tool's name.
