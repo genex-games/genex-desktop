@@ -3692,6 +3692,9 @@ describe("a director's run through the real core and harness", () => {
         // skies, as the Blender plugin offers its tools.
         "cc0__fetch",
         "cc0__search",
+        // Flipped: the CC0 Library packs a fetched scan into a Terrain layer's textures. A tool has
+        // no stack scope (only skills do), so a web lead is offered it too.
+        "cc0__terrain-layer",
         "computer",
         "finish",
         "genex__asset",
@@ -3712,6 +3715,10 @@ describe("a director's run through the real core and harness", () => {
         "job_stop",
         "job_tail",
         "judge",
+        // Flipped: the bundled Content Library (`library`) offers its pre-processed CC0 entries; like
+        // every plugin tool it reaches a web lead too, while its skill serves Rust games only.
+        "library__add",
+        "library__search",
         "look",
         "note",
         // Flipped: a lead may look for a Genex plugin and show the person its card, in the chat its

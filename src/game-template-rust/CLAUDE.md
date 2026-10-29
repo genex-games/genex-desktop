@@ -143,7 +143,7 @@ Models, textures and skies live in `assets/`. Studio imports each file when it l
 what the game loads; `docs/api/assets.md`, `docs/api/drawing.md` and `docs/api/genex-toml.md`
 hold the how.
 
-- **The Genex Library first.** For a common surface, sky, prop, rock or tree, `library__search`
+- **The Content Library first.** For a common surface, sky, prop, rock or tree, `library__search`
   (any word matches), then `library__add`: pre-processed CC0 entries at real size, within a
   triangle budget, with no import work. Read one in `on_reset` with `gfx.assets().library(id)`
   (`docs/api/library.md`; `docs/examples/library-yard/`).

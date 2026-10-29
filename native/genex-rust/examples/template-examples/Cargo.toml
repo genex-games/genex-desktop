@@ -57,7 +57,7 @@ path = "../../../../src/game-template-rust/docs/examples/set-dressing/src/main.r
 name = "soldier"
 path = "../../../../src/game-template-rust/docs/examples/soldier/src/main.rs"
 
-# The yard dressed from the Genex Library (its entries read from beside the binary, stand-ins without them).
+# The yard dressed from the Content Library (its entries read from beside the binary, stand-ins without them).
 [[bin]]
 name = "library-yard"
 path = "../../../../src/game-template-rust/docs/examples/library-yard/src/main.rs"

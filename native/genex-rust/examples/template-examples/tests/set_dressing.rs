@@ -43,7 +43,7 @@ fn started(seed: u32) -> Runtime<World> {
 fn every_layer_places_from_the_seed_and_the_set_draws_built_meshes() {
     let mut runtime = started(1);
     let layers = runtime.state()["dressing"]["layers"].clone();
-    for layer in ["rubble", "plaster", "papers", "grime", "leaks", "posters", "stains", "lamps", "bollards", "bins", "litter", "street-rubble", "puddles", "cracks", "street-posters", "street-grime"] {
+    for layer in ["rubble", "plaster", "papers", "grime", "leaks", "posters", "stains", "lamps", "bollards", "bins", "litter", "street-rubble", "crates", "cones", "puddles", "cracks", "patches", "oil", "street-posters", "street-grime"] {
         assert!(layers[layer].as_u64().unwrap_or(0) > 0, "the dressing places {layer}: {layers}");
     }
     assert!(layers["rubble"].as_u64().unwrap_or(0) > 40 && layers["papers"].as_u64().unwrap_or(0) > 40, "dense clutter: {layers}");

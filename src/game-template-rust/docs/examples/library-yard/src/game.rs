@@ -1,4 +1,4 @@
-//! A yard dressed entirely from the Genex Library (`docs/api/library.md`): an asphalt yard with a
+//! A yard dressed entirely from the Content Library (`docs/api/library.md`): an asphalt yard with a
 //! snow-covered strip, a brick wall, a bench, a barrel and a crate under an HDRI sky. Nothing is
 //! modelled or imported by hand: each entry was added with `library__add` and is read here in
 //! `on_reset` with `gfx.assets().library(id)`, which hands out a material at its real size, a model

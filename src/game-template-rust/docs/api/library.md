@@ -1,4 +1,4 @@
-# Genex Library
+# Content Library
 
 Genex ships its own library of pre-processed CC0 content (Studio's `library` plugin): about 67 PBR
 materials, 13 HDRI skies, 39 props, rocks and debris, and tree slots. Each entry is ready to draw:

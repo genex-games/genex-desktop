@@ -1,4 +1,4 @@
-//! A yard dressed from the Genex Library: the entry file of `docs/examples/library-yard`, a complete
+//! A yard dressed from the Content Library: the entry file of `docs/examples/library-yard`, a complete
 //! game folder's `src/` you can copy whole. The yard itself is `game.rs`.
 
 mod game;
