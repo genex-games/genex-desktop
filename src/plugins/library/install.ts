@@ -52,7 +52,7 @@ export interface StagedDelivery {
 
 const MESSAGE = {
   Unpublished:
-    "the Genex Library pack is not published yet: set the library plugin's pack folder (Settings, Plugins, Genex Library) to a pack built by scripts/library/build-library.ts",
+    "the Genex Library pack is not published yet: set the library plugin's pack folder (Settings, Plugins, Content Library) to a pack built by scripts/library/build-library.ts",
   Digest: (name: string) => `${name}: its sha256 is not the catalog's`,
   Size: (name: string, bytes: number, want: number) => `${name}: ${bytes} bytes, the catalog says ${want}`,
   NotFile: (name: string) => `${name}: not a regular file in the pack folder`,

@@ -2,9 +2,9 @@
   "apiVersion": 4,
   "id": "library",
   "version": "1.0.0",
-  "name": "Genex Library",
+  "name": "Content Library",
   "publisher": "Studio",
-  "description": "Genex's own library of pre-processed CC0 materials, skies, props, rocks and trees: decimated to budget with levels baked in, textures pre-encoded, real-world sizes. Added to a game with zero import work. No account or credits.",
+  "description": "A library of pre-processed CC0 materials, skies, props, rocks and trees: decimated to budget with levels baked in, textures pre-encoded, real-world sizes. Added to a game with zero import work. No account or credits.",
   "backend": "backend.mjs",
   "capabilities": ["network", "project.write", "jobs"],
   "network": {
@@ -13,7 +13,7 @@
   "tools": [
     {
       "name": "search",
-      "description": "Search the Genex Library: PBR materials (ground, snow, mud, asphalt, grass, walls, plaster, concrete, brick, tiles, floors, wood, metal, fabric, rock, roofing), HDRI skies by time of day and weather, props, rocks and debris, and trees. Any word matches (\"snow ground\" finds snow and ground surfaces), best first. Returns each entry's id (what library__add takes), name, category, tags, status, tiers, real size in metres (sizeMetres x, y height, z; tileMetres for one texture repeat), LOD0 triangles, and a sky's time and weather. kind narrows to material, sky, model or vegetation; limit is 1-24 (default 8). Search here before cc0__search, Blender or generating a common surface, sky or prop.",
+      "description": "Search the content library: PBR materials (ground, snow, mud, asphalt, grass, walls, plaster, concrete, brick, tiles, floors, wood, metal, fabric, rock, roofing), HDRI skies by time of day and weather, props, rocks and debris, and trees. Any word matches (\"snow ground\" finds snow and ground surfaces), best first. Returns each entry's id (what library__add takes), name, category, tags, status, tiers, real size in metres (sizeMetres x, y height, z; tileMetres for one texture repeat), LOD0 triangles, and a sky's time and weather. kind narrows to material, sky, model or vegetation; limit is 1-24 (default 8). Search here before cc0__search, Blender or generating a common surface, sky or prop.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -34,7 +34,7 @@
     },
     {
       "name": "add",
-      "description": "Add one Genex Library entry to this game: Studio installs its files (checked against their sha256 pins) and delivers them to assets/library/<folder>/, with the licence (CC0-1.0) and source recorded. A material arrives as albedo, normal and ORM maps with GPU-compressed twins at the tier asked (2k by default; 4k for a surface seen up close on desktop; 1k where the entry has it), a sky as its HDRI, a model as one GLB in metres within its triangle budget with its levels baked in. Load it in on_reset with gfx.assets().library(\"<id>\"); the answer's use line shows the call. Adding the same entry again lands in the same folder.",
+      "description": "Add one content library entry to this game: Studio installs its files (checked against their sha256 pins) and delivers them to assets/library/<folder>/, with the licence (CC0-1.0) and source recorded. A material arrives as albedo, normal and ORM maps with GPU-compressed twins at the tier asked (2k by default; 4k for a surface seen up close on desktop; 1k where the entry has it), a sky as its HDRI, a model as one GLB in metres within its triangle budget with its levels baked in. Load it in on_reset with gfx.assets().library(\"<id>\"); the answer's use line shows the call. Adding the same entry again lands in the same folder.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -54,7 +54,7 @@
   "skills": [
     {
       "name": "genex-library-rust",
-      "text": "The Genex Library is the first stop for common content: library__search finds pre-processed CC0 materials, skies, props, rocks and trees (any word matches); library__add delivers one into assets/library/<folder>/ and records its licence. Never copy library files by hand. Load an added entry in on_reset with gfx.assets().library(\"<id>\") and keep what it gives in the world: .material() (albedo, normal and ORM at real size, world UV), .environment() (the HDRI sky), .model() (a GLB in metres with levels, and an impostor for rocks, vehicles, structures and trees). An entry that was not added refuses missing and the call's .unwrap_or_default() draws the stand-in; verify state().__render.missingModels stays absent. Pick 2k by default and 4k only for surfaces seen up close on desktop. docs/api/library.md lists every call.",
+      "text": "The content library is the first stop for common content: library__search finds pre-processed CC0 materials, skies, props, rocks and trees (any word matches); library__add delivers one into assets/library/<folder>/ and records its licence. Never copy library files by hand. Load an added entry in on_reset with gfx.assets().library(\"<id>\") and keep what it gives in the world: .material() (albedo, normal and ORM at real size, world UV), .environment() (the HDRI sky), .model() (a GLB in metres with levels, and an impostor for rocks, vehicles, structures and trees). An entry that was not added refuses missing and the call's .unwrap_or_default() draws the stand-in; verify state().__render.missingModels stays absent. Pick 2k by default and 4k only for surfaces seen up close on desktop. docs/api/library.md lists every call.",
       "stacks": ["rust-wgpu"]
     }
   ],
