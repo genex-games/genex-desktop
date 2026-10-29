@@ -976,7 +976,7 @@ export class CodexEngine implements Engine {
     const args = await this.#turnServerArgs(request, runDir, ctx.signal);
     const server = await this.#appServer(runDir, ctx.signal, { args, onStderr }).catch(() => null);
     if (!server) return null;
-    const bypass = chatMode(request) === PermissionMode.Bypass;
+    const bypass = runsAsPerson(request);
     const opening = await openCodexTurn(server, {
       thread: threadStartParams({ cwd: runDir, model: ctx.model, bypass, tools }),
       tools: new Set(tools.map((tool) => tool.name)),
@@ -1130,7 +1130,7 @@ export class CodexEngine implements Engine {
     stream: StreamContext,
   ): Promise<AsyncIterable<Record<string, unknown>>> {
     if (stream.turn) {
-      const bypass = chatMode(request) === PermissionMode.Bypass;
+      const bypass = runsAsPerson(request);
       const params = turnStartParams({ cwd: stream.runDir, bypass }, stream.prompt, stream.images);
       return stream.turn.run(params, (name, args) => answerBridgeCall(name, args, request));
     }
@@ -2121,12 +2121,21 @@ function startsElsewhere(request: DelegateRequest): boolean {
 }
 
 /**
- * The session's box: the bypass flag only for the chat's own session in Bypass; a worker's own
- * box; else its folder. `bridge` is the bridge's own roots (`bridgeRoots`).
+ * Whether the session runs as the person, with no box: the chat's own session in Bypass, and a
+ * writing worker of a Bypass chat, as Codex's own Bypass runs in their terminal.
+ */
+function runsAsPerson(request: DelegateRequest): boolean {
+  if (request.worker) return request.worker.mode === PermissionMode.Bypass && !startsElsewhere(request);
+  return chatMode(request) === PermissionMode.Bypass;
+}
+
+/**
+ * The session's box: the bypass flag for a session that runs as the person (`runsAsPerson`); a
+ * worker's own box; else its folder. `bridge` is the bridge's own roots (`bridgeRoots`).
  */
 function sessionBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
   if (request.worker) return [...workerBox(request, runDir, bridge), ...workerWebSearch(request)];
-  return chatMode(request) === PermissionMode.Bypass ? BYPASS_ARGS : sandboxArgs(runDir, [runDir, ...bridge]);
+  return runsAsPerson(request) ? BYPASS_ARGS : sandboxArgs(runDir, [runDir, ...bridge]);
 }
 
 /**
@@ -2152,22 +2161,23 @@ function workerWebSearch(request: DelegateRequest): string[] {
 }
 
 /**
- * A worker's box. Codex has no hook Genex sets and is not spawned through ProcessSandbox, and its
- * bypass flag drops every fence, so a worker is always boxed, whatever the chat's mode: it never
- * asks (`approval_policy=never`), writes only its write roots, and reaches the network only in a
- * Bypass chat. Its box never stops reads, so the never-touch list holds for its writes (and is
- * named in its brief). Plan and a reader start elsewhere and write only the studio's bridge.
+ * A worker's box. A writer of a Bypass chat has none: the person chose Bypass, so it runs as
+ * Codex's own Bypass does (the never-touch list is then named in its brief only). In every other
+ * mode it never asks (`approval_policy=never`), writes only its write roots and has no network; its
+ * box never stops reads, so the never-touch list holds for its writes (and is named in its brief).
+ * Plan and a reader start elsewhere and write only the studio's bridge.
  */
 function workerBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
   const seat = request.worker;
   if (!seat || startsElsewhere(request)) return sandboxArgs(runDir, [runDir, ...bridge]);
+  if (runsAsPerson(request)) return BYPASS_ARGS;
   // Its box cannot deny inside a writable folder: none that is, holds or sits in a never-touch root.
   const writes = writableRoots(
     seat.writeRoots.map((dir) => path.resolve(dir)),
     seat.neverTouch,
   );
   const roots = [...new Set([path.resolve(runDir), ...bridge, ...writes])];
-  return sandboxArgs(runDir, roots, seat.mode === PermissionMode.Bypass);
+  return sandboxArgs(runDir, roots);
 }
 
 /**

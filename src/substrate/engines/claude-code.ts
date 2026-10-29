@@ -2576,20 +2576,21 @@ async function sandboxFor(
 }
 
 /**
- * A worker's box: it writes its roots (in Bypass the home folder too), never the studio's protected
- * folders nor anything the never-touch list names, fenced around its own open folders
- * (`neverTouchFence`). Bypass and Auto run its sandboxed commands unasked; any other mode asks. A
- * command it wants run outside the box goes through the mode's own approval
- * (`allowUnsandboxedCommands`): Auto's classifier, the person in Accept edits and Manual; none in
- * Bypass, nor where nobody can be asked. Outside the box only the never-touch hook holds it. The
- * sandbox takes no network wildcard, so a command's network use is asked about as the mode asks
- * (Bypass allows it).
+ * A worker's box: none in Bypass, which runs it as Claude Code's own Bypass does (the never-touch
+ * hook alone holds it). Otherwise it writes its roots, never the studio's protected folders nor
+ * anything the never-touch list names, fenced around its own open folders (`neverTouchFence`).
+ * Auto runs its sandboxed commands unasked; any other mode asks. A command it wants run outside the
+ * box goes through the mode's own approval (`allowUnsandboxedCommands`): Auto's classifier, the
+ * person in Accept edits and Manual; none where nobody can be asked. Outside the box only the
+ * never-touch hook holds it. The sandbox takes no network wildcard, so a command's network use is
+ * asked about as the mode asks.
  */
 async function workerSandbox(
   request: DelegateRequest,
   box: WorkerBox,
   protectedPaths: string[],
 ): Promise<Record<string, unknown>> {
+  if (!box.boxed) return { enabled: false };
   const fence = request.worker ? await neverTouchFence(request.worker.neverTouch) : { reads: [], writes: [] };
   const roots = workerWrites(request);
   const writes = box.home ? [os.homedir(), ...roots] : roots;
@@ -2626,7 +2627,11 @@ function workerClaudeFolders(cwd: string, roots: readonly string[]): string[] {
  */
 export function studioShell(request: DelegateRequest, platform: NodeJS.Platform): boolean {
   if (platform !== "win32" || request.blind) return false;
-  if (request.worker) return !workerReadOnly(request.worker, Boolean(request.readOnly));
+  if (request.worker) {
+    const box = workerBox(request.worker, Boolean(request.readOnly));
+    // A Bypass worker has no box: Claude Code's own shell runs its commands, as the person's.
+    return box.boxed && !workerReadOnly(request.worker, Boolean(request.readOnly));
+  }
   return !asksOf(request) && !request.readOnly;
 }
 

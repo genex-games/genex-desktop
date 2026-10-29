@@ -2,9 +2,9 @@
  * A worker's Claude Code session, as the engine starts it from the seat the host handed it.
  *
  * The Agent SDK's `query()` is injected, so what is proven is the engine's half: a worker runs in
- * the chat's mode (Bypass in a box that writes the home folder and its roots; Auto, Accept edits and
- * Manual in a box that writes only its roots; every box denying the never-touch list; Plan
- * read-only), the never-touch hook comes first in every mode and screens reads,
+ * the chat's mode (Bypass with no box, as Claude Code's own Bypass; Auto, Accept edits and Manual
+ * in a box that writes only its roots and denies the never-touch list; Plan read-only), the
+ * never-touch hook comes first in every mode and screens reads,
  * its questions reach the host with its own words and never change its mode, and the web is a
  * research worker's or a writer's. Sessions without a seat keep their contract (engine-delegated,
  * engine-permissions).
@@ -139,6 +139,7 @@ function preToolUse(options: Options): Array<{ matcher?: string; hooks: Hook[] }
 }
 
 type Sandbox = {
+  enabled: boolean;
   autoAllowBashIfSandboxed: boolean;
   allowUnsandboxedCommands: boolean;
   filesystem: { allowWrite?: string[]; denyWrite: string[]; denyRead: string[] };
@@ -157,9 +158,9 @@ function assertReadOnly(options: Options): void {
 }
 
 /**
- * A writer in the chat's mode: asking the host, in a box that denies the never-touch list in every
- * mode. Bypass's box writes the home folder beside its roots and never lets a command leave it;
- * the others write only its roots.
+ * A writer in the chat's mode: asking the host. Bypass runs it as Claude Code's own Bypass does,
+ * with no box (the never-touch hook still screens its calls); the other modes run it in a box that
+ * denies the never-touch list and writes only its roots.
  */
 function assertWriter(options: Options, mode: PermissionMode, roots: string[], fenced: string): void {
   const disallowed = options.disallowedTools as string[];
@@ -167,22 +168,20 @@ function assertWriter(options: Options, mode: PermissionMode, roots: string[], f
   assert.equal(options.permissionMode, mode, "the chat's mode");
   assert.equal(typeof options.canUseTool, "function", `${mode}: what Claude Code asks goes to the host`);
   for (const tool of ["Edit", "Write", "Bash"]) assert.equal(disallowed.includes(tool), false, `${mode}: ${tool}`);
+  if (mode === PermissionMode.Bypass) {
+    assert.equal(sandbox?.enabled, false, "Bypass: no box, so its commands reach the network and the GPU");
+    return;
+  }
   assert.ok(sandbox, `${mode} runs in a box`);
   assert.ok(sandbox.filesystem.denyRead.includes(fenced), `${mode}: the box never reads the never-touch list`);
   assert.ok(sandbox.filesystem.denyWrite.includes(fenced), `${mode}: the box never writes the never-touch list`);
-  if (mode === PermissionMode.Bypass) {
-    assert.deepEqual(sandbox.filesystem.allowWrite, [os.homedir(), ...roots], "Bypass: the home folder and its roots");
-    assert.equal(sandbox.autoAllowBashIfSandboxed, true, "Bypass: its commands run unasked");
-    assert.equal(sandbox.allowUnsandboxedCommands, false, "Bypass: no command leaves the box");
-    return;
-  }
   assert.deepEqual(sandbox.filesystem.allowWrite, roots, `${mode}: it writes only its roots`);
   assert.equal(sandbox.autoAllowBashIfSandboxed, mode === PermissionMode.Auto, `${mode}: unasked only in Auto`);
   assert.equal(sandbox.allowUnsandboxedCommands, true, `${mode}: leaving the box is asked about`);
 }
 
 describe("a worker's session follows the chat's mode", () => {
-  it("a worker runs in the chat's mode: Bypass in a box writing the home folder, Auto, Accept edits and Manual in a box writing only its roots, Plan read-only", async () => {
+  it("a worker runs in the chat's mode: Bypass with no box, Auto, Accept edits and Manual in a box writing only its roots, Plan read-only", async () => {
     const f = await fixture();
     for (const mode of MODES) {
       const options = await session(f, seat(f, mode));
@@ -201,7 +200,8 @@ describe("a worker's session follows the chat's mode", () => {
     for (const dir of [f.copy, f.granted]) await mkdir(path.join(dir, ".claude"), { recursive: true });
     const denies = (denyWrite: string[], target: string) =>
       denyWrite.some((entry) => entry === target || path.matchesGlob(target, entry));
-    for (const mode of MODES.filter((m) => m !== PermissionMode.Plan)) {
+    // Bypass has no box: there, as in Claude Code's own Bypass, nothing fences these at the OS.
+    for (const mode of MODES.filter((m) => m !== PermissionMode.Plan && m !== PermissionMode.Bypass)) {
       const { denyWrite } = ((await session(f, seat(f, mode))).sandbox as Sandbox).filesystem;
       for (const target of [path.join(f.copy, ".claude"), path.join(f.granted, ".claude")])
         assert.ok(denies(denyWrite, target), `${mode}: ${target} is never written: ${denyWrite.join(", ")}`);
@@ -293,11 +293,13 @@ describe("a worker's session follows the chat's mode", () => {
         const output = answer.hookSpecificOutput as { permissionDecision?: string } | undefined;
         assert.equal(output?.permissionDecision, "deny", `${mode}: ${tool} ${JSON.stringify(input)}`);
       }
+      // Bypass has no box: the hook above is what refuses those writes there.
       const box = options.sandbox as Sandbox | undefined;
-      assert.ok(
-        box?.filesystem.denyWrite.some((denied) => snapshot.startsWith(`${denied}${path.sep}`)),
-        `${mode}: the box never writes a snapshot`,
-      );
+      if (mode !== PermissionMode.Bypass)
+        assert.ok(
+          box?.filesystem.denyWrite.some((denied) => snapshot.startsWith(`${denied}${path.sep}`)),
+          `${mode}: the box never writes a snapshot`,
+        );
       for (const file of [
         path.join(f.engineHome, ".credentials.json"),
         path.join(f.engineHome, "settings.json"),

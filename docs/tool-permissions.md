@@ -304,7 +304,7 @@ Its seat (`WorkerSeat`, `#workerReach`) carries:
 
 | Chat mode | A Claude Code worker |
 | --- | --- |
-| Bypass | `bypassPermissions`, in a box that writes the home folder and its roots, every command in it unasked, none leaving it |
+| Bypass | `bypassPermissions` with no box, as Claude Code's own Bypass: its commands reach the network and the GPU, and the never-touch hook still screens each call |
 | Auto | `auto`, in a box that writes only its roots and runs its sandboxed commands unasked |
 | Accept edits | `acceptEdits`, in that box, asking about each command |
 | Manual | `default`, in that box, asking about each edit and command |
@@ -320,12 +320,15 @@ on Windows drive, share and Git Bash paths; a lone `/` given to `tr` or as a sea
 text) and any `security` call, each path also as its links lead. A word reaches what it names and
 all below it, so `rm -rf ~/.codex`, `cd ..` from a game and `ls ~` are refused alike; a call it
 cannot read (`${HOME:-…}`, `$OLDPWD`) is refused, and a call that writes is refused in a folder open
-only for reading. In every mode, Bypass included, the box denies the same roots at the OS boundary,
+only for reading. In every mode but Bypass, the box denies the same roots at the OS boundary,
 and Claude Code's own folder (`.claude`) in its folder and each write root, for every command that
 stays in it; the text screen is the second net, for what a program builds
-as it runs. The sandbox takes no network wildcard, so a Bypass worker's command that reaches the
-network is allowed by its mode. A Codex worker cannot ask, so it is always boxed: its writable
-roots are its write roots, and the network is on only in a Bypass chat. Only a delegated engine
+as it runs. The sandbox takes no network wildcard, so a boxed worker's command that reaches the
+network is asked about as its mode asks. A Bypass worker has no box: the person chose Bypass for
+their chat, so its workers run as Claude Code's and Codex's own Bypass do, and only the hook holds
+a Claude Code worker. A Codex worker cannot ask: in a Bypass chat it runs with Codex's bypass flag
+(`runsAsPerson`), and in every other mode it is boxed, its writable roots its write roots, with no
+network. Only a delegated engine
 (Claude Code, Codex) carries a seat: a local model's work stays unattended, and its chat session is
 offered no worker tools.
 
@@ -692,8 +695,8 @@ Loop run must confirm the two known changes: builders can no longer read sibling
   logins; a page's text can still try to steer the agent.
 - Codex cannot ask mid-turn: Manual and Accept edits are unavailable for it until it runs over a
   protocol that asks (`codex app-server`), and a chat in either runs Codex in Auto's sandbox. Its
-  Bypass has no sandbox at all, as the CLI's own flag, and neither has Grok Build's, whose builds
-  then run as the person (`runsAsPerson`). Bonsai and Codex ask about no read, and their
+  Bypass has no sandbox at all, as the CLI's own flag, for the chat's session and its workers alike,
+  and neither has Grok Build's, whose builds then run as the person (`runsAsPerson`). Bonsai and Codex ask about no read, and their
   "always" offers no standing grant.
 
 - One card can hold a lead's turn for up to five minutes, and the coordinator's own five-minute

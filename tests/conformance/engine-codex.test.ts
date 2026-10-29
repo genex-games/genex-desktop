@@ -451,9 +451,10 @@ describe("codex engine", () => {
     }
   });
 
-  it("a Codex worker is always boxed: its roots writable, the network on only in a Bypass chat, never the bypass flag", async () => {
-    // Codex has no hook Genex sets and its bypass flag drops every fence, so a worker is boxed in
-    // every mode: the never-touch list holds for its writes at the OS boundary.
+  it("a Codex worker runs as the person in a Bypass chat, and boxed with no network in every other mode", async () => {
+    // Bypass is the person's choice for their chat: its workers run as Codex's own Bypass does, as
+    // the chat's own session already did. Every other mode keeps the box, the never-touch list
+    // holding for its writes at the OS boundary.
     const { fn, seen } = fakeExec(successRun);
     const { engine, root } = await signedInEngine(fn);
     const game = path.join(root, "game");
@@ -475,15 +476,20 @@ describe("codex engine", () => {
       argv.includes('sandbox_mode="workspace-write"') && argv.includes('approval_policy="never"');
     const network = (argv: string[]) => argv.find((arg) => arg.startsWith("sandbox_workspace_write.network_access="));
 
-    for (const mode of ["bypassPermissions", "auto", "acceptEdits", "default"] as const) {
+    await engine.delegate({ prompt: "build the scene", cwd: game, worker: seat("bypassPermissions") });
+    const bypass = seen.at(-1)!;
+    assert.equal(bypass.cwd, game, "Bypass: in its folder");
+    assert.ok(bypass.argv.includes("--dangerously-bypass-approvals-and-sandbox"), "Bypass: the bypass flag");
+    assert.equal(boxed(bypass.argv), false, "Bypass: no box");
+    assert.ok(bypass.prompt.includes(path.join(root, "other-game")), "Bypass: the brief names what it never reaches");
+    for (const mode of ["auto", "acceptEdits", "default"] as const) {
       await engine.delegate({ prompt: "build the scene", cwd: game, worker: seat(mode) });
       const call = seen.at(-1)!;
       assert.equal(call.cwd, game, mode);
       assert.ok(boxed(call.argv), `${mode}: boxed`);
       assert.ok(!call.argv.includes("--dangerously-bypass-approvals-and-sandbox"), `${mode}: never the bypass flag`);
       assert.deepEqual(writable(call.argv), [game, ...bridgeRoot(game), refs], `${mode}: its write roots`);
-      const open = mode === "bypassPermissions";
-      assert.equal(network(call.argv), `sandbox_workspace_write.network_access=${open}`, mode);
+      assert.equal(network(call.argv), "sandbox_workspace_write.network_access=false", mode);
       assert.ok(call.prompt.includes(path.join(root, "other-game")), `${mode}: the brief names what it never reaches`);
     }
     await engine.delegate({ prompt: "plan the scene", cwd: game, worker: seat("plan") });
