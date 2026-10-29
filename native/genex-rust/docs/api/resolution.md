@@ -26,7 +26,9 @@ numbers each destination draws at, and the two explicit tiers a game may ask for
 class on every desktop class; a browser or a phone holds it to its own row, so one config is right
 everywhere. Check it with `capture --size 3840x2160` (or `7680x4320`): a native capture side goes
 up to 8192. Studio's embedded Live view stays at most 4096 a side; the game's own window and its
-captures are not held to it.
+captures are not held to it. Measured on an M4 Max (a lit yard with a 4096 ground map): Native4k
+draws in about 13 ms of GPU time, Cinematic8k in about 55 ms, so treat Cinematic8k as a capture and
+cutscene tier.
 
 Supersampling: on a native desktop-ultra a render scale set in code may reach 2 (`ClassOverride {
 render_scale: Some(2.0), .. }`; `genex.toml` and the `renderSettings` lock stay within 0.5..=1), and
