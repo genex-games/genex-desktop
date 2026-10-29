@@ -10,33 +10,17 @@
       "kind": "material",
       "name": "Snow 02",
       "category": "snow",
-      "tags": [
-        "winter",
-        "ground",
-        "snow",
-        "uneven",
-        "smooth",
-        "powdery",
-        "frosty",
-        "snowfield",
-        "soft",
-        "wintery"
-      ],
+      "tags": ["winter", "ground", "snow", "uneven", "smooth", "powdery", "frosty", "snowfield", "soft", "wintery"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "snow_02",
         "page": "https://polyhaven.com/a/snow_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -139,32 +123,17 @@
       "kind": "material",
       "name": "Snow 01",
       "category": "snow",
-      "tags": [
-        "winter",
-        "ground",
-        "snow",
-        "rough",
-        "uneven",
-        "footprints",
-        "powdery",
-        "trail",
-        "snowfield"
-      ],
+      "tags": ["winter", "ground", "snow", "rough", "uneven", "footprints", "powdery", "trail", "snowfield"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "snow_01",
         "page": "https://polyhaven.com/a/snow_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -216,31 +185,17 @@
       "kind": "material",
       "name": "Snow 03",
       "category": "snow",
-      "tags": [
-        "winter",
-        "ground",
-        "footprints",
-        "snow",
-        "uneven",
-        "rough",
-        "trampled",
-        "mud"
-      ],
+      "tags": ["winter", "ground", "footprints", "snow", "uneven", "rough", "trampled", "mud"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "snow_03",
         "page": "https://polyhaven.com/a/snow_03",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -292,30 +247,17 @@
       "kind": "material",
       "name": "Snow Floor",
       "category": "snow",
-      "tags": [
-        "winter",
-        "ground",
-        "slush",
-        "rough",
-        "snow",
-        "floor",
-        "asphalt"
-      ],
+      "tags": ["winter", "ground", "slush", "rough", "snow", "floor", "asphalt"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "snow_floor",
         "page": "https://polyhaven.com/a/snow_floor",
-        "authors": [
-          "eye-candy.xyz"
-        ]
+        "authors": ["eye-candy.xyz"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -367,31 +309,17 @@
       "kind": "material",
       "name": "Brown Mud Leaves 01",
       "category": "mud",
-      "tags": [
-        "ground",
-        "autumn",
-        "forest",
-        "grass",
-        "mud",
-        "moss",
-        "stones",
-        "orange"
-      ],
+      "tags": ["ground", "autumn", "forest", "grass", "mud", "moss", "stones", "orange"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "brown_mud_leaves_01",
         "page": "https://polyhaven.com/a/brown_mud_leaves_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -494,28 +422,17 @@
       "kind": "material",
       "name": "Brown Mud Dry",
       "category": "mud",
-      "tags": [
-        "ground",
-        "dry",
-        "dirt",
-        "mud",
-        "stones"
-      ],
+      "tags": ["ground", "dry", "dirt", "mud", "stones"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "brown_mud_dry",
         "page": "https://polyhaven.com/a/brown_mud_dry",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -586,16 +503,11 @@
         "site": "polyhaven",
         "id": "brown_mud_02",
         "page": "https://polyhaven.com/a/brown_mud_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -666,16 +578,11 @@
         "site": "polyhaven",
         "id": "forrest_ground_01",
         "page": "https://polyhaven.com/a/forrest_ground_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -797,17 +704,11 @@
         "site": "polyhaven",
         "id": "forest_ground_04",
         "page": "https://polyhaven.com/a/forest_ground_04",
-        "authors": [
-          "Rob Tuytel",
-          "Rico Cilliers"
-        ]
+        "authors": ["Rob Tuytel", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 3.15,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -878,16 +779,11 @@
         "site": "polyhaven",
         "id": "forest_leaves_02",
         "page": "https://polyhaven.com/a/forest_leaves_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -958,16 +854,11 @@
         "site": "polyhaven",
         "id": "rocks_ground_02",
         "page": "https://polyhaven.com/a/rocks_ground_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1038,16 +929,11 @@
         "site": "polyhaven",
         "id": "rocky_trail_02",
         "page": "https://polyhaven.com/a/rocky_trail_02",
-        "authors": [
-          "Amal Kumar"
-        ]
+        "authors": ["Amal Kumar"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1169,16 +1055,11 @@
         "site": "polyhaven",
         "id": "leafy_grass",
         "page": "https://polyhaven.com/a/leafy_grass",
-        "authors": [
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1281,31 +1162,17 @@
       "kind": "material",
       "name": "Asphalt 01",
       "category": "asphalt",
-      "tags": [
-        "road",
-        "street",
-        "urban",
-        "rough",
-        "dirty",
-        "asphalt",
-        "worn"
-      ],
+      "tags": ["road", "street", "urban", "rough", "dirty", "asphalt", "worn"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "asphalt_01",
         "page": "https://polyhaven.com/a/asphalt_01",
-        "authors": [
-          "Dario Barresi",
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Dario Barresi", "Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 2.08,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1425,16 +1292,11 @@
         "site": "polyhaven",
         "id": "asphalt_track",
         "page": "https://polyhaven.com/a/asphalt_track",
-        "authors": [
-          "Dimitrios Savva"
-        ]
+        "authors": ["Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1504,16 +1366,11 @@
         "site": "polyhaven",
         "id": "asphalt_06",
         "page": "https://polyhaven.com/a/asphalt_06",
-        "authors": [
-          "Jan Martens"
-        ]
+        "authors": ["Jan Martens"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1635,16 +1492,11 @@
         "site": "polyhaven",
         "id": "clean_asphalt",
         "page": "https://polyhaven.com/a/clean_asphalt",
-        "authors": [
-          "Dimitrios Savva"
-        ]
+        "authors": ["Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 2.1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1712,16 +1564,11 @@
         "site": "polyhaven",
         "id": "asphalt_pit_lane",
         "page": "https://polyhaven.com/a/asphalt_pit_lane",
-        "authors": [
-          "Dimitrios Savva"
-        ]
+        "authors": ["Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1773,33 +1620,17 @@
       "kind": "material",
       "name": "Gravelly Sand",
       "category": "gravel",
-      "tags": [
-        "ground",
-        "path",
-        "sand",
-        "gravel",
-        "stony",
-        "terrain",
-        "dirt",
-        "coarse",
-        "debris",
-        "dusty"
-      ],
+      "tags": ["ground", "path", "sand", "gravel", "stony", "terrain", "dirt", "coarse", "debris", "dusty"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "gravelly_sand",
         "page": "https://polyhaven.com/a/gravelly_sand",
-        "authors": [
-          "Dario Barresi"
-        ]
+        "authors": ["Dario Barresi"]
       },
       "material": {
         "tileMetres": 2.48,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -1870,16 +1701,11 @@
         "site": "polyhaven",
         "id": "gravel_stones",
         "page": "https://polyhaven.com/a/gravel_stones",
-        "authors": [
-          "Amal Kumar"
-        ]
+        "authors": ["Amal Kumar"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2001,17 +1827,11 @@
         "site": "polyhaven",
         "id": "gravel_floor_02",
         "page": "https://polyhaven.com/a/gravel_floor_02",
-        "authors": [
-          "Jenelle van Heerden",
-          "Dimitrios Savva"
-        ]
+        "authors": ["Jenelle van Heerden", "Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2063,32 +1883,17 @@
       "kind": "material",
       "name": "Sand 01",
       "category": "sand",
-      "tags": [
-        "beach",
-        "desert",
-        "ground",
-        "sand",
-        "uneven",
-        "trampled",
-        "clay",
-        "plaster",
-        "dry"
-      ],
+      "tags": ["beach", "desert", "ground", "sand", "uneven", "trampled", "clay", "plaster", "dry"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "sand_01",
         "page": "https://polyhaven.com/a/sand_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2210,16 +2015,11 @@
         "site": "polyhaven",
         "id": "coast_sand_01",
         "page": "https://polyhaven.com/a/coast_sand_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 15,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2271,32 +2071,17 @@
       "kind": "material",
       "name": "Beige Wall 001",
       "category": "plaster",
-      "tags": [
-        "wall",
-        "interior",
-        "painted",
-        "beige",
-        "smooth",
-        "suburb",
-        "house",
-        "home"
-      ],
+      "tags": ["wall", "interior", "painted", "beige", "smooth", "suburb", "house", "home"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "beige_wall_001",
         "page": "https://polyhaven.com/a/beige_wall_001",
-        "authors": [
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2399,28 +2184,17 @@
       "kind": "material",
       "name": "Grey Plaster",
       "category": "plaster",
-      "tags": [
-        "wall",
-        "interior",
-        "moss",
-        "plain",
-        "bare"
-      ],
+      "tags": ["wall", "interior", "moss", "plain", "bare"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "grey_plaster",
         "page": "https://polyhaven.com/a/grey_plaster",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2491,16 +2265,11 @@
         "site": "polyhaven",
         "id": "plastered_wall",
         "page": "https://polyhaven.com/a/plastered_wall",
-        "authors": [
-          "Amal Kumar"
-        ]
+        "authors": ["Amal Kumar"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2622,17 +2391,11 @@
         "site": "polyhaven",
         "id": "concrete_wall_003",
         "page": "https://polyhaven.com/a/concrete_wall_003",
-        "authors": [
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2754,17 +2517,11 @@
         "site": "polyhaven",
         "id": "cracked_concrete_wall",
         "page": "https://polyhaven.com/a/cracked_concrete_wall",
-        "authors": [
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2816,33 +2573,17 @@
       "kind": "material",
       "name": "Concrete Floor Worn 001",
       "category": "concrete",
-      "tags": [
-        "floor",
-        "industrial",
-        "worn",
-        "old",
-        "plain",
-        "grey",
-        "weathered",
-        "bare",
-        "discolored"
-      ],
+      "tags": ["floor", "industrial", "worn", "old", "plain", "grey", "weathered", "bare", "discolored"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "concrete_floor_worn_001",
         "page": "https://polyhaven.com/a/concrete_floor_worn_001",
-        "authors": [
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -2945,28 +2686,17 @@
       "kind": "material",
       "name": "Concrete Floor 02",
       "category": "concrete",
-      "tags": [
-        "floor",
-        "garage",
-        "rough",
-        "moss",
-        "plain"
-      ],
+      "tags": ["floor", "garage", "rough", "moss", "plain"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "concrete_floor_02",
         "page": "https://polyhaven.com/a/concrete_floor_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3088,16 +2818,11 @@
         "site": "polyhaven",
         "id": "concrete_layers_02",
         "page": "https://polyhaven.com/a/concrete_layers_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3168,16 +2893,11 @@
         "site": "polyhaven",
         "id": "gravel_embedded_concrete",
         "page": "https://polyhaven.com/a/gravel_embedded_concrete",
-        "authors": [
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3229,31 +2949,17 @@
       "kind": "material",
       "name": "Concrete Floor Painted",
       "category": "concrete",
-      "tags": [
-        "floor",
-        "painted",
-        "warehouse",
-        "rough",
-        "textured",
-        "urban",
-        "worn",
-        "weathered"
-      ],
+      "tags": ["floor", "painted", "warehouse", "rough", "textured", "urban", "worn", "weathered"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "concrete_floor_painted",
         "page": "https://polyhaven.com/a/concrete_floor_painted",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3305,31 +3011,17 @@
       "kind": "material",
       "name": "Red Brick",
       "category": "brick",
-      "tags": [
-        "wall",
-        "exterior",
-        "building",
-        "brick",
-        "bricks",
-        "red brick",
-        "brick wall",
-        "rough"
-      ],
+      "tags": ["wall", "exterior", "building", "brick", "bricks", "red brick", "brick wall", "rough"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "red_brick",
         "page": "https://polyhaven.com/a/red_brick",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.4,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3432,30 +3124,17 @@
       "kind": "material",
       "name": "Red Brick 03",
       "category": "brick",
-      "tags": [
-        "wall",
-        "exterior",
-        "old",
-        "red",
-        "industrial",
-        "factory",
-        "brown"
-      ],
+      "tags": ["wall", "exterior", "old", "red", "industrial", "factory", "brown"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "red_brick_03",
         "page": "https://polyhaven.com/a/red_brick_03",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3507,31 +3186,17 @@
       "kind": "material",
       "name": "Brick Wall 001",
       "category": "brick",
-      "tags": [
-        "wall",
-        "exterior",
-        "red",
-        "rough",
-        "industrial",
-        "plain",
-        "baked"
-      ],
+      "tags": ["wall", "exterior", "red", "rough", "industrial", "plain", "baked"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "brick_wall_001",
         "page": "https://polyhaven.com/a/brick_wall_001",
-        "authors": [
-          "Rob Tuytel",
-          "Dimitrios Savva"
-        ]
+        "authors": ["Rob Tuytel", "Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3634,32 +3299,17 @@
       "kind": "material",
       "name": "Castle Brick 02 Red",
       "category": "brick",
-      "tags": [
-        "wall",
-        "castle",
-        "medieval",
-        "rough",
-        "red",
-        "sewer",
-        "damp",
-        "old",
-        "uneven"
-      ],
+      "tags": ["wall", "castle", "medieval", "rough", "red", "sewer", "damp", "old", "uneven"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "castle_brick_02_red",
         "page": "https://polyhaven.com/a/castle_brick_02_red",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3711,30 +3361,17 @@
       "kind": "material",
       "name": "Medieval Blocks 03",
       "category": "brick",
-      "tags": [
-        "wall",
-        "stone",
-        "medieval",
-        "blocks",
-        "large",
-        "old",
-        "rough"
-      ],
+      "tags": ["wall", "stone", "medieval", "blocks", "large", "old", "rough"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "medieval_blocks_03",
         "page": "https://polyhaven.com/a/medieval_blocks_03",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3805,16 +3442,11 @@
         "site": "polyhaven",
         "id": "interior_tiles",
         "page": "https://polyhaven.com/a/interior_tiles",
-        "authors": [
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 1.9,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -3936,16 +3568,11 @@
         "site": "polyhaven",
         "id": "worn_tile_floor",
         "page": "https://polyhaven.com/a/worn_tile_floor",
-        "authors": [
-          "Dimitrios Savva"
-        ]
+        "authors": ["Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4067,16 +3694,11 @@
         "site": "polyhaven",
         "id": "checkered_pavement_tiles",
         "page": "https://polyhaven.com/a/checkered_pavement_tiles",
-        "authors": [
-          "Amal Kumar"
-        ]
+        "authors": ["Amal Kumar"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4147,16 +3769,11 @@
         "site": "polyhaven",
         "id": "concrete_tiles_02",
         "page": "https://polyhaven.com/a/concrete_tiles_02",
-        "authors": [
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 1.83,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4208,35 +3825,17 @@
       "kind": "material",
       "name": "Laminate Floor 02",
       "category": "floor",
-      "tags": [
-        "wood",
-        "interior",
-        "laminate",
-        "even",
-        "flat",
-        "wooden",
-        "floor",
-        "smooth",
-        "tiles",
-        "brown",
-        "planks"
-      ],
+      "tags": ["wood", "interior", "laminate", "even", "flat", "wooden", "floor", "smooth", "tiles", "brown", "planks"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "laminate_floor_02",
         "page": "https://polyhaven.com/a/laminate_floor_02",
-        "authors": [
-          "Dario Barresi",
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Dario Barresi", "Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 1.7,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4358,17 +3957,11 @@
         "site": "polyhaven",
         "id": "diagonal_parquet",
         "page": "https://polyhaven.com/a/diagonal_parquet",
-        "authors": [
-          "Jenelle van Heerden",
-          "Sergej Majboroda"
-        ]
+        "authors": ["Jenelle van Heerden", "Sergej Majboroda"]
       },
       "material": {
         "tileMetres": 2.36,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4420,28 +4013,17 @@
       "kind": "material",
       "name": "Old Planks 02",
       "category": "floor",
-      "tags": [
-        "wood",
-        "planks",
-        "old",
-        "damaged",
-        "worn"
-      ],
+      "tags": ["wood", "planks", "old", "damaged", "worn"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "old_planks_02",
         "page": "https://polyhaven.com/a/old_planks_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4563,16 +4145,11 @@
         "site": "polyhaven",
         "id": "dark_wooden_planks",
         "page": "https://polyhaven.com/a/dark_wooden_planks",
-        "authors": [
-          "Amal Kumar"
-        ]
+        "authors": ["Amal Kumar"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4643,18 +4220,11 @@
         "site": "polyhaven",
         "id": "plank_flooring",
         "page": "https://polyhaven.com/a/plank_flooring",
-        "authors": [
-          "Dario Barresi",
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dario Barresi", "Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 1.34,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4706,31 +4276,17 @@
       "kind": "material",
       "name": "Plywood",
       "category": "wood",
-      "tags": [
-        "board",
-        "construction",
-        "clean",
-        "even",
-        "smooth",
-        "flat",
-        "continuous",
-        "consistent"
-      ],
+      "tags": ["board", "construction", "clean", "even", "smooth", "flat", "continuous", "consistent"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "plywood",
         "page": "https://polyhaven.com/a/plywood",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 0.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4782,30 +4338,17 @@
       "kind": "material",
       "name": "Oak Veneer 01",
       "category": "wood",
-      "tags": [
-        "furniture",
-        "veneer",
-        "oak",
-        "grain",
-        "wood grain",
-        "natural wood",
-        "road"
-      ],
+      "tags": ["furniture", "veneer", "oak", "grain", "wood grain", "natural wood", "road"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "oak_veneer_01",
         "page": "https://polyhaven.com/a/oak_veneer_01",
-        "authors": [
-          "Jenelle van Heerden"
-        ]
+        "authors": ["Jenelle van Heerden"]
       },
       "material": {
         "tileMetres": 1.83,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4876,17 +4419,11 @@
         "site": "polyhaven",
         "id": "weathered_brown_planks",
         "page": "https://polyhaven.com/a/weathered_brown_planks",
-        "authors": [
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 1.8,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -4989,28 +4526,17 @@
       "kind": "material",
       "name": "Wood Planks Dirt",
       "category": "wood",
-      "tags": [
-        "planks",
-        "dirty",
-        "barn",
-        "even",
-        "weathered"
-      ],
+      "tags": ["planks", "dirty", "barn", "even", "weathered"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "wood_planks_dirt",
         "page": "https://polyhaven.com/a/wood_planks_dirt",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5062,33 +4588,17 @@
       "kind": "material",
       "name": "Metal Plate",
       "category": "metal",
-      "tags": [
-        "floor",
-        "industrial",
-        "tread",
-        "bare",
-        "painted",
-        "rusty",
-        "pattern",
-        "iron",
-        "factory",
-        "steel"
-      ],
+      "tags": ["floor", "industrial", "tread", "bare", "painted", "rusty", "pattern", "iron", "factory", "steel"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "metal_plate",
         "page": "https://polyhaven.com/a/metal_plate",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 0.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5210,17 +4720,11 @@
         "site": "polyhaven",
         "id": "rust_coarse_01",
         "page": "https://polyhaven.com/a/rust_coarse_01",
-        "authors": [
-          "Dimitrios Savva",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dimitrios Savva", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 2.2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5323,27 +4827,17 @@
       "kind": "material",
       "name": "Rusty Metal 02",
       "category": "metal",
-      "tags": [
-        "rust",
-        "painted",
-        "old",
-        "weathered"
-      ],
+      "tags": ["rust", "painted", "old", "weathered"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "rusty_metal_02",
         "page": "https://polyhaven.com/a/rusty_metal_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5414,17 +4908,11 @@
         "site": "polyhaven",
         "id": "corrugated_iron",
         "page": "https://polyhaven.com/a/corrugated_iron",
-        "authors": [
-          "Jenelle van Heerden",
-          "Dimitrios Savva"
-        ]
+        "authors": ["Jenelle van Heerden", "Dimitrios Savva"]
       },
       "material": {
         "tileMetres": 1.12,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5527,30 +5015,17 @@
       "kind": "material",
       "name": "Green Metal Rust",
       "category": "metal",
-      "tags": [
-        "painted",
-        "rust",
-        "container",
-        "ship",
-        "tank",
-        "industrial",
-        "canister"
-      ],
+      "tags": ["painted", "rust", "container", "ship", "tank", "industrial", "canister"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "green_metal_rust",
         "page": "https://polyhaven.com/a/green_metal_rust",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5621,16 +5096,11 @@
         "site": "polyhaven",
         "id": "fabric_leather_02",
         "page": "https://polyhaven.com/a/fabric_leather_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 0.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5701,17 +5171,11 @@
         "site": "polyhaven",
         "id": "hessian_230",
         "page": "https://polyhaven.com/a/hessian_230",
-        "authors": [
-          "colormass",
-          "Rico Cilliers"
-        ]
+        "authors": ["colormass", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 0.27,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5781,16 +5245,11 @@
         "site": "polyhaven",
         "id": "brown_leather",
         "page": "https://polyhaven.com/a/brown_leather",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 0.4,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5893,31 +5352,17 @@
       "kind": "material",
       "name": "Denim Fabric 02",
       "category": "fabric",
-      "tags": [
-        "denim",
-        "cloth",
-        "jeans",
-        "pants",
-        "clothing",
-        "textile ",
-        "creased",
-        "folds"
-      ],
+      "tags": ["denim", "cloth", "jeans", "pants", "clothing", "textile ", "creased", "folds"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "denmin_fabric_02",
         "page": "https://polyhaven.com/a/denmin_fabric_02",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 0.1,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -5969,31 +5414,17 @@
       "kind": "material",
       "name": "Dirty Carpet",
       "category": "fabric",
-      "tags": [
-        "carpet",
-        "floor",
-        "interior",
-        "dirty",
-        "textile ",
-        "rug",
-        "discolored",
-        "faded"
-      ],
+      "tags": ["carpet", "floor", "interior", "dirty", "textile ", "rug", "discolored", "faded"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "dirty_carpet",
         "page": "https://polyhaven.com/a/dirty_carpet",
-        "authors": [
-          "Rohit Seervi"
-        ]
+        "authors": ["Rohit Seervi"]
       },
       "material": {
         "tileMetres": 0.6,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6064,17 +5495,11 @@
         "site": "polyhaven",
         "id": "rock_face_03",
         "page": "https://polyhaven.com/a/rock_face_03",
-        "authors": [
-          "Dario Barresi",
-          "Rico Cilliers"
-        ]
+        "authors": ["Dario Barresi", "Rico Cilliers"]
       },
       "material": {
         "tileMetres": 2.7,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6126,29 +5551,17 @@
       "kind": "material",
       "name": "Rocks Ground 01",
       "category": "rock",
-      "tags": [
-        "stones",
-        "ground",
-        "rubble",
-        "rough",
-        "rock",
-        "cracked"
-      ],
+      "tags": ["stones", "ground", "rubble", "rough", "rock", "cracked"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "rocks_ground_01",
         "page": "https://polyhaven.com/a/rocks_ground_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6200,30 +5613,17 @@
       "kind": "material",
       "name": "Cobblestone Floor 04",
       "category": "cobblestone",
-      "tags": [
-        "street",
-        "pavement",
-        "old town",
-        "cobblestone",
-        "moss",
-        "damp",
-        "wet"
-      ],
+      "tags": ["street", "pavement", "old town", "cobblestone", "moss", "damp", "wet"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "cobblestone_floor_04",
         "page": "https://polyhaven.com/a/cobblestone_floor_04",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 1.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6275,34 +5675,17 @@
       "kind": "material",
       "name": "Grassy Cobblestone",
       "category": "cobblestone",
-      "tags": [
-        "street",
-        "path",
-        "overgrown",
-        "ground",
-        "dirt",
-        "rock",
-        "grass",
-        "dirty",
-        "trampled",
-        "pathway"
-      ],
+      "tags": ["street", "path", "overgrown", "ground", "dirt", "rock", "grass", "dirty", "trampled", "pathway"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "grassy_cobblestone",
         "page": "https://polyhaven.com/a/grassy_cobblestone",
-        "authors": [
-          "Dario Barresi",
-          "Charlotte Baglioni"
-        ]
+        "authors": ["Dario Barresi", "Charlotte Baglioni"]
       },
       "material": {
         "tileMetres": 2,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6373,16 +5756,11 @@
         "site": "polyhaven",
         "id": "roof_slates_03",
         "page": "https://polyhaven.com/a/roof_slates_03",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 3,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6434,30 +5812,17 @@
       "kind": "material",
       "name": "Ceramic Roof 01",
       "category": "roofing",
-      "tags": [
-        "roof",
-        "tiles",
-        "terracotta",
-        "ceramic",
-        "old",
-        "city",
-        "moss"
-      ],
+      "tags": ["roof", "tiles", "terracotta", "ceramic", "old", "city", "moss"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "ceramic_roof_01",
         "page": "https://polyhaven.com/a/ceramic_roof_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "material": {
         "tileMetres": 3.5,
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6509,28 +5874,18 @@
       "kind": "sky",
       "name": "Kloofendal 48d Partly Cloudy (Pure Sky)",
       "category": "sky",
-      "tags": [
-        "day",
-        "clouds",
-        "pure skies"
-      ],
+      "tags": ["day", "clouds", "pure skies"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "kloofendal_48d_partly_cloudy_puresky",
         "page": "https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky",
-        "authors": [
-          "Greg Zaal",
-          "Jarod Guest"
-        ]
+        "authors": ["Greg Zaal", "Jarod Guest"]
       },
       "sky": {
         "time": "noon",
         "weather": "partly-cloudy",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6581,30 +5936,18 @@
       "kind": "sky",
       "name": "Noon Grass",
       "category": "sky",
-      "tags": [
-        "day",
-        "sunny",
-        "field",
-        "tree",
-        "sun",
-        "grass"
-      ],
+      "tags": ["day", "sunny", "field", "tree", "sun", "grass"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "noon_grass",
         "page": "https://polyhaven.com/a/noon_grass",
-        "authors": [
-          "Greg Zaal"
-        ]
+        "authors": ["Greg Zaal"]
       },
       "sky": {
         "time": "noon",
         "weather": "clear",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6655,29 +5998,18 @@
       "kind": "sky",
       "name": "Autumn Field (Pure Sky)",
       "category": "sky",
-      "tags": [
-        "day",
-        "sunny",
-        "autumn",
-        "pure skies"
-      ],
+      "tags": ["day", "sunny", "autumn", "pure skies"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "autumn_field_puresky",
         "page": "https://polyhaven.com/a/autumn_field_puresky",
-        "authors": [
-          "Jarod Guest",
-          "Sergej Majboroda"
-        ]
+        "authors": ["Jarod Guest", "Sergej Majboroda"]
       },
       "sky": {
         "time": "morning",
         "weather": "clear",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6707,29 +6039,18 @@
       "kind": "sky",
       "name": "Overcast Soil (Pure Sky)",
       "category": "sky",
-      "tags": [
-        "grey",
-        "cloudy",
-        "soft",
-        "pure skies"
-      ],
+      "tags": ["grey", "cloudy", "soft", "pure skies"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "overcast_soil_puresky",
         "page": "https://polyhaven.com/a/overcast_soil_puresky",
-        "authors": [
-          "Jarod Guest",
-          "Sergej Majboroda"
-        ]
+        "authors": ["Jarod Guest", "Sergej Majboroda"]
       },
       "sky": {
         "time": "morning",
         "weather": "overcast",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6759,29 +6080,18 @@
       "kind": "sky",
       "name": "Snowy Park 01",
       "category": "sky",
-      "tags": [
-        "winter",
-        "grey",
-        "park",
-        "snow",
-        "tree"
-      ],
+      "tags": ["winter", "grey", "park", "snow", "tree"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "snowy_park_01",
         "page": "https://polyhaven.com/a/snowy_park_01",
-        "authors": [
-          "Oliksiy Yakovlyev"
-        ]
+        "authors": ["Oliksiy Yakovlyev"]
       },
       "sky": {
         "time": "noon",
         "weather": "snow",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6811,31 +6121,18 @@
       "kind": "sky",
       "name": "Snowy Field",
       "category": "sky",
-      "tags": [
-        "winter",
-        "sunny",
-        "field",
-        "tree",
-        "sun",
-        "snow",
-        "tracks"
-      ],
+      "tags": ["winter", "sunny", "field", "tree", "sun", "snow", "tracks"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "snowy_field",
         "page": "https://polyhaven.com/a/snowy_field",
-        "authors": [
-          "Andreas Mischok"
-        ]
+        "authors": ["Andreas Mischok"]
       },
       "sky": {
         "time": "morning",
         "weather": "snow",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6865,31 +6162,18 @@
       "kind": "sky",
       "name": "Lilienstein",
       "category": "sky",
-      "tags": [
-        "evening",
-        "golden hour",
-        "sun",
-        "grass",
-        "field",
-        "forest",
-        "meadow"
-      ],
+      "tags": ["evening", "golden hour", "sun", "grass", "field", "forest", "meadow"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "lilienstein",
         "page": "https://polyhaven.com/a/lilienstein",
-        "authors": [
-          "Andreas Mischok"
-        ]
+        "authors": ["Andreas Mischok"]
       },
       "sky": {
         "time": "sunset",
         "weather": "partly-cloudy",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6919,34 +6203,18 @@
       "kind": "sky",
       "name": "Spruit Sunrise",
       "category": "sky",
-      "tags": [
-        "sunrise",
-        "golden hour",
-        "tree",
-        "sun",
-        "grass",
-        "path",
-        "field",
-        "park",
-        "mist",
-        "power line"
-      ],
+      "tags": ["sunrise", "golden hour", "tree", "sun", "grass", "path", "field", "park", "mist", "power line"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "spruit_sunrise",
         "page": "https://polyhaven.com/a/spruit_sunrise",
-        "authors": [
-          "Greg Zaal"
-        ]
+        "authors": ["Greg Zaal"]
       },
       "sky": {
         "time": "dawn",
         "weather": "clear",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -6976,33 +6244,18 @@
       "kind": "sky",
       "name": "Canary Wharf",
       "category": "sky",
-      "tags": [
-        "city",
-        "urban",
-        "europe",
-        "london",
-        "architecture",
-        "building",
-        "railing",
-        "concrete",
-        "street"
-      ],
+      "tags": ["city", "urban", "europe", "london", "architecture", "building", "railing", "concrete", "street"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "canary_wharf",
         "page": "https://polyhaven.com/a/canary_wharf",
-        "authors": [
-          "Andreas Mischok"
-        ]
+        "authors": ["Andreas Mischok"]
       },
       "sky": {
         "time": "afternoon",
         "weather": "partly-cloudy",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -7032,28 +6285,18 @@
       "kind": "sky",
       "name": "Kloppenheim 02",
       "category": "sky",
-      "tags": [
-        "stars",
-        "dark",
-        "moon",
-        "galaxy"
-      ],
+      "tags": ["stars", "dark", "moon", "galaxy"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "kloppenheim_02",
         "page": "https://polyhaven.com/a/kloppenheim_02",
-        "authors": [
-          "Greg Zaal"
-        ]
+        "authors": ["Greg Zaal"]
       },
       "sky": {
         "time": "night",
         "weather": "clear",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -7083,31 +6326,18 @@
       "kind": "sky",
       "name": "Moonless Golf",
       "category": "sky",
-      "tags": [
-        "stars",
-        "dark",
-        "lights",
-        "grass",
-        "golf",
-        "milky way",
-        "field"
-      ],
+      "tags": ["stars", "dark", "lights", "grass", "golf", "milky way", "field"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "moonless_golf",
         "page": "https://polyhaven.com/a/moonless_golf",
-        "authors": [
-          "Greg Zaal"
-        ]
+        "authors": ["Greg Zaal"]
       },
       "sky": {
         "time": "night",
         "weather": "clear",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -7137,33 +6367,18 @@
       "kind": "sky",
       "name": "Winter Evening",
       "category": "sky",
-      "tags": [
-        "winter",
-        "city",
-        "street lights",
-        "building",
-        "architecture",
-        "europe",
-        "pillar",
-        "snow",
-        "lamp"
-      ],
+      "tags": ["winter", "city", "street lights", "building", "architecture", "europe", "pillar", "snow", "lamp"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "winter_evening",
         "page": "https://polyhaven.com/a/winter_evening",
-        "authors": [
-          "Sergej Majboroda"
-        ]
+        "authors": ["Sergej Majboroda"]
       },
       "sky": {
         "time": "night",
         "weather": "overcast",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -7212,17 +6427,12 @@
         "site": "polyhaven",
         "id": "brown_photostudio_02",
         "page": "https://polyhaven.com/a/brown_photostudio_02",
-        "authors": [
-          "Sergej Majboroda"
-        ]
+        "authors": ["Sergej Majboroda"]
       },
       "sky": {
         "time": "interior",
         "weather": "studio",
-        "tiers": [
-          "2k",
-          "4k"
-        ]
+        "tiers": ["2k", "4k"]
       },
       "upstream": [
         {
@@ -7271,17 +6481,11 @@
         "site": "polyhaven",
         "id": "painted_wooden_bench",
         "page": "https://polyhaven.com/a/painted_wooden_bench",
-        "authors": [
-          "Kirill Sannikov"
-        ]
+        "authors": ["Kirill Sannikov"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          1.165,
-          0.889,
-          0.497
-        ],
+        "sizeMetres": [1.165, 0.889, 0.497],
         "tier": "2k",
         "sourceTriangles": 630
       },
@@ -7341,17 +6545,11 @@
         "site": "polyhaven",
         "id": "modular_street_seating",
         "page": "https://polyhaven.com/a/modular_street_seating",
-        "authors": [
-          "Stuart Attenborrow"
-        ]
+        "authors": ["Stuart Attenborrow"]
       },
       "model": {
         "budget": "large-prop",
-        "sizeMetres": [
-          4.34,
-          0.95,
-          0.77
-        ],
+        "sizeMetres": [4.34, 0.95, 0.77],
         "tier": "2k",
         "sourceTriangles": 25156
       },
@@ -7465,17 +6663,11 @@
         "site": "polyhaven",
         "id": "street_lamp_01",
         "page": "https://polyhaven.com/a/street_lamp_01",
-        "authors": [
-          "Josh Dean"
-        ]
+        "authors": ["Josh Dean"]
       },
       "model": {
         "budget": "large-prop",
-        "sizeMetres": [
-          0.704,
-          3.871,
-          0.386
-        ],
+        "sizeMetres": [0.704, 3.871, 0.386],
         "tier": "2k",
         "sourceTriangles": 30610
       },
@@ -7536,17 +6728,11 @@
         "site": "polyhaven",
         "id": "street_lamp_02",
         "page": "https://polyhaven.com/a/street_lamp_02",
-        "authors": [
-          "Josh Dean"
-        ]
+        "authors": ["Josh Dean"]
       },
       "model": {
         "budget": "large-prop",
-        "sizeMetres": [
-          0.386,
-          1.675,
-          0.807
-        ],
+        "sizeMetres": [0.386, 1.675, 0.807],
         "tier": "2k",
         "sourceTriangles": 20338
       },
@@ -7588,33 +6774,17 @@
       "kind": "model",
       "name": "Metal Trash Can",
       "category": "bin",
-      "tags": [
-        "dumpster",
-        "garbage",
-        "street",
-        "bin",
-        "rubbish",
-        "disposal",
-        "litter",
-        "outdoor trash can",
-        "utility"
-      ],
+      "tags": ["dumpster", "garbage", "street", "bin", "rubbish", "disposal", "litter", "outdoor trash can", "utility"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "metal_trash_can",
         "page": "https://polyhaven.com/a/metal_trash_can",
-        "authors": [
-          "GurJas Studios"
-        ]
+        "authors": ["GurJas Studios"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          1.847,
-          0.906,
-          0.556
-        ],
+        "sizeMetres": [1.847, 0.906, 0.556],
         "tier": "2k",
         "sourceTriangles": 13960
       },
@@ -7693,17 +6863,11 @@
         "site": "polyhaven",
         "id": "trashbag",
         "page": "https://polyhaven.com/a/trashbag",
-        "authors": [
-          "Benny Weimer"
-        ]
+        "authors": ["Benny Weimer"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          0.528,
-          0.575,
-          0.463
-        ],
+        "sizeMetres": [0.528, 0.575, 0.463],
         "tier": "2k",
         "sourceTriangles": 4482
       },
@@ -7764,17 +6928,11 @@
         "site": "polyhaven",
         "id": "Barrel_01",
         "page": "https://polyhaven.com/a/Barrel_01",
-        "authors": [
-          "Jorge Camacho"
-        ]
+        "authors": ["Jorge Camacho"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          0.563,
-          0.88,
-          0.563
-        ],
+        "sizeMetres": [0.563, 0.88, 0.563],
         "tier": "2k",
         "sourceTriangles": 2682
       },
@@ -7816,33 +6974,17 @@
       "kind": "model",
       "name": "Barrel 03",
       "category": "barrel",
-      "tags": [
-        "metal",
-        "oil drum",
-        "industrial",
-        "barrel",
-        "oil",
-        "fuel",
-        "truck",
-        "painted",
-        "blue"
-      ],
+      "tags": ["metal", "oil drum", "industrial", "barrel", "oil", "fuel", "truck", "painted", "blue"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "barrel_03",
         "page": "https://polyhaven.com/a/barrel_03",
-        "authors": [
-          "Serhii Khromov"
-        ]
+        "authors": ["Serhii Khromov"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          0.634,
-          0.93,
-          0.639
-        ],
+        "sizeMetres": [0.634, 0.93, 0.639],
         "tier": "2k",
         "sourceTriangles": 1473
       },
@@ -7903,17 +7045,11 @@
         "site": "polyhaven",
         "id": "wooden_crate_01",
         "page": "https://polyhaven.com/a/wooden_crate_01",
-        "authors": [
-          "James Ray Cock"
-        ]
+        "authors": ["James Ray Cock"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          0.825,
-          0.35,
-          0.409
-        ],
+        "sizeMetres": [0.825, 0.35, 0.409],
         "tier": "2k",
         "sourceTriangles": 6576
       },
@@ -7974,18 +7110,11 @@
         "site": "polyhaven",
         "id": "wooden_crate_02",
         "page": "https://polyhaven.com/a/wooden_crate_02",
-        "authors": [
-          "James Ray Cock",
-          "Jurita Burger"
-        ]
+        "authors": ["James Ray Cock", "Jurita Burger"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          1.166,
-          0.464,
-          0.529
-        ],
+        "sizeMetres": [1.166, 0.464, 0.529],
         "tier": "2k",
         "sourceTriangles": 5176
       },
@@ -8044,17 +7173,11 @@
         "site": "polyhaven",
         "id": "plastic_crate_02",
         "page": "https://polyhaven.com/a/plastic_crate_02",
-        "authors": [
-          "Fabi_G"
-        ]
+        "authors": ["Fabi_G"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          0.506,
-          0.254,
-          0.406
-        ],
+        "sizeMetres": [0.506, 0.254, 0.406],
         "tier": "2k",
         "sourceTriangles": 5840
       },
@@ -8114,17 +7237,11 @@
         "site": "polyhaven",
         "id": "cardboard_box_01",
         "page": "https://polyhaven.com/a/cardboard_box_01",
-        "authors": [
-          "Rahul Chaudhary"
-        ]
+        "authors": ["Rahul Chaudhary"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          0.387,
-          0.342,
-          0.516
-        ],
+        "sizeMetres": [0.387, 0.342, 0.516],
         "tier": "2k",
         "sourceTriangles": 16952
       },
@@ -8184,18 +7301,11 @@
         "site": "polyhaven",
         "id": "modular_chainlink_fence",
         "page": "https://polyhaven.com/a/modular_chainlink_fence",
-        "authors": [
-          "James Ray Cock",
-          "Amal Kumar"
-        ]
+        "authors": ["James Ray Cock", "Amal Kumar"]
       },
       "model": {
         "budget": "structure",
-        "sizeMetres": [
-          8.115,
-          2.523,
-          2.149
-        ],
+        "sizeMetres": [8.115, 2.523, 2.149],
         "tier": "2k",
         "sourceTriangles": 89232
       },
@@ -8273,17 +7383,11 @@
         "site": "polyhaven",
         "id": "concrete_road_barrier",
         "page": "https://polyhaven.com/a/concrete_road_barrier",
-        "authors": [
-          "Amal Kumar"
-        ]
+        "authors": ["Amal Kumar"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          1.545,
-          0.835,
-          0.641
-        ],
+        "sizeMetres": [1.545, 0.835, 0.641],
         "tier": "2k",
         "sourceTriangles": 80776
       },
@@ -8342,17 +7446,11 @@
         "site": "polyhaven",
         "id": "fire_hydrant",
         "page": "https://polyhaven.com/a/fire_hydrant",
-        "authors": [
-          "Gonçalo Felício"
-        ]
+        "authors": ["Gonçalo Felício"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          0.875,
-          0.799,
-          0.318
-        ],
+        "sizeMetres": [0.875, 0.799, 0.318],
         "tier": "2k",
         "sourceTriangles": 86316
       },
@@ -8431,17 +7529,11 @@
         "site": "polyhaven",
         "id": "utility_box_02",
         "page": "https://polyhaven.com/a/utility_box_02",
-        "authors": [
-          "James Ray Cock"
-        ]
+        "authors": ["James Ray Cock"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          0.92,
-          1.12,
-          0.432
-        ],
+        "sizeMetres": [0.92, 1.12, 0.432],
         "tier": "2k",
         "sourceTriangles": 6268
       },
@@ -8499,17 +7591,11 @@
         "site": "polyhaven",
         "id": "exterior_aircon_unit",
         "page": "https://polyhaven.com/a/exterior_aircon_unit",
-        "authors": [
-          "Monsta3D"
-        ]
+        "authors": ["Monsta3D"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          1.8,
-          0.928,
-          0.374
-        ],
+        "sizeMetres": [1.8, 0.928, 0.374],
         "tier": "2k",
         "sourceTriangles": 18986
       },
@@ -8622,17 +7708,11 @@
         "site": "polyhaven",
         "id": "rollershutter_door",
         "page": "https://polyhaven.com/a/rollershutter_door",
-        "authors": [
-          "MP"
-        ]
+        "authors": ["MP"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          3.08,
-          2.4,
-          0.3
-        ],
+        "sizeMetres": [3.08, 2.4, 0.3],
         "tier": "2k",
         "sourceTriangles": 1104
       },
@@ -8697,17 +7777,11 @@
         "site": "polyhaven",
         "id": "large_castle_door",
         "page": "https://polyhaven.com/a/large_castle_door",
-        "authors": [
-          "Tina"
-        ]
+        "authors": ["Tina"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          2.012,
-          2.965,
-          0.339
-        ],
+        "sizeMetres": [2.012, 2.965, 0.339],
         "tier": "2k",
         "sourceTriangles": 12640
       },
@@ -8766,17 +7840,11 @@
         "site": "polyhaven",
         "id": "rollershutter_window_01",
         "page": "https://polyhaven.com/a/rollershutter_window_01",
-        "authors": [
-          "MP"
-        ]
+        "authors": ["MP"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          5.1,
-          1.851,
-          0.3
-        ],
+        "sizeMetres": [5.1, 1.851, 0.3],
         "tier": "2k",
         "sourceTriangles": 1104
       },
@@ -8843,17 +7911,11 @@
         "site": "polyhaven",
         "id": "covered_car",
         "page": "https://polyhaven.com/a/covered_car",
-        "authors": [
-          "MP"
-        ]
+        "authors": ["MP"]
       },
       "model": {
         "budget": "vehicle",
-        "sizeMetres": [
-          1.789,
-          1.411,
-          4.38
-        ],
+        "sizeMetres": [1.789, 1.411, 4.38],
         "tier": "2k",
         "sourceTriangles": 12592
       },
@@ -8914,17 +7976,11 @@
         "site": "polyhaven",
         "id": "old_tyre",
         "page": "https://polyhaven.com/a/old_tyre",
-        "authors": [
-          "MP"
-        ]
+        "authors": ["MP"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          0.6,
-          0.6,
-          0.165
-        ],
+        "sizeMetres": [0.6, 0.6, 0.165],
         "tier": "2k",
         "sourceTriangles": 2880
       },
@@ -8966,33 +8022,17 @@
       "kind": "model",
       "name": "Wooden Picnic Table",
       "category": "table",
-      "tags": [
-        "park",
-        "outdoor",
-        "bench",
-        "vintage",
-        "old",
-        "worn",
-        "weathered",
-        "countryside",
-        "outdoor seating"
-      ],
+      "tags": ["park", "outdoor", "bench", "vintage", "old", "worn", "weathered", "countryside", "outdoor seating"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "wooden_picnic_table",
         "page": "https://polyhaven.com/a/wooden_picnic_table",
-        "authors": [
-          "Ulan Cabanilla"
-        ]
+        "authors": ["Ulan Cabanilla"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          2.241,
-          0.746,
-          3.022
-        ],
+        "sizeMetres": [2.241, 0.746, 3.022],
         "tier": "2k",
         "sourceTriangles": 10210
       },
@@ -9052,33 +8092,17 @@
       "kind": "model",
       "name": "Wooden Table 01",
       "category": "table",
-      "tags": [
-        "wood",
-        "interior",
-        "vintage",
-        "prop",
-        "table",
-        "school",
-        "desk",
-        "old",
-        "worn"
-      ],
+      "tags": ["wood", "interior", "vintage", "prop", "table", "school", "desk", "old", "worn"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "WoodenTable_01",
         "page": "https://polyhaven.com/a/WoodenTable_01",
-        "authors": [
-          "Ethan Place"
-        ]
+        "authors": ["Ethan Place"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          1.8,
-          0.549,
-          0.657
-        ],
+        "sizeMetres": [1.8, 0.549, 0.657],
         "tier": "2k",
         "sourceTriangles": 952
       },
@@ -9137,17 +8161,11 @@
         "site": "polyhaven",
         "id": "metal_office_desk",
         "page": "https://polyhaven.com/a/metal_office_desk",
-        "authors": [
-          "Ulan Cabanilla"
-        ]
+        "authors": ["Ulan Cabanilla"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          2,
-          0.788,
-          0.947
-        ],
+        "sizeMetres": [2, 0.788, 0.947],
         "tier": "2k",
         "sourceTriangles": 6898
       },
@@ -9189,33 +8207,17 @@
       "kind": "model",
       "name": "Plastic Monobloc Chair 01",
       "category": "chair",
-      "tags": [
-        "seat",
-        "plastic",
-        "garden",
-        "dirty",
-        "old",
-        "monobloc",
-        "outdoor",
-        "cheap",
-        "shed"
-      ],
+      "tags": ["seat", "plastic", "garden", "dirty", "old", "monobloc", "outdoor", "cheap", "shed"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "plastic_monobloc_chair_01",
         "page": "https://polyhaven.com/a/plastic_monobloc_chair_01",
-        "authors": [
-          "Kuutti Siitonen"
-        ]
+        "authors": ["Kuutti Siitonen"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          0.642,
-          0.88,
-          0.628
-        ],
+        "sizeMetres": [0.642, 0.88, 0.628],
         "tier": "2k",
         "sourceTriangles": 3356
       },
@@ -9257,33 +8259,17 @@
       "kind": "model",
       "name": "Sofa 02",
       "category": "chair",
-      "tags": [
-        "couch",
-        "living room",
-        "interior",
-        "wood",
-        "furniture",
-        "chair",
-        "prop",
-        "leather",
-        "fabric"
-      ],
+      "tags": ["couch", "living room", "interior", "wood", "furniture", "chair", "prop", "leather", "fabric"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "sofa_02",
         "page": "https://polyhaven.com/a/sofa_02",
-        "authors": [
-          "Kirill Sannikov"
-        ]
+        "authors": ["Kirill Sannikov"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          1.807,
-          0.709,
-          0.818
-        ],
+        "sizeMetres": [1.807, 0.709, 0.818],
         "tier": "2k",
         "sourceTriangles": 2728
       },
@@ -9325,32 +8311,17 @@
       "kind": "model",
       "name": "Steel Frame Shelves 01",
       "category": "shelf",
-      "tags": [
-        "storage",
-        "warehouse",
-        "metal",
-        "commercial",
-        "modern",
-        "shelf",
-        "bookshelf",
-        "wood"
-      ],
+      "tags": ["storage", "warehouse", "metal", "commercial", "modern", "shelf", "bookshelf", "wood"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "steel_frame_shelves_01",
         "page": "https://polyhaven.com/a/steel_frame_shelves_01",
-        "authors": [
-          "James Ray Cock"
-        ]
+        "authors": ["James Ray Cock"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          1.097,
-          2.141,
-          0.502
-        ],
+        "sizeMetres": [1.097, 2.141, 0.502],
         "tier": "2k",
         "sourceTriangles": 4348
       },
@@ -9411,17 +8382,11 @@
         "site": "polyhaven",
         "id": "painted_wooden_cabinet",
         "page": "https://polyhaven.com/a/painted_wooden_cabinet",
-        "authors": [
-          "Kirill Sannikov"
-        ]
+        "authors": ["Kirill Sannikov"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          1.195,
-          1.182,
-          0.617
-        ],
+        "sizeMetres": [1.195, 1.182, 0.617],
         "tier": "2k",
         "sourceTriangles": 2227
       },
@@ -9482,17 +8447,11 @@
         "site": "polyhaven",
         "id": "WetFloorSign_01",
         "page": "https://polyhaven.com/a/WetFloorSign_01",
-        "authors": [
-          "Fran Calvente"
-        ]
+        "authors": ["Fran Calvente"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          0.3,
-          0.63,
-          0.359
-        ],
+        "sizeMetres": [0.3, 0.63, 0.359],
         "tier": "2k",
         "sourceTriangles": 228
       },
@@ -9553,17 +8512,11 @@
         "site": "polyhaven",
         "id": "boulder_01",
         "page": "https://polyhaven.com/a/boulder_01",
-        "authors": [
-          "Rico Cilliers"
-        ]
+        "authors": ["Rico Cilliers"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          1.273,
-          1.004,
-          1.831
-        ],
+        "sizeMetres": [1.273, 1.004, 1.831],
         "tier": "2k",
         "sourceTriangles": 123976
       },
@@ -9622,18 +8575,11 @@
         "site": "polyhaven",
         "id": "namaqualand_boulder_02",
         "page": "https://polyhaven.com/a/namaqualand_boulder_02",
-        "authors": [
-          "Greg Zaal",
-          "Rico Cilliers"
-        ]
+        "authors": ["Greg Zaal", "Rico Cilliers"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          2.533,
-          0.883,
-          1.235
-        ],
+        "sizeMetres": [2.533, 0.883, 1.235],
         "tier": "2k",
         "sourceTriangles": 183681
       },
@@ -9692,18 +8638,11 @@
         "site": "polyhaven",
         "id": "namaqualand_boulder_03",
         "page": "https://polyhaven.com/a/namaqualand_boulder_03",
-        "authors": [
-          "Jenelle van Heerden",
-          "Dario Barresi"
-        ]
+        "authors": ["Jenelle van Heerden", "Dario Barresi"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          2.408,
-          1.474,
-          3.065
-        ],
+        "sizeMetres": [2.408, 1.474, 3.065],
         "tier": "2k",
         "sourceTriangles": 121546
       },
@@ -9745,32 +8684,17 @@
       "kind": "model",
       "name": "Rock Moss Set 01",
       "category": "rock",
-      "tags": [
-        "moss",
-        "stones",
-        "forest",
-        "rocks",
-        "outdoor",
-        "pebbles",
-        "rock",
-        "dirt"
-      ],
+      "tags": ["moss", "stones", "forest", "rocks", "outdoor", "pebbles", "rock", "dirt"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "rock_moss_set_01",
         "page": "https://polyhaven.com/a/rock_moss_set_01",
-        "authors": [
-          "Kless Gyzen"
-        ]
+        "authors": ["Kless Gyzen"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          8.005,
-          1.768,
-          6.949
-        ],
+        "sizeMetres": [8.005, 1.768, 6.949],
         "tier": "2k",
         "sourceTriangles": 63127
       },
@@ -9812,32 +8736,17 @@
       "kind": "model",
       "name": "Rock Moss Set 02",
       "category": "rock",
-      "tags": [
-        "moss",
-        "stones",
-        "forest",
-        "rocks",
-        "outdoor",
-        "pebbles",
-        "rock",
-        "dirt"
-      ],
+      "tags": ["moss", "stones", "forest", "rocks", "outdoor", "pebbles", "rock", "dirt"],
       "licence": "CC0-1.0",
       "source": {
         "site": "polyhaven",
         "id": "rock_moss_set_02",
         "page": "https://polyhaven.com/a/rock_moss_set_02",
-        "authors": [
-          "Kless Gyzen"
-        ]
+        "authors": ["Kless Gyzen"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          8.278,
-          1.368,
-          3.41
-        ],
+        "sizeMetres": [8.278, 1.368, 3.41],
         "tier": "2k",
         "sourceTriangles": 57647
       },
@@ -9898,17 +8807,11 @@
         "site": "polyhaven",
         "id": "stone_fire_pit",
         "page": "https://polyhaven.com/a/stone_fire_pit",
-        "authors": [
-          "Sebastian Platen"
-        ]
+        "authors": ["Sebastian Platen"]
       },
       "model": {
         "budget": "small-prop",
-        "sizeMetres": [
-          1.448,
-          0.388,
-          1.433
-        ],
+        "sizeMetres": [1.448, 0.388, 1.433],
         "tier": "2k",
         "sourceTriangles": 3887
       },
@@ -9969,17 +8872,11 @@
         "site": "polyhaven",
         "id": "tree_stump_01",
         "page": "https://polyhaven.com/a/tree_stump_01",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          1.426,
-          0.573,
-          1.59
-        ],
+        "sizeMetres": [1.426, 0.573, 1.59],
         "tier": "2k",
         "sourceTriangles": 41046
       },
@@ -10040,17 +8937,11 @@
         "site": "polyhaven",
         "id": "dead_tree_trunk",
         "page": "https://polyhaven.com/a/dead_tree_trunk",
-        "authors": [
-          "Rob Tuytel"
-        ]
+        "authors": ["Rob Tuytel"]
       },
       "model": {
         "budget": "rock",
-        "sizeMetres": [
-          3.051,
-          0.29,
-          0.278
-        ],
+        "sizeMetres": [3.051, 0.29, 0.278],
         "tier": "2k",
         "sourceTriangles": 101802
       },
@@ -10111,17 +9002,11 @@
         "site": "polyhaven",
         "id": "dry_branches_medium_01",
         "page": "https://polyhaven.com/a/dry_branches_medium_01",
-        "authors": [
-          "Rico Cilliers"
-        ]
+        "authors": ["Rico Cilliers"]
       },
       "model": {
         "budget": "prop",
-        "sizeMetres": [
-          1.059,
-          0.341,
-          1.299
-        ],
+        "sizeMetres": [1.059, 0.341, 1.299],
         "tier": "2k",
         "sourceTriangles": 16803
       },
@@ -10163,29 +9048,19 @@
       "kind": "vegetation",
       "name": "Birch, winter",
       "category": "tree",
-      "tags": [
-        "birch",
-        "winter",
-        "bare"
-      ],
+      "tags": ["birch", "winter", "bare"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "birch_winter",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "bare silver birch, white bark with black lenticels, twig crown, 12-18 m",
         "budget": "tree",
-        "sizeMetres": [
-          6,
-          15,
-          6
-        ]
+        "sizeMetres": [6, 15, 6]
       }
     },
     {
@@ -10193,29 +9068,19 @@
       "kind": "vegetation",
       "name": "Birch, summer",
       "category": "tree",
-      "tags": [
-        "birch",
-        "summer",
-        "leafy"
-      ],
+      "tags": ["birch", "summer", "leafy"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "birch_summer",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "silver birch in leaf, drooping twigs, 12-18 m",
         "budget": "tree",
-        "sizeMetres": [
-          7,
-          15,
-          7
-        ]
+        "sizeMetres": [7, 15, 7]
       }
     },
     {
@@ -10223,29 +9088,19 @@
       "kind": "vegetation",
       "name": "Spruce",
       "category": "tree",
-      "tags": [
-        "conifer",
-        "evergreen",
-        "forest"
-      ],
+      "tags": ["conifer", "evergreen", "forest"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "spruce",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "Norway spruce, dense conical crown, 15-25 m",
         "budget": "tree",
-        "sizeMetres": [
-          7,
-          20,
-          7
-        ]
+        "sizeMetres": [7, 20, 7]
       }
     },
     {
@@ -10253,29 +9108,19 @@
       "kind": "vegetation",
       "name": "Scots pine",
       "category": "tree",
-      "tags": [
-        "conifer",
-        "evergreen",
-        "forest"
-      ],
+      "tags": ["conifer", "evergreen", "forest"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "pine",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "Scots pine, orange upper bark, flat high crown, 15-25 m",
         "budget": "tree",
-        "sizeMetres": [
-          8,
-          20,
-          8
-        ]
+        "sizeMetres": [8, 20, 8]
       }
     },
     {
@@ -10283,29 +9128,19 @@
       "kind": "vegetation",
       "name": "Oak, summer",
       "category": "tree",
-      "tags": [
-        "oak",
-        "summer",
-        "park"
-      ],
+      "tags": ["oak", "summer", "park"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "oak_summer",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "English oak in leaf, broad crown, 15-20 m",
         "budget": "tree",
-        "sizeMetres": [
-          14,
-          17,
-          14
-        ]
+        "sizeMetres": [14, 17, 14]
       }
     },
     {
@@ -10313,29 +9148,19 @@
       "kind": "vegetation",
       "name": "Oak, bare",
       "category": "tree",
-      "tags": [
-        "oak",
-        "winter",
-        "bare"
-      ],
+      "tags": ["oak", "winter", "bare"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "oak_bare",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "English oak in winter, gnarled bare branches, 15-20 m",
         "budget": "tree",
-        "sizeMetres": [
-          14,
-          17,
-          14
-        ]
+        "sizeMetres": [14, 17, 14]
       }
     },
     {
@@ -10343,29 +9168,19 @@
       "kind": "vegetation",
       "name": "Leafy bush",
       "category": "bush",
-      "tags": [
-        "shrub",
-        "hedge",
-        "garden"
-      ],
+      "tags": ["shrub", "hedge", "garden"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "bush_leafy",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "rounded deciduous shrub, 1-2 m",
         "budget": "tree",
-        "sizeMetres": [
-          2,
-          1.6,
-          2
-        ]
+        "sizeMetres": [2, 1.6, 2]
       }
     },
     {
@@ -10373,29 +9188,19 @@
       "kind": "vegetation",
       "name": "Grass tuft",
       "category": "grass",
-      "tags": [
-        "grass",
-        "meadow",
-        "scatter"
-      ],
+      "tags": ["grass", "meadow", "scatter"],
       "licence": "CC0-1.0",
       "source": {
         "site": "generated",
         "id": "grass_tuft",
         "page": "https://github.com/genex-games/genex-desktop",
-        "authors": [
-          "Genex"
-        ]
+        "authors": ["Genex"]
       },
       "slot": {
         "generator": "aaa-vegetation",
         "brief": "clump of wild grass cards for scattering, 0.3-0.6 m",
         "budget": "tree",
-        "sizeMetres": [
-          0.6,
-          0.5,
-          0.6
-        ]
+        "sizeMetres": [0.6, 0.5, 0.6]
       }
     }
   ]
