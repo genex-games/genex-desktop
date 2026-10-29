@@ -307,6 +307,70 @@ fn metal_sun_shafts_through_the_lakeside_canopy_and_the_harbour_windows() {
     assert!(failures.is_empty(), "no shafts: {failures:#?}");
 }
 
+/// Harbour Street on `ultra` with its look's fog drawn as a volume (`volumetric`) or analytically.
+fn harbour_ultra(volumetric: bool) -> genex::Runtime<showcase_game::harbour::World> {
+    use genex::render::QualityPreset;
+    use showcase_game::harbour;
+    let mut game = harbour::new_game();
+    game.render_settings(harbour::render_config().preset(QualityPreset::Ultra).fog(harbour::look_fog().with_volumetric(volumetric)));
+    harbour::wire(&mut game);
+    at_shot_tick(game)
+}
+
+/// The window shafts captured as the Studio's replay row does after a reload: the window drew
+/// `live_frames` Live frames first (a count no seed fixes), then the settled capture; with the
+/// `__render` look facts that capture wrote.
+fn replayed_shafts(volumetric: bool, live_frames: usize) -> (Capture, genex::Value) {
+    use genex::present::Presenter;
+    let mut runtime = harbour_ultra(volumetric);
+    let mut presenter = Presenter::open(showcase_game::harbour::WORLD_SIZE, showcase_game::harbour_assets()).expect("presenter");
+    let refused = presenter.install_for(&mut runtime);
+    assert!(refused.is_empty(), "{refused:?}");
+    runtime.pause();
+    for _ in 0..live_frames {
+        presenter.draw_view(&mut runtime, View::Named("window-shafts")).expect("a view").expect("drawn");
+    }
+    presenter.set_capturing(true);
+    presenter.draw_view(&mut runtime, View::Named("window-shafts")).expect("a view").expect("drawn");
+    let look = runtime.state()["__render"]["look"].clone();
+    (presenter.resilient.capture().expect("capture"), look)
+}
+
+/// Plan 2, Track B: quality presets own features and checks never remove them. Harbour Street's
+/// window shafts on `ultra` pass the replay row with the fog volumetric (two fresh runs, one with a
+/// single Live frame before the capture and one with many, capture the same pixels), the look facts
+/// name the volume, and the shafts streak the air against the analytic fog as A.5's row asks.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_harbour_window_shafts_on_ultra_replay_to_the_same_pixels() {
+    if gpu().is_none() {
+        return;
+    }
+    let (few, look) = replayed_shafts(true, 1);
+    let (many, _) = replayed_shafts(true, REPLAY_LIVE_FRAMES);
+    let (analytic, flat_look) = replayed_shafts(false, 1);
+    let dir = out_dir();
+    write_png(&dir.join("harbour-window-shafts-ultra-replay-a.png"), &few);
+    write_png(&dir.join("harbour-window-shafts-ultra-replay-b.png"), &many);
+    write_png(&dir.join("harbour-window-shafts-ultra-analytic.png"), &analytic);
+    let differing = few.bgra().iter().zip(many.bgra()).filter(|(a, b)| a != b).count();
+    assert_eq!(differing, 0, "the same seed drew different pixels after different Live frame counts");
+    assert_eq!(look["preset"], "ultra", "{look}");
+    assert_eq!(look["features"]["volumetric-fog"], true, "{look}");
+    assert_eq!(flat_look["features"]["volumetric-fog"], false, "{flat_look}");
+    let difference: Vec<f64> = lumas(&few).iter().zip(lumas(&analytic)).map(|(v, a)| v - a).collect();
+    let n = difference.len() as f64;
+    let mean = difference.iter().sum::<f64>() / n;
+    let spread = (difference.iter().map(|d| (d - mean) * (d - mean)).sum::<f64>() / n).sqrt();
+    let darker = difference.iter().filter(|d| **d <= -SHAFT_DARKER_LEVELS).count() as f64 / n;
+    let kept = difference.iter().filter(|d| d.abs() <= SHAFT_KEPT_LEVELS).count() as f64 / n;
+    println!("{{\"row\":\"froxel-shafts-ultra-replay\",\"spread\":{spread:.2},\"darkerShare\":{darker:.4},\"keptShare\":{kept:.4}}}");
+    assert!(spread >= SHAFT_SPREAD_MIN && darker >= SHAFT_SHARE_MIN && kept >= SHAFT_SHARE_MIN, "no shafts on ultra: spread {spread:.2}, darker {darker:.4}, kept {kept:.4}");
+}
+
+/// Live frames the second replay run draws before its capture.
+const REPLAY_LIVE_FRAMES: usize = 40;
+
 /// The froxel fog's shafts: the luma difference against the analytic fog spreads by at least this
 /// many levels, at least [`SHAFT_SHARE_MIN`] of the pixels are [`SHAFT_DARKER_LEVELS`] darker and
 /// as many within [`SHAFT_KEPT_LEVELS`] of the analytic fog.

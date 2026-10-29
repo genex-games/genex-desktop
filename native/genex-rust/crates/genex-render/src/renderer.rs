@@ -851,6 +851,8 @@ pub struct Renderer {
     /// How the frame being drawn (then the last one) draws its scene colour.
     path: ScenePath,
     last_path: Option<ScenePath>,
+    /// What the last prepared frame's content asked of the look (`look_features`).
+    look_asks: crate::look_features::FrameAsks,
     /// The live frame timer, armed for one frame at a time (its begin pass is recorded by the
     /// `tables` node, which only sees the renderer shared).
     timer: std::cell::RefCell<Option<live_timing::FrameTimer>>,
@@ -2823,6 +2825,7 @@ impl Renderer {
             upload_arena: std::cell::RefCell::new(crate::tables::UploadArena::new(&device)),
             path: ScenePath::LEGACY,
             last_path: None,
+            look_asks: crate::look_features::FrameAsks::default(),
             timer: std::cell::RefCell::new(None),
             node_timer: std::cell::RefCell::new(None),
             pool,
@@ -3220,6 +3223,11 @@ impl Renderer {
     /// The game's look.
     pub fn look(&self) -> &Look {
         &self.look
+    }
+
+    /// Each look feature and whether the last prepared frame drew it (`__render.look.features`).
+    pub fn drawn_look_features(&self) -> [(crate::look_features::LookFeature, bool); 16] {
+        crate::look_features::drawn(&self.quality, &self.look, self.look_asks)
     }
 
     /// The session's scene format (a pipeline-shaping fact, chosen once per device class: plan
@@ -4778,6 +4786,13 @@ impl Renderer {
         let array = self.form == FormFactor::Desktop && self.shadow_desc.bytes() <= crate::shadow_cache::CACHE_ARRAY_MAX_BYTES;
         self.shadow_cache.prepare(&self.device, &plan, &self.shadow_draws, self.shadow_desc, (live, self.terrain.is_some(), array));
         let prepass = self.prepass_plan(stage, meshlets.is_some(), plan.cascades.is_some(), &temporal);
+        self.look_asks = crate::look_features::FrameAsks {
+            hdr: scene_path.hdr,
+            sun: plan.cascades.is_some(),
+            shadowed_spot: self.spot_atlas,
+            shadowed_point: self.point_atlas,
+            environment_lights: self.environment_lights(),
+        };
         let spec = self.target_spec(&scene_path, prepass.as_ref(), &temporal);
         self.targets = pooled_targets(&mut self.pool, &self.device, (self.width, self.height), render, self.samples, &spec)?;
         let occlusion = self.prepare_occlusion(&plan, path, prepass.is_some(), scene_path.depth_reversed)?;

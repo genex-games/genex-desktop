@@ -337,6 +337,7 @@ impl LookRaster {
             coverage: f64::from(covered) / total,
             flat_coverage: f64::from(flat) / total,
             tags: tags.into_iter().map(|tally| tally.facts(total)).collect(),
+            drawn: None,
         })
     }
 
@@ -527,6 +528,20 @@ pub struct LookFacts {
     pub flat_coverage: f64,
     /// Per tag, in first-draw order.
     pub tags: Vec<TagFacts>,
+    /// The preset and look features the frame drew (`preset`, `features`); None from a raster
+    /// alone, before the presenter adds them.
+    pub drawn: Option<DrawnLook>,
+}
+
+/// The preset a frame drew and each look feature, on or off (`__render.look.preset` and
+/// `features`): what the harness compares between rounds so a round never removes a feature to
+/// get a check through.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrawnLook {
+    /// The preset's wire spelling (a capture's pinned one, else Live's).
+    pub preset: &'static str,
+    /// Every look feature's wire spelling and whether the frame drew it, in the contract's order.
+    pub features: Vec<(&'static str, bool)>,
 }
 
 fn rounded(value: f64, scale: f64) -> CoreValue {
@@ -561,6 +576,14 @@ impl LookFacts {
         look.set("grid", CoreValue::Array(vec![CoreValue::from(self.grid[0]), CoreValue::from(self.grid[1])]));
         look.set("coverage", rounded(self.coverage, SHARE_SCALE));
         look.set("flatCoverage", rounded(self.flat_coverage, SHARE_SCALE));
+        if let Some(drawn) = &self.drawn {
+            look.set("preset", CoreValue::from(drawn.preset));
+            let mut features = CoreValue::object();
+            for (feature, on) in &drawn.features {
+                features.set(*feature, CoreValue::Bool(*on));
+            }
+            look.set("features", features);
+        }
         look.set("tags", tags);
         look
     }

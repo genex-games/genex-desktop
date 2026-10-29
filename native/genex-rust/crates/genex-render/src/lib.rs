@@ -172,6 +172,8 @@ pub mod fog;
 /// Froxel volumetric fog and sun shafts (renderer pass 2 A.5): the height fog as a lit volume on
 /// `high` and `ultra`, bound in the aerial perspective's place.
 pub mod froxel;
+/// Which look features a frame draws (`__render.look.features`; plan 2 Track B).
+pub mod look_features;
 
 // --- RQ5: motion vectors, TAA, the FSR1 upscaler (RQ5.0 registers every RQ5 module; TAA and the
 // upscaler are `post` nodes, `post::taa` and `post::fsr`, whose shaders their modules hold until
