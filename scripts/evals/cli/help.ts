@@ -159,6 +159,49 @@ export const MESSAGE: Readonly<Record<EvalCommand, CommandHelp>> = {
     details: ["--repeatability re-grades a seeded sample (grader calls: needs --live)."],
     exits: EXITS_COMMON,
   },
+  [EvalCommand.AaaSuite]: {
+    usage: "aaa suite",
+    summary: "List the AA+ release-gate prompts, their views, demos and references",
+    details: ["Reads evals/aaa/suite.json; prints each prompt's version and its brief to send."],
+    exits: "exit 0 valid, 64 bad usage",
+  },
+  [EvalCommand.AaaCollect]: {
+    usage:
+      "aaa collect --prompt <id> --run <runDir> --roles <roles.json> --out <dir> [--shots <dir>] [--facts <facts.json>] [--clean yes|no]",
+    summary: "Turn a finished Genex run into an AA+ evidence bundle",
+    details: [
+      "Reads the integration head's judge shots and stats; --roles maps camera names to the prompt's view roles.",
+      "--facts adds look facts, the provenance audit and per-tick motion and exposure tracks (genex-aaa-facts/1).",
+    ],
+    exits: "exit 0 written, 1 refused, 64 bad usage",
+  },
+  [EvalCommand.AaaGrade]: {
+    usage:
+      "aaa grade <bundleDir>... --out <dir> [--taste off|live] [--taste-family gpt|claude|gpt,claude] [--builder-family claude|gpt] [--votes n] [--references <dir>]",
+    summary: "Grade evidence bundles below AA / AA / AA+ / AAA-ish and judge the release gate",
+    details: [
+      "Writes report.json and report.md to --out. --taste live asks the blind taste judge (grader calls: needs --live).",
+      "Without a taste verdict no prompt can reach AA+.",
+    ],
+    exits: "exit 0 the release gate passes, 1 it fails or a bundle was refused, 2 references missing, 64 bad usage",
+  },
+  [EvalCommand.AaaCompare]: {
+    usage:
+      "aaa compare <candidateBundle> --baseline <baselineBundle> --out <dir> [--taste off|live] [--taste-family gpt|claude|gpt,claude] [--references <dir>]",
+    summary: "Compare a run with a baseline run of the same prompt, side by side",
+    details: [
+      "Writes compare.json and compare.md (both sides' captures per view, checks that moved, measured numbers).",
+      "--taste live also asks a blind pairwise look judge per view, in both orders (grader calls: needs --live).",
+    ],
+    exits:
+      "exit 0 the candidate is clearly better, 1 it is not or a bundle was refused, 2 references missing, 64 bad usage",
+  },
+  [EvalCommand.AaaReferences]: {
+    usage: "aaa references --live [--dir <dir>]",
+    summary: "Fetch the suite's CC0 reference stills into the eval home",
+    details: [LIVE_NOTE, "Reaches only api.polyhaven.com and dl.polyhaven.org; each download must match its md5."],
+    exits: EXITS_COMMON,
+  },
 };
 
 /** The line every overview ends with. */

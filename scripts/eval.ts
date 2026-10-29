@@ -10,7 +10,7 @@ import { SYSTEM_HANDLERS } from "./evals/cli/bindings.ts";
 import { CliExit, type CliRun, EXIT_USAGE, type Out } from "./evals/cli/exit.ts";
 import { commandHelp, FOOTER, MESSAGE } from "./evals/cli/help.ts";
 import { LIVE_FLAG, LiveNeed, LiveRefusal, liveGate } from "./evals/cli/live.ts";
-import { EvalCommand } from "./evals/vocabulary.ts";
+import { AaaTasteMode, EvalCommand } from "./evals/vocabulary.ts";
 
 export { CliExit, type CliRun, type CommandHandler, EXIT_USAGE, type Out } from "./evals/cli/exit.ts";
 
@@ -33,6 +33,12 @@ const live = () => LiveNeed.Required;
 /** `diagnostics` spends grader quota only when it re-grades the repeatability sample. */
 const liveWhenResampling = (args: readonly string[]) =>
   args.includes("--repeatability") ? LiveNeed.Required : LiveNeed.None;
+
+/** `aaa grade` and `aaa compare` ask a model only when their taste judge is live. */
+const liveWhenTasteLive = (args: readonly string[]) => {
+  const at = args.indexOf("--taste");
+  return at >= 0 && args[at + 1] === AaaTasteMode.Live ? LiveNeed.Required : LiveNeed.None;
+};
 
 /** The machine's registry row of a command. */
 const row = (command: EvalCommand, need: CommandSpec["live"]): CommandSpec => ({
@@ -62,6 +68,11 @@ export const COMMANDS: readonly CommandSpec[] = [
   row(EvalCommand.Gc, local),
   row(EvalCommand.ValidateLedger, local),
   row(EvalCommand.Diagnostics, liveWhenResampling),
+  row(EvalCommand.AaaSuite, local),
+  row(EvalCommand.AaaCollect, local),
+  row(EvalCommand.AaaGrade, liveWhenTasteLive),
+  row(EvalCommand.AaaCompare, liveWhenTasteLive),
+  row(EvalCommand.AaaReferences, live),
 ];
 
 /** The registry row a command line names: the longest command that starts the arguments. */
