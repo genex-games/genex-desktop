@@ -96,6 +96,7 @@ export const RPC_CLASSES = {
   "coordinator.tool": RpcClass.Work,
   "engine.delegations": RpcClass.Record,
   "engine.hardware": RpcClass.Record,
+  "engine.usage": RpcClass.Record,
   "game.list": RpcClass.Record,
   "game.setCover": RpcClass.Work,
   "game.setCoverShader": RpcClass.Work,

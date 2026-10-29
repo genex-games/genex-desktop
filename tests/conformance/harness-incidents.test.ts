@@ -19180,4 +19180,39 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       ["CLOSE-UP / hero:yard", "CLOSE-UP / default", "CLOSE-UP / eye:here"],
     );
   });
+  it("G3-7c. two workers stopped on the weekly limit and the run waited 44 minutes for an account switch: worker_start weighs the builder's plan limits the app already shows, and says when a worker may stop on them", async () => {
+    const { usageForecast, usageWarning, USAGE_WARN_PERCENT } = await import(
+      "../../src/harness-seed/loop/director/usage-forecast.ts"
+    );
+    const report = (percent: number) => [
+      {
+        engine: "claude-code",
+        state: "ready",
+        account: "studio",
+        usage: {
+          measuredAt: "2026-10-29T01:00:00Z",
+          windows: [
+            { id: "five_hour", label: "5-hour", percent: 30 },
+            { id: "seven_day", label: "Weekly", percent, resetsAt: "2026-10-30T09:00:00Z" },
+          ],
+        },
+      },
+    ];
+    assert.match(
+      usageWarning(report(91), "claude-code", 6),
+      /^claude-code's Weekly limit is at 91%, resetting 2026-10-30T09:00:00Z: a worker of 6 rounds may stop on it mid-round/,
+    );
+    assert.equal(usageWarning(report(USAGE_WARN_PERCENT - 1), "claude-code", 6), "", "room left, nothing said");
+    assert.equal(usageWarning(report(99), "codex", 6), "", "another engine's limits are not this builder's");
+    const recorder = ctxRecorder({ handlers: { "engine.usage": () => report(92) } });
+    assert.match(await usageForecast(recorder.ctx, "claude-code", null), /this worker may stop on it/);
+    const silent = ctxRecorder({
+      handlers: {
+        "engine.usage": () => {
+          throw new Error("older host");
+        },
+      },
+    });
+    assert.equal(await usageForecast(silent.ctx, "claude-code", 3), "", "a host with no reports says nothing");
+  });
 });

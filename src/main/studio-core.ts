@@ -13,6 +13,7 @@
  * Deliberately free of Electron imports so the whole core can be exercised under plain node; the
  * preview is injected through {@link PreviewPort}.
  */
+import type { ProviderUsageReport } from "../shared/provider-usage.ts";
 import type { ChildProcess } from "node:child_process";
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, statfs } from "node:fs/promises";
 import os from "node:os";
@@ -475,6 +476,8 @@ export interface StudioPaths {
 
 export interface StudioCoreOptions {
   renderGameCover?: (surface: string, seed: number) => Promise<string>;
+  /** The subscriptions' plan limits as the app last read them (`core/provider-usage.ts`); absent in tests and smokes. */
+  providerUsage?: () => ProviderUsageReport[];
   /** Computer control (`desktop-control.ts`): absent where no desktop driver can be reached, and in tests. */
   desktop?: DesktopControl;
   /** Notes each boot step as it finishes (`main/performance.ts`); a launch without diagnostics passes nothing. */

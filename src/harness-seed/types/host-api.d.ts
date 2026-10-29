@@ -1436,6 +1436,22 @@ export interface HardwareReport {
 }
 // ↑ src/shared/studio-api.ts
 
+export type UsageState = 'checking' | 'ready' | 'failed' | 'not_shared' | 'signed_out';
+// ↑ src/shared/provider-usage.ts
+
+/**
+ * One subscription and where its plan limits stand. `usage` always belongs to `account`, the
+ * account in use: a switch never shows the last account's numbers.
+ */
+export interface ProviderUsageReport {
+  engine: string;
+  state: UsageState;
+  /** The account in use (`terminal`, `studio`, `account-N`), or null when the engine names none. */
+  account: string | null;
+  usage: ProviderUsage | null;
+}
+// ↑ src/shared/provider-usage.ts
+
 /** Host-owned presentation metadata. Folder identity and game files never change on rename. */
 export type CoverStyle = "world" | "relic" | "city";
 // ↑ src/shared/game-library.ts
@@ -3105,6 +3121,11 @@ export interface HarnessHostApi {
     result: Array<{ project: string; cwd: string; engine: string; startedAt: number }>;
   };
   "engine.hardware": { params: void; result: HardwareReport };
+  /**
+   * Where each subscription's plan limits stand (`core/provider-usage.ts`, the panel's own reports):
+   * sanitized, never an account id or a credential. Empty where the app tracks none.
+   */
+  "engine.usage": { params: void; result: ProviderUsageReport[] };
 
   // — games —
   "game.list": { params: void; result: GameProject[] };
