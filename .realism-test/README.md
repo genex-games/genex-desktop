@@ -12,3 +12,6 @@ removed once the screenshots are taken.
 4. `node studio_build.mjs <work>/export realism-test <work>/shots` builds it through Studio's MCP
    server and saves `today_*.jpg` (shape-only meshes, the template's lighting) and
    `realistic_*.jpg` (PBR SurfaceAppearances, Realistic lighting, atmosphere, post effects).
+5. `node .realism-test/gate_check.mts . <work>/assets/models` runs Genex's own model check
+   (`checkModel` in `src/plugins/roblox/asset-gate.ts`, what `import-model` runs first) over the
+   14 downloaded models as they come from Poly Haven. On 2026-10-29 (dev 097f21e) 4 of 14 passed.
