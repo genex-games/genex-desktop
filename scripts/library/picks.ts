@@ -201,7 +201,7 @@ const MODELS: ModelPick[] = [
   model("steel_frame_shelves_01", "shelf", LibraryBudget.SmallProp, ["storage", "warehouse", "metal"]),
   model("painted_wooden_cabinet", "shelf", LibraryBudget.SmallProp, ["cupboard", "kitchen", "interior"]),
   model("WetFloorSign_01", "sign", LibraryBudget.SmallProp, ["caution", "interior"]),
-  model("rock", LibraryBudget.Rock, ["boulder", "stone", "nature"]),
+  model("boulder_01", "rock", LibraryBudget.Rock, ["boulder", "stone", "nature"]),
   model("namaqualand_boulder_02", "rock", LibraryBudget.Rock, ["boulder", "stone", "desert"]),
   model("namaqualand_boulder_03", "rock", LibraryBudget.Rock, ["boulder", "stone", "desert"]),
   model("rock_moss_set_01", "rock", LibraryBudget.Rock, ["moss", "stones", "forest"]),
