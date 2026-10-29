@@ -33,7 +33,11 @@ presets scale the picture down for a smaller device; nothing scales a cheap pict
 5. **Tag and measure.** `frame.tag("<name>")` before what you draw, a `probe` per mechanic, a
    camera that shows it, a `demo` when a generic walk cannot reach it. The checks see the game only
    through these: a mechanic with no probe, tag or camera is unmeasured, and an unmeasured
-   mechanic does not count as built.
+   mechanic does not count as built. Three names the harness looks for: a
+   `game.named_camera("hero:<area>", ..)` per area, the shot judged against `references/`; a
+   `game.demo("sprint-run", ..)` in a first-person game, sprinting straight ahead for a few
+   seconds; and a `game.demo("doorway", ..)` where rooms meet, walking from a lit room into a
+   darker one. The harness measures camera comfort and exposure over time on those two demos.
 6. **Deterministic.** Randomness only from `ctx.rng` or the reset `rng`; time only from `ctx.tick`
    and `ctx.dt`; transcendental math from `genex::math`; `genex::Map`/`genex::Set` instead of
    `HashMap`/`HashSet`; no `std::time`, threads or OS entropy. The studio's build refuses them.
@@ -98,7 +102,7 @@ calling that facet done.
 | Character, creature, enemy | `genex__asset` `character` or `creature` (rigged, then `animate`) | a capsule or a mannequin |
 | Weapon and first-person arms | `docs/examples/fps-arms/` kit, else `genex__asset` `model` | arms or a gun built from boxes |
 | Walls, floors, ceilings, ground surfaces | `cc0__fetch` a scan at `2k` with its normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, a 1k or smaller map on a near surface |
-| Modular shell (walls with openings, trims, windows, doors) | `blender__model` kit script textured with scans (`docs/examples/interior-kit/`) | untextured modules, boxes with no reveals |
+| Modular shell (walls with openings, trims, windows, doors) | `blender__model` kit script textured with scans (`docs/examples/interior-kit/`); Blender otherwise only finishes a heavy model (decimate, levels) | untextured modules, boxes with no reveals |
 | Trees, bushes, foliage | a CC0 tree model (decimated, with its impostor); `genex__asset` `image` (transparent) for leaf and grass cards | a cone, sphere or box tree; one model cloned in a row |
 | Ground across the world | one `Terrain` with scan layers (`docs/api/terrain.md`) | a box or a quad as outdoor ground |
 | Snow, dust, moss on things | a terrain layer and the material's own map; snow falls as `Particles::snow(..)` | a slab or a thin box on top |

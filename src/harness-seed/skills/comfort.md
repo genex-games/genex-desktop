@@ -36,8 +36,8 @@ stylised lens (fisheye, grain, vignette) has a setting that turns it off.
 
 ## Measuring it
 
-Give the game a demo that sprints along a straight path for a few seconds and a probe of the
-camera's pose each tick (its height above the feet, its roll, its field of view). From the series:
+Give the game a demo named `sprint-run` that sprints along a straight path for a few seconds and
+returns the camera's pose each tick (its height above the feet, its roll, its field of view). From the series:
 the bob's peak to peak, the roll's largest value, the step cadence and the energy above 8 Hz. A
 Rust game's rig reports these itself under `state().volatile.camera` once its probe is
 registered. A round that moves any of them past its cap is a regression, whatever it adds.
