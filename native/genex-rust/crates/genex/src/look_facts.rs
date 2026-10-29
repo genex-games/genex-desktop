@@ -777,8 +777,12 @@ mod tests {
         raster.tag("corridor");
         // A floor slab running from behind the camera to 20 m in front of it.
         raster.mesh(index.get(MeshId::CUBE), &cube_at(Vec3::new(0.0, 0.0, -5.0), Vec3::new(4.0, 0.2, 30.0)), &Material::color([9; 4]));
+        // The slab's near part exists only if the triangles crossing the near plane were clipped:
+        // the bottom row's middle cell is covered, and nothing above the horizon is.
+        let bottom_centre = raster.cells[((raster.height - 1) * raster.width + raster.width / 2) as usize];
+        assert_ne!(bottom_centre.draw, EMPTY, "the near floor under the camera is drawn");
         let corridor = tag(&raster.facts().expect("drew"), "corridor").clone();
-        assert!(corridor.coverage > 0.2 && corridor.coverage < 0.6, "the lower half, narrowing: {}", corridor.coverage);
+        assert!(corridor.coverage > 0.15 && corridor.coverage < 0.5, "the lower half, narrowing: {}", corridor.coverage);
     }
 
     #[test]
