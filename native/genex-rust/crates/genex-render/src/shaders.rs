@@ -51,6 +51,7 @@ macro_rules! forward_wgsl {
             include_str!("../shaders/lighting/output.wgsl"),
             include_str!("../shaders/forward_effects.wgsl"),
             include_str!("../shaders/alpha_mask.wgsl"),
+            include_str!("../shaders/lighting/layers.wgsl"),
             include_str!("../shaders/forward.wgsl"),
             include_str!("../shaders/screen/normal_roughness_unpack.wgsl"),
             include_str!("../shaders/screen/normal_roughness.wgsl"),

@@ -61,6 +61,9 @@ pub struct GlbMaterial<T = u32> {
     /// How it lets light through: `KHR_materials_diffuse_transmission` as the subsurface chunk
     /// shades it ([`GlbMaterialExt::subsurface`], renderer pass 2 B.1); `None` is opaque to light.
     pub subsurface: Option<Subsurface>,
+    /// Its clearcoat, sheen, anisotropy and transmission factors (`KHR_materials_*`,
+    /// [`GlbMaterialExt::lobes`]; AAA materials): none by default.
+    pub lobes: crate::layers::Lobes,
 }
 
 impl<T: Copy> GlbMaterial<T> {
@@ -80,6 +83,7 @@ impl<T: Copy> GlbMaterial<T> {
             occlusion_texture: self.occlusion_texture.and_then(|t| upload(t, TextureKind::Data)),
             occlusion_strength: self.occlusion_strength,
             subsurface: self.subsurface,
+            lobes: self.lobes,
         }
     }
 
@@ -130,6 +134,7 @@ impl GlbMaterial<TextureId> {
         if let Some(subsurface) = self.subsurface {
             material = material.with_subsurface(subsurface);
         }
+        material.layers.lobes = self.lobes;
         material.with_double_sided(self.double_sided)
     }
 }
@@ -327,9 +332,10 @@ fn glb_parts(gltf: &gltf::Gltf) -> Result<Vec<GlbPart>, RenderError> {
             let (lods, lod_warnings) = lods.finish();
             let material_ext = material.as_ref().and_then(|material| read_material_ext(material, &gltf.document));
             let subsurface = material_ext.as_ref().and_then(GlbMaterialExt::subsurface);
+            let lobes = material_ext.as_ref().map(GlbMaterialExt::lobes).unwrap_or_default();
             GlbPart {
                 mesh,
-                material: material.as_ref().map(|material| GlbMaterial { subsurface, ..read_material(material) }),
+                material: material.as_ref().map(|material| GlbMaterial { subsurface, lobes, ..read_material(material) }),
                 emission: material.as_ref().and_then(read_emission),
                 material_ext,
                 meshlets: merged.set,
@@ -575,6 +581,7 @@ fn read_material(material: &gltf::Material<'_>) -> GlbMaterial {
         occlusion_texture,
         occlusion_strength,
         subsurface: None,
+        lobes: crate::layers::Lobes::default(),
     }
 }
 

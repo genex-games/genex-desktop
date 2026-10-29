@@ -17,6 +17,7 @@ Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emi
 // .with_occlusion_texture(path, strength) .with_emissive(color, strength) .with_emissive_texture(path) .with_untextured_color(color)
 // .with_uv_scale(u, v) .with_world_uv(metres) .with_uv_offset(u, v) .with_uv_rotation(radians) .with_uv_jitter(seed: u32)
 // .with_stochastic_tiling(true) .with_macro_variation(strength, metres) .with_subsurface(Subsurface::WAX)
+// .with_cover(Cover::snow(amount, slope, noise)) .with_detail(..) .with_layer(..) .with_parallax(..) .with_clearcoat(..) (docs/api/layered-materials.md)
 frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4)); // .with_intensity(1.0)
 frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3)); // .with_intensity(1.0)
 frame.decal(&Decal::on_wall(center, facing, width, height).with_base_texture(path)); // Decal::on_ground(center, width, length)
@@ -189,7 +190,9 @@ drawn in the sky and seen by reflections and the ambient light, on desktop `medi
 and phones show a clear sky. On every preset clouds veil the sun the ground gets (about half at
 coverage 0.5), so a cloudy day's shadows are lit by the sky, never black. Snow and rain fall from
 an overcast sky: `Environment::Sky(SkyParams::overcast())`, a bright grey sky on every preset and
-a veiled sun, not a blue sky with a full sun.
+a veiled sun, not a blue sky with a full sun. The snow on the ground and on props is a material
+cover laid by the weather (`frame.weather(&Weather::heavy_snow(), seconds)`, or
+`Cover::snow(..)`; `docs/api/layered-materials.md`), never white boxes.
 `Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
 Radiance `.hdr` under `assets/` (`HdriEnvironment::new(path).with_rotation_degrees(90.0)
 .with_intensity(0.5)`, inside `Environment::Hdri(..)`) and is drawn behind it. By default

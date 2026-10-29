@@ -16,6 +16,7 @@ use genex_gpu_memory::MemoryFacts;
 use crate::post::bloom::CHAIN_RESOLUTION;
 use crate::post::dof::DofTier;
 use crate::foliage::GrassQuality;
+use crate::layers::LayerTier;
 use crate::post::motion_blur::MotionBlurTier;
 use crate::screen_inputs::ScreenInputs;
 use crate::settings::{
@@ -485,6 +486,12 @@ fn table_quality(preset: QualityPreset, form: FormFactor) -> Quality {
         QualityPreset::High => GrassQuality::HIGH,
         QualityPreset::Ultra => GrassQuality::ULTRA,
     };
+    // AAA materials: layered materials by preset (phones' caps lower it, `apply_mobile_caps`).
+    quality.material_layers = match preset {
+        QualityPreset::Low => LayerTier::Cover,
+        QualityPreset::Medium => LayerTier::Layers,
+        QualityPreset::High | QualityPreset::Ultra => LayerTier::Parallax,
+    };
     // Game systems LOD-06 (owner call L6): 1 px on high and ultra, coarser below (phones take
     // their tier's floor, `apply_mobile_caps`).
     quality.lod = match preset {
@@ -872,6 +879,8 @@ fn apply_mobile_caps(quality: &mut Quality, preset: QualityPreset, class: Device
     // tile GPU's cost); none elsewhere on phones.
     let phone_grass = class.tier >= PerformanceTier::High && preset >= QualityPreset::High;
     quality.grass = if phone_grass { GrassQuality::MOBILE } else { GrassQuality::OFF };
+    // AAA materials: no parallax search on phones; the low phones draw the cover alone.
+    quality.material_layers = if class.tier == PerformanceTier::Low { LayerTier::Cover } else { quality.material_layers.min(LayerTier::Layers) };
     cap_lod(&mut quality.lod, class);
 }
 

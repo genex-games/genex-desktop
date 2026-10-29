@@ -48,12 +48,20 @@ struct Emitter {
     flags: vec4<u32>,
     // xyz: half the sides of the box around the origin particles spawn in; w: reserved.
     extent: vec4<f32>,
+    // Weather (AAA materials, WP-13): xyz the gusts' peak extra velocity (units a tick), w their
+    // period in ticks (0: no gusts).
+    weather: vec4<f32>,
+    // x: the flutter's reach (world units), y: its period in ticks, z: the size variance (a
+    // fraction either way), w: how lit the particles are (0..1).
+    flutter: vec4<f32>,
 }
 
 // `Emitter::flags.x` bits (`particles::flags`).
 const PARTICLE_FLAG_SORTED: u32 = 1u;
 const PARTICLE_FLAG_FLIPBOOK: u32 = 2u;
 const PARTICLE_FLAG_BLEND_FRAMES: u32 = 4u;
+const PARTICLE_FLAG_LIT: u32 = 8u;
+const PARTICLE_FLAG_FOLLOW_CAMERA: u32 = 16u;
 
 // The sort's key of a slot nothing draws: after every drawn slot.
 const PARTICLE_KEY_LAST: u32 = 0xffffffffu;

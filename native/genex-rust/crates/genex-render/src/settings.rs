@@ -2026,6 +2026,11 @@ pub struct Quality {
     /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
     /// renderer.
     pub grass: crate::foliage::GrassQuality,
+    /// Which layered-material parts the surfaces draw (AAA materials lane, [`crate::layers`]):
+    /// cover alone on `low` and the legacy renderer, cover noise, detail maps, the second layer and
+    /// the lobes from `medium` (and on the high phones), parallax occlusion mapping on desktop
+    /// `high` and `ultra`. A pipeline constant (`GX_MATERIAL_LAYERS`).
+    pub material_layers: crate::layers::LayerTier,
     /// Levels of detail (game systems LOD-06): the threshold, the crossfade band, impostors and the
     /// far-field density. Resource knobs; the presets set them per class (owner call L6).
     pub lod: LodQuality,
@@ -2095,6 +2100,7 @@ impl Quality {
             ssr: crate::ssr::SsrQuality::OFF,
             taau: false,
             grass: crate::foliage::GrassQuality::OFF,
+            material_layers: crate::layers::LayerTier::Cover,
             lod: LodQuality::LEGACY,
         }
     }
@@ -2181,6 +2187,7 @@ impl Quality {
             meshlets: self.meshlets,
             occlusion: self.occlusion,
             specular_aa: self.specular_aa,
+            material_layers: self.material_layers,
         }
     }
 
@@ -2240,6 +2247,8 @@ pub struct PipelineKey {
     pub occlusion: bool,
     /// [`Quality::specular_aa`].
     pub specular_aa: bool,
+    /// [`Quality::material_layers`].
+    pub material_layers: crate::layers::LayerTier,
 }
 
 /// A per-feature switch id (`RenderFeature` on the wire).

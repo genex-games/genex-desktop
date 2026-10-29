@@ -21,6 +21,7 @@ box a game ships fails the Art bar in `CLAUDE.md`.
 | `docs/examples/crowd/` | A crowd on a nav mesh: 120 walkers wander a walled market square, each a nav agent driving its own sensor capsule through the documented loop, sent to the least busy stall near the last, animated at their ground speed; 240 trees round the walls as two retained instance groups; a camera that draws the nav mesh | townsfolk, shoppers, zombies, any many-agent scene, and many things that stand still |
 | `docs/examples/explosion/` | An explosion on one tick: an emissive fireball that swells and dies, fire, sparks that fall and bounce, a smoke cloud that thins out, a point light's flash, the bang played where it happened, a radial impulse that throws Rapier crates, and a camera shake, all drawn from the blast's age | any burst effect (a grenade, a spell, a hit, a pickup) with sound and shake |
 | `docs/examples/menus-saves/` | Menus and save slots: a title menu (Continue, New game, Load, Settings), a pause menu, a quit confirm, slot lists that save and load the whole world, an autosave ring, the facade's settings menu and a toast per slot event, all from the kit's menus so keys, a pad and a tap walk them; a HUD with a health bar and the buttons a phone plays with | any game with a title screen, a pause menu or saving |
+| `docs/examples/exterior-snow/` | A snowy yard: the ground one Terrain of two packed CC0 layers (snow, and slush down a trodden path, each base colour with height and normal, roughness and occlusion), props snowed by their materials (a bench's slats, a shed's roof and not its walls, a fence, a dumpster, rocks, a clear-coated car), lamp posts with their lights, and heavy snow falling around the camera in two lit layers with gusts whose cover the frame lays on every draw | any outdoor or winter scene, any weather (`docs/api/layered-materials.md`) |
 | `docs/examples/soldier/` | The soldier kit: a rigged soldier in combat gear holding the arms kit's rifle (`soldier.glb`, made by `soldier.py` from Quaternius' CC0 animation library), animated from a remote player's replicated state alone: gaits from the velocity, an aim layer along the pitch, fire, reload, hits by side and death, framed close by the game camera | enemies and remote players in any shooter (`docs/examples/soldier/README.md`) |
 
 ## Building blocks
@@ -32,7 +33,8 @@ it from the reference page named, and look at a capture after each step.
 | --- | --- | --- |
 | Interior, architecture | `interior-room/`, `interior-kit/` (`rooms-and-buildings.md`) | `docs/api/lighting.md` |
 | Outdoor light, weather, ground | `looks/` (a terrain, sky and sun recipes, snow and rain) | `docs/look-recipes.md`, `docs/api/terrain.md`, `docs/api/particles.md` |
-| Trees, foliage, water | gap: no example draws a tree model, ground cover or water yet; use CC0 tree models with impostors (`docs/api/drawing.md`), terrain grass and `Water` | `docs/api/drawing.md`, `docs/api/terrain.md`, `docs/api/water.md` |
+| Outdoor terrain and nature | `exterior-snow/` (a Terrain of packed layers with a control map, weather and its cover); `crowd/` stands trees as instance groups; no example yet has water or foliage | `docs/api/terrain.md`, `docs/api/layered-materials.md`, `docs/api/water.md`, `docs/api/instance-groups.md` |
+| Weather, snow, rain | `exterior-snow/` (`Weather::heavy_snow()`, `Cover`) | `docs/api/layered-materials.md`, `docs/api/particles.md` |
 | Rigged characters, animation | `third-person/` (a graph with a masked layer and an event), `fps/` (an enemy's graph with one-shot clips), `crowd/` (simple animators at ground speed), `fps-arms/` (a weapon rig), `soldier/` (gaits from velocity, an aim layer, hits, death) | `docs/api/animation.md` |
 | First-person controller and weapon | `fps/`, `fps-arms/` | `docs/api/characters.md`, `docs/api/input.md` |
 | Third-person controller and camera | `third-person/` | `docs/api/characters.md` |
@@ -50,6 +52,11 @@ The examples ship no scans; without them they draw stand-in colours, so they run
 are copied. Each `Scan` names the folder `cc0__fetch` lands in; if yours answers another path, use it.
 The interior kit and the arms kit ship their own GLBs.
 
+- **exterior-snow**: two Terrain layers packed with `cc0__terrain-layer` from CC0 textures
+  fetched at `2k` (the ground fills the screen): a snow texture (Poly Haven `snow_02`) packed as
+  `terrain/snow`, and a slush or wet asphalt one (`asphalt_01`) as `terrain/slush`, so the files
+  are `terrain/snow_albedo.png`, `terrain/snow_data.png`, `terrain/slush_albedo.png` and
+  `terrain/slush_data.png`. Without them the ground draws its fallback colours.
 - **interior-room**: `cc0__fetch` at `2k` from Poly Haven: `peeling_painted_wall`,
   `blue_plaster_wall` (the dado), `floor_tiles_06`, `concrete_wall_003`, `wood_table_worn`,
   `rusty_metal_02`. Three RGBA decals: `decals/grime-streaks.png`, `decals/poster.png`,

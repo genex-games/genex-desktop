@@ -253,7 +253,7 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     let f_avg = f0 + (vec3<f32>(1.0) - f0) / 21.0;
     let fms_ems = e_ms * fss_ess * f_avg / (vec3<f32>(1.0) - e_ms * f_avg);
     let k_d = s.albedo * (1.0 - s.metallic) * (vec3<f32>(1.0) - fss_ess - fms_ems);
-    let r = reflect(-s.v, s.n);
+    let r = gx_lobe_reflection(s, reflect(-s.v, s.n));
     let term = gx_surface_occlusion(s);
     // Under `GX_AO_GI` the term's xyz is the GI's light and it has no bent normal (B.4).
     let ao = vec4<f32>(select(term.xyz, vec3<f32>(0.0), GX_AO_GI), term.w);
@@ -280,11 +280,57 @@ fn gx_environment_light(s: Surface) -> vec3<f32> {
     }
     let specular_visibility = gx_horizon_fade(r, s.geometric) * ao_specular;
     let specular = fss_ess * radiance * specular_visibility;
+    var lit: vec3<f32>;
     if GX_AO_GI {
         // The GI is the bounce Jimenez's multi-bounce fit stands in for (B.4), so the sky's light
         // takes the visibility as it is and the GI adds what the occluders send: both would count
         // the bounce twice.
-        return specular + (fms_ems + k_d) * (irradiance * occlusion + term.xyz);
+        lit = specular + (fms_ems + k_d) * (irradiance * occlusion + term.xyz);
+    } else {
+        lit = specular + (fms_ems + k_d) * irradiance * gx_ao_multibounce(occlusion, s.albedo * (1.0 - s.metallic));
     }
-    return specular + (fms_ems + k_d) * irradiance * gx_ao_multibounce(occlusion, s.albedo * (1.0 - s.metallic));
+    if gx_lobe_params.w > 0.5 {
+        lit = gx_environment_lobes(s, lit, irradiance, specular_visibility, n_dot_v);
+    }
+    return lit;
+}
+
+// The mirror direction the environment's specular is fetched along: an anisotropic surface's
+// bent toward its stretch (Filament's bent reflection for anisotropy, `getReflectedVector`),
+// else `r` as it is.
+fn gx_lobe_reflection(s: Surface, r: vec3<f32>) -> vec3<f32> {
+    let anisotropy = gx_lobe_params.z;
+    if gx_lobe_params.w < 0.5 || anisotropy == 0.0 {
+        return r;
+    }
+    let t = normalize(gx_lobe_tangent - s.n * dot(s.n, gx_lobe_tangent));
+    let b = cross(s.n, t);
+    let direction = select(t, b, anisotropy < 0.0);
+    let stretched_tangent = cross(direction, s.v);
+    let stretched_normal = normalize(cross(stretched_tangent, direction));
+    let bend = abs(anisotropy) * clamp(5.0 * s.roughness, 0.0, 1.0);
+    return reflect(-s.v, normalize(mix(s.n, stretched_normal, bend)));
+}
+
+// The environment's light `lit` on `s` with its sheen and clearcoat (AAA materials, WP-15): the
+// sheen's share of the diffuse irradiance, then the clearcoat's own reflection (one more probe
+// walk, for a clearcoated material only) over both, dimmed by the coat's Fresnel.
+fn gx_environment_lobes(s: Surface, lit: vec3<f32>, irradiance: vec3<f32>, visibility: f32, n_dot_v: f32) -> vec3<f32> {
+    var out = lit;
+    let sheen = gx_lobe_sheen;
+    let sheen_peak = max(sheen.r, max(sheen.g, sheen.b));
+    if sheen_peak > 0.0 {
+        out = out * (1.0 - sheen_peak * GX_SHEEN_ALBEDO) + sheen.rgb * irradiance * GX_SHEEN_ALBEDO * gx_material_ao;
+    }
+    let coat = gx_lobe_params.x;
+    if coat > 0.0 {
+        let nc = gx_lobe_coat_normal;
+        let coat_roughness = max(gx_lobe_params.y, GX_LOBE_ROUGHNESS_MIN);
+        let nc_dot_v = clamp(dot(nc, s.v), 0.0001, 1.0);
+        let fc = (0.04 + 0.96 * pow(1.0 - nc_dot_v, 5.0)) * coat;
+        let rc = reflect(-s.v, nc);
+        let coat_light = gx_env_light(s.world_pos, rc, gx_env_lod(coat_roughness), nc);
+        out = out * (1.0 - fc) + coat_light.reflection * fc * visibility;
+    }
+    return out;
 }

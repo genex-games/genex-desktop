@@ -467,6 +467,33 @@ struct GxMaterialExt {
     // The tiling (Bodycam B2b): x flag bits (1 world projection, 2 stochastic), y rotation in
     // radians, z macro variation strength, w its patch size in metres.
     tiling: vec4<f32>,
+    // The layered parts (AAA materials, `layers.rs`, shaders/lighting/layers.wgsl), each read only
+    // under its flag in `params.z`. Textures are `class * 65536 + layer` (-1: none).
+    // rgb the cover's colour (linear), a its amount.
+    cover: vec4<f32>,
+    // x the cosine of the cover's steepest slope, y its edge in cosine units, z its roughness, w
+    // how much it flattens the normal map.
+    cover_shape: vec4<f32>,
+    // x the cover's noise strength, y the noise's patch in metres, z how much it darkens the base
+    // colour, w how much its colour replaces it.
+    cover_look: vec4<f32>,
+    // x the detail albedo, y the detail normal map, z repeats per base tile, w the albedo's strength.
+    detail: vec4<f32>,
+    // x the detail normal's strength, y the distance it has faded out by (0: never).
+    detail_look: vec4<f32>,
+    // The second layer's base colour, normal, ORM and height textures.
+    layer: vec4<f32>,
+    // x the mask (0 noise, 1 up, 2 + channel the vertex colour), y the height blend's depth, z the
+    // noise mask's patch in metres, w the layer's repeats per base tile.
+    layer_shape: vec4<f32>,
+    // rgb the layer's tint (linear), a its roughness factor.
+    layer_tint: vec4<f32>,
+    // x the parallax height map, y its depth in tiles, z the most search steps.
+    parallax: vec4<f32>,
+    // x clearcoat, y its roughness, z anisotropy, w its rotation in radians.
+    lobes: vec4<f32>,
+    // rgb the sheen's colour (linear), a its roughness.
+    sheen: vec4<f32>,
 }
 
 // The view distance of a depth-buffer value under projection `proj` (perspective or

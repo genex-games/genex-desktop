@@ -49,6 +49,9 @@ pub mod tables;
 pub mod cull;
 /// Metallic-roughness materials (lights moved to [`lights`], re-exported here).
 pub mod pbr;
+/// Layered materials and the extra shading lobes (AAA materials lane): cover, detail, a second
+/// layer, parallax, clearcoat, sheen, anisotropy, transmission.
+pub mod layers;
 /// Per-pixel subsurface scattering and diffuse transmission (renderer pass 2 B.1).
 pub mod subsurface;
 /// Two-cascade sun shadows.
@@ -84,6 +87,9 @@ pub mod overlay;
 pub mod extension;
 /// GPU particles: a render-only compute emitter.
 pub mod particles;
+/// Weather presets (AAA materials lane): snow, rain and dust as camera-following lit layers, and the
+/// cover each lays.
+pub mod weather;
 /// Device-loss recovery: the device watch and the resilient renderer.
 pub mod device_loss;
 /// HiDPI world sizing, logical captures, present mode and 60 Hz pacing.

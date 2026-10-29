@@ -82,6 +82,7 @@ mod runtime;
 mod ragdoll;
 mod sim;
 mod particles;
+mod layers;
 mod stream;
 mod stream_groups;
 mod stream_source;
@@ -116,10 +117,14 @@ pub use decal::Decal;
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
 pub use frame::{
     Ambient, Color, CustomDraw, CustomMesh, DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, Draw, Frame, IrradianceVolume, Lights, Material, PointLight,
-    PostDraw, ReflectionProbe, Shape, SpotLight, Sun, Transform,
+    PostDraw, ReflectionProbe, Shape, SpotLight, Sun, Transform, DETAIL_FADE_METRES,
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use particles::{PARTICLES_MAX, ParticleFlipbook, Particles, ParticlesError, ParticlesErrorCode};
+/// Layered materials and weather (AAA materials lane): cover, a second layer, weather presets.
+pub use layers::{Cover, Layer, LayerMask, Weather};
+/// Which weather preset a [`Weather`] is.
+pub use genex_render::weather::WeatherKind;
 pub use group::{Far, GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
 pub use terrain::{GRASS_DENSITY_MAX, GRASS_HEIGHT_MAX, Grass, Scatter, TERRAIN_LAYER_MAX, TERRAIN_SAMPLES_MAX, Terrain, TerrainError, TerrainErrorCode, TerrainLayer, TerrainTexel};
 /// The look a terrain's layers share (macro variation, wetness, the height blend's depth).
@@ -249,6 +254,7 @@ pub mod prelude {
         Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
         Material, MeshData, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
+    pub use crate::{Cover, Layer, Weather};
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
     // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.
     pub use serde::{Deserialize, Serialize};
