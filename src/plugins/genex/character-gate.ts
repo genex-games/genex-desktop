@@ -7,7 +7,13 @@
  */
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { CharacterFailure, characterVerdict, type CharacterProblem } from "../../shared/character-contract.ts";
+import {
+  CharacterFailure,
+  CharacterRole,
+  characterVerdict,
+  type CharacterProblem,
+  clipRole,
+} from "../../shared/character-contract.ts";
 import { GenexFailureCode, type GenexJob, type GenexJobFailure, GenexOperation } from "../../shared/genex.ts";
 import { characterFacts, restPoseOf } from "../../substrate/asset-import/character-facts.ts";
 import { readGlb } from "../../substrate/asset-import/glb.ts";
@@ -80,4 +86,35 @@ export async function gateCharacter(job: GenexJob, output: string): Promise<Gene
     providerError: `Not delivered, the body is not playable: ${rejected.join("; ")}`,
     next: [...codes].map((code) => NEXT[code]).join(" "),
   };
+}
+
+/** The names of the clips a GLB's document holds. */
+function clipNames(bytes: Uint8Array): string[] {
+  try {
+    const animations = readGlb(bytes).json.animations;
+    if (!Array.isArray(animations)) return [];
+    return animations.map((each) =>
+      each && typeof each === "object" && typeof each.name === "string" ? each.name : "",
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The move roles no clip in `output` covers, counting the body's own clips and those of the
+ * animation-only GLBs beside it: what the agent still fills with `character.animate` or
+ * `animations.search`. Null when the job makes no body.
+ */
+export async function missingRolesOf(job: GenexJob, output: string): Promise<CharacterRole[] | null> {
+  if (!BODY_OPERATIONS.has(job.operation)) return null;
+  const covered = new Set<CharacterRole>();
+  for (const file of await glbsUnder(output)) {
+    if ((await stat(file)).size > BODY_FILE_MAX_BYTES) continue;
+    for (const name of clipNames(new Uint8Array(await readFile(file)))) {
+      const role = clipRole(name);
+      if (role) covered.add(role);
+    }
+  }
+  return Object.values(CharacterRole).filter((role) => !covered.has(role));
 }

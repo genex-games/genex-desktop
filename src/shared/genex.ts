@@ -350,6 +350,8 @@ export interface GenexJob {
   error?: string;
   /** Set when Genex's provider failed or canceled the generation (`generation-failed`, `generation-canceled`). */
   failure?: GenexJobFailure;
+  /** A delivered body's move roles no clip covers yet (`shared/character-contract.ts`): what to fill with `character.animate`. */
+  missingRoles?: string[];
   /** Set when the job went no further than asking the person for something first. */
   blocked?: GenexBlocked;
   creditsQuoted?: number;

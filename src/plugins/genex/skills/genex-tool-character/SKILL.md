@@ -24,8 +24,9 @@ unchanged. Where it disagrees with this preface, this preface wins.
   reaches the game: one that is not skinned, lacks core humanoid bones, rests with arms hanging or
   raised, or is not person-sized comes back `failed` with `failure.code` `character-rejected`; read
   `failure.providerError` for why and `failure.next` for the call that fixes it, then regenerate. The
-  roles a game needs are idle, walk, run, crouch, aim, fire, reload, hit and death: name a clip for
-  each (`character.animate`, `animations.search`) when the body's own clips lack one.
+  roles a game needs are idle, walk, run, crouch, aim, fire, reload, hit and death: a delivered
+  body's job lists the ones no clip covers in `missingRoles`; fill each with a plainly named clip
+  (`character.animate`, `animations.search`: "Crouch", "Reload").
 - These lanes are Meshy; Studio has no provider option. A prop, vehicle or building is the model
   card's lane (Tripo), or Local Blender's.
 

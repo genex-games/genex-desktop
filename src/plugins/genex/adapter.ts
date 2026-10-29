@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import { SecretStore } from "../../substrate/secrets.ts";
 import { deliverGenexFiles } from "../../substrate/genex-delivery.ts";
-import { gateCharacter } from "./character-gate.ts";
+import { gateCharacter, missingRolesOf } from "./character-gate.ts";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, lstat, rm } from "node:fs/promises";
@@ -2339,6 +2339,8 @@ export class GenexTools {
       return;
     }
     job.files = await this.#deliver(output, root, job.id);
+    const missing = await missingRolesOf(job, output);
+    if (missing) job.missingRoles = missing;
     if (job.preferredFile) job.preferredFile = job.files.find((file) => path.basename(file) === job.preferredFile);
     if (job.files.length) job.status = GenexJobStatus.Downloaded;
   }

@@ -3841,7 +3841,8 @@ its deadline or its assertion.
   not skinned (`not-rigged`), lacks core humanoid bones (`not-humanoid`), rests with arms hanging or
   raised (`rest-pose`, 25-110° from hanging, measured by `restPoseOf` from the file's rest transforms)
   or is not person-sized (`scale`, hips 0.2-2.5 m above the feet). Roles no clip covers come back as
-  `missingRoles`, for `character.animate`, `animations.search` or a retargeted library.
+  `missingRoles` (also on the delivered job, counting animation-only GLBs beside the body), for
+  `character.animate`, `animations.search` or a retargeted library.
 - `plugins/genex/character-gate.ts` runs it on every drawn GLB a character, creature, finalize or
   import job downloaded, before delivery. A rejected body is not delivered: the job is `failed` with
   `failure.code` `character-rejected`, the reasons in `failure.providerError` and the call that

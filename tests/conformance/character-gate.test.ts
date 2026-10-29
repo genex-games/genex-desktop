@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { gateCharacter } from "../../src/plugins/genex/character-gate.ts";
-import { CharacterFailure } from "../../src/shared/character-contract.ts";
+import { gateCharacter, missingRolesOf } from "../../src/plugins/genex/character-gate.ts";
+import { CharacterFailure, CharacterRole } from "../../src/shared/character-contract.ts";
 import { GenexFailureCode, GenexJobStatus, GenexOperation, type GenexJob } from "../../src/shared/genex.ts";
 import { motionGlb } from "../helpers/glb.ts";
 import { riggedCharacter } from "../helpers/rigged-glb.ts";
@@ -85,5 +85,32 @@ describe("the character gate", () => {
   it("passes an output with no GLB: there is nothing to judge", async () => {
     const dir = await outputWith({ "notes.txt": new Uint8Array([1]) });
     assert.equal(await gateCharacter(jobOf(GenexOperation.Character), dir), null);
+  });
+});
+
+const COVERED: ReadonlySet<CharacterRole> = new Set([CharacterRole.Idle, CharacterRole.Walk, CharacterRole.Run]);
+
+describe("the roles a delivered body still lacks", () => {
+  const all = Object.values(CharacterRole);
+
+  it("counts the body's own clips and those of animation-only files beside it", async () => {
+    const dir = await outputWith({
+      "character.glb": riggedCharacter({ clips: [{ name: "Idle" }, { name: "Walk" }] }),
+      "clips/run.glb": new Uint8Array(motionGlb("Run_Fwd", ["Hips", "Spine"])),
+    });
+    assert.deepEqual(
+      await missingRolesOf(jobOf(GenexOperation.Character), dir),
+      all.filter((role) => !COVERED.has(role)),
+    );
+  });
+
+  it("names every role for a body with no clips", async () => {
+    const dir = await outputWith({ "character.glb": riggedCharacter({}) });
+    assert.deepEqual(await missingRolesOf(jobOf(GenexOperation.Creature), dir), all);
+  });
+
+  it("is null for a job that makes no body", async () => {
+    const dir = await outputWith({ "prop.glb": riggedCharacter({}) });
+    assert.equal(await missingRolesOf(jobOf(GenexOperation.Model), dir), null);
   });
 });
