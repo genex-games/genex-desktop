@@ -50,7 +50,7 @@ world.rig.update(ctx.dt, RigStep { velocity: player.velocity(), turn: turn.x, ..
 // the camera hook: eye before any bob (the hitscan starts there), look direction, vertical fovy.
 game.camera(|sim| sim.world.rig.camera(sim.world.eye(), sim.world.forward(), FOVY));
 // a comfort check reads it per tick, outside the checksum.
-game.probe_volatile("camera", |sim| sim.world.rig.probe());
+game.probe_volatile("cameraMotion", |sim| sim.world.rig.probe());
 ```
 
 `fovy` is the **vertical** field of view in degrees. Keep a first-person game between 60 and 80

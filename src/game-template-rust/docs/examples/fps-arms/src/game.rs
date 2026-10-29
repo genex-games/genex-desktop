@@ -165,7 +165,7 @@ pub fn wire(game: &mut Game<World>) {
         json!({ "x": at.x, "z": at.z, "yaw": sim.world.yaw, "pitch": sim.world.pitch, "aim": sim.world.aim, "sprinting": sim.world.sprinting })
     });
     // The camera's motion per tick for a comfort check (bob, roll, cadence), outside the checksum.
-    game.probe_volatile("camera", |sim| sim.world.rig.probe());
+    game.probe_volatile("cameraMotion", |sim| sim.world.rig.probe());
 }
 
 /// Turn, walk or sprint the capsule, ease the aim, and measure the wall in front of the rifle.

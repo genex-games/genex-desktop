@@ -67,8 +67,10 @@ Common mistakes:
   camera the hook returns.
 - A draw or probe hook may read `rig.pose()`; scale what it shows with
   `Comfort::current().bob_share()` so the view model obeys the person's settings too.
-- `game.probe("camera", ..)` would put the rig into the checksum; a comfort check reads
-  `game.probe_volatile("camera", |sim| sim.world.rig.probe())`.
+- `camera` is a reserved `state()` key: name the probe `cameraMotion` (a game that names a probe
+  `camera` fails to install `reserved-probe`).
+- `game.probe("cameraMotion", ..)` would put the rig into the checksum; a comfort check reads
+  `game.probe_volatile("cameraMotion", |sim| sim.world.rig.probe())`.
 
 ## Third person
 

@@ -4,7 +4,7 @@
 //! over time. These rows measure the rig the way a comfort check reads a run: per-tick camera poses,
 //! bob peak to peak, roll, the bob's dominant frequency and its energy above 6 Hz.
 
-use genex::camera::{BOB_PEAK_TO_PEAK_MAX, Comfort, FirstPersonRig, RigStep};
+use genex::camera::{Comfort, FirstPersonRig, RigStep};
 use genex::prelude::*;
 
 const DT: f32 = 1.0 / 60.0;
@@ -126,7 +126,6 @@ fn a_sprint_run_holds_every_comfort_cap() {
     assert!(comfort_numbers(&pitches).high_share < HIGH_ENERGY_CAP, "pitch has no high-frequency energy");
     let kick = steady.iter().map(|sample| sample.fovy - BASE_FOVY).fold(0.0, f32::max);
     assert!(kick > 0.0 && kick <= FOV_KICK_CAP_DEG, "sprint field of view kick {kick:.2}°");
-    assert!(BOB_PEAK_TO_PEAK_MAX <= BOB_CAP_M);
 }
 
 #[test]

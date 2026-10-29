@@ -112,7 +112,7 @@ fn mouse_look_turns_the_view_and_the_keys_walk_the_capsule() {
 }
 
 /// WP-3: the example's sprint used to bob 4 cm at 14 Hz with a cusp at every step. On
-/// `FirstPersonRig` the camera's probe (`state().volatile.camera`) stays under the comfort caps on
+/// `FirstPersonRig` the camera's probe (`state().volatile.cameraMotion`) stays under the comfort caps on
 /// a held sprint: cadence below 3 Hz, bob at most 3 cm peak to peak, roll at most 1.5°.
 #[test]
 fn a_held_sprint_keeps_the_camera_under_the_comfort_caps() {
@@ -123,7 +123,7 @@ fn a_held_sprint_keeps_the_camera_under_the_comfort_caps() {
     let (mut bobs, mut cadence, mut roll) = (Vec::new(), 0.0f64, 0.0f64);
     for _ in 0..120 {
         runtime.step(FIXED_STEP_MS);
-        let camera = runtime.state()["volatile"]["camera"].clone();
+        let camera = runtime.state()["volatile"]["cameraMotion"].clone();
         bobs.push(camera["bobM"].as_f64().expect("the camera probe's bob"));
         cadence = cadence.max(camera["cadenceHz"].as_f64().expect("its cadence"));
         roll = roll.max(camera["rollDeg"].as_f64().expect("its roll").abs());
