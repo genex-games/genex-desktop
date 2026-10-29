@@ -259,7 +259,11 @@ is the context reading. Compact now runs Grok's own `/compact` on the resumed se
 (`auto_compact_completed`). Its sandbox writes the workspace (a scratch folder when read-only) and
 Grok's home (`ownHome`; on Windows the studio's sandbox grants it at start, as OpenCode's folders),
 denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
-`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). On Windows the sandbox runs
+`cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). A chat the person set to
+Bypass runs its builds and Compact now outside that sandbox, as the person, as Codex's Bypass does
+(`runsAsPerson`, `grokOutside`): in their environment less every credential and other vendors'
+variables, on Grok's own sign-in, which it renews itself; a read-only session of that chat keeps
+the sandbox. On Windows the sandbox runs
 Grok as its own user, and Grok gives `auth.json` to the Windows user who signed in alone, on every
 read and write (#531): each run reads a copy in its own folder instead (`GROK_AUTH_PATH`,
 `copySessionSignIn`), every account's entry without its refresh token, removed after the run (and,

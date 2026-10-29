@@ -16,7 +16,7 @@ import { after, before, describe, it } from "node:test";
 import { EngineId } from "../../src/shared/providers.ts";
 import { spawnCommand } from "../../src/substrate/command-launch.ts";
 import { cliVersion, resolveCodingCli } from "../../src/substrate/engines/external-cli.ts";
-import { GrokEngine, grokEvents, type GrokExec } from "../../src/substrate/engines/grok.ts";
+import { GrokEngine, grokEvents, grokOutside, type GrokExec } from "../../src/substrate/engines/grok.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { FAKE_DONE_TEXT, type FakeXai, startFakeXai } from "../helpers/fake-xai-responses.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -124,12 +124,16 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     }
   });
 
-  /** The engine on the real CLI, its turns in Genex's real sandbox, reaching only the fake. */
+  /** The engine on the real CLI, its turns in Genex's real sandbox (or a Bypass chat's as the person), reaching only the fake. */
   const engine = (home = process.env.GROK_HOME) => {
     const execFn: GrokExec = async function* (invocation) {
+      const env = { ...invocation.env, GROK_CLI_CHAT_PROXY_BASE_URL: fake.proxyUrl };
+      if (!invocation.sandbox) {
+        yield* grokOutside(binary, { ...invocation, env }, process.env);
+        return;
+      }
       const sandbox = await ProcessSandbox.create(invocation.sandbox);
       try {
-        const env = { ...invocation.env, GROK_CLI_CHAT_PROXY_BASE_URL: fake.proxyUrl };
         yield* grokEvents(sandbox, binary, { ...invocation, env, domains: ["127.0.0.1", "localhost"] });
       } finally {
         await sandbox.dispose();
@@ -214,6 +218,35 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     assert.equal(await readFile(path.join(folder, "minted.txt"), "utf8"), "2", "renewed once, its new hour left alone");
     const sent = fake.modelRequestHeaders().slice(sentBefore);
     assert.ok(sent.length > 0 && sent.every((headers) => headers.includes("renewed-2")), "both builds ran on it");
+  });
+
+  it("in a Bypass chat runs as the person, outside the sandbox, and an Auto turn resumes that session inside it", {
+    timeout: 2 * TURN_TIMEOUT_MS,
+  }, async () => {
+    const outside = path.join(root, "outside", PROOF.file);
+    await mkdir(path.dirname(outside), { recursive: true });
+    // As the read-only session's write: quotes and slashes Grok's Windows shell passes on as they are.
+    const write = `node -e "require('node:fs').writeFileSync('${outside.replaceAll("\\", "/")}', 'ok')"`;
+    const dir = await game("bypass", write);
+    const chat = (mode: string) => ({ mode, ask: async () => ({ decision: "deny" }) }) as never;
+    const bypass = await engine().delegate({
+      cwd: dir,
+      prompt: "Write outside the game.",
+      permissions: chat("bypassPermissions"),
+    });
+    assert.equal(bypass.ok, true, bypass.errorText);
+    assert.equal(await readFile(outside, "utf8"), "ok", "no sandbox held a write outside the game");
+    fake.next("node probe.mjs");
+    // On Windows the sandbox runs as its own user: the session the person's Grok kept must open to it.
+    const auto = await engine().delegate({
+      cwd: dir,
+      prompt: "Run the probe.",
+      resume: bypass.sessionId,
+      permissions: chat("auto"),
+    });
+    assert.equal(auto.ok, true, auto.errorText);
+    assert.equal(auto.sessionId, bypass.sessionId, "the same session, resumed in the sandbox");
+    assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
   });
 
   it("a judge's picture reaches the model: Grok opens the file its prompt names, in the real sandbox", {

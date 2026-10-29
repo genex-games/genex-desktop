@@ -352,7 +352,8 @@ export interface GrokTurn {
 }
 
 /**
- * `grok`'s arguments for one turn. Grok's own sandbox stays off: the studio's holds every session.
+ * `grok`'s arguments for one turn. Grok's own sandbox stays off: the studio's holds every session
+ * but a Bypass chat's, which the person chose to run unboxed.
  * A build approves every call; so does a read-only session, whose sandbox lets it write only its
  * own folder (as a Codex reviewer's does), with the file-editing tools gone. A blind judge and a
  * one-shot answer run in Grok's ask mode, where a headless run refuses every call nobody approved
