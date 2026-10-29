@@ -202,7 +202,7 @@ pub(crate) fn preset(species: Species) -> Preset {
             bark: BarkKind::Birch,
             bark_tile: 0.5,
             leaf: LeafKind::Birch,
-            twig: [0.16, 0.085, 0.075],
+            twig: [0.13, 0.09, 0.09],
         },
         Species::Spruce => Preset {
             form: Form::Branched,
