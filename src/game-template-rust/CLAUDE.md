@@ -110,24 +110,27 @@ calling that facet done.
 | Sky and outdoor light | `Environment::sky()` with the recipe's sun, or a CC0 `.hdr` at 4k | a sky-dome texture on a sphere |
 | Sounds | `genex__asset` `sfx`, or CC0 | silence for a mechanic that has sound |
 
-**Never ship.** Each line names the check that refuses it; fix what it names.
+**Never ship.** A judge names each of these by its id (the harness's look blockers) and a round that
+adds one is not kept; fix what it names.
 
-- `box-tree`: a tree or bush made of cones, spheres or boxes.
-- `slab-snow`: snow as a slab or box on the ground or on props.
-- `block-furniture`: furniture or props built from cubes in code or a primitive-only script.
-- `flat-prop`: an untextured, flat-coloured surface the camera comes within 10 m of.
-- `scan-missing-maps`: a scan drawn without its normal and ORM maps, or below `2k` up close.
-- `box-ground`: a box or a quad as the outdoor ground.
-- `camera-over-comfort`: head bob over 2.8 cm, roll over 2 degrees or a step cadence over 2.8 Hz.
-- `camera-tick-noise`: camera shake drawn fresh from `ctx.rng` every tick.
-- `fov-out-of-range`: a first-person `fovy` (vertical, degrees) outside 60 to 80.
-- `stacked-darkening`: a dark look made of negative compensation, a raised `ev_min`, a vignette
-  and a dark grade together; a dark room needs less light, not every control turned down.
-- `post-without-clean-tier`: a lens, grain or vignette pass with no way off in the settings.
-- `near-billboard`: a flat card or impostor within 50 m of the camera.
-- `black-silhouette`: hands, a weapon or a character that reads as a black shape; draw
-  first-person parts between `frame.view_model()` and `frame.end_view_model()`.
-- `cube-particles`: particles that read as cubes; use `frame.weather(..)`, `Particles::snow(..)`, `Particles::dust(..)`.
+- `stick-tree`: a tree or bush made of cones, spheres, boxes or sticks with no leaf or twig cards.
+- `slab-snow`: snow, sand or dust as a slab or box on the ground or on props.
+- `primitive`: furniture, props or characters built from cubes in code or a primitive-only script.
+- `flat-material`: an untextured, flat-coloured surface; near ones (within 10 m) also need their
+  scan's normal and ORM maps at `2k`.
+- `uncomfortable-camera`: head bob over 2.8 cm, roll over 2 degrees, a step cadence over 2.8 Hz,
+  or shake drawn fresh from `ctx.rng` every tick (use `FirstPersonRig`).
+- `crushed-shadow`: a dark look made of negative compensation, a raised `ev_min`, a vignette and a
+  dark grade together; a dark room needs less light, not every control turned down.
+- `exposure-pump`: exposure that jumps or overshoots crossing a doorway.
+- `dark-viewmodel`: hands, a weapon or a character that reads as a black shape; draw first-person
+  parts between `frame.view_model()` and `frame.end_view_model()`.
+- `placeholder-particles`: particles that read as cubes; use `frame.weather(..)`,
+  `Particles::snow(..)`, `Particles::dust(..)`.
+
+Also never: a box or a quad as the outdoor ground, a first-person `fovy` (vertical, degrees) outside
+60 to 80, a lens, grain or vignette pass with no way off in the settings, or a flat card or
+impostor within 50 m of the camera.
 
 ## Assets
 

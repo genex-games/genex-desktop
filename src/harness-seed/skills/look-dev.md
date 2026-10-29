@@ -47,10 +47,9 @@ The area's look is done when its hero shot passes and none of the never-ship ite
 
 Each id is a defect a judge names; any one in a hero shot fails it.
 
-`box-tree`, `slab-snow`, `block-furniture`, `flat-prop`, `scan-missing-maps`, `box-ground`,
-`camera-over-comfort`, `camera-tick-noise`, `fov-out-of-range`, `stacked-darkening`,
-`post-without-clean-tier`, `near-billboard`, `black-silhouette`, `cube-particles`. In a Rust game
-folder `CLAUDE.md` (Art bar) says what each one is.
+`stick-tree`, `slab-snow`, `primitive`, `flat-material`, `uncomfortable-camera`, `crushed-shadow`,
+`exposure-pump`, `dark-viewmodel`, `placeholder-particles` (the look blockers). In a Rust game
+folder `CLAUDE.md` (Art bar) says what each one is, with the few defects no check names yet.
 
 ## Briefing a worker
 
