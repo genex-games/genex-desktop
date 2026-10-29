@@ -236,6 +236,9 @@ fn metal_a_lit_flake_against_an_overcast_sky_is_not_a_dark_speck() {
     quality.hdr = true;
     quality.tonemap = true;
     quality.prepass = true;
+    // The high preset's sky, drawn behind the flake too, so the row compares it with what it is seen
+    // against.
+    quality.environment = genex_render::presets::preset_quality(QualityPreset::High, DeviceClass::new(FormFactor::Desktop, PerformanceTier::High)).environment;
     quality.environment.sky = true;
     renderer.renderer_mut().set_quality(&quality);
     renderer.renderer_mut().set_environment(&sky);
@@ -252,6 +255,7 @@ fn metal_a_lit_flake_against_an_overcast_sky_is_not_a_dark_speck() {
     let (x, y) = pixel_of(&camera, size, at);
     let (flake_luma, sky_luma) = (luma(&shot, (x, y)), luma(&shot, (x + 24, y)));
     println!("a lit white flake against the overcast sky: flake {flake_luma:.1}, sky beside it {sky_luma:.1}");
+    assert!(sky_luma > 60.0, "the overcast sky is drawn behind the flake ({sky_luma:.1})");
     assert!(flake_luma >= 0.85 * sky_luma, "a lit flake glows with the sky behind it, never a dark speck against it");
 }
 
