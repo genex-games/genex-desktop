@@ -6738,7 +6738,23 @@
           "bytes": 977224,
           "md5": "5c0426b5068d5d41f0a301035ecac9ab"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "5ceda94b9a1926d068e70811460e39773c64302d6db4aabe5715aed39b8b0624",
+            "bytes": 26878788
+          },
+          {
+            "name": "entry.json",
+            "sha256": "d797ede67f65e71e142c72e3165fe3fcbc8960a703a1fb3a284e0c75072862e4",
+            "bytes": 644
+          }
+        ],
+        "triangles": 25156
+      }
     },
     {
       "id": "model/street_lamp_01",
@@ -6883,7 +6899,23 @@
           "bytes": 530092,
           "md5": "5c89269a65d65cdb33d018012f003ef7"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "a8ba0923234771118360b2f82a32241c3f97bcbc24205ce190e77f3253bee946",
+            "bytes": 6316456
+          },
+          {
+            "name": "entry.json",
+            "sha256": "1af2905a64233155d8fc347afdb6abcf5bd140e117ffa99d6cbc266aeb08d8b7",
+            "bytes": 605
+          }
+        ],
+        "triangles": 20338
+      }
     },
     {
       "id": "model/metal_trash_can",
@@ -7034,7 +7066,23 @@
           "bytes": 106316,
           "md5": "ad6ebbf5b9aa0179feeea87a4bd289a3"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "40e330ceae77b2942d83fcfc5bf2d83400578c871e929f92404cab08bd9c0bdc",
+            "bytes": 5323236
+          },
+          {
+            "name": "entry.json",
+            "sha256": "bcf055bef3666fdb0f00b1d9bd87548a9dced7da3dfa70c30ccfa471b4f29b87",
+            "bytes": 590
+          }
+        ],
+        "triangles": 4482
+      }
     },
     {
       "id": "model/barrel_01",
@@ -7167,7 +7215,23 @@
           "bytes": 496907,
           "md5": "6bbcfb8aab6d545bc47f50a548ea89b7"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "88ad09e91a240953a47e0d59d4432bb06d3dfa06705c2c62a38b573ae9da5b14",
+            "bytes": 2096152
+          },
+          {
+            "name": "entry.json",
+            "sha256": "772f0057cd40ee2e3e7acf000b3c3917c6085adc31fde3890f6b173a6fd2a8f2",
+            "bytes": 539
+          }
+        ],
+        "triangles": 1473
+      }
     },
     {
       "id": "model/wooden_crate_01",
@@ -7313,7 +7377,23 @@
           "bytes": 150064,
           "md5": "08d98507231cdeda1070d1a2d0646254"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "90d83d3d7cbaa663ac07f85dd7aae2732bb2d8f6ae3216bba1ade0f5f476d47a",
+            "bytes": 8212792
+          },
+          {
+            "name": "entry.json",
+            "sha256": "a72bdce650e8da8a5efb969dd18d7e4132d0fe2a5c6f1bfb0403ee3b6c4146f2",
+            "bytes": 633
+          }
+        ],
+        "triangles": 5176
+      }
     },
     {
       "id": "model/plastic_crate_02",
@@ -7456,7 +7536,23 @@
           "bytes": 381936,
           "md5": "64bea3a77434981017b8a06da4ccb0df"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "2495300c6169ae3669994498f2669decde65f0448eff882d3bca9474db3b6945",
+            "bytes": 6877768
+          },
+          {
+            "name": "entry.json",
+            "sha256": "709979a11794a4a8130260b2b965e934fbf17ae3f4269010950e4270e68602dd",
+            "bytes": 597
+          }
+        ],
+        "triangles": 16952
+      }
     },
     {
       "id": "model/modular_chainlink_fence",
@@ -7796,7 +7892,23 @@
           "bytes": 2598114,
           "md5": "bbc7d0d06e8c1c3500d99fa772e64a5d"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "ac2a4c48321b75141714088253354d94372f56899f918c0beef5e850ba54a33c",
+            "bytes": 7161340
+          },
+          {
+            "name": "entry.json",
+            "sha256": "e4691dd8dfa6770761876d59248db02ca0d9dc8b92c380c1693eeaa5af291dc1",
+            "bytes": 604
+          }
+        ],
+        "triangles": 6268
+      }
     },
     {
       "id": "model/exterior_aircon_unit",
@@ -7912,7 +8024,23 @@
           "bytes": 919689,
           "md5": "92d3cfb2603f1328efafc403cd67ea7b"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "bb028e8e1cd079cb971dcc1e0186d2f7c174f9105181ad8ea41ee64ee9c0e3c1",
+            "bytes": 25432808
+          },
+          {
+            "name": "entry.json",
+            "sha256": "f6e63ecdc51d1262ba719791d1e216f12ae0feea5b7fe2b70589e386a495c7ca",
+            "bytes": 618
+          }
+        ],
+        "triangles": 18986
+      }
     },
     {
       "id": "model/rollershutter_door",
@@ -8060,7 +8188,23 @@
           "bytes": 3723833,
           "md5": "5b31d5e2057371f82158bd56dbe19588"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "7f65c9645c423bd4278ec98c34e32adeca6a83a2385f265fd38fba71c37e1d8d",
+            "bytes": 11676444
+          },
+          {
+            "name": "entry.json",
+            "sha256": "c48c843199d5bd94119dd73e8a1447fcac6a6effee920a1055ae1a8463146afb",
+            "bytes": 589
+          }
+        ],
+        "triangles": 12640
+      }
     },
     {
       "id": "model/rollershutter_window_01",
@@ -8129,7 +8273,23 @@
           "bytes": 2247637,
           "md5": "802fef0837a9e1840a01d356d72f3938"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "74966583985f5515a44ce1985a6cdefef6e3bfcdca31bffd4f1ed49883085141",
+            "bytes": 8426892
+          },
+          {
+            "name": "entry.json",
+            "sha256": "2b50bcef051b7f9cdd4717e06701a3fd6fb2da0195b5043495645475ddd3f3eb",
+            "bytes": 637
+          }
+        ],
+        "triangles": 1104
+      }
     },
     {
       "id": "model/covered_car",
@@ -8194,7 +8354,23 @@
           "bytes": 2661301,
           "md5": "b8aac0571d16581540ec55e7280780ee"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "a0449279f129ffa92a8f8bb2f90f5d92c0f42d8fe8a8552f7df04b354f594f78",
+            "bytes": 8186464
+          },
+          {
+            "name": "entry.json",
+            "sha256": "2591137f5a4f2cc0455fee9f1ee157d5a6abb26454e5771231a3f7133780434c",
+            "bytes": 593
+          }
+        ],
+        "triangles": 12592
+      }
     },
     {
       "id": "model/old_tyre",
@@ -8259,7 +8435,23 @@
           "bytes": 2557591,
           "md5": "d8ce2ae13fba7a55f9a7773ff3fc2b16"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "84c6e55000f523d147a717ef033f1eb379ed13311d4870c95898c4577db9317b",
+            "bytes": 8703072
+          },
+          {
+            "name": "entry.json",
+            "sha256": "9a29df816a0b5f03ffb3a26be45233b01f4ef7bc3cf7fbfef67b4e42f000f65a",
+            "bytes": 571
+          }
+        ],
+        "triangles": 2880
+      }
     },
     {
       "id": "model/wooden_picnic_table",
@@ -8476,7 +8668,23 @@
           "bytes": 229700,
           "md5": "96f258b9a64d36ca011f44de23da7c65"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "f96dc60d59187afaa30f9e47a5e8a02cfcea7cfe73dd45e628f46a534a764075",
+            "bytes": 5321740
+          },
+          {
+            "name": "entry.json",
+            "sha256": "231bc186f6c792a1c3cc4d891c82e6cd00be5df4b80bd8235f4cfcbef876a89a",
+            "bytes": 592
+          }
+        ],
+        "triangles": 6898
+      }
     },
     {
       "id": "model/plastic_monobloc_chair_01",
@@ -8596,7 +8804,23 @@
           "bytes": 74864,
           "md5": "024d6f57a7c2ee7915430cd6e1c2651e"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "7e8205595d3e820bb0de7d31739ac891302bff2b05a16277183a934fb49a69d5",
+            "bytes": 1294964
+          },
+          {
+            "name": "entry.json",
+            "sha256": "a1217af000692ac6713ce5ed7b59072d08e4a2b5fe8a85c6d6af0f8312d8ef9b",
+            "bytes": 540
+          }
+        ],
+        "triangles": 2728
+      }
     },
     {
       "id": "model/steel_frame_shelves_01",
@@ -8729,7 +8953,23 @@
           "bytes": 2228994,
           "md5": "27f4f179af9fe7ed7ee3e3936a434b0c"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "a676e690b6d50582d270c6d4849c4d2ec63131157e4f8a4d2287c02b2c069dda",
+            "bytes": 6841372
+          },
+          {
+            "name": "entry.json",
+            "sha256": "73e831d08ab3af3b59e409f64b24bce966dc6b23768fa8e5d95918806ddfdde4",
+            "bytes": 643
+          }
+        ],
+        "triangles": 2227
+      }
     },
     {
       "id": "model/wetfloorsign_01",
@@ -8794,7 +9034,23 @@
           "bytes": 9496,
           "md5": "2a027a15ce3f42cbc2e9392361fd180b"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "46e45aaeac483f1e587c70aff1d6cc9c30469f6f471d45b7f096cecc22b54006",
+            "bytes": 769708
+          },
+          {
+            "name": "entry.json",
+            "sha256": "4abac9b94ef2ae441fcc1549045cd95d004b181ec543793c29c3a497ed2efd0b",
+            "bytes": 620
+          }
+        ],
+        "triangles": 228
+      }
     },
     {
       "id": "model/boulder_01",
@@ -8859,7 +9115,23 @@
           "bytes": 2273068,
           "md5": "94c796dfd73f72b11e557cb2c05ff51e"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "6a697c8a32d0d4f7a69edd35416ec5c4e8b055db4936dc4dc3a506200231594d",
+            "bytes": 13235948
+          },
+          {
+            "name": "entry.json",
+            "sha256": "f99b6f0111282a3f80a9c9f0eef2893d7e2fd08d95af9338015908edeed48c63",
+            "bytes": 596
+          }
+        ],
+        "triangles": 23706
+      }
     },
     {
       "id": "model/namaqualand_boulder_02",
@@ -8922,7 +9194,23 @@
           "bytes": 3919158,
           "md5": "9591cab5cf9658a9eb23da834856a661"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "7e038e8394e9b12745cf38f6bed775610203705e747f8fa44429a042567ceffe",
+            "bytes": 12927436
+          },
+          {
+            "name": "entry.json",
+            "sha256": "5546f4320b42a9ef490174f2031db64061383598384f95b1b3abe83011c10904",
+            "bytes": 639
+          }
+        ],
+        "triangles": 22080
+      }
     },
     {
       "id": "model/namaqualand_boulder_03",
@@ -8985,7 +9273,23 @@
           "bytes": 3341422,
           "md5": "15932af831e44b675c18c3ef54398dc8"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "0b61df0e7837e00ee4eed50ca1165b63d2ccd80ef086f56be7c80bd2f149d055",
+            "bytes": 10279492
+          },
+          {
+            "name": "entry.json",
+            "sha256": "3c99f0b1205c6256aecd8457eb72def4dfc2a7ae1ffd8d78f5fc3f27de1f8127",
+            "bytes": 646
+          }
+        ],
+        "triangles": 22080
+      }
     },
     {
       "id": "model/rock_moss_set_01",
@@ -9037,7 +9341,23 @@
           "bytes": 293827,
           "md5": "f7b3045b503fbde038598f8586ac25ef"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "2eee30f2fcb196241148d26d664fea8312a7f8c2e7f9cfad3601fab33dd8647f",
+            "bytes": 3396028
+          },
+          {
+            "name": "entry.json",
+            "sha256": "793ec22fb98c56b86e2d7ed6adc90c5d657620e5488ea3ed9ac78ee8aba2c47b",
+            "bytes": 548
+          }
+        ],
+        "triangles": 22074
+      }
     },
     {
       "id": "model/rock_moss_set_02",
@@ -9089,7 +9409,23 @@
           "bytes": 501755,
           "md5": "802ec244c86d10888efad97737adc938"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "0798bb83a3e4432347046acecec2c12606ede0662bed362d8b47ce8fd16366df",
+            "bytes": 3747420
+          },
+          {
+            "name": "entry.json",
+            "sha256": "b286081a65614151a3682dfc6d572019a824d2b876754d07ab22dbb12034970e",
+            "bytes": 547
+          }
+        ],
+        "triangles": 22074
+      }
     },
     {
       "id": "model/stone_fire_pit",
@@ -9154,7 +9490,23 @@
           "bytes": 3161409,
           "md5": "c59121e7f8496eb47e66f988462a3cc0"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "cc2a734adee293c1c35a98a11f8d897f8685eab82675b503b2b721a8c4150249",
+            "bytes": 9660096
+          },
+          {
+            "name": "entry.json",
+            "sha256": "adbfe0f3d4b3c04fbde292e100825640132775a584ef49d8a2f30408199aeadb",
+            "bytes": 609
+          }
+        ],
+        "triangles": 3887
+      }
     },
     {
       "id": "model/tree_stump_01",
@@ -9219,7 +9571,23 @@
           "bytes": 2801595,
           "md5": "07f544eae11d9a255bef25e82510a91f"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "f04f8204dac5289cd58269be519cc0be23933879ac9cc0a32a8bd92ffbff9711",
+            "bytes": 11641540
+          },
+          {
+            "name": "entry.json",
+            "sha256": "12582bf005c884d082bfdf57c1fcdabf2c54c38cf6c10cebde86edcb16cccd5c",
+            "bytes": 599
+          }
+        ],
+        "triangles": 22080
+      }
     },
     {
       "id": "model/dead_tree_trunk",
@@ -9284,7 +9652,23 @@
           "bytes": 2293788,
           "md5": "2a2b05e67a5c51fba5fc7591a7857957"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "a4b9053c8e840f21336faff12eaa06dee756d4ac1f794c63dd0c1b2be19d04a6",
+            "bytes": 11192208
+          },
+          {
+            "name": "entry.json",
+            "sha256": "6301328211f01fc23f696980d0bcf20ff070d2dd79524e7860e94eaa39f16448",
+            "bytes": 595
+          }
+        ],
+        "triangles": 22080
+      }
     },
     {
       "id": "model/dry_branches_medium_01",
@@ -9349,7 +9733,23 @@
           "bytes": 465172,
           "md5": "10de852c8bf38e3f3ca5fb1d6c8de9d0"
         }
-      ]
+      ],
+      "build": {
+        "pack": "2026.10.29",
+        "files": [
+          {
+            "name": "model.glb",
+            "sha256": "fa23b5909eeec74c1b4240d0671f996398257633ad124cf4129a456d0591e8c0",
+            "bytes": 10987776
+          },
+          {
+            "name": "entry.json",
+            "sha256": "6aa062c65ddbe3b23b1a19e50360571a125ae8f7fa4a04e43e96074d594349f3",
+            "bytes": 641
+          }
+        ],
+        "triangles": 16803
+      }
     },
     {
       "id": "vegetation/birch_winter",
