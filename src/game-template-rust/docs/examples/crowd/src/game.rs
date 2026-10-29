@@ -4,7 +4,8 @@
 //!
 //! A crowd on a nav mesh, distilled from the engine's nav-crowd example: 120 walkers wander a
 //! walled market square between its stalls and its fountain, each a nav agent driving its own
-//! character capsule, and 240 trees stand round the walls as two retained instance groups.
+//! character capsule, and 240 trees (`gfx.plant` oaks and maples) stand round the walls as retained
+//! instance groups.
 //!
 //! Every tick runs the documented loop: `sim.nav.update(dt)` once, then per walker the agent's
 //! desired velocity drives its capsule (`Character::drive`) and `nav.set_position` tells the nav
@@ -19,6 +20,7 @@
 
 use genex::animation::ClipId;
 use genex::glam::Vec3Swizzles;
+use genex::plants::{PlantSpec, Season, Species};
 use genex::nav::{AgentId, NavAgent, NavArea, NavConfig, NavDebug, NavInput, NavMesh, NavStatus};
 use genex::physics::ColliderBuilder;
 use genex::prelude::*;
@@ -85,8 +87,7 @@ pub struct World {
     walkers: Vec<Walker>,
     targets: Vec<Vec3>,
     clips: Option<[ClipId; 2]>,
-    trunks: Option<InstanceGroup>,
-    crowns: Option<InstanceGroup>,
+    trees: Vec<InstanceGroup>,
 }
 
 /// The `nav` camera: high over the square's corner, with the nav mesh and paths drawn.
@@ -184,7 +185,7 @@ fn reset(sim: &mut Sim<World>, _seed: u32, rng: &mut Pcg32, gfx: &Gfx) {
         sim.world.walkers.push(Walker { agent, body, animator, target: nearest, arrivals: 0, stalled: 0, longest_stall: 0 });
         send_on(sim, index, rng.next_u32());
     }
-    (sim.world.trunks, sim.world.crowns) = trees(rng);
+    sim.world.trees = trees(rng, gfx);
 }
 
 /// [`WALKERS`] spawn points spread over the square, clear of every solid.
@@ -200,20 +201,24 @@ fn spawn_points() -> Vec<Vec3> {
     (0..WALKERS).map(|index| lattice[index * lattice.len() / WALKERS]).collect()
 }
 
-/// The trees round the walls as two retained groups, trunks and crowns, placed from the reset's
-/// seed: made once, drawn every frame, their rows uploaded once.
-fn trees(rng: &mut Pcg32) -> (Option<InstanceGroup>, Option<InstanceGroup>) {
-    let placed: Vec<(Vec3, f32)> = (0..TREES)
-        .map(|_| {
-            let (angle, radius) = (rng.range_f32(0.0, std::f32::consts::TAU), rng.range_f32(TREE_BAND.0, TREE_BAND.1));
-            (vec3(radius * genex::math::cos(angle), 0.0, radius * genex::math::sin(angle)), rng.range_f32(3.0, 6.0))
-        })
-        .collect();
-    let trunks = placed.iter().map(|(at, height)| Transform::from_translation(*at + Vec3::Y * 0.5 * height).with_scale(vec3(0.3, *height, 0.3))).collect();
-    let crowns = placed.iter().map(|(at, height)| Transform::from_translation(*at + Vec3::Y * *height).with_scale(Vec3::splat(0.4 * height))).collect();
-    let bark = Material::color(Color::rgb(90, 64, 44)).with_roughness(0.9);
-    let leaves = Material::color(Color::rgb(70, 110, 60)).with_roughness(0.8);
-    (InstanceGroup::cubes(trunks, &bark).ok(), InstanceGroup::spheres(crowns, &leaves).ok())
+/// The trees round the walls: grown plants (bark, leaf cards, levels, impostors and wind built in),
+/// three variants dealt round the band from the reset's seed, each one retained group made once,
+/// drawn every frame, its rows uploaded once.
+fn trees(rng: &mut Pcg32, gfx: &Gfx) -> Vec<InstanceGroup> {
+    let variants = [
+        gfx.plant(&PlantSpec::new(Species::Oak, Season::Leafy).seed(1).height(12.0)),
+        gfx.plant(&PlantSpec::new(Species::Maple, Season::Leafy).seed(2).height(11.0)),
+        gfx.plant(&PlantSpec::new(Species::Oak, Season::Leafy).seed(3).height(13.0)),
+    ];
+    let mut placed: Vec<Vec<Transform>> = vec![Vec::new(); variants.len()];
+    for index in 0..TREES {
+        let (angle, radius) = (rng.range_f32(0.0, std::f32::consts::TAU), rng.range_f32(TREE_BAND.0, TREE_BAND.1));
+        let at = vec3(radius * genex::math::cos(angle), 0.0, radius * genex::math::sin(angle));
+        let turn = Quat::from_rotation_y(rng.range_f32(0.0, std::f32::consts::TAU));
+        let copy = Transform::from_translation(at).with_rotation(turn).with_scale(Vec3::splat(rng.range_f32(0.75, 1.15)));
+        placed[index % variants.len()].push(copy);
+    }
+    variants.iter().zip(placed).filter_map(|(model, copies)| InstanceGroup::models(model, copies).ok()).collect()
 }
 
 /// Send walker `index` to the least busy target within [`NEXT_TARGET_RADIUS`] of its last (ties by
@@ -283,7 +288,7 @@ fn draw(sim: &Sim<World>, frame: &mut Frame, camera: &Camera) {
         frame.cube_with(box_at(center, half), &wall);
     }
     frame.tag("trees");
-    for group in [&world.trunks, &world.crowns].into_iter().flatten() {
+    for group in &world.trees {
         frame.group(group);
     }
     frame.tag("crowd");
