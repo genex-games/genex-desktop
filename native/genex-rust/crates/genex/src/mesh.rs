@@ -169,17 +169,7 @@ impl MeshData {
     /// Add the axis-aligned box from `min` to `max`: six outward quads ([`MeshData::quad`]), each
     /// with UVs in tiles of `metres` (walls upright, the top seen from above with -z up).
     pub fn cuboid(&mut self, min: Vec3, max: Vec3, metres: f32) -> &mut MeshData {
-        let (a, b) = (min.min(max), min.max(max));
-        let p = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
-        let faces = [
-            [p(a.x, a.y, b.z), p(b.x, a.y, b.z), p(b.x, b.y, b.z), p(a.x, b.y, b.z)],
-            [p(b.x, a.y, a.z), p(a.x, a.y, a.z), p(a.x, b.y, a.z), p(b.x, b.y, a.z)],
-            [p(b.x, a.y, b.z), p(b.x, a.y, a.z), p(b.x, b.y, a.z), p(b.x, b.y, b.z)],
-            [p(a.x, a.y, a.z), p(a.x, a.y, b.z), p(a.x, b.y, b.z), p(a.x, b.y, a.z)],
-            [p(a.x, b.y, b.z), p(b.x, b.y, b.z), p(b.x, b.y, a.z), p(a.x, b.y, a.z)],
-            [p(a.x, a.y, a.z), p(b.x, a.y, a.z), p(b.x, a.y, b.z), p(a.x, a.y, b.z)],
-        ];
-        for corners in faces {
+        for corners in box_faces(min.min(max), min.max(max)) {
             self.quad(corners, metres);
         }
         self
@@ -240,7 +230,7 @@ impl MeshData {
 
     /// The given normals made unit (a zero one faces up), or with none, each vertex's triangles'
     /// normals summed by area.
-    fn filled_normals(&self) -> Vec<Vec3> {
+    pub(crate) fn filled_normals(&self) -> Vec<Vec3> {
         if !self.normals.is_empty() {
             return self.normals.iter().map(|n| n.normalize_or(Vec3::Y)).collect();
         }
@@ -256,9 +246,23 @@ impl MeshData {
     }
 }
 
+/// The six outward faces of the box from `a` to `b` (`a <= b`), each's corners as [`MeshData::quad`]
+/// takes them (walls upright, the top seen from above with -z up).
+pub(crate) fn box_faces(a: Vec3, b: Vec3) -> [[Vec3; 4]; 6] {
+    let p = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
+    [
+        [p(a.x, a.y, b.z), p(b.x, a.y, b.z), p(b.x, b.y, b.z), p(a.x, b.y, b.z)],
+        [p(b.x, a.y, a.z), p(a.x, a.y, a.z), p(a.x, b.y, a.z), p(b.x, b.y, a.z)],
+        [p(b.x, a.y, b.z), p(b.x, a.y, a.z), p(b.x, b.y, a.z), p(b.x, b.y, b.z)],
+        [p(a.x, a.y, a.z), p(a.x, a.y, b.z), p(a.x, b.y, b.z), p(a.x, b.y, a.z)],
+        [p(a.x, b.y, b.z), p(b.x, b.y, b.z), p(b.x, b.y, a.z), p(a.x, b.y, a.z)],
+        [p(a.x, a.y, a.z), p(b.x, a.y, a.z), p(b.x, a.y, b.z), p(a.x, a.y, b.z)],
+    ]
+}
+
 /// The world-aligned box projection of `p` along the axis `normal` faces most, one tile a metre:
 /// the renderer's `gx_surface_uv` rule (u to the viewer's right, v down a wall).
-fn box_uv(p: Vec3, normal: Vec3) -> Vec2 {
+pub(crate) fn box_uv(p: Vec3, normal: Vec3) -> Vec2 {
     let a = normal.abs();
     let sign = |value: f32| if value >= 0.0 { 1.0 } else { -1.0 };
     if a.x >= a.y && a.x >= a.z {

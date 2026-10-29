@@ -234,6 +234,8 @@ with Rapier colliders, fetch a scan per surface, then build the shell from a kit
 or `genex__asset`, scans at their real size with `.with_world_uv(metres)`,
 `.with_stochastic_tiling(true)` and a macro variation, decals over the rest, then light it as
 World look says.
+Rounded edges come from the builders in `docs/api/meshes.md`; rubble, papers, litter, grime,
+posters and puddles from a seeded `Dressing` (`docs/api/scatter.md`, `docs/examples/set-dressing/`).
 
 ## Game systems
 
