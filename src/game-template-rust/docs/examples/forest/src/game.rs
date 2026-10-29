@@ -58,8 +58,11 @@ fn stands() -> Vec<StandRule> {
         stand("winter-birch", winter(Species::Birch, 2), &[SNOW], grove, 0.0035),
         stand("winter-birch", winter(Species::Birch, 3), &[SNOW], grove, 0.0035),
         stand("dead-birch", PlantSpec::new(Species::Birch, Season::Dead).seed(4), &[SNOW], grove, 0.0006),
-        StandRule { far: Some((30.0, 70.0)), scale: (0.7, 1.2), ..stand("winter-shrub", winter(Species::Shrub, 1), &[SNOW], grove, 0.004) },
-        StandRule { far: Some((20.0, 45.0)), scale: (0.8, 1.3), ..stand("straw", winter(Species::Grass, 1), &[SNOW], [-46.0, -22.0, -10.0, 22.0], 0.12) },
+        StandRule { far: Some((30.0, 70.0)), scale: (0.6, 1.0), ..stand("winter-shrub", winter(Species::Shrub, 1), &[SNOW], grove, 0.003) },
+        StandRule { far: Some((30.0, 70.0)), scale: (0.9, 1.4), ..stand("winter-shrub", winter(Species::Shrub, 2), &[SNOW], grove, 0.0015) },
+        // Two straw seeds at two sizes and densities, so the tufts never read as one clump repeated.
+        StandRule { far: Some((20.0, 45.0)), scale: (0.5, 0.9), ..stand("straw", winter(Species::Grass, 1), &[SNOW], [-46.0, -22.0, -10.0, 22.0], 0.09) },
+        StandRule { far: Some((20.0, 45.0)), scale: (1.0, 1.6), ..stand("straw", winter(Species::Grass, 2), &[SNOW], [-58.0, -30.0, -10.0, 30.0], 0.03) },
         stand("winter-spruce", winter(Species::Spruce, 1), &[SNOW], [-155.0, -92.0, -70.0, 92.0], 0.003),
         stand("winter-spruce", winter(Species::Spruce, 2), &[SNOW], [-155.0, -92.0, -70.0, 92.0], 0.003),
         stand("oak", summer(Species::Oak, 1), &[MEADOW, FLOOR], forest, 0.0012),
