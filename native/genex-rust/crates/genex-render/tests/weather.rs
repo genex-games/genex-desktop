@@ -224,6 +224,37 @@ fn metal_a_lit_flake_in_a_wall_s_shadow_is_darker_than_one_in_the_sun() {
     assert!((flat_shade - flat_sun).abs() < 3.0, "unlit flakes keep their colour wherever they are");
 }
 
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_lit_flake_against_an_overcast_sky_is_not_a_dark_speck() {
+    let Some(gpu) = gpu() else { return };
+    let size = (256, 144);
+    let camera = CameraDesc::look_at([0.0, 1.5, 6.0], [0.0, 3.0, 0.0]);
+    let mut renderer = renderer(&gpu, size, false);
+    let sky = genex_render::settings::Environment::Sky(genex_render::settings::SkyParams::overcast());
+    let mut quality = Quality::off();
+    quality.hdr = true;
+    quality.tonemap = true;
+    quality.prepass = true;
+    quality.environment.sky = true;
+    renderer.renderer_mut().set_quality(&quality);
+    renderer.renderer_mut().set_environment(&sky);
+    let at = [0.0, 2.6, 2.0];
+    let snowflake = renderer.add_emitter(&gpu, flake(at, 0.3, 1.0)).expect("flake");
+    let mut frame = ground(camera);
+    frame.lighting_mut().sun_dir = [0.2, 0.8, -0.4];
+    frame.particles(snowflake, 0);
+    for _ in 0..8 {
+        renderer.render(&gpu, &frame, CullPath::Gpu, None).expect("frame");
+    }
+    let shot = draw(&gpu, &mut renderer, &frame);
+    write_evidence("flake-overcast", &shot);
+    let (x, y) = pixel_of(&camera, size, at);
+    let (flake_luma, sky_luma) = (luma(&shot, (x, y)), luma(&shot, (x + 24, y)));
+    println!("a lit white flake against the overcast sky: flake {flake_luma:.1}, sky beside it {sky_luma:.1}");
+    assert!(flake_luma >= 0.85 * sky_luma, "a lit flake glows with the sky behind it, never a dark speck against it");
+}
+
 /// The share of `capture`'s pixels brighter than the ground by more than 12 levels.
 fn bright_share(capture: &Capture, plain: &Capture) -> f32 {
     let w = capture.width() as i32;

@@ -25,6 +25,11 @@ const PARTICLE_SUN_SHARE: f32 = 0.5;
 const PARTICLE_FORWARD_GAIN: f32 = 0.8;
 const PARTICLE_FORWARD_POWER: f32 = 8.0;
 const PARTICLE_PI: f32 = 3.14159265;
+// The share of the sky behind a lit particle that comes through it: a flake, a drop or a puff is
+// thin and scatters forward, so against a bright overcast it glows, never a dark speck.
+const PARTICLE_TRANSLUCENCY: f32 = 0.6;
+// The environment mip the light behind a particle is read at, as a share of the last.
+const PARTICLE_BEHIND_MIP: f32 = 0.6;
 const PARTICLE_CASCADES: u32 = 4u;
 
 // The sun's visibility at `world` through the cascade its view depth falls in: one comparison tap
@@ -57,7 +62,7 @@ fn particle_sun_visibility(world: vec3<f32>) -> f32 {
 
 // The light on a lit particle at `center`: the sun through its shadow, scattered more looking
 // into it, plus the sky's mean radiance (the environment's roughest mip above and below, or the
-// flat ambient).
+// flat ambient), and under an environment a share of what lies behind it along the view.
 fn particle_light(center: vec3<f32>) -> vec3<f32> {
     let sun = normalize(frame.sun_dir.xyz);
     let view = normalize(center - frame.camera_pos.xyz);
@@ -68,7 +73,8 @@ fn particle_light(center: vec3<f32>) -> vec3<f32> {
         let last = f32(textureNumLevels(particle_env_specular) - 1u);
         let above = textureSampleLevel(particle_env_specular, particle_env_sampler, vec3<f32>(0.0, 1.0, 0.0), last).rgb;
         let below = textureSampleLevel(particle_env_specular, particle_env_sampler, vec3<f32>(0.0, -1.0, 0.0), last).rgb;
-        sky = 0.5 * (above + below);
+        let behind = textureSampleLevel(particle_env_specular, particle_env_sampler, view, last * PARTICLE_BEHIND_MIP).rgb;
+        sky = mix(0.5 * (above + below), behind, PARTICLE_TRANSLUCENCY);
     }
     return sunlight + sky;
 }
