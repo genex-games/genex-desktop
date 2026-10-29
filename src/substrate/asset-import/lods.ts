@@ -255,11 +255,12 @@ function flagsFor(input: SimplifyInput, level: number): MeshoptSimplifyFlag[] {
 }
 
 /** One simplification of `indices` to `share` of its triangles: the indices and the relative error. */
-async function simplifyTo(
+export async function simplifyTo(
   input: SimplifyInput,
   indices: Uint32Array,
   share: number,
   level: number,
+  maxError: number = LOD_MAX_RELATIVE_ERROR,
 ): Promise<[Uint32Array, number]> {
   const simplifier = await meshoptSimplifier();
   const target = Math.floor((indices.length * share) / TRIANGLE) * TRIANGLE;
@@ -272,7 +273,7 @@ async function simplifyTo(
     input.weights,
     input.lock,
     target,
-    LOD_MAX_RELATIVE_ERROR,
+    maxError,
     flagsFor(input, level),
   );
 }
