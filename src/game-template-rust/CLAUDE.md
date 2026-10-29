@@ -103,7 +103,7 @@ calling that facet done.
 | Weapon and first-person arms | `docs/examples/fps-arms/` kit, else `genex__asset` `model` | arms or a gun built from boxes |
 | Walls, floors, ceilings, ground surfaces | `cc0__fetch` a scan at `2k` with its normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, a 1k or smaller map on a near surface |
 | Modular shell (walls with openings, trims, windows, doors) | `blender__model` kit script textured with scans (`docs/examples/interior-kit/`); Blender otherwise only finishes a heavy model (decimate, levels) | untextured modules, boxes with no reveals |
-| Trees, bushes, foliage | a CC0 tree model (decimated, with its impostor); `genex__asset` `image` (transparent) for leaf and grass cards | a cone, sphere or box tree; one model cloned in a row |
+| Trees, bushes, grass | `gfx.plant(&PlantSpec::new(species, season).seed(n))` (`docs/api/vegetation.md`: bark and leaf maps, levels, impostor, wind), else a CC0 tree model with its tier; vary seed, height and species | a cone, sphere or box tree; one model cloned in a row |
 | Ground across the world | one `Terrain` with scan layers packed by `cc0__terrain-layer` (`docs/api/terrain.md`, `docs/examples/exterior-snow/`) | a box or a quad as outdoor ground |
 | Snow, dust, moss, wet on things | a material cover, `Material::with_cover(Cover::snow(..))` (`docs/api/layered-materials.md`); falling snow and rain are `frame.weather(&Weather::heavy_snow(), seconds)` | a slab or a thin box on top |
 | Posters, grime, cracks, puddles | `frame.decal(..)` with a `genex__asset` `image` or CC0 decal | thin boxes over a surface |
