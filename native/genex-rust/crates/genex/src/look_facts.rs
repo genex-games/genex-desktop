@@ -66,7 +66,7 @@ impl MeshStats {
     /// The stats of `mesh`.
     pub fn of(mesh: &MeshData) -> MeshStats {
         let corner = |index: u32| mesh.vertices.get(index as usize).map(|v| [v.position[0], v.position[1], v.position[2], v.uv[0], v.uv[1]]);
-        let corners: Vec<[f32; 5]> = mesh.indices.chunks_exact(3).filter_map(|tri| Some([corner(tri[0])?, corner(tri[1])?, corner(tri[2])?])).flatten().collect();
+        let corners: Vec<[f32; 5]> = mesh.indices.as_chunks::<3>().0.iter().filter_map(|tri| Some([corner(tri[0])?, corner(tri[1])?, corner(tri[2])?])).flatten().collect();
         let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
         for v in &mesh.vertices {
             for axis in 0..3 {
@@ -77,7 +77,7 @@ impl MeshStats {
         if mesh.vertices.is_empty() {
             (min, max) = ([0.0; 3], [0.0; 3]);
         }
-        let (area, uv_area) = corners.chunks_exact(3).fold((0.0, 0.0), |(area, uv), tri| (area + world_area(tri), uv + uv_triangle_area(tri)));
+        let (area, uv_area) = corners.as_chunks::<3>().0.iter().fold((0.0, 0.0), |(area, uv), tri| (area + world_area(tri), uv + uv_triangle_area(tri)));
         let triangles = u32::try_from(corners.len() / 3).unwrap_or(u32::MAX);
         let proxy = (corners.len() / 3 <= PROXY_TRIANGLES_MAX).then(|| Arc::from(corners));
         MeshStats { min, max, triangles, area, uv_area, proxy }
@@ -185,11 +185,11 @@ impl LookRaster {
         let (out_w, out_h) = (output.0.max(1) as f32, output.1.max(1) as f32);
         let aspect = out_w / out_h;
         let (width, height) = if aspect >= 1.0 { (GRID_LONG_SIDE, ((GRID_LONG_SIDE as f32 / aspect).round() as u32).max(1)) } else { (((GRID_LONG_SIDE as f32 * aspect).round() as u32).max(1), GRID_LONG_SIDE) };
-        let view = Mat4::look_at_rh(camera.position, camera.target, camera.up);
+        let view = glam::camera::rh::view::look_at_mat4(camera.position, camera.target, camera.up);
         let orthographic = camera.projection == Projection::Orthographic;
         let (proj, pixels_per_metre) = if orthographic {
             let half_h = camera.fovy.max(1e-3) * 0.5;
-            (Mat4::orthographic_rh(-half_h * aspect, half_h * aspect, -half_h, half_h, NEAR, 1000.0), out_h / (2.0 * half_h))
+            (glam::camera::rh::proj::directx::orthographic(-half_h * aspect, half_h * aspect, -half_h, half_h, NEAR, 1000.0), out_h / (2.0 * half_h))
         } else {
             let tan = libm::tanf(camera.fovy.clamp(1.0, 179.0).to_radians() * 0.5);
             (perspective(tan, aspect), out_h / (2.0 * tan))
@@ -258,7 +258,7 @@ impl LookRaster {
     }
 
     fn proxy(&mut self, model: &Mat4, corners: &[[f32; 5]], draw: u32) {
-        for tri in corners.chunks_exact(3) {
+        for tri in corners.as_chunks::<3>().0 {
             let world: Vec<Vec3> = tri.iter().map(|c| model.transform_point3(Vec3::new(c[0], c[1], c[2]))).collect();
             let area = (world[1] - world[0]).cross(world[2] - world[0]).length() * 0.5;
             let uv_per_metre = if area > 0.0 { (uv_triangle_area(tri) / area).sqrt() } else { 0.0 };
