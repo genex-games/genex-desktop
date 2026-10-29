@@ -28,7 +28,7 @@
 @vertex
 fn vs_shadow(@location(0) position: vec3<f32>, @location(4) slot: u32, @builtin(instance_index) instance: u32) -> ShadowCasterOut {
     let row = instances[visible[visible_row(pass_view.view, 0u, 0u, slot_base[slot + pass_view.slot_offset], instance, frame.counts.w)]];
-    return gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * (row.model * vec4<f32>(position, 1.0)));
+    return gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * gx_row_world(row, position, frame.texture_lod.y));
 }
 
 // --- Alpha-tested casters (P2-0.12): the cutout casts its own shape. The plain alpha test at the
@@ -45,7 +45,7 @@ struct ShadowMaskOut {
 @vertex
 fn vs_shadow_mask(@location(0) position: vec3<f32>, @location(2) uv: vec2<f32>, @location(4) slot: u32, @builtin(instance_index) instance: u32) -> ShadowMaskOut {
     let row = instances[visible[visible_row(pass_view.view, 0u, 0u, slot_base[slot + pass_view.slot_offset], instance, frame.counts.w)]];
-    let world = row.model * vec4<f32>(position, 1.0);
+    let world = gx_row_world(row, position, frame.texture_lod.y);
     let caster = gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * world);
     var out: ShadowMaskOut;
     out.clip = caster.clip;
@@ -109,7 +109,7 @@ struct ShadowFadeOut {
 fn vs_shadow_fade(@location(0) position: vec3<f32>, @location(4) slot: u32, @builtin(instance_index) instance: u32) -> ShadowFadeOut {
     let at = gx_shadow_visible_at(slot, instance);
     let row = instances[visible[at]];
-    let caster = gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * (row.model * vec4<f32>(position * gx_shadow_grow(at), 1.0)));
+    let caster = gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * gx_row_world(row, position * gx_shadow_grow(at), frame.texture_lod.y));
     return ShadowFadeOut(caster.clip, caster.light_z, at);
 }
 
@@ -145,7 +145,7 @@ struct ShadowMaskFadeOut {
 fn vs_shadow_mask_fade(@location(0) position: vec3<f32>, @location(2) uv: vec2<f32>, @location(4) slot: u32, @builtin(instance_index) instance: u32) -> ShadowMaskFadeOut {
     let at = gx_shadow_visible_at(slot, instance);
     let row = instances[visible[at]];
-    let world = row.model * vec4<f32>(position * gx_shadow_grow(at), 1.0);
+    let world = gx_row_world(row, position * gx_shadow_grow(at), frame.texture_lod.y);
     let caster = gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * world);
     return ShadowMaskFadeOut(caster.clip, caster.light_z, uv, world.xyz, row.material, at);
 }

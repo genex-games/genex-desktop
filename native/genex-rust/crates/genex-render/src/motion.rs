@@ -443,7 +443,9 @@ fn prev_row(prev: Option<&PrevRow>, row: &GpuInstance, motion: &MotionRow, prev_
     let same_vertices = prev_vertices && prev.mesh == motion.mesh && motion.skinned_base.is_some();
     let prev_base = prev.skinned_base.filter(|_| same_vertices).unwrap_or(NO_PREV_VERTICES);
     let matched = if by_id { MOTION_FLAG_MATCHED_BY_ID } else { 0 };
-    let still = if prev.model == row.model && prev_base == NO_PREV_VERTICES { MOTION_FLAG_STILL } else { 0 };
+    // A swaying row (model wind) moves every frame though its matrix stands still.
+    let stands = prev.model == row.model && prev_base == NO_PREV_VERTICES && row.wind == [0; 3];
+    let still = if stands { MOTION_FLAG_STILL } else { 0 };
     GpuPrevModel { model: prev.model, flags: [matched | still, prev_base, current_base, 0] }
 }
 
@@ -1126,6 +1128,19 @@ mod tests {
         assert_eq!((desc.format, desc.size, desc.samples), (TextureFormat::Rg16Float, (640, 360), 1));
         assert_eq!(target((0, 0)).size, (1, 1));
         assert_eq!(bytes((640, 360)), 640 * 360 * 4);
+    }
+
+    #[test]
+    fn a_swaying_row_is_never_a_still_motion_row() {
+        let model = crate::scene::translation(3.0, 0.0, -2.0);
+        let row = crate::instance::instance_row(&model, [0.0; 3], 1.0, 0);
+        let motion = MotionRow { key: MotionKey { scope: MotionScope::Id { id: DrawId::from(7u32), skinned: false }, ordinal: 0 }, mesh: MeshId::CUBE, skinned_base: None };
+        let prev = PrevRow { model, bounds: row.bounds, mesh: MeshId::CUBE, skinned_base: None };
+        assert_ne!(prev_row(Some(&prev), &row, &motion, true).flags[0] & MOTION_FLAG_STILL, 0, "a row that stood still is still");
+        let sway = crate::wind::Sway { height: 1.0, reach: 1.0, trunk: 0.1, branch: 0.0, flutter: 0.0, flutter_hz: 0.0 };
+        let swaying = crate::instance::swaying(row, Some(sway));
+        let prev = PrevRow { bounds: swaying.bounds, ..prev };
+        assert_eq!(prev_row(Some(&prev), &swaying, &motion, true).flags[0] & MOTION_FLAG_STILL, 0, "a swaying row moves though its matrix stands");
     }
 
     #[test]

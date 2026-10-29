@@ -23,7 +23,7 @@ use genex_core::map::FastMap;
 use crate::caps::BUFFER_MAX_BYTES;
 use crate::cull::{CullLod, active_views, cascade_view, cpu_cull_view};
 use crate::error::{RenderCode, RenderError};
-use crate::instance::instance_row;
+use crate::instance::{instance_row, swaying};
 use crate::layout::{GpuBatch, GpuMeshlet, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
 use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex, casters_lod};
 use crate::mesh_arena::{ArenaStream, Rewrite, RowAllocator};
@@ -1739,8 +1739,9 @@ impl Rows {
         for at in &drawn.draws {
             let draw = &scene.draws[*at];
             let row = instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material));
+            // Model wind: the LOD row keeps the still sphere, so a sway never moves a switch.
             self.lod_rows.push(lod_row(&draw.model, row.bounds, &draw.lod));
-            self.instances.push(row);
+            self.instances.push(swaying(row, draw.material.sway));
             self.motion.extend(key_of.get(*at).copied().flatten());
         }
         self.instances.len() - first
@@ -1749,20 +1750,23 @@ impl Rows {
     /// One opaque retained group's rows: its cached rows under this frame's material row, and its
     /// span (A.0b).
     fn push_group(&mut self, GroupDraw { group, material, id, lod }: &GroupDraw, entry: &MeshEntry, keys: &mut DrawKeys, materials: &mut Materials) {
+        let group_material = material;
         let material = materials.row(material);
         let first = self.instances.len();
         self.instances.extend_from_slice(&group.rows(entry.center, entry.radius));
         self.lod_rows.extend_from_slice(&group.lod_rows(entry.center, entry.radius, lod));
-        if material != 0 {
+        let sway = group_material.sway;
+        if material != 0 || sway.is_some() {
             for row in &mut self.instances[first..] {
-                row.material = material;
+                *row = swaying(GpuInstance { material: if material != 0 { material } else { row.material }, ..*row }, sway);
             }
         }
         for _ in 0..group.len() {
             self.motion.extend(keys.row(*id, group.mesh(), RowKind::Opaque, None));
         }
         let rows = group.len() as u32;
-        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius), lod: *lod });
+        let wind = sway.map_or([0; 3], crate::wind::Sway::words);
+        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius), lod: *lod, wind });
     }
 
     /// One skinned part's batch in `variant`'s region (its slot base there): one row per draw

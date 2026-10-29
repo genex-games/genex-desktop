@@ -325,6 +325,9 @@ pub struct LoadedModel {
     /// The model-space sphere around every part's mesh (centre xyz, radius; 0 when unknown): a
     /// compound's parts measure their levels from its members' spheres together (LOD-07).
     pub sphere: [f32; 4],
+    /// The model's height above its origin and its reach from its vertical axis (metres, model
+    /// space; 0 when unknown): what a swaying copy's weights are measured over (model wind).
+    pub extent: [f32; 2],
 }
 
 /// One GLB image a [`LoadedModel`] uploaded (C-11, C-14).
@@ -551,6 +554,11 @@ pub struct AssetCache {
     posed: posed::Posed,
     /// GLB textures by content (WP-9): one upload per image however many models hold it.
     pub(crate) shared_textures: SharedTextures,
+    /// The textures built meshes uploaded, by their texels' digest and kind (`gfx.plant`'s seed
+    /// variants embed the same maps): a built mesh's image with the texels of one already on the
+    /// device takes its id instead of a second copy. Textures are never removed, so a shared id
+    /// stays valid.
+    built_textures: Vec<(u64, TextureKind, TextureId)>,
 }
 
 /// Textures a GLB uploaded, by content (WP-9): the same image embedded in several GLBs, or their
@@ -724,7 +732,7 @@ impl AssetCache {
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4] });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4], extent: [0.0; 2] });
             self.models.push((path.to_owned(), loaded));
         }
     }
@@ -850,17 +858,29 @@ impl AssetCache {
                 self.family_chosen = true;
             }
         }
+        let mut built_textures = std::mem::take(&mut self.built_textures);
         for (key, model) in model_keys(frame) {
             if self.tried(key) {
                 continue;
             }
             let chained = model.and_then(|model| Some((model.path()?, model.lod_options().filter(|lod| lod.chained())?)));
+            let built = model.and_then(Model::path).is_some_and(crate::mesh::is_mesh_path);
+            let mut sharing = BuiltMeshUploads { inner: &mut *uploads, known: &mut built_textures };
+            let uploads: &mut dyn Uploads = if built { &mut sharing } else { &mut *sharing.inner };
             let loaded = match chained {
-                Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log)?,
-                None => load_model(key, (source, uploads), &mut self.shared_textures, log)?,
+                Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log),
+                None => load_model(key, (source, uploads), &mut self.shared_textures, log),
+            };
+            let loaded = match loaded {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    self.built_textures = built_textures;
+                    return Err(error);
+                }
             };
             self.models.push((key.to_owned(), loaded));
         }
+        self.built_textures = built_textures;
         self.characters.load(frame, source, uploads, log)?;
         // AN-27: node-posed models as rigid skins.
         self.posed.load(frame, source, uploads, log)?;
@@ -910,6 +930,98 @@ impl AssetCache {
             self.environments.push((hdri.path.clone(), map));
         }
         Ok(())
+    }
+}
+
+/// `inner` uploading a built mesh's textures (`gfx.mesh`, `gfx.plant`) once per texels and kind:
+/// an image whose texels match one in `known` takes that one's id. Every other upload is
+/// `inner`'s.
+struct BuiltMeshUploads<'a> {
+    inner: &'a mut dyn Uploads,
+    known: &'a mut Vec<(u64, TextureKind, TextureId)>,
+}
+
+impl BuiltMeshUploads<'_> {
+    /// The digest of `data`'s size and texels.
+    fn digest(data: &TextureData) -> u64 {
+        let mut bytes = Vec::with_capacity(8 + data.rgba().len());
+        bytes.extend(data.width().to_le_bytes());
+        bytes.extend(data.height().to_le_bytes());
+        bytes.extend_from_slice(data.rgba());
+        genex_core::digest::fnv1a64(&bytes)
+    }
+
+    /// The known id of `data` as `kind`, else the one `add` uploads it as (remembered).
+    fn shared(&mut self, data: &TextureData, kind: TextureKind, add: impl FnOnce(&mut dyn Uploads) -> Result<TextureId, RenderError>) -> Result<TextureId, RenderError> {
+        let digest = BuiltMeshUploads::digest(data);
+        if let Some((_, _, id)) = self.known.iter().find(|(known, known_kind, _)| *known == digest && *known_kind == kind) {
+            return Ok(*id);
+        }
+        let id = add(&mut *self.inner)?;
+        self.known.push((digest, kind, id));
+        Ok(id)
+    }
+}
+
+impl Uploads for BuiltMeshUploads<'_> {
+    fn add_mesh(&mut self, mesh: MeshData) -> Result<MeshId, RenderError> {
+        self.inner.add_mesh(mesh)
+    }
+
+    fn add_meshes(&mut self, meshes: Vec<MeshData>) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_meshes(meshes)
+    }
+
+    fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_meshes_with_meshlets(parts)
+    }
+
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_model_parts(parts)
+    }
+
+    fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.shared(data, kind, |inner| inner.add_texture(data, kind))
+    }
+
+    fn add_skinned_model(&mut self, model: &genex_render::skin::SkinnedModel) -> Result<genex_render::skin::SkinId, RenderError> {
+        self.inner.add_skinned_model(model)
+    }
+
+    fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
+        self.inner.remove_mesh(id)
+    }
+
+    fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_meshes_from(parts, source)
+    }
+
+    fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
+        self.shared(data, kind, |inner| inner.add_texture_from(data, kind, source))
+    }
+
+    fn environment_map_width(&self) -> u32 {
+        self.inner.environment_map_width()
+    }
+
+    fn compressed_families(&self) -> Vec<TextureFamily> {
+        self.inner.compressed_families()
+    }
+
+    fn texture_family(&self) -> TextureFamily {
+        self.inner.texture_family()
+    }
+
+    fn compressed_min_side(&self) -> u32 {
+        self.inner.compressed_min_side()
+    }
+
+    fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        self.inner.set_texture_family(family)
+    }
+
+    fn add_compressed_texture(&mut self, texture: &CompressedTexture, kind: TextureKind, source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+        self.inner.add_compressed_texture(texture, kind, source)
     }
 }
 
@@ -1319,6 +1431,16 @@ fn union_sphere(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [a[0] + offset[0] * t, a[1] + offset[1] * t, a[2] + offset[2] * t, radius]
 }
 
+/// The height above the origin and the reach from the vertical axis of every part's mesh (model
+/// wind's extent): the highest vertex's y and the farthest vertex's distance from the y axis.
+fn parts_extent(parts: &ModelParts) -> [f32; 2] {
+    let vertices = parts.iter().flat_map(|part| part.mesh.vertices.iter());
+    vertices.fold([0.0_f32; 2], |[height, reach], vertex| {
+        let [x, y, z] = vertex.position;
+        [height.max(y), reach.max((x * x + z * z).sqrt())]
+    })
+}
+
 /// The sphere around every part's mesh.
 fn parts_sphere(parts: &ModelParts) -> [f32; 4] {
     parts.iter().fold([0.0; 4], |sphere, part| {
@@ -1360,6 +1482,7 @@ fn load_model_levels(
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
     let mut model_parts: ModelParts = glb.model_parts();
     let sphere = parts_sphere(&model_parts);
+    let extent = parts_extent(&model_parts);
     let mismatch = levels.iter().any(|(level, _)| level.len() != model_parts.len());
     let refused = refused.or(mismatch.then_some(LodRefusalCode::LevelsMismatch));
     let authored = refused.is_none() && !levels.is_empty();
@@ -1400,7 +1523,7 @@ fn load_model_levels(
     }
     let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
     let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
-    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere }), refused))
+    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere, extent }), refused))
 }
 
 /// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
@@ -1476,6 +1599,8 @@ fn glb_textures(
         };
         let issue = match id {
             None => None,
+            // A mesh the game built (`gfx.mesh`, `gfx.plant`) has no import step to compress it.
+            Some(_) if crate::mesh::is_mesh_path(model.path) => None,
             Some(_) if refused => Some(AssetIssueCode::TextureFamilyRefused),
             Some(_) if !ships_any_sidecar(&model, image, kind, source) => Some(AssetIssueCode::TextureUncompressed),
             Some(_) => None,
@@ -3423,6 +3548,7 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                 sink.lod(lod);
             }
             let mut triangles = 0u32;
+            let extent = drawn_extent(model, assets);
             for member in model.drawn_members() {
                 let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
                     sink.mesh(MeshId::CUBE, matrix, Material::missing());
@@ -3430,6 +3556,7 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                     triangles = triangles.saturating_add(CUBE_TRIANGLES);
                     continue;
                 };
+                let wind = model.wind().or(member.wind());
                 for part in &loaded.parts {
                     let mut drawn_with = match (material, &part.material) {
                         (Some(material), _) => surface(material, *tint, assets),
@@ -3439,7 +3566,7 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                     if let Some(cover) = cover {
                         drawn_with.layers.cover = Some(cover.render());
                     }
-                    sink.mesh(part.mesh, matrix, drawn_with);
+                    sink.mesh(part.mesh, matrix, in_wind(drawn_with, wind, extent, material.is_none()));
                 }
                 triangles = triangles.saturating_add(loaded.triangles);
             }
@@ -3477,6 +3604,22 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             let posed = posed::PosedShape { model, nodes, palette, transform: *transform, tint: *tint };
             posed::push(sink, assets, missing, posed)
         }
+    }
+}
+
+/// The extent a swaying `model` is measured over (model wind): its loaded members' together, so
+/// a compound's wood and leaves bend as one plant.
+fn drawn_extent(model: &Model, assets: &AssetCache) -> [f32; 2] {
+    let loaded = model.drawn_members().iter().filter_map(|member| assets.model(member.key()?));
+    loaded.fold([0.0_f32; 2], |[height, reach], loaded| [height.max(loaded.extent[0]), reach.max(loaded.extent[1])])
+}
+
+/// `material` swaying by `wind` over `extent` (model wind; the foliage defaults when it is the
+/// part's own GLB material, `own`), or as it is for a model that stands still.
+fn in_wind(material: Material, wind: Option<crate::foliage::WindResponse>, extent: [f32; 2], own: bool) -> Material {
+    match wind {
+        Some(wind) => crate::foliage::swaying(material, wind, extent, own),
+        None => material,
     }
 }
 
@@ -3537,6 +3680,7 @@ fn push_group_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mu
         }
         crate::GroupShape::Model(model) => {
             let mut triangles = 0u32;
+            let extent = drawn_extent(model, assets);
             for member in model.drawn_members() {
                 let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
                     sink.group(&group.render_group(MeshId::CUBE), Material::missing());
@@ -3544,12 +3688,13 @@ fn push_group_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mu
                     triangles = triangles.saturating_add(CUBE_TRIANGLES.saturating_mul(count));
                     continue;
                 };
+                let wind = model.wind().or(member.wind());
                 for part in &loaded.parts {
                     let drawn_with = match (group.material(), &part.material) {
                         (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
                         _ => own(),
                     };
-                    sink.group(&group.render_group(part.mesh), drawn_with);
+                    sink.group(&group.render_group(part.mesh), in_wind(drawn_with, wind, extent, group.material().is_none()));
                 }
                 triangles = triangles.saturating_add(loaded.triangles.saturating_mul(count));
             }

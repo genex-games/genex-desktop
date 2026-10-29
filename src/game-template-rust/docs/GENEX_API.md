@@ -47,6 +47,7 @@ change touches.
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
 | Streaming a large world | `docs/api/streaming.md` | Cells: anchors, sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
 | Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
+| Vegetation | `docs/api/vegetation.md` | `gfx.plant` trees and grass, `Model::with_wind`. |
 | Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
 | Layered materials and weather | `docs/api/layered-materials.md` | Covers, layers, parallax, lobes, weather. |

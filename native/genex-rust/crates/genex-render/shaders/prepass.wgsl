@@ -82,7 +82,7 @@ fn vs_prepass(in: PrepassIn, @builtin(instance_index) instance: u32) -> PrepassO
         start = slot_base[in.slot + pass_view.slot_offset];
     }
     let row = instances[visible[visible_row(pass_view.view, pass_view.direct, pass_view.base, start, instance, frame.counts.w)]];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: PrepassOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
@@ -135,7 +135,7 @@ fn gx_prepass_row(slot: u32, instance: u32) -> u32 {
 @vertex
 fn vs_prepass_mask(in: PrepassMaskIn, @builtin(instance_index) instance: u32) -> PrepassMaskOut {
     let row = instances[gx_prepass_row(in.slot, instance)];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: PrepassMaskOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
@@ -175,11 +175,11 @@ fn vs_prepass_motion(in: PrepassIn, @builtin(instance_index) instance: u32, @bui
     let index = visible[visible_row(pass_view.view, pass_view.direct, pass_view.base, start, instance, frame.counts.w)];
     let row = instances[index];
     let prev = prev_models[index];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     // A still row skips the second transform (uniform across the instance's vertices).
     var prev_world = world;
     if (prev.flags.x & GX_MOTION_STILL) == 0u {
-        prev_world = prev.model * vec4<f32>(gx_motion_prev_local(in.position, prev.flags, vertex), 1.0);
+        prev_world = gx_sway_world(prev.model, gx_motion_prev_local(in.position, prev.flags, vertex), gx_row_wind(row), frame.texture_lod.z);
     }
     var out: MotionOut;
     out.clip = gx_clip_position(frame.view_proj, world, motion_frame.jitter.xy);
@@ -246,10 +246,10 @@ fn vs_prepass_motion_mask(in: PrepassMaskIn, @builtin(instance_index) instance: 
     let index = gx_prepass_row(in.slot, instance);
     let row = instances[index];
     let prev = prev_models[index];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var prev_world = world;
     if (prev.flags.x & GX_MOTION_STILL) == 0u {
-        prev_world = prev.model * vec4<f32>(gx_motion_prev_local(in.position, prev.flags, vertex), 1.0);
+        prev_world = gx_sway_world(prev.model, gx_motion_prev_local(in.position, prev.flags, vertex), gx_row_wind(row), frame.texture_lod.z);
     }
     var out: MotionMaskOut;
     out.clip = gx_clip_position(frame.view_proj, world, motion_frame.jitter.xy);
@@ -312,7 +312,7 @@ struct PrepassFadeOut {
 fn vs_prepass_fade(in: PrepassIn, @builtin(instance_index) instance: u32) -> PrepassFadeOut {
     let at = gx_prepass_visible_at(in.slot, instance);
     let row = instances[visible[at]];
-    let world = row.model * vec4<f32>(in.position * gx_prepass_grow(at), 1.0);
+    let world = gx_row_world(row, in.position * gx_prepass_grow(at), frame.texture_lod.y);
     var out: PrepassFadeOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
@@ -341,7 +341,7 @@ struct PrepassMaskFadeOut {
 fn vs_prepass_mask_fade(in: PrepassMaskIn, @builtin(instance_index) instance: u32) -> PrepassMaskFadeOut {
     let at = gx_prepass_visible_at(in.slot, instance);
     let row = instances[visible[at]];
-    let world = row.model * vec4<f32>(in.position * gx_prepass_grow(at), 1.0);
+    let world = gx_row_world(row, in.position * gx_prepass_grow(at), frame.texture_lod.y);
     var out: PrepassMaskFadeOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
@@ -376,10 +376,10 @@ fn vs_prepass_motion_fade(in: PrepassIn, @builtin(instance_index) instance: u32,
     let index = visible[at];
     let row = instances[index];
     let prev = prev_models[index];
-    let world = row.model * vec4<f32>(in.position * gx_prepass_grow(at), 1.0);
+    let world = gx_row_world(row, in.position * gx_prepass_grow(at), frame.texture_lod.y);
     var prev_world = world;
     if (prev.flags.x & GX_MOTION_STILL) == 0u {
-        prev_world = prev.model * vec4<f32>(gx_motion_prev_local(in.position, prev.flags, vertex) * gx_prepass_grow(at), 1.0);
+        prev_world = gx_sway_world(prev.model, gx_motion_prev_local(in.position, prev.flags, vertex) * gx_prepass_grow(at), gx_row_wind(row), frame.texture_lod.z);
     }
     var out: MotionFadeOut;
     out.clip = gx_clip_position(frame.view_proj, world, motion_frame.jitter.xy);
@@ -417,10 +417,10 @@ fn vs_prepass_motion_mask_fade(in: PrepassMaskIn, @builtin(instance_index) insta
     let index = visible[at];
     let row = instances[index];
     let prev = prev_models[index];
-    let world = row.model * vec4<f32>(in.position * gx_prepass_grow(at), 1.0);
+    let world = gx_row_world(row, in.position * gx_prepass_grow(at), frame.texture_lod.y);
     var prev_world = world;
     if (prev.flags.x & GX_MOTION_STILL) == 0u {
-        prev_world = prev.model * vec4<f32>(gx_motion_prev_local(in.position, prev.flags, vertex) * gx_prepass_grow(at), 1.0);
+        prev_world = gx_sway_world(prev.model, gx_motion_prev_local(in.position, prev.flags, vertex) * gx_prepass_grow(at), gx_row_wind(row), frame.texture_lod.z);
     }
     var out: MotionMaskFadeOut;
     out.clip = gx_clip_position(frame.view_proj, world, motion_frame.jitter.xy);

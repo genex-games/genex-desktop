@@ -38,6 +38,7 @@ use genex_core::paths::is_safe_asset_path;
 use genex_core::saves::Saves;
 use serde_json::Value;
 
+use crate::foliage::WindResponse;
 use crate::extend::{CustomMaterial, ExtensionRefusal, Extensions, PostPass, WgslSetup};
 use crate::lod::{Impostor, LOD_BIAS_DEFAULT, LOD_BIAS_MAX, LOD_BIAS_MIN, LodRefusalCode, ModelLod};
 #[cfg(doc)]
@@ -87,6 +88,8 @@ pub struct Model {
     lod: Option<Arc<ModelLod>>,
     /// The GLB a game built (`gfx.mesh`, Bodycam B2c), read before the asset source.
     mesh: Option<InlineMesh>,
+    /// How it bends in the shared wind (vegetation lane, `Model::with_wind`); `None` stands still.
+    wind: Option<WindResponse>,
 }
 
 impl Model {
@@ -122,11 +125,11 @@ impl Model {
             if lod.members.is_empty() {
                 lod.key = None;
             }
-            return Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh };
+            return Model { lod: Some(Arc::new(lod)), ..self };
         }
         lod.levels = levels.iter().map(|(level, metres)| (level.clone(), metres.to_bits())).collect();
         lod.key = Some(crate::lod::levels_key(&path, levels));
-        Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh }
+        Model { lod: Some(Arc::new(lod)), ..self }
     }
 
     /// How long this model keeps its detail: 2.0 holds each level twice as far, 0.5 half
@@ -137,7 +140,7 @@ impl Model {
         let bias = if bias.is_nan() { LOD_BIAS_DEFAULT } else { bias.clamp(LOD_BIAS_MIN, LOD_BIAS_MAX) };
         let mut lod = self.lod_options().cloned().unwrap_or_default();
         lod.bias = bias.to_bits();
-        Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh }
+        Model { lod: Some(Arc::new(lod)), ..self }
     }
 
     /// Past its last mesh level, draw this model as an impostor baked from its own parts at load
@@ -154,7 +157,24 @@ impl Model {
         if self.path.is_none() {
             lod.refused = Some(LodRefusalCode::ImpostorInvalid);
         }
-        Model { path: self.path, lod: Some(Arc::new(lod)), mesh: self.mesh }
+        Model { lod: Some(Arc::new(lod)), ..self }
+    }
+
+    /// Bend this model in the shared wind (vegetation lane): its trunk leans down each gust, its
+    /// branches bob and its leaves flutter, each layer sized by `wind` ([`WindResponse::tree`],
+    /// `shrub`, `grass`) relative to the model's own height and reach. Its foliage parts (an
+    /// alpha-tested, blended or double-sided material) draw cut out, two-sided and lit through as
+    /// [`crate::Subsurface::LEAF`] unless their material says otherwise. Every level, every copy
+    /// of an instance group and every member of a compound sways; the impostor stands still.
+    /// Display-only: the sim and its checksum never see it. Any model may sway; a missing one
+    /// still draws the checker.
+    pub fn with_wind(self, wind: WindResponse) -> Model {
+        Model { wind: Some(wind), ..self }
+    }
+
+    /// How it bends in the wind, if it does.
+    pub fn wind(&self) -> Option<WindResponse> {
+        self.wind
     }
 
     /// Its impostor, unless refused (game systems LOD-16).
@@ -194,12 +214,12 @@ impl Model {
         if !is_safe_asset_path(path) {
             return Model::default();
         }
-        Model { path: Some(Arc::from(path)), lod: None, mesh: None }
+        Model { path: Some(Arc::from(path)), lod: None, mesh: None, wind: None }
     }
 
     /// The handle of a mesh a game built, at `path` ([`crate::mesh::MESH_PATH_PREFIX`]).
     pub(crate) fn inline(path: &str, mesh: InlineMesh) -> Model {
-        Model { path: Some(Arc::from(path)), lod: None, mesh: Some(mesh) }
+        Model { path: Some(Arc::from(path)), lod: None, mesh: Some(mesh), wind: None }
     }
 
     /// The GLB a game built for this handle (`gfx.mesh`), if it is one.
@@ -570,7 +590,7 @@ impl Assets {
             return Model::default();
         }
         self.note(path);
-        Model { path: Some(Arc::from(path)), lod: None, mesh: None }
+        Model { path: Some(Arc::from(path)), lod: None, mesh: None, wind: None }
     }
 
     /// Several models drawn as one (a tree's wood and foliage GLBs): one transform, one level
@@ -586,10 +606,10 @@ impl Assets {
         if let Some(code) = crate::lod::compound_refusal(members) {
             let lod = ModelLod { refused: Some(code), ..ModelLod::default() };
             let path = first.path.clone();
-            return Model { path, lod: Some(Arc::new(lod)), mesh: first.mesh };
+            return Model { path, lod: Some(Arc::new(lod)), mesh: first.mesh, wind: None };
         }
         let lod = ModelLod { members: members.iter().map(|member| (*member).clone()).collect(), key: Some(crate::lod::compound_key(members)), ..ModelLod::default() };
-        Model { path: first.path, lod: Some(Arc::new(lod)), mesh: first.mesh }
+        Model { path: first.path, lod: Some(Arc::new(lod)), mesh: first.mesh, wind: None }
     }
 
     /// A texture at `assets/<path>` ([`GAME_TEXTURE_FORMATS`]); a missing texture when the path is
@@ -738,12 +758,14 @@ pub struct Gfx {
     textured: RefCell<Vec<(String, Vec<GameTexture>)>>,
     /// The sounds and music the resets decoded (AU-7), kept across seeds.
     audio: crate::audio::Bank,
+    /// The plants the resets grew (`gfx.plant`), kept across seeds.
+    plants: crate::plants::PlantCache,
 }
 
 impl Gfx {
     pub(crate) fn new(world_size: [u32; 2], saves: Saves, wgsl: WgslSetup, source: Box<dyn AssetSource>) -> Gfx {
         let assets = Assets::with_source(source);
-        Gfx { assets, world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()), audio: crate::audio::Bank::default() }
+        Gfx { assets, world_size, saves, extensions: Extensions::new(wgsl), textured: RefCell::new(Vec::new()), audio: crate::audio::Bank::default(), plants: crate::plants::PlantCache::default() }
     }
 
     /// The sound at `assets/<path>` (WAV, Ogg Vorbis, MP3, FLAC), in `on_reset` (an asset of the
@@ -775,6 +797,16 @@ impl Gfx {
     /// `mesh-not-finite`, `mesh-too-large`); nothing is made.
     pub fn mesh(&self, data: &MeshData) -> Result<Model, MeshError> {
         crate::mesh::build(data)
+    }
+
+    /// A plant grown from `spec` ([`crate::plants`]): a tree, shrub or grass clump with bark
+    /// PBR, alpha twig and leaf cards, three mesh levels, an impostor (not for grass) and its
+    /// species' wind, drawn with `frame.model`, an [`crate::InstanceGroup`] or a scatter like a
+    /// GLB from `assets/`. Grown on the CPU the first time a reset asks for a spec (about a
+    /// tenth of a second at the default map size) and kept across seeds; the same spec grows the
+    /// same plant on every destination. Never refused: every spec grows.
+    pub fn plant(&self, spec: &crate::plants::PlantSpec) -> Model {
+        self.plants.plant(spec)
     }
 
     /// The rigged GLB at `assets/<path>` as a [`CharacterAsset`], in `on_reset` (an asset of the

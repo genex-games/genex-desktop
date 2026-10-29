@@ -131,7 +131,9 @@ pub struct GpuFrame {
     /// x: the mip bias material textures sample with this frame
     /// ([`crate::settings::frame_texture_lod_bias`]: TAA's, FSR1's upscale's, else 0; renderer pass
     /// 2, P2-0.8b T-06), added to the pipeline's `GX_TEXTURE_LOD_BIAS` by `gx_texture_lod_bias`;
-    /// a uniform, so a dynamic-resolution step moves it without a pipeline. y, z, w: reserved (0).
+    /// a uniform, so a dynamic-resolution step moves it without a pipeline. y: the model wind's
+    /// seconds this frame, z: last frame's (this frame's after a history reset; [`crate::wind`]).
+    /// w: reserved (0).
     pub texture_lod: [f32; 4],
 }
 
@@ -260,8 +262,8 @@ pub struct GpuInstance {
     pub bounds: [f32; 4],
     /// Index into the material table.
     pub material: u32,
-    /// Padding to 16 bytes.
-    pub pad: [u32; 3],
+    /// The model wind's words ([`crate::wind::Sway::words`]): 0 for a row that does not sway.
+    pub wind: [u32; 3],
 }
 
 /// One material in the material table (`Material`).

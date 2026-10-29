@@ -128,7 +128,7 @@ fn gx_forward_grow(at: u32) -> f32 {
 fn vs_main_fade(in: VsIn, @builtin(instance_index) instance: u32) -> VsFadeOut {
     let at = gx_forward_visible_at(in, instance);
     let row = instances[visible[at]];
-    let world = row.model * vec4<f32>(in.position * gx_forward_grow(at), 1.0);
+    let world = gx_row_world(row, in.position * gx_forward_grow(at), frame.texture_lod.y);
     var out: VsFadeOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.world_pos = world.xyz;
@@ -157,7 +157,7 @@ fn vs_main(in: VsIn, @builtin(instance_index) instance: u32) -> VsOut {
         start = slot_base[in.slot + pass_view.slot_offset];
     }
     let row = instances[visible[visible_row(pass_view.view, pass_view.direct, pass_view.base, start, instance, frame.counts.w)]];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: VsOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.world_pos = world.xyz;
