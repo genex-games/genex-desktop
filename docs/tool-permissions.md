@@ -531,7 +531,8 @@ The chat's own session on any engine is handed `permissions` (`#personSession`, 
 `permissionPrompts` needed); only an engine with `permissionPrompts` gets the person's reach
 (`reachesMac`: no sibling-folder deny list, `mainAgentReachNote`) and a lead's or coordinator's
 `leadAsks`. Another engine's chat session, and a Loop's lead in place on it, keeps the unattended
-fence and the same denied paths.
+fence and the same denied paths (only named in its brief in Codex's and Grok Build's Bypass, which
+have no sandbox).
 
 Bonsai ([`local-session-permissions.ts`](../src/substrate/engines/local-session-permissions.ts)
 `permitCall`) asks before `edit_file` and `write_file` in Manual and before `run_command` in Manual

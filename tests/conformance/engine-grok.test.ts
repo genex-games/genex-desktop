@@ -239,6 +239,7 @@ async function engineWith(
     platform?: NodeJS.Platform;
     renewSignIn?: (renewal: { scope: string; leadSeconds: number }) => Promise<void>;
     clock?: () => number;
+    toolPath?: () => Promise<string>;
   } = {},
 ) {
   const root = await tmpDir("grok-engine-");
@@ -264,6 +265,7 @@ async function engineWith(
     ...(options.platform ? { platform: options.platform } : {}),
     ...(options.renewSignIn ? { renewSignIn: options.renewSignIn } : {}),
     ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.toolPath ? { toolPath: options.toolPath } : {}),
   });
   return { engine, seen, prompts, beside, root };
 }
@@ -739,27 +741,33 @@ setTimeout(() => { writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(expir
   });
 
   it("runs a chat the person set to Bypass as them, outside the studio's sandbox, as Codex's Bypass", async () => {
-    const { engine, seen } = await engineWith(() => replay([]));
+    const toolPath = path.join(os.tmpdir(), "studio-tools", "bin");
+    const { engine, seen } = await engineWith(() => replay([]), { toolPath: async () => toolPath });
     const cwd = await game();
     const chat = (mode: string) => ({ mode, ask: async () => ({ decision: "deny" }) }) as never;
     await engine.delegate({ cwd, prompt: "Add a boss", permissions: chat("bypassPermissions") });
-    await engine.delegate({ cwd, prompt: "", compact: true, resume: "s", permissions: chat("bypassPermissions") });
-    assert.equal(seen.length, 2, "a turn and a compaction");
-    for (const invocation of seen) {
-      assert.equal(invocation.sandbox, null, "no sandbox: the person confirmed Bypass for this chat");
-      assert.equal(invocation.cwd, await realpath(cwd), "in the game folder");
-    }
-    assert.ok(seen[0]?.argv.includes("--always-approve"), "it never asks, as in every build");
-    assert.equal(flag(seen[0]?.argv, "--sandbox"), "off", "nor does Grok's own sandbox hold it");
+    const [invocation] = seen;
+    assert.equal(invocation?.sandbox, null, "no sandbox: the person confirmed Bypass for this chat");
+    assert.equal(invocation?.cwd, await realpath(cwd), "in the game folder");
+    assert.equal(
+      invocation?.env.PATH,
+      toolPath,
+      "the studio's toolchain, as a sandboxed session gets from its sandbox",
+    );
+    assert.ok(invocation?.argv.includes("--always-approve"), "it never asks, as in every build");
+    assert.equal(flag(invocation?.argv, "--sandbox"), "off", "nor does Grok's own sandbox hold it");
 
     await engine.delegate({ cwd, prompt: "Look", readOnly: true, permissions: chat("bypassPermissions") });
     await engine.delegate({ cwd, prompt: "Build", permissions: chat("auto") });
     await engine.delegate({ cwd, prompt: "Build" });
+    // Compact now, as the harness asks for it: unattended, read-only, with no chat's mode.
+    await engine.delegate({ cwd, prompt: "", compact: true, readOnly: true, resume: "s" });
     assert.deepEqual(
-      seen.slice(2).map((invocation) => invocation.sandbox === null),
-      [false, false, false],
-      "a read-only session of a Bypass chat, an Auto chat and unattended work stay in the sandbox",
+      seen.slice(1).map((later) => later.sandbox === null),
+      [false, false, false, false],
+      "a read-only session of a Bypass chat, an Auto chat, unattended work and a compaction stay in the sandbox",
     );
+    assert.equal(seen[2]?.env.PATH, undefined, "a sandboxed session's PATH is its sandbox's");
   });
 
   it("on Windows a Bypass chat runs as the person on Grok's own sign-in: no copy, and Grok renews it itself", async () => {
@@ -1045,10 +1053,11 @@ describe("Grok Build's command line", () => {
       GITHUB_TOKEN: "github-token",
       GROK_HOME: "/elsewhere",
     };
+    const toolPath = path.join(root, "tools");
     const invocation = {
       argv: [cli, ...argv],
       cwd: root,
-      env: { GROK_HOME: path.join(root, ".grok") },
+      env: { GROK_HOME: path.join(root, ".grok"), PATH: toolPath },
       signal: new AbortController().signal,
       domains: [],
       onStderr: () => {},
@@ -1057,9 +1066,11 @@ describe("Grok Build's command line", () => {
     for await (const event of grokOutside(process.execPath, invocation, parent)) seen.push(event);
     assert.deepEqual(seen[0]?.argv, argv, "a path with a quote in it arrives as one word");
     assert.equal(seen[0]?.cwd, await realpath(root));
-    assert.deepEqual(seen[0]?.env, {
-      PATH: process.env.PATH,
-      GROK_HOME: path.join(root, ".grok"),
-    });
+    assert.deepEqual(seen[0]?.env, { PATH: toolPath, GROK_HOME: path.join(root, ".grok") }, "the studio's toolchain");
+
+    const own = { ...invocation, env: { GROK_HOME: path.join(root, ".grok") } };
+    const without: Array<Record<string, unknown>> = [];
+    for await (const event of grokOutside(process.execPath, own, parent)) without.push(event);
+    assert.equal((without[0]?.env as { PATH?: string })?.PATH, process.env.PATH, "else the person's own");
   });
 });

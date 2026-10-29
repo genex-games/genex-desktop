@@ -69,6 +69,7 @@ import type { PartialDelegateState } from "./common.ts";
 import { ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { childEnv } from "../child-env.ts";
+import { withEnvPath } from "../toolchain.ts";
 import { credentialHomes, grokHome } from "../credential-homes.ts";
 import { sniffImage } from "../image-sniff.ts";
 import { stopChild } from "../process-tree.ts";
@@ -476,7 +477,8 @@ export class GrokEngine implements Engine {
       await this.#inRunFolder(async (folder) => {
         const invocation = await this.#invocation(grokCompactArgv(request.resume ?? "", cwd), {
           access: GrokAccess.Build,
-          asPerson: runsAsPerson(request, GrokAccess.Build),
+          // The harness asks for it as unattended work, with no chat's mode: it keeps the sandbox.
+          asPerson: false,
           cwd,
           runDir: cwd,
           folder,
@@ -564,7 +566,7 @@ export class GrokEngine implements Engine {
     return {
       argv,
       cwd: ctx.runDir,
-      env: { ...grokEnv(this.#home), ...(sandbox ? await this.#signIn(ctx.folder) : {}) },
+      env: { ...grokEnv(this.#home), ...(sandbox ? await this.#signIn(ctx.folder) : await this.#ownPath()) },
       signal: ctx.signal,
       sandbox,
       domains: [...GROK_HOSTS],
@@ -585,6 +587,14 @@ export class GrokEngine implements Engine {
     await this.#renewDue().catch(() => {});
     const copy = await copySessionSignIn(this.#home, folder).catch(() => null);
     return copy ? { GROK_AUTH_PATH: copy } : {};
+  }
+
+  /**
+   * The studio's toolchain PATH for a session outside the sandbox, which a sandboxed one gets from
+   * the sandbox (`toolPath`): its own git first where macOS has only the developer tools' stand-in.
+   */
+  async #ownPath(): Promise<Record<string, string>> {
+    return this.#toolPath ? { PATH: await this.#toolPath() } : {};
   }
 
   /**
@@ -998,16 +1008,18 @@ async function* runGrok(invocation: GrokInvocation): AsyncGenerator<Record<strin
 /**
  * Start `binary` as the person, for a chat they set to Bypass, and yield its events: no sandbox, as
  * Codex's Bypass, in their environment less every credential and other vendors' variables
- * (`childEnv`), Grok's own laid over it.
+ * (`childEnv`), Grok's own laid over it, the invocation's PATH under the one key `PATH`.
  */
 export async function* grokOutside(
   binary: string,
   invocation: Omit<GrokInvocation, "sandbox">,
   parent: Record<string, string | undefined>,
 ): AsyncGenerator<Record<string, unknown>> {
+  const env = childEnv(parent, { base: "contractor", vendor: "grok", set: invocation.env });
+  const toolPath = invocation.env.PATH;
   const child = spawnCommand(binary, invocation.argv, {
     cwd: invocation.cwd,
-    env: childEnv(parent, { base: "contractor", vendor: "grok", set: invocation.env }),
+    env: toolPath === undefined ? env : withEnvPath(env, toolPath),
     stdio: ["ignore", "pipe", "pipe"],
   });
   yield* childEvents(child, invocation);
