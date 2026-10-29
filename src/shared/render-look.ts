@@ -10,8 +10,40 @@
  * after occlusion. Exposure telemetry is read back from the GPU a few frames late.
  */
 
+import { EFFECTIVE_PRESETS, type EffectivePreset } from "./render-quality.ts";
+
 /** The version `__render.look` and `__render.exposure` carry; a reader refuses another. */
 export const RENDER_LOOK_VERSION = 1;
+
+/**
+ * A look feature `__render.look.features` reports drawn or not. Wire values. The harness compares
+ * rounds by them: a round that turns one off on the same preset removed a feature instead of
+ * fixing the check that failed with it.
+ */
+export const LookFeature = {
+  /** The fog as a lit volume: the sun's shadows carve shafts in it, local lights glow in it. */
+  VolumetricFog: "volumetricFog",
+  /** Any fog (the volume or the plain height fog). */
+  Fog: "fog",
+  Shadows: "shadows",
+  SpotShadows: "spotShadows",
+  PointShadows: "pointShadows",
+  ContactShadows: "contactShadows",
+  Ao: "ao",
+  /** Screen-space global illumination. */
+  Ssgi: "ssgi",
+  /** Screen-space reflections. */
+  Ssr: "ssr",
+  Bloom: "bloom",
+  Taa: "taa",
+  /** Image-based lighting from the environment. */
+  Ibl: "ibl",
+  LocalExposure: "localExposure",
+  AutoExposure: "autoExposure",
+  DepthOfField: "depthOfField",
+  MotionBlur: "motionBlur",
+} as const;
+export type LookFeature = (typeof LookFeature)[keyof typeof LookFeature];
 
 /** `__render.look.tags[tag]`: one tag's surfaces as the frame showed them. */
 export interface LookTagFacts {
@@ -51,6 +83,13 @@ export interface RenderLookFacts {
   coverage: number;
   /** Share of the screen (0..1) covered by flat materials, tagged or not. */
   flatCoverage: number;
+  /**
+   * The preset the frame drew (a capture's pinned settings, so a device's fallback never shows);
+   * absent from an engine that predates it.
+   */
+  preset?: EffectivePreset;
+  /** Every look feature, true where the frame draws it (the game asks and the preset draws it); absent with `preset`. */
+  features?: Record<LookFeature, boolean>;
   /** Per tag (`frame.tag(name)`); untagged draws count only in the totals above. */
   tags: Record<string, LookTagFacts>;
 }
@@ -133,6 +172,23 @@ const LOOK_TAGS_MAX = 256;
 /** The most model paths one tag lists. */
 const MODELS_PER_TAG_MAX = 64;
 
+const isPreset = (value: unknown): value is EffectivePreset =>
+  typeof value === "string" && (EFFECTIVE_PRESETS as readonly string[]).includes(value);
+
+/** Whether `value` holds exactly every look feature, each a boolean. */
+function isLookFeatures(value: unknown): value is Record<LookFeature, boolean> {
+  if (!isRecord(value)) return false;
+  const names = Object.values(LookFeature) as string[];
+  const keys = Object.keys(value);
+  return keys.length === names.length && keys.every((key) => names.includes(key) && typeof value[key] === "boolean");
+}
+
+/** Whether `value`'s optional preset and features are absent or in their shape. */
+function featuresInShape(value: Record<string, unknown>): boolean {
+  const presetOk = value.preset === undefined || isPreset(value.preset);
+  return presetOk && (value.features === undefined || isLookFeatures(value.features));
+}
+
 /** Whether `value` is one tag's facts in its shape. */
 function isLookTagFacts(value: unknown): value is LookTagFacts {
   if (!isRecord(value)) return false;
@@ -171,6 +227,7 @@ export function isRenderLookFacts(value: unknown): value is RenderLookFacts {
   const { grid, tags } = value;
   const gridOk = Array.isArray(grid) && grid.length === 2 && grid.every((side) => isCount(side) && side > 0);
   if (!gridOk || !isShare(value.coverage) || !isShare(value.flatCoverage) || !isRecord(tags)) return false;
+  if (!featuresInShape(value)) return false;
   const facts = Object.values(tags);
   return facts.length <= LOOK_TAGS_MAX && facts.every(isLookTagFacts);
 }
@@ -180,8 +237,17 @@ export function parseRenderLookFacts(value: unknown): RenderLookFacts | null {
   if (!isRenderLookFacts(value)) return null;
   const tags: Record<string, LookTagFacts> = {};
   for (const [tag, facts] of Object.entries(value.tags)) tags[tag] = lookTagCopy(facts);
-  const { grid, coverage, flatCoverage } = value;
-  return { version: RENDER_LOOK_VERSION, grid: [grid[0], grid[1]], coverage, flatCoverage, tags };
+  const { grid, coverage, flatCoverage, preset, features } = value;
+  const facts: RenderLookFacts = {
+    version: RENDER_LOOK_VERSION,
+    grid: [grid[0], grid[1]],
+    coverage,
+    flatCoverage,
+    tags,
+  };
+  if (preset !== undefined) facts.preset = preset;
+  if (features !== undefined) facts.features = { ...features };
+  return facts;
 }
 
 /** Whether `value` is a `__render.exposure` in its shape. */

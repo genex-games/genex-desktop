@@ -2503,7 +2503,8 @@ impl Presenter {
             runtime.note_missing_models(&drawn.missing_models);
             runtime.note_lod_refused(&drawn.lod_refused);
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
-            runtime.note_look_facts(self.look.measure(&frame, &camera, &self.assets, output, live).cloned());
+            let drawn_look = self.drawn_look(&handle, live);
+            runtime.note_look_facts(self.look.measure(&frame, &camera, &self.assets, output, live).cloned().map(|facts| LookFacts { drawn: Some(drawn_look), ..facts }));
             let exposure = self.resilient.renderer().exposure_telemetry();
             if live {
                 self.exposure_trace.note(runtime.tick() as f64 * FIXED_STEP_MS / 1000.0, &exposure);
@@ -2512,6 +2513,14 @@ impl Presenter {
             runtime.note_exposure_trace(&self.exposure_trace);
         }
         Some(drawn)
+    }
+
+    /// The preset and look features the frame just drawn drew (`__render.look.preset`, `features`):
+    /// a capture's pinned preset, else Live's.
+    fn drawn_look(&self, handle: &RenderHandle, live: bool) -> crate::look_facts::DrawnLook {
+        let preset = if live { handle.borrow().status().preset } else { handle.borrow().capture_frame().1.preset };
+        let features = self.resilient.renderer().renderer().drawn_look_features();
+        crate::look_facts::DrawnLook { preset: preset.wire(), features: features.iter().map(|(feature, on)| (feature.wire(), *on)).collect() }
     }
 
     /// The streamed view set's part of a frame (STR-16): its limits follow the drawn class, then it

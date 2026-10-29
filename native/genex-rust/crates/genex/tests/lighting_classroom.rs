@@ -16,7 +16,7 @@ use std::path::Path;
 
 use genex::prelude::*;
 use genex::present::Presenter;
-use genex::render::{Exposure, Metering, QualityPreset, ReflectionProbe, RenderConfig, SpotLight, Tonemap, units};
+use genex::render::{Exposure, Fog, Metering, QualityPreset, ReflectionProbe, RenderConfig, SpotLight, Tonemap, units};
 use genex::render::{Environment, SkyParams};
 use genex::{FIXED_STEP_MS, Runtime, View};
 
@@ -37,6 +37,11 @@ const WINDOWS: [(f32, f32); 2] = [(1.0, 3.2), (4.8, 7.0)];
 /// Ceiling tubes: 3000 lm each, a 60° cone down, 4000 K.
 const TUBE_LUMENS: f32 = 3000.0;
 const TUBE_CONE: f32 = 60.0;
+/// The fog recipe's extinction per metre: a dusty room, thin enough to see across.
+const FOG_DENSITY: f32 = 0.08;
+/// Sim ticks the replay drive steps while paused (the harness's fixed horizon is longer; the
+/// count only has to be the same for both runs).
+const REPLAY_TICKS: usize = 24;
 
 #[derive(Default)]
 struct World;
@@ -48,6 +53,11 @@ enum Recipe {
     Indoor,
     /// Gen3's light facet: average metering, -0.75 EV, a raised `ev_min` of -2.5.
     Gen3,
+    /// The indoor recipe on `ultra` with a thin volumetric fog the sun carves shafts from at the
+    /// windows (Track B: the determinism check keeps every look feature on).
+    Fog,
+    /// The same room on `ultra` without the fog, the shafts' reference.
+    Clear,
 }
 
 fn box_at(frame: &mut Frame, min: Vec3, max: Vec3, material: &Material) {
@@ -109,11 +119,17 @@ fn light_room(frame: &mut Frame) {
 
 fn runtime(recipe: Recipe) -> Runtime<World> {
     let exposure = match recipe {
-        Recipe::Indoor => Exposure::auto().compensation(0.0).metering(Metering::Center),
         Recipe::Gen3 => Exposure::auto().compensation(-0.75).metering(Metering::Average).range(-2.5, 8.0),
+        _ => Exposure::auto().compensation(0.0).metering(Metering::Center),
+    };
+    let config = RenderConfig::new().tonemap(Tonemap::AgxPunchy).exposure(exposure);
+    let config = match recipe {
+        Recipe::Indoor | Recipe::Gen3 => config.preset(QualityPreset::High),
+        Recipe::Clear => config.preset(QualityPreset::Ultra),
+        Recipe::Fog => config.preset(QualityPreset::Ultra).fog(Fog::default().with_density(FOG_DENSITY).with_height(0.0, 0.0)),
     };
     let mut game = Game::new(World).title("Classroom").world_size(WORLD[0], WORLD[1]);
-    game.render_settings(RenderConfig::new().preset(QualityPreset::High).tonemap(Tonemap::AgxPunchy).exposure(exposure));
+    game.render_settings(config);
     game.camera(|_| Camera { fovy: 70.0, ..Camera::look_at(Vec3::new(0.8, 1.6, 0.8), Vec3::new(6.5, 1.1, 5.2)) });
     game.on_draw(|_, frame, _| {
         light_room(frame);
@@ -134,16 +150,31 @@ fn luma_stats(bgra: &[u8]) -> (f64, f64) {
     (mean, darkest)
 }
 
-fn capture(recipe: Recipe, name: &str) -> Option<(f64, f64, serde_json::Value)> {
+/// A presenter on this machine's GPU, or none (skipped) without one.
+fn presenter() -> Option<Presenter> {
     let require = std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1");
-    let mut presenter = match Presenter::open(WORLD, &[]) {
-        Ok(presenter) => presenter,
+    match Presenter::open(WORLD, &[]) {
+        Ok(presenter) => Some(presenter),
         Err(error) if require => panic!("GENEX_REQUIRE_METAL=1 and no WebGPU-core adapter: {error}"),
         Err(error) => {
             eprintln!("skipped: no WebGPU-core adapter ({error})");
-            return None;
+            None
         }
-    };
+    }
+}
+
+/// Writes `bgra` as `name.png` and `render` as `name.json` into `GENEX_RENDER_EVIDENCE_DIR`.
+fn evidence(name: &str, bgra: &[u8], render: &serde_json::Value) {
+    let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") else { return };
+    let dir = Path::new(&dir);
+    let _ = std::fs::create_dir_all(dir);
+    let rgba: Vec<u8> = bgra.as_chunks::<4>().0.iter().flat_map(|p| [p[2], p[1], p[0], 255]).collect();
+    std::fs::write(dir.join(format!("{name}.png")), png(WORLD[0], WORLD[1], &rgba)).expect("evidence");
+    std::fs::write(dir.join(format!("{name}.json")), serde_json::to_vec_pretty(render).expect("json")).expect("evidence");
+}
+
+fn capture(recipe: Recipe, name: &str) -> Option<(f64, f64, serde_json::Value)> {
+    let mut presenter = presenter()?;
     let mut runtime = runtime(recipe);
     presenter.set_capturing(true);
     for _ in 0..4 {
@@ -151,13 +182,7 @@ fn capture(recipe: Recipe, name: &str) -> Option<(f64, f64, serde_json::Value)> 
     }
     let bgra = presenter.resilient.capture().expect("capture").bgra().to_vec();
     let render = runtime.state()["__render"].clone();
-    if let Ok(dir) = std::env::var("GENEX_RENDER_EVIDENCE_DIR") {
-        let dir = Path::new(&dir);
-        let _ = std::fs::create_dir_all(dir);
-        let rgba: Vec<u8> = bgra.as_chunks::<4>().0.iter().flat_map(|p| [p[2], p[1], p[0], 255]).collect();
-        std::fs::write(dir.join(format!("{name}.png")), png(WORLD[0], WORLD[1], &rgba)).expect("evidence");
-        std::fs::write(dir.join(format!("{name}.json")), serde_json::to_vec_pretty(&render).expect("json")).expect("evidence");
-    }
+    evidence(name, &bgra, &render);
     let (mean, darkest) = luma_stats(&bgra);
     eprintln!("{name}: mean luma {mean:.1}, darkest bin {:.1} %, exposure {}", darkest * 100.0, render["exposure"]);
     Some((mean, darkest, render))
@@ -179,6 +204,62 @@ fn metal_a_windowed_classroom_lit_by_its_sun_and_tubes_settles_in_the_luminance_
 fn metal_the_classroom_under_gen3_s_exposure_warns_of_its_raised_floor() {
     let Some((_, _, render)) = capture(Recipe::Gen3, "classroom-high-gen3") else { return };
     assert_eq!(render["exposure"]["warnings"], serde_json::json!(["ev-min-raised-with-doorway-adaptation"]));
+}
+
+/// The harness's replay row (`native-evidence.ts` `replayRow`) on one fresh run: the game paused
+/// on its seed, [`REPLAY_TICKS`] steps, then a settled capture. Between the reload and the capture
+/// the window draws Live frames at its own pace, so the two runs the row compares draw different
+/// counts: `live_frames` Live frames, spread over the steps.
+fn replay_capture(recipe: Recipe, live_frames: usize) -> Option<Vec<u8>> {
+    let mut presenter = presenter()?;
+    let mut runtime = runtime(recipe);
+    runtime.pause();
+    let mut drawn = 0;
+    for tick in 0..REPLAY_TICKS {
+        while drawn * REPLAY_TICKS < live_frames * (tick + 1) {
+            presenter.draw_view(&mut runtime, View::Game).expect("game view").expect("drawn");
+            drawn += 1;
+        }
+        runtime.step(FIXED_STEP_MS);
+    }
+    presenter.set_capturing(true);
+    presenter.draw_view(&mut runtime, View::Game).expect("game view").expect("drawn");
+    Some(presenter.resilient.capture().expect("capture").bgra().to_vec())
+}
+
+/// How many pixels of `a` and `b` differ, and by at most how much in one channel.
+fn pixel_difference(a: &[u8], b: &[u8]) -> (usize, u8) {
+    let pixels = a.as_chunks::<4>().0.iter().zip(b.as_chunks::<4>().0);
+    pixels.fold((0, 0), |(count, most), (p, q)| {
+        let delta = p.iter().zip(q).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+        (count + usize::from(delta > 0), most.max(delta))
+    })
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_volumetric_fog_room_on_ultra_replays_to_the_same_pixels_whatever_live_drew_first() {
+    let Some(few) = replay_capture(Recipe::Fog, 1) else { return };
+    let Some(many) = replay_capture(Recipe::Fog, 3 * REPLAY_TICKS) else { return };
+    let render = serde_json::Value::Null;
+    evidence("classroom-ultra-fog-replay-a", &few, &render);
+    evidence("classroom-ultra-fog-replay-b", &many, &render);
+    let (count, most) = pixel_difference(&few, &many);
+    if count > 0 {
+        let clear = replay_capture(Recipe::Clear, 1).zip(replay_capture(Recipe::Clear, 3 * REPLAY_TICKS));
+        let (clear_count, clear_most) = clear.map_or((0, 0), |(a, b)| pixel_difference(&a, &b));
+        eprintln!("without the fog: {clear_count} differ, by up to {clear_most}");
+    }
+    assert_eq!((count, most), (0, 0), "the same seed and input drew different pixels: {count} differ, by up to {most}");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_fog_room_s_sun_shafts_light_the_air_inside_the_windows() {
+    let Some((fog_mean, _, fog)) = capture(Recipe::Fog, "classroom-ultra-fog") else { return };
+    let Some((clear_mean, _, _)) = capture(Recipe::Clear, "classroom-ultra-clear") else { return };
+    eprintln!("fog {fog_mean:.1} vs clear {clear_mean:.1}");
+    assert!(fog["exposure"]["warnings"].as_array().is_some_and(Vec::is_empty), "{}", fog["exposure"]);
 }
 
 /// A stored-deflate PNG of `rgba` (`width` x `height`).

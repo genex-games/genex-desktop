@@ -9,6 +9,7 @@ import { describe, it } from "node:test";
 import {
   EXPOSURE_TELEMETRY_BINS,
   ExposureWarning,
+  LookFeature,
   parseExposureTelemetry,
   parseExposureTrace,
   parseRenderLookFacts,
@@ -27,6 +28,17 @@ describe("render look facts", () => {
       tags: { bench: { ...fixture.look.tags.bench, junk: true } },
     });
     assert.deepEqual(tagged?.tags.bench, fixture.look.tags.bench);
+  });
+
+  it("reads the drawn look features with the preset, and a look without them", () => {
+    const parsed = parseRenderLookFacts(fixture.look);
+    assert.equal(parsed?.preset, "ultra");
+    assert.deepEqual(Object.keys(parsed?.features ?? {}).sort(), Object.values(LookFeature).sort());
+    assert.equal(parsed?.features?.[LookFeature.VolumetricFog], true);
+    const { preset: _preset, features: _features, ...older } = fixture.look;
+    const plain = parseRenderLookFacts(older);
+    assert.notEqual(plain, null, "an engine before the features still parses");
+    assert.equal(plain?.features, undefined);
   });
 
   it("refuses a value outside the shape whole", () => {
@@ -48,6 +60,12 @@ describe("render look facts", () => {
       { ...fixture.look, tags: { bench: { ...bench, models: "a.glb" } } },
       { ...fixture.look, tags: { bench: { ...bench, models: [1] } } },
       { ...fixture.look, tags: { bench: { ...bench, primitiveOnly: undefined } } },
+      { ...fixture.look, preset: "epic" },
+      { ...fixture.look, preset: "auto" },
+      { ...fixture.look, features: [] },
+      { ...fixture.look, features: { ...fixture.look.features, volumetricFog: 1 } },
+      { ...fixture.look, features: { ...fixture.look.features, warp: true } },
+      { ...fixture.look, features: { fog: true } },
       { ...fixture.look, tags: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`t${i}`, bench])) },
     ];
     for (const value of hostile) assert.equal(parseRenderLookFacts(value), null, JSON.stringify(value)?.slice(0, 80));
