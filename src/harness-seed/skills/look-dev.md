@@ -45,11 +45,12 @@ The area's look is done when its hero shot passes and none of the never-ship ite
 
 ## Never ship
 
-Each id is a defect a judge names; any one in a hero shot fails it.
-
-`stick-tree`, `slab-snow`, `primitive`, `flat-material`, `uncomfortable-camera`, `crushed-shadow`,
-`exposure-pump`, `dark-viewmodel`, `placeholder-particles` (the look blockers). In a Rust game
-folder `CLAUDE.md` (Art bar) says what each one is, with the few defects no check names yet.
+Each id is a look blocker the judges name; any one in a hero shot fails it: `primitive`,
+`flat-material`, `stick-tree`, `slab-snow`, `art-source-mismatch`, `dark-viewmodel`,
+`crushed-shadow`, `placeholder-particles`, `visible-tiling`, `sky-contradicts`, `exposure-pump`,
+`uncomfortable-camera`, `not-shipped`. In a Rust game folder `CLAUDE.md` (Art bar) says what each
+one is, with the three rules that have no id (stacked darkening, a lens with no way off, cards
+within 50 m).
 
 ## Briefing a worker
 

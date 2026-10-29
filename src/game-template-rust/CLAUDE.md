@@ -110,27 +110,31 @@ calling that facet done.
 | Sky and outdoor light | `Environment::sky()` with the recipe's sun, or a CC0 `.hdr` at 4k | a sky-dome texture on a sphere |
 | Sounds | `genex__asset` `sfx`, or CC0 | silence for a mechanic that has sound |
 
-**Never ship.** A judge names each of these by its id (the harness's look blockers) and a round that
-adds one is not kept; fix what it names.
+**Never ship.** The judges name each of these by its id and refuse the round that adds one.
 
-- `stick-tree`: a tree or bush made of cones, spheres, boxes or sticks with no leaf or twig cards.
-- `slab-snow`: snow, sand or dust as a slab or box on the ground or on props.
-- `primitive`: furniture, props or characters built from cubes in code or a primitive-only script.
-- `flat-material`: an untextured, flat-coloured surface; near ones (within 10 m) also need their
-  scan's normal and ORM maps at `2k`.
+- `primitive`: a box, cylinder, capsule or cube-built prop, piece of furniture, pole, vehicle or
+  character, or a box or quad as the outdoor ground (ground is a `Terrain`).
+- `flat-material`: a prop, wall or ground in one untextured colour; every near surface is a scan
+  with its normal and ORM maps, at `2k` or more.
+- `stick-tree`: a tree or bush of cones, spheres, cylinders or sticks with no leaf or twig cards.
+- `slab-snow`: snow, sand or dust as a slab or thin box laid on the ground or a prop.
+- `art-source-mismatch`: an asset from a lesser route than the sourcing table plans.
+- `dark-viewmodel`: hands or a weapon drawn as a black shape; draw first-person parts between
+  `frame.view_model()` and `frame.end_view_model()`.
+- `crushed-shadow`: pure-black shadows with no fill or bounce.
+- `placeholder-particles`: particles that read as cubes; use `frame.weather(..)`, `Particles::snow(..)`,
+  `Particles::dust(..)`.
+- `visible-tiling`: a texture whose repeat shows at play distance.
+- `sky-contradicts`: a sky or light that disagrees with the brief's weather or time of day.
+- `exposure-pump`: exposure that jumps or overshoots at a doorway (the `doorway` demo).
 - `uncomfortable-camera`: head bob over 2.8 cm, roll over 2 degrees, a step cadence over 2.8 Hz,
-  or shake drawn fresh from `ctx.rng` every tick (use `FirstPersonRig`).
-- `crushed-shadow`: a dark look made of negative compensation, a raised `ev_min`, a vignette and a
-  dark grade together; a dark room needs less light, not every control turned down.
-- `exposure-pump`: exposure that jumps or overshoots crossing a doorway.
-- `dark-viewmodel`: hands, a weapon or a character that reads as a black shape; draw first-person
-  parts between `frame.view_model()` and `frame.end_view_model()`.
-- `placeholder-particles`: particles that read as cubes; use `frame.weather(..)`,
-  `Particles::snow(..)`, `Particles::dust(..)`.
+  shake drawn fresh from `ctx.rng` every tick, or a first-person `fovy` (vertical) outside 60 to 80
+  (the `sprint-run` demo).
+- `not-shipped`: a camera that would not pass as a screenshot from a shipped game of its genre.
 
-Also never: a box or a quad as the outdoor ground, a first-person `fovy` (vertical, degrees) outside
-60 to 80, a lens, grain or vignette pass with no way off in the settings, or a flat card or
-impostor within 50 m of the camera.
+Also never: a dark look made by stacking negative compensation, a raised `ev_min`, a vignette and a
+dark grade (light the room less instead); a lens, grain or vignette pass with no way off in the
+settings; a flat card or impostor within 50 m of the camera.
 
 ## Assets
 
