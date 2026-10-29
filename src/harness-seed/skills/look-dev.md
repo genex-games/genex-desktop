@@ -12,8 +12,9 @@ builds breadth: an area that only exists is not a look.
 
 ## When
 
-- After sourcing has delivered the area's hero assets (`asset-sourcing`), before mechanics fill
-  the area with more of the same.
+- After the whole level is blocked out and walkable (`level-plan`) and sourcing has delivered the
+  area's hero assets (`asset-sourcing`), before mechanics fill the area with more of the same.
+  One area at a time: an area still in greybox never holds up another area or another facet.
 - Again when a brief or a person's message changes the place, the time of day or the weather.
 
 ## Steps
@@ -23,7 +24,7 @@ builds breadth: an area that only exists is not a look.
    `docs/look-recipes.md` and code in `docs/examples/looks/src/looks.rs`; tell the worker which
    block, and that it copies the block's `light` and `look` pair first.
 2. **Place one hero camera** per area where the person plays (in a Rust game
-   `game.named_camera("hero:<area>", ..)`): the shot the judges compare with the references. Keep
+   `game.named_camera("hero:<zone>", ..)` per zone of `docs/LEVEL.md`): the shot the judges compare with the references. Keep
    the camera, and name it in every brief for the area.
 3. **Light before materials.** Sky and sun, the room's lights paired with their emissive
    fittings, one reflection probe and one irradiance volume per room, fog, exposure, then the
@@ -48,9 +49,15 @@ The area's look is done when its hero shot passes and none of the never-ship ite
 Each id is a look blocker the judges name; any one in a hero shot fails it: `primitive`,
 `flat-material`, `stick-tree`, `slab-snow`, `art-source-mismatch`, `dark-viewmodel`,
 `crushed-shadow`, `placeholder-particles`, `visible-tiling`, `sky-contradicts`, `exposure-pump`,
-`uncomfortable-camera`, `not-shipped`. In a Rust game folder `CLAUDE.md` (Art bar) says what each
-one is, with the three rules that have no id (stacked darkening, a lens with no way off, cards
-within 50 m).
+`uncomfortable-camera`, `not-shipped`, `feature-off`, `broken-pose`, `incoherent-place`,
+`unreachable-zone`, `no-exit`, `dead-end`, `unbounded`. In a Rust game folder `CLAUDE.md` (Art bar) says what each
+one is, with the rules that have no id (stacked darkening, a lens with no way off, cards within
+50 m).
+
+Never pass a check by switching a look feature off (fog, light shafts, shadows, bloom, ambient
+occlusion, a texture size): the quality presets decide what each device draws. Report the failing
+check with its code, keep the feature, and fix the cause; a miss on one device class is answered
+in that class's settings, never on every device.
 
 ## Briefing a worker
 
