@@ -19169,7 +19169,7 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
         frames: [1, 2, 3].map((n) => ({ label: `ref${n}`, data: "iVBOR", mimeType: "image/png" })),
       },
     } as Run;
-    const labels = shipImages(refs, evidence).map((image) => image.label);
+    const labels = shipImages(refs, evidence).map((image) => image.label ?? "");
     assert.equal(labels.length, 14);
     assert.deepEqual(
       labels.filter((label) => label.startsWith("REFERENCE")),
