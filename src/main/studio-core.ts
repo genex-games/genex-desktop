@@ -1550,7 +1550,8 @@ export class StudioCore {
         lockRecovery: path.join(this.layout.engineHomes, LOCK_RECOVERY_DIR),
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.OpenCode }),
       }),
-      // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is.
+      // Grok Build on the person's own Grok sign-in, in the studio's sandbox as OpenCode is (a
+      // Bypass chat's builds run as the person, as Codex's do).
       new GrokEngine({
         scratchRoot: path.join(this.layout.scratch, EngineId.Grok),
         protectedPaths: this.#protectedPaths(),

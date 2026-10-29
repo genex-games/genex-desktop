@@ -523,7 +523,7 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | Bonsai, OpenRouter, Local server | Auto, Manual, Accept edits, Plan | the studio runs its tools and asks before each change |
 | Codex | Auto, Plan, Bypass | `codex exec` cannot ask mid-turn; the mode picks its sandbox |
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
-| Grok Build | Auto, Plan | `grok -p` cannot ask mid-turn and always runs in the studio's sandbox; Plan reads from a folder of its own |
+| Grok Build | Auto, Plan, Bypass | `grok -p` cannot ask mid-turn: Auto runs it in the studio's sandbox, Bypass as the person outside it, as Codex's; Plan reads from a folder of its own |
 | Cursor | Auto, Plan | `cursor-agent --print` cannot ask mid-turn and always runs in the studio's sandbox |
 | Ollama, a new engine | Auto | its harness tool loop keeps its sandbox |
 
@@ -531,7 +531,8 @@ The chat's own session on any engine is handed `permissions` (`#personSession`, 
 `permissionPrompts` needed); only an engine with `permissionPrompts` gets the person's reach
 (`reachesMac`: no sibling-folder deny list, `mainAgentReachNote`) and a lead's or coordinator's
 `leadAsks`. Another engine's chat session, and a Loop's lead in place on it, keeps the unattended
-fence and the same denied paths.
+fence and the same denied paths (only named in its brief in Codex's and Grok Build's Bypass, which
+have no sandbox).
 
 Bonsai ([`local-session-permissions.ts`](../src/substrate/engines/local-session-permissions.ts)
 `permitCall`) asks before `edit_file` and `write_file` in Manual and before `run_command` in Manual
@@ -691,7 +692,8 @@ Loop run must confirm the two known changes: builders can no longer read sibling
   logins; a page's text can still try to steer the agent.
 - Codex cannot ask mid-turn: Manual and Accept edits are unavailable for it until it runs over a
   protocol that asks (`codex app-server`), and a chat in either runs Codex in Auto's sandbox. Its
-  Bypass has no sandbox at all, as the CLI's own flag. Bonsai and Codex ask about no read, and their
+  Bypass has no sandbox at all, as the CLI's own flag, and neither has Grok Build's, whose builds
+  then run as the person (`runsAsPerson`). Bonsai and Codex ask about no read, and their
   "always" offers no standing grant.
 
 - One card can hold a lead's turn for up to five minutes, and the coordinator's own five-minute

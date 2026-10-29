@@ -9,8 +9,10 @@
  * runs, the CLI says itself (`probeGrok`). Like OpenCode it brings no sandbox the studio can rely
  * on, so every session runs inside the studio's `ProcessSandbox`: the workspace (or, read-only, a
  * scratch folder) is all it can write, the studio's secrets and every other CLI's sign-in stay
- * unreadable, and only xAI's hosts are reachable. Its own permission rules keep a read-only
- * session to reading and the studio bridge (`grokTurnArgv`).
+ * unreadable, and only xAI's hosts are reachable. The one exception is a chat the person set to
+ * Bypass and confirmed: its builds run as them, outside that sandbox, as Codex's Bypass does
+ * (`runsAsPerson`, `grokOutside`). Its own permission rules keep a read-only session to reading
+ * and the studio bridge (`grokTurnArgv`).
  *
  * The prompt goes in a file of ACP content blocks (Grok reads no piped stdin, and on Windows the
  * sandbox would not pass one on), its pictures as files beside it for Grok's own `read_file`
@@ -65,7 +67,9 @@ import {
 import { abortControllerFor, CompletionStop, interruption, partialDelegateResult, STOPPED_BY_USER } from "./common.ts";
 import type { PartialDelegateState } from "./common.ts";
 import { ProcessSandbox, type SandboxOptions, shellQuote } from "../spawn.ts";
+import { spawnCommand } from "../command-launch.ts";
 import { childEnv } from "../child-env.ts";
+import { withEnvPath } from "../toolchain.ts";
 import { credentialHomes, grokHome } from "../credential-homes.ts";
 import { sniffImage } from "../image-sniff.ts";
 import { stopChild } from "../process-tree.ts";
@@ -151,8 +155,8 @@ export interface GrokInvocation {
   cwd: string;
   env: Record<string, string>;
   signal: AbortSignal;
-  /** The sandbox the real CLI is started in. */
-  sandbox: SandboxOptions;
+  /** The sandbox the real CLI is started in; none for a chat the person set to Bypass, which runs as them. */
+  sandbox: SandboxOptions | null;
   /** The hosts the session may reach. */
   domains: string[];
   /** Hears the CLI's error log, which names the HTTP status of a failed call. */
@@ -218,6 +222,8 @@ async function clearRunFolders(temporary: string): Promise<void> {
 /** How a session's turn is set up. */
 interface TurnSetup {
   access: GrokAccess;
+  /** A chat the person set to Bypass: it runs as them, outside the studio's sandbox (`runsAsPerson`). */
+  asPerson: boolean;
   cwd: string;
   runDir: string;
   bridge: boolean;
@@ -375,7 +381,8 @@ export class GrokEngine implements Engine {
     const partial = (): PartialDelegateState => partialState(run, startedAt, request.model, bridge, request);
     try {
       const prompt = this.#brief(request, { access, cwd, scratch, locks, bridge });
-      const turn = { access, cwd, runDir, bridge: Boolean(bridge), prompt, images: request.images ?? [] };
+      const asPerson = runsAsPerson(request, access);
+      const turn = { access, asPerson, cwd, runDir, bridge: Boolean(bridge), prompt, images: request.images ?? [] };
       await this.#runTurn(request, run, { ...turn, signal: controller.signal });
     } catch (err) {
       return this.#endingAfterThrow(err, run, request, partial);
@@ -440,7 +447,15 @@ export class GrokEngine implements Engine {
       ...(request.effort ? { effort: request.effort } : {}),
     };
     try {
-      const turn = { access: GrokAccess.Answer, cwd: scratch, runDir: scratch, bridge: false, images, signal };
+      const turn = {
+        access: GrokAccess.Answer,
+        asPerson: false,
+        cwd: scratch,
+        runDir: scratch,
+        bridge: false,
+        images,
+        signal,
+      };
       await this.#runTurn(asked, run, { ...turn, prompt: answerPrompt(request) });
       return run;
     } finally {
@@ -462,6 +477,8 @@ export class GrokEngine implements Engine {
       await this.#inRunFolder(async (folder) => {
         const invocation = await this.#invocation(grokCompactArgv(request.resume ?? "", cwd), {
           access: GrokAccess.Build,
+          // The harness asks for it as unattended work, with no chat's mode: it keeps the sandbox.
+          asPerson: false,
           cwd,
           runDir: cwd,
           folder,
@@ -529,25 +546,27 @@ export class GrokEngine implements Engine {
     return row?.efforts?.includes(effort) ? effort : null;
   }
 
-  /** The command, environment and sandbox of one run. */
+  /** The command, environment and sandbox of one run; no sandbox for the person's Bypass. */
   async #invocation(
     argv: string[],
-    ctx: { access: GrokAccess; cwd: string; runDir: string; folder: string; signal: AbortSignal; run: GrokRun },
+    ctx: Pick<TurnSetup, "access" | "asPerson" | "cwd" | "runDir" | "signal"> & { folder: string; run: GrokRun },
     denyReads: string[] = [],
   ): Promise<GrokInvocation> {
-    const sandbox = grokSandbox({
-      runDir: ctx.runDir,
-      gameDir: ctx.cwd,
-      gitDirs: ctx.access === GrokAccess.Build ? await gitMetadata(ctx.cwd) : [],
-      scratchDir: path.join(this.#scratchRoot, TEMPORARY_DIR),
-      secretPaths: [...this.#protectedPaths, ...denyReads],
-      home: this.#home,
-      ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
-    });
+    const sandbox = ctx.asPerson
+      ? null
+      : grokSandbox({
+          runDir: ctx.runDir,
+          gameDir: ctx.cwd,
+          gitDirs: ctx.access === GrokAccess.Build ? await gitMetadata(ctx.cwd) : [],
+          scratchDir: path.join(this.#scratchRoot, TEMPORARY_DIR),
+          secretPaths: [...this.#protectedPaths, ...denyReads],
+          home: this.#home,
+          ...(this.#toolPath ? { toolPath: this.#toolPath } : {}),
+        });
     return {
       argv,
       cwd: ctx.runDir,
-      env: { ...grokEnv(this.#home), ...(await this.#signIn(ctx.folder)) },
+      env: { ...grokEnv(this.#home), ...(sandbox ? await this.#signIn(ctx.folder) : await this.#ownPath()) },
       signal: ctx.signal,
       sandbox,
       domains: [...GROK_HOSTS],
@@ -558,15 +577,24 @@ export class GrokEngine implements Engine {
   }
 
   /**
-   * Where a session reads Grok's sign-in. On Windows the sandbox runs it as its own user, whom Grok's
-   * own file shuts out, so it reads a copy in its run's folder (`copySessionSignIn`); elsewhere it
-   * runs as the person and reads Grok's file in its home.
+   * Where a sandboxed session reads Grok's sign-in. On Windows the sandbox runs it as its own user,
+   * whom Grok's own file shuts out, so it reads a copy in its run's folder (`copySessionSignIn`);
+   * elsewhere it runs as the person and reads Grok's file in its home, as the person's Bypass does
+   * everywhere.
    */
   async #signIn(folder: string): Promise<Record<string, string>> {
     if (this.#platform !== StudioPlatform.Windows) return {};
     await this.#renewDue().catch(() => {});
     const copy = await copySessionSignIn(this.#home, folder).catch(() => null);
     return copy ? { GROK_AUTH_PATH: copy } : {};
+  }
+
+  /**
+   * The studio's toolchain PATH for a session outside the sandbox, which a sandboxed one gets from
+   * the sandbox (`toolPath`): its own git first where macOS has only the developer tools' stand-in.
+   */
+  async #ownPath(): Promise<Record<string, string>> {
+    return this.#toolPath ? { PATH: await this.#toolPath() } : {};
   }
 
   /**
@@ -821,9 +849,18 @@ function sessionAccess(request: DelegateRequest): GrokAccess {
   return readOnly || chatMode(request) === PermissionMode.Plan ? GrokAccess.ReadOnly : GrokAccess.Build;
 }
 
-/** The chat's mode as Grok Build honours it (Auto or Plan), or null for unattended work. */
+/** The chat's mode as Grok Build honours it (Auto, Plan or Bypass), or null for unattended work. */
 function chatMode(request: DelegateRequest): PermissionMode | null {
   return request.permissions ? engineMode(EngineId.Grok, request.permissions.mode) : null;
+}
+
+/**
+ * A session that builds for a chat the person set to Bypass (and confirmed): it runs as them,
+ * outside the studio's sandbox, as Codex's Bypass does. A read-only session of that chat (a lead
+ * while its build runs) and unattended work keep the sandbox.
+ */
+function runsAsPerson(request: DelegateRequest, access: GrokAccess): boolean {
+  return access === GrokAccess.Build && chatMode(request) === PermissionMode.Bypass;
 }
 
 /**
@@ -950,18 +987,42 @@ async function gitMetadata(cwd: string): Promise<string[]> {
   return [...new Set(dirs)];
 }
 
-/** Start `grok` inside the studio's sandbox and yield its events. */
+/** Start `grok` inside the studio's sandbox, or as the person for their Bypass, and yield its events. */
 async function* runGrok(invocation: GrokInvocation): AsyncGenerator<Record<string, unknown>> {
   invocation.signal.throwIfAborted();
   const installation = await resolveCodingCli(EngineId.Grok);
   const binary = installation.status.path;
   if (!binary) throw new EngineError(EngineFailureKind.Unavailable, EngineId.Grok, MESSAGE.NotInstalled);
+  if (!invocation.sandbox) {
+    yield* grokOutside(binary, invocation, installation.env);
+    return;
+  }
   const sandbox = await ProcessSandbox.create(invocation.sandbox);
   try {
     yield* grokEvents(sandbox, binary, invocation);
   } finally {
     await sandbox.dispose().catch(() => {});
   }
+}
+
+/**
+ * Start `binary` as the person, for a chat they set to Bypass, and yield its events: no sandbox, as
+ * Codex's Bypass, in their environment less every credential and other vendors' variables
+ * (`childEnv`), Grok's own laid over it, the invocation's PATH under the one key `PATH`.
+ */
+export async function* grokOutside(
+  binary: string,
+  invocation: Omit<GrokInvocation, "sandbox">,
+  parent: Record<string, string | undefined>,
+): AsyncGenerator<Record<string, unknown>> {
+  const env = childEnv(parent, { base: "contractor", vendor: "grok", set: invocation.env });
+  const toolPath = invocation.env.PATH;
+  const child = spawnCommand(binary, invocation.argv, {
+    cwd: invocation.cwd,
+    env: toolPath === undefined ? env : withEnvPath(env, toolPath),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  yield* childEvents(child, invocation);
 }
 
 /** Start `binary` with the invocation's argv in `sandbox` and yield its events. */

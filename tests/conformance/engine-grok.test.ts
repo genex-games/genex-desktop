@@ -27,7 +27,13 @@ import {
   type GrokProbe,
 } from "../../src/substrate/engines/grok-cli.ts";
 import { grokStderrStatus, grokStream, parseGrokLine } from "../../src/substrate/engines/grok-events.ts";
-import { GrokEngine, grokEvents, type GrokExec, type GrokInvocation } from "../../src/substrate/engines/grok.ts";
+import {
+  GrokEngine,
+  grokEvents,
+  grokOutside,
+  type GrokExec,
+  type GrokInvocation,
+} from "../../src/substrate/engines/grok.ts";
 import { EngineError, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -233,6 +239,7 @@ async function engineWith(
     platform?: NodeJS.Platform;
     renewSignIn?: (renewal: { scope: string; leadSeconds: number }) => Promise<void>;
     clock?: () => number;
+    toolPath?: () => Promise<string>;
   } = {},
 ) {
   const root = await tmpDir("grok-engine-");
@@ -258,6 +265,7 @@ async function engineWith(
     ...(options.platform ? { platform: options.platform } : {}),
     ...(options.renewSignIn ? { renewSignIn: options.renewSignIn } : {}),
     ...(options.clock ? { clock: options.clock } : {}),
+    ...(options.toolPath ? { toolPath: options.toolPath } : {}),
   });
   return { engine, seen, prompts, beside, root };
 }
@@ -698,7 +706,7 @@ setTimeout(() => { writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(expir
       "a refused call would end its turn: the sandbox, not Grok's ask mode, keeps the game as it is",
     );
     assert.match(flag(argv, "--disallowed-tools") ?? "", /search_replace,write/);
-    assert.deepEqual(invocation?.sandbox.writableRoots, [invocation?.cwd], "it writes only its own folder");
+    assert.deepEqual(invocation?.sandbox?.writableRoots, [invocation?.cwd], "it writes only its own folder");
   });
 
   it("a blind judge has the shell alone, approved only for the studio bridge, and no web", async () => {
@@ -728,8 +736,70 @@ setTimeout(() => { writeFileSync(${JSON.stringify(file)}, ${JSON.stringify(expir
       permissions: { mode: "plan", ask: async () => ({ decision: "deny" }) } as never,
     });
     assert.notEqual(seen[0]?.cwd, cwd);
-    assert.deepEqual(seen[0]?.sandbox.writableRoots, [seen[0]?.cwd], "the game folder stays read-only");
+    assert.deepEqual(seen[0]?.sandbox?.writableRoots, [seen[0]?.cwd], "the game folder stays read-only");
     assert.match((prompts[0] as Array<{ text: string }>)[0]?.text ?? "", /PLAN MODE/);
+  });
+
+  it("runs a chat the person set to Bypass as them, outside the studio's sandbox, as Codex's Bypass", async () => {
+    const toolPath = path.join(os.tmpdir(), "studio-tools", "bin");
+    const { engine, seen } = await engineWith(() => replay([]), { toolPath: async () => toolPath });
+    const cwd = await game();
+    const chat = (mode: string) => ({ mode, ask: async () => ({ decision: "deny" }) }) as never;
+    await engine.delegate({ cwd, prompt: "Add a boss", permissions: chat("bypassPermissions") });
+    const [invocation] = seen;
+    assert.equal(invocation?.sandbox, null, "no sandbox: the person confirmed Bypass for this chat");
+    assert.equal(invocation?.cwd, await realpath(cwd), "in the game folder");
+    assert.equal(
+      invocation?.env.PATH,
+      toolPath,
+      "the studio's toolchain, as a sandboxed session gets from its sandbox",
+    );
+    assert.ok(invocation?.argv.includes("--always-approve"), "it never asks, as in every build");
+    assert.equal(flag(invocation?.argv, "--sandbox"), "off", "nor does Grok's own sandbox hold it");
+
+    await engine.delegate({ cwd, prompt: "Look", readOnly: true, permissions: chat("bypassPermissions") });
+    await engine.delegate({ cwd, prompt: "Build", permissions: chat("auto") });
+    await engine.delegate({ cwd, prompt: "Build" });
+    // Compact now, as the harness asks for it: unattended, read-only, with no chat's mode.
+    await engine.delegate({ cwd, prompt: "", compact: true, readOnly: true, resume: "s" });
+    assert.deepEqual(
+      seen.slice(1).map((later) => later.sandbox === null),
+      [false, false, false, false],
+      "a read-only session of a Bypass chat, an Auto chat, unattended work and a compaction stay in the sandbox",
+    );
+    assert.equal(seen[2]?.env.PATH, undefined, "a sandboxed session's PATH is its sandbox's");
+  });
+
+  it("on Windows a Bypass chat runs as the person on Grok's own sign-in: no copy, and Grok renews it itself", async () => {
+    const home = path.join(await tmpDir("grok-bypass-"), ".grok");
+    await mkdir(home, { recursive: true });
+    const now = Date.now();
+    const signIn = JSON.stringify({
+      "grok.com": {
+        key: "access-1",
+        refresh_token: "refresh-1",
+        create_time: new Date(now - 24 * 60 * 60_000).toISOString(),
+        expires_at: new Date(now + 10 * 60_000).toISOString(),
+      },
+    });
+    await writeFile(path.join(home, "auth.json"), signIn);
+    const renewals: unknown[] = [];
+    const { engine, seen } = await engineWith(() => replay([]), {
+      home,
+      platform: "win32",
+      renewSignIn: async (renewal) => {
+        renewals.push(renewal);
+      },
+    });
+    const bypass = { mode: "bypassPermissions", ask: async () => ({ decision: "deny" }) } as never;
+    await engine.delegate({ cwd: await game(), prompt: "x", permissions: bypass });
+    assert.equal(seen[0]?.env.GROK_AUTH_PATH, undefined, "Grok reads its own file, which the person may open");
+    assert.equal(renewals.length, 0, "nobody renews it first: Grok renews its own sign-in as it runs");
+    assert.equal(await readFile(path.join(home, "auth.json"), "utf8"), signIn);
+
+    await engine.delegate({ cwd: await game(), prompt: "x" });
+    assert.ok(seen[1]?.env.GROK_AUTH_PATH, "a sandboxed session still reads a copy");
+    assert.equal(renewals.length, 1, "renewed first, as its copy cannot renew itself");
   });
 
   it("throws a failure the run policy acts on by its status, and reports any other as the build's outcome", async () => {
@@ -960,5 +1030,47 @@ describe("Grok Build's command line", () => {
     }
     assert.deepEqual(seen[0]?.argv, argv, "a path with a quote in it arrives as one word");
     assert.equal(grokStderrStatus(stderr), 503);
+  });
+
+  it("starts a Bypass chat's CLI as the person, in their environment less every credential and other vendors'", async () => {
+    const root = await tmpDir("grok-outside-");
+    // A stand-in CLI: Node, printing where it runs, its arguments and the variables it was given.
+    const cli = path.join(root, "cli.cjs");
+    await writeFile(
+      cli,
+      'const e = process.env; process.stdout.write(JSON.stringify({ type: "args", argv: process.argv.slice(2), cwd: process.cwd(), env: { PATH: e.PATH, GROK_HOME: e.GROK_HOME, XAI_API_KEY: e.XAI_API_KEY, OPENAI_API_KEY: e.OPENAI_API_KEY, GITHUB_TOKEN: e.GITHUB_TOKEN } }) + "\\n");\n',
+    );
+    const argv = grokTurnArgv({
+      access: "build",
+      promptFile: path.join(root, "it's prompt.json"),
+      cwd: root,
+      bridge: false,
+    });
+    const parent = {
+      PATH: process.env.PATH,
+      XAI_API_KEY: "xai-key",
+      OPENAI_API_KEY: "openai-key",
+      GITHUB_TOKEN: "github-token",
+      GROK_HOME: "/elsewhere",
+    };
+    const toolPath = path.join(root, "tools");
+    const invocation = {
+      argv: [cli, ...argv],
+      cwd: root,
+      env: { GROK_HOME: path.join(root, ".grok"), PATH: toolPath },
+      signal: new AbortController().signal,
+      domains: [],
+      onStderr: () => {},
+    };
+    const seen: Array<Record<string, unknown>> = [];
+    for await (const event of grokOutside(process.execPath, invocation, parent)) seen.push(event);
+    assert.deepEqual(seen[0]?.argv, argv, "a path with a quote in it arrives as one word");
+    assert.equal(seen[0]?.cwd, await realpath(root));
+    assert.deepEqual(seen[0]?.env, { PATH: toolPath, GROK_HOME: path.join(root, ".grok") }, "the studio's toolchain");
+
+    const own = { ...invocation, env: { GROK_HOME: path.join(root, ".grok") } };
+    const without: Array<Record<string, unknown>> = [];
+    for await (const event of grokOutside(process.execPath, own, parent)) without.push(event);
+    assert.equal((without[0]?.env as { PATH?: string })?.PATH, process.env.PATH, "else the person's own");
   });
 });

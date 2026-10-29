@@ -22,7 +22,7 @@ describe("the modes each engine honours", () => {
   it("lists every engine's modes in the composer's order, Auto always among them", () => {
     assert.deepEqual(PERMISSION_MODES, ALL);
     const table = Object.fromEntries(
-      ["claude-code", "codex", "bonsai", "ollama", "openrouter", "opencode", "a-new-engine"].map((engine) => [
+      ["claude-code", "codex", "bonsai", "ollama", "openrouter", "opencode", "grok", "a-new-engine"].map((engine) => [
         engine,
         permissionModesFor(engine),
       ]),
@@ -36,6 +36,8 @@ describe("the modes each engine honours", () => {
       openrouter: ["auto", "default", "acceptEdits", "plan"],
       // `opencode run` cannot stop mid-turn to ask, and always runs in the studio's sandbox.
       opencode: ["auto", "plan"],
+      // `grok -p` cannot ask either; in the person's Bypass it runs outside the studio's sandbox, as Codex does.
+      grok: ["auto", "plan", "bypassPermissions"],
       "a-new-engine": ["auto"],
     });
     // An inherited property name is no engine of its own.
@@ -50,6 +52,7 @@ describe("the modes each engine honours", () => {
     assert.deepEqual(runs("ollama"), ["auto", "auto", "auto", "auto", "auto"]);
     assert.deepEqual(runs("openrouter"), ["auto", "default", "acceptEdits", "plan", "auto"]);
     assert.deepEqual(runs("opencode"), ["auto", "auto", "auto", "plan", "auto"]);
+    assert.deepEqual(runs("grok"), ["auto", "auto", "auto", "plan", "bypassPermissions"]);
   });
 
   it("says why a mode is not offered: a session that cannot ask, or commands that are always sandboxed", () => {
@@ -60,6 +63,7 @@ describe("the modes each engine honours", () => {
     assert.deepEqual(reasons("ollama"), [null, "cannot_ask", "cannot_ask", "cannot_ask", "cannot_ask"]);
     assert.deepEqual(reasons("openrouter"), [null, null, null, null, "always_sandboxed"]);
     assert.deepEqual(reasons("opencode"), [null, "cannot_ask", "cannot_ask", null, "cannot_ask"]);
+    assert.deepEqual(reasons("grok"), [null, "cannot_ask", "cannot_ask", null, null]);
   });
 
   it("asks for a plan's approval mid-turn on Claude Code, after the turn where an engine plans by ending it", () => {
