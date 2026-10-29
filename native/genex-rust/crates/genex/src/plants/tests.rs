@@ -87,14 +87,17 @@ fn a_birch_reads_white_and_a_winter_birch_is_bare() {
         texels.rgba().chunks(4).map(|t| f32::from(t[0]) + f32::from(t[1]) + f32::from(t[2])).sum::<f32>() / (3.0 * (texels.rgba().len() / 4) as f32)
     };
     assert!(mean_bark(Species::Birch) > 1.6 * mean_bark(Species::Oak), "birch bark is far lighter than oak's");
-    let cover = |season: Season| {
+    // The share of a birch's covered card texels that are leaf-green (green well over red).
+    let green = |season: Season| {
         let glb = plant_glb(&spec(Species::Birch, season));
         let model = GlbModel::from_glb(&glb.levels[0]).expect("opens");
         let image = model.parts()[1].material.as_ref().and_then(|m| m.base_texture).expect("card texture");
         let texels = GlbModel::image_from_glb(&glb.levels[0], image).expect("decodes");
-        texels.rgba().chunks(4).filter(|t| t[3] > 127).count()
+        let covered: Vec<&[u8]> = texels.rgba().chunks(4).filter(|t| t[3] > 127).collect();
+        covered.iter().filter(|t| u32::from(t[1]) > u32::from(t[0]) + 20).count() as f32 / covered.len().max(1) as f32
     };
-    assert!(cover(Season::Winter) * 2 < cover(Season::Leafy), "a winter birch's twigs are bare");
+    let (leafy, winter) = (green(Season::Leafy), green(Season::Winter));
+    assert!(leafy > 0.5 && winter < 0.05, "a summer birch's cards are leaves ({leafy}), a winter birch's bare twigs ({winter})");
 }
 
 #[test]
