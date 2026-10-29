@@ -1,4 +1,5 @@
 import { qualityRefusal } from "../quality-lint.ts";
+import { usageForecast } from "./usage-forecast.ts";
 import { sharedOwnershipNote } from "./ownership.ts";
 import { SOURCING_PART, sourcingRefusal, spreadRefusal } from "./sourcing.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
@@ -1572,7 +1573,9 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const mode = workerModeOf(args);
   const { budgetMs, rounds } = workerBudget(loopRun, args, mode, remaining);
   // What a round on this game has actually cost, against what this worker is being given.
-  const roundWarning = shortBudgetWarning(budgetMs, medianRoundMs());
+  // And what the builder's plan limits leave for it (usage-forecast.ts).
+  const usage = await usageForecast(ctx, roleEngine(run, RoleKey.Builder), rounds);
+  const roundWarning = [shortBudgetWarning(budgetMs, medianRoundMs()), usage].filter(Boolean).join("; ");
   const ownsMain = yes(args.owns_main, runningWorkers().length === 0);
   const parsed = parseWorkerArgs(loopRun, args);
   if (typeof parsed === "string") return parsed;

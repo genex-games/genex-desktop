@@ -66,6 +66,7 @@ export const HostMethod = {
   CoordinatorTool: "coordinator.tool",
   EngineDelegations: "engine.delegations",
   EngineHardware: "engine.hardware",
+  EngineUsage: "engine.usage",
   GameList: "game.list",
   GameSetCover: "game.setCover",
   GameSetCoverShader: "game.setCoverShader",

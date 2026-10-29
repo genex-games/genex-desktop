@@ -107,7 +107,9 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
   and no judge or director meets a budget by dropping maps.
 
 Builder sessions are rotated every three rounds (`facet/session-rotation.ts`); the round after is briefed
-whole. A look blocker the judges keep naming becomes the game's lesson with the rule that fixes it
+whole. `worker_start` weighs the builder's plan limits, the same reports the app's usage panel shows
+(host method `engine.usage`): from 85% of a window used, its answer says the worker may stop on it
+(`director/usage-forecast.ts`). A look blocker the judges keep naming becomes the game's lesson with the rule that fixes it
 (`ledger.ts`, `look-bar-rules.ts`).
 
 A play script may
