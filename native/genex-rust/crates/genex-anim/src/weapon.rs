@@ -14,6 +14,9 @@ use crate::skeleton::Skeleton;
 
 /// A grip's distance from its wrist, as a share of the forearm's length: the middle of the palm.
 const PALM_SHARE: f32 = 0.35;
+/// How many times an arm is solved: the grip sits off the wrist and swings as the arm turns, so
+/// each pass re-aims at what the last one left.
+const HOLD_PASSES: usize = 4;
 /// A hand this close to its grip counts as holding it, metres.
 pub const HOLD_TOLERANCE: f32 = 0.02;
 
@@ -96,14 +99,16 @@ impl WeaponSockets {
 pub fn hold_weapon(skeleton: &Skeleton, sockets: &WeaponSockets, hold: &WeaponHold, pose: &mut [Trs], model: &mut [Mat4]) -> HoldResult {
     let reach = |arm: Arm, socket: Socket, goal: Vec3, pose: &mut [Trs], model: &mut [Mat4]| {
         let position = |model: &[Mat4], joint: JointId| model[usize::from(joint.raw())].w_axis.truncate();
-        let grip = socket.position(model).unwrap_or(goal);
-        // The hand joint must move by what the grip is away from its point.
-        let hand_goal = position(model, arm.hand) + (goal - grip);
-        let pole = (position(model, arm.lower) - position(model, arm.upper)).normalize_or_zero();
         let chain = TwoBoneChain { start: arm.upper, mid: arm.lower, end: arm.hand, mid_axis: Vec3::X };
-        let ik = TwoBoneIk { weight: hold.weight, ..TwoBoneIk::new(hand_goal, pole) };
-        apply_two_bone(skeleton, &chain, &ik, pose, model);
-        skeleton.local_to_model(pose, model);
+        for _ in 0..HOLD_PASSES {
+            let grip = socket.position(model).unwrap_or(goal);
+            // The hand joint must move by what the grip is away from its point.
+            let hand_goal = position(model, arm.hand) + (goal - grip);
+            let pole = (position(model, arm.lower) - position(model, arm.upper)).normalize_or_zero();
+            let ik = TwoBoneIk { weight: hold.weight, ..TwoBoneIk::new(hand_goal, pole) };
+            apply_two_bone(skeleton, &chain, &ik, pose, model);
+            skeleton.local_to_model(pose, model);
+        }
         socket.position(model).is_some_and(|now| now.distance(goal) <= HOLD_TOLERANCE)
     };
     let primary = reach(sockets.right, sockets.primary, hold.primary, pose, model);
