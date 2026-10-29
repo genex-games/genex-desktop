@@ -94,7 +94,9 @@ game.on_update(|sim, _| {
   and their models stream in under the device's memory pool and frame budget. A model that is
   still loading draws nothing and is never listed as a missing model; a refused one draws the
   missing-asset checker. A model the asset index lists with levels of detail loads its coarsest
-  level first and draws that until the whole model arrives. Display only: never in the checksum.
+  level first and draws that until the whole model arrives. A model the pool lets go gives back
+  its meshes and textures (a texture shared with a resident model stays), so a long walk holds only
+  what the view draws. Display only: never in the checksum.
 - `CellBuild::group(InstanceGroup)` draws a retained group while the cell is within the view
   radius: its rows upload once, and stop when the cell leaves the view. A built cell leaves the view
   only a cell side past the view radius, so a camera wobbling on the edge rebuilds and uploads

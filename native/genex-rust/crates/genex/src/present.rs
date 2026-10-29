@@ -321,6 +321,9 @@ pub struct LoadedModel {
     pub triangles: u32,
     /// The GLB images its parts' materials sample, uploaded, in first-use order.
     pub textures: Vec<ModelTexture>,
+    /// The texture each of [`LoadedModel::textures`] took, in the same order: the model holds one
+    /// reference to each, and gives them back when it is evicted (STR-3).
+    pub texture_ids: Vec<TextureId>,
     /// A normal-mapped primitive had no TANGENT, so its tangents were generated at load (C-9).
     pub runtime_tangents: bool,
     /// The model-space sphere around every part's mesh (centre xyz, radius; 0 when unknown): a
@@ -387,6 +390,16 @@ pub trait Uploads {
     /// Remove mesh `id` and its levels (an evicted streamed model, STR-16). The default holds no
     /// meshes, so it removes nothing.
     fn remove_mesh(&mut self, _id: MeshId) -> Result<(), RenderError> {
+        Ok(())
+    }
+    /// One more reference to texture `id`: another model holds it (STR-3). The default holds no
+    /// textures, so it counts nothing.
+    fn retain_texture(&mut self, _id: TextureId) -> Result<(), RenderError> {
+        Ok(())
+    }
+    /// One reference fewer to texture `id` (an evicted streamed model's, STR-3): its layer is
+    /// free once the last goes. The default holds no textures, so it frees nothing.
+    fn remove_texture(&mut self, _id: TextureId) -> Result<(), RenderError> {
         Ok(())
     }
     /// [`Uploads::add_meshes_with_meshlets`] for parts `source` decodes again from bytes the
@@ -456,6 +469,14 @@ impl Uploads for Resilient {
 
     fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
         Resilient::remove_mesh(self, id).map(drop)
+    }
+
+    fn retain_texture(&mut self, id: TextureId) -> Result<(), RenderError> {
+        Resilient::retain_texture(self, id).map(drop)
+    }
+
+    fn remove_texture(&mut self, id: TextureId) -> Result<(), RenderError> {
+        Resilient::remove_texture(self, id).map(drop)
     }
 
     fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
@@ -568,20 +589,74 @@ pub struct AssetCache {
 /// Textures a GLB uploaded, by content (WP-9): the same image embedded in several GLBs, or their
 /// identical sidecars, uploads once, so a kit of pieces sharing 2k and 4k scans costs one upload
 /// and one layer a scan, not one a piece. Keyed by an FNV-1a 64 digest of the bytes uploaded (a
-/// sidecar file's, or a decoded image's texels and size) and the slot's kind. The presenter never
-/// removes a model's texture, so a held id stays good as long as the cache.
+/// sidecar file's, or a decoded image's texels and size) and the slot's kind. Each model taking a
+/// texture holds one renderer reference to it; an evicted streamed model gives its references back
+/// ([`SharedTextures::release`], STR-3), and the texture is forgotten, its layer free, once the last
+/// model holding it goes.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct SharedTextures(BTreeMap<u64, Vec<(TextureKind, TextureId)>>);
+pub(crate) struct SharedTextures {
+    by_content: BTreeMap<u64, Vec<(TextureKind, TextureId)>>,
+    /// The references the cache's models hold, by texture.
+    refs: Vec<(TextureId, u32)>,
+}
 
 impl SharedTextures {
-    /// The texture uploaded from content `digest` as `kind`, if any.
-    fn get(&self, digest: u64, kind: TextureKind) -> Option<TextureId> {
-        self.0.get(&digest)?.iter().find(|(held, _)| *held == kind).map(|(_, id)| *id)
+    /// The texture uploaded from content `digest` as `kind`, with one more reference for the model
+    /// taking it; None when there is none, or when the renderer no longer holds it (it is forgotten
+    /// then, and the model uploads its own). A lost device is passed on.
+    fn take(&mut self, uploads: &mut dyn Uploads, digest: u64, kind: TextureKind) -> Result<Option<TextureId>, RenderError> {
+        let held = self.by_content.get(&digest).and_then(|held| held.iter().find(|(known, _)| *known == kind));
+        let Some(&(_, id)) = held else { return Ok(None) };
+        match uploads.retain_texture(id) {
+            Ok(()) => {
+                *self.refs_mut(id) += 1;
+                Ok(Some(id))
+            }
+            Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
+            Err(_) => {
+                self.forget(id);
+                Ok(None)
+            }
+        }
     }
 
-    /// Remember `id` as the upload of content `digest` as `kind`.
+    /// Remember `id`, just uploaded from content `digest` as `kind`, with its uploading model's reference.
     fn put(&mut self, digest: u64, kind: TextureKind, id: TextureId) {
-        self.0.entry(digest).or_default().push((kind, id));
+        self.by_content.entry(digest).or_default().push((kind, id));
+        *self.refs_mut(id) = 1;
+    }
+
+    /// Give one model's reference to `id` back to the renderer; at the last, `id` is forgotten and
+    /// its layer is free for the next texture.
+    pub(crate) fn release(&mut self, uploads: &mut dyn Uploads, id: TextureId) -> Result<(), RenderError> {
+        uploads.remove_texture(id)?;
+        let refs = self.refs_mut(id);
+        *refs = refs.saturating_sub(1);
+        if *refs == 0 {
+            self.forget(id);
+        }
+        Ok(())
+    }
+
+    /// The references held to `id` (a new entry at 0).
+    fn refs_mut(&mut self, id: TextureId) -> &mut u32 {
+        let at = match self.refs.iter().position(|(known, _)| *known == id) {
+            Some(at) => at,
+            None => {
+                self.refs.push((id, 0));
+                self.refs.len() - 1
+            }
+        };
+        &mut self.refs[at].1
+    }
+
+    /// Drop `id` from the map and its count.
+    fn forget(&mut self, id: TextureId) {
+        self.refs.retain(|(known, _)| *known != id);
+        for held in self.by_content.values_mut() {
+            held.retain(|(_, known)| *known != id);
+        }
+        self.by_content.retain(|_, held| !held.is_empty());
     }
 }
 
@@ -683,10 +758,12 @@ fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uplo
 /// `<model>#<image>`): absent when the game ships no such file or it is under the family's
 /// smallest size class (the image is held there by design), refused (logged) when it is
 /// unreadable or the renderer refuses it. A lost device is passed on.
-fn load_family_file(file: &str, path: &str, kind: TextureKind, (source, uploads): (&dyn ModelSource, &mut dyn Uploads), shared: Option<&mut SharedTextures>, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
+fn load_family_file(file: &str, path: &str, kind: TextureKind, (source, uploads): (&dyn ModelSource, &mut dyn Uploads), mut shared: Option<&mut SharedTextures>, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
     let Some(bytes) = source.model_bytes(file) else { return Ok(Compressed::Absent) };
     let digest = genex_core::digest::fnv1a64(&bytes);
-    if let Some(id) = shared.as_ref().and_then(|shared| shared.get(digest, kind)) {
+    if let Some(shared) = shared.as_deref_mut()
+        && let Some(id) = shared.take(uploads, digest, kind)?
+    {
         return Ok(Compressed::Loaded(id));
     }
     let texture = match read_ktx2(&bytes) {
@@ -748,7 +825,7 @@ impl AssetCache {
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4], extent: [0.0; 2], stats: Vec::new() });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), texture_ids: Vec::new(), runtime_tangents: false, sphere: [0.0; 4], extent: [0.0; 2], stats: Vec::new() });
             self.models.push((path.to_owned(), loaded));
         }
     }
@@ -1362,7 +1439,7 @@ fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &
 fn shared_upload(uploads: &mut dyn Uploads, shared: &mut SharedTextures, texture: TextureUpload<'_>, what: &str, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
     let (data, kind, _) = &texture;
     let digest = texels_digest(data);
-    if let Some(id) = shared.get(digest, *kind) {
+    if let Some(id) = shared.take(uploads, digest, *kind)? {
         return Ok(Some(id));
     }
     let kind = *kind;
@@ -1537,10 +1614,10 @@ fn load_model_levels(
         };
         parts.push(ModelPart { mesh, material });
     }
-    let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
+    let (textures, texture_ids) = images.iter().filter_map(|(texture, id)| Some((*texture, (*id)?))).unzip();
     let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
     let stats = glb.parts().iter().map(|part| Arc::new(MeshStats::of(&part.mesh))).collect();
-    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere, extent, stats }), refused))
+    Ok((Some(LoadedModel { parts, triangles, textures, texture_ids, runtime_tangents, sphere, extent, stats }), refused))
 }
 
 /// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
