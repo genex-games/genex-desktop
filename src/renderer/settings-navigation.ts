@@ -7,6 +7,8 @@ export const SettingsSection = {
   Storage: "storage",
   Providers: "providers",
   Local: "local",
+  /** How games use AI, Genex credits, limits and the Games list (`panels/game-ai/PlayAiSection.tsx`). */
+  PlayAi: "play-ai",
   Appearance: "appearance",
   Harness: "harness",
   /** Claude Code's "always allow" rules saved in game chats. */

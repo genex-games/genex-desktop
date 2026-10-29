@@ -9,8 +9,9 @@
  * drops it; a like of the player's own bursts. Main keeps what it shows (`PlayViewerEvent.bar`) and acts on
  * what it asks (`studio:play.control`). An Esc held in the game puts the keyboard here (Esc gives it back).
  * A signed-out guest is offered a Genex account here until its ×. A game in voice chat gets the mic switch
- * beside its name, with a menu of microphones. Offline, the facts say so in place of the players, and Like
- * and Remix wait for the connection.
+ * beside its name, with a menu of microphones. A game that uses AI gets the AI pill before the actions
+ * (`PlayAiPill.tsx`). Offline, the facts say so in place of the players, and Like and Remix wait for the
+ * connection.
  */
 import { sizeWords } from "../../shared/byte-size.ts";
 import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
@@ -450,10 +451,13 @@ function NativeAppButton({ app, send }: { app: PlayBarNative; send: SendControl 
 export function PlayViewerBar({
   view,
   send,
+  aiPill,
   onComments,
 }: {
   view: BarView;
   send: SendControl;
+  /** The game's AI pill, once the game has said hello to its AI. */
+  aiPill?: ReactNode;
   onComments: () => void;
 }): JSX.Element {
   const { bar } = view;
@@ -498,6 +502,7 @@ export function PlayViewerBar({
       <span className="sr-only" role="status">
         {bar?.note ? WORDS.notes[bar.note] : null}
       </span>
+      {aiPill}
       <Actions
         bar={bar}
         actions={actions}

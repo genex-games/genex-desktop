@@ -1,8 +1,8 @@
 # Genex: product overview
 
-Genex (formerly AI Game Studio) is a macOS Electron application for making games with AI:
+Genex (formerly AI Game Studio) is an Electron application for making games with AI:
 local browser games, and Unreal, Roblox Studio or other engines' projects. A person describes a
-game or a change, answers questions, and reviews the running game and build results. Each game is
+game or change, answers questions, and reviews the running game and builds. Each game is
 a real local project to open, edit and export.
 
 ## What the app contains
@@ -13,7 +13,7 @@ switches between **Live** (the playable
 game), **Builds** (work and results) and **Assets** (files and generated media).
 
 The prompt bar chooses the model, permissions, Auto or Loop mode, planning, references and
-tools. Chat shows replies, questions, compact status and results; details expand on demand.
+tools. Chat shows replies, questions, status and results; details expand on demand.
 
 Studio pairs an assistant with Activity to review runs and instruction improvements. Settings owns
 the games folder, appearance, provider/model setup and saved permissions. Accounts, local projects and installed harness edits

@@ -3,6 +3,7 @@
  * captures and computer sessions agents look through, the agent screens on the stage, and a run's
  * builds played or landed. Composed by `StudioCore`; its state stays in the core.
  */
+import type { AiLaneHint } from "../../shared/game-ai-lane.ts";
 import {
   genexJobDir,
   isGenexInspectionFile,
@@ -714,8 +715,11 @@ export class PreviewService {
     };
   }
 
-  /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
-  loadPreview(p: HarnessParams<"preview.load">): Promise<string> {
+  /**
+   * `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle
+   * at a time. `aiLane` names the lane `genex-ai` plays on in this load (a play-time AI replay).
+   */
+  loadPreview(p: HarnessParams<"preview.load">, options: { aiLane?: AiLaneHint | null } = {}): Promise<string> {
     const handle = p.handle ?? LIVE_HANDLE;
     return serial(this.#x.previewOperations, handle, async () => {
       const profiling = Boolean(p.candidateId && p.revision);
@@ -724,7 +728,7 @@ export class PreviewService {
       const port = this.preview(p.handle);
       if (p.candidateId && p.revision)
         return this.#loadCandidate(p, { candidateId: p.candidateId, revision: p.revision }, port);
-      return this.#loadServedPreview(p, handle, checkedRoot, port);
+      return this.#loadServedPreview(p, handle, checkedRoot, port, options.aiLane ?? null);
     });
   }
 
@@ -751,6 +755,7 @@ export class PreviewService {
     handle: string,
     checkedRoot: string | null,
     port: PreviewPort,
+    aiLane: AiLaneHint | null,
   ): Promise<string> {
     const remembered = { project: p.project, root: checkedRoot, entry: p.entry, loaded: null as string | null };
     this.#x.servedRoots.set(handle, remembered);
@@ -765,7 +770,7 @@ export class PreviewService {
       if (!served) return unservedUrl(p);
       // A load starts the page again, whether or not it then arrives: Live's game is no longer stopped.
       if (isLive) this.#liveStopped = false;
-      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback, aiLane });
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       if (isLive) this.#liveLoaded(webBuild);
@@ -1686,7 +1691,7 @@ export class PreviewService {
       try {
         const checkedRoot = await this.#x.assertHarnessRoot(project, null);
         this.#x.profileSources.delete(LIVE_HANDLE);
-        await this.#loadServedPreview({ project }, LIVE_HANDLE, checkedRoot, this.preview());
+        await this.#loadServedPreview({ project }, LIVE_HANDLE, checkedRoot, this.preview(), null);
         return WebBuildLoad.Loaded;
       } catch {
         return WebBuildLoad.Kept;

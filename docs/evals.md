@@ -189,8 +189,10 @@ Pinned: C1 `medieval-village` (dev-tuned: the seed was iterated on village runs)
 C3 `mini-golf`, C5 `vague-brief` and C8 `canary` (no checklist; its verdict is machine-only).
 C9 `edit-existing`, C10 `follow-up`, C11 `long-horizon` and C12-C18 (projects, engines and the
 Loop's finish: `vague-unreal-on`, `unreal-plugin-off`, `port-to-unreal`, `godot-no-plugin`,
-`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) are drafts
-the owner pins before a first baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
+`loop-finish-check`, `timed-wrap-up`, `godot-loop`; C12-C15 and C18 on Genex lanes only) and C19-C22
+(play-time AI: `ai-kingdom-turns`, `ai-sketch-animals`, `ai-robot-tactics`, `ai-shopkeeper-talk`;
+Genex lanes only, since a raw lane has no `genex-ai`) are drafts the owner pins before a first
+baseline. Private holdouts live in `$GENEX_EVALS_HOME/cases-private.md`, every case
 marked holdout; holdout rows never enter Git or an export.
 
 Anti-fitting is a static check: `npm run check:isolation` (in `check:static` and CI, public
@@ -327,6 +329,15 @@ stopped for 30 minutes, atomically (renamed aside, then checked again).
   tie. When exactly one side is a typed no-build and the other has enough evidence, the pair is a
   forfeit decided with no model call: the side that built wins every facet and the rows carry
   `forfeit: true`. Rows stay in the local ledger.
+- **Play-time AI** (`grade/ai-play.ts`, for C19-C22): from the run's own records, never the game's
+  word — the schema failure rate after the one repair (`game_ai_call` rows, at most 1%), fallback
+  coverage and determinism (the host's `ai.replay` with no answer and from the tapes, all demos),
+  local p95 per site (at most 15 s on this Mac's models) and calls per decision (a demo's tape lines
+  over its checkpoints, at most 4: a per-frame guard). A metric without records is unmeasured, never
+  passed; a snapshot's `ai/tapes/` is read as hostile files, never through a link. The blind
+  pairwise mechanic judge (`grade/ai-mechanic-pairwise.ts`, rubric
+  `grade/ai-mechanic-pairwise-prompt.md`, refused like the pairwise rubric) compares two runs' saved
+  AI calls and their no-answer replays, both orders, a win only when they agree.
 - **Canary.** C8 opens and closes each provider stream with a boot-only check
   (`l1.builds_and_boots`); a harness failure or no-build fails it.
 - **Calibration** (`calibrate [--quick]`): the committed fixtures in
@@ -611,3 +622,6 @@ five-minute rows read `unknown`); both set `STUDIO_BROWSER_TESTS=1`.
   Codex lane's Claude judges beside a Genex Claude lane) can cross-attribute them.
 - Grader thresholds (known-good 0.75, `minActionableDelta` 0.10) and the draft cases are owner
   placeholders; changing an endpoint moves `ENDPOINTS_SHA`.
+- The play-time AI grades are not yet ledger rows: `ai-play.ts` and the mechanic judge are pure
+  graders over a run's log, snapshot and replays, and the campaign pipeline does not call them yet
+  (the host's `ai.replay` needs the play-time AI broker).

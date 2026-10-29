@@ -9,6 +9,8 @@
  * A module that fails to import is reported as a broken tool rather than taking the turn down —
  * the agent should see its own syntax error as a tool result and fix it.
  *
+ * A module's words live beside it in `<module>-prompts.ts`, which is text and never imported as tools.
+ *
  * A tool module written before the harness was TypeScript is a `tools/*.mjs` file, and still
  * loads. When both `x.ts` and `x.mjs` are there, `x.ts` wins and `x.mjs` is not imported: an app
  * update lays `x.ts` down beside the old copy, which must not register every tool twice.
@@ -48,6 +50,8 @@ export interface RegistryOptions {
 const TOOL_MODULE = /\.(?:ts|mjs)$/;
 /** The registry's own module, never a tool module. */
 const REGISTRY_MODULES = new Set(["index.ts", "index.mjs"]);
+/** A tool module's words (`ai-tools-prompts.ts`): model-facing text beside a module, never a tool module. */
+const WORDS_MODULE = /-prompts\.ts$/;
 /** The module a candidate's tools come from… */
 const CANDIDATE_MODULE = "game-tools";
 /** …and the only tools of it a candidate may use: it reads and writes its own files, and checks them. */
@@ -66,7 +70,7 @@ const NO_PROJECT = "Open a project first";
 function isToolModule(entry: Dirent, files: ReadonlySet<string>): boolean {
   const moduleFile = entry.isFile() && TOOL_MODULE.test(entry.name) && !entry.name.endsWith(".d.ts");
   if (!moduleFile) return false;
-  if (REGISTRY_MODULES.has(entry.name)) return false;
+  if (REGISTRY_MODULES.has(entry.name) || WORDS_MODULE.test(entry.name)) return false;
   // `x.ts` wins over the legacy `x.mjs` beside it.
   return !(entry.name.endsWith(".mjs") && files.has(entry.name.replace(/\.mjs$/, ".ts")));
 }

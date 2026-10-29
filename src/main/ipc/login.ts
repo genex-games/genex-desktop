@@ -56,6 +56,8 @@ export interface LoginIpcDeps {
   /** A run is being held awake for, or a user turn is in flight: the ChatGPT account must not change under it. */
   busy(): boolean;
   pushUiEvent(event: UiEvent): void;
+  /** The account a subscription runs on changed: play-time AI stops every grant that named it. */
+  payerChanged?(engine: string): void;
   requireCli?: typeof requireCodingCli;
   run?: typeof runCommand;
 }
@@ -72,6 +74,7 @@ export function registerLoginIpc(
     subscription,
     busy,
     pushUiEvent,
+    payerChanged = () => {},
     requireCli = requireCodingCli,
     run = runCommand,
   }: LoginIpcDeps,
@@ -124,7 +127,11 @@ export function registerLoginIpc(
   });
 
   // OpenCode's own sign-in in the terminal: it changes no account a run is using, so it is never refused.
-  handle("studio:opencode.signin", async () => openCodeLogin.start());
+  handle("studio:opencode.signin", async () => {
+    const started = await openCodeLogin.start();
+    payerChanged(EngineId.OpenCode);
+    return started;
+  });
   // Grok Build's own `grok login` in the terminal: the next session reads it, so it is never refused either.
   handle("studio:grok.signin", async () => grokLogin.start());
 
@@ -163,7 +170,15 @@ export function registerLoginIpc(
     });
   });
 
-  registerAccountIpc(handle, { codexLogin, subscription, pushUiEvent, requireCli, run, changeCodexAccount });
+  registerAccountIpc(handle, {
+    codexLogin,
+    subscription,
+    pushUiEvent,
+    payerChanged,
+    requireCli,
+    run,
+    changeCodexAccount,
+  });
 }
 
 /**
@@ -176,10 +191,12 @@ function registerAccountIpc(
     codexLogin,
     subscription,
     pushUiEvent,
+    payerChanged,
     requireCli,
     run,
     changeCodexAccount,
   }: Pick<LoginIpcDeps, "codexLogin" | "subscription" | "pushUiEvent"> & {
+    payerChanged(engine: string): void;
     requireCli: typeof requireCodingCli;
     run: typeof runCommand;
     changeCodexAccount: <T>(change: () => Promise<T>) => Promise<T>;
@@ -225,6 +242,7 @@ function registerAccountIpc(
     const use = async () => {
       const status = await engine.runOnAccount(account);
       pushUiEvent({ type: UiEvent.EnginesChanged, payload: {} });
+      payerChanged(id);
       return status;
     };
     return id === EngineId.Codex ? changeCodexAccount(use) : use();
@@ -254,11 +272,13 @@ function registerAccountIpc(
         // does not remove keychain credentials. An added account goes whole.
         if (account !== AccountId.Studio) await fs.rm(home, { recursive: true, force: true });
         await forgetAccount(engine, engineId, account);
+        payerChanged(engineId);
         return true;
       });
     }
     await fs.rm(home, { recursive: true, force: true });
     await forgetAccount(engine, engineId, account);
+    payerChanged(engineId);
     return true;
   });
 

@@ -24,9 +24,8 @@ Play/Reload. An empty scaffold shows “Ready for your first idea”, or
 Opening a game starts nothing: Live keeps its game. Otherwise only the user changes Live (Play,
 Reload, Make live, a chat request while hidden) or a finished Unity/Godot `web/` build. A newer
 healthy build, a changed game folder, a chat's show or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
-in at once. The
-preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
-[projects](projects-engines.md#lives-views).
+in at once. Previews reach only public library CDNs (Open Game names other hosts) and, in Live
+with Create Live on, game AI. Other folders' views: [projects](projects-engines.md#lives-views).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest

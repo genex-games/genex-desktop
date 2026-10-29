@@ -51,6 +51,7 @@ const IDLE_BAR: PlayBarState = {
   guestCard: false,
   facts: null,
   mic: null,
+  ai: null,
   comments: null,
   signedIn: true,
   remixing: false,

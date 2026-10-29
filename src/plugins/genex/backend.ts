@@ -327,13 +327,14 @@ const ACTIONS: Record<string, Action> = {
     const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
     const exportStage = () => service(PluginService.ExportStage, {});
     const camera = coverCamera(ctx, service, invokedAt);
-    return genex.publishGallery(ctx.project, exportStage, args.title, camera, apps, remixChoice(args, ctx));
+    // The game's play-time AI as the dialog read it rides with the publish (`args.ai`), when it asked.
+    return genex.publishGallery(ctx.project, exportStage, args.title, camera, apps, remixChoice(args, ctx), args.ai);
   },
   [GenexAction.PublishApps]: async (genex, args, ctx, service, invokedAt) => {
     if (!ctx.project) throw new Error(MESSAGE.OpenProject());
     const apps = ctx.directory ? await nativeUploads(ctx.directory, args.native) : [];
     const camera = coverCamera(ctx, service, invokedAt);
-    return genex.publishAppsOnly(ctx.project, apps, args.title, camera, remixChoice(args, ctx));
+    return genex.publishAppsOnly(ctx.project, apps, args.title, camera, remixChoice(args, ctx), args.ai);
   },
   [GenexAction.PublishAllowUpload]: withProject((genex, project, args) =>
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),

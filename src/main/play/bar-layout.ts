@@ -1,8 +1,9 @@
 /**
  * Where the viewer bar's layer lies over the window. The bar is a strip of its own across the
  * window's top for as long as a game is open, the game below it, never under it; the layer covers the
- * whole window while Comments or a game's purchase sheet is open, and is put away while the game's page
- * holds the screen in full screen (a purchase sheet still covers it then). Nothing the bar's page says
+ * whole window while one of the bar's overlays (Comments, an AI card or menu) or a game's purchase sheet
+ * is open, and is put away while the game's page holds the screen in full screen (an overlay or a
+ * purchase sheet still covers it then). Nothing the bar's page says
  * puts the layer away under a sheet: the sheet is main's word, never the page's.
  */
 import type { PlayBarHold } from "../../shared/play-bar.ts";
@@ -13,7 +14,7 @@ export const BarLayout = {
   Hidden: "hidden",
   /** The bar's strip across the window's top. */
   Bar: "bar",
-  /** The whole window, for Comments or a purchase sheet over the dimmed game. */
+  /** The whole window, for an overlay or a purchase sheet over the dimmed game. */
   Full: "full",
 } as const;
 export type BarLayout = (typeof BarLayout)[keyof typeof BarLayout];
@@ -26,15 +27,16 @@ export interface BarLayoutDeps {
 /** The bar's layer laid out over `deps`. */
 export function barLayout(deps: BarLayoutDeps) {
   let open = false;
-  let comments = false;
+  /** One of the bar's overlays is open over the window. */
+  let overlaid = false;
   /** A game's purchase sheet is open over the window. */
   let sheet = false;
   /** The game's page holds the screen in full screen. */
   let fullScreen = false;
   let layout: BarLayout = BarLayout.Hidden;
 
-  /** Comments or a purchase sheet lies over the whole window. */
-  const covering = (): boolean => comments || sheet;
+  /** An overlay of the bar's (Comments, an AI card or menu) or a purchase sheet lies over the whole window. */
+  const covering = (): boolean => overlaid || sheet;
   const wanted = (): BarLayout => {
     if (!open) return BarLayout.Hidden;
     if (covering()) return BarLayout.Full;
@@ -53,13 +55,13 @@ export function barLayout(deps: BarLayoutDeps) {
       open = true;
       place();
     },
-    /** What the bar's layer says: whether Comments is open. */
+    /** What the bar's layer says: which of its overlays is open, if any. */
     hold(next: PlayBarHold): void {
-      comments = next.comments;
+      overlaid = next.overlay !== null;
       place();
     },
-    /** Comments is open over the game. */
-    comments: (): boolean => comments,
+    /** One of the bar's overlays (Comments, an AI card or menu) is open over the game. */
+    overlaid: (): boolean => overlaid,
     /** A game's purchase sheet opened or closed: open, the layer covers the whole window. */
     sheet(on: boolean): void {
       sheet = on;
@@ -72,12 +74,12 @@ export function barLayout(deps: BarLayoutDeps) {
     },
     /** Whether the game's page holds the screen in full screen. */
     isFullScreen: (): boolean => fullScreen,
-    /** Comments or a purchase sheet covers the window: the keyboard stays with the bar's layer. */
+    /** An overlay or a purchase sheet covers the window: the keyboard stays with the bar's layer. */
     covering,
     /** The viewer closed: the layer goes at once, and the next game starts afresh. */
     close(): void {
       open = false;
-      comments = false;
+      overlaid = false;
       sheet = false;
       fullScreen = false;
       place();

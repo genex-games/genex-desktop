@@ -8,8 +8,10 @@
 @import "./styles/onboarding.css";
 @import "./styles/genex.css";
 @import "./styles/play.css";
+@import "./styles/play-ai.css";
 @import "./styles/play-assets.css";
 @import "./styles/people.css";
+@import "./styles/play-ai-studio.css";
 @import "./styles/native-games.css";
 @import "./styles/store.css";
 @import "./styles/items.css";

@@ -21,6 +21,7 @@ import type { SendFailure, SendRefusal } from "./composer.ts";
 import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
+import type { GameAiNotice } from "./game-ai-views.ts";
 import type { NativeInstalls, NativeSession } from "./play-native.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
@@ -177,6 +178,8 @@ export interface UiEventMap {
   // — play —
   /** Play's game viewer loaded, played, failed or closed (`main/play/viewer.ts`). */
   "play.viewer": PlayViewerEvent;
+  /** Play-time AI: a card to show, a stop, a game's AI changed, a model check moved on. */
+  "game-ai.notice": GameAiNotice;
   /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
   "play.remix": RemixProgress;
   /** Play's installed games or an install changed: every one, as `studio:play.installs` answers (`main/play/native-installs.ts`). */
@@ -326,6 +329,7 @@ export const UiEvent = {
   LiveBehind: "live.behind",
   PreviewSoundToggle: "preview.sound.toggle",
   PlayViewer: "play.viewer",
+  GameAi: "game-ai.notice",
   PlayRemix: "play.remix",
   PlayInstalls: "play.installs",
   PlaySessions: "play.sessions",
@@ -409,6 +413,7 @@ const HOST_ONLY: ReadonlySet<string> = new Set<UiEventType>([
   UiEvent.LiveBehind,
   UiEvent.ItemDrafted,
   UiEvent.ItemsLocal,
+  UiEvent.GameAi,
 ]);
 
 /** Whether a harness notification names an event only the host sends. */

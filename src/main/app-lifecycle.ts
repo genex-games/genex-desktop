@@ -197,6 +197,8 @@ export interface QuitParts {
   core: { host: { stop(): Promise<void>; kill(): void }; stop(): Promise<void> } | null;
   /** Play's native games being played in their own windows: each ends with the app. */
   games?: { stopAll(): Promise<void> } | null;
+  /** Play-time AI, when the studio composed it: its watcher stops and its waiting counts go. */
+  gameAi?: { dispose(): Promise<void> } | null;
 }
 
 /**
@@ -213,11 +215,13 @@ export function shutdownSteps({
   terminals,
   core,
   games,
+  gameAi,
 }: QuitParts): ShutdownStep[] {
   return [
     // A game asked to quit gets its grace period, then is killed with everything it started.
     { name: "end native games", timeoutMs: 5 * SECOND_MS, run: () => games?.stopAll() },
     { name: "stop the harness", timeoutMs: 7 * SECOND_MS, run: () => core?.host.stop() },
+    { name: "stop play-time AI", timeoutMs: 5 * SECOND_MS, run: () => gameAi?.dispose() },
     { name: "release keep-awake", timeoutMs: SECOND_MS, run: () => keepAwake.release() },
     { name: "dismiss Codex sign-in", timeoutMs: 3 * SECOND_MS, run: () => codexLogin.dismiss() },
     { name: "cancel Claude sign-in", timeoutMs: 3 * SECOND_MS, run: () => claudeLogin.cancel() },

@@ -1,15 +1,17 @@
 /**
  * Where the viewer bar's layer lies: the bar's strip across the window's top for as long as a game is
- * open, the whole window while Comments or a purchase sheet is open, and put away while the game's page
- * holds the screen in full screen (a purchase sheet still covers it then). Nothing the bar's page says
+ * open, the whole window while one of its overlays (Comments, an AI card or menu) or a purchase sheet is
+ * open, and put away while the game's page holds the screen in full screen (an overlay or a purchase
+ * sheet still covers it then). Nothing the bar's page says
  * puts the layer away under a sheet, and closing the viewer forgets all of it.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { BarLayout, barLayout } from "../../src/main/play/bar-layout.ts";
+import { type PlayBarHold, PlayBarOverlay } from "../../src/shared/play-bar.ts";
 
-const NO_HOLD = { comments: false };
-const COMMENTS = { comments: true };
+const NO_HOLD: PlayBarHold = { overlay: null };
+const COMMENTS: PlayBarHold = { overlay: PlayBarOverlay.Comments };
 
 /** A layout recording where it lays the layer, a game already open in it. */
 function opened() {
@@ -36,10 +38,22 @@ describe("Play bar's layer", () => {
     log.length = 0;
     layer.hold(COMMENTS);
     assert.equal(layer.covering(), true);
-    assert.equal(layer.comments(), true);
+    assert.equal(layer.overlaid(), true);
     layer.hold(NO_HOLD);
     assert.deepEqual(log, [`place ${BarLayout.Full}`, `place ${BarLayout.Bar}`]);
     assert.equal(layer.covering(), false);
+  });
+
+  it("covers the whole window for the AI pill's menu and cards as for Comments, a full-screen game too", () => {
+    const { layer, log } = opened();
+    layer.fullScreen(true);
+    log.length = 0;
+    layer.hold({ overlay: PlayBarOverlay.AiCard });
+    assert.equal(layer.overlaid(), true);
+    layer.hold({ overlay: PlayBarOverlay.AiMenu });
+    assert.deepEqual(log, [`place ${BarLayout.Full}`], "one overlay after another keeps the whole window");
+    layer.hold(NO_HOLD);
+    assert.deepEqual(log, [`place ${BarLayout.Full}`, `place ${BarLayout.Hidden}`], "the game keeps its screen");
   });
 
   it("lets no hold from the bar's page collapse the layer while a purchase sheet is open", () => {

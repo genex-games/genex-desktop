@@ -30,11 +30,14 @@ import {
   isCutConnection,
   longHaulFetch,
   needsVision,
+  onPayload,
   type PiAssistant,
   piContext,
   type PiStreamFn,
   streamHttpStatus,
+  withResponseFormat,
 } from "./pi-completions.ts";
+import { gameCallSchema } from "./game-calls.ts";
 import { CatalogError, ModelCatalog } from "./model-catalog.ts";
 import { LocalSessions } from "./local-session.ts";
 import { DEFAULT_OLLAMA_HOST } from "./ollama.ts";
@@ -450,6 +453,9 @@ export class LocalServerEngine implements Engine {
   }
 
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    // llama.cpp, LM Studio, vLLM, TabbyAPI and KoboldCpp read the OpenAI `response_format` and decode
+    // against the schema; a server that ignores it still answers, and the caller validates the reply.
+    const schema = gameCallSchema(request, this.id);
     const saved = await this.#saved();
     const modelId = await this.#modelFor(request.model);
     const row = await this.#knownRow(modelId, saved);
@@ -468,6 +474,7 @@ export class LocalServerEngine implements Engine {
         maxTokens,
         headers: keyHeaders(key),
         ...(request.signal ? { signal: request.signal } : {}),
+        ...onPayload(schema ? withResponseFormat(schema) : null),
       });
       await drainPiStream(stream, { ...request, onDelta: answerDeltas(request.onDelta) }, this.id);
       const assistant = (await stream.result()) as PiAssistant;

@@ -688,6 +688,15 @@ const glyphs = {
       <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
     </>
   ),
+  // A flag on its pole: Report what the AI wrote.
+  flag: <path d="M6 20.5V4m0 .5h10.5l-2.25 3.75L16.5 12H6" />,
+  // The power mark: Turn off AI.
+  power: (
+    <>
+      <path d="M12 3.5v7.5" />
+      <path d="M7.4 6.7a7 7 0 1 0 9.2 0" />
+    </>
+  ),
   /** A small triangle up or down: a number that rose or fell. */
   "caret-up": <path d="M12 7l6 9H6z" fill="currentColor" stroke="none" />,
   "caret-down": <path d="M12 17l6-9H6z" fill="currentColor" stroke="none" />,

@@ -130,6 +130,9 @@ through the JS API imports `@typescript/typescript6`.
 - `claude-rules.ts`: whether Claude Code would deny a path by an absolute rule, matched as CLI
   2.1.281 does (node-ignore, case-blind) for the shapes `claude-permissions.ts` writes.
 - `leftover-children.ts`: the runners' per-file check for child processes left running (above).
+- `game-ai-traces.ts`: settled play-time AI calls as the service hands its trace sink (`traceOf`,
+  `requestOf`), the callers main derives (`callerFor` a Play or a Create game) and a clock the test
+  moves (`heldClock`), for the Report, model-check, moments and fit-count suites.
 - `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
   tables, a machine type), for the package's Visual C++ runtime checks.
 - `failure-codes.ts`: the analytics failure-code suites' hostile inputs (words, paths, Node codes

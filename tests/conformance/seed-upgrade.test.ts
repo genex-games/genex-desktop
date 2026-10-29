@@ -634,13 +634,9 @@ describe("the craft migration on an installed catalogue", () => {
     const copied = JSON.parse(await readFile(path.join(rig.ws, "library", "checks.json"), "utf8")) as {
       checks: Record<string, unknown>;
     };
-    assert.deepEqual(Object.keys(copied.checks).sort(), [
-      "camera-player-eye",
-      "demo-walk",
-      "drawcalls-ceiling",
-      "player-moved",
-      "primary-action-registers",
-    ]);
+    // The shipped catalogue whole: the five keepers and the play-time AI checks.
+    assert.deepEqual(Object.keys(copied.checks).sort(), Object.keys(seedCatalogue.checks).sort());
+    assert.ok(Object.keys(copied.checks).includes("camera-player-eye"));
   });
 
   it("retires nothing when the seed ships no recipes to retrieve from", async () => {

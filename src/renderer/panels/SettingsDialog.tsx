@@ -13,8 +13,9 @@ import { PermissionsSection } from "./PermissionsSection.tsx";
 import { PrivacySection } from "./PrivacySection.tsx";
 import { AboutSection } from "./AboutSection.tsx";
 import { AccountSection, AccountSignOut } from "./AccountSection.tsx";
+import { PlayAiSection } from "./game-ai/PlayAiSection.tsx";
 import { usePeople } from "../state/hooks.ts";
-import { ABOUT_WORDS, ACCOUNT_WORDS, PRIVACY_WORDS, STORAGE_WORDS } from "../words.ts";
+import { ABOUT_WORDS, ACCOUNT_WORDS, AI_SETTINGS_WORDS, PRIVACY_WORDS, STORAGE_WORDS } from "../words.ts";
 import { t } from "../../shared/i18n.ts";
 
 /**
@@ -35,6 +36,7 @@ const SECTIONS: readonly SectionTab[] = [
   { id: SettingsSection.Account, label: ACCOUNT_WORDS.tab, icon: "character" },
   { id: SettingsSection.Providers, label: t("Model Providers"), icon: "globe" },
   { id: SettingsSection.Local, label: t("Local Models"), icon: "box" },
+  { id: SettingsSection.PlayAi, label: AI_SETTINGS_WORDS.tab, icon: "sparkle" },
   { id: SettingsSection.Appearance, label: t("Appearance"), icon: "palette" },
   { id: SettingsSection.Games, label: t("Games"), icon: "folder" },
   { id: SettingsSection.Storage, label: STORAGE_WORDS.tab, icon: "drive" },
@@ -90,6 +92,8 @@ function SectionBody({
   if (section === SettingsSection.Permissions) return <PermissionsSection />;
   if (section === SettingsSection.Privacy) return <PrivacySection />;
   if (section === SettingsSection.About) return <AboutSection />;
+  if (section === SettingsSection.PlayAi)
+    return <PlayAiSection onOpenProviders={() => onSection(SettingsSection.Providers)} />;
   return (
     <LocalModelsSection
       engines={engines}

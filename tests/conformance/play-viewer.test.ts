@@ -13,7 +13,7 @@ import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { ESC_HOLD_MS } from "../../src/main/game-full-screen.ts";
-import { type PlayTicket, SignInNeeded, TicketStatus } from "../../src/main/play/gallery.ts";
+import { type PlayTicket, type PlayWorld, SignInNeeded, TicketStatus } from "../../src/main/play/gallery.ts";
 import {
   EXTERNAL_LINK_GAP_MS,
   externalAddress,
@@ -24,6 +24,8 @@ import {
 import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/view-drop.ts";
 import { NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
+import { type PlayAiBar, PlayAiPhase, PlayBarOverlay } from "../../src/shared/play-bar.ts";
+import { AiDoor, AiFunding } from "../../src/shared/game-ai.ts";
 import { NativeAppOffer, NativePlatform, type PlayBarNative } from "../../src/shared/play-native.ts";
 import { PLAY_BAR_HEIGHT, PLAY_ORIGIN, PlayControl, PlayNote, PlayViewerPhase } from "../../src/shared/play.ts";
 import {
@@ -67,6 +69,7 @@ describe("Play viewer", () => {
         guestCard: false,
         facts: null,
         mic: null,
+        ai: null,
         comments: null,
         signedIn: null,
         remixing: false,
@@ -86,6 +89,7 @@ describe("Play viewer", () => {
       guestCard: false,
       facts: { author: "Simeon M", authorId: null, plays: 5300, online: 8 },
       mic: null,
+      ai: null,
       comments: 2,
       signedIn: true,
       remixing: false,
@@ -514,7 +518,7 @@ describe("Play viewer's bar above the game", () => {
     log.length = 0;
     viewer.control(PlayControl.FullScreen);
     assert.deepEqual(log, ["game.fullScreen"], "the page's own full screen: its Esc and the bar's return follow");
-    viewer.hold({ comments: true });
+    viewer.hold({ overlay: PlayBarOverlay.Comments });
     log.length = 0;
     viewer.control(PlayControl.FullScreen);
     assert.deepEqual(log, [], "not under Comments");
@@ -535,25 +539,38 @@ describe("Play viewer's bar above the game", () => {
   it("lays its layer over the whole window for Comments with the keyboard, and gives the game it back after", async () => {
     const { viewer, log } = await playing();
     log.length = 0;
-    viewer.hold({ comments: true });
+    viewer.hold({ overlay: PlayBarOverlay.Comments });
     assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${WINDOW.height}`, "buttons shown", "bar.focus"]);
     log.length = 0;
-    viewer.hold({ comments: false });
+    viewer.hold({ overlay: null });
     assert.deepEqual(log, [`bar.show ${BAR_STRIP}`, "buttons shown", "game.focus"]);
+  });
+
+  it("covers a full-screen game for an AI card with the keyboard, and gives it back the screen and the keyboard", async () => {
+    const { viewer, log } = await playing();
+    viewer.fullScreen(true);
+    log.length = 0;
+    viewer.hold({ overlay: PlayBarOverlay.AiCard });
+    assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${WINDOW.height}`, "buttons shown", "bar.focus"]);
+    log.length = 0;
+    viewer.hold({ overlay: PlayBarOverlay.AiMenu });
+    assert.deepEqual(log, [], "one overlay after another keeps the layer and the keyboard");
+    viewer.hold({ overlay: null });
+    assert.deepEqual(log, ["bar.hide", "buttons hidden", "game.focus"]);
   });
 
   it("leaves the keyboard with Comments opened while the game loads, and keeps it over the window if the game fails", async () => {
     const { viewer, log } = rig();
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    viewer.hold({ comments: true });
+    viewer.hold({ overlay: PlayBarOverlay.Comments });
     log.length = 0;
     viewer.loaded();
     assert.ok(!log.includes("game.focus"), "the comment field keeps the keyboard");
     const failing = rig();
     failing.viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    failing.viewer.hold({ comments: true });
+    failing.viewer.hold({ overlay: PlayBarOverlay.Comments });
     failing.log.length = 0;
     failing.viewer.failed();
     assert.ok(!failing.log.some((line) => line.startsWith("bar.")), "the layer stays over the whole window");
@@ -578,19 +595,19 @@ describe("Play viewer's bar above the game", () => {
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
     const before = events.length;
-    viewer.hold({ comments: false });
+    viewer.hold({ overlay: null });
     assert.equal(events.length, before, "a hold alone draws nothing");
-    viewer.hold({ comments: false, ready: true });
+    viewer.hold({ overlay: null, ready: true });
     assert.equal(events.length, before + 1);
     assert.equal(events.at(-1)?.bar?.title, "Lost Cathedral");
   });
 
-  it("reads only what holds it, as booleans", async () => {
+  it("reads only an overlay the layer names", async () => {
     const { viewer, log } = await playing();
     log.length = 0;
-    viewer.hold({ comments: 1 });
-    viewer.hold(null);
-    assert.ok(!log.some((line) => line.startsWith("bar.")), "Comments is open only for a true");
+    for (const hold of [{ overlay: "settings" }, { overlay: 1 }, { overlay: true }, { comments: true }, null])
+      viewer.hold(hold);
+    assert.ok(!log.some((line) => line.startsWith("bar.")), "an overlay is open only when it is one of the bar's");
   });
 
   it("puts its layer away and the window's buttons back when the viewer closes", async () => {
@@ -613,6 +630,13 @@ describe("Play viewer's bar above the game", () => {
     const unnamed = await playing();
     unnamed.viewer.control(PlayControl.Maker);
     assert.equal(unnamed.viewer.showing(), "lost-cathedral");
+  });
+
+  it("closes onto Settings → Model Providers from the AI pill's Add more models", async () => {
+    const { viewer, events } = await playing();
+    viewer.control(PlayControl.AiModels);
+    assert.deepEqual(events.at(-1), { slug: "lost-cathedral", openId: 1, phase: PlayViewerPhase.Closed, models: true });
+    assert.equal(viewer.showing(), null);
   });
 
   it("holds Remix while a remix is being made, and for a game that may not be remixed", async () => {
@@ -813,6 +837,82 @@ describe("Play viewer and the studio window", () => {
     const { win, closes } = studioWindow();
     win.emit("closed");
     assert.equal(closes(), 1);
+  });
+});
+
+describe("Play viewer's game, as its AI bridge names it", () => {
+  it("is the game on screen once its facts are read: its project id, its name, the address opened and whether others see it", async () => {
+    let read: (world: PlayWorld) => void = () => {};
+    const { viewer, opened } = rig({ world: () => new Promise<PlayWorld>((resolve) => (read = resolve)) });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    // The page is up and asking before its facts arrive: the answer waits for them.
+    assert.equal(opened.length, 1);
+    const asked = viewer.aiGame();
+    read(WORLD);
+    // A multiplayer game's AI text may reach other players: the bridge holds its calls as shared (D6).
+    const expected = { projectId: WORLD.id, title: WORLD.title, address: opened[0], shared: WORLD.multiplayer };
+    assert.deepEqual(await asked, expected);
+    assert.deepEqual(await viewer.aiGame(), expected);
+  });
+
+  it("is nothing once the game closes, or for a game opened since", async () => {
+    const { viewer } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    const before = viewer.aiGame();
+    viewer.close();
+    assert.equal(await before, null);
+    assert.equal(await viewer.aiGame(), null);
+  });
+
+  it("is nothing while the game's facts cannot be read: no project id, no AI", async () => {
+    const { viewer } = rig({
+      world: async () => {
+        throw new Error("502");
+      },
+    });
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    assert.equal(await viewer.aiGame(), null);
+  });
+});
+
+describe("Play viewer's AI pill", () => {
+  const pill = (game: PlayAiBar["game"]): PlayAiBar => ({
+    game,
+    phase: PlayAiPhase.Ready,
+    model: { door: AiDoor.Local, engine: "ollama", model: "qwen3:8b" },
+    label: "Qwen3 8B",
+    shortLabel: "Qwen3 8B",
+    funding: AiFunding.Free,
+    tag: null,
+    balanceCredits: null,
+    lowCredits: false,
+    unranked: false,
+    note: null,
+    addedCredits: null,
+  });
+
+  it("draws the pill main computed for the game on screen into the bar", async () => {
+    const { viewer, events } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.aiBar(pill(`play:${WORLD.id}`));
+    assert.deepEqual(events.at(-1)?.bar?.ai, pill(`play:${WORLD.id}`));
+  });
+
+  it("draws no pill of another game, or with no game open", async () => {
+    const { viewer, events } = rig();
+    viewer.aiBar(pill(`play:${WORLD.id}`));
+    assert.equal(events.length, 0);
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    const before = events.length;
+    viewer.aiBar(pill("play:another-project"));
+    viewer.aiBar(pill("create:Lost Cathedral"));
+    assert.equal(events.length, before);
+    assert.equal(events.at(-1)?.bar?.ai, null);
   });
 });
 
@@ -1044,9 +1144,9 @@ describe("Play viewer: the game's Store door", () => {
     await settle();
     viewer.loaded();
     viewer.control(PlayControl.Store);
-    viewer.hold({ comments: true });
+    viewer.hold({ overlay: PlayBarOverlay.Comments });
     log.length = 0;
-    viewer.hold({ comments: false });
+    viewer.hold({ overlay: null });
     assert.ok(log.includes("page.focus"), log.join("; "));
     assert.ok(!log.includes("game.focus"));
   });

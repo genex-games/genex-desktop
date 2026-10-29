@@ -7,7 +7,7 @@
 import { init, parse } from "es-module-lexer";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { GENEX_EMBED_VENDOR, type GenexGameManifest } from "../../shared/genex.ts";
+import { GENEX_EMBED_SDK_GLOBAL, GENEX_EMBED_VENDOR, type GenexGameManifest } from "../../shared/genex.ts";
 import { connectModuleSrc, withConnectScript } from "../../shared/genex-page.ts";
 import { isInside } from "../../substrate/paths.ts";
 
@@ -70,6 +70,10 @@ const PREVIEW_HEADING = [
   "// preview's own address the SDK runs in local test mode: no account and no network. Publishing",
   "// to Genex replaces this module with one that names the game's project.",
 ];
+/** Why the connect module hands its SDK on. */
+const CONNECTED_HEADING = [
+  "// genex-ai (play-time AI) calls Genex through this same connected SDK, so it is handed on here.",
+];
 /** What the preview's module names: nothing the local test mode sends anywhere. */
 const PREVIEW_CONNECTION: GenexConnection = {
   slug: "studio-preview",
@@ -104,6 +108,7 @@ function connectModule(
   return [
     ...heading,
     `import { ${imports} } from "./${sdk}";`,
+    `import * as connected from "./${sdk}";`,
     "",
     "const served = window.__GENEX__ ?? {};",
     "initEmbed({",
@@ -111,6 +116,8 @@ function connectModule(
     `  apiUrl: served.apiUrl ?? ${JSON.stringify(apiUrl)},`,
     `  dashboardOrigins: served.dashboardOrigins ?? ${JSON.stringify(dashboardOrigins)},`,
     "});",
+    ...CONNECTED_HEADING,
+    `Object.defineProperty(window, ${JSON.stringify(GENEX_EMBED_SDK_GLOBAL)}, { value: connected, configurable: true });`,
     ...tail,
     "",
   ].join("\n");

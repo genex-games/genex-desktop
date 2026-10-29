@@ -28,6 +28,7 @@ import {
 } from "../../src/renderer/play/bar-model.ts";
 import { PLAY_WORDS } from "../../src/renderer/words.ts";
 import { PLAY_ORIGIN, PlayViewerPhase } from "../../src/shared/play.ts";
+import { PlayBarOverlay } from "../../src/shared/play-bar.ts";
 import { PurchaseAnswer } from "../../src/shared/play-purchase.ts";
 import { COMMENT_MAX, COMMENTS_PAGE, commentBody, type PlayComment } from "../../src/shared/play-comments.ts";
 
@@ -298,17 +299,20 @@ describe("Play comments in the bar's layer", () => {
     assert.equal(barNews(next, { slug: "b", openId: 2, phase: PlayViewerPhase.Closed }), null);
   });
 
-  it("tells main whether Comments is open only when it changes, asking for the bar again after mounting or a new game", () => {
-    const first = holdToTell(NOTHING_TOLD, { comments: false });
-    assert.deepEqual(first?.payload, { comments: false, ready: true });
-    assert.equal(holdToTell(first?.key ?? "", { comments: false }), null, "nothing new");
-    const opened = holdToTell(first?.key ?? "", { comments: true, ready: true });
-    assert.deepEqual(opened?.payload, { comments: true }, "only the first word asks for the bar");
-    assert.deepEqual(holdToTell(NOTHING_TOLD, { comments: true })?.payload, { comments: true, ready: true });
+  it("tells main which overlay is open only when it changes, asking for the bar again after mounting or a new game", () => {
+    const first = holdToTell(NOTHING_TOLD, { overlay: null });
+    assert.deepEqual(first?.payload, { overlay: null, ready: true });
+    assert.equal(holdToTell(first?.key ?? "", { overlay: null }), null, "nothing new");
+    const opened = holdToTell(first?.key ?? "", { overlay: PlayBarOverlay.Comments, ready: true });
+    assert.deepEqual(opened?.payload, { overlay: PlayBarOverlay.Comments }, "only the first word asks for the bar");
+    assert.deepEqual(holdToTell(NOTHING_TOLD, { overlay: PlayBarOverlay.AiMenu })?.payload, {
+      overlay: PlayBarOverlay.AiMenu,
+      ready: true,
+    });
   });
 
   it("acts on a fresh Esc only: back to a playing game, out of one still loading or failed, never over Comments", () => {
-    const fresh = { repeat: false, commentsOpen: false, sheetOpen: false };
+    const fresh = { repeat: false, overlayOpen: false, sheetOpen: false };
     assert.equal(barEscape(PlayViewerPhase.Playing, fresh), BarEscape.Resume);
     assert.equal(barEscape(PlayViewerPhase.Loading, fresh), BarEscape.Leave);
     assert.equal(barEscape(PlayViewerPhase.Failed, fresh), BarEscape.Leave);
@@ -317,7 +321,7 @@ describe("Play comments in the bar's layer", () => {
       BarEscape.None,
       "a held Esc repeating",
     );
-    assert.equal(barEscape(PlayViewerPhase.Loading, { ...fresh, commentsOpen: true }), BarEscape.None);
+    assert.equal(barEscape(PlayViewerPhase.Loading, { ...fresh, overlayOpen: true }), BarEscape.None);
     assert.equal(barEscape(undefined, fresh), BarEscape.None);
   });
 
@@ -361,7 +365,7 @@ describe("Play comments in the bar's layer", () => {
 
 describe("Esc in the bar's layer under a purchase sheet", () => {
   it("leaves Esc to a purchase sheet while one is open: it never resumes the game or leaves under it", () => {
-    const sheet = { repeat: false, commentsOpen: false, sheetOpen: true };
+    const sheet = { repeat: false, overlayOpen: false, sheetOpen: true };
     assert.equal(barEscape(PlayViewerPhase.Playing, sheet), BarEscape.None, "the game stays covered");
     assert.equal(barEscape(PlayViewerPhase.Loading, sheet), BarEscape.None, "the viewer stays open");
     assert.equal(barEscape(PlayViewerPhase.Failed, sheet), BarEscape.None);

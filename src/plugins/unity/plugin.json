@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "unity",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "icon": "icon.svg",
   "name": "Unity",
   "publisher": "Genex",
@@ -71,6 +71,15 @@
         "properties": {}
       },
       "confirmation": "Take back what Genex added to this Unity project: the Pipeline package's line in its Packages/manifest.json. Anything else you changed stays, and agents can no longer reach its editor."
+    },
+    {
+      "name": "add-ai",
+      "facts": ["unity-project"],
+      "description": "Add Genex's play-time AI package (com.genex.ai) to this game's Unity project as Packages/com.genex.ai, so the game can ask a model at play time: dialogue, a judge, a turn's outcome. Use it when the user wants AI in the game itself (not for building it). It answers how a game uses it: GenexAi.Ask<T> with a fallback, results only through GenexAi.Drain() once per FixedUpdate. Never call a model's API from the game directly.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
     },
     {
       "name": "open-editor",

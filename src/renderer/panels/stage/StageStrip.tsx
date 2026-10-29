@@ -28,6 +28,7 @@ import { ViewSwitcher } from "../../ui/view-switcher.tsx";
 import { liveBehindLabel, liveBehindWords, STAGE_WORDS } from "../../words.ts";
 import type { Notify } from "../../state/toasts.ts";
 import { PluginToolbar } from "../PluginToolbar.tsx";
+import { StageAiPill } from "../game-ai/StageAiPill.tsx";
 import { LiveRun } from "./live-run.ts";
 import {
   activeStageTab,
@@ -285,6 +286,35 @@ function ViewMenu({
 }
 
 /**
+ * The Live game's play-time AI on the strip: a named pill like the plugin buttons, so it folds with
+ * them; `title` is the game's name, its folder's until it has one. A pill that goes away holds no
+ * menu open, so the native game view comes back.
+ */
+function StripAiPill({
+  project,
+  title,
+  run,
+  onOpenChange,
+}: {
+  project: string;
+  title: string | undefined;
+  run: { state: LiveRun; toggle: () => void };
+  onOpenChange: (open: boolean) => void;
+}): JSX.Element {
+  useEffect(() => () => onOpenChange(false), [onOpenChange]);
+  return (
+    <StageAiPill
+      project={project}
+      title={title ?? project}
+      onOpenChange={onOpenChange}
+      onPlayNow={() => {
+        if (run.state === LiveRun.Stopped) run.toggle();
+      }}
+    />
+  );
+}
+
+/**
  * The strip over the stage: the views, Play/Stop, Reload, the game's sound and full screen, then at
  * its end the plugin buttons. As it narrows it makes room in steps (`strip-fold.ts`): the views fold
  * into one button, then the plugin buttons move to a second row, then Sound and Full screen join
@@ -351,15 +381,17 @@ export function StageStrip({
   const step = useStripFold(strip, [start, game, end]);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   // The folded views' menu goes with the fold: a strip wide enough again closes it.
   useEffect(() => {
     if (step === StripFoldStep.Full) setViewsOpen(false);
   }, [step]);
-  // Either menu lies over the stage, so the native game view gives way while one is open.
+  // Each menu (a plugin's, the views', the AI pill's) lies over the stage, so the native game view
+  // gives way while one is open.
   useEffect(() => {
-    onToolbarOpen(pluginsOpen || viewsOpen);
+    onToolbarOpen(pluginsOpen || viewsOpen || aiOpen);
     return () => onToolbarOpen(false);
-  }, [pluginsOpen, viewsOpen, onToolbarOpen]);
+  }, [pluginsOpen, viewsOpen, aiOpen, onToolbarOpen]);
   const secondRow = step === StripFoldStep.Plugins || step === StripFoldStep.Game;
   const tabs = stageTabs({ views: live.views, plugins, hasBuilds, buildsLive, hasShop, beside });
   const active = activeStageTab(stageView, live.views, live.shown);
@@ -405,6 +437,9 @@ export function StageStrip({
         {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
       </div>
       <div ref={end} data-row={secondRow ? "second" : undefined} className="stage-strip-end flex items-center gap-2">
+        {project && livePreview ? (
+          <StripAiPill project={project} title={loaded?.title} run={run} onOpenChange={setAiOpen} />
+        ) : null}
         <PluginToolbar
           plugins={plugins}
           project={project}

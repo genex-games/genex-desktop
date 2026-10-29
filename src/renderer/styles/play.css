@@ -1019,8 +1019,9 @@
   font-family: var(--font-family-sans);
   -webkit-app-region: drag;
 }
-/* Comments or a purchase sheet covers the window: the bar under its dimmed backdrop drags nothing. */
-.play-bar-layer:is([data-comments], [data-sheet]) .play-viewer-bar {
+/* An overlay (Comments, what the AI pill opens) or a purchase sheet covers the window: the bar under
+   its dimmed backdrop drags nothing. */
+.play-bar-layer:is([data-overlay], [data-sheet]) .play-viewer-bar {
   -webkit-app-region: no-drag;
 }
 /* Clear of macOS's traffic lights, on one line with them; on Windows and Linux, clear of the window

@@ -17,6 +17,7 @@ import { openPluginSetup } from "../../plugin-setup.ts";
 import { type StatusPoll, startStatusPoll } from "../../status-poll.ts";
 import { type Notify, ToastTone } from "../../state/toasts.ts";
 import { Button } from "../../ui/Button.tsx";
+import { EngineAiLine } from "../game-ai/StageAiPill.tsx";
 import { PLUGIN_CARD_WORDS, problemWords } from "../../words.ts";
 
 /** How often the card asks the plugin where the game stands; the Unreal card asks as often. */
@@ -139,6 +140,7 @@ export function PluginCardStage({
             </Button>
           </div>
         ) : null}
+        <EngineAiLine project={game.name} title={game.title} />
       </div>
     </div>
   );

@@ -130,13 +130,27 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   signed out, else the field with Post inside it once something is typed; at most 500 characters).
   The account's own comments can be deleted. Main reads and writes them for the game on screen
   (`main/play/comments.ts`); Esc, ✕ or a click outside closes it and the game gets the keyboard back.
+- A game that uses AI gets the AI pill left of the bar's actions, before a Mac app's pill and Like
+  (`renderer/play/PlayAiPill.tsx`): the chat's model button, naming the model (or Credits with the
+  balance, AI · Choose while a card waits, AI off) and wearing main's notes ("Report sent") in place
+  of its label. It opens the same model menu as the chat under it (`PlayAiMenu.tsx`): what the
+  game's AI costs in the words of how it is paid, Genex credits, the person's models by maker with
+  one tag each (Free, plan, $–$$$, Best), the models that may struggle folded, Turn off AI, Report
+  and Add more models (which closes the game onto Settings → Model Providers). Main's first-use and
+  stop cards (`UiEvent.GameAi`) drop from the pill by themselves and take no answer in their first
+  600 ms, focus on the card, never its yes; Esc sets one aside on the pill. Keep playing and Resume
+  (a game genex.games paused after two top-ups in a day) go to main (`studio:game-ai.resume`). Get
+  credits shows genex.games' packs, auto top-up ("at most once a day", off by default) and Genex
+  Pro, with checkout in the browser; Report shows what it sends first. One overlay is open at a
+  time, Comments or the AI's (`PlayAiLayer.tsx`), over the whole window (a card over a full-screen
+  game too), and none under a purchase sheet; the decisions are `play/ai-model.ts`'s.
 - Paying in coin: a game's purchase (the embed SDK's `buy()` or `requestPayment()`) opens Studio's
   own sheet over the dimmed game in the bar's layer (`main/play/viewer-purchase.ts`,
   `renderer/play/PlayPurchase.tsx`), never genex.games' confirm page. The SDK's popup is made hidden,
   at most one per game and only while the viewer may show a sheet; only the game's own top frame's
   counts, its first move ends it, and it never loads the confirm page. While one lives, Play's session
-  cancels any request for a confirm page; with none alive it cancels nothing
-  (`main/play/purchase-window.ts`, `purchase-address.ts`). Main reads the purchase as the app's Genex
+  cancels any request for a confirm page; with none alive it cancels none, and its refusal of AI
+  vendors' APIs (below) holds either way (`main/play/purchase-window.ts`, `purchase-address.ts`). Main reads the purchase as the app's Genex
   account, then the coin balance
   only for a purchase the game may ask for, and shows a sheet only for the game on screen while the
   purchase is open to pay (`main/play/coin.ts`); an ask it drops waits 5 seconds like a Cancel.
@@ -158,6 +172,25 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
   few seconds. A coin purchase's popup is the exception above: its confirm address no longer goes to
   the browser.
+- Report (in the AI pill's menu) sends what the game's AI wrote this session to genex.games, for
+  moderation and the game's maker: each AI call (prompts, the player's fields, the answer, the
+  model and how it was paid), a replay tape, the seed and build, state digests, console errors and
+  one frame. No account goes with it, and keys, emails and phone numbers are taken out first;
+  "See what's sent" shows exactly that. A reply still unusable after its repair sends an automatic
+  Report with none of the player's words. With usage-stats consent, Studio also sends how many
+  replies fit each game's shape per model and week, counts only.
+- Play-time AI: the view's one preload (`preload/play-mic.ts`, page half `play-ai-page.ts`) gives
+  the page `window.__genexDesktop`, the `genex-ai` host lane and embed-sdk 0.34's desktop confirm
+  (`shared/genex-desktop-bridge.ts`, mirrored in genex-demo's SDK). Main
+  (`main/game-ai/bridge-play.ts`) hears only the page's top frame on the origin it opened, keys
+  the game by its genex.games project id (`play:<id>`, never the slug), drops a burst past its
+  window, holds a few envelopes unanswered at most, and takes a grant or a confirm only inside a
+  person's click or key (the page's own activation and an input main saw). A confirm draws Genex's
+  card over the game with genex.games' own terms and approves there only after a yes; every other
+  popup is denied. Leaving for another page aborts its calls and closes its card (a link sent to
+  the browser does not). Play's session refuses requests to AI vendors' APIs
+  (`shared/ai-vendors.ts`, `main/play/ai-gateway.ts`) and writes `ai_direct_blocked` to the
+  page's console once per host; a near miss loads.
 - Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
   Main lets the page open the microphone only right after it asked it to, and only on the game's
   own origin.
@@ -195,6 +228,63 @@ server's disk), and the CLI pushes that folder as the source
   elsewhere sets it aside and its row brings it back; one finished meanwhile is a toast, and its
   game takes the row. A failure is a toast, and Play comes back for a person still with it. A remix
   keeps its scripts off until a build fails and the person trusts it: the stage's Run setup scripts.
+
+## Play-time AI on this Mac
+
+A game asks for text or schema-checked JSON at play time through `genex-ai`; main answers every call
+in `src/main/game-ai/service.ts`, from a caller it derives itself (the frame, the partition or the
+process), in one order: read → route → reserve → queue → door → validate → settle.
+
+- Refusals before anything is reserved have no side effect: a schema outside the dialect, a ticket
+  already running, AI off, a first use of the person's plan or money with no yes, or a door that is
+  not legal, verified, unlocked or ready here (`shared/game-ai-route.ts`).
+- Genex picks the model (the last one the game used, the maker's pick, the person's best that fits —
+  free, then plan, then paid — then Genex credits). A free, ready model on this Mac starts with no
+  tap; a plan or money is used only after one card's yes per game and door (`approvals.ts`: one
+  pending card per game, five minutes, a cooldown after a decline, no commit in its first 600 ms,
+  the `approve-paid` / `approve-plan` native step first). A payer change forgets that yes.
+- Grants live in `userData/game-ai/grants.json` (`budgets.ts`), out of reach of every agent process.
+  A call reserves its worst case on disk before dispatch; it settles at the billed cost, and a reply
+  the game could not use costs nothing, its one repair included. Per-door terms hold calls at once,
+  a minute and a day (the plan: one at a time, 50 a day, resting past the share each plan keeps for
+  building); the person's daily alert pauses a game, and their OpenRouter monthly limit holds the key.
+- The queue puts builds first; Stop, a page going away or a payer change aborts calls at once.
+  A payer change is a new or forgotten OpenRouter key, another account of the Claude plan, an
+  OpenCode sign-in, or the Genex account Studio is signed in as changing (seen by its token).
+  Text other players will see is answered only from a door genex.games screens: the development
+  lane says who sees each answer, and genex.games withholds shared text its classifier did not
+  clear (`moderated`). `ledger.jsonl` keeps ids, counts and money per call, never text, each also a
+  `CustomEvent.GameAiCall`.
+- One service per launch (`game-ai/host.ts`, composed by `main/game-ai-app.ts`) answers Play's page,
+  Create Live's route, a native game an agent plays and the harness; its genex.games client
+  (`platform.ts`) reads the balance, the packs at one price, checkout and auto top-up (turning it on
+  or changing its numbers happens only on genex.games' Stripe page, which shows the mandate), and
+  the embed SDK's confirms by id; Reports and fit counts go with no account. Every call of a
+  multiplayer Play game is held as shared. The pill's menu is `menu.ts`.
+- Doors (`doors/`): this Mac's installed models (never a download), OpenCode, the person's
+  OpenRouter key (fully priced models only), the Claude plan (Claude Code only, Create on one's own
+  game), the development lane on genex.games, a saved playtest (`<game>/ai/tapes/`, replayed by key
+  and occurrence, never verified) and the fixture a fixture profile answers with.
+
+## Answering games with your plan
+
+Settings › Play-time AI, While you play: Answer games with my plan (off). Then this Mac answers
+genex.games' plan-funded calls (a web game in any browser, or a published game in Play) with the
+person's own Claude Code, or Codex only behind its read-deny check (`src/main/game-ai/player-*.ts`,
+ported from genex-demo's `genex player`). genex.games composes every job and keeps the ledger,
+limits, waits and Stop; the watcher only works the queue: one job at a time, under a lease (so
+`genex player` on the same Mac never answers one twice), nothing claimed while a build runs, and
+past the keep-for-building share a row goes back as a wait until the plan's reset.
+
+- Sign-in is a separate Genex player credential (`scope: 'player'`, no money), in the secret store
+  under `genex-player-credential`, bound to Play's API. A refused one ends; a 426 asks for an update.
+- Each job: the official CLI, no tools, the game's text on stdin, API-key variables blanked, a
+  fresh temp folder removed afterwards, inside a `ProcessSandbox` that denies reading the home
+  folder bar the CLI's install (and Claude Code's own home); Claude Code loads none of the person's
+  settings or CLAUDE.md (`--setting-sources=`). A CLI is advertised only after a probe proves a
+  canary there unreadable and the CLI still signed in, and (Claude Code) that a job's own invocation
+  answers without a memory file's canary in it.
+- Logs carry ids, codes and timings, never a prompt or an answer. Tests: `plan-watcher-*`.
 
 ## Native builds
 
@@ -511,3 +601,50 @@ Share, Add), `ipc/asset-library.ts` (`studio:assets.*`), `renderer/state/sharing
 `use-tile-picture.ts`); fixtures answer from `dev/fixture-asset-library.ts` (fixture `asset-library`,
 whose window also gets the library's files from the fixture).
 
+## Play-time AI: Reports, the model check and the export scan
+
+- Every settled AI call reaches one trace sink (`main/game-ai/trace-sink.ts`), each part apart: the
+  game's Report session in memory (`report.ts`), the creator's Create Live playtest moments
+  (`moments.ts`, `userData/game-ai/moments/`), and counts-only fit from play (`fit-counts.ts`).
+- A Report bundle (`AiReportBundle`, D9) carries the session's calls (an unchanged system prompt by
+  its hash), a replay tape, and the game's capture read as hostile: seed, build commit, inputs, state
+  digests, `state().ai`, console errors, one frame. Keys, emails and phone numbers are redacted,
+  including key-shaped names; the oldest calls go first until it fits the body cap.
+  `report-ingest.ts` posts it to genex.games' `AI_REPORT_ROUTE` with no account; a `create:` game's
+  never leaves. An automatic bundle carries no player text, once per call, three per game an hour.
+- Fit counts wait in `userData/game-ai/fit-counts.json` only while the person consents
+  (`shareFitCounts`), published games only, and go every six hours; turning consent off drops them.
+- The model check (`model-check.ts`, D10/D12) is optional and the creator's: it replays the newest
+  24 moments on their own doors (this Mac, their key, OpenCode, their plan when allowed), never
+  Genex credits, over the panel's picks they can run plus every connected model, at most twelve,
+  with the game's one repair and a judge on their own model. The result and their pick survive a
+  restart; a stop keeps the last result. `ipc/game-ai-report-check.ts` admits only a library game
+  whose folder is a real folder. The harness runs it on this Mac's models only.
+- Export refuses an AI vendor's key in any game file (file, line and vendor named, never the key)
+  and reports vendor API hosts reached by URL as `aiDirect` with the agent's genex-ai hint; Publish
+  shows it as a warning. Near misses from `shared/ai-vendors.ts` pass. A template game exports its
+  `ai/` folder; saved playtests stay home unless placed in `ai/tapes/ship/`.
+
+## Play-time AI for creators
+
+The creator side of play-time AI lives in `renderer/panels/game-ai/`, its words in `words.ts`
+(`AI_SETTINGS_WORDS`, `GET_CREDITS_WORDS`, `CREATE_AI_WORDS`, `MODEL_CHECK_WORDS`,
+`PUBLISH_AI_WORDS`, `REPORT_INBOX_WORDS`, `ENGINE_AI_WORDS`) and its derivations in
+`play-ai-view.ts`. Genex credits are the unit; dollars show only at checkout.
+
+- **Settings → Play-time AI** (`SettingsSection.PlayAi`): how games pick, credits with Get credits
+  and auto top-up (off by default; genex.games holds it to once a day and three times a month),
+  optional limits, the Games list with Turn off, and the maker switches.
+- **Create**: the strip's AI pill (`[data-stage-ai]`) is the chat's model menu for the game; a
+  pick that first uses a plan or credits shows its one-sentence card, whose commit waits 600 ms;
+  a stop main pushes opens the pill with Play's stop card.
+  Engine Live cards show the same as one line (`[data-engine-ai]`).
+- **Model check** (optional, the creator's own models) and **Player reports**: Fix with agent
+  saves the report's tape as the game's playtest (`studio:ai-reports.fix`, realpath-contained)
+  and asks the chat to replay it; the player's note never goes into that prompt.
+- **Publish**: Needs AI or Works without AI, nothing preselected; Publish waits for that choice,
+  never for a check. Who sees what the AI writes is declared on genex.games before the upload (a
+  refusal puts nothing online), and `AI-DISCLOSURE.md` goes up beside the build. A publish of
+  native apps alone declares the audience the same way and ships no `AI-DISCLOSURE.md`.
+
+`npm run test:ui -- play-ai-studio` checks every state in dark and light.

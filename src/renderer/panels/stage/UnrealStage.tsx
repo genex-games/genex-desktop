@@ -41,6 +41,7 @@ import {
   type StageView,
   stageView,
 } from "./unreal-stage-view.ts";
+import { EngineAiLine } from "../game-ai/StageAiPill.tsx";
 import { track } from "../../analytics/client.ts";
 import { AnalyticsEvent } from "../../analytics/events.ts";
 import { elapsedMs } from "../../analytics/properties.ts";
@@ -294,6 +295,7 @@ export function UnrealStage({
             </Button>
           </div>
         ) : null}
+        <EngineAiLine project={game.name} title={name} />
       </div>
     </div>
   );

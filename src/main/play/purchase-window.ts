@@ -7,7 +7,8 @@
  * sheet. The popup's first move ends it: a confirm page's purchase goes to the viewer, which shows its
  * own sheet, any other https address goes to the browser through the game's link gate, and anything
  * else nowhere; it never loads a thing. While one lives, Play's session cancels its every request, and
- * any request for a confirm page at all. A popup opened by a frame inside the game, or opened without
+ * any request for a confirm page at all. Play's own standing rule (`standRequests`: the refusal of AI
+ * vendors) shares that one listener, so it holds before, while and after a popup lives. A popup opened by a frame inside the game, or opened without
  * an opener, is not the SDK's: it is a link. Electron-free at runtime (the session and the pages come
  * in by the little of them this needs): tested on fakes (`play-purchase-window.test.ts`) and in Electron
  * (`tests/e2e/play-purchase-electron.ts`), where Electron 43.7.6 reports both of the SDK's navigations
@@ -133,6 +134,11 @@ const popupOf = new WeakMap<object, Popup>();
 /** How many popups live in each session: its request listener lives as long as one does. */
 const liveIn = new WeakMap<CaptureSession, number>();
 
+/** A rule Play's session answers every request by, popup or none: true cancels the request. */
+export type StandingRule = (request: PageRequest) => boolean;
+/** Each session's standing rule, which every listener this module sets answers too. */
+const standingIn = new WeakMap<CaptureSession, StandingRule>();
+
 /**
  * Where a game's purchases are confirmed: genex.games' own website, the one its API names in a game's
  * confirm address, whatever website a development profile points Studio's links at. A development
@@ -194,18 +200,46 @@ function answerRequest(request: PageRequest): typeof CANCEL | typeof PASS {
   return confirm ? CANCEL : PASS;
 }
 
-/** A popup came to life in `session`: its first turns the session's request listener on. */
+/** What `session`'s standing rule answers a request: a pass when it has none. */
+function answerStanding(session: CaptureSession, request: PageRequest): typeof CANCEL | typeof PASS {
+  return standingIn.get(session)?.(request) ? CANCEL : PASS;
+}
+
+/** `session`'s listener with no popup alive: its standing rule's, or none at all. */
+function setStandingListener(session: CaptureSession): void {
+  const listener = standingIn.has(session)
+    ? (request: PageRequest, answer: (response: { cancel?: boolean }) => void) =>
+        answer(answerStanding(session, request))
+    : null;
+  session.webRequest.onBeforeRequest(ALL_URLS, listener);
+}
+
+/**
+ * Give Play's session its standing request rule. Electron keeps one request listener per session, so
+ * the rule is answered by the listener a live popup sets too, and stays once the last popup goes.
+ */
+export function standRequests(session: CaptureSession, rule: StandingRule): void {
+  standingIn.set(session, rule);
+  if ((liveIn.get(session) ?? 0) === 0) setStandingListener(session);
+}
+
+/** A popup came to life in `session`: its first turns the session's popup listener on. */
 function listen(session: CaptureSession): void {
   const live = (liveIn.get(session) ?? 0) + 1;
   liveIn.set(session, live);
-  if (live === 1) session.webRequest.onBeforeRequest(ALL_URLS, (request, answer) => answer(answerRequest(request)));
+  if (live !== 1) return;
+  session.webRequest.onBeforeRequest(ALL_URLS, (request, answer) => {
+    // The popup's own answer first: a load of its top document is decided whatever else holds.
+    const popup = answerRequest(request);
+    answer(popup === CANCEL ? CANCEL : answerStanding(session, request));
+  });
 }
 
-/** A popup in `session` is gone: with the last, the session hears no request again. */
+/** A popup in `session` is gone: with the last, the session hears only its standing rule again. */
 function unlisten(session: CaptureSession): void {
   const live = Math.max(0, (liveIn.get(session) ?? 0) - 1);
   liveIn.set(session, live);
-  if (live === 0) session.webRequest.onBeforeRequest(ALL_URLS, null);
+  if (live === 0) setStandingListener(session);
 }
 
 /** Whether a value is an object with an `id` of its own to read. */

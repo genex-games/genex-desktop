@@ -39,6 +39,8 @@ import {
   type GenexStatus,
 } from "../../shared/genex.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { aiAudienceRoute } from "../../shared/game-ai.ts";
+import type { AiPublishListing } from "../../shared/game-ai-check.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { PluginStillProblemCode } from "../../shared/plugins.ts";
@@ -175,6 +177,10 @@ import {
   type ReviewAnswer,
 } from "./jobs.ts";
 import {
+  AI_DISCLOSURE_FILE,
+  aiDirectWarning,
+  aiDisclosure,
+  aiListingOf,
   canForceSettle,
   checksDraftPage,
   deploymentCheckDue,
@@ -207,6 +213,7 @@ import {
   uploadMissing,
   wasInterrupted,
   workspaceManifest,
+  GENEX_PROJECT_ID_RE,
   type HostedMeta,
   type HostedStaging,
   type InterruptedJob,
@@ -837,7 +844,9 @@ export class GenexTools {
    * the public version, creating the hosted project and the gallery listing the first time. `title`
    * is the name it is listed under: the last one Studio listed, else its folder name, as words.
    * `camera` shoots the genex-cover demo again; that frame is sent once the publish is recorded.
-   * `apps` are the game's Mac, Windows and Linux builds, sent once its web build is public.
+   * `apps` are the game's Mac, Windows and Linux builds, sent once its web build is public. `ai` is
+   * the game's play-time AI listing when Publish asked for one: its audience is declared and its
+   * disclosure ships beside the build.
    */
   async publishGallery(
     project: string,
@@ -846,13 +855,16 @@ export class GenexTools {
     camera?: CoverCamera,
     apps: readonly NativeUpload[] = [],
     remix: RemixChoice = {},
+    ai?: unknown,
   ): Promise<GenexPublishState> {
+    const listing = aiListingOf(ai);
     return this.#account(() =>
       this.#startPublish(project, GenexPublishKind.Gallery, {
         exportStage,
         title,
         apps,
         remix,
+        listing,
         ...(camera ? { camera } : {}),
       }),
     );
@@ -862,7 +874,8 @@ export class GenexTools {
    * the game in the gallery under `title` with the first that goes, creating its hosted project the
    * first time. Runs as a publish job, so the dialog shows it like one. `camera` takes the cover
    * again first (an engine game's is the one its agent rendered); once the apps are recorded, that
-   * cover is sent as a gallery publish's is.
+   * cover is sent as a gallery publish's is. `ai` is the game's play-time AI listing when Publish
+   * asked for one: its audience is declared before any app goes.
    */
   async publishAppsOnly(
     project: string,
@@ -870,7 +883,9 @@ export class GenexTools {
     title?: unknown,
     camera?: CoverCamera,
     remix: RemixChoice = {},
+    ai?: unknown,
   ): Promise<GenexPublishState> {
+    const listing = aiListingOf(ai);
     return this.#account(async () => {
       if (!this.#sendsApps || apps.length === 0) throw new Error(PUBLISH_MESSAGE.NoAppsRefusal());
       const state = await this.publishStatus(project);
@@ -898,7 +913,7 @@ export class GenexTools {
       if (shotLines.length) state.warnings = shotLines;
       delete state.lastError;
       await this.#savePublishState(project, state);
-      const done = this.#runAppsJob(project, job, apps, remix);
+      const done = this.#runAppsJob(project, job, apps, { remix, listing });
       this.#publishJobs.set(project, { job, done });
       void done.finally(() => {
         if (this.#publishJobs.get(project)?.job === job) this.#publishJobs.delete(project);
@@ -906,12 +921,12 @@ export class GenexTools {
       return this.#withCover(project, { ...state, job });
     });
   }
-  /** The apps-only publish itself, detached from the press: hosted project, apps, listing, record. */
+  /** The apps-only publish itself, detached from the press: hosted project, AI audience, apps, listing, record. */
   async #runAppsJob(
     project: string,
     job: GenexPublishJob,
     apps: readonly NativeUpload[],
-    remix: RemixChoice,
+    { remix, listing: ai }: { remix: RemixChoice; listing: AiPublishListing | null },
   ): Promise<void> {
     const dir = this.#publishDir(project);
     const controller = new AbortController();
@@ -919,6 +934,8 @@ export class GenexTools {
     const step: NativeStep = { jobId: job.id, controller, done: Promise.resolve() };
     try {
       const meta = await this.#ensureHostedProject(project, dir, path.join(dir, "home"), job, controller.signal);
+      // Who sees the game's AI text is declared before any app goes, as a web build's publish does.
+      if (ai) await this.#declareAudience(meta, ai);
       job.phase = GenexPublishPhase.Uploading;
       await this.#persistJob(project, job);
       const sending = this.#sendApps(project, job.id, apps, controller.signal, { title: job.title ?? project });
@@ -991,12 +1008,14 @@ export class GenexTools {
       camera,
       apps = [],
       remix = {},
+      listing = null,
     }: {
       exportStage?: () => Promise<unknown>;
       title?: unknown;
       camera?: CoverCamera;
       apps?: readonly NativeUpload[];
       remix?: RemixChoice;
+      listing?: AiPublishListing | null;
     },
   ): Promise<GenexPublishState> {
     const state = await this.publishStatus(project);
@@ -1020,16 +1039,20 @@ export class GenexTools {
     };
     if (kind === GenexPublishKind.Gallery)
       job.title = cleanGenexTitle(title) ?? state.title ?? defaultGenexTitle(project);
-    const connect = exportStage ? await this.#exportGame(project, state, job, dir, exportStage) : false;
+    const exported = exportStage
+      ? await this.#exportGame(project, state, job, dir, { exportStage, listing })
+      : { connect: false, warning: null };
+    const { connect } = exported;
     const cover = coverRides(kind, state);
     // The shot is taken here, inside the invocation: a detached upload gets no answer from host services.
     const shotLines = cover && camera ? await this.#reshoot(project, camera) : [];
+    const warnings = [...(exported.warning ? [exported.warning] : []), ...shotLines];
     state.job = job;
     delete state.warnings;
-    if (shotLines.length) state.warnings = shotLines;
+    if (warnings.length) state.warnings = warnings;
     delete state.lastError;
     await this.#savePublishState(project, state);
-    const done = this.#runPublishJob(project, kind, job, { cover, connect, apps, remix });
+    const done = this.#runPublishJob(project, kind, job, { cover, connect, apps, remix, listing });
     this.#publishJobs.set(project, { job, done });
     this.#exporting.delete(project);
     void done.finally(() => {
@@ -1038,16 +1061,17 @@ export class GenexTools {
     return this.#withCover(project, { ...state, job });
   }
   /**
-   * Export the game into the publish workspace and mark it, inside the invocation that asked. True
-   * when the game brings no SDK of its own, so Studio connects the copy once Genex names its project.
+   * Export the game into the publish workspace and mark it, inside the invocation that asked.
+   * `connect` when the game brings no SDK of its own, so Studio connects the copy once Genex names
+   * its project; `warning` when the build calls an AI vendor directly (D5).
    */
   async #exportGame(
     project: string,
     state: GenexPublishState,
     job: GenexPublishJob,
     dir: string,
-    exportStage: () => Promise<unknown>,
-  ): Promise<boolean> {
+    { exportStage, listing }: { exportStage: () => Promise<unknown>; listing: AiPublishListing | null },
+  ): Promise<{ connect: boolean; warning: string | null }> {
     this.#exporting.add(project);
     try {
       const startPhase = job.phase;
@@ -1060,9 +1084,15 @@ export class GenexTools {
       if (Number.isSafeInteger(files)) job.export = { files: files as number };
       const connect = !bringsOwnSdk(exported?.genex);
       await this.#writeWorkspaceManifest(dir, project, job, exported?.genex, connect);
+      // A game that uses AI ships its disclosure beside the build, marked and tested with it.
+      if (listing)
+        await writeFile(
+          path.join(dir, "dist", AI_DISCLOSURE_FILE),
+          aiDisclosure(job.title ?? state.title ?? defaultGenexTitle(project), listing),
+        );
       job.deployment = await markDeployment(path.join(dir, "dist"), job.id);
       job.phase = startPhase;
-      return connect;
+      return { connect, warning: aiDirectWarning(exported) };
     } catch (error) {
       job.state = GenexPublishJobState.Failed;
       job.phase = GenexPublishPhase.Failed;
@@ -1122,7 +1152,14 @@ export class GenexTools {
       connect,
       apps,
       remix,
-    }: { cover: boolean; connect: boolean; apps: readonly NativeUpload[]; remix: RemixChoice },
+      listing: ai,
+    }: {
+      cover: boolean;
+      connect: boolean;
+      apps: readonly NativeUpload[];
+      remix: RemixChoice;
+      listing: AiPublishListing | null;
+    },
   ): Promise<void> {
     const dir = this.#publishDir(project);
     const home = path.join(dir, "home");
@@ -1140,6 +1177,9 @@ export class GenexTools {
     try {
       const meta = await this.#ensureHostedProject(project, dir, home, job, controller.signal);
       run.attempt.slug = meta.slug;
+      // Who sees the game's AI text is declared before anything goes up: genex.games screens a
+      // shared audience's text (D6), and refuses a shared call of a game that declared none.
+      if (ai) await this.#declareAudience(meta, ai);
       if (connect) await this.#connectCopy(run, meta);
       const allowed = remixAllowed(remix.allowed, await this.#remixSaved(project));
       // Only a publish opens the game to remixers: a draft carries no project.
@@ -1162,6 +1202,17 @@ export class GenexTools {
       this.#controllers.delete(controller);
       await dropStaged(dir);
     }
+  }
+  /** Declare on genex.games who sees the game's AI text, as the creator's own account; a refusal stops the publish. */
+  async #declareAudience(meta: HostedMeta, listing: AiPublishListing): Promise<void> {
+    const id = typeof meta.id === "string" && GENEX_PROJECT_ID_RE.test(meta.id) ? meta.id : null;
+    if (!id) throw new Error(PUBLISH_MESSAGE.AudienceRefused);
+    await this.#fetch(aiAudienceRoute(id), {
+      method: "PUT",
+      body: JSON.stringify({ audience: listing.audience }),
+    }).catch(() => {
+      throw new Error(PUBLISH_MESSAGE.AudienceRefused);
+    });
   }
   /** One CLI phase, persisted first, with Genex's record read just before anything is uploaded. */
   async #runStep(

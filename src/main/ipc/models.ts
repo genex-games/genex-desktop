@@ -18,7 +18,7 @@ import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { EngineError } from "../../substrate/engines/types.ts";
 import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
-import type { EngineStatus } from "../../shared/engine-descriptor.ts";
+import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
 
 /** The engines whose model list Settings may ask to refresh. */
 const REFRESHABLE: ReadonlySet<string> = new Set([
@@ -74,13 +74,15 @@ export interface ModelsIpcDeps {
   pushUiEvent(event: UiEvent): void;
   /** OpenRouter's browser sign-in, which hands the key it gets to the engine. */
   openRouterLogin: OpenRouterLogin;
+  /** The person's key changed (a new one kept, or the old one forgotten): play-time AI stops every grant that named it. */
+  payerChanged?(engine: string): void;
   /** The subscriptions' plan limits, kept live (`core/provider-usage.ts`). */
   usage: Pick<ProviderUsageService, "snapshot" | "refresh">;
 }
 
 export function registerModelsIpc(
   handle: IpcHandle,
-  { core, subscription, pushUiEvent, openRouterLogin, usage }: ModelsIpcDeps,
+  { core, subscription, pushUiEvent, openRouterLogin, usage, payerChanged = () => {} }: ModelsIpcDeps,
 ): void {
   handle("studio:engines", async () => core.engines.describe());
   handle("studio:models.refresh", async (payload) => {
@@ -90,7 +92,7 @@ export function registerModelsIpc(
     await core.engines.get(provider).refreshModels?.(true);
     return true;
   });
-  registerApiKeyIpc(handle, { core, pushUiEvent, openRouterLogin });
+  registerApiKeyIpc(handle, { core, pushUiEvent, openRouterLogin, payerChanged });
   registerLocalServerIpc(handle, { core, pushUiEvent });
   // The plan limits as they stand, at once; a fresh read starts, and each subscription's answer
   // arrives as a `provider.usage` push.
@@ -187,26 +189,37 @@ export function registerModelsIpc(
  */
 function registerApiKeyIpc(
   handle: IpcHandle,
-  { core, pushUiEvent, openRouterLogin }: Pick<ModelsIpcDeps, "core" | "pushUiEvent" | "openRouterLogin">,
+  {
+    core,
+    pushUiEvent,
+    openRouterLogin,
+    payerChanged,
+  }: Pick<ModelsIpcDeps, "core" | "pushUiEvent" | "openRouterLogin"> & { payerChanged(engine: string): void },
 ): void {
   const keyEngine = (): ApiKeyEngine => {
     const engine = core.engines.has(EngineId.OpenRouter) ? core.engines.get(EngineId.OpenRouter) : null;
     if (!isApiKeyEngine(engine)) throw new Error(MESSAGE.noKeyEngine());
     return engine;
   };
+  // A key that is kept (the engine answers ready with it) or forgotten is a new payer; a refused one changes nothing.
+  const saveKey = async (key: unknown): Promise<EngineStatus> => {
+    const status = await keyEngine().saveKey(key);
+    if (status.code === EngineStatusCode.Ready) payerChanged(EngineId.OpenRouter);
+    return status;
+  };
   handle("studio:openrouter.key.save", async (payload) => {
-    const status = await keyEngine().saveKey(payload?.key);
+    const status = await saveKey(payload?.key);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenRouter } });
     return status;
   });
   handle("studio:openrouter.key.clear", async () => {
     const status = await keyEngine().clearKey();
+    payerChanged(EngineId.OpenRouter);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenRouter } });
     return status;
   });
   handle("studio:openrouter.signin", async () => {
-    const engine = keyEngine();
-    const result = await openRouterLogin.start((key) => engine.saveKey(key));
+    const result = await openRouterLogin.start(saveKey);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.OpenRouter } });
     return result;
   });

@@ -10,8 +10,8 @@ opens **home** (also the wordmark): one composer over an optional picture. A gam
 conversation beside the stage (Live, Builds once planned, Assets), Harness its conversation
 and Activity; Plugins and Items fill the workspace.
 
-Settings (a modal): Genex account, Model Providers, Local Models, Appearance, Games, Storage,
-Harness, Permissions, Privacy, About; narrow windows: a drawer.
+Settings, a modal (drawer when narrow): Genex account, Model Providers, Local Models, Play-time AI,
+Appearance, Games, Storage, Harness, Permissions, Privacy, About.
 
 The bell keeps unanswered questions, plans, permission requests, then build endings and
 sign-outs, each opening where answered; unfocused, macOS notifications and the Dock badge carry
@@ -41,8 +41,8 @@ administrator prompt, two if Secondary Logon is off).
   and delete, policy links ([PRIVACY](../../PRIVACY.md)).
 - Home's **Open a folder…** inspects before writing (Claude settings and hooks trusted unless
   switched off); only a web folder gets starter files.
-- A game's menu: Rename (same folder), Pin/Unpin, Change image, Delete (only the library
-  entry; active work blocks it; reopening restores it).
+- A game's menu: Rename (same folder), Pin/Unpin, Change image, Delete (library entry
+  only; active work blocks it; reopening restores it).
 - The chat header: title, Show in Finder, Terminal, ⋯ (Export game…, Rename), **Free N GB**
   past 1 GB (not Harness or unbound drafts). Search reaches older and unbound chats.
 - Command-B toggles navigation, Command-K searches, Command-2 Harness, Command-1 the last chat.
@@ -54,7 +54,7 @@ A game's folder owns its identity. Commits and checkpoints skip engine scratch (
 merges. Snapshots and links use raw bytes, Git hooks and filters off; LFS pointers stay
 pointers. Unsent text survives loading; hidden workspaces ignore keys.
 
-Live is a native view; under an overlay the stage holds its frame.
+Under an overlay, native Live shows a held frame.
 
 ## Where to work
 

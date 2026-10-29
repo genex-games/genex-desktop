@@ -4,7 +4,8 @@
  * friend, Remix, Full screen and Exit. A published game fills the window below it, never under it, and the
  * bar stays up for the whole game; only its page's full screen gives it the whole window, asked for by the
  * game or by the bar's Full screen (`bar-layout.ts`). Its Comments opens over the dimmed game
- * (`viewer-comments.ts`), and so does a game's coin purchase sheet (`viewer-purchase.ts`). Main keeps what
+ * (`viewer-comments.ts`), and so do the menu and cards of the AI pill main draws for a game that uses AI
+ * (`aiBar`), and a game's coin purchase sheet (`viewer-purchase.ts`). Main keeps what
  * the bar shows and acts on what it asks (`studio:play.control`, `studio:play.purchase`). Holding Esc in
  * the game moves the keyboard to the bar (a tap still reaches the game: pause menus, mouse lock); Esc there
  * gives it back. A guest with no Genex account is offered a Genex account in the bar until its ×. A game in
@@ -16,7 +17,7 @@
  */
 import { ESC_HOLD_MS, type FullScreenKey, type Rect } from "../game-full-screen.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
-import type { PlayBarHold } from "../../shared/play-bar.ts";
+import { isPlayBarOverlay, type PlayAiBar, type PlayBarHold } from "../../shared/play-bar.ts";
 import {
   isPlayControl,
   isPlaySlug,
@@ -31,6 +32,8 @@ import {
   PlayViewerPhase,
 } from "../../shared/play.ts";
 import type { PlayMicReport } from "../../shared/play-mic.ts";
+import { playGameKey } from "../../shared/game-ai.ts";
+import type { PlayAiGame } from "../game-ai/bridge-play.ts";
 import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
 import { mintedTicket, type PlayGallery, type PlayWorld, SignInNeeded, TicketStatus } from "./gallery.ts";
 import { BarLayout, barLayout } from "./bar-layout.ts";
@@ -122,6 +125,8 @@ interface Session {
   world: PlayWorld | null;
   /** The game's page facts on their way: Comments waits for the game's id. */
   worldRead: Promise<PlayWorld | null>;
+  /** The address the game's page was opened at, once a ticket was minted (or known not to be). */
+  address: string | null;
   state: PlayBarState;
   /** A like is on its way: another press waits for it. */
   liking: boolean;
@@ -140,6 +145,7 @@ const IDLE_STATE: PlayBarState = {
   guestCard: false,
   facts: null,
   mic: null,
+  ai: null,
   comments: null,
   signedIn: null,
   remixing: false,
@@ -175,8 +181,11 @@ function heldEscape(clock: Clock, onHeld: () => void) {
   };
 }
 
-/** What a closing tells the app beyond the closing itself: Genex to install, a remix to make, a profile to show. */
-type ClosedNews = Pick<PlayViewerEvent, "install" | "remix" | "profile">;
+/**
+ * What a closing tells the app beyond the closing itself: Genex to install, a remix to make, a
+ * profile to show, Settings → Model Providers to open.
+ */
+type ClosedNews = Pick<PlayViewerEvent, "install" | "remix" | "profile" | "models">;
 
 /** What the header's actions share: the session they act for and how they report back. */
 interface ViewerContext {
@@ -269,7 +278,8 @@ async function loadGame(ctx: ViewerContext, epoch: number, showAnyway: () => voi
   s.signedOut = ticket.status === TicketStatus.SignedOut;
   s.state = { ...s.state, signedIn: !s.signedOut };
   ctx.draw();
-  ctx.deps.game.open(ctx.deps.gameUrl(s.slug, mintedTicket(ticket)), s.slug, ctx.gameBounds());
+  s.address = ctx.deps.gameUrl(s.slug, mintedTicket(ticket));
+  ctx.deps.game.open(s.address, s.slug, ctx.gameBounds());
   return ctx.deps.clock.setTimeout(showAnyway, SHOW_GAME_AFTER_MS);
 }
 
@@ -399,6 +409,10 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
       const maker = ctx.session()?.world?.authorId;
       if (maker) ctx.close({ profile: maker });
     },
+    // The AI pill's Add more models: models are added in Settings, which the game's window covers.
+    [PlayControl.AiModels]: () => {
+      if (ctx.session()) ctx.close({ models: true });
+    },
     [PlayControl.Install]: () => {
       if (ctx.session()?.signedOut) ctx.close({ install: true });
     },
@@ -430,6 +444,7 @@ const freshSession = (slug: string, title: string, epoch: number, micOn: boolean
   phase: PlayViewerPhase.Loading,
   world: null,
   worldRead: Promise.resolve(null),
+  address: null,
   state: { ...IDLE_STATE, title, remixing },
   liking: false,
   signedOut: false,
@@ -450,10 +465,11 @@ function placeBarInPlay(deps: PlayViewerDeps, layout: BarLayout, playing: boolea
   if (handBack) deps.game.focus();
 }
 
-/** What the bar's layer says, as main accepts it: booleans, anything else false. */
+/** What the bar's layer says, as main accepts it: an overlay it names and a boolean, anything else none. */
 const readHold = (value: unknown): PlayBarHold => {
   const hold = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-  return { comments: hold.comments === true, ready: hold.ready === true };
+  const overlay = isPlayBarOverlay(hold.overlay) ? hold.overlay : null;
+  return { overlay, ready: hold.ready === true };
 };
 
 /**
@@ -477,20 +493,22 @@ interface ViewerLoop {
 }
 
 /**
- * The bar's layer said whether Comments is open: opening takes the keyboard, closing gives it back to
- * the game unless a purchase sheet still covers it, or to the app's page under the open Store. A page
- * that has just mounted is drawn the bar again, whatever news it missed loading.
+ * The bar's layer said which of its overlays is open (Comments, an AI card or menu): one opening takes
+ * the keyboard, the last closing gives it back to the game unless a purchase sheet still covers it, or
+ * to the app's page under the open Store. A page that has just mounted is drawn the bar again, whatever
+ * news it missed loading.
  */
 function holdBar(loop: ViewerLoop, value: unknown): void {
   const s = loop.ctx.session();
   if (!s) return;
   const next = readHold(value);
   if (next.ready) loop.ctx.draw();
-  const was = loop.layer.comments();
+  const was = loop.layer.overlaid();
+  const opened = next.overlay !== null;
   loop.layer.hold(next);
-  if (next.comments && !was) loop.ctx.deps.bar.focus();
-  const closed = !next.comments && was;
-  // Comments closed over the open Store: the keyboard goes back to the Store's page, never the hidden game.
+  if (opened && !was) loop.ctx.deps.bar.focus();
+  const closed = !opened && was;
+  // An overlay closed over the open Store: the keyboard goes back to the Store's page, never the hidden game.
   if (closed && storeOpen(s)) loop.ctx.deps.store?.focusPage();
   const closedOverGame = closed && s.phase === PlayViewerPhase.Playing;
   if (closedOverGame && !loop.ctx.covering()) loop.ctx.deps.game.focus();
@@ -505,7 +523,7 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
   return {
     /**
      * The game's page finished loading: it takes the window under the bar, and the keyboard unless
-     * Comments or a purchase sheet has it.
+     * an overlay of the bar or a purchase sheet has it.
      */
     loaded: (): void => {
       if (ctx.session()?.phase !== PlayViewerPhase.Loading) return;
@@ -525,7 +543,7 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
     control: (value: unknown, at?: PlayPoint): void => {
       if (ctx.session() && isPlayControl(value)) actions[value](at);
     },
-    /** Whether the bar's Comments is open, and whether its page has just mounted. */
+    /** Which of the bar's overlays is open, and whether its page has just mounted. */
     hold: (value: unknown): void => holdBar(loop, value),
     /** The game's page said how its microphone is. */
     mic: (report: PlayMicReport): void => heardMic(ctx, report),
@@ -548,6 +566,28 @@ function viewerCalls(loop: ViewerLoop, heldEsc: ReturnType<typeof heldEscape>) {
       if (ctx.session() && layer.layout() !== BarLayout.Hidden) deps.bar.show(barBounds(deps, layer.layout()));
     },
     ...viewerComments(ctx),
+    /**
+     * Draw the AI pill main computed for a game (`GameAiDeps.drawPill`), when it is the game on
+     * screen's: the pill of a game that closed, or of another one, is never drawn.
+     */
+    aiBar: (bar: PlayAiBar): void => {
+      const s = ctx.session();
+      if (!s?.world || bar.game !== playGameKey(s.world.id)) return;
+      s.state = { ...s.state, ai: bar };
+      ctx.draw();
+    },
+    /**
+     * The game on screen as its AI bridge names it, once its page facts are read: its genex.games
+     * project id (its AI's key), its name and the address its page was opened at. Null when no game
+     * is open, it closed meanwhile, or its facts could not be read.
+     */
+    aiGame: async (): Promise<PlayAiGame | null> => {
+      const s = ctx.session();
+      if (!s) return null;
+      const world = await s.worldRead;
+      if (!world || !s.address || !ctx.current(s.epoch)) return null;
+      return { projectId: world.id, title: world.title || s.title, address: s.address, shared: world.multiplayer };
+    },
     /** An install changed: the bar's native-app pill reads what it offers again. */
     nativeChanged: (): void => {
       const s = ctx.session();

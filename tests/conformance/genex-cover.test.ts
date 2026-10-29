@@ -43,6 +43,7 @@ import {
   parseCoverAnswer,
   parseCoverView,
 } from "../../src/plugins/genex/cover.ts";
+import { MESSAGE as PUBLISH_MESSAGE } from "../../src/plugins/genex/publish.ts";
 import { needsCover } from "../../src/renderer/panels/plugins/genex/genex-publish-view.ts";
 import {
   GenexCoverOrigin,
@@ -607,7 +608,7 @@ const isCoverRoute = (url: string) => url.startsWith("/api/projects/p1/cover/") 
  * A fixture Genex for one hosted game, with the cover routes: the owner's view (by slug, with who
  * chose the cover), the upload grant, the PUT and the commit. `live` changes its answers mid-test.
  */
-async function coverFixture(options: { sendMs?: number } = {}) {
+async function coverFixture(options: { sendMs?: number; aiHosts?: string[] } = {}) {
   const temp = await tmpDir("studio-genex-cover-");
   const bare = path.join(temp, "source.git");
   await mkdir(bare, { recursive: true });
@@ -640,7 +641,9 @@ async function coverFixture(options: { sendMs?: number } = {}) {
     const dist = path.join(workspace, "dist");
     await mkdir(dist, { recursive: true });
     await writeFile(path.join(dist, "index.html"), '<!doctype html><meta charset="utf-8"><title>Racing</title>');
-    return { dir: dist, files: 1, included: ["index.html"], excluded: [] };
+    const hosts = (options.aiHosts ?? []).map((name) => ({ file: "index.html", host: name, vendor: "openai" }));
+    const aiDirect = hosts.length ? { aiDirect: { hosts, hint: "use genex-ai" } } : {};
+    return { dir: dist, files: 1, included: ["index.html"], excluded: [], ...aiDirect };
   };
   const start = (kind: "gallery" | "draft", lens?: CoverCamera) =>
     kind === "gallery"
@@ -674,6 +677,21 @@ describe("a publish sends the staged frame after it is done", () => {
       assert.deepEqual(await filesUnder(fx.game), before, "the game folder is never written");
       const scratch = await filesUnder(path.join(fx.host, "publish", PROJECT, ".genex", "scratch"));
       assert.deepEqual(scratch, [], "nothing for the CLI's own scratch pickup");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("warns, and still publishes, when the build calls an AI vendor directly (D5)", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await coverFixture({ aiHosts: ["api.openai.com"] });
+    try {
+      const done = await fx.publish(
+        "gallery",
+        camera(() => still("first")),
+      );
+      assert.equal(done.job?.state, "done", done.job?.error);
+      assert.deepEqual(done.warnings, [PUBLISH_MESSAGE.AiDirect(["api.openai.com"], 0)]);
     } finally {
       await fx.close();
     }

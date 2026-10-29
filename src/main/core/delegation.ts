@@ -102,6 +102,7 @@ import {
   withdrawnNotice,
   withdrawnSince,
 } from "./delegation-prompts.ts";
+import type { NativeAiHost } from "../game-ai/bridge-native.ts";
 import { computerTools, type ComputerGrant, type ComputerTools } from "./computer-tools.ts";
 import { delegationMirror, scopedRecord, type ActivityScope, type DelegationMirror } from "./delegation-events.ts";
 import { withFallbacks } from "./engine-failure.ts";
@@ -814,9 +815,22 @@ export class DelegationService {
       return computerTools(this.#x.previews, grant, initialRoot, outDir, session);
     // Started on the session's first move, never here: every chat turn is handed a computer, and a
     // native game opens a window of its own. Until it runs, the tool offers what such a game may do.
+    const ai = await this.#nativeAi(grant.project);
     return computerTools(this.#x.previews, grant, initialRoot, outDir, session, {
-      bridge: { sandbox: this.#core.sandbox, engine: (engine, root) => this.#core.startEngine(engine, root) },
+      bridge: {
+        sandbox: this.#core.sandbox,
+        engine: (engine, root) => this.#core.startEngine(engine, root),
+        ...(ai ? { ai } : {}),
+      },
     });
+  }
+
+  /** Play-time AI for a native game of the library the computer starts, named as the library names it. */
+  async #nativeAi(project: string): Promise<NativeAiHost | null> {
+    const native = this.#core.options.gameAiNative;
+    if (!native) return null;
+    const listed = (await this.#core.games.list().catch(() => [])).find((game) => game.name === project);
+    return native({ name: project, title: listed?.title || project });
   }
 
   /**

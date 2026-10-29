@@ -1,3 +1,4 @@
+import { aiMechanicOfJudgedBuild } from "../ai-mechanic.ts";
 import { keepCheckpoint } from "./progress.ts";
 import { retainSpan, timedOperation } from "./timing.ts";
 import { capRefusesWorker, runNow } from "./cap-lines.ts";
@@ -437,6 +438,12 @@ async function askJudgeQuestion(loopRun: LoopRun, pass: JudgePass): Promise<void
   judgement.answer = said;
 }
 
+/** A game that declares play-time AI: the AI mechanic judge's word on the build, from tape replays only. */
+async function askAiMechanic(loopRun: LoopRun, pass: JudgePass): Promise<void> {
+  const verdict = await aiMechanicOfJudgedBuild(loopRun.ctx, judgeRun(loopRun, pass), pass.evidence);
+  if (verdict) pass.out.aiMechanic = verdict;
+}
+
 /** The other side of a blind comparison: the start, or another build looked at on this window. */
 async function otherBuild(
   loopRun: LoopRun,
@@ -742,6 +749,7 @@ async function judgeOnWindow(loopRun: LoopRun, ask: JudgeAsk, handle: string | n
   /** The checks this pass scored, one entry each — the verdict record keeps them, not only their tally. */
   const scored = await scoreJudgeChecks(loopRun, pass);
   await askJudgeQuestion(loopRun, pass);
+  await askAiMechanic(loopRun, pass);
   /** The worker whose build this one was put beside, when it was put beside one. */
   const againstWorker = await compareJudged(loopRun, pass);
   // A stopped round a judge preferred to the integration branch may go into it (kept-work.ts).

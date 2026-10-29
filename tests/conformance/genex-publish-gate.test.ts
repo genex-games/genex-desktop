@@ -19,7 +19,8 @@ import { after, before, describe, it } from "node:test";
 import { pathToFileURL } from "node:url";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
 import { bringsOwnSdk } from "../../src/plugins/genex/entry-page.ts";
-import { MESSAGE as PUBLISH_MESSAGE } from "../../src/plugins/genex/publish.ts";
+import { AI_DISCLOSURE_FILE, aiDisclosure, MESSAGE as PUBLISH_MESSAGE } from "../../src/plugins/genex/publish.ts";
+import type { AiPublishListing } from "../../src/shared/game-ai-check.ts";
 import {
   cleanGenexTitle,
   defaultGenexTitle,
@@ -80,6 +81,8 @@ interface Seen {
   events: string[];
   deploys: Array<Record<string, unknown>>;
   listings: Array<Record<string, unknown>>;
+  /** Each AI audience declared, with the token it came with. */
+  audiences: Array<{ body: Record<string, unknown>; token: string | undefined }>;
 }
 
 /**
@@ -88,13 +91,13 @@ interface Seen {
  * As Genex does, the project records sign-in support only for the build players get: a draft
  * upload keeps it with the draft, and promoting the draft makes it the project's.
  */
-async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boolean } = {}) {
+async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boolean; audienceStatus?: number } = {}) {
   const temp = await tmpDir("studio-genex-gate-");
   const bare = path.join(temp, "source.git");
   await mkdir(bare, { recursive: true });
   assert.ok(await run("git", ["init", "--bare", "-q", bare]));
   const pushUrl = pathToFileURL(bare).href;
-  const seen: Seen = { events: [], deploys: [], listings: [] };
+  const seen: Seen = { events: [], deploys: [], listings: [], audiences: [] };
   const hosted = new Map<string, string>();
   let status = "draft",
     stagingCommitSha = "",
@@ -105,7 +108,20 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
   const note = (event: string) => {
     if (seen.events.at(-1) !== event) seen.events.push(event);
   };
-  const server = await startGenexFixtureApi(({ method, url, body }, reply) => {
+  const server = await startGenexFixtureApi(({ method, url, body, authorization }, reply) => {
+    if (url === "/api/runtime/projects/p1/ai-audience" && method === "PUT") {
+      note("audience");
+      const token = authorization.replace(/^Bearer /, "") || undefined;
+      seen.audiences.push({ body: JSON.parse(body || "{}"), token });
+      const status = options.audienceStatus ?? 200;
+      return status === 200
+        ? reply.json({
+            audience: JSON.parse(body || "{}").audience,
+            declaredAt: "2026-10-20T00:00:00.000Z",
+            moderation: "available",
+          })
+        : reply.json({ error: "runtime_unavailable" }, status);
+    }
     if (url.startsWith("/upload/") && method === "PUT") {
       hosted.set(decodeURIComponent(url.slice("/upload/".length)), body);
       return reply.json({ ok: true });
@@ -179,8 +195,21 @@ async function genexFixture(options: { broken?: boolean; failFirstDeploy?: boole
       return { dir: dist, files: 1, included: ["index.html"], excluded: [], ...(manifest ? { genex: manifest } : {}) };
     };
   /** Publish `page` under `title`; `manifest` null is a game whose package.json names no Genex package. */
-  const publish = async (title?: string, manifest: GenexGameManifest | null = SIGN_IN_GAME, page?: string) => {
-    const started = await genex.publishGallery(PROJECT, exportStage(manifest ?? undefined, page), title);
+  const publish = async (
+    title?: string,
+    manifest: GenexGameManifest | null = SIGN_IN_GAME,
+    page?: string,
+    ai?: unknown,
+  ) => {
+    const started = await genex.publishGallery(
+      PROJECT,
+      exportStage(manifest ?? undefined, page),
+      title,
+      undefined,
+      [],
+      {},
+      ai,
+    );
     return genex.publishWait(PROJECT, started.job?.id);
   };
   /** Put the game on its draft page only, and wait until that draft passes its test or fails it. */
@@ -537,6 +566,87 @@ describe("what a game's package.json tells Genex", () => {
     assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/multiplayer": "0.17.0" } }), false);
     assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/embed-sdk": "0.30.0" } }), true);
     assert.equal(bringsOwnSdk(undefined), false);
+  });
+});
+
+describe("a game's play-time AI at Publish", () => {
+  const LISTING = {
+    requires: "ai",
+    leaderboard: true,
+    audience: "shared",
+    sites: [
+      { site: "narrator.line", op: "say" },
+      { site: "npc.reply", op: "ask" },
+    ],
+  };
+
+  it("declares who sees its AI text on genex.games before anything goes up, and ships its AI disclosure", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await fx.publish("Racing Demo", SIGN_IN_GAME, undefined, LISTING);
+      assert.equal(done.job?.state, "done", done.job?.error);
+      assert.deepEqual(fx.seen.audiences, [{ body: { audience: "shared" }, token: "fixture-token" }]);
+      assert.ok(
+        fx.seen.events.indexOf("audience") < fx.seen.events.indexOf("deploy:staging"),
+        `declared before the upload: ${fx.seen.events.join(", ")}`,
+      );
+      const disclosure = fx.hosted.get(AI_DISCLOSURE_FILE);
+      assert.ok(disclosure, "AI-DISCLOSURE.md went up with the build");
+      assert.equal(disclosure, aiDisclosure("Racing Demo", LISTING as AiPublishListing));
+      for (const line of ["Racing Demo", "`narrator.line`", "`npc.reply`", "leaderboard", "moderat"])
+        assert.ok(disclosure.includes(line), line);
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("puts nothing online when genex.games refuses the declaration", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture({ audienceStatus: 503 });
+    try {
+      const done = await fx.publish("Racing Demo", SIGN_IN_GAME, undefined, LISTING);
+      assert.equal(done.job?.state, "failed");
+      assert.deepEqual(fx.seen.deploys, [], "nothing uploaded");
+      assert.deepEqual(fx.seen.listings, [], "nothing listed");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("declares nothing and ships no disclosure for a game with no AI step", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await genexFixture();
+    try {
+      const done = await fx.publish("Racing Demo");
+      assert.equal(done.job?.state, "done", done.job?.error);
+      assert.deepEqual(fx.seen.audiences, []);
+      assert.equal(fx.hosted.has(AI_DISCLOSURE_FILE), false);
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("refuses a listing out of shape before anything is exported or sent", async () => {
+    const fx = await genexFixture();
+    try {
+      const hostile: unknown[] = [
+        null,
+        { ...LISTING, audience: "everyone" },
+        { ...LISTING, sites: [{ site: "../x", op: "ask" }] },
+        { ...LISTING, sites: [{ site: "npc.reply", op: "shell" }] },
+        { ...LISTING, sites: [LISTING.sites[0], LISTING.sites[0]] },
+        { ...LISTING, extra: true },
+      ];
+      for (const ai of hostile)
+        await assert.rejects(
+          fx.genex.publishGallery(PROJECT, async () => assert.fail("no export"), "X", undefined, [], {}, ai),
+        );
+      assert.deepEqual(fx.seen.audiences, []);
+      assert.deepEqual(fx.seen.deploys, []);
+    } finally {
+      await fx.close();
+    }
   });
 });
 

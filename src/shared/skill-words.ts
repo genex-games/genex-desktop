@@ -4,12 +4,14 @@ import { t } from "./i18n.ts";
 const SKILLS: Record<string, () => string> = {
   "facet-decomposition": () => t("how Harness plans a build"),
   director: () => t("how Harness leads a build"),
+  "llm-games": () => t("how Harness builds games that use AI while they are played"),
 };
 
 /** "Harness updated how it plans a build.": the chat's whole sentence for each named instruction file. */
 const SKILLS_UPDATED: Record<string, () => string> = {
   "facet-decomposition": () => t("Harness updated how it plans a build."),
   director: () => t("Harness updated how it leads a build."),
+  "llm-games": () => t("Harness updated how it builds games that use AI while they are played."),
 };
 
 /** An instruction file's name as the harness records it: "skills/director.md" is "director". */

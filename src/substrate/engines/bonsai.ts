@@ -24,6 +24,8 @@ import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { t } from "../../shared/i18n.ts";
 import { DEFAULT_COMPACTION_PERCENT } from "./common.ts";
+import { gameCallSchema, gameResponseFormat, isGameCall } from "./game-calls.ts";
+import type { AiOutputSchema } from "../../shared/game-ai-schema.ts";
 /** FIFO generation queue. Tool execution happens OUTSIDE this lease, so a waiting director
  * never holds the slot needed by its own workers. Aborted waiters leave immediately. */
 export class InferenceQueue {
@@ -102,8 +104,8 @@ const SHORT_CONTEXT_TIMEOUT_MS = 10 * MINUTE_MS;
 const ERROR_BODY_CHARS = 500;
 /** Bonsai's recommended sampling. */
 const BONSAI_SAMPLING = { top_p: 0.95, top_k: 20, min_p: 0 } as const;
-/** Thinking tokens per reasoning effort; -1 lets the model think as long as it likes. */
-const REASONING_BUDGET: Record<string, number> = { low: 512, medium: 2048, high: 8192, max: -1 };
+/** Thinking tokens per reasoning effort; 0 answers without thinking, -1 lets the model think as long as it likes. */
+const REASONING_BUDGET: Record<string, number> = { none: 0, low: 512, medium: 2048, high: 8192, max: -1 };
 /** The efforts a Bonsai model offers, and where it starts. */
 const BONSAI_EFFORTS: string[] = [
   ReasoningEffort.Low,
@@ -200,6 +202,7 @@ export class BonsaiEngine implements Engine {
     return this.sessions.run(request, model);
   }
   async complete(request: CompleteRequest): Promise<CompleteResponse> {
+    const schema = gameCallSchema(request, this.id);
     const model = request.model ?? (await this.defaultModel());
     if (!model) throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.DownloadFirst);
     bonsaiModel(model);
@@ -215,7 +218,7 @@ export class BonsaiEngine implements Engine {
       release = await this.#lease(signal);
       request.onActivity?.(ChatActivityPhase.LoadingModel);
       const host = await this.runtime.start(model, signal);
-      const body = completionBody(request, model);
+      const body = completionBody(request, model, schema);
       const post: Post = (route, value) =>
         fetch(`${host}${route}`, {
           method: "POST",
@@ -387,9 +390,21 @@ export class BonsaiEngine implements Engine {
   }
 }
 
-/** The streaming chat-completion request for one call: messages, sampling, thinking budget, tools. */
-function completionBody(request: CompleteRequest, model: string) {
-  const budget = REASONING_BUDGET[request.effort ?? ReasoningEffort.Low] ?? REASONING_BUDGET.low;
+/**
+ * The effort a call thinks at when it names none: a build thinks a little; a game's call answers
+ * straight away, because its thinking would come out of the game's own small output budget.
+ */
+function effortOf(request: CompleteRequest): string {
+  if (request.effort) return request.effort;
+  return isGameCall(request) ? ReasoningEffort.None : ReasoningEffort.Low;
+}
+
+/**
+ * The streaming chat-completion request for one call: messages, sampling, thinking budget, tools,
+ * and the reply schema as llama-server's `response_format`, which it decodes against as a grammar.
+ */
+function completionBody(request: CompleteRequest, model: string, schema: AiOutputSchema | null) {
+  const budget = REASONING_BUDGET[effortOf(request)] ?? REASONING_BUDGET.low;
   return {
     model,
     messages: openAiMessages(request.messages, request.systemPrompt),
@@ -402,6 +417,7 @@ function completionBody(request: CompleteRequest, model: string) {
     ...(request.tools?.length
       ? { tools: request.tools.map((t) => ({ type: "function", function: t })), tool_choice: "auto" }
       : {}),
+    ...(schema ? { response_format: gameResponseFormat(schema) } : {}),
   };
 }
 

@@ -73,6 +73,7 @@ import {
 } from "./publish-platforms-view.ts";
 import type { PublishPlatform } from "../../../../shared/publish-platforms.ts";
 import { PublishShareLine } from "./PublishShare.tsx";
+import { type PublishAi, PublishAiBlock, usePublishAi } from "../../game-ai/PublishAi.tsx";
 import { useShareWhenLive } from "./use-publish-share.ts";
 import { Skeleton } from "../../../ui/Skeleton.tsx";
 
@@ -846,6 +847,7 @@ function PublishBody({
   const { platforms, behind, apps, waiting, upToDate, inReview } = useAppsPublish(project, record.state?.native);
   const celebrate = useCelebration(view, publishing, inReview);
   const share = useShareWhenLive(project, celebrate);
+  const ai = usePublishAi(project);
   // A name changed after it went live is listed again by Publish update ("Save name" while celebrating).
   const renamed = title !== null && title.trim() !== (record.state?.title ?? "") && view.stage === PublishStage.Public;
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
@@ -887,6 +889,7 @@ function PublishBody({
         />
         {view.running && <Progress view={view} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
+        <PublishAiBlock ai={ai} project={project} title={name} quiet={{ publishing, celebrate }} />
         <PublishShareLine share={share} celebrate={celebrate} />
         <WhoPlays
           project={project}
@@ -900,6 +903,8 @@ function PublishBody({
             name={name}
             publishing={publishing}
             project={project}
+            ai={ai}
+            renaming={celebrate}
             label={pressLabel(celebrate, apps)}
             apps={apps !== null}
             waiting={waiting}
@@ -921,6 +926,7 @@ function PublishBody({
           taking={Boolean(cover.taking)}
           record={record}
           name={name}
+          ai={ai}
         />
       </div>
     </div>
@@ -991,6 +997,7 @@ function Hint({
   taking,
   record,
   name,
+  ai,
 }: {
   view: PublishView;
   publishing: boolean;
@@ -1000,6 +1007,8 @@ function Hint({
   taking: boolean;
   record: ReturnType<typeof usePublishRecord>;
   name: string;
+  /** The game's play-time AI choice, sent again with a retried upload. */
+  ai: PublishAi;
 }): JSX.Element | null {
   const again = view.again;
   if (publishing && view.slow)
@@ -1007,7 +1016,10 @@ function Hint({
       <p className="genex-publish-hint">
         {WORDS.slow}{" "}
         {again && (
-          <TextButton aria-label={again.ariaLabel} onClick={() => void record.publishAgain(again, name)}>
+          <TextButton
+            aria-label={again.ariaLabel}
+            onClick={() => void record.publishAgain(again, name, ai.choice ?? undefined)}
+          >
             {again.label}
           </TextButton>
         )}
@@ -1040,6 +1052,8 @@ function Presses({
   name,
   publishing,
   project,
+  ai,
+  renaming = false,
   label,
   apps = false,
   waiting = false,
@@ -1050,6 +1064,10 @@ function Presses({
   name: string;
   publishing: boolean;
   project: string;
+  /** The game's play-time AI choice: Publish waits until a game that played with AI says whether it needs it. */
+  ai: PublishAi;
+  /** Save name: the press renames what just went live, so it waits for no AI choice. */
+  renaming?: boolean;
   /** Whether the press sends the game's project too, so others can remix it (Allow remixing). */
   remix: boolean;
   /** The main press's words in place of the view's (Save name, for a rename right after it went live). */
@@ -1083,7 +1101,12 @@ function Presses({
       aria-label={apps && label ? label : view.primary.ariaLabel}
       aria-busy={publishing || undefined}
       disabled={publishing || waiting || !view.canPublish || record.pressing !== Pressing.None}
-      onClick={() => void (apps ? record.publishApps(name, remix) : record.publish(name, remix))}
+      onClick={() => {
+        // Save name renames what is live; only a publish waits for the AI choice.
+        if (!renaming && !ai.ready()) return;
+        const choice = ai.choice ?? undefined;
+        void (apps ? record.publishApps(name, remix, choice) : record.publish(name, remix, choice));
+      }}
     >
       {publishing ? <BusyLabel view={view} /> : (label ?? view.primary.label)}
     </Button>

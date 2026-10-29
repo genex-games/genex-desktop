@@ -78,6 +78,7 @@ import {
 import { agentsSetting, setAgentsSetting } from "../../substrate/engine-agents.ts";
 import { newestUnity6, readinessOf } from "./readiness.ts";
 import { pipelineVersionOf, SetupError, SetupRefusal, setUpProject, undoSetup } from "./setup.ts";
+import { AI_PACKAGE, AiPackageError, AiPackageRefusal, embedAiPackage, SHIPPED_AI_PACKAGE } from "./ai-package.ts";
 import { readFacts, SetupAction, setupCard, skippedCard } from "./setup-steps.ts";
 import { createInstaller, type InstallDeps, type Installer, systemInstallDeps } from "./unity-install.ts";
 
@@ -107,6 +108,7 @@ export const UnityTool = {
   SceneShots: "scene-shots",
   EditorActivity: "editor-activity",
   ShowSteps: "show-steps",
+  AddAi: "add-ai",
   Multiplayer: "multiplayer",
 } as const;
 export type UnityTool = (typeof UnityTool)[keyof typeof UnityTool];
@@ -144,6 +146,8 @@ const isUnityAction = (name: string): name is UnityAction => (Object.values(Unit
  */
 export type UnityBackendDeps = MomentDeps & {
   install?: InstallDeps;
+  /** Genex's play-time AI package as the plugin ships it; the one beside this backend unless a test says. */
+  aiPackage?: string;
   /** Genex's Unity multiplayer package as the plugin ships it (`multiplayer/com.genex.multiplayer`). */
   multiplayerPackage?: string;
   /** Runs `look` every `ms` until the backend ends; this computer's timer unless a test stands in. */
@@ -252,6 +256,20 @@ const MESSAGE = {
     "The Unity setup card is in the chat: Genex can install Unity Hub and Unity 6 for the user, who only signs in. Tell them in one line, then end your reply; the chat tells you when Unity is ready.",
   StepsDone: "Unity 6 is installed and signed in here; there is no setup card to show. Call unity__new-game.",
   StepsNoChat: "There is no chat to show the Unity setup card in.",
+  AddedAi: (changed: boolean, kept: readonly string[]) =>
+    [
+      changed
+        ? `Added Genex's play-time AI package (${AI_PACKAGE}) to this project as Packages/${AI_PACKAGE}; Unity imports it, and Newtonsoft JSON with it, when it next comes forward.`
+        : `This project already has Genex's play-time AI package (${AI_PACKAGE}) as shipped.`,
+      kept.length ? `Files you had changed are kept beside the new ones as .mine~: ${kept.join(", ")}.` : "",
+      "Ask with GenexAi.Ask<T>(site, prompt, new AiOptions { Fallback = … }) (T a class of public fields; [GenexMaxItems] and [GenexMaxLength] bound lists and strings), Say for streamed text; results reach the game only through GenexAi.Drain(), once at the top of FixedUpdate: clamp every value before it changes the world, and pass player-typed text in AiOptions.Untrusted, never in the prompt. Genex answers while the game plays in this editor; a build outside Genex gets ai_off and plays its fallbacks.",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  [AiPackageRefusal.NoPackages]:
+    "This project has no Packages folder yet: ask the user to open it in Unity once, then call again.",
+  [AiPackageRefusal.Link]:
+    "This project's Packages folder (or Genex's AI package in it) is a link, so Genex won't write through it: ask the user to make it a plain folder.",
   SetAside: (folder: string) =>
     `Unity had kept backups of scenes that were unsaved when Unity last ended; so that it opens without asking to recover them, Genex moved them to ${folder}. Tell the user, in case that work is wanted.`,
 } as const;
@@ -507,6 +525,15 @@ async function undo(deps: UnityBackendDeps, context: PluginContext): Promise<str
   return changed ? MESSAGE.UndoneSetup : MESSAGE.NothingToUndo;
 }
 
+/** The agent's `add-ai`: Genex's play-time AI package embedded in the game's Unity project. */
+async function addAi(deps: UnityBackendDeps, context: PluginContext): Promise<string> {
+  const { project } = await projectOf(deps, context);
+  const embedded = await embedAiPackage(project.root, deps.aiPackage ?? SHIPPED_AI_PACKAGE).catch((error: unknown) => {
+    throw error instanceof AiPackageError ? new Error(MESSAGE[error.code]) : error;
+  });
+  return MESSAGE.AddedAi(embedded.changed, embedded.kept);
+}
+
 /** What an opening the agent asked for came to, in words. */
 function openedWords(opening: Opening, did: string): string {
   const said = launched(opening)
@@ -649,6 +676,7 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     [UnityTool.SceneShots]: atMoment(sceneShots),
     [UnityTool.EditorActivity]: atMoment(editorActivity),
     [UnityTool.ShowSteps]: async (context) => showSteps(deps, await installerOf(context), context),
+    [UnityTool.AddAi]: (context) => addAi(deps, context),
     [UnityTool.Multiplayer]: (context, args) => setUpMultiplayer(deps, context, args),
   };
   // An action takes nothing from its arguments: the open game's own project is all it acts on.

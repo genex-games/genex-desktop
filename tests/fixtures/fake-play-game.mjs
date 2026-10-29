@@ -15,6 +15,12 @@
  * stderr before ready, written the blocking way a native engine writes it), --crash (exit before
  * ready), and --reduced (a game that declares a relative pointer, a freeze-only clock, no seed,
  * no actions and no text input, and refuses those ops with `unsupported`).
+ *
+ * Play-time AI: --ai declares `capabilities.ai` and, after each reset, prints an `ai` hello on its
+ * second tick and a call on its sixth whose answer (`move`) steers the dot; it takes `ai.reply`
+ * and `ai.delta`, drops replies to lines of an earlier run, and keeps the rids it sent and those
+ * answered under `volatile.ai`. --ai-undeclared prints the same lines without declaring ai;
+ * --ai-burst=<n> prints n calls instead of one; --ai-oversize prints an oversize `ai` line first.
  */
 import { writeFileSync, writeSync } from "node:fs";
 import { crc32, deflateSync } from "node:zlib";
@@ -62,7 +68,76 @@ function freshSim(seed) {
     score: 0,
     clicks: 0,
     hazards: [],
+    aiMove: null,
   };
+}
+
+const AI = flags.has("ai");
+const AI_LINES = AI || flags.has("ai-undeclared");
+const AI_BURST = Number(flags.get("ai-burst") ?? 1);
+/** The tick an `ai` hello, an oversize line and the calls are printed on, after a reset. */
+const AI_HELLO_TICK = 1;
+const AI_OVERSIZE_TICK = 3;
+const AI_CALL_TICK = 5;
+/** Longer than the studio reads an `ai` line (`PLAY_AI_MAX_LINE_CHARS`). */
+const AI_OVERSIZE_CHARS = 210 * 1024;
+const AI_MOVES = ["left", "right"];
+/** The rids this run sent and those answered, since the last reset; rids are not part of a replay. */
+let aiEcho = { asked: [], answered: [], codes: [] };
+/** Lines this process printed: rids never repeat, so a reply to a line of an earlier run is dropped. */
+let aiLines = 0;
+
+function askAi(op, body) {
+  aiLines += 1;
+  const rid = `rid-${String(aiLines).padStart(6, "0")}`;
+  aiEcho.asked.push(rid);
+  say({ event: "ai", rid, op, body });
+  return rid;
+}
+
+function aiCall(n) {
+  return {
+    v: 1,
+    op: "ask",
+    site: "fake.move",
+    ticket: `ticket-${String(aiLines + 1).padStart(6, "0")}-${n}`,
+    grantId: "no-grant",
+    system: null,
+    prompt: "Pick the way the dot runs.",
+    untrusted: {},
+    memory: null,
+    schema: {
+      type: "object",
+      properties: { move: { type: "string", enum: AI_MOVES } },
+      required: ["move"],
+      additionalProperties: false,
+    },
+    tier: "fast",
+    authority: "local",
+    maxOutputTokens: 32,
+    stream: false,
+  };
+}
+
+/** The lines a tick prints, by its number since the reset. */
+function aiTick(sim) {
+  if (!AI_LINES) return;
+  if (sim.tick === AI_HELLO_TICK) askAi("hello", null);
+  if (sim.tick === AI_OVERSIZE_TICK && flags.has("ai-oversize"))
+    say({ event: "ai", rid: "rid-oversize", op: "cancel", body: { ticket: "t".repeat(AI_OVERSIZE_CHARS) } });
+  if (sim.tick === AI_CALL_TICK) for (let n = 0; n < AI_BURST; n++) askAi("call", aiCall(n));
+}
+
+function aiReply(args) {
+  if (typeof args.rid !== "string") throw new BadArgs("ai.reply needs a rid");
+  const asked = aiEcho.asked.includes(args.rid) && !aiEcho.answered.includes(args.rid);
+  if (!asked) return { dropped: true };
+  aiEcho.answered.push(args.rid);
+  const reply = args.reply;
+  if (reply && reply.ok === false) aiEcho.codes.push(reply.code);
+  const move = reply?.ok === true ? reply.value?.move : undefined;
+  if (AI_MOVES.includes(move)) game.sim.aiMove = move;
+  return {};
 }
 
 /** Input as it is at launch: nothing held, typed or queued, the pointer in the middle. */
@@ -99,8 +174,10 @@ function landClicks(sim) {
 function tick() {
   const sim = game.sim;
   landClicks(sim);
+  aiTick(sim);
   const ground = H - 6;
-  const dx = (inputOn(RIGHT_KEYS, "right") ? 2 : 0) - (inputOn(LEFT_KEYS, "left") ? 2 : 0);
+  const steered = (sim.aiMove === "right" ? 1 : 0) - (sim.aiMove === "left" ? 1 : 0);
+  const dx = (inputOn(RIGHT_KEYS, "right") ? 2 : 0) - (inputOn(LEFT_KEYS, "left") ? 2 : 0) + steered;
   sim.x = Math.max(0, Math.min(W - PLAYER, sim.x + dx));
   if (inputOn(JUMP_KEYS, "jump") && sim.y >= ground) sim.vy = -6;
   sim.vy += 1;
@@ -155,6 +232,7 @@ function state() {
       wheel: game.wheel,
     },
     checksum: checksum(),
+    ...(AI_LINES ? { volatile: { ai: aiEcho } } : {}),
   };
 }
 
@@ -247,6 +325,7 @@ function step(args) {
 function reset(args) {
   need(Number.isInteger(args.seed) && args.seed >= 0, "seed is a whole number");
   Object.assign(game, { sim: freshSim(args.seed), ...freshInput() });
+  aiEcho = { asked: [], answered: [], codes: [] };
   return { seed: args.seed };
 }
 
@@ -263,7 +342,15 @@ function build() {
 
 const CAPABILITIES = REDUCED
   ? { pointer: "relative", clock: "freeze", state: "game", seed: false, actions: [], screenshot: ["png"] }
-  : { pointer: "absolute", clock: "replayable", state: "game", seed: true, actions: ACTIONS, screenshot: ["png"] };
+  : {
+      pointer: "absolute",
+      clock: "replayable",
+      state: "game",
+      seed: true,
+      actions: ACTIONS,
+      screenshot: ["png"],
+      ...(AI ? { ai: true } : {}),
+    };
 
 const OPS = {
   hello: () => ({
@@ -316,6 +403,8 @@ const OPS = {
   reset,
   state,
   hazards: () => game.sim.hazards.map((hazard) => ({ ...hazard })),
+  // The studio's AI ops, taken only by a game that declared ai.
+  ...(AI ? { "ai.reply": aiReply, "ai.delta": () => ({}) } : {}),
 };
 
 function say(message, then) {

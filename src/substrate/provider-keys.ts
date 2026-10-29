@@ -10,6 +10,12 @@ import { SecretStore } from "./secrets.ts";
 export const OPENROUTER_KEY_SECRET = "openrouter-api-key";
 /** The secret a local server's API key is kept under. Stored on disk: never rename it. */
 export const LOCAL_SERVER_KEY_SECRET = "local-server-api-key";
+/**
+ * The secret the plan watcher's Genex player credential is kept under (`main/game-ai/player-watcher.ts`):
+ * a `scope: 'player'` session that reaches genex.games' seven player routes and can move no money,
+ * kept apart from the creator's Genex account. Stored on disk: never rename it.
+ */
+export const GENEX_PLAYER_CREDENTIAL_SECRET = "genex-player-credential";
 
 /** One provider's key: read it, replace it, or forget it. A locked store throws `SecretStorageUnavailableError`. */
 export interface ApiKeyStore {

@@ -38,6 +38,7 @@ const METHODS = [
   "createGame",
   "createGameThread",
   "defaultDelegatedEngine",
+  "deniedPaths",
   "discardStagedProposal",
   "dispatchRun",
   "emit",
@@ -53,6 +54,7 @@ const METHODS = [
   "knownSecretValues",
   "landBuild",
   "listAllEvents",
+  "liveAiCapture",
   "liveState",
   "loadPreview",
   "loadWebBuild",
@@ -67,6 +69,7 @@ const METHODS = [
   "offerBuild",
   "offerLive",
   "permissionSettings",
+  "playAiDemo",
   "playGameSnapshot",
   // The stage strip's Play/Stop (studio:preview.play, studio:preview.stop).
   "playLive",

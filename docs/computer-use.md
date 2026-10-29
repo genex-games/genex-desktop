@@ -124,7 +124,9 @@ native-job sandbox with the GPU, as Godot needs to draw); the delegation then gi
 the `ProcessSandbox`. Handing a session its computer starts nothing (every chat turn is handed one):
 the game starts on the session's first move and stops at its release, and until it runs the tool
 offers what a conforming game may do. The playtest shorthands are not offered there; its moves are drawn on the
-worker's agent screen like a browser game's (`targetFramePort`). Every plugin is held to the shared
+worker's agent screen like a browser game's (`targetFramePort`). A game that declares play-time AI
+gets its answers through the target on step boundaries, from the AI host the computer tools are
+given (`bridge.ai`), and `ai_off` without one ([play-protocol.md](play-protocol.md#play-time-ai-optional)). Every plugin is held to the shared
 conformance suite (`tests/conformance/play-protocol.test.ts`, run against
 `tests/fixtures/fake-play-game.mjs`; `PLAY_GAME_COMMAND` points it at another game).
 

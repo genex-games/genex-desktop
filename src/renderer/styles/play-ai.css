@@ -1,0 +1,452 @@
+/* ── Play-time AI in the Play bar: the AI pill and what it opens (design v3, `V3-*` boards) ── */
+
+/* The pill: the bar's 32px button with the model's name, a quieter word after it (Free, the balance,
+   Unranked) and the menu's chevron. Open, it wears the hover fill; a card waiting gives it Play's blue
+   edge; turned off, it reads muted. The narrow bar shows the model's shorter name. */
+.play-ai-pill {
+  gap: 0;
+  padding-inline: 10px 8px;
+}
+.play-ai-pill[data-open] {
+  background: var(--hover);
+}
+.play-ai-pill[data-attention] {
+  background: color-mix(in srgb, var(--play-blue) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--play-blue) 70%, transparent);
+}
+.play-ai-pill[data-off] {
+  color: var(--ink-3);
+}
+.play-ai-pill-name {
+  display: inline-flex;
+}
+.play-ai-pill-value {
+  margin-inline-start: 6px;
+  color: var(--ink-3);
+}
+.play-ai-pill-value[data-warn] {
+  color: var(--orange);
+}
+.play-ai-pill-short {
+  display: none;
+}
+.play-ai-pill-chevron {
+  margin-inline-start: 6px;
+  color: var(--ink-3);
+}
+@media (max-width: 900px) {
+  .play-ai-pill-full {
+    display: none;
+  }
+  .play-ai-pill-short {
+    display: inline;
+  }
+}
+/* A reply on its way: the name shimmers (the chat's working line). */
+.play-ai-pill-name[data-busy],
+.play-ai-card-line[data-busy] > span {
+  --shimmer-rest: color-mix(in oklab, var(--ink-3) 82%, var(--background));
+  background: linear-gradient(100deg, var(--shimmer-rest) 36%, var(--ink) 50%, var(--shimmer-rest) 64%);
+  background-size: 260% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer-sweep 2.1s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+:root[data-motion="rest"] :is(.play-ai-pill-name[data-busy], .play-ai-card-line[data-busy] > span) {
+  animation-play-state: paused;
+}
+
+/* The model menu: the chat's model menu (`picker-panel`), 288px, under the pill's right edge. Its
+   head names the game and what its AI costs; each row wears one tag. */
+.play-ai-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+}
+.play-ai-menu-head b {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.play-ai-menu-head small {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+.play-ai-row-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.play-ai-row-name small {
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 14px;
+}
+.play-ai-row-end {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+.play-ai-tag {
+  color: var(--ink-3);
+  font: 11px / 16px var(--font-family-mono);
+}
+.play-ai-tag[data-tag="free"] {
+  padding-inline: 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--green);
+}
+.play-ai-tag[data-tag="best"] {
+  padding-inline: 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--play-blue) 28%, transparent);
+  color: var(--ink);
+}
+.play-ai-menu-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Links in running text: Get credits, See what's sent, Try again. */
+.play-ai-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font: 12px var(--font-family-mono);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.play-ai-link:hover {
+  color: var(--ink);
+}
+.play-ai-problem {
+  margin: 0;
+  padding: 4px 10px 2px;
+  color: var(--red);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Genex's cards over the game: a 340px card hung under the pill (`V3-First`, `V3-Stops`), one
+   sentence with its odd parts bold, small print, and two buttons with the primary in Play's blue. */
+.play-ai-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: rgb(0 0 0 / 0.5);
+  animation: play-fade-in 150ms ease-out both;
+}
+.play-ai-card {
+  position: fixed;
+  z-index: 211;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(340px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--menu-edge);
+  border-radius: 14px;
+  background: var(--popover);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  outline: none;
+  animation: play-ai-drop 180ms var(--ease-smooth-out) both;
+}
+@keyframes play-ai-drop {
+  from {
+    opacity: 0;
+    translate: 0 -6px;
+  }
+}
+.play-ai-card-line {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 22px;
+}
+.play-ai-card-line b {
+  font-weight: 500;
+}
+.play-ai-card-small {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+.play-ai-card .play-ai-problem {
+  padding: 0;
+}
+.play-ai-card-acts {
+  display: flex;
+  gap: 8px;
+}
+.play-ai-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding-inline: 14px;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  color: var(--ink);
+  font: 13px var(--font-family-mono);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.play-ai-button:hover:enabled {
+  background: color-mix(in oklab, var(--ink) 13%, transparent);
+}
+.play-ai-button[data-primary] {
+  flex: 1;
+  background: var(--play-blue);
+  color: #fff;
+}
+.play-ai-button[data-primary]:hover:enabled {
+  background: color-mix(in oklab, var(--play-blue) 88%, #fff);
+}
+.play-ai-button[data-ghost] {
+  background: transparent;
+  color: var(--ink-3);
+}
+.play-ai-button:disabled,
+.play-ai-button[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+.play-ai-card :is(button, [role="radio"], [role="switch"], textarea):focus-visible,
+.play-ai-report :is(button, [role="radio"], textarea):focus-visible,
+.play-ai-menu :is(button):focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+
+/* Get credits (`V3-TopUp`): 400px under the pill over the dimmed game, the four packs in a row. */
+.play-ai-credits {
+  gap: 14px;
+  width: min(400px, calc(100vw - 32px));
+}
+.play-ai-credits-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 26px;
+}
+.play-ai-credits .play-ai-card-small:first-of-type {
+  margin-top: -8px;
+}
+.play-ai-packs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 8px;
+}
+.play-ai-pack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  border: 1px solid var(--menu-edge);
+  border-radius: 12px;
+  background: none;
+  color: var(--ink);
+  font: 500 15px var(--font-family-mono);
+  cursor: pointer;
+}
+.play-ai-pack small {
+  color: var(--ink-3);
+  font: 11px var(--font-family-mono);
+}
+.play-ai-pack[aria-checked="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.play-ai-credits-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.play-ai-credits-pro {
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+}
+.play-ai-credits-pro small {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 16px;
+}
+.play-ai-credits-browser {
+  margin-top: -4px;
+  text-align: center;
+}
+.play-ai-sep {
+  width: 100%;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+}
+
+/* Report what the AI wrote (`Report-v2`): the app's dialog over the dimmed game, centred. */
+.play-ai-report {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 211;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--popover);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  translate: -50% -50%;
+  outline: none;
+  animation: play-comments-in 200ms var(--ease-smooth-out) both;
+}
+.play-ai-report-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+}
+.play-ai-report .play-ai-card-small {
+  font-size: 13px;
+  line-height: 18px;
+}
+.play-ai-report .play-ai-problem {
+  padding: 0;
+}
+.play-ai-sent {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--menu-edge);
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--canvas, var(--background)) 55%, var(--popover));
+}
+.play-ai-moment {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.play-ai-moment-site {
+  color: var(--ink-3);
+  font: 11px / 16px var(--font-family-mono);
+}
+.play-ai-moment p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.play-ai-moment b {
+  font-weight: 500;
+}
+.play-ai-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.play-ai-reason {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+.play-ai-reason:hover {
+  background: var(--hover);
+}
+.play-ai-reason-mark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--menu-edge);
+}
+.play-ai-reason[aria-checked="true"] .play-ai-reason-mark {
+  background: var(--ink);
+  box-shadow:
+    inset 0 0 0 4px var(--popover),
+    0 0 0 1.5px var(--ink);
+}
+.play-ai-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+}
+.play-ai-note textarea {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid var(--menu-edge);
+  border-radius: 12px;
+  background: var(--input, var(--hover));
+  color: var(--ink);
+  font: 14px / 20px var(--font-family-sans);
+  resize: vertical;
+}
+.play-ai-report-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.play-ai-report-foot .play-ai-button[data-primary] {
+  flex: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play-ai-card,
+  .play-ai-scrim,
+  .play-ai-report {
+    animation: none;
+  }
+  .play-ai-pill-name[data-busy],
+  .play-ai-card-line[data-busy] > span {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--ink-3);
+  }
+}

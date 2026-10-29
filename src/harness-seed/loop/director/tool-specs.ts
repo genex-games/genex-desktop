@@ -6,6 +6,7 @@
 import { FACET_POLICY } from "../facet-loop.ts";
 import { stopRuleWords } from "../finish-check-prompts.ts";
 import { KIND_NAMES } from "../kinds.ts";
+import { AiRequirement } from "../ai-contract.ts";
 import { CHECK_KINDS, MAX_DONE, MAX_MILESTONES, renderCheckGrammar } from "../spec.ts";
 import { WorkerIsolation, WorkerTool, WorkerVerdict } from "../workers/contract.ts";
 import { MAX_PLAN_WORKERS, MAX_WAIT_S } from "./budgets.ts";
@@ -122,6 +123,10 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
           type: "string",
           description:
             'Required with contract: JSON {"scale","far","set_pieces":[2–3],"headroom"} — the world\'s scale, what the player sees past the nearest building, set-pieces, what it could grow into. Committed as docs/VISION.md; never frozen.',
+        },
+        ai: {
+          type: "string",
+          description: `A game that calls a model in play (genex-ai): ${AiRequirement.Ai} (needs it) or ${AiRequirement.Optional}.`,
         },
         play_script: {
           type: "string",

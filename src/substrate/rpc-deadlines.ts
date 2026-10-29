@@ -147,6 +147,14 @@ export const RPC_CLASSES = {
   "guardian.validate_edit": RpcClass.Work,
   "guardian.write_self": RpcClass.Work,
   "ui.notify": RpcClass.Record,
+  // Play-time AI: the schema check is pure and the tape list reads one folder; replaying, recording,
+  // benching and checking play the game on tapes and this Mac's models, bounded by their run budget.
+  "ai.schemaCheck": RpcClass.Record,
+  "ai.tapes": RpcClass.Record,
+  "ai.replay": RpcClass.Work,
+  "ai.record": RpcClass.Work,
+  "ai.bench": RpcClass.Work,
+  "ai.modelCheck": RpcClass.Work,
 } as const satisfies Record<HarnessHostMethod, RpcClass>;
 
 /** How long the host services a call of `method`; null for no deadline of its own. Unknown methods are refused before this. */

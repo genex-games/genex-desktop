@@ -10,8 +10,10 @@ import {
   type PageRequest,
   PURCHASE_RESERVE_MS,
   purchaseConfirmOrigin,
+  standRequests,
   wirePurchaseCapture,
 } from "../../src/main/play/purchase-window.ts";
+import { aiGatewayVerdict } from "../../src/main/play/ai-gateway.ts";
 import { PLAY_ORIGIN } from "../../src/shared/play.ts";
 import { fakeClock } from "../helpers/play-viewer-rig.ts";
 
@@ -364,6 +366,21 @@ describe("Play's session while a purchase popup lives", () => {
     assert.equal(c.net.request("https://example.com/y", next.id, "mainFrame"), "cancel");
     c.advance(0);
     assert.deepEqual(c.log, ["purchase in_req", "out https://example.com/y"]);
+  });
+
+  test("Play's standing refusal of AI vendors answers before, while and after a popup lives", () => {
+    const c = capture();
+    // Play's session refuses a game's direct requests to AI vendors (`viewer-view.ts`).
+    standRequests(c.net.session, (request) => aiGatewayVerdict(request.url) !== null);
+    const vendor = "https://api.openai.com/v1/chat/completions";
+    assert.equal(c.net.request(vendor, c.game.id, "xhr"), "cancel", "before a popup");
+    const popup = c.reserved();
+    assert.equal(c.net.request(vendor, c.game.id, "xhr"), "cancel", "while one lives");
+    assert.equal(c.net.request(confirmPage("in_1"), c.game.id, "subFrame"), "cancel");
+    popup.close();
+    assert.equal(c.net.request(vendor, c.game.id, "xhr"), "cancel", "after the last goes");
+    assert.equal(c.net.request(confirmPage("in_1"), c.game.id, "subFrame"), "pass");
+    assert.equal(c.net.request("https://moon.genex.technology/asset.png", c.game.id, "image"), "pass");
   });
 
   test("the listener goes with the last popup, and a page is a purchase popup only while it lives", () => {

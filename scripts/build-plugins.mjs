@@ -176,6 +176,8 @@ async function buildUnreal(root, resources, sdk) {
     path.join(unreal, "panel.html"),
     await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")),
   );
+  // Genex's play-time AI plugin (C++), which a game that uses AI carries in its Plugins folder.
+  await cp(path.join(root, "src/plugins/unreal/GenexAI"), path.join(unreal, "GenexAI"), { recursive: true });
   // The editor helper is Unreal's own plugin, copied whole into a game's Plugins folder at setup.
   await cp(path.join(root, "src/plugins/unreal/GenexEditorHelper"), path.join(unreal, "GenexEditorHelper"), {
     recursive: true,
@@ -399,6 +401,8 @@ async function buildUnity(root, resources, sdk) {
   // Genex's Unity multiplayer package a game embeds, and the skill that explains it.
   for (const folder of ["multiplayer", "skills"])
     await cp(path.join(root, "src/plugins/unity", folder), path.join(unity, folder), { recursive: true });
+  // Genex's play-time AI package, embedded in a game's project by unity__add-ai, read beside the backend.
+  await cp(path.join(root, "src/plugins/unity/packages"), path.join(unity, "packages"), { recursive: true });
   // Genex's own type goes in as data: a panel can load no font from anywhere else.
   const panel = await inlinePanelSdk(
     await readFile(path.join(root, "src/plugins/unity/panel.html"), "utf8"),

@@ -65,6 +65,7 @@ import {
   clampRepeat,
 } from "../../substrate/preview-input.ts";
 import { readProjectShape, resolvePlayCommand } from "../../substrate/project-shape.ts";
+import { NATIVE_AI_OFF, type NativeAiBridge, type NativeAiHost, nativeAiBridge } from "../game-ai/bridge-native.ts";
 import { type ProcessSandbox, killChild, shellQuote } from "../../substrate/spawn.ts";
 import type { TargetSource } from "./computer-session.ts";
 
@@ -86,6 +87,10 @@ const STEP_DEADLINE_PER_SIMULATED_MS = 2;
 const MAX_STEP_DEADLINE_MS = 3 * MINUTE_MS;
 /** The most refusals kept between two reads, so a session that never reads them holds no more. */
 const MAX_KEPT_REFUSALS = 32;
+/** A game process's AI channel is this and its pid. */
+const NATIVE_CHANNEL_PREFIX = "native:";
+/** The channel of a target whose process has no pid to name it by. */
+const UNNAMED_CHANNEL = "native";
 
 const MESSAGE = {
   notBridge: "this build does not declare a Play Protocol game: studio.json needs a runtime and a play command",
@@ -113,13 +118,23 @@ export interface BridgeRefusal {
 export interface GameBridgeTarget extends ComputerTarget {
   /** The game's own `hello`; null on a target that never started. */
   readonly hello: PlayHello | null;
+  /** The game's play-time AI bridge; null unless its hello declared `capabilities.ai`. */
+  readonly ai: NativeAiBridge | null;
   /** The ops the game refused since the last read, oldest first; reading clears them. */
   refusals(): BridgeRefusal[];
 }
 
-/** What a target needs beyond its client: a sleep the tests can replace. */
+/** What a target needs beyond its client: a sleep the tests can replace, and play-time AI's host. */
 export interface GameBridgeOptions {
   sleep?: (ms: number) => Promise<void>;
+  /** Where a game that declared `capabilities.ai` sends its `ai` lines; absent, each is answered `ai_off`. */
+  ai?: NativeAiHost;
+}
+
+/** Where a target's game runs: its folder and the channel its AI calls are abandoned by. */
+export interface GameBridgePlace {
+  cwd: string;
+  channel: string;
 }
 
 /**
@@ -156,6 +171,9 @@ interface InputContext {
   hold: (ms: number) => Promise<void>;
 }
 
+/** What runs before each step of a held clock: play-time AI delivers what settled (nothing without AI). */
+type StepBoundary = () => Promise<void>;
+
 /** How long a `step` of `ms` simulated milliseconds may take to answer. */
 function stepDeadlineMs(ms: number): number {
   return Math.min(MAX_STEP_DEADLINE_MS, STEP_DEADLINE_BASE_MS + ms * STEP_DEADLINE_PER_SIMULATED_MS);
@@ -163,13 +181,15 @@ function stepDeadlineMs(ms: number): number {
 
 /**
  * Advance the game `ms` simulated milliseconds, in calls of at most {@link PLAY_MAX_STEP_MS}
- * (the longest step every game takes), each waited for as long as its simulation may take. The
- * simulated milliseconds, or null when the game did not say; nothing is sent for `ms` ≤ 0.
+ * (the longest step every game takes), each waited for as long as its simulation may take, each
+ * after its boundary (play-time AI's answers). The simulated milliseconds, or null when the game did
+ * not say; nothing is sent for `ms` ≤ 0.
  */
-async function stepGame(client: PlayClient, ms: number): Promise<number | null> {
+async function stepGame(client: PlayClient, ms: number, boundary: StepBoundary): Promise<number | null> {
   let simulated = 0;
   for (let left = ms; left > 0; left -= PLAY_MAX_STEP_MS) {
     const piece = Math.min(left, PLAY_MAX_STEP_MS);
+    await boundary();
     const ran = readStep(await client.call(PlayOp.Step, { ms: piece }, { timeoutMs: stepDeadlineMs(piece) }));
     if (ran === null) return null;
     simulated += ran;
@@ -327,17 +347,22 @@ function isRefusal(error: unknown): error is PlayProtocolError {
   return error instanceof PlayProtocolError && !isUnreachable(error);
 }
 
+/** The clock's parts beyond the client: its state, where refusals go, and play-time AI's bridge. */
+interface ClockParts {
+  state: BridgeState;
+  refused: (error: PlayProtocolError) => void;
+  ai: NativeAiBridge | null;
+  boundary: StepBoundary;
+}
+
 /**
  * The target's clock: pause, play and step, as far as the game declared them. A step the game
  * refuses answers null ("cannot step"), its refusal handed to `refused`; a dead process still throws.
+ * A clock started again delivers what play-time AI held for the next step at once.
  */
-function bridgeClock(
-  client: PlayClient,
-  caps: TargetCapabilities,
-  state: BridgeState,
-  refused: (error: PlayProtocolError) => void,
-): ComputerTarget["clock"] {
+function bridgeClock(client: PlayClient, caps: TargetCapabilities, parts: ClockParts): ComputerTarget["clock"] {
   if (caps.clock === ClockLevel.None) return undefined;
+  const { state, refused, ai, boundary } = parts;
   const pause = async () => {
     await client.call(PlayOp.Pause, {});
     state.held = true;
@@ -345,11 +370,12 @@ function bridgeClock(
   const start = async () => {
     await client.call(PlayOp.Play, {});
     state.held = false;
+    await ai?.flush();
   };
   if (!canStep(caps)) return { pause, start };
   const step = async (ms: number) => {
     try {
-      const ran = await stepGame(client, ms);
+      const ran = await stepGame(client, ms, boundary);
       state.held = true;
       return ran;
     } catch (error) {
@@ -390,25 +416,47 @@ async function bridgeShot(client: PlayClient, hello: PlayHello, quality: number)
   return { jpeg: Buffer.from(shot.data, "base64"), stats, surface: null, mime };
 }
 
-/** A Play Protocol game, through its open client, as a computer target. */
+/**
+ * The game's AI bridge, listening to its `ai` lines, when it declared `capabilities.ai`. Where no AI
+ * is wired every line is answered `ai_off`, so the game plays its fallbacks instead of waiting.
+ */
+function attachAi(
+  client: PlayClient,
+  hello: PlayHello,
+  host: NativeAiHost | undefined,
+  at: { place: GameBridgePlace; held: () => boolean },
+): NativeAiBridge | null {
+  const bridge = nativeAiBridge(client, { ...at.place, hello }, host ?? NATIVE_AI_OFF, at.held);
+  if (bridge) client.hearAi(bridge.hear);
+  return bridge;
+}
+
+/**
+ * A Play Protocol game, through its open client, as a computer target. `place` names where it runs,
+ * for play-time AI's caller.
+ */
 export function gameBridgeTarget(
   client: PlayClient,
   hello: PlayHello,
   options: GameBridgeOptions = {},
+  place: GameBridgePlace = { cwd: "", channel: UNNAMED_CHANNEL },
 ): GameBridgeTarget {
   const caps = capabilitiesFromHello(hello);
   const state: BridgeState = { pointer: null, held: false };
   const refusals = refusalLog();
-  const clock = bridgeClock(client, caps, state, refusals.add);
+  const ai = attachAi(client, hello, options.ai, { place, held: () => state.held });
+  const boundary: StepBoundary = ai ? ai.boundary : async () => {};
+  const clock = bridgeClock(client, caps, { state, refused: refusals.add, ai, boundary });
   const pause = options.sleep ?? ((ms: number) => sleep(ms).then(() => {}));
   // Inside an action a refused step is thrown, so the action counts as not applied.
   const hold = async (ms: number) => {
-    if (state.held && canStep(caps)) await stepGame(client, ms);
+    if (state.held && canStep(caps)) await stepGame(client, ms, boundary);
     else await pause(ms);
   };
   const ctx: InputContext = { client, view: hello.view, state, hold };
   return {
     hello,
+    ai,
     caps,
     refusals: refusals.take,
     viewSize: () => hello.view,
@@ -444,6 +492,7 @@ function unreachableTarget(): GameBridgeTarget {
   const refuse = () => Promise.reject(new Error(`${TargetRefusal.Unreachable}: ${MESSAGE.unreachable}`));
   return {
     hello: null,
+    ai: null,
     refusals: () => [],
     caps: capabilitiesFromHello(null),
     viewSize: () => ({ width: 1, height: 1 }),
@@ -480,6 +529,9 @@ export interface GameBridgeLaunchOptions {
   /** Starts the game some other way than `command` in the sandbox (an engine a plugin runs). */
   spawn?: () => Promise<{ child: ChildProcess; input?: Writable }>;
 }
+
+/** A game process's channel for play-time AI: what its calls are abandoned by when it goes. */
+const channelOf = (child: ChildProcess): string => `${NATIVE_CHANNEL_PREFIX}${child.pid ?? UNNAMED_CHANNEL}`;
 
 /** A process to stop, the client that can ask it to quit, and how long it is given. */
 interface StopPlan {
@@ -526,13 +578,19 @@ export async function launchGameBridge(options: GameBridgeLaunchOptions): Promis
     if (hello.protocol !== PLAY_PROTOCOL_VERSION)
       throw new PlayProtocolError(PlayFailure.Version, PlayOp.Hello, MESSAGE.otherVersion(hello.protocol));
     const opened = client;
+    const target = gameBridgeTarget(opened, hello, options.target, { cwd: options.cwd, channel: channelOf(child) });
+    // The process's AI calls are abandoned as soon as it is gone, however it went.
+    void streams.exited.then(() => target.ai?.close());
     return {
-      target: gameBridgeTarget(opened, hello, options.target),
+      target,
       client: opened,
       child,
       exited: streams.exited,
       running: () => !opened.exited,
-      stop: () => stopGame({ child, client: opened, exited: streams.exited, graceMs }),
+      stop: () => {
+        target.ai?.close();
+        return stopGame({ child, client: opened, exited: streams.exited, graceMs });
+      },
     };
   } catch (error) {
     await stopGame({ child, client, exited: streams.exited, graceMs });

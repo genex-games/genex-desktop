@@ -294,7 +294,9 @@ describe("seed upgrade across the move to TypeScript", () => {
     };
     const { modules, broken } = await registry.loadToolModules(ws);
     const shippedTools = (await readdir(path.join(seed, "tools"))).filter(
-      (name) => name.endsWith(".ts") && name !== "index.ts" && name !== "cover-tools.ts",
+      // A words module (`<module>-prompts.ts`) is text beside its tools, never a tool module.
+      (name) =>
+        name.endsWith(".ts") && name !== "index.ts" && name !== "cover-tools.ts" && !name.endsWith("-prompts.ts"),
     );
     assert.deepEqual(broken, []);
     for (const name of shippedTools)

@@ -24,7 +24,7 @@ import { GenexPromo } from "./panels/GenexPromo.tsx";
 import { nativeViewsUp } from "./play/play-model.ts";
 import { AvatarWelcome } from "./play/AvatarWelcome.tsx";
 import { PlayViewerLayer } from "./play/PlayViewerLayer.tsx";
-import { useGuestSignIn } from "./play/use-genex-sign-in.ts";
+import { useGuestSignIn, useModelsAsked } from "./play/use-genex-sign-in.ts";
 import { usePlayRemixes } from "./play/use-play-remixes.ts";
 import { AppSidebar } from "./shell/AppSidebar.tsx";
 import { PluginsRoom, Toasts } from "./shell/store-leaves.tsx";
@@ -103,6 +103,7 @@ export function App(): JSX.Element {
   useChatWidthVariable(shell, app);
   usePlayRemixes(navigation, chrome);
   useGuestSignIn();
+  useModelsAsked();
   // While Play's game or its menu lies over the window, no drag region takes the pointer from them (play.css).
   const playNative = usePlay((s) => nativeViewsUp(s.viewer));
   // A game playing in Play is modal: nothing under it takes the keyboard or a click.

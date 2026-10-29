@@ -8,6 +8,21 @@ import type { StudioApi } from "../../src/shared/studio-api.ts";
 import { ShaderFailure } from "../../src/shared/backdrop-shader.ts";
 import { CliInstallPhase } from "../../src/shared/cli-install.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
+import { AiWatcherSignIn, AiWatcherState, type AiWatcherView } from "../../src/shared/game-ai-watcher.ts";
+
+/** The plan watcher as a fresh profile has it: off and signed out. */
+const PLAN_WATCHER_OFF: AiWatcherView = {
+  enabled: false,
+  state: AiWatcherState.Off,
+  runners: [],
+  codexHeld: false,
+  resetsAt: null,
+  problem: null,
+  signIn: AiWatcherSignIn.SignedOut,
+  code: null,
+  cliAlso: false,
+  lastAnsweredAt: null,
+};
 
 export type StudioMethod = keyof StudioApi;
 export interface StudioCall<M extends StudioMethod = StudioMethod> {
@@ -198,6 +213,31 @@ const METHODS = [
   "playStats",
   "playCreators",
   "playCredits",
+  "gameAiMenu",
+  "gameAiPick",
+  "gameAiAnswer",
+  "gameAiEnable",
+  "gameAiActivity",
+  "gameAiSettings",
+  "gameAiSettingsSave",
+  "gameAiTapes",
+  "gameAiReportPreview",
+  "gameAiReport",
+  "gameAiCheck",
+  "gameAiCheckState",
+  "gameAiCheckStop",
+  "gameAiRecommend",
+  "gameAiPublishFacts",
+  "gameAiCredits",
+  "gameAiCheckout",
+  "gameAiResume",
+  "planWatcher",
+  "planWatcherSwitch",
+  "planWatcherSignIn",
+  "planWatcherCancelSignIn",
+  "planWatcherSignOut",
+  "gameAiInbox",
+  "gameAiInboxFix",
   "playHandleCheck",
   "playSetHandle",
   "playShare",
@@ -446,6 +486,11 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     genexSignIn: () => ({ status: GenexAccountStatus.SigningIn }),
     genexCancelSignIn: () => ({ status: GenexAccountStatus.SignedOut }),
     genexSignOut: () => ({ status: GenexAccountStatus.SignedOut }),
+    planWatcher: () => PLAN_WATCHER_OFF,
+    planWatcherSwitch: () => PLAN_WATCHER_OFF,
+    planWatcherSignIn: () => ({ ...PLAN_WATCHER_OFF, signIn: AiWatcherSignIn.SigningIn }),
+    planWatcherCancelSignIn: () => PLAN_WATCHER_OFF,
+    planWatcherSignOut: () => PLAN_WATCHER_OFF,
     playPeople: () => ({ people: [], unavailable: false }),
     playStats: () => null,
     playCreators: () => null,

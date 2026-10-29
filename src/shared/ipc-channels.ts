@@ -230,6 +230,31 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:assets.file": "assetLibraryFile",
   "studio:play.manage": "playManage",
   "studio:play.cover": "playCover",
+  "studio:game-ai.menu": "gameAiMenu",
+  "studio:game-ai.pick": "gameAiPick",
+  "studio:game-ai.answer": "gameAiAnswer",
+  "studio:game-ai.enable": "gameAiEnable",
+  "studio:game-ai.activity": "gameAiActivity",
+  "studio:game-ai.settings": "gameAiSettings",
+  "studio:game-ai.settings.save": "gameAiSettingsSave",
+  "studio:game-ai.tapes": "gameAiTapes",
+  "studio:game-ai.report.preview": "gameAiReportPreview",
+  "studio:game-ai.report": "gameAiReport",
+  "studio:game-ai.check": "gameAiCheck",
+  "studio:game-ai.check.state": "gameAiCheckState",
+  "studio:game-ai.check.stop": "gameAiCheckStop",
+  "studio:game-ai.recommend": "gameAiRecommend",
+  "studio:game-ai.publish-facts": "gameAiPublishFacts",
+  "studio:game-ai.credits": "gameAiCredits",
+  "studio:game-ai.checkout": "gameAiCheckout",
+  "studio:game-ai.resume": "gameAiResume",
+  "studio:plan-watcher": "planWatcher",
+  "studio:plan-watcher.switch": "planWatcherSwitch",
+  "studio:plan-watcher.sign-in": "planWatcherSignIn",
+  "studio:plan-watcher.cancel": "planWatcherCancelSignIn",
+  "studio:plan-watcher.sign-out": "planWatcherSignOut",
+  "studio:ai-reports.inbox": "gameAiInbox",
+  "studio:ai-reports.fix": "gameAiInboxFix",
   "studio:store.items": "storeItems",
   "studio:store.my-items": "storeMyItems",
   "studio:store.item-games": "storeItemGames",
@@ -405,8 +430,19 @@ export interface StudioInvokePayloads {
   "studio:plugins.choose-file": { id: string; request: Arg<"pluginChooseFile", 1> };
   "studio:plugins.genex-publish-review": { project: string };
   "studio:plugins.genex-publish-platforms": { project: string };
-  "studio:plugins.genex-publish": { project: string; review: ExportReview; title?: string; remix?: boolean };
-  "studio:plugins.genex-publish-apps": { project: string; title?: string; remix?: boolean };
+  "studio:plugins.genex-publish": {
+    project: string;
+    review: ExportReview;
+    title?: string;
+    remix?: boolean;
+    ai?: Arg<"genexPublish", 4>;
+  };
+  "studio:plugins.genex-publish-apps": {
+    project: string;
+    title?: string;
+    remix?: boolean;
+    ai?: Arg<"genexPublishApps", 3>;
+  };
   "studio:plugins.index": { refresh?: boolean };
   "studio:plugins.install-github": { spec: string };
   "studio:plugins.lookup-github": { link: string; version?: GithubVersion };
@@ -516,6 +552,31 @@ export interface StudioInvokePayloads {
   "studio:play.share": { url: string; at?: PlayPoint };
   "studio:play.manage": { gameId: string; change: PlayGameChange };
   "studio:play.cover": { gameId: string; image: Uint8Array; contentType: PlayCoverType };
+  "studio:game-ai.menu": { game: Arg<"gameAiMenu", 0> };
+  "studio:game-ai.pick": { game: Arg<"gameAiPick", 0>; model: Arg<"gameAiPick", 1> };
+  "studio:game-ai.answer": Arg<"gameAiAnswer", 0>;
+  "studio:game-ai.enable": { game: Arg<"gameAiEnable", 0>; enabled: boolean };
+  "studio:game-ai.activity": undefined;
+  "studio:game-ai.settings": undefined;
+  "studio:game-ai.settings.save": { patch: Arg<"gameAiSettingsSave", 0> };
+  "studio:game-ai.tapes": { project: string };
+  "studio:game-ai.report.preview": { game: Arg<"gameAiReportPreview", 0> };
+  "studio:game-ai.report": Arg<"gameAiReport", 0>;
+  "studio:game-ai.check": { project: string };
+  "studio:game-ai.check.state": { project: string };
+  "studio:game-ai.check.stop": { project: string };
+  "studio:game-ai.recommend": { project: string; model: Arg<"gameAiRecommend", 1> };
+  "studio:game-ai.publish-facts": { project: string };
+  "studio:game-ai.credits": undefined;
+  "studio:game-ai.checkout": { product: Arg<"gameAiCheckout", 0> };
+  "studio:game-ai.resume": { game: Arg<"gameAiResume", 0>; pause: Arg<"gameAiResume", 1> };
+  "studio:plan-watcher": undefined;
+  "studio:plan-watcher.switch": { enabled: boolean };
+  "studio:plan-watcher.sign-in": undefined;
+  "studio:plan-watcher.cancel": undefined;
+  "studio:plan-watcher.sign-out": undefined;
+  "studio:ai-reports.inbox": { project: string };
+  "studio:ai-reports.fix": { project: string; id: string };
   "studio:store.items": { slug: string };
   "studio:store.my-items": { slug: string };
   "studio:store.item-games": { itemId: string };

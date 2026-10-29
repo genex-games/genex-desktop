@@ -33,7 +33,8 @@
      The only element besides the canvas is the fatal-error panel, hidden until a throw. -->
 <pre id="fatal"></pre>
 
-<!-- three.js is vendored with the studio: games build and run with no network at all. -->
+<!-- three.js is vendored with the studio: games build and run with no network at all.
+     genex-ai is how the game asks a model while it is played (docs/AI.md). -->
 <script type="importmap">
   {
     "imports": {
@@ -41,7 +42,8 @@
       "three/tsl": "/vendor/three.tsl.js",
       "three": "/vendor/three.module.js",
       "three/addons/": "/vendor/three/examples/jsm/",
-      "three/": "/vendor/three/"
+      "three/": "/vendor/three/",
+      "genex-ai": "/vendor/genex/ai/index.js"
     }
   }
 </script>
