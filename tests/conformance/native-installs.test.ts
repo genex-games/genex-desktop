@@ -11,7 +11,6 @@ import { chmod, cp, mkdir, readdir, readFile, realpath, stat, writeFile } from "
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
-import genexManifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { type InstallOutcome, nativeInstalls, SAVES } from "../../src/main/play/native-installs.ts";
 import { GAME_BUNDLE_PREFIX, runTool, type ToolRun, WINDOWED_KEY } from "../../src/main/play/native-unpack.ts";
 import type { PlayGameDetail } from "../../src/shared/play.ts";
@@ -229,12 +228,7 @@ describe("Play's native installer", { skip: SKIP }, () => {
     await installs.install("dust-runners");
     await installs.idle();
     assert.equal((await installs.record("dust-runners"))?.windowed, true);
-    const skill = genexManifest.skills.find((one) => one.name === "publishing-apps");
-    const skillText =
-      skill && "file" in skill
-        ? await readFile(new URL(`../../src/plugins/genex/${skill.file}`, import.meta.url), "utf8")
-        : "";
-    assert.match(skillText, new RegExp(WINDOWED_KEY), "the agent is told the key");
+    // The agent is told the key in the Genex plugin's publishing-apps skill (plugins.test.ts).
     const index = JSON.parse(await readFile(path.join(root, "index.json"), "utf8"));
     const { engine: _engine, windowed: _windowed, ...older } = index.games["dust-runners"];
     await writeFile(path.join(root, "index.json"), JSON.stringify({ ...index, games: { "dust-runners": older } }));

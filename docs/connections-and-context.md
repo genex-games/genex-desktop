@@ -745,7 +745,9 @@ preview stays single-player. Fixture profiles refuse the CLI and package tools.
 
 Genex 1.6.0 adds the game's Genex cover: the one real 16:9 frame genex.games shows on its gallery
 card, its page and every shared link, unrelated to Studio's own sidebar cover. The game stages it as
-a demo named `genex-cover`. The plugin's `cover` skill, read on demand, says when and by whom (once the game
+a demo named `genex-cover`. Once a run lands its build in a web game while Genex is on, Studio asks the
+chat's agent for it as a step of its own, in a hidden message sent with the person's engine and model
+but not their Loop (`core/cover-step.ts`). The plugin's `cover` skill, read on demand, says when and by whom (once the game
 looks like itself; before every publish, the first or an update, it checks `genex__cover` status
 and shoots first while no shot is kept; after a big visual change; by the session that owns the
 build; after a publish whose own outcome sent no frame it offers once to make one, never again

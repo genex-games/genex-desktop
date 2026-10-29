@@ -192,6 +192,8 @@ import { FinishReviews, finishHistory } from "./core/finish-review.ts";
 import { PreviewService } from "./core/previews.ts";
 import { AutoResumeService, type AutoResumeDeps } from "./core/auto-resume.ts";
 import { heldStartAsk, heldStartRuns } from "./core/held-start.ts";
+import { coverStepAsk, coverStepRuns } from "./core/cover-step.ts";
+import { CoreFact, hasFact } from "../shared/project-facts.ts";
 import { availableMemory } from "../substrate/hardware.ts";
 import { RecoveryService } from "./core/recovery.ts";
 import { ChatRewindService } from "./core/rewind.ts";
@@ -1826,11 +1828,20 @@ export class StudioCore {
       }
     }
     for (const runId of changedRuns) this.emit(UiEvent.RunSummaryChanged, { runId });
-    this.#autoResume.observe(threadId, result.events);
-    for (const runId of heldStartRuns(result.events)) void this.#askAfterHeldStart(threadId, runId);
-    // Off the append's path: reading the game's folder never holds up the log.
-    void noteBuildEnd(this.#buildEnds, threadId, result.events).catch(() => {});
+    this.#afterRunEnds(threadId, result.events);
     return result.latestEventId;
+  }
+
+  /**
+   * What a chat's appended events start once a run ends: a Resume, the agent told why a Loop did not
+   * start, the cover of a landed build, and the game list's view of the build. Off the append's
+   * path: reading the game's folder never holds up the log.
+   */
+  #afterRunEnds(threadId: string, events: readonly EventEnvelope[]): void {
+    this.#autoResume.observe(threadId, events);
+    for (const runId of heldStartRuns(events)) void this.#askAfterHeldStart(threadId, runId);
+    for (const runId of coverStepRuns(events)) void this.#askForCover(threadId, runId);
+    void noteBuildEnd(this.#buildEnds, threadId, events).catch(() => {});
   }
 
   /** A Loop a plugin held back at its start: the chat's agent is told why, to fix it (`core/held-start.ts`). */
@@ -1841,6 +1852,27 @@ export class StudioCore {
     } catch (err) {
       this.options.onLog?.(
         `[core] the agent wasn't told why the Loop didn't start in ${threadId}: ${errorMessage(err)}`,
+        "stderr",
+      );
+    }
+  }
+
+  /**
+   * A run that landed its build in a web game while the Genex plugin is on: the chat's agent makes
+   * the game's Genex cover now, as a step of its own (`core/cover-step.ts`).
+   */
+  async #askForCover(threadId: string, runId: string): Promise<void> {
+    try {
+      if (!this.plugins?.enabled(GENEX_PLUGIN_ID)) return;
+      const project = gameOfThread((await this.store.getRecord(threadId).catch(() => null))?.metadata);
+      if (!project) return;
+      const kind = await this.games.kindOf(project).catch(() => null);
+      if (!kind || !hasFact(kind.facts, CoreFact.WebGame, ".")) return;
+      const ask = coverStepAsk(threadId, await this.store.listEvents(threadId), runId);
+      if (ask) await this.sendUserMessage(ask.text, ask.options);
+    } catch (err) {
+      this.options.onLog?.(
+        `[core] the agent wasn't asked for the cover in ${threadId}: ${errorMessage(err)}`,
         "stderr",
       );
     }

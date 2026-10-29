@@ -23,6 +23,7 @@ import { RESERVED_TOOLBAR_LABELS } from "../../src/substrate/plugins/reserved-la
 import type { PluginChange, PluginInfo, PluginManifest, PluginSource } from "../../src/shared/plugins.ts";
 import { CallCutOff } from "../../src/shared/plugins.ts";
 import { PluginCallCutOff } from "../../src/substrate/plugins/process.ts";
+import { WINDOWED_KEY } from "../../src/main/play/native-unpack.ts";
 const source = EXAMPLE_PLUGIN;
 test("bundled plugin uses a real child, tools and settings share one contract; disabled fails closed", async () => {
   const f = await fixture();
@@ -2180,6 +2181,8 @@ test("bundled Genex indexes its vendored skills, serves them through genex__skil
       "genex__cover-set",
     ])
       assert.ok(names.includes(name), `${name} in ${names.join(", ")}`);
+    // Read on demand as the agent reads it: the publishing-apps skill names the key a windowed Mac app sets.
+    assert.match(await readGenexSkill(registry, "publishing-apps", binding), new RegExp(WINDOWED_KEY));
     const cover = splitVendoredSkill(await readGenexSkill(registry, "genex-cover", binding));
     assert.equal(
       cover.preface,

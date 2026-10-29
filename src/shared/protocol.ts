@@ -117,6 +117,8 @@ export const MessageOrigin = {
   TagRetry: "tag-retry",
   /** A Loop the chat started that a plugin held back before its first turn: why, for the agent to fix (`core/held-start.ts`). */
   LoopHeld: "loop-held",
+  /** A run landed its build: the agent is asked to make the game's Genex cover now (`core/cover-step.ts`). */
+  CoverStep: "cover-step",
 } as const;
 export type MessageOrigin = (typeof MessageOrigin)[keyof typeof MessageOrigin];
 const MESSAGE_ORIGINS: ReadonlySet<unknown> = new Set(Object.values(MessageOrigin));
