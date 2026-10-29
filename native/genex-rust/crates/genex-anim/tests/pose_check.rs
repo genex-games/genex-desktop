@@ -66,7 +66,7 @@ fn the_rest_rig_is_a_whole_body() {
 fn a_clean_walk_passes_and_every_defect_names_its_code() {
     let rig = rig();
     let check = PoseCheck::new(rig.skeleton());
-    let swing = |sign: f32| move |t: f32| Quat::from_rotation_x(sign * 0.3 * (t * 2.0 * PI).sin());
+    let swing = |sign: f32| move |t: f32| Quat::from_rotation_x(sign * 0.6 * (t - 0.5));
     let walk = turning(&rig, "Walk", "LeftUpLeg", swing(1.0));
     assert_eq!(check.check_clip(&walk, Some(ClipRole::Walk)), vec![], "a leg swing keeps the body");
 
