@@ -182,3 +182,22 @@ fn a_two_handed_hold_lands_both_grips_on_the_weapon_and_never_breaks_the_arms() 
     assert!(!result.primary && !result.support);
     assert!(model.iter().all(|m| m.is_finite()));
 }
+
+#[test]
+fn an_animator_can_be_aimed_at_the_weapon_through_its_arm_targets() {
+    use genex_anim::animator::Limb;
+    let rig = rig();
+    let skeleton = rig.skeleton();
+    let sockets = WeaponSockets::of(skeleton, &HumanoidMap::of(skeleton)).expect("a humanoid has hands");
+    let (_, model) = rest_pose(&rig);
+    let hold = WeaponHold { primary: Vec3::new(-0.1, 1.3, 0.3), support: Vec3::new(0.1, 1.3, 0.5), weight: 1.0 };
+    let [(first, right), (second, left)] = sockets.limb_targets(&model, &hold).expect("targets");
+    assert_eq!((first, second), (Limb::RightArm, Limb::LeftArm));
+    let moved = |socket: &genex_anim::weapon::Socket, target: Vec3, goal: Vec3| {
+        let hand = model[usize::from(socket.joint.raw())].w_axis.truncate();
+        (target - hand).distance(goal - socket.position(&model).expect("grip"))
+    };
+    assert!(moved(&sockets.primary, right.target, hold.primary) < 1e-5);
+    assert!(moved(&sockets.support, left.target, hold.support) < 1e-5);
+    assert!(right.pole.is_finite() && left.pole.is_finite());
+}

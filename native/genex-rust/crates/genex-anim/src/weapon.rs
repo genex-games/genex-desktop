@@ -6,6 +6,7 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::animator::{Limb, LimbTarget};
 use crate::humanoid::{HumanoidBone, HumanoidMap};
 use crate::ids::JointId;
 use crate::ik::{TwoBoneChain, TwoBoneIk, apply_two_bone};
@@ -91,6 +92,22 @@ impl WeaponSockets {
             Socket { joint: arm.hand, offset: along * forearm * PALM_SHARE }
         };
         Some(WeaponSockets { primary: socket(right), support: socket(left), right, left })
+    }
+}
+
+impl WeaponSockets {
+    /// The arm targets that put each grip on `hold`, for an animator's `reach(limb, Some(target))`:
+    /// the hand joint goes where it must for its grip to meet the weapon, the elbow stays where
+    /// `model` has it. One pass, so the grip, which swings with the wrist, ends within a few
+    /// centimetres; [`hold_weapon`] iterates to the exact point on a pose you own.
+    pub fn limb_targets(&self, model: &[Mat4], hold: &WeaponHold) -> Option<[(Limb, LimbTarget); 2]> {
+        let at = |joint: JointId| model.get(usize::from(joint.raw())).map(|m| m.w_axis.truncate());
+        let arm = |limb, arm: Arm, socket: Socket, goal: Vec3| {
+            let hand_goal = at(arm.hand)? + (goal - socket.position(model)?);
+            let pole = (at(arm.lower)? - at(arm.upper)?).normalize_or_zero();
+            Some((limb, LimbTarget { target: hand_goal, pole, weight: hold.weight }))
+        };
+        Some([arm(Limb::RightArm, self.right, self.primary, hold.primary)?, arm(Limb::LeftArm, self.left, self.support, hold.support)?])
     }
 }
 
