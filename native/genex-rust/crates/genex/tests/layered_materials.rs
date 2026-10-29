@@ -5,7 +5,7 @@
 
 use genex::glam::Vec3;
 use genex::present::{AssetCache, to_scene};
-use genex::{Camera, Color, Cover, Frame, Layer, LayerMask, Material, Transform, Weather, WeatherKind};
+use genex::{Camera, Color, Cover, Frame, MaterialLayer, LayerMask, Material, Transform, Weather, WeatherKind};
 use genex_render::layers::Cover as RenderCover;
 use genex_render::scene::Scene;
 
@@ -33,7 +33,7 @@ fn a_material_s_cover_and_lobes_reach_its_draw() {
 fn maps_that_did_not_load_are_left_out_of_the_layers() {
     let layered = Material::color(Color::WHITE)
         .with_detail("textures/grain.png", "", 8.0)
-        .with_layer(Layer::textured("textures/moss.png", "textures/moss_n.png", "textures/moss_orm.png", 2.0).masked_by(LayerMask::Up, 1.0))
+        .with_layer(MaterialLayer::textured("textures/moss.png", "textures/moss_n.png", "textures/moss_orm.png", 2.0).masked_by(LayerMask::Up, 1.0))
         .with_parallax("textures/bricks_h.png", 0.05);
     let mut frame = Frame::default();
     frame.cube_with(Transform::IDENTITY, &layered);
