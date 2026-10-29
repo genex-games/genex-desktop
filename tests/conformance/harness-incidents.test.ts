@@ -18997,26 +18997,22 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       run: { ...yard, art },
       state: { artPlannedAt: t0, workers: new Map(), lastShip: null } as Record<string, any>,
     };
-    const held = String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000));
+    const held = String(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000));
     assert.match(
       held,
       /^worker_start waits for the sourcing stage \(up to 29 more min\): docs\/ASSETS\.md in the integration names no file for bench, birch\./,
     );
-    assert.equal(
-      await sourcingRefusal(loopRun as never, { sourcing: "yes" }, t0 + 60_000),
-      null,
-      "the sourcing worker starts",
-    );
+    assert.equal(await sourcingRefusal(loopRun as never, "sourcing", t0 + 60_000), null, "the sourcing worker starts");
     await mkdir(path.join(integration, "docs"), { recursive: true });
     await writeFile(path.join(integration, "docs", "ASSETS.md"), "# Assets\n- bench: assets/genex/b1/bench.glb\n");
-    assert.match(String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000)), /names no file for birch\./);
+    assert.match(String(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000)), /names no file for birch\./);
     await writeFile(
       path.join(integration, "docs", "ASSETS.md"),
       "- bench: assets/genex/b1/bench.glb\n- `birch`: assets/cc0/c2/birch.glb\n",
     );
-    assert.equal(await sourcingRefusal(loopRun as never, {}, t0 + 60_000), null, "every planned model is sourced");
+    assert.equal(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000), null, "every planned model is sourced");
     assert.equal(
-      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, {}, t0 + SOURCING_MS),
+      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, "yard", t0 + SOURCING_MS),
       null,
       "the stage is timeboxed",
     );
@@ -19130,5 +19126,58 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       /^\[stick-tree\] came back in 2 rounds here: source trees as models with leaf or twig cards/,
     );
     assert.ok(!lessons.some((lesson) => lesson.startsWith("[haze-plane]")), "only look blockers carry a rule");
+  });
+  it("G3-6b. the art director saw 960×540 thumbnails re-cut 125 times and, with 14 frames of its own, no reference still: its look keeps two reference slots and carries close-ups of where the nearest props stand", async () => {
+    const { shipImages } = await import("../../src/harness-seed/loop/ship-review.ts");
+    const { closeUps, CLOSE_UP_CROP } = await import("../../src/harness-seed/loop/close-ups.ts");
+    const shot = (camera: string) => ({ camera, path: `/f/${camera}.jpg`, base64: `px-${camera}` });
+    const evidence: Record<string, unknown> = {
+      shots: [
+        shot("default"),
+        shot("hero:yard"),
+        shot("eye:here"),
+        ...Array.from({ length: 14 }, (_, i) => shot(`cam${i}`)),
+      ],
+    };
+    const recorder = ctxRecorder({
+      handlers: {
+        "preview.crop": (params: Record<string, unknown>) => ({
+          base64: `crop-${String(params.path)}`,
+          path: "/c.jpg",
+          bytes: 1,
+          width: 800,
+          height: 450,
+        }),
+      },
+    });
+    evidence.closeUps = await closeUps(recorder.ctx, {
+      run: yard,
+      evidence,
+      heroes: ["hero:yard"],
+      label: "director/judge_1",
+    });
+    assert.deepEqual(
+      (evidence.closeUps as Array<{ camera: string }>).map((c) => c.camera),
+      ["hero:yard", "default", "eye:here"],
+    );
+    assert.deepEqual(recorder.paramsOf("preview.crop")[0]?.crop, CLOSE_UP_CROP);
+    const refs = {
+      ...yard,
+      reference: {
+        name: "x",
+        shots: [],
+        frames: [1, 2, 3].map((n) => ({ label: `ref${n}`, data: "iVBOR", mimeType: "image/png" })),
+      },
+    } as Run;
+    const labels = shipImages(refs, evidence).map((image) => image.label);
+    assert.equal(labels.length, 14);
+    assert.deepEqual(
+      labels.filter((label) => label.startsWith("REFERENCE")),
+      ["REFERENCE / ref1", "REFERENCE / ref2"],
+    );
+    assert.deepEqual(
+      labels.filter((label) => label.startsWith("CLOSE-UP")),
+      ["CLOSE-UP / hero:yard", "CLOSE-UP / default", "CLOSE-UP / eye:here"],
+    );
   });
 });

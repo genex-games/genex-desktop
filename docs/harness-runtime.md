@@ -98,7 +98,7 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
   with the greybox rule and the boot rule (`loop/look-bar-prompts.ts`, `loop/destination-budgets.ts`).
 - Assets first (`director/sourcing.ts`). `worker_start` waits, up to 30 minutes from the art pass, until
   `docs/ASSETS.md` in the integration names a file for every planned prop, organic and character tag
-  (`- <tag>: <file>`), except for the sourcing worker (`sourcing=yes`). Once one part builds, another
+  (`- <tag>: <file>`), except for the sourcing worker (the part `id=sourcing`). Once one part builds, another
   waits, up to 45 minutes, for an art director's review with no blocker. A plan part's `hero` camera is
   in every art director's look.
 - Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res

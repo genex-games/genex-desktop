@@ -1,6 +1,6 @@
 import { qualityRefusal } from "../quality-lint.ts";
 import { sharedOwnershipNote } from "./ownership.ts";
-import { sourcingRefusal, spreadRefusal } from "./sourcing.ts";
+import { SOURCING_PART, sourcingRefusal, spreadRefusal } from "./sourcing.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
 import { goalCommission } from "./commission.ts";
@@ -1548,9 +1548,9 @@ function markAssetsStage(loopRun: LoopRun, worker: Worker, sourcing: boolean): v
 }
 
 /** Why `worker_start` waits for assets first (sourcing.ts), or null. */
-async function assetsFirstRefusal(loopRun: LoopRun, id: string, args: AnyRecord, sourcing: boolean) {
+async function assetsFirstRefusal(loopRun: LoopRun, id: string, sourcing: boolean) {
   const now = Date.now();
-  const held = await sourcingRefusal(loopRun, args, now);
+  const held = await sourcingRefusal(loopRun, id, now);
   return held ?? (sourcing ? null : spreadRefusal(loopRun, id, now));
 }
 
@@ -1561,8 +1561,8 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const precondition = await startPreconditions(loopRun, id, args);
   if (precondition) return precondition;
   // Assets first on a look bar (sourcing.ts): the sourcing stage, then one area's look-dev hero shot.
-  const sourcing = yes(args.sourcing, false);
-  const assetsFirst = await assetsFirstRefusal(loopRun, id, args, sourcing);
+  const sourcing = id === SOURCING_PART;
+  const assetsFirst = await assetsFirstRefusal(loopRun, id, sourcing);
   if (assetsFirst) return assetsFirst;
   const missingPrerequisite = await requireMultiplayer(loopRun, goal);
   if (missingPrerequisite) return missingPrerequisite;

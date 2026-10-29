@@ -89,7 +89,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         },
         workers: {
           type: "string",
-          description: `JSON array of the parts you hand out, 1–${MAX_PLAN_WORKERS}: [{"id":"plaza-light","title":"Plaza light","seam":"the plaza's light and sky","owns":"src/plaza.js","done":["dusk from every camera"],"minutes":45}]. multiplayer:true on a part needing Genex online play checks its host prerequisites first. added:true on a part SCOPE does not name makes it optional. hero names the registered camera that shows the part's area finished: every art director's look photographs it. worker_start takes the same id; dropping or adding a part is a new plan.`,
+          description: `JSON array of the parts you hand out, 1–${MAX_PLAN_WORKERS}: [{"id":"plaza-light","title":"Plaza light","seam":"the plaza's light and sky","owns":"src/plaza.js","done":["dusk from every camera"],"minutes":45}]. multiplayer:true on a part needing Genex online play checks its host prerequisites first. added:true on a part SCOPE does not name makes it optional. worker_start takes the same id; dropping or adding a part is a new plan.`,
         },
         cut: {
           type: "string",
@@ -126,7 +126,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         art: {
           type: "string",
           description:
-            'Required when the ask sets a visual bar (photoreal, AAA, reference stills): every area\'s assets, JSON [{"area","tier","kind","asset","source","tags","why"}], sourced from Genex, CC0 models and scans, Blender kits for the modular shell only; a refusal gives the grammar.',
+            'Required when the ask sets a visual bar (photoreal, AAA, reference stills): every area\'s assets, JSON [{"area","tier","kind","asset","source","tags","why"}]; a refusal gives the grammar.',
         },
         start: {
           type: "string",
@@ -196,11 +196,6 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         cameras: {
           type: "string",
           description: "Registered cameras its evidence comes from, comma-separated (default: default).",
-        },
-        sourcing: {
-          type: "string",
-          description:
-            'yes: the asset-sourcing worker on a run with an art pass — it generates and fetches the planned models into assets/ and lists each as "- <tag>: <file>" in docs/ASSETS.md before builders start.',
         },
         done: {
           type: "string",

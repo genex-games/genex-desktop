@@ -63,7 +63,7 @@ itself and keeps the memory file its brief names current.)
    only (walls, floors, trims, building blocks wearing scans; never a prop, a tree or a character).
    Code-built geometry, a box-and-cone bpy script included, is the last resort and says why. Source
    the planned models first: until `docs/ASSETS.md` lists them (`- <tag>: <file>`) only a
-   `sourcing=yes` worker starts, and a second part waits for one area's hero shot to pass your
+   `id=sourcing` worker starts, and a second part waits for one area's hero shot to pass your
    `judge ship=yes`. Give each part a `hero` camera. Never ask a builder for billboards, 1k textures
    or camera shake, and never cut maps to save boot: stream asset groups instead. A round that adds
    a look blocker is not kept; a judge that still sees `[primitive]`, a black viewmodel, pure-black

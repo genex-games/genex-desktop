@@ -41,6 +41,8 @@ import type { MessageImage } from "../types/host-api.d.ts";
 
 /** The most frames one review is shown: the build's own first, then motion, then the reference. */
 export const SHIP_REVIEW_IMAGES = 14;
+/** How many of those a review against reference stills keeps for the stills, whatever else fills the room. */
+const REFERENCE_RESERVE = 2;
 /** The size the art director looks at: a real screen, not the 960×600 every worker's window has. */
 export const SHIP_VIEW = { width: 1600, height: 900 } as const;
 /** The most defects one review keeps, worst first. */
@@ -170,10 +172,22 @@ function referenceFrames(run: Run): MessageImage[] {
  * reference stills with the room left.
  */
 export function shipImages(run: Run, evidence: AnyRecord, max = SHIP_REVIEW_IMAGES): MessageImage[] {
-  const own = ownFrames(evidence).slice(0, max);
-  const motion = motionFrames(evidence).slice(0, Math.max(0, max - own.length));
-  const room = Math.max(0, max - own.length - motion.length);
-  return [...own, ...motion, ...referenceFrames(run).slice(0, room)];
+  // A review against the references always carries some: gen3's 14 own frames left none.
+  const references = referenceFrames(run);
+  const reserved = Math.min(references.length, REFERENCE_RESERVE, max);
+  const near = closeUpFrames(evidence).slice(0, Math.max(0, max - reserved));
+  const own = ownFrames(evidence).slice(0, Math.max(0, max - reserved - near.length));
+  const motion = motionFrames(evidence).slice(0, Math.max(0, max - reserved - near.length - own.length));
+  const room = Math.max(0, max - own.length - near.length - motion.length);
+  return [...own, ...near, ...motion, ...references.slice(0, room)];
+}
+
+/** The close-ups a look carries (close-ups.ts), labelled by the camera they were cut from. */
+function closeUpFrames(evidence: AnyRecord): MessageImage[] {
+  const frames: AnyRecord[] = Array.isArray(evidence.closeUps) ? evidence.closeUps : [];
+  return frames
+    .filter((frame) => typeof frame?.base64 === "string" && frame.base64)
+    .map((frame) => imageOf(frame.base64, `CLOSE-UP / ${String(frame.camera ?? "shot")}`));
 }
 
 /** The build's own readings, labeled as its output; the HUD read against the kind's budget. */
