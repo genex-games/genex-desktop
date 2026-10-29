@@ -114,7 +114,7 @@ impl Layer {
     /// `tiles` times per tile of the material's own maps. Masked by a world noise of 2 m patches
     /// until [`Layer::masked_by`] says otherwise.
     pub fn textured(base: &str, normal: &str, orm: &str, tiles: f32) -> Layer {
-        Layer { base: Some(Arc::from(base)), normal: Some(Arc::from(normal)), orm: Some(Arc::from(orm)), ..Layer::color(Color::WHITE) }
+        Layer { base: Some(Arc::from(base)), normal: Some(Arc::from(normal)), orm: Some(Arc::from(orm)), tiles, ..Layer::color(Color::WHITE) }
     }
 
     /// A flat layer of `color` (no maps).

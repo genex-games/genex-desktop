@@ -170,7 +170,7 @@ fn lobes_write_their_rows_and_transmission_blends_the_material() {
         anisotropy_rotation: 1.0,
         transmission: 0.0,
     };
-    let material = Material::color([90; 4]).with_layers(MaterialLayers { lobes, ..MaterialLayers::default() });
+    let material = Material::color([90, 90, 90, 255]).with_layers(MaterialLayers { lobes, ..MaterialLayers::default() });
     let row = material.to_gpu_ext();
     assert_eq!(row.lobes, [1.0, 0.1, 1.0, 1.0]);
     assert_eq!(row.sheen, [0.4, 0.2, 0.3, 0.5]);

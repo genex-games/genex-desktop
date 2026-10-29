@@ -41,7 +41,7 @@ fn maps_that_did_not_load_are_left_out_of_the_layers() {
     let detail = layers.detail.expect("the detail is kept");
     assert_eq!((detail.albedo, detail.normal, detail.tiles), (None, None, 8.0), "no texture loaded");
     let layer = layers.layer.expect("the layer keeps its tint and mask");
-    assert_eq!((layer.mask, layer.base), (LayerMask::Up, None));
+    assert_eq!((layer.mask, layer.base, layer.tiles), (LayerMask::Up, None, 2.0));
     assert_eq!(layers.parallax, None, "parallax without its height map is off");
 }
 
