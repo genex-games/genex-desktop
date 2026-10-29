@@ -75,7 +75,7 @@ read each row.
 | Horror, stealth | as FPS, plus `docs/api/lighting.md` (local lights, fog) | `fps/`, `interior-kit/` | interior night | the kit, scans with normal and ORM, decals for wear |
 | Third-person action, adventure | `docs/api/characters.md`, `docs/api/animation.md` | `third-person/` | the place's | rigged hero (`genex__asset character`), props |
 | Interior, architecture, school, office | `docs/examples/rooms-and-buildings.md`, `docs/api/lighting.md` | `interior-kit/`, `interior-room/`, `looks/` | interior day or night | 2k scans per surface, kit pieces, hero props |
-| Open world, exterior, town | `docs/api/terrain.md`, `docs/api/instance-groups.md`, `docs/api/streaming.md` | `looks/`, `crowd/` | exterior day, overcast and snow, rain, forest, desert | terrain layers from scans, CC0 or generated models, an HDRI or the sky |
+| Open world, exterior, town | `docs/api/terrain.md`, `docs/api/instance-groups.md`, `docs/api/streaming.md` | `looks/`, `crowd/` | exterior day, overcast and snow, rain, forest, desert | Library materials, skies and props, `gfx.plant` trees, terrain layers from scans |
 | Night city, street | `docs/api/lighting.md`, `docs/api/particles.md` | `looks/` | night street | lamp and facade models, wet-surface scans |
 | Racing, vehicles | `docs/api/physics.md`, `docs/api/terrain.md` | `looks/` (exterior) | exterior day | vehicle models (`genex__asset model`), track scans |
 | Crowds, many agents | `docs/api/navigation.md`, `docs/api/instance-groups.md` | `crowd/` | the place's | rigged walkers, instanced props |
@@ -98,16 +98,16 @@ calling that facet done.
 
 | Asset class | Route, best first | Never |
 | --- | --- | --- |
-| Hero prop, furniture, vehicle (seen within 10 m) | `cc0__search` a model, else `genex__asset` `model` with `auto-size` (and `face-limit` for a mid prop) | a cube or cone script, a flat-coloured `blender__model` |
+| Hero prop, furniture, vehicle (seen within 10 m) | `library__search` then `library__add`, else `cc0__search` a model, else `genex__asset` `model` with `auto-size` (and `face-limit` for a mid prop) | a cube or cone script, a flat-coloured `blender__model` |
 | Character, creature, enemy | `genex__asset` `character` or `creature` (rigged, then `animate`) | a capsule or a mannequin |
 | Weapon and first-person arms | `docs/examples/fps-arms/` kit, else `genex__asset` `model` | arms or a gun built from boxes |
-| Walls, floors, ceilings, ground surfaces | `cc0__fetch` a scan at `2k` with its normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, a 1k or smaller map on a near surface |
+| Walls, floors, ceilings, ground surfaces | `library__search` then `library__add`, else `cc0__fetch` a scan at `2k` with its normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, a 1k or smaller map on a near surface |
 | Modular shell (walls with openings, trims, windows, doors) | `blender__model` kit script textured with scans (`docs/examples/interior-kit/`); Blender otherwise only finishes a heavy model (decimate, levels) | untextured modules, boxes with no reveals |
 | Trees, bushes, grass | `gfx.plant(&PlantSpec::new(species, season).seed(n))` (`docs/api/vegetation.md`: bark and leaf maps, levels, impostor, wind), else a CC0 tree model with its tier; vary seed, height and species | a cone, sphere or box tree; one model cloned in a row |
 | Ground across the world | one `Terrain` with scan layers packed by `cc0__terrain-layer` (`docs/api/terrain.md`, `docs/examples/exterior-snow/`) | a box or a quad as outdoor ground |
 | Snow, dust, moss, wet on things | a material cover, `Material::with_cover(Cover::snow(..))` (`docs/api/layered-materials.md`); falling snow and rain are `frame.weather(&Weather::heavy_snow(), seconds)` | a slab or a thin box on top |
 | Posters, grime, cracks, puddles | `frame.decal(..)` with a `genex__asset` `image` or CC0 decal | thin boxes over a surface |
-| Sky and outdoor light | `Environment::sky()` with the recipe's sun, or a CC0 `.hdr` at 4k | a sky-dome texture on a sphere |
+| Sky and outdoor light | `library__search` then `library__add`, else `Environment::sky()` with the recipe's sun, or a CC0 `.hdr` at 4k | a sky-dome texture on a sphere |
 | Sounds | `genex__asset` `sfx`, or CC0 | silence for a mechanic that has sound |
 
 **Never ship.** The judges name each of these by its id and refuse the round that adds one.

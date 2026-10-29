@@ -18,14 +18,14 @@ request in parallel, before any facet builds an area's content. Again when an ar
 
 | Class | Route, best first | Never |
 | --- | --- | --- |
-| Hero prop, furniture, vehicle (seen within 10 m) | `cc0__search` a model; else `genex__asset` `model` with `auto-size` (`face-limit` for a mid prop) | a cube or cone script, a flat-coloured `blender__model` |
+| Hero prop, furniture, vehicle (seen within 10 m) | `library__search` then `library__add`, else `cc0__search` a model; else `genex__asset` `model` with `auto-size` (`face-limit` for a mid prop) | a cube or cone script, a flat-coloured `blender__model` |
 | Character, creature, enemy | `genex__asset` `character` or `creature`, then `animate` | a capsule, a mannequin |
 | First-person arms and weapon | the arms kit in a Rust folder (`docs/examples/fps-arms/`), else `genex__asset` `model` | arms or a gun from boxes |
-| Walls, floors, ground surfaces | `cc0__fetch` a scan at `2k` with normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, 1k or less on a near surface |
+| Walls, floors, ground surfaces | `library__search` then `library__add`, else `cc0__fetch` a scan at `2k` with normal and ORM maps; `genex__asset` `texture` for a surface no scan has | a scan without normal and ORM, 1k or less on a near surface |
 | Modular shell | `blender__model` kit scripts textured with scans | untextured modules |
-| Trees, bushes, foliage | a CC0 tree model, decimated, with its impostor; `genex__asset` `image` (transparent) for leaf and grass cards | cone, sphere or box trees; one model in rows |
+| Trees, bushes, foliage | `gfx.plant(..)` in a Rust game (`docs/api/vegetation.md`), else a CC0 tree model with its impostor; `genex__asset` `image` (transparent) for leaf and grass cards | cone, sphere or box trees; one model in rows |
 | Posters, grime, decals | `genex__asset` `image` or a CC0 decal | thin boxes |
-| Sky | the physical sky with the scene recipe, or a CC0 `.hdr` at 4k | a textured dome |
+| Sky | `library__search` then `library__add`, else the physical sky with the scene recipe, or a CC0 `.hdr` at 4k | a textured dome |
 | Sound | `genex__asset` `sfx`, or CC0 | none |
 
 ## Rules
