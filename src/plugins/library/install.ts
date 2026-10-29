@@ -97,6 +97,18 @@ async function fetchPackFile(
   return checked(file, new Uint8Array(await readFile(at)));
 }
 
+/** Write `bytes` to `at` through a `.part` beside it, removed again when the write or the rename fails. */
+async function writeAtomically(at: string, bytes: Uint8Array): Promise<void> {
+  const temporary = `${at}.${randomUUID()}.part`;
+  try {
+    await writeFile(temporary, bytes, { flag: "wx" });
+    await rename(temporary, at);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
 /** Whether the stored copy at `at` still matches `file`'s pin. */
 async function storedMatches(at: string, file: LibraryPackFile): Promise<boolean> {
   const stat = await lstat(at).catch(() => null);
@@ -126,9 +138,7 @@ async function installFiles(
     const at = path.join(dir, file.name);
     if (await storedMatches(at, file)) continue;
     const bytes = await fetchPackFile(source, entry.id, pack, file, net);
-    const temporary = `${at}.${randomUUID()}.part`;
-    await writeFile(temporary, bytes, { flag: "wx" });
-    await rename(temporary, at);
+    await writeAtomically(at, bytes);
   }
   return dir;
 }
