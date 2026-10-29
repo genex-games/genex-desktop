@@ -144,15 +144,19 @@ const blockerKey = (blocker: FactBlocker): string => `${blocker.blocker}\u0000${
 
 /**
  * The blockers the challenger's facts show that the incumbent's do not: what the round added. A
- * challenger with no facts adds nothing by facts; an incumbent with none had nothing, so every
- * challenger blocker is new.
+ * challenger with no facts adds nothing by facts, and neither does one beside an incumbent that
+ * reported none: the bodycam rerun refused every title and combat round for the greybox world the
+ * map builder was still texturing, because "the game you had" carried no look facts to compare.
+ * An incumbent that reported facts with no tag drawn had nothing, so every challenger blocker is new.
  */
 export function addedFactBlockers(
   challenger: AnyRecord | null | undefined,
   incumbent: AnyRecord | null | undefined,
   organic: ReadonlySet<string> = new Set(),
 ): string[] {
-  const before = new Set(factBlockers(lookFactsOf(incumbent), organic).map(blockerKey));
+  const had = lookFactsOf(incumbent);
+  if (!had) return [];
+  const before = new Set(factBlockers(had, organic).map(blockerKey));
   return factBlockers(lookFactsOf(challenger), organic)
     .filter((blocker) => !before.has(blockerKey(blocker)))
     .map((blocker) => blocker.text);

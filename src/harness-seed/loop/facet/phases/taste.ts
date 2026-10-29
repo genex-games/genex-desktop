@@ -19,6 +19,7 @@ import { tasteCamerasOf } from "../taste-cameras.ts";
 import { asksForLook } from "../../look-bar.ts";
 import { auditProvenance } from "../../provenance.ts";
 import { addedMeasured, measuredBlockers, presentOnly } from "../../temporal-checks.ts";
+import { incumbentFindings } from "../incumbent-findings.ts";
 
 /** How much of the move a verdict's reason quotes. */
 const MOVE_QUOTED = 120;
@@ -109,17 +110,18 @@ function tasteReason(loop: FacetLoop, round: FacetRound, decided: Decision): str
  * What the harness measures itself on the challenger: the provenance audit (provenance.ts) on a run
  * with a visual bar, the luminance band, the doorway's exposure and the sprint's comfort
  * (temporal-checks.ts). A blocking finding the accepted build did not already have is one the round
- * added. The findings ride on the round by key, and become the incumbent's when it is kept (keep.ts).
+ * added; what it already had is its own evidence measured the same way (incumbent-findings.ts).
+ * The findings ride on the round by key, and become the incumbent's when it is kept (keep.ts).
  */
 async function measureRound(loop: FacetLoop, round: FacetRound): Promise<void> {
   const { run } = loop;
   const lookBar = asksForLook(run);
-  const audit = lookBar
-    ? await auditProvenance(run, round.evidence.state, loop.worktree ?? loop.workdir).catch(() => [])
-    : [];
+  const root = loop.worktree ?? loop.workdir;
+  const audit = lookBar ? await auditProvenance(run, round.evidence.state, root).catch(() => []) : [];
   const measured = [...presentOnly(audit), ...measuredBlockers(run, round.evidence, lookBar)];
   round.measured = Object.fromEntries(measured.map((finding) => [finding.key, finding.severity]));
-  const added = addedMeasured(measured, loop.incumbentMeasured ?? {});
+  const before = await incumbentFindings(run, loop.incumbentEvidence, loop.incumbentMeasured, root);
+  const added = before ? addedMeasured(measured, before) : [];
   if (!added.length) return;
   round.taste.addedBlockers = [...new Set([...(round.taste.addedBlockers ?? []), ...added])];
   round.taste.satisfied = false;
