@@ -36,6 +36,8 @@ change touches (nearly every game needs Ctx and Drawing).
 | Ctx | `docs/api/ctx.md` | Raw keys, touches, pads, pointer, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
 | Input | `docs/api/input.md` | Actions, touch controls, rebinding, prompts, replays. |
 | Drawing | `docs/api/drawing.md` | Tags, models from `assets/`, `gfx.mesh` meshes, cubes, spheres, lines, clear colour. |
+| Mesh builders | `docs/api/meshes.md` | Rounded cuboids, profiles, extrude, lathe, sweep, tube, subdivide, displace, weighted normals, auto UVs. |
+| Set dressing | `docs/api/scatter.md` | Seeded rule-based placement on surfaces, volumes and splines; clutter, debris, decals; instance groups. |
 | Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, the stable checksum. |
 | UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |
 | Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |

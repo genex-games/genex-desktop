@@ -184,8 +184,10 @@ whether it builds; `gfx.mesh` refuses with a `MeshError` (`error.code.wire()`), 
 3), `mesh-index-out-of-range`, `mesh-attribute-mismatch` (normals or UVs given but not one per
 position), `mesh-not-finite` and `mesh-too-large` (past `MESH_VERTICES_MAX` or
 `MESH_TRIANGLES_MAX`, 262,144 each). A built mesh's path starts `genex-mesh/` and is no file under
-`assets/`. A bigger or organic shape (furniture, a radiator, a car) is still a GLB: generated, a
-CC0 download or a Blender script.
+`assets/`. Shapes that must not read as boxes (rounded edges, turned, swept or smoothed solids,
+rocks) have builders: `docs/api/meshes.md`; filling a level with clutter, debris and wear is
+`docs/api/scatter.md`. A bigger or organic shape (a car, a sofa, a tree) is still a GLB: generated,
+a CC0 download or a Blender script.
 
 `Camera::look_at(position, target)` places a view;
 `Camera { projection: Projection::Orthographic, fovy: 12.0, ..Camera::look_at(position, target) }`

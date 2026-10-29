@@ -202,7 +202,10 @@ variation, uneven patches each jittered from a seed, close tints of one scan, a 
 a zone of its own, decals over the rest. Then light it as World look says: a sun that falls in at the windows, every glowing
 fitting paired with a light, a probe and a volume per room, decals for wear, thin fog. Boxes are
 for the greybox: they have no reveals, sills or broken edges, which the kit or a built mesh
-(`gfx.mesh`, `docs/api/drawing.md`) gives.
+(`gfx.mesh`, `docs/api/drawing.md`) gives, with rounded edges from the builders in
+`docs/api/meshes.md`. A level is dressed by rules, not by hand: rubble, papers, litter, grime,
+posters and puddles come from a seeded `Dressing` (`docs/api/scatter.md`,
+`docs/examples/set-dressing/`).
 
 ## Game systems
 

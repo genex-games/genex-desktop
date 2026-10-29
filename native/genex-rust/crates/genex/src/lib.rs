@@ -63,6 +63,10 @@ pub mod gpu;
 mod input;
 mod lod;
 mod mesh;
+mod mesh_ops;
+mod mesh_shapes;
+mod noise;
+mod scatter;
 #[doc(hidden)]
 pub mod loading;
 pub mod manifest;
@@ -130,6 +134,10 @@ pub use frame::UvMapping;
 /// What keeps a [`Material`]'s tiled textures from reading as a repeat (Bodycam B2b).
 pub use frame::UvVariation;
 pub use mesh::{MESH_PATH_PREFIX, MESH_TRIANGLES_MAX, MESH_VERTICES_MAX, MeshData, MeshError, MeshErrorCode};
+pub use mesh_ops::SUBDIVIDE_LEVELS_MAX;
+pub use mesh_shapes::{EXTRUDE_BEVEL_SEGMENTS, LATHE_SEGMENTS_MAX, PROFILE_SMOOTH_DEGREES, Profile, ROUND_SEGMENTS_MAX};
+pub use noise::{NOISE_OCTAVES_MAX, fbm3, noise3};
+pub use scatter::{DRESSING_CANDIDATES_MAX, DRESSING_TINT_BUCKETS, DRESSING_VARIANTS_MAX, Dressed, Dressing, Layer, Placed, SPLINE_SAMPLES_PER_SPAN, Spline, Surface, Zone};
 pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
