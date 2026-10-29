@@ -13,7 +13,7 @@
 //!    rows into every destination, an empty set for a game with none, so a lane build admits the
 //!    same sources natively, on the web and on a phone; only a build outside the lane (no rows
 //!    compiled in, no folder) admits a compiled-in source undeclared, at api 1;
-//! 3. its text comes, natively with a game folder (a dev build, Live), from the folder through
+//! 3. its text comes, natively with a game folder (`wgsl_root`, or `cargo run`/`cargo test`), from the folder through
 //!    genex-render's `read_extension_source` (by realpath inside the folder, a regular file, never a
 //!    link, at most `WGSL_MAX_BYTES`), so an edited shader takes effect at the next reset with no
 //!    rebuild; else from the binary (`game.wgsl(path, include_str!(..))`, what a web, phone or
