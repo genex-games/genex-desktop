@@ -176,13 +176,13 @@ const SYSROOT_PACKAGES = [
  * update and records it here.
  */
 const SYSROOT_PACKAGE_VERSIONS = [
-  "libX11-devel-1.6.8-9.el8_10.x86_64",
+  "libX11-devel-1.6.8-10.el8_10.x86_64",
   "libXrandr-devel-1.5.2-1.el8.x86_64",
   "libXinerama-devel-1.1.4-1.el8.x86_64",
   "libXcursor-devel-1.1.15-3.el8.x86_64",
-  "libXi-devel-1.7.10-1.el8.x86_64",
+  "libXi-devel-1.7.10-2.el8_10.x86_64",
   "libXext-devel-1.3.4-1.el8.x86_64",
-  "libXrender-devel-0.9.10-7.el8.x86_64",
+  "libXrender-devel-0.9.10-8.el8_10.x86_64",
   "libXfixes-devel-5.0.3-7.el8.x86_64",
   "libxkbcommon-devel-0.9.1-1.el8.x86_64",
   "wayland-devel-1.21.0-1.el8.x86_64",
