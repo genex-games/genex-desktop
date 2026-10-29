@@ -24,6 +24,8 @@ import { tmpDir } from "../helpers/tmp.ts";
 const LIVE = process.env.STUDIO_GROK_CLI_TESTS === "1";
 /** How long one scripted turn may take. */
 const TURN_TIMEOUT_MS = 120_000;
+/** How long the made-up sign-in may take. */
+const SIGN_IN_TIMEOUT_MS = 60_000;
 /** What the scripted command writes in the session's folder. */
 const PROOF = { file: "grok-proof.txt", text: "ok" } as const;
 const PROBE_SOURCE = `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(PROOF.file)}, ${JSON.stringify(PROOF.text)});\nconsole.log("probe ran");\n`;
@@ -41,17 +43,30 @@ async function grokBinary(): Promise<string> {
   return found.status.path;
 }
 
+/**
+ * The provider command `grok login` runs. On Windows Grok hands it to `cmd /C` as one argument,
+ * which Rust escapes `\"`-style and cmd does not unescape: the paths go unquoted there.
+ */
+function providerCommand(token: string): string {
+  if (process.platform !== "win32") return `"${process.execPath}" "${token}"`;
+  assert.ok(!`${process.execPath}${token}`.includes(" "), "unquoted paths without spaces");
+  return `${process.execPath} ${token}`;
+}
+
 /** `grok login` into the test's own home, with a made-up token from a script of the test's own. */
 async function signIn(binary: string, root: string): Promise<void> {
   const token = path.join(root, "token.mjs");
   await writeFile(token, 'console.log(JSON.stringify({ access_token: "fake-session-token", expires_in: 3600 }));\n');
   const env = {
     ...process.env,
-    GROK_AUTH_PROVIDER_COMMAND: `"${process.execPath}" "${token}"`,
+    GROK_AUTH_PROVIDER_COMMAND: providerCommand(token),
     GROK_DISABLE_AUTOUPDATER: "1",
   };
   const child = spawnCommand(binary, ["login"], { env, stdio: "ignore" });
+  // A provider command that fails sends `grok login` to the browser, where it waits for good.
+  const timer = setTimeout(() => child.kill(), SIGN_IN_TIMEOUT_MS);
   const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+  clearTimeout(timer);
   assert.equal(code, 0, "grok login with the made-up token");
 }
 
@@ -77,7 +92,8 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
       const auth = path.join(process.env.GROK_HOME, "auth.json");
       console.log(execFileSync("icacls", [auth], { encoding: "utf8" }));
       const store = JSON.parse(await readFile(auth, "utf8")) as Record<string, Record<string, unknown>>;
-      for (const [scope, entry] of Object.entries(store)) console.log(`scope ${scope}: ${Object.keys(entry).join(", ")}`);
+      for (const [scope, entry] of Object.entries(store))
+        console.log(`scope ${scope}: ${Object.keys(entry).join(", ")}`);
     }
   });
 
