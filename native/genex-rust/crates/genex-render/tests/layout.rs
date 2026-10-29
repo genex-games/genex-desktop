@@ -94,7 +94,8 @@ const GOLDEN: [(&str, usize); 35] = [
     ("PassView", 16),
     // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`);
     // lane FQ flipped 912 -> 928: each sun cascade's caster error (`GpuCullViews::shadow_lod`).
-    ("CullViews", 928),
+    // AAA review WP-15 flipped 928 -> 2080: twelve more cull views (two point lights' faces).
+    ("CullViews", 2080),
     ("DrawIndexedArgs", 20),
     ("MeshVertex", 48),
     ("SkinVertex", 32),

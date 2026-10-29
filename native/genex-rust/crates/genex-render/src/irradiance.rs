@@ -954,7 +954,7 @@ impl GridSchedule {
         if slot.published && !crate::sky::lut_due(frame.frame_index, frame.cadence) {
             return GridWork::new();
         }
-        if slot.relighting && frame.frame_index % RELIGHT_CADENCE != 0 {
+        if slot.relighting && !frame.frame_index.is_multiple_of(RELIGHT_CADENCE) {
             return GridWork::new();
         }
         let count = slot.volume.cell_count();

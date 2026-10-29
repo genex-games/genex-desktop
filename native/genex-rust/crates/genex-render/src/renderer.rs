@@ -5661,7 +5661,13 @@ impl Renderer {
     /// Whether the game asked for a shadowed spot under a quality that draws them (sticky): the
     /// shadow array then holds the spot atlas layer, and the budget counts it.
     pub fn uses_shadowed_spots(&self) -> bool {
-        self.spot_atlas || self.point_atlas
+        self.spot_atlas
+    }
+
+    /// Whether the game asked for a shadowed point light under a quality that draws them (sticky,
+    /// AAA review WP-15): the shadow array then holds the point layer, and the budget counts it.
+    pub fn uses_shadowed_points(&self) -> bool {
+        self.point_atlas
     }
 
     /// Draw every shadowed spot's casters into its tile of the atlas layer (after the drawn

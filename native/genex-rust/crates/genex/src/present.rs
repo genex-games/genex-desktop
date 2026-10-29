@@ -2310,6 +2310,7 @@ impl Presenter {
         handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
+        handle.borrow_mut().note_point_atlas(self.resilient.renderer().renderer().uses_shadowed_points());
         // The impostors baked on the renderer in use (LOD-16, `volatile.render.lod`).
         handle.borrow_mut().note_impostors(self.assets.impostors.stats());
         // What the frame's characters did and how the renderer skinned them (AN-23).

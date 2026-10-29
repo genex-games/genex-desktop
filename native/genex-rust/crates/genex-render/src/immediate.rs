@@ -1553,7 +1553,6 @@ impl FrameRenderer {
         }
     }
 
-    /// The settle re-render the next frame draws (None: a Live frame).
     /// What the exposure metered and drew for the last frame read back (`state().__render.exposure`,
     /// AAA review WP-5): Live's a few frames late, a settled capture's own once it is drawn.
     pub fn exposure_telemetry(&self) -> crate::post::exposure::ExposureTelemetry {
@@ -1570,7 +1569,7 @@ impl FrameRenderer {
         self.exposure_frames += 1;
         let Some(node) = self.exposure.as_ref() else { return Ok(()) };
         let capture = set == HistorySet::Capture;
-        let due = if capture { settle.is_none_or(|settle| settle.is_last()) } else { self.exposure_frames % u64::from(crate::post::exposure::READBACK_EVERY) == 0 };
+        let due = if capture { settle.is_none_or(|settle| settle.is_last()) } else { self.exposure_frames.is_multiple_of(u64::from(crate::post::exposure::READBACK_EVERY)) };
         if self.exposure_readback.is_none() {
             self.exposure_readback = Some(crate::post::exposure::ExposureReadback::new(&gpu.device)?);
         }
@@ -1584,6 +1583,7 @@ impl FrameRenderer {
         Ok(())
     }
 
+    /// The settle re-render the next frame draws (None: a Live frame).
     pub fn settling(&self) -> Option<SettleFrame> {
         self.settle
     }
