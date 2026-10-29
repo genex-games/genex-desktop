@@ -586,7 +586,8 @@ fn metal_sheen_brightens_the_rim_of_cloth() {
     let Some(gpu) = gpu() else { return };
     let mut renderer = renderer(&gpu, &hdr_plain(LayerTier::Layers), desktop());
     let cloth = Material::color([40, 20, 60, 255]).with_pbr(0.0, 0.9);
-    let velvet = MaterialLayers { lobes: Lobes { sheen_color: [0.9, 0.7, 1.0], sheen_roughness: 0.4, ..Lobes::default() }, ..MaterialLayers::default() };
+    // Velvet's sheen is rough (0.6..0.8 in the Khronos samples): a wide lobe that lights the rim.
+    let velvet = MaterialLayers { lobes: Lobes { sheen_color: [0.9, 0.7, 1.0], sheen_roughness: 0.7, ..Lobes::default() }, ..MaterialLayers::default() };
     // The radius-2 sphere seen from 6 m: its silhouette's top is 70.5 degrees from the view axis,
     // so a point at 66 degrees faces the camera at a grazing 85 degrees, lit from above.
     let camera = CameraDesc::look_at([0.0, 0.0, 6.0], [0.0, 0.0, 0.0]);

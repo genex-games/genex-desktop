@@ -116,6 +116,10 @@ fn gx_detail(s: Surface, ext: GxMaterialExt, uv: vec2<f32>, uv_dx: vec2<f32>, uv
     if ext.detail_look.y > 0.0 {
         fade = clamp(1.0 - distance / ext.detail_look.y, 0.0, 1.0);
     }
+    // Past its fade the detail changes nothing: no fetch.
+    if fade <= 0.0 {
+        return out;
+    }
     let albedo = gx_layer_texture(ext.detail.x);
     if albedo != NO_TEXTURE {
         let texel = gx_class_texel(true, albedo, uv * tiles, uv_dx * tiles, uv_dy * tiles).rgb;
@@ -147,6 +151,11 @@ fn gx_layer_mask(ext: GxMaterialExt, world_pos: vec3<f32>, g: vec3<f32>, vertex_
 // the mask is half way, the higher layer shows, within the blend depth; 0 is the base whole, 1
 // the layer whole.
 fn gx_second_layer(s: Surface, ext: GxMaterialExt, uv: vec2<f32>, uv_dx: vec2<f32>, uv_dy: vec2<f32>, f: GxLayerFrame, vertex_color: vec4<f32>) -> Surface {
+    // Where the mask is 0 the blend is exactly the base, whatever the heights: no fetch at all.
+    let mask = gx_layer_mask(ext, s.world_pos, f.g, vertex_color);
+    if mask <= 0.0 {
+        return s;
+    }
     var out = s;
     let tiles = ext.layer_shape.w;
     let luv = uv * tiles;
@@ -174,15 +183,15 @@ fn gx_second_layer(s: Surface, ext: GxMaterialExt, uv: vec2<f32>, uv_dx: vec2<f3
     if height_ref != NO_TEXTURE {
         height = gx_class_texel(false, height_ref, luv, ldx, ldy).r;
     }
+    // At mask 1 the blend is exactly the layer: the base's height is not read.
     var base_height = 0.5;
     let base_height_ref = gx_layer_texture(ext.parallax.x);
-    if base_height_ref != NO_TEXTURE {
+    if base_height_ref != NO_TEXTURE && mask < 1.0 {
         base_height = gx_class_texel(false, base_height_ref, uv, uv_dx, uv_dy).r;
     }
     // A height blend that is exactly the base at mask 0 and the layer at mask 1, whatever the
     // heights (Mishkinis' depth as the width of the line between them).
     let depth = max(ext.layer_shape.y, 0.01);
-    let mask = gx_layer_mask(ext, s.world_pos, f.g, vertex_color);
     let x = (height - base_height) + (2.0 * mask - 1.0) * (1.0 + depth);
     let w = clamp(x / depth * 0.5 + 0.5, 0.0, 1.0);
     out.albedo = mix(out.albedo, albedo, w);
@@ -193,9 +202,9 @@ fn gx_second_layer(s: Surface, ext: GxMaterialExt, uv: vec2<f32>, uv_dx: vec2<f3
     return out;
 }
 
-// `s` with its cover where it faces up (every tier; its noise from tier 1): the coverage of the
-// slope band from the cover's steepest slope to the softness above it, carved by the noise, then
-// held against the amount (1 - amount is the coverage it needs). Where it lies its colour replaces
+// `s` with its cover where it faces up (every tier; its noise from tier 1): the slope band from the
+// cover's steepest slope to the softness above it, times the covered share its amount asks for
+// (in patches by its noise, or evenly without). Where it lies its colour replaces
 // the base colour by its opacity, it darkens what stays, and its roughness and flattened normal
 // replace the surface's.
 fn gx_cover(s: Surface, ext: GxMaterialExt, g: vec3<f32>) -> Surface {
