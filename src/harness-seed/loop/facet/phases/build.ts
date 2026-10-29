@@ -1,4 +1,5 @@
 /** The build turn — interrupted by a steer or wound down by the clock, retried after a provider outage — and a turn that was stopped on purpose. */
+import { noteSessionRound } from "../session-rotation.ts";
 import { roleEffort, RoleKey } from "../../model-roles.ts";
 import { buildTurn } from "../../build-turn.ts";
 import { type RoomClock, withWorkerRoom } from "../../workers/room.ts";
@@ -233,6 +234,7 @@ async function delegatedBuild(loop: FacetLoop, round: FacetRound): Promise<void>
     }
     turn = await followingTurn(loop, round, delegation, windDown);
   } while (turn);
+  noteSessionRound(loop);
   if (!delegation.ok) noteFailedDelegation(loop, round, delegation);
 }
 

@@ -1,8 +1,38 @@
 # Characters
 
 A world holds its characters and ragdolls and drives them in `on_update`, before the runtime's
-physics step. The types come from `genex` (`Character`, `CharacterMotion` and `CharacterNav` are
-in the prelude).
+physics step. `Character`, `CharacterMotion` and `CharacterNav` are in the prelude; the rest is
+at the crate root. Every type and call in one line:
+
+```rust
+use genex::{CharacterError, CharacterParams, CharacterStep, RootMotion};
+use genex::{HumanoidBone, Ragdoll, RagdollPart, RagdollProfile}; // physics builds only
+use genex::physics::{ColliderHandle, RigidBodyHandle};
+Character::spawn(&mut sim.physics, feet, params);              // -> Result<Character, CharacterError>
+CharacterParams { jump_speed: 9.0, ..CharacterParams::default() }; // every field an f32 (below)
+// radius, height, max_slope_degrees, step_height, snap_to_ground, gravity, jump_speed, accel, decel, turn_rate
+character.drive(physics, CharacterMotion::Velocity { wish, jump }, dt); // -> CharacterStep
+// CharacterStep { moved: Vec3, grounded, sliding, landed, left_ground } (bools)
+// CharacterMotion::Velocity { wish, jump } | Root(RootMotion) | Mixed { root, wish, jump, root_share }
+character.feet(); character.velocity();                        // -> Vec3
+character.facing(); character.grounded();                      // -> Quat, bool
+character.transform().into();                                  // -> Transform
+character.body(); character.collider();                        // -> Option<RigidBodyHandle>, Option<ColliderHandle>
+character.ground_ray(&sim.physics); character.nav_config(); character.remove(physics);
+Character::on_ground(feet, params);                            // -> Result<Character, CharacterError>, no physics
+character.drive_on(|x, z| terrain.height(x, z), motion, dt);    // -> CharacterStep
+Ragdoll::build(&mut sim.physics, &animator, model, &profile);   // model: Mat4 -> Result<Ragdoll, AnimationError>
+ragdoll.follow(physics, &animator, model); ragdoll.go_limp(physics, part, velocity);
+ragdoll.power(physics, part, strength); ragdoll.recover(physics, part, seconds);
+```
+
+Exclude the capsule from your own ray casts with
+`QueryFilter::default().exclude_rigid_body(body)` (`docs/api/physics.md`).
+
+Common mistake: a head, hand or weapon socket is not on the `Character` or the `CharacterAsset`
+(neither has a `joint` method). It is the animator's: `animator.socket(joint, model)` answers the
+joint's world `Mat4`, with the `JointId` from `hero.skeleton()`'s `find` by name
+(`docs/api/animation.md`). Place a camera or a gun there after the animator's update.
 
 ## The controller
 

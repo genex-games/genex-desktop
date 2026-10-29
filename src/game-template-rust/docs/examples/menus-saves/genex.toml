@@ -1,0 +1,31 @@
+# The menus-saves example's manifest (copy it over the game's own genex.toml, keeping your title).
+# It draws its menus with the kit (`genex::ui`) and keeps its slots with `game.saves`; neither
+# needs a switch. Its menu labels are words in code: a game with locales keys them to `.ftl` lines
+# (`docs/api/text.md`).
+[game]
+title = "Menus and saves"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+
+[physics]
+enabled = false
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

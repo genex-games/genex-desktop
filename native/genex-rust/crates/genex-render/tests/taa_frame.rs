@@ -596,3 +596,124 @@ fn metal_a_fast_moving_custom_draw_leaves_no_trail_under_taa() {
 /// How far the custom cube's motion may stand from its own, as a share of it (a cube's centre
 /// pixel sees a point a little off the centre, on its turned face).
 const CUSTOM_MOTION_SHARE_MAX: f32 = 0.25;
+
+// ---------------------------------------------------------------------------------------------
+// Bodycam (owner, 2026-10-28): the Rust template's starter scene (a metallic block turning on a
+// floor under the sun) at Live's ultra preset ghosted under TAA: the block's shadow smeared into a
+// long rounded blob with ghost edges, and a dark streak crossed the block's face. With TAA off the
+// shadow was crisp. A moving shadow on a still receiver, and a draw without an id, must not ghost.
+
+/// The starter scene's frame size (wide enough for the shadow to span many pixels).
+const STARTER_SIZE: (u32, u32) = (384, 256);
+/// The starter's turn (radians a second, `SPIN_PER_SECOND`) and Live's tick rate.
+const STARTER_SPIN_PER_SECOND: f32 = 0.8;
+const STARTER_TICKS_PER_SECOND: f32 = 60.0;
+/// Ticks the block turns before the compared frame: two seconds, past the floor's history.
+const STARTER_TICKS: u64 = 120;
+/// A pixel ghosts when its luma differs from the TAA-off frame's by more than this many levels
+/// and stands more than [`EDGE_REACH_PX`] from every edge of the TAA-off frame (a neighbour pair
+/// more than [`EDGE_LEVELS`] apart), where anti-aliasing alone differs.
+const GHOST_LEVELS: f32 = 16.0;
+const EDGE_REACH_PX: i64 = 1;
+const EDGE_LEVELS: f32 = 10.0;
+/// The most ghost pixels the turning block may add over the same block standing still (whose
+/// differences are anti-aliasing's alone; the reported blob added well over a thousand).
+const GHOST_PIXELS_MAX: usize = 40;
+
+/// The starter scene at `tick` as a Live frame: the floor and the block turned by `spin` radians,
+/// the block under `id` (None: drawn without one, as the template drew it).
+fn starter_frame(tick: u64, spin: f32, id: Option<&str>) -> ImmediateFrame {
+    let mut frame = ImmediateFrame::new(CameraDesc::look_at([4.0, 2.2, 5.5], [0.0, 0.5, 0.0]), [150, 180, 215, 255]);
+    let lighting = frame.lighting_mut();
+    lighting.sun_dir = glam::Vec3::new(-0.62, 0.45, -0.64).normalize().to_array();
+    lighting.sun_color = [255, 255, 255];
+    lighting.sun_intensity = 3.0;
+    lighting.ambient = [170, 190, 220];
+    lighting.ambient_intensity = 0.2;
+    lighting.shadows = true;
+    let floor = genex_render::scene::scaled([0.0, -0.5, 0.0], [1800.0, 1.0, 1800.0]);
+    let block = (glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.5, 0.0)) * glam::Mat4::from_rotation_y(spin)).to_cols_array();
+    frame.mesh(MeshId::CUBE, floor, Material::color([140, 136, 128, 255]).with_pbr(0.0, 0.9));
+    frame.id(id.map(DrawId::from));
+    frame.mesh(MeshId::CUBE, block, Material::color([224, 168, 72, 255]).with_pbr(1.0, 0.3));
+    frame.id(None);
+    frame.set_tick(tick);
+    frame
+}
+
+/// Live's ultra preset on a desktop-high class, with `anti_aliasing`.
+fn starter_quality(anti_aliasing: AntiAliasing) -> Quality {
+    let class = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+    let mut quality = genex_render::presets::preset_quality(genex_render::settings::QualityPreset::Ultra, class);
+    quality.anti_aliasing = anti_aliasing;
+    quality
+}
+
+/// The starter scene's last frame after [`STARTER_TICKS`] at `quality`, the block turning (or
+/// standing at its last turn).
+fn starter_run(gpu: &Gpu, quality: &Quality, id: Option<&str>, turning: bool) -> Capture {
+    let mut frames = FrameRenderer::new(gpu, STARTER_SIZE.0, STARTER_SIZE.1, RenderOptions { msaa: false }).expect("renderer");
+    let renderer = frames.renderer_mut();
+    renderer.set_scene_format(SceneFormat::Rgba16Float);
+    renderer.set_device_class(DeviceClass::new(FormFactor::Desktop, PerformanceTier::High));
+    renderer.set_quality(quality);
+    renderer.set_render_scale(1.0);
+    renderer.set_environment(&genex_render::settings::Environment::sky());
+    // TAA's history alone, in display levels: local exposure (on at ultra) lifts the shadow's
+    // levels and with them any difference in it (45 ghost pixels with it, 27 without).
+    let look = renderer.look().with_local_exposure(genex_render::post::local_exposure::LocalExposure::OFF);
+    renderer.set_look(look);
+    let spin = |tick: u64| STARTER_SPIN_PER_SECOND * tick as f32 / STARTER_TICKS_PER_SECOND;
+    for tick in 1..=STARTER_TICKS {
+        let at = if turning { spin(tick) } else { spin(STARTER_TICKS) };
+        frames.render(gpu, &starter_frame(tick, at, id), CullPath::Gpu, None).expect("Live frame");
+    }
+    frames.capture(gpu).expect("capture")
+}
+
+/// The pixels of `taa` more than [`GHOST_LEVELS`] from `reference` away from the reference's
+/// edges, and the largest such difference.
+fn ghost_pixels(taa: &Capture, reference: &Capture) -> (usize, f32) {
+    let (a, b) = (lumas(taa), lumas(reference));
+    let (w, h) = (reference.width() as i64, reference.height() as i64);
+    let at = |x: i64, y: i64| b[(y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) as usize];
+    let step = |x: i64, y: i64| (at(x, y) - at(x + 1, y)).abs().max((at(x, y) - at(x, y + 1)).abs());
+    let on_edge = |x: i64, y: i64| (-EDGE_REACH_PX - 1..=EDGE_REACH_PX).any(|dy| (-EDGE_REACH_PX - 1..=EDGE_REACH_PX).any(|dx| step(x + dx, y + dy) > EDGE_LEVELS));
+    let mut ghosts = 0;
+    let mut worst = 0.0f32;
+    for y in 0..h {
+        for x in 0..w {
+            let diff = (a[(y * w + x) as usize] - b[(y * w + x) as usize]).abs();
+            if diff > GHOST_LEVELS && !on_edge(x, y) {
+                ghosts += 1;
+                worst = worst.max(diff);
+            }
+        }
+    }
+    (ghosts, worst)
+}
+
+/// The starter's turning block under Live's ultra preset leaves no ghost under TAA, drawn without
+/// an id (as the template drew it) and with one: against the TAA-off frame of the same tick, away
+/// from its edges, it differs on no more pixels than the same block standing still does.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_starters_turning_block_and_its_shadow_leave_no_ghost_under_taa() {
+    let Some(gpu) = gpu() else { return };
+    let off = |turning| starter_run(&gpu, &starter_quality(AntiAliasing::Off), None, turning);
+    let (turning_off, still_off) = (off(true), off(false));
+    write_evidence("starter-taa-off", &turning_off);
+    let mut problems = Vec::new();
+    for id in [None, Some("block")] {
+        let label = id.unwrap_or("no-id");
+        let turning = starter_run(&gpu, &starter_quality(AntiAliasing::Taa), id, true);
+        let still = starter_run(&gpu, &starter_quality(AntiAliasing::Taa), id, false);
+        write_evidence(&format!("starter-taa-{label}"), &turning);
+        let ((ghosts, worst), (aliasing, _)) = (ghost_pixels(&turning, &turning_off), ghost_pixels(&still, &still_off));
+        eprintln!("starter under TAA ({label}): turning {ghosts} pixels off the TAA-off frame (worst {worst:.1} levels), still {aliasing}");
+        if ghosts > aliasing + GHOST_PIXELS_MAX {
+            problems.push(format!("{label}: the turning block's frame differs on {ghosts} pixels (worst {worst:.1} levels), the still one's on {aliasing}"));
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}

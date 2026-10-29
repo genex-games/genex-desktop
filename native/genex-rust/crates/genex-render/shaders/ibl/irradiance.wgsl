@@ -11,7 +11,13 @@
 // mean distance, along the axis, to the first surface: a wall across the axis at distance h
 // reaches h from every texel that sees it; clamped to `grid_bake.depth.w`), which the forward
 // pass's leak control tests a shaded point's distance from the cell against
-// (`irradiance::ambient_reach`). Texels no geometry covered read the sky's
+// (`irradiance::ambient_reach`). The capture holds the first bounce only (surfaces lit by the sun and
+// the local lights, no ambient), so a ceiling the sun never reaches would stay black: the bounces
+// after it are estimated in the reduce (AAA push P3, `irradiance::bounce_gain`). The surfaces
+// around a cell are lit by about what the cell sees, its mean radiance over the whole sphere M, so
+// each bounce off them adds the room's albedo rho times the one before: rho/(1 - rho) x M in all,
+// added to each direction in proportion to the geometry its hemisphere sees (`grid_bake.sky.y`, 0:
+// the first bounce alone). Texels no geometry covered read the sky's
 // prefiltered cube at `grid_bake.sky.x` and reach the clamp. One workgroup reduces one cell of the
 // batch: 64 lanes each sum a strided share of the 6 x side^2 texels, then a tree sum in workgroup
 // memory, and lanes 0..6 write the cell's six texels into the volume's staging block (atlas
@@ -26,7 +32,8 @@ struct GxGridBake {
     // x: the depth a face is cleared to; y, z: the face projection's depth terms (view distance
     // z / (depth + y)); w: the farthest reach a cell records.
     depth: vec4<f32>,
-    // x: the sky cube's level uncovered texels read; y, z, w: reserved.
+    // x: the sky cube's level uncovered texels read; y: the later bounces' gain, rho/(1 - rho)
+    // (0: the first bounce alone); z, w: reserved.
     sky: vec4<f32>,
 }
 
@@ -47,6 +54,10 @@ const GRID_REACH_MASK: u32 = 31u;
 var<workgroup> lane_light: array<array<vec4<f32>, 6>, 64>;
 // Per lane and direction: x the cos^4-weighted distance, y the weight.
 var<workgroup> lane_reach: array<array<vec2<f32>, 6>, 64>;
+// Per lane and direction: the cosine weight of the texels geometry covered.
+var<workgroup> lane_surface: array<array<f32, 6>, 64>;
+// Per lane: rgb the solid-angle-weighted radiance over the whole sphere, a the solid angle.
+var<workgroup> lane_sphere: array<vec4<f32>, 64>;
 
 // The world direction through texel coordinate `uv` (0..1, v down) of cube face `face`
 // (`ibl::cube_direction`, the probes' `ibl_cube_direction`).
@@ -90,9 +101,12 @@ fn cs_irradiance_reduce(@builtin(local_invocation_index) lane: u32, @builtin(wor
     let reach_max = grid_bake.depth.w;
     var light: array<vec4<f32>, 6>;
     var reach: array<vec2<f32>, 6>;
+    var surface: array<f32, 6>;
+    var sphere = vec4<f32>(0.0);
     for (var a = 0u; a < GRID_DIRECTIONS; a++) {
         light[a] = vec4<f32>(0.0);
         reach[a] = vec2<f32>(0.0);
+        surface[a] = 0.0;
     }
     for (var i = lane; i < face_texels * 6u; i += GRID_LANES) {
         let face = i / face_texels;
@@ -115,11 +129,14 @@ fn cs_irradiance_reduce(@builtin(local_invocation_index) lane: u32, @builtin(wor
             let st = uv * 2.0 - 1.0;
             distance = abs(view) * length(vec3<f32>(st, 1.0));
         }
+        sphere += vec4<f32>(radiance * solid, solid);
+        let covered = select(1.0, 0.0, distance < 0.0);
         for (var a = 0u; a < GRID_DIRECTIONS; a++) {
             let c = dot(dir, grid_axis(a));
             if c > 0.0 {
                 let w = c * solid;
                 light[a] += vec4<f32>(radiance * w, w);
+                surface[a] += covered * w;
                 let c2 = c * c;
                 let focus = c2 * c2 * solid;
                 let along = select(min(distance * c, reach_max), reach_max, distance < 0.0);
@@ -130,14 +147,18 @@ fn cs_irradiance_reduce(@builtin(local_invocation_index) lane: u32, @builtin(wor
     for (var a = 0u; a < GRID_DIRECTIONS; a++) {
         lane_light[lane][a] = light[a];
         lane_reach[lane][a] = reach[a];
+        lane_surface[lane][a] = surface[a];
     }
+    lane_sphere[lane] = sphere;
     workgroupBarrier();
     for (var stride = GRID_LANES / 2u; stride > 0u; stride >>= 1u) {
         if lane < stride {
             for (var a = 0u; a < GRID_DIRECTIONS; a++) {
                 lane_light[lane][a] += lane_light[lane + stride][a];
                 lane_reach[lane][a] += lane_reach[lane + stride][a];
+                lane_surface[lane][a] += lane_surface[lane + stride][a];
             }
+            lane_sphere[lane] += lane_sphere[lane + stride];
         }
         workgroupBarrier();
     }
@@ -146,7 +167,11 @@ fn cs_irradiance_reduce(@builtin(local_invocation_index) lane: u32, @builtin(wor
     }
     let a = lane;
     let total = lane_light[0][a];
-    let irradiance = total.rgb / max(total.a, 1e-8);
+    let whole = lane_sphere[0];
+    // The later bounces: the share of the hemisphere geometry covers, lit by the cell's whole mean.
+    let covered = lane_surface[0][a] / max(total.a, 1e-8);
+    let bounces = covered * grid_bake.sky.y * whole.rgb / max(whole.a, 1e-8);
+    let irradiance = total.rgb / max(total.a, 1e-8) + bounces;
     let axis = a / 2u;
     // Both reaches of the axis, coded into one exact float (`irradiance::pack_reaches`): either of
     // its two texels gives the lookup both planes.

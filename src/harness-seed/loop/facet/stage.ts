@@ -76,19 +76,23 @@ export const polishEscalates = (spec: Staged): boolean =>
 /**
  * Is a finish-stage worker done? The judge preferred its build, the build runs and every identity
  * check holds: the polish is in, so the worker ends. The strict `satisfied` the build stage waits
- * for is not required — a finisher's contract is "better, and nothing broken". Returns the
- * sentence for `stoppedBecause`, or null while there is still work to do.
+ * for is not required — a finisher's contract is "better, and nothing broken" — but a look blocker
+ * the judge still sees (look-bar.ts) is broken. Returns the sentence for `stoppedBecause`, or null
+ * while there is still work to do.
  */
 export function finishDone({
   won,
   broken = false,
   summary = null,
+  lookBlockers = [],
 }: {
   won: unknown;
   broken?: boolean;
   summary?: { identityAllPass?: boolean } | null;
+  /** The look blockers the round's judge named (judge.ts `tasteVeto`). */
+  lookBlockers?: readonly string[] | null;
 }): string | null {
-  const done = Boolean(won) && !broken && summary?.identityAllPass === true;
+  const done = Boolean(won) && !broken && summary?.identityAllPass === true && !lookBlockers?.length;
   return done ? "the finish is in: the judge preferred the polished build and every identity check holds" : null;
 }
 

@@ -252,6 +252,8 @@ export interface LoopRunState {
   workers: Map<string, Worker>;
   plan: AnyRecord | null;
   planReviewUntil: number | null;
+  /** The craft recipes the lead was already handed (director/craft.ts): a plan's answer names only new ones. */
+  craftShown?: string[];
   planSaidFrom: number;
   planGo: boolean;
   facetSpecs: FacetSpec[];
@@ -411,6 +413,8 @@ type ArtDirectionParts = Partial<
     Pick<
       typeof artDirectionFunctions,
       | "artDirectionPass"
+      | "closeOwesShipReview"
+      | "closeShipReview"
       | "finishMarkAt"
       | "firstWaveIn"
       | "shipLookAfter"
@@ -825,7 +829,17 @@ export async function evidenceOf(
     scaffold,
     inheritedConsole,
     camerasOwned,
+    crossBuilds: buildsCrossAt(loopRun, root),
   });
+}
+
+/**
+ * Does a look at `root` build the game's Windows and Linux destinations: on the run's integration
+ * worktree and the game's own folder, once per run; never in a worker's copy, or every copy keeps
+ * cross builds of its own (the Bodycam rerun's four workers filled 70 GB in two hours).
+ */
+function buildsCrossAt(loopRun: LoopRun, root: string): boolean {
+  return root === loopRun.integrationWorktree || root === loopRun.projectDir;
 }
 
 /**

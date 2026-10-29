@@ -24,7 +24,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { coreGameBuilds } from "../../src/main/core/internals.ts";
-import { BuildPriority, type GameBuildGame } from "../../src/main/game-build.ts";
+import { BuildPriority, buildFailureNote, type GameBuildGame } from "../../src/main/game-build.ts";
 import {
   RUST_CRATE_ALLOWLIST,
   RUST_TARGET_BUILDERS,
@@ -188,6 +188,59 @@ case "$sub" in
 esac
 exit 0
 `;
+}
+
+/** One clippy lint a stub game's code trips: its name, its group and clippy's default level (`W` warn, `D` deny). */
+interface LintHit {
+  lint: string;
+  group: string;
+  level: "W" | "D";
+  /** A rustc lint (`dead_code`, group `unused`), named without clippy's prefix. */
+  rustc?: boolean;
+}
+
+/**
+ * The stub clippy's run over a game that trips `hits`: each lint's level resolved from the lint
+ * flags after `--` as rustc resolves them (in order, the last flag naming the lint, its group or,
+ * for a clippy lint, `clippy::all` wins; a lint left at warn is an error while `warnings` is denied), and an error
+ * message for each one that ends denied, failing the run when any does.
+ */
+function clippyLevels(hits: readonly LintHit[]): string {
+  const levelOf = [
+    "flags=''; after=0",
+    'for a in "$@"; do if [ "$after" = 1 ]; then flags="$flags $a"; fi; if [ "$a" = -- ]; then after=1; fi; done',
+    "level_of() {",
+    "  level=$3; prefix=$4; flag=''",
+    "  for a in $flags; do",
+    "    case $a in -D|-W|-A|-F) flag=$a; continue ;; esac",
+    '    case $a in "$prefix$1"|"$prefix$2") if [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
+    '    if [ "$a" = clippy::all ] && [ -n "$prefix" ] && [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi',
+    '    if [ "$a" = warnings ] && [ -n "$flag" ]; then warnings=$(echo "$flag" | cut -c2); fi',
+    "    flag=''",
+    "  done",
+    '  if [ "$level" = W ] && { [ "$warnings" = D ] || [ "$warnings" = F ]; }; then level=D; fi',
+    '  if [ "$level" = F ]; then level=D; fi',
+    '  echo "$level"',
+    "}",
+    "failed=0",
+  ];
+  const each = hits.map((hit) => {
+    const prefix = hit.rustc ? "" : "clippy::";
+    const message = {
+      reason: "compiler-message",
+      message: {
+        message: `lint ${hit.lint}`,
+        code: { code: `${prefix}${hit.lint}` },
+        level: "error",
+        spans: [{ file_name: "src/main.rs", line_start: 1, column_start: 1, is_primary: true }],
+        children: [],
+        rendered: `error: lint ${hit.lint}`,
+      },
+    };
+    const denied = `warnings=''; if [ "$(level_of ${hit.lint} ${hit.group} ${hit.level} '${prefix}')" = D ]; then`;
+    return `${denied} printf '%s\\n' '${JSON.stringify(message)}'; failed=1; fi`;
+  });
+  return [...levelOf, ...each, 'if [ "$failed" = 1 ]; then exit 101; fi'].join("\n");
 }
 
 /** A stub cargo and rustc in `bin`. */
@@ -615,6 +668,57 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     for (const flag of ["--offline", "--locked", "-D warnings"]) assert.ok(args.includes(flag), `clippy ran ${flag}`);
   });
 
+  it("never fails a build on a style or complexity lint, while the store's determinism bans stay errors (B6: bodycam's collapsible_if)", async () => {
+    // Bodycam's game tripped these four, each a hard error under `-D warnings` alone.
+    const styleHits: LintHit[] = [
+      { lint: "collapsible_if", group: "style", level: "W" },
+      { lint: "manual_is_multiple_of", group: "complexity", level: "W" },
+      { lint: "approx_constant", group: "correctness", level: "D" },
+    ];
+    const bans: LintHit[] = [{ lint: "disallowed_methods", group: "style", level: "W" }];
+    for (const [name, hits, failsOn] of [
+      ["style", styleHits, null],
+      ["bans", [...styleHits, ...bans], "clippy::disallowed_methods"],
+    ] as const) {
+      const parent = await realpath(await tmpDir(`rust-clippy-levels-${name}-`));
+      const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+      const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);
+      assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
+      if (failsOn) assert.deepEqual(codes, [failsOn]);
+    }
+  });
+
+  it("never fails a build on code the game does not use yet, while a dropped Result and the determinism bans stay errors (BC2: bodycam rerun's dead_code)", async () => {
+    // The rerun's agents lost rounds to these, each a hard error under `-D warnings`.
+    const unusedHits: LintHit[] = [
+      { lint: "dead_code", group: "unused", level: "W", rustc: true },
+      { lint: "unused_imports", group: "unused", level: "W", rustc: true },
+      { lint: "unused_variables", group: "unused", level: "W", rustc: true },
+      { lint: "unused_mut", group: "unused", level: "W", rustc: true },
+    ];
+    for (const [name, hits, failsOn] of [
+      ["unused", unusedHits, null],
+      [
+        "must-use",
+        [...unusedHits, { lint: "unused_must_use", group: "unused", level: "W", rustc: true }],
+        "unused_must_use",
+      ],
+      [
+        "bans",
+        [...unusedHits, { lint: "disallowed_methods", group: "style", level: "W" }],
+        "clippy::disallowed_methods",
+      ],
+    ] as const) {
+      const parent = await realpath(await tmpDir(`rust-unused-levels-${name}-`));
+      const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+      const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);
+      assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
+      if (failsOn) assert.deepEqual(codes, [failsOn]);
+    }
+  });
+
   it("compiles in the native-enhanced features genex.toml declares (GENEX_NATIVE_FEATURES), and none for a core game", async () => {
     for (const [features, expected] of [
       [["subgroup", "ray-query"], "subgroup,ray-query"],
@@ -781,6 +885,86 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
+  it("tells the agent the first error with its place and how many more, never the command and its environment (B6)", async () => {
+    const parent = await realpath(await tmpDir("rust-first-error-"));
+    const located = (code: string, message: string, line: number, rendered: string) => ({
+      reason: "compiler-message",
+      message: {
+        message,
+        code: { code },
+        level: "error",
+        spans: [{ file_name: "STAGE/src/facets/player.rs", line_start: line, column_start: 15, is_primary: true }],
+        children: [{ message: "method defined here", level: "note", spans: [] }],
+        rendered,
+      },
+    });
+    // rustc's rendering of bodycam's first error, its gutter lines included.
+    const first = located(
+      "E0061",
+      "this method takes 3 arguments but 2 arguments were supplied",
+      243,
+      [
+        "error[E0061]: this method takes 3 arguments but 2 arguments were supplied",
+        "   --> src/facets/player.rs:243:15",
+        "    |",
+        "243 |     frame.sphere_with(Transform::IDENTITY, &mat);",
+        "    |           ^^^^^^^^^^^ ------------------- argument #2 of type `f32` is missing",
+        "    |                       |",
+        "    |                       expected `Vec3`, found `Transform`",
+        "    |",
+        "note: method defined here",
+        "   --> genex-0.1.0/src/frame.rs:830:12",
+        "    |",
+        "830 |     pub fn sphere_with(&mut self, center: Vec3, radius: f32, material: &Material) -> &mut Self {",
+        "help: provide the argument",
+        "",
+      ].join("\n"),
+    );
+    const second = located(
+      "E0599",
+      "no method named `screen_rect` found",
+      56,
+      "error[E0599]: no method named `screen_rect`\n",
+    );
+    const third = located("E0308", "mismatched types", 70, "error[E0308]: mismatched types\n");
+    const aborting = {
+      reason: "compiler-message",
+      message: { message: "aborting due to 3 previous errors", level: "error", spans: [] },
+    };
+    const printed = [first, second, third, aborting].map(
+      (message) => `printf '%s\\n' ${shellWord(JSON.stringify(message))} | sed "s#STAGE#$stage#g"`,
+    );
+    const onClippy = ['stage=$(dirname "$manifest")', ...printed, "exit 101"].join("\n");
+    const { builds } = await lane(parent, openSandboxes().sandbox, {
+      stub: { onClippy },
+      staging: stager(undefined, [], { renderToml: '[render]\npreset = "auto"\n' }),
+    });
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const problem = outcome.problem;
+    assert.ok(problem);
+    assert.match(problem.command, /clippy/, "the stage's Details keep the command");
+    const note = buildFailureNote(problem);
+    assert.ok(!note.includes(problem.command), note);
+    for (const noise of ["env -i", "CARGO_HOME", "GENEX_RENDER_TOML", "[render]"])
+      assert.ok(!note.includes(noise), noise);
+    const [head, ...lines] = note.split("\n");
+    assert.equal(head, "the game's build failed (exit 101):");
+    assert.equal(lines[0], "error[E0061]: this method takes 3 arguments but 2 arguments were supplied");
+    assert.equal(lines[1], "   --> src/facets/player.rs:243:15");
+    for (const kept of [
+      "expected `Vec3`, found `Transform`",
+      "note: method defined here",
+      "help: provide the argument",
+    ])
+      assert.ok(
+        lines.some((line) => line.includes(kept)),
+        `${kept} in ${note}`,
+      );
+    assert.ok(!lines.some((line) => line.trim() === "|"), "no empty gutter lines");
+    assert.equal(lines.at(-1), "…and 2 more errors");
+    assert.ok(!note.includes("E0599"), "only the first error is shown");
+  });
+
   it("names cargo's own error, not its progress, when a step fails with no diagnostic", async () => {
     const parent = await realpath(await tmpDir("rust-cargo-error-"));
     const open = openSandboxes();
@@ -810,6 +994,55 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.equal(outcome.problem?.code, null);
     assert.equal(outcome.problem?.lines.length, 1, JSON.stringify(outcome.problem?.lines));
     assert.match(outcome.problem?.lines[0] ?? "", /SIGKILL/);
+  });
+
+  it("checks a game with the gate's clippy in the build's own sandbox, and builds, admits and serves nothing (B6 fast check)", async () => {
+    const parent = await realpath(await tmpDir("rust-check-"));
+    const open = openSandboxes();
+    const error = {
+      reason: "compiler-message",
+      message: {
+        message: "mismatched types",
+        code: { code: "E0308" },
+        level: "error",
+        spans: [{ file_name: "STAGE/src/main.rs", line_start: 3, column_start: 9, is_primary: true }],
+        children: [],
+        rendered: "error[E0308]: mismatched types\n --> src/main.rs:3:9\n",
+      },
+    };
+    const onClippy = [
+      'stage=$(dirname "$manifest")',
+      'echo "$*" > "$CARGO_TARGET_DIR/../clippy-args"',
+      `if grep -q broken "$stage/src/main.rs"; then printf '%s\\n' ${shellWord(JSON.stringify(error))} | sed "s#STAGE#$stage#g"; exit 101; fi`,
+    ].join("\n");
+    const { builds } = await lane(parent, open.sandbox, { stub: { onClippy } });
+    const dir = await rustGame(parent);
+    const game = gameOf(dir);
+    const steps = () => open.requests.map((request) => request.label?.split(":").at(-1));
+    await writeFile(path.join(dir, "src", "main.rs"), "fn main() { broken }\n");
+    const failed = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live, { check: true });
+    assert.equal(failed.ok, false);
+    assert.deepEqual(
+      failed.rust?.diagnostics.map((d) => [d.code, d.file, d.line]),
+      [["E0308", "src/main.rs", 3]],
+    );
+    assert.equal(failed.problem?.lines[0], "error[E0308]: mismatched types");
+    await writeFile(path.join(dir, "src", "main.rs"), "fn main() {}\n");
+    const passed = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live, { check: true });
+    assert.equal(passed.ok, true, JSON.stringify(passed.problem));
+    assert.equal(passed.output, null, "a check makes no output to serve");
+    assert.deepEqual(
+      steps(),
+      ["identity", "lock", "clippy", "identity", "lock", "clippy"],
+      "clippy even for Live, never the build",
+    );
+    const [spec] = open.specs;
+    assert.ok(spec);
+    assert.ok((await readFile(path.join(spec.bin, "clippy-args"), "utf8")).includes("-D warnings"), "the gate's lints");
+    assert.equal(await lstat(`${spec.bin}.out`).catch(() => null), null, "nothing admitted");
+    const built = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(built.ok, true, "a build after a check builds as ever");
+    assert.ok(built.output);
   });
 
   it("writes a receipt with each step's timing and the compiler's identity", async () => {

@@ -1,5 +1,18 @@
 # Water
 
+Lakes, ponds and rivers are `Water`; there is no open ocean in the facade yet.
+
+Every type and call in one line:
+
+```rust
+use genex::render::Water;                                      // and WATER_ABSORPTION_MAX, WATER_REFRACTION_MAX
+Water::lake(centre, half_extent);                              // Vec3, Vec2 -> Water
+water.with_absorption([r, g, b]).with_scatter([r, g, b]).with_foam(width); // -> Water, like every with_*
+water.with_ripple(strength, roughness).with_refraction(offset);
+frame.water(&water);                                           // one a frame: a second call replaces it
+Water::drawn_at(setup.quality());                              // -> bool; setup: a level-3 pass's genex::gpu::PassSetup (or PassFrame)
+```
+
 A lake, a pond or a flooded quarry: `frame.water(&Water::lake(centre, half_extent))`
 (`use genex::render::Water;`), one logical draw, a flat rectangle at the level `centre.y`, `half_extent`
 metres either side along x and z. Make it larger than the water: the ground above the level hides
@@ -7,7 +20,8 @@ it, so the shoreline is wherever your terrain meets the level and needs no outli
 draws it after the opaque scene on presets with TAA (desktop and web `high` and `ultra`): the bed
 shows through by its depth (Beer-Lambert absorption), foam laps the shallows, and it refracts what
 is behind it and reflects the screen. An MSAA preset (`low`, `medium`, the phones' defaults) draws
-no water yet: where `Water::drawn_at(ctx.quality())` is false, draw your own in a level-3 pass.
+no water yet: where `Water::drawn_at(setup.quality())` (a level-3 pass's quality) is false, draw
+your own in that pass.
 The look's height fog covers it as it covers the ground. Where the screen has no reflection it
 reflects the reflection probes over it and the sky, so give a lake a `frame.reflection_probe(..)`
 over it and its shores to see the woods in it, captured from open water: what stands near the

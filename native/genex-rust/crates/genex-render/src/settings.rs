@@ -38,6 +38,10 @@ use crate::shadow::SHADOW_MAP_PX;
 pub const MAX_CASCADES: u8 = crate::layout::MAX_CASCADES as u8;
 /// The smallest render scale a device class steps down to.
 pub const RENDER_SCALE_MIN: f32 = 0.5;
+/// The largest render scale anything draws at (WP-9: supersampling, native desktop-ultra only,
+/// `presets::render_scale_max`): the scene at twice the output a side, resolved by the tonemap's
+/// luminance-weighted bilinear filter (a weighted 2x2 box at exactly 2).
+pub const RENDER_SCALE_SUPERSAMPLE_MAX: f32 = 2.0;
 /// Samples per pixel with MSAA on (where the formats take it).
 pub const MSAA_SAMPLE_COUNT: u32 = MSAA_SAMPLES;
 
@@ -306,6 +310,16 @@ pub struct Look {
     /// frame, after depth of field ([`crate::post::motion_blur::MotionBlur`]; off, the default,
     /// draws nothing). Settled captures draw without it unless the shot asks.
     pub motion_blur: crate::post::motion_blur::MotionBlur,
+    /// Local exposure (AAA push P3): bright regions (a window onto a sunlit yard) come down and dark
+    /// ones (a corridor ceiling) come up towards middle grey, each region by its own amount, with
+    /// its detail kept ([`crate::post::local_exposure::LocalExposure`]; on by default, drawn where
+    /// the quality's [`Quality::local_exposure`] is). HDR scene only.
+    pub local_exposure: crate::post::local_exposure::LocalExposure,
+    /// Auto exposure adapts much faster for a moment when the camera crosses into or out of a room
+    /// the game declares (an irradiance volume's or a reflection probe's box; Bodycam light fix,
+    /// [`crate::post::exposure::RoomAdaptation`]), so stepping from a sunlit yard into a corridor
+    /// does not leave the picture dark. On by default.
+    pub doorway_adaptation: bool,
 }
 
 /// Rec. 709 linear rgb to CIE XYZ (columns; Filament v1.78 `ColorSpaceUtils.h` `sRGB_to_XYZ`,
@@ -555,9 +569,11 @@ pub const DEFAULT_BLOOM_INTENSITY: f32 = 0.04;
 pub const DEFAULT_EV_MIN: f32 = -8.0;
 /// Auto exposure's default metering ceiling, in EV.
 pub const DEFAULT_EV_MAX: f32 = 8.0;
-/// Auto exposure's default brightening speed (the scene got darker), in EV per second: slow, as
-/// an eye adjusts to the dark.
-pub const DEFAULT_ADAPTATION_UP: f32 = 1.0;
+/// Auto exposure's default brightening speed (the scene got darker), in EV per second: fast, so
+/// stepping from a sunlit yard into a room does not leave the picture dark for seconds (a
+/// corridor 5 EV under the yard reads within about a second; at a declared room's doorway faster
+/// still, `post::exposure::RoomAdaptation`).
+pub const DEFAULT_ADAPTATION_UP: f32 = 4.0;
 /// Auto exposure's default darkening speed (the scene got brighter), in EV per second: fast, so
 /// stepping into sunlight does not leave the picture blown out for long.
 pub const DEFAULT_ADAPTATION_DOWN: f32 = 3.0;
@@ -610,6 +626,8 @@ const DEFAULT_LOOK: Look = Look {
     grading: crate::post::grading::Grading::NEUTRAL,
     depth_of_field: crate::post::dof::DepthOfField::OFF,
     motion_blur: crate::post::motion_blur::MotionBlur::OFF,
+    local_exposure: crate::post::local_exposure::LocalExposure::DEFAULT,
+    doorway_adaptation: true,
 };
 
 impl Default for Look {
@@ -715,6 +733,14 @@ impl Look {
     /// The look with `fog`.
     pub fn with_fog(mut self, fog: Fog) -> Look {
         self.fog = fog;
+        self
+    }
+
+    /// The look with `local` exposure (its contrasts held by
+    /// [`crate::post::local_exposure::LocalExposure::new`]; [`crate::post::local_exposure::LocalExposure::OFF`]
+    /// turns it off).
+    pub fn with_local_exposure(mut self, local: crate::post::local_exposure::LocalExposure) -> Look {
+        self.local_exposure = crate::post::local_exposure::LocalExposure::new(local.highlights, local.shadows);
         self
     }
 
@@ -867,6 +893,13 @@ impl SkyParams {
     pub fn with_intensity(mut self, intensity: f32) -> SkyParams {
         self.intensity = environment_intensity(intensity);
         self
+    }
+
+    /// A snowy or rainy day's sky (Bodycam light fix): the overcast air ([`SkyMedium::overcast`]),
+    /// a bright even grey on every preset, and a full deck of cloud ([`Clouds::overcast`]) that
+    /// veils the sun the ground gets, so shadows are soft and the sky's light fills them.
+    pub fn overcast() -> SkyParams {
+        SkyParams::default().with_medium(SkyMedium::overcast()).with_clouds(Some(Clouds::overcast()))
     }
 
     /// The sky made of `medium` (held to what the LUTs take, [`SkyMedium::validated`]).
@@ -1236,6 +1269,13 @@ pub fn frame_texture_lod_bias(taa: &TaaQuality, temporal: bool, easu: bool, rend
         return 0.0;
     }
     libm::log2f(held_render_scale(render_scale)).max(TAA_LOD_BIAS_MIN)
+}
+
+/// The longest side a scene drawn for an output side of `px` may have: the output's own below
+/// scale 1, twice it supersampled ([`RENDER_SCALE_SUPERSAMPLE_MAX`]), never past the target cap.
+pub(crate) fn supersampled_side_max(px: u32) -> u32 {
+    let px = px.max(1);
+    px.saturating_mul(2).min(crate::caps::MAX_WORLD_PX).max(px)
 }
 
 /// `render_scale` held to `RENDER_SCALE_MIN..=1` (NaN: 1), as the mip biases read it.
@@ -1688,6 +1728,18 @@ pub struct EnvironmentQuality {
     /// Whether a volume's lookup hides the cells a point is behind a wall from (eight hand-weighed
     /// cells, `irradiance::grid_irradiance`) instead of the sampler's three trilinear fetches.
     pub irradiance_leak_control: bool,
+    /// Cells of a volume one Live frame bakes (the bake's time slice, at most
+    /// `irradiance::BATCH_CELLS`; AAA review WP-12). A resource knob.
+    pub irradiance_cells_per_frame: u8,
+    /// Whether published volumes are baked again, one after another, for as long as they are held
+    /// (dynamic probe GI, AAA review WP-12): a lamp switched on, a door opened or a sun moved
+    /// reaches the bounced light within one cycle instead of never. Off, a volume is baked once
+    /// and again only when the sky changes. A resource knob.
+    pub irradiance_relight: bool,
+    /// The rooms the renderer lights without the game declaring them ([`crate::irradiance::AutoRooms`],
+    /// AAA review WP-12): a volume for each reflection probe without one and a probe for each
+    /// volume without one, and a volume following the camera wherever no declared room holds it.
+    pub auto_rooms: crate::irradiance::AutoRooms,
     /// The froxel fog's grid (renderer pass 2 A.5, [`crate::froxel`]): the height fog lit per
     /// froxel by the shadowed sun and the binned lights (sun shafts), bound in the aerial volume's
     /// place; None keeps the analytic fog. Desktop and web `high` and `ultra`. A resource knob.
@@ -1709,6 +1761,8 @@ pub struct LightQuality {
     pub tile_px: u32,
     /// Spot lights with shadow maps.
     pub shadowed_spots: u8,
+    /// Point lights with cube shadow maps (AAA review WP-15; at most `layout::MAX_SHADOWED_POINTS`).
+    pub shadowed_points: u8,
     /// Most projected decals drawn (renderer pass 2 A.10, `decals::held_decals`: nearest first,
     /// the last ones faded towards the cut); 0 draws none. Decals are binned with the lights, so
     /// only a `clustered` quality draws them.
@@ -1716,8 +1770,11 @@ pub struct LightQuality {
 }
 
 /// A material texture size class (RQ6): the side of the texture arrays a texture is stored in.
-/// Each class is its own pair of arrays (`layout::TEXTURE_SIZE_CLASSES`); a texture goes in the
-/// smallest class that holds its source size, capped at [`TextureQuality::max_class`].
+/// A texture goes in the smallest class that holds its source size, capped at
+/// [`TextureQuality::max_class`]. The shaders bind four class slots
+/// (`layout::TEXTURE_CLASS_SLOTS`); which class each slot holds is the max class's ladder
+/// (`texture::class_ladder`): the web's 256/512/1024/2048, and on a native desktop the 4096 and
+/// 8192 classes in the top slots (WP-9).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TextureClass {
@@ -1729,25 +1786,34 @@ pub enum TextureClass {
     S1024,
     /// 2048 texels.
     S2048,
+    /// 4096 texels: native desktops only (WP-9).
+    S4096,
+    /// 8192 texels: native desktops only, on an explicit choice (WP-9's cinematic tier).
+    S8192,
 }
 
 impl TextureClass {
     /// Every class, smallest first.
-    pub const ALL: [TextureClass; 4] = [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048];
+    pub const ALL: [TextureClass; 6] =
+        [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048, TextureClass::S4096, TextureClass::S8192];
 
-    /// The class index a material texture reference carries (`layout::texture_ref`).
+    /// The class's index, smallest first (`layout::TEXTURE_CLASS_SIDES`). A material texture
+    /// reference carries the class's slot instead (`texture::class_ladder`), which is this index
+    /// on the web's ladder.
     pub const fn index(self) -> u32 {
         match self {
             TextureClass::S256 => 0,
             TextureClass::S512 => 1,
             TextureClass::S1024 => 2,
             TextureClass::S2048 => 3,
+            TextureClass::S4096 => 4,
+            TextureClass::S8192 => 5,
         }
     }
 
     /// The arrays' side in texels.
     pub const fn side(self) -> u32 {
-        crate::layout::TEXTURE_SIZE_CLASSES[self.index() as usize]
+        crate::layout::TEXTURE_CLASS_SIDES[self.index() as usize]
     }
 }
 
@@ -1761,11 +1827,15 @@ pub struct TextureQuality {
     /// Whether normal-map mips are renormalized with the lost length folded into roughness
     /// (Toksvig); off keeps today's mips.
     pub toksvig: bool,
+    /// The MiB the material arrays may take (WP-9: a native desktop's share of its memory budget,
+    /// `texture::native_textures`), which scales each class's layer cap; 0 keeps the device
+    /// class's fixed rows (the web, phones and captures pinned before WP-9).
+    pub layer_budget_mib: u32,
 }
 
 impl TextureQuality {
     /// Today's textures: one 256 class, today's mips.
-    pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false };
+    pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false, layer_budget_mib: 0 };
 }
 
 /// The finest LOD error threshold anything may ask for, in output pixels (game systems LOD-06).
@@ -1874,7 +1944,7 @@ const fn textures_switched(textures: TextureQuality, on: bool) -> TextureQuality
     if textures.toksvig || !matches!(textures.max_class, TextureClass::S256) {
         return textures;
     }
-    TextureQuality { max_class: TextureClass::S1024, toksvig: true }
+    TextureQuality { max_class: TextureClass::S1024, toksvig: true, layer_budget_mib: 0 }
 }
 
 /// `spots` shadowed spots with the spot-shadows switch `on`.
@@ -1912,6 +1982,9 @@ pub struct Quality {
     pub shadows: ShadowQuality,
     /// Contact shadows.
     pub contact_shadows: bool,
+    /// Local exposure where the look asks for it (AAA push P3): on at `high` and `ultra`. A
+    /// resource knob (a compute pass and two bindings; the tonemap skips it on a uniform).
+    pub local_exposure: bool,
     /// Bloom.
     pub bloom: BloomQuality,
     /// Ambient occlusion.
@@ -1967,6 +2040,11 @@ pub struct Quality {
     /// (uniforms and buffer sizes, never a pipeline); off on `low`, the low phones and the legacy
     /// renderer.
     pub grass: crate::foliage::GrassQuality,
+    /// Which layered-material parts the surfaces draw (AAA materials lane, [`crate::layers`]):
+    /// cover alone on `low` and the legacy renderer, cover noise, detail maps, the second layer and
+    /// the lobes from `medium` (and on the high phones), parallax occlusion mapping on desktop
+    /// `high` and `ultra`. A pipeline constant (`GX_MATERIAL_LAYERS`).
+    pub material_layers: crate::layers::LayerTier,
     /// Levels of detail (game systems LOD-06): the threshold, the crossfade band, impostors and the
     /// far-field density. Resource knobs; the presets set them per class (owner call L6).
     pub lod: LodQuality,
@@ -1999,6 +2077,7 @@ impl Quality {
                 screen_mask: true,
             },
             contact_shadows: false,
+            local_exposure: false,
             bloom: BloomQuality { enabled: false, resolution: 0 },
             ao: AoQuality { resolution: AoResolution::Off, slices: 0, steps: 0, temporal: false },
             ao_method: AoMethod::Horizons,
@@ -2019,10 +2098,13 @@ impl Quality {
                 continuous_sky: false,
                 irradiance_volumes: 0,
                 irradiance_leak_control: false,
+                irradiance_cells_per_frame: crate::irradiance::CELLS_PER_FRAME as u8,
+                irradiance_relight: false,
+                auto_rooms: crate::irradiance::AutoRooms::OFF,
                 froxel_fog: None,
                 clouds: None,
             },
-            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 },
+            lights: LightQuality { cap: MAX_LIGHTS as u32, clustered: false, tile_px: 0, shadowed_spots: 0, shadowed_points: 0, decals: 0 },
             textures: TextureQuality::OFF,
             prepass: false,
             meshlets: false,
@@ -2035,6 +2117,7 @@ impl Quality {
             ssr: crate::ssr::SsrQuality::OFF,
             taau: false,
             grass: crate::foliage::GrassQuality::OFF,
+            material_layers: crate::layers::LayerTier::Cover,
             lod: LodQuality::LEGACY,
         }
     }
@@ -2059,7 +2142,7 @@ impl Quality {
             RenderFeature::Occlusion => self.occlusion,
             RenderFeature::Prepass => self.prepass,
             RenderFeature::TextureQuality => self.textures != TextureQuality::OFF,
-            RenderFeature::SpotShadows => self.lights.shadowed_spots > 0,
+            RenderFeature::SpotShadows => self.lights.shadowed_spots > 0 || self.lights.shadowed_points > 0,
             RenderFeature::LodFade => self.lod.fade_band > 0.0,
             RenderFeature::Impostors => self.lod.impostors,
         }
@@ -2091,7 +2174,14 @@ impl Quality {
             RenderFeature::Occlusion => self.occlusion = on,
             RenderFeature::Prepass => self.prepass = on,
             RenderFeature::TextureQuality => self.textures = textures_switched(self.textures, on),
-            RenderFeature::SpotShadows => self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on),
+            RenderFeature::SpotShadows => {
+                self.lights.shadowed_spots = spots_switched(self.lights.shadowed_spots, on);
+                // The switch covers point lights' cube maps too (AAA review WP-15): off drops them,
+                // on keeps the preset's.
+                if !on {
+                    self.lights.shadowed_points = 0;
+                }
+            }
             RenderFeature::LodFade => self.lod.fade_band = fade_band_switched(self.lod.fade_band, on),
             RenderFeature::Impostors => self.lod.impostors = on,
         }
@@ -2121,6 +2211,7 @@ impl Quality {
             meshlets: self.meshlets,
             occlusion: self.occlusion,
             specular_aa: self.specular_aa,
+            material_layers: self.material_layers,
         }
     }
 
@@ -2180,6 +2271,8 @@ pub struct PipelineKey {
     pub occlusion: bool,
     /// [`Quality::specular_aa`].
     pub specular_aa: bool,
+    /// [`Quality::material_layers`].
+    pub material_layers: crate::layers::LayerTier,
 }
 
 /// A per-feature switch id (`RenderFeature` on the wire).
@@ -2374,7 +2467,7 @@ pub enum QualityKnob {
     Clustered,
     /// [`LightQuality::tile_px`].
     LightTile,
-    /// [`LightQuality::shadowed_spots`].
+    /// [`LightQuality::shadowed_spots`] and [`LightQuality::shadowed_points`].
     ShadowedSpots,
     /// [`Quality::prepass`].
     Prepass,
@@ -2538,8 +2631,8 @@ impl RenderSettings {
     /// frame index temporal effects are keyed to and whether their history was reset. The jitter
     /// is TAA's position for `frame_index` when this build draws TAA, else zero.
     pub fn frame_config(&self, output: (u32, u32), scale: f32, frame_index: u64, history_reset: bool) -> FrameConfig {
-        let scale = scale.clamp(RENDER_SCALE_MIN, 1.0);
-        let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, px.max(1));
+        let scale = if scale.is_nan() { 1.0 } else { scale.clamp(RENDER_SCALE_MIN, RENDER_SCALE_SUPERSAMPLE_MAX) };
+        let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, supersampled_side_max(px));
         let taa = crate::graph::feature_drawn(&self.quality, RenderFeature::Taa);
         let jitter = if taa { crate::jitter::offset_px(frame_index, self.quality.taa.jitter_cycle) } else { crate::jitter::NO_JITTER };
         FrameConfig {
@@ -2631,9 +2724,10 @@ mod tests {
     #[test]
     fn texture_classes_are_the_layout_sizes_smallest_first() {
         let sides: Vec<u32> = TextureClass::ALL.iter().map(|class| class.side()).collect();
-        assert_eq!(sides, crate::layout::TEXTURE_SIZE_CLASSES);
+        // WP-9 flipped: six classes, 4096 and 8192 past the web's four.
+        assert_eq!(sides, crate::layout::TEXTURE_CLASS_SIDES);
         assert!(TextureClass::ALL.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(TextureClass::ALL.map(TextureClass::index), [0, 1, 2, 3]);
+        assert_eq!(TextureClass::ALL.map(TextureClass::index), [0, 1, 2, 3, 4, 5]);
     }
 
     #[test]

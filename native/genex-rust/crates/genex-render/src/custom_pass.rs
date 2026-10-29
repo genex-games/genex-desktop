@@ -230,7 +230,6 @@ struct GxMaterial {
 /// are reserved.
 pub const TABLES_V2_WGSL: &str = concat!(
     include_str!("../shaders/common.wgsl"),
-    include_str!("../shaders/wind.wgsl"),
     "
 // genex custom-pass tables, API v2: the v1 rows under their v1 names.
 alias GxInstance = Instance;

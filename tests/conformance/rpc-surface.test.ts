@@ -32,6 +32,7 @@ const API_KEYS = [
   "engine.hardware",
   "engine.interrupt",
   "engine.steer",
+  "engine.usage",
   "events.append",
   "events.head",
   "events.inbox",

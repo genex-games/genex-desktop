@@ -131,10 +131,12 @@ describe("the director's tool schemas stay small", () => {
     // bytes (18,876 to 19,095) on playtest's goal_state, the state a blind judge plays to and the
     // studio verifies, also deliberately. So is wrap_up's next_goal and next_hours (19,095 to
     // 19,291): "stop it and start a new one" had no way to start the new Loop without the person.
+    // The plan's start= and art= (19,291 to 19,704) are spent deliberately too: judges could not
+    // drive a game past its title, and a photoreal ask was greyboxed with no plan for its assets.
     // The 15,000-byte target is NOT met; what is left is the fifteen tool descriptions themselves,
     // and cutting those is its own change.
     const size = JSON.stringify(DIRECTOR_TOOLS).length;
-    assert.ok(size <= 19_300, `DIRECTOR_TOOLS serialises to ${size} bytes, over the ratchet`);
+    assert.ok(size <= 19_710, `DIRECTOR_TOOLS serialises to ${size} bytes, over the ratchet`);
 
     // What the worker_start checks description is meant to become: the same grammar, one line
     // per kind, with no helper enumeration a tool schema cannot afford.
@@ -219,14 +221,19 @@ describe("the pages a builder is handed", () => {
       );
   });
 
-  it("ships exactly the two skills the run code reads, and the Rust extension ladder's", () => {
+  it("ships exactly the two skills the run code reads, and the chat skill index's", () => {
     // director.md and facet-decomposition.md are read by name; four more used to ship and were
     // read by nothing, which is what RETIRED_SEED_PATHS now takes off an install. Flipped (M7.3):
     // rust-extension-ladder.md ships for the chat's skill index (`read_skill`), the guidance a
-    // Rust game's lead reads before reaching past the facade.
+    // Rust game's lead reads before reaching past the facade. Flipped (AAA docs): look-dev.md,
+    // asset-sourcing.md and comfort.md ship for the same index, the art, sourcing and camera
+    // guidance a lead reads before briefing a build.
     assert.deepEqual(readdirSync(pathMod.join(seedDir, "skills")).sort(), [
+      "asset-sourcing.md",
+      "comfort.md",
       "director.md",
       "facet-decomposition.md",
+      "look-dev.md",
       "rust-extension-ladder.md",
     ]);
   });

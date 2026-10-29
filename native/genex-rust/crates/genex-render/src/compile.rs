@@ -163,7 +163,8 @@ pub const WORKGROUP_AUDIT: &[(&str, &str)] = &[
     ("ibl-sh9", "each lane stores partial[lane] and lowest[lane] before reading; lane 0 stores ringing before the uniform load"),
     ("meshlet-cull", "cull_mark, cull_scan and cull_scatter store every lane's scan_a, scan_b, marks and lane_slots before a barrier"),
     ("grass-gen", "cs_grass_tiles and cs_grass_scan store every lane's gx_grass_scan[lane] before the scan's first barrier; cs_grass_pack declares none it reads"),
-    ("irradiance-passes", "cs_irradiance_reduce: each of the 64 lanes stores lane_light[lane][a] and lane_reach[lane][a] for all six directions before the reduction's first barrier"),
+    ("irradiance-passes", "cs_irradiance_reduce: each of the 64 lanes stores lane_light[lane][a], lane_reach[lane][a] and lane_surface[lane][a] for all six directions and lane_sphere[lane] before the reduction's first barrier"),
+    ("local-exposure", "cs_local_exposure_grid and cs_local_exposure_grid_msaa: lanes 0-15 of the 64 store 0 into gx_le_weight and gx_le_sum, lanes 0-1 into gx_le_all, before the first barrier"),
     ("particles-sort", "cs_sort_block and cs_sort_inner: each of the 256 lanes stores all eight of its sort_lds slots (a pair past the count as the last key) before the first barrier; cs_sort_step declares none"),
     ("ocean-fft", "cs_ocean_fft_rows and cs_ocean_fft_columns: each of the 256 lanes stores gx_ocean_a[lane] before the first barrier, and every Stockham pass writes the whole ping-pong row it reads next before a barrier; cs_ocean_spectrum and cs_ocean_resolve read none"),
 ];

@@ -17,9 +17,22 @@ pub const MAX_DEPTH: usize = json::MAX_DEPTH;
 pub const PROTOCOL_VERSION: u32 = 1;
 /// The smallest world target side, in pixels (the C++ runtime's `MIN_WORLD_PX`).
 pub const MIN_WORLD_PX: u32 = 64;
-/// The largest world target side, in pixels (the C++ runtime's `MAX_WORLD_PX`): the host refuses a
-/// `ready.size` or a capture side above it (`NATIVE_CAPTURE_MAX_PX`).
-pub const MAX_WORLD_PX: u32 = 4096;
+/// The largest world target side on the web, in pixels (the C++ runtime's `MAX_WORLD_PX`), and the
+/// largest a game's declared `world_size` may have on every destination, so a manifest that loads
+/// natively loads in a browser too.
+pub const WEB_MAX_WORLD_PX: u32 = 4096;
+/// The largest world target side on a native build (WP-9: 8K output, captures and render targets;
+/// WebGPU's default `max_texture_dimension_2d`): the host refuses a `ready.size` or a capture side
+/// above it (`NATIVE_CAPTURE_MAX_PX`).
+pub const NATIVE_MAX_WORLD_PX: u32 = 8192;
+/// The largest world target side this build draws: [`NATIVE_MAX_WORLD_PX`] natively,
+/// [`WEB_MAX_WORLD_PX`] in a browser.
+#[cfg(not(target_arch = "wasm32"))]
+pub const MAX_WORLD_PX: u32 = NATIVE_MAX_WORLD_PX;
+/// The largest world target side this build draws: [`NATIVE_MAX_WORLD_PX`] natively,
+/// [`WEB_MAX_WORLD_PX`] in a browser.
+#[cfg(target_arch = "wasm32")]
+pub const MAX_WORLD_PX: u32 = WEB_MAX_WORLD_PX;
 /// How many bytes one read asks for; the buffer grows by this much, never by a whole line.
 const READ_CHUNK_BYTES: usize = 64 * 1024;
 

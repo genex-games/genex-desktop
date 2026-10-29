@@ -4,6 +4,7 @@
  * (`buildStartingPoint`) — and before both, `prepareLoopRun`, which builds the run itself.
  */
 
+import { loadReferenceStills } from "../reference-stills.ts";
 import { DEFAULT_WALL_CLOCK_MS, MIN_DELEGATE_TIMEOUT_MS, PAGE_SEED } from "../config.ts";
 import { gatherEvidence } from "../evidence.ts";
 import { commitAll, GIT, gitAt, gitlinks, headOf, resetClean, shortSha } from "../git.ts";
@@ -331,6 +332,8 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
   // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
   loopRun.game = { hookEvents: game?.hookEvents, ...editorPlayOf(game) };
   loopRun.leaseGame = leaseGameOf(game);
+  // Budgets are said per destination (destination-budgets.ts): every look reads them off the run.
+  if (game?.destinations) loopRun.run.destinations = game.destinations;
   return projectDir;
 }
 
@@ -656,7 +659,10 @@ export async function prepareLoopRun(
   const priorLedger = await loadPriorLedger(ctx, threadId, run, gameKind);
   const gameLessons = await loadGameLessons(ctx.workspace, run.project).catch(() => []);
   run.gameLessons = gameLessons;
+  // The game's references/ stills reach every judge and the report, whether or not the run brought them.
+  const referenceNotes = await loadReferenceStills(ctx, run).catch(() => []);
   const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
+  report.notes = [...(report.notes ?? []), ...referenceNotes];
   await announceRunStart(ctx, threadId, run, { resume, liveChat }, capacity);
 
   // A game that came with its own shape is photographed BEFORE the studio touches it: the
@@ -822,7 +828,9 @@ async function prepareOpenLoopRun(
   const game = await openGame(ctx, run);
   // A refused run keeps the record it came with: its refusal says nothing of a cap it never ran under.
   if (!refused) recordCreditCap(run, spentBefore);
+  const referenceNotes = await loadReferenceStills(ctx, run).catch(() => []);
   const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
+  report.notes = [...(report.notes ?? []), ...referenceNotes];
   // A run refused at once announces nothing here: its refusal writes its whole record (`refuseResume`).
   if (!refused)
     await announceRunStart(

@@ -24,6 +24,7 @@
  * A new module on purpose: a seed upgrade keeps any older module the agent edited, so it imports
  * the frame verdicts from their own module and only names its neighbours have always exported.
  */
+import { readyWaitOf } from "./ready-wait.ts";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -32,7 +33,7 @@ import { WINDOW_RETRIES_MS } from "./config.ts";
 import { type FrameLook, weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { isRecord } from "./json.ts";
-import { playScriptFor, wantsEyeCameras } from "./kinds.ts";
+import { playScriptFor, startKeysFor, wantsEyeCameras } from "./kinds.ts";
 import {
   BuildTarget,
   type Destinations,
@@ -57,7 +58,7 @@ import { PageMethod } from "./page-contract.ts";
 import { applyPlayScript } from "./play-script.ts";
 import { touchesSkipped } from "./native-refusal.ts";
 import { slug } from "./spec.ts";
-import { sleep } from "./time.ts";
+import { SECOND_MS, sleep } from "./time.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
 import type { BuildProblem, BuildProblemCode, NativeRunMemory, StudioPlatform } from "../types/host-api.d.ts";
 import type { applySetup, consoleProblems, Evidence, GatherOptions, Shot } from "./evidence.ts";
@@ -209,6 +210,9 @@ const HOST_NAME = {
 } as const satisfies Record<StudioPlatform, string>;
 
 /** What the gate says, in its own words. */
+/** Leaving the title (`startNative`): the clock steps this long between reads of `flow.playing`, for at most this long. */
+const START_STEP_MS = 240;
+const START_WAIT_MAX_MS = 12 * SECOND_MS;
 const MESSAGE = {
   similarity: "frame similarity is unmeasured until PX10 sets its threshold",
   webUnheard: "the web build did not answer its sound level",
@@ -221,6 +225,8 @@ const MESSAGE = {
   noLease: (target: string) => `no ${target} lease was free to run the gate`,
   buildFailed: (target: string, why: string) => `the ${target} build failed: ${why}`,
   builtNotRun: (host: string) => `built, not run on this ${host}`,
+  builtWhereIntegrated: (target: string) =>
+    `not built in a worker's copy: the ${target} build is made where the run integrates, so each copy does not keep one of its own`,
   phoneNotBuilt: (target: string) =>
     `not built or run by the judge: an ${target} build is made by the export lane and runs only on a device the person starts from Studio, so its gameplay is judged on this computer's build`,
   hostRefusedBuild: (refusal: string, detail: string | null) =>
@@ -235,6 +241,10 @@ const MESSAGE = {
   refused: (refusal: string, detail: string | null) =>
     `the host refused the bundle: ${refusal}${detail ? ` (${detail})` : ""}`,
   notReady: (reason: string) => `the game never said it was ready: ${reason}`,
+  unreadPlay: (keys: string[]) =>
+    `the game reports no state().flow, so the harness pressed the declared start keys (${keys.join("/")}) without reading whether play began — report flow {playing, phase} in state() (a "flow" probe) so the drive knows`,
+  outsidePlay: (keys: string[]) =>
+    `the drive began outside play: the start keys (${keys.join("/")}) did not bring the game to flow.playing within ${START_WAIT_MAX_MS / SECOND_MS} s; the scripted controls landed in the front-end`,
   stepped: (witness: AnyRecord) =>
     `stepping moved nothing: frames ${witness.frameBefore} → ${witness.frameAfter}, ${witness.simulatedMs} ms simulated, ${witness.drawCalls} draws`,
   noFrame: (asked: readonly string[]) => `no camera produced a frame (asked for: ${asked.join(", ") || "none"})`,
@@ -734,7 +744,7 @@ async function readyRow(gate: GateRun): Promise<boolean> {
       ...(request.root ? { root: request.root } : {}),
       ...h,
     });
-    const ready = await ctx.call(HostMethod.PreviewReady, { ...h });
+    const ready = await ctx.call(HostMethod.PreviewReady, { ...h, ...readyWaitOf(request.run) });
     if (ready?.ready !== true) {
       gate.rows.push(
         failed(
@@ -1024,6 +1034,12 @@ export interface ParityLook {
   judged: boolean;
   tolerances?: ToleranceStore;
   retriesMs?: readonly number[];
+  /**
+   * Build the Windows and Linux destinations this host builds but does not run (the default).
+   * False on a Loop worker's copy: a cross build is many gigabytes per folder, so it is made once,
+   * where the run integrates, and the worker's look leaves those rows unmeasured.
+   */
+  crossBuilds?: boolean;
 }
 
 /**
@@ -1067,6 +1083,8 @@ async function targetGate(ctx: HarnessCtx, look: ParityLook, target: BuildTarget
   if (!host) return unrunnableParity(target, TargetRefusal.NotRunnableHere, MESSAGE.noHost);
   const refusal = runRefusal(host, target, { gameBox: look.capacity.native?.gameBox === true });
   const builtNotRun = refusal === TargetRefusal.NotRunnableHere && CROSS_TARGETS.includes(target);
+  if (builtNotRun && look.crossBuilds === false)
+    return unrunnableParity(target, TargetRefusal.NotRunnableHere, MESSAGE.builtWhereIntegrated(target));
   if (builtNotRun) return crossGate(ctx, look, target, MESSAGE.builtNotRun(HOST_NAME[host]));
   if (refusal) return unrunnableParity(target, refusal);
   if (!look.judged) return unrunnableParity(target, null, MESSAGE.webUnjudged);
@@ -1228,6 +1246,7 @@ export async function withParity(
     cameras,
     viewpoints: evidence.viewpoints ?? cameras,
     judged: !evidence.loadError && cameras.length > 0,
+    crossBuilds: options.crossBuilds !== false,
   });
   if (!parity) return evidence;
   evidence.parity = parity;
@@ -1398,7 +1417,7 @@ async function loadNative(look: NativeLook): Promise<boolean> {
       ...(options.root ? { root: options.root } : {}),
       ...h,
     });
-    look.ready = await ctx.call(HostMethod.PreviewReady, { ...h });
+    look.ready = await ctx.call(HostMethod.PreviewReady, { ...h, ...readyWaitOf(options.run) });
   } catch (error) {
     problems.push(MESSAGE.notReady(messageOf(error)));
     return false;
@@ -1453,6 +1472,7 @@ async function driveNative(look: NativeLook): Promise<void> {
   try {
     await step();
     look.stateEarly = await ctx.call(HostMethod.PreviewState, { ...h });
+    await startNative(look);
     const script = playScriptFor(options.run?.game);
     const played = await applyPlayScript(ctx, script, { clock: "step", runId: options.run.runId, ...h }).catch(
       (error: unknown) => {
@@ -1471,6 +1491,32 @@ async function driveNative(look: NativeLook): Promise<void> {
   }
   if (isRecord(look.state?.error)) look.problems.push(`runtime error: ${look.state.error.message}`);
   await listenNative(look);
+}
+
+/**
+ * The declared start keys, pressed on a game that is not in play yet, and the clock stepped until
+ * its `flow` says play began (one step when it reports none), so the opening sample and the
+ * scripted controls are in play (evidence.ts `reachPlay`). A native run has no `begin()`; a game
+ * that declared no keys, is in play already, or is judged on its front-end is driven as before.
+ */
+async function startNative(look: NativeLook): Promise<void> {
+  const { ctx, h, options } = look;
+  const keys = startKeysFor(options.run?.game);
+  const setup = options.setup === undefined ? options.run.setup : options.setup;
+  const playing = (state: unknown) => {
+    const flow = isRecord(state) ? state.flow : null;
+    return isRecord(flow) ? flow.playing === true : null;
+  };
+  if (!keys.length || setup?.begin === false || playing(look.stateEarly) === true) return;
+  await applyPlayScript(ctx, [{ type: "tap", keys }], { clock: "step", runId: options.run.runId, ...h });
+  let ms = 0;
+  do {
+    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: START_STEP_MS, ...h });
+    ms += START_STEP_MS;
+    look.stateEarly = await ctx.call(HostMethod.PreviewState, { ...h });
+  } while (playing(look.stateEarly) === false && ms < START_WAIT_MAX_MS);
+  if (playing(look.stateEarly) === null) look.warnings.push(MESSAGE.unreadPlay(keys));
+  if (playing(look.stateEarly) === false) look.warnings.push(MESSAGE.outsidePlay(keys));
 }
 
 /** The drive steps a motion strip of `count` frames is taken at, spread over the drive. */

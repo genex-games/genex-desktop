@@ -75,6 +75,8 @@ import {
   tasteVeto,
 } from "../../src/harness-seed/loop/judge.ts";
 import { EngineId } from "../../src/shared/providers.ts";
+import { RUST_FACET } from "../../src/harness-seed/loop/rust-briefs.ts";
+import { computerToolDefinition } from "../../src/substrate/computer-tool.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { GameValidationCode } from "../../src/shared/game-project.ts";
 import { LEAD_WINDOWS, MAX_BUILDERS } from "../../src/shared/builders.ts";
@@ -223,7 +225,12 @@ it("AUDIT-SEED. preserved pre-wake budgets cannot break newly shipped completion
 import { reopenBudgets, reopenedRun } from "../../src/harness-seed/loop/reopen-run.ts";
 import { CompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
 import { turnBriefing } from "../../src/harness-seed/loop/turn-prompts.ts";
-import { compileWorkerSpec, LandingHow, monitorFindings } from "../../src/harness-seed/loop/director/rules.ts";
+import {
+  compilePlan,
+  compileWorkerSpec,
+  LandingHow,
+  monitorFindings,
+} from "../../src/harness-seed/loop/director/rules.ts";
 import { NoteKind } from "../../src/harness-seed/loop/director/wake-schedule.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
 import { computePixelStats, labPalette } from "../../src/substrate/pixel-stats.ts";
@@ -5942,8 +5949,12 @@ describe("one session, reviewed", () => {
   /**
    * A game folder at `base` and a build that adds src/sky.js, and the landing (`landIntegration`)
    * over a run of real git in them: the close's own look and head are not the question here.
+   * `files` adds to the base and to the build.
    */
-  async function landingOver(prepare: (git: (...a: string[]) => Promise<string>, dir: string) => Promise<void>) {
+  async function landingOver(
+    prepare: (git: (...a: string[]) => Promise<string>, dir: string) => Promise<void>,
+    files: { base?: Record<string, string>; build?: Record<string, string> } = {},
+  ) {
     const { tmpDir } = await import("../helpers/tmp.ts");
     const dir = await tmpDir("one-session-landing-");
     const git = async (...args: string[]) => (await gitFile(args, { cwd: dir })).stdout.trim();
@@ -5953,11 +5964,13 @@ describe("one session, reviewed", () => {
     await mkdir(path.join(dir, "src"), { recursive: true });
     await writeFile(path.join(dir, "README.md"), "a game\n");
     await writeFile(path.join(dir, "src", "sign.js"), "export const sign = 'none';\n");
+    for (const [file, text] of Object.entries(files.base ?? {})) await writeFile(path.join(dir, file), text);
     await git("add", "-A");
     await git("commit", "-qm", "base");
     const base = await git("rev-parse", "HEAD");
     await git("checkout", "-qb", "run");
     await writeFile(path.join(dir, "src", "sky.js"), "export const sky = 'blue';\n");
+    for (const [file, text] of Object.entries(files.build ?? {})) await writeFile(path.join(dir, file), text);
     await git("add", "-A");
     await git("commit", "-qm", "the run's build");
     const head = await git("rev-parse", "HEAD");
@@ -5989,6 +6002,41 @@ describe("one session, reviewed", () => {
     const landed = await landIntegration(loopRun as never, true);
     return { landed, git, dir, head, notes, report };
   }
+
+  it("BC1. Studio's own kind declaration committed in the game folder and the lead's same game block in the build: the landing merges studio.json by its keys instead of refusing", async () => {
+    const studioJson = (game?: Record<string, unknown>, more: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ name: "body-cam", kind: "rust-wgpu", serve: ".", ...more, ...(game ? { game } : {}) }, null, 2)}\n`;
+    const block = { kind: "first-person", hud: true, mouseLook: true, keyboardMove: true };
+    // The folder's commit is the director's `declareGameKind`; the build's block is the lead's own.
+    const declared =
+      (game: Record<string, unknown>) => async (git: (...a: string[]) => Promise<string>, dir: string) => {
+        await writeFile(path.join(dir, "studio.json"), studioJson(game));
+        await git("commit", "-qam", "studio: this game is a first-person game");
+      };
+    const build = { "studio.json": studioJson(block, { title: "Body Cam" }) };
+    const same = await landingOver(declared({ ...block, declaredBy: "plan" }), {
+      base: { "studio.json": studioJson() },
+      build,
+    });
+    assert.equal(same.landed.ok, true, same.landed.reason);
+    assert.deepEqual(JSON.parse(await same.git("show", "HEAD:studio.json")), {
+      name: "body-cam",
+      kind: "rust-wgpu",
+      serve: ".",
+      game: { ...block, declaredBy: "plan" },
+      title: "Body Cam",
+    });
+    assert.equal(await same.git("show", "HEAD:src/sky.js"), "export const sky = 'blue';");
+    assert.equal(await same.git("status", "--porcelain"), "", "the merge is committed, nothing left over");
+
+    // A kind the folder and the build disagree on is a real conflict: aborted, never guessed.
+    const differs = await landingOver(declared({ ...block, kind: "racing", declaredBy: "plan" }), {
+      base: { "studio.json": studioJson() },
+      build,
+    });
+    assert.equal(differs.landed.why, "could-not-land", differs.landed.reason);
+    assert.equal(await differs.git("status", "--porcelain"), "", "the merge was aborted");
+  });
 
   it("OS6. the landing tells uncommitted changes in the game folder from commits that conflict or a hook that refuses, and never undoes a merge of the user's own under way", async () => {
     // Only a stray the build does not touch: it lands, and the stray is named, left as it was.
@@ -9528,6 +9576,54 @@ describe("C++ · raylib on the web lane (M3a)", () => {
     const refused = await look(NativeRefusal.ImportsOpengl32);
     assert.equal(refused.verdict?.pass, false, "a build the host refuses fails the gate");
     assert.equal(refused.board?.pass, false, "and the board");
+  });
+
+  it("BODYCAM-DISK. a six-destination Rust Loop's worker looks build Browser and this Mac only: Windows and Linux are built where the run integrates", async () => {
+    // The Bodycam rerun: every look at each of four workers' copies built Windows and Linux too
+    // (crossGate), six build folders of 13–14 GB each, 70 GB in two hours, rebuilt within minutes
+    // of being deleted.
+    const { buildsCrossDestinations } = await import("../../src/harness-seed/loop/facet/cross-builds.ts");
+    const { FacetRole: Role } = await import("../../src/harness-seed/loop/facet/state.ts");
+    const look = async (crossBuilds: boolean | undefined) => {
+      const recorder = ctxRecorder({
+        unknown: { value: null },
+        handlers: {
+          [HostMethod.NativeBuild]: () => ({ ok: true, problem: null, lock: "abc", output: "/out", admission: null }),
+        },
+      });
+      const verdict = await parityFor(recorder.ctx as never, {
+        run: { runId: "r1", project: "body-cam", stack: GameStack.RustWgpu } as never,
+        destinations: { stack: GameStack.RustWgpu, targets: Object.values(BuildTarget) },
+        capacity: { host: StudioPlatform.Mac, native: { gameBox: true, leases: 0, max: 4 } } as never,
+        webHandle: "w1",
+        root: "/runs/r1/fps",
+        seed: 1234,
+        cameras: ["default"],
+        judged: true,
+        retriesMs: [],
+        ...(crossBuilds === undefined ? {} : { crossBuilds }),
+      });
+      return { built: recorder.paramsOf(HostMethod.NativeBuild).map((params) => params.target), verdict };
+    };
+    const worker = await look(false);
+    assert.deepEqual(worker.built, [BuildTarget.Mac], "a worker's copy builds this Mac's destination alone");
+    for (const target of [BuildTarget.Windows, BuildTarget.Linux]) {
+      const gate = worker.verdict?.targets.find((entry) => entry.target === target);
+      assert.equal(gate?.pass, null, `${target} is unmeasured on a worker, never passed`);
+      assert.ok(
+        gate?.rows.every((row) => row.pass === null && /where the run integrates/.test(row.reason)),
+        JSON.stringify(gate?.rows),
+      );
+    }
+    const integration = await look(undefined);
+    assert.deepEqual(integration.built, [BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux]);
+    assert.equal(buildsCrossDestinations({ role: Role.Facet, worktree: "/runs/r1/fps" }), false, "a worker");
+    assert.equal(buildsCrossDestinations({ role: Role.Integration, worktree: "/runs/r1/integration" }), true);
+    assert.equal(
+      buildsCrossDestinations({ role: Role.Facet, worktree: null }),
+      true,
+      "a facet on the game's own folder",
+    );
   });
 
   it("RAYLIB-CHECKS. scene checks on a raylib spec report pass: null, and the page is never asked", async () => {
@@ -17763,5 +17859,1525 @@ describe("a resumed run whose start waits on its game's build (HX)", () => {
     assert.equal(await within(running, STOPPED_START_MS, "still waiting"), "closed");
     assert.deepEqual(givenBack, ["msg_trees"], "the chat answers it: never left sending");
     assert.equal(leadLineOf(RUN_ID), undefined, "the line is shut with the run");
+  });
+});
+
+describe("a first-person Rust game's craft, handed before anything fails (bodycam B4)", () => {
+  /** The friend's brief, as start_autopilot took it (goal and direction), cut to what names the subject. */
+  const BODYCAM = {
+    goal: "Make the photorealistic bodycam fps shooter in post-soviet environment in our RUST engine.",
+    direction:
+      "A photorealistic bodycam view through a wide fisheye lens inside an abandoned Soviet building. Tall peeling-paint windows with sunburst grilles, hard sun patches on a dusty tiled floor, crumbling plaster and concrete, a long dim corridor with a warm-lit room at the end, a dark gloved hand and pistol low in frame.",
+  };
+  /** The three.js recipes whose craft a Rust game had no port of. */
+  const PORTED = [
+    "fps.hands-in-frame",
+    "fps.weapon-from-parts",
+    "fps.muzzle-under-the-barrel",
+    "fps.sight-on-centre-in-ads",
+    "fps.crosshair-off-in-ads",
+    "fps.breath-not-a-blob",
+    "materials.buildings-not-flat",
+    "materials.mapped-identity-tags",
+    "materials.roughness-and-bump",
+    "materials.weathered-masonry",
+    "facade.recessed-windows-seams",
+    "arena.no-haze-planes",
+  ];
+  const SEED = path.join(process.cwd(), "src", "harness-seed");
+  /** The art pass a photoreal brief's plan carries (look-bar.ts). */
+  const SCHOOL_ART = JSON.stringify(
+    [
+      // Flipped (gen3 G3-2a): a look brief's assets say what they are, and the sky is an HDRI scan, not Blender.
+      ["hero", "gloved hands and pistol", "genex-model", "prop"],
+      ["mid", "peeling-paint windows with sunburst grilles", "genex-model", "structure"],
+      ["scatter", "plaster debris and dust", "scan", "surface"],
+      ["sky", "hard sun through dusty air", "scan", "atmosphere"],
+    ].map(([tier, asset, source, kind]) => ({ area: "the corridor", tier, asset, source, kind })),
+  );
+  /** A three.js recipe's Rust port: `fps.hands-in-frame` is `rust.fps-hands-in-frame` (no id holds another's). */
+  const rustPortOf = (id: string) => `rust.${id.replace(".", "-")}`;
+
+  it("B4a. a first-person Rust game's judges named [no-hands] in every verdict and no Rust recipe answered it: each fps, materials and facade recipe and arena.no-haze-planes has a Rust port, and the defect retrieves the hands one", async () => {
+    const { loadRecipes, recipesForChecks, checksFromDefects, CRAFT_ADOPT_SCORE } = await import(
+      "../../src/harness-seed/loop/library.ts"
+    );
+    const recipes = await loadRecipes(SEED);
+    const rust = new Map(recipes.filter((r) => r.runtime === GameStack.RustWgpu).map((r) => [r.id, r]));
+    for (const id of PORTED) {
+      const port = rust.get(rustPortOf(id));
+      assert.ok(port, `${rustPortOf(id)} is in the seed`);
+      const three = recipes.find((r) => r.id === id);
+      assert.equal(three?.runtime, GameStack.ThreeJs, `${id} stays a three.js recipe for three.js games`);
+      assert.deepEqual(port.kinds, three?.kinds, `${rustPortOf(id)} is for the same kinds of game`);
+      assert.ok(
+        port.check?.kind !== "scene",
+        `${rustPortOf(id)} measures what a Rust game can report (no scene graph)`,
+      );
+      assert.doesNotMatch(
+        `${port.intent} ${port.port}`,
+        /parent(ed)? to the camera|THREE\.|materials\.js|userData/,
+        id,
+      );
+    }
+    const defects = checksFromDefects(["[no-hands] the pistol floats on a tan block; no hands hold it"]);
+    const hits = recipesForChecks(recipes, defects, 3, {
+      kind: "first-person",
+      stack: GameStack.RustWgpu,
+      minScore: CRAFT_ADOPT_SCORE,
+    });
+    assert.ok(
+      hits.some((hit) => hit.recipe.id === "rust.fps-hands-in-frame"),
+      `the defect retrieves the Rust hands recipe: ${hits.map((h) => h.recipe.id)}`,
+    );
+  });
+
+  it("B4b. the director planned a first-person Rust game and was never shown a recipe: the plan's answer names the kind's craft and writes it whole beside the integration", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const integration = await tmpDir("craft-integration-");
+    const loopRun = fakeLoopRun(fakeHost(), {
+      ctx: {
+        threadId: "t1",
+        cancelled: false,
+        workspace: SEED,
+        setStatus: () => {},
+        notify: () => {},
+        call: async () => null,
+      },
+      integrationWorktree: integration,
+      run: {
+        runId: "run_bc",
+        project: "body-cam",
+        goal: BODYCAM.goal,
+        reference: { name: BODYCAM.direction, shots: [] },
+        stack: GameStack.RustWgpu,
+        engine: "claude",
+        budgets: { wallClockMs: HOUR_MS },
+      },
+    });
+    const answer = await loopRun.setPlan({
+      summary: "A playable bodycam shooter in an abandoned school wing.",
+      kind: "first-person",
+      start: '["Enter"]',
+      art: SCHOOL_ART,
+      workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
+    });
+    assert.match(answer, /CRAFT FOR A FIRST-PERSON GAME/);
+    for (const id of ["rust.fps-hands-in-frame", "rust.fps-weapon-from-parts"]) assert.match(answer, new RegExp(id));
+    assert.doesNotMatch(answer, /\n- fps\.hands-in-frame/, "never the three.js recipe");
+    const file = await readFile(path.join(integration, ".studio", "CRAFT.md"), "utf8");
+    assert.match(file, /frame\.tag\("hands"\)/, "the whole recipe, its Rust sketch included");
+    // A second plan of the same kind repeats nothing the lead was already handed.
+    const again = await loopRun.setPlan({
+      summary: "A playable bodycam shooter in an abandoned school wing.",
+      kind: "first-person",
+      start: '["Enter"]',
+      art: SCHOOL_ART,
+      workers: JSON.stringify([{ id: "school-look", done: ["the corridor reads as decayed plaster and tile"] }]),
+    });
+    assert.doesNotMatch(again, /CRAFT FOR/);
+  });
+
+  it("B4c. the director's opening brief and each builder's are handed the game's craft from the brief's words; a three.js game is handed no Rust recipe", async () => {
+    const { openingCraft, builderCraft } = await import("../../src/harness-seed/loop/director/craft.ts");
+    const { craftForGame } = await import("../../src/harness-seed/loop/game-craft.ts");
+    const { loadRecipes } = await import("../../src/harness-seed/loop/library.ts");
+    const integration = await tmpDir("craft-open-");
+    const worktree = await tmpDir("craft-builder-");
+    const run = {
+      runId: "run_bc",
+      project: "body-cam",
+      goal: BODYCAM.goal,
+      reference: { name: BODYCAM.direction },
+      stack: GameStack.RustWgpu,
+    };
+    const loopRun = { ctx: { workspace: SEED }, run, shape: null, state: {}, integrationWorktree: integration };
+    const opening = await openingCraft(loopRun as never);
+    for (const id of [
+      "rust.fps-hands-in-frame",
+      "rust.materials-buildings-not-flat",
+      "rust.facade-recessed-windows-seams",
+    ])
+      assert.match(opening, new RegExp(id), `the lead's brief names ${id}`);
+    assert.match(opening, new RegExp(path.join(integration, ".studio", "CRAFT.md")));
+    const builder = await builderCraft(loopRun as never, worktree, [
+      "Surfaces and light for level.rs: plaster walls, tiled floor, windows",
+    ]);
+    assert.match(builder, /rust\.materials-weathered-masonry/);
+    assert.match(builder, /Whole, with code: \.studio\/CRAFT\.md/);
+    assert.match(await readFile(path.join(worktree, ".studio", "CRAFT.md"), "utf8"), /Decal::on_wall/);
+    const three = craftForGame(await loadRecipes(SEED), {
+      kind: "first-person",
+      stack: GameStack.ThreeJs,
+      texts: [BODYCAM.goal, BODYCAM.direction],
+    });
+    assert.ok(
+      three.some((pick) => pick.recipe.id === "fps.hands-in-frame"),
+      "a three.js game gets its own",
+    );
+    assert.ok(
+      three.every((pick) => pick.recipe.runtime === GameStack.ThreeJs),
+      "and never a Rust one",
+    );
+  });
+});
+
+describe("a high bar on a short clock (bodycam B9)", () => {
+  it("B9. a 56-minute photoreal run polished its greybox and never reached geometry or hands: a timed lead hears the layer order and to say which layer the time reaches; a long or until-done run does not", async () => {
+    const { directorBrief } = await import("../../src/harness-seed/loop/director/briefs.ts");
+    const briefFor = (
+      workingMinutes: number,
+      completionPolicy: (typeof CompletionPolicy)[keyof typeof CompletionPolicy],
+    ) => {
+      const now = Date.now();
+      return directorBrief({
+        run: {
+          runId: "run_bc",
+          project: "body-cam",
+          goal: "Make the photorealistic bodycam fps shooter in post-soviet environment in our RUST engine.",
+          engine: "claude",
+          budgets: { wallClockMs: (workingMinutes + 15) * MINUTE_MS, completionPolicy },
+        },
+        softDeadline: now + workingMinutes * MINUTE_MS,
+        finalDeadline: now + (workingMinutes + 15) * MINUTE_MS,
+        integrationWorktree: "/runs/body-cam/integration",
+        baseCommit: "a".repeat(40),
+      } as never);
+    };
+    const short = briefFor(56, CompletionPolicy.Duration);
+    assert.match(short, /A HIGH BAR ON 5[56] MINUTES/);
+    assert.match(short, /greybox that plays[\s\S]*real geometry[\s\S]*light and materials[\s\S]*hands and weapon/);
+    assert.match(short, /plan's risks which layer the time reaches/);
+    assert.doesNotMatch(briefFor(6 * 60, CompletionPolicy.Duration), /A HIGH BAR ON/, "six hours fit every layer");
+    assert.doesNotMatch(briefFor(56, CompletionPolicy.Goal), /A HIGH BAR ON/, "an until-done run has no clock to beat");
+  });
+});
+
+describe("a Rust builder's build loop (B6, bodycam)", () => {
+  it("B6. A Rust builder paid a rebuild and page boot per compiler error and wrote its own clippy script: its eyes offer the computer's check, which the computer has", () => {
+    const eyes = RUST_FACET.eyes({ engine: EngineId.ClaudeCode });
+    assert.match(eyes, /mcp__studio__computer action=check\b/, eyes);
+    const offered = computerToolDefinition({ role: "builder" }).parameters.properties.action?.description ?? "";
+    assert.match(offered, /\bcheck\b/, "the builder's computer offers check");
+  });
+});
+
+/**
+ * Bodycam rerun (run_mvr7v1x222st): "[dead-input] player.x, player.z and player.yaw are identical
+ * before and after the scripted controls" was raised in about 21 rounds. Two things in the
+ * harness made it: a Rust game reports no `state().flow` and has no `__studio.begin()`, so the
+ * drive never left the title and every scripted key landed on it; and once the game did move
+ * (its `walks` probe passed from the fps facet's third round on), the defect had become a
+ * picture question, "Is this defect gone?", that a still frame can never answer, and it failed
+ * every round to the end of the run.
+ */
+describe("Bodycam rerun: judges that could not drive the game", () => {
+  /** A Rust game on its title: Enter (its edge, as body-cam reads it) starts play; W walks only in play. No flow, no begin(). */
+  function rustTitleGame() {
+    let phase = "title";
+    let z = -8;
+    const held = new Set<string>();
+    const handlers: Record<string, CtxHandler> = {
+      [HostMethod.PreviewLoad]: () => "about:blank",
+      [HostMethod.PreviewReload]: () => true,
+      [HostMethod.PreviewReady]: () => ({ ready: true, via: "shim", pageMs: 0, phase: "ready" }),
+      [HostMethod.PreviewStatus]: () => ({ crashed: false, unresponsive: false, loadError: null, buildFailed: null }),
+      [HostMethod.PreviewCall]: (params) => {
+        if (params.method === PageMethod.Cameras) return ["default"];
+        if (params.method === PageMethod.Demos || params.method === PageMethod.Eyes) return [];
+        if (params.method === PageMethod.Seed) {
+          phase = "title";
+          z = -8;
+          held.clear();
+          return 1;
+        }
+        if (params.method === PageMethod.Begin) return { ok: false, reason: "this page declares no begin()" };
+        if (params.method === PageMethod.Step && phase === "playing" && held.has("w")) z += 1;
+        return { ok: true, frame: 1 };
+      },
+      [HostMethod.PreviewEvaluate]: () => ({ steppedFrames: 8, drawCalls: 40, now: 320, canvas: true }),
+      [HostMethod.PreviewState]: () => ({ version: 1, match: { phase }, player: { x: 0, z, yaw: 1.5708 } }),
+      [HostMethod.PreviewPageUi]: () => ({ entries: [], coverage: 0 }),
+      [HostMethod.PreviewDiff]: () => ({ compared: 1_000, diffFraction: 0 }),
+      [HostMethod.PreviewInput]: (params) => {
+        for (const action of (params.actions ?? []) as Array<{ type: string; keys?: string[] }>) {
+          const keys = action.keys ?? [];
+          if (action.type === "down") for (const key of keys) held.add(key);
+          if (action.type === "up") for (const key of keys) held.delete(key);
+          const pressed = action.type === "tap" || action.type === "down";
+          if (pressed && keys.includes("Enter") && phase === "title") phase = "playing";
+        }
+        return { ok: true, applied: 1, width: 800, height: 600 };
+      },
+      [HostMethod.PreviewGesture]: () => ({ knocked: true, trusted: null }),
+      [HostMethod.PreviewScreenshot]: (params) => ({
+        path: `/runs/shots/${String(params.label)}.jpg`,
+        base64: String(params.label),
+        bytes: 12,
+        stats: { canvas: true, litFraction: 0.4, drawCalls: 40 },
+      }),
+      [HostMethod.PreviewConsole]: () => [],
+      [HostMethod.PreviewGpuErrors]: () => [],
+    };
+    return ctxRecorder({ handlers, unknown: { value: null } });
+  }
+
+  it("BC3. a Rust game on its title with declared start keys and no state().flow: the drive presses them before the opening sample, and the scripted keys move the player", async () => {
+    const recorder = rustTitleGame();
+    const game = { kind: "first-person", start: { keys: ["Enter"] } };
+    const evidence = await gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_bodycam", project: "body-cam", game } as never,
+      iterationId: "001",
+      seed: 1234,
+    });
+    const early = evidence.stateEarly as { match: { phase: string }; player: { z: number } };
+    const late = evidence.state as { player: { z: number } };
+    assert.equal(early.match.phase, "playing", "the opening sample is taken in play, after the start keys");
+    assert.ok(
+      late.player.z > early.player.z,
+      `the scripted W walked the player: z ${early.player.z} → ${late.player.z}`,
+    );
+    assert.equal(evidence.play?.via, "keys");
+    assert.ok(
+      evidence.warnings.some((w: string) => /reports no state\(\)\.flow/.test(w)),
+      `the builder is told to report flow: ${evidence.warnings.join("; ")}`,
+    );
+  });
+
+  it("BC3. a game with no flow and no declared start keys is driven call for call as before", async () => {
+    const recorder = rustTitleGame();
+    const evidence = await gatherEvidence(recorder.ctx as never, {
+      run: { runId: "run_bodycam", project: "body-cam", game: { kind: "first-person" } } as never,
+      iterationId: "001",
+      seed: 1234,
+    });
+    const taps = recorder.paramsOf(HostMethod.PreviewInput).filter((p) => JSON.stringify(p.actions).includes("Enter"));
+    assert.deepEqual(taps, [], "nothing pressed that the game did not declare");
+    assert.equal("play" in evidence, false);
+  });
+
+  it("BC3. a [dead-input] defect never becomes a picture question: the kind's own input probes measure it", () => {
+    const fps = {
+      id: "fps",
+      title: "Gun, hands and bodycam feel",
+      intent: "the rifle in the hands",
+      owns: ["src/facets/weapon.rs"],
+      identity: ["rifle in hands"],
+      cameras: ["default"],
+      checks: [{ id: "walks", kind: "probe", expr: "abs(delta('player.x')) > 0 || abs(delta('player.z')) > 0" }],
+    };
+    const noted: Array<{ text: string; why: string }> = [];
+    const grown = defectsToChecks(
+      fps as never,
+      [
+        "[dead-input] player.yaw, player.x and player.z are identical before and after the scripted controls (yaw 1.5708, x 0, z -8). The match never leaves the title phase under the harness. On the default camera the title is still up.",
+      ],
+      { iteration: 1, noteDefect: ((note: { text: string; why: string }) => noted.push(note)) as never },
+    );
+    assert.deepEqual(
+      grown.map((check) => check.id),
+      [],
+      "no vision question a still frame can never answer",
+    );
+    assert.equal(noted.length, 1, "the ledger keeps the sentence");
+  });
+
+  it("BC3. a plan that declares a kind says how the game leaves its title: start keys, or none", () => {
+    const one = JSON.stringify([{ id: "core", title: "Core", owns: "src/game.rs", done: ["a match"] }]);
+    const missing = compilePlan({ summary: "a bodycam shooter", workers: one, kind: "first-person" });
+    assert.match(String(missing.error), /plan: start/, "refused at plan time");
+    const keyed = compilePlan({ summary: "a bodycam shooter", workers: one, kind: "first-person", start: '["Enter"]' });
+    assert.deepEqual(keyed.plan?.game?.start, { keys: ["Enter"] });
+    const none = compilePlan({ summary: "a chess board", workers: one, kind: "static-board", start: "none" });
+    assert.deepEqual(none.plan?.game?.start, { keys: [] }, "a game that boots into play says so");
+    assert.equal(compilePlan({ summary: "a sketch", workers: one }).error, undefined, "no kind, nothing to drive");
+  });
+});
+
+describe("Bodycam rerun: greybox nobody had to replace", () => {
+  // The rerun's judges named [primitive] about nineteen times and none of it held anything back:
+  // the owner's Live window showed stick trees, untextured poles, a box car, cube snow, a black
+  // viewmodel, crushed shadows and a bright blue sky while it snowed.
+  const yard: Run = {
+    runId: "bc-yard",
+    project: "body-cam",
+    goal: "Make the photorealistic bodycam fps shooter in a snowy post-soviet yard.",
+    reference: { name: "a photoreal bodycam shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const facet = { id: "yard-look", title: "The yard", intent: "a snowy panel-block yard at dusk" };
+  const sides = {
+    run: yard,
+    challenger: { state: { phase: "playing" } },
+    incumbentEvidence: { state: { phase: "playing" } },
+  };
+  /** A taste judge that answers this JSON. */
+  const judging = (answer: Record<string, unknown>) =>
+    ctxRecorder({ handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(answer) } }) } });
+  const askedOf = (recorder: ReturnType<typeof judging>): string => {
+    const messages = recorder.paramsOf("engine.complete")[0]?.messages;
+    return Array.isArray(messages) ? String(messages[0]?.content) : "";
+  };
+  const satisfiedWith = (extra: Record<string, unknown>) => ({
+    pick: "A",
+    satisfied: true,
+    regression: null,
+    newCheck: null,
+    defects: [],
+    polish: [],
+    scale: "polish",
+    reason: "the yard reads",
+    ...extra,
+  });
+
+  it("BC5a. a taste judge called the yard satisfied while naming [primitive]: a look blocker holds the facet open", async () => {
+    const primitive = "[primitive] the car by the gate is a grey box with no wheels — eye:spawn";
+    const taste = await tasteVeto(judging(satisfiedWith({ defects: [primitive] })).ctx, {
+      ...sides,
+      facet,
+      random: () => 0.1,
+    });
+    assert.equal(taste.satisfied, false, "never satisfied while a look blocker is on screen");
+    assert.deepEqual(taste.lookBlockers, [primitive]);
+    const clean = await tasteVeto(judging(satisfiedWith({ defects: ["the snow could fall slower"] })).ctx, {
+      ...sides,
+      facet,
+      random: () => 0.1,
+    });
+    assert.equal(clean.satisfied, true, "a defect that is no look blocker leaves the judge's word standing");
+  });
+
+  it("BC5b. crushed shadows filed as a polish nit: a look blocker in polish is a defect and still holds the facet", async () => {
+    const crushed = "[crushed-shadow] the stairwell's shadows are pure black — eye:here";
+    const taste = await tasteVeto(judging(satisfiedWith({ polish: [crushed, "a stray stripe on the curb"] })).ctx, {
+      ...sides,
+      facet,
+      random: () => 0.1,
+    });
+    assert.equal(taste.satisfied, false);
+    assert.ok(taste.defects.includes(crushed), "the builder receives it as work");
+    assert.ok(!taste.polish.includes(crushed), "and not as an optional nit");
+    assert.deepEqual(taste.polish, ["a stray stripe on the curb"]);
+  });
+
+  it("BC5c. a finishing worker ended on a preferred polish with a black viewmodel on screen: the finish is not in", async () => {
+    const { finishDone } = await import("../../src/harness-seed/loop/facet/stage.ts");
+    const done = { won: true, summary: { identityAllPass: true } };
+    assert.equal(
+      finishDone({ ...done, lookBlockers: ["[dark-viewmodel] the rifle and glove are a black shape — default"] }),
+      null,
+    );
+    assert.match(String(finishDone({ ...done, lookBlockers: [] })), /finish is in/);
+  });
+
+  it("BC5d. the ship review let a bright blue sky over falling snow through as visible: a look blocker is a blocker and the build does not ship", async () => {
+    const { readShipReview } = await import("../../src/harness-seed/loop/ship-review.ts");
+    const review = readShipReview(
+      {
+        ship: true,
+        defects: [
+          {
+            what: "[sky-contradicts] a bright blue sky while it snows",
+            camera: "default",
+            part: null,
+            severity: "visible",
+          },
+          { what: "the HUD timer is a little small", camera: "default", part: null, severity: "nit" },
+        ],
+        doNotRegress: [],
+        reason: "close",
+      },
+      [],
+    );
+    assert.deepEqual(
+      review.defects.map((defect) => defect.severity),
+      ["blocker", "nit"],
+    );
+    assert.equal(review.ship, false, "a blocker on screen is no ship");
+  });
+
+  it("BC5e. no judge asked whether a frame would pass as a shipped game's: each scene camera is held to the reference, and one that would not is a blocker", async () => {
+    const still = { mimeType: "image/png", data: "iVBORw0KGgo=", label: "bodycam still" };
+    const withStills = { ...yard, reference: { ...yard.reference, frames: [still] } } as Run;
+    const recorder = judging(
+      satisfiedWith({
+        shipped: [
+          { camera: "eye:spawn", passes: false, why: "stick trees and a box car" },
+          { camera: "default", passes: true, why: "" },
+        ],
+      }),
+    );
+    const taste = await tasteVeto(recorder.ctx, { ...sides, run: withStills, facet, random: () => 0.1 });
+    assert.match(askedOf(recorder), /SHIPPED LOOK: .*next to the REFERENCE stills/);
+    assert.deepEqual(taste.lookBlockers, [
+      "[not-shipped] would not pass as a shipped game's screenshot: stick trees and a box car — eye:spawn",
+    ]);
+    assert.equal(taste.satisfied, false);
+    // A run that sets no visual bar is not asked, and an answer it was not asked adds nothing.
+    const plain = { ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run;
+    const unasked = judging(satisfiedWith({ shipped: [{ camera: "eye:spawn", passes: false, why: "flat" }] }));
+    const chess = await tasteVeto(unasked.ctx, { ...sides, run: plain, facet, random: () => 0.1 });
+    assert.doesNotMatch(askedOf(unasked), /SHIPPED LOOK/);
+    assert.equal(chess.satisfied, true);
+  });
+
+  it("BC5f. the director greyboxed a photoreal yard with no asset plan: the plan needs its art pass, sourced per tier, and every builder reads it", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { artPassLines } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");
+    const integration = await tmpDir("art-pass-integration-");
+    const seed = path.join(process.cwd(), "src", "harness-seed");
+    const ctx = {
+      threadId: "t1",
+      cancelled: false,
+      workspace: seed,
+      setStatus: () => {},
+      notify: () => {},
+      call: async () => null,
+    };
+    const loopRun = fakeLoopRun(fakeHost(), {
+      ctx,
+      integrationWorktree: integration,
+      run: { ...yard, engine: "claude" },
+    });
+    const workers = JSON.stringify([{ id: "yard-look", done: ["the yard reads as a real snowy courtyard"] }]);
+    const summary = "A photoreal bodycam yard.";
+    const asset = (tier: string, source: string, extra: Record<string, string> = {}) => ({
+      area: "the yard",
+      tier,
+      asset: `${tier} asset`,
+      source,
+      kind: "prop",
+      ...extra,
+    });
+    // Flipped (gen3 G3-2a): every asset names its kind, and the sky is an HDRI scan rather than Blender.
+    const full = [
+      asset("hero", "genex-model"),
+      asset("mid", "genex-model"),
+      asset("scatter", "scan", { kind: "surface" }),
+      asset("sky", "scan", { kind: "atmosphere" }),
+    ];
+    assert.match(String(await loopRun.setPlan({ summary, workers })), /plan: the ask sets a visual bar/);
+    assert.match(String(await loopRun.setPlan({ summary, workers, art: "none" })), /needs its art pass/);
+    const noSky = JSON.stringify(full.slice(0, 3));
+    assert.match(String(await loopRun.setPlan({ summary, workers, art: noSky })), /art lists no sky asset/);
+    const boxCar = JSON.stringify([...full, asset("mid", "code")]);
+    assert.match(
+      String(await loopRun.setPlan({ summary, workers, art: boxCar })),
+      /code-built geometry is the last resort/,
+    );
+    assert.equal(loopRun.state.plan, null, "nothing was planned while refused");
+    const kept = await loopRun.setPlan({ summary, workers, art: JSON.stringify(full) });
+    assert.doesNotMatch(String(kept), /^plan:/);
+    assert.equal((loopRun.run.art as { generations: number }).generations, 2, "two Genex generations reserved");
+    // A re-plan keeps the pass it does not repeat.
+    await loopRun.setPlan({ summary, workers });
+    assert.equal((loopRun.run.art as { assets: unknown[] }).assets.length, 4);
+    const brief = artPassLines(loopRun.run);
+    assert.match(brief, /the yard · hero: hero asset ← genex-model/);
+    assert.match(brief, /2 Genex generations are reserved/);
+    assert.match(brief, /Greybox is a step inside a round, never a finish/);
+    // A run that sets no visual bar plans as it did.
+    const chess = fakeLoopRun(fakeHost(), {
+      ctx,
+      integrationWorktree: await tmpDir("art-pass-chess-"),
+      run: { ...yard, goal: "a chess board", reference: { name: "", shots: [] }, engine: "claude" },
+    });
+    assert.doesNotMatch(String(await chess.setPlan({ summary: "Chess.", workers })), /^plan:/);
+    assert.equal(artPassLines(chess.run), "");
+  });
+});
+
+describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", () => {
+  // Gen3 kept a yard of box benches, cone birches and slab snow: rounds were kept when existence
+  // checks flipped, look blockers only changed `satisfied`, judges looked through 960×540 stills
+  // and nothing measured exposure or motion over time. One row per failure in the AAA review.
+  const yard: Run = {
+    runId: "g3-yard",
+    project: "body-cam-2",
+    goal: "Make the photorealistic bodycam fps shooter in a snowy post-soviet yard.",
+    reference: { name: "a photoreal bodycam shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const facet = { id: "yard", title: "The yard", intent: "a snowy panel-block courtyard with benches and birches" };
+  const judging = (answer: Record<string, unknown>) =>
+    ctxRecorder({ handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(answer) } }) } });
+  const askedOf = (recorder: ReturnType<typeof judging>): string => {
+    const messages = recorder.paramsOf("engine.complete")[0]?.messages;
+    return Array.isArray(messages) ? String(messages[0]?.content) : "";
+  };
+  const preferChallenger = (extra: Record<string, unknown> = {}) => ({
+    pick: "A",
+    satisfied: false,
+    regression: null,
+    newCheck: null,
+    defects: [],
+    polish: [],
+    scale: "structural",
+    reason: "the yard is a courtyard now",
+    ...extra,
+  });
+  /** A game state reporting one tag's engine look facts. */
+  const lookState = (tags: Record<string, Record<string, unknown>>) => ({
+    phase: "playing",
+    __render: { look: { tags } },
+  });
+  /** The bench of the lighting lane's fixture (`tests/fixtures/render-look-v1.json`): untextured, no maps. */
+  const BOX_BENCH = {
+    coverage: 0.04,
+    flatCoverage: 0.031,
+    texelsPerMetre: null,
+    pixelsPerMetre: 640,
+    trianglesPerSquareMetre: 2.5,
+    normalMapShare: 0,
+    ormShare: 0,
+    alphaCardShare: 0,
+    draws: 12,
+  };
+  /** A birch of cones: textured bark, no leaf or twig cards. */
+  const CONE_BIRCH = { ...BOX_BENCH, flatCoverage: 0, texelsPerMetre: 256, normalMapShare: 1, ormShare: 1 };
+
+  it("G3-1a. yard it1 was kept on yard-is-a-courtyard while it added a bench of twelve boxes: a round that adds a look blocker is not kept, whatever checks flipped", async () => {
+    const { acceptRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
+    const spec = { checks: [{ id: "yard-is-a-courtyard", kind: "vision" }] };
+    const board = { "yard-is-a-courtyard": { kind: "vision", pass: true } };
+    const comparison = { flips: ["yard-is-a-courtyard"] };
+    const kept = acceptRound({ spec, board, comparison, taste: { veto: false, pick: "challenger" } });
+    assert.equal(kept.accepted, true, "a strong flip alone still keeps a round");
+    const blocked = acceptRound({
+      spec,
+      board,
+      comparison,
+      taste: { veto: false, pick: "challenger", addedBlockers: ["[primitive] the bench is twelve boxes — eye:spawn"] },
+    });
+    assert.deepEqual([blocked.accepted, blocked.source], [false, "look-blocked"]);
+  });
+
+  it("G3-1b. the taste judge saw a box bench appear where there was none and could not call it a regression: on a look bar it lists what the accepted build added, and the engine's facts add theirs", async () => {
+    const bench = "[primitive] the new bench by the garages is twelve grey boxes — eye:spawn";
+    const recorder = judging(preferChallenger({ added: [bench, "a nicer bench"] }));
+    const taste = await tasteVeto(recorder.ctx, {
+      run: yard,
+      facet,
+      challenger: { state: { phase: "playing" } },
+      incumbentEvidence: { state: { phase: "playing" } },
+      random: () => 0.1,
+    });
+    assert.deepEqual(taste.addedBlockers, [bench], "only a tagged look blocker counts as added");
+    assert.match(askedOf(recorder), /ART BAR: .*"added".*"Worse against the art bar" is a regression/);
+    // The engine's facts: a bench drawn in flat colour and a birch with no cards (organic by the art pass), new in this round.
+    const art = {
+      generations: 0,
+      assets: [
+        { area: "the yard", tier: "mid", kind: "organic", asset: "birches", source: "genex-model", tags: ["birch"] },
+      ],
+    };
+    const facts = await tasteVeto(judging(preferChallenger()).ctx, {
+      run: { ...yard, art },
+      facet,
+      challenger: { state: lookState({ bench: BOX_BENCH, birch: CONE_BIRCH }) },
+      incumbentEvidence: { state: lookState({}) },
+      random: () => 0.1,
+    });
+    assert.deepEqual(
+      facts.addedBlockers.map((text: string) => /^\[([a-z-]+)\] ([a-z]+):/.exec(text)?.slice(1).join(" ")),
+      ["flat-material bench", "stick-tree birch"],
+    );
+    // A blocker the incumbent already showed was not added by this round.
+    const old = await tasteVeto(judging(preferChallenger()).ctx, {
+      run: yard,
+      facet,
+      challenger: { state: lookState({ bench: BOX_BENCH }) },
+      incumbentEvidence: { state: lookState({ bench: BOX_BENCH }) },
+      random: () => 0.1,
+    });
+    assert.deepEqual(old.addedBlockers, []);
+    // A run with no visual bar is not held to one.
+    const chess = { ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run;
+    const plain = judging(preferChallenger({ added: [bench] }));
+    const unbarred = await tasteVeto(plain.ctx, {
+      run: chess,
+      facet,
+      challenger: { state: lookState({ bench: BOX_BENCH }) },
+      incumbentEvidence: { state: lookState({}) },
+      random: () => 0.1,
+    });
+    assert.deepEqual(unbarred.addedBlockers, []);
+    assert.doesNotMatch(askedOf(plain), /ART BAR/);
+  });
+
+  it("G3-1c. light it1 and yard it1 were judged with no image attached and kept on the state alone: a round with no frame to show is captured once more, then Unmeasured, never judged blind", async () => {
+    const { verifyChallenger } = await import("../../src/harness-seed/loop/facet/phases/verify.ts");
+    const verdictOf = async (again: Record<string, unknown>) => {
+      const recorder = judging({ pick: "A", satisfied: false, defects: [], reason: "fine" });
+      let captures = 0;
+      const loop = {
+        ctx: recorder.ctx,
+        legacy: true,
+        facet,
+        run: yard,
+        incumbentEvidence: null,
+        biggestGap: "the yard reads as boxes",
+        deadline: Date.now() + HOUR_MS,
+        budgets: { observationDelays: [] },
+        spec: { cameras: ["default"] },
+      };
+      const round: Record<string, any> = {
+        iterationId: "it1",
+        // Shots on record, but an alias fallback with no pixels: nothing a judge can be shown.
+        evidence: { ok: true, problems: [], shots: [{ camera: "default", path: "/f.jpg" }] },
+        gatherOnce: async () => {
+          captures++;
+          return { ok: true, problems: [], ...again };
+        },
+      };
+      await verifyChallenger(loop as never, round as never);
+      return { round, captures, judged: recorder.paramsOf("engine.complete").length };
+    };
+    const blind = await verdictOf({ shots: [{ camera: "default", path: "/f.jpg" }] });
+    assert.deepEqual(
+      [blind.round.verdictSource, blind.round.won, blind.captures, blind.judged],
+      ["unseen", false, 1, 0],
+    );
+    assert.match(blind.round.verdict.reason, /^unmeasured: no frame of this build could be shown/);
+    const seen = await verdictOf({ shots: [{ camera: "default", path: "/f.jpg", base64: "px" }] });
+    assert.deepEqual(
+      [seen.round.verdictSource, seen.captures, seen.judged],
+      ["legacy", 1, 1],
+      "a second capture with pixels is judged",
+    );
+  });
+
+  it("G3-1f. references/ held the owner's still while the report said referenceStills: [] and no judge compared with it: a run that brought no frames takes the game's references/", async () => {
+    const { loadReferenceStills } = await import("../../src/harness-seed/loop/reference-stills.ts");
+    const { loopRunReport } = await import("../../src/harness-seed/loop/director/setup.ts");
+    const still = { label: "owner-classroom", data: "iVBORw0KGgo=", mimeType: "image/png" };
+    const recorder = ctxRecorder({
+      handlers: {
+        "game.references": () => ({ frames: [still], skipped: [{ file: "notes.txt", why: "not an image" }] }),
+      },
+    });
+    const run = { ...yard, reference: { name: "a photoreal bodycam shooter", shots: [] } } as Run;
+    const notes = await loadReferenceStills(recorder.ctx, run);
+    assert.deepEqual(
+      run.reference?.frames?.map((frame) => frame.label),
+      ["owner-classroom"],
+    );
+    assert.deepEqual(loopRunReport(run).referenceStills, ["owner-classroom"]);
+    assert.deepEqual(notes, [
+      "loaded 1 reference still(s) from references/: owner-classroom",
+      "reference skipped: notes.txt is not an image",
+    ]);
+    // A run that brought its own stills keeps them, and the folder is not read.
+    const own = { ...yard, reference: { name: "x", shots: [], frames: [{ ...still, label: "brought" }] } } as Run;
+    const untouched = ctxRecorder({ handlers: { "game.references": () => ({ frames: [still] }) } });
+    assert.deepEqual(await loadReferenceStills(untouched.ctx, own), []);
+    assert.equal(untouched.paramsOf("game.references").length, 0);
+    assert.deepEqual(
+      own.reference?.frames?.map((frame) => frame.label),
+      ["brought"],
+    );
+  });
+
+  it("G3-1g. a parity capture labelled classroom was the title menu: a demo whose end frame is another frame of the same pass is flagged as not having moved the game", async () => {
+    const { weighDemoFrames } = await import("../../src/harness-seed/loop/frame-verdicts.ts");
+    const look = {
+      warnings: [] as string[],
+      shots: [
+        { camera: "default", base64: "title-menu" },
+        { camera: "demo:classroom", base64: "title-menu" },
+        { camera: "demo:doorway", base64: "doorway-end" },
+        { camera: "eye:spawn", base64: "yard" },
+      ],
+    };
+    assert.deepEqual(weighDemoFrames(look), [
+      "demo:classroom's end frame is the same picture as default — the demo did not move the game (a title screen or a paused game): its frame proves nothing about the demo",
+    ]);
+    assert.equal(look.warnings.length, 1, "the judge reads it beside the frame");
+  });
+
+  it("G3-2a. the art pass took a cone-script birch and a box bench as `blender`, and the grammar's own example sourced the sky from Blender: a kit is the modular shell only, every asset says what it is, and the example is a valid pass", async () => {
+    const { readArtPass, ArtRefusal } = await import("../../src/harness-seed/loop/look-bar.ts");
+    const { ART_GRAMMAR } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");
+    const example = JSON.parse(/\[\{.*?\}\]/.exec(ART_GRAMMAR)?.[0] ?? "[]");
+    const read = readArtPass(JSON.stringify(example), true);
+    assert.ok("art" in read && read.art, "the grammar's example passes its own rules");
+    const sky = example.find((asset: { tier: string }) => asset.tier === "sky");
+    assert.notEqual(sky.source, "blender-kit", "the sky is no Blender script");
+    const row = (extra: Record<string, unknown>) => ({ area: "the yard", asset: "a thing", ...extra });
+    const others = [
+      row({ tier: "mid", kind: "structure", source: "blender-kit", why: "wears the concrete_panels scan" }),
+      row({ tier: "scatter", kind: "surface", source: "scan" }),
+      row({ tier: "sky", kind: "atmosphere", source: "scan" }),
+    ];
+    const pass = (hero: Record<string, unknown>) => readArtPass(JSON.stringify([row(hero), ...others]), true);
+    const problem = (hero: Record<string, unknown>) => {
+      const answer = pass(hero);
+      return "problem" in answer ? answer.problem.code : null;
+    };
+    assert.equal(
+      problem({ tier: "hero", kind: "prop", source: "blender" }),
+      ArtRefusal.KitNotForHero,
+      "the old `blender` is a kit",
+    );
+    const birch = row({ tier: "mid", kind: "organic", source: "blender-kit", why: "bark scan" });
+    const birches = readArtPass(
+      JSON.stringify([row({ tier: "hero", kind: "prop", source: "genex-model" }), birch, ...others]),
+      true,
+    );
+    assert.equal(
+      "problem" in birches ? birches.problem.code : null,
+      ArtRefusal.KitNotForHero,
+      "a cone-script birch is no kit",
+    );
+    assert.equal(problem({ tier: "hero", source: "genex-model" }), ArtRefusal.KindMissing);
+    const bare = readArtPass(
+      JSON.stringify([
+        row({ tier: "hero", kind: "prop", source: "cc0-model" }),
+        ...others.slice(1),
+        row({ tier: "mid", kind: "structure", source: "blender-kit" }),
+      ]),
+      true,
+    );
+    assert.equal("problem" in bare ? bare.problem.code : null, ArtRefusal.KitWithoutWhy);
+    const good = pass({ tier: "hero", kind: "prop", source: "cc0-model", tags: ["bench"] });
+    assert.ok("art" in good && good.art?.assets[0]?.tags?.[0] === "bench", "a row keeps its draw tags");
+    // A run with no visual bar plans kits as it did.
+    const unbarred = readArtPass(JSON.stringify([row({ tier: "hero", source: "blender" }), ...others]), false);
+    assert.ok("art" in unbarred);
+  });
+
+  it("G3-2b. the 16:45 re-plan added the yard and kept an art pass that planned nothing for it: a re-plan that adds a part on a look bar gives art= again", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const loopRun = fakeLoopRun(fakeHost(), {
+      ctx: {
+        threadId: "t1",
+        cancelled: false,
+        workspace: path.join(process.cwd(), "src", "harness-seed"),
+        setStatus: () => {},
+        notify: () => {},
+        call: async () => null,
+      },
+      integrationWorktree: await tmpDir("g3-replan-"),
+      run: { ...yard, engine: "claude" },
+    });
+    const art = JSON.stringify([
+      { area: "the school", tier: "hero", kind: "prop", asset: "desks", source: "genex-model" },
+      {
+        area: "the school",
+        tier: "mid",
+        kind: "structure",
+        asset: "walls",
+        source: "blender-kit",
+        why: "plaster scans",
+      },
+      { area: "the school", tier: "scatter", kind: "surface", asset: "debris", source: "scan" },
+      { area: "the school", tier: "sky", kind: "atmosphere", asset: "overcast HDRI", source: "scan" },
+    ]);
+    const school = JSON.stringify([{ id: "school", done: ["the classroom reads"] }]);
+    const both = JSON.stringify([
+      { id: "school", done: ["the classroom reads"] },
+      { id: "yard", done: ["the yard reads"] },
+    ]);
+    assert.doesNotMatch(String(await loopRun.setPlan({ summary: "A school.", workers: school, art })), /^plan:/);
+    const refused = String(await loopRun.setPlan({ summary: "A school and its yard.", workers: both }));
+    assert.match(refused, /^plan: the plan adds yard and keeps an art pass that plans nothing for it/);
+    assert.equal(
+      (loopRun.state.plan as { workers: unknown[] }).workers.length,
+      1,
+      "nothing was re-planned while refused",
+    );
+    // The same part list again keeps the pass it does not repeat.
+    assert.doesNotMatch(String(await loopRun.setPlan({ summary: "A school.", workers: school })), /^plan:/);
+  });
+
+  it("G3-2c. seven benches, four bins and every birch were planned as models and delivered as box scripts with no normal map: the provenance audit follows each planned tag to its file and lock row, and a lesser source is a blocking art-source-mismatch the round may not add", async () => {
+    const { auditProvenance } = await import("../../src/harness-seed/loop/provenance.ts");
+    const { glbFile } = await import("../helpers/roblox-models.ts");
+    const { symlink } = await import("node:fs/promises");
+    const game = await tmpDir("g3-provenance-");
+    const outside = await tmpDir("g3-outside-");
+    const textured = glbFile(
+      { asset: { version: "2.0" }, images: [{ uri: "a.png" }], materials: [{ normalTexture: { index: 0 } }] },
+      Buffer.alloc(0),
+    );
+    const flat = glbFile(
+      { asset: { version: "2.0" }, materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.5, 0.5, 0.5, 1] } }] },
+      Buffer.alloc(0),
+    );
+    const put = async (rel: string, bytes: Buffer, root = game) => {
+      await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+      await writeFile(path.join(root, rel), bytes);
+    };
+    await put("assets/blender/bench/model.glb", flat);
+    await put("assets/blender/block/model.glb", textured);
+    await put("assets/genex/bin/model.glb", textured);
+    await put("kit.glb", textured, outside);
+    await mkdir(path.join(game, "assets/blender/linked"), { recursive: true });
+    await symlink(path.join(outside, "kit.glb"), path.join(game, "assets/blender/linked/model.glb"));
+    const rows = ["assets/blender/bench/model.glb", "assets/blender/block/model.glb", "assets/blender/linked/model.glb"]
+      .map((file) => ({ path: file, origin: "blender" }))
+      .concat([{ path: "assets/genex/bin/model.glb", origin: "genex" }]);
+    await writeFile(path.join(game, "genex-assets.lock"), JSON.stringify({ version: 1, entries: rows, derived: [] }));
+    const art = {
+      generations: 2,
+      assets: [
+        { area: "the yard", tier: "hero", kind: "prop", asset: "park bench", source: "genex-model", tags: ["bench"] },
+        { area: "the yard", tier: "hero", kind: "prop", asset: "bins", source: "genex-model", tags: ["bin"] },
+        {
+          area: "the yard",
+          tier: "mid",
+          kind: "structure",
+          asset: "panel blocks",
+          source: "blender-kit",
+          why: "scans",
+          tags: ["block", "garage", "stray", "far"],
+        },
+        { area: "the yard", tier: "scatter", kind: "surface", asset: "snow ground", source: "scan", tags: ["ground"] },
+      ],
+    };
+    const tag = (model: string, extra: Record<string, unknown> = {}) => ({ coverage: 0.05, models: [model], ...extra });
+    const state = lookState({
+      bench: tag("assets/blender/bench/model.glb"),
+      bin: tag("assets/genex/bin/model.glb"),
+      block: tag("assets/blender/block/model.glb"),
+      ground: tag("assets/blender/bench/model.glb"),
+      // Hostile model paths the build itself reported: never read, so never trusted as a textured kit.
+      garage: tag("assets/blender/linked/model.glb"),
+      stray: tag("../g3-outside/kit.glb"),
+      far: tag(path.join(outside, "kit.glb")),
+    });
+    const audit = await auditProvenance({ ...yard, art }, state, game);
+    const tags = audit.map((text) => /^\[art-source-mismatch\] ([a-z]+):/.exec(text)?.[1]);
+    assert.deepEqual(tags, ["bench", "garage", "stray", "far"], audit.join("\n"));
+    assert.match(
+      audit[0] ?? "",
+      /plans park bench as genex-model \(hero\), and it is drawn from code-built or an untextured box script \(assets\/blender\/bench\/model\.glb\)/,
+    );
+    // The engine's word that a tag is all primitives outranks the folder it came from.
+    const primitive = await auditProvenance(
+      { ...yard, art },
+      lookState({ bin: tag("assets/genex/bin/model.glb", { primitiveOnly: true }) }),
+      game,
+    );
+    assert.equal(primitive.length, 1);
+    assert.deepEqual(await auditProvenance({ ...yard }, state, game), [], "no art pass, nothing to audit");
+  });
+
+  it("G3-3a. a 15 s web boot gate and a phone memory note made a native desktop game ship 1k scans with no normal or ORM maps: budgets are said per destination, a look brief declares its boot, and no judge or director turns a budget into dropped maps", async () => {
+    const { slowBootWarning, bootBudgetLine, LOOK_BAR_BOOT_MS } = await import(
+      "../../src/harness-seed/loop/destination-budgets.ts"
+    );
+    const { artPassLines, ART_PASS_RULE } = await import("../../src/harness-seed/loop/look-bar-prompts.ts");
+    const { judgePrompt } = await import("../../src/harness-seed/loop/judge.ts");
+    const native = { destinations: { stack: "rust-wgpu", targets: ["macos", "windows"] } } as unknown as Run;
+    const web = { destinations: { stack: "rust-wgpu", targets: ["web", "macos"] } } as unknown as Run;
+    assert.match(
+      slowBootWarning(14_200, native),
+      /web preview Genex judges this native game through took 14\.2 s.*not the desktop build's budget: keep full-resolution maps/,
+    );
+    assert.match(
+      slowBootWarning(14_200, web),
+      /^the page took 14\.2 s .*\[\[asset_group\]\]s rather than cutting maps/,
+    );
+    assert.match(bootBudgetLine(yard), new RegExp(`"bootMs": ${LOOK_BAR_BOOT_MS} in studio\\.json`));
+    assert.equal(bootBudgetLine({ ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run), "");
+    const art = {
+      generations: 0,
+      assets: [{ area: "yard", tier: "hero", kind: "prop", asset: "bench", source: "cc0-model" }],
+    };
+    assert.match(artPassLines({ ...yard, art }), /BOOT: this look loads 2k and 4k scans/);
+    const neverCut = /never by dropping normal or ORM maps/;
+    assert.match(ART_PASS_RULE, neverCut, "the director never caps textures to protect a boot");
+    const ctx = { workspace: path.join(process.cwd(), "src", "harness-seed") } as never;
+    for (const rubric of ["taste-veto.md", "ship-review.md"])
+      assert.match(await judgePrompt(ctx, rubric, "fallback"), neverCut, rubric);
+    const { SHIP_REVIEW_FALLBACK } = await import("../../src/harness-seed/loop/ship-review-prompts.ts");
+    assert.match(SHIP_REVIEW_FALLBACK, neverCut, "a workspace without the rubric file says it too");
+  });
+
+  it("G3-4a. the light facet settled the classroom at mean luma 28 with 41% in the darkest bin and [crushed-shadow] never stopped a keep: a playable camera outside the luminance band is a blocking defect", async () => {
+    const { lumaBandDefect } = await import("../../src/harness-seed/loop/look-facts.ts");
+    const { blocksLook } = await import("../../src/harness-seed/loop/look-bar.ts");
+    const histogram = (darkest: number) => [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)];
+    const dark = lumaBandDefect("classroom", { meanLuma: 28, histogram: histogram(0.41) }, { night: false });
+    assert.ok(dark && blocksLook(dark), String(dark));
+    assert.match(String(dark), /classroom: settles at mean luma 28 with 41\.0%/);
+    assert.equal(lumaBandDefect("classroom", { meanLuma: 105, histogram: histogram(0.08) }, { night: false }), null);
+    // A declared night look sits lower; a frame of black still fails it.
+    assert.equal(lumaBandDefect("street", { meanLuma: 60, histogram: histogram(0.3) }, { night: true }), null);
+    assert.ok(lumaBandDefect("street", { meanLuma: 20, histogram: histogram(0.6) }, { night: true }));
+    assert.equal(
+      lumaBandDefect("classroom", null, { night: false }),
+      null,
+      "a camera that reports nothing is not judged by facts",
+    );
+  });
+
+  it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's exposure trace must be within 1 EV of where it settles a second after the crossing, and never pass it by more than 0.25 EV", async () => {
+    const { doorwayDefect } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    const trace = (ev: (t: number) => number) => ({
+      __render: {
+        exposureTrace: Array.from({ length: 121 }, (_, i) => ({
+          t: i / 30,
+          appliedEv: ev(i / 30),
+          meteredEv: ev(i / 30),
+        })),
+      },
+    });
+    // The engine's own doorway: 3 EV down in about a third of a second, from the crossing at 0.5 s.
+    assert.equal(doorwayDefect(trace((t) => (t < 0.5 ? 2 : Math.max(-1, 2 - 9 * (t - 0.5))))), null);
+    // A slow drift: still well over one EV bright a second after the crossing.
+    assert.match(
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : Math.max(-1, 2 - 0.8 * (t - 0.5)))))),
+      /^\[exposure-pump\] demo:doorway: .*is still \d\.\d EV from where it settles 1 s after the crossing/,
+    );
+    // Over-darkening and coming back: it passes the settled EV.
+    assert.match(
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : t < 1 ? 2 - 7 * (t - 0.5) : -1.5 + 0.5 * Math.min(1, t - 1))))),
+      /passes its settled EV by 0\.\d\d/,
+    );
+    assert.equal(doorwayDefect({ __render: {} }), null, "a game with no trace is not judged on one");
+  });
+
+  it("G3-4c. the sprint camera rolled ±5.8° at 3.7 Hz with an 8.9 cm bob at 7.5 Hz and nothing read the pose: demo:sprint-run's pose log is held to the comfort caps", async () => {
+    const { comfortDefect, comfortReading, COMFORT_CAPS } = await import(
+      "../../src/harness-seed/loop/temporal-checks.ts"
+    );
+    const pose = (rollDeg: number, rollHz: number, bobM: number, bobHz: number) => ({
+      __camera: {
+        trace: Array.from({ length: 241 }, (_, i) => {
+          const t = i / 60;
+          return {
+            t,
+            x: 0,
+            y: 1.7 + (bobM / 2) * Math.sin(2 * Math.PI * bobHz * t) + 0.05 * t,
+            z: 5 * t,
+            roll_deg: rollDeg * Math.sin(2 * Math.PI * rollHz * t),
+            pitch_deg: 0,
+            yaw_deg: 0,
+          };
+        }),
+      },
+    });
+    const gen3 = pose(5.8, 3.7, 0.089, 7.5);
+    const reading = comfortReading(gen3.__camera.trace);
+    assert.ok(
+      reading && Math.abs(reading.bobHz - 7.5) < 0.3 && Math.abs(reading.bobM - 0.089) < 0.005,
+      JSON.stringify(reading),
+    );
+    const defect = String(comfortDefect(gen3));
+    assert.match(defect, /^\[uncomfortable-camera\] demo:sprint-run: the sprint camera roll ±5\.8°/);
+    assert.match(defect, /bob \d\.\d cm peak to peak.*bob at 7\.5 Hz.*above 6 Hz/);
+    // The demo's own result carries the rig's probe rows (bobM, rollDeg) tick by tick; with no trace, the rig's cadence.
+    const rows = gen3.__camera.trace.map(({ t, y, roll_deg }) => ({ t, bobM: y - 1.7, rollDeg: roll_deg }));
+    assert.match(String(comfortDefect({}, { ok: true, trace: rows })), /roll ±5\.8°/);
+    assert.match(
+      String(comfortDefect({ volatile: { cameraMotion: { cadenceHz: 7.5, bobM: 0.01, rollDeg: 0.4 } } })),
+      /steps at 7\.5 Hz/,
+    );
+    assert.equal(comfortDefect({ volatile: { cameraMotion: { cadenceHz: 2.2 } } }), null);
+    // A rig inside the caps: 1° roll and a 2.4 cm bob at 2.2 Hz, the slope of a ramp removed.
+    assert.equal(comfortDefect(pose(1, 1.1, 0.024, 2.2)), null);
+    assert.ok(
+      COMFORT_CAPS.rollDeg <= 1.5 && COMFORT_CAPS.bobHz < 3,
+      "the caps are the engine rig's, inside the review's proposal",
+    );
+  });
+
+  it("G3-4d. the light facet's darker classroom and the gunplay facet's heavier sprint were kept: a harness-measured blocker the accepted build did not have is one the round added, compared by what it is about, not its numbers", async () => {
+    const { addedMeasured, measuredBlockers } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    const shot = (camera: string, meanLuma: number, darkest: number) => ({
+      camera,
+      base64: "px",
+      stats: { meanLuma, histogram: [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)] },
+    });
+    const severities = (found: Array<{ key: string; severity: number }>) =>
+      Object.fromEntries(found.map((finding) => [finding.key, finding.severity]));
+    const lit = measuredBlockers(yard, { shots: [shot("eye:here", 105, 0.05), shot("demo:doorway", 10, 0.9)] }, true);
+    assert.deepEqual(lit, [], "a demo's end frame is not a playable camera");
+    const dim = measuredBlockers(yard, { shots: [shot("eye:here", 67, 0.12)] }, true);
+    const crushed = measuredBlockers(yard, { shots: [shot("eye:here", 28, 0.41)] }, true);
+    assert.deepEqual(
+      crushed.map((finding) => finding.key),
+      ["[crushed-shadow] eye:here"],
+    );
+    assert.equal(addedMeasured(crushed, severities(lit)).length, 1, "lit to crushed is added");
+    assert.equal(
+      addedMeasured(crushed, severities(dim)).length,
+      1,
+      "dim (67) to crushed (28) is the same finding made worse: the round's own",
+    );
+    assert.equal(addedMeasured(dim, severities(crushed)).length, 0, "brightening it adds nothing");
+    assert.equal(addedMeasured(dim, severities(dim)).length, 0, "the incumbent's own finding, unchanged, is not added");
+    const night = {
+      ...yard,
+      art: {
+        generations: 0,
+        assets: [
+          { area: "the yard", tier: "sky", kind: "atmosphere", asset: "moonless night", source: "scan", night: true },
+        ],
+      },
+    };
+    assert.deepEqual(
+      measuredBlockers(night, { shots: [shot("eye:here", 60, 0.3)] }, true),
+      [],
+      "a declared night look sits lower",
+    );
+    // The sprint and the doorway are measured on any run, look bar or not, when the game runs those demos.
+    const sprinting = {
+      demoStates: {
+        "sprint-run": {
+          __camera: {
+            trace: Array.from({ length: 241 }, (_, i) => ({
+              t: i / 60,
+              y: 1.7 + 0.045 * Math.sin(2 * Math.PI * 7.5 * (i / 60)),
+              roll_deg: 5.8 * Math.sin(2 * Math.PI * 3.7 * (i / 60)),
+            })),
+          },
+        },
+      },
+    };
+    assert.deepEqual(
+      measuredBlockers({ goal: "a chess board" }, sprinting, false).map((finding) => finding.key),
+      ["[uncomfortable-camera] demo:sprint-run"],
+    );
+  });
+  it("G3-5a. milestones asked for 'a sprint that tilts and shakes the view' and 'birch and pine billboards', and the scaffold was told frame.cube: a mandate that asks for less is refused, two parts owning one file are named, and a look brief starts from sourced models", async () => {
+    const { qualityRefusal } = await import("../../src/harness-seed/loop/quality-lint.ts");
+    const { sharedOwnership } = await import("../../src/harness-seed/loop/director/ownership.ts");
+    const { rustBaseBrief } = await import("../../src/harness-seed/loop/rust-briefs.ts");
+    assert.match(
+      String(qualityRefusal("milestones", [{ what: "a sprint that tilts and shakes the view" }])),
+      /^milestones: rung 1 asks for shake/,
+    );
+    assert.match(String(qualityRefusal("move", ["birch and pine billboards along the fence"])), /asks for billboard/);
+    assert.match(
+      String(qualityRefusal("milestones", [{ what: "scans at 1k to keep boot short" }])),
+      /asks for low-resolution/,
+    );
+    assert.equal(qualityRefusal("milestones", [{ what: "the yard reads as a snowy courtyard at dusk" }]), null);
+    const part = (id: string, owns: string[]) => ({ id, title: id, seam: "", owns, done: [], minutes: null });
+    assert.deepEqual(
+      sharedOwnership([part("light", ["src/light.rs", "src/glass/"]), part("yard", ["src/glass/window.rs"])]),
+      { a: "light", b: "yard", path: "src/glass/window.rs" },
+    );
+    assert.equal(sharedOwnership([part("light", ["src/light.rs"]), part("yard", ["src/yard.rs"])]), null);
+    const brief = (run: Run) => rustBaseBrief({ run, plan: { facets: [] }, projectLabel: "body-cam" } as never);
+    assert.match(brief(yard), /This ask sets a visual bar: show the requested subject with models from assets\//);
+    assert.doesNotMatch(brief(yard), /or procedural shapes/);
+    assert.match(
+      brief({ ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run),
+      /frame\.cube, frame\.sphere/,
+    );
+  });
+  it("G3-5b. no stage sourced a model before builders started and the yard spread over four parts before one frame was finished: on a look bar, worker_start waits for the planned models in docs/ASSETS.md, then for one area's hero shot to pass the art director, each timeboxed", async () => {
+    const { sourcingRefusal, spreadRefusal, heroCameras, SOURCING_MS, LOOK_DEV_MS } = await import(
+      "../../src/harness-seed/loop/director/sourcing.ts"
+    );
+    const integration = await tmpDir("g3-sourcing-");
+    const art = {
+      generations: 2,
+      assets: [
+        { area: "the yard", tier: "hero", kind: "prop", asset: "bench", source: "genex-model", tags: ["bench"] },
+        { area: "the yard", tier: "mid", kind: "organic", asset: "birches", source: "genex-model", tags: ["birch"] },
+        {
+          area: "the yard",
+          tier: "mid",
+          kind: "structure",
+          asset: "blocks",
+          source: "blender-kit",
+          why: "scans",
+          tags: ["block"],
+        },
+      ],
+    };
+    const t0 = Date.UTC(2026, 9, 29, 1, 0, 0);
+    const loopRun = {
+      integrationWorktree: integration,
+      run: { ...yard, art },
+      state: { artPlannedAt: t0, workers: new Map(), lastShip: null } as Record<string, any>,
+    };
+    const held = String(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000));
+    assert.match(
+      held,
+      /^worker_start waits for the sourcing stage \(up to 29 more min\): docs\/ASSETS\.md in the integration names no file for bench, birch\./,
+    );
+    assert.equal(await sourcingRefusal(loopRun as never, "sourcing", t0 + 60_000), null, "the sourcing worker starts");
+    await mkdir(path.join(integration, "docs"), { recursive: true });
+    await writeFile(path.join(integration, "docs", "ASSETS.md"), "# Assets\n- bench: assets/genex/b1/bench.glb\n");
+    assert.match(String(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000)), /names no file for birch\./);
+    await writeFile(
+      path.join(integration, "docs", "ASSETS.md"),
+      "- bench: assets/genex/b1/bench.glb\n- `birch`: assets/cc0/c2/birch.glb\n",
+    );
+    assert.equal(await sourcingRefusal(loopRun as never, "yard", t0 + 60_000), null, "every planned model is sourced");
+    assert.equal(
+      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, "yard", t0 + SOURCING_MS),
+      null,
+      "the stage is timeboxed",
+    );
+    // Look-dev: one part builds; a second waits for a review of its hero shot with no blocker.
+    loopRun.state.workers.set("yard", { id: "yard" });
+    loopRun.state.lookDevSince = t0;
+    assert.match(
+      String(spreadRefusal(loopRun as never, "school", t0 + 60_000)),
+      /waits for the look-dev hero shot .*When yard's hero camera shows it/,
+    );
+    assert.equal(
+      spreadRefusal(loopRun as never, "yard", t0 + 60_000),
+      null,
+      "the part already building restarts freely",
+    );
+    loopRun.state.lastShip = { head: "h", defects: [{ what: "[primitive] bench", severity: "blocker" }] };
+    assert.ok(spreadRefusal(loopRun as never, "school", t0 + 60_000), "a review with a blocker holds breadth");
+    loopRun.state.lastShip = { head: "h", defects: [{ what: "a seam", severity: "visible" }] };
+    assert.equal(spreadRefusal(loopRun as never, "school", t0 + 60_000), null);
+    loopRun.state.lastShip = null;
+    assert.equal(spreadRefusal(loopRun as never, "school", t0 + LOOK_DEV_MS), null, "and timeboxed");
+    assert.equal(spreadRefusal({ ...loopRun, run: yard } as never, "school", t0), null, "no art pass, no hold");
+    assert.deepEqual(heroCameras({ workers: [{ id: "yard", hero: "hero:yard" }, { id: "school" }] }), ["hero:yard"]);
+  });
+  it("G3-6a. one model family judged its own builders and praised the yard: judge/pin.json may name a second taste judge, and on a look bar its blockers and its 'not satisfied' hold too", async () => {
+    const workspace = await tmpDir("g3-second-judge-");
+    await mkdir(path.join(workspace, "judge"), { recursive: true });
+    await writeFile(path.join(workspace, "judge", "pin.json"), JSON.stringify({ second: { engine: "codex" } }));
+    const birch = "[stick-tree] the birches are white cones with no twigs — eye:spawn";
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.complete": (params: Record<string, unknown>) => ({
+          message: {
+            content: JSON.stringify(
+              params.engine === "codex"
+                ? preferChallenger({ satisfied: false, added: [birch] })
+                : preferChallenger({ satisfied: true }),
+            ),
+          },
+        }),
+      },
+    });
+    const ctx = { ...recorder.ctx, workspace };
+    const run = { ...yard, engine: "claude" } as Run;
+    const taste = await tasteVeto(ctx as never, {
+      run,
+      facet,
+      challenger: { state: {} },
+      incumbentEvidence: { state: {} },
+      random: () => 0.1,
+    });
+    assert.deepEqual(
+      recorder.paramsOf("engine.complete").map((params) => params.engine),
+      ["claude", "codex"],
+    );
+    assert.deepEqual([taste.satisfied, taste.addedBlockers], [false, [birch]]);
+    assert.equal(taste.secondJudge?.engine, "codex");
+    // With no second judge named, one call, as before.
+    const single = ctxRecorder({
+      handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(preferChallenger()) } }) },
+    });
+    await tasteVeto(single.ctx, {
+      run,
+      facet,
+      challenger: { state: {} },
+      incumbentEvidence: { state: {} },
+      random: () => 0.1,
+    });
+    assert.equal(single.paramsOf("engine.complete").length, 1);
+  });
+
+  it("G3-7a. builders ran one uncompacted session to 830k tokens and about two hundred images: a builder's session is rotated every few rounds and the next round is briefed whole", async () => {
+    const { noteSessionRound, rotateSession, SESSION_ROUNDS } = await import(
+      "../../src/harness-seed/loop/facet/session-rotation.ts"
+    );
+    const appended: Array<[string, Record<string, unknown>]> = [];
+    const loop: Record<string, any> = {
+      sessionId: "ses_1",
+      sessionRounds: 0,
+      runThreadId: "t",
+      facet: { id: "yard" },
+      run: { runId: "r" },
+      appendRun: async (type: string, payload: Record<string, unknown>) => appended.push([type, payload]),
+    };
+    for (let i = 1; i < SESSION_ROUNDS; i++) {
+      noteSessionRound(loop as never);
+      assert.equal(await rotateSession(loop as never, i), false);
+    }
+    noteSessionRound(loop as never);
+    assert.equal(await rotateSession(loop as never, SESSION_ROUNDS), true);
+    assert.deepEqual([loop.sessionId, loop.sessionRounds], [null, 0]);
+    assert.equal(appended[0]?.[0], "facet_session_reset");
+    assert.match(String(appended[0]?.[1].reason), /^rotated after 3 rounds/);
+  });
+  it("G3-7b. the ledger recorded 'primitive ×12' and no rule: a look blocker the judges keep naming becomes the game's lesson with what sources and fixes it", async () => {
+    const { deriveLessons } = await import("../../src/harness-seed/loop/ledger.ts");
+    const round = (n: number, gap: string) => ({ round: n, decision: "kept", gap, unmeasuredChecks: [] }) as never;
+    const lessons = deriveLessons([
+      round(1, "[primitive] the bench is twelve boxes"),
+      round(2, "[primitive] the bins are boxes"),
+      round(3, "[stick-tree] the birches are cones"),
+      round(4, "[stick-tree] still cones"),
+      round(5, "[haze-plane] a milky band"),
+    ]);
+    assert.match(
+      lessons[0] ?? "",
+      /^\[primitive\] came back in 2 rounds here: source props, vehicles and characters as genex-model, cc0-model or genex-character/,
+    );
+    assert.match(
+      lessons[1] ?? "",
+      /^\[stick-tree\] came back in 2 rounds here: source trees as models with leaf or twig cards/,
+    );
+    assert.ok(!lessons.some((lesson) => lesson.startsWith("[haze-plane]")), "only look blockers carry a rule");
+  });
+  it("G3-6b. the art director saw 960×540 thumbnails re-cut 125 times and, with 14 frames of its own, no reference still: its look keeps two reference slots and carries close-ups of where the nearest props stand", async () => {
+    const { shipImages } = await import("../../src/harness-seed/loop/ship-review.ts");
+    const { closeUps, CLOSE_UP_CROP } = await import("../../src/harness-seed/loop/close-ups.ts");
+    const shot = (camera: string) => ({ camera, path: `/f/${camera}.jpg`, base64: `px-${camera}` });
+    const evidence: Record<string, unknown> = {
+      shots: [
+        shot("default"),
+        shot("hero:yard"),
+        shot("eye:here"),
+        ...Array.from({ length: 14 }, (_, i) => shot(`cam${i}`)),
+      ],
+    };
+    const recorder = ctxRecorder({
+      handlers: {
+        "preview.crop": (params: Record<string, unknown>) => ({
+          base64: `crop-${String(params.path)}`,
+          path: "/c.jpg",
+          bytes: 1,
+          width: 800,
+          height: 450,
+        }),
+      },
+    });
+    evidence.closeUps = await closeUps(recorder.ctx, {
+      run: yard,
+      evidence,
+      heroes: ["hero:yard"],
+      label: "director/judge_1",
+    });
+    assert.deepEqual(
+      (evidence.closeUps as Array<{ camera: string }>).map((c) => c.camera),
+      ["hero:yard", "default", "eye:here"],
+    );
+    assert.deepEqual(recorder.paramsOf("preview.crop")[0]?.crop, CLOSE_UP_CROP);
+    const refs = {
+      ...yard,
+      reference: {
+        name: "x",
+        shots: [],
+        frames: [1, 2, 3].map((n) => ({ label: `ref${n}`, data: "iVBOR", mimeType: "image/png" })),
+      },
+    } as Run;
+    const labels = shipImages(refs, evidence).map((image) => image.label ?? "");
+    assert.equal(labels.length, 14);
+    assert.deepEqual(
+      labels.filter((label) => label.startsWith("REFERENCE")),
+      ["REFERENCE / ref1", "REFERENCE / ref2"],
+    );
+    assert.deepEqual(
+      labels.filter((label) => label.startsWith("CLOSE-UP")),
+      ["CLOSE-UP / hero:yard", "CLOSE-UP / default", "CLOSE-UP / eye:here"],
+    );
+  });
+  it("G3-7c. two workers stopped on the weekly limit and the run waited 44 minutes for an account switch: worker_start weighs the builder's plan limits the app already shows, and says when a worker may stop on them", async () => {
+    const { usageForecast, usageWarning, USAGE_WARN_PERCENT } = await import(
+      "../../src/harness-seed/loop/director/usage-forecast.ts"
+    );
+    const report = (percent: number) => [
+      {
+        engine: "claude-code",
+        state: "ready",
+        account: "studio",
+        usage: {
+          measuredAt: "2026-10-29T01:00:00Z",
+          windows: [
+            { id: "five_hour", label: "5-hour", percent: 30 },
+            { id: "seven_day", label: "Weekly", percent, resetsAt: "2026-10-30T09:00:00Z" },
+          ],
+        },
+      },
+    ];
+    assert.match(
+      usageWarning(report(91), "claude-code", 6),
+      /^claude-code's Weekly limit is at 91%, resetting 2026-10-30T09:00:00Z: a worker of 6 rounds may stop on it mid-round/,
+    );
+    assert.equal(usageWarning(report(USAGE_WARN_PERCENT - 1), "claude-code", 6), "", "room left, nothing said");
+    assert.equal(usageWarning(report(99), "codex", 6), "", "another engine's limits are not this builder's");
+    const recorder = ctxRecorder({ handlers: { "engine.usage": () => report(92) } });
+    assert.match(await usageForecast(recorder.ctx, "claude-code", null), /this worker may stop on it/);
+    const silent = ctxRecorder({
+      handlers: {
+        "engine.usage": () => {
+          throw new Error("older host");
+        },
+      },
+    });
+    assert.equal(await usageForecast(silent.ctx, "claude-code", 3), "", "a host with no reports says nothing");
+  });
+  it("G3-4e. one luma rule across harness, evals and docs: a snow yard at 155 is correctly exposed, an interior at 150 is blown, and a declared night street at 30 is not crushed", async () => {
+    const { measuredBlockers } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    const shot = (camera: string, meanLuma: number, darkest: number) => ({
+      camera,
+      base64: "px",
+      stats: { meanLuma, histogram: [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)] },
+    });
+    const keys = (run: Run, ...shots: ReturnType<typeof shot>[]) =>
+      measuredBlockers(run, { shots }, true).map((finding) => finding.key);
+    const settings = { ...yard, cameraSettings: { "hero:yard": "exterior", "hero:classroom": "interior" } } as Run;
+    assert.deepEqual(keys(settings, shot("hero:yard", 155, 0.02)), [], "overcast snow outdoors sits inside 90-175");
+    assert.deepEqual(
+      keys(settings, shot("default", 160, 0.02)),
+      [],
+      "a camera of unknown setting is held to the exterior band",
+    );
+    assert.deepEqual(
+      keys(settings, shot("hero:classroom", 150, 0.02)),
+      ["[blown] hero:classroom"],
+      "an interior above 130 is blown",
+    );
+    assert.deepEqual(keys(settings, shot("hero:yard", 190, 0.0)), ["[blown] hero:yard"], "and an exterior above 175");
+    const night = {
+      ...yard,
+      art: {
+        generations: 0,
+        assets: [{ area: "the street", tier: "sky", kind: "atmosphere", asset: "night", source: "scan", night: true }],
+      },
+    } as Run;
+    assert.deepEqual(
+      keys(night, shot("eye:here", 30, 0.35)),
+      [],
+      "a declared night look sits in 25-95 with up to 40% black",
+    );
+    assert.deepEqual(keys(night, shot("eye:here", 20, 0.5)), ["[crushed-shadow] eye:here"]);
+    assert.deepEqual(keys(night, shot("eye:here", 110, 0.05)), ["[blown] eye:here"], "night above 95 is not night");
+    const { cameraSettings } = await import("../../src/harness-seed/loop/director/sourcing.ts");
+    const { compilePlan } = await import("../../src/harness-seed/loop/director/rules.ts");
+    const compiled = compilePlan({
+      summary: "A school and its yard.",
+      workers: JSON.stringify([
+        { id: "yard", hero: "hero:yard", setting: "exterior" },
+        { id: "classroom", hero: "hero:classroom", setting: "interior" },
+        { id: "hud", hero: "hero:hud", setting: "orbit" },
+      ]),
+    });
+    assert.deepEqual(
+      cameraSettings(compiled.plan),
+      { "hero:yard": "exterior", "hero:classroom": "interior" },
+      "a setting it does not know places nothing",
+    );
+  });
+});
+
+describe("Bodycam rerun: a look gate that blamed every round for the shared world (run_mvta2ggcw68k)", () => {
+  // The rerun's title and combat rounds were refused for the greybox world the map builder was
+  // still texturing, and the map's first round broke on the 15 s web boot gate.
+  const look: Run = {
+    runId: "rerun-yard",
+    project: "body-cam-3",
+    goal: "Make the photorealistic bodycam fps shooter in a snowy post-soviet yard.",
+    reference: { name: "a photoreal bodycam shooter", shots: [] },
+    budgets: { wallClockMs: HOUR_MS },
+  };
+  const facet = { id: "screen", title: "Title and overlay", intent: "a title screen and the bodycam overlay" };
+  /** The shared world as the engine reported it: every mesh an untouched primitive, 78% flat. */
+  const GREYBOX_WORLD = {
+    coverage: 0.9,
+    flatCoverage: 0.782,
+    texelsPerMetre: null,
+    pixelsPerMetre: 640,
+    trianglesPerSquareMetre: 2,
+    normalMapShare: 0,
+    ormShare: 0,
+    alphaCardShare: 0,
+    draws: 40,
+    primitiveOnly: true,
+  };
+  const greybox = { phase: "playing", __render: { look: { tags: { world: GREYBOX_WORLD } } } };
+  const shotAt = (meanLuma: number, darkest: number) => ({
+    shots: [
+      {
+        camera: "eye:here",
+        base64: "px",
+        stats: { meanLuma, histogram: [darkest, ...Array.from({ length: 15 }, () => (1 - darkest) / 15)] },
+      },
+    ],
+  });
+
+  it("RR-1. screen it1, combat it1 and screen it2 were refused for [primitive] and [flat-material] on the greybox world they do not own, because the incumbent carried no look facts: a blocker is the round's only when the incumbent was measured without it", async () => {
+    const { addedFactBlockers } = await import("../../src/harness-seed/loop/look-facts.ts");
+    const { incumbentFindings } = await import("../../src/harness-seed/loop/facet/incumbent-findings.ts");
+    const { addedMeasured, measuredBlockers } = await import("../../src/harness-seed/loop/temporal-checks.ts");
+    assert.deepEqual(
+      addedFactBlockers(greybox, { phase: "playing" }),
+      [],
+      "an incumbent with no look facts blames nothing",
+    );
+    assert.deepEqual(addedFactBlockers(greybox, greybox), [], "the shared world's own blockers, unchanged");
+    assert.equal(
+      addedFactBlockers(greybox, { phase: "playing", __render: { look: { tags: {} } } }).length,
+      2,
+      "an incumbent measured with nothing drawn: this round drew the greybox",
+    );
+    const answer = {
+      pick: "A",
+      satisfied: true,
+      regression: null,
+      newCheck: null,
+      defects: [],
+      polish: [],
+      scale: "structural",
+      reason: "the title reads",
+    };
+    const recorder = ctxRecorder({
+      handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(answer) } }) },
+    });
+    const taste = await tasteVeto(recorder.ctx as never, {
+      run: look,
+      facet,
+      challenger: { state: greybox },
+      incumbentEvidence: { state: { phase: "playing" } },
+      random: () => 0.1,
+    });
+    assert.deepEqual(taste.addedBlockers, [], "the title round is judged on its checks, not the world's greybox");
+    // Measured findings before the first keep: the incumbent's own frames are what it had.
+    const dark = shotAt(28, 0.41);
+    const found = measuredBlockers(look, dark, true);
+    assert.equal(found.length, 1, "the shared world's dark camera is measured on the round");
+    assert.deepEqual(
+      addedMeasured(found, (await incumbentFindings(look, dark, {}, null)) ?? {}),
+      [],
+      "but it is not the round's",
+    );
+    assert.equal(await incumbentFindings(look, null, {}, null), null, "an incumbent nothing measured blames nothing");
+    assert.equal(await incumbentFindings(look, { state: { phase: "playing" }, shots: [] }, {}, null), null);
+    const lit = (await incumbentFindings(look, shotAt(110, 0.05), {}, null)) ?? {};
+    assert.equal(addedMeasured(found, lit).length, 1, "a camera the round darkened is still the round's");
+  });
+
+  it("RR-2. map it1 broke on 'the page never reported itself ready within 15.0 s … (pipelines)': no studio.json declared bootMs, so the look on a visual bar waits for the boot its brief asks for", async () => {
+    const { LOOK_BAR_BOOT_MS } = await import("../../src/harness-seed/loop/destination-budgets.ts");
+    const waits = async (run: Run) => {
+      const recorder = ctxRecorder({
+        handlers: {
+          [HostMethod.PreviewReload]: () => ({}),
+          [HostMethod.PreviewReady]: () => ({
+            ready: true,
+            via: "shim",
+            pageMs: 900,
+            timedOut: false,
+            phase: "ready",
+            budgetMs: 15_000,
+          }),
+        },
+      });
+      await gatherEvidence(recorder.ctx as never, { run, iterationId: "001", seed: 1 } as never).catch(() => null);
+      return recorder.paramsOf(HostMethod.PreviewReady).map((params) => params.timeoutMs);
+    };
+    const looked = await waits(look);
+    assert.ok(looked.length > 0, "the look asked whether the page was ready");
+    assert.deepEqual([...new Set(looked)], [LOOK_BAR_BOOT_MS]);
+    const plain = await waits({ ...look, goal: "a chess board", reference: { name: "", shots: [] } } as Run);
+    assert.deepEqual([...new Set(plain)], [undefined], "a run with no visual bar keeps the folder's own bootMs");
   });
 });

@@ -37,9 +37,9 @@ loosens the sandbox.
   `frame.point_light` and `frame.spot_light`, `Material::emissive`, `frame.environment` and the
   preset's shadows all reach a v2 material as they reach a built-in surface, and a custom pass
   that redraws one of them costs every device the effect twice.
-- Before calling a visual change done, capture it under `renderSettings`
-  `{set: {deviceClass: "mobile-mid"}}` and at `low`: a level-2 source or level-3 pass must hold up
-  there, and `state().volatile.render.degraded` says (by typed reason, never refusal) what a device
+- Author a visual change for `ultra` on desktop and judge it there first; before calling it done,
+  also capture it under `renderSettings` `{set: {deviceClass: "mobile-mid"}}` and at `low`: a
+  level-2 source or level-3 pass must stay readable there, and `state().volatile.render.degraded` says (by typed reason, never refusal) what a device
   gave up. Write level-2 sources and level-3 passes at v2 (`api = 2`): they draw linear,
   pre-exposed colour into the HDR scene before the look's tonemapper and read the frame's depth,
   normals, motion, environment and HDR scene by declared input (`RenderInputs`). A level-3 stage

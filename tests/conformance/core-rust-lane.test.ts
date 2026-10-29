@@ -45,11 +45,11 @@ import { ASSET_INDEX_FILE, type AssetIndex } from "../../src/main/rust-package-a
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import { ExportWarningCode, WEB_BUDGET_MB_BYTES } from "../../src/shared/game-export-contract.ts";
 import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
-import type { ToolchainLock } from "../../src/shared/toolchain.ts";
+import { ToolchainId, type ToolchainLock } from "../../src/shared/toolchain.ts";
 import { fnv1a64Hex } from "../../src/substrate/native-game-port.ts";
 import { type RunRequest, type RunResult, shellQuote } from "../../src/substrate/spawn.ts";
 import { readCurrentLock } from "../../src/substrate/toolchain-store/lock.ts";
-import { RustMissing, rustSysroot } from "../../src/substrate/toolchain-store/rust-locate.ts";
+import { rustSysroot } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -340,7 +340,11 @@ describe("the core's Rust locate: the store's toolchain, the payload's gate", { 
       assert.equal(found.toolchain.clippyConf, payload);
       assert.deepEqual(found.toolchain.reads, [store, payload]);
     }
-    assert.deepEqual(await locate(lock, BuildTarget.Ios), { ok: false, missing: [RustMissing.Base] });
+    // Flipped (phone rows pinned): an iPhone build names its standard libraries, which this lock lacks; it was the base before.
+    assert.deepEqual(await locate(lock, BuildTarget.Ios), {
+      ok: false,
+      missing: [ToolchainId.RustStdIos, ToolchainId.RustStdIosSim],
+    });
   });
 
   for (const [name, plant] of HOSTILE_PAYLOAD_FILES) {

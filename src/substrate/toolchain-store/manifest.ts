@@ -10,7 +10,7 @@
  * published has no download (`not-hosted`).
  */
 import { createHash } from "node:crypto";
-import { BuildTarget, isBuildTarget } from "../../shared/game-project.ts";
+import { ALL_BUILD_TARGETS, BuildTarget } from "../../shared/game-project.ts";
 import {
   ArchiveFormat,
   type ToolchainArchive,
@@ -146,6 +146,7 @@ const LICENCE = {
   LlvmMingw: "Apache-2.0 WITH LLVM-exception; ZPL-2.1 (mingw-w64)",
   Raylib: "Zlib",
   Angle: "BSD-3-Clause",
+  SwiftShader: "Apache-2.0 (SwiftShader, the Vulkan loader); Apache-2.0 WITH LLVM-exception (libc++)",
   LinuxSysroot: "MIT (X11, Wayland, xkbcommon headers and link-time libraries; GLFW Wayland protocol code)",
 } as const;
 
@@ -245,6 +246,15 @@ const PINNED = {
     strip: 1,
     into: "",
   },
+  // Pinned for the Linux Studio's Rust Windows builds, by its GitHub release asset digest.
+  llvmMingwLinux: {
+    url: `${LLVM_MINGW}/llvm-mingw-20260922-ucrt-ubuntu-22.04-x86_64.tar.xz`,
+    bytes: 83_924_028,
+    sha256: "bb7bb7654b33d5aa8712acb837c963b2e0c56352560c76105270a3268c665c21",
+    format: ArchiveFormat.TarXz,
+    strip: 1,
+    into: "",
+  },
   emscriptenMac: {
     url: `${EMSCRIPTEN_BUILDS}/mac/${EMSCRIPTEN_REVISION}/wasm-binaries-arm64.tar.xz`,
     bytes: 276_811_332,
@@ -312,6 +322,18 @@ const ANGLE = {
   linux: { ...BUNDLE_LOCK.targets[AngleTarget.LinuxX64Vulkan], reason: ToolchainUnhosted.NotPublished },
 } as const satisfies Record<string, ToolchainLocalArtifact>;
 
+// The software Vulkan a Rust Linux game ships, split from the Linux ANGLE build above
+// (swiftshader-bundle.ts) and pinned beside it by native/angle/bundle-lock.json: bundled the same way.
+const SWIFTSHADER: ToolchainLocalArtifact | null = BUNDLE_LOCK.swiftshader
+  ? {
+      manifestSha256: BUNDLE_LOCK.swiftshader.manifestSha256,
+      manifestBytes: BUNDLE_LOCK.swiftshader.manifestBytes,
+      files: BUNDLE_LOCK.swiftshader.files,
+      bytes: BUNDLE_LOCK.swiftshader.bytes,
+      reason: ToolchainUnhosted.NotPublished,
+    }
+  : null;
+
 // Built by scripts/toolchains/linux-sysroot.ts from the almalinux:8 headers (pinned by image digest)
 // and GLFW's Wayland protocol code generated there; verified file by file against its manifest.json.
 const LINUX_SYSROOT: ToolchainLocalArtifact = {
@@ -328,7 +350,11 @@ const LINUX_SYSROOT: ToolchainLocalArtifact = {
   reason: ToolchainUnhosted.NotPublished,
 };
 
-/** Every entry the C++ · raylib store installs (the Rust stack's are {@link RUST_MANIFEST}). */
+/**
+ * Every entry the C++ · raylib store installs, and the shared artifacts beside them a Rust cross
+ * build also reads (zig, llvm-mingw, the Linux headers, the software Vulkan split from ANGLE); the
+ * Rust stack's own are {@link RUST_MANIFEST}.
+ */
 export const TOOLCHAIN_MANIFEST: readonly ToolchainEntry[] = releaseManifest(
   Object.freeze([
     entry(ToolchainId.Cmake, "4.4.3", ToolchainHost.MacArm64, null, LICENCE.Cmake, [PINNED.cmakeMac]),
@@ -364,6 +390,7 @@ export const TOOLCHAIN_MANIFEST: readonly ToolchainEntry[] = releaseManifest(
       unpinned(`${ZIG}/zig-x86_64-windows-0.16.0.zip`, ArchiveFormat.Zip, 1),
     ]),
     entry(ToolchainId.LlvmMingw, "20260922", ToolchainHost.MacArm64, null, LICENCE.LlvmMingw, [PINNED.llvmMingwMac]),
+    entry(ToolchainId.LlvmMingw, "20260922", ToolchainHost.LinuxX64, null, LICENCE.LlvmMingw, [PINNED.llvmMingwLinux]),
     entry(ToolchainId.RaylibSource, "6.0", null, null, LICENCE.Raylib, [PINNED.raylibSource]),
     localArtifact(ToolchainId.AngleMac, BuildTarget.Mac, LICENCE.Angle, ANGLE.mac),
     localArtifact(ToolchainId.AngleWindows, BuildTarget.Windows, LICENCE.Angle, ANGLE.windows),
@@ -375,6 +402,9 @@ export const TOOLCHAIN_MANIFEST: readonly ToolchainEntry[] = releaseManifest(
       LINUX_SYSROOT,
       LINUX_SYSROOT_VERSION,
     ),
+    ...(SWIFTSHADER
+      ? [localArtifact(ToolchainId.SwiftShaderLinux, BuildTarget.Linux, LICENCE.SwiftShader, SWIFTSHADER)]
+      : []),
   ]),
 );
 
@@ -412,12 +442,16 @@ function recipeArchive(value: unknown, at: string): ToolchainArchive {
   });
 }
 
+const isAnyBuildTarget = (value: unknown): value is BuildTarget =>
+  typeof value === "string" && (ALL_BUILD_TARGETS as readonly string[]).includes(value);
+
 /** One recipe entry, shape-checked. */
 function recipeEntry(value: unknown, index: number): ToolchainEntry {
   const at = `entries[${index}]`;
   if (!isObject(value) || typeof value.id !== "string" || !TOOLCHAIN_IDS.has(value.id))
     throw new Error(MESSAGE.BadRecipe(at));
-  const target = value.target === null || isBuildTarget(value.target) ? value.target : undefined;
+  // A phone's standard library names its destination too: any destination in the vocabulary.
+  const target = value.target === null || isAnyBuildTarget(value.target) ? value.target : undefined;
   const typed = typeof value.version === "string" && TOOLCHAIN_HOSTS.has(value.host) && target !== undefined;
   if (!typed || typeof value.licence !== "string" || !Array.isArray(value.archives))
     throw new Error(MESSAGE.BadRecipe(at));

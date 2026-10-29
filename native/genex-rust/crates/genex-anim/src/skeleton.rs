@@ -7,7 +7,10 @@
 //! pass over caller scratch with no allocation. The palette is written in the file's skin order
 //! (`skin_order`), so genex-render's `SkinnedMeshData` and `skin.wgsl` read it unchanged; it
 //! equals genex-render's `Skeleton::joint_matrices`, `inverse(global(mesh node)) × global(joint)
-//! × inverse bind`, with the mesh node and the folded frames at rest.
+//! × inverse bind`, with the mesh node and the folded frames at rest. The palette is therefore in
+//! the skinned mesh node's space: a draw places it under `transform × mesh_frame()`, so the
+//! armature a Mixamo, Meshy or Uthana file turns and scales stands where its joints (and every
+//! socket) are, as glTF places it.
 
 use glam::Mat4;
 
@@ -40,21 +43,23 @@ pub struct Skeleton {
     parents: Vec<u16>,
     rest: Vec<Trs>,
     root_frames: Vec<Mat4>,
+    mesh_frame: Mat4,
     unmesh: Mat4,
     skin_order: Vec<JointId>,
     inverse_bind: Vec<Mat4>,
 }
 
 impl Skeleton {
-    /// A skeleton from parent-first joints, the skinned mesh node's inverse global transform, and
-    /// the skin's joints with their inverse bind matrices in file order. The importer checks
-    /// every bound before calling this.
-    pub(crate) fn from_parts(joints: Vec<JointParts>, unmesh: Mat4, skin: Vec<(JointId, Mat4)>) -> Skeleton {
+    /// A skeleton from parent-first joints, the skinned mesh node's global transform at rest and
+    /// its inverse, and the skin's joints with their inverse bind matrices in file order. The
+    /// importer checks every bound before calling this.
+    pub(crate) fn from_parts(joints: Vec<JointParts>, (mesh_frame, unmesh): (Mat4, Mat4), skin: Vec<(JointId, Mat4)>) -> Skeleton {
         let mut skeleton = Skeleton {
             names: Vec::with_capacity(joints.len()),
             parents: Vec::with_capacity(joints.len()),
             rest: Vec::with_capacity(joints.len()),
             root_frames: Vec::with_capacity(joints.len()),
+            mesh_frame,
             unmesh,
             skin_order: Vec::with_capacity(skin.len()),
             inverse_bind: Vec::with_capacity(skin.len()),
@@ -96,6 +101,12 @@ impl Skeleton {
     pub fn parent(&self, joint: JointId) -> Option<JointId> {
         let parent = *self.parents.get(usize::from(joint.0))?;
         (parent != NO_PARENT).then_some(JointId(parent))
+    }
+
+    /// The skinned mesh node's global transform at rest (an armature's turn and scale included):
+    /// the frame the palette is in, which a draw puts under the character's transform.
+    pub fn mesh_frame(&self) -> Mat4 {
+        self.mesh_frame
     }
 
     /// The rest pose, one local transform per joint.

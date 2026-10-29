@@ -420,8 +420,8 @@ export interface StudioApi {
    * chose one. `stack` and `targets` are where people play (Create Game's destinations); a game
    * created without them is a Three.js browser game. `stack` is the explicit choice and wins over
    * what `targets` imply. `rust-wgpu` is refused `stack-gated` in a release build; a development
-   * build creates it, and its lane builds the Mac and the web (the phones' builders wait for their
-   * toolchains; Windows and Linux are refused `target-unbuilt`). `provisional`: the title waits for
+   * build creates it, and on a Mac its lane builds all six destinations (the phones only for a
+   * Rust game: any other stack naming one is refused). `provisional`: the title waits for
    * the game's first idea (`GameName.provisional`).
    */
   createGame(

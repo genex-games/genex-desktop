@@ -45,21 +45,49 @@ fn gx_spot_cone(ext: LightExt, to_light: vec3<f32>) -> f32 {
 
 // Tiles across the spot shadow atlas layer (`spot_shadow::SPOT_ATLAS_TILES`).
 const GX_SPOT_ATLAS_TILES: u32 = 2u;
+// Tiles across the point layer after it (`spot_shadow::POINT_ATLAS_TILES`, AAA review WP-15).
+const GX_POINT_ATLAS_TILES: u32 = 4u;
+// The spots' shadow slots; a slot past them is a point light's face (`layout::MAX_SHADOWED_SPOTS`).
+const GX_SPOT_SLOTS: u32 = 4u;
 // How far a spot shadow's receiver is pulled along its normal, in the spot map's texels at the
 // receiver's distance (against acne on surfaces the spot grazes).
 const GX_SPOT_NORMAL_OFFSET_TEXELS: f32 = 1.5;
 
-// How much of shadow slot `slot`'s spot reaches `s` (RQ6.5): a 3x3 PCF of bilinear comparison taps
-// in the slot's tile of the spot atlas, the shared shadow array's layer after the drawn cascades.
-// The slot's light view-projection follows the light rows in `light_ext`; one texel's world size
-// at the receiver comes from the matrix (row 0's length is the projection's 1 / tan(half fov)).
-// Outside the map (behind the spot, past its range) the spot is not shadowed: its cone and window
-// end there.
-fn gx_spot_shadow(s: Surface, light: Light, slot: u32) -> f32 {
+// The face of a point light's cube that sees `to_surface` (light to surface), in
+// `spot_shadow::POINT_FACE_AXES` order: +x, -x, +y, -y, +z, -z by its largest component.
+fn gx_point_face(to_surface: vec3<f32>) -> u32 {
+    let a = abs(to_surface);
+    if a.x >= a.y && a.x >= a.z {
+        return select(1u, 0u, to_surface.x >= 0.0);
+    }
+    if a.y >= a.z {
+        return select(3u, 2u, to_surface.y >= 0.0);
+    }
+    return select(5u, 4u, to_surface.z >= 0.0);
+}
+
+// How much of shadow slot `slot`'s light reaches `s` (RQ6.5): a 3x3 PCF of bilinear comparison
+// taps in the slot's tile, a spot's in the spot atlas (the shared shadow array's layer after the
+// drawn cascades), a point light's (`slot` its faces' first, AAA review WP-15) in the face that sees
+// `s` in the point layer after it. The slot's light view-projection follows the light rows in
+// `light_ext`; one texel's world size at the receiver comes from the matrix (row 0's length is the
+// projection's 1 / tan(half fov)). Outside the map (behind the spot, past its range) the light is
+// not shadowed: its cone and window end there.
+fn gx_spot_shadow(s: Surface, light: Light, base_slot: u32) -> f32 {
+    var slot = base_slot;
+    var tiles = GX_SPOT_ATLAS_TILES;
+    var layer = i32(gx_sun_cascades());
+    var index = slot;
+    if base_slot >= GX_SPOT_SLOTS {
+        slot = base_slot + gx_point_face(s.world_pos - light.position_range.xyz);
+        tiles = GX_POINT_ATLAS_TILES;
+        layer += 1;
+        index = slot - GX_SPOT_SLOTS;
+    }
     let base = GX_LIGHT_EXT_VEC4S * frame.counts.x + GX_SPOT_MATRIX_VEC4S * slot;
     let m = mat4x4<f32>(light_ext[base], light_ext[base + 1u], light_ext[base + 2u], light_ext[base + 3u]);
     let side = f32(textureDimensions(shadow_map).x);
-    let tile = floor(side / f32(GX_SPOT_ATLAS_TILES));
+    let tile = floor(side / f32(tiles));
     let focal = length(vec3<f32>(m[0].x, m[1].x, m[2].x));
     let texel = 2.0 * distance(light.position_range.xyz, s.world_pos) / max(focal * tile, 1e-6);
     let clip = m * vec4<f32>(s.world_pos + s.geometric * (texel * GX_SPOT_NORMAL_OFFSET_TEXELS), 1.0);
@@ -70,12 +98,11 @@ fn gx_spot_shadow(s: Surface, light: Light, slot: u32) -> f32 {
     if abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z > 1.0 {
         return 1.0;
     }
-    let corner = vec2<f32>(f32(slot % GX_SPOT_ATLAS_TILES), f32(slot / GX_SPOT_ATLAS_TILES)) * tile;
+    let corner = vec2<f32>(f32(index % tiles), f32(index / tiles)) * tile;
     let at = corner + vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * tile;
     // Every bilinear tap stays inside the tile: a neighbour's map is never read.
     let low = corner + vec2<f32>(1.0);
     let high = corner + vec2<f32>(tile - 1.0);
-    let layer = i32(gx_sun_cascades());
     var lit = 0.0;
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {

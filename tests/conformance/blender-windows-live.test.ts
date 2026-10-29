@@ -2,7 +2,7 @@
 // model job runs in the process sandbox through PluginNativeServices as the app wires it. Windows
 // only, and opt-in (`STUDIO_NETWORK_TESTS=1`): it reaches download.blender.org.
 import assert from "node:assert/strict";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { it } from "node:test";
 import { BLENDER_WRAPPER_PY } from "../../src/plugins/blender/wrapper.ts";
@@ -37,6 +37,7 @@ it("installs Blender and runs a model job sandboxed on Windows", {
   for (const dir of [work, runtimes, pkg, storage, path.join(game, "assets", "src")])
     await mkdir(dir, { recursive: true });
   await writeFile(path.join(pkg, "wrapper.py"), BLENDER_WRAPPER_PY);
+  await copyFile(new URL("../../src/plugins/blender/genex_bpy.py", import.meta.url), path.join(pkg, "genex_bpy.py"));
   await writeFile(path.join(game, "assets", "src", "tree.py"), TREE_PY);
   const manifest = validateManifest(
     JSON.parse(await readFile(new URL("../../src/plugins/blender/plugin.json", import.meta.url), "utf8")),

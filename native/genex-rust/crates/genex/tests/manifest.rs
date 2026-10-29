@@ -315,6 +315,8 @@ fn the_render_vocabulary_is_the_wires() {
     assert_eq!(wire["fogDistanceLimit"].as_f64(), Some(manifest::FOG_DISTANCE_LIMIT));
     assert_eq!(wire["fogColorMax"].as_f64(), Some(manifest::FOG_COLOR_MAX));
     assert_eq!(wire["contactShadowLengthMax"].as_f64(), Some(manifest::CONTACT_SHADOW_LENGTH_MAX));
+    assert_eq!(wire["localExposureContrastMin"].as_f64(), Some(manifest::LOCAL_EXPOSURE_CONTRAST_MIN));
+    assert_eq!(manifest::LOCAL_EXPOSURE_CONTRAST_MIN as f32, genex_render::post::local_exposure::CONTRAST_MIN, "the file's floor is the renderer's");
 }
 
 /// The RQ4 look of the host's `genex-toml.test.ts` row, as both parsers read it.
@@ -343,6 +345,17 @@ fn the_rq4_look_reads_from_the_table_and_applies_to_the_renderer_look() {
 }
 
 #[test]
+fn local_exposure_reads_from_the_table_and_one_turns_a_side_off() {
+    let text = "[game]\ntitle = \"T\"\n[render.look]\nlocal_exposure_highlights = 0.5\nlocal_exposure_shadows = 1\n";
+    let look = manifest::parse(text).expect("valid").render.look;
+    assert_eq!((look.local_exposure_highlights, look.local_exposure_shadows), (Some(0.5), Some(1.0)));
+    let applied = look.apply_effects(genex_render::Look::default());
+    assert_eq!((applied.local_exposure.highlights, applied.local_exposure.shadows), (0.5, 1.0));
+    let config = genex::render::RenderConfig::new().local_exposure(1.0, 1.0);
+    assert!(!config.look.local_exposure.is_on(), "both contrasts at 1: off");
+}
+
+#[test]
 fn an_rq4_look_value_outside_its_range_is_refused_invalid_render_look() {
     let rows = [
         "bloom_threshold = -1",
@@ -364,6 +377,9 @@ fn an_rq4_look_value_outside_its_range_is_refused_invalid_render_look() {
         "contact_shadow_length = 0",
         "contact_shadow_length = 3",
         "ao_radius = nan",
+        "local_exposure_highlights = 0.1",
+        "local_exposure_shadows = 1.5",
+        "local_exposure_shadows = nan",
     ];
     for row in rows {
         let error = manifest::parse(&format!("[game]\ntitle = \"T\"\n[render.look]\n{row}\n")).expect_err(row);

@@ -171,9 +171,26 @@ export function bundledTargetOf(entry: ToolchainEntry, lock: BundleLock = BUNDLE
   return same ? target : null;
 }
 
-/** Whether the app includes this exact ANGLE or Linux headers pin, installed from its resources. */
+/**
+ * Whether `entry` is exactly the SwiftShader split the lock pins (its component, the lock's commit,
+ * the pinned manifest digest, size and listing): the app's build bundles it beside the ANGLE builds.
+ */
+export function isBundledSwiftShader(entry: ToolchainEntry, lock: BundleLock = BUNDLE_LOCK): boolean {
+  const { local } = entry;
+  const pin = lock.swiftshader;
+  const shaped = entry.id === ToolchainId.SwiftShaderLinux && entry.archives.length === 0;
+  if (!pin || !local || !shaped || entry.version !== commit12(lock)) return false;
+  return (
+    pin.manifestSha256 === local.manifestSha256 &&
+    pin.manifestBytes === local.manifestBytes &&
+    pin.files === local.files &&
+    pin.bytes === local.bytes
+  );
+}
+
+/** Whether the app includes this exact ANGLE, SwiftShader split or Linux headers pin, installed from its resources. */
 export const isBundled = (entry: ToolchainEntry, lock: BundleLock = BUNDLE_LOCK): boolean =>
-  bundledTargetOf(entry, lock) !== null || isBundledLinuxSysroot(entry);
+  bundledTargetOf(entry, lock) !== null || isBundledSwiftShader(entry, lock) || isBundledLinuxSysroot(entry);
 
 /** Where the app's resources keep one ANGLE build: `<resources>/angle/<target>/<commit12>`. */
 export function bundledFolder(resources: string, target: AngleTarget, lock: BundleLock = BUNDLE_LOCK): string {
@@ -203,16 +220,22 @@ export const BundleState = {
 } as const;
 export type BundleState = (typeof BundleState)[keyof typeof BundleState];
 
+/** Where the app's resources keep `entry`'s bundled build, or null when the app does not bundle `entry`. */
+function bundledFolderOf(resources: string, entry: ToolchainEntry, lock: BundleLock): string | null {
+  const target = bundledTargetOf(entry, lock);
+  if (target) return bundledFolder(resources, target, lock);
+  if (isBundledSwiftShader(entry, lock)) return bundledSwiftShaderFolder(resources, lock.commit);
+  return isBundledLinuxSysroot(entry) ? bundledLinuxSysrootFolder(resources) : null;
+}
+
 /** Whether the app's resources hold `entry`'s bundled build, or null when the app does not bundle `entry`. */
 export async function bundledState(
   resources: string,
   entry: ToolchainEntry,
   lock: BundleLock = BUNDLE_LOCK,
 ): Promise<BundleState | null> {
-  const target = bundledTargetOf(entry, lock);
-  const sysroot = isBundledLinuxSysroot(entry);
-  if (!target && !sysroot) return null;
-  const folder = target ? bundledFolder(resources, target, lock) : bundledLinuxSysrootFolder(resources);
+  const folder = bundledFolderOf(resources, entry, lock);
+  if (folder === null) return null;
   const manifest = await lstat(path.join(folder, ARTIFACT_MANIFEST_FILE)).catch(() => null);
   return manifest?.isFile() ? BundleState.Present : BundleState.Missing;
 }

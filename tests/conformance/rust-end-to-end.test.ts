@@ -54,7 +54,7 @@ import { WEB_FILES } from "../../src/main/rust-build-web.ts";
 import { CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import { SECOND_MS } from "../../src/shared/duration.ts";
 import { WEB_WASM_BUDGET_DEFAULT_BYTES } from "../../src/shared/game-export-contract.ts";
-import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
+import { ALL_BUILD_TARGETS, BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
 import {
   NATIVE_CAPTURE_FORMAT,
   NATIVE_PROTOCOL_VERSION,
@@ -359,11 +359,10 @@ describe("the core's Rust lane: flavours and the web branch (stub store)", { ski
     });
   }
 
-  it("registers the web and phone builders over the lane's table", () => {
+  // Flipped (cross lanes pinned): Windows and Linux were refusing placeholders until the recipe pinned their components.
+  it("registers the web, phone and cross builders over the lane's table", () => {
     const builders = rustTargetBuilders();
-    for (const target of [BuildTarget.Mac, BuildTarget.Web, BuildTarget.Ios, BuildTarget.Android])
-      assert.equal(builders[target].ready, true, target);
-    for (const target of [BuildTarget.Windows, BuildTarget.Linux]) assert.equal(builders[target].ready, false, target);
+    for (const target of ALL_BUILD_TARGETS) assert.equal(builders[target].ready, true, target);
   });
 });
 

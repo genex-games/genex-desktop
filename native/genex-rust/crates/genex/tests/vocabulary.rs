@@ -178,7 +178,8 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
 #[test]
 fn the_game_systems_blocks_are_the_fixtures() {
     use genex::manifest::{
-        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS, STREAM_CALLS,
+        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, CAMERA_CALLS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS,
+        STREAM_CALLS,
     };
     let pinned = fixture();
     let animation: Vec<&str> = genex_anim::AnimationErrorCode::ALL
@@ -194,7 +195,7 @@ fn the_game_systems_blocks_are_the_fixtures() {
     let lod = genex::LodRefusalCode::ALL.map(genex::LodRefusalCode::wire);
     assert_eq!(LOD_REFUSALS, lod, "the manifest's lod refusals are LodRefusalCode's");
     let settings: Vec<&str> = genex::settings::SettingsErrorCode::ALL.iter().map(|code| code.wire()).collect();
-    let blocks: [(&str, &[&str], &[&str]); 7] = [
+    let blocks: [(&str, &[&str], &[&str]); 8] = [
         ("animation", &ANIMATION_CALLS, &animation[..]),
         ("stream", &STREAM_CALLS, &stream),
         ("nav", &NAV_CALLS, &nav),
@@ -202,6 +203,7 @@ fn the_game_systems_blocks_are_the_fixtures() {
         ("assets", &ASSET_CALLS, &ASSET_REFUSALS),
         ("lod", &LOD_CALLS, &LOD_REFUSALS),
         ("settings", &SETTINGS_CALLS, &settings),
+        ("cameraRig", &CAMERA_CALLS, &[]),
     ];
     for (key, calls, refusals) in blocks {
         assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");
@@ -303,7 +305,10 @@ fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};
     use genex_render::texture::TextureFamily;
     let pinned = fixture();
-    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues"]);
+    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues", "look", "exposure"]);
+    use genex_render::post::exposure::ExposureWarning;
+    let warnings = [ExposureWarning::EvMinRaisedWithDoorwayAdaptation, ExposureWarning::DoorwayAdaptationUnderManual];
+    assert_eq!(names(&pinned["runtimeRender"]["exposureWarnings"]), warnings.map(ExposureWarning::wire));
     assert_eq!(names(&pinned["runtimeRender"]["issueCodes"]), AssetIssueCode::ALL.map(AssetIssueCode::wire));
     let families: Vec<&str> = TextureFamily::ALL.into_iter().map(|family| TextureOrigin::Family(family).wire()).chain([TextureOrigin::Source.wire()]).collect();
     assert_eq!(names(&pinned["runtimeRender"]["families"]), families);
@@ -435,6 +440,60 @@ fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the
     frame.environment(Environment::Sky(sky));
     let leaf = Material::color(Color::rgb(60, 110, 30)).with_subsurface(Subsurface::new([0.2, 0.3, 0.05], 0.15).with_transmission(0.6));
     assert!(leaf.subsurface().is_some());
+}
+
+/// Bodycam B2b, B2c and B7: the material texture and UV calls, and the built-mesh calls and
+/// refusals (`gfx.mesh`), each a call of the facade.
+#[test]
+fn the_material_and_mesh_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::{MeshData, MeshErrorCode};
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "materials"),
+        [
+            ".with_metal_rough_texture",
+            ".with_orm_texture",
+            ".with_occlusion_texture",
+            ".with_uv_scale",
+            ".with_world_uv",
+            ".with_uv_offset",
+            ".with_uv_jitter",
+            ".with_uv_rotation",
+            ".with_stochastic_tiling",
+            ".with_macro_variation"
+        ]
+    );
+    let plaster = Material::color(Color::WHITE)
+        .with_metal_rough_texture("textures/plaster_rough.png")
+        .with_orm_texture("textures/plaster_orm.png")
+        .with_occlusion_texture("textures/plaster_ao.png", 0.8)
+        .with_uv_scale(4.0, 3.0)
+        .with_world_uv(2.0)
+        .with_uv_offset(0.25, 0.5)
+        .with_uv_jitter(7)
+        .with_uv_rotation(0.3)
+        .with_stochastic_tiling(true)
+        .with_macro_variation(0.15, 3.0);
+    assert_eq!(plaster.occlusion_texture(), Some(("textures/plaster_ao.png", 0.8)));
+    let variation = plaster.uv_variation();
+    assert!(variation.stochastic && variation.rotation == 0.3 && variation.macro_strength == 0.15);
+    // A panel's jitter is a pure function of its seed: the same everywhere, different per panel.
+    let jitter = |seed: u32| Material::default().with_uv_jitter(seed).uv_variation().offset;
+    assert_eq!(jitter(7), variation.offset);
+    assert_eq!(jitter(7), jitter(7));
+    assert_ne!(jitter(7), jitter(8));
+    assert!((0..64).map(jitter).all(|offset| offset.iter().all(|value| (0.0..1.0).contains(value))));
+    assert_eq!(pinned_calls(&pinned, "mesh"), ["gfx.mesh", "MeshData::new", ".vertex", ".triangle", ".quad", ".cuboid", ".check"]);
+    let refusals = MeshErrorCode::ALL.map(MeshErrorCode::wire);
+    assert_eq!(names(&pinned["mesh"]["refusals"]), refusals);
+    let mut data = MeshData::new();
+    let a = data.vertex(Vec3::ZERO, Vec3::Z, genex::glam::Vec2::ZERO);
+    let b = data.vertex(Vec3::X, Vec3::Z, genex::glam::Vec2::X);
+    let c = data.vertex(Vec3::Y, Vec3::Z, genex::glam::Vec2::Y);
+    data.triangle(a, b, c).quad([Vec3::ZERO, Vec3::X, Vec3::ONE, Vec3::Y], 1.0).cuboid(Vec3::ZERO, Vec3::ONE, 1.0);
+    assert!(data.check().is_ok());
+    let mut game = Game::new(());
+    game.on_reset(move |_, _, _, gfx| assert!(gfx.mesh(&data).is_ok()));
 }
 
 /// The Physics page's calls (lane PH): Rapier 0.36 through `genex::physics`, as `docs/api/physics.md`

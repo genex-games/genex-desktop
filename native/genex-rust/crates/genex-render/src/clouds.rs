@@ -101,6 +101,19 @@ pub struct Clouds {
     pub cirrus: f32,
 }
 
+/// How sharply a layer's coverage veils the sun the ground gets ([`Clouds::sun_through`]): its
+/// clear share raised to this times the density.
+pub const SUN_VEIL_POWER: f32 = 0.8;
+/// The least of the sun an overcast sky lets through to the ground (a bright disc through the
+/// deck still casts soft shadows).
+pub const SUN_VEIL_MIN: f32 = 0.04;
+/// [`Clouds::overcast`]'s coverage: the whole sky a low grey deck.
+pub const OVERCAST_COVERAGE: f32 = 0.97;
+/// [`Clouds::overcast`]'s layer: a low stratus deck, base and thickness in km.
+pub const OVERCAST_LAYER_KM: [f32; 2] = [0.8, 1.6];
+/// [`Clouds::overcast`]'s density.
+pub const OVERCAST_DENSITY: f32 = 1.6;
+
 /// The default layer, as a constant ([`Clouds::default`]).
 const DEFAULT_CLOUDS: Clouds = Clouds {
     coverage: DEFAULT_COVERAGE,
@@ -165,6 +178,26 @@ impl Clouds {
     pub fn with_offset(mut self, offset_km: [f32; 2]) -> Clouds {
         self.offset_km = offset_km;
         self.validated()
+    }
+
+    /// A snowy or rainy day's sky (Bodycam light fix): a low, heavy deck over the whole sky, so the
+    /// sky reads grey and bright instead of blue and the sun reaches the ground veiled
+    /// ([`Clouds::sun_through`]): soft shadows the sky's light fills.
+    pub fn overcast() -> Clouds {
+        let [base, thickness] = OVERCAST_LAYER_KM;
+        Clouds { coverage: OVERCAST_COVERAGE, base_km: base, thickness_km: thickness, density: OVERCAST_DENSITY, ..DEFAULT_CLOUDS }
+    }
+
+    /// The share of the sun the layer lets through to the ground, on average over its gaps and its
+    /// clouds: its clear share raised to [`SUN_VEIL_POWER`] times its density, at least
+    /// [`SUN_VEIL_MIN`] (1 for a clear sky; about half at the default coverage; a few hundredths
+    /// overcast). The sky's own light comes through the clouds as the panorama draws them, so a
+    /// cloudy day's shadows are lit by a brighter, greyer sky instead of standing black against a
+    /// full sun.
+    pub fn sun_through(&self) -> f32 {
+        let layer = self.validated();
+        let clear = 1.0 - layer.coverage;
+        libm::powf(clear, SUN_VEIL_POWER * layer.density.max(0.0)).max(SUN_VEIL_MIN)
     }
 }
 

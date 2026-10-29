@@ -6,6 +6,19 @@
  * the game page with `executeJavaScript`, and the conformance suite evaluates the same string
  * against a fake page (tests/conformance/page-shim.test.ts).
  */
+/** The frozen-clock frame between an input's press and its release, as source text `preview.ts` evaluates in the page. */
+export const PAGE_STEP_CLOCK = `(ms) => {
+  /* A Rust web shell's game (GenexShell with a boot status) ticks only through its own step verb
+     while the studio holds it paused: its frames draw and tick nothing, so a press and a release
+     with only frames between them reached no tick and the key was never pressed. The facade's
+     step runs the page's frames and then the game's verb, as the harness's own step does. */
+  const shell = window.GenexShell;
+  const studio = window.__studio;
+  if (shell && shell.status && studio && typeof studio.step === "function") return studio.step(ms);
+  const c = window.__studioClock;
+  return c && typeof c.step === "function" ? c.step(ms) : null;
+}`;
+
 export const PAGE_DISPATCH = `(payload) => {
   const studio = window.__studio;
   /* One look, three roads. It reaches a game through the contract's own injectInput, through

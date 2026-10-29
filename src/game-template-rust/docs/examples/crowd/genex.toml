@@ -1,0 +1,31 @@
+# The crowd example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Crowd"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+fog_density = 0.002
+
+# Every walker is a Rapier character capsule moved along a baked nav mesh; a rigged walker GLB, when
+# it is there, is animated.
+[physics]
+enabled = true
+
+[nav]
+enabled = true
+
+[animation]
+enabled = true
+
+[audio]
+enabled = false
+
+[streaming]
+enabled = false

@@ -59,7 +59,7 @@ struct MeshletVsOut {
 fn vs_meshlet(@builtin(vertex_index) index: u32) -> MeshletVsOut {
     let in = gx_meshlet_pull(index);
     let row = in.row;
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: MeshletVsOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.world_pos = world.xyz;
@@ -80,7 +80,7 @@ struct MeshletPrepassOut {
 fn vs_meshlet_prepass(@builtin(vertex_index) index: u32) -> MeshletPrepassOut {
     let in = gx_meshlet_pull(index);
     let row = in.row;
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: MeshletPrepassOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
@@ -95,7 +95,7 @@ fn vs_meshlet_shadow(@builtin(vertex_index) index: u32) -> ShadowCasterOut {
     let drawn = drawn_meshlets[decoded.x];
     let vertex = meshlet_vertices[meshlets[drawn.meshlet].vertex_offset + decoded.y];
     let position = vec3<f32>(mesh_vertices[vertex].data[0], mesh_vertices[vertex].data[1], mesh_vertices[vertex].data[2]);
-    return gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * (instances[drawn.instance].model * vec4<f32>(position, 1.0)));
+    return gx_shadow_caster(frame.cascade_view_proj[pass_view.view - 1u] * gx_row_world(instances[drawn.instance], position, frame.texture_lod.y));
 }
 
 // Depth only (layout and pipeline checks; the frame pairs the vertex entries with the forward and
@@ -141,7 +141,7 @@ fn vs_meshlet_prepass_motion(@builtin(vertex_index) index: u32) -> MeshletMotion
     let in = gx_meshlet_pull(index);
     let row = in.row;
     let prev = meshlet_prev_models[drawn.instance];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: MeshletMotionOut;
     out.clip = gx_clip_position(frame.view_proj, world, meshlet_motion_frame.jitter.xy);
     out.normal = (row.normal * vec4<f32>(in.normal, 0.0)).xyz;
@@ -149,7 +149,7 @@ fn vs_meshlet_prepass_motion(@builtin(vertex_index) index: u32) -> MeshletMotion
     // `motion::MOTION_FLAG_STILL` (4): a still row's world position is last frame's.
     var prev_world = world;
     if (prev.flags.x & 4u) == 0u {
-        prev_world = prev.model * vec4<f32>(in.position, 1.0);
+        prev_world = gx_sway_world(prev.model, in.position, gx_row_wind(row), frame.texture_lod.z);
     }
     out.previous = meshlet_motion_frame.prev_view_proj * prev_world;
     out.reactive = prev.flags.x & 1u;

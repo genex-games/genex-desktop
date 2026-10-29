@@ -47,6 +47,9 @@ export const RUST_TRIPLE = {
   [BuildTarget.Android]: "aarch64-linux-android",
 } as const satisfies Record<BuildTarget, string>;
 
+/** The iOS Simulator's triple on Apple silicon: an iPhone game's second standard library (the Simulator export's build). */
+export const RUST_IOS_SIMULATOR_TRIPLE = "aarch64-apple-ios-sim";
+
 /** The triple of the sysroot each store host runs (its standard library comes with the `rust` component). */
 export const RUST_HOST_TRIPLE = {
   [ToolchainHost.MacArm64]: "aarch64-apple-darwin",
@@ -338,8 +341,12 @@ async function readRecord(file: string): Promise<Record<string, unknown> | null>
   return isJsonObject(value) && value.schema === RECORD_SCHEMA ? value : null;
 }
 
-/** Every triple a record may name: a destination's, or a store host's own. */
-const KNOWN_TRIPLES: ReadonlySet<string> = new Set([...Object.values(RUST_TRIPLE), ...Object.values(RUST_HOST_TRIPLE)]);
+/** Every triple a record may name: a destination's (the iOS Simulator's too), or a store host's own. */
+const KNOWN_TRIPLES: ReadonlySet<string> = new Set([
+  ...Object.values(RUST_TRIPLE),
+  RUST_IOS_SIMULATOR_TRIPLE,
+  ...Object.values(RUST_HOST_TRIPLE),
+]);
 
 const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const isStringList = (value: unknown): value is string[] =>

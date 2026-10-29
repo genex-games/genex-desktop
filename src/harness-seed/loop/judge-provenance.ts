@@ -55,6 +55,12 @@ export interface JudgePin {
   engine: EngineId | null;
   model: string | null;
   fallback: boolean;
+  /**
+   * A second taste judge, ideally of another model family (`"second": {"engine","model"}`): on a run
+   * with a visual bar it looks at the same pair, and its blockers and its "not satisfied" count too.
+   * Absent unless pin.json names one: off by default, since it doubles the taste judge's calls.
+   */
+  second?: { engine: EngineId; model: string | null };
 }
 
 /** What one verdict records of its own making. */
@@ -126,11 +132,26 @@ const isEngineId = (value: unknown): value is EngineId =>
 /** A pin's fields, or null when any field it names is not one a pin may carry. */
 export function judgePinOf(value: unknown): JudgePin | null {
   if (!isPlainRecord(value)) return null;
-  const { engine, model, fallback } = value;
+  const { engine, model, fallback, second } = value;
   if (engine !== undefined && !isEngineId(engine)) return null;
   if (model !== undefined && !(typeof model === "string" && PINNED_MODEL.test(model))) return null;
   if (fallback !== undefined && typeof fallback !== "boolean") return null;
-  return { engine: engine ?? null, model: model ?? null, fallback: fallback ?? true };
+  const other = second === undefined ? undefined : secondJudgeOf(second);
+  if (other === null) return null;
+  return {
+    engine: engine ?? null,
+    model: model ?? null,
+    fallback: fallback ?? true,
+    ...(other ? { second: other } : {}),
+  };
+}
+
+/** The second judge a pin names, or null when it names one wrongly. */
+function secondJudgeOf(value: unknown): { engine: EngineId; model: string | null } | null {
+  if (!isPlainRecord(value) || !isEngineId(value.engine)) return null;
+  const { model } = value;
+  if (model !== undefined && !(typeof model === "string" && PINNED_MODEL.test(model))) return null;
+  return { engine: value.engine, model: (model as string | undefined) ?? null };
 }
 
 /**

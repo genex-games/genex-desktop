@@ -563,15 +563,28 @@ function rangeError(value: unknown, range: readonly [number, number], outside: R
   return value >= range[0] && value <= range[1] ? null : outside;
 }
 
+/** A `look`: absent or null, else an object (the game checks its keys). */
+function lookError(value: unknown): RenderSettingsArgError | null {
+  return value === undefined || value === null || isRecord(value) ? null : NativeOpError.BadArgument;
+}
+
+/** `value` is null or passes `guard`: a `set` member that clears or sets its setting. */
+function isNullOr<T>(value: unknown, guard: (value: unknown) => value is T): value is T | null {
+  return value === null || guard(value);
+}
+
+const isNumber = (value: unknown): value is number => typeof value === "number";
+
 /** The members of a checked `set` a game reads (it ignores any other). */
 function settingsChangeOf(set: Record<string, unknown>): RenderSettingsChange {
   const change: RenderSettingsChange = {};
-  const { preset, deviceClass, features, renderScaleLock, frameBudgetMs } = set;
-  if (preset === null || isQualityPreset(preset)) change.preset = preset;
-  if (deviceClass === null || isDeviceClass(deviceClass)) change.deviceClass = deviceClass;
-  if (features === null || isFeatureSwitches(features)) change.features = features === null ? null : { ...features };
-  if (renderScaleLock === null || typeof renderScaleLock === "number") change.renderScaleLock = renderScaleLock;
-  if (frameBudgetMs === null || typeof frameBudgetMs === "number") change.frameBudgetMs = frameBudgetMs;
+  const { preset, deviceClass, features, renderScaleLock, frameBudgetMs, look } = set;
+  if (isNullOr(look, isRecord)) change.look = look === null ? null : { ...look };
+  if (isNullOr(preset, isQualityPreset)) change.preset = preset;
+  if (isNullOr(deviceClass, isDeviceClass)) change.deviceClass = deviceClass;
+  if (isNullOr(features, isFeatureSwitches)) change.features = features === null ? null : { ...features };
+  if (isNullOr(renderScaleLock, isNumber)) change.renderScaleLock = renderScaleLock;
+  if (isNullOr(frameBudgetMs, isNumber)) change.frameBudgetMs = frameBudgetMs;
   return change;
 }
 
@@ -590,7 +603,12 @@ export function checkRenderSettingsArg(arg: unknown): RenderSettingsArgCheck {
     wordError(set.deviceClass, isDeviceClass, RenderSettingsRefusal.UnknownDeviceClass) ??
     featuresError(set.features) ??
     rangeError(set.renderScaleLock, [RENDER_SCALE_MIN, RENDER_SCALE_MAX], RenderSettingsRefusal.InvalidScale) ??
-    rangeError(set.frameBudgetMs, [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX], RenderSettingsRefusal.InvalidFrameBudget);
+    rangeError(
+      set.frameBudgetMs,
+      [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX],
+      RenderSettingsRefusal.InvalidFrameBudget,
+    ) ??
+    lookError(set.look);
   return error ? { ok: false, error } : { ok: true, arg: { set: settingsChangeOf(set) } };
 }
 
@@ -622,8 +640,8 @@ export type GameBoxProblem = (typeof GameBoxProblem)[keyof typeof GameBoxProblem
 
 /** Pixel layout of a capture file in `state/captures/<seq>.bgra`, rows top-down: what `computePixelStats` reads. */
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
-/** The longest side a capture may have; a reply declaring more is refused before any read. */
-export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The longest side a capture (and a native `ready.size`) may have, an 8K frame (genex-core's `NATIVE_MAX_WORLD_PX`); a reply declaring more is refused before any read. */
+export const NATIVE_CAPTURE_MAX_PX = 8192;
 /** The shortest side a capture may be asked to draw at: the world target's smallest (`MIN_WORLD_PX`). */
 export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes `readRegularFile` will take for one capture. */
@@ -817,7 +835,7 @@ export const NativeGpuBound = {
   WgslTooLarge: "wgsl-too-large",
   /** An empty buffer, or one above the WebGPU-core storage binding size. */
   BufferTooLarge: "buffer-too-large",
-  /** A texture above 4096 × 4096 × 4 bytes. */
+  /** A texture above the destination's cap: 8192 × 8192 × 4 bytes natively, 4096 × 4096 × 4 on the web. */
   TextureTooLarge: "texture-too-large",
   /** One frame's uploads above the per-frame budget. */
   UploadBudget: "upload-budget",
@@ -1383,7 +1401,7 @@ export interface NativeCaptureSize {
   height: number;
 }
 
-/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..4096. */
+/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..8192. */
 export function isNativeCaptureSize(value: unknown): value is NativeCaptureSize {
   const side = (n: unknown) =>
     Number.isSafeInteger(n) && Number(n) >= NATIVE_CAPTURE_MIN_PX && Number(n) <= NATIVE_CAPTURE_MAX_PX;

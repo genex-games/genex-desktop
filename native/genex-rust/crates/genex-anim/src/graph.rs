@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use glam::Vec2;
 
+use crate::blendspace::{BlendSpace1D, BlendSpace2D, MAX_BLEND_POINTS};
 use crate::clip::Clip;
 use crate::error::AnimationError;
 use crate::events::{EventTable, EventTableBuilder};
@@ -67,12 +68,131 @@ pub enum Motion {
     Empty,
     /// One clip.
     Clip(ClipMotion),
+    /// Clips blended by a parameter and played in step ([`Motion::blend1d`]).
+    Blend(BlendMotion),
 }
 
 impl Motion {
     /// `clip`, looping at speed 1 (chain `.once()`, `.speed(s)`, `.speed_by(param)`).
     pub const fn clip(clip: ClipId) -> ClipMotion {
         ClipMotion { clip, looping: true, speed: 1.0, speed_by: None }
+    }
+
+    /// Clips at points on a line, weighed by the float `by` (a locomotion speed: idle at 0, walk
+    /// at 1.4, run at 4): between two neighbours the weights are linear, past the ends the end
+    /// plays alone. Chain `.speed(s)` and `.speed_by(param)`.
+    pub fn blend1d(by: FloatParam, points: &[(f32, ClipId)]) -> BlendMotion {
+        BlendMotion::new(BlendPoints::Line { by, points: points.to_vec() })
+    }
+
+    /// Clips at free 2D points weighed by the vector `by` (aim pitch and yaw): barycentric over a
+    /// Delaunay triangulation, the nearest hull edge outside it.
+    pub fn blend2d(by: Vec2Param, points: &[(Vec2, ClipId)]) -> BlendMotion {
+        BlendMotion::new(BlendPoints::Plane { by, points: points.to_vec(), directional: false })
+    }
+
+    /// Clips at velocities (direction × speed, character space: +x right, +y forward) weighed by
+    /// the vector `by`: the 8-way walk and run set, an idle at the origin. Polar gradient bands, so
+    /// only the angular and speed neighbours of the velocity get weight.
+    pub fn directional(by: Vec2Param, points: &[(Vec2, ClipId)]) -> BlendMotion {
+        BlendMotion::new(BlendPoints::Plane { by, points: points.to_vec(), directional: true })
+    }
+}
+
+/// Clips blended by a parameter and played in step: every clip runs at the same normalized time
+/// (one shared phase), and the phase advances by `dt × speed` over the weighted mean of the clips'
+/// lengths, so a walk blending into a run changes its stride rate smoothly and both clips plant
+/// the same foot together. Author the clips to start on the same foot. It always loops.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlendMotion {
+    points: BlendPoints,
+    speed: f32,
+    speed_by: Option<FloatParam>,
+}
+
+/// Where a blend's clips sit and what weighs them.
+#[derive(Clone, Debug, PartialEq)]
+enum BlendPoints {
+    Line { by: FloatParam, points: Vec<(f32, ClipId)> },
+    Plane { by: Vec2Param, points: Vec<(Vec2, ClipId)>, directional: bool },
+}
+
+impl BlendMotion {
+    fn new(points: BlendPoints) -> BlendMotion {
+        BlendMotion { points, speed: 1.0, speed_by: None }
+    }
+
+    /// Play at `speed` (negative plays backwards).
+    #[must_use]
+    pub fn speed(self, speed: f32) -> BlendMotion {
+        BlendMotion { speed, ..self }
+    }
+
+    /// Multiply the speed by a float parameter's value each tick (the ground speed over the
+    /// blend's authored speed, so the feet do not slide).
+    #[must_use]
+    pub fn speed_by(self, param: FloatParam) -> BlendMotion {
+        BlendMotion { speed_by: Some(param), ..self }
+    }
+
+    /// The clips, in declaration order.
+    pub fn clips(&self) -> Vec<ClipId> {
+        match &self.points {
+            BlendPoints::Line { points, .. } => points.iter().map(|(_, clip)| *clip).collect(),
+            BlendPoints::Plane { points, .. } => points.iter().map(|(_, clip)| *clip).collect(),
+        }
+    }
+
+    /// Its fixed speed.
+    pub const fn fixed_speed(&self) -> f32 {
+        self.speed
+    }
+
+    /// The parameter its speed is multiplied by.
+    pub const fn speed_param(&self) -> Option<FloatParam> {
+        self.speed_by
+    }
+}
+
+impl From<BlendMotion> for Motion {
+    fn from(motion: BlendMotion) -> Motion {
+        Motion::Blend(motion)
+    }
+}
+
+/// A checked blend: its space, what weighs it, and each clip's id and length.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BuiltBlend {
+    space: BuiltSpace,
+    clips: Vec<ClipId>,
+    durations: Vec<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum BuiltSpace {
+    Line(FloatParam, BlendSpace1D),
+    Plane(Vec2Param, BlendSpace2D),
+}
+
+impl BuiltBlend {
+    /// Each clip's weight under `params` into `out` (declaration order); answers the filled part.
+    pub(crate) fn weights<'w>(&self, params: &crate::params::Params, out: &'w mut [f32; MAX_BLEND_POINTS]) -> &'w [f32] {
+        match &self.space {
+            BuiltSpace::Line(by, space) => space.weights(params.float(*by), out),
+            BuiltSpace::Plane(by, space) => space.weights(params.vec2(*by), out),
+        }
+        &out[..self.clips.len()]
+    }
+
+    /// The weighted mean of the clips' lengths under `params`, seconds: one cycle of the phase.
+    pub(crate) fn cycle(&self, params: &crate::params::Params) -> f32 {
+        let mut weights = [0.0; MAX_BLEND_POINTS];
+        self.weights(params, &mut weights).iter().zip(&self.durations).map(|(weight, duration)| weight * duration).sum()
+    }
+
+    /// The clips and their lengths, in declaration order.
+    pub(crate) fn clips(&self) -> impl Iterator<Item = (ClipId, f32)> + '_ {
+        self.clips.iter().copied().zip(self.durations.iter().copied())
     }
 }
 
@@ -195,9 +315,11 @@ pub(crate) struct StateInfo {
     pub(crate) name: String,
     pub(crate) layer: LayerId,
     pub(crate) motion: Motion,
-    /// The motion's length in seconds (0 for `Empty`).
+    /// The motion's length in seconds (0 for `Empty`; 1 for a blend, whose time is its phase).
     pub(crate) length: f32,
     pub(crate) looping: bool,
+    /// A blend's checked space and clips.
+    pub(crate) blend: Option<BuiltBlend>,
     /// The transitions to try, best first.
     pub(crate) outgoing: Vec<u32>,
 }
@@ -296,6 +418,11 @@ impl AnimGraph {
     /// The length of a state's motion in seconds (0 for `Empty`).
     pub fn state_length(&self, state: StateId) -> f32 {
         self.state_info(state).map_or(0.0, |info| info.length)
+    }
+
+    /// A blend state's checked space and clips.
+    pub(crate) fn state_blend(&self, state: StateId) -> Option<&BuiltBlend> {
+        self.state_info(state).and_then(|info| info.blend.as_ref())
     }
 
     /// Every transition, in declaration order.
@@ -567,22 +694,55 @@ impl<'a> AnimGraphBuilder<'a> {
             if self.states[..index].iter().any(|earlier| earlier.layer == state.layer && earlier.name == state.name) {
                 return Err(format!("state {:?} is declared twice in one layer", state.name));
             }
-            let (length, looping) = match &state.motion {
-                Motion::Empty => (0.0, false),
+            let (length, looping, blend) = match &state.motion {
+                Motion::Empty => (0.0, false, None),
                 Motion::Clip(motion) => {
                     let clip = self.check_clip(motion.clip)?;
-                    if !motion.speed.is_finite() {
-                        return Err(format!("state {:?} plays at a non-finite speed", state.name));
-                    }
-                    if let Some(param) = motion.speed_by {
-                        self.check_param(param)?;
-                    }
-                    (clip.duration(), motion.looping)
+                    self.check_speed(&state.name, motion.speed, motion.speed_by)?;
+                    (clip.duration(), motion.looping, None)
+                }
+                Motion::Blend(motion) => {
+                    self.check_speed(&state.name, motion.speed, motion.speed_by)?;
+                    (1.0, true, Some(self.check_blend(&state.name, motion)?))
                 }
             };
-            states.push(StateInfo { name: state.name.clone(), layer: state.layer, motion: state.motion.clone(), length, looping, outgoing: Vec::new() });
+            states.push(StateInfo { name: state.name.clone(), layer: state.layer, motion: state.motion.clone(), length, looping, blend, outgoing: Vec::new() });
         }
         Ok(states)
+    }
+
+    fn check_speed(&self, state: &str, speed: f32, speed_by: Option<FloatParam>) -> Result<(), String> {
+        if !speed.is_finite() {
+            return Err(format!("state {state:?} plays at a non-finite speed"));
+        }
+        speed_by.map_or(Ok(()), |param| self.check_param(param))
+    }
+
+    /// A blend's points as a space (genex-anim's blend spaces refuse too few, too many, non-finite
+    /// or repeated points), its parameter of the right kind and clips of the graph that last.
+    fn check_blend(&self, state: &str, motion: &BlendMotion) -> Result<BuiltBlend, String> {
+        let refused = |error: AnimationError| format!("state {state:?}: {}", error.detail);
+        let space = match &motion.points {
+            BlendPoints::Line { by, points } => {
+                self.check_param(*by)?;
+                BuiltSpace::Line(*by, BlendSpace1D::new(points).map_err(refused)?)
+            }
+            BlendPoints::Plane { by, points, directional } => {
+                self.check_param(*by)?;
+                let space = if *directional { BlendSpace2D::directional(points) } else { BlendSpace2D::cartesian(points) };
+                BuiltSpace::Plane(*by, space.map_err(refused)?)
+            }
+        };
+        let clips = motion.clips();
+        let mut durations = Vec::with_capacity(clips.len());
+        for clip in &clips {
+            let duration = self.check_clip(*clip)?.duration();
+            if duration.is_nan() || duration <= 0.0 {
+                return Err(format!("state {state:?} blends clip {}, which has no length", clip.raw()));
+            }
+            durations.push(duration);
+        }
+        Ok(BuiltBlend { space, clips, durations })
     }
 
     fn check_transitions(&self, states: &[StateInfo]) -> Result<(), String> {

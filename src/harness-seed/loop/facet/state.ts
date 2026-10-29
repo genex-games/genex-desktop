@@ -198,6 +198,10 @@ export interface ResumableState {
    * put to the user as a decision card, by their `what`: each is asked once, never built.
    */
   surfacedBeyond: string[];
+  /** What the harness measured blocking on the accepted build (provenance.ts, temporal-checks.ts), by key: a round is held to adding none. */
+  incumbentMeasured: Record<string, number>;
+  /** How many rounds the builder's current session has carried (facet/session-rotation.ts). */
+  sessionRounds: number;
   /** The judge's polish notes on the accepted build: optional, never a round's whole work. */
   polishList: string[];
   /** The judge's biggest gap and how many judged builds in a row it has stood: { text, count, checkId, losses }. */
@@ -232,6 +236,8 @@ export interface RoundCounters {
   integrationNote: string | null;
   lastSpike: SpikeOutcome | null;
   recipes: Recipe[];
+  /** The game's craft block for BRIEF.md (loop/game-craft.ts), chosen once per loop; undefined until then. */
+  craft?: string;
   currentMove: AnyRecord | null;
   currentFix: AnyRecord | null;
   fixedForRecord: boolean | null;
@@ -317,6 +323,8 @@ export const RESUMABLE_FIELDS = {
   principleStreaks: Carry.Record,
   lastBigMove: Carry.Value,
   surfacedBeyond: Carry.List,
+  incumbentMeasured: Carry.Record,
+  sessionRounds: Carry.Value,
   polishList: Carry.Value,
   gapStreak: Carry.Value,
   emaBuildMs: Carry.Value,
@@ -373,6 +381,8 @@ function freshResumable(facet: AnyRecord, initialDefects: unknown): ResumableSta
     principleStreaks: {},
     lastBigMove: null,
     surfacedBeyond: [],
+    incumbentMeasured: {},
+    sessionRounds: 0,
     polishList: [],
     gapStreak: null,
     emaBuildMs: null,

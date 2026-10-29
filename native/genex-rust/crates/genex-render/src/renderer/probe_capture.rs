@@ -12,7 +12,8 @@
 //!
 //! What a capture leaves out (open, recorded with A.3): transparent draws, alpha-masked and
 //! double-sided variants, skinned meshes' motion, particles, lines, Level-2 custom materials and
-//! Level-3 passes; spot lights unshadowed; the sky's sun disk (the analytic sun lights instead).
+//! Level-3 passes; spot lights unshadowed; the sky's sun disk (the analytic sun lights instead);
+//! for an irradiance cell, the fog (`CaptureKind::fogged`).
 //!
 //! The irradiance volumes' bake (renderer pass 2 A.4, `crate::irradiance`) runs first in the
 //! node, because the probes' table carries the volumes' rows: each cell due this frame is six
@@ -205,7 +206,7 @@ impl Renderer {
         let key = SurfaceKey {
             shadow_filter: ShadowFilter::Pcf3x3,
             shadow_temporal: false,
-            effects: EffectKey { ao: false, ao_gi: false, contact_shadows: false, fog: self.surface_key(true).effects.fog, aerial: false },
+            effects: EffectKey { ao: false, ao_gi: false, contact_shadows: false, fog: kind.fogged() && self.surface_key(true).effects.fog, aerial: false },
             binned_lights: false,
             sun_soft_edges: false,
             sun_cascades: 1,
@@ -340,7 +341,7 @@ impl Renderer {
         ]);
         let [light_ext, light_bins, material_ext] = FRAME_LIGHT_BINDINGS.map(|(binding, _)| binding);
         entries.extend([entry(light_ext, t.light_ext.get()), entry(light_bins, t.light_bins.get()), entry(material_ext, t.material_ext.get())]);
-        let class_views = MATERIAL_CLASS_ARRAYS.map(|(class, kind)| self.textures.view(class, kind));
+        let class_views = MATERIAL_CLASS_ARRAYS.map(|(slot, kind)| self.textures.slot_view(slot, kind));
         entries.extend(FRAME_MATERIAL_CLASS_BINDINGS.into_iter().zip(class_views).map(|((binding, _), view)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }));
         let neutral = self.ssr.borrow().neutral().clone();
         entries.push(wgpu::BindGroupEntry { binding: crate::screen_inputs::FRAME_REFLECTIONS_BINDING.0, resource: wgpu::BindingResource::TextureView(&neutral) });
@@ -353,7 +354,7 @@ impl Renderer {
     /// the probe's box) and its visible lists (the casters' at view 1).
     fn probe_shadow_group(&self, uniform: &wgpu::BufferBinding<'_>, visible: &wgpu::BufferBinding<'_>) -> BindGroup {
         let t = &self.tables;
-        let color_classes = TextureClass::ALL.map(|class| self.textures.view(class, TextureKind::Color));
+        let color_classes = self.textures.slot_views(TextureKind::Color);
         let mut entries = vec![
             wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(uniform.clone()) },
             entry(1, t.instances.get()),
@@ -383,6 +384,14 @@ enum CaptureKind {
 }
 
 impl CaptureKind {
+    /// Whether its faces are drawn through the look's fog. An irradiance cell's are not (AAA push
+    /// P3): the analytic fog in-scatters the sky's horizon, so a cell inside a closed room would
+    /// see its air glow with the sky and light the room with it (and the froxel fog that reads the
+    /// cells); the fog is the frame's own, applied where the camera looks.
+    fn fogged(self) -> bool {
+        matches!(self, CaptureKind::Probe)
+    }
+
     fn cull(self) -> Option<wgpu::Face> {
         match self {
             CaptureKind::Probe => Some(wgpu::Face::Back),

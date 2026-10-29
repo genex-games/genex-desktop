@@ -21,6 +21,10 @@ use crate::extend::{CustomMaterial, PostPass};
 use crate::gfx::Model;
 use genex_render::motion::DrawId;
 use genex_render::settings::Environment;
+pub use genex_render::scene::{UvMapping, UvVariation};
+
+/// The PCG32 stream [`Material::with_uv_jitter`] draws its offset from.
+const UV_JITTER_SEQUENCE: u64 = 0xB2B;
 use glam::{Mat4, Quat, Vec3};
 
 /// Metallic factor of [`Material::default`]: a dielectric.
@@ -168,9 +172,15 @@ pub struct Material {
     base_texture: Option<Arc<str>>,
     normal_texture: Option<Arc<str>>,
     metal_rough_texture: Option<Arc<str>>,
+    occlusion_texture: Option<Arc<str>>,
+    occlusion_strength: f32,
     emissive_texture: Option<Arc<str>>,
     untextured_color: Option<Color>,
     subsurface: Option<crate::Subsurface>,
+    uv: UvMapping,
+    variation: UvVariation,
+    /// Cover, detail maps, a second layer, parallax and the extra lobes (AAA materials).
+    layering: crate::layers::Layering,
 }
 
 impl Default for Material {
@@ -187,9 +197,14 @@ impl Default for Material {
             base_texture: None,
             normal_texture: None,
             metal_rough_texture: None,
+            occlusion_texture: None,
+            occlusion_strength: 1.0,
             emissive_texture: None,
             untextured_color: None,
             subsurface: None,
+            uv: UvMapping::default(),
+            variation: UvVariation::default(),
+            layering: crate::layers::Layering::default(),
         }
     }
 }
@@ -268,9 +283,191 @@ impl Material {
     }
 
     /// This material with a glTF metallic-roughness texture (`assets/<path>`): green roughness,
-    /// blue metallic.
+    /// blue metallic, each times [`Material::roughness`] and [`Material::metallic`] (leave them
+    /// at 1 to take the map's values as they are).
     pub fn with_metal_rough_texture(self, path: &str) -> Material {
         Material { metal_rough_texture: Some(Arc::from(path)), ..self }
+    }
+
+    /// This material with a packed ORM texture (`assets/<path>`, glTF's packing and most texture
+    /// sites' `_ORM`/`_ARM` maps): red ambient occlusion, green roughness, blue metallic, read in
+    /// one fetch. [`Material::with_metal_rough_texture`] plus [`Material::with_occlusion_texture`]
+    /// on the same file at strength 1.
+    pub fn with_orm_texture(self, path: &str) -> Material {
+        Material { metal_rough_texture: Some(Arc::from(path)), occlusion_texture: Some(Arc::from(path)), occlusion_strength: 1.0, ..self }
+    }
+
+    /// This material with an ambient-occlusion texture (`assets/<path>`, red channel) darkening
+    /// the ambient light in its crevices by `strength` (0..1; never the sun or other lights).
+    pub fn with_occlusion_texture(self, path: &str, strength: f32) -> Material {
+        Material { occlusion_texture: Some(Arc::from(path)), occlusion_strength: strength, ..self }
+    }
+
+    /// This material repeating its textures `u` times across and `v` times down the mesh's own
+    /// UVs (Bodycam B2b): a cube's face, a model's UV layout. 0, negative or not finite reads as 1.
+    /// For a box of any size, [`Material::with_world_uv`] keeps one texel density instead.
+    pub fn with_uv_scale(self, u: f32, v: f32) -> Material {
+        Material { uv: UvMapping::Mesh { scale: [u, v] }, ..self }
+    }
+
+    /// This material projecting its textures from the world (Bodycam B2b): every face takes the
+    /// texture along the axis it faces most, repeating every `metres` metres, so a 4 m wall, a
+    /// 0.2 m sill and a floor drawn with `frame.cube_with` all show the same texel size without
+    /// stretch. u runs to the viewer's right and v down a wall. For geometry that stays put: a
+    /// moving draw's texture slides over it, and a curved model shows seams where its faces turn
+    /// (give it [`Material::with_uv_scale`]). 0, negative or not finite reads as 1 m.
+    pub fn with_world_uv(self, metres: f32) -> Material {
+        let tiles = if metres.is_finite() && metres > 0.0 { 1.0 / metres } else { 1.0 };
+        Material { uv: UvMapping::World { tiles_per_metre: [tiles, tiles] }, ..self }
+    }
+
+    /// How its textures meet the surface ([`Material::with_uv_scale`], [`Material::with_world_uv`]).
+    pub fn uv_mapping(&self) -> UvMapping {
+        self.uv
+    }
+
+    /// This material with its textures moved by `u` and `v` tiles (Bodycam B2b): wall panels of
+    /// one texture that each start it somewhere else no longer line up into a visible repeat.
+    pub fn with_uv_offset(self, u: f32, v: f32) -> Material {
+        Material { variation: UvVariation { offset: [u, v], ..self.variation }, ..self }
+    }
+
+    /// This material with its textures moved by an offset drawn from `seed` (Bodycam B2b): the
+    /// same seed gives the same offset on every destination, so give each panel its own (its index
+    /// in the level), never a per-frame value.
+    pub fn with_uv_jitter(self, seed: u32) -> Material {
+        let mut rng = genex_core::rng::Pcg32::new(u64::from(seed), UV_JITTER_SEQUENCE);
+        let (u, v) = (rng.unit(), rng.unit());
+        self.with_uv_offset(u, v)
+    }
+
+    /// This material with its textures turned by `radians` (Bodycam B2b; the normal map turns
+    /// with them): for textures with no direction (plaster, concrete, dirt), never brick or wood.
+    pub fn with_uv_rotation(self, radians: f32) -> Material {
+        Material { variation: UvVariation { rotation: radians, ..self.variation }, ..self }
+    }
+
+    /// This material blending each texture from two copies at offsets that change across the
+    /// surface (Bodycam B2b, stochastic tiling), so a long wall shows no tile twice. It costs a
+    /// second fetch of the base colour, normal and metal-rough maps; an emissive map keeps the
+    /// plain tiling, so leave it off a material with one.
+    pub fn with_stochastic_tiling(self, on: bool) -> Material {
+        Material { variation: UvVariation { stochastic: on, ..self.variation }, ..self }
+    }
+
+    /// This material's base colour varied in large patches of about `metres` by up to `strength`
+    /// (Bodycam B2b, 0..1: 0.15 is ±15%), from a world-space noise: dirt and fading across a wall
+    /// a tile cannot hold. For geometry that stays put.
+    pub fn with_macro_variation(self, strength: f32, metres: f32) -> Material {
+        Material { variation: UvVariation { macro_strength: strength, macro_metres: metres, ..self.variation }, ..self }
+    }
+
+    /// What keeps its tiled textures from reading as a repeat ([`Material::with_uv_offset`],
+    /// [`Material::with_uv_jitter`], [`Material::with_uv_rotation`],
+    /// [`Material::with_stochastic_tiling`], [`Material::with_macro_variation`]).
+    pub fn uv_variation(&self) -> UvVariation {
+        self.variation
+    }
+
+    /// This material with `cover` where it faces up (AAA materials): snow, dust, moss or water,
+    /// replacing its colour, roughness and normal map there. `Cover::snow(0.9, 50.0, 0.3)` snows a
+    /// bench's seat, lid or ledge by material, never by a white box laid on it. A cover on the
+    /// material wins over [`Frame::cover_world`]'s; [`crate::Cover::none`] keeps it bare.
+    pub fn with_cover(mut self, cover: crate::Cover) -> Material {
+        self.layering.cover = Some(cover);
+        self
+    }
+
+    /// The cover it carries ([`Material::with_cover`]), if any.
+    pub fn cover(&self) -> Option<crate::Cover> {
+        self.layering.cover
+    }
+
+    /// This material with close-up detail maps (`assets/<path>`; `""` leaves one out), repeating
+    /// `tiles` times per tile of its own maps: an sRGB albedo overlay around mid-grey (128 changes
+    /// nothing) and a normal map added to its own, fading out by 15 m. Grain a base map's
+    /// resolution cannot hold: a 4 m wall's plaster pores, a floor's wood fibre. Drawn from
+    /// `medium` up (phones included); `low` draws the material without them.
+    pub fn with_detail(mut self, albedo: &str, normal: &str, tiles: f32) -> Material {
+        let maps = crate::layers::DetailMaps {
+            albedo: crate::layers::path(albedo),
+            normal: crate::layers::path(normal),
+            tiles,
+            albedo_strength: 1.0,
+            normal_strength: 1.0,
+            fade_metres: DETAIL_FADE_METRES,
+        };
+        self.layering.detail = Some(maps);
+        self
+    }
+
+    /// This material's detail maps ([`Material::with_detail`]) at `albedo` and `normal` strength
+    /// (0..1 and 0..2), faded out by `fade_metres` (0: never).
+    pub fn with_detail_strength(mut self, albedo: f32, normal: f32, fade_metres: f32) -> Material {
+        if let Some(detail) = &mut self.layering.detail {
+            (detail.albedo_strength, detail.normal_strength, detail.fade_metres) = (albedo, normal, fade_metres);
+        }
+        self
+    }
+
+    /// This material with a second `layer` blended over its own maps ([`crate::MaterialLayer`]): moss on
+    /// the tops of stones ([`crate::LayerMask::Up`]), mortar and dirt in patches
+    /// ([`crate::LayerMask::Noise`]). With [`Material::with_parallax`]'s height map and the
+    /// layer's own, the blend follows the heights. Drawn from `medium` up.
+    pub fn with_layer(mut self, layer: crate::MaterialLayer) -> Material {
+        self.layering.layer = Some(layer);
+        self
+    }
+
+    /// This material with a height map (`assets/<path>`, red, white high) and parallax occlusion
+    /// mapping `depth` tiles deep (0.02..0.08 for bricks and cobbles; at most 0.25): joints and
+    /// gaps look deep at a grazing view. Drawn on desktop `high` and `ultra` (phones and lower
+    /// presets draw the flat maps; the height still steers [`Material::with_layer`]'s blend).
+    pub fn with_parallax(mut self, height: &str, depth: f32) -> Material {
+        self.layering.parallax = Some((Arc::from(height), depth));
+        self
+    }
+
+    /// This material under a clear coat (`KHR_materials_clearcoat`): a second, smooth specular
+    /// layer of `strength` (0..1) and `roughness` over it. Car paint, varnished wood, a lacquered
+    /// door.
+    pub fn with_clearcoat(mut self, strength: f32, roughness: f32) -> Material {
+        (self.layering.lobes.clearcoat, self.layering.lobes.clearcoat_roughness) = (strength, roughness);
+        self
+    }
+
+    /// This material with a sheen of `color` (sRGB) at `roughness` (`KHR_materials_sheen`): the
+    /// soft rim of velvet, wool and cloth.
+    pub fn with_sheen(mut self, color: Color, roughness: f32) -> Material {
+        let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+        self.layering.lobes.sheen_color = [linear(color.r), linear(color.g), linear(color.b)];
+        self.layering.lobes.sheen_roughness = roughness;
+        self
+    }
+
+    /// This material's highlights stretched by `strength` (-1..1; `KHR_materials_anisotropy`)
+    /// along its mesh's tangent turned by `rotation` radians: brushed metal, a pan's bottom, hair.
+    pub fn with_anisotropy(mut self, strength: f32, rotation: f32) -> Material {
+        (self.layering.lobes.anisotropy, self.layering.lobes.anisotropy_rotation) = (strength, rotation);
+        self
+    }
+
+    /// This material letting `share` (0..1) of the light behind it straight through
+    /// (`KHR_materials_transmission`, thin-walled): window glass at 0.95 with roughness 0.05. It
+    /// draws blended; its highlights stay whole.
+    pub fn with_transmission(mut self, share: f32) -> Material {
+        self.layering.lobes.transmission = share;
+        self
+    }
+
+    /// What it layers over its maps, for the renderer.
+    pub(crate) fn layering(&self) -> &crate::layers::Layering {
+        &self.layering
+    }
+
+    /// The ambient-occlusion texture's path and strength ([`Material::with_occlusion_texture`]).
+    pub fn occlusion_texture(&self) -> Option<(&str, f32)> {
+        self.occlusion_texture.as_deref().map(|path| (path, self.occlusion_strength))
     }
 
     /// The base-colour texture's path.
@@ -293,6 +490,9 @@ impl Material {
         self.emissive_texture.as_deref()
     }
 }
+
+/// How far detail maps reach before they have faded out ([`Material::with_detail`]), metres.
+pub const DETAIL_FADE_METRES: f32 = 15.0;
 
 /// The sun: one directional light that casts the frame's shadows.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -325,6 +525,22 @@ pub struct PointLight {
     pub color: Color,
     /// Radiance multiplier.
     pub intensity: f32,
+    /// Whether it asks for a cube shadow map (AAA review WP-15): the device's quality decides how
+    /// many point lights get one (none on low, medium and phones, one on high, two on ultra), the
+    /// nearest on screen first; one without lights unshadowed.
+    pub shadow: bool,
+}
+
+impl PointLight {
+    /// A point light at `position` fading out at `range`, with no shadow map.
+    pub fn new(position: Vec3, range: f32, color: Color, intensity: f32) -> PointLight {
+        PointLight { position, range, color, intensity, shadow: false }
+    }
+
+    /// This point light asking for a cube shadow map, or not.
+    pub fn with_shadow(self, shadow: bool) -> PointLight {
+        PointLight { shadow, ..self }
+    }
 }
 
 /// A light at a point shining inside a cone (a torch, a street lamp, light through a window): full
@@ -536,6 +752,9 @@ pub enum Shape {
         tint: Color,
         /// Replaces the materials its GLB names; `None` keeps them.
         material: Option<Material>,
+        /// Laid over its materials where they face up ([`Frame::model_with_cover`]; AAA
+        /// materials); `None` takes the frame's [`Frame::cover_world`].
+        cover: Option<crate::Cover>,
     },
     /// A unit cube under a transform.
     #[non_exhaustive]
@@ -665,6 +884,8 @@ pub struct Draw {
     pub tag: String,
     /// The draw id current when it was drawn ([`Frame::id`]), if any.
     pub id: Option<DrawId>,
+    /// Whether it is part of the first-person view model ([`Frame::view_model`]).
+    pub view_model: bool,
     /// What to draw.
     pub shape: Shape,
 }
@@ -674,6 +895,7 @@ pub struct Draw {
 pub struct Frame {
     tag: String,
     id: Option<DrawId>,
+    view_model: bool,
     camera_cut: bool,
     draws: Vec<Draw>,
     custom: Vec<CustomDraw>,
@@ -686,6 +908,8 @@ pub struct Frame {
     water: Option<crate::water::Water>,
     decals: Vec<crate::decal::Decal>,
     particles: Vec<crate::particles::Particles>,
+    /// The cover every draw without its own takes ([`Frame::cover_world`]; AAA materials).
+    world_cover: Option<crate::Cover>,
     /// Whether the presenter draws the streamed cell overlay over this frame (`cells_debug`).
     cells_debug: bool,
     /// The animators this frame drew, each copied once (lane CP).
@@ -727,6 +951,7 @@ impl Default for Frame {
         Frame {
             tag: DEFAULT_TAG.to_owned(),
             id: None,
+            view_model: false,
             camera_cut: false,
             draws: Vec::new(),
             custom: Vec::new(),
@@ -739,6 +964,7 @@ impl Default for Frame {
             water: None,
             decals: Vec::new(),
             particles: Vec::new(),
+            world_cover: None,
             cells_debug: false,
             animators: DrawnAnimators::default(),
         }
@@ -773,6 +999,22 @@ impl Frame {
         self
     }
 
+    /// Draw the following models, characters and shapes as the first-person view model (the arms
+    /// and the weapon at the lens) until [`Frame::end_view_model`]: screen-space ambient occlusion
+    /// and contact shadows, made for the world, leave them alone, and a soft fill from over the
+    /// camera's shoulder, at the frame's exposure, keeps them from going black against a bright sky
+    /// with the sun in front. The world's sun, shadows and lights still light them. Not a draw.
+    pub fn view_model(&mut self) -> &mut Self {
+        self.view_model = true;
+        self
+    }
+
+    /// End [`Frame::view_model`]: the following draws are the world's again.
+    pub fn end_view_model(&mut self) -> &mut Self {
+        self.view_model = false;
+        self
+    }
+
     /// Start every temporal history over at this frame (a new shot: TAA, auto exposure and AO
     /// forget the previous frames). A camera jump beyond the renderer's thresholds is a cut
     /// without asking. Not a draw.
@@ -793,7 +1035,7 @@ impl Frame {
 
     /// Draw a model with a tint multiplied into its GLB's base colours.
     pub fn model_tinted(&mut self, model: &Model, transform: Transform, tint: Color) -> &mut Self {
-        self.push(Shape::Model { model: model.clone(), transform, tint, material: None })
+        self.push(Shape::Model { model: model.clone(), transform, tint, material: None, cover: None })
     }
 
     /// Draw a model with its nodes at `animator`'s pose (game systems AN-27): a door, a platform or
@@ -806,9 +1048,17 @@ impl Frame {
         self.push(Shape::Posed { model: model.clone(), nodes, palette, transform, tint: Color::WHITE })
     }
 
+    /// Draw a model with the materials its GLB names under `cover` where they face up (AAA
+    /// materials): a bench, a car or a fence snowed, dusted or wet by its own materials, its
+    /// textures and normal maps kept beneath. [`crate::Cover::none`] keeps it bare under the
+    /// frame's [`Frame::cover_world`] (a prop under a roof).
+    pub fn model_with_cover(&mut self, model: &Model, transform: Transform, cover: crate::Cover) -> &mut Self {
+        self.push(Shape::Model { model: model.clone(), transform, tint: Color::WHITE, material: None, cover: Some(cover) })
+    }
+
     /// Draw a model with `material` instead of the materials its GLB names.
     pub fn model_with(&mut self, model: &Model, transform: Transform, material: &Material) -> &mut Self {
-        self.push(Shape::Model { model: model.clone(), transform, tint: Color::WHITE, material: Some(material.clone()) })
+        self.push(Shape::Model { model: model.clone(), transform, tint: Color::WHITE, material: Some(material.clone()), cover: None })
     }
 
     /// Draw a unit cube under `transform`.
@@ -852,7 +1102,13 @@ impl Frame {
 
     /// Add a point light at `position`, fading out at `range`. Not a draw.
     pub fn point_light(&mut self, position: Vec3, range: f32, color: Color, intensity: f32) -> &mut Self {
-        self.lights.points.push(PointLight { position, range, color, intensity });
+        self.point_light_with(&PointLight::new(position, range, color, intensity))
+    }
+
+    /// Add `light` (`PointLight::new(..).with_shadow(true)` for one casting a cube shadow map). Not
+    /// a draw.
+    pub fn point_light_with(&mut self, light: &PointLight) -> &mut Self {
+        self.lights.points.push(*light);
         self
     }
 
@@ -973,6 +1229,34 @@ impl Frame {
         if !self.particles.contains(particles) {
             self.count();
             self.particles.push(particles.clone());
+        }
+        self
+    }
+
+    /// Lay `cover` on everything this frame draws (AAA materials): every cube, sphere, model,
+    /// group and instance whose material carries no cover of its own takes it where it faces up,
+    /// a GLB's own materials included; the first-person view model and posed characters never do.
+    /// A material's own [`Material::with_cover`] wins; [`crate::Cover::none`] keeps one bare.
+    /// The last call wins. The terrain keeps its own layers: give it a snow layer for its ground.
+    pub fn cover_world(&mut self, cover: crate::Cover) -> &mut Self {
+        self.world_cover = Some(cover);
+        self
+    }
+
+    /// The cover every draw without its own takes ([`Frame::cover_world`]), if any.
+    pub fn world_cover(&self) -> Option<crate::Cover> {
+        self.world_cover
+    }
+
+    /// Draw `weather` ([`crate::Weather`]) around the camera, `seconds` after it started: both of
+    /// its layers ([`Frame::particles`]), and the cover it has laid by then on everything drawn
+    /// ([`Frame::cover_world`], none before it starts). A later [`Frame::cover_world`] wins.
+    pub fn weather(&mut self, weather: &crate::Weather, seconds: f32) -> &mut Self {
+        for layer in weather.layers() {
+            self.particles(layer);
+        }
+        if let Some(cover) = weather.cover_after(seconds) {
+            self.world_cover = Some(cover);
         }
         self
     }
@@ -1101,7 +1385,7 @@ impl Frame {
 
     fn push(&mut self, shape: Shape) -> &mut Self {
         let tag = self.count();
-        self.draws.push(Draw { tag, id: self.id, shape });
+        self.draws.push(Draw { tag, id: self.id, view_model: self.view_model, shape });
         self
     }
 

@@ -49,6 +49,23 @@ impl Rig {
     pub fn node_of_joint(&self, joint: JointId) -> usize {
         self.joint_nodes.get(usize::from(joint.raw())).copied().unwrap_or(usize::MAX)
     }
+
+    /// This rig read through another file's nodes, given their names in file order: a node named
+    /// like one of its joints ([`Skeleton::find`]) is that joint, the first such node of a joint
+    /// winning; every other node is none.
+    pub(crate) fn by_names(&self, names: &[Option<&str>]) -> Rig {
+        let mut node_joints = vec![None; names.len()];
+        let mut joint_nodes = vec![usize::MAX; self.skeleton.joint_count()];
+        for (node, name) in names.iter().enumerate() {
+            let Some(joint) = name.and_then(|name| self.skeleton.find(name)) else { continue };
+            let slot = &mut joint_nodes[usize::from(joint.raw())];
+            if *slot == usize::MAX {
+                *slot = node;
+                node_joints[node] = Some(joint);
+            }
+        }
+        Rig { skeleton: self.skeleton.clone(), node_joints, joint_nodes }
+    }
 }
 
 /// The rig of a GLB's first skinned mesh node. Refused `animation-asset-invalid`: not a GLB or a
@@ -350,7 +367,8 @@ fn read_rig(gltf: &gltf::Gltf) -> Result<Rig, AnimationError> {
     check_tree(gltf, &parents, &skin_nodes, mesh_node)?;
     let member = skeleton_members(&parents, &skin_nodes)?;
     let inverse_bind = inverse_binds(gltf, &skin, joint_count)?;
-    let unmesh = global_rest(gltf, &parents, mesh_node)?.inverse();
+    let mesh_frame = global_rest(gltf, &parents, mesh_node)?;
+    let unmesh = mesh_frame.inverse();
     if !unmesh.is_finite() {
         return Err(AnimationError::asset_invalid(format!("the skinned mesh node {mesh_node} cannot be inverted")));
     }
@@ -372,5 +390,5 @@ fn read_rig(gltf: &gltf::Gltf) -> Result<Rig, AnimationError> {
         joints.push(JointParts { name, parent, rest: rest(gltf, node)?, root_frame });
     }
     let skin_slots = skin_nodes.iter().zip(inverse_bind).map(|(&node, ibm)| (node_joints[node].unwrap_or(JointId(0)), ibm)).collect();
-    Ok(Rig { skeleton: Skeleton::from_parts(joints, unmesh, skin_slots), node_joints, joint_nodes: order })
+    Ok(Rig { skeleton: Skeleton::from_parts(joints, (mesh_frame, unmesh), skin_slots), node_joints, joint_nodes: order })
 }

@@ -248,6 +248,7 @@ function browserSource(
       return { target, problem: null, note, fresh: true };
     },
     frame: (target, jpeg, caption, act) => previews.frame(target.port, screen(), jpeg, caption, act),
+    check: (root) => previews.checkBuild(grant.project, root),
   };
 }
 

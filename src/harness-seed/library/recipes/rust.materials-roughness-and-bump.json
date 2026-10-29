@@ -1,0 +1,51 @@
+{
+  "id": "rust.materials-roughness-and-bump",
+  "runtime": "rust-wgpu",
+  "title": "Rust surfaces take light as materials: normal and roughness maps, not paint",
+  "tags": [
+    "roughness",
+    "normal",
+    "bump",
+    "specular",
+    "wet",
+    "sheen",
+    "pbr",
+    "material",
+    "map",
+    "light",
+    "photoreal",
+    "photorealistic"
+  ],
+  "checkClass": "materials",
+  "kind": "craft",
+  "pack": "materials",
+  "note": "Give each surface its normal map and roughness texture (with_normal_texture, with_metal_rough_texture) so grazing light shows its relief.",
+  "intent": "Uniform roughness is why a scene looks like a clay render. Fetch the CC0 set's normal (OpenGL convention, nor_gl) and roughness or ARM maps with its colour, and give each Material .with_normal_texture(path, 1.0) and .with_metal_rough_texture(path) (glTF packing: roughness in green, metal in blue). Polished floors and wet patches go lower (a puddle is a ground decal with with_roughness(0.04) and with_flatten(1.0)), dry plaster and cloth higher. Light low and from the side (a sun through a window, a spot along a corridor) so the relief reads, and check a capture at high as well as low: lower presets cap texture size but keep normal detail.",
+  "sketch": "use genex::prelude::*;\nuse genex::render::Decal;\n\n/// A surface's three maps from one CC0 set: colour, relief (OpenGL normal) and roughness/metal (glTF packing).\nfn surface(set: &str, relief: f32) -> Material {\n    Material::color(Color::WHITE)\n        .with_base_texture(&format!(\"cc0/{set}/color.jpg\"))\n        .with_normal_texture(&format!(\"cc0/{set}/normal_gl.jpg\"), relief)\n        .with_metal_rough_texture(&format!(\"cc0/{set}/arm.jpg\"))\n}\n\n/// Wet tile reads glossy where a puddle lies: a ground decal, not a darker material.\nfn draw_puddle(frame: &mut Frame, at: Vec3) {\n    frame.tag(\"puddle\");\n    frame.decal(\n        &Decal::on_ground(at, 1.4, 0.9)\n            .with_base_texture(\"decals/puddle.png\")\n            .with_color(Color::rgb(40, 42, 46))\n            .with_roughness(0.04)\n            .with_flatten(1.0),\n    );\n}\n",
+  "check": {
+    "id": "materials-roughness-varies",
+    "kind": "vision",
+    "camera": "eye:spawn",
+    "ask": "Do the nearby surfaces show relief and varying sheen under the light (cracks, grain, a glossier floor), rather than flat painted colour?",
+    "weight": "normal",
+    "note": "Surfaces read as materials with relief and sheen, not paint."
+  },
+  "port": "The facet that makes a Material fetches all three maps of its set at once; no Material in the game has only a colour texture where relief shows.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/lighting.md",
+      "note": "with_normal_texture(path, strength) and with_metal_rough_texture(path); decals take with_roughness and with_flatten."
+    },
+    {
+      "source": "library/recipes/materials.roughness-and-bump.json",
+      "note": "The three.js recipe materials.roughness-and-bump, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

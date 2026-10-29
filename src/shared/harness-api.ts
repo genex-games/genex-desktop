@@ -12,6 +12,7 @@
  * The schemas complement the host's own containment; they never replace it. A path that passes
  * here is still resolved by realpath and refused outside its root by the handler.
  */
+import type { ProviderUsageReport } from "./provider-usage.ts";
 import { z } from "zod";
 import type { AgentScreenFrame } from "./agent-screen.ts";
 import type { StudioPlatform } from "./boot.ts";
@@ -649,6 +650,11 @@ export interface HarnessHostApi {
     result: Array<{ project: string; cwd: string; engine: string; startedAt: number }>;
   };
   "engine.hardware": { params: void; result: HardwareReport };
+  /**
+   * Where each subscription's plan limits stand (`core/provider-usage.ts`, the panel's own reports):
+   * sanitized, never an account id or a credential. Empty where the app tracks none.
+   */
+  "engine.usage": { params: void; result: ProviderUsageReport[] };
 
   // — games —
   "game.list": { params: void; result: GameProject[] };
@@ -1089,6 +1095,7 @@ export const HostMethod = {
   CoordinatorTool: "coordinator.tool",
   EngineDelegations: "engine.delegations",
   EngineHardware: "engine.hardware",
+  EngineUsage: "engine.usage",
   GameList: "game.list",
   GameSetCover: "game.setCover",
   GameSetCoverShader: "game.setCoverShader",

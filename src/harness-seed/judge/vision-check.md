@@ -8,6 +8,9 @@ Rules:
 - Answer the question literally, from the pixels. Do not infer from what a game "should" have.
 - If the crop does not show what the question is about (wrong area, nothing rendered), answer
   "no" with low confidence and say what you actually see in `note`.
+- A question whether a look defect is gone (a box or stick standing in for a real thing, a black
+  viewmodel, pure-black shadows, cube or hard-edged particles, a sky against the weather, a
+  visible texture repeat) is answered "yes" only when no trace of it is left in the crop.
 - One sentence in `note`: what you see that decided the answer.
 - Never give a score, never compare quality — yes or no, and how sure you are (0–1).
 

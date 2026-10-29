@@ -23,6 +23,8 @@ import { JudgeParse } from "./judge-provenance.ts";
 import { workingGoal } from "./goal-prompts.ts";
 import { scopeLines } from "./scope-prompts.ts";
 import { visionJudgeLines } from "./vision-prompts.ts";
+import { asksForLook, blocksLook, genreOf, notShippedLooks, notShippedText } from "./look-bar.ts";
+import { shippedLookLine } from "./look-bar-prompts.ts";
 import { clip, CLIP_REASON } from "./text.ts";
 import { doNotRegressOf } from "./do-not-regress.ts";
 import { roleEffort, RoleKey } from "./model-roles.ts";
@@ -39,6 +41,8 @@ import type { MessageImage } from "../types/host-api.d.ts";
 
 /** The most frames one review is shown: the build's own first, then motion, then the reference. */
 export const SHIP_REVIEW_IMAGES = 14;
+/** How many of those a review against reference stills keeps for the stills, whatever else fills the room. */
+const REFERENCE_RESERVE = 2;
 /** The size the art director looks at: a real screen, not the 960×600 every worker's window has. */
 export const SHIP_VIEW = { width: 1600, height: 900 } as const;
 /** The most defects one review keeps, worst first. */
@@ -168,10 +172,22 @@ function referenceFrames(run: Run): MessageImage[] {
  * reference stills with the room left.
  */
 export function shipImages(run: Run, evidence: AnyRecord, max = SHIP_REVIEW_IMAGES): MessageImage[] {
-  const own = ownFrames(evidence).slice(0, max);
-  const motion = motionFrames(evidence).slice(0, Math.max(0, max - own.length));
-  const room = Math.max(0, max - own.length - motion.length);
-  return [...own, ...motion, ...referenceFrames(run).slice(0, room)];
+  // A review against the references always carries some: gen3's 14 own frames left none.
+  const references = referenceFrames(run);
+  const reserved = Math.min(references.length, REFERENCE_RESERVE, max);
+  const near = closeUpFrames(evidence).slice(0, Math.max(0, max - reserved));
+  const own = ownFrames(evidence).slice(0, Math.max(0, max - reserved - near.length));
+  const motion = motionFrames(evidence).slice(0, Math.max(0, max - reserved - near.length - own.length));
+  const room = Math.max(0, max - own.length - near.length - motion.length);
+  return [...own, ...near, ...motion, ...references.slice(0, room)];
+}
+
+/** The close-ups a look carries (close-ups.ts), labelled by the camera they were cut from. */
+function closeUpFrames(evidence: AnyRecord): MessageImage[] {
+  const frames: AnyRecord[] = Array.isArray(evidence.closeUps) ? evidence.closeUps : [];
+  return frames
+    .filter((frame) => typeof frame?.base64 === "string" && frame.base64)
+    .map((frame) => imageOf(frame.base64, `CLOSE-UP / ${String(frame.camera ?? "shot")}`));
 }
 
 /** The build's own readings, labeled as its output; the HUD read against the kind's budget. */
@@ -207,6 +223,7 @@ function shipContent(ask: ShipAsk, labels: readonly string[]): string {
     partsLine(parts),
     framesLine(labels, view),
     ...evidenceLines(evidence, hudBudgetFor(run.game)),
+    asksForLook(run) ? shippedLookLine(genreOf(run), Boolean(run.reference?.frames?.length), "this build") : "",
     SHIP_ASK,
     SHIP_REPLY,
   ]
@@ -234,7 +251,19 @@ function defectOf(raw: unknown, partIds: ReadonlySet<string>, cameras: ReadonlyS
   const what = clip(String(record.what ?? "").trim(), CLIP_REASON);
   if (!what) return null;
   const part = typeof record.part === "string" && partIds.has(record.part) ? record.part : null;
-  return { what, camera: cameraOf(record.camera, cameras), part, severity: severityOf(record.severity) };
+  // A look blocker is a blocker whatever severity the judge gave it (look-bar.ts).
+  const severity = blocksLook(what) ? DefectSeverity.Blocker : severityOf(record.severity);
+  return { what, camera: cameraOf(record.camera, cameras), part, severity };
+}
+
+/** Each camera the review said would not pass as a shipped game's screenshot, as a blocker no part owns. */
+function notShippedOf(raw: AnyRecord, cameras: ReadonlySet<string> | null): ShipDefect[] {
+  return notShippedLooks(raw.shipped, cameras).map((look) => ({
+    what: clip(notShippedText(look), CLIP_REASON),
+    camera: look.camera,
+    part: null,
+    severity: DefectSeverity.Blocker,
+  }));
 }
 
 /**
@@ -256,11 +285,13 @@ export function readShipReview(
       parse: JudgeParse.Invalid,
     };
   const ids = new Set(parts.map((part) => part.id));
-  const defects = (Array.isArray(raw.defects) ? raw.defects : [])
+  const listed = (Array.isArray(raw.defects) ? raw.defects : [])
     .map((defect: unknown) => defectOf(defect, ids, cameras))
-    .filter((defect: ShipDefect | null): defect is ShipDefect => defect !== null)
-    .slice(0, MAX_SHIP_DEFECTS);
-  return { ship: raw.ship, defects, doNotRegress: doNotRegressOf(raw), reason, parse: JudgeParse.Valid };
+    .filter((defect: ShipDefect | null): defect is ShipDefect => defect !== null);
+  const defects = [...listed, ...notShippedOf(raw, cameras)].slice(0, MAX_SHIP_DEFECTS);
+  // `ship` is true only when no defect is a blocker: a look blocker the judge let through says no.
+  const ship = raw.ship && !defects.some((defect) => defect.severity === DefectSeverity.Blocker);
+  return { ship, defects, doNotRegress: doNotRegressOf(raw), reason, parse: JudgeParse.Valid };
 }
 
 /**
@@ -279,7 +310,8 @@ export async function shipReview(ctx: HarnessCtx, ask: ShipAsk): Promise<ShipRev
     };
   const { run, evidence, parts, max = SHIP_REVIEW_IMAGES } = ask;
   const images = shipImages(run, evidence, max);
-  const systemPrompt = await judgeParts.judgePrompt(ctx, "ship-review.md", SHIP_REVIEW_FALLBACK);
+  const tokens = typeof judgeParts.artefactTokens === "function" ? judgeParts.artefactTokens(run) : [];
+  const systemPrompt = await judgeParts.judgePrompt(ctx, "ship-review.md", SHIP_REVIEW_FALLBACK, tokens);
   const userContent = shipContent(
     ask,
     images.map((image) => image.label ?? ""),

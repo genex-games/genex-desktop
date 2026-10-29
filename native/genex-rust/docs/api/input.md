@@ -3,8 +3,27 @@
 A game reads actions (`jump`, `move`), never keys. One action map names them once; keys, pads and
 on-screen touch controls all drive the same action, the player can rebind any of them, and a
 prompt shows the button of the device in use. The types live in `genex::actions` (the prelude has
-`ActionMap`, `Context`, `Binding`, `PadButton`, `Stick` and `TouchControls`). The raw devices
-(`ctx.keys`, `ctx.touches`, `ctx.pads`) stay on the Ctx page.
+`ActionMap`, `Context`, `Binding`, `Condition`, `PadButton`, `Stick` and `TouchControls`). The raw
+devices (`ctx.keys`, `ctx.touches`, `ctx.pads`) stay on the Ctx page. Every type and call in one
+line:
+
+```rust
+use genex::actions::{controls_panel, glyph_ui, ActionId, Anchor, ContextId, ControlId, Device, Modifier, ShowWhen, StickMode};
+const JUMP: ActionId = ActionId::new("jump");                  // also ContextId::new, ControlId::new: consts
+Context::new(PLAY, 0).button(JUMP, &bindings).axis1(id, &bindings).axis2(id, &bindings);
+// .when(Condition::Press) and .modify(Modifier::..) shape the action added last
+// Binding::Pad(PadButton::South), Binding::Stick(Stick::Left), Binding::Touch(control), Binding::WASD,
+// Binding::ARROWS, Binding::Look, Binding::Wheel; a key is `Key::Space.into()`
+ctx.actions.down(JUMP); ctx.actions.pressed(JUMP); ctx.actions.fired(JUMP); // -> bool
+ctx.actions.value(id); ctx.actions.axis2(id); ctx.actions.held_ticks(id);  // -> f32, Vec2, u32
+ctx.actions.device();          // -> Device::KeyboardMouse | Device::Pad(PadFamily) | Device::Touch
+ctx.actions.glyph(JUMP);       // -> Glyph, drawn with glyph_ui(ui, &glyph)
+ctx.actions.enable(context); ctx.actions.disable(context); ctx.actions.is_on(context);
+TouchControls::new().stick(id, Anchor::BottomLeft([x, y]), radius, StickMode::Floating);
+// .button(id, "Jump", at, radius), .dpad(id, at, size), .label("Move"), .show(ShowWhen::Touch)
+```
+
+`Device::Pad` carries the pad's family, so match it as `Device::Pad(_)`.
 
 ```rust
 use genex::actions::{glyph_ui, ActionId, Anchor, Condition, ContextId, ControlId, ShowWhen, StickMode};
@@ -43,6 +62,9 @@ game.on_ui(|_sim, ui, ctx| { glyph_ui(ui, &ctx.actions.glyph(JUMP)); });
   `Binding::WASD`, `Binding::ARROWS`, `Binding::Keys2`, `Binding::Keys4`, `Binding::Dpad`,
   `Binding::PadAxis`, `Binding::Chord` (up to three inputs together), `Binding::Touch(control)`,
   `Binding::Look` and `Binding::Wheel`. At most 64 actions, 8 contexts and 8 bindings an action.
+  `Binding::Look` is the locked mouse's movement in pixels (x right, y down): turn the view by it
+  every tick, and hand the yaw's change to a first-person camera rig as `RigStep::turn`, positive
+  to the right (`docs/api/camera.md`).
 - **Conditions** count ticks, never seconds: `Condition::Down` (the default), `Press`, `Release`,
   `Hold { ticks, one_shot }`, `Tap { max_ticks }`, `Pulse { first, every }`, `Toggle`,
   `Cooldown { ticks }` and `BlockBy(action)`. Several on one action must all fire.
@@ -123,5 +145,5 @@ world or a repeated id). The player's file answers `input-bindings-invalid`,
 `input-track-mismatch`, and a remote player's actions that do not read against the map
 `input-wire-invalid`.
 
-`native/genex-rust/examples/input-twinstick` plays with keys and mouse, a pad or touch, rebinds in
-its pause menu and replays a recorded session to an equal checksum.
+`docs/examples/fps/` and `docs/examples/third-person/` read their moves and buttons as actions;
+`docs/examples/menus-saves/` walks its menus by the same keys, pad and taps.

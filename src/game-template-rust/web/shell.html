@@ -110,6 +110,11 @@
       runs, whose synchronous calls then find them compiled. A dry boot that fails or takes longer
       than RECORD_TIMEOUT_MS is skipped: the boot then counts the pipelines it creates.
 
+      Readiness: under Studio (its page shim's window.__studioClock) the boot holds the page's
+      readiness from its start (hold()) and declares it ready at the first lit frame (ready()), so
+      Studio's wait ends when the game is on screen, never while the loading screen is up; a boot
+      that ends on a card lets it go (release()). An export has no __studioClock and calls nothing.
+
       Frames: the canvas follows its displayed size from the moment it is shown (a resize, or the
       Live view getting its size while studio_boot still runs). Each animation frame feeds the game
       whole refreshes of the display (its rate measured from the frame intervals), not the frame's
@@ -562,8 +567,8 @@
       const STREAM_HANDOFF_BYTES = 8 * 1024 * 1024;
       /** The WebGPU features of the compressed texture families, in the order the plan is told them. */
       const TEXTURE_FEATURES = ["texture-compression-bc", "texture-compression-astc", "texture-compression-etc2"];
-      /** A screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
-      const MOBILE_SHORT_SIDE_CSS_PX = 900;
+      /** A touch screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
+      const MOBILE_SHORT_SIDE_CSS_PX = 600;
       /** Why an asset stopped the boot (the module's own refusals keep their codes). Wire values. */
       const AssetFailure = {
         FetchFailed: "asset-fetch-failed",
@@ -695,12 +700,14 @@
 
       /**
        * Whether the hints say phone or tablet (genex-render's WebHints::is_mobile): a mobile user
-       * agent, touch with a coarse pointer, or a short screen side of at most MOBILE_SHORT_SIDE_CSS_PX.
+       * agent, touch with a coarse pointer, or a touch screen whose short side is at most
+       * MOBILE_SHORT_SIDE_CSS_PX. A screen without touch is a desktop's at any size.
        */
       function isMobile(hints) {
-        const coarseTouch = hints.maxTouchPoints > 0 && hints.coarsePointer;
-        const smallScreen = hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
-        return hints.uaMobile === true || coarseTouch || smallScreen;
+        const touch = hints.maxTouchPoints > 0;
+        const coarseTouch = touch && hints.coarsePointer;
+        const smallTouchScreen = touch && hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
+        return hints.uaMobile === true || coarseTouch || smallTouchScreen;
       }
 
       /** One element with its text (never markup) and attributes. */
@@ -769,6 +776,7 @@
           reason: refusal.reason ?? null,
           limit: refusal.limit ?? null,
         });
+        studioReadiness("release");
         renderUnsupportedCard();
         reportUnsupported();
       }
@@ -779,6 +787,7 @@
        */
       function showFailed(error) {
         Object.assign(status, { state: State.Failed, code: BOOT_FAILED, reason: String(error?.message ?? error) });
+        studioReadiness("release");
         const words = MESSAGE.failed;
         showCard(State.Failed, [
           element("h1", words.title, { id: "unsupported-title" }),
@@ -799,6 +808,7 @@
        */
       async function showDeviceLost(game, error) {
         Object.assign(status, { state: State.Failed, code: FrameFailure.DeviceLost, reason: String(error?.message ?? error) });
+        studioReadiness("release");
         await flushSaves(game);
         const words = MESSAGE.deviceLost;
         showCard(State.Failed, [
@@ -847,6 +857,19 @@
       }
 
       /** The loading screen gone at once (a card takes the page) and its stall watch stopped. */
+      /**
+       * Studio's page shim, told where the boot's readiness stands: "hold" (the shell declares it),
+       * "ready" (the first lit frame is on screen) or "release" (a card ended the boot). Nothing
+       * outside Studio, where the page has no __studioClock.
+       */
+      function studioReadiness(verb, why) {
+        try {
+          window.__studioClock?.[verb]?.(why);
+        } catch {
+          // Studio's clock refusing a word never stops the game.
+        }
+      }
+
       function stopLoading() {
         clearTimeout(loading.watchdog);
         loader.hidden = true;
@@ -856,6 +879,7 @@
       /** The first lit frame is on screen: the loading screen fades out and leaves. */
       function finishLoading() {
         progress(LoadStage.Ready);
+        studioReadiness("ready", "first-lit-frame");
         loader.setAttribute("aria-busy", "false");
         loader.classList.add("leaving");
         setTimeout(() => {
@@ -869,6 +893,7 @@
         if (!booting() || status.state === State.Running) return;
         const count = done !== null && total !== null ? `: ${done} of ${total}` : "";
         Object.assign(status, { state: State.Failed, code: BOOT_TIMEOUT, reason: `${stage}${count}` });
+        studioReadiness("release");
         const words = MESSAGE.timeout;
         showCard(State.Failed, [
           element("h1", words.title, { id: "unsupported-title" }),
@@ -2082,6 +2107,7 @@
             }
             noteTrap(error);
             Object.assign(status, { state: State.Failed, code: FrameFailure.Failed, reason: String(error?.message ?? error) });
+            studioReadiness("release");
             return;
           }
           requestAnimationFrame(frame);
@@ -2284,6 +2310,7 @@
       }
 
       async function boot() {
+        studioReadiness("hold");
         progress(LoadStage.Wasm);
         const refusal = await preflight();
         if (refusal) return showUnsupported(refusal);

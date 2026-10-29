@@ -1,0 +1,34 @@
+# The library-yard example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Library yard"
+fit = "expand"
+
+# Desktops and phones each start on their own preset; judge the yard at `high` and check `low`.
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure meters the HDRI sky the library delivered.
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.0
+
+# A small yard: the sun's cascades cover 30 m, so the props' shadows stay sharp.
+[render.shadows]
+distance = 30
+
+[physics]
+enabled = false
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

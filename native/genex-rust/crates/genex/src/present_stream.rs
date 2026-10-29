@@ -721,7 +721,7 @@ impl StreamView {
         let loaded = match answer {
             Ok(bytes) => {
                 let read = ReadModel { path: &path, bytes, rest: source };
-                crate::present::load_model(&path, &read, uploads, log)?
+                crate::present::load_model(&path, (&read, uploads), &mut assets.shared_textures, log)?
             }
             Err(detail) => {
                 log(&format!("model {path:?} could not be read: {detail}; drawing the missing-asset checker"));

@@ -65,7 +65,7 @@ use crate::particles::{EmitterDesc, EmitterId, GpuEmitter, GpuParticle, GpuParti
 use crate::post::exposure::{ExposureHistory, ExposureInput, ExposurePass, ExposureSource, exposure_source};
 use crate::prepass::ExtensionDemand;
 use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, ScenePath, StagePrepass, WORLD_FORMAT, WorldNodes, WorldPass, WorldStage, shader};
-use crate::settings::{LdrReason, Look, Quality, TextureClass};
+use crate::settings::{LdrReason, Look, Quality};
 use crate::settle::{ExposureHistories, FrameHistory, HistoryKey, HistoryReset, HistorySet, LiveFrame, LiveHistory, SettleFrame, SettleHooks};
 use crate::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, Scene, scaled};
 use crate::skin::{SkinId, SkinnedMeshData, SkinnedModel};
@@ -612,9 +612,9 @@ impl QuadPass {
                 entry(0, &self.uniforms),
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(renderer.color_texture_view()) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(renderer.texture_sampler()) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(renderer.color_class_view(TextureClass::S512)) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(renderer.color_class_view(TextureClass::S1024)) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(renderer.color_class_view(TextureClass::S2048)) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(renderer.color_slot_view(1)) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(renderer.color_slot_view(2)) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(renderer.color_slot_view(3)) },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -740,6 +740,8 @@ struct ExposureFrame<'a> {
     ticks: u32,
     /// Adapt at once (a settled capture).
     instant: bool,
+    /// How many times faster than the look it adapts (a Live frame at a room's doorway).
+    boost: f32,
 }
 
 impl FrameNodesOf<'_> {
@@ -805,6 +807,7 @@ impl FrameNodesOf<'_> {
             quality: &exposure.quality,
             ticks: exposure.ticks,
             instant: exposure.instant,
+            boost: exposure.boost,
             timestamp_writes: None,
         };
         let ran = exposure.pass.encode(&self.gpu.device, &self.gpu.queue, frame.encoder(), exposure.history, input);
@@ -986,14 +989,14 @@ fn v2_frame_facts(renderer: &Renderer, frame: &ImmediateFrame, history: &FrameHi
 /// The exposure node's work for a frame at `history`: the node's set (Live or the capture's),
 /// with instant adaptation in a capture. None before the node exists, on frames that cannot draw
 /// HDR, or with the exposure switch off.
-fn exposure_frame<'a>(node: &'a mut Option<ExposureHistories>, renderer: &Renderer, history: &FrameHistory) -> Option<ExposureFrame<'a>> {
+fn exposure_frame<'a>(node: &'a mut Option<ExposureHistories>, renderer: &Renderer, history: &FrameHistory, boost: f32) -> Option<ExposureFrame<'a>> {
     let (quality, look) = (*renderer.quality(), *renderer.look());
     let runs = quality.hdr && quality.exposure && renderer.hdr_scene_format() != WORLD_FORMAT;
     let node = node.as_mut().filter(|_| runs)?;
     node.set_look(&look);
     let (pass, history_buffers) = node.parts(history.set);
     let instant = history.set == HistorySet::Capture;
-    Some(ExposureFrame { pass, history: history_buffers, look, quality, ticks: history.ticks, instant })
+    Some(ExposureFrame { pass, history: history_buffers, look, quality, ticks: history.ticks, instant, boost })
 }
 
 /// The buffer the frame's pre-exposure is copied from under auto exposure (a fixed exposure is
@@ -1030,8 +1033,15 @@ pub struct FrameRenderer {
     /// The exposure node with Live's and the capture's histories, made on the first frame that
     /// meters (graph node 20).
     exposure: Option<ExposureHistories>,
+    /// Auto exposure's quick adjustment at a declared room's doorway (Live frames).
+    room_adaptation: crate::post::exposure::RoomAdaptation,
     /// Settled captures begun since this renderer was made.
     settled: u32,
+    /// The exposure state and histogram read back for `state().__render.exposure` (AAA review
+    /// WP-5), made with the exposure node.
+    exposure_readback: Option<crate::post::exposure::ExposureReadback>,
+    /// Frames drawn, the read-back's clock.
+    exposure_frames: u64,
 }
 
 /// Bytes of the exposure copied into the frame uniforms' pre-exposure lane.
@@ -1066,6 +1076,9 @@ impl FrameRenderer {
             last_history: None,
             paced_ticks: None,
             exposure: None,
+            room_adaptation: crate::post::exposure::RoomAdaptation::default(),
+            exposure_readback: None,
+            exposure_frames: 0,
         })
     }
 
@@ -1326,7 +1339,12 @@ impl FrameRenderer {
         if let Some((node, reversed)) = self.renderer.reactive_node() {
             self.particles.ensure_reactive(&gpu.device, node, reversed)?;
         }
-        let exposure = exposure_frame(&mut self.exposure, &self.renderer, &history);
+        // A Live frame whose camera crossed into or out of a declared room adapts faster.
+        let lighting = &frame.scene().lighting;
+        let rooms = crate::post::exposure::rooms_around(frame.scene().camera.eye, &lighting.irradiance_volumes, &lighting.reflection_probes);
+        let doorway = history.set == HistorySet::Live && self.renderer.look().doorway_adaptation;
+        let boost = if doorway { self.room_adaptation.step(rooms, history.ticks) } else { 1.0 };
+        let exposure = exposure_frame(&mut self.exposure, &self.renderer, &history, boost);
         let pre_exposure = exposure.as_ref().and_then(|work| auto_pre_exposure(work));
         let frame_v2 = self.materials.frame_v2().cloned();
         let mut encoder = FrameEncoder::new(&gpu.device, &gpu.queue, "frame");
@@ -1355,7 +1373,9 @@ impl FrameRenderer {
         let done = nodes.world.finish();
         self.renderer.end_frame(prep, done);
         let steps = ran?;
+        let (set, settle) = (history.set, history.settle);
         self.commit_history(history, live);
+        self.read_exposure(gpu, set, settle, boost)?;
         let encoded: usize = steps.iter().map(|step| step.nodes().len()).sum();
         self.nodes_encoded = self.nodes_encoded.saturating_add(encoded as u64);
         Ok(self.report(frame, path, quad_draws, custom.custom_draws(), hud))
@@ -1531,6 +1551,36 @@ impl FrameRenderer {
         if self.renderer.tight_budget() {
             self.renderer.release_capture_history();
         }
+    }
+
+    /// What the exposure metered and drew for the last frame read back (`state().__render.exposure`,
+    /// AAA review WP-5): Live's a few frames late, a settled capture's own once it is drawn.
+    pub fn exposure_telemetry(&self) -> crate::post::exposure::ExposureTelemetry {
+        let (look, quality) = (self.renderer.look(), self.renderer.quality());
+        let source = crate::post::exposure::exposure_source(look, quality);
+        let latest = self.exposure_readback.as_ref().and_then(|readback| readback.latest());
+        crate::post::exposure::exposure_telemetry(look, source, latest, self.exposure_frames)
+    }
+
+    /// After a frame of history `set` adapted at `boost`: Live copies the exposure back every
+    /// [`crate::post::exposure::READBACK_EVERY`] frames without waiting; a settled capture waits
+    /// for its last frame's.
+    fn read_exposure(&mut self, gpu: &Gpu, set: HistorySet, settle: Option<SettleFrame>, boost: f32) -> Result<(), RenderError> {
+        self.exposure_frames += 1;
+        let Some(node) = self.exposure.as_ref() else { return Ok(()) };
+        let capture = set == HistorySet::Capture;
+        let due = if capture { settle.is_none_or(|settle| settle.is_last()) } else { self.exposure_frames.is_multiple_of(u64::from(crate::post::exposure::READBACK_EVERY)) };
+        if self.exposure_readback.is_none() {
+            self.exposure_readback = Some(crate::post::exposure::ExposureReadback::new(&gpu.device)?);
+        }
+        let Some(readback) = self.exposure_readback.as_mut() else { return Ok(()) };
+        if !due {
+            readback.take(&gpu.device);
+            return Ok(());
+        }
+        let history = if capture { &node.capture } else { &node.live };
+        readback.read_back(&gpu.device, &gpu.queue, history, boost, self.exposure_frames, capture);
+        Ok(())
     }
 
     /// The settle re-render the next frame draws (None: a Live frame).

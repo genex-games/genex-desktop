@@ -1,0 +1,39 @@
+{
+  "id": "rust.fps-sight-on-centre-in-ads",
+  "runtime": "rust-wgpu",
+  "title": "Rust aim down sights puts the sight's notch on the camera axis",
+  "tags": ["ads", "aim", "sight", "iron", "centre", "ndc", "align", "fov", "weapon", "demo", "fps"],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "A demo named ads holds aim and returns the sight's notch projected to the screen, within 3% of the centre.",
+  "intent": "Aiming that does not put the sight where the shot goes is worse than none. The viewmodel is drawn in camera space, so ADS is exact arithmetic, not tuning by eye: keep the sight's notch as a const in the gun's space, and the ADS pose is the camera-space offset that puts that notch on the axis (x and y the negation of the notch's, at a chosen depth). Ease a world value aim from 0 to 1 over about 150 ms in on_update and lerp the gun between the hip and the ADS offset by it. Register game.demo(\"ads\", ..) that holds aim, advances a few hundred ms and returns { sightNdc: {x, y}, crosshairVisible } so the board can measure it.",
+  "sketch": "use genex::prelude::*;\n\n/// The sight's notch in the gun's own space; ADS moves the gun so this point lands on the camera axis.\nconst SIGHT: Vec3 = Vec3::new(0.0, 0.052, -0.02);\nconst HIP: Vec3 = Vec3::new(0.17, -0.19, 0.45);\nconst ADS_DEPTH: f32 = 0.32;\nconst ADS_SECONDS: f32 = 0.15;\n\n/// Where the gun sits in camera space at `aim` (0 hip, 1 down the sights).\nfn gun_local(aim: f32) -> Vec3 {\n    let sights = vec3(-SIGHT.x, -SIGHT.y, ADS_DEPTH); // the notch on the axis, not tuned by eye\n    HIP.lerp(sights, aim)\n}\n\nfn update_aim(w: &mut super::World, ctx: &Ctx) {\n    let target = if w.aim_held { 1.0 } else { 0.0 };\n    let step = ctx.dt / ADS_SECONDS;\n    w.aim = (w.aim + (target - w.aim).clamp(-step, step)).clamp(0.0, 1.0);\n}\n\n/// One predicate the HUD and the demo share: the crosshair is drawn only while not aiming.\npub fn crosshair_visible(w: &super::World) -> bool { w.aim < 0.5 }\n\nfn ads_demo(d: &mut DemoDriver<super::World>) -> Value {\n    d.sim_mut().world.aim_held = true;\n    d.advance_ms(400);\n    let w = &d.sim().world;\n    // The notch in camera space: x, y over depth is its offset from the screen's centre.\n    let notch = gun_local(w.aim) + SIGHT;\n    json!({\n        \"sightNdc\": { \"x\": notch.x / notch.z, \"y\": notch.y / notch.z },\n        \"crosshairVisible\": crosshair_visible(w),\n    })\n}\n",
+  "check": {
+    "id": "sight-aligns-in-ads",
+    "kind": "demo",
+    "name": "ads",
+    "expr": "abs(result.sightNdc.x) < 0.03 && abs(result.sightNdc.y) < 0.03",
+    "weight": "identity",
+    "note": "A demo named ads holds aim and returns { sightNdc: {x, y} } — the sight's notch over its depth in camera space; within 3% of the screen's centre."
+  },
+  "port": "The viewmodel facet owns the sight constant, the hip and ADS offsets and the ads demo; the player facet sets the aim intent from input.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/../GENEX_API.md",
+      "note": "game.demo with DemoDriver::sim_mut and advance_ms; a demo's returned Value is what a check reads."
+    },
+    {
+      "source": "library/recipes/fps.sight-on-centre-in-ads.json",
+      "note": "The three.js recipe fps.sight-on-centre-in-ads, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

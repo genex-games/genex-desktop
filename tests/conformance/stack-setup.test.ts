@@ -29,11 +29,20 @@ describe("what a stack's setup prepares on each host", () => {
     assert.deepEqual(setupTargets(GameStack.RustWgpu, toolchainHostOf("darwin", "x64")), []);
   });
 
-  it("prepares Browser and Mac for Rust on an Apple-silicon Mac, Browser on Linux, nothing on Windows: no cross pins yet", () => {
-    // Flipped (M4 review): a cross destination is offered only once its builder registers (rustCrossPinned).
-    assert.deepEqual(setupTargets(GameStack.RustWgpu, ToolchainHost.MacArm64), [BuildTarget.Web, BuildTarget.Mac]);
+  it("prepares Browser, Mac, Windows and Linux for Rust on an Apple-silicon Mac, Browser, Windows and Linux on Linux, nothing on Windows", () => {
+    // Flipped (cross lanes pinned): the recipe pins the cross components, so both cross builders register.
+    assert.deepEqual(setupTargets(GameStack.RustWgpu, ToolchainHost.MacArm64), [
+      BuildTarget.Web,
+      BuildTarget.Mac,
+      BuildTarget.Windows,
+      BuildTarget.Linux,
+    ]);
     assert.deepEqual(setupTargets(GameStack.RustWgpu, ToolchainHost.WindowsX64), []);
-    assert.deepEqual(setupTargets(GameStack.RustWgpu, ToolchainHost.LinuxX64), [BuildTarget.Web]);
+    assert.deepEqual(setupTargets(GameStack.RustWgpu, ToolchainHost.LinuxX64), [
+      BuildTarget.Web,
+      BuildTarget.Windows,
+      BuildTarget.Linux,
+    ]);
   });
 
   it("offers a Rust cross destination exactly when the recipe pins its components", () => {

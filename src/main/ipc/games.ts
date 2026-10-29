@@ -1,6 +1,6 @@
 /** The game library: create, update (with its cover image), archive, remove, and what a game holds. */
 import { validateGameCover } from "../../shared/game-library.ts";
-import { isGameStack } from "../../shared/game-project.ts";
+import { GameStack, isGameStack } from "../../shared/game-project.ts";
 import type { StudioInvokePayload } from "../../shared/ipc-channels.ts";
 import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -11,6 +11,7 @@ import {
   isDestinationList,
   ScaffoldCaller,
 } from "../../substrate/game-workspace.ts";
+import { destinationVocabulary } from "../../substrate/project-shape.ts";
 import type { RunSummaryReader } from "../run-summary-reader.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { IpcHandle } from "./registrar.ts";
@@ -50,7 +51,9 @@ const electron = () => import("electron");
 function createOptions(payload: StudioInvokePayload<"studio:game.create">): CreateOptions {
   const { parent, provisional, stack, targets } = payload;
   if (stack !== undefined && !isGameStack(stack)) throw new Error(MESSAGE.unknownStack);
-  if (targets !== undefined && !isDestinationList(targets)) throw new Error(MESSAGE.badTargets);
+  // The phones are a Rust · wgpu game's alone: any other stack, or none, names the browser and the desktop only.
+  const vocabulary = destinationVocabulary(stack ?? GameStack.ThreeJs);
+  if (targets !== undefined && !isDestinationList(targets, vocabulary)) throw new Error(MESSAGE.badTargets);
   const refusal = creationRefusal({ stack, targets });
   if (refusal) throw new CreationError(refusal, MESSAGE.raylibRetired);
   return {

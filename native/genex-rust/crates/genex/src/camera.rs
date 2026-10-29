@@ -1,7 +1,16 @@
 //! Cameras: the game's own view, named observer cameras and player eyes all return a [`Camera`]
-//! from a read hook, so placing one never changes the simulation.
+//! from a read hook, so placing one never changes the simulation. [`FirstPersonRig`] adds a
+//! first-person view's walk, landing, recoil and shake motion under hard comfort caps, scaled by
+//! the person's settings in the camera hook.
 
 use glam::Vec3;
+
+mod rig;
+
+pub use rig::{
+    BOB_PEAK_TO_PEAK_MAX, BOB_ROLL_MAX_DEG, CADENCE_MAX_HZ, Comfort, FOV_KICK_MAX_DEG, FirstPersonRig, NOISE_MAX_HZ, REDUCED_MOTION_SHARE, ROLL_TOTAL_MAX_DEG,
+    RigPose, RigStep,
+};
 
 /// How a camera projects the world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

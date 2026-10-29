@@ -34,6 +34,7 @@ use std::sync::Arc;
 use genex_anim::AnimationError;
 use genex_anim::animator::{AnimSet, Animator as Rig};
 use genex_anim::character::GroundHit;
+use genex_anim::clip::import_clips_by_name;
 use genex_anim::evaluate::pose_digest;
 use genex_anim::foot::{FootPlacer, FootRig, FootSettings, apply_plan};
 use genex_anim::math::Trs;
@@ -43,13 +44,13 @@ use genex_core::json::Value as CoreValue;
 use serde_json::Value;
 
 use crate::frame::{Color, Material, Transform};
-use crate::gfx::{CharacterAsset, Model};
+use crate::gfx::{Assets, CharacterAsset, Model};
 use crate::math::{Mat4, Vec3};
 
 pub use genex_anim::animator::{AnimEvent, AnimatorStep, Limb, LimbTarget, LookTarget};
 pub use genex_anim::events::EventFilter;
 pub use genex_anim::foot::{Foot, FootGoal, FootPlan, height_ground};
-pub use genex_anim::graph::{AnimGraph, AnimGraphBuilder, ClipMotion, DEFAULT_BLEND_SECONDS, Motion, TransitionBlend, TransitionBuilder};
+pub use genex_anim::graph::{AnimGraph, AnimGraphBuilder, BlendMotion, ClipMotion, DEFAULT_BLEND_SECONDS, Motion, TransitionBlend, TransitionBuilder};
 pub use genex_anim::ids::{ClipId, EventId, JointId, LayerId, StateId};
 pub use genex_anim::mask::{BodyPart, Mask};
 pub use genex_anim::params::{BoolParam, Condition, FloatParam, TriggerParam, Vec2Param};
@@ -81,6 +82,18 @@ impl CharacterAsset {
     /// The clip named `name` in the file (its glTF animation name), or None.
     pub fn clip(&self, name: &str) -> Option<ClipId> {
         self.graph().clip(name)
+    }
+
+    /// How fast `clip` carries the character over the ground, metres per second: its root
+    /// motion's net horizontal travel over its length. None for a clip the character lacks or
+    /// before [`CharacterAsset::with_root_motion`] extracted it. Put each clip of a speed blend
+    /// at its own ground speed (`Motion::blend1d(speed, &[(walk_speed, walk), (run_speed, run)])`)
+    /// and feed the body's speed, so the feet move with the ground.
+    pub fn clip_ground_speed(&self, clip: ClipId) -> Option<f32> {
+        let track = self.set().motion(clip)?;
+        let travel = track.displacement();
+        let duration = track.duration();
+        (duration > 0.0).then(|| (travel.x * travel.x + travel.z * travel.z).sqrt() / duration)
     }
 
     /// The file's clip names, in file order (a [`ClipId`] is the index).
@@ -115,6 +128,41 @@ impl CharacterAsset {
         let (set, from) = (self.set(), source.set());
         let mut clips = set.clips().to_vec();
         clips.extend(retarget_clips(from.skeleton(), from.clips(), set.skeleton())?);
+        Ok(self.with_set(AnimSet::new(set.skeleton().clone(), clips)))
+    }
+
+    /// The same character with clips from other files, after its own (B8): for each `(name,
+    /// path)`, the first animation of the GLB at `assets/<path>` under `name`. A clip file is a
+    /// skeleton-only GLB (Uthana delivers one per clip) or any GLB whose nodes carry this rig's
+    /// joint names: each channel drives the joint of its node's name, the rest are skipped, and
+    /// nothing is retargeted. Read in `on_reset` as [`Assets::bytes`] reads. Extract root motion
+    /// after this. Refused `animation-asset-invalid`: a file the build does not have or cannot
+    /// read now, one that is not a valid GLB, or a name a clip already has; `animation-clip-missing`:
+    /// a file with no animation, or none whose channels name a joint of this rig.
+    ///
+    /// ```
+    /// # use genex::prelude::*;
+    /// # fn wire(game: &mut Game<Option<genex::CharacterAsset>>) {
+    /// game.on_reset(|sim, _, _, gfx| {
+    ///     let Ok(gunman) = gfx.character("gunman/rig.glb") else { return };
+    ///     let clips = [("Idle", "gunman/idle.glb"), ("Fire", "gunman/fire.glb")];
+    ///     sim.world = gunman.with_clip_files(gfx.assets(), &clips).ok();
+    /// });
+    /// # }
+    /// ```
+    pub fn with_clip_files(&self, assets: &Assets, files: &[(&str, &str)]) -> Result<CharacterAsset, AnimationError> {
+        let set = self.set();
+        let mut clips = set.clips().to_vec();
+        for &(name, path) in files {
+            let refused = |error: AnimationError| AnimationError { code: error.code, detail: format!("{path}: {}", error.detail) };
+            if clips.iter().any(|clip| clip.name() == name) {
+                return Err(AnimationError::asset_invalid(format!("{path}: the character already has a clip named {name:?}")));
+            }
+            let bytes = assets.bytes(path).map_err(|error| AnimationError::asset_invalid(format!("{path}: {error}")))?;
+            let added = import_clips_by_name(&bytes, self.rig()).map_err(refused)?;
+            let Some(first) = added.into_iter().next() else { return Err(refused(AnimationError::clip_missing("the file has no animation"))) };
+            clips.push(first.renamed(name));
+        }
         Ok(self.with_set(AnimSet::new(set.skeleton().clone(), clips)))
     }
 }
@@ -282,7 +330,8 @@ impl Animator {
         self.model_pose().get(usize::from(joint.raw())).map_or(model, |joint| model * *joint)
     }
 
-    /// The skinning palette of the drawn pose into `palette`, in skin order.
+    /// The skinning palette of the drawn pose into `palette`, in skin order: in the skinned mesh
+    /// node's space, which `skeleton().mesh_frame()` places under the character's transform.
     pub fn palette(&self, palette: &mut [[f32; 16]]) {
         self.rig.set().skeleton().palette(self.model_pose(), palette);
     }

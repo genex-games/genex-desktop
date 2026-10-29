@@ -46,6 +46,8 @@ import { FlowPhase as TemplateFlowPhase } from "../../src/game-template/src/stud
 import { PreviewConsoleSource } from "../../src/harness-seed/loop/preview-gone.ts";
 import { blindCompare } from "../../src/harness-seed/loop/judge.ts";
 import { facetPrompt } from "../../src/harness-seed/loop/facet/prompt.ts";
+import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
+import { BuildTarget, GameStack, StudioPlatform } from "../../src/harness-seed/loop/native-contract.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 
 interface StubOptions {
@@ -194,6 +196,8 @@ function stubCtx(options: StubOptions) {
 }
 
 const run = { runId: "run_test", project: "proj" };
+/** A Rust game for the browser and every desktop. */
+const DESKTOP_GAME = [BuildTarget.Web, BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux];
 
 /** The .mjs destructure makes TS see every option as required; the loop passes them optionally. */
 function gather(ctx: unknown, extra: Record<string, unknown> = {}) {
@@ -249,6 +253,40 @@ describe("gatherEvidence after the stale-frame run", () => {
     const part = await look(false);
     assert.equal(part.ok, true, `problems: ${part.problems.join("; ")}`);
     assert.ok(part.warnings.some((w: string) => w.includes("the camera wiring is the entry owner's")));
+  });
+
+  it("the director builds a six-destination Rust game's Windows and Linux on its integration worktree, never in a worker's copy", async () => {
+    const { evidenceOf } = await import("../../src/harness-seed/loop/director/loop-run.ts");
+    const integration = "/runs/run_test/integration";
+    const built: Array<{ root: unknown; target: unknown }> = [];
+    const { ctx: page } = stubCtx({ frames: ["AAAA", "BBBB"], cameras: ["default"] });
+    const ctx = {
+      ...page,
+      call: async (method: string, payload: Record<string, unknown> = {}) => {
+        if (method === HostMethod.GameList)
+          return [{ name: "proj", destinations: { stack: GameStack.RustWgpu, targets: DESKTOP_GAME } }];
+        // No game box: the Mac's own gate is not this row's question, only what is built where.
+        if (method === HostMethod.PreviewCapacity)
+          return { host: StudioPlatform.Mac, native: { gameBox: false, leases: 0, max: 4 } };
+        if (method !== HostMethod.NativeBuild) return page.call(method, payload);
+        built.push({ root: payload.root, target: payload.target });
+        return { ok: true, problem: null, lock: "abc", output: "/out", admission: null };
+      },
+    };
+    const loopRun = {
+      ctx,
+      run: { ...run, stack: GameStack.RustWgpu },
+      state: { workers: new Map() },
+      integrationWorktree: integration,
+    };
+    const lookAt = (root: string) => evidenceOf(loopRun as never, root, { label: "judge_1" } as never);
+    await lookAt("/runs/run_test/workers/fps");
+    assert.deepEqual(built, [], "a worker's copy builds no cross destination");
+    await lookAt(integration);
+    assert.deepEqual(built, [
+      { root: integration, target: BuildTarget.Windows },
+      { root: integration, target: BuildTarget.Linux },
+    ]);
   });
 
   it("one duplicated camera is a warning, not a voided challenger", async () => {
@@ -1851,7 +1889,9 @@ describe("racing and flight hold the throttle through the drive", () => {
 
   it("reads declared start keys from the plan or studio.json, and writes them back", async () => {
     assert.deepEqual(normalizeGameTraits({ start: { keys: "Enter" } }).start, { keys: ["Enter"] });
-    assert.equal("start" in normalizeGameTraits({ start: { keys: [] } }), false);
+    // An explicit empty list is the plan's `start=none`: the game boots straight into play (BC3).
+    assert.deepEqual(normalizeGameTraits({ start: { keys: [] } }).start, { keys: [] });
+    assert.equal("start" in normalizeGameTraits({ start: {} }), false);
     assert.equal("start" in normalizeGameTraits({ start: 5 }), false);
     assert.deepEqual(startKeysFor({ start: { keys: ["Enter", "space"] } }), ["Enter", "space"]);
     assert.deepEqual(startKeysFor(undefined), []);

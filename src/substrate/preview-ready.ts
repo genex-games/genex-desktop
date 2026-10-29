@@ -17,6 +17,7 @@
 import type { PreviewInputAction } from "./preview-input.ts";
 import type { PreviewPort } from "./preview-port.ts";
 import { COMPUTER_VIEW } from "./computer-tool.ts";
+import { BootStage } from "../shared/native-contract.ts";
 import { ReadyPhase, type ReadyResult, ReadyVia } from "../shared/preview-contract.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
@@ -122,6 +123,9 @@ export interface ReadySnapshot {
 
 const NO_GESTURE = { needed: false, done: false, reasons: [] as string[] };
 
+/** The Genex web shell's own boot states (`window.GenexShell.status.state`, `shell.html`). Wire values. */
+const ShellState = { Starting: "starting", Running: "running" } as const;
+
 /**
  * The expression the studio evaluates in the page.
  *
@@ -134,8 +138,46 @@ const NO_GESTURE = { needed: false, done: false, reasons: [] as string[] };
  * present, `__shim !== true`, and a `state()` that answers something other than `{__missing}`.
  * The shim's own merging facade must never be mistaken for a game's contract, or every page
  * would report itself attached and the whole premise would collapse.
+ *
+ * A page with the Rust web shell (`window.GenexShell.progress`, `game-template-rust/web/shell.html`)
+ * is booting until the shell says its first lit frame is on screen (stage `ready`): the shim settles
+ * a quiet page half way through its budget, and a page compiling its pipelines fetches nothing, so
+ * without this every look photographed the loading screen as the game. A shell that failed or
+ * refused shows its card instead and is read as before.
  */
 export const READY_PROBE = `(() => {
+  /* The Genex web shell (a Rust · wgpu page) binds the game's verbs only when studio_boot answers,
+     and its loading screen leaves at the first lit frame. The shim settles a quiet page that drew
+     nothing at half its budget, which a shell still compiling its pipelines is: until the shell
+     says it is up, every seed, pause, step and key reaches the shim alone. A shell that failed or
+     found no WebGPU shows its card and is read as before; the C++ shell has neither field. */
+  var shellLoading = function () {
+    var shell = window.GenexShell;
+    var status = shell && typeof shell.status === "object" ? shell.status : null;
+    var progress = shell && typeof shell.progress === "object" ? shell.progress : null;
+    var stage = progress && typeof progress.stage === "string" ? progress.stage : null;
+    var state = status ? status.state : null;
+    var starting = state === ${JSON.stringify(ShellState.Starting)};
+    var lighting = stage !== null && stage !== ${JSON.stringify(BootStage.Ready)} && (state === null || state === ${JSON.stringify(ShellState.Running)});
+    if (!starting && !lighting) return null;
+    var counted = progress && typeof progress.done === "number" && typeof progress.total === "number" ? " " + progress.done + " of " + progress.total : "";
+    return ("the game is still on its loading screen (" + (stage || "starting") + counted + ")").slice(0, ${MAX_REASON_CHARS});
+  };
+  var held = function (answer) {
+    var loading = shellLoading();
+    if (!loading) return answer;
+    answer.via = answer.via === "none" ? "contract" : answer.via;
+    answer.ready = false;
+    answer.phase = "boot";
+    answer.reason = loading;
+    return answer;
+  };
+  try {
+    return held(readAnswer());
+  } catch (err) {
+    return { via: "none", ready: false, phase: "unknown", attached: false, frames: 0, drawCalls: 0, pageMs: null, timedOut: false, reason: String((err && err.message) || err).slice(0, ${MAX_REASON_CHARS}), gesture: { needed: false, done: false, reasons: [] } };
+  }
+  function readAnswer() {
   var noGesture = { needed: false, done: false, reasons: [] };
   var readGesture = function (raw) {
     if (!raw || typeof raw !== "object") return noGesture;
@@ -193,6 +235,7 @@ export const READY_PROBE = `(() => {
     return fail("the page reports no readiness signal");
   } catch (err) {
     return fail(String((err && err.message) || err).slice(0, ${MAX_REASON_CHARS}));
+  }
   }
 })()`;
 

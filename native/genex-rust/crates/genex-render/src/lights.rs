@@ -14,7 +14,7 @@
 //! renderer's forward pass draws through them.
 
 use crate::cluster::{ClusterInput, LightBinFrame};
-use crate::layout::{GpuLight, GpuLightExt, GpuLocalLight, LIGHT_KIND_SPOT, MAX_LIGHTS, MAX_LOCAL_LIGHTS, NO_SHADOW_SLOT, SPOT_SHADOW_UNFADED};
+use crate::layout::{GpuLight, GpuLightExt, GpuLocalLight, LIGHT_KIND_POINT, LIGHT_KIND_SPOT, MAX_LIGHTS, MAX_LOCAL_LIGHTS, NO_SHADOW_SLOT, SPOT_SHADOW_UNFADED};
 #[cfg(doc)]
 use crate::layout::MAX_SHADOWED_SPOTS;
 use crate::scene::CameraDesc;
@@ -113,6 +113,10 @@ pub struct Lighting {
     pub ambient_intensity: f32,
     /// Point lights.
     pub points: Vec<PointLight>,
+    /// The indices into `points` of the point lights asking for a cube shadow map (AAA review
+    /// WP-15): granted after binning to the asking ones that reach the screen, nearest first, up to
+    /// the preset's `LightQuality::shadowed_points`; the legacy loop draws none.
+    pub shadowed_points: Vec<usize>,
     /// Spot lights.
     pub spots: Vec<SpotLight>,
     /// Whether the sun casts shadows (cascades drawn through the culled indirect path).
@@ -140,6 +144,7 @@ impl Default for Lighting {
             ambient: [255, 255, 255],
             ambient_intensity: 0.08,
             points: Vec::new(),
+            shadowed_points: Vec::new(),
             spots: Vec::new(),
             shadows: true,
             shadow_distance: QUALITY_SHADOW_DISTANCE,
@@ -198,7 +203,20 @@ fn spot_ext(spot: &SpotLight, slot: Option<usize>) -> GpuLightExt {
 pub fn local_lights(lighting: &Lighting, cap: usize, shadow_requests: usize) -> Vec<GpuLocalLight> {
     let cap = cap.min(MAX_LOCAL_LIGHTS);
     let slots = shadow_requests;
-    let points = lighting.points.iter().map(|light| GpuLocalLight { light: light_row(light.position, light.range, light.color, light.intensity), ext: GpuLightExt::POINT });
+    let mut asked = 0;
+    let points = lighting.points.iter().enumerate().map(move |(index, light)| {
+        // A shadow-asking point light is marked with its request order, as a spot is (AAA review
+        // WP-15); `spot_shadow::grant_points` turns the mark into its faces' first slot or clears it.
+        let request = lighting.shadowed_points.contains(&index).then(|| {
+            asked += 1;
+            asked - 1
+        });
+        let ext = match request {
+            Some(request) => GpuLightExt { params: [-1.0, LIGHT_KIND_POINT, request as f32, SPOT_SHADOW_UNFADED], ..GpuLightExt::POINT },
+            None => GpuLightExt::POINT,
+        };
+        GpuLocalLight { light: light_row(light.position, light.range, light.color, light.intensity), ext }
+    });
     let mut granted = 0;
     let spots = lighting.spots.iter().map(move |spot| {
         let slot = (spot.shadow && granted < slots).then(|| {
@@ -394,7 +412,7 @@ mod tests {
     #[test]
     fn the_legacy_loop_keeps_the_light_table_under_the_cap_and_adds_the_spots_after_it() {
         let lighting = scene(3, &[false, true]);
-        let (lights, ext) = legacy_lights(&lighting, &LightQuality { cap: 64, clustered: false, tile_px: 0, shadowed_spots: 2, decals: 0 }, &camera_at([0.0; 3]));
+        let (lights, ext) = legacy_lights(&lighting, &LightQuality { cap: 64, clustered: false, tile_px: 0, shadowed_spots: 2, shadowed_points: 0, decals: 0 }, &camera_at([0.0; 3]));
         assert_eq!(&lights[..3], light_table(&lighting).as_slice(), "point rows are the legacy table's");
         assert_eq!(lights.len(), 5, "spots are shaded on the legacy loop too");
         assert_eq!(ext.iter().map(kind_of).collect::<Vec<_>>(), [LightKind::Point, LightKind::Point, LightKind::Point, LightKind::Spot, LightKind::Spot]);
@@ -407,7 +425,7 @@ mod tests {
         for light in &mut lighting.points {
             light.range = 0.4;
         }
-        let quality = LightQuality { cap: 4, clustered: false, tile_px: 0, shadowed_spots: 0, decals: 0 };
+        let quality = LightQuality { cap: 4, clustered: false, tile_px: 0, shadowed_spots: 0, shadowed_points: 0, decals: 0 };
         // Lights at x = 0..9 with range 0.4: from x = 9.5 the nearest are 9, 8, 7, 6.
         let (lights, _) = legacy_lights(&lighting, &quality, &camera_at([9.5, 1.0, 0.0]));
         let xs: Vec<f32> = lights.iter().map(|light| light.position_range[0]).collect();

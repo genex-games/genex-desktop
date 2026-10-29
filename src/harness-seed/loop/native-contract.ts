@@ -486,8 +486,8 @@ export { NativeRefusal, TargetRefusal };
 
 /** Pixel layout of a native capture, rows top-down. */
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
-/** The longest side a capture may have. */
-export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The longest side a capture may have: an 8K frame. */
+export const NATIVE_CAPTURE_MAX_PX = 8192;
 /** The shortest side a capture may be asked to draw at: the world target's smallest. */
 export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes one capture may take. */
@@ -684,6 +684,7 @@ export const RenderSettingsRefusal = {
   UnknownFeature: "unknown-render-feature",
   InvalidScale: "invalid-render-scale",
   InvalidFrameBudget: "invalid-frame-budget",
+  InvalidLook: "invalid-look",
 } as const;
 export type RenderSettingsRefusal = (typeof RenderSettingsRefusal)[keyof typeof RenderSettingsRefusal];
 
@@ -708,6 +709,8 @@ export interface RenderSettingsChange {
   renderScaleLock?: number | null;
   /** The frame time, in ms, dynamic resolution holds instead of the class's; null gives it back. */
   frameBudgetMs?: number | null;
+  /** `[render.look]` keys overlaid on the game's look, no rebuild; null gives its look back. */
+  look?: Record<string, unknown> | null;
 }
 
 /** What `renderSettings` answers: the settings in force after the call. */

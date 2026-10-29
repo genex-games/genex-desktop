@@ -191,8 +191,8 @@ No build ships the launcher yet (it needs Genex's Windows signing), so Play answ
 
 A Rust · wgpu game's Windows build is cross-built on a Mac
 ([`rust-build-windows.ts`](../src/main/rust-build-windows.ts): `x86_64-pc-windows-gnullvm` with
-llvm-mingw, a static C runtime, one `game.exe`); its builder registers only once the Rust recipe
-pins the cross components, and until then the build is refused `target-unbuilt`. It draws through D3D12 alone with FXC
+llvm-mingw, a static C runtime, one `game.exe`); its builder registers because the Rust recipe
+pins its cross components (a recipe without them refuses the build `target-unbuilt`). It draws through D3D12 alone with FXC
 (`d3dcompiler_47.dll`) chosen explicitly, and its PE policy refuses desktop OpenGL, a DXC compiler
 or a shipped runtime DLL. wgpu loads `d3dcompiler_47.dll`, `d3d12.dll` and `dxgi.dll` by bare
 name, and none is a KnownDLL, so Windows' default search order looks in the executable's folder

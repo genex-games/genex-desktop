@@ -1,0 +1,54 @@
+{
+  "id": "rust.fps-weapon-from-parts",
+  "runtime": "rust-wgpu",
+  "title": "A Rust weapon is a modelled GLB or several shaped parts, not one box",
+  "tags": [
+    "weapon",
+    "gun",
+    "pistol",
+    "rifle",
+    "barrel",
+    "grip",
+    "sight",
+    "stock",
+    "silhouette",
+    "parts",
+    "box",
+    "primitive",
+    "fps",
+    "asset",
+    "blender"
+  ],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "The weapon is a modelled GLB, or at least four shaped parts (slide, frame, barrel, grip) under frame.tag(\"weapon\"); one box is not a gun.",
+  "intent": "A single box in the corner of the screen reads as a placeholder within one frame. Make the gun a modelled GLB first (Local Blender's bpy: slide, frame, trigger guard, angled grip, sights, at real size: a pistol is about 0.19 m long), loaded once in on_reset with gfx.assets().model(..) and drawn with frame.model under frame.tag(\"weapon\") from the viewmodel's transform. Failing that, draw at least four parts with frame.cube_with and frame.sphere_with in two or more materials (dark metal slide with with_metallic(1.0).with_roughness(0.35), polymer frame rougher), the grip angled back about 15 degrees. Keep it in proportion against the hands, and keep the barrel's end as one named point (a const in the gun's space) that the muzzle flash and the shot ray both start from.",
+  "sketch": "use genex::prelude::*;\n\n/// The gun's parts in its own space (metres): slide, frame, barrel, grip, sights. A pistol is ~0.19 m long.\nconst PARTS: [(Vec3, Vec3); 4] = [\n    (Vec3::new(0.0, 0.035, -0.06), Vec3::new(0.03, 0.03, 0.19)),  // slide\n    (Vec3::new(0.0, 0.012, -0.05), Vec3::new(0.028, 0.02, 0.16)), // frame and dust cover\n    (Vec3::new(0.0, -0.045, 0.01), Vec3::new(0.026, 0.09, 0.035)), // grip, turned back below\n    (Vec3::new(0.0, 0.054, -0.13), Vec3::new(0.006, 0.008, 0.006)), // front sight\n];\nconst GRIP_RAKE: f32 = 0.26; // radians the grip leans back\n\nfn draw_gun(frame: &mut Frame, pose: Transform, slide: &Material, polymer: &Material) {\n    frame.tag(\"weapon\");\n    for (i, (at, size)) in PARTS.iter().enumerate() {\n        let lean = if i == 2 { Quat::from_rotation_x(GRIP_RAKE) } else { Quat::IDENTITY };\n        let local = Transform::from_translation(pose.translation + pose.rotation * *at)\n            .with_rotation(pose.rotation * lean)\n            .with_scale(*size);\n        frame.cube_with(local, if i == 0 { slide } else { polymer });\n    }\n    // The barrel's end shows as a round bore, not a box face.\n    frame.sphere_with(pose.translation + pose.rotation * vec3(0.0, 0.035, -0.155), 0.007, polymer);\n}\n",
+  "check": {
+    "id": "weapon-silhouette",
+    "kind": "probe",
+    "expr": "__render.tags.weapon.drawCalls >= 4 || __render.tags.weapon.triangles >= 300",
+    "weight": "identity",
+    "note": "The weapon is drawn from at least four parts, or from a modelled mesh of 300+ triangles, under frame.tag(\"weapon\") — one box is a primitive, not a gun."
+  },
+  "port": "The viewmodel facet owns the gun's model and its barrel-end constant; the firing code reads that constant, never a second copy.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/drawing.md",
+      "note": "Models from assets/ are drawn with frame.model; __render.tags counts draws and triangles per tag."
+    },
+    {
+      "source": "library/recipes/fps.weapon-from-parts.json",
+      "note": "The three.js recipe fps.weapon-from-parts, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

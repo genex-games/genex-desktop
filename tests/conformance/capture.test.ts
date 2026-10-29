@@ -460,6 +460,33 @@ describe("the page-side capture photographs the end of the frame", () => {
     assert.equal(kept.captureInfo().composited, false);
   });
 
+  it("a game's own picture keeps its own size, so a canvas of another size adds no band", async () => {
+    // A Rust game's capture reads back its world target at the world size (960x540) while its
+    // `fit = "expand"` canvas fills a 960x600 window: composited onto the canvas's size, the 60
+    // rows the picture did not cover came out as a band of the page's background (B5).
+    const canvas = canvasStub(960, 600);
+    const world = rig({
+      descriptors: [{ index: 0, kind: "webgpu", width: 960, height: 600 }],
+      elements: [canvas],
+      styles: new Map<unknown, { backgroundColor?: string; backgroundImage?: string }>([
+        [canvas, { backgroundColor: "rgb(14, 20, 38)", backgroundImage: "none" }],
+      ]),
+      decode: () => ({ naturalWidth: 960, naturalHeight: 540, width: 960, height: 540 }),
+    });
+    const capture = createFrameCapture(world.deps);
+    assert.equal(await capture.paint("data:image/png;base64,WORLD", {}), "data:image/png;base64,COMPOSITED");
+    assert.deepEqual(world.scratch.order, ["fillRect 0,0,960,540 in rgb(14, 20, 38)", "drawImage"]);
+    assert.deepEqual([world.scratch.canvas.width, world.scratch.canvas.height], [960, 540]);
+    // A picture whose size cannot be read is composited at the canvas's size, as before.
+    const unsized = rig({
+      descriptors: [{ index: 0, kind: "webgpu", width: 960, height: 600 }],
+      elements: [canvas],
+      decode: () => ({}),
+    });
+    await createFrameCapture(unsized.deps).paint("data:image/png;base64,WORLD", {});
+    assert.deepEqual([unsized.scratch.canvas.width, unsized.scratch.canvas.height], [960, 600]);
+  });
+
   it("with the counters quieted a draw cannot be proved, so the frame is taken on trust", async () => {
     const canvas = canvasStub(800, 600);
     const world = rig({

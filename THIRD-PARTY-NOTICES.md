@@ -208,6 +208,17 @@ The Play film, `play-publish.mp4`, shows game covers from the public genex.games
 (`design/play-publish-video/README.md`); its players and its desk were made with Genex image
 generation for the film.
 
+## Rust template's interior kit
+
+The trim sheet, props atlas and crack decal in `src/game-template-rust/docs/examples/interior-kit/assets/kit/`
+are cut and repainted from Poly Haven scans published under CC0-1.0 (`wood_table_worn`,
+`green_metal_rust`, `rusty_metal_02`, `concrete_wall_003`, `painted_plaster_wall`,
+`peeling_painted_wall`) by `native/genex-rust/examples/template-examples/kit/kit_sheets.py`; no
+credit is required. Its GLBs are made by Genex's own `interior_kit.py`. Its other decals (posters,
+chalk, peeling paint, water and grime) are keyed from images, and its `hero/` models fitted from
+models, that Genex generated for it (image generation through fal.ai, models through Tripo), listed
+in `kit/generated.json`.
+
 ## Downloaded components
 
 C++ · raylib games are built with toolchains, and Rust games' crate requests are checked with a
@@ -1191,6 +1202,48 @@ stand-ins without them.
 | `granite_tile` | the kerb stones and the cafe's threshold | https://polyhaven.com/a/granite_tile (`granite_tile_diff_1k.jpg`, `granite_tile_nor_gl_1k.jpg`, `granite_tile_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Charlotte Baglioni, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 1,987,919 bytes |
 | `metal_grate_rusty` | the drains along the kerbs, the manhole covers, the alley's gutter and the air conditioners' grilles | https://polyhaven.com/a/metal_grate_rusty (`metal_grate_rusty_diff_1k.jpg`, `metal_grate_rusty_nor_gl_1k.jpg`, `metal_grate_rusty_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,774,295 bytes |
 | `kloppenheim_01_puresky` | the overcast dusk sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_01_puresky (`kloppenheim_01_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,187,954 bytes |
+
+## Genex Library pack
+
+The Genex Library (`src/plugins/library/`, `docs/api/library.md`) is not in this repository and
+does not ship inside Genex.app. Its catalog, `src/plugins/library/catalog.json`, names every entry
+with its source page, its authors and each upstream file's URL, size and md5. The entries are
+Poly Haven materials, HDRI skies and models published under CC0 1.0 (Poly Haven's licence,
+https://polyhaven.com/license), plus vegetation made by Genex's own generator. No attribution is
+required; the catalog gives it anyway.
+
+`scripts/library/build-library.ts` builds the pack from those pinned sources: it re-encodes maps as
+Basis KTX2, decimates models and bakes their levels, and records each output file's sha256 in the
+catalog. The `library` plugin downloads an entry's files only when a game adds it, and checks each
+file against that digest. Each delivery records the entry's source and authors. The pack adds no
+code: the encoder, simplifier and decoders it runs are the asset importer's, listed under "Asset
+importer decoders" and "Asset importer packages".
+
+## Soldier kit
+
+`src/game-template-rust/docs/examples/soldier/soldier.glb` is built by `soldier.py` from Quaternius'
+Universal Animation Library (Standard), CC0 1.0: its mannequin, skeleton and clips (Idle, Walk,
+Run, Sprint, CrouchIdle, CrouchWalk and Death, some turned, the strafes made from its walk). The
+library is `universal_animation_librarystandard.zip` (14,541,205 bytes, sha256
+`18ff1a7215f4852b320203e8aaf02a1578b5c8eef9027fbaedfcedc7b85a3ac2`) from
+https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip (page
+https://quaternius.com), its `Godot/AnimationLibrary_Godot_Standard.glb`. The outfit and rifle carry
+the arms kit's scans below (Poly Haven's `book_pattern`, `leather_white` and `dark_wood`; ambientCG's
+`Metal029` and `Plastic014A`), tinted. CC0; the credit is given anyway.
+
+## First-person arms kit scans
+
+`src/game-template-rust/docs/examples/fps-arms/fps-arms.glb` carries five CC0 scans, resized
+(2k colour, 1k normal, 512 roughness/metal), some tinted, and packed into the GLB by
+`fps_arms.py`. Every one is CC0; the credits are given anyway.
+
+| Scan | Used for | Source | Authors | Licence |
+| --- | --- | --- | --- | --- |
+| `Metal029` | the rifle's black painted steel | https://ambientcg.com/view?id=Metal029 (`Metal029_2K-JPG.zip`: Color, NormalGL, Roughness, Metalness) | Lennart Demes, via ambientCG | CC0 1.0 (ambientCG's licence, https://docs.ambientcg.com/license/); no attribution is required and it is given anyway |
+| `Plastic014A` | the magazine's bakelite, tinted plum | https://ambientcg.com/view?id=Plastic014A (`Plastic014A_2K-JPG.zip`: Color, NormalGL, Roughness) | Lennart Demes, via ambientCG | CC0 1.0 (ambientCG's licence, https://docs.ambientcg.com/license/); no attribution is required and it is given anyway |
+| `dark_wood` | the handguards, grip and stock | https://polyhaven.com/a/dark_wood (`dark_wood_diff_2k.jpg`, `dark_wood_nor_gl_2k.jpg`, `dark_wood_arm_2k.jpg`) | Dario Barresi, Dimitrios Savva and Rico Cilliers, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+| `leather_white` | the gloves, tinted coyote | https://polyhaven.com/a/leather_white (`leather_white_diff_2k.jpg`, `leather_white_nor_gl_2k.jpg`, `leather_white_arm_2k.jpg`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+| `book_pattern` | the sleeves' olive cotton | https://polyhaven.com/a/book_pattern (`book_pattern_col1_2k.jpg`, `book_pattern_nor_gl_2k.jpg`, `book_pattern_arm_2k.jpg`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
 
 ## Rust toolchain runtime
 

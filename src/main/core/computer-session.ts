@@ -29,6 +29,7 @@ import {
   ComputerVerb,
   type ComputerHostAction,
   type ComputerRequest,
+  computerActionsFor,
   computerAct,
   computerToInput,
   describeComputerAction,
@@ -88,6 +89,12 @@ export interface TargetSource<T extends ComputerTarget = ComputerTarget> {
   load(root: string, force: boolean): Promise<TargetLoad<T> & { fresh: boolean }>;
   /** A picture of the target for the agent's screen; null asks the source to take its own. */
   frame(target: T, jpeg: Buffer | null, caption: string, act: ScreenAct): Promise<void>;
+  /**
+   * The build at `root` compiled as a reload would build it, without building, loading or
+   * reloading anything: the agent's answer (the first error, or that it is clean). Absent: the
+   * target has nothing to check.
+   */
+  check?(root: string): Promise<string>;
 }
 
 /** A goal the studio checks after every move: the first time it holds is studio-verified. */
@@ -408,7 +415,8 @@ async function act(ctx: ActionContext): Promise<LiveToolResult> {
   return observed(ctx, `${head}. ${await helpers.afterMove(ctx)}${ctx.noteLine}`, true);
 }
 
-const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
+/** The host actions answered on a loaded target; a check never loads one (`checkBuild` in `computerSession`). */
+const HOST_ACTIONS: Record<Exclude<ComputerHostAction, typeof ComputerVerb.Check>, HostActionHandler> = {
   screenshot: look,
   camera: look,
   zoom,
@@ -432,7 +440,7 @@ const HOST_ACTIONS: Record<ComputerHostAction, HostActionHandler> = {
   web_type: web,
 };
 
-function isHostAction(action: string): action is ComputerHostAction {
+function isHostAction(action: string): action is keyof typeof HOST_ACTIONS {
   return Object.hasOwn(HOST_ACTIONS, action);
 }
 
@@ -848,15 +856,30 @@ export function computerSession<T extends ComputerTarget>(
     if (ctx.record.reached && options.quest && tracePath) options.onReached?.(tracePath, options.quest.id);
     return answer;
   };
+  // The build folder compiled through the source, the window left as it is: no load, no move.
+  const checkBuild = async (request: ComputerRequest): Promise<LiveToolResult> => {
+    const actions = computerActionsFor(offered())
+      .filter((action) => action !== ComputerVerb.Check)
+      .join(", ");
+    if (!source.check) return refuse(request, COMPUTER_ARG_PROBLEM.unsupported(request.action, actions));
+    const answer = await source.check(root);
+    await trace.write(request, describeComputerAction(request), emptyRecord(), null, false);
+    return answer;
+  };
+  // What answers before any load: a refusal of what even the target may do (nothing starts), or a check.
+  const beforeLoad = (request: ComputerRequest): Promise<LiveToolResult> | null => {
+    const ruledOut = refusalOf(request, offered());
+    if (ruledOut) return refuse(request, ruledOut);
+    return request.action === ComputerVerb.Check ? checkBuild(request) : null;
+  };
   const run = async (name: string, args: Record<string, unknown>): Promise<LiveToolResult> => {
     if (name !== (options.toolName ?? COMPUTER_TOOL_NAME)) return `unknown tool ${name}`;
     const parsed = parseComputerArgs(args);
     if (!parsed.ok) return parsed.error;
     const request = parsed.request;
-    // Refused before the load when even what the target may do rules it out (nothing starts),
-    // and again after it, against what the loaded target says it can do.
-    const ruledOut = refusalOf(request, offered());
-    if (ruledOut) return refuse(request, ruledOut);
+    // Refused before the load (`beforeLoad`), and again after it, against what the loaded target says it can do.
+    const early = beforeLoad(request);
+    if (early) return early;
     const loaded = await ensureLoaded(request.action === ComputerVerb.Reload);
     if (loaded.problem) return loaded.problem;
     const refused = refusalOf(request, offered());

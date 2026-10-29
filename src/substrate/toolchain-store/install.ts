@@ -54,7 +54,15 @@ import {
   type SignatureRecord,
   writeNew,
 } from "./artifact.ts";
-import { appResourcesDir, BUNDLE_LOCK, type BundleLock, bundledFolder, bundledTargetOf, isBundled } from "./bundled.ts";
+import {
+  appResourcesDir,
+  BUNDLE_LOCK,
+  type BundleLock,
+  bundledFolder,
+  bundledTargetOf,
+  isBundled,
+  isBundledSwiftShader,
+} from "./bundled.ts";
 import { arrangeColyseusLibs, colyseusProbeFiles } from "./colyseus.ts";
 import { colyseusSourceProbeFiles } from "./colyseus-android.ts";
 import { cachedDownload } from "./download-cache.ts";
@@ -69,6 +77,7 @@ import {
 import { isSafePin, LOCKS_FOLDER } from "./lock.ts";
 import { entryDigest, entrySha12, isDownloadable } from "./manifest.ts";
 import { bundledLinuxSysrootFolder, isBundledLinuxSysroot, verifyLinuxSysrootFolder } from "./linux-sysroot-bundle.ts";
+import { bundledSwiftShaderFolder, SWIFTSHADER_TARGET } from "./swiftshader-bundle.ts";
 
 const MESSAGE = {
   NotHttps: (url: string) => `Toolchains download over https only: ${url}`,
@@ -799,6 +808,8 @@ async function installBundled(
 ): Promise<Swapped | null> {
   if (isBundledLinuxSysroot(entry)) return installBundledLinuxSysroot(store, entry, resources, options);
   const lock = options.lock ?? BUNDLE_LOCK;
+  if (isBundledSwiftShader(entry, lock))
+    return installBundledSwiftShader(store, entry, resources, { ...options, lock });
   const target = bundledTargetOf(entry, lock);
   const { local } = entry;
   if (!target || !local) throw new ToolchainError(ToolchainProblem.NotHosted, MESSAGE.NotHosted(entry.id));
@@ -812,6 +823,24 @@ async function installBundled(
     signed: true,
     now: options.now ?? Date.now,
   };
+  return stageVerifiedCopy(store, entry, local, folder, how);
+}
+
+/** Install the included SwiftShader split (Linux's software Vulkan) through the same verified copy, its origin the lock's commit. */
+async function installBundledSwiftShader(
+  store: string,
+  entry: ToolchainEntry,
+  resources: string,
+  options: { now?: () => number; lock: BundleLock },
+): Promise<Swapped | null> {
+  const { local } = entry;
+  if (!local) throw new ToolchainError(ToolchainProblem.NotHosted, MESSAGE.NotHosted(entry.id));
+  if (await holdsArtifact(pinnedFolder(store, entry).final, entry, local)) return null;
+  const folder = bundledSwiftShaderFolder(resources, options.lock.commit);
+  if (!(await lstat(folder).catch(() => null)))
+    throw new ArtifactError(ArtifactFault.Missing, MESSAGE.NotBundled(entry.id, folder));
+  const origin = { commit: options.lock.commit, target: SWIFTSHADER_TARGET };
+  const how = { source: ReceiptSource.Bundled, origin, signed: false, now: options.now ?? Date.now };
   return stageVerifiedCopy(store, entry, local, folder, how);
 }
 

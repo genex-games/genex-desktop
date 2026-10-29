@@ -1,5 +1,25 @@
 # Custom GPU passes
 
+Every type and call in one line:
+
+```rust
+use genex::gpu::{GpuError, GpuPass, GpuPassCtx, PassSetup, PassStage, RenderInputs}; // and the wgpu types a pass names
+game.gpu_pass("outline", PassStage::PostHdr, Outline::default());
+// PassStage::BeforeCull | AfterPrepass | AfterOpaque | AfterTransparent | PostHdr | Post
+impl GpuPass<World> for Outline {
+    fn rebuild(&mut self, setup: &mut PassSetup<'_>) -> Result<(), GpuError> { Ok(()) }
+    fn run(&mut self, ctx: &mut GpuPassCtx<'_, '_, World>) {}
+    fn api(&self) -> u32 { 2 }
+    fn inputs(&self) -> RenderInputs { RenderInputs::DEPTH | RenderInputs::NORMALS } // MOTION, ENVIRONMENT, HDR_SCENE
+}
+setup.create_shader(label, wgsl)?; setup.world_format(); setup.tables_layout(); setup.environment_layout(); // Option
+setup.world_depth(write); setup.world_multisample(); setup.motion_target(); setup.reactive_target();
+setup.temporal_depth(write); setup.temporal_multisample(); // and create_buffer, create_texture, create_render_pipeline ..
+ctx.sim(); ctx.tick(); ctx.prev_tick(); ctx.depth_reversed(); ctx.tables(); ctx.environment(); // &Sim<World> read-only
+ctx.encoder(); ctx.draws(); ctx.motion_draws(); ctx.reactive_draws(); // -> Option<&mut ..>, by stage
+ctx.prepass_depth(); ctx.prepass_normals(); ctx.prepass_motion(); ctx.world_texture(); // -> Option<&..>
+```
+
 `game.gpu_pass(name, stage, pass)` registers raw wgpu work into the frame (extension ladder level
 3). `pass` implements `genex::gpu::GpuPass<World>`: `rebuild(&mut self, setup)` creates its
 shaders, buffers, textures and pipelines through `PassSetup`, at install and again after the GPU
@@ -60,10 +80,10 @@ gx_shadow_sampler: sampler_comparison` (in the cascade `c` whose `gx_frame.casca
 point's view depth, compare the depth of the point lifted by `cascade_offsets[c]` along its normal
 in `cascade_view_proj[c]` less `shadow_params.x`, the comparison bias every cascade shares;
 `cascade_splits.w` is 0 on a frame without sun
-shadows; the showcase's grass does this). The tables carry the fog row
+shadows). The tables carry the fog row
 (`gx_frame.fog_color`, `gx_frame.fog_params`) and the environment cube (`gx_env_specular`) but no
 fog function, so such a pass repeats the height fog with the cube read just above the horizon as
-its in-scatter (the showcase's `look_fog`; the air's aerial perspective does not reach it) and
+its in-scatter (the air's aerial perspective does not reach it) and
 lights a ground lantern with a soft additive disc of its own. Every resource counts against the GPU caps, WGSL is checked against WebGPU core
 plus `[gpu] native_features`, no buffer is mappable, and a pass wgpu rejects stops running with
 `gpu-pass-invalid` (listed with its code in `state().volatile.customPasses`). In-world draws are

@@ -9,6 +9,10 @@
 //! - **Pose.** The presenter evaluates the animator's state (genex-anim's pure pipeline, IK
 //!   included) into the joint palette in skin order and hands it to the renderer's skinned draw.
 //!   The draw reads a clone of the animator, so nothing the presenter does reaches the simulation.
+//! - **Armature.** The palette is in the skinned mesh node's space, so the draw's model matrix is
+//!   the character's transform times the mesh node's rest frame (B8): an armature turned and
+//!   scaled above the mesh (Mixamo, Meshy, Uthana: 90° about X at 0.01) stands upright at its real
+//!   size, where its bind-pose model and every `socket` put it.
 //! - **Rate LOD (Live only).** [`AssetCache::pose_characters`] keeps each character's last palette
 //!   by `(asset path, draw id, ordinal)`. A character re-evaluates when its [`RateBand`] interval of
 //!   ticks has passed; in between, Live draws the held palette, and the renderer then runs no skin
@@ -239,7 +243,7 @@ impl Characters {
                 None => {
                     let palette = if live && !shared.contains(&at) {
                         let key = PoseKey { path: path.to_owned(), id: draw.id, ordinal };
-                        self.live_pose(key, animator, band_of(&skin, *transform, game_camera), tick, &mut stats)
+                        self.live_pose(key, animator, band_of(&skin, &drawn_model(animator, *transform), game_camera), tick, &mut stats)
                     } else {
                         full_rate(animator, &mut stats)
                     };
@@ -289,9 +293,15 @@ fn shared_animators(frame: &Frame) -> FastSet<usize> {
     shown.into_iter().filter(|(_, draws)| *draws > 1).map(|(at, _)| at).collect()
 }
 
-/// The rate band of a character drawn under `transform` (its bind-pose sphere, placed).
-fn band_of(skin: &LoadedSkin, transform: Transform, game_camera: &Camera) -> RateBand {
-    let sphere = genex_render::lod_rows::world_sphere(&transform.to_cols_array(), skin.center, skin.radius);
+/// The model matrix `animator`'s character draws under at `transform`: the transform, then the
+/// skinned mesh node's rest frame its palette is in.
+fn drawn_model(animator: &Animator, transform: Transform) -> [f32; 16] {
+    (transform.matrix() * animator.set().skeleton().mesh_frame()).to_cols_array()
+}
+
+/// The rate band of a character drawn under `model` (its bind-pose sphere, placed).
+fn band_of(skin: &LoadedSkin, model: &[f32; 16], game_camera: &Camera) -> RateBand {
+    let sphere = genex_render::lod_rows::world_sphere(model, skin.center, skin.radius);
     rate_band(game_camera, sphere)
 }
 
@@ -373,7 +383,7 @@ pub(super) fn push(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut
     let path = animator.asset().path();
     let skinned = assets.characters.skin(path).filter(|skin| skin.skin.joint_count() as usize == animator.set().skeleton().skin_order().len());
     let Some(skin) = skinned else {
-        let model = Shape::Model { model: animator.model(), transform, tint, material: material.cloned() };
+        let model = Shape::Model { model: animator.model(), transform, tint, material: material.cloned(), cover: None };
         return push_shape(sink, assets, missing, &model);
     };
     let joints = assets.characters.posed(animator).map_or_else(|| evaluated_palette(animator), <[_]>::to_vec);
@@ -385,7 +395,7 @@ pub(super) fn push(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut
             (None, None) => surface(&crate::Material::color(tint), Color::WHITE, assets),
         })
         .collect();
-    sink.skinned(skin.skin, transform.to_cols_array(), joints, materials);
+    sink.skinned(skin.skin, drawn_model(animator, transform), joints, materials);
     skin.triangles
 }
 

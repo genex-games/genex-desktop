@@ -128,7 +128,7 @@ fn gx_forward_grow(at: u32) -> f32 {
 fn vs_main_fade(in: VsIn, @builtin(instance_index) instance: u32) -> VsFadeOut {
     let at = gx_forward_visible_at(in, instance);
     let row = instances[visible[at]];
-    let world = row.model * vec4<f32>(in.position * gx_forward_grow(at), 1.0);
+    let world = gx_row_world(row, in.position * gx_forward_grow(at), frame.texture_lod.y);
     var out: VsFadeOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.world_pos = world.xyz;
@@ -157,7 +157,7 @@ fn vs_main(in: VsIn, @builtin(instance_index) instance: u32) -> VsOut {
         start = slot_base[in.slot + pass_view.slot_offset];
     }
     let row = instances[visible[visible_row(pass_view.view, pass_view.direct, pass_view.base, start, instance, frame.counts.w)]];
-    let world = row.model * vec4<f32>(in.position, 1.0);
+    let world = gx_row_world(row, in.position, frame.texture_lod.y);
     var out: VsOut;
     out.clip = gx_clip_position(frame.view_proj, world, frame.jitter.xy);
     out.world_pos = world.xyz;
@@ -171,6 +171,28 @@ fn vs_main(in: VsIn, @builtin(instance_index) instance: u32) -> VsOut {
 // Whether this pipeline draws the HDR scene (pbr.wgsl's direct specular asks): its constant.
 fn gx_scene_shades_hdr() -> bool {
     return GX_SCENE_HDR;
+}
+
+// A first-person view model's fill (Bodycam light fix): a soft light from above the camera and
+// to its right, behind the lens, at a level relative to the frame's exposure (scene units over the
+// pre-exposure, `cascade_splits.z`), so the arms and the rifle at the lens keep their form against
+// a bright sky with the sun in front, as a game's camera light would. Through the surface's own
+// BRDF, so steel catches a highlight and a dark glove stays darker than a pale one: a white
+// surface facing it reads at `GX_VIEW_MODEL_FILL` of middle grey's scene value twice over (the
+// irradiance is pi times it, as the BRDF divides the diffuse term by pi).
+const GX_VIEW_MODEL_FILL: f32 = 0.6;
+const GX_VIEW_MODEL_FILL_DIRECTION: vec3<f32> = vec3<f32>(0.35, 0.55, 0.76);
+
+fn gx_view_model_fill(s: Surface) -> vec3<f32> {
+    let forward = normalize(frame.camera_forward.xyz);
+    // Any up that is not the forward axis: looking straight up or down keeps a basis.
+    let up_hint = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(forward.y) > 0.99);
+    let right = normalize(cross(forward, up_hint));
+    let up = cross(right, forward);
+    let d = GX_VIEW_MODEL_FILL_DIRECTION;
+    let l = normalize(right * d.x + up * d.y - forward * d.z);
+    let level = GX_VIEW_MODEL_FILL * PI / max(frame.cascade_splits.z, 1e-6);
+    return shade(s.n, s.v, l, vec3<f32>(level), s.albedo, s.metallic, s.roughness);
 }
 
 // Linear rgb and alpha of a fragment: ambient, then the sun (and the sun's light through a
@@ -192,11 +214,31 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
     gx_sun_shadow_end_fade(frame.shadow_soft.z);
     let facing = select(-1.0, 1.0, front);
     let tangent = vec4<f32>(in.tangent.xyz * facing, in.tangent.w * facing);
-    var s = gx_surface(in.world_pos, in.normal * facing, in.uv, tangent, in.material);
-    s.v = normalize(frame.camera_pos.xyz - in.world_pos);
     let ext = material_ext[in.material];
+    gx_view_model = (u32(max(ext.params.z, 0.0)) & GX_MATERIAL_VIEW_MODEL) != 0u;
+    let mapped = gx_surface_uv(ext.uv, ext.tiling, in.uv, tangent, in.world_pos, in.normal * facing);
+    // The layered parts' gradients and frame (AAA materials, shaders/lighting/layers.wgsl), taken
+    // here in uniform control flow; parallax moves the base layer's UVs before any fetch.
+    let lod_scale = exp2(gx_texture_lod_bias());
+    let uv_dx = dpdx(mapped.uv) * lod_scale;
+    let uv_dy = dpdy(mapped.uv) * lod_scale;
+    let layer_frame = gx_layer_frame(in.normal * facing, mapped.tangent);
+    let to_camera = frame.camera_pos.xyz - in.world_pos;
+    let base_uv = gx_parallax_uv(ext, mapped.uv, uv_dx, uv_dy, layer_frame, normalize(to_camera));
+    var s = gx_surface(in.world_pos, in.normal * facing, base_uv, mapped.tangent, in.material);
+    s.v = normalize(frame.camera_pos.xyz - in.world_pos);
     // The occlusion map eased from 1 by its strength (P2-0.12 LG-09).
     gx_material_ao = mix(1.0, gx_material_ao, ext.emissive.w);
+    // The detail maps, the second layer and the cover, then the extra lobes' state for `shade`
+    // (AAA materials); a material without layers keeps its surface as built.
+    s = gx_layered_surface(s, ext, base_uv, uv_dx, uv_dy, layer_frame, length(to_camera), vec4<f32>(0.0));
+    gx_lobes_begin(ext, layer_frame);
+    // A transmissive material (`KHR_materials_transmission`, thin-walled) shows the background
+    // through by the share it lets pass: its diffuse dims by its transmission.
+    let transmitted = gx_transmitted(ext, dot(s.n, s.v));
+    if transmitted > 0.0 {
+        s.albedo *= 1.0 - ext.transmission.w * (1.0 - s.metallic);
+    }
     // An alpha-tested surface that survived its test is opaque (P2-0.12): its alpha is the
     // cutout's, not a blend's, so it takes the opaque surfaces' AO and contact shadows.
     if ext.params.w > 0.0 {
@@ -223,8 +265,17 @@ fn surface(in: VsOut, front: bool) -> vec4<f32> {
         color += gx_subsurface_sun(s, ext, sun);
     }
     color = gx_local_lights(color, s);
-    color += gx_emission(ext, in.uv);
+    if gx_view_model {
+        color += gx_view_model_fill(s);
+    }
+    color += gx_emission(ext, mapped.uv);
     color = gx_forward_fog(color, s.world_pos);
+    if transmitted > 0.0 {
+        // Blended over the frame by `alpha (1 - transmitted)`: the lit colour lands whole and the
+        // background shows through by the transmitted share.
+        let kept = max(1.0 - transmitted, 0.02);
+        return vec4<f32>(color / kept, s.alpha * kept);
+    }
     return vec4<f32>(color, s.alpha);
 }
 

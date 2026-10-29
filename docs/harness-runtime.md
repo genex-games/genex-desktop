@@ -52,7 +52,73 @@ judgement (racing and flight then hold W/ArrowUp through the rest of the drive, 
 the game's racing line when it has one and released before the cameras; a declared script holds
 nothing; a front-end kept for its owner, `begin:false`, is pressed by nothing, not even a declared
 script), and `gameLine(run.game)` is the first line of
-every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` may declare `start.keys`. A play script may
+every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` declares `start.keys`; the director's `plan`
+refuses a kind without `start` (keys, or `none` for a game that boots into play). Both evidence
+passes press the keys before the opening sample (the web pass once `begin()` refuses), until `state().flow` says play began; a game that
+reports no `flow` (a Rust or C++ game unless it adds a `flow` probe) gets one settle step and a
+warning asking for it. A judge's `[dead-input]` defect is read off state, never asked of a frame
+(`facet/defects.ts`): it goes to the defect ledger, and the kind's look and move probes measure it.
+
+The look a run is held to is one table for every stack (`loop/look-bar.ts`). The look blockers —
+`[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`, `[placeholder-particles]`,
+`[sky-contradicts]`, `[visible-tiling]`, `[not-shipped]`, `[flat-material]`, `[stick-tree]` and
+`[slab-snow]`, plus the harness's own `[art-source-mismatch]`, `[exposure-pump]` and
+`[uncomfortable-camera]` (`judge/artefact-classes.md`) — hold the work open in code: a taste
+verdict naming one, in `defects` or in `polish` (moved into `defects`), is never `satisfied`, a
+finisher's `finishDone` waits while one remains, and the ship review makes it a `blocker` whatever
+severity it gave, so `ship` is false. A run whose ask sets a visual bar (`asksForLook`: reference
+stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
+
+- Keeping. A round that adds a look blocker is not kept, whatever checks flipped
+  (`facet/rules.ts acceptRound`, verdict source `look-blocked`). Added means: the taste judge lists it
+  in `added` under its ART BAR line ("worse against the art bar" is a regression, even where the
+  other build lacks the thing), the engine's look facts show it (`loop/look-facts.ts`, reading
+  `state().__render.look`), or the harness measures it (`loop/provenance.ts`, `loop/temporal-checks.ts`)
+  where the accepted build did not have it or had it less badly. The accepted build is measured on its
+  own evidence (`facet/incumbent-findings.ts`); one that reported no look facts, or that nothing was
+  measured on, makes no finding the round's.
+- Eyes. Facet rounds are captured at 1600×900, like the art director's look. A round with no frame a
+  judge can be shown is captured once more, then left Unmeasured (`unseen`), never judged blind.
+  `references/*` load onto every run that brought no stills (`loop/reference-stills.ts`). A demo whose
+  end frame is another frame of the same pass is flagged as not having moved the game. When
+  `judge/pin.json` names a `second` engine, a second taste judge looks too and its blockers count.
+- The close. The head a run lands always gets the art director's look against the references (in
+  the close's own judge when that judge asks a question); a report with none says it has no art
+  verdict (`shipReview.judged: false`).
+- Measured. Every playable camera (the default view, the harness's eyes and each part's `hero`) sits in
+  its luminance band, the rule the eval rubric and the docs' calibration page share: mean luma 90-130 for
+  an interior, 90-175 outdoors or where the plan does not say, darkest bin ≤ 15%; 25-95 with up to 40%
+  black for a night or horror look (`"night": true` on the sky row). A plan part's `setting`
+  (`interior`, `exterior`) places its hero camera. Below the band is `[crushed-shadow]`, above it `[blown]`; `demo:doorway`'s exposure trace moves at most 1 EV per half
+  second with no overshoot; `demo:sprint-run`'s pose (the trace the demo returns, or the rig's
+  `volatile.cameraMotion`) stays inside the engine rig's comfort caps. The doorway and sprint checks run on
+  every run whose game has those demos.
+- The art pass. The director's `plan` refuses such a run without `art=`: every area's assets by tier
+  (hero, mid, scatter, sky), each with its `kind`, its draw `tags` and its source — a Genex generation,
+  a CC0 model, a scan, a `blender-kit` (the modular shell only: never a hero, a prop, a character or
+  anything organic, and it names the scans it wears) or code with a why; a bpy script of untouched
+  primitives counts as code. At round end the provenance audit follows each planned tag to its model,
+  its `genex-assets.lock` row and its normal maps. A re-plan that adds a part gives `art=` again. It is
+  kept on `run.art`, counts the Genex generations it reserves, and every builder's brief carries it
+  with the greybox rule and the boot rule (`loop/look-bar-prompts.ts`, `loop/destination-budgets.ts`).
+- Assets first (`director/sourcing.ts`). `worker_start` waits, up to 30 minutes from the art pass, until
+  `docs/ASSETS.md` in the integration names a file for every planned prop, organic and character tag
+  (`- <tag>: <file>`), except for the sourcing worker (the part `id=sourcing`). Once one part builds, another
+  waits, up to 45 minutes, for an art director's review with no blocker. A plan part's `hero` camera is
+  in every art director's look.
+- Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
+  textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
+  answered with a warning naming them (`director/ownership.ts`). Budgets are said per destination: a native game's slow web preview is the preview's boot,
+  and no judge or director meets a budget by dropping maps. The harness's own look on such a run waits
+  45 s for the page to say it is ready, whatever `studio.json` declares (`loop/ready-wait.ts`).
+
+Builder sessions are rotated every three rounds (`facet/session-rotation.ts`); the round after is briefed
+whole. `worker_start` weighs the builder's plan limits, the same reports the app's usage panel shows
+(host method `engine.usage`): from 85% of a window used, its answer says the worker may stop on it
+(`director/usage-forecast.ts`). A look blocker the judges keep naming becomes the game's lesson with the rule that fixes it
+(`ledger.ts`, `look-bar-rules.ts`).
+
+A play script may
 `touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for
 the finger): it reaches a Rust · wgpu game's contract v2 run or web page through `preview.input`;
 any other preview answers `touch-not-taken`, the script skips that touch, and the look warns that
@@ -83,7 +149,8 @@ read these signals.
 Where learning goes. Four places, and they are not interchangeable: a check earned into
 `library/checks.json` (five technical checks ship; a planner's check earns its place by being
 used), a craft recipe in `library/recipes` (opinions about how a thing should look — retrieved
-when a check fails or a judge names the defect, never imposed), a skill file (how an agent works),
+when a check fails or a judge names the defect, and offered up front by kind and brief as below,
+never imposed; each is written for one stack, so a Rust game reads `rust.*` ports), a skill file (how an agent works),
 and a prompt (what a role is). `library/games/<game>.jsonl` and `.md` hold what a run learned
 about one game and belong to the harness workspace, never the user's repository.
 
@@ -486,7 +553,9 @@ as `final-commit-failed`. A landing that git refuses over uncommitted changes in
 or one into a folder with something staged or a merge of its own under way (which the failed
 merge's abort would undo, so it is not tried), is refused as `uncommitted-changes` and names them
 without blaming anyone; a conflict with commits there, or a hook or lock that refuses the merge,
-stays `could-not-land` with git's words.
+stays `could-not-land` with git's words. A conflict in `studio.json` alone (the studio's own kind
+declaration beside the lead's `game` block) is merged by its keys (`loop/studio-json-merge.ts`):
+equal values are one, a key one side added is kept, and only a key both set apart still refuses.
 
 Genex's moments. Every restore of a game folder (`snapshot.restore` naming the game, and the
 person's file Rewind) runs the enabled plugins' `restore.before` and `restore.after` steps around
@@ -1102,7 +1171,15 @@ whole to `.studio/RECIPES.md`; the brief keeps their titles and intents, and onl
 keeps its sketch inline. Retrieval keeps to the run's game kind (a recipe's optional `kinds`; none
 means every kind), needs `CRAFT_ADOPT_SCORE` unless the recipe is the check's own, and takes exact
 matches only for a first round's unscored checks, and THE FIX's recipe keeps to the game kind
-too. A builder's `capture` (Claude Code, Codex and local sessions alike) shoots its part's own
+too. Beside that retrieval, the game's craft is chosen before anything fails
+(`loop/game-craft.ts`): every recipe for the declared kind on the game's stack, plus any whose tags
+two words of the brief name, at most ten. It is written whole to `.studio/CRAFT.md` and listed in
+the director's opening brief, in the `plan` answer that declares a kind (only recipes not yet
+listed), in each single-session builder's brief and in every round of a loop builder's BRIEF.md
+(director/craft.ts, facet/phases/brief.ts). A timed director run of at most four working hours also
+hears the layer order for a bar its clock may not reach — greybox, geometry, light and materials,
+then what sits closest to the camera — and is told to name the layer the time reaches in the plan's
+risks (director/layer-prompts.ts); the person's hours are never lengthened. A builder's `capture` (Claude Code, Codex and local sessions alike) shoots its part's own
 cameras unless it names others, and `page=bench/<part>.html` loads a bench page (an existing `.html`
 file inside the workspace, by real path; anything else, or any page of a game served from its
 build output, is refused and nothing loads) through the served root with no setup. A rebaseline
@@ -1128,8 +1205,10 @@ the three Electron runners that share `dist`; standalone `test:e2e`, `test:build
 `test:shapes:e2e` still build their own current output. Readiness keeps its separate immutable
 builds because it tests isolation. Add packaged checks when that surface changes. The
 source/document ownership areas in knowledge-map.json route changes to maintained topic docs.
-`verify:context` checks links, documented commands, source ownership and Git artifact policy.
-It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
+`verify:context` checks links, documented commands, source ownership and Git artifact policy,
+and `scripts/check-template-docs.ts` checks the Rust template's pages: every path they name opens
+in the game folder, compiled snippets equal the example regions they mirror, and other Rust
+snippets call only names the facade crates define. It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
 and summarize that review in the PR; a structural pass does not certify semantic accuracy.
 
 The existing coordinator records an aborted delegated turn as error; the fixture

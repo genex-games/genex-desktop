@@ -303,7 +303,9 @@ fn bake_cube(gpu: &Gpu, sky: &SkyState, side: u32) -> Vec<[f32; 4]> {
 
 /// The clouds draw into the background (the sky above the horizon breaks into bright and darker
 /// patches where the clear sky is a smooth gradient) and into the environment cube (its +Y face
-/// likewise), and a quality without the panorama draws the sky as before, byte for byte.
+/// likewise), and a quality without the panorama draws the sky as before, byte for byte, while the
+/// ground under the declared layer takes its veiled sun (the Bodycam light fix: the weather is the
+/// game's, on every preset).
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
 fn metal_the_clouds_draw_into_the_background_and_the_environment_cube() {
@@ -322,9 +324,11 @@ fn metal_the_clouds_draw_into_the_background_and_the_environment_cube() {
     let switched_off = draw(cloudy(), None);
     write_evidence("clear", &clear);
     write_evidence("cloudy", &cloudy_frame);
-    assert!(clear.bgra() == switched_off.bgra(), "a quality without clouds draws the sky as before");
     // The sky's upper two thirds (the horizon sits lower in a frame pitched 25 degrees up).
     let upper = |capture: &Capture| lumas(capture)[..(size.0 * size.1 * 2 / 3) as usize].to_vec();
+    assert!(upper(&clear) == upper(&switched_off), "a quality without clouds draws the sky as before");
+    let ground = |capture: &Capture| lumas(capture)[(size.0 * size.1 * 15 / 16) as usize..].iter().sum::<f32>();
+    assert!(ground(&switched_off) < ground(&clear), "the ground under the layer takes a veiled sun without the panorama too");
     let width = size.0 as usize;
     let (clear_detail, cloudy_detail) = (relative_detail(&upper(&clear), width), relative_detail(&upper(&cloudy_frame), width));
     eprintln!("background luma detail: clear {clear_detail:.4}, cloudy {cloudy_detail:.4}");

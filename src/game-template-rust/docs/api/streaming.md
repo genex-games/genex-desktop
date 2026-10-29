@@ -7,6 +7,37 @@ things and checksum on every destination and with any number of worker threads. 
 names its own use line beside the prelude: `use genex::{CellBuild, Streaming};` (`StreamCommit`,
 `CellColliders` and `StreamColliders` come from `genex` too).
 
+Every type and call in one line:
+
+```rust
+use genex::{CellBuild, CellId, EnteredCell, StreamCommit, StreamError, StreamErrorCode, StreamTicket, Streaming, TerrainTiles};
+use genex::{CellColliders, StreamColliders};                   // physics builds only
+use genex::pack::{CellPacks, PackReadError};
+game.streaming(Streaming::grid(64.0).sim_radius(1).hysteresis(1).prefetch(1).anchors(1).view_radius(256.0)); // once; .cell_size() reads it back
+game.cell_content(|cell, inputs| CellBuild::<Rock>::default().thing(rock).model(&model, at).group(group)); // pure: Fn(CellId, &CellInputs) -> CellBuild<T>
+inputs.bounds(); inputs.rng(); inputs.model(path); inputs.scatter(&terrain, &rule); // -> (Vec2, Vec2), Pcg32, Model, Vec<Transform>; also inputs.cell(), seed
+sim.stream.set_anchor("player", at); sim.stream.clear_anchor("player"); // -> Result<(), StreamError>
+sim.stream.entered(); sim.stream.left();                       // -> &[EnteredCell], &[CellId]: this tick only
+cell.cell(); cell.things::<Rock>(); cell.refused();             // -> CellId, iter of &Rock, Option<StreamErrorCode>
+sim.stream.active(); sim.stream.is_active(cell); sim.stream.ground(x, z); // -> iter of CellId, bool, Option<f32>
+sim.stream.keep(cell); sim.stream.release(cell); sim.stream.kept(); // keep -> Result<(), StreamError>
+sim.stream.snapshot(); sim.stream.restore(&save);              // -> Value, Result<(), StreamError>
+sim.stream.require("interior"); sim.stream.ready(ticket);      // -> Result<StreamTicket, StreamError>, Option<GroupHandles>
+handles.bytes(path); handles.model(path); handles.paths();     // -> Option<&AssetBytes>, Option<&Model>, iter of &str
+sim.stream.group_refusal(ticket); sim.stream.release_group("interior"); sim.stream.required_groups();
+game.stream_colliders(); CellBuild::<()>::default().part(CellColliders::new().with(collider)); // collider: a ColliderBuilder
+sim.facets.get::<StreamColliders>().handles(cell);             // -> &[ColliderHandle]
+game.stream_commit(hook);                                      // hook: impl StreamCommit<W> { fn leave(..), fn enter(..) }
+Streaming::grid(64.0).terrain(TerrainTiles::procedural(129, |x, z| height)?.with_height_range(min, max)?);
+TerrainTiles::authored(&index, |cell| size, |cell| bytes);     // -> Result<TerrainTiles, TerrainError>
+tiles.samples(); tiles.is_procedural(); tiles.authored_cells(); tiles.tile(cell, size); tiles.tile_heights(cell, size);
+game.cell_content(tiles.colliders_content(64.0)); tiles.with_colliders(false); tiles.collider(cell, size); tiles.cell_colliders(cell, size);
+CellPacks::from_table(ASSETS, "valley"); CellPacks::read(&source, folder); // -> Result<CellPacks, PackReadError>
+packs.world(); packs.cell(cell); packs.cells(); packs.digest();
+digest::fnv1a64(bytes); digest::fnv1a64_from(bytes, hash); digest::hex64(hash); // use genex::digest;
+frame.cells_debug();
+```
+
 A game whose genex.toml sets `[streaming] enabled = false` is built without streaming:
 `game.streaming` fails install `streaming-disabled`. Delete that line (or set it to `true`) to
 use this page.

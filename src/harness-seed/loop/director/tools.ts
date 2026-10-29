@@ -1,4 +1,8 @@
 import { keepCheckpoint } from "./progress.ts";
+import { closeUps } from "../close-ups.ts";
+import { asksForLook } from "../look-bar.ts";
+import { heroCameras } from "./sourcing.ts";
+import { qualityRefusal } from "../quality-lint.ts";
 import { retainSpan, timedOperation } from "./timing.ts";
 import { capRefusesWorker, runNow } from "./cap-lines.ts";
 import { GoalBlocker, GoalStatus, goalDecision, recordGoalEvidence, replanGoal } from "./goals.ts";
@@ -599,6 +603,13 @@ async function shipStep(loopRun: LoopRun, pass: JudgePass): Promise<void> {
   }
   // Only a leased window is sized (evidence.ts `sizeWindow`): a look with none was taken at its own size.
   const view = handle ? SHIP_VIEW : null;
+  // On a look bar the art director also sees close-ups of where the nearest props stand (close-ups.ts).
+  if (asksForLook(run) && !evidence.closeUps) {
+    const heroes = heroCameras(state.plan);
+    evidence.closeUps = await closeUps(ctx, { run, evidence, heroes, label: `director/judge_${pass.n}`, handle }).catch(
+      () => [],
+    );
+  }
   const asking = () => shipReview(ctx, { run: judgeRun(loopRun, pass), evidence, parts: shipParts(state.plan), view });
   const patience = { deadline: judgeDeadline(loopRun, pass), delays: outageDelays(run), label: "the art director" };
   const review = await withProviderPatience(ctx, asking, patience).catch(unreadShip);
@@ -837,8 +848,15 @@ function finallyJudged(judged: LastJudge | null, head: string | null): boolean {
  */
 export async function judgeTheLanding(loopRun: LoopRun, head: string | null, judgeBy?: number): Promise<void> {
   const { note } = loopRun;
-  const ask = closeJudgeAsk(loopRun, head);
-  if (!ask) return;
+  const asked = closeJudgeAsk(loopRun, head);
+  if (!asked) return;
+  // The same look carries the art director's review of the head it lands (art-direction.ts `closeShipReview`): one capture, one record.
+  // A blind compare against the start stays a compare: its ship review runs on its own after it.
+  const owesShip =
+    asked.against === Against.None &&
+    typeof loopRun.closeOwesShipReview === "function" &&
+    loopRun.closeOwesShipReview(head);
+  const ask = owesShip ? { ...asked, ship: "yes" } : asked;
   const options = { borrow: true, final: true, until: landingJudgeUntil(Date.now(), judgeBy) };
   await judge(loopRun, ask, options).catch((err: unknown) =>
     note(
@@ -1255,6 +1273,8 @@ function addRung(worker: Worker, moveText: string): { rung: AnyRecord } | { refu
     return {
       refusal: `worker ${worker.id} has no ladder to add a move to — it is a single session; send it text instead`,
     };
+  const worse = qualityRefusal("move", [moveText]);
+  if (worse) return { refusal: worse };
   const climbed = worker.spec.milestones ?? [];
   const milestone = normalizeMilestone({ what: moveText }, climbed.length);
   if (!milestone) return { refusal: "move: one sentence saying what the game IS after this iteration" };

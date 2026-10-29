@@ -39,6 +39,21 @@ const FRAMES = [
   { data: Buffer.from("frame-two").toString("base64"), mimeType: "image/png", label: "dusk 2" },
 ];
 
+/**
+ * The art pass a scripted lead gives (look-bar.ts `readArtPass`): the runs here carry reference
+ * pictures, which set a visual bar, and a plan on one lists every tier's assets. Scans and
+ * surfaces only, so no sourcing hold waits for a model.
+ */
+const art = (ids: string[]) =>
+  JSON.stringify(
+    ids.flatMap((id) => [
+      { area: id, tier: "hero", kind: "surface", asset: `${id} paving`, source: "scan", tags: [id] },
+      { area: id, tier: "mid", kind: "structure", asset: `${id} walls`, source: "scan", tags: [`${id}-walls`] },
+      { area: id, tier: "scatter", kind: "surface", asset: `${id} leaves`, source: "scan", tags: [`${id}-leaves`] },
+      { area: id, tier: "sky", kind: "atmosphere", asset: "dusk sky", source: "scan", tags: ["sky"] },
+    ]),
+  );
+
 /** The plan every scripted lead writes before its first worker, as a real one must. */
 const plan = (ids: string[]) => ({
   summary: "This run: a dusk sky over the plaza.",
@@ -47,6 +62,7 @@ const plan = (ids: string[]) => ({
   ),
   base: "the integration branch as it stands",
   risks: "one window at a time on this machine",
+  art: art(ids),
 });
 const single = (id: string, owns: string) => ({
   id,

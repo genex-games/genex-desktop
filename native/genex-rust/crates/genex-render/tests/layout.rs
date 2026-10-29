@@ -94,7 +94,8 @@ const GOLDEN: [(&str, usize); 35] = [
     ("PassView", 16),
     // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`);
     // lane FQ flipped 912 -> 928: each sun cascade's caster error (`GpuCullViews::shadow_lod`).
-    ("CullViews", 928),
+    // AAA review WP-15 flipped 928 -> 2080: twelve more cull views (two point lights' faces).
+    ("CullViews", 2080),
     ("DrawIndexedArgs", 20),
     ("MeshVertex", 48),
     ("SkinVertex", 32),
@@ -125,7 +126,11 @@ const GOLDEN: [(&str, usize); 35] = [
     ("LightExt", 32),
     // Renderer pass 2 B.1 flipped 32 -> 64: the subsurface scatter colour and thickness, and the
     // forward-scatter power, diffuse transmission and scattering depth (two rows).
-    ("GxMaterialExt", 64),
+    // Bodycam B2b flipped 64 -> 96: the UV mapping row (scale, offset) and the tiling row (world
+    // projection and stochastic flags, rotation, macro variation). AAA materials flipped 96 -> 272:
+    // eleven layer rows (cover, its shape and look, detail and its look, the second layer, its
+    // shape and tint, parallax, the lobes, the sheen).
+    ("GxMaterialExt", 272),
     // Renderer pass 2 A.0 (LG-16) flipped 32 -> 64: the clusterable kinds' index ranges and the
     // decals' and probes' own depth mappings (lights, decals and probes share one index space).
     ("LightBinParams", 64),
@@ -133,7 +138,7 @@ const GOLDEN: [(&str, usize); 35] = [
     // balance a 3x3 matrix (three 16-byte columns) where the gains row was (96 before). P2-0.10
     // flipped 128 -> 144: AgX punchy's curve row (Godot's AgX, contrast, toe, slope and w). A.2
     // flipped 144 -> 256: grading's seven rows (global knobs, ranges, five per-section knobs).
-    ("GxTonemapParams", 256),
+    ("GxTonemapParams", 288),
 ];
 
 fn parse(name: &str, source: &str) -> naga::Module {
@@ -1267,7 +1272,8 @@ fn the_r2_nodes_have_landed_and_asking_for_occlusion_schedules_its_node() {
 fn the_frame_grows_past_the_frozen_v1_prefix_with_every_cascade() {
     use genex_render::layout::{GpuFrame, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS, SHADOW_CASCADES};
     use std::mem::offset_of;
-    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 1 + 4 + 4));
+    // AAA review WP-15 flipped MAX_VIEWS 1 + 4 + 4 -> 1 + 4 + 16: two shadowed point lights' faces.
+    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 1 + 4 + 16));
     assert_eq!(size_of::<GxFrameV1>() as u64, GX_FRAME_V1_BYTES, "the v1 frame is frozen");
     assert!(size_of::<GpuFrame>() as u64 > GX_FRAME_V1_BYTES, "the renderer's frame grows");
     assert_eq!(SHADOW_CASCADES, 2, "the v1 prefix carries two cascades");

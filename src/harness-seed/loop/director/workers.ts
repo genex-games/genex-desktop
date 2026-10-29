@@ -1,3 +1,7 @@
+import { qualityRefusal } from "../quality-lint.ts";
+import { usageForecast } from "./usage-forecast.ts";
+import { sharedOwnershipNote } from "./ownership.ts";
+import { cameraSettings, SOURCING_PART, sourcingRefusal, spreadRefusal } from "./sourcing.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
 import { goalCommission } from "./commission.ts";
@@ -27,6 +31,9 @@ import { isRunning, setWorkerState, WorkerMode, WorkerState } from "../outcomes.
 import { runRef } from "../repo.ts";
 import { RunEvent } from "../run-events.ts";
 import { normalizeScoutSetup } from "../scout.ts";
+import { ArtRefusal, asksForLook, readArtPass, type ArtPass } from "../look-bar.ts";
+import { unplannedParts } from "../art-kinds.ts";
+import { artRefusalWords } from "../look-bar-prompts.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { FINISH_SINGLE_REFUSAL, FINISH_START_MOVES } from "../facet/stage-prompts.ts";
 import { isOpenRung } from "../facet/growth.ts";
@@ -52,6 +59,7 @@ import {
   workerWindows,
 } from "./budgets.ts";
 import { singleWorkerBrief } from "./briefs.ts";
+import { builderCraft, planCraft } from "./craft.ts";
 import { iterationDigest, loopNote, workerDigest } from "./digests.ts";
 import { conflictMergeOf, markersLeft, mergeFirst } from "./conflict-worker.ts";
 import {
@@ -582,6 +590,50 @@ function keepVision(loopRun: LoopRun, plan: AnyRecord, previous: AnyRecord | nul
   loopRun.journal.run = { ...loopRun.journal.run, vision };
 }
 
+/**
+ * The art pass the plan carries (look-bar.ts): the one it gives, else the one the plan before it
+ * gave — a re-plan never has to repeat it. A run whose ask sets a visual bar plans every area's
+ * assets and their sources before a builder starts; the words of a refusal otherwise.
+ */
+function artPassOf(
+  loopRun: LoopRun,
+  args: AnyRecord,
+  previous: AnyRecord | null,
+  workers: readonly AnyRecord[],
+): { art: ArtPass | null } | string {
+  const omitted = args.art === undefined || args.art === null || args.art === "";
+  const lookBar = asksForLook(loopRun.run);
+  if (omitted && previous?.art) {
+    const before = ((previous.workers ?? []) as AnyRecord[]).map((worker) => String(worker.id));
+    const added = unplannedParts(
+      before,
+      workers.map((worker) => String(worker.id)),
+    );
+    if (lookBar && added.length) return artRefusalWords({ code: ArtRefusal.AreaUnplanned, names: added });
+    return { art: previous.art as ArtPass };
+  }
+  const read = readArtPass(args.art, lookBar);
+  return "problem" in read ? artRefusalWords(read.problem) : read;
+}
+
+/** Where each part's hero camera stands, on the run every worker copies and the journal a Resume reads (sourcing.ts). */
+function keepCameraSettings(loopRun: LoopRun, plan: AnyRecord): void {
+  const settings = cameraSettings(plan);
+  if (!Object.keys(settings).length) return;
+  loopRun.run.cameraSettings = settings;
+  loopRun.journal.run = { ...loopRun.journal.run, cameraSettings: settings };
+}
+
+/** The art pass set on the plan and the run: every builder's brief reads `run.art`, and a Resume brings it back. */
+function keepArtPass(loopRun: LoopRun, plan: AnyRecord, art: ArtPass | null): void {
+  if (!art) return;
+  // The sourcing stage's clock starts when the run first plans its assets (sourcing.ts).
+  (loopRun.state as AnyRecord).artPlannedAt ??= Date.now();
+  plan.art = art;
+  loopRun.run.art = art;
+  loopRun.journal.run = { ...loopRun.journal.run, art };
+}
+
 export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   const { journal, saveJournal, state } = loopRun;
   const compiled = compilePlan(args);
@@ -589,12 +641,16 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   const plan = compiled.plan;
   const first = !state.plan;
   const previous = state.plan;
+  const artPass = artPassOf(loopRun, args, previous, plan.workers);
+  if (typeof artPass === "string") return artPass;
   // Outcomes this plan sets (a reopened build's first plan for the ask) are shown like a first plan's.
   const acceptanceKept = Boolean(state.goals);
   const scopeError = await planAcceptance(loopRun, args, plan.workers);
   if (scopeError) return scopeError;
   const additions = await settlePlanScope(loopRun, plan, previous, args);
   keepVision(loopRun, plan, previous);
+  keepArtPass(loopRun, plan, artPass.art);
+  keepCameraSettings(loopRun, plan);
   state.plan = plan;
   if (plan.game) await declareGameKind(loopRun, plan.game);
   journal.director.plan = plan;
@@ -609,7 +665,11 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   // with its vision beside it as docs/VISION.md.
   const contracted = await contractOnPlan(loopRun);
   const answer = await planAnswer(loopRun, plan, { first, acceptanceKept, args });
-  return contracted ? `${answer} ${contracted}` : answer;
+  // The kind the plan declared brings its own recipes (director/craft.ts): only those not handed yet.
+  const craft = await planCraft(loopRun, plan).catch(() => "");
+  const owners = sharedOwnershipNote(plan.workers);
+  const said = [answer, contracted, owners].filter(Boolean).join(" ");
+  return craft ? `${said}\n\n${craft}` : said;
 }
 
 /** What `plan` answers once the plan is kept: the card on the user's screen, and what to do next. */
@@ -887,6 +947,8 @@ function ladderArg(args: AnyRecord): { value: AnyRecord[]; error?: undefined } |
     return {
       error: `milestones: every rung is {"what":"one structural step — what the game IS after it","check":{…}} and "check" is optional; the last may be {"open":true}`,
     };
+  const worse = qualityRefusal("milestones", ladder);
+  if (worse) return { error: worse };
   return { value: ladder };
 }
 
@@ -1489,12 +1551,29 @@ function workerBudget(
   return wholeRoundsBudget(asked, loopRun.medianRoundMs(), remaining);
 }
 
+/** A started worker as the assets-first holds read it: the sourcing worker, or the part whose start begins look-dev. */
+function markAssetsStage(loopRun: LoopRun, worker: Worker, sourcing: boolean): void {
+  if (sourcing) (worker as AnyRecord).sourcing = true;
+  else (loopRun.state as AnyRecord).lookDevSince ??= Date.now();
+}
+
+/** Why `worker_start` waits for assets first (sourcing.ts), or null. */
+async function assetsFirstRefusal(loopRun: LoopRun, id: string, sourcing: boolean) {
+  const now = Date.now();
+  const held = await sourcingRefusal(loopRun, id, now);
+  return held ?? (sourcing ? null : spreadRefusal(loopRun, id, now));
+}
+
 export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const { ctx, integrationWorktree, medianRoundMs, note, run, runningWorkers, startRefusal, state } = loopRun;
   const id = slug(args.id) || defaultWorkerId(loopRun);
   const goal = String(args.goal ?? id);
   const precondition = await startPreconditions(loopRun, id, args);
   if (precondition) return precondition;
+  // Assets first on a look bar (sourcing.ts): the sourcing stage, then one area's look-dev hero shot.
+  const sourcing = id === SOURCING_PART;
+  const assetsFirst = await assetsFirstRefusal(loopRun, id, sourcing);
+  if (assetsFirst) return assetsFirst;
   const missingPrerequisite = await requireMultiplayer(loopRun, goal);
   if (missingPrerequisite) return missingPrerequisite;
   const allowed = await startRefusal(id, args);
@@ -1503,7 +1582,9 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const mode = workerModeOf(args);
   const { budgetMs, rounds } = workerBudget(loopRun, args, mode, remaining);
   // What a round on this game has actually cost, against what this worker is being given.
-  const roundWarning = shortBudgetWarning(budgetMs, medianRoundMs());
+  // And what the builder's plan limits leave for it (usage-forecast.ts).
+  const usage = await usageForecast(ctx, roleEngine(run, RoleKey.Builder), rounds);
+  const roundWarning = [shortBudgetWarning(budgetMs, medianRoundMs()), usage].filter(Boolean).join("; ");
   const ownsMain = yes(args.owns_main, runningWorkers().length === 0);
   const parsed = parseWorkerArgs(loopRun, args);
   if (typeof parsed === "string") return parsed;
@@ -1539,6 +1620,7 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const worker = await openThread(loopRun, opened);
   if (typeof worker === "string") return startRefused(loopRun, starting, worker);
   worker.goal = goal;
+  markAssetsStage(loopRun, worker, sourcing);
   compileContract(loopRun, worker, parsed, args);
   // A part the art director found defects in while nobody ran it: they are this worker's questions now.
   loopRun.takeShelvedShipDefects?.(worker);
@@ -1972,6 +2054,8 @@ async function runSingleWorker(loopRun: LoopRun, worker: Worker): Promise<void> 
   const { gameFacts, noteWorkerLimit, ownShape, projectDir, run, shape } = loopRun;
   // A conflict worker's merge is opened first; one that went through, or failed, needs no session.
   if (await mergeFirst(loopRun, worker)) return;
+  // The craft for this part, written into its worktree before its session reads anything.
+  const craft = await builderCraft(loopRun, worker.worktree, [worker.title, worker.brief]).catch(() => "");
   // Genex's identity opens the brief: the game's folder and what the run found it holds.
   const brief = singleWorkerBrief({
     run,
@@ -1981,6 +2065,7 @@ async function runSingleWorker(loopRun: LoopRun, worker: Worker): Promise<void> 
     setup: worker.setup,
     facts: gameFacts ?? null,
     gameFolder: projectDir || null,
+    craft,
   });
   const delegation = await runSingleSession(loopRun, worker, brief);
   worker.summary = String(delegation.summary ?? "").slice(0, SUMMARY_CHARS);

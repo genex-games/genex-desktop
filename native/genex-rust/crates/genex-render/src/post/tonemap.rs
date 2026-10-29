@@ -37,6 +37,13 @@
 //! variants of every pipeline made so far are made there, never mid-pass), the uniform its rows
 //! and binding [`GRADING_LUT_BINDING`] its LUT (a neutral 1x1x1 texel without one).
 //!
+//! Local exposure (AAA push P3, [`crate::post::local_exposure`]) runs in the same pass too: once
+//! [`TonemapNode::set_local_exposure`] hands the node the frame's [`LocalExposure`], each pass first
+//! records the grid from the input the tonemap reads and binds it at
+//! [`crate::post::local_exposure::TONEMAP_GRID_BINDING`] and
+//! [`crate::post::local_exposure::TONEMAP_MEAN_BINDING`] (the neutral LUT texel and the neutral
+//! bloom texel without it, and the uniform's `local.z` 0: the shader skips it).
+//!
 //! Shaders: [`crate::shaders::TONEMAP`], [`crate::shaders::RESOLVE_HDR`].
 
 use crate::compile::Compiled;
@@ -48,6 +55,7 @@ use crate::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use crate::error::RenderError;
 use crate::gpu::Gpu;
 use crate::post::grading::{GRADING_LUT_BINDING, Grading, GradingLut, LUT_FORMAT, ShaderGrading, lut_side_max};
+use crate::post::local_exposure::{GridOutput, GridSource, LocalExposure, LocalExposureNode, TONEMAP_GRID_BINDING, TONEMAP_MEAN_BINDING};
 use crate::post::bloom::{BloomInput, BloomNode, BloomOutput, BloomSettings, BloomSource, TONEMAP_BLOOM_BINDING, TONEMAP_SAMPLER_BINDING};
 use crate::readback::map_read_blocking;
 use crate::settings::Tonemapper;
@@ -186,6 +194,11 @@ pub struct GpuTonemapParams {
     pub section_gain: [f32; 4],
     /// Each section's lift.
     pub section_lift: [f32; 4],
+    /// Local exposure ([`crate::post::local_exposure::tonemap_rows`]): x the highlights' contrast,
+    /// y the shadows', z 1 when on (0: skipped), w the plain mean's share of the base.
+    pub local: [f32; 4],
+    /// xy: the scene's uv to the grid's; zw: one grid cell in grid uv.
+    pub local_grid: [f32; 4],
 }
 
 /// The scene value where the allenwp curve's toe and shoulder meet (Godot's `awp_crossover_point`).
@@ -492,6 +505,10 @@ impl NodeLut {
 
 /// The tonemap node: one module, a pipeline per (curve, source, target format) made on first use,
 /// the uniform and the bind group of the current input.
+/// What a tonemap bind group was made for: the input's generation, whether it is multisampled,
+/// the bloom chain's, the LUT's and local exposure's grid's generations.
+type GroupKey = (u64, bool, u64, u64, u64);
+
 pub(crate) struct TonemapNode {
     module: ShaderModule,
     scene_layout: BindGroupLayout,
@@ -501,7 +518,7 @@ pub(crate) struct TonemapNode {
     sampler: Sampler,
     params: Buffer,
     pipelines: Vec<(PipelineKey, Compiled<RenderPipeline>)>,
-    group: Option<((u64, bool, u64, u64), BindGroup)>,
+    group: Option<(GroupKey, BindGroup)>,
     /// The 1x1 black texture bound for bloom until the chain runs (WebGPU zero-initializes it).
     neutral_bloom: TextureView,
     /// The bloom the next passes draw (None: the neutral input).
@@ -516,6 +533,10 @@ pub(crate) struct TonemapNode {
     neutral_lut: TextureView,
     /// Bumped whenever the bound LUT changes (the bind group is rebuilt).
     lut_generation: u64,
+    /// The local exposure the next passes draw (None: off, the neutral texels).
+    local: Option<LocalExposure>,
+    /// Local exposure's grid pass, made when a frame first asks for it.
+    local_node: Option<LocalExposureNode>,
 }
 
 /// A filterable 2D float texture binding of the fragment stage (the scene, the bloom chain).
@@ -551,6 +572,16 @@ fn neutral_lut(device: &Device) -> TextureView {
         view_formats: &[],
     });
     texture.create_view(&Default::default())
+}
+
+/// Local exposure's grid binding: a filterable 3D float texture.
+fn grid_entry() -> wgpu::BindGroupLayoutEntry {
+    let ty = wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        view_dimension: wgpu::TextureViewDimension::D3,
+        multisampled: false,
+    };
+    layout_entry(TONEMAP_GRID_BINDING, ty)
 }
 
 fn sampler_entry() -> wgpu::BindGroupLayoutEntry {
@@ -615,11 +646,11 @@ impl TonemapNode {
         let module = crate::shaders::module(device, "tonemap", crate::shaders::TONEMAP)?;
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap"),
-            entries: &[filterable_entry(0), sampler_entry(), uniform_entry(), filterable_entry(TONEMAP_BLOOM_BINDING), lut_entry()],
+            entries: &[filterable_entry(0), sampler_entry(), uniform_entry(), filterable_entry(TONEMAP_BLOOM_BINDING), lut_entry(), grid_entry(), filterable_entry(TONEMAP_MEAN_BINDING)],
         });
         let msaa_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap msaa"),
-            entries: &[sampler_entry(), uniform_entry(), multisampled_entry(3), filterable_entry(TONEMAP_BLOOM_BINDING), lut_entry()],
+            entries: &[sampler_entry(), uniform_entry(), multisampled_entry(3), filterable_entry(TONEMAP_BLOOM_BINDING), lut_entry(), grid_entry(), filterable_entry(TONEMAP_MEAN_BINDING)],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("tonemap"),
@@ -645,6 +676,8 @@ impl TonemapNode {
             lut: None,
             neutral_lut: neutral_lut(device),
             lut_generation: 0,
+            local: None,
+            local_node: None,
         })
     }
 
@@ -695,6 +728,18 @@ impl TonemapNode {
         Ok(())
     }
 
+    /// Draw `local` exposure from the next pass on (each pass records the grid, then slices it), or
+    /// none (`None`, or a look with both contrasts at 1: the neutral texels, skipped). The grid's
+    /// pipelines are made here, on the frame that first asks, never mid-pass.
+    pub(crate) fn set_local_exposure(&mut self, device: &Device, local: Option<LocalExposure>) -> Result<(), RenderError> {
+        let local = local.filter(LocalExposure::is_on);
+        if local.is_some() && self.local_node.is_none() {
+            self.local_node = Some(LocalExposureNode::new(device)?);
+        }
+        self.local = local;
+        Ok(())
+    }
+
     /// The pipeline of `tonemapper` reading `source` into `format`, made once (a pipeline-shaping
     /// change prewarms it at the frame that asks).
     pub(crate) fn pipeline(&mut self, device: &Device, tonemapper: Tonemapper, source: TonemapSource, format: TextureFormat) -> Compiled<RenderPipeline> {
@@ -718,8 +763,8 @@ impl TonemapNode {
         self.pipelines.len()
     }
 
-    fn bind_group(&mut self, device: &Device, input: &TextureView, multisampled: bool, generation: u64, bloom: Option<&BloomOutput>) -> BindGroup {
-        let key = (generation, multisampled, bloom.map_or(0, |output| output.chain), self.lut_generation);
+    fn bind_group(&mut self, device: &Device, input: &TextureView, multisampled: bool, generation: u64, (bloom, local): (Option<&BloomOutput>, Option<&GridOutput>)) -> BindGroup {
+        let key = (generation, multisampled, bloom.map_or(0, |output| output.chain), self.lut_generation, local.map_or(0, |grid| grid.generation));
         if let Some((held, group)) = &self.group
             && *held == key
         {
@@ -731,17 +776,22 @@ impl TonemapNode {
         let bloom = wgpu::BindGroupEntry { binding: TONEMAP_BLOOM_BINDING, resource: wgpu::BindingResource::TextureView(chain) };
         let lut_view = self.lut.as_ref().map_or(&self.neutral_lut, |lut| &lut.view);
         let lut = wgpu::BindGroupEntry { binding: GRADING_LUT_BINDING, resource: wgpu::BindingResource::TextureView(lut_view) };
+        // Without local exposure the shader never reads these: the neutral LUT and bloom texels
+        // stand in (a 3D and a 2D float texture, as the bindings ask).
+        let (grid_view, mean_view) = local.map_or((&self.neutral_lut, &self.neutral_bloom), |grid| (&grid.grid, &grid.mean));
+        let grid = wgpu::BindGroupEntry { binding: TONEMAP_GRID_BINDING, resource: wgpu::BindingResource::TextureView(grid_view) };
+        let mean = wgpu::BindGroupEntry { binding: TONEMAP_MEAN_BINDING, resource: wgpu::BindingResource::TextureView(mean_view) };
         let group = if multisampled {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("tonemap msaa"),
                 layout: &self.msaa_layout,
-                entries: &[sampler, params, wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(input) }, bloom, lut],
+                entries: &[sampler, params, wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(input) }, bloom, lut, grid, mean],
             })
         } else {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("tonemap"),
                 layout: &self.scene_layout,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(input) }, sampler, params, bloom, lut],
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(input) }, sampler, params, bloom, lut, grid, mean],
             })
         };
         self.group = Some((key, group.clone()));
@@ -755,6 +805,14 @@ impl TonemapNode {
         let source = if pass.source.multisampled() { BloomSource::Msaa(pass.input) } else { BloomSource::Scene(pass.input) };
         let input = BloomInput { source, render: pass.source_size, output: pass.output_size, settings: &settings, generation: pass.generation };
         node.encode(device, queue, encoder, input)
+    }
+
+    /// Record local exposure's grid from the pass's input when the node draws it.
+    fn encode_local(&mut self, device: &Device, encoder: &mut wgpu::CommandEncoder, pass: &TonemapPass<'_>) -> Option<GridOutput> {
+        self.local?;
+        let node = self.local_node.as_mut()?;
+        let source = if pass.source.multisampled() { GridSource::Msaa(pass.input) } else { GridSource::Scene(pass.input) };
+        node.encode(device, encoder, source, pass.source_size)
     }
 
     /// Record one tonemap pass (after the bloom chain, when the node draws bloom): a full-screen
@@ -773,7 +831,9 @@ impl TonemapNode {
         timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) -> u32 {
         let bloom = self.encode_bloom(device, queue, encoder, pass);
+        let local = self.encode_local(device, encoder, pass);
         let passes = 1 + bloom.as_ref().map_or(0, |output| output.passes);
+        let [local_row, local_grid] = crate::post::local_exposure::tonemap_rows(self.local.filter(|_| local.is_some()), pass.source_size);
         let (intensity, scale, threshold) = bloom.as_ref().map_or((0.0, 0.0, 0.0), |output| (output.intensity, output.scale, output.threshold));
         let [grade, grade_range, section_saturation, section_contrast, section_gamma, section_gain, section_lift] =
             self.grading.rows(self.lut.as_ref().map_or(1, |lut| lut.side));
@@ -792,10 +852,12 @@ impl TonemapNode {
             section_gamma,
             section_gain,
             section_lift,
+            local: local_row,
+            local_grid,
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
         let pipeline = self.pipeline(device, pass.tonemapper, pass.source, pass.format);
-        let group = self.bind_group(device, pass.input, pass.source.multisampled(), pass.generation, bloom.as_ref());
+        let group = self.bind_group(device, pass.input, pass.source.multisampled(), pass.generation, (bloom.as_ref(), local.as_ref()));
         let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("tonemap"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -915,7 +977,7 @@ pub fn grade_image(
     class: DeviceClass,
     dither: bool,
 ) -> Result<Capture, RenderError> {
-    draw_tonemap_image(gpu, (tonemapper, source), image, target, (dither, None), Some((grading, class)))
+    draw_tonemap_image(gpu, (tonemapper, source), image, target, (dither, None, None), Some((grading, class)))
 }
 
 /// [`tonemap_image`] with `bloom` composited (None: no bloom, the bloom-free picture): the chain
@@ -934,7 +996,14 @@ fn tonemap_through(
     dither: bool,
     bloom: Option<BloomSettings>,
 ) -> Result<Capture, RenderError> {
-    draw_tonemap_image(gpu, (tonemapper, source), image, target, (dither, bloom), None)
+    draw_tonemap_image(gpu, (tonemapper, source), image, target, (dither, bloom, None), None)
+}
+
+/// [`tonemap_image`] under `local` exposure (None: off, the picture before it): the grid and the
+/// tonemap the renderer records, over a `size` image of pre-exposed radiance onto a target of the
+/// same size, undithered.
+pub fn local_exposure_image(gpu: &Gpu, tonemapper: Tonemapper, size: (u32, u32), texels: &[[f32; 4]], local: Option<LocalExposure>) -> Result<Capture, RenderError> {
+    draw_tonemap_image(gpu, (tonemapper, TonemapSource::Scene), (size, texels), size, (false, None, local), None)
 }
 
 fn draw_tonemap_image(
@@ -942,7 +1011,7 @@ fn draw_tonemap_image(
     (tonemapper, source): (Tonemapper, TonemapSource),
     (size, texels): ((u32, u32), &[[f32; 4]]),
     target: (u32, u32),
-    (dither, bloom): (bool, Option<BloomSettings>),
+    (dither, bloom, local): (bool, Option<BloomSettings>, Option<LocalExposure>),
     grading: Option<(&Grading, DeviceClass)>,
 ) -> Result<Capture, RenderError> {
     let (width, height) = size;
@@ -977,6 +1046,7 @@ fn draw_tonemap_image(
     let (input, output) = (scene.create_view(&Default::default()), output_texture.create_view(&Default::default()));
     let mut node = TonemapNode::new(device)?;
     node.set_bloom(device, bloom)?;
+    node.set_local_exposure(device, local)?;
     if let Some((grading, class)) = grading {
         node.set_grading(device, &gpu.queue, grading, class);
     }

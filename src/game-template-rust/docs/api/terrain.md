@@ -6,6 +6,23 @@ the camera and coarser far away (continuous levels of detail that morph, so the 
 pops or cracks), casts it into the sun's shadows, and shades it per pixel from up to
 `TERRAIN_LAYER_MAX` (16) material layers.
 
+The terrain types are at the crate root, not in the prelude. Every type and call in one line:
+
+```rust
+use genex::{Grass, Scatter, Terrain, TerrainError, TerrainLayer, TerrainTexel}; // and TERRAIN_SAMPLES_MAX, TERRAIN_LAYER_MAX
+Terrain::from_fn([385, 385], origin, spacing, |x, z| height);  // -> Result<Terrain, TerrainError>; samples: [u32; 2], origin: Vec2
+Terrain::from_heights(samples, origin, spacing, &heights);     // row-major, x fastest
+terrain.with_layers(vec![TerrainLayer::textured(albedo, data, tile), TerrainLayer::flat(color)]); // -> Result<Terrain, TerrainError>
+TerrainLayer::textured(albedo, data, tile).with_tint(rgb).with_fallback(color).with_grass(grass); // rgb: Vec3
+Grass::meadow(density, height).with_height(lo, hi).with_width(lo, hi).with_colors(root, tip);
+grass.with_dry(color, share).with_flowers(color, share).with_transmission(amount);
+terrain.with_control(&texels);                                 // TerrainTexel::layer(i), TerrainTexel::blend(base, overlay, amount), .with_wetness(w)
+terrain.height(x, z);                                          // -> f32
+terrain.scatter(&Scatter::new(density, &[0, 1]).with_scale(lo, hi).with_seed(2), min, max); // -> Vec<Transform>
+// Scatter's other builders: .on_flat_ground(least_normal_y), .following_ground(share), .with_cap(most)
+frame.terrain(&terrain);                                       // one a frame
+```
+
 ```rust
 // on_reset: heights every 0.5 m over 192 m, two layers, a control texel per height sample.
 let terrain = Terrain::from_fn([385, 385], vec2(-96.0, -96.0), 0.5, |x, z| hills(x, z))
@@ -27,7 +44,9 @@ samples a side. A layer is `TerrainLayer::textured(albedo, data, tile)` (two fil
 `assets/`: the base colour with the layer's height in alpha, and a data texture with the normal's
 x and y in red and green, roughness in blue and occlusion in alpha, one tile every `tile` metres,
 `.with_tint(..)`, `.with_fallback(..)` for the colour it draws without its texture) or
-`TerrainLayer::flat(color)`. `terrain.with_layers(..)` sets them; without a control map every
+`TerrainLayer::flat(color)`. Make the two files from a CC0 scan with the `cc0__terrain-layer` tool
+(`cc0__fetch` a texture, then `cc0__terrain-layer` with its folder and a name): it answers the
+`TerrainLayer::textured(..)` line to paste and the `[[texture]]` rows; never pack them by hand. `terrain.with_layers(..)` sets them; without a control map every
 sample is layer 0. `TerrainTexel::layer(i)`, `TerrainTexel::blend(base, overlay, amount)` and
 `.with_wetness(..)` make one control texel per height sample for `terrain.with_control(..)`; the
 renderer blends the texels around each pixel by weight and by each layer's height, and hex-tiles

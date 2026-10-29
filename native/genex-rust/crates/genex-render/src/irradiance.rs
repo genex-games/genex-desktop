@@ -81,6 +81,10 @@ pub const VOLUME_INTENSITY_MAX: f32 = 64.0;
 pub const CAPTURE_SIDE: u32 = 16;
 /// Cells one Live frame bakes (the bake's time slice).
 pub const CELLS_PER_FRAME: usize = 2;
+/// Frames between two batches of a relight (dynamic GI, AAA review WP-12): a relight runs for as
+/// long as a volume is held, so it pays a quarter of a slice's cost a frame; a first or stale bake
+/// keeps the full slice.
+pub const RELIGHT_CADENCE: u64 = 4;
 /// Cells one batch of a settled capture's bake draws before its commands are submitted (the
 /// capture targets and per-face rows hold this many cells).
 pub const BATCH_CELLS: usize = 8;
@@ -142,6 +146,24 @@ pub struct IrradianceVolume {
     pub blend: f32,
     /// The multiplier of its irradiance (1: as baked).
     pub intensity: f32,
+    /// The room's albedo its bake assumes for the bounces after the first (AAA push P3,
+    /// [`bounce_gain`]): `0..=`[`BOUNCE_MAX`], [`DEFAULT_BOUNCE`] by default; 0 bakes the first
+    /// bounce alone (a ceiling the sun never reaches stays black).
+    pub bounce: f32,
+}
+
+/// The room albedo a volume's bake assumes by default for the bounces after the first: about a
+/// lived-in room's (plaster, concrete, tiles and furniture).
+pub const DEFAULT_BOUNCE: f32 = 0.45;
+/// The largest albedo a volume's bake assumes (the bounces' sum grows without bound towards 1).
+pub const BOUNCE_MAX: f32 = 0.8;
+
+/// The gain of the bounces after the first for a room of albedo `bounce`: each bounce is `bounce`
+/// times the one before, so they sum to `bounce / (1 - bounce)` times the light the first bounce
+/// leaves around a cell (the reduce's `grid_bake.sky.y`).
+pub fn bounce_gain(bounce: f32) -> f32 {
+    let bounce = bounce.clamp(0.0, BOUNCE_MAX);
+    bounce / (1.0 - bounce)
 }
 
 impl IrradianceVolume {
@@ -151,7 +173,7 @@ impl IrradianceVolume {
         let (a, b) = (Vec3::from(min), Vec3::from(max));
         let extent = (b - a).abs();
         let cells = extent.to_array().map(|side| cells_for(side / DEFAULT_SPACING));
-        IrradianceVolume { min, max, cells, blend: 0.1 * extent.min_element(), intensity: 1.0 }
+        IrradianceVolume { min, max, cells, blend: 0.1 * extent.min_element(), intensity: 1.0, bounce: DEFAULT_BOUNCE }
     }
 
     /// The volume with `cells` cells along x, y and z.
@@ -169,11 +191,17 @@ impl IrradianceVolume {
         IrradianceVolume { intensity, ..self }
     }
 
+    /// The volume baked for a room of albedo `bounce` (0: the first bounce alone).
+    pub fn with_bounce(self, bounce: f32) -> IrradianceVolume {
+        IrradianceVolume { bounce, ..self }
+    }
+
     /// The volume as the renderer keeps it, or None when it cannot be baked: a corner that is not
     /// finite, or a box side below [`VOLUME_EXTENT_MIN`] or above [`VOLUME_EXTENT_MAX`] (corners in
     /// either order are sorted). Cells are held to `1..=`[`CELLS_PER_AXIS_MAX`] per axis and cut
     /// along the longest axes to at most [`CELLS_MAX`]; the fade to `0..=` half the smallest side
-    /// (0 when not finite); the multiplier to `0..=`[`VOLUME_INTENSITY_MAX`] (1 when not finite).
+    /// (0 when not finite); the multiplier to `0..=`[`VOLUME_INTENSITY_MAX`] (1 when not finite); the
+    /// bounce albedo to `0..=`[`BOUNCE_MAX`] ([`DEFAULT_BOUNCE`] when not finite).
     pub fn held(&self) -> Option<IrradianceVolume> {
         let finite = |v: &[f32; 3]| v.iter().all(|c| c.is_finite());
         if !finite(&self.min) || !finite(&self.max) {
@@ -192,7 +220,8 @@ impl IrradianceVolume {
         }
         let blend = if self.blend.is_finite() { self.blend.clamp(0.0, 0.5 * extent.min_element()) } else { 0.0 };
         let intensity = if self.intensity.is_finite() { self.intensity.clamp(0.0, VOLUME_INTENSITY_MAX) } else { 1.0 };
-        Some(IrradianceVolume { min: min.to_array(), max: max.to_array(), cells, blend, intensity })
+        let bounce = if self.bounce.is_finite() { self.bounce.clamp(0.0, BOUNCE_MAX) } else { DEFAULT_BOUNCE };
+        Some(IrradianceVolume { min: min.to_array(), max: max.to_array(), cells, blend, intensity, bounce })
     }
 
     /// The sphere around its influence (the box grown by the fade): what the binning reads.
@@ -201,14 +230,15 @@ impl IrradianceVolume {
         ClusterSphere { centre: ((a + b) * 0.5).to_array(), radius: 0.5 * (b - a).length() + self.blend * 3.0_f32.sqrt() }
     }
 
-    /// What identifies the volume's bake across frames: its box and cells, bit for bit (the fade
-    /// and the multiplier change only its row).
-    pub fn bake_key(&self) -> [u32; 9] {
-        let mut key = [0; 9];
+    /// What identifies the volume's bake across frames: its box, cells and bounce albedo, bit for
+    /// bit (the fade and the multiplier change only its row).
+    pub fn bake_key(&self) -> [u32; 10] {
+        let mut key = [0; 10];
         for (slot, value) in key.iter_mut().zip(self.min.iter().chain(&self.max)) {
             *slot = value.to_bits();
         }
-        key[6..].copy_from_slice(&self.cells);
+        key[6..9].copy_from_slice(&self.cells);
+        key[9] = self.bounce.to_bits();
         key
     }
 
@@ -527,10 +557,14 @@ pub fn blend(rows: &[GpuProbeRow], p: [f32; 3]) -> (Vec<f32>, f32) {
 /// direction's irradiance normalized by its discrete cosine weight (a constant environment bakes
 /// exactly its radiance), each reach the cos^4-weighted mean of the distance along its axis
 /// (a wall across the axis at h gives h from every texel that sees it), clamped to `reach_max`,
-/// packed by axis ([`ambient_cube`]).
-pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side: u32, reach_max: f32) -> AmbientCube {
+/// packed by axis ([`ambient_cube`]). The later bounces add `gain` ([`bounce_gain`]) times the
+/// mean radiance over the whole sphere to each direction, in proportion to the cosine weight of
+/// the texels a surface covers in its hemisphere (0: the first bounce alone).
+pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side: u32, reach_max: f32, gain: f32) -> AmbientCube {
     let mut light = [[0.0_f64; 4]; AXIS_DIRECTIONS];
     let mut reach = [[0.0_f64; 2]; AXIS_DIRECTIONS];
+    let mut surface = [0.0_f64; AXIS_DIRECTIONS];
+    let mut sphere = [0.0_f64; 4];
     for face in 0..FACES {
         for y in 0..side {
             for x in 0..side {
@@ -539,6 +573,10 @@ pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side:
                 let solid = crate::ibl::texel_solid_angle(side, x, y);
                 let (radiance, distance) = sees(dir);
                 let (distance, reach_max) = (distance.map(f64::from), f64::from(reach_max));
+                for (out, value) in sphere.iter_mut().zip(radiance) {
+                    *out += f64::from(value) * solid;
+                }
+                sphere[3] += solid;
                 for (a, (sum, focus)) in light.iter_mut().zip(reach.iter_mut()).enumerate() {
                     let axis = a / 2;
                     let sign = if a & 1 == 1 { -1.0 } else { 1.0 };
@@ -549,6 +587,9 @@ pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side:
                             *out += f64::from(value) * w;
                         }
                         sum[3] += w;
+                        if distance.is_some() {
+                            surface[a] += w;
+                        }
                         let f = c * c * c * c * solid;
                         // A texel no surface covers reaches the clamp along every axis.
                         focus[0] += distance.map_or(reach_max, |d| (d * c).min(reach_max)) * f;
@@ -558,10 +599,13 @@ pub fn ambient_cube_of(sees: &dyn Fn([f32; 3]) -> ([f32; 3], Option<f32>), side:
             }
         }
     }
+    let whole = sphere[3].max(1.0e-12);
+    let mean = [sphere[0] / whole, sphere[1] / whole, sphere[2] / whole];
     let rgb = std::array::from_fn(|a| {
         let [r, g, b, w] = light[a];
         let w = w.max(1.0e-12);
-        [(r / w) as f32, (g / w) as f32, (b / w) as f32]
+        let later = f64::from(gain) * surface[a] / w;
+        [(r / w + later * mean[0]) as f32, (g / w + later * mean[1]) as f32, (b / w + later * mean[2]) as f32]
     });
     let reaches = std::array::from_fn(|a| if reach[a][1] > 0.0 { (reach[a][0] / reach[a][1]) as f32 } else { reach_max });
     ambient_cube(rgb, reaches, reach_max)
@@ -630,12 +674,130 @@ pub fn cell_work() -> u64 {
     2 * u64::from(FACES) * u64::from(CAPTURE_SIDE) * u64::from(CAPTURE_SIDE)
 }
 
+// --- Rooms the renderer adds (AAA review WP-12) ---
+
+/// The rooms the renderer lights without the game declaring them, so an agent never fakes bounce
+/// with spot lights or leaves a room on the sky's light: `paired` gives each declared reflection
+/// probe that no declared volume covers a volume over its box, and each declared volume that no
+/// probe covers a probe over its; `camera` adds a volume around the camera
+/// ([`CAMERA_VOLUME_EXTENT`], snapped to [`CAMERA_VOLUME_SNAP`]) wherever no room (declared or
+/// paired) holds it. The added ones come after the declared ones, so a quality's cap keeps the
+/// game's own first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct AutoRooms {
+    /// Pair declared probes and volumes.
+    pub paired: bool,
+    /// Add the camera's own volume where no room holds it.
+    pub camera: bool,
+}
+
+impl AutoRooms {
+    /// None added (low, and every quality before AAA review WP-12).
+    pub const OFF: AutoRooms = AutoRooms { paired: false, camera: false };
+    /// Declared rooms paired (desktop `medium`, phones).
+    pub const PAIRED: AutoRooms = AutoRooms { paired: true, camera: false };
+    /// Paired, and the camera's own volume (desktop `high` and `ultra`).
+    pub const ALL: AutoRooms = AutoRooms { paired: true, camera: true };
+}
+
+/// The camera volume's box size, world units: a floor and the rooms or street around it.
+pub const CAMERA_VOLUME_EXTENT: [f32; 3] = [24.0, 8.0, 24.0];
+/// Its cells (two metres apart): 576, a few seconds of Live bake at the high slice.
+pub const CAMERA_VOLUME_CELLS: [u32; 3] = [12, 4, 12];
+/// Its centre snaps to this grid across x and z (the camera is always at least this far inside its
+/// sides), and its floor to [`CAMERA_VOLUME_FLOOR_SNAP`] below the eye: the same camera gives the
+/// same box in every frame and capture, and walking moves it a few times a minute.
+pub const CAMERA_VOLUME_SNAP: f32 = 8.0;
+/// How far below the eye the camera volume's floor sits, at least.
+pub const CAMERA_VOLUME_BELOW: f32 = 2.0;
+/// The grid its floor snaps to, world units.
+pub const CAMERA_VOLUME_FLOOR_SNAP: f32 = 2.0;
+/// How far past its faces the camera volume fades into the sky's light.
+pub const CAMERA_VOLUME_BLEND: f32 = 4.0;
+/// A declared probe and volume are one room when their boxes share at least this much of the
+/// smaller one.
+pub const PAIRED_OVERLAP_SHARE: f32 = 0.5;
+/// Eye height a paired probe captures from, above its box's floor (held inside the box).
+pub const PAIRED_PROBE_EYE: f32 = 1.6;
+
+/// The box of the camera volume around `eye`.
+pub fn camera_volume(eye: [f32; 3]) -> IrradianceVolume {
+    let snap = |value: f32, grid: f32| libm::floorf(value / grid + 0.5) * grid;
+    let centre = [snap(eye[0], CAMERA_VOLUME_SNAP), 0.0, snap(eye[2], CAMERA_VOLUME_SNAP)];
+    let floor = libm::floorf((eye[1] - CAMERA_VOLUME_BELOW) / CAMERA_VOLUME_FLOOR_SNAP) * CAMERA_VOLUME_FLOOR_SNAP;
+    let half = [CAMERA_VOLUME_EXTENT[0] * 0.5, 0.0, CAMERA_VOLUME_EXTENT[2] * 0.5];
+    let min = [centre[0] - half[0], floor, centre[2] - half[2]];
+    let max = [centre[0] + half[0], floor + CAMERA_VOLUME_EXTENT[1], centre[2] + half[2]];
+    IrradianceVolume::new(min, max).with_cells(CAMERA_VOLUME_CELLS).with_blend(CAMERA_VOLUME_BLEND)
+}
+
+/// The share of the smaller of two boxes the two share (0 when apart).
+fn overlap_share(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> f32 {
+    let size = |(min, max): ([f32; 3], [f32; 3])| (0..3).map(|axis| (max[axis] - min[axis]).max(0.0)).product::<f32>();
+    let shared = (0..3).map(|axis| (a.1[axis].min(b.1[axis]) - a.0[axis].max(b.0[axis])).max(0.0)).product::<f32>();
+    let smaller = size(a).min(size(b));
+    if smaller > 0.0 { shared / smaller } else { 0.0 }
+}
+
+fn contains(volume: &IrradianceVolume, eye: [f32; 3]) -> bool {
+    (0..3).all(|axis| eye[axis] >= volume.min[axis] && eye[axis] <= volume.max[axis])
+}
+
+/// The volumes and probes a frame lights with under `rooms`: the declared ones (held) and, after
+/// them, the ones [`AutoRooms`] adds for the camera at `eye`.
+pub fn auto_rooms(volumes: &[IrradianceVolume], probes: &[ReflectionProbe], eye: [f32; 3], rooms: AutoRooms) -> (Vec<IrradianceVolume>, Vec<ReflectionProbe>) {
+    let mut held_v = held_volumes(volumes);
+    let mut held_p = crate::probes::held_probes(probes);
+    if rooms.paired {
+        let declared_v = held_v.clone();
+        let declared_p = held_p.clone();
+        let paired = |a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])| overlap_share(a, b) >= PAIRED_OVERLAP_SHARE;
+        for probe in declared_p.iter().filter(|probe| !declared_v.iter().any(|volume| paired((probe.min, probe.max), (volume.min, volume.max)))) {
+            held_v.extend(IrradianceVolume::new(probe.min, probe.max).with_blend(probe.blend).held());
+        }
+        for volume in declared_v.iter().filter(|volume| !declared_p.iter().any(|probe| paired((probe.min, probe.max), (volume.min, volume.max)))) {
+            let eye_height = (volume.min[1] + PAIRED_PROBE_EYE).min(volume.max[1]);
+            let capture = [(volume.min[0] + volume.max[0]) * 0.5, eye_height, (volume.min[2] + volume.max[2]) * 0.5];
+            held_p.extend(ReflectionProbe::new(volume.min, volume.max).with_capture(capture).with_blend(volume.blend).held());
+        }
+    }
+    if rooms.camera && !held_v.iter().any(|volume| contains(volume, eye)) {
+        held_v.extend(camera_volume(eye).held());
+    }
+    (held_v, held_p)
+}
+
+/// `lighting` with the rooms `quality` adds for the camera at `eye`; borrowed as it is when it adds
+/// none (no environment light, no volumes baked, or nothing to add).
+pub fn with_auto_rooms<'a>(lighting: &'a crate::lights::Lighting, quality: &EnvironmentQuality, eye: [f32; 3]) -> std::borrow::Cow<'a, crate::lights::Lighting> {
+    let rooms = quality.auto_rooms;
+    let off = rooms == AutoRooms::OFF || !quality.ibl || quality.irradiance_volumes == 0;
+    if off {
+        return std::borrow::Cow::Borrowed(lighting);
+    }
+    let (volumes, probes) = auto_rooms(&lighting.irradiance_volumes, &lighting.reflection_probes, eye, rooms);
+    let unchanged = volumes.len() == lighting.irradiance_volumes.len() && probes.len() == lighting.reflection_probes.len();
+    if unchanged {
+        return std::borrow::Cow::Borrowed(lighting);
+    }
+    let mut owned = lighting.clone();
+    owned.irradiance_volumes = volumes;
+    owned.reflection_probes = probes;
+    std::borrow::Cow::Owned(owned)
+}
+
 // --- The bake schedule ---
 
 /// One held volume's bake state.
 #[derive(Clone, Debug, PartialEq)]
 struct VolumeSlot {
     volume: IrradianceVolume,
+    /// The box and cells its published bake was drawn for: a volume that moves keeps showing its
+    /// last bake where it was baked until the bake at its new place is published.
+    baked: IrradianceVolume,
+    /// Whether the bake in progress is a relight of a current bake (dynamic GI), not a first bake
+    /// or a stale one's.
+    relighting: bool,
     /// Whether its atlas block holds a published bake (the row weighs it).
     published: bool,
     /// Whether the published bake no longer matches what a bake would draw now.
@@ -674,6 +836,12 @@ pub struct GridFrame<'a> {
     pub cadence: u8,
     /// A settled capture's frame: bake whole whatever differs.
     pub settle: bool,
+    /// Cells a Live frame bakes (`EnvironmentQuality::irradiance_cells_per_frame`, at most
+    /// [`BATCH_CELLS`]).
+    pub cells_per_frame: usize,
+    /// Whether current bakes are baked again, one volume after another
+    /// (`EnvironmentQuality::irradiance_relight`).
+    pub relight: bool,
 }
 
 /// The volumes' bake schedule: which volumes are published, which are stale, the bake in progress
@@ -681,16 +849,19 @@ pub struct GridFrame<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct GridSchedule {
     slots: Vec<VolumeSlot>,
-    keys: Vec<[u32; 9]>,
+    keys: Vec<[u32; 10]>,
     lit_by: u64,
     /// The volume whose bake is in progress (its staging block holds its cells so far).
     job: Option<usize>,
+    /// The volume the next relight bakes (round robin).
+    relight_next: usize,
 }
 
 impl GridSchedule {
     /// Whether every held volume has a published, current bake.
     pub fn settled(&self) -> bool {
-        self.job.is_none() && self.slots.iter().all(|slot| slot.published && !slot.stale)
+        let relight_only = self.job.is_none_or(|job| self.slots.get(job).is_some_and(|slot| slot.relighting));
+        relight_only && self.slots.iter().all(|slot| slot.published && !slot.stale)
     }
 
     /// Whether volume `slot` has a published bake.
@@ -704,16 +875,28 @@ impl GridSchedule {
         self.slots.get(slot).filter(|slot| slot.published).map_or(0.0, |slot| (slot.shown + 1).min(FADE_IN_FRAMES) as f32 / FADE_IN_FRAMES as f32)
     }
 
-    /// Advance to `frame`: a new set of volumes (a box or its cells changed, one added or removed)
-    /// starts over (every block is made again); a new light makes every bake stale (a bake in
-    /// progress starts again). Returns the batches due this frame in encode order.
+    /// Advance to `frame`: a volume added or removed starts every slot over; a volume whose box or
+    /// cells changed is baked again at its new place while its last bake stays shown where it was
+    /// baked; a new light makes every bake stale (a bake in progress starts again). Returns the
+    /// batches due this frame in encode order.
     pub fn advance(&mut self, frame: &GridFrame<'_>) -> GridWork {
-        let keys: Vec<[u32; 9]> = frame.volumes.iter().map(IrradianceVolume::bake_key).collect();
-        if keys != self.keys {
-            self.keys = keys;
-            self.slots = frame.volumes.iter().map(|volume| VolumeSlot { volume: *volume, published: false, stale: true, next: 0, shown: 0 }).collect();
+        let keys: Vec<[u32; 10]> = frame.volumes.iter().map(IrradianceVolume::bake_key).collect();
+        if keys.len() != self.keys.len() {
+            self.slots = frame
+                .volumes
+                .iter()
+                .map(|volume| VolumeSlot { volume: *volume, baked: *volume, relighting: false, published: false, stale: true, next: 0, shown: 0 })
+                .collect();
             self.job = None;
+        } else if keys != self.keys {
+            for (index, slot) in self.slots.iter_mut().enumerate().filter(|(index, _)| keys[*index] != self.keys[*index]) {
+                *slot = VolumeSlot { stale: true, next: 0, relighting: false, ..slot.clone() };
+                if self.job == Some(index) {
+                    self.job = None;
+                }
+            }
         }
+        self.keys = keys;
         for (slot, volume) in self.slots.iter_mut().zip(frame.volumes) {
             // Same bake; its fade and multiplier may change freely.
             slot.volume = *volume;
@@ -747,24 +930,36 @@ impl GridSchedule {
             let cells: Vec<[u32; 3]> = (0..slot.volume.cell_count()).map(|cell| slot.volume.cell_at(cell)).collect();
             let batches = cells.len().div_ceil(BATCH_CELLS);
             work.extend(cells.chunks(BATCH_CELLS).enumerate().map(|(batch, chunk)| GridBatch { slot: index, cells: chunk.to_vec(), publish: batch + 1 == batches }));
-            *slot = VolumeSlot { published: true, stale: false, next: 0, shown: FADE_IN_FRAMES, ..*slot };
+            *slot = VolumeSlot { baked: slot.volume, relighting: false, published: true, stale: false, next: 0, shown: FADE_IN_FRAMES, ..*slot };
         }
         work
     }
 
-    /// A Live frame's slice: [`CELLS_PER_FRAME`] cells of the bake in progress, or of the first
-    /// volume never published (every frame), or of the first stale one (on the cadence).
+    /// A Live frame's slice: the frame's `cells_per_frame` cells of the bake in progress, or of
+    /// the first volume never published (every frame), or of the first stale one (on the
+    /// cadence), or with relight on of the next current one (round robin, on the cadence).
     fn bake_slice(&mut self, frame: &GridFrame<'_>) -> GridWork {
         if self.job.is_none() {
             self.job = self.slots.iter().position(|slot| !slot.published).or_else(|| self.slots.iter().position(|slot| slot.stale));
+        }
+        if self.job.is_none() && frame.relight && !self.slots.is_empty() {
+            let index = self.relight_next % self.slots.len();
+            self.relight_next = index + 1;
+            self.slots[index].relighting = true;
+            self.slots[index].next = 0;
+            self.job = Some(index);
         }
         let Some(index) = self.job else { return GridWork::new() };
         let slot = &mut self.slots[index];
         if slot.published && !crate::sky::lut_due(frame.frame_index, frame.cadence) {
             return GridWork::new();
         }
+        if slot.relighting && !frame.frame_index.is_multiple_of(RELIGHT_CADENCE) {
+            return GridWork::new();
+        }
         let count = slot.volume.cell_count();
-        let end = (slot.next + CELLS_PER_FRAME as u32).min(count);
+        let slice = frame.cells_per_frame.clamp(1, BATCH_CELLS) as u32;
+        let end = (slot.next + slice).min(count);
         let cells: Vec<[u32; 3]> = (slot.next..end).map(|cell| slot.volume.cell_at(cell)).collect();
         let publish = end == count;
         slot.next = end;
@@ -774,6 +969,8 @@ impl GridSchedule {
             }
             slot.published = true;
             slot.stale = false;
+            slot.relighting = false;
+            slot.baked = slot.volume;
             slot.next = 0;
             self.job = None;
         }
@@ -794,7 +991,9 @@ impl GridSchedule {
             .enumerate()
             .map(|(index, slot)| {
                 let origin = layout.origins.get(index).copied().filter(|_| slot.published);
-                volume_row(&slot.volume, origin, self.presence(index), leak_control)
+                // The published bake where it was baked; its fade and multiplier as declared now.
+                let shown = IrradianceVolume { min: slot.baked.min, max: slot.baked.max, cells: slot.baked.cells, ..slot.volume };
+                volume_row(&shown, origin, self.presence(index), leak_control)
             })
             .collect()
     }
@@ -1036,7 +1235,15 @@ impl IrradianceMaps {
             self.generation += 1;
         }
         self.volumes = volumes;
-        let frame = GridFrame { volumes: &self.volumes, lit_by, frame_index: prep.frame_index, cadence: prep.quality.rebake_cadence, settle: prep.settle };
+        let frame = GridFrame {
+            volumes: &self.volumes,
+            lit_by,
+            frame_index: prep.frame_index,
+            cadence: prep.quality.rebake_cadence,
+            settle: prep.settle,
+            cells_per_frame: usize::from(prep.quality.irradiance_cells_per_frame),
+            relight: prep.quality.irradiance_relight,
+        };
         self.work = self.schedule.advance(&frame);
         self.rows = self.schedule.rows(&self.layout, prep.quality.irradiance_leak_control);
         Ok(self.work.clone())
@@ -1189,7 +1396,7 @@ impl GridGpu {
             cells,
             shape: [batch.cells.len().min(BATCH_CELLS) as u32, volume.cells[1], volume.cells[2], CAPTURE_SIDE],
             depth: [if reversed { 0.0 } else { 1.0 }, z_scale, z_offset, volume.reach_max()],
-            sky: [SKY_LEVEL, 0.0, 0.0, 0.0],
+            sky: [SKY_LEVEL, bounce_gain(volume.bounce), 0.0, 0.0],
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&bake));
     }
@@ -1246,16 +1453,27 @@ mod tests {
         for volume in dropped {
             assert_eq!(volume.held(), None, "{volume:?}");
         }
-        let flipped = IrradianceVolume { min: [2.0, 2.0, 2.0], max: [0.0, 0.0, 0.0], cells: [0, 999, u32::MAX], blend: 99.0, intensity: f32::INFINITY };
+        let flipped = IrradianceVolume { min: [2.0, 2.0, 2.0], max: [0.0, 0.0, 0.0], cells: [0, 999, u32::MAX], blend: 99.0, intensity: f32::INFINITY, bounce: f32::NAN };
         let held = flipped.held().expect("held");
         assert_eq!((held.min, held.max), ([0.0; 3], [2.0; 3]), "corners sorted");
         assert!(held.cells.iter().all(|count| (1..=CELLS_PER_AXIS_MAX).contains(count)), "{:?}", held.cells);
         assert!(held.cell_count() <= CELLS_MAX, "{:?}", held.cells);
         assert_eq!((held.blend, held.intensity), (1.0, 1.0), "fade held to half the side, multiplier default");
+        assert_eq!(held.bounce, DEFAULT_BOUNCE, "a bounce albedo that is not finite is the default");
+        assert_eq!(room().with_bounce(2.0).held().map(|volume| volume.bounce), Some(BOUNCE_MAX));
         let negative = room().with_intensity(-2.0).with_blend(nan).held().expect("held");
         assert_eq!((negative.intensity, negative.blend), (0.0, 0.0));
         let many: Vec<IrradianceVolume> = (0..MAX_VOLUMES + 3).map(|i| IrradianceVolume::new([i as f32, 0.0, 0.0], [i as f32 + 1.0, 1.0, 1.0])).collect();
         assert_eq!(held_volumes(&many).len(), MAX_VOLUMES);
+    }
+
+    #[test]
+    fn the_later_bounces_sum_as_a_geometric_series_and_change_the_bake() {
+        assert_eq!(bounce_gain(0.0), 0.0, "albedo 0: the first bounce alone");
+        assert!((bounce_gain(0.5) - 1.0).abs() < 1e-6, "albedo 0.5 doubles the first bounce");
+        assert!((bounce_gain(1.0) - BOUNCE_MAX / (1.0 - BOUNCE_MAX)).abs() < 1e-6, "held below 1");
+        assert_ne!(room().bake_key(), room().with_bounce(0.0).bake_key(), "a new albedo is a new bake");
+        assert_eq!(room().bake_key(), room().with_intensity(3.0).bake_key(), "the multiplier is only the row's");
     }
 
     #[test]
@@ -1302,7 +1520,7 @@ mod tests {
 
     #[test]
     fn a_constant_environment_bakes_exactly_its_radiance() {
-        let cube = ambient_cube_of(&open([0.25, 0.5, 2.0]), CAPTURE_SIDE, 3.0);
+        let cube = ambient_cube_of(&open([0.25, 0.5, 2.0]), CAPTURE_SIDE, 3.0, 0.0);
         for texel in cube {
             for (value, want) in texel.iter().zip([0.25, 0.5, 2.0]) {
                 assert!((value - want).abs() < 1e-5, "{texel:?}");
@@ -1319,7 +1537,7 @@ mod tests {
     fn the_ambient_cube_holds_light_from_its_side() {
         // A red wall fills the +x half of the sphere at 1 unit, the sky the rest.
         let sees = |d: [f32; 3]| if d[0] > 0.0 { ([1.0, 0.0, 0.0], Some(1.0 / d[0])) } else { ([0.0, 0.0, 1.0], None) };
-        let cube = ambient_cube_of(&sees, CAPTURE_SIDE, 4.0);
+        let cube = ambient_cube_of(&sees, CAPTURE_SIDE, 4.0, 0.0);
         assert!(cube[0][0] > 0.99 && cube[0][2] < 0.01, "+x sees the wall: {:?}", cube[0]);
         assert!(cube[1][2] > 0.99 && cube[1][0] < 0.01, "-x sees the sky: {:?}", cube[1]);
         assert!((cube[2][0] - 0.5).abs() < 0.05, "+y sees half of each: {:?}", cube[2]);
@@ -1391,8 +1609,34 @@ mod tests {
         assert_eq!(blend(&[probe], [0.0; 3]), (vec![0.0], 1.0), "a reflection probe's row lends no diffuse light");
     }
 
+    /// AAA review WP-12: a declared probe without a volume gets one over its box, a declared volume
+    /// without a probe gets one, the camera gets its own volume where no room holds it, and the
+    /// same camera always gets the same box.
+    #[test]
+    fn auto_rooms_pair_declared_rooms_and_follow_the_camera_outside_them() {
+        let classroom = ReflectionProbe::new([0.0, 0.0, 0.0], [8.0, 3.0, 6.0]);
+        let corridor = IrradianceVolume::new([8.0, 0.0, 0.0], [10.0, 3.0, 20.0]);
+        let (volumes, probes) = auto_rooms(&[corridor], &[classroom], [4.0, 1.6, 3.0], AutoRooms::ALL);
+        assert_eq!(volumes.len(), 2, "the corridor, then the classroom's own; the camera is in a room");
+        assert_eq!((volumes[1].min, volumes[1].max), (classroom.min, classroom.max));
+        assert_eq!(probes.len(), 2);
+        assert_eq!((probes[1].min, probes[1].max, probes[1].capture), (corridor.min, corridor.max, [9.0, 1.6, 10.0]));
+        let (paired_only, _) = auto_rooms(&[corridor], &[classroom], [40.0, 1.6, 3.0], AutoRooms::PAIRED);
+        assert_eq!(paired_only.len(), 2, "no camera volume without `camera`");
+        let (outside, _) = auto_rooms(&[corridor], &[classroom], [40.0, 1.6, 3.0], AutoRooms::ALL);
+        assert_eq!(outside.len(), 3);
+        let own = outside[2];
+        assert_eq!((own.min, own.max, own.cells), ([28.0, -2.0, -12.0], [52.0, 6.0, 12.0], CAMERA_VOLUME_CELLS));
+        assert_eq!(camera_volume([41.0, 1.7, 3.5]), camera_volume([40.0, 1.6, 3.0]), "a step keeps the box");
+        assert!(contains(&camera_volume([43.9, 1.6, 3.0]), [43.9, 1.6, 3.0]));
+        let same_room = IrradianceVolume::new([0.5, 0.0, 0.0], [8.0, 3.0, 6.0]);
+        let (none_added, probes) = auto_rooms(&[same_room], &[classroom], [4.0, 1.6, 3.0], AutoRooms::ALL);
+        assert_eq!((none_added.len(), probes.len()), (1, 1), "a probe and a volume over one room pair");
+        assert_eq!(auto_rooms(&[], &[], [0.0; 3], AutoRooms::OFF), (Vec::new(), Vec::new()));
+    }
+
     fn frame(volumes: &[IrradianceVolume], frame_index: u64, lit_by: u64, settle: bool) -> GridFrame<'_> {
-        GridFrame { volumes, lit_by, frame_index, cadence: 1, settle }
+        GridFrame { volumes, lit_by, frame_index, cadence: 1, settle, cells_per_frame: CELLS_PER_FRAME, relight: false }
     }
 
     #[test]
@@ -1433,10 +1677,62 @@ mod tests {
         assert_eq!(settle.iter().filter(|batch| batch.publish).count(), 2);
         assert!(schedule.settled());
         assert!(schedule.advance(&frame(&volumes, 502, 3, true)).is_empty(), "and nothing after");
-        // A moved volume starts over.
-        let moved = [small, IrradianceVolume::new([0.0; 3], [3.0, 3.0, 3.0])];
-        schedule.advance(&frame(&moved, 503, 3, false));
+        // A moved volume (AAA review WP-12: the camera's own) is baked again at its new place
+        // while its last bake stays shown where it was baked; its neighbour is untouched. Flipped
+        // from "a moved volume starts over", which sent every volume back to the sky's light.
+        let moved_room = IrradianceVolume { min: [8.0, 0.0, 0.0], max: [16.0, 3.0, 8.0], ..room() };
+        let moved = [small, moved_room];
+        let work = schedule.advance(&frame(&moved, 503, 3, false));
+        assert!(schedule.published(0) && schedule.published(1), "both still shown");
+        assert_eq!(work.first().map(|batch| batch.slot), Some(1), "the moved one bakes");
+        let rows = schedule.rows(&layout, true);
+        assert_eq!(rows[1].min_blend[0], room().min[0], "shown where it was baked until its new bake publishes");
+        let mut frames = 504;
+        while !schedule.settled() {
+            schedule.advance(&frame(&moved, frames, 3, false));
+            frames += 1;
+        }
+        assert_eq!(schedule.rows(&layout, true)[1].min_blend[0], 8.0, "then at its new place");
+        // A volume added starts every slot over.
+        schedule.advance(&frame(&[small, moved_room, room()], frames, 3, false));
         assert!(!schedule.published(0) && !schedule.published(1));
+    }
+
+    /// Dynamic probe GI (AAA review WP-12): with relight on, current volumes are baked again one
+    /// after another for as long as they are held, at the quality's slice, while the schedule
+    /// still reads as settled (a capture compared with Live does not wait forever).
+    #[test]
+    fn relight_bakes_current_volumes_again_round_robin_at_the_quality_slice() {
+        let small = IrradianceVolume::new([0.0; 3], [2.0, 1.0, 2.0]);
+        let volumes = [small, room()];
+        let relit = |index: u64| GridFrame { cells_per_frame: 4, relight: true, ..frame(&volumes, index, 1, false) };
+        let mut schedule = GridSchedule::default();
+        let first = schedule.advance(&relit(0));
+        assert_eq!(first[0].cells.len(), 4, "the quality's slice");
+        let mut index = 1;
+        while !schedule.settled() {
+            schedule.advance(&relit(index));
+            index += 1;
+        }
+        assert_eq!(index, 1 + u64::from(room().cell_count()).div_ceil(4));
+        let mut relit_slots = Vec::new();
+        let mut batches = 0;
+        let relight_frames = RELIGHT_CADENCE * u64::from(small.cell_count() + room().cell_count());
+        for _ in 0..relight_frames {
+            let work = schedule.advance(&relit(index));
+            assert!(work.is_empty() || index % RELIGHT_CADENCE == 0, "a relight batch only every {RELIGHT_CADENCE} frames");
+            index += 1;
+            batches += work.len();
+            relit_slots.extend(work.iter().filter(|batch| batch.publish).map(|batch| batch.slot));
+            assert!(schedule.settled(), "a relight never reads as unsettled");
+            assert!(schedule.published(0) && schedule.published(1));
+        }
+        assert!(batches > 0 && batches as u64 <= relight_frames / RELIGHT_CADENCE + 1);
+        assert_eq!(&relit_slots[..2], [0, 1], "round robin");
+        let still = GridFrame { relight: false, ..relit(index) };
+        let mut idle = GridSchedule::default();
+        idle.advance(&GridFrame { settle: true, ..still });
+        assert!(idle.advance(&still).is_empty(), "without relight a current bake is left alone");
     }
 
     #[test]

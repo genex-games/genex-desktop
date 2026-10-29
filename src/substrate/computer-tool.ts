@@ -11,7 +11,8 @@
  * The action vocabulary is Anthropic's `computer_toolset_20260801` (screenshot, zoom,
  * left_click …, key, type, scroll, wait) so both models already know how to hold it, plus the
  * studio verbs a game needs: `camera` (a named studio viewpoint), `state` (the game's own
- * numbers), `reload` (rebuild + reload after edits), `console` (errors since load).
+ * numbers), `reload` (rebuild + reload after edits), `check` (compile the edits, no reload),
+ * `console` (errors since load).
  *
  * Electron-free: this file parses the flat arguments the bridge shim and the MCP schema
  * deliver and maps an action onto {@link PreviewInputAction}s. The port that executes them
@@ -83,6 +84,7 @@ export const COMPUTER_HOST_ACTIONS = [
   "camera",
   "state",
   "reload",
+  "check",
   "console",
   "batch",
   "act",
@@ -92,8 +94,15 @@ export const COMPUTER_HOST_ACTIONS = [
   "web_type",
 ] as const;
 
-/** The actions the session itself treats specially, by name: a wait, a batch and a reload. */
-export const ComputerVerb = { Wait: "wait", Batch: "batch", Reload: "reload", Act: "act", Look: "look" } as const;
+/** The actions the session itself treats specially, by name: a wait, a batch, a reload and a check. */
+export const ComputerVerb = {
+  Wait: "wait",
+  Batch: "batch",
+  Reload: "reload",
+  Check: "check",
+  Act: "act",
+  Look: "look",
+} as const;
 
 /** The web page verbs: a page read and driven by its structure, in a separate, clean browser. */
 export const WebVerb = { Open: "web_open", Read: "web_read", Click: "web_click", Type: "web_type" } as const;
@@ -584,6 +593,8 @@ const ACTION_NEEDS_CAPABILITY: Partial<Record<ComputerAction, (caps: TargetCapab
   state: (caps) => hasState(caps),
   console: (caps) => caps.console,
   reload: (caps) => caps.reload,
+  // A check compiles what a reload would rebuild: only a target that rebuilds has one.
+  check: (caps) => caps.reload,
   web_open: (caps) => caps.dom,
   web_read: (caps) => caps.dom,
   web_click: (caps) => caps.dom,
@@ -707,6 +718,7 @@ const ACTION_DEED: Record<ComputerAction, ScreenDeed> = {
   console: ScreenDeed.Look,
   wait: ScreenDeed.Wait,
   reload: ScreenDeed.Reload,
+  check: ScreenDeed.Reload,
   batch: ScreenDeed.Press,
   look: ScreenDeed.Move,
   act: ScreenDeed.Press,

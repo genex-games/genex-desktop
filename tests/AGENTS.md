@@ -133,6 +133,8 @@ through the JS API imports `@typescript/typescript6`.
   `metalRequired()`); the runners run those files one at a time, after the parallel ones.
 - `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
   tables, a machine type), for the package's Visual C++ runtime checks.
+- `aaa-evidence.ts`: AA+ release-gate builders: a suite of test prompts, an evidence bundle that
+  passes every floor (a test changes one fact), and synthetic camera and EV tracks.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.

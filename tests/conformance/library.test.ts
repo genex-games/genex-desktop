@@ -49,17 +49,18 @@ describe("a Rust · wgpu night's recipes (M3.2)", () => {
     assert.ok(foreign.length > 0, "the library has craft for other stacks");
     const menu = renderCraftForPlanner(recipes, { stack: GameStack.RustWgpu });
     for (const recipe of foreign) assert.ok(!menu.includes(recipe.id), `${recipe.id} is not on a Rust menu`);
-    assert.equal(craftChecks(recipes, { stack: GameStack.RustWgpu }).size, 0, "no foreign craft check");
+    // A Rust game has craft of its own (the bodycam ports); none of it comes from another stack.
+    const rustCraft = [...craftChecks(recipes, { stack: GameStack.RustWgpu }).values()];
+    for (const { recipe } of rustCraft)
+      assert.equal(recipe.runtime, GameStack.RustWgpu, `${recipe.id}: no foreign craft check`);
     const asked = foreign.slice(0, 2).map((recipe) => recipe.id);
     const adopted = withCraftChecks({ craft: asked, checks: [] }, recipes, { stack: GameStack.RustWgpu });
     assert.deepEqual(adopted.added, []);
     assert.deepEqual(adopted.unknown, asked, "a recipe for another stack is unknown to a Rust game");
+    // Words a foreign check shares may reach a Rust recipe; never the foreign one itself.
     for (const check of checksFor(foreign))
-      assert.deepEqual(
-        craftForNewCheck(recipes, check, { stack: GameStack.RustWgpu, min: Number.MIN_VALUE }),
-        [],
-        check.id,
-      );
+      for (const { recipe } of craftForNewCheck(recipes, check, { stack: GameStack.RustWgpu, min: Number.MIN_VALUE }))
+        assert.equal(recipe.runtime, GameStack.RustWgpu, `${check.id}: ${recipe.id}`);
   });
 
   it("a caller that names no stack keeps the menu it always had (characterization)", async () => {

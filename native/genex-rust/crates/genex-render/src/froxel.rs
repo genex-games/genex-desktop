@@ -173,9 +173,11 @@ pub struct GpuFroxelParams {
     pub prev_camera: [f32; 4],
     /// x, y, z: froxels across, down and slices; w: 1 when the frame's lights are binned.
     pub grid: [u32; 4],
-    /// xyz: this frame's jitter inside a froxel (0..1); w: 0.
+    /// xyz: this frame's jitter inside a froxel (0..1); w: the first irradiance volume's row in
+    /// the probes' table ([`FroxelFrame::rooms`]).
     pub jitter: [f32; 4],
-    /// x, y: the render size in pixels; z: 1 when the environment lights the scene; w: 0.
+    /// x, y: the render size in pixels; z: 1 when the environment lights the scene; w: the
+    /// irradiance volumes' rows the inject reads from there (0: none).
     pub screen: [f32; 4],
     /// The fog row's colour lane (`GpuFog::color`).
     pub fog_color: [f32; 4],
@@ -205,6 +207,11 @@ pub struct FroxelInputs<'a> {
     pub env_sampler: &'a Sampler,
     /// The aerial-perspective volume this frame (a one-texel neutral volume where none ran).
     pub aerial: &'a TextureView,
+    /// The probes' and irradiance volumes' rows (`probes::ENV_PROBE_ROWS`): inside a room's
+    /// volume the fog takes what its cells see instead of the horizon (AAA push P3).
+    pub rooms: &'a Buffer,
+    /// The irradiance volumes' atlas (`irradiance::ENV_IRRADIANCE`).
+    pub room_cells: &'a TextureView,
 }
 
 /// What the froxel fog knows about one frame.
@@ -230,6 +237,9 @@ pub struct FroxelFrame {
     pub binned: bool,
     /// The fog row the frame draws with.
     pub fog: GpuFog,
+    /// The irradiance volumes' rows in the probes' table: the first and how many (they follow
+    /// the reflection probes'; (0, 0): none, the horizon lights the fog everywhere).
+    pub rooms: (u32, u32),
 }
 
 /// The frame the history holds.
@@ -315,7 +325,7 @@ fn storage_3d() -> BindingType {
 }
 
 /// The inject kernel's bindings (`froxel_fog.wgsl` 0-10).
-fn inject_entries() -> [BindGroupLayoutEntry; 11] {
+fn inject_entries() -> [BindGroupLayoutEntry; 13] {
     [
         entry(0, uniform()),
         entry(1, uniform()),
@@ -328,6 +338,8 @@ fn inject_entries() -> [BindGroupLayoutEntry; 11] {
         entry(8, BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
         entry(9, filterable_3d()),
         entry(10, storage_3d()),
+        entry(14, storage_read()),
+        entry(15, filterable_3d()),
     ]
 }
 
@@ -410,8 +422,8 @@ impl FroxelFog {
             camera: [x, y, z, weight],
             prev_camera: [prev[0], prev[1], prev[2], near],
             grid: [u32::from(self.grid.width), u32::from(self.grid.height), u32::from(self.grid.slices), u32::from(frame.binned)],
-            jitter: [jitter[0], jitter[1], jitter[2], 0.0],
-            screen: [frame.render_size.0 as f32, frame.render_size.1 as f32, if frame.environment_lights { 1.0 } else { 0.0 }, 0.0],
+            jitter: [jitter[0], jitter[1], jitter[2], frame.rooms.0 as f32],
+            screen: [frame.render_size.0 as f32, frame.render_size.1 as f32, if frame.environment_lights { 1.0 } else { 0.0 }, frame.rooms.1 as f32],
             fog_color: frame.fog.color,
             fog_params: frame.fog.params,
         }
@@ -450,6 +462,8 @@ impl FroxelFog {
                 wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(inputs.env_sampler) },
                 wgpu::BindGroupEntry { binding: 9, resource: texture_resource(&self.injected[1 - slot]) },
                 wgpu::BindGroupEntry { binding: 10, resource: texture_resource(&self.injected[slot]) },
+                wgpu::BindGroupEntry { binding: 14, resource: inputs.rooms.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 15, resource: texture_resource(inputs.room_cells) },
             ],
         });
         let integrate = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -494,6 +508,7 @@ mod tests {
             environment_lights: true,
             binned: true,
             fog: GpuFog::default(),
+            rooms: (0, 0),
         }
     }
 

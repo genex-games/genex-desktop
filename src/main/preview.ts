@@ -54,7 +54,7 @@ import {
   tooLargeNote,
   unpackedResponse,
 } from "./page-serve.ts";
-import { PAGE_DISPATCH } from "./page-dispatch.ts";
+import { PAGE_DISPATCH, PAGE_STEP_CLOCK } from "./page-dispatch.ts";
 import { anchoredBounds } from "./preview-anchor.ts";
 import { gameViewPreferences } from "./game-view.ts";
 import { capActions, type PreviewInputAction } from "../substrate/preview-input.ts";
@@ -1478,10 +1478,7 @@ export class GamePreview {
     const view = this.#view;
     if (!view) return;
     try {
-      await view.webContents.executeJavaScript(
-        `(() => { const c = window.__studioClock; return c && typeof c.step === "function" ? c.step(${Math.round(ms)}) : null; })()`,
-        true,
-      );
+      await view.webContents.executeJavaScript(`(${PAGE_STEP_CLOCK})(${Math.round(ms)})`, true);
     } catch {
       /* a page that has not booted yet has no clock to step; the next input retries */
     }

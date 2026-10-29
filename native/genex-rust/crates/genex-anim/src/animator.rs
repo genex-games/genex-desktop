@@ -30,6 +30,7 @@ use genex_core::digest::{FNV_OFFSET_BASIS, fnv1a64_from, hex64};
 use genex_core::json::Value;
 use glam::{Mat4, Vec2, Vec3};
 
+use crate::blendspace::MAX_BLEND_POINTS;
 use crate::clip::Clip;
 use crate::error::AnimationError;
 use crate::evaluate::{Evaluation, Inputs, compose, pose_digest, sample_state};
@@ -406,20 +407,15 @@ impl Animator {
     fn played_by(&mut self, index: usize, dt: f32, speeds: (f32, Option<f32>), switched: bool) {
         self.played.clear();
         let before = self.before[index];
-        let graph = self.machine.graph();
         let layer = LayerId(index as u32);
         let after = self.machine.transition(layer);
         let progress = after.map_or(1.0, |running| running.progress());
         let crossfading = !switched && after.is_some_and(|running| matches!(running.blend, TransitionBlend::Crossfade(_)));
         let current = if crossfading { progress } else { 1.0 };
-        if let Some(played) = played_clip(graph, before.state, before.time, dt * speeds.0, current) {
-            self.played.push(played);
-        }
+        push_played(&self.machine, before.state, before.time, dt * speeds.0, current, &mut self.played);
         let source = before.transition.zip(speeds.1).filter(|_| crossfading);
-        if let Some((running, speed)) = source
-            && let Some(played) = played_clip(graph, running.from, running.from_time, dt * speed, 1.0 - progress)
-        {
-            self.played.push(played);
+        if let Some((running, speed)) = source {
+            push_played(&self.machine, running.from, running.from_time, dt * speed, 1.0 - progress, &mut self.played);
         }
     }
 
@@ -458,7 +454,7 @@ impl Animator {
         evaluation.fit(set.skeleton().joint_count(), set.clips().len());
         for (index, player) in players.iter_mut().enumerate() {
             let cursors = evaluation.cursors();
-            player.update(machine, LayerId(index as u32), switched, dt, |state, time, pose| sample_state(set, machine.graph(), state, time, cursors, pose));
+            player.update(machine, LayerId(index as u32), switched, dt, |state, time, pose| sample_state(set, machine, state, time, cursors, pose));
         }
         let mut out = std::mem::replace(&mut self.evaluation, Evaluation::new(0));
         self.evaluate_into(&mut out);
@@ -613,23 +609,44 @@ fn check_graph(set: &AnimSet, graph: &AnimGraph) -> Result<(), String> {
                 return Err(format!("state {:?} plays a {} s clip, the set's lasts {} s", state.name, state.length, found.duration()));
             }
         }
+        for (id, length) in state.blend.iter().flat_map(|blend| blend.clips()) {
+            let found = clip(id)?;
+            if found.duration().to_bits() != length.to_bits() {
+                return Err(format!("state {:?} blends a {length} s clip, the set's lasts {} s", state.name, found.duration()));
+            }
+        }
         index += 1;
     }
     Ok(())
 }
 
-/// A state's clip speed this tick, as the machine computes it.
+/// A state's clip speed this tick, as the machine computes it (a blend's: phase per second).
 fn clip_speed(machine: &Machine, state: StateId) -> f32 {
-    let Some(Motion::Clip(motion)) = machine.graph().state_motion(state) else { return 0.0 };
-    let speed = motion.fixed_speed() * motion.speed_param().map_or(1.0, |param| machine.params().float(param));
-    if speed.is_finite() { speed } else { 0.0 }
+    machine.graph().state_info(state).map_or(0.0, |info| crate::machine::speed(info, machine.params()))
 }
 
-/// The clip `state` played from `time` over `delta` seconds of clip time, at `weight`.
-fn played_clip(graph: &AnimGraph, state: StateId, time: f32, delta: f32, weight: f32) -> Option<Played> {
-    let Some(Motion::Clip(motion)) = graph.state_motion(state) else { return None };
-    let length = graph.state_length(state);
-    Some(Played { clip: motion.clip_id(), span: Span::advance(time, delta, length, motion.looping()), weight })
+/// The clips `state` played from `time` over `delta` of its time, at `weight`, into `out`: its
+/// clip, or each clip of a blend that has weight, at the blend's share and over the same share of
+/// its own length (a blend's time is its phase).
+fn push_played(machine: &Machine, state: StateId, time: f32, delta: f32, weight: f32, out: &mut Vec<Played>) {
+    let graph = machine.graph();
+    match graph.state_motion(state) {
+        Some(Motion::Clip(motion)) => {
+            let length = graph.state_length(state);
+            out.push(Played { clip: motion.clip_id(), span: Span::advance(time, delta, length, motion.looping()), weight });
+        }
+        Some(Motion::Blend(_)) => {
+            let Some(blend) = graph.state_blend(state) else { return };
+            let mut weights = [0.0; MAX_BLEND_POINTS];
+            let weights = blend.weights(machine.params(), &mut weights);
+            for ((clip, length), share) in blend.clips().zip(weights) {
+                if *share > 0.0 {
+                    out.push(Played { clip, span: Span::advance(time * length, delta * length, length, true), weight: weight * share });
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 // Snapshot encoding: every float is its bits as an integer, so a value written as JSON text and

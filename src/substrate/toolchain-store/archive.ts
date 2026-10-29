@@ -19,7 +19,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants, createReadStream } from "node:fs";
-import { link, lstat, mkdir, open, readdir, realpath, symlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, readlink, realpath, symlink } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -931,16 +931,59 @@ async function regularFileSha256(file: string): Promise<{ size: number; sha256: 
   }
 }
 
-/** Every regular file under `root`, `/`-separated and in byte order; a link or special file throws. */
-async function treeFiles(root: string, rel = ""): Promise<string[]> {
+/** A link inside a tree: where it is (`/`-separated) and its relative target, as written. */
+export interface TreeLink {
+  rel: string;
+  target: string;
+}
+
+/** What a tree holds: its folders and regular files, and the links of its own it may keep. */
+export interface TreeEntries {
+  folders: string[];
+  files: string[];
+  links: TreeLink[];
+}
+
+/**
+ * Whether the link at `rel` under `root` is one of the tree's own: a relative target that stays
+ * inside the tree as written and, followed, still lands inside it (no chain out, nothing dangling).
+ */
+async function ownLink(root: string, rel: string): Promise<TreeLink | null> {
+  const target = await readlink(path.join(root, ...rel.split("/"))).catch(() => null);
+  if (target === null || path.isAbsolute(target) || target.includes("\\")) return null;
+  const written = path.posix.normalize(path.posix.join(path.posix.dirname(rel), target));
+  if (written === ".." || written.startsWith("../")) return null;
+  const real = await realpath(path.join(root, ...rel.split("/"))).catch(() => null);
+  const realRoot = await realpath(root);
+  const inside = real !== null && (real === realRoot || real.startsWith(`${realRoot}${path.sep}`));
+  return inside ? { rel, target } : null;
+}
+
+/**
+ * Everything under `root`, `/`-separated and in byte order. A special file throws, and so does a
+ * link, unless `links` keeps the tree's own ({@link ownLink}): the relative links an archive made
+ * inside its component (llvm-mingw's shared include folders). A link is never followed.
+ */
+export async function treeEntries(root: string, options: { links?: boolean } = {}, rel = ""): Promise<TreeEntries> {
   const at = rel ? path.join(root, ...rel.split("/")) : root;
-  const found: string[] = [];
+  const found: TreeEntries = { folders: [], files: [], links: [] };
   const entries = (await readdir(at, { withFileTypes: true })).sort((a, b) => byteOrder(a.name, b.name));
   for (const entry of entries) {
     const child = rel ? `${rel}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) found.push(...(await treeFiles(root, child)));
-    else if (entry.isFile()) found.push(child);
-    else throw new ToolchainError(ToolchainProblem.Integrity, MESSAGE.TreeNotRegular(child));
+    if (entry.isDirectory()) {
+      const inner = await treeEntries(root, options, child);
+      found.folders.push(child, ...inner.folders);
+      found.files.push(...inner.files);
+      found.links.push(...inner.links);
+      continue;
+    }
+    if (entry.isFile()) {
+      found.files.push(child);
+      continue;
+    }
+    const own = entry.isSymbolicLink() && options.links ? await ownLink(root, child) : null;
+    if (!own) throw new ToolchainError(ToolchainProblem.Integrity, MESSAGE.TreeNotRegular(child));
+    found.links.push(own);
   }
   return found;
 }
@@ -948,12 +991,14 @@ async function treeFiles(root: string, rel = ""): Promise<string[]> {
 /**
  * The digest of everything under `root`: each regular file's path, size, executable bit and
  * sha256. Folders count only through the files in them. A link or a special file anywhere refuses
- * the tree (`ToolchainProblem.Integrity`): a pinned tree is never read through one.
+ * the tree (`ToolchainProblem.Integrity`): a pinned tree is never read through one. With `links`,
+ * the tree's own relative links ({@link treeEntries}) count too, each by its path and target after
+ * the files, so a tree without links digests exactly as before.
  */
-export async function treeDigest(root: string): Promise<TreeDigest> {
+export async function treeDigest(root: string, options: { links?: boolean } = {}): Promise<TreeDigest> {
   const outer = createHash("sha256");
   let bytes = 0;
-  const files = await treeFiles(root);
+  const { files, links } = await treeEntries(root, options);
   for (const rel of files) {
     const file = await regularFileSha256(path.join(root, ...rel.split("/")));
     if (!file) throw new ToolchainError(ToolchainProblem.Integrity, MESSAGE.TreeNotRegular(rel));
@@ -961,5 +1006,6 @@ export async function treeDigest(root: string): Promise<TreeDigest> {
     outer.update(`${rel}\0${file.size}\0${executable ? "x" : "-"}\0${file.sha256}\n`);
     bytes += file.size;
   }
+  for (const link of links) outer.update(`${link.rel}\0link\0${link.target}\n`);
   return { sha256: outer.digest("hex"), files: files.length, bytes };
 }

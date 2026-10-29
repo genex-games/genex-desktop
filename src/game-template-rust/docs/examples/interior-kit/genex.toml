@@ -1,0 +1,36 @@
+# The interior-kit example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Interior kit"
+fit = "expand"
+
+# Built to be judged at a desktop preset (`high` or `ultra`); check it at `low` and as a phone too.
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure meters the rooms, so the windows burn out as a camera would see them; the fog and
+# the grade are set in code on top of this (`game::look`).
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = -0.3
+
+# The building is 16 m long: the sun's cascades cover 30 m, so its shadows stay sharp inside.
+[render.shadows]
+distance = 30
+
+# Every wall, the floor and the heavy furniture are fixed colliders a player walks against.
+[physics]
+enabled = true
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

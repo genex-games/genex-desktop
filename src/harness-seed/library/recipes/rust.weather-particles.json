@@ -1,0 +1,41 @@
+{
+  "id": "rust.weather-particles",
+  "runtime": "rust-wgpu",
+  "title": "Rain, snow and dust in Rust: the engine's soft round particles around the camera, never cubes",
+  "tags": [
+    "weather",
+    "rain",
+    "snow",
+    "snowfall",
+    "flakes",
+    "dust",
+    "motes",
+    "sunbeam",
+    "precipitation",
+    "particles",
+    "cubes",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "weather",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Rain, snow and dust are Particles::rain, ::snow and ::dust made once in on_reset and drawn with frame.particles: soft round dots, never meshes.",
+  "intent": "Snowflakes, raindrops and dust motes drawn as tiny cube meshes read as flying blocks. Use the engine's particles (docs/api/particles.md): Particles::snow(top, half_extent) drops soft round flakes 2.5 cm across at 1 m/s from a box's top, settling briefly where they land; Particles::rain(top, half_extent) draws streaks that stop on what the camera sees; Particles::dust(origin, half_extent) hangs faint 5 mm motes throughout a box, unlit, so make the box the sunbeam. Make each emitter once in on_reset, keep it in the world and draw it every frame with frame.particles(&emitter). An emitter is its description: with_origin(..) at a new place each frame makes a new one, and the renderer holds only 16, so never move a box with the camera. Cover the world with a few rain or snow boxes made once instead and draw those near the camera. Tune with .with_rate(per_tick, lifetime_ticks) or .with_look(..) rather than more emitters; a phone draws every n-th particle past its cap.",
+  "sketch": "// src/facets/weather.rs — the facet's own module; src/main.rs adds its two FACET WIRING lines.\n// World (src/main.rs) holds snowing: bool, sky: Vec<(Vec3, Particles)> and dust: Option<Particles>.\nuse super::World;\nuse genex::Particles;\nuse genex::prelude::*;\n\n/// The weather tiles: a 3 x 3 grid of 20 m boxes over a 60 m yard (a larger world takes more,\n/// at most about 14 with the dust: the renderer holds 16 different emitters).\nconst TILE: f32 = 20.0;\nconst TILES: u32 = 3;\n/// The boxes' top: rain falls 9 m in its second of life, snow in about 9 s.\nconst SKY_Y: f32 = 9.0;\n\n/// One rain or snow box per tile, made once: a box moved each frame would be a new emitter.\nfn sky(snowing: bool) -> Vec<(Vec3, Particles)> {\n    let half = vec3(TILE * 0.5, 0.0, TILE * 0.5);\n    let mut tiles = Vec::new();\n    for i in 0..TILES * TILES {\n        let centre = vec3(((i % TILES) as f32 - 1.0) * TILE, SKY_Y, ((i / TILES) as f32 - 1.0) * TILE);\n        let tile = if snowing { Particles::snow(centre, half) } else { Particles::rain(centre, half) };\n        tiles.push((centre, tile.with_seed(i + 1))); // a seed each, so neighbours differ\n    }\n    tiles\n}\n\npub fn wire(game: &mut Game<World>) {\n    game.on_reset(|sim, _, _, _| {\n        // Made at a loading point and kept in the world; the same emitters again after a reset.\n        sim.world.sky = sky(sim.world.snowing);\n        // Motes in the sunbeam from the hall's window: the box is the beam (they are not lit).\n        sim.world.dust = Some(Particles::dust(vec3(4.0, 1.4, -6.0), vec3(0.8, 1.2, 2.5)));\n    });\n    game.on_draw(|sim, frame, camera| {\n        let at = vec2(camera.position.x, camera.position.z);\n        frame.tag(\"weather\"); // counts the draws that follow\n        for (centre, tile) in &sim.world.sky {\n            // The tiles within one tile of the camera: weather at least 10 m all round, wherever it goes.\n            if (vec2(centre.x, centre.z) - at).length() < TILE {\n                frame.particles(tile);\n            }\n        }\n        if let Some(dust) = &sim.world.dust {\n            frame.tag(\"dust\").particles(dust);\n        }\n    });\n}\n",
+  "port": "The world's owner (or a weather facet) makes and draws the emitters; no other facet draws weather or dust, and none draws them as meshes.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Particles)",
+      "note": "Particles::snow, ::rain and ::dust, frame.particles, an emitter made once and the renderer's 16."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

@@ -155,14 +155,17 @@ fn luminance(rgb: [f32; 3]) -> f32 {
 /// sun towards `sun_dir` with `sun_color` (outside the atmosphere): the brighter of the sun and the
 /// moon, each through the sky's medium ([`crate::sky::sun_transmittance_in`]), as (direction,
 /// colour). The moon takes over only once it outshines the setting sun, so the light's luminance
-/// never jumps (its direction turns where both are equally faint).
+/// never jumps (its direction turns where both are equally faint). A layer of clouds veils either
+/// on the way down ([`crate::clouds::Clouds::sun_through`]), on every preset whether or not it
+/// draws the clouds: the weather is the game's, not the device's.
 pub fn ground_light(sky: &crate::settings::SkyParams, camera_height_km: f32, sun_dir: [f32; 3], sun_color: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    let veil = sky.clouds.map_or(1.0, |clouds| clouds.sun_through());
     let through = crate::sky::sun_transmittance_in(&sky.medium, camera_height_km, sun_dir, sky.sun_angular_radius);
-    let sun = [0, 1, 2].map(|c| sun_color[c] * through[c]);
+    let sun = [0, 1, 2].map(|c| sun_color[c] * through[c] * veil);
     let Some(moon) = sky.moon.as_ref() else { return (sun_dir, sun) };
     let light = moon_light(moon, sun_dir, sun_color);
     let through = crate::sky::sun_transmittance_in(&sky.medium, camera_height_km, moon.direction, moon.angular_radius);
-    let moonlit = [0, 1, 2].map(|c| light[c] * through[c]);
+    let moonlit = [0, 1, 2].map(|c| light[c] * through[c] * veil);
     if luminance(moonlit) > luminance(sun) { (moon.direction, moonlit) } else { (sun_dir, sun) }
 }
 

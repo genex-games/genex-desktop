@@ -910,6 +910,8 @@ async function createCore(userData: string): Promise<StudioCore> {
   const launch = launchCoreOptions();
   const studio: StudioCore = new StudioCore({
     renderGameCover,
+    // The harness forecasts a worker's run against the same plan limits the panel shows.
+    providerUsage: () => providerUsage.snapshot(),
     // Read at send time, once the core exists: Play's catalog and account hang off it.
     mentionSources: mentionSourcesFor(() => studio),
     ...(desktop ? { desktop } : {}),

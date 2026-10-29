@@ -124,6 +124,7 @@ import {
 import { liveMaxFps } from "../live-pace.ts";
 import { PlayStage } from "../../shared/play-timing.ts";
 import { cleanTreeOf } from "../rust-build-content.ts";
+import { importRefusalNotes } from "../rust-import-notes.ts";
 import type { PlayClock } from "./play-timings.ts";
 
 /** The most cameras one capture photographs. */
@@ -210,6 +211,9 @@ const MESSAGE = {
   benchBuilt:
     "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
   benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
+  /** A capture whose page spent its boot budget: said first, so no frame below is read as the game. */
+  notLoaded: (ready: ReadyResult) =>
+    `NOT LOADED: the page had not finished loading after ${Math.round(ready.budgetMs / SECOND_MS)}s (${ready.reason ?? "it never reported itself ready"}). The frames below show what it drew so far, most likely its loading screen, not the game: do not judge the game from them. Capture again; if it keeps happening, the game's boot is too slow or it never draws its first frame.`,
   benchAfter:
     "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
   profilingNeedsStage: "profiling requires a stage preview",
@@ -259,6 +263,9 @@ const MESSAGE = {
   snapshotNotBuilt: "the snapshot's web build failed; the game's console says why",
   buildDidNotRun: (reason: string, lines: readonly string[]) =>
     `the game's build did not run (${reason})${lines.length ? `: ${lines.join(", ")}` : ""}`,
+  checkedClean: (workspace: string) =>
+    `${workspace} compiles clean: no compiler or lint error. Nothing was reloaded; reload to see it running.`,
+  nothingToCheck: "this game has no compile step to check: reload to see your edits",
 } as const;
 
 /** A reference file that could not become a still, and why. */
@@ -340,15 +347,19 @@ function captureAnswer({
   lines,
   errors,
   setupNote,
+  notLoaded,
 }: {
   bench: { entry: string } | null;
   root: string;
   lines: readonly string[];
   errors: Parameters<typeof consoleErrorsLine>[0];
   setupNote: string | null;
+  /** The wait of a page that never finished loading; null when it did. */
+  notLoaded: ReadyResult | null;
 }): string {
   const workspace = path.basename(root);
   return [
+    ...(notLoaded ? [MESSAGE.notLoaded(notLoaded)] : []),
     bench ? MESSAGE.benchCaptured(bench.entry, workspace) : `Captured your CURRENT build (workspace ${workspace}):`,
     ...lines,
     consoleErrorsLine(errors),
@@ -444,6 +455,8 @@ function unservedUrl(p: { project: string; entry?: string | undefined }): string
 
 /** A build failure said on a window's console: its load error, and that the window does not show the asked build. */
 const BUILD_FAILED_NOTE = { loadError: true, buildFailed: true } as const;
+/** The console level a file the import step left out is said at (`preview.ts`'s own warnings' level). */
+const IMPORT_NOTE_LEVEL = "warning";
 
 /** Where a capture's frame came from when the port does not say (a web page): every field unknown. */
 const UNKNOWN_PROVENANCE: CaptureProvenance = {
@@ -803,6 +816,11 @@ export class PreviewService {
   /** The build trouble last said on each window, so a judged load that built nothing says why. */
   readonly #buildNotes = new WeakMap<PreviewPort, string | null>();
   /**
+   * The files the import step left out of the build each window serves (B8), said again after
+   * every load and reload of it, because loading a page clears its console.
+   */
+  readonly #importNotes = new WeakMap<PreviewPort, readonly string[]>();
+  /**
    * The compiled build output each window was last given to serve (a lane's `<bin>.out`), so the
    * build lanes' sweep keeps it. A window that moved on keeps its entry until it loads another
    * build: the sweep keeps a folder a little longer, never removes one in view.
@@ -1075,6 +1093,7 @@ export class PreviewService {
     options: ServeOptions = {},
   ): Promise<ServedEntry | null> {
     this.#buildNotes.delete(port);
+    this.#importNotes.delete(port);
     const descriptor = await this.#game(project);
     const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
     if (isCompiledStack(stackOf(shape))) return this.#servedCompiled(project, root, entry, port, options, descriptor);
@@ -1109,6 +1128,30 @@ export class PreviewService {
   /** A game of the library by name, or undefined when there is none (or the library cannot be read). */
   async #game(project: string): Promise<GameProject | undefined> {
     return (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
+  }
+
+  /**
+   * A compiled game's fast check (the computer's `check`): `root`'s web build through the
+   * build-lane seam with `check`, so its lane runs only its compiler gate (Rust: clippy in the
+   * build's own sandbox) and nothing is built, served, loaded or reported to the stage. The answer
+   * is the agent's: the build problem's note, or that it compiles clean.
+   */
+  async checkBuild(project: string, root: string): Promise<string> {
+    const descriptor = await this.#game(project);
+    const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    if (!isCompiledStack(stackOf(shape))) return MESSAGE.nothingToCheck;
+    const game = {
+      project,
+      dir: root,
+      shape,
+      destinations: destinationsOf(descriptor ?? {}),
+      lock: await this.#gameLock(project, shape),
+      recordLock: false,
+    };
+    const receipt = await this.#x.gameBuilds.ensure(game, BuildTarget.Web, CppBuildPurpose.Judging, { check: true });
+    if (!receipt.outcome) return MESSAGE.laneMissing(receipt.stack);
+    const { problem } = receipt.outcome;
+    return problem ? problemNote(problem) : MESSAGE.checkedClean(path.basename(root));
   }
 
   /**
@@ -1188,11 +1231,17 @@ export class PreviewService {
     const note = outcome.problem ? problemNote(outcome.problem) : null;
     this.#buildNotes.set(port, note);
     if (note) port.note?.("error", note, BUILD_FAILED_NOTE);
+    this.#importNotes.set(port, importRefusalNotes(outcome.rust?.receipt?.assets));
     if (root === null) {
       if (outcome.problem) this.#x.buildProblems.set(project, outcome.problem);
       else this.#x.buildProblems.delete(project);
     }
     return note;
+  }
+
+  /** The files the import step left out of `port`'s build, on its console (warnings: the page still runs). */
+  #sayImportNotes(port: PreviewPort): void {
+    for (const note of this.#importNotes.get(port) ?? []) port.note?.(IMPORT_NOTE_LEVEL, note);
   }
 
   /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
@@ -1336,6 +1385,7 @@ export class PreviewService {
       // Loading clears the port's error, and the build is still broken: the agent loop and the
       // judges read that flag, so the failure is put back on the page the user can see.
       if (served.stale) port.note?.("error", served.stale, BUILD_FAILED_NOTE);
+      this.#sayImportNotes(port);
       return url;
     } catch (error) {
       if (isLive)
@@ -1537,7 +1587,8 @@ export class PreviewService {
     for (const camera of camerasForShot(sc, shot.bench, shot.cameras, known))
       lines.push(await this.#captureCamera(port, screen, { ...shot, camera, known, source, build: loaded.build }));
     const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
-    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote: loaded.setupNote });
+    const { setupNote, notLoaded } = loaded;
+    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote, notLoaded });
   }
 
   /**
@@ -1640,7 +1691,9 @@ export class PreviewService {
     sc: NonNullable<DelegateRequest["selfCapture"]>,
     session: SessionPort,
     { target, bench }: { target: string; bench: { entry: string } | null },
-  ): Promise<{ problem: string } | { setupNote: string | null; build: BuildIdentity | null }> {
+  ): Promise<
+    { problem: string } | { setupNote: string | null; build: BuildIdentity | null; notLoaded: ReadyResult | null }
+  > {
     const loaded = await this.loadServed(port, sc.project, target, bench?.entry ?? sc.entry);
     if (loaded.problem) {
       session.loaded = null;
@@ -1649,8 +1702,10 @@ export class PreviewService {
     const applied = bench ? null : await this.applySetup(port, sc.setup);
     session.loaded = bench ? null : { root: target, at: Date.now() };
     // A page the studio never heard report itself ready is still photographed — the frames
-    // just come with the sentence that says what they are worth.
-    return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null, build: loaded.build };
+    // come under the sentence that says, first, that they are not the game (not again as a note).
+    const notLoaded = loaded.ready?.timedOut ? loaded.ready : null;
+    const note = notLoaded ? null : loaded.note;
+    return { setupNote: [note, applied].filter(Boolean).join("; ") || null, build: loaded.build, notLoaded };
   }
 
   /**
@@ -2538,7 +2593,10 @@ export class PreviewService {
     const webBuild = await this.#reloadStarting(handle, last);
     // Reload means "what is on disk NOW" — for a game with its own build, that is a rebuild.
     const rebuilt = last ? await this.#rebuildServed(port, last, handle, p?.retry === true) : false;
-    if (!rebuilt) await port.reload();
+    if (!rebuilt) {
+      await port.reload();
+      this.#sayImportNotes(port);
+    }
     if (last && isLive) await this.#live.loaded(last.project, { print, root: last.root });
     if (isLive) this.#liveLoaded(webBuild);
     return true;
@@ -2846,6 +2904,7 @@ export class PreviewService {
     await port.load(last.project, served.entry, served.root, servedLoadOptions(served));
     last.loaded = key;
     if (served.stale) port.note?.("error", served.stale, BUILD_FAILED_NOTE);
+    this.#sayImportNotes(port);
     return true;
   }
 }

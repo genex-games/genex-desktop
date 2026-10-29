@@ -1,0 +1,52 @@
+{
+  "id": "rust.fps-breath-not-a-blob",
+  "runtime": "rust-wgpu",
+  "title": "Rust breath and smoke stay a small part of the first-person frame",
+  "tags": [
+    "breath",
+    "puff",
+    "smoke",
+    "coverage",
+    "bright",
+    "blob",
+    "sprite",
+    "firstperson",
+    "frame",
+    "fog",
+    "fps",
+    "particles"
+  ],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "Bright puff pixels cover at most a tenth of the first-person frame during breath or muzzle smoke, else it is a blob.",
+  "intent": "What matters about breath or gun smoke is how much of the frame it whitens. Draw it with the engine's particles (frame.particles, a pure function of the tick: docs/api/particles.md) started half a metre or more in front of the camera, never at the near plane: five to ten small, low-opacity puffs per breath that drift away from the camera rather than across it. If the frame still washes out, move the emitter forward; do not lower the opacity until it disappears. Capture the default first-person camera during the effect (a demo that breathes or fires) and read the frame before tuning anything else.",
+  "sketch": "use genex::prelude::*;\n\n/// Breath on a cold day: a few small puffs, started well in front of the lens and drifting away from it.\nfn breath(eye: Vec3, forward: Vec3) -> Particles {\n    Particles::steam(eye + forward * 0.6 - vec3(0.0, 0.12, 0.0))\n        .with_rate(1, 50)\n        .with_motion(forward * 0.01, 0.004, -0.0001)\n        .with_look(0.05, 2.5, Color::rgba(235, 240, 245, 70), Color::rgba(235, 240, 245, 0))\n        .with_sorted(true)\n}\n\nfn draw_breath(w: &super::World, frame: &mut Frame) {\n    if w.breathing { frame.tag(\"breath\").particles(&w.breath); } // rebuilt in on_update from the player's eye\n}\n",
+  "check": {
+    "id": "puff-coverage",
+    "kind": "pixel",
+    "camera": "default",
+    "expr": "fractionAbove(0.85) <= 0.10",
+    "weight": "normal",
+    "note": "Captured during the breath or smoke effect from the first-person default camera: bright puff pixels cover at most ~10% of the frame."
+  },
+  "port": "The effects facet owns the emitters and a demo that shows the effect; the default camera is the player's.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/particles.md",
+      "note": "Emitters drawn as a pure function of the tick."
+    },
+    {
+      "source": "library/recipes/fps.breath-not-a-blob.json",
+      "note": "The three.js recipe fps.breath-not-a-blob, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

@@ -46,7 +46,8 @@ struct FrameUniforms {
     // gx_sun_cascade_bias (the v2 prelude's reads the shared `shadow_params.x`).
     cascade_bias: vec4<f32>,
     // x: the frame's texture mip bias (`settings::frame_texture_lod_bias`, T-06), read through
-    // gx_texture_lod_bias; y, z, w: reserved (0).
+    // gx_texture_lod_bias; y: the model wind's seconds this frame, z: last frame's (this frame's
+    // after a history reset), read by `gx_row_world`'s callers; w: reserved (0).
     texture_lod: vec4<f32>,
 }
 
@@ -158,9 +159,12 @@ struct Instance {
     // World-space bounding sphere: centre xyz, radius w.
     bounds: vec4<f32>,
     material: u32,
-    pad0: u32,
-    pad1: u32,
-    pad2: u32,
+    // The model wind's words (`wind::Sway::words`, vegetation lane): half-float pairs, x the
+    // model's height and reach, y the trunk's lean and the branches' bob, z the leaves' flutter
+    // and its rate; all 0 for a row that does not sway (`gx_sway_on`).
+    wind0: u32,
+    wind1: u32,
+    wind2: u32,
 }
 
 struct Material {
@@ -202,9 +206,9 @@ struct PassView {
 }
 
 struct CullViews {
-    // MAX_VIEWS (layout.rs): the camera, four cascades, four shadowed spots; the active views
-    // lead and the rest are 0.
-    planes: array<array<vec4<f32>, 6>, 9>,
+    // MAX_VIEWS (layout.rs): the camera, four cascades, sixteen shadow slots (four spots, two
+    // point lights' six faces); the active views lead and the rest are 0.
+    planes: array<array<vec4<f32>, 6>, 21>,
     // x: visible-list slots per view, y: batches, z: active views, w: the views the frame holds
     // (bit v: a far cascade off its cadence keeps last frame's map, so its cull is skipped).
     params: vec4<u32>,
@@ -461,6 +465,39 @@ struct GxMaterialExt {
     // x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
     // world units, w: reserved (B.1).
     transmission: vec4<f32>,
+    // The UV mapping (Bodycam B2b, `gx_surface_uv`): xy the scale (0 reads as 1; tiles per metre
+    // for a world projection), zw the offset in tiles.
+    uv: vec4<f32>,
+    // The tiling (Bodycam B2b): x flag bits (1 world projection, 2 stochastic), y rotation in
+    // radians, z macro variation strength, w its patch size in metres.
+    tiling: vec4<f32>,
+    // The layered parts (AAA materials, `layers.rs`, shaders/lighting/layers.wgsl), each read only
+    // under its flag in `params.z`. Textures are `class * 65536 + layer` (-1: none).
+    // rgb the cover's colour (linear), a its amount.
+    cover: vec4<f32>,
+    // x the cosine of the cover's steepest slope, y its edge in cosine units, z its roughness, w
+    // how much it flattens the normal map.
+    cover_shape: vec4<f32>,
+    // x the cover's noise strength, y the noise's patch in metres, z how much it darkens the base
+    // colour, w how much its colour replaces it.
+    cover_look: vec4<f32>,
+    // x the detail albedo, y the detail normal map, z repeats per base tile, w the albedo's strength.
+    detail: vec4<f32>,
+    // x the detail normal's strength, y the distance it has faded out by (0: never).
+    detail_look: vec4<f32>,
+    // The second layer's base colour, normal, ORM and height textures.
+    layer: vec4<f32>,
+    // x the mask (0 noise, 1 up, 2 + channel the vertex colour), y the height blend's depth, z the
+    // noise mask's patch in metres, w the layer's repeats per base tile.
+    layer_shape: vec4<f32>,
+    // rgb the layer's tint (linear), a its roughness factor.
+    layer_tint: vec4<f32>,
+    // x the parallax height map, y its depth in tiles, z the most search steps.
+    parallax: vec4<f32>,
+    // x clearcoat, y its roughness, z anisotropy, w its rotation in radians.
+    lobes: vec4<f32>,
+    // rgb the sheen's colour (linear), a its roughness.
+    sheen: vec4<f32>,
 }
 
 // The view distance of a depth-buffer value under projection `proj` (perspective or
@@ -470,4 +507,119 @@ fn gx_view_distance(proj: mat4x4<f32>, depth: f32) -> f32 {
         return (proj[3][2] - depth) / proj[2][2];
     }
     return proj[3][2] / (depth + proj[2][2]);
+}
+
+// --- The shared wind (renderer pass 2, B.7; `wind.rs` holds its CPU twin): one gust and one
+// flutter field over the world, a function of a plant's root and simulated seconds only. Vertex
+// animation evaluates it at this frame's time and at last frame's (`PassFrame::prev_tick`,
+// `GxDrawV2`'s `prev_time`; `GpuFrame::texture_lod` y and z for model wind), so the sway carries
+// its own motion vectors and TAA reprojects it instead of trailing it.
+
+// The wind's direction over the ground (unit, y 0).
+const GX_WIND_DIR: vec3<f32> = vec3<f32>(0.55238038, 0.0, 0.83359218);
+
+// The wind at a plant rooted at `root`, `t` simulated seconds in.
+struct GxWind {
+    // The slow gust, 0.0..1.0 (0.5 on average): how far the wind leans a stem.
+    gust: f32,
+    // The fast flutter, -1.0..1.0: a stem's quick shiver.
+    flutter: f32,
+}
+
+fn gx_wind(root: vec3<f32>, t: f32) -> GxWind {
+    var wind: GxWind;
+    wind.gust = 0.5 + 0.3 * sin(t * 1.6 + root.x * 0.21 + root.z * 0.13) + 0.2 * sin(t * 0.55 + root.x * 0.045 - root.z * 0.03);
+    wind.flutter = sin(t * 4.0 + root.x * 1.7 + root.z * 1.3);
+    return wind;
+}
+
+// --- Model wind (vegetation lane; `wind.rs` `sway_offset` is the CPU twin, sine for sine): a row
+// whose wind words are set bends in the shared wind in every pass that draws it, trunk, branches
+// and leaves, weighted by the vertex's model-space height and reach over the model's.
+// The extent a swaying model keeps (`wind::SWAY_EXTENT_MIN`).
+const GX_SWAY_EXTENT_MIN: f32 = 0.05;
+// The branches' bob rate in radians a second, and the shares of the bob and the flutter that do
+// not wait for a gust (`wind.rs`).
+const GX_SWAY_BRANCH_RATE: f32 = 1.9;
+const GX_SWAY_BRANCH_CALM: f32 = 0.35;
+const GX_SWAY_FLUTTER_CALM: f32 = 0.5;
+const GX_SWAY_TAU: f32 = 6.28318531;
+
+// A half float's value from its 16 bits (the wind words' pairs; `unpack2x16float` needs a
+// capability WebGPU core lacks). Subnormals read as 0; the words never hold infinities.
+fn gx_half(bits: u32) -> f32 {
+    let exponent = (bits >> 10u) & 0x1fu;
+    if exponent == 0u {
+        return 0.0;
+    }
+    let sign = (bits & 0x8000u) << 16u;
+    return bitcast<f32>(sign | ((exponent + 112u) << 23u) | ((bits & 0x3ffu) << 13u));
+}
+
+// The pair of half floats in `word`: low then high.
+fn gx_halves(word: u32) -> vec2<f32> {
+    return vec2<f32>(gx_half(word & 0xffffu), gx_half(word >> 16u));
+}
+
+// The row's wind words.
+fn gx_row_wind(row: Instance) -> vec3<u32> {
+    return vec3<u32>(row.wind0, row.wind1, row.wind2);
+}
+
+// Whether a row sways: a sway's first word is never 0.
+fn gx_sway_on(wind: vec3<u32>) -> bool {
+    return wind.x != 0u;
+}
+
+// How far the vertex at model-space `local` of a copy under `model` moves, `t` wind seconds in.
+fn gx_sway_offset(model: mat4x4<f32>, local: vec3<f32>, wind: vec3<u32>, t: f32) -> vec3<f32> {
+    let extent = gx_halves(wind.x);
+    let bend = gx_halves(wind.y);
+    let leaf = gx_halves(wind.z);
+    let root = model[3].xyz;
+    let scale = length(model[1].xyz);
+    let field = gx_wind(root, t);
+    let height = clamp(local.y / extent.x, 0.0, 1.0);
+    let reach = clamp(length(local.xz) / extent.y, 0.0, 1.0);
+    let lean = bend.x * scale * field.gust * height * height;
+    let branch_phase = 1.3 * (0.7 * local.x + 0.3 * local.y + 1.1 * local.z) + 0.37 * root.x + 0.51 * root.z;
+    let branch_gust = GX_SWAY_BRANCH_CALM + (1.0 - GX_SWAY_BRANCH_CALM) * field.gust;
+    let branch = bend.y * scale * reach * reach * height * branch_gust * sin(t * GX_SWAY_BRANCH_RATE + branch_phase);
+    let leaf_phase = 7.3 * local.x + 5.1 * local.y + 9.7 * local.z;
+    let flutter_gust = GX_SWAY_FLUTTER_CALM + (1.0 - GX_SWAY_FLUTTER_CALM) * field.gust;
+    let flutter = leaf.x * scale * reach * flutter_gust * sin(t * leaf.y * GX_SWAY_TAU + leaf_phase);
+    // The leaf shivers about an axis of its own; the lean sinks the vertex so the trunk keeps its
+    // length (the circle's sagitta).
+    let axis = vec3<f32>(0.45 * sin(leaf_phase), 0.8, 0.45 * cos(leaf_phase));
+    let standing = max(height * extent.x * scale, GX_SWAY_EXTENT_MIN);
+    let sink = lean * lean / (2.0 * standing);
+    let along = lean + 0.4 * branch;
+    return vec3<f32>(GX_WIND_DIR.x * along, 0.6 * branch - sink, GX_WIND_DIR.z * along) + axis * flutter;
+}
+
+// The world position of model-space `local` of a copy under `model` whose row has `wind`, `t`
+// wind seconds in: `model * local` exactly for a row that does not sway.
+fn gx_sway_world(model: mat4x4<f32>, local: vec3<f32>, wind: vec3<u32>, t: f32) -> vec4<f32> {
+    let world = model * vec4<f32>(local, 1.0);
+    if !gx_sway_on(wind) {
+        return world;
+    }
+    return world + vec4<f32>(gx_sway_offset(model, local, wind, t), 0.0);
+}
+
+// `gx_sway_world` under the row's own model matrix.
+fn gx_row_world(row: Instance, local: vec3<f32>, t: f32) -> vec4<f32> {
+    return gx_sway_world(row.model, local, gx_row_wind(row), t);
+}
+
+// How far a swaying row's vertices may move (world units: its layers' sum times its scale), 0 for
+// a row that does not sway: the meshlet cull grows each cluster's sphere by it.
+fn gx_sway_reach(row: Instance) -> f32 {
+    let wind = gx_row_wind(row);
+    if !gx_sway_on(wind) {
+        return 0.0;
+    }
+    let bend = gx_halves(wind.y);
+    let scale = max(max(length(row.model[0].xyz), length(row.model[1].xyz)), length(row.model[2].xyz));
+    return (bend.x + bend.y + gx_halves(wind.z).x) * scale;
 }

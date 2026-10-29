@@ -1,0 +1,195 @@
+{
+  "schema": "genex-aaa-suite/1",
+  "prompts": [
+    {
+      "id": "bodycam-post-soviet",
+      "label": "Bodycam shooter, post-Soviet school and yard",
+      "origin": "The user's words in the gen3 goal of run_mvs67gsbys67, verbatim; the goal's last sentence was the harness's own origin line",
+      "brief": "Make the photorealistic bodycam FPS shooter in a post-Soviet environment in our Rust engine. Make it with animations, and more photorealistic with modern render techniques — super AAAA photorealism. Make this game multiplayer using Genex.",
+      "look": "bright",
+      "views": [
+        {
+          "role": "interior-hero",
+          "setting": "interior",
+          "describe": "A classroom or corridor at eye height, as a player first sees it"
+        },
+        {
+          "role": "interior-close",
+          "setting": "interior",
+          "describe": "Within 2 m of a wall, a radiator or furniture"
+        },
+        { "role": "exterior-hero", "setting": "exterior", "describe": "The yard or street outside, at eye height" },
+        { "role": "exterior-close", "setting": "exterior", "describe": "Within 2 m of a bench, bin, tree or fence" },
+        { "role": "character", "setting": "interior", "describe": "Another soldier or player at 5 to 10 m" }
+      ],
+      "motion": [{ "demo": "sprint", "describe": "A 3 s first-person sprint along a straight path" }],
+      "transitions": [{ "demo": "doorway", "describe": "Walk from the yard through a door into the building" }],
+      "references": [
+        { "source": "polyhaven", "asset": "construction_yard", "matches": "exterior-hero", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "school_hall", "matches": "interior-hero", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "winter-courtyard",
+      "label": "Snowy apartment courtyard in winter",
+      "origin": "Held-out exterior prompt written for the release gate",
+      "brief": "I want a small game where you walk around a snowy apartment courtyard in winter, late afternoon. Real snow on the ground and on the benches and parked cars, bare birch trees, an old playground, and you can go into the stairwell of one of the buildings. It should look like a photo, not a cartoon.",
+      "look": "bright",
+      "views": [
+        {
+          "role": "exterior-hero",
+          "setting": "exterior",
+          "describe": "The courtyard at eye height, buildings and trees in view"
+        },
+        { "role": "exterior-close", "setting": "exterior", "describe": "Within 2 m of a snowy bench or a parked car" },
+        {
+          "role": "vegetation-close",
+          "setting": "exterior",
+          "describe": "Within 3 m of a birch trunk, looking up into the branches"
+        },
+        { "role": "interior-hero", "setting": "interior", "describe": "Inside the stairwell at eye height" }
+      ],
+      "motion": [{ "demo": "walk", "describe": "A 3 s first-person walk across the courtyard" }],
+      "transitions": [{ "demo": "doorway", "describe": "Walk from the courtyard into the stairwell" }],
+      "references": [
+        { "source": "polyhaven", "asset": "snowy_park_01", "matches": "exterior-hero", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "winter_evening", "matches": "exterior-close", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "forest-hike",
+      "label": "Forest hike to a lookout",
+      "origin": "Held-out exterior prompt written for the release gate",
+      "brief": "Make a relaxing hiking game in a thick forest. Morning sun coming through the trees, a dirt trail with roots and rocks, ferns and moss everywhere, a little stream you cross on a fallen log. I just want to walk up to the lookout at the top and enjoy the view. As real looking as possible.",
+      "look": "bright",
+      "views": [
+        {
+          "role": "exterior-hero",
+          "setting": "exterior",
+          "describe": "On the trail at eye height, trees on both sides"
+        },
+        { "role": "vegetation-close", "setting": "exterior", "describe": "Within 2 m of ferns, moss or a tree trunk" },
+        { "role": "exterior-vista", "setting": "exterior", "describe": "The view from the lookout" }
+      ],
+      "motion": [{ "demo": "walk", "describe": "A 3 s first-person walk along the trail" }],
+      "transitions": [],
+      "references": [
+        { "source": "polyhaven", "asset": "autumn_forest_01", "matches": "exterior-hero", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "forest_slope", "matches": "vegetation-close", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "night-city-street",
+      "label": "Rainy city street at night",
+      "origin": "Held-out exterior prompt written for the release gate",
+      "brief": "A city street at night after the rain. Wet asphalt reflecting the neon signs and street lamps, parked cars, steam coming out of a manhole, a few people walking past. You walk home and can step into a corner shop. Cinematic, like a modern AAA game.",
+      "look": "dark",
+      "views": [
+        {
+          "role": "exterior-hero",
+          "setting": "exterior",
+          "describe": "The street at eye height with lamps and signs in view"
+        },
+        { "role": "exterior-close", "setting": "exterior", "describe": "Within 2 m of a parked car or the wet kerb" },
+        { "role": "interior-hero", "setting": "interior", "describe": "Inside the corner shop" },
+        { "role": "character", "setting": "exterior", "describe": "A passer-by at 3 to 8 m" }
+      ],
+      "motion": [{ "demo": "walk", "describe": "A 3 s first-person walk along the pavement" }],
+      "transitions": [{ "demo": "doorway", "describe": "Walk from the street into the shop" }],
+      "references": [
+        {
+          "source": "polyhaven",
+          "asset": "cobblestone_street_night",
+          "matches": "exterior-hero",
+          "yawDeg": [0, 120, 240]
+        },
+        { "source": "polyhaven", "asset": "shanghai_bund", "matches": "exterior-close", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "rally-stage",
+      "label": "Rally car on a gravel stage",
+      "origin": "Held-out vehicle prompt written for the release gate",
+      "brief": "A rally racing game on a gravel road through green hills in summer. One car that handles properly, with drifting and dust behind the wheels, a chase camera and a bonnet camera, and a timer for the stage. I want it to look like a real rally on TV.",
+      "look": "bright",
+      "views": [
+        { "role": "vehicle-chase", "setting": "exterior", "describe": "The chase camera behind the car at speed" },
+        { "role": "vehicle-close", "setting": "exterior", "describe": "Within 3 m of the stopped car, side on" },
+        { "role": "exterior-hero", "setting": "exterior", "describe": "The road ahead from the bonnet camera" }
+      ],
+      "motion": [{ "demo": "drive", "describe": "3 s of the chase camera at full speed on a straight" }],
+      "transitions": [],
+      "references": [
+        { "source": "polyhaven", "asset": "dirt_bike_track_01", "matches": "exterior-hero", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "rural_asphalt_road", "matches": "vehicle-chase", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "third-person-yard",
+      "label": "Third-person action in an industrial yard",
+      "origin": "Held-out third-person prompt written for the release gate",
+      "brief": "Third person action game: you're a mercenary fighting through an abandoned industrial yard at midday. Over the shoulder camera, taking cover, rolling, a few enemies with rifles. The character and the place should look as detailed as a current-gen console game.",
+      "look": "bright",
+      "views": [
+        { "role": "character", "setting": "exterior", "describe": "Over the shoulder, the player character in frame" },
+        { "role": "exterior-hero", "setting": "exterior", "describe": "The yard at eye height with cover and enemies" },
+        {
+          "role": "exterior-close",
+          "setting": "exterior",
+          "describe": "Within 2 m of a crate, barrier or wall used as cover"
+        }
+      ],
+      "motion": [{ "demo": "sprint", "describe": "A 3 s third-person sprint" }],
+      "transitions": [],
+      "references": [
+        { "source": "polyhaven", "asset": "abandoned_parking", "matches": "exterior-hero", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "empty_warehouse_01", "matches": "exterior-close", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "hospital-horror",
+      "label": "Horror in an abandoned hospital at night",
+      "origin": "Held-out interior prompt written for the release gate",
+      "brief": "Horror game in an abandoned hospital at night. You only have a flashlight, some corridor lights flicker, peeling paint, rusty beds, dust floating in the beam. Something is following you. Make it properly scary and realistic, not low poly.",
+      "look": "dark",
+      "views": [
+        { "role": "interior-hero", "setting": "interior", "describe": "A corridor at eye height, flashlight on" },
+        {
+          "role": "interior-close",
+          "setting": "interior",
+          "describe": "Within 2 m of a bed or a peeling wall, in the beam"
+        },
+        { "role": "interior-room", "setting": "interior", "describe": "A ward seen from its doorway" }
+      ],
+      "motion": [{ "demo": "walk", "describe": "A 3 s first-person walk down a corridor" }],
+      "transitions": [{ "demo": "doorway", "describe": "Walk from a dark ward into a lit corridor" }],
+      "references": [
+        { "source": "polyhaven", "asset": "creepy_bathroom", "matches": "interior-close", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "abandoned_hall_01", "matches": "interior-hero", "yawDeg": [0, 120, 240] }
+      ]
+    },
+    {
+      "id": "sunny-village",
+      "label": "Sunny countryside village",
+      "origin": "Held-out exterior prompt written for the release gate",
+      "brief": "A peaceful village in the countryside on a sunny summer afternoon. Old stone houses with tiled roofs, flowers on the windows, a well in the little square, fields and trees around, chickens walking about. I walk around and can talk to a couple of villagers. As realistic as you can make it.",
+      "look": "bright",
+      "views": [
+        {
+          "role": "exterior-hero",
+          "setting": "exterior",
+          "describe": "The square at eye height, houses and the well in view"
+        },
+        { "role": "exterior-close", "setting": "exterior", "describe": "Within 2 m of a house wall with flowers" },
+        { "role": "exterior-vista", "setting": "exterior", "describe": "Fields and trees beyond the village" },
+        { "role": "character", "setting": "exterior", "describe": "A villager at 2 to 4 m, mid-conversation" }
+      ],
+      "motion": [{ "demo": "walk", "describe": "A 3 s first-person walk across the square" }],
+      "transitions": [],
+      "references": [
+        { "source": "polyhaven", "asset": "belfast_farmhouse", "matches": "exterior-vista", "yawDeg": [0, 120, 240] },
+        { "source": "polyhaven", "asset": "dresden_square", "matches": "exterior-hero", "yawDeg": [0, 120, 240] }
+      ]
+    }
+  ]
+}

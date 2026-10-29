@@ -168,6 +168,8 @@ import {
   readLedger,
   RECONCILE_BATCH,
   settledFailureStatus,
+  generationFailure,
+  recordCliFailure,
   siblingWithFiles,
   type LedgerRow,
   type ReviewAnswer,
@@ -2288,7 +2290,7 @@ export class GenexTools {
       return { ...job, result: response };
     } catch (e) {
       job.status = failedJobStatus(job, signal.aborted);
-      job.error = (e as Error).message;
+      recordCliFailure(job, (e as Error).message, signal.aborted);
       if (e instanceof GenexTermsPending) job.blocked = GenexBlocked.Terms;
       await this.#reconcileJob(cwd, job);
       job.status = settledFailureStatus(job, READ_OPERATIONS.has(request.operation), () => signal.aborted);
@@ -2316,7 +2318,11 @@ export class GenexTools {
     job.remoteStatus = response.status;
     job.status = jobStatusFromRemote(response.status);
     if (Number.isSafeInteger(response.creditsQuoted)) job.creditsQuoted = response.creditsQuoted;
-    if (isRemoteFailure(job)) job.error = String(response.error ?? job.status);
+    if (isRemoteFailure(job)) {
+      job.error = String(response.error ?? job.status);
+      const failure = generationFailure(response);
+      if (failure) job.failure = failure;
+    }
     if (hasDownloadableResult(job)) await this.#deliverResult(cwd, job, root, output, signal);
     await this.#reconcileJob(cwd, job);
   }

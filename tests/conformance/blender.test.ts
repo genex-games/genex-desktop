@@ -242,13 +242,11 @@ describe("Blender through the public plugin API", () => {
       });
       assert.equal(last.record.name, "dog-two", JSON.stringify(last.record));
       const argv = String(last.record.stats.argv).split(" ");
-      assert.deepEqual(argv.slice(3, 8), [
-        "dog-two",
-        "--rig",
-        "1",
-        "--inputs",
-        "assets/src/common.py,assets/tex/rust.png",
-      ]);
+      assert.deepEqual(argv.slice(3, 6), ["dog-two", "--rig", "1"]);
+      // Every job also gets Studio's genex_bpy helper library beside the wrapper's flags.
+      const after = (flag: string) => argv[argv.indexOf(flag) + 1];
+      assert.equal(path.basename(after("--helpers") ?? ""), "genex_bpy.py");
+      assert.equal(after("--inputs"), "assets/src/common.py,assets/tex/rust.png");
       const slots = argv.flatMap((arg, i) => (arg === "--slot" ? [path.basename(argv[i + 1] ?? "")] : []));
       const padding = Array.from({ length: 7 }, (_, i) => `input${i + 3}.py`);
       assert.deepEqual(slots, ["input1.py", "input2.png", ...padding], "unused slots carry the script again");

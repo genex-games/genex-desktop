@@ -1305,11 +1305,20 @@ describe("the run's plan, before anyone builds", () => {
   it("takes what kind of game this is on the plan, and refuses a kind that is not one", () => {
     const one = JSON.stringify([{ id: "board" }]);
     const board = (
-      compilePlan({ summary: "a chess board that reads", workers: one, kind: "static-board" }) as { plan: any }
+      compilePlan({ summary: "a chess board that reads", workers: one, kind: "static-board", start: "none" }) as {
+        plan: any;
+      }
     ).plan;
     assert.deepEqual(
       board.game,
-      { kind: "static-board", hud: false, mouseLook: false, keyboardMove: false, playScript: null },
+      {
+        kind: "static-board",
+        hud: false,
+        mouseLook: false,
+        keyboardMove: false,
+        playScript: null,
+        start: { keys: [] },
+      },
       "a declared kind brings its own traits and nothing else",
     );
 
@@ -1318,6 +1327,7 @@ describe("the run's plan, before anyone builds", () => {
         summary: "a builder you pan around",
         workers: one,
         kind: "free-camera",
+        start: "none",
         play_script: JSON.stringify([{ type: "drag", fromX: 100, fromY: 100, x: 300, y: 200 }]),
       }) as { plan: any }
     ).plan;
@@ -3682,6 +3692,9 @@ describe("a director's run through the real core and harness", () => {
         // skies, as the Blender plugin offers its tools.
         "cc0__fetch",
         "cc0__search",
+        // Flipped: the CC0 Library packs a fetched scan into a Terrain layer's textures. A tool has
+        // no stack scope (only skills do), so a web lead is offered it too.
+        "cc0__terrain-layer",
         "computer",
         "finish",
         "genex__asset",
@@ -3702,6 +3715,10 @@ describe("a director's run through the real core and harness", () => {
         "job_stop",
         "job_tail",
         "judge",
+        // Flipped: the bundled Content Library (`library`) offers its pre-processed CC0 entries; like
+        // every plugin tool it reaches a web lead too, while its skill serves Rust games only.
+        "library__add",
+        "library__search",
         "look",
         "note",
         // Flipped: a lead may look for a Genex plugin and show the person its card, in the chat its
@@ -7255,7 +7272,7 @@ describe("a director's run through the real core and harness", () => {
         seen.director.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         // The director looked and decided this is not the top-down game the file says.
-        results.planned = text(await call("plan", { ...planFor("core"), kind: "first-person" }));
+        results.planned = text(await call("plan", { ...planFor("core"), kind: "first-person", start: '["Enter"]' }));
         // A worker with no seam owns nearly the whole repository, so it starts alone…
         results.startedCore = json(
           await call("worker_start", {

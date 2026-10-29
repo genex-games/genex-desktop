@@ -15,8 +15,9 @@
  * on its discovery path; the security settings are `--config` overrides on every command. The lock
  * is generated offline against the vendored registry in the build folder, read back and verified
  * (every package the vendored registry's or a path package), then copied into the stage for
- * `--offline --locked` runs: clippy with the store's `clippy.toml` and `-D warnings` first, then the
- * build, both under `RUSTFLAGS=-F unsafe_code`.
+ * `--offline --locked` runs: clippy with the store's `clippy.toml` and `-D warnings` (style,
+ * complexity and unused-code lints allowed, the store's determinism bans denied: {@link CLIPPY_LINT_LEVELS}) first,
+ * then the build, both under `RUSTFLAGS=-F unsafe_code`.
  *
  * The game's trust flag (`rust-trust.ts`, set only by the person) is the one way off that policy
  * (`rustTrustPolicy`): with it on, `-F unsafe_code` is dropped and the game's own `build.rs`
@@ -288,6 +289,35 @@ const VENDORED_SOURCE = "genex-vendored";
 const CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index";
 /** The unsafe-code policy every game crate is compiled under (M7.2's trust flag is the only way off it). */
 const GAME_RUSTFLAGS = "-F unsafe_code";
+/**
+ * The lint levels clippy's gate runs a game crate at, in order (rustc lets the last flag naming a
+ * lint or its group win). Every warning is an error, except clippy's style and complexity groups
+ * and `approx_constant` (a literal near a std constant, as a hand-written TAU), which only say how
+ * the code reads: they never fail a build (B6, bodycam's `collapsible_if`). Nor does rustc's
+ * `unused` group: a field, function, import or variable a game in progress does not use yet
+ * (`dead_code`) cost bodycam's agents whole rounds, in every build alike, since an export that
+ * failed on what judged builds allowed would surprise the person last. A dropped `Result`
+ * (`unused_must_use`) is still an error. The store's `clippy.toml` determinism bans are in the
+ * style group, so they are denied again after it.
+ */
+const CLIPPY_LINT_LEVELS: readonly string[] = [
+  "-D",
+  "warnings",
+  "-A",
+  "unused",
+  "-D",
+  "unused_must_use",
+  "-A",
+  "clippy::style",
+  "-A",
+  "clippy::complexity",
+  "-A",
+  "clippy::approx_constant",
+  "-D",
+  "clippy::disallowed_methods",
+  "-D",
+  "clippy::disallowed_types",
+];
 /** The rustc lint an `unsafe` block under {@link GAME_RUSTFLAGS} fails with. */
 const UNSAFE_CODE_LINT = "unsafe_code";
 /** A game's own build script, beside its `genex.toml`; staged only for a trusted game. */
@@ -735,6 +765,8 @@ interface Pending {
   turn: BuildTurn;
   /** What the build is made of, when its source is a clean checkout (`rust-build-content.ts`); null otherwise. */
   content: PendingContent | null;
+  /** Only the gate's clippy on the staged game (`GameBuildOptions.check`): nothing is built, admitted or announced. */
+  check: boolean;
 }
 
 /** A clean checkout's build: its content key and tree, and whether its stage proved to be that tree. */
@@ -833,6 +865,8 @@ interface InFlight {
   controller: AbortController;
   done: Promise<BuildOutcome>;
   waiters: number;
+  /** A check (`Pending.check`): a build never shares it, and starts once it is done. */
+  check: boolean;
 }
 
 /** What one step answered: its run, or null when Stop came first. */
@@ -901,8 +935,22 @@ export class RustBuilds implements GameBuildLane {
       return this.#refused(asked, BuildProblemCode.ToolchainMissing, lines, null, RustBuildRefusal.TargetSettings);
     }
     const turn = { priority: priorityOf(purpose, options.priority) };
-    const pending: Pending = { game, target, purpose, builder, source, bin, lock, sdk, settings, turn, content: null };
-    return await this.#join(pending, options);
+    const check = options.check === true;
+    const pending: Pending = {
+      game,
+      target,
+      purpose,
+      builder,
+      source,
+      bin,
+      lock,
+      sdk,
+      settings,
+      turn,
+      content: null,
+      check,
+    };
+    return await (check ? this.#joinCheck(pending, options) : this.#join(pending, options));
   }
 
   /** The build of `pending`'s folder under way (or a new one), waited for; a Play timing it hears its marks meanwhile. */
@@ -911,20 +959,37 @@ export class RustBuilds implements GameBuildLane {
     const timing = options.timing;
     if (timing) this.#timingsOf(bin).add(timing);
     try {
-      const running = this.#running(bin);
+      const running = this.#building(bin);
       if (running) return await this.#waitRaised(running, pending, options);
       const content = await this.#contentOf(pending);
       const same = content ? this.#sameContent(content.key, pending) : null;
       if (same) return await this.#waitOnContent(same, pending, options);
       const reused = content ? await this.#reused(pending, content.key, timing) : null;
       if (reused) return reused;
-      const started = this.#running(bin);
+      const started = this.#building(bin);
       if (started) return await this.#waitRaised(started, pending, options);
       const flight = this.#start({ ...pending, content }, this.#inFlight.get(bin) ?? null);
       return await this.#wait(flight, pending, options.signal);
     } finally {
       if (timing) this.#timings.get(bin)?.delete(timing);
     }
+  }
+
+  /**
+   * A check of `pending`'s folder: the build or check of it under way answers it (a build runs
+   * the compiler too), else a check of its own starts, after a cancelled one.
+   */
+  async #joinCheck(pending: Pending, options: GameBuildOptions): Promise<BuildOutcome> {
+    const running = this.#running(pending.bin);
+    if (running) return await this.#wait(running, pending, options.signal);
+    const flight = this.#start(pending, this.#inFlight.get(pending.bin) ?? null);
+    return await this.#wait(flight, pending, options.signal);
+  }
+
+  /** The build of `bin` under way and not stopped, a check never: a build waits for a check, then builds. */
+  #building(bin: string): InFlight | null {
+    const running = this.#running(bin);
+    return running && !running.check ? running : null;
   }
 
   /** The build of `bin` under way and not stopped, or null. */
@@ -1175,7 +1240,14 @@ export class RustBuilds implements GameBuildLane {
     const controller = new AbortController();
     const start = () => this.#build(pending, controller.signal);
     const done = cancelled ? cancelled.done.then(start, start) : start();
-    const flight: InFlight = { project: pending.game.project, turn: pending.turn, controller, done, waiters: 0 };
+    const flight: InFlight = {
+      project: pending.game.project,
+      turn: pending.turn,
+      controller,
+      done,
+      waiters: 0,
+      check: pending.check,
+    };
     this.#inFlight.set(pending.bin, flight);
     const key = pending.content?.key;
     if (key) this.#contentFlights.set(key, { flight, bin: pending.bin, linted: lintsFor(pending.purpose) });
@@ -1358,6 +1430,7 @@ export class RustBuilds implements GameBuildLane {
         rust: RustBuildRefusal.DependencyNotAllowed,
       });
     }
+    if (plan.check) return await this.#checkSteps(plan, signal, lastGood);
     const imported = await this.#timed(plan.bin, PlayStage.BuildStep, ASSETS_STEP, () =>
       this.#importAssets(plan, signal),
     );
@@ -1380,6 +1453,22 @@ export class RustBuilds implements GameBuildLane {
     return await this.#timed(plan.bin, PlayStage.BuildStep, ADMIT_STEP, () =>
       this.#admit(plan, build, compiler, lastGood, signal),
     );
+  }
+
+  /**
+   * A check's steps on the staged game: identity, lock and the gate's clippy whatever the purpose,
+   * never the asset import or the build. Answers clippy's problem, or `ok` with no output.
+   */
+  async #checkSteps(plan: Plan, signal: AbortSignal, lastGood: string | null): Promise<BuildOutcome> {
+    const identity = await this.#step(plan, RustBuildStep.Identity, rustcCommand(plan), IDENTITY_TIMEOUT_MS, signal);
+    if (!succeeded(identity)) return this.#failed(plan, identity, signal, lastGood);
+    const locked = await this.#lock(plan, signal, lastGood);
+    if (locked) return locked;
+    const timeout = RUST_BUILD_TIMEOUT_MS[plan.target];
+    const clippy = await this.#step(plan, RustBuildStep.Clippy, clippyCommand(plan, this.#jobs()), timeout, signal);
+    if (!succeeded(clippy)) return this.#failed(plan, clippy, signal, lastGood);
+    const rust: RustLaneReport = { refusal: null, diagnostics: [], receipt: null };
+    return { ok: true, output: null, lastGood, problem: null, ran: true, rust };
   }
 
   /** The slug a networked export bakes in: the binding's, when it is one fit to bake; null for every other build. */
@@ -2082,6 +2171,8 @@ export class RustBuilds implements GameBuildLane {
   }
 
   #emit(asked: Asked, phase: BuildPhase): void {
+    // A check is no build: the stage's progress never hears of it.
+    if (asked.check) return;
     const { game, target, purpose } = asked;
     this.options.emit({ project: game.project, target, purpose, phase, at: this.#now() });
   }
@@ -2107,6 +2198,8 @@ interface Asked {
   game: GameBuildGame;
   target: BuildTarget;
   purpose: CppBuildPurpose;
+  /** A check (`Pending.check`), which announces nothing; absent for a refusal before any. */
+  check?: boolean;
 }
 
 /** How a build that did not succeed is answered. */
@@ -2454,7 +2547,7 @@ function cargoStep(plan: Plan, step: "clippy" | "build", args: readonly string[]
 }
 
 function clippyCommand(plan: Plan, jobs: number): string {
-  return cargoStep(plan, "clippy", [...sharedArgs(plan, jobs), "--", "-D", "warnings"]);
+  return cargoStep(plan, "clippy", [...sharedArgs(plan, jobs), "--", ...CLIPPY_LINT_LEVELS]);
 }
 
 function buildCommand(plan: Plan, jobs: number): string {

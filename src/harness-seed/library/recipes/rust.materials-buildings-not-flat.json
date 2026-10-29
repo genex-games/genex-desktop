@@ -1,0 +1,56 @@
+{
+  "id": "rust.materials-buildings-not-flat",
+  "runtime": "rust-wgpu",
+  "title": "Rust buildings carry textured materials from CC0 sets, never flat colour",
+  "tags": [
+    "building",
+    "facade",
+    "wall",
+    "walls",
+    "material",
+    "map",
+    "masonry",
+    "plaster",
+    "concrete",
+    "brick",
+    "wood",
+    "flat",
+    "colour",
+    "texture",
+    "cc0",
+    "interior",
+    "corridor"
+  ],
+  "checkClass": "materials",
+  "kind": "craft",
+  "pack": "materials",
+  "note": "Walls and floors use Material::color(..).with_base_texture/normal/metal_rough from CC0 sets, panelled so the texture is not stretched.",
+  "intent": "Buildings are the largest surfaces in the frame, so flat colour on them is the first thing the taste judge names. Fetch three or four CC0 surface sets (cc0__search, cc0__fetch at 1k: plaster, concrete, tile, wood) with their colour, normal and roughness maps, and make one Material per kind in on_reset: Material::color(Color::WHITE).with_base_texture(color).with_normal_texture(normal, 1.0).with_metal_rough_texture(rough). A cube's texture spans each face once (0..1 per face), so a 12 m wall drawn as one cube stretches it: draw walls as panels of about 2 m (or the material's real tile size), or better, build the shell as a GLB kit in Local Blender with world-scale UVs. Pick the kind per wall from the reset rng so neighbours differ, and vary the tint slightly so a row does not read as one block. Every wall, floor and ceiling draw goes under a tag (\"building\", \"floor\") so the checks can see it.",
+  "sketch": "use genex::prelude::*;\n\n/// One wall kind: colour, normal and roughness maps from one CC0 set, so it takes the light as plaster does.\nfn wall_kind(set: &str) -> Material {\n    Material::color(Color::WHITE)\n        .with_base_texture(&format!(\"cc0/{set}/color.jpg\"))\n        .with_normal_texture(&format!(\"cc0/{set}/normal.jpg\"), 1.0)\n        .with_metal_rough_texture(&format!(\"cc0/{set}/rough.jpg\"))\n        .with_untextured_color(Color::rgb(150, 146, 138))\n}\n\n/// A wall drawn as ~2 m panels: a cube's texture spans each face once, so short panels keep the texel size even.\nfn draw_wall(frame: &mut Frame, from: Vec3, to: Vec3, height: f32, thick: f32, kinds: &[Material], seed: u32) {\n    let run = to - from;\n    let panels = (run.length() / 2.0).round().max(1.0) as u32;\n    let step = run / panels as f32;\n    frame.tag(\"building\");\n    for i in 0..panels {\n        let centre = from + step * (i as f32 + 0.5) + vec3(0.0, height * 0.5, 0.0);\n        let size = vec3(step.length().max(thick), height, thick);\n        let yaw = genex::math::atan2(step.x, step.z);\n        let kind = &kinds[((seed + i * 7) as usize) % kinds.len()]; // seeded, so neighbours differ\n        frame.cube_with(Transform::from_translation(centre).with_rotation(Quat::from_rotation_y(yaw)).with_scale(size), kind);\n    }\n}\n",
+  "check": {
+    "id": "materials-no-flat-buildings",
+    "kind": "vision",
+    "camera": "eye:spawn",
+    "ask": "Do the walls and floor in view carry a real surface texture (plaster, concrete, tile, wood) that is not stretched or smeared, rather than flat colour?",
+    "weight": "normal",
+    "note": "Buildings carry textured materials at an even texel size; a flat or stretched wall is the first thing the judge names."
+  },
+  "port": "The level facet makes the wall kinds once in on_reset and owns every wall, floor and ceiling draw; dressing facets add decals, never repaint walls.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/lighting.md",
+      "note": "Material::with_base_texture, with_normal_texture, with_metal_rough_texture and with_untextured_color."
+    },
+    {
+      "source": "library/recipes/materials.buildings-not-flat.json",
+      "note": "The three.js recipe materials.buildings-not-flat, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

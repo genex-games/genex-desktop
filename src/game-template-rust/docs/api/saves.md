@@ -3,8 +3,24 @@
 `game.saves(SaveConfig::schema(1))` gives the game save slots, and `game.save_world()` puts the
 whole world in each slot through serde. A game crate does not name serde: `World` derives
 `Serialize` and `Deserialize` from the prelude through the facade's copy. A hook asks
-`ctx.slots()` to save, load or delete a slot. The save types live in `genex::saves`:
-`use genex::saves::{SaveConfig, SlotOp};`.
+`ctx.slots()` to save, load or delete a slot. The save types live in `genex::saves`, not the
+prelude. Every type and call in one line:
+
+```rust
+use genex::saves::{SaveConfig, SaveError, SlotEvent, SlotInfo, SlotOp, SlotState};
+game.saves(SaveConfig::schema(2).migrate(1, |sections| Ok(sections)).autosave(3600, 3)); // -> &mut Game
+// also .autosave_on_suspend(true) and .slots_max(16); a migrate step is Fn(Value) -> Result<Value, String>
+game.save_world();                                             // World: Default + Serialize + Deserialize
+game.save_section("door", |sim| json!(sim.world.door_open), |sim, value, gfx| Ok(())); // load -> Result<(), String>
+let slots = ctx.slots();                                       // in on_update and on_ui
+slots.save("quick", "Quick save"); slots.load("quick"); slots.delete("quick"); // -> Result<(), SaveError>
+slots.list(); slots.get("quick");                              // -> &[SlotInfo], Option<&SlotInfo>
+slots.events(); slots.busy();                                  // -> &[SlotEvent], bool
+// SlotEvent { op: SlotOp, slot, result: Result<SlotInfo, SaveError> }; SaveError { code, detail }; slot.as_str()
+```
+
+`SlotOp`, `SlotState` and `SaveErrorCode` are `#[non_exhaustive]`: compare with `==` or end a
+`match` with `_ => {}`.
 
 ```rust
 #[derive(Default, Serialize, Deserialize)]
@@ -94,7 +110,7 @@ game.on_update(|sim, ctx| {
   `checksumMatch`.
 - `ctx.save(file, bytes)` and `ctx.load(file)` stay for a game's own files beside the slots.
 
-`native/genex-rust/examples/menus-saves` saves and loads through slot lists in its menus (an
-overwrite asks first, Continue loads the newest slot, and the ring autosaves every minute of
-play). A check saves by key, loads, then reads `state().volatile.saves.lastLoad.checksumMatch`:
-its rows also pin one envelope that native, x86_64 and wasm32 write byte for byte.
+`docs/examples/menus-saves/` saves and loads through slot lists in its menus (Continue loads the
+newest slot, and the ring autosaves every minute of play). A check saves by key, loads, then reads
+`state().volatile.saves.lastLoad.checksumMatch`; the engine's rows pin one envelope that native,
+x86_64 and wasm32 write byte for byte.

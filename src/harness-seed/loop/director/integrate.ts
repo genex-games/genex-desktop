@@ -11,6 +11,7 @@ import {
   commitAll,
   GIT,
   gitAt,
+  gitExec,
   gitlinks,
   headOf,
   isAncestor,
@@ -32,6 +33,7 @@ import {
   trimLedger,
 } from "../ledger.ts";
 import { unionMergeMain } from "../merge.ts";
+import { resolveStudioJson } from "../studio-json-merge.ts";
 import { wiringFor } from "../native-loop.ts";
 import { failedObservationRule, NativeVerdict } from "../native-verdict.ts";
 import { skipOptimization } from "../optimization.ts";
@@ -733,6 +735,9 @@ export async function integrate(loopRun: LoopRun, args: AnyRecord) {
 
 // ── the close ──
 
+/** What the report says when no art director looked at the head the run closed on. */
+const NO_ART_VERDICT = "no judge looked at this build's look, so the run has no art verdict on it";
+
 /** Did a judge pass this head's evidence, including the native checks it owes? */
 function judgePassedChecks(judged: LastJudge | null, head: string | null): boolean {
   return Boolean(judged && judged.head === head && judged.ok);
@@ -809,6 +814,10 @@ async function landWhatRuns(
   if (judgePassedChecks(before, head) && !judgePassedChecks(state.lastJudge, head)) state.lastJudge = before;
   // The judge's look may carry the landing, but what the landing claims is the close's own look.
   state.healthByHead.set(head, health.ok === true);
+  // The head that lands always gets the art director's look against the references, reported and never
+  // a veto: the close's judge carries it (tools.ts `judgeTheLanding`); when another judge already held
+  // its word on this head, the art director looks on its own.
+  if (typeof loopRun.closeShipReview === "function") await loopRun.closeShipReview(head, bound.judgeBy);
   const judged = judgePassedChecks(state.lastJudge, head);
   if (health.ok === true || judged) return landIntegration(true);
   if (failedObservationRule(health, VerdictRule.DoesNotStart) === NativeVerdict.Rule) {
@@ -1215,10 +1224,21 @@ export async function landIntegration(loopRun: LoopRun, land: boolean): Promise<
   const changed = await gameFolderChanges(loopRun);
   if (changed.held)
     return notLanded(LANDING_WORDS.uncommitted(changed.paths, integrationRef), NotLandedReason.UncommittedChanges);
+  const message = `director ${run.runId}: integrated build`;
+  const label = `director:${run.runId}:land`;
   const merge = await mergeNoFf(ctx, { project: run.project }, state.integrationHead, {
-    message: `director ${run.runId}: integrated build`,
-    label: `director:${run.runId}:land`,
+    message,
+    label,
     listConflicts: true,
+    // The studio's own kind declaration may sit in the folder's studio.json beside the build's:
+    // merged by its keys, so the same `game` block on both sides is no conflict.
+    resolve: () =>
+      resolveStudioJson(
+        (command) => gitExec(ctx, { project: run.project }, command, { label: `${label}:studio-json` }),
+        {
+          message,
+        },
+      ),
   });
   if (!merge.ok) {
     // Git refused to write over uncommitted changes, or the build conflicts with commits made in
@@ -1399,7 +1419,8 @@ export async function closeRun(loopRun: LoopRun, landed: AnyRecord): Promise<voi
   report.landingResult = landingResult(landed);
   // Whether the art director would ship the head this close stands on: reported, never a veto.
   const shipReview = typeof loopRun.shipReport === "function" ? loopRun.shipReport() : null;
-  if (shipReview) report.shipReview = shipReview;
+  // A close no judge looked at for its look says so: "it starts" is never an art verdict.
+  report.shipReview = shipReview ?? { head: state.integrationHead, judged: false, why: NO_ART_VERDICT };
   // The run's last verdict, in the same shape as every other: what became of the build, and
   // whether anybody preferred it. Emitted here rather than at each caller so a close by finish,
   // by the clock, by a limit, by a quit or by a crash all leave one.

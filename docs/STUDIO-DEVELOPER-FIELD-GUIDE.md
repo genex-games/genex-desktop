@@ -40,7 +40,7 @@ diagnostics, `GENEX_FORCE_ERROR` in `src/main.rs` forces one, and the committed 
 in `tests/fixtures/rust-wasm/`); `rust-mobile-game` adds a Browser, iPhone and Android game. The
 app's Rust lane (`src/main/core/rust-lane.ts`) builds over that store for the Mac and the web
 (the WebGPU page Live and browser exports use); the phones' builders build on a Mac (never run
-by an agent or a check), Windows and Linux are refused `target-unbuilt` until their cross components are pinned; Mac embedded and headless runs start from the admitted bytes, and only window runs and Mac exports are `lane-missing`. Real Rust rows read
+by an agent or a check), Windows and Linux cross-build with the store's llvm-mingw, zig and cargo-zigbuild; Mac embedded and headless runs start from the admitted bytes, and only window runs and Mac exports are `lane-missing`. Real Rust rows read
 `GENEX_RUST_TOOLCHAIN_DIR` and the Rust dev store (`node scripts/toolchains/dev-store.ts --stack rust-wgpu`).
 Play is timed from the click to the first frame (`src/main/core/play-timings.ts`): each Play window,
 Live Native view and `showBuild` writes one `[play]` line to the profile's `core/logs/studio.log`

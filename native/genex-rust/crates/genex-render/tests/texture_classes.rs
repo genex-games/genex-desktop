@@ -9,13 +9,14 @@
 //!     --offline --locked -- --ignored metal
 
 use genex_render::budget::{BudgetInput, BudgetKind, DegradeMode, DegradeRung, MaterialClass, fit, ledger};
-use genex_render::device_class::{DeviceClass, FormFactor};
-use genex_render::layout::{NO_TEXTURE, TEXTURE_SIZE_CLASSES, texture_ref_parts};
-use genex_render::presets::{class_defaults, preset_quality, reference_resolution, scene_format};
+use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, TargetOs};
+use genex_render::layout::{NO_TEXTURE, TEXTURE_CLASS_SIDES, TEXTURE_CLASS_SLOTS, TEXTURE_SIZE_CLASSES, texture_ref_parts};
+use genex_render::presets::{ClassOverride, RenderOverrides, class_budget_bytes, class_defaults, preset_quality, profile, reference_resolution, scene_format};
 use genex_render::settings::{Quality, QualityPreset, TextureClass, TextureQuality};
 use genex_render::texture::{
-    ClassArrays, MAX_TEXTURE_LAYERS, TEXTURE_LAYER_PX, TextureData, TextureId, TextureKind, class_for_source, class_layer_caps,
-    fitted_textures, material_arrays, mip_chain, normal_mip_chain, preset_textures, toksvig_roughness,
+    ClassArrays, MATERIAL_BUDGET_SHARE_PERCENT, MAX_TEXTURE_LAYERS, NATIVE_SOURCE_TEXTURE_MAX_SIDE, SOURCE_TEXTURE_MAX_SIDE, TEXTURE_LAYER_PX,
+    TextureData, TextureId, TextureKind, WEB_SOURCE_TEXTURE_MAX_SIDE, capped_source, capped_source_at, class_for_source, class_ladder,
+    class_layer_caps, fitted_textures, material_arrays, mip_chain, normal_mip_chain, preset_textures, toksvig_roughness,
 };
 use genex_render::scene::{CameraDesc, Material, MeshId, Scene, scaled};
 use genex_render::{CullPath, Gpu, RenderCode, RenderOptions, Renderer};
@@ -268,6 +269,11 @@ fn toksvig_leaves_a_flat_normal_map_unchanged_but_for_its_alpha() {
 
 #[test]
 fn class_layer_caps_are_zero_above_the_max_class_and_off_is_todays_single_class() {
+    let off = {
+        let mut caps = [0; TextureClass::ALL.len()];
+        caps[0] = MAX_TEXTURE_LAYERS;
+        caps
+    };
     for device in DeviceClass::ALL {
         for preset in QualityPreset::ALL {
             let textures = preset_textures(preset, device);
@@ -283,7 +289,7 @@ fn class_layer_caps_are_zero_above_the_max_class_and_off_is_todays_single_class(
             assert!(caps[0] > 0 && caps[1] > 0, "{} {}: 256 and 512 are held everywhere", device.wire(), preset.wire());
             assert!(caps.windows(2).all(|pair| pair[0] >= pair[1]), "{caps:?}: larger classes hold fewer layers");
         }
-        assert_eq!(class_layer_caps(device, TextureQuality::OFF), [MAX_TEXTURE_LAYERS, 0, 0, 0], "{}", device.wire());
+        assert_eq!(class_layer_caps(device, TextureQuality::OFF), off, "{}", device.wire());
     }
 }
 
@@ -346,7 +352,136 @@ fn the_degrade_step_drops_the_largest_size_class_first() {
 
 #[test]
 fn the_size_classes_are_the_layout_contract() {
-    assert_eq!(TextureClass::ALL.map(TextureClass::side), TEXTURE_SIZE_CLASSES);
+    // WP-9 flipped: six classes (4096 and 8192 added); the four slots the shaders bind keep the
+    // web's ladder, TEXTURE_SIZE_CLASSES.
+    assert_eq!(TextureClass::ALL.map(TextureClass::side), TEXTURE_CLASS_SIDES);
+    assert_eq!(class_ladder(TextureClass::S2048).map(TextureClass::side), TEXTURE_SIZE_CLASSES);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Native 4096 and 8192 classes (WP-9)
+
+/// A native Mac reporting `gib` GiB of GPU-visible memory.
+fn native_mac(gib: u64) -> DeviceFacts {
+    DeviceFacts::new(TargetOs::MacOs, wgpu::Backend::Metal, wgpu::DeviceType::IntegratedGpu).with_gpu_visible_memory(Some(gib * 1024 * MIB))
+}
+
+/// A desktop browser reporting 8 GB of `deviceMemory`.
+fn browser() -> DeviceFacts {
+    let hints = genex_render::device_class::WebHints { device_memory_gb: Some(8.0), hardware_concurrency: Some(8), ..Default::default() };
+    DeviceFacts::new(TargetOs::Web, wgpu::Backend::BrowserWebGpu, wgpu::DeviceType::Other).with_web(hints)
+}
+
+#[test]
+fn every_ladder_keeps_four_slots_smallest_first_and_holds_its_top_class() {
+    for max_class in TextureClass::ALL {
+        let ladder = class_ladder(max_class);
+        assert_eq!(ladder.len(), TEXTURE_CLASS_SLOTS, "the shaders bind four slot pairs on every destination");
+        assert_eq!(ladder[0], TextureClass::S256, "slot 0 is the growing 256 class everywhere");
+        assert!(ladder.windows(2).all(|pair| pair[0] < pair[1]), "{ladder:?}");
+        assert!(ladder.contains(&max_class) || max_class < TextureClass::S2048, "{max_class:?} is held by its own ladder");
+    }
+    assert_eq!(class_ladder(TextureClass::S4096), [TextureClass::S256, TextureClass::S1024, TextureClass::S2048, TextureClass::S4096]);
+    assert_eq!(class_ladder(TextureClass::S8192), [TextureClass::S256, TextureClass::S1024, TextureClass::S4096, TextureClass::S8192]);
+    for max_class in [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048] {
+        assert_eq!(class_ladder(max_class).map(TextureClass::side), TEXTURE_SIZE_CLASSES, "the web's ladder below 4096");
+    }
+}
+
+#[test]
+fn a_native_desktop_at_high_or_ultra_holds_4096_textures_and_the_web_keeps_2048() {
+    let rows = [
+        ("desktop-ultra", native_mac(27), TextureClass::S4096),
+        ("desktop-high", native_mac(27), TextureClass::S4096),
+        ("desktop-mid", native_mac(27), TextureClass::S1024),
+        ("desktop-ultra", browser(), TextureClass::S2048),
+        ("desktop-high", browser(), TextureClass::S2048),
+        ("mobile-high", DeviceFacts::new(TargetOs::Ios, wgpu::Backend::Metal, wgpu::DeviceType::IntegratedGpu), TextureClass::S1024),
+    ];
+    for (wire, facts, expected) in rows {
+        let resolved = profile(&facts, class(wire), &RenderOverrides::default(), None);
+        assert_eq!(resolved.quality.textures.max_class, expected, "{wire} on {:?}", facts.os);
+    }
+    assert_eq!(class_for_source(4096, 4096, TextureClass::S4096), TextureClass::S4096);
+    assert_eq!(class_for_source(3000, 1000, TextureClass::S8192), TextureClass::S4096);
+    assert_eq!(class_for_source(8192, 8192, TextureClass::S8192), TextureClass::S8192);
+}
+
+#[test]
+fn an_explicit_8192_class_reaches_8192_only_on_a_native_desktop() {
+    let cinematic = ClassOverride { max_texture_class: Some(TextureClass::S8192), ..ClassOverride::default() };
+    let native = profile(&native_mac(27), class("desktop-ultra"), &RenderOverrides::default(), Some(&cinematic));
+    assert_eq!(native.quality.textures.max_class, TextureClass::S8192);
+    let web = profile(&browser(), class("desktop-ultra"), &RenderOverrides::default(), Some(&cinematic));
+    assert_eq!(web.quality.textures.max_class, TextureClass::S2048, "the web keeps its cap");
+    let phone = DeviceFacts::new(TargetOs::Ios, wgpu::Backend::Metal, wgpu::DeviceType::IntegratedGpu);
+    let ios = profile(&phone, class("mobile-high"), &RenderOverrides::default(), Some(&cinematic));
+    assert_eq!(ios.quality.textures.max_class, TextureClass::S1024, "phones keep theirs");
+}
+
+#[test]
+fn native_layer_caps_scale_with_the_budget_and_the_web_keeps_its_fixed_rows() {
+    let ultra = class("desktop-ultra");
+    let web = profile(&browser(), ultra, &RenderOverrides::default(), None);
+    assert_eq!(class_layer_caps(ultra, web.quality.textures), class_layer_caps(ultra, preset_textures(QualityPreset::Ultra, ultra)), "web: today's rows");
+    let mut previous = 0;
+    for gib in [6, 12, 27, 48] {
+        let facts = native_mac(gib);
+        let native = profile(&facts, ultra, &RenderOverrides::default(), None);
+        let textures = native.quality.textures;
+        let caps = class_layer_caps(ultra, textures);
+        let top = caps[TextureClass::S4096.index() as usize];
+        assert!(top >= 1 && top >= previous, "{gib} GiB: {caps:?}");
+        previous = top;
+        let reserved: u64 = material_arrays(ultra, textures).iter().map(MaterialClass::bytes).sum();
+        let share = class_budget_bytes(ultra, &facts) / 100 * MATERIAL_BUDGET_SHARE_PERCENT;
+        assert!(reserved <= share.max(class_defaults(ultra).budget_bytes / 2), "{gib} GiB: {} MiB of a {} MiB share", reserved / MIB, share / MIB);
+        assert!(caps.iter().all(|cap| *cap <= MAX_TEXTURE_LAYERS), "{caps:?}");
+    }
+    assert!(previous >= 8, "a 48 GiB GPU holds at least eight 4096 layers a kind ({previous})");
+    let big = profile(&native_mac(27), ultra, &RenderOverrides::default(), None).quality.textures;
+    let rows = class_layer_caps(ultra, preset_textures(QualityPreset::Ultra, ultra));
+    let caps = class_layer_caps(ultra, big);
+    assert!(caps[TextureClass::S2048.index() as usize] >= rows[TextureClass::S2048.index() as usize], "never fewer than the fixed row");
+}
+
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_a_4096_texture_reaches_the_gpu_at_4096() {
+    let Some(gpu) = gpu() else { return };
+    let ultra = class("desktop-ultra");
+    let textures = profile(&native_mac(27), ultra, &RenderOverrides::default(), None).quality.textures;
+    assert_eq!(textures.max_class, TextureClass::S4096);
+    let mut arrays = ClassArrays::new(&gpu.device, ultra, textures);
+    let source = checker(4096, 1);
+    let id = arrays.add(&gpu.device, &gpu.queue, &source, TextureKind::Color).expect("a 4096 texture");
+    let small = arrays.add(&gpu.device, &gpu.queue, &checker(512, 4), TextureKind::Color).expect("a 512 texture");
+    assert_eq!(id.class(), TextureClass::S4096);
+    assert_eq!(texture_ref_parts(id.reference()), Some((3, 0)), "the 4096 class sits in the top slot the shaders bind");
+    assert_eq!(small.class(), TextureClass::S1024, "a 512 source takes the ladder's next class up");
+    assert_eq!(texture_ref_parts(small.reference()), Some((1, 0)));
+    let caps = class_layer_caps(ultra, textures);
+    assert_eq!(arrays.extent(TextureClass::S4096, TextureKind::Color), (4096, caps[TextureClass::S4096.index() as usize]));
+    assert_eq!(arrays.texture(TextureClass::S4096, TextureKind::Color).width(), 4096, "level 0 is 4096 texels on the GPU");
+    gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("uploads finish");
+    // Drawn close up, one-texel cells stay cells only if level 0 holds all 4096 texels: resampled to
+    // 2048 every texel would average two black and two white cells into grey.
+    let picture = |textures: TextureQuality| {
+        let mut renderer = textured_renderer(&gpu, textures);
+        let id = renderer.add_texture(&gpu, &source, TextureKind::Color).expect("texture");
+        let mut scene = wall(Material::color([255, 255, 255, 255]).with_base_texture(id));
+        scene.camera = CameraDesc::look_at([0.0, 0.0, 10.25], [0.0, 0.0, 0.0]);
+        renderer.render(&gpu, &scene, CullPath::Gpu).expect("frame");
+        (id.class(), renderer.capture(&gpu).expect("capture").bgra().to_vec())
+    };
+    let (held, sharp) = picture(textures);
+    let (web_class, grey) = picture(preset_textures(QualityPreset::Ultra, ultra));
+    assert_eq!((held, web_class), (TextureClass::S4096, TextureClass::S2048));
+    write_capture("texture-class-native-4096", &sharp);
+    write_capture("texture-class-web-2048", &grey);
+    let (cells, flat) = (luma_spread(&sharp), luma_spread(&grey));
+    assert!(flat < 8.0, "resampled to 2048 the one-texel checker is grey (luma spread {flat})");
+    assert!(cells > 4.0 * flat.max(4.0), "the 4096 class draws its one-texel cells (luma spread {cells} vs {flat})");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -599,4 +734,25 @@ fn metal_a_device_loss_replays_textures_into_the_classes_they_had() {
     assert_eq!(replayed.texture_quality(), high);
     let added = resilient.add_texture(&checker(1024, 2), TextureKind::Color).expect("after recovery");
     assert_eq!((added.class(), added.layer()), (TextureClass::S1024, 1), "the replayed texture kept layer 0 of class 1024");
+}
+
+#[test]
+fn a_source_past_the_largest_class_is_kept_at_its_side_and_a_smaller_one_untouched() {
+    // Bodycam B1: a 4K map was decoded and kept whole for device-loss replay (64 MiB each) though
+    // no size class stores more than 2048 texels a side. WP-9 flipped the native cap 2048 -> 8192
+    // (the 8192 class); the web keeps 2048.
+    assert_eq!(WEB_SOURCE_TEXTURE_MAX_SIDE, TextureClass::S2048.side());
+    assert_eq!(NATIVE_SOURCE_TEXTURE_MAX_SIDE, TextureClass::S8192.side());
+    assert_eq!(SOURCE_TEXTURE_MAX_SIDE, NATIVE_SOURCE_TEXTURE_MAX_SIDE, "these tests run natively");
+    let wide = TextureData::rgba8(4096, 1024, vec![200; 4096 * 1024 * 4]).expect("image");
+    let capped = capped_source_at(&wide, TextureKind::Color, WEB_SOURCE_TEXTURE_MAX_SIDE);
+    assert_eq!((capped.width(), capped.height()), (2048, 512), "the aspect is kept");
+    assert!(capped.rgba().iter().all(|byte| *byte == 200), "a flat image stays flat");
+    assert!(matches!(capped_source(&wide, TextureKind::Color), std::borrow::Cow::Borrowed(_)), "a 4096 source is kept whole natively");
+    let small = TextureData::rgba8(2048, 2048, vec![7; 2048 * 2048 * 4]).expect("image");
+    assert!(matches!(capped_source_at(&small, TextureKind::Data, 2048), std::borrow::Cow::Borrowed(_)), "a source within the cap is not copied");
+    let pattern: Vec<u8> = (0..4096 * 4096 * 4).map(|at: usize| (at * 37 % 251) as u8).collect();
+    let square = TextureData::rgba8(4096, 4096, pattern).expect("image");
+    let from_capped = mip_chain(&capped_source_at(&square, TextureKind::Color, 2048), TextureKind::Color, 2048);
+    assert_eq!(from_capped, mip_chain(&square, TextureKind::Color, 2048), "the 2048 class stores the same texels from the capped source");
 }

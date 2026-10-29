@@ -1,5 +1,20 @@
 # genex.toml
 
+Every table and its keys in one line (only `[game] title` is required; a key not listed here is
+refused):
+
+```text
+[game] title, world_size, fit, save_name      [crates] <crate> = "<version>"   [[crate_request]] name, version, reason
+[[wgsl]] path, kind, api                      [gpu] native_features            [web] wasm_budget_mb
+[physics] [audio] [nav] [streaming] [animation] enabled
+[[texture]] path, usage                       [[asset_group]] name, paths
+[assets] budget_mb, phone_max_texture_px      [assets.<web|ios|android|desktop>] budget_mb
+[net] enabled   [net.matchmaking] preset, win_condition   [net.matchmaking.config] <knob> = <number>
+[render] and its tables: docs/api/rendering.md   [render.loading]: docs/api/loading-screen.md
+```
+
+Studio writes `[engine]` when the person ejects the engine; never add or edit it.
+
 ```toml
 [game]
 title = "Pond"            # required
@@ -16,7 +31,7 @@ version = "1.0.0"         # one exact release
 reason = "tidy layouts"   # optional, one sentence for the person
 
 [[wgsl]]                  # optional WGSL sources: a custom pass reads one with include_str!, Level 2
-path = "shaders/water.wgsl"   # loads material and post sources through Gfx (see Custom materials and post passes)
+path = "shaders/water.wgsl"   # loads material and post sources through Gfx (docs/api/custom-materials.md)
 kind = "pass"             # pass | material | post
 api = 1                   # optional: the extension API it is written against (default 1)
 
@@ -79,8 +94,9 @@ is opened with exactly the declared features, and one without them ends the run
 
 A `[[wgsl]]` source is staged with the game, size-checked and validated by naga. A `pass` source
 is read by a custom GPU pass with `include_str!("../shaders/water.wgsl")` and built through
-`PassSetup`; a `material` or `post` source is loaded by name through `Gfx` (see Custom materials and post passes). A
-`[render]` table sets the look and the per-device quality (see Rendering).
+`PassSetup`; a `material` or `post` source is loaded by name through `Gfx`
+(`docs/api/custom-materials.md`). A `[render]` table sets the look and the per-device quality
+(`docs/api/rendering.md`).
 
 A web export is built for size. Past its budget (`[web] wasm_budget_mb`, default 4 MB of gzip) it
 still exports, with a warning that it loads slower on phones and weak devices; raise the budget
@@ -136,8 +152,8 @@ texture side an iPhone or Android package keeps; one that is not a power of two 
 refused `invalid-texture-cap`.
 
 `[net] enabled = true` builds the game with networking (`docs/api/net.md`). Studio's Live, its
-judges and the Simulator build an On a device press installs link the in-process room, so nothing
-Studio runs reaches the network; only an export links the relay, and it joins the game's own Genex
+judges, the Simulator build and the build an On a device press installs all link the in-process
+room, so nothing Studio runs reaches the network; only an export links the relay, and it joins the game's own Genex
 draft. Test multiplayer on the published draft, in a normal and a private window.
 `[net.matchmaking]` reaches Genex with the draft as a three.js game's `genex.matchmaking` does;
 without it, `matchmake()` gets Genex's `duel`. Write it as the tables above: an inline table

@@ -1,0 +1,37 @@
+{
+  "id": "rust.materials-mapped-identity-tags",
+  "runtime": "rust-wgpu",
+  "title": "In Rust every identity draw samples a texture or a modelled asset's own",
+  "tags": ["material", "map", "texture", "identity", "asset", "flat", "untextured", "cc0", "glb", "compressed"],
+  "checkClass": "materials",
+  "kind": "craft",
+  "pack": "materials",
+  "note": "What the facet exists to build is a textured Material or a modelled GLB, and every texture it binds is compressed (no assetIssues).",
+  "intent": "Whatever the facet exists to build must not be flat colour. Three answers pass: a Material with a base texture (and its normal and roughness maps) from a CC0 set, a GLB whose own materials carry textures (modelled in Local Blender or fetched), or a decal laid on a textured surface. Read state().__render.textures after a capture: each texture the frame bound is named with its kind (color, data, normal) and a compressed family; give a loose image a [[texture]] row in genex.toml so it ships compressed, and keep __render.assetIssues absent.",
+  "sketch": "use genex::prelude::*;\n\n// genex.toml: a loose image the code samples gets a row, so the import ships it compressed:\n// [[texture]]\n// path = \"cc0/plaster/color.jpg\"\n// usage = \"color\"\n\n/// What a facet exists to build samples real maps; its stand-in colour shows only until they load.\nfn crate_material() -> Material {\n    Material::color(Color::WHITE)\n        .with_base_texture(\"cc0/wood-crate/color.jpg\")\n        .with_normal_texture(\"cc0/wood-crate/normal.jpg\", 1.0)\n        .with_metal_rough_texture(\"cc0/wood-crate/rough.jpg\")\n        .with_untextured_color(Color::rgb(120, 92, 60))\n}\n",
+  "check": {
+    "id": "materials-mapped-identity",
+    "kind": "probe",
+    "expr": "len(__render.textures) >= 3 && !has('__render.assetIssues')",
+    "weight": "normal",
+    "note": "The last frame bound at least three textures and the renderer names no asset issue (an uncompressed or refused texture)."
+  },
+  "port": "The facet that owns a surface owns its Material and its CC0 set; a shared Material lives in the world, made once in on_reset.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/drawing.md",
+      "note": "__render.textures names every bound texture with its kind and family; __render.assetIssues names what to fix."
+    },
+    {
+      "source": "library/recipes/materials.mapped-identity-tags.json",
+      "note": "The three.js recipe materials.mapped-identity-tags, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

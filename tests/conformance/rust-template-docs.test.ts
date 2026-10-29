@@ -129,6 +129,7 @@ const FACADE = JSON.parse(
   lens: { calls: string[] };
   nightSky: { calls: string[] };
   subsurface: { calls: string[] };
+  vegetation: { calls: string[] };
 };
 
 /** Every call group the fixture pins (a top-level entry with a `calls` list), by its key. */
@@ -337,8 +338,8 @@ const PINNED_CALL_PAGES = [
  * Names those pages call that are not the game systems' facade calls: Rust's, glam's and serde's
  * own methods, the hooks, the core's older calls (`frame.tag`, `sim.split`, `Pcg32::unit`,
  * `frame.sphere`, `frame.cube`, `Color::rgb`, `Transform`'s `.with_rotation`,
- * `genex::render::settings_button`), egui's `ui.painter` and a game's own helper in the profiling
- * example (`enemy.think`).
+ * `genex::render::settings_button`), egui's `ui.painter`, `ui.max_rect` and `ctx.content_rect`, and
+ * a game's own helper in the profiling example (`enemy.think`).
  */
 const NOT_GAME_SYSTEMS_CALLS = new Set([
   "and_then",
@@ -388,6 +389,8 @@ const NOT_GAME_SYSTEMS_CALLS = new Set([
   "on_update",
   "probe_volatile",
   "painter",
+  "max_rect",
+  "content_rect",
   "settings_button",
   "cube",
   "rgb",
@@ -550,6 +553,12 @@ describe("GENEX_API.md is the facade's reference", () => {
     const text = api();
     for (const call of FACADE.terrain.calls) assert.ok(text.includes(`${call}(`), `GENEX_API.md teaches ${call}(..)`);
     for (const refusal of FACADE.terrain.refusals) assert.ok(text.includes(refusal), `GENEX_API.md names ${refusal}`);
+  });
+
+  it("the Vegetation page teaches every plant and wind call the fixture pins", () => {
+    const page = read("docs/api/vegetation.md");
+    for (const call of FACADE.vegetation.calls)
+      assert.ok(page.includes(`${call}(`), `vegetation.md teaches ${call}(..)`);
   });
 
   it("teaches every particle call and refusal", () => {
