@@ -413,6 +413,8 @@ type ArtDirectionParts = Partial<
     Pick<
       typeof artDirectionFunctions,
       | "artDirectionPass"
+      | "closeOwesShipReview"
+      | "closeShipReview"
       | "finishMarkAt"
       | "firstWaveIn"
       | "shipLookAfter"

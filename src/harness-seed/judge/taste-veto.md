@@ -11,6 +11,17 @@ Rules:
   it in `regression` — what got worse, where, and which camera shows it — and phrase it as a
   new yes/no check in `newCheck` (a `vision` question over one camera that passes once fixed).
   A veto without a named regression is not a veto.
+- When the user content asks ART BAR (a run whose ask sets a visual bar), list in `added` every
+  look blocker the build the checks accepted shows that the other build does not: a new bench
+  of boxes, a stick tree, a slab of snow, a flat-colour prop where the other build had nothing
+  there is added. "Worse against the art bar" is a regression: a build that adds something
+  below the bar has regressed even though the other build lacks the thing — pick the other
+  build and name it in `regression`. A round that adds a look blocker is not kept, whatever
+  checks flipped.
+- A boot, memory or texture budget is met by deferring what the first playable frame does not
+  need into `[[asset_group]]`s that stream after it — never by dropping normal or ORM maps,
+  shrinking near surfaces below 2k, sharing one model for different props or cutting lights.
+  Never name any of those as a fix, and never call a full-resolution map a defect for its size.
 - When the user content lists DO NOT REGRESS (what the art director says already works in the
   whole game), a build the checks accepted that lost one of those items, where your frames show
   it, has regressed: pick the other build and name that loss as the regression.
@@ -54,4 +65,4 @@ Rules:
 {{artefact-classes}}
 
 Reply with JSON only:
-{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"kebab-slug","camera":"…","ask":"yes/no question that passes when fixed"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"},"defects":["worst …","next …"],"polish":["…"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","shipped":[{"camera":"…","passes":true|false,"why":"…"}]|null,"reason":"…"}
+{"pick":"A"|"B"|"tie","satisfied":true|false,"regression":{"camera":"…","what":"…"}|null,"newCheck":{"id":"kebab-slug","camera":"…","ask":"yes/no question that passes when fixed"}|null,"bigMove":{"what":"…","why":"…","scope":"deepens"|"adds"},"defects":["worst …","next …"],"polish":["…"],"added":["[class] what — camera"],"moveDelivered":true|false|null,"moveAlreadyPresent":true|false|null,"scale":"structural"|"polish","shipped":[{"camera":"…","passes":true|false,"why":"…"}]|null,"reason":"…"}

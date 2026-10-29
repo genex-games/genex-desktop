@@ -1577,3 +1577,30 @@ describe("the lead's turn as Genex's moments name it (wake.ts)", () => {
     assert.doesNotMatch(words, /the person|ask them|Try again later|a plugin of this game/i);
   });
 });
+
+describe("Bodycam gen3: the final head nobody judged for its look (run_mvs67gsbys67)", () => {
+  it("G3-1e. the final integration head got only 'it starts' and judge_5 made no model call: the close always gets the art director's look at the head it lands, once, and a close with none reports no art verdict", async () => {
+    const host = fakeHost();
+    const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: shipAndQuestion() } });
+    assert.equal(loopRun.closeOwesShipReview(HEAD), true, "a head that loads, beyond the start, with no review");
+    await loopRun.closeShipReview(HEAD);
+    assert.equal(shipCalls(host).length, 1, "the art director looked at the landing head");
+    assert.equal(loopRun.state.lastShip?.head, HEAD);
+    assert.equal(loopRun.closeOwesShipReview(HEAD), false, "one review stands on that head");
+    await loopRun.closeShipReview(HEAD);
+    assert.equal(shipCalls(host).length, 1, "and is not asked again");
+    // The start alone, a head that does not load and a stopped run owe none.
+    assert.equal(loopRun.closeOwesShipReview(FORK), false);
+    loopRun.state.healthByHead.set(HEAD2, false);
+    assert.equal(loopRun.closeOwesShipReview(HEAD2), false);
+    // A close inside a lead's call with under a minute left does not start the look.
+    loopRun.state.healthByHead.set(HEAD2, true);
+    await loopRun.closeShipReview(HEAD2, Date.now() + 10_000);
+    assert.equal(shipCalls(host).length, 1);
+    // The report of a close no art director looked at says so instead of carrying nothing.
+    const quiet = fakeLoopRun(fakeHost()).loopRun;
+    quiet.state.integrationHead = HEAD2;
+    await quiet.closeRun({ ok: true, line: "made live" }).catch(() => {});
+    assert.equal(quiet.report.shipReview?.judged, false, JSON.stringify(quiet.report.shipReview));
+  });
+});

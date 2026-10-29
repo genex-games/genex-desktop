@@ -41,6 +41,7 @@ export const VerdictRule = {
   NoChange: "no-change",
   NoMove: "no-move",
   Unfixed: "unfixed",
+  BelowLookBar: "below-look-bar",
   Broken: "broken",
   Unreachable: "unreachable",
   Stopped: "stopped",

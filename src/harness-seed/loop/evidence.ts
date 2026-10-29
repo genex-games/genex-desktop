@@ -35,6 +35,8 @@ import { BuildTarget, type LeaseCapacity, type LeaseGame, acquireFor, leasedJudg
 import { stampedStack } from "./native-loop.ts";
 import { templateMainOf } from "./native-review.ts";
 import { weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
+import * as frameVerdicts from "./frame-verdicts.ts";
+import { slowBootWarning } from "./destination-budgets.ts";
 import { nativeEvidence, withParity } from "./native-evidence.ts";
 import { type CrashFacts, readCrashFacts } from "./crash-facts.ts";
 import { crashFactsLine } from "./crash-facts-prompts.ts";
@@ -988,9 +990,7 @@ async function readReadiness(look: Look): Promise<void> {
     problems.push(notReadyProblem(ready));
   }
   if (look.readyAfterMs !== null && look.readyAfterMs > SLOW_BOOT_MS) {
-    warnings.push(
-      `the page took ${(look.readyAfterMs / SECOND_MS).toFixed(1)} s to report itself ready — every pass of the run pays that boot`,
-    );
+    warnings.push(slowBootWarning(look.readyAfterMs, look.run));
   }
 }
 
@@ -2119,6 +2119,7 @@ async function weighFrames(look: Look): Promise<LookEnd> {
   if (compiled) look.entry = templateMainOf(compiled);
   weighBlackness(look, weighDraws(look));
   weighDuplicates(look);
+  if (typeof frameVerdicts.weighDemoFrames === "function") frameVerdicts.weighDemoFrames(look);
   weighEmptyBase(look);
 }
 

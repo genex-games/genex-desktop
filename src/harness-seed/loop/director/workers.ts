@@ -27,7 +27,7 @@ import { isRunning, setWorkerState, WorkerMode, WorkerState } from "../outcomes.
 import { runRef } from "../repo.ts";
 import { RunEvent } from "../run-events.ts";
 import { normalizeScoutSetup } from "../scout.ts";
-import { asksForLook, readArtPass, type ArtPass } from "../look-bar.ts";
+import { ArtRefusal, asksForLook, readArtPass, unplannedParts, type ArtPass } from "../look-bar.ts";
 import { artRefusalWords } from "../look-bar-prompts.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { FINISH_SINGLE_REFUSAL, FINISH_START_MOVES } from "../facet/stage-prompts.ts";
@@ -590,10 +590,24 @@ function keepVision(loopRun: LoopRun, plan: AnyRecord, previous: AnyRecord | nul
  * gave — a re-plan never has to repeat it. A run whose ask sets a visual bar plans every area's
  * assets and their sources before a builder starts; the words of a refusal otherwise.
  */
-function artPassOf(loopRun: LoopRun, args: AnyRecord, previous: AnyRecord | null): { art: ArtPass | null } | string {
+function artPassOf(
+  loopRun: LoopRun,
+  args: AnyRecord,
+  previous: AnyRecord | null,
+  workers: readonly AnyRecord[],
+): { art: ArtPass | null } | string {
   const omitted = args.art === undefined || args.art === null || args.art === "";
-  if (omitted && previous?.art) return { art: previous.art as ArtPass };
-  const read = readArtPass(args.art, asksForLook(loopRun.run));
+  const lookBar = asksForLook(loopRun.run);
+  if (omitted && previous?.art) {
+    const before = ((previous.workers ?? []) as AnyRecord[]).map((worker) => String(worker.id));
+    const added = unplannedParts(
+      before,
+      workers.map((worker) => String(worker.id)),
+    );
+    if (lookBar && added.length) return artRefusalWords({ code: ArtRefusal.AreaUnplanned, names: added });
+    return { art: previous.art as ArtPass };
+  }
+  const read = readArtPass(args.art, lookBar);
   return "problem" in read ? artRefusalWords(read.problem) : read;
 }
 
@@ -612,7 +626,7 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   const plan = compiled.plan;
   const first = !state.plan;
   const previous = state.plan;
-  const artPass = artPassOf(loopRun, args, previous);
+  const artPass = artPassOf(loopRun, args, previous, plan.workers);
   if (typeof artPass === "string") return artPass;
   // Outcomes this plan sets (a reopened build's first plan for the ask) are shown like a first plan's.
   const acceptanceKept = Boolean(state.goals);

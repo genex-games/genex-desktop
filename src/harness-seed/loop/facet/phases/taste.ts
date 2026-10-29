@@ -15,6 +15,9 @@ import { roundFields } from "../record.ts";
 import { roundStage } from "../stage.ts";
 import { keptByBlock } from "../build-block.ts";
 import { blockReason } from "../build-block-prompts.ts";
+import { asksForLook } from "../../look-bar.ts";
+import { auditProvenance } from "../../provenance.ts";
+import { addedMeasured, measuredBlockers, presentOnly } from "../../temporal-checks.ts";
 
 /** The harness's eyes the taste judge looks through beside the facet's own cameras. */
 const TASTE_EYES = ["eye:spawn", "eye:here", "eye:down"];
@@ -33,10 +36,15 @@ interface Decision {
   moveNow: ReturnType<typeof moveVerdict>;
 }
 
+/** The cameras the taste judge is shown: the facet's own and the harness's eyes the evidence has. */
+export function tasteCamerasOf(loop: FacetLoop, round: FacetRound): string[] {
+  const eyes = (round.evidence.eyes ?? []).filter((e: string) => TASTE_EYES.includes(e));
+  return [...new Set([...loop.spec.cameras, ...eyes])];
+}
+
 /** Ask the taste judge, apply the acceptance rule, hold THE FIX to account, and grow the judge's own new check. */
 export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<void> {
   const { ctx, facet, run, spec } = loop;
-  const eyes = (round.evidence.eyes ?? []).filter((e: string) => TASTE_EYES.includes(e));
   round.taste = await tasteVeto(ctx, {
     run,
     facet,
@@ -44,12 +52,13 @@ export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<
     incumbentEvidence: loop.incumbentEvidence,
     board: round.nextBoard,
     comparison: round.comparison,
-    cameras: [...new Set([...spec.cameras, ...eyes])],
+    cameras: tasteCamerasOf(loop, round),
     iterationId: round.iterationId,
     move: loop.currentMove?.what ?? null,
     // A finishing round is judged as one: polish is expected, and its polish list is the work.
     stage: roundStage(round, spec),
   });
+  await measureRound(loop, round);
   // The move (§5): measured by its own check when it has one, else by the taste judge.
   // A build that flipped nothing AND did not deliver a move somebody asked for is a
   // loss — polish alone never wins. A move the harness invented for itself is guidance
@@ -59,24 +68,27 @@ export async function tasteVerdict(loop: FacetLoop, round: FacetRound): Promise<
   // the record says so, because "rolled back — now a new check" is what the user sees.
   // A build block (facet/build-block.ts) is kept on the checks the board already settled: the
   // judge looked once, and its pick, veto and notes are the next round's work, not a verdict.
-  const decided = round.buildBlock
-    ? keptByBlock(spec, round.nextBoard, round.comparison)
-    : acceptRound({
-        spec,
-        board: round.nextBoard,
-        comparison: round.comparison,
-        taste: round.taste,
-        moveMissing: moveNow.costsRound,
-      });
+  const lookBlocked = Boolean(round.taste.addedBlockers?.length);
+  const decided =
+    round.buildBlock && !lookBlocked
+      ? keptByBlock(spec, round.nextBoard, round.comparison)
+      : acceptRound({
+          spec,
+          board: round.nextBoard,
+          comparison: round.comparison,
+          taste: round.taste,
+          moveMissing: moveNow.costsRound,
+        });
   const weakOnly = decided.strong.length === 0 && round.comparison.flips.length > 0;
   round.verdictSource = decided.source;
   round.verdict = {
     pick: decided.accepted ? Side.Challenger : Side.Incumbent,
     satisfied: round.taste.satisfied,
-    biggest_gap: round.taste.regression?.what ?? round.taste.biggest_gap ?? "",
-    reason: round.buildBlock
-      ? blockReason(decided.strong)
-      : tasteReason(loop, round, { ...decided, weakOnly, moveNow }),
+    biggest_gap: round.taste.addedBlockers?.[0] ?? round.taste.regression?.what ?? round.taste.biggest_gap ?? "",
+    reason:
+      round.buildBlock && !lookBlocked
+        ? blockReason(decided.strong)
+        : tasteReason(loop, round, { ...decided, weakOnly, moveNow }),
     defects: round.taste.defects,
   };
   if (decided.accepted) holdTheFix(loop, round);
@@ -92,10 +104,32 @@ function tasteReason(loop: FacetLoop, round: FacetRound, decided: Decision): str
   if (accepted && strong.length)
     return `checks accepted (${strong.join(", ")}), taste judge did not veto${moveNow.missing ? "; the move was not delivered" : ""}`;
   if (accepted) return `${flipped}; taste judge preferred the challenger${moveWords(loop, round, moveNow)}`;
+  if (round.verdictSource === VerdictSource.LookBlocked)
+    return `the round added a look blocker, so it is not kept whatever checks flipped: ${round.taste.addedBlockers.join("; ")}`;
   if (round.verdictSource === VerdictSource.TasteVeto) return `taste veto: ${round.taste.regression?.what}`;
   if (round.verdictSource === VerdictSource.NoMove)
     return `no check moved and the move was not delivered: ${String(loop.currentMove?.what).slice(0, MOVE_QUOTED)}`;
   return `${flipped} and the taste judge kept the incumbent`;
+}
+
+/**
+ * What the harness measures itself on the challenger: the provenance audit (provenance.ts) on a run
+ * with a visual bar, the luminance band, the doorway's exposure and the sprint's comfort
+ * (temporal-checks.ts). A blocking finding the accepted build did not already have is one the round
+ * added. The findings ride on the round by key, and become the incumbent's when it is kept (keep.ts).
+ */
+async function measureRound(loop: FacetLoop, round: FacetRound): Promise<void> {
+  const { run } = loop;
+  const lookBar = asksForLook(run);
+  const audit = lookBar
+    ? await auditProvenance(run, round.evidence.state, loop.worktree ?? loop.workdir).catch(() => [])
+    : [];
+  const measured = [...presentOnly(audit), ...measuredBlockers(run, round.evidence, lookBar)];
+  round.measured = Object.fromEntries(measured.map((finding) => [finding.key, finding.severity]));
+  const added = addedMeasured(measured, loop.incumbentMeasured ?? {});
+  if (!added.length) return;
+  round.taste.addedBlockers = [...new Set([...(round.taste.addedBlockers ?? []), ...added])];
+  round.taste.satisfied = false;
 }
 
 /**
