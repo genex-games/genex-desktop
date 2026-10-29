@@ -724,7 +724,7 @@ fn register_lighting(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape
     if quality.lights.clustered {
         ledger.register(BudgetKind::Target, "light-bins", shape.light_bin_bytes(quality));
     }
-    let (cascades, spots) = shadow_bytes(quality, &shape);
+    let (cascades, spots) = shadow_bytes(quality, shape);
     if quality.shadows.enabled {
         ledger.register(BudgetKind::Shadows, "cascades", cascades);
     }

@@ -197,7 +197,8 @@ struct TestMaterials {
 impl TestMaterials {
     fn new(device: &wgpu::Device, rows: &[GpuMaterial]) -> TestMaterials {
         let storage = |label, contents: &[u8]| device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: wgpu::BufferUsages::STORAGE });
-        let ext = vec![0f32; 16 * rows.len()];
+        // One extension row per material, at the row's own size (B2b grew it past 64 bytes).
+        let ext = vec![0f32; size_of::<genex_render::layout::GpuMaterialExt>() / 4 * rows.len()];
         let arrays = (0..8)
             .map(|_| {
                 device
