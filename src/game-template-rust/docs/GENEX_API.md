@@ -45,8 +45,8 @@ change touches.
 | Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
 | Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
-| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
-| Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
+| Streaming a large world | `docs/api/streaming.md` | Cells, anchors, sim radius, builders, holds, terrain tiles, refusals. |
+| Terrain | `docs/api/terrain.md` | Heightmap ground across the world. |
 | Vegetation | `docs/api/vegetation.md` | `gfx.plant` trees and grass, `Model::with_wind`. |
 | Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
@@ -54,18 +54,18 @@ change touches.
 | Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
 | Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading, replay, refusals. |
 | Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
-| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials, emission, reflection probes, irradiance volumes, decals, sky and HDR maps. |
-| Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, settings panel, shadows, draw ids, camera cuts. |
+| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials, emission, probes, volumes, decals, sky and HDR maps. |
+| Rendering | `docs/api/rendering.md` | Presets, classes, features, `[render]`, settings panel, shadows, draw ids, cuts. |
 | Resolution | `docs/api/resolution.md` | Sides, textures, budgets. |
 | Grading and the lens | `docs/api/grading.md` | Build order, grade, white balance, LUTs, depth of field, motion blur. |
 | Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
 | Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
 | Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once, drawn as a group. |
-| Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
-| Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
+| Custom materials and post passes | `docs/api/custom-materials.md` | Ladder level 2: WGSL materials and post passes in `genex.toml`. |
+| Custom GPU passes | `docs/api/gpu-passes.md` | Ladder level 3: raw wgpu through `genex::gpu` at the frame's stages. |
 | Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
 | Performance and budgets | `docs/api/performance.md` | Per-class and per-preset budgets, hard caps, content costs. |
-| genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: game, physics, crates, WGSL, native features, web. |
+| genex.toml | `docs/api/genex-toml.md` | Every build input key: game, physics, crates, WGSL, native features, web. |
 
 ## Hooks
 

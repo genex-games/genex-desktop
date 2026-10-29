@@ -46,7 +46,7 @@ resolution moves below the mode to hold the frame-rate target (30 or 60: frames 
 256 lights, at most one shadowed spot, TAA only on `mobile-high` at `high` and up, and no AO or contact
 shadows while the world pass is multisampled.
 
-Output sides, texture classes and budgets: `docs/api/resolution.md`.
+Sides, texture classes, budgets: `docs/api/resolution.md`.
 
 The look's `tonemapper`: `khronos-neutral` (default) keeps
 authored colours; `agx-punchy` is filmic, for bright, high-contrast scenes; `agx` is muted;
@@ -142,14 +142,14 @@ in a few pixels). `state().volatile.render` (class, preset, scale, `features`,
 Rules for agents:
 
 - Never hard-code `ultra`, a resolution, a render scale or an upscaling mode (only a photo mode
-  holds Native, or a resolution tier does), and never read render settings in a simulation hook. Author for
-  `ultra` on desktop; check `low` and a phone stay readable.
+  or a resolution tier holds Native); never read render settings in simulation. Author
+  for desktop `ultra`; check `low` and phones.
 - Never switch `shadows`, `meshlets` or `occlusion` off to save frame time, nor ask for more
-  cascades than a preset has outside `shadows_at`: presets and class caps already scale them.
+  cascades than a preset has outside `shadows_at`: presets and class caps scale them.
 - Test as a phone: `renderSettings` `{set: {deviceClass: "mobile-mid"}}`, `{set: {preset: "low"}}`,
   `{set: {features: {bloom: false}}}` or `{set: {renderScaleLock: 0.75}}` answer the settings in
   force (`features` as of the last drawn frame: capture, then read); a capture shows the game as
   that class draws it; `{set: {frameBudgetMs: 4}}` makes dynamic resolution hold 4 ms.
-  Check `mobile-mid` and `low` before calling it done: the picture must read as the same game;
+  Check `mobile-mid` and `low` before done: the picture must read as the same game;
   `{set: {features: {hdr: false}}}` compares the look with the old LDR scene. `{set: {preset: null, features: null, deviceClass: null,
   renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back.

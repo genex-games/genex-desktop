@@ -568,16 +568,23 @@ function lookError(value: unknown): RenderSettingsArgError | null {
   return value === undefined || value === null || isRecord(value) ? null : NativeOpError.BadArgument;
 }
 
+/** `value` is null or passes `guard`: a `set` member that clears or sets its setting. */
+function isNullOr<T>(value: unknown, guard: (value: unknown) => value is T): value is T | null {
+  return value === null || guard(value);
+}
+
+const isNumber = (value: unknown): value is number => typeof value === "number";
+
 /** The members of a checked `set` a game reads (it ignores any other). */
 function settingsChangeOf(set: Record<string, unknown>): RenderSettingsChange {
   const change: RenderSettingsChange = {};
   const { preset, deviceClass, features, renderScaleLock, frameBudgetMs, look } = set;
-  if (look === null || isRecord(look)) change.look = look === null ? null : { ...look };
-  if (preset === null || isQualityPreset(preset)) change.preset = preset;
-  if (deviceClass === null || isDeviceClass(deviceClass)) change.deviceClass = deviceClass;
-  if (features === null || isFeatureSwitches(features)) change.features = features === null ? null : { ...features };
-  if (renderScaleLock === null || typeof renderScaleLock === "number") change.renderScaleLock = renderScaleLock;
-  if (frameBudgetMs === null || typeof frameBudgetMs === "number") change.frameBudgetMs = frameBudgetMs;
+  if (isNullOr(look, isRecord)) change.look = look === null ? null : { ...look };
+  if (isNullOr(preset, isQualityPreset)) change.preset = preset;
+  if (isNullOr(deviceClass, isDeviceClass)) change.deviceClass = deviceClass;
+  if (isNullOr(features, isFeatureSwitches)) change.features = features === null ? null : { ...features };
+  if (isNullOr(renderScaleLock, isNumber)) change.renderScaleLock = renderScaleLock;
+  if (isNullOr(frameBudgetMs, isNumber)) change.frameBudgetMs = frameBudgetMs;
   return change;
 }
 
@@ -596,7 +603,11 @@ export function checkRenderSettingsArg(arg: unknown): RenderSettingsArgCheck {
     wordError(set.deviceClass, isDeviceClass, RenderSettingsRefusal.UnknownDeviceClass) ??
     featuresError(set.features) ??
     rangeError(set.renderScaleLock, [RENDER_SCALE_MIN, RENDER_SCALE_MAX], RenderSettingsRefusal.InvalidScale) ??
-    rangeError(set.frameBudgetMs, [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX], RenderSettingsRefusal.InvalidFrameBudget) ??
+    rangeError(
+      set.frameBudgetMs,
+      [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX],
+      RenderSettingsRefusal.InvalidFrameBudget,
+    ) ??
     lookError(set.look);
   return error ? { ok: false, error } : { ok: true, arg: { set: settingsChangeOf(set) } };
 }
