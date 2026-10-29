@@ -102,7 +102,7 @@ export async function aaaSuiteCommand(args: readonly string[], out: Out, deps: A
 }
 
 const COLLECT_USAGE =
-  "aaa collect --prompt <id> --run <runDir> --roles <roles.json> --out <dir> [--shots <dir>] [--facts <facts.json>] [--clean yes|no]";
+  "aaa collect --prompt <id> --run <runDir> [--roles <roles.json>] --out <dir> [--shots <dir>] [--facts <facts.json>] [--clean yes|no]";
 const CLEAN_VALUES: Readonly<Record<string, boolean>> = { yes: true, no: false };
 
 function readJsonFile(file: string | undefined): unknown {
@@ -119,7 +119,7 @@ export async function aaaCollectCommand(args: readonly string[], out: Out, deps:
   const value = (name: string) => parsed?.values.get(name);
   const clean = value("--clean");
   const prompt = promptById(readAaaSuite(deps.root), value("--prompt"));
-  const required = ["--run", "--roles", "--out"].every((name) => value(name) !== undefined);
+  const required = ["--run", "--out"].every((name) => value(name) !== undefined);
   if (!parsed || parsed.positional.length || !prompt || !required || (clean !== undefined && !(clean in CLEAN_VALUES)))
     return usage(out, COLLECT_USAGE);
   const outDir = path.resolve(value("--out") as string);
@@ -129,7 +129,7 @@ export async function aaaCollectCommand(args: readonly string[], out: Out, deps:
       prompt,
       runDir: path.resolve(value("--run") as string),
       shotsDir: value("--shots") === undefined ? null : path.resolve(value("--shots") as string),
-      roles: readJsonFile(value("--roles")) as Record<string, string>,
+      roles: value("--roles") === undefined ? null : (readJsonFile(value("--roles")) as Record<string, string>),
       facts: readJsonFile(value("--facts")),
       clean: clean === undefined ? null : (CLEAN_VALUES[clean] ?? null),
       outDir,

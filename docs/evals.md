@@ -521,7 +521,7 @@ workflow, outside this CLI):
 
 1. `npm run eval -- aaa suite` prints each brief, its views and demos. Send the brief to a fresh
    Rust game in a live `studio:dev` profile and let the Loop finish.
-2. Write `roles.json` mapping the game's camera names to the prompt's view roles, and a
+2. Write `roles.json` mapping the game's camera names to the prompt's view roles (or leave `--roles` out: `collect` then takes the run report's `captureRoles`, which the harness writes, keeping the roles this prompt can use), and a
    `genex-aaa-facts/1` file with what the shots cannot show (the engine's look facts, the
    provenance audit, the motion and doorway tracks, clean native captures).
 3. `npm run eval -- aaa collect --prompt <id> --run <profile>/core/runs/<runId> --roles roles.json

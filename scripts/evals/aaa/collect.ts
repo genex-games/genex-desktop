@@ -51,14 +51,17 @@ export interface CollectInput {
   runDir: string;
   /** The judge-shot folder; by default the run's `director/health_<head>`. */
   shotsDir: string | null;
-  /** Camera name → suite view role. */
-  roles: Readonly<Record<string, string>>;
+  /** Camera name → suite view role; null takes the run report's `captureRoles`. */
+  roles: Readonly<Record<string, string>> | null;
   /** A `genex-aaa-facts/1` object, or null. */
   facts: unknown;
   /** Whether the shots were taken with stylised post off; null when unknown. */
   clean: boolean | null;
   outDir: string;
 }
+
+/** A collect whose camera→role map is settled. */
+type ResolvedInput = CollectInput & { roles: Readonly<Record<string, string>> };
 
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json =>
@@ -68,8 +71,18 @@ function readJson(file: string): unknown {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+/** The entries of an object whose values are strings. */
+const stringValues = (object: Json): Record<string, string> =>
+  Object.fromEntries(Object.entries(object).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+
 /** The run's report: its id, goal and integration head. */
-function readRunReport(runDir: string): { runId: string | null; goal: string; head: string | null; game: string } {
+function readRunReport(runDir: string): {
+  runId: string | null;
+  goal: string;
+  head: string | null;
+  game: string;
+  captureRoles: Record<string, string> | null;
+} {
   const file = path.join(runDir, "report.json");
   if (!fs.existsSync(file)) throw new CollectError(CollectProblem.NoReport, "the run folder has no report.json");
   const report = readJson(file);
@@ -80,6 +93,7 @@ function readRunReport(runDir: string): { runId: string | null; goal: string; he
     goal: text(report.goal) ?? "",
     head: text(report.integrationHead),
     game: text(report.project) ?? "unknown",
+    captureRoles: isObject(report.captureRoles) ? stringValues(report.captureRoles) : null,
   };
 }
 
@@ -92,7 +106,7 @@ function defaultShotsDir(runDir: string, head: string | null): string {
 function shotCapture(
   shot: Json,
   shotsDir: string,
-  input: CollectInput,
+  input: ResolvedInput,
   fractions: Readonly<Record<string, number>>,
 ): AaaCapture | null {
   const camera = typeof shot.camera === "string" ? shot.camera : null;
@@ -121,7 +135,7 @@ function shotCapture(
   };
 }
 
-function readShots(shotsDir: string, input: CollectInput, fractions: Readonly<Record<string, number>>): AaaCapture[] {
+function readShots(shotsDir: string, input: ResolvedInput, fractions: Readonly<Record<string, number>>): AaaCapture[] {
   const verdictFile = path.join(shotsDir, "verdict.json");
   if (!fs.existsSync(verdictFile))
     throw new CollectError(CollectProblem.NoShots, "the shot folder has no verdict.json");
@@ -154,11 +168,25 @@ function briefOf(goal: string, prompt: AaaPrompt): boolean {
   return goal === prompt.brief || goal.startsWith(`${prompt.brief} `);
 }
 
+/**
+ * The camera→role map: the one given, or the run report's `captureRoles` (the harness's own map)
+ * cut to the roles this prompt can use, a view of the prompt or the fixed set.
+ */
+function rolesOf(input: CollectInput, fromReport: Record<string, string> | null): Record<string, string> {
+  if (input.roles) {
+    checkRoles(input.prompt, input.roles);
+    return { ...input.roles };
+  }
+  if (!fromReport) throw new CollectError(CollectProblem.BadRoles, "no --roles and the run report has no captureRoles");
+  const known = new Set(input.prompt.views.map((view) => view.role));
+  return Object.fromEntries(Object.entries(fromReport).filter(([, role]) => known.has(role) || isFixedRole(role)));
+}
+
 /** Collect, validate and write `<outDir>/evidence.json`; returns the bundle. */
-export function collectEvidence(input: CollectInput): AaaEvidence {
-  checkRoles(input.prompt, input.roles);
-  const facts = factsOf(input.facts);
-  const report = readRunReport(input.runDir);
+export function collectEvidence(given: CollectInput): AaaEvidence {
+  const facts = factsOf(given.facts);
+  const report = readRunReport(given.runDir);
+  const input = { ...given, roles: rolesOf(given, report.captureRoles) };
   const shotsDir = input.shotsDir ?? defaultShotsDir(input.runDir, report.head);
   const captures = [
     ...readShots(

@@ -38,7 +38,10 @@ if (!BODYCAM) throw new Error("empty suite");
 const TINY_JPEG = jpeg.encode({ width: 4, height: 4, data: new Uint8Array(64).fill(128) }, 80).data;
 
 /** A finished run folder: report.json and an integration-head shot folder with images and stats. */
-async function fakeRun(shots: Array<{ camera: string; file: string; luma: number; width?: number }>): Promise<string> {
+async function fakeRun(
+  shots: Array<{ camera: string; file: string; luma: number; width?: number }>,
+  captureRoles?: Record<string, string>,
+): Promise<string> {
   const run = await tmpDir("aaa-run-");
   const head = "1501e3f54558a51f350b5a56d9b0d78d841fb90f";
   const report = {
@@ -46,6 +49,7 @@ async function fakeRun(shots: Array<{ camera: string; file: string; luma: number
     project: "body-cam-2",
     goal: `${BODYCAM?.brief} Continue from the existing code in this workspace.`,
     integrationHead: head,
+    ...(captureRoles ? { captureRoles } : {}),
   };
   fs.writeFileSync(path.join(run, "report.json"), JSON.stringify(report));
   const dir = path.join(run, "director", "health_1501e3f5", "screenshots");
@@ -69,6 +73,51 @@ async function fakeRun(shots: Array<{ camera: string; file: string; luma: number
 const ROLES = { classroom: "interior-hero", "demo:yard": "exterior-hero" };
 
 describe("aaa collect", () => {
+  it("takes the roles from the run report's captureRoles when none are given, keeping only roles this prompt can use", async () => {
+    const run = await fakeRun(
+      [
+        { camera: "classroom", file: "classroom.jpg", luma: 28 },
+        { camera: "map:top", file: "map.jpg", luma: 90 },
+        { camera: "hero:vault", file: "vault.jpg", luma: 60 },
+      ],
+      { classroom: "interior-hero", "map:top": "map-topdown", "hero:vault": "balcony-hero" },
+    );
+    const evidence = collectEvidence({
+      prompt: BODYCAM,
+      runDir: run,
+      shotsDir: null,
+      roles: null,
+      facts: null,
+      clean: true,
+      outDir: await tmpDir("aaa-out-"),
+    });
+    assert.deepEqual(
+      evidence.captures.map((c) => [c.camera, c.role]),
+      [
+        ["classroom", "interior-hero"],
+        ["map:top", "map-topdown"],
+        ["hero:vault", null],
+      ],
+    );
+  });
+
+  it("refuses when neither roles nor a report's captureRoles exist", async () => {
+    const run = await fakeRun([{ camera: "classroom", file: "classroom.jpg", luma: 28 }]);
+    assert.throws(
+      () =>
+        collectEvidence({
+          prompt: BODYCAM,
+          runDir: run,
+          shotsDir: null,
+          roles: null,
+          facts: null,
+          clean: null,
+          outDir: run,
+        }),
+      (error) => error instanceof CollectError && error.problem === CollectProblem.BadRoles,
+    );
+  });
+
   it("builds a bundle from the integration head's shots, copying each image by base name", async () => {
     const run = await fakeRun([
       { camera: "classroom", file: "classroom.jpg", luma: 28 },
