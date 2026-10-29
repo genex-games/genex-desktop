@@ -2688,7 +2688,7 @@ describe("harness incidents", () => {
 
   // ── trees that read as boulders ────────────────────────────────────────────
 
-  it("T1. the fix: the judge's biggest gap becomes a check at first sight, is mandatory after two repeats, a build that leaves it loses, and a stuck fix goes to the planner", async () => {
+  it("T1. the fix: the judge's biggest gap becomes a check at first sight, is mandatory after two repeats, a build that leaves it is kept with the fix owed, and a stuck fix goes to the planner", async () => {
     // Unit: the biggest gap never waits for room on a full board.
     const full = {
       id: "g",
@@ -2801,7 +2801,7 @@ describe("harness incidents", () => {
       added.length >= 1 && Number(added[0]!.iteration) === 1,
       `the biggest gap became a check at iteration 1: ${JSON.stringify(added.map((a) => a.iteration))}`,
     );
-    // After two verdicts naming it, the brief carries THE FIX; after three, a build that leaves it loses.
+    // After two verdicts naming it, the brief carries THE FIX; after three it is mandatory.
     assert.ok(
       fixes.some((f) => f.delivered === null && Number(f.streak) >= 2),
       `the fix was asked: ${JSON.stringify(fixes.map((f) => [f.iteration, f.streak, f.mandatory, f.delivered]))} — gaps: ${JSON.stringify(water.map((i) => [i.iteration, i.verdictSource, String(i.biggest_gap).slice(0, 50)]))} — events: ${JSON.stringify(
@@ -2823,20 +2823,25 @@ describe("harness incidents", () => {
       briefs.some((b) => /## THE FIX this iteration/.test(b) && /reeds/.test(b)),
       "the builder's brief named the fix in its own section",
     );
-    const unfixed = water.filter((i) => i.verdictSource === "unfixed");
-    assert.ok(unfixed.length >= 1, `a preferred build that left the mandatory fix lost: ${debug}`);
-    assert.match(String(unfixed[0]!.reason), /the fix was mandatory/);
-    assert.equal(unfixed[0]!.winner, "incumbent");
-    // Two such losses hand the check to the planner and stop asking.
+    // Flipped (Loop phase 2): a preferred build that leaves the mandatory fix is kept, and the fix stays owed.
+    const left = water.filter((i) => /the fix stays owed/.test(String(i.reason)));
+    assert.ok(left.length >= 1, `a preferred build that left the mandatory fix says so: ${debug}`);
+    assert.match(String(left[0]!.reason), /the fix was mandatory/);
+    assert.equal(left[0]!.winner, "challenger");
+    assert.ok(
+      water.every((i) => i.verdictSource !== "unfixed"),
+      `no round is undone for it: ${debug}`,
+    );
+    // Two builds that leave it hand the check to the planner and stop asking.
     const stuck = customEvents(events, "autopilot_decision").filter((d) =>
-      /lost 2 builds in a row/.test(String(d.decision)),
+      /was left by 2 builds in a row/.test(String(d.decision)),
     );
     assert.ok(
       stuck.length >= 1,
       `the stuck fix went to the planner: ${JSON.stringify(customEvents(events, "autopilot_decision").map((d) => String(d.decision).slice(0, 80)))}`,
     );
     const afterStuck = fixes.filter(
-      (f) => Number(f.iteration) > Number(unfixed[unfixed.length - 1]!.iteration) && f.delivered === null,
+      (f) => Number(f.iteration) > Number(left[left.length - 1]!.iteration) && f.delivered === null,
     );
     assert.equal(
       afterStuck.length,
@@ -9443,7 +9448,7 @@ describe("the finish stage and the false ESCALATE", () => {
     // A director-owned worker past its ladder: guidance, three polished builds behind it.
     const guidance = { what: "traffic weaves in both lanes", mandatory: false, polishStreak: 3 };
     assert.doesNotMatch(brief(guidance), /ESCALATE/);
-    assert.doesNotMatch(brief(guidance), /rejects a build without the move/);
+    assert.doesNotMatch(brief(guidance), /mandatory now/);
     assert.doesNotMatch(prompt(guidance), /ESCALATE/);
     // A rung is mandatory because the director asked for it, not because polish escalated.
     const rung = {
@@ -9459,7 +9464,8 @@ describe("the finish stage and the false ESCALATE", () => {
     const escalated = { ...guidance, mandatory: true, polishStreak: 2, escalated: true };
     assert.match(
       brief(escalated),
-      /ESCALATE: the last 2 accepted builds were polish only\. The judge now rejects a build without the move\./,
+      // Flipped (Loop phase 2): an escalated move is mandatory and stays owed; nothing is rejected for it.
+      /ESCALATE: the last 2 accepted builds were polish only\. The move is mandatory now, and it stays owed until a build delivers it\./,
     );
     assert.match(prompt(escalated), /ESCALATE: your last 2 accepted builds were polish only\./);
   });

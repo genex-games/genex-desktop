@@ -1830,7 +1830,7 @@ describe("code reviewer, mechanical half", () => {
     assert.deepEqual(files.get("src/x.js")?.removed, ["removed"]);
   });
 
-  it("flags Math.random, wall clock, untagged batches, and edits outside ownership", () => {
+  it("flags untagged batches and edits outside ownership, and never the game's randomness or clock", () => {
     const diff = [
       "+++ b/src/city.js",
       "@@ -1,0 +1,5 @@",
@@ -1844,8 +1844,9 @@ describe("code reviewer, mechanical half", () => {
       "+export const x = 1;",
     ].join("\n");
     const violations = mechanicalReview(diff, { id: "city", owns: ["src/city.js"], checks: [] });
-    assert.ok(violations.some((v) => /Math\.random/.test(v.what)));
-    assert.ok(violations.some((v) => /wall-clock/.test(v.what)));
+    // Flipped (Loop phase 2): Math.random and the wall clock are the game's own.
+    assert.ok(!violations.some((v) => /Math\.random/.test(v.what)));
+    assert.ok(!violations.some((v) => /wall-clock/.test(v.what)));
     assert.ok(violations.some((v) => /none tagged/.test(v.what)));
     assert.ok(violations.some((v) => /outside this facet's ownership \(src\/lighting\.js\)/.test(v.what)));
     assert.ok(violations.every((v) => v.source === "mechanical"));
