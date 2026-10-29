@@ -257,8 +257,8 @@ replaces the clear colour; elsewhere the flat ambient light and the clear colour
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
 
-On desktop `high` and `ultra` screen-space GI adds the light nearby surfaces bounce (a red box
-tints the floor in front of it), beside the volumes' room-scale bounce; phones and `medium` keep
+On desktop `ultra` screen-space GI adds the light nearby surfaces bounce (a red box tints the
+floor in front of it), beside the volumes' room-scale bounce; the other presets and phones keep
 the volumes alone.
 
 One exposure cannot hold a sunlit window and the dark room around it. On `high` and `ultra` local

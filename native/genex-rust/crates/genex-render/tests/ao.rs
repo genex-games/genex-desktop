@@ -174,14 +174,17 @@ fn every_ao_preset_runs_gtao_and_off_runs_nothing() {
 /// memory budget) and XeGTAO's horizons at `medium` and on every phone class (owner decision D16:
 /// the GI's cost on a phone is unmeasured).
 #[test]
-fn the_presets_draw_ssgi_on_the_bitmask_at_high_and_ultra_on_desktops_only() {
+fn the_presets_draw_ssgi_on_the_bitmask_at_ultra_on_desktops_only() {
     let look = Look::default();
     for class in DeviceClass::ALL {
         for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
             let quality = preset_quality(preset, class);
             let desktop_high = class.form == genex_render::device_class::FormFactor::Desktop && preset >= QualityPreset::High;
-            // AAA review WP-12 flipped desktop `high` from the bitmask alone to its GI (was ultra only).
-            let expected = if desktop_high { AoMethod::BitmaskGi } else { AoMethod::Horizons };
+            let expected = match (desktop_high, preset) {
+                (true, QualityPreset::Ultra) => AoMethod::BitmaskGi,
+                (true, _) => AoMethod::Bitmask,
+                _ => AoMethod::Horizons,
+            };
             assert_eq!(quality.ao_method, expected, "{class:?} {}", preset.wire());
             if let Some(settings) = AoSettings::of(&look, &quality) {
                 assert_eq!(settings.method, expected);

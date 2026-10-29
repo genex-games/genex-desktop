@@ -632,11 +632,9 @@ fn high_row(quality: &mut Quality) {
     quality.local_exposure = true;
     quality.bloom = BloomQuality { enabled: true, resolution: CHAIN_RESOLUTION };
     quality.ao = AoQuality { resolution: AoResolution::Half, slices: 2, steps: 6, temporal: true };
-    // B.4: the visibility bitmask with its screen-space GI, the light of what the bitmask hides
-    // (AAA review WP-12: desktop-high too, not only ultra; at half size its terms add a quarter of
-    // ultra's). Medium keeps XeGTAO's horizons within its 0.6 ms; phones keep them too
-    // (`apply_mobile_caps`).
-    quality.ao_method = AoMethod::BitmaskGi;
+    // B.4: the visibility bitmask (no halo behind thin objects; ultra adds its GI). Medium keeps
+    // XeGTAO's horizons within its 0.6 ms; phones keep them too (`apply_mobile_caps`).
+    quality.ao_method = AoMethod::Bitmask;
     // Four shadowed spots (AAA review WP-15: a room's fixtures cast shadows; was two): the atlas is
     // one layer whatever the count, so only the four maps' draws are added. One shadowed point
     // light (a bare bulb, a lantern): six faces in the point layer after the spot atlas.
@@ -678,8 +676,13 @@ fn ultra_row(quality: &mut Quality, form: FormFactor) {
     // slice) costs about a fifth more a step: 3 x 8 measured 1.38 ms (M4 Max, 1080p), so the owner
     // raised ultra's AO budget to 1.5 ms (2026-10-12; plan §2.5 had 1.2) rather than halve the steps.
     quality.ao = AoQuality { resolution: AoResolution::Full, slices: 3, steps: 8, temporal: true };
-    // B.4's screen-space GI, inherited from high (look integration, AAA review WP-12). Two shadowed
-    // point lights (AAA review WP-15).
+    // B.4's screen-space GI, the light of what the bitmask hides (look integration). Not at high:
+    // its terms hold the light (`ao::target_bytes_shaped`), +18.4 MB at 1440p, and desktop-high's
+    // default with its texture arrays would pass its 512 MiB budget (553.7 MB); like D16, a preset
+    // fits its budget by its defaults, not by a larger budget (AAA review WP-12 tried high and the
+    // integrator kept it on ultra until the owner measures a larger budget).
+    quality.ao_method = AoMethod::BitmaskGi;
+    // Two shadowed point lights (AAA review WP-15).
     quality.lights = lights(1024, 16, 4);
     quality.lights.shadowed_points = crate::layout::MAX_SHADOWED_POINTS as u8;
     quality.ssr = crate::ssr::SsrQuality::ULTRA;
