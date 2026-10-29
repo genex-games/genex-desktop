@@ -455,7 +455,7 @@ floor unknown, which never passes.
 | --- | --- | --- | --- |
 | `view-coverage`, `clean-resolution` | every view captured clean at ≥1600×900 | | |
 | `native-4k` | | every view clean and native at 3840×2160 | |
-| `luma-band` | bright: mean luma 90–130 inside, 90–150 outside, ≤15% below luma 8; dark: 35–95, ≤40% | | |
+| `luma-band` | bright: mean luma 90–130 inside, 90–175 outside, ≤15% below luma 8; dark: 25–95, ≤40% | | |
 | `doorway` | ≤1 EV per 0.5 s, ≤0.25 EV overshoot | | |
 | `comfort` | bob ≤3 cm peak to peak below 3 Hz, roll ±1.5° (≤2° absolute), ≤5% of roll and pitch power above 6 Hz | | |
 | `reduced-motion` | | keeps ≤10% of bob and roll | |

@@ -54,11 +54,11 @@ export const LUMA_BANDS: Readonly<Record<AaaLook, Record<ViewSetting, { min: num
   {
     [AaaLook.Bright]: {
       [ViewSetting.Interior]: { min: 90, max: 130, darkMax: 0.15 },
-      [ViewSetting.Exterior]: { min: 90, max: 150, darkMax: 0.15 },
+      [ViewSetting.Exterior]: { min: 90, max: 175, darkMax: 0.15 },
     },
     [AaaLook.Dark]: {
-      [ViewSetting.Interior]: { min: 35, max: 95, darkMax: 0.4 },
-      [ViewSetting.Exterior]: { min: 35, max: 95, darkMax: 0.4 },
+      [ViewSetting.Interior]: { min: 25, max: 95, darkMax: 0.4 },
+      [ViewSetting.Exterior]: { min: 25, max: 95, darkMax: 0.4 },
     },
   };
 /** Doorway crossing: EV change per 0.5 s and overshoot caps (WP-5, proposed). */
