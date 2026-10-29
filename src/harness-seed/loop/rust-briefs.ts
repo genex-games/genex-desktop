@@ -386,6 +386,13 @@ const RUST_HOST_FILES = `genex.toml and ${RUST_API_DOC}`;
 const RUST_DEMO_ASK =
   "If this facet is behavioural (an interaction, a move, a beat), expose a deterministic demo of it via the studio contract (a game.demo entry registered in its wire) — demo checks run it and photograph its end frame.";
 
+/**
+ * How a look is tuned without a rebuild per try: the running game overlays `[render.look]` keys
+ * from `renderSettings {set: {look}}` (Live and captures), so values are settled live and written once.
+ */
+const RUST_LOOK_TUNE =
+  "Tune the look live, not by rebuilding: renderSettings {set: {look: {<[render.look] keys>}}} changes the running game's look for Live and captures; settle the values against the references, write them into genex.toml [render.look] once, then give the overlay back with {set: {look: null}}. A game that refuses it (invalid-look, or an older renderSettings) takes the genex.toml edit and a rebuild.";
+
 /** The facet builder's lines for a Rust · wgpu game: the Rust twins of `CPP_FACET`. */
 export const RUST_FACET = {
   module: facetModule,
@@ -394,9 +401,9 @@ export const RUST_FACET = {
   files: (owned: string) =>
     `- YOUR FILES: put this facet's work in its own module — ${owned}, with \`pub fn wire(game: &mut Game<super::World>)\` and its own state through game.facet_state::<T>() (split further into private items of that module if it grows).`,
   ownsEntry: (entryMain: string) =>
-    `- This worker OWNS ${entryMain}, src/game.rs and genex.toml — you may restructure them, and you wire in other workers' modules when they appear. ${RUST_API_DOC} stays read-only.`,
+    `- This worker OWNS ${entryMain}, src/game.rs and genex.toml — you may restructure them, and you wire in other workers' modules when they appear. ${RUST_API_DOC} stays read-only. ${RUST_LOOK_TUNE}`,
   notOwnEntry: (entryMain: string) =>
-    `- This worker does NOT own ${entryMain} or ${RUST_HOST_FILES}. If your work needs a change in one of them, say so in your summary and leave it: the director makes that edit, or gives it to whoever owns the entry.`,
+    `- This worker does NOT own ${entryMain} or ${RUST_HOST_FILES}. If your work needs a change in one of them, say so in your summary and leave it: the director makes that edit, or gives it to whoever owns the entry. For a look, settle [render.look] values live with renderSettings {set: {look}} and name the settled keys in your summary.`,
   wiringOnly: (entryMain: string) =>
     `- This facet does NOT own ${entryMain}, src/game.rs or ${RUST_HOST_FILES}. Touch ${entryMain} ONLY to add your two wiring lines inside the "FACET WIRING" marker block (${RUST_WIRING_LINES}; add the marker block if it is missing); never reformat or reorganise anything else.`,
   demoAsk: RUST_DEMO_ASK,
