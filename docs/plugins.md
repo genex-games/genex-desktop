@@ -3553,6 +3553,13 @@ answers `{started: true}` as the download starts and the installation record say
 since a call's deadline must not cut the download short. An agent cannot choose a binary, download
 URL or installation action: either way the manifest's pinned one is installed.
 
+A runtime may declare `platforms: [{platform: "win32-x64", candidates: [...]}]`, using the same
+computer names as `installs`. The matching list replaces the fallback `candidates`; when there is
+no match, the fallback remains in use. Each list uses the same candidate path rules below.
+Use `storage:` for a runtime managed in plugin storage, including when the person moves Genex
+storage to another drive, or `setting:` for a path the person chooses. A missing matching runtime
+remains missing; another platform's candidate list is not probed.
+
 A candidate (`native-candidates.ts`) is an absolute POSIX path (skipped on Windows), a path under
 `home:`, `studio:`, `storage:` or, on Windows, `programfiles:`, `programfilesx86:` and
 `localappdata:`; a path beside the program Windows opens a file type with (`opens:.blend/…`, from

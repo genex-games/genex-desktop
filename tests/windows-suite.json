@@ -178,6 +178,7 @@
   "tests/conformance/model-roles.test.ts",
   "tests/conformance/native-candidates.test.ts",
   "tests/conformance/native-pins.test.ts",
+  "tests/conformance/native-platform-candidates.test.ts",
   "tests/conformance/native-policy.test.ts",
   "tests/conformance/native-sandbox.test.ts",
   "tests/conformance/notifications.test.ts",

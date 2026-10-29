@@ -58,16 +58,32 @@ export interface PluginRuntimePin {
   platform?: NativePlatform;
 }
 
-/** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
+/** A runtime's candidate paths for one supported operating system and processor. */
+export interface PluginRuntimeCandidates {
+  platform: NativePlatform;
+  candidates: string[];
+}
+
+/** API 3. A reviewed native runtime, its version probe and optional platform-specific paths. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
+  /** Replaces the fallback candidates on a matching OS and architecture. */
+  platforms?: PluginRuntimeCandidates[];
   version: { args: string[]; pattern: string; minimum: string };
   /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
   install?: PluginRuntimePin;
   /** Pinned downloads for other computers, one per `platform`. */
   installs?: PluginRuntimePin[];
+}
+
+/** Candidate paths for this computer, or the runtime's fallback paths when none match. */
+export function runtimeCandidatesFor(
+  runtime: Pick<PluginNativeRuntime, "candidates" | "platforms">,
+  platform: string,
+): readonly string[] {
+  return runtime.platforms?.find((entry) => entry.platform === platform)?.candidates ?? runtime.candidates;
 }
 
 /** The pinned download of `runtime` for `platform` (this computer's by default), if it has one. */

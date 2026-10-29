@@ -15,11 +15,19 @@
  * activation shape and the panel bridge are checked before anyone installs the package.
  */
 
-/** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
+/** A runtime's candidate paths for one supported operating system and processor. */
+export interface PluginRuntimeCandidates {
+  platform: "darwin-arm64" | "win32-x64" | "win32-arm64";
+  candidates: string[];
+}
+
+/** API 3. A reviewed native runtime, its version probe and optional platform-specific paths. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
+  /** Replaces the fallback candidates on a matching OS and architecture. */
+  platforms?: PluginRuntimeCandidates[];
   version: { args: string[]; pattern: string; minimum: string };
   /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
   install?: PluginRuntimePin;
