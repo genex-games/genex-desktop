@@ -29,9 +29,9 @@ the game, not defects to correct. Change what the brief asks for and leave the r
 5. **Deterministic play, and this game's own assets.** Randomness only from the `rng` in
    `update()` or a generator seeded in `reset(seed)`; time only from `dt`. Two builds that cannot
    be run on one seed cannot be compared. Whatever this game already loads at run time keeps
-   loading: the template's "nothing is downloaded" rule is about the studio's offline scaffold,
-   not about your game. New models come from the studio's own tools (`assets/src/<name>.py` for
-   the `blender` tool when it is offered); `references/` is for you to LOOK at.
+   loading, and new models, textures and sounds come from the studio's tools (`assets/src/<name>.py`
+   for the `blender` tool when it is offered) or from anywhere their license allows; `references/`
+   is for you to LOOK at.
 __BUILD_RULE__
 Two lessons every contractor re-learned: before re-tuning lighting, fog or a material, capture the
 game and look at what it already draws; and a check that cannot pass as written is not yours to
