@@ -119,9 +119,9 @@ const offerName = (kind: PluginKindOffer): string =>
 /**
  * The first rule for a folder with no kind yet (`holds`: nothing, or notes to read first), on every
  * message until it has one. With engine plugins' kinds on offer (`kinds`) and the question card
- * bridged (`asked`): the engine question, whose web answer starts the web starter. Otherwise web is
- * the default through `start_web_game`, each kind on offer is made by its own tool when the request
- * names it, and an engine Genex has no plugin on for goes through `plugins_find`.
+ * bridged (`asked`): the engine question. Otherwise web is the default, written straight into the
+ * folder as plain Claude Code would write it, each kind on offer is made by its own tool when the
+ * request names it, and an engine Genex has no plugin on for goes through `plugins_find`.
  */
 export function pendingKindRule(
   engine: string | undefined,
@@ -133,9 +133,8 @@ export function pendingKindRule(
   const offered = kinds ?? [];
   // The engine question sends another engine to `plugins_find` itself, before it asks.
   if (asked && offered.length > 0) return [engineChoiceRule(engine, unreal, offered)];
-  const start = toolCall(engine, ProjectTool.StartWebGame);
   return [
-    `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), call ${start} first, then build the game in the page it writes.`,
+    `${newProjectWords(holds)} For a game that plays in Genex (the default when the request names no engine), write it straight into this folder: Genex shows the index.html at its root in its Live view, and \`three\` and \`three/addons/\` resolve to its own three.js r185 when the page has no import map of its own.`,
     ...offered.map((kind) => {
       const name = offerName(kind);
       return `When the request names ${name}, call ${toolCall(engine, kind.tool)}: it makes the game's ${name} project in this folder; then build it with that plugin's tools.`;

@@ -10,7 +10,7 @@ import type { LiveToolResult, LiveToolSpec } from "../../shared/engine-requests.
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import type { GameProject } from "../../shared/game-project.ts";
 import { PluginCallBlocker, PluginSourceKind } from "../../shared/plugins.ts";
-import { type GameKind, kindPending, ProjectStarter } from "../../shared/project-facts.ts";
+import { type GameKind, ProjectStarter } from "../../shared/project-facts.ts";
 import {
   type PluginsFindAnswer,
   type PluginsSuggestAnswer,
@@ -28,7 +28,6 @@ import {
   PLUGINS_SUGGEST_ANSWER,
   PLUGINS_SUGGEST_TOOL,
   PROJECT_TOOL_ANSWER,
-  START_WEB_GAME_TOOL,
 } from "./project-tools-prompts.ts";
 
 /** The longest search and reason a session may send, in characters; the rest is cut. */
@@ -64,17 +63,15 @@ export const ProjectToolSeat = {
 export type ProjectToolSeat = (typeof ProjectToolSeat)[keyof typeof ProjectToolSeat];
 
 /**
- * The project tools a session is handed, by its seat: the chat's own gets the web starter while its
- * game has no kind yet (never for a folder of its own files of a kind Genex can't name), the plugin
- * search, card and check; a lead the search and the card; a worker the search; anyone else (a
- * reviewer included) nothing.
+ * The project tools a session is handed, by its seat: the chat's own gets the plugin search, card
+ * and check (a new web game it writes straight into the folder, so no starter tool); a lead the
+ * search and the card; a worker the search; anyone else (a reviewer included) nothing.
  */
-export function projectTools(game: GameKind, seat: ProjectToolSeat): LiveToolSpec[] {
+export function projectTools(_game: GameKind, seat: ProjectToolSeat): LiveToolSpec[] {
   if (seat === ProjectToolSeat.Worker) return [PLUGINS_FIND_TOOL];
   if (seat === ProjectToolSeat.Lead) return [PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL];
   if (seat !== ProjectToolSeat.Chat) return [];
-  const start = kindPending(game) ? [START_WEB_GAME_TOOL] : [];
-  return [...start, PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL, PLUGIN_CHECK_TOOL];
+  return [PLUGINS_FIND_TOOL, PLUGINS_SUGGEST_TOOL, PLUGIN_CHECK_TOOL];
 }
 
 /** One of Genex's project tools as a chat's session calls it, by name. */
