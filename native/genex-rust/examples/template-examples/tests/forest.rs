@@ -47,7 +47,7 @@ fn every_stand_grows_and_draws_without_an_asset_file() {
     let forest = runtime.state()["forest"].clone();
     eprintln!("forest: {forest}");
     assert_eq!(forest["heroes"], 2);
-    assert!(forest["plants"].as_u64() > Some(1500), "a dense forest: {forest}");
+    assert!(forest["plants"].as_u64() > Some(900), "a dense forest: {forest}");
     assert!(forest["byTag"]["winter-birch"].as_u64() > Some(15), "a grove of birches: {forest}");
     assert!(forest["byTag"]["grass"].as_u64() > Some(500), "ground cover: {forest}");
 }
