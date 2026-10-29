@@ -230,11 +230,11 @@ describe("Play's native installer", { skip: SKIP }, () => {
     await installs.idle();
     assert.equal((await installs.record("dust-runners"))?.windowed, true);
     const skill = genexManifest.skills.find((one) => one.name === "publishing-apps");
-    assert.match(
-      skill && "text" in skill ? String(skill.text) : "",
-      new RegExp(WINDOWED_KEY),
-      "the agent is told the key",
-    );
+    const skillText =
+      skill && "file" in skill
+        ? await readFile(new URL(`../../src/plugins/genex/${skill.file}`, import.meta.url), "utf8")
+        : "";
+    assert.match(skillText, new RegExp(WINDOWED_KEY), "the agent is told the key");
     const index = JSON.parse(await readFile(path.join(root, "index.json"), "utf8"));
     const { engine: _engine, windowed: _windowed, ...older } = index.games["dust-runners"];
     await writeFile(path.join(root, "index.json"), JSON.stringify({ ...index, games: { "dust-runners": older } }));

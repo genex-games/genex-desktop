@@ -2164,8 +2164,9 @@ test("bundled Genex indexes its vendored skills, serves them through genex__skil
     assert.match(guidance, /genex__skill \{"name":"genex-threejs-multiplayer"\}/);
     assert.doesNotMatch(guidance, /Two rules that decide whether it feels good/, "a card's body is never in the brief");
     assert.doesNotMatch(guidance, /\[genex\/asset-workflow\]/, "the duplicate of the asset tool's description is gone");
-    // The Genex cover: an inline skill every brief carries, beside the card read on demand.
-    assert.match(guidance, /\[genex\/cover\]\n[^\n]*set_game_cover[^\n]*genex-cover/);
+    // The Genex cover: read on demand like the card beside it, never carried whole in a brief.
+    assert.match(guidance, /\[genex\/cover\] [^\n]*genex__skill \{"name":"cover"\}/);
+    assert.doesNotMatch(guidance, /set_game_cover/, "the cover skill's body is not in the brief");
     assert.match(guidance, /\[genex\/genex-cover\] [^\n]*genex__skill \{"name":"genex-cover"\}/);
     const tools = registry.tools().filter((t) => t.name.startsWith("genex__"));
     for (const text of [guidance, ...tools.map((t) => t.description)]) assert.doesNotMatch(text, /npx genex/);
