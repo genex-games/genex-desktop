@@ -103,6 +103,8 @@ mod gpu {
         Bare,
         Own,
         World,
+        /// Its own cover under a lamp too: the frame binds its local lights' tables.
+        OwnLamplit,
     }
 
     fn runtime(snow: Snow, preset: QualityPreset) -> Runtime<()> {
@@ -114,8 +116,12 @@ mod gpu {
             if snow == Snow::World {
                 frame.cover_world(Cover::snow(1.0, 45.0, 0.0));
             }
+            if snow == Snow::OwnLamplit {
+                frame.point_light(vec3(2.0, 1.5, 2.0), 4.0, Color::rgb(255, 200, 140), 0.5);
+            }
             let wood = Material::color(WOOD).with_roughness(0.8);
-            let wood = if snow == Snow::Own { wood.with_cover(Cover::snow(1.0, 45.0, 0.0)) } else { wood };
+            let owned = matches!(snow, Snow::Own | Snow::OwnLamplit);
+            let wood = if owned { wood.with_cover(Cover::snow(1.0, 45.0, 0.0)) } else { wood };
             frame.cube_with(Transform::IDENTITY.with_scale(vec3(6.0, 0.2, 6.0)), &wood);
         });
         let mut runtime = Runtime::new(game).expect("valid registrations");
@@ -151,9 +157,11 @@ mod gpu {
             let Some(bare) = luma(Snow::Bare, preset) else { return };
             let own = luma(Snow::Own, preset).expect("a presenter");
             let world = luma(Snow::World, preset).expect("a presenter");
-            println!("{}: bare {bare:.1}, own cover {own:.1}, world cover {world:.1}", preset.wire());
+            let lamplit = luma(Snow::OwnLamplit, preset).expect("a presenter");
+            println!("{}: bare {bare:.1}, own cover {own:.1}, world cover {world:.1}, own under a lamp {lamplit:.1}", preset.wire());
             assert!(own > 1.5 * bare, "a material's own cover whitens the slab at {}", preset.wire());
             assert!(world > 1.5 * bare, "the world's cover whitens the slab at {}", preset.wire());
+            assert!(lamplit > 1.5 * bare, "a lamp in the frame keeps the cover at {}", preset.wire());
         }
     }
 }
