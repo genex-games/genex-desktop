@@ -27,9 +27,10 @@ weather.cover_after(seconds);                                  // -> Option<Cove
 
 ## Cover: snow, dust, moss and water by material
 
-A cover lies where a surface faces up: its `amount` (0..1) is how much of what may hold it is
-covered, its `slope` the steepest face, in degrees from flat, that still holds it (90 is a wall,
-180 every face), its `noise` (0..1) how much a world-space noise breaks it into patches. The
+A cover lies where a surface faces up: its `amount` (0..1) is the share of what may hold it that
+is covered (0 none, 1 all), its `slope` the steepest face, in degrees from flat, that still holds
+it (90 is a wall, 180 every face), its `noise` (0..1) how much a world-space noise breaks that
+share into patches (0 lays a partial amount evenly, thinner). The
 surface's own normal map counts, so snow sits on the up-facing bumps of a brick and fills its
 joints. Where it lies it replaces the base colour, roughness and metallic and flattens the normal
 map: a bench's slats, a shed's roof, a rock's top and a car's bonnet whiten, while walls and the
@@ -55,8 +56,8 @@ frame.cube_with(pane, &glass.with_cover(Cover::none()));        // the window st
 whose material carries no cover; a material's own `with_cover` wins and `Cover::none()` keeps one
 bare. The first-person view model and posed characters are never covered. The terrain keeps its own
 layers: give the ground a snow layer (Terrain, below). A cover is a pure function of the surface,
-the same every frame; the cover's noise is drawn from `medium` up (`low` and the low phones draw
-the cover whole by its slope).
+the same every frame; the cover's noise is drawn from `medium` up (`low` and the low phones lay a
+partial amount evenly instead of in patches).
 
 ## Weather
 
@@ -115,9 +116,9 @@ highlights; the background is not tinted or refracted. A GLB's `KHR_materials_cl
 
 | Part | `low`, low phones | `medium`, phones, the web at `medium` | desktop `high`, `ultra` |
 |-|-|-|-|
-| Cover | by slope, no noise | with its noise | with its noise |
+| Cover | by slope, even (no patches) | in patches by its noise | in patches by its noise |
 | Detail, second layer, lobes | off (plain maps) | on | on |
-| Parallax | off (flat maps) | off (flat maps) | on, 8-32 steps by view angle |
+| Parallax | off (flat maps) | off (flat maps) | on, up to 32 steps by view angle, no finer than a pixel |
 | Weather | both layers, lit | both layers, lit | both layers, lit |
 
 Measured on the owner's Apple Silicon Mac at 2560×1440 `high`: see the numbers in

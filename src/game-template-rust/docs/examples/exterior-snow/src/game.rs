@@ -37,18 +37,21 @@ const SLUSH_TILE: f32 = 2.0;
 const SNOW_SECONDS: f32 = 600.0;
 /// The bench's own cover (it wins over the weather's): fresh, a little patchier.
 const BENCH_SNOW: (f32, f32, f32) = (0.9, 45.0, 0.35);
-/// The overcast day: a dim sun behind the cloud, the sky's light filling the shade.
-const SUN_TOWARDS: Vec3 = vec3(-0.4, 0.45, -0.6);
+/// The overcast day: a dim sun high behind the cloud (a low one reddens the haze it lights), the
+/// sky's cool light filling the shade.
+const SUN_TOWARDS: Vec3 = vec3(-0.35, 0.85, -0.4);
 const SUN_INTENSITY: f32 = 1.2;
+const SUN_COLOR: Color = Color::rgb(236, 242, 255);
 /// Snow haze: thin fog, thicker near the ground.
 const FOG_DENSITY: f32 = 0.018;
 const FOG_FALLOFF: f32 = 0.08;
-/// The lamps: where they stand, their warm colour and light.
+/// The lamps: where they stand, their warm colour, and the faint pool they cast by day (a strong
+/// one tints the snow around it orange).
 const LAMPS: [Vec3; 2] = [vec3(-3.2, 0.0, -4.0), vec3(3.4, 0.0, -14.0)];
 const LAMP_COLOR: Color = Color::rgb(255, 196, 130);
 const LAMP_GLOW: f32 = 8.0;
-const LAMP_LIGHT: f32 = 3.0;
-const LAMP_RANGE: f32 = 9.0;
+const LAMP_LIGHT: f32 = 0.6;
+const LAMP_RANGE: f32 = 6.0;
 /// The eye: standing on the path, looking along it.
 const EYE: Vec3 = vec3(0.6, 1.7, 6.0);
 const LOOK_AT: Vec3 = vec3(-0.5, 1.0, -6.0);
@@ -161,7 +164,7 @@ fn surfaces() -> Surfaces {
 }
 
 fn draw(world: &World, frame: &mut Frame) {
-    frame.clear(Color::rgb(190, 196, 204)).ambient(Color::rgb(190, 200, 215), 0.3).sun(SUN_TOWARDS, Color::rgb(255, 248, 240), SUN_INTENSITY);
+    frame.clear(Color::rgb(190, 196, 204)).ambient(Color::rgb(190, 200, 215), 0.3).sun(SUN_TOWARDS, SUN_COLOR, SUN_INTENSITY);
     frame.environment(Environment::Sky(SkyParams::overcast()));
     if let Some(ground) = &world.ground {
         frame.tag("ground").terrain(ground);

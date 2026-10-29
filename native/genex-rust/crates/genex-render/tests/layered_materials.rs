@@ -160,6 +160,22 @@ fn parallax_holds_its_depth_and_steps_and_needs_a_height_map() {
 }
 
 #[test]
+fn draws_that_differ_only_by_their_layers_keep_their_own_rows() {
+    use genex_render::scene::{FramePlan, MeshLibrary, translation};
+    let wood = Material::color([120, 72, 40, 255]);
+    let snowed = wood.with_layers(MaterialLayers { cover: Some(Cover::SNOW), ..MaterialLayers::default() });
+    let mut scene = Scene::new(CameraDesc::look_at([0.0, 2.0, 6.0], [0.0; 3]), CLEAR);
+    for (i, material) in [wood, snowed, snowed, wood].into_iter().enumerate() {
+        scene.draw(MeshId::CUBE, translation(i as f32, 0.0, 0.0), material);
+    }
+    let plan = FramePlan::build(&scene, &MeshLibrary::new(), 1.0).expect("plan");
+    let rows: Vec<u32> = plan.instances.iter().map(|row| row.material).collect();
+    assert_eq!(rows, [0, 1, 1, 0], "a run of one material shares a row; a cover makes another");
+    let flags: Vec<u32> = plan.material_ext.iter().map(|ext| ext.params[2] as u32 & MATERIAL_EXT_FLAG_COVER).collect();
+    assert_eq!(flags, [0, MATERIAL_EXT_FLAG_COVER]);
+}
+
+#[test]
 fn lobes_write_their_rows_and_transmission_blends_the_material() {
     let lobes = Lobes {
         clearcoat: 1.0,
@@ -383,16 +399,32 @@ fn metal_wet_cover_darkens_the_diffuse_and_sharpens_the_reflection() {
 #[ignore = "needs a Metal adapter"]
 fn metal_the_cheapest_tier_draws_the_cover_without_its_noise() {
     let Some(gpu) = gpu() else { return };
-    let snow = MaterialLayers { cover: Some(Cover::SNOW.shaped(1.0, 45.0, 0.9)), ..MaterialLayers::default() };
-    let shot_at = |tier: LayerTier| {
+    let snow = MaterialLayers { cover: Some(Cover::SNOW.shaped(0.6, 45.0, 0.9)), ..MaterialLayers::default() };
+    let spread_at = |tier: LayerTier| {
         let mut renderer = renderer(&gpu, &hdr_plain(tier), desktop());
-        shoot(&gpu, &mut renderer, &cube_scene(with(dark_stone(), snow))).0
+        let lumas = floor_lumas(&gpu, &mut renderer, with(dark_stone(), snow));
+        let mean = lumas.iter().sum::<f32>() / lumas.len() as f32;
+        let spread = libm::sqrtf(lumas.iter().map(|l| (l - mean) * (l - mean)).sum::<f32>() / lumas.len() as f32);
+        (mean, spread)
     };
-    let (cheap, full) = (shot_at(LayerTier::Cover), shot_at(LayerTier::Layers));
-    let (cheap_top, _) = top_and_side(&cheap);
-    let (full_top, _) = top_and_side(&full);
-    println!("snowed top: cover tier {:.3}, layers tier {:.3}", luma3(cheap_top), luma3(full_top));
-    assert!(luma3(cheap_top) > luma3(full_top), "without its noise the cover lies whole (no holes)");
+    let bare = {
+        let mut renderer = renderer(&gpu, &hdr_plain(LayerTier::Cover), desktop());
+        let lumas = floor_lumas(&gpu, &mut renderer, dark_stone());
+        lumas.iter().sum::<f32>() / lumas.len() as f32
+    };
+    let ((cheap_mean, cheap_spread), (_, full_spread)) = (spread_at(LayerTier::Cover), spread_at(LayerTier::Layers));
+    println!("floor at amount 0.6: bare {bare:.3}, cover tier {cheap_mean:.3} spread {cheap_spread:.4}, layers tier spread {full_spread:.4}");
+    assert!(cheap_mean > 2.0 * bare, "the cheapest tier still lays the cover");
+    assert!(cheap_spread < 0.25 * full_spread, "without its noise the cover lies evenly, not in patches");
+}
+
+/// The luminance of every pixel of an 8 m floor of `material` seen from 6 m above.
+fn floor_lumas(gpu: &Gpu, renderer: &mut Renderer, material: Material) -> Vec<f32> {
+    let mut scene = Scene::new(CameraDesc::look_at([0.0, 6.0, 0.01], [0.0, 0.0, 0.0]), CLEAR);
+    scene.lighting.shadows = false;
+    scene.lighting.sun_dir = [0.2, 1.0, 0.3];
+    scene.draw(MeshId::CUBE, scaled([0.0, -0.05, 0.0], [8.0, 0.1, 8.0]), material);
+    shoot(gpu, renderer, &scene).0.iter().map(luminance).collect()
 }
 
 /// A `side`-square RGBA8 texture of `f(x, y)`.
@@ -555,12 +587,19 @@ fn metal_sheen_brightens_the_rim_of_cloth() {
     let mut renderer = renderer(&gpu, &hdr_plain(LayerTier::Layers), desktop());
     let cloth = Material::color([40, 20, 60, 255]).with_pbr(0.0, 0.9);
     let velvet = MaterialLayers { lobes: Lobes { sheen_color: [0.9, 0.7, 1.0], sheen_roughness: 0.4, ..Lobes::default() }, ..MaterialLayers::default() };
-    let (plain, _) = shoot(&gpu, &mut renderer, &sphere_scene(cloth, [0.0, 1.0, 0.2]));
-    let (sheened, shot) = shoot(&gpu, &mut renderer, &sphere_scene(cloth.with_layers(velvet), [0.0, 1.0, 0.2]));
+    // The radius-2 sphere seen from 6 m: its silhouette's top is 70.5 degrees from the view axis,
+    // so a point at 66 degrees faces the camera at a grazing 85 degrees, lit from above.
+    let camera = CameraDesc::look_at([0.0, 0.0, 6.0], [0.0, 0.0, 0.0]);
+    let scene_of = |material: Material| {
+        let mut scene = sphere_scene(material, [0.0, 1.0, 0.2]);
+        scene.camera = camera;
+        scene
+    };
+    let (plain, _) = shoot(&gpu, &mut renderer, &scene_of(cloth));
+    let (sheened, shot) = shoot(&gpu, &mut renderer, &scene_of(cloth.with_layers(velvet)));
     write_evidence("sheen", &shot);
-    let camera = CameraDesc::look_at([0.0, 0.0, 3.0], [0.0, 0.0, 0.0]);
-    let rim = pixel(&camera, Vec3::new(0.0, 0.97, 0.15));
-    let (plain_rim, sheen_rim) = (luma3(mean_near(&plain, rim, 2.0)), luma3(mean_near(&sheened, rim, 2.0)));
+    let rim = pixel(&camera, Vec3::new(0.0, 1.827, 0.813));
+    let (plain_rim, sheen_rim) = (luma3(mean_near(&plain, rim, 1.5)), luma3(mean_near(&sheened, rim, 1.5)));
     println!("rim: plain {plain_rim:.4}, sheen {sheen_rim:.4}");
     assert!(sheen_rim > 1.3 * plain_rim, "sheen lights the grazing rim");
 }

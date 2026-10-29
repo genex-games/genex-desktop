@@ -9,11 +9,12 @@ fit = "expand"
 form_factors = ["desktop", "mobile"]
 preset = "auto"
 
-# Auto exposure meters the bright snow, as a camera would.
+# Auto exposure pulls whatever it meters toward middle grey, so a snow field turns grey: open it up
+# a stop, as a photographer does in snow, and the yard reads near white.
 [render.look]
 tonemapper = "agx-punchy"
 exposure = "auto"
-ev_compensation = 0.3
+ev_compensation = 1.0
 
 # A yard 60 m across: the sun's cascades cover 60 m.
 [render.shadows]
