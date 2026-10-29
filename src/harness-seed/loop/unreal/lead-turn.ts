@@ -171,7 +171,13 @@ async function steer(lead: LeadRun, turn: LeadTurn, key: string, text: string): 
   if (turn.over || turn.steered.has(key)) return false;
   turn.steered.add(key);
   const id = `${lead.run.runId}:${lead.journal.turns}:${key}`;
-  const params = { threadId: lead.threadId, into: lead.run.runId, messages: [{ id, text }], interrupt: false };
+  const params = {
+    threadId: lead.threadId,
+    into: lead.run.runId,
+    messages: [{ id, text }],
+    interrupt: false,
+    byGenex: true,
+  };
   const answer = await lead.ctx.call(HostMethod.EngineSteer, params).catch(() => null);
   return Boolean(answer?.accepted.includes(id));
 }

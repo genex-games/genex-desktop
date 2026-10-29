@@ -45,6 +45,7 @@ link.start({
 	[Message.GuiLayout] = device.layout,
 	[Message.ModelImport] = model.import,
 	[Message.Activity] = activity.now,
+	[Message.ActivityWhy] = activity.why,
 	[Message.Team] = team.others,
 })
 

@@ -29,6 +29,8 @@ import {
   type RequestOptions,
 } from "../../src/plugins/roblox/helper-link.ts";
 import {
+  ActivitySignal,
+  type ActivityWhy,
   CHUNK_BYTES,
   HelperErrorCode,
   HelperMessage,
@@ -85,6 +87,8 @@ function studioPlace(initial: Record<string, Buffer>, steps: Step[]) {
     others: [] as string[],
     pings: true,
     loadFails: undefined as Error | undefined,
+    /** What the helper last counted as the person's work; undefined: an older helper that can't say. */
+    why: undefined as ActivityWhy | undefined,
   };
   const exportAnswer = (request: HelperRequestBodies["place.export"], options: RequestOptions) => {
     const known = new Map(request.known.map((part) => [part.name, part.hash]));
@@ -121,6 +125,10 @@ function studioPlace(initial: Record<string, Buffer>, steps: Step[]) {
         throw new HelperLinkError(HelperLinkFailure.TimedOut, "The helper didn't answer activity in time.");
       return { editing: false };
     }
+    if (type === HelperMessage.ActivityWhy) {
+      if (state.why) return state.why;
+      throw new HelperLinkError(HelperLinkFailure.Answered, "unknown request", HelperErrorCode.Unsupported);
+    }
     throw new Error(`not asked in this test: ${type}`);
   }) as HelperAsk;
   return { ask, parts, loads, state };
@@ -156,7 +164,11 @@ async function momentWorld(options: { initial?: Record<string, Buffer> } = {}) {
     connectsAfterOpen: undefined as number | undefined,
   };
   const marks: AgentMarks = {};
-  const watch = createStudioWatch(() => clock);
+  const logged: string[] = [];
+  const watch = createStudioWatch(
+    () => clock,
+    (line) => logged.push(line),
+  );
   const controller = new AbortController();
   let openedAt: number | undefined;
   const ops: MomentOps = {
@@ -215,6 +227,7 @@ async function momentWorld(options: { initial?: Record<string, Buffer> } = {}) {
     studio,
     marks,
     watch,
+    logged,
     stop: () => controller.abort(),
     advance: (ms: number) => {
       clock += ms;
@@ -609,6 +622,28 @@ describe("the person first: the agent's own work in Studio is not the person's",
     world.watch.activity(GAME, true);
     world.watch.activity(GAME, false);
     assert.equal(await personActive(world.ops), false, "the helper said the person stopped");
+  });
+
+  it("activity counted as the person's names its source in the log: what the helper last saw, once per source", async () => {
+    const world = await momentWorld();
+    world.place.state.why = { signal: ActivitySignal.Recording, detail: "Assistant: Run Luau" };
+    assert.equal(await personActive(world.ops), false);
+    assert.ok(!world.steps.includes(HelperMessage.ActivityWhy), "nobody at it: the helper isn't asked");
+    world.watch.activity(GAME, true);
+    assert.equal(await personActive(world.ops), true);
+    assert.equal(await personActive(world.ops), true, "the answer is the probe's as before");
+    assert.deepEqual(world.logged, [
+      `studio activity in ${GAME} counted as the person's: recording "Assistant: Run Luau"`,
+    ]);
+    world.place.state.why = { signal: ActivitySignal.Selection, detail: "Workspace.Baseplate" };
+    assert.equal(await personActive(world.ops), true);
+    assert.equal(
+      world.logged.at(-1),
+      `studio activity in ${GAME} counted as the person's: selection "Workspace.Baseplate"`,
+    );
+    world.place.state.why = undefined;
+    assert.equal(await personActive(world.ops), true, "an older helper that can't say changes nothing");
+    assert.equal(world.logged.length, 2);
   });
 
   it("marks as files: believed while fresh, never when stale or dated ahead, play cleared when it ends", async () => {

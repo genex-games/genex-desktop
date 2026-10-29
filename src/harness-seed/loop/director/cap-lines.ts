@@ -113,6 +113,7 @@ export async function steerCapLine(loopRun: LoopRun, now: number): Promise<void>
     into: loopRun.run.runId,
     messages: [{ id, text: lineText(loopRun, line, now) }],
     interrupt,
+    byGenex: true,
   };
   const answer = await loopRun.ctx.call(HostMethod.EngineSteer, params).catch(() => null);
   if (!answer?.accepted?.includes(id)) return;

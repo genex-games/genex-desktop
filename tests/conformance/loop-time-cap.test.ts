@@ -176,6 +176,10 @@ describe("the open Loop under its cap", () => {
       [TIME_CAP_WORDS.headsUp(15), TIME_CAP_WORDS.timesUp],
     );
     assert.equal(steers[0]?.interrupt, false, "the heads-up never cuts the turn short");
+    assert.ok(
+      steers.every((steer) => steer.byGenex === true),
+      "the cap lines are Genex's own words: a call waiting for the person goes on waiting",
+    );
     const first = host.leadCalls()[0] as { timeoutMs?: number };
     assert.ok(Number(first.timeoutMs) > 30 * MINUTE_MS, "the turn may go on into the grace");
     assert.doesNotMatch(String(host.prompts()[1]), /Time's up/, "heard mid-turn: not said again");

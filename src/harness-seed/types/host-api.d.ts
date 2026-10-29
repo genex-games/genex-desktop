@@ -2298,9 +2298,18 @@ export interface HarnessHostApi {
    * calls, never inside one. `interrupt: false` takes them only into a session that reads them
    * mid-turn, and never cuts one short; `native: false` never hands them to it mid-turn: the session
    * is cut at its next step (a message that changes how the turn runs, steer-switch.ts).
+   * `byGenex: true` marks Genex's own words (a save-point reminder, a time line, a run's news): read
+   * mid-turn, they end no call's wait for a lock, which only the person's words do (`PersonWrote`).
    */
   "engine.steer": {
-    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean; native?: boolean };
+    params: {
+      threadId: string;
+      into: string;
+      messages: SteerMessage[];
+      interrupt?: boolean;
+      native?: boolean;
+      byGenex?: boolean;
+    };
     result: { how: SteerDelivery | null; accepted: string[] };
   };
   "coordinator.tool": {

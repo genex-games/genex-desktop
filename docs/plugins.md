@@ -1389,14 +1389,19 @@ has, and loads a save point's parts back (`place.load`), each checked against th
 `play.multiplayer` starts `StudioTestService:ExecuteMultiplayerTestAsync` (one session, at most
 eight players); pausing or ending a test acts in the play session's own data models, out of the
 Edit helper's reach, so those answer `unsupported`. `activity` and `team` (who else is in a Team
-Create place) are sent on change and answered when asked; `device.set` and `gui.layout` drive the
+Create place) are sent on change and answered when asked; `activity.why` answers what the helper
+last counted as the person's work (a selection, an undo or redo, a recording not named `Genex: …`
+by its name, typing in a script) and which instance; `device.set` and `gui.layout` drive the
 Device Simulator; `model.import` builds a checked mesh (`GXM1`) as a MeshPart.
 
 **Scripts as files.** A Roblox game's scripts are `.luau` files under its `src/<Service>/`, in
 Rojo's names (`script-paths.ts`): `Name.server.luau` a Script, `Name.client.luau` a LocalScript,
 `Name.luau` a ModuleScript, `Name.plugin.luau` and `Name.runcontext-server|client.luau` a Script
 with that run context, folders for the instances on the way, and `init.<kind>.luau` inside its own
-folder for a script with scripts below it. A character no file system keeps (separators,
+folder for a script with scripts below it. Such a script can reach Studio after the scripts inside
+it, which were given a Folder of its name on the way: its push says it holds its folder (`holds`),
+and the helper moves that Folder's children into it and removes the Folder in the same recording.
+Removing a script also removes the Folders it leaves empty, up to its service. A character no file system keeps (separators,
 `: * ? " < > |`, controls, trailing dots and spaces, a Windows device name's first letter, a dot
 that would read as a kind, `%` itself) is written `%XX`; each name has one spelling, so a file
 spelled otherwise is no script of the game's, and a name past 200 characters gets no file. Two
@@ -1645,6 +1650,10 @@ connection's writes, 3 s after it included, since Studio records `execute_luau` 
 `agent-play.json` during the agent's play test; Genex's own load and reconcile run under the busy
 mark too, and so do its own reads in a Studio another game is bound to (the helper link's marker
 reads, Choose your place asking each Studio for its place); a mark older than 30 minutes or dated ahead is not believed); it claims nothing unsaved.
+When it counts activity as the person's, the backend asks the helper `activity.why` and logs an
+answer that changed (`studio activity in <game> counted as the person's: <signal> "<which>"`, on the
+backend's stderr, kept with `STUDIO_PLUGIN_DEBUG=1`), so a wait nobody caused names its cause; a
+helper before version 3 can't say, and the probe's answer stands.
 The `viewport` [observer](#observers) runs `hero-shots` and shows Live's `stills`.
 
 Its skills reach a game that holds a Roblox place only (`facts: ["roblox-project"]`, never
@@ -2234,7 +2243,9 @@ declined consent (`{blocker: "lock", lock, reason, hold, message}`: `reason` the
 person's own action never waits for the person. A wait ends early when the person writes in the
 chat the calling session answers (`engine.steer` handed it their message, natively or by a cut at
 its next step): the call answers the refusal `person_wrote`, telling the agent to read the message
-first and call again if it still needs the tool; only a wait ends so, never a lock already given. A worker writing in place holds Genex's in-place
+first and call again if it still needs the tool; only a wait ends so, never a lock already given.
+Genex's own words steered into a turn (`byGenex`: the save-point reminder, the time cap's lines, a
+run's news) end no wait. A worker writing in place holds Genex's in-place
 lock and the game's `project` locks for its whole life (`locks.hold`/`locks.release`,
 [harness runtime](harness-runtime.md#workers-in-a-chat)); its own calls pass them (on an engine the
 host seats no worker on too, as `unseatedHolder`), still giving way to the person, and its line and row read "Working in <label>". Any end of the harness, a planned

@@ -7,7 +7,7 @@
  * inside one (`steer-cut.ts`) — marked `steered`, so its caller (the harness's
  * `loop/chat-steer.ts`) resumes it with the messages in front instead of reading a Stop. Either
  * way the session's plugin calls stop waiting for a lock (`PersonWrote`): the agent reads the
- * message first. Only a chat's own session answers a turn, and a run's lead, which answers the
+ * message first. Genex's own words read mid-turn (`byGenex`: a reminder, a time line) end no wait. Only a chat's own session answers a turn, and a run's lead, which answers the
  * chat while its build runs (addressed by its run id, and told without recording where: the queue
  * recorded the hand-over): a builder's never.
  */
@@ -150,10 +150,18 @@ async function nativeSend(running: ActiveDelegation, p: SteerParams): Promise<St
   return doorSend(running.steer);
 }
 
-/** The messages read mid-turn: the session's calls waiting for a lock stop waiting once it took one. */
-function sendNatively(running: ActiveDelegation, send: SteerSend, messages: readonly SteerMessage[]): SteerAnswer {
+/**
+ * The messages read mid-turn: the session's calls waiting for a lock stop waiting once it took one
+ * of the person's. Genex's own words (`byGenex`) leave them waiting.
+ */
+function sendNatively(
+  running: ActiveDelegation,
+  send: SteerSend,
+  messages: readonly SteerMessage[],
+  byGenex: boolean,
+): SteerAnswer {
   const accepted = sendEach(send, messages);
-  if (accepted.length && running.personWrote) personWrote(running.personWrote);
+  if (accepted.length && running.personWrote && !byGenex) personWrote(running.personWrote);
   return { how: SteerDelivery.Native, accepted };
 }
 
@@ -177,7 +185,7 @@ export async function steerIntoChat(
   if (running.steered) return { how: SteerDelivery.Interrupt, accepted: all };
   if (running.abort.signal.aborted) return REFUSED;
   const send = await nativeSend(running, p);
-  if (send) return sendNatively(running, send, messages);
+  if (send) return sendNatively(running, send, messages, p.byGenex === true);
   // No input mid-turn (Codex, an older Claude Code, a Loop chat), or none asked: cut, and the caller
   // resumes — unless it asked for a session that reads them as it works, or none.
   const mayCut = p.interrupt !== false && !running.ended && !running.abort.signal.aborted;

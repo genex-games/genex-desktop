@@ -49,7 +49,14 @@ import {
   type ScriptRef,
 } from "./helper-protocol.ts";
 import { clearPendingScripts, existingFolder, hasPendingScripts, writeWhole } from "./place-files.ts";
-import { layoutScripts, SCRIPT_EXTENSION, SCRIPTS_FOLDER, scriptKey, scriptRefOf } from "./script-paths.ts";
+import {
+  holdsFolder,
+  layoutScripts,
+  SCRIPT_EXTENSION,
+  SCRIPTS_FOLDER,
+  scriptKey,
+  scriptRefOf,
+} from "./script-paths.ts";
 import { isGameId } from "./studio-binding.ts";
 
 /** How long `src/` stays quiet before its changes are pushed: an editor's save is several writes. */
@@ -668,9 +675,17 @@ class SyncState {
     await this.toDisk(file, studioSource);
   }
 
-  /** The file's source into Studio, refused by the helper when Studio isn't at `base` any more. */
+  /**
+   * The file's source into Studio, refused by the helper when Studio isn't at `base` any more. A
+   * script that holds its folder says so, so the helper puts the scripts already in it inside it.
+   */
   async push(file: string, ref: ScriptRef, disk: DiskScript, base: string | undefined, timeoutMs?: number) {
-    const body = base === undefined ? { script: ref, source: disk.source } : { script: ref, source: disk.source, base };
+    const body = {
+      script: ref,
+      source: disk.source,
+      ...(base === undefined ? {} : { base }),
+      ...(holdsFolder(file) ? { holds: true } : {}),
+    };
     try {
       const { hash } = await this.deps.ask(HelperMessage.ScriptsWrite, body, limitOf(timeoutMs));
       this.record.scripts[file] = hash;
