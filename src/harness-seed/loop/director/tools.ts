@@ -1,3 +1,4 @@
+import { captureRoles } from "../capture-set.ts";
 import { keepCheckpoint } from "./progress.ts";
 import { closeUps } from "../close-ups.ts";
 import { asksForLook } from "../look-bar.ts";
@@ -617,7 +618,10 @@ async function shipStep(loopRun: LoopRun, pass: JudgePass): Promise<void> {
   if (onIntegration) {
     routeShipDefects(loopRun, review);
     const doNotRegress = doNotRegressAfter(state.lastShip, review);
-    state.lastShip = { head, ship: review.ship, defects: review.defects, doNotRegress, at: Date.now() };
+    // The eval grader's roles for the capture set this look photographed (capture-set.ts).
+    const cameras = (evidence.shots ?? []).map((shot: AnyRecord) => String(shot.camera));
+    const roles = captureRoles(cameras, (run.cameraSettings ?? {}) as Record<string, unknown>);
+    state.lastShip = { head, ship: review.ship, defects: review.defects, doNotRegress, at: Date.now(), roles };
   }
   out.ship = {
     ship: review.ship,

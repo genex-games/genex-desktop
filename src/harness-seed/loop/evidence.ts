@@ -37,6 +37,7 @@ import { templateMainOf } from "./native-review.ts";
 import { weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
 import * as frameVerdicts from "./frame-verdicts.ts";
 import { readyWaitOf } from "./ready-wait.ts";
+import { expandCameraSet } from "./capture-set.ts";
 import { slowBootWarning } from "./destination-budgets.ts";
 import { nativeEvidence, withParity } from "./native-evidence.ts";
 import { type CrashFacts, readCrashFacts } from "./crash-facts.ts";
@@ -1728,10 +1729,12 @@ async function chooseCameras(look: Look): Promise<void> {
   else if (Array.isArray(cameras) && cameras.length > 0) {
     // A facet's camera that is a demo's end or the drive's corner is a frame the pass takes on its
     // own, never a viewpoint to ask debugCamera for (nor one "not registered in config.cameras").
-    const viewpoints = cameras.map(String).filter((name) => !isPassFrame(name));
+    // A `prefix*` camera is every registered one under it, the whole-game capture set (capture-set.ts).
+    look.registeredCameras = await registeredCameraNames(look);
+    const asked = cameras.map(String).filter((name) => !isPassFrame(name));
+    const viewpoints = expandCameraSet(asked, look.registeredCameras);
     for (const name of [DEFAULT_CAMERA, ...viewpoints]) addCamera(cameraNames, name);
     for (const name of wantEyes) addCamera(cameraNames, name);
-    look.registeredCameras = await registeredCameraNames(look);
   } else {
     await declaredCameraNames(look, cameraNames, floorCameras);
     for (const name of wantEyes) addCamera(cameraNames, name);

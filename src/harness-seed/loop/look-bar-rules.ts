@@ -32,7 +32,7 @@ export const BLOCKER_RULES: Record<LookBlocker, string> = {
   [LookBlocker.VisibleTiling]:
     "break tiling with 2k scans, stochastic tiling and decals; never a 4 m repeat at play distance",
   [LookBlocker.NotShipped]:
-    "reach one area's finished look (its hero shot passes the art director) before spreading to more",
+    "block out the whole level playable first, then bring each zone to its finished look against the references",
   [LookBlocker.FlatMaterial]: "give every surface a scan or generated texture with its normal and ORM maps",
   [LookBlocker.StickTree]: `source trees as models with leaf or twig cards (${ArtSource.GenexModel} or a decimated ${ArtSource.Cc0Model}); never cones`,
   [LookBlocker.SlabSnow]: "put snow or dust on by material cover and a terrain layer, never as boxes laid on props",
@@ -42,4 +42,14 @@ export const BLOCKER_RULES: Record<LookBlocker, string> = {
     "keep doorway adaptation smooth: at most 1 EV per half second, a low ev_min, no overshoot",
   [LookBlocker.UncomfortableCamera]:
     "drive the first-person camera with the engine rig inside its comfort caps; never add shake or bob of your own",
+  [LookBlocker.FeatureOff]:
+    "the quality presets own every look feature: report a check that fails, never switch fog, a lit volume, shadows or bloom off to pass it",
+  [LookBlocker.BrokenPose]:
+    "validate every character clip on the engine's humanoid bone map: limb lengths kept, feet grounded, both hands on the weapon",
+  [LookBlocker.IncoherentPlace]:
+    "plan the level in docs/LEVEL.md (zones, connections, exits, spawns, play loop, boundary) and block it all out before art",
+  [LookBlocker.UnreachableZone]: "connect every planned zone to spawn with a door, stairs or path the player can use",
+  [LookBlocker.NoExit]: "give the level the exit its plan names, reachable from spawn",
+  [LookBlocker.DeadEnd]: "end a corridor only where the level plan says, at a locked door, rubble or a view out",
+  [LookBlocker.Unbounded]: "close the world with fences, rubble, locked doors or a backdrop the player cannot pass",
 };

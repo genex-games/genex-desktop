@@ -103,9 +103,19 @@ stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
   with the greybox rule and the boot rule (`loop/look-bar-prompts.ts`, `loop/destination-budgets.ts`).
 - Assets first (`director/sourcing.ts`). `worker_start` waits, up to 30 minutes from the art pass, until
   `docs/ASSETS.md` in the integration names a file for every planned prop, organic and character tag
-  (`- <tag>: <file>`), except for the sourcing worker (the part `id=sourcing`). Once one part builds, another
-  waits, up to 45 minutes, for an art director's review with no blocker. A plan part's `hero` camera is
-  in every art director's look.
+  (`- <tag>: <file>`), except for the sourcing worker (the part `id=sourcing`) and the blockout. A plan
+  part's `hero` camera is in every art director's look, with the capture set the game registers
+  (`hero:*`, `map:*`, `closeup:*`; `loop/capture-set.ts`). No zone's finished look holds another part.
+- Blockout first (`director/blockout.ts`, `loop/level-plan.ts`), on any run whose game kind has a place
+  (first-person, third-person, top-down, side-on, racing, flight), look bar or not: the part `id=blockout`
+  writes `docs/LEVEL.md` (Zones, Connections, Exits, Spawns, Play loop, Boundary, in its kind's terms) and
+  greyboxes the whole level playable; every other part but `sourcing` waits for it, at most a third of the
+  run. Its rounds are held only to place and feature blockers. A game's `state().__level` reachability
+  report is held to the plan: `[unreachable-zone]`, `[no-exit]`, `[dead-end]`, `[unbounded]`.
+- Features. A round that switches off a look feature the accepted build drew at the same preset
+  (`volatile.render.features`, `__render.look.features`) adds `[feature-off]` (`loop/feature-off.ts`);
+  builders are told to report a failing check instead. Judges tag `[broken-pose]` on close-ups and
+  `[incoherent-place]` on `map:top`.
 - Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
   textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
   answered with a warning naming them (`director/ownership.ts`). Budgets are said per destination: a native game's slow web preview is the preview's boot,
