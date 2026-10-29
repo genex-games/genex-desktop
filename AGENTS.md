@@ -25,8 +25,7 @@ historical task records at startup.
 
 - The renderer is a browser: no Node, Electron, main, preload or substrate imports. It talks
   only through the fixed named calls in `src/shared/studio-api.ts`.
-- Every spawned agent or game process goes through ProcessSandbox. A Bypass chat's agents and
-  workers run with no box, as Claude Code's and Codex's own Bypass do: the person chose it.
+- Every spawned agent or game process goes through ProcessSandbox; Bypass agents run unboxed.
 - Seed upgrades keep the in-app agent's harness edits.
 - Every new IPC channel is classified fixture-safe or native in `src/main/dev/native-policy.ts`.
 - Preserve the normal profile and `~/AI Games`; use owned `studio:dev` profiles. Automated

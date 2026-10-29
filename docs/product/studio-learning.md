@@ -17,11 +17,11 @@ request and outcome; expanding shows captures, Play build and Open game chat. Em
 
 ## Learning and instructions
 
-Learning starts on; **Apply suggestions automatically** starts off on fresh installs. The switch
-in Activity's header turns all learning on or off; Harness's own edits are listed there, each
-undoable.
-Off, Harness learns nothing new (no review, suggestions, lessons, recipe statistics or automatic
-apply); what it learned stays in use and undoable, waiting suggestions actionable, runs recorded.
+Learning starts off (an older install is switched off once), as does **Apply suggestions
+automatically**. Activity's header switch toggles learning; Harness's own edits are listed
+there, each undoable.
+Off, Harness learns nothing new and cannot edit its own code, prompts or skills; what it learned
+stays in use and undoable, waiting suggestions actionable, runs recorded.
 
 Harness learns from run evidence and proposes reusable instruction changes; proposed, applied,
 checked and game-quality results are distinct. A game chat shows one plain line about what
