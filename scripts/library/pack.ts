@@ -107,6 +107,91 @@ async function simplifiedWithin(
   return out;
 }
 
+/** The coarsest and finest grids a clustering tries, in cells along the longest side. */
+const CLUSTER_GRID_MIN = 4;
+const CLUSTER_GRID_MAX = 1024;
+
+/** The corner and longest side of the box around `positions`. */
+function boxOf(positions: Float32Array): { min: number[]; side: number } {
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  for (let at = 0; at < positions.length; at++) {
+    const axis = at % 3;
+    const value = positions[at] ?? 0;
+    min[axis] = Math.min(min[axis] ?? value, value);
+    max[axis] = Math.max(max[axis] ?? value, value);
+  }
+  return { min, side: Math.max(...max.map((high, axis) => high - (min[axis] ?? 0)), Number.EPSILON) };
+}
+
+/** The point of vertex `vertex`. */
+const pointOf = (positions: Float32Array, vertex: number): number[] =>
+  [0, 1, 2].map((axis) => positions[vertex * 3 + axis] ?? 0);
+
+/** For each vertex `used` by a mesh, the vertex that stands for its grid cell: the one nearest the cell's centroid. */
+function cellRepresentatives(positions: Float32Array, used: ReadonlySet<number>, cells: number): Map<number, number> {
+  const { min, side } = boxOf(positions);
+  const size = side / cells;
+  const keyOf = (vertex: number) =>
+    pointOf(positions, vertex)
+      .map((value, axis) => Math.floor((value - (min[axis] ?? 0)) / size))
+      .join(",");
+  const sums = new Map<string, { sum: number[]; n: number }>();
+  for (const vertex of used) {
+    const cell = sums.get(keyOf(vertex)) ?? { sum: [0, 0, 0], n: 0 };
+    pointOf(positions, vertex).forEach((value, axis) => {
+      cell.sum[axis] = (cell.sum[axis] ?? 0) + value;
+    });
+    cell.n++;
+    sums.set(keyOf(vertex), cell);
+  }
+  const best = new Map<string, { vertex: number; distance: number }>();
+  for (const vertex of used) {
+    const key = keyOf(vertex);
+    const cell = sums.get(key);
+    const distance = pointOf(positions, vertex).reduce(
+      (sum, value, axis) => sum + (value - (cell?.sum[axis] ?? 0) / (cell?.n ?? 1)) ** 2,
+      0,
+    );
+    if (distance < (best.get(key)?.distance ?? Infinity)) best.set(key, { vertex, distance });
+  }
+  return new Map([...used].map((vertex) => [vertex, best.get(keyOf(vertex))?.vertex ?? vertex]));
+}
+
+/**
+ * `indices` with vertices clustered on a grid of `cells` along the longest side of `positions`' box:
+ * every vertex of a cell becomes the cell's vertex nearest its centroid, and a triangle that no
+ * longer has three distinct corners is dropped. Only indices change; the vertex data is untouched.
+ */
+function clusteredIndices(positions: Float32Array, indices: Uint32Array, cells: number): Uint32Array {
+  const stand = cellRepresentatives(positions, new Set(indices), cells);
+  const kept: number[] = [];
+  for (let at = 0; at + 2 < indices.length; at += TRIANGLE) {
+    const [a = 0, b = 0, c = 0] = [0, 1, 2].map((k) => stand.get(indices[at + k] ?? 0) ?? 0);
+    if (a !== b && b !== c && a !== c) kept.push(a, b, c);
+  }
+  return Uint32Array.from(kept);
+}
+
+/** Every primitive clustered on the finest grid that keeps all together within `cap` triangles. */
+function clusteredWithin(inputs: ReturnType<typeof inputsOf>["inputs"], cap: number): Uint32Array[] | null {
+  const run = (cells: number) =>
+    inputs.map((input) => clusteredIndices(input.geometry.positions, input.geometry.indices, cells));
+  const total = (parts: Uint32Array[]) => parts.reduce((sum, indices) => sum + indices.length / TRIANGLE, 0);
+  let low = CLUSTER_GRID_MIN;
+  let high = CLUSTER_GRID_MAX;
+  let best: Uint32Array[] | null = null;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const parts = run(mid);
+    if (total(parts) <= cap) {
+      best = parts;
+      low = mid + 1;
+    } else high = mid - 1;
+  }
+  return best;
+}
+
 /**
  * `glb` with at most `cap` triangles: each primitive simplified to its share of the budget by
  * meshoptimizer (normals and UVs weighed, where primitives meet locked), at the tightest error
@@ -125,10 +210,7 @@ export async function decimateGlb(glb: Uint8Array, cap: number): Promise<{ bytes
     ...DECIMATE_ERRORS.map((maxError) => ({ inputs, maxError })),
     ...DECIMATE_ERRORS_LOOSE.map((maxError) => ({ inputs: inputs.map(unweighed), maxError })),
   ];
-  for (const { inputs: pass, maxError } of passes) {
-    const kept = await simplifiedWithin(pass, cap, maxError);
-    const triangles = kept.reduce((sum, indices) => sum + indices.length / TRIANGLE, 0);
-    if (triangles > cap) continue;
+  const apply = (kept: Uint32Array[]) => {
     const accessors = objects(doc.json.accessors);
     primitives.forEach((primitive, at) => {
       const indices = kept[at] ?? new Uint32Array(0);
@@ -140,7 +222,14 @@ export async function decimateGlb(glb: Uint8Array, cap: number): Promise<{ bytes
     pruneAccessors(doc);
     const bytes = packGlb(doc);
     return { bytes, triangles: glbTriangles(bytes) };
+  };
+  for (const { inputs: pass, maxError } of passes) {
+    const kept = await simplifiedWithin(pass, cap, maxError);
+    if (kept.reduce((sum, indices) => sum + indices.length / TRIANGLE, 0) <= cap) return apply(kept);
   }
+  // A mesh the simplifier cannot collapse (a scan of near-separate triangles) is clustered on a grid.
+  const clustered = clusteredWithin(inputs, cap);
+  if (clustered) return apply(clustered);
   throw new DecimateError(MESSAGE.CannotReach(before, cap));
 }
 
