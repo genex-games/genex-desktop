@@ -501,8 +501,10 @@ pub fn menu_answer(ui: &mut egui::Ui) -> MenuAnswer {
 /// runs and for an unknown key. Display only: copying a value into the world makes the
 /// simulation depend on the person, so a value that changes play belongs in the world's save.
 pub fn value(key: &str) -> Option<SettingValue> {
+    // While the menu is being drawn it holds the scope mutably, and a read from inside it (the
+    // renderer asking for the picture settings) takes the routed copy instead of panicking.
     SCOPE
-        .with_borrow(|slot| slot.as_ref().map(|shared| shared.store.value(key)))
+        .with(|slot| slot.try_borrow().ok().and_then(|slot| slot.as_ref().map(|shared| shared.store.value(key))))
         .unwrap_or_else(|| READ.with_borrow(|slot| slot.as_ref().and_then(|store| store.value(key))))
 }
 
