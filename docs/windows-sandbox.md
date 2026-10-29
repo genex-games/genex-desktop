@@ -349,4 +349,5 @@ through the folders the others keep in `%TEMP%`: tests remove theirs with `remov
 A dispatch with `files` runs only those files after the sandbox setup
 (`gh workflow run windows.yml --ref <branch> -f files="tests/a.test.ts"`), and one with
 `desktop` only drives computer control on the runner's desktop
-(`tests/e2e/run-windows-desktop-control.mjs`). `.gitattributes` keeps every checkout LF.
+(`tests/e2e/run-windows-desktop-control.mjs`); `grok` first installs the real Grok Build from xAI's
+installer for `STUDIO_GROK_CLI_TESTS` (`-f grok=true -f files="tests/conformance/grok-cli-live.test.ts"`). `.gitattributes` keeps every checkout LF.

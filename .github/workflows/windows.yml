@@ -70,21 +70,6 @@ jobs:
           & (Join-Path $bin "grok.exe") --version
           "STUDIO_GROK_BIN=$(Join-Path $bin 'grok.exe')" >> $env:GITHUB_ENV
           "STUDIO_GROK_CLI_TESTS=1" >> $env:GITHUB_ENV
-          # Diagnostics (temporary): a made-up sign-in, and what Grok does to its file's permissions.
-          $diag = Join-Path $env:RUNNER_TEMP "grok-diag"
-          New-Item -ItemType Directory -Force $diag | Out-Null
-          Set-Content (Join-Path $diag "token.mjs") 'console.log(JSON.stringify({ access_token: "fake-session-token", expires_in: 3600 }));'
-          $env:GROK_HOME = Join-Path $diag "home"
-          $env:GROK_AUTH_PROVIDER_COMMAND = "`"$((Get-Command node).Source)`" `"$(Join-Path $diag 'token.mjs')`""
-          $env:GROK_DISABLE_AUTOUPDATER = "1"
-          & (Join-Path $bin "grok.exe") login
-          Get-ChildItem $env:GROK_HOME | Format-Table Name, Length
-          $auth = Join-Path $env:GROK_HOME "auth.json"
-          icacls $env:GROK_HOME
-          icacls $auth
-          "protected: $((Get-Acl $auth).AreAccessRulesProtected)"
-          $store = Get-Content $auth -Raw | ConvertFrom-Json
-          foreach ($scope in $store.PSObject.Properties) { "scope $($scope.Name): $(($scope.Value.PSObject.Properties | ForEach-Object Name) -join ', ')" }
       - name: Tests
         if: ${{ !inputs.desktop }}
         env:

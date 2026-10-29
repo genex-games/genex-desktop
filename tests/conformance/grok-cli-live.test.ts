@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { EngineId } from "../../src/shared/providers.ts";
@@ -71,6 +71,14 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     process.env.GROK_XAI_API_BASE_URL = fake.proxyUrl.replace("/proxy/v1", "/v1");
     await mkdir(process.env.GROK_HOME, { recursive: true });
     await signIn(binary, root);
+    // TEMPORARY diagnostics for #531: what Grok did to its sign-in file's permissions.
+    if (process.platform === "win32") {
+      const { execFileSync } = await import("node:child_process");
+      const auth = path.join(process.env.GROK_HOME, "auth.json");
+      console.log(execFileSync("icacls", [auth], { encoding: "utf8" }));
+      const store = JSON.parse(await readFile(auth, "utf8")) as Record<string, Record<string, unknown>>;
+      for (const [scope, entry] of Object.entries(store)) console.log(`scope ${scope}: ${Object.keys(entry).join(", ")}`);
+    }
   });
 
   after(async () => {
@@ -128,6 +136,11 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     assert.ok(result.sessionId, "a session Continue can resume");
     assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
     assert.match(fake.commandOutput() ?? "", /probe ran/);
+    assert.deepEqual(
+      await readdir(path.join(root, "scratch", "tmp")),
+      [],
+      "the turn's folder (on Windows, its sign-in copy) is gone",
+    );
   });
 
   it("a judge's picture reaches the model: Grok opens the file its prompt names, in the real sandbox", {
