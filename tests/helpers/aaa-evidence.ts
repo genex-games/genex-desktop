@@ -10,6 +10,7 @@ import {
   type PoseTick,
   PropOrigin,
 } from "../../scripts/evals/aaa/evidence.ts";
+import { closeupRole, type GradeContext, MAP_ROLE } from "../../scripts/evals/aaa/honest.ts";
 import { type AaaPrompt, parseAaaSuite } from "../../scripts/evals/aaa/suite.ts";
 
 /** Raw suite prompt JSON with two views, one motion and one doorway demo. */
@@ -80,11 +81,25 @@ function capture(role: string, camera: string, meanLuma: number): AaaCapture {
     height: 2160,
     clean: true,
     native: true,
+    subjectFraction: null,
     meanLuma,
     darkFraction: 0.05,
     source: FactSource.Probe,
   };
 }
+
+/** The clip the passing evidence has a close-up and a pose check for. */
+export const CLIP = { character: "hero", clip: "walk" } as const;
+/** The integration head the passing evidence's dev store was built from. */
+export const HEAD = "abc1234def56";
+/** A grading context that passes every honest-grading check. */
+export const PASSING_CONTEXT: GradeContext = {
+  expectedHead: HEAD,
+  vision: {
+    anatomy: { pass: true, sameFamily: false, detail: [] },
+    place: { pass: true, sameFamily: false, detail: [] },
+  },
+};
 
 /** Evidence for a two-view prompt that passes every floor up to AAA-ish, taste aside. */
 export function passingEvidence(prompt: AaaPrompt): AaaEvidence {
@@ -93,7 +108,39 @@ export function passingEvidence(prompt: AaaPrompt): AaaEvidence {
     promptId: prompt.id,
     promptVersion: prompt.version,
     subject: { game: "test-game", head: "abc", runId: "run_test", preset: "desktop-ultra", destination: "native" },
-    captures: [capture("interior-hero", "classroom", 110), capture("exterior-hero", "yard", 120)],
+    captures: [
+      capture("interior-hero", "classroom", 110),
+      capture("exterior-hero", "yard", 120),
+      capture(MAP_ROLE, "map", 100),
+      { ...capture(closeupRole(CLIP), "hero-walk", 110), subjectFraction: 0.7 },
+    ],
+    characters: { clips: [CLIP], source: FactSource.Engine },
+    poses: [
+      {
+        ...CLIP,
+        limbLengthDrift: 0.01,
+        torsoLengthRatio: 0.98,
+        selfIntersection: 0,
+        feetGrounded: true,
+        source: FactSource.Engine,
+      },
+    ],
+    place: {
+      zones: 4,
+      plannedZones: 4,
+      reachableZones: 4,
+      exits: 2,
+      plannedExits: 2,
+      unplannedDeadEnds: 0,
+      source: FactSource.Engine,
+    },
+    lookFeatures: {
+      preset: "desktop-ultra",
+      expected: ["volumetric-fog", "ssao"],
+      active: ["volumetric-fog", "ssao", "bloom"],
+      source: FactSource.Engine,
+    },
+    store: { head: HEAD, source: FactSource.Probe },
     surfaces: [
       { tag: "wall", nearestM: 2, texelDensityPxPerM: 1200, hasNormal: true, hasOrm: true, source: FactSource.Engine },
       { tag: "floor", nearestM: 1, texelDensityPxPerM: 1100, hasNormal: true, hasOrm: true, source: FactSource.Engine },

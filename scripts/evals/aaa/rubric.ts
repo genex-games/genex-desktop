@@ -38,6 +38,13 @@ export const AaaFloor = {
   OrganicCards: "organic-cards",
   FlatCoverage: "flat-coverage",
   Taste: "taste",
+  CaptureSet: "capture-set",
+  AnatomyPose: "anatomy-pose",
+  PlaceCoherence: "place-coherence",
+  LookFeatures: "look-features",
+  StoreFresh: "store-fresh",
+  AnatomyJudge: "anatomy-judge",
+  PlaceJudge: "place-judge",
 } as const;
 export type AaaFloor = (typeof AaaFloor)[keyof typeof AaaFloor];
 
@@ -98,7 +105,7 @@ export interface TasteSummary {
 }
 
 /** A check's outcome as facts are read: any fail fails, any gap is unknown, else pass. */
-class Tally {
+export class Tally {
   fails: string[] = [];
   gaps: string[] = [];
   passes: string[] = [];

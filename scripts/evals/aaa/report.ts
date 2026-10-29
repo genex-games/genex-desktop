@@ -16,7 +16,11 @@ import {
   rubricChecks,
   type TasteSummary,
 } from "./rubric.ts";
+import { type GradeContext, honestChecks } from "./honest.ts";
 import type { AaaPrompt } from "./suite.ts";
+
+/** What a grading run knows beyond the bundle, when the caller gives nothing. */
+const NO_CONTEXT: GradeContext = { expectedHead: null, vision: null };
 
 /** The schema tag a report carries. */
 export const AAA_REPORT_SCHEMA = "genex-aaa-report/1";
@@ -64,6 +68,9 @@ function reconstructedCount(evidence: AaaEvidence): number {
     ...(evidence.flatCoverage ? [evidence.flatCoverage.source] : []),
     ...evidence.motion.map((t) => t.source),
     ...evidence.exposure.map((t) => t.source),
+    ...(evidence.characters ? [evidence.characters.source] : []),
+    ...(evidence.poses ?? []).map((p) => p.source),
+    ...[evidence.place, evidence.lookFeatures, evidence.store].flatMap((fact) => (fact ? [fact.source] : [])),
   ];
   return sources.filter((source) => source === FactSource.Reconstructed).length;
 }
@@ -73,8 +80,9 @@ export function gradePrompt(
   prompt: AaaPrompt,
   evidence: AaaEvidence,
   taste: { summary: TasteSummary | null; missing: string[] },
+  context: GradeContext = NO_CONTEXT,
 ): AaaPromptReport {
-  const checks = rubricChecks(prompt, evidence, taste.summary);
+  const checks = [...rubricChecks(prompt, evidence, taste.summary), ...honestChecks(evidence, context)];
   const grade = gradeOf(checks);
   return {
     promptId: prompt.id,

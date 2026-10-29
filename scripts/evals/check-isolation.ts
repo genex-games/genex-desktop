@@ -91,6 +91,8 @@ export const GRADER_RUBRIC_FILES = [
   "scripts/evals/grade/pairwise-prompt.md",
   "scripts/evals/aaa/taste-prompt.md",
   "scripts/evals/aaa/pairwise-taste-prompt.md",
+  "scripts/evals/aaa/anatomy-prompt.md",
+  "scripts/evals/aaa/place-prompt.md",
 ] as const;
 
 /** Lowercase words with apostrophes folded in and every other non-letter a break. */
