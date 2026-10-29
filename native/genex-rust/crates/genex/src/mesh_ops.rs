@@ -236,13 +236,13 @@ impl MeshData {
         let (point_of, count) = weld(&self.positions);
         let smooth = self.point_normals(&point_of, count);
         let mut offsets: Vec<Option<Vec3>> = vec![None; count];
-        for vertex in 0..self.positions.len() {
-            let point = point_of[vertex] as usize;
+        for (position, &point) in self.positions.iter_mut().zip(&point_of) {
+            let point = point as usize;
             let offset = *offsets[point].get_or_insert_with(|| {
-                let metres = amount(self.positions[vertex]);
+                let metres = amount(*position);
                 smooth[point] * if metres.is_finite() { metres } else { 0.0 }
             });
-            self.positions[vertex] += offset;
+            *position += offset;
         }
         self.weighted_normals(DISPLACE_SMOOTH_DEGREES)
     }

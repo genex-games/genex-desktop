@@ -126,8 +126,9 @@ pub fn wire(game: &mut Game<World>) {
     game.camera(|_sim| Camera { fovy: 64.0, ..Camera::look_at(ROOM_EYE, ROOM_LOOK) });
     game.named_camera("street", |_sim| Camera { fovy: 58.0, ..Camera::look_at(STREET_EYE, STREET_LOOK) });
     game.probe("dressing", |sim| {
-        let counts = sim.world.set.as_ref().map(|set| set.dressed.counts().into_iter().map(|(name, count)| (name.to_owned(), json!(count))).collect::<serde_json::Map<_, _>>());
-        json!({ "layers": counts, "decals": sim.world.set.as_ref().map_or(0, |set| set.decals.len()) })
+        let set = sim.world.set.as_ref();
+        let layers: std::collections::BTreeMap<String, usize> = set.map(|set| set.dressed.counts().into_iter().map(|(name, count)| (name.to_owned(), count)).collect()).unwrap_or_default();
+        json!({ "layers": layers, "decals": set.map_or(0, |set| set.decals.len()) })
     });
 }
 
