@@ -4,13 +4,14 @@
  */
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { EventKind, ThreadKind } from "../../shared/event-log.ts";
+import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import type { ConversationRecord, EventEnvelope } from "../../substrate/types.ts";
 import type { StudioCore } from "../studio-core.ts";
 
-/** Why a thread change is refused. */
+/** Why a thread change is refused, as the person reads it. */
 const MESSAGE = {
-  chatNeedsName: "a chat needs a name",
+  chatNeedsName: () => t("a chat needs a name"),
 } as const;
 
 /** The title a game's own conversation starts with. */
@@ -88,7 +89,7 @@ export class GameThreadService {
   /** Retitle a chat. The record is the index; `thread_updated` is the durable truth. */
   async renameThread(threadId: string, title: string): Promise<ConversationRecord> {
     const next = title.trim().slice(0, THREAD_TITLE_MAX);
-    if (!next) throw new Error(MESSAGE.chatNeedsName);
+    if (!next) throw new Error(MESSAGE.chatNeedsName());
     const record = await this.#core.store.updateThread(threadId, { title: next });
     this.#core.emit(UiEvent.ThreadUpdated, { threadId, title: next });
     return record;

@@ -503,3 +503,66 @@ test("a settled checkpoint operation releases its folder queue", async (t) => {
   assert.ok(queues.size > 0);
   for (const queue of queues) assert.equal(queue.has(dir), false);
 });
+
+test("the folder as it was before a rewind comes back by the rewind's id, saving the present first", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "fly();\n");
+  await fs.writeFile(path.join(dir, "src", "boss.js"), "roar();\n");
+  const rewound = await checkpoints.restore(dir, "thread-1", "msg_a");
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+  const back = await checkpoints.restoreSaved(dir, "thread-1", rewound.rewindId);
+  assert.equal(back.files, 2);
+  assert.equal(await read(dir, "src/main.js"), "fly();\n");
+  assert.equal(await read(dir, "src/boss.js"), "roar();\n");
+  assert.notEqual(back.rewindId, rewound.rewindId, "the present was saved on a ref of its own");
+  // …so bringing it back can itself be undone.
+  assert.equal(await checkpoints.restoreSaved(dir, "thread-1", back.rewindId).then((r) => r.files), 2);
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+});
+
+test("the folder before a rewind does not come back once the game's history moved", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "fly();\n");
+  const rewound = await checkpoints.restore(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "notes.txt"), "kept\n");
+  await git(dir, ["add", "notes.txt"]);
+  await git(dir, ["commit", "-q", "-m", "a note"]);
+  await assert.rejects(checkpoints.restoreSaved(dir, "thread-1", rewound.rewindId), /history changed since the rewind/);
+  assert.equal(await read(dir, "src/main.js"), "jump();\n");
+});
+
+test("a rewind id that is not one names no ref, and nothing is saved or changed", async (t) => {
+  const { dir, checkpoints } = await game(t);
+  await checkpoints.take(dir, "thread-1", "msg_a");
+  await fs.writeFile(path.join(dir, "src", "main.js"), "fly();\n");
+  const rewound = await checkpoints.restore(dir, "thread-1", "msg_a");
+  const refs = async () => git(dir, ["for-each-ref", "--format=%(refname)", "refs/studio/"]);
+  const before = await refs();
+  const hostile = [
+    "",
+    "..",
+    "../before/msg_a",
+    "../../../../heads/main",
+    "HEAD",
+    "refs/heads/main",
+    `${rewound.rewindId}/x`,
+    `${rewound.rewindId}\n`,
+    "-delete",
+    "mabc1-0123abcz",
+    "MABC1-0123ABCD",
+    "mabc1-0123abc",
+    "a".repeat(17) + "-0123abcd",
+    "mabc1-0123abcd", // well formed, but no rewind saved it
+  ];
+  for (const rewindId of hostile) {
+    await assert.rejects(
+      checkpoints.restoreSaved(dir, "thread-1", rewindId),
+      /no longer saved/,
+      JSON.stringify(rewindId),
+    );
+  }
+  assert.equal(await refs(), before, "no ref was written");
+  assert.equal(await read(dir, "src/main.js"), "jump();\n", "the folder is as it was");
+});

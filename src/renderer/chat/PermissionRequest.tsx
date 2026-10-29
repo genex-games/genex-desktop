@@ -4,6 +4,7 @@
  * conversation (`PermissionOutcome`). Only the host settles a request; the caller keys a card by request id.
  */
 import type { JSX } from "react";
+import { t } from "../../shared/i18n.ts";
 import {
   isPlanRequest,
   PermissionDecision,
@@ -31,14 +32,14 @@ import { type ChatChoice, ChatQuestion } from "./ChatQuestion.tsx";
 
 /** The card's own words. */
 const WORDS = {
-  allow: "Allow",
-  allowOnce: "Just this once.",
-  deny: "Deny",
-  keepPlanningPlaceholder: "Keep planning: what should change?",
-  reviewRequest: "Review permission request",
-  reviewPlan: "Review plan",
-  details: "Request details",
-  plan: "Plan",
+  allow: t("Allow"),
+  allowOnce: t("Just this once."),
+  deny: t("Deny"),
+  keepPlanningPlaceholder: t("Keep planning: what should change?"),
+  reviewRequest: t("Review permission request"),
+  reviewPlan: t("Review plan"),
+  details: t("Request details"),
+  plan: t("Plan"),
 } as const;
 
 /** The tools whose one subject is a file or a folder, shown as its link. */
@@ -48,9 +49,9 @@ const SHELL_TOOL = "Bash";
 
 /** The modes a plan approval continues in, as the card offers them. */
 const PLAN_CHOICES: ReadonlyArray<ChatChoice & { id: SteadyPermissionMode }> = [
-  { id: PermissionMode.Auto, label: "Yes, in Auto mode" },
-  { id: PermissionMode.AcceptEdits, label: "Yes, and accept edits" },
-  { id: PermissionMode.Manual, label: "Yes, and ask before changes" },
+  { id: PermissionMode.Auto, label: t("Yes, in Auto mode") },
+  { id: PermissionMode.AcceptEdits, label: t("Yes, and accept edits") },
+  { id: PermissionMode.Manual, label: t("Yes, and ask before changes") },
 ];
 
 /** The command a shell request runs, when it names one. */

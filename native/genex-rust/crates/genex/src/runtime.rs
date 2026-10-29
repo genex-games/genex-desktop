@@ -30,7 +30,7 @@ use crate::sim::{FacetState, Sim};
 use genex_core::clock::FrameClock;
 use genex_core::json::Value as CoreValue;
 use genex_core::paths::{self, ANDROID_DATA_KEY, Destination, GameIdentity};
-use genex_core::protocol::{MAX_WORLD_PX, MIN_WORLD_PX};
+use genex_core::protocol::{MIN_WORLD_PX, WEB_MAX_WORLD_PX};
 use genex_core::saves::Saves;
 use genex_core::session::{self, SessionView, StateExtras};
 use genex_hud::{Hud, HudInput, HudPaint};
@@ -60,6 +60,12 @@ const LOD_REFUSED_KEY: &str = "lodRefused";
 const TEXTURES_KEY: &str = "textures";
 /// `state().__render`'s asset issues of the last frame (C-11).
 const ASSET_ISSUES_KEY: &str = "assetIssues";
+/// `state().__render.look`: the frame's look facts (`src/shared/render-look.ts`).
+const LOOK_KEY: &str = "look";
+/// `state().__render.exposure`: the exposure's telemetry (`src/shared/render-look.ts`).
+const EXPOSURE_KEY: &str = "exposure";
+/// `state().__render.exposureTrace`: the Live exposure's last seconds.
+const EXPOSURE_TRACE_KEY: &str = "exposureTrace";
 /// `state().volatile`'s streaming counters, while streaming is registered (STR-9): the runtime
 /// key's name, so no volatile probe can take it.
 const STREAM_VOLATILE_KEY: &str = "__stream";
@@ -135,7 +141,7 @@ pub enum InstallErrorCode {
     InvalidName,
     /// `facet_state::<T>()` registered twice for one `T`.
     DuplicateFacetState,
-    /// A world size side outside `64..=4096` (genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`).
+    /// A world size side outside `64..=4096` (genex-core's `MIN_WORLD_PX..=WEB_MAX_WORLD_PX`).
     InvalidWorldSize,
     /// A second `game.streaming`.
     DuplicateStreaming,
@@ -175,11 +181,17 @@ pub enum InstallErrorCode {
     /// A second `game.settings`, a game option off the Game tab or with a reserved prefix, or a
     /// preset that does not fit its tab's options.
     SettingsInvalid,
+    /// `game.navigation` or `game.nav_bake` in a game built with `[nav] enabled = false` (release
+    /// R-1): the build links no navigation.
+    NavDisabled,
+    /// `game.streaming` in a game built with `[streaming] enabled = false` (release R-1): the build
+    /// links no streaming.
+    StreamingDisabled,
 }
 
 impl InstallErrorCode {
     /// Every code, in declaration order.
-    pub const ALL: [InstallErrorCode; 26] = [
+    pub const ALL: [InstallErrorCode; 28] = [
         InstallErrorCode::DuplicateCamera,
         InstallErrorCode::DuplicatePlayer,
         InstallErrorCode::DuplicateProbe,
@@ -206,6 +218,8 @@ impl InstallErrorCode {
         InstallErrorCode::DuplicateNet,
         InstallErrorCode::NetConfigInvalid,
         InstallErrorCode::SettingsInvalid,
+        InstallErrorCode::NavDisabled,
+        InstallErrorCode::StreamingDisabled,
     ];
 
     /// The typed code's wire spelling.
@@ -237,6 +251,8 @@ impl InstallErrorCode {
             InstallErrorCode::DuplicateNet => "duplicate-net",
             InstallErrorCode::NetConfigInvalid => "net-config-invalid",
             InstallErrorCode::SettingsInvalid => "settings-invalid",
+            InstallErrorCode::NavDisabled => "nav-disabled",
+            InstallErrorCode::StreamingDisabled => "streaming-disabled",
         }
     }
 }
@@ -320,6 +336,12 @@ struct Tally {
     asset_issues: Vec<AssetIssue>,
     /// Models drawn whole because a level-of-detail option was refused (LOD-07).
     lod_refused: Vec<crate::present::LodRefused>,
+    /// What the frame showed of each tag (`__render.look`, AAA review WP-2).
+    look: Option<crate::look_facts::LookFacts>,
+    /// What the exposure metered and drew (`__render.exposure`, AAA review WP-5).
+    exposure: Option<genex_render::post::exposure::ExposureTelemetry>,
+    /// The Live exposure's last seconds (`__render.exposureTrace`, AAA review WP-5).
+    exposure_trace: Option<CoreValue>,
 }
 
 /// The simulation and clock state the hooks run against.
@@ -430,12 +452,13 @@ impl<W: Default + 'static> Runtime<W> {
             tally: Tally::default(),
             render: Rc::new(RefCell::new(RenderControl::new(game.render.clone(), (game.world_size[0], game.world_size[1])))),
             g6: crate::g6::G6::default(),
-            stream: crate::stream_tick::StreamTick::new(game.streaming.first(), &game.cell_contents),
+            stream: crate::stream_tick::StreamTick::new(game.stream_registration(), &game.cell_contents),
             rows: VecDeque::new(),
         };
         let mut runtime = Runtime { game, core };
         // The player's bindings are read once, before the first seed (IN-11).
         runtime.core.g6.input.install(&runtime.game.g6.input, runtime.core.gfx.saves(), studio_run());
+        runtime.core.g6.input.set_touch(runtime.game.g6.touch.layout());
         // And the person's UI layer (locale), which a Genex run ignores (UIS-10).
         runtime.core.g6.ui.rebase(&runtime.game.g6.ui, runtime.core.gfx.saves(), studio_run());
         // Then the settings menu's (UIS-11), which routes the person's volumes and UI layer.
@@ -512,10 +535,18 @@ impl<W> Runtime<W> {
         self.core.stream.loading()
     }
 
+    /// The cells the simulation streams around its anchors now (active, entering at the next
+    /// commit, and the prefetch ring), ascending: what a shell that fetches a pack's cell bodies and
+    /// terrain tiles while playing asks for (the web's). Empty without `game.streaming`. Display and
+    /// scheduling only: it never changes the simulation.
+    pub fn streamed_cells(&self) -> Vec<genex_core::cell::CellId> {
+        self.core.sim.stream.around()
+    }
+
     /// What the presenter's streamed view set reads (STR-16): the registration, the cell builders
     /// and the seed; None without `game.streaming`.
     pub(crate) fn stream_view(&self) -> Option<crate::present_stream::ViewInputs> {
-        let streaming = self.game.streaming.first()?;
+        let streaming = self.game.stream_registration()?;
         Some(crate::present_stream::ViewInputs::new(streaming, &self.game.cell_contents, self.core.seed))
     }
 
@@ -622,7 +653,14 @@ impl<W> Runtime<W> {
     #[doc(hidden)]
     pub fn host_saves(&mut self, call: crate::saves::HostSavesCall) -> Result<serde_json::Value, crate::saves::SaveError> {
         let core = &mut self.core;
-        let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
+        let running = crate::saves::Running {
+            sim: &mut core.sim,
+            seed: &mut core.seed,
+            tick: &mut core.tick,
+            rng: &core.rng,
+            gfx: &core.gfx,
+            input: &mut core.g6.input,
+        };
         let answer = crate::saves::host_call(&self.game, &mut core.g6.saves, running, call)?;
         if !answer.restored {
             return Ok(answer.value);
@@ -643,7 +681,8 @@ impl<W> Runtime<W> {
     #[doc(hidden)]
     pub fn suspend_save(&mut self) -> Option<Result<crate::saves::SlotInfo, crate::saves::SaveError>> {
         let core = &mut self.core;
-        let view = crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx };
+        let view =
+            crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx, input: &core.g6.input };
         crate::saves::suspend_save(&self.game, &mut core.g6.saves, &view)
     }
 
@@ -723,6 +762,11 @@ impl<W> Runtime<W> {
         self.game.world_size
     }
 
+    /// How the world fills a window of another aspect ([`Game::fit`](crate::Game::fit)).
+    pub fn fit(&self) -> crate::Fit {
+        self.game.fit
+    }
+
     /// The save folder name the game chose, if any.
     pub fn save_name(&self) -> Option<&str> {
         self.game.save_name.as_deref()
@@ -749,6 +793,13 @@ impl<W> Runtime<W> {
             volatile.extend(self.probe_leaves(true));
         }
         state
+    }
+
+    /// The characters the game made in its resets (`gfx.character`), whose rigs imported: the
+    /// presenter skins them at the boot, so the renderer compiles every skinned variant before a
+    /// frame draws one (game systems R-20, EP-X1).
+    pub(crate) fn character_paths(&self) -> Vec<String> {
+        self.core.gfx.assets().character_paths()
     }
 
     /// `state()` as genex-core's snapshot (`session::snapshot_view`): `camera` the active view,
@@ -785,7 +836,7 @@ impl<W> Runtime<W> {
             volatile.set(name, CoreValue::from(&value));
         }
         state.set(session::VOLATILE_KEY, volatile);
-        if !self.game.streaming.is_empty() {
+        if self.game.stream_registration().is_some() {
             let active = core.sim.stream.active().collect();
             state.set(crate::stream::RUNTIME_KEY, crate::stream::runtime_value(&active));
             let mut volatile = state[session::VOLATILE_KEY].clone();
@@ -1082,6 +1133,15 @@ impl<W> Runtime<W> {
         if !issues.is_empty() {
             render.set(ASSET_ISSUES_KEY, CoreValue::Array(issues));
         }
+        if let Some(look) = &tally.look {
+            render.set(LOOK_KEY, look.to_value());
+        }
+        if let Some(exposure) = &tally.exposure {
+            render.set(EXPOSURE_KEY, crate::look_facts::exposure_value(exposure));
+        }
+        if let Some(trace) = &tally.exposure_trace {
+            render.set(EXPOSURE_TRACE_KEY, trace.clone());
+        }
         render
     }
 
@@ -1104,6 +1164,23 @@ impl<W> Runtime<W> {
     /// (LOD-07): `state().__render.lodRefused` (`[{model, code}]`), absent when empty.
     pub fn note_lod_refused(&mut self, refused: &[crate::present::LodRefused]) {
         self.core.tally.lod_refused = refused.to_vec();
+    }
+
+    /// What the frame last drawn showed of each tag (AAA review WP-2): `state().__render.look`,
+    /// absent when it drew no world mesh. Display only.
+    pub fn note_look_facts(&mut self, look: Option<crate::look_facts::LookFacts>) {
+        self.core.tally.look = look;
+    }
+
+    /// What the exposure metered and drew for the frame last drawn (AAA review WP-5):
+    /// `state().__render.exposure`. Display only.
+    pub fn note_exposure(&mut self, exposure: genex_render::post::exposure::ExposureTelemetry) {
+        self.core.tally.exposure = Some(exposure);
+    }
+
+    /// The Live exposure's last seconds (`state().__render.exposureTrace`), absent while empty.
+    pub fn note_exposure_trace(&mut self, trace: &crate::look_facts::ExposureTrace) {
+        self.core.tally.exposure_trace = trace.to_value();
     }
 
     /// The textures the renderer bound in the frame last drawn and the issues they raise (C-11):
@@ -1329,8 +1406,8 @@ pub(crate) fn fresh_sim<W>(world: W, game: &Game<W>) -> Sim<W> {
         world,
         physics: fresh_physics(),
         facets: FacetState::fresh(&game.facets),
-        nav: crate::nav::fresh(game.navigation.as_ref()),
-        stream: crate::stream_tick::StreamState::fresh(game.streaming.first()),
+        nav: crate::nav::fresh(game.nav_config()),
+        stream: crate::stream_tick::StreamState::fresh(game.stream_registration()),
         net: crate::net::Net::fresh(crate::net::build_mode(studio_run()), &game.g6.net.config()),
     }
 }
@@ -1368,7 +1445,14 @@ fn step<W>(game: &Game<W>, core: &mut Core<W>, ms: f64) -> StepResult {
 /// cell build.
 fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::HoldBudget) -> bool {
     // A load the last tick asked for swaps in first (UIS-9); one whose body is not resident holds.
-    let running = crate::saves::Running { sim: &mut core.sim, seed: &mut core.seed, tick: &mut core.tick, rng: &core.rng, gfx: &core.gfx };
+    let running = crate::saves::Running {
+        sim: &mut core.sim,
+        seed: &mut core.seed,
+        tick: &mut core.tick,
+        rng: &core.rng,
+        gfx: &core.gfx,
+        input: &mut core.g6.input,
+    };
     match crate::saves::swap_in(game, &mut core.g6.saves, running) {
         crate::saves::Swap::Hold => return false,
         crate::saves::Swap::Restored => restored(game, core),
@@ -1455,10 +1539,15 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
         let shown = crate::actions_touch::State::shown(&game.g6.touch, ctx.actions.device());
         let (sim, touch) = (&mut core.sim, &core.g6.touch);
         let panel = crate::render::PanelScope::enter(&core.render);
+        // The hooks draw inside the safe area plus a margin, at the person's text size (R-25);
+        // touch controls keep the whole world.
+        let layout = core.g6.ui.hooks_layout(&game.g6.ui);
         core.hud.run(game.world_size, simulated_ms(core.tick) / 1000.0, &hud, |ui| {
-            for hook in &game.uis {
-                hook(sim, ui, &ctx);
-            }
+            layout.show(ui, |ui| {
+                for hook in &game.uis {
+                    hook(sim, ui, &ctx);
+                }
+            });
             if shown {
                 touch.paint(&game.g6.touch, game.world_size, ui);
             }
@@ -1489,7 +1578,8 @@ fn tick<W>(game: &Game<W>, core: &mut Core<W>, hold: &mut crate::stream_tick::Ho
     core.g6.audio.step(camera, &core.sim);
     core.g6.tick_end(&game.g6, core.tick);
     core.tick += 1;
-    let view = crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx };
+    let view =
+        crate::saves::SaveView { sim: &core.sim, seed: core.seed, tick: core.tick, rng: &core.rng, gfx: &core.gfx, input: &core.g6.input };
     crate::saves::end_of_tick(game, &mut core.g6.saves, &view);
     true
 }
@@ -1591,6 +1681,7 @@ fn check_audio<W>(game: &Game<W>) -> Result<(), InstallError> {
 
 fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_world_size(game.world_size)?;
+    check_switches(game)?;
     check_single(&game.cameras, InstallErrorCode::DuplicateCamera, "a second camera needs .camera_override()")?;
     check_single(&game.players, InstallErrorCode::DuplicatePlayer, "a second player needs .player_override()")?;
     check_probes(game)?;
@@ -1598,7 +1689,7 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     check_names(cameras, InstallErrorCode::DuplicateCameraName, &[DEFAULT_CAMERA])?;
     check_names(game.eyes.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateEye, &[])?;
     check_names(game.demos.iter().map(|c| c.name.as_str()), InstallErrorCode::DuplicateDemo, &[])?;
-    check_streaming(&game.streaming, &game.cell_contents, game.navigation.as_ref())?;
+    check_streaming(&game.streaming, &game.cell_contents, game.nav_config())?;
     check_input(game)?;
     check_audio(game)?;
     crate::saves::check(game).map_err(|(code, detail)| InstallError::new(code, detail))?;
@@ -1615,11 +1706,24 @@ fn validate<W>(game: &Game<W>) -> Result<(), InstallError> {
     Ok(())
 }
 
+/// A registration of a system the game's genex.toml switched off (release R-1): refused, so a
+/// switch never silently drops what the game asked for. The detail names the key to turn on.
+fn check_switches<W>(game: &Game<W>) -> Result<(), InstallError> {
+    let wants_nav = game.navigation.is_some() || !game.nav_bakes.is_empty();
+    if wants_nav && !crate::nav::NAV_BUILT {
+        return Err(InstallError::new(InstallErrorCode::NavDisabled, "game.navigation and game.nav_bake need [nav] enabled = true"));
+    }
+    if !game.streaming.is_empty() && !crate::stream::STREAMING_BUILT {
+        return Err(InstallError::new(InstallErrorCode::StreamingDisabled, "game.streaming needs [streaming] enabled = true"));
+    }
+    Ok(())
+}
+
 fn check_world_size(size: [u32; 2]) -> Result<(), InstallError> {
-    if size.iter().all(|side| (MIN_WORLD_PX..=MAX_WORLD_PX).contains(side)) {
+    if size.iter().all(|side| (MIN_WORLD_PX..=WEB_MAX_WORLD_PX).contains(side)) {
         return Ok(());
     }
-    let detail = format!("{}x{} ({MIN_WORLD_PX}..={MAX_WORLD_PX})", size[0], size[1]);
+    let detail = format!("{}x{} ({MIN_WORLD_PX}..={WEB_MAX_WORLD_PX})", size[0], size[1]);
     Err(InstallError::new(InstallErrorCode::InvalidWorldSize, detail))
 }
 

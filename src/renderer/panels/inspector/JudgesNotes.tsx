@@ -3,6 +3,7 @@
  * what they named, the liveness critic, and what comes next.
  */
 import type { JSX } from "react";
+import { t } from "../../../shared/i18n.ts";
 import {
   checkWords,
   type FacetNode,
@@ -26,12 +27,12 @@ const DEFECTS_SHOWN = 12;
 const PRINCIPLE_MAX = 3;
 
 const ALIVE_WORDS: Record<string, string> = {
-  light: "light",
-  extent: "how far the world goes",
-  scales: "things at every size",
-  purpose: "every object has a reason to be there",
-  life: "movement and inhabitants",
-  wear: "age and weather on things",
+  light: t("light"),
+  extent: t("how far the world goes"),
+  scales: t("things at every size"),
+  purpose: t("every object has a reason to be there"),
+  life: t("movement and inhabitants"),
+  wear: t("age and weather on things"),
 };
 
 const aliveWord = (key: string): string => ALIVE_WORDS[key] ?? key;
@@ -51,23 +52,34 @@ function verdictWords(node: IterationNode, problem: string, flips: string[]): st
   const written = verdictSentence(node.verdict);
   if (written) return written;
   if (node.status === IterationStatus.Rolled) {
-    const objection = problem ? ` The reviewers' biggest objection: ${problem.replace(/\.$/, "")}.` : "";
-    return `Undone — ${undoneBecause(node.verdictSource)}.${objection}`;
+    const reason = undoneBecause(node.verdictSource);
+    if (!problem) return t("Undone — {reason}.", { reason });
+    return t("Undone — {reason}. The reviewers' biggest objection: {objection}.", {
+      reason,
+      objection: problem.replace(/\.$/, ""),
+    });
   }
   if (node.satisfied)
-    return "Kept, and the reviewers are satisfied with this part: every identity check passes and the side-by-side reviewer has nothing left to ask.";
+    return t(
+      "Kept, and the reviewers are satisfied with this part: every identity check passes and the side-by-side reviewer has nothing left to ask.",
+    );
   if (!flips.length)
-    return "Kept. No check changed, but the step landed and the side-by-side reviewer preferred the new build to the one before.";
-  const one = flips.length === 1;
-  return `Kept. ${flips.length} check${one ? "" : "s"} that failed before now pass${one ? "es" : ""}, nothing that passed before broke, and the side-by-side reviewer did not object.`;
+    return t(
+      "Kept. No check changed, but the step landed and the side-by-side reviewer preferred the new build to the one before.",
+    );
+  return t(
+    "Kept. {count, plural, one {# check that failed before now passes} other {# checks that failed before now pass}}, nothing that passed before broke, and the side-by-side reviewer did not object.",
+    { count: flips.length },
+  );
 }
 
 /** What the builder is asked next: the next try's step, or why there is none. */
 function nextWords(next: IterationNode | null, facet: FacetNode | null): string {
   if (next) return roundStep(next);
-  if (facet?.stoppedBecause) return `Nothing — this part has stopped (${stoppedWords(facet.stoppedBecause)}).`;
-  if (facet?.satisfied) return "Nothing — this part is done.";
-  return "Not decided yet.";
+  if (facet?.stoppedBecause)
+    return t("Nothing — this part has stopped ({reason}).", { reason: stoppedWords(facet.stoppedBecause) });
+  if (facet?.satisfied) return t("Nothing — this part is done.");
+  return t("Not decided yet.");
 }
 
 function CheckIds({ title, ids }: { title: string; ids: string[] }): JSX.Element | null {
@@ -88,12 +100,12 @@ function CheckIds({ title, ids }: { title: string; ids: string[] }): JSX.Element
 
 function StillFailing({ board, problem }: { board: Scoreboard; problem: string }): JSX.Element {
   const failing = board.results.filter((row) => row.pass === false);
-  if (!failing.length) return <p>Nothing is failing.</p>;
+  if (!failing.length) return <p>{t("Nothing is failing.")}</p>;
   return (
     <>
       <p>
-        <strong>Still failing</strong>
-        {problem ? <> — the biggest of them: {problem}</> : null}
+        <strong>{t("Still failing")}</strong>
+        {problem ? <> {t("— the biggest of them: {problem}", { problem })}</> : null}
       </p>
       <ul>
         {failing.slice(0, FAILING_SHOWN).map((row) => (
@@ -103,7 +115,7 @@ function StillFailing({ board, problem }: { board: Scoreboard; problem: string }
           </li>
         ))}
         {failing.length > FAILING_SHOWN ? (
-          <li className="text-ink-3">and {failing.length - FAILING_SHOWN} more</li>
+          <li className="text-ink-3">{t("and {count} more", { count: failing.length - FAILING_SHOWN })}</li>
         ) : null}
       </ul>
     </>
@@ -115,9 +127,9 @@ function Checks({ node, problem }: { node: IterationNode; problem: string }): JS
   if (!board) return null;
   return (
     <>
-      <h3>Checks — {checkCounts(board)}</h3>
-      <CheckIds title="Newly passing" ids={plannedFlips(node)} />
-      <CheckIds title="Broke again" ids={board.regressions} />
+      <h3>{t("Checks — {counts}", { counts: checkCounts(board) })}</h3>
+      <CheckIds title={t("Newly passing")} ids={plannedFlips(node)} />
+      <CheckIds title={t("Broke again")} ids={board.regressions} />
       <StillFailing board={board} problem={problem} />
     </>
   );
@@ -127,7 +139,7 @@ function Named({ defects }: { defects: string[] }): JSX.Element | null {
   if (!defects.length) return null;
   return (
     <>
-      <h3>What the reviewers named</h3>
+      <h3>{t("What the reviewers named")}</h3>
       <ul>
         {defects.slice(0, DEFECTS_SHOWN).map((defect, index) => (
           <li key={index}>{plainDefect(defect)}</li>
@@ -139,8 +151,11 @@ function Named({ defects }: { defects: string[] }): JSX.Element | null {
 
 function Weakest({ alive }: { alive: Liveness }): JSX.Element | null {
   const weakest = weakestPrinciple(alive);
-  if (weakest) return <p>Six things the critic looks for; the weakest here is {aliveWord(weakest.key)}.</p>;
-  if (alive.biggest) return <p>The weakest thing: {aliveWord(alive.biggest)}.</p>;
+  if (weakest)
+    return (
+      <p>{t("Six things the critic looks for; the weakest here is {thing}.", { thing: aliveWord(weakest.key) })}</p>
+    );
+  if (alive.biggest) return <p>{t("The weakest thing: {thing}.", { thing: aliveWord(alive.biggest) })}</p>;
   return null;
 }
 
@@ -149,9 +164,7 @@ function Alive({ alive }: { alive: Liveness | null }): JSX.Element | null {
   const explained = alive.principles.some((principle) => principle.reason || principle.fix);
   return (
     <>
-      <h3>
-        Does it feel alive? {alive.total} of {alive.max ?? "?"}
-      </h3>
+      <h3>{t("Does it feel alive? {score} of {max}", { score: alive.total, max: alive.max ?? "?" })}</h3>
       {alive.summary ? <p>{alive.summary}</p> : null}
       <Weakest alive={alive} />
       {explained ? (
@@ -159,9 +172,11 @@ function Alive({ alive }: { alive: Liveness | null }): JSX.Element | null {
           {alive.principles.map((principle) => (
             <li key={principle.key}>
               <strong>{capitalise(ALIVE_WORDS[principle.key] ?? principle.title ?? principle.key)}</strong>
-              {principle.score !== null ? ` · ${principle.score} of ${PRINCIPLE_MAX}` : ""}
+              {principle.score !== null
+                ? ` · ${t("{score} of {max}", { score: principle.score, max: PRINCIPLE_MAX })}`
+                : ""}
               {principle.reason ? ` — ${principle.reason}` : ""}
-              {principle.fix ? <span className="text-ink-3"> Fix: {principle.fix}</span> : null}
+              {principle.fix ? <span className="text-ink-3"> {t("Fix: {fix}", { fix: principle.fix })}</span> : null}
             </li>
           ))}
         </ul>
@@ -183,11 +198,13 @@ function Verdict({ node, problem, quoted }: { node: IterationNode; problem: stri
     <>
       {words === quoted ? null : (
         <>
-          <h3>Verdict</h3>
+          <h3>{t("Verdict")}</h3>
           <p>{words}</p>
         </>
       )}
-      {node.reason ? <p className="text-ink-3">In the reviewers' words: {plainDefect(node.reason)}</p> : null}
+      {node.reason ? (
+        <p className="text-ink-3">{t("In the reviewers' words: {words}", { words: plainDefect(node.reason) })}</p>
+      ) : null}
     </>
   );
 }
@@ -209,16 +226,16 @@ export function JudgesNotes({
     <section
       // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region takes focus so the keyboard can scroll it
       tabIndex={0}
-      aria-label="Reviewers' notes"
+      aria-label={t("Reviewers' notes")}
       className="graph-sheet max-h-[360px] overflow-y-auto rounded-[10px] bg-inset px-3.5 py-3 select-text focus-visible:outline-2 focus-visible:outline-accent"
     >
       <Verdict node={node} problem={problem} quoted={quoted} />
       <Checks node={node} problem={problem} />
       <Named defects={node.defects} />
-      <h3>Side by side with the build before</h3>
+      <h3>{t("Side by side with the build before")}</h3>
       <p>{sideBySideWords({ status: node.status, satisfied: node.satisfied, source: node.verdictSource })}</p>
       <Alive alive={node.liveness} />
-      <h3>What the worker is asked next</h3>
+      <h3>{t("What the worker is asked next")}</h3>
       <p>{nextWords(nextTry(graph, node), facet)}</p>
     </section>
   );

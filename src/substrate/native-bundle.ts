@@ -953,10 +953,30 @@ export function bundleIdentityEntries(bundleId: string, name: string): PlistEntr
   ];
 }
 
-/** The run bundle's `Info.plist`: host text only, nothing from the build. */
+/** The category a game's bundle declares: what macOS reads to decide that an app is a game. */
+export const GAME_APP_CATEGORY = "public.app-category.games";
+
+/**
+ * The entries a bundle a person plays declares (lane FR): the game category and Game Mode support,
+ * so macOS may raise the game's scheduling and GPU priority while it is fullscreen and in front.
+ * macOS 26 reads `LSSupportsGameMode`; macOS 14 and 15 read `GCSupportsGameMode`, which 26 keeps
+ * as its legacy spelling. Neither changes the signature's rules: the bundle is still signed ad hoc.
+ */
+export function gameModeEntries(): PlistEntry[] {
+  return [
+    ["LSApplicationCategoryType", plistString(GAME_APP_CATEGORY)],
+    ["LSSupportsGameMode", "<true/>"],
+    ["GCSupportsGameMode", "<true/>"],
+  ];
+}
+
+/**
+ * The run bundle's `Info.plist`: host text only, nothing from the build. A window run is a game a
+ * person plays ({@link gameModeEntries}); a background run (`LSUIElement`) claims nothing.
+ */
 function infoPlist(bundleId: string, name: string, uiElement: boolean): string {
-  const background: PlistEntry[] = uiElement ? [["LSUIElement", "<true/>"]] : [];
-  return plistDocument([...bundleIdentityEntries(bundleId, name), ...background]);
+  const role: PlistEntry[] = uiElement ? [["LSUIElement", "<true/>"]] : gameModeEntries();
+  return plistDocument([...bundleIdentityEntries(bundleId, name), ...role]);
 }
 
 /**

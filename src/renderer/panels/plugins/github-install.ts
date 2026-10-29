@@ -7,6 +7,7 @@ import {
   type GithubVersion,
   GithubVersionKind,
 } from "../../../shared/plugins.ts";
+import { intlLocale } from "../../../shared/i18n.ts";
 import { PLUGINS_WORDS } from "../../words.ts";
 
 const WORDS = PLUGINS_WORDS.github;
@@ -48,7 +49,7 @@ export function shortDate(iso: string | undefined, now: Date = new Date()): stri
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
   const year = date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" as const };
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", ...year });
+  return date.toLocaleDateString(intlLocale(), { month: "short", day: "numeric", ...year });
 }
 
 /** The version line: its name, and what else helps to know (latest release, the commit, when). */

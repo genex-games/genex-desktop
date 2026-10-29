@@ -22,6 +22,10 @@
 //!   recorded length and FNV-1a 64; the `web` module's `studio_assets_*` exports are the shell's
 //!   side of it.
 //!
+//! - [`web_stream`]: what the web fetches while playing: each frame the named groups the game
+//!   requires and the cell bodies and terrain tiles around its anchors are wanted, and what arrived
+//!   reaches the sim's source at the next frame boundary (`state().volatile.webStream`).
+//!
 //! - [`web_saves`]: what `state()` says about the web's saves, kept in genex-core's in-memory mirror
 //!   that the shell fills from IndexedDB before the first reset and drains write-behind (M2.9);
 //!   the `web` module's `studio_saves_*` exports are the shell's side of it.
@@ -50,6 +54,7 @@ pub mod studio;
 // (through `pub use genex::*` below), and a shell module of the same name would shadow them.
 pub mod web_audio;
 pub mod web_saves;
+pub mod web_stream;
 
 #[cfg(target_arch = "wasm32")]
 mod web;

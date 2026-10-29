@@ -47,6 +47,8 @@ const COLD_BUILD_MS = 40 * 60 * SECOND_MS;
 /** The lock a real build is stamped with: the lane names its build folder by it, nothing reads its pins. */
 const REAL_LOCK = lockOf({ rust: { version: "1.99.0", sha12: "000000000000" } });
 
+/** The template genex.toml's navigation switch, off until a game walks. */
+const NAV_OFF = "[nav]\nenabled = false";
 /** The facet the row adds to the template: a walker's nav and one offline bake of a 24 m floor. */
 const NAV_FACET = `use crate::game::World;
 use genex::nav::{NavArea, NavConfig, NavInput};
@@ -164,6 +166,11 @@ async function bakingTemplateLane(sessions: { opened: number }) {
   const source = await readFile(main, "utf8");
   assert.ok(source.includes(FACET_WIRING), "the template's facet wiring block");
   await writeFile(main, source.replace(FACET_WIRING, FACET_LINES));
+  // The template switches navigation off (release R-2); a game that bakes a navmesh turns it on, as its guide says.
+  const toml = path.join(game.dir, "genex.toml");
+  const manifest = await readFile(toml, "utf8");
+  assert.ok(manifest.includes(NAV_OFF), "the template's [nav] switch");
+  await writeFile(toml, manifest.replace(NAV_OFF, "[nav]\nenabled = true"));
   const resources = await realpath(await tmpDir("rust-bake-real-resources-"));
   const payload = rustPayloadDir(resources);
   await mkdir(payload, { recursive: true });

@@ -21,7 +21,7 @@ export function useWelcomeExit(
   );
   const finishWelcome = useCallback(
     (then?: () => void) => {
-      // A new person meets Genex Tools once the welcome is behind them.
+      // A new person meets the Genex plugin once the welcome is behind them.
       queueGenexPromo();
       app.finishWelcome();
       then?.();

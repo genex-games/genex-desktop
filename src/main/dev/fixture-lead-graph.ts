@@ -161,7 +161,7 @@ async function agentJob(
   part: string,
   job: { plugin: "genex" | "blender"; file: string; prompt: string },
 ) {
-  const names = job.plugin === "genex" ? ["Genex Tools", "asset"] : ["Local Blender", "model"];
+  const names = job.plugin === "genex" ? ["Genex plugin", "asset"] : ["Local Blender", "model"];
   const [pluginName = "", tool = ""] = names;
   const call = {
     callId: `${part}-call`,

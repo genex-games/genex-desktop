@@ -83,6 +83,12 @@ const MEDIUM_COEFFICIENT_MAX: f32 = 10.0;
 /// The largest Mie asymmetry (Cornette-Shanks is singular at 1).
 const MEDIUM_ASYMMETRY_MAX: f32 = 0.99;
 
+/// [`SkyMedium::overcast`]'s haze scattering at the ground, per km (Earth's is about a
+/// thirtieth).
+pub const OVERCAST_MIE_SCATTERING: f32 = 0.12;
+/// [`SkyMedium::overcast`]'s share of Earth's blue (Rayleigh) scattering.
+pub const OVERCAST_RAYLEIGH_SHARE: f32 = 0.25;
+
 /// The air of the physical sky (renderer pass 2 B.2, after Bevy 0.20's `ScatteringMedium`, MIT OR
 /// Apache-2.0, as values in Hillaire's three terms instead of baked density and scattering LUTs):
 /// the planet, a Rayleigh-like term with its own colour, a Mie-like term (haze or dust) with a
@@ -136,6 +142,17 @@ impl SkyMedium {
     /// Earth's atmosphere.
     pub fn earth() -> SkyMedium {
         SkyMedium::EARTH
+    }
+
+    /// An overcast day's air (Bodycam light fix): Earth's with a quarter of its blue scattering
+    /// (the deck hides the blue sky above it) and thirty times its haze, scattering broadly over a
+    /// low layer, so the sky reads a bright, even grey instead of blue on every preset (phones and
+    /// `low` draw no clouds) and the sun's disc is dimmed. A snowy or rainy day's sky is
+    /// `SkyParams::overcast`, which adds the cloud deck's veil.
+    pub fn overcast() -> SkyMedium {
+        let earth = SkyMedium::EARTH;
+        let blue = earth.rayleigh_scattering.map(|scattering| scattering * OVERCAST_RAYLEIGH_SHARE);
+        earth.with_rayleigh(blue, earth.rayleigh_scale_height_km).with_mie(OVERCAST_MIE_SCATTERING, OVERCAST_MIE_SCATTERING / 0.9, 0.3, 1.2)
     }
 
     /// A Mars-like sky: a thin CO2 atmosphere (Rayleigh about a hundredth of Earth's) over a smaller

@@ -418,6 +418,13 @@ impl State {
         scale.resolve(self.output, self.pinned)
     }
 
+    /// Where and how this tick's UI hooks draw (R-25): inside the safe area plus
+    /// [`HUD_MARGIN_PT`], with the person's text size. Without `game.ui` the UI scale is 1.
+    pub(crate) fn hooks_layout(&self, setup: &Setup) -> HooksLayout {
+        let scale = if setup.registered() { self.scale(setup) } else { 1.0 };
+        HooksLayout { margin: hooks_margin(self.safe_area(), scale), text_size: text_size(self.person.text_size) }
+    }
+
     fn safe_area(&self) -> [f32; 4] {
         match self.session.safe_area {
             Some(insets) => insets,
@@ -557,6 +564,8 @@ pub(crate) struct PersonLayer {
     pub(crate) scale: Option<UiScale>,
     /// Reduced motion.
     pub(crate) reduced_motion: bool,
+    /// The text size, a factor of the game's (None: the game's own, 1).
+    pub(crate) text_size: Option<f32>,
 }
 
 /// `lang/<locale>.ftl`.
@@ -626,12 +635,67 @@ pub fn reduced_motion() -> bool {
     SCOPE.with_borrow(|slot| slot.as_ref().is_some_and(|shared| shared.reduced_motion))
 }
 
-/// The screen's safe area as a margin in egui points (world pixels over the UI scale): zero in a
-/// Genex run unless the session emulates one, and outside the hooks.
-pub fn safe_area(_ui: &egui::Ui) -> egui::Margin {
+/// The gap, in egui points, between the screen's safe area and a game's UI hooks (R-25): the UI
+/// kit, the settings menu and a HUD's labels never sit flush against the screen's edge.
+pub const HUD_MARGIN_PT: f32 = 16.0;
+/// The smallest and largest text size factor the person layer applies.
+const TEXT_SIZE_RANGE: (f32, f32) = (0.5, 3.0);
+
+/// Where and how a tick's UI hooks draw (R-25): the root UI inset by `margin` (points), its text
+/// styles scaled by `text_size`. Display only: it moves widgets, never what the checksum reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct HooksLayout {
+    /// The inset from the world's edge, in points: the safe area plus [`HUD_MARGIN_PT`].
+    pub(crate) margin: egui::Margin,
+    /// The text size factor (1: the game's own).
+    pub(crate) text_size: f32,
+}
+
+impl HooksLayout {
+    /// Run `add` in a child of `root` inset by the margin, with its text styles scaled. Widgets
+    /// placed at absolute positions (an `Area`, `ui.put`) and egui's clip rect are unchanged; a
+    /// world too small for the margin keeps the whole root.
+    pub(crate) fn show<R>(self, root: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        let full = root.max_rect();
+        let inset = full - self.margin;
+        let rect = if inset.is_positive() { inset } else { full };
+        root.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            if self.text_size != 1.0 {
+                let text_size = self.text_size;
+                ui.style_mut().text_styles.values_mut().for_each(|font| font.size *= text_size);
+            }
+            add(ui)
+        })
+        .inner
+    }
+}
+
+/// The hooks' margin in points: `insets` (world pixels) over the UI `scale`, plus
+/// [`HUD_MARGIN_PT`], each side within egui's margin range (a negative or non-finite inset is 0).
+fn hooks_margin(insets: [f32; 4], scale: f32) -> egui::Margin {
+    let scale = scale.max(UI_SCALE_MIN);
+    let side = |inset: f32| {
+        let inset = if inset.is_finite() { inset.max(0.0) } else { 0.0 };
+        (inset / scale + HUD_MARGIN_PT).round().clamp(0.0, f32::from(i8::MAX)) as i8
+    };
+    egui::Margin { left: side(insets[0]), top: side(insets[1]), right: side(insets[2]), bottom: side(insets[3]) }
+}
+
+/// The person's text size factor within [`TEXT_SIZE_RANGE`] (none, or not finite: 1).
+fn text_size(chosen: Option<f32>) -> f32 {
+    chosen.filter(|size| size.is_finite()).map_or(1.0, |size| size.clamp(TEXT_SIZE_RANGE.0, TEXT_SIZE_RANGE.1))
+}
+
+/// What of `ui`'s rect the screen's safe area still covers, as a margin in egui points (world
+/// pixels over the UI scale): zero in a Genex run unless the session emulates one, and outside the
+/// hooks. The hooks already draw inside the safe area (R-25), so a UI laid out inside the rect a
+/// hook is given needs no more; a child placed back at the screen's edge gets the rest.
+pub fn safe_area(ui: &egui::Ui) -> egui::Margin {
     let (insets, scale) = SCOPE.with_borrow(|slot| slot.as_ref().map_or(([0.0; 4], 1.0), |shared| (shared.safe_area, shared.scale)));
-    let point = |inset: f32| (inset / scale).round().clamp(0.0, f32::from(i8::MAX)) as i8;
-    egui::Margin { left: point(insets[0]), top: point(insets[1]), right: point(insets[2]), bottom: point(insets[3]) }
+    let (screen, rect) = (ui.ctx().content_rect(), ui.max_rect());
+    let already = [rect.min.x - screen.min.x, rect.min.y - screen.min.y, screen.max.x - rect.max.x, screen.max.y - rect.max.y];
+    let point = |side: usize| (insets[side] / scale - already[side].max(0.0)).round().clamp(0.0, f32::from(i8::MAX)) as i8;
+    egui::Margin { left: point(0), top: point(1), right: point(2), bottom: point(3) }
 }
 
 #[cfg(test)]
@@ -644,6 +708,70 @@ mod tests {
         assert_eq!(person_locale(br#"{"format":1,"values":{"ui.language":3}}"#), None);
         assert_eq!(person_locale(b"not json"), None);
         assert_eq!(person_locale(br#"{"format":1}"#), None);
+    }
+
+    /// One 640x480 pass of `layout` drawing a label; answers the label's rect and text height.
+    fn label_in(layout: HooksLayout) -> (egui::Rect, f32) {
+        let ctx = egui::Context::default();
+        genex_hud::install_fonts(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
+        let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+        let mut found = (egui::Rect::NOTHING, 0.0);
+        let mut output = ctx.run_ui(input, |root| {
+            found = layout.show(root, |ui| {
+                let height = ui.style().text_styles[&egui::TextStyle::Body].size;
+                (ui.label("Hello").rect, height)
+            });
+        });
+        output.textures_delta.clear();
+        found
+    }
+
+    /// R-25: the UI kit and HUD text sat flush top-left ("Hello" at 0,0). The hooks draw inside the
+    /// safe area plus 16 pt, at any UI scale.
+    #[test]
+    fn the_hooks_draw_inside_the_safe_area_plus_the_margin() {
+        let plain = HooksLayout { margin: hooks_margin([0.0; 4], 1.0), text_size: 1.0 };
+        let (rect, _) = label_in(plain);
+        assert_eq!((rect.min.x, rect.min.y), (HUD_MARGIN_PT, HUD_MARGIN_PT), "{rect:?}");
+        let notched = HooksLayout { margin: hooks_margin([0.0, 48.0, 0.0, 0.0], 2.0), text_size: 1.0 };
+        let (rect, _) = label_in(notched);
+        assert_eq!((rect.min.x, rect.min.y), (HUD_MARGIN_PT, 24.0 + HUD_MARGIN_PT), "a 48 px notch at scale 2 is 24 pt: {rect:?}");
+        let hostile = hooks_margin([f32::MAX, -5.0, f32::NAN, 1e9], 1.0);
+        assert_eq!((hostile.left, hostile.top, hostile.right, hostile.bottom), (i8::MAX, 16, 16, i8::MAX), "clamped into egui's range");
+    }
+
+    /// R-25: inside the hooks' inset rect the safe area is already cleared, so a game that lays
+    /// out within `ui.max_rect()` less `safe_area(ui)` (the documented pattern) never insets twice;
+    /// a rect at the screen's edge still gets the whole safe area.
+    #[test]
+    fn safe_area_answers_only_what_the_rect_has_not_cleared() {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
+        let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+        let insets = [0.0, 40.0, 0.0, 20.0];
+        let shared = Shared { catalog: None, reduced_motion: false, safe_area: insets, scale: 1.0 };
+        let previous = SCOPE.with_borrow_mut(|slot| slot.replace(shared));
+        let mut seen = Vec::new();
+        let mut output = ctx.run_ui(input, |root| {
+            let edge = safe_area(root);
+            let inner = HooksLayout { margin: hooks_margin(insets, 1.0), text_size: 1.0 }.show(root, |ui| safe_area(ui));
+            seen.push((edge.top, edge.bottom, inner.top, inner.bottom));
+        });
+        output.textures_delta.clear();
+        SCOPE.with_borrow_mut(|slot| *slot = previous);
+        assert_eq!(seen, [(40, 20, 0, 0)]);
+    }
+
+    /// R-25: the person's text size scales the hooks' text styles (it was recorded, not applied).
+    #[test]
+    fn the_text_size_scales_the_hooks_text() {
+        let margin = hooks_margin([0.0; 4], 1.0);
+        let (small, body) = label_in(HooksLayout { margin, text_size: 1.0 });
+        let (large, scaled) = label_in(HooksLayout { margin, text_size: text_size(Some(1.5)) });
+        assert_eq!(scaled, body * 1.5);
+        assert!(large.height() > small.height() * 1.3, "the label grows: {small:?} -> {large:?}");
+        assert_eq!([text_size(None), text_size(Some(f32::NAN)), text_size(Some(9.0)), text_size(Some(0.1))], [1.0, 1.0, 3.0, 0.5]);
     }
 
     #[test]

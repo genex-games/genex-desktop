@@ -1,9 +1,26 @@
 # Custom materials and post passes
 
+Every type and call in one line:
+
+```rust
+use genex::prelude::*;                                      // CustomMaterial, CustomMesh, PostPass, Gfx, Frame
+use genex::ExtensionRefusal;                                // material.refusal() -> Option<&ExtensionRefusal>
+use genex::render::{ClassOverride, JitterCycle, RenderConfig, TaaQuality};
+game.wgsl("shaders/glow.wgsl", include_str!("../shaders/glow.wgsl")); // one per [[wgsl]] row
+gfx.material(path, &uniforms);                              // -> CustomMaterial; uniforms: &[f32]
+gfx.set_material_uniforms(&material, &uniforms);            // -> Result<(), ExtensionRefusal>
+gfx.material_textured(path, &uniforms, &[&gfx.texture("textures/noise.png")]); // -> CustomMaterial
+gfx.post_pass(path); gfx.post_pass_with(path, &uniforms);   // -> PostPass
+frame.custom(&model, transform, &material, tint);           // or CustomMesh::Cube, CustomMesh::Sphere for &model
+frame.post_pass(&pass);                                     // after the world, before the HUD
+RenderConfig::new().class(class, ClassOverride { taa: Some(TaaQuality::DEFAULT.with_jitter_cycle(JitterCycle::Sixteen)), ..Default::default() });
+```
+
 Level 2 of the extension ladder is a WGSL source: declare each WGSL source in `genex.toml` as a `[[wgsl]]` row (`path`,
 `kind = "material"` or `"post"`, `api = 1`) and compile it in with
 `game.wgsl("shaders/glow.wgsl", include_str!("../shaders/glow.wgsl"))`: web, phone and export builds
-have no game folder to read it from. In `on_reset`, `gfx.material(path, &uniforms)` returns a
+have no game folder to read it from. A game run by cargo (`cargo run`, its tests) reads the folder.s copy instead: edit the shader and
+the next reset reads it again, no rebuild. Live runs the built game: rebuild there. In `on_reset`, `gfx.material(path, &uniforms)` returns a
 `CustomMaterial` you draw with `frame.custom(mesh, transform, &material, tint)` (`mesh` is a `Model`,
 `CustomMesh::Cube` or `CustomMesh::Sphere`, radius 1; change its uniforms later with
 `gfx.set_material_uniforms(&material, &uniforms)`), and `gfx.post_pass(path)`, or
@@ -29,7 +46,13 @@ albedo, 0.0, 0.2), dpdx(n), dpdy(n));` `gx_draw.prev_model` is the draw's model 
 (matched by its id) and `gx_draw.params.z` last frame's simulated seconds (`params.x` this
 frame's), so a vertex animation can place itself at both times. The draws of one v2 material
 and one mesh are one instanced call, and `gx_draw` is still the drawing instance's own row (group
-1 holds the frame's read-only `gx_draws` table). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
+1 holds the frame's read-only `gx_draws` table). A v2 post pass is one fragment entry, `@fragment fn fs_post(in: GxPostInV2) -> @location(0)
+vec4<f32>`: `in.uv` runs (0, 0) top-left to (1, 1) bottom-right over the output, and
+`gx_scene_uv(position)` turns a fragment position (`in.position`, or a uv you moved times
+`gx_post.output_size`) into the uv to sample `gx_scene` at, which differs from `in.uv` when the
+scene is drawn at a lower render scale: `textureSampleLevel(gx_scene, gx_sampler,
+gx_scene_uv(in.position), 0.0)` is the frame as it is. `gx_post` holds `output_size`, `time`
+(simulated seconds) and `frame_index` (key grain to it). A v2 post pass reads `gx_scene` and `gx_frame` (and `gx_env_sh`, the
 environment's SH9) on the display-ready frame after the tonemap, and `gx_depth`, `gx_normals` and
 `gx_motion` (the prepass's motion vectors, written whenever a source declares them; the
 formula is under Custom GPU passes) (an effect on the HDR scene before it is a Level-3 `PostHdr` pass; grass or water a Level-3 pass draws shadows itself from the v2 tables' `gx_shadow_map`, under Custom GPU passes), and
@@ -64,3 +87,11 @@ canvas size whose budget changes the samples rebuilds the world pass for them. T
 them per class from code only: `RenderConfig::new().class(class, ClassOverride { taa:
 Some(TaaQuality::DEFAULT.with_jitter_cycle(JitterCycle::Sixteen)), ..Default::default() })`
 (`.with_alpha_min(..)` for a steadier history, `.with_lod_bias(..)` for sharper textures).
+
+A stylised post pass (a bodycam lens, grain, a vignette, scan lines) is the game's look, so it is
+the same on every preset; keep three things true of it. It runs after the world and before the
+HUD (`frame.post_pass`), so text stays sharp. The person can turn it off: give it a game option
+(`docs/api/settings.md`), and look at a capture with it off too, which is how the judges see the
+world. And it never carries the exposure: a vignette or grain darkens the frame, so keep the
+recipe's compensation (`docs/look-recipes.md`) and keep the vignette's corners above a third of
+the centre's brightness, rather than lowering exposure under it.

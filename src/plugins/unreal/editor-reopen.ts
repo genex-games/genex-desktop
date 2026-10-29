@@ -19,13 +19,18 @@
  * directly in the engine's or the project's crash folder, named for the project, not a link, whose
  * copy of the editor's log names this project. Unreal's normal quit goes first, and only while the
  * one editor running is this project's (it reaches whichever editor runs); then a terminate, then a
- * kill. Processes are listed on a Mac only; elsewhere none is ended.
+ * kill. Processes are listed on a Mac, all of them; on Windows only the editors are (WMI, with their
+ * command lines), each ended with what it started (`taskkill /T /F`), and the crash reporter, whose
+ * crash folders Windows names otherwise, is not looked for. Elsewhere none is ended.
  */
 import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { StudioPlatform } from "../../shared/boot.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { killProcessTree } from "../../substrate/process-tree.ts";
+import { windowsProcesses } from "../../substrate/windows-processes.ts";
 import { projectModule } from "./cpp-module.ts";
 import { logOfProject } from "./editor-log.ts";
 import { pollUntil } from "./editor-queue.ts";
@@ -103,6 +108,9 @@ const SILENT_WAIT_MS = 15 * SECOND_MS;
 /** A terminate first, a kill for what outlives it. */
 const END_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGKILL"];
 const EDITOR_PROGRAM = "UnrealEditor";
+/** Windows' editor program, the one the listing asks WMI for, and the suffix its file names carry. */
+const WINDOWS_EDITOR_PROGRAM = `${EDITOR_PROGRAM}.exe`;
+const WINDOWS_PROGRAM_SUFFIX = /\.exe$/i;
 const REPORTER_PROGRAM = /^CrashReportClient(?:Editor)?$/;
 /** A crash folder is `CrashReport-UE-<Project>-pid-<editor's id>-<crash's GUID>`. */
 const CRASH_FOLDER_PREFIX = "CrashReport-UE-";
@@ -124,14 +132,15 @@ const MESSAGE = {
   CannotCompile: (xcode: string) =>
     `This Mac can't build the game's C++ module (Xcode: ${xcode}), so Genex didn't reopen Unreal on modules that may not match the game's code.`,
   NotEnded:
-    "Unreal's crashed editor or its crash reporter for this game didn't end, so Genex didn't reopen it. Quit them, then open the game from the Unreal button.",
-  EditorNotEnded: "This game's Unreal editor or its crash reporter didn't end. Quit them, then try again.",
+    "Unreal's crashed editor or its crash reporter for this game didn't end even when killed, so Genex didn't reopen it. Ask the user to force-quit it (Option-Command-Esc), then call unreal__open-editor.",
+  EditorNotEnded:
+    "This game's Unreal editor or its crash reporter didn't end even when killed. Ask the user to force-quit it (Option-Command-Esc), then try again.",
   StillAnswers:
-    "This game's Unreal still answers after Genex ended what it found of it, so it didn't end. Quit Unreal, then try again.",
+    "This game's Unreal still answers after Genex ended every editor of its project it found (another Unreal may have it open), so it didn't end. Ask the user to quit that Unreal, then try again.",
   NoProjectToEnd: "This game isn't linked to an Unreal project, so there is no Unreal to end.",
-  Reopening: "Genex is reopening this game's Unreal; read editor-state until it is done.",
+  Reopening: "Genex is reopening this game's Unreal; wait until it answers (editor-status), then try again.",
   NotBuilt: (why: string) => `The game's C++ module didn't build, so Genex didn't reopen Unreal: ${why}`,
-  NotAnswering: `Genex reopened the game's project, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes. Open the game from the Unreal button.`,
+  NotAnswering: `Genex reopened the game's project, but Unreal didn't answer within ${OPEN_WAIT_MS / MINUTE_MS} minutes. Call unreal__editor-status to see whether it answers now; if it still doesn't, call unreal__open-editor with restart: true.`,
 } as const;
 
 /** The project's name, as Unreal names its log and its crash folders. */
@@ -149,9 +158,12 @@ function crashFolders(home: string, version: string | undefined, project: string
 const argumentsOf = (row: ProcessRow) =>
   row.args.startsWith(row.exec) ? row.args.slice(row.exec.length) : ` ${row.args}`;
 
+/** A process's program by its file name, without Windows' `.exe`: `UnrealEditor` on either platform. */
+const programOf = (row: ProcessRow): string => path.win32.basename(row.exec).replace(WINDOWS_PROGRAM_SUFFIX, "");
+
 /** Whether a process is an Unreal editor whose arguments name `project` as a whole argument. */
 const isOwnEditor = (row: ProcessRow, project: string) =>
-  path.basename(row.exec) === EDITOR_PROGRAM && ` ${argumentsOf(row)} `.includes(` ${project} `);
+  programOf(row) === EDITOR_PROGRAM && ` ${argumentsOf(row)} `.includes(` ${project} `);
 
 /** The crash folders of `name` inside `folder` that `args` names as whole arguments. */
 function namedCrashFolders(args: string, folder: string, name: string): string[] {
@@ -174,7 +186,7 @@ async function isOwnCrashFolder(folder: string, project: string): Promise<boolea
 
 /** Whether a process is Unreal's crash reporter for one of this project's crash folders. */
 async function isOwnReporter(row: ProcessRow, project: string, folders: readonly string[]): Promise<boolean> {
-  if (!REPORTER_PROGRAM.test(path.basename(row.exec))) return false;
+  if (!REPORTER_PROGRAM.test(programOf(row))) return false;
   const named = folders.flatMap((folder) => namedCrashFolders(argumentsOf(row), folder, projectName(project)));
   for (const folder of named) if (await isOwnCrashFolder(folder, project)) return true;
   return false;
@@ -204,10 +216,16 @@ function send(env: ProcessEnv, pid: number, signal: NodeJS.Signals) {
 }
 
 /**
- * One reopen job's game, the engine whose crash folder may hold its reports, and whether it brings an
- * outdated Genex editor helper up to the plugin's while Unreal is closed.
+ * One reopen job's game, the engine whose crash folder may hold its reports, whether it brings an
+ * outdated Genex editor helper up to the plugin's while Unreal is closed, and whether it builds the
+ * game's C++ module first (the Loop's reopen after a crash; an agent's Open leaves that to Unreal's
+ * own Open, which builds a hot-reloaded module).
  */
-type ReopenTarget = RestartTarget & { engine: { version: string; directory: string } | undefined; helper?: boolean };
+type ReopenTarget = RestartTarget & {
+  engine: { version: string; directory: string } | undefined;
+  helper?: boolean;
+  build?: boolean;
+};
 
 /**
  * Ends what is left of this project's editor and crash reporter: the normal quit while the one
@@ -262,7 +280,7 @@ async function buildModule(deps: ReopenDeps, target: ReopenTarget): Promise<void
 async function reopenNow(deps: ReopenDeps, target: ReopenTarget): Promise<void> {
   await endOwn(deps, target, MESSAGE.NotEnded);
   if (target.helper) await updateOutdated(deps, target);
-  await buildModule(deps, target);
+  if (target.build !== false) await buildModule(deps, target);
   await deps.restart.forget?.(target.storage, target.project);
   await openAndWait(deps, target, MESSAGE.NotAnswering);
 }
@@ -288,6 +306,9 @@ function reopeningOf(jobs: Jobs, project: string | undefined, restarting: Restar
   return restarting(project) ? { state: ReopenState.Reopening } : (jobs.get(project) ?? IDLE);
 }
 
+/** What a reopen is asked for: the game, and whether it updates an outdated helper and builds the C++ module first. */
+type ReopenAsk = { storage: string; game: string; helper: boolean; build: boolean };
+
 /**
  * Starts reopening the game's Unreal unless it already answers or a job already reopens it; with
  * `helper`, an outdated Genex editor helper is updated while Unreal is closed.
@@ -295,10 +316,10 @@ function reopeningOf(jobs: Jobs, project: string | undefined, restarting: Restar
 async function startReopen(
   deps: ReopenDeps,
   jobs: Jobs,
-  ask: { storage: string; game: string; helper: boolean },
+  ask: ReopenAsk,
   restarting: Restarting,
 ): Promise<ReopenAnswer> {
-  const { storage, game, helper } = ask;
+  const { storage, game, helper, build } = ask;
   const project = await deps.project(storage, game);
   if (!project) throw new Error(MESSAGE.NoProject);
   // Genex's own restart (adding the C++ module) opens Unreal again itself: no second editor, no second build.
@@ -307,7 +328,8 @@ async function startReopen(
   // Another call may have started the job while this one asked.
   if (jobs.get(project)?.state === ReopenState.Reopening) return { started: true };
   const engine = await deps.engine();
-  runJob(jobs, project, REOPEN_STATES, deps.now, () => reopenNow(deps, { storage, game, project, engine, helper }));
+  const target = { storage, game, project, engine, helper, build };
+  runJob(jobs, project, REOPEN_STATES, deps.now, () => reopenNow(deps, target));
   return { started: true };
 }
 
@@ -376,7 +398,7 @@ async function endEditor(
 }
 
 /**
- * The runner's `reopen-editor`, `editor-state` and `end-editor` over one set of reopen jobs, and
+ * The runner's `reopen-editor`, `editor-state` and `end-editor` and the agent's `open-editor` over one set of reopen jobs, and
  * whether the game's editor process runs (null: can't tell, or no linked project). While Genex
  * itself restarts a project's Unreal (`restarting`: adding its C++ module), it reads as reopening:
  * health waits for it, a crash step starts nothing, and nothing ends it.
@@ -385,7 +407,13 @@ export function createReopenTools(deps: ReopenDeps, restarting: Restarting = () 
   const jobs: Jobs = new Map();
   return {
     reopen: (storage: string, game: string, helper = false) =>
-      startReopen(deps, jobs, { storage, game, helper }, restarting),
+      startReopen(deps, jobs, { storage, game, helper, build: true }, restarting),
+    /**
+     * An agent's Open as a reopen job: what is left of the project's editor and crash reporter
+     * ended, then the project opened (Unreal's own Open builds a hot-reloaded module) and waited for.
+     */
+    open: (storage: string, game: string) =>
+      startReopen(deps, jobs, { storage, game, helper: false, build: false }, restarting),
     state: (storage: string, game: string) => editorState(deps, jobs, { storage, game }, restarting),
     end: (storage: string, game: string) => endEditor(deps, jobs, { storage, game }, restarting),
     running: async (storage: string, game: string) => {
@@ -420,13 +448,30 @@ async function macProcesses(): Promise<ProcessRow[]> {
   });
 }
 
-/** This computer's processes for the reopen job: listed on a Mac, none elsewhere; signals by `process.kill`. */
+/** This Windows computer's Unreal editors, with their command lines; none when they can't be listed. */
+export async function windowsEditors(list: typeof windowsProcesses = windowsProcesses): Promise<ProcessRow[]> {
+  return (await list([WINDOWS_EDITOR_PROGRAM])) ?? [];
+}
+
+/** Signals one process: by `process.kill` on a Mac; on Windows, which has no signals, it ends the tree. */
+function signalProcess(platform: NodeJS.Platform, pid: number, signal: NodeJS.Signals): void {
+  if (platform !== StudioPlatform.Windows) {
+    process.kill(pid, signal);
+    return;
+  }
+  process.kill(pid, 0);
+  void killProcessTree(pid, { platform });
+}
+
+/** This computer's processes for the reopen job: all on a Mac, the editors on Windows, none elsewhere. */
 export function systemProcesses(home: string, platform: NodeJS.Platform = process.platform): ProcessEnv {
+  const listed: Partial<Record<NodeJS.Platform, () => Promise<ProcessRow[]>>> = {
+    darwin: macProcesses,
+    win32: () => windowsEditors(),
+  };
   return {
     home,
-    list: async () => (platform === MAC ? macProcesses() : []),
-    signal: (pid, signal) => {
-      process.kill(pid, signal);
-    },
+    list: async () => (await listed[platform]?.().catch(() => [])) ?? [],
+    signal: (pid, signal) => signalProcess(platform, pid, signal),
   };
 }

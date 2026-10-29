@@ -3,19 +3,34 @@
  * workspace". It says why agents need it, names what is missing with the exact commands that
  * install it (or, where AppArmor blocks the isolation, the command that allows it), and offers
  * Retry, which re-runs core startup in main (`state/boot.ts`). On Windows, where the missing piece
- * is a one-time install, Set up runs it (one administrator prompt) and then starts. On Linux under Ubuntu's user-namespace restriction, Set up installs Genex's
+ * is a one-time install, the window runs it by itself instead: "Setting up Genex" over the installer's animation while Windows asks for approval, then the studio.
+ * The same card says which step a Windows start is on ("Starting Genex"), and that the studio
+ * would not start ("Genex couldn't start") with Try again, a report and Quit.
+ * Each of them offers a new version downloaded meanwhile (`BootUpdate`): it may fix what stopped the start.
+ * It also shows Genex moving its files to the folder chosen in Settings → Storage, and a data
+ * folder that is not there.
+ * On Linux under Ubuntu's user-namespace restriction, Set up installs Genex's
  * AppArmor profile (one password prompt) and the app restarts; the same install is folded away
- * as a terminal command. `BootRoot` chooses between this, the studio itself, and nothing while
+ * as a terminal command. `BootRoot` chooses between these, the studio itself, and nothing while
  * main has not answered yet.
  */
-import { type JSX, useState } from "react";
-import { type AppArmorFix, type InstallCommand, type SandboxProblem, toolPackage } from "../shared/boot.ts";
+import { type JSX, type ReactNode, useState } from "react";
+import { type ReadyUpdate, UpdateAction } from "../shared/app-update.ts";
+import {
+  type AppArmorFix,
+  type InstallCommand,
+  type SandboxProblem,
+  StartStep,
+  toolPackage,
+  WindowsSetupNeed,
+} from "../shared/boot.ts";
+import type { DataMoveProgress } from "../shared/data-folder.ts";
 import { App } from "./App.tsx";
 import { useAppLoaderDismissal } from "./app-loader.ts";
-import { type Boot, BootView, bootView, canSetUp } from "./state/boot.ts";
+import { type Boot, BootView, bootView, canSetUp, SetupReport, setsUpByItself } from "./state/boot.ts";
 import { useBoot } from "./state/hooks.ts";
 import { Button } from "./ui/Button.tsx";
-import { SANDBOX_SETUP_WORDS as WORDS } from "./words.ts";
+import { UPDATE_WORDS, SANDBOX_SETUP_WORDS as WORDS } from "./words.ts";
 
 /** The studio, the setup screen, or nothing until main says which. */
 export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
@@ -25,21 +40,433 @@ export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
   const error = useBoot(boot.store, (s) => s.error);
   const installable = useBoot(boot.store, canSetUp);
   const settingUp = useBoot(boot.store, (s) => s.settingUp);
-  const setupCancelled = useBoot(boot.store, (s) => s.setupCancelled);
+  const report = useBoot(boot.store, (s) => s.report);
+  const step = useBoot(boot.store, (s) => s.step);
+  const move = useBoot(boot.store, (s) => s.move);
+  const dataFolder = useBoot(boot.store, (s) => s.dataFolder);
+  const update = useBoot(boot.store, (s) => s.update);
+  const onUpdate = (): void => void boot.restartToUpdate();
   const restarting = useBoot(boot.store, (s) => s.restarting);
-  // The studio dismisses the startup loader once its own first screen is drawn; the setup screen is drawn now.
-  useAppLoaderDismissal(view === BootView.SandboxSetup);
+  const setupCancelled = useBoot(boot.store, (s) => s.setupCancelled);
+  // Windows' Set up is its own card, run by itself; Linux's sits on the setup screen behind a press.
+  const windowsCard = useBoot(boot.store, setsUpByItself);
+  // The studio dismisses the startup loader once its own first screen is drawn; the others are drawn now.
+  useAppLoaderDismissal(view !== BootView.Studio && view !== BootView.Loading);
   if (view === BootView.Studio) return <App />;
+  // Try again starts the studio again: the card says so until it opens, or fails again.
+  if (view === BootView.Starting || (view === BootView.Failed && retrying))
+    return <StartingCard step={step ?? StartStep.Studio} update={update} onUpdate={onUpdate} />;
+  const dataCard = dataFolderCard({ view, move, dataFolder, error, retrying, boot });
+  if (dataCard) return dataCard;
+  if (view === BootView.Failed) {
+    return (
+      <StartFailed
+        error={error}
+        report={report}
+        onRetry={() => void boot.retry()}
+        onReport={() => void boot.report()}
+        onQuit={() => void boot.quit()}
+        update={update}
+        onUpdate={onUpdate}
+      />
+    );
+  }
   if (view === BootView.Loading || !problem) return null;
+  if (windowsCard) {
+    return (
+      <WindowsSetup
+        problem={problem}
+        settingUp={settingUp}
+        error={error}
+        report={report}
+        onSetUp={() => void boot.setUp()}
+        onReport={() => void boot.report()}
+        update={update}
+        onUpdate={onUpdate}
+      />
+    );
+  }
   const setUp = installable
     ? { settingUp, restarting, cancelled: setupCancelled, onSetUp: () => void boot.setUp() }
     : null;
   return (
-    <SandboxSetup problem={problem} retrying={retrying} error={error} onRetry={() => void boot.retry()} setUp={setUp} />
+    <SandboxSetup
+      problem={problem}
+      retrying={retrying}
+      error={error}
+      onRetry={() => void boot.retry()}
+      setUp={setUp}
+      update={update}
+      onUpdate={onUpdate}
+    />
   );
 }
 
-/** Set up's state on the screen, where the platform offers it (Windows, and Linux for the restriction). */
+/** What the Windows card says: working through Set up, waiting for an OK it did not get, or failed. */
+const WindowsStep = {
+  SettingUp: "setting-up",
+  NeedsOk: "needs-ok",
+  Failed: "failed",
+} as const;
+type WindowsStep = (typeof WindowsStep)[keyof typeof WindowsStep];
+
+/** The card's title and line for each step. */
+const WINDOWS_CARD = {
+  [WindowsStep.SettingUp]: WORDS.windows.settingUp,
+  [WindowsStep.NeedsOk]: WORDS.windows.needsOk,
+  [WindowsStep.Failed]: WORDS.windows.failed,
+} satisfies Record<WindowsStep, { title: string; line: string }>;
+
+/** The installer's animation (forge's Squirrel `loadingGif`), so setup looks like the installer's next moment. */
+const INSTALLING_ANIMATION = { backgroundImage: "url(media/installing.gif)" } as const;
+
+/**
+ * The installer's ripple animation filling the window, and a card at its bottom left with `title`
+ * and what follows it: the Windows setup, start and start-failure screens.
+ */
+function AnimationCard({
+  selector,
+  titleId,
+  title,
+  children,
+}: {
+  selector: Record<`data-${string}`, string>;
+  titleId: string;
+  title: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <div
+      {...selector}
+      style={INSTALLING_ANIMATION}
+      className="relative h-full overflow-hidden bg-canvas bg-cover bg-center [image-rendering:pixelated]"
+    >
+      {/* The window has no title bar of its own: the top strip moves it, as the headers do. */}
+      <div className="titlebar-drag absolute inset-x-0 top-0 h-12" />
+      <section
+        aria-labelledby={titleId}
+        aria-live="polite"
+        className="absolute right-6 bottom-8 left-6 flex max-w-[360px] flex-col gap-2 rounded-[14px] bg-surface px-5 py-[18px] shadow-raised [image-rendering:auto]"
+      >
+        <h1 id={titleId} className="text-lg font-medium text-ink">
+          {title}
+        </h1>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+/** What is going on right now, after a softly pulsing dot. */
+function WorkingLine({ text }: { text: string }): JSX.Element {
+  return (
+    <p className="flex items-center gap-2 font-mono text-sm text-ink-3">
+      <span className="size-[7px] rounded-full bg-accent-primary animate-[records-pulse_1.4s_ease-in-out_infinite] motion-reduce:animate-none" />
+      {text}
+    </p>
+  );
+}
+
+/** A new version downloaded before the studio opened, and the press that installs it. */
+interface UpdateOffer {
+  update: ReadyUpdate | null;
+  onUpdate: () => void;
+}
+
+/**
+ * The new version, when one waits: a line saying it may fix this, and the sidebar's own Relaunch
+ * to update (or, on Linux, its Download).
+ */
+function BootUpdate({ update, onUpdate }: UpdateOffer): JSX.Element | null {
+  if (!update) return null;
+  const label = update.action === UpdateAction.Download ? UPDATE_WORDS.download(update.version) : UPDATE_WORDS.restart;
+  return (
+    <div data-boot-update={update.action} className="flex flex-wrap items-center gap-2 pt-2">
+      <p className="text-ink-2">{WORDS.update.ready(update.version)}</p>
+      <Button variant="default" onClick={onUpdate}>
+        {label}
+      </Button>
+    </div>
+  );
+}
+
+/** A Windows start before its studio opens: "Starting Genex" and the step it is on. */
+export function StartingCard({ step, update, onUpdate }: { step: StartStep } & UpdateOffer): JSX.Element {
+  return (
+    <AnimationCard selector={{ "data-boot-starting": step }} titleId="boot-starting-title" title={WORDS.starting.title}>
+      <p className="text-ink-2">{WORDS.starting.line}</p>
+      <WorkingLine text={WORDS.starting.step[step]} />
+      <BootUpdate update={update} onUpdate={onUpdate} />
+    </AnimationCard>
+  );
+}
+
+/** The screens of a launch that moves Genex's files or cannot find them, or null for any other. */
+function dataFolderCard({
+  view,
+  move,
+  dataFolder,
+  error,
+  retrying,
+  boot,
+}: {
+  view: BootView;
+  move: DataMoveProgress | null;
+  dataFolder: string | null;
+  error: string | null;
+  retrying: boolean;
+  boot: Boot;
+}): JSX.Element | null {
+  const onRetry = () => void boot.retry();
+  const onQuit = () => void boot.quit();
+  if (view === BootView.Moving && move && error !== null)
+    return <MoveStoppedCard to={move.to} error={error} retrying={retrying} onRetry={onRetry} onQuit={onQuit} />;
+  if (view === BootView.Moving && move) return <MovingCard move={move} />;
+  if (view === BootView.DataMissing && dataFolder !== null)
+    return <DataMissingCard dir={dataFolder} error={error} retrying={retrying} onRetry={onRetry} onQuit={onQuit} />;
+  return null;
+}
+
+/** Genex moving its files before it starts again: where to, and how far. */
+export function MovingCard({ move }: { move: DataMoveProgress }): JSX.Element {
+  const words = WORDS.moving;
+  return (
+    <AnimationCard selector={{ "data-boot-moving": "" }} titleId="boot-moving-title" title={words.title}>
+      <p className="text-ink-2">{words.line(move.to)}</p>
+      <WorkingLine text={move.total > 0 ? words.progress(move.done, move.total) : words.counting} />
+    </AnimationCard>
+  );
+}
+
+/** A move that stopped part-way with some files already moved: why, Try again (carries the move on) and Quit. */
+export function MoveStoppedCard({
+  to,
+  error,
+  retrying,
+  onRetry,
+  onQuit,
+}: {
+  to: string;
+  error: string;
+  retrying: boolean;
+  onRetry: () => void;
+  onQuit: () => void;
+}): JSX.Element {
+  const words = WORDS.moveStopped;
+  return (
+    <AnimationCard selector={{ "data-boot-move-stopped": "" }} titleId="boot-move-stopped-title" title={words.title}>
+      <p className="text-ink-2">{words.line(to)}</p>
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <Button variant="default" data-boot-try-again disabled={retrying} onClick={onRetry}>
+          {retrying ? WORDS.dataMissing.checking : words.tryAgain}
+        </Button>
+        <Button variant="ghost" data-boot-quit onClick={onQuit}>
+          {words.quit}
+        </Button>
+      </div>
+      <p className="text-sm text-orange">{error}</p>
+    </AnimationCard>
+  );
+}
+
+/** The folder Genex keeps its files in is not there: which one, Try again and Quit. */
+export function DataMissingCard({
+  dir,
+  error,
+  retrying,
+  onRetry,
+  onQuit,
+}: {
+  dir: string;
+  error: string | null;
+  retrying: boolean;
+  onRetry: () => void;
+  onQuit: () => void;
+}): JSX.Element {
+  const words = WORDS.dataMissing;
+  return (
+    <AnimationCard selector={{ "data-boot-data-missing": "" }} titleId="boot-data-missing-title" title={words.title}>
+      <p className="text-ink-2">{words.line(dir)}</p>
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <Button variant="default" data-boot-try-again disabled={retrying} onClick={onRetry}>
+          {retrying ? words.checking : words.tryAgain}
+        </Button>
+        <Button variant="ghost" data-boot-quit onClick={onQuit}>
+          {words.quit}
+        </Button>
+      </div>
+      {error !== null && <p className="text-sm text-orange">{error}</p>}
+    </AnimationCard>
+  );
+}
+
+/** A studio whose harness would not start: Try again, a report, Quit, and the raw error under Details. */
+export function StartFailed({
+  error,
+  report,
+  onRetry,
+  onReport,
+  onQuit,
+  update,
+  onUpdate,
+}: {
+  error: string | null;
+  report: SetupReport;
+  onRetry: () => void;
+  onReport: () => void;
+  onQuit: () => void;
+} & UpdateOffer): JSX.Element {
+  const words = WORDS.startFailed;
+  return (
+    <AnimationCard selector={{ "data-boot-failed": "" }} titleId="boot-failed-title" title={words.title}>
+      <p className="text-orange">{words.line}</p>
+      <BootUpdate update={update} onUpdate={onUpdate} />
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <Button variant="default" data-boot-try-again onClick={onRetry}>
+          {words.tryAgain}
+        </Button>
+        {error !== null && <ReportAction report={report} onReport={onReport} />}
+        <Button variant="ghost" data-boot-quit onClick={onQuit}>
+          {words.quit}
+        </Button>
+      </div>
+      {report === SetupReport.Failed && <p className="text-sm text-orange">{WORDS.windows.failed.reportFailed}</p>}
+      {error !== null && <ErrorDetails error={error} />}
+    </AnimationCard>
+  );
+}
+
+function windowsStep(settingUp: boolean, error: string | null): WindowsStep {
+  if (settingUp) return WindowsStep.SettingUp;
+  return error === null ? WindowsStep.NeedsOk : WindowsStep.Failed;
+}
+
+/**
+ * Windows' first start: the installer's ripple animation fills the window and a card at the bottom
+ * left says what is happening. Set up starts by itself (`Boot.start`), so the card first waits on
+ * Windows' approval prompt; a declined prompt asks again with Set up, and a failure offers Try
+ * again, a report to the team and the raw error under Details.
+ */
+export function WindowsSetup({
+  problem,
+  settingUp,
+  error,
+  report,
+  onSetUp,
+  onReport,
+  update,
+  onUpdate,
+}: {
+  problem: SandboxProblem;
+  settingUp: boolean;
+  error: string | null;
+  report: SetupReport;
+  onSetUp: () => void;
+  onReport: () => void;
+} & UpdateOffer): JSX.Element {
+  const step = windowsStep(settingUp, error);
+  const words = WINDOWS_CARD[step];
+  return (
+    <AnimationCard
+      selector={{ "data-sandbox-setup": problem.code, "data-windows-setup": step }}
+      titleId="windows-setup-title"
+      title={words.title}
+    >
+      <p className={step === WindowsStep.Failed ? "text-orange" : "text-ink-2"}>{words.line}</p>
+      {problem.windowsNeeds?.includes(WindowsSetupNeed.LogonService) && <LogonServiceLine step={step} />}
+      <BootUpdate update={update} onUpdate={onUpdate} />
+      {step === WindowsStep.SettingUp && <WorkingLine text={WORDS.windows.settingUp.step} />}
+      {step === WindowsStep.NeedsOk && (
+        <div className="pt-2">
+          <Button variant="default" data-sandbox-set-up onClick={onSetUp}>
+            {WORDS.windows.needsOk.setUp}
+          </Button>
+        </div>
+      )}
+      {step === WindowsStep.Failed && error !== null && (
+        <SetupFailed error={error} report={report} onSetUp={onSetUp} onReport={onReport} />
+      )}
+    </AnimationCard>
+  );
+}
+
+/**
+ * Windows' Secondary Logon service is disabled: Set up turns it back on, and after a Set up that
+ * could not, the line says how to do it by hand.
+ */
+function LogonServiceLine({ step }: { step: WindowsStep }): JSX.Element {
+  const words = WORDS.windows.logonService;
+  return (
+    <p data-windows-need={WindowsSetupNeed.LogonService} className="text-ink-2">
+      {step === WindowsStep.Failed ? words.fix : words.line}
+    </p>
+  );
+}
+
+/** Send a report; while it sends, a line says so, and once sent a bare ✓ takes its place. */
+function ReportAction({ report, onReport }: { report: SetupReport; onReport: () => void }): JSX.Element {
+  const words = WORDS.windows.failed;
+  if (report === SetupReport.Sent) {
+    return (
+      <span data-setup-report={report} role="img" aria-label={words.sent} className="px-2 text-ink">
+        ✓
+      </span>
+    );
+  }
+  if (report === SetupReport.Sending) {
+    return (
+      <span data-setup-report={report} className="px-2 text-sm text-ink-3">
+        {words.sending}
+      </span>
+    );
+  }
+  return (
+    <Button variant="secondary" data-setup-report={report} onClick={onReport}>
+      {words.report}
+    </Button>
+  );
+}
+
+/** A failed Set up's actions: Try again, the report (sent, it is a bare ✓), and the raw error. */
+function SetupFailed({
+  error,
+  report,
+  onSetUp,
+  onReport,
+}: {
+  error: string;
+  report: SetupReport;
+  onSetUp: () => void;
+  onReport: () => void;
+}): JSX.Element {
+  const words = WORDS.windows.failed;
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <Button variant="default" data-sandbox-set-up onClick={onSetUp}>
+          {words.tryAgain}
+        </Button>
+        <ReportAction report={report} onReport={onReport} />
+      </div>
+      {report === SetupReport.Failed && <p className="text-sm text-orange">{words.reportFailed}</p>}
+      <ErrorDetails error={error} />
+    </>
+  );
+}
+
+/** The raw error, folded under Details and selectable for copying. */
+function ErrorDetails({ error }: { error: string }): JSX.Element {
+  return (
+    <details className="settings-disclosure text-sm text-ink-3">
+      <summary>{WORDS.details}</summary>
+      <pre className="mt-2 max-h-24 overflow-auto font-mono text-micro whitespace-pre-wrap break-words select-text">
+        {error}
+      </pre>
+    </details>
+  );
+}
+
+/** Set up's state on the setup screen, where Linux offers it for the restriction. */
 interface SetUpControl {
   settingUp: boolean;
   /** Linux: installed, and main is restarting the app. */
@@ -160,15 +587,17 @@ export function SandboxSetup({
   retrying,
   error,
   onRetry,
-  setUp = null,
+  setUp,
+  update,
+  onUpdate,
 }: {
   problem: SandboxProblem;
   retrying: boolean;
   error: string | null;
   onRetry: () => void;
-  /** Offered where the sandbox installs from here (Windows, and Linux for the restriction); null elsewhere. */
+  /** Offered where Set up installs from this screen (Linux, for the restriction); null elsewhere. */
   setUp?: SetUpControl | null;
-}): JSX.Element {
+} & UpdateOffer): JSX.Element {
   const busy = retrying || Boolean(setUp?.settingUp || setUp?.restarting);
   return (
     <div data-sandbox-setup={problem.code} className="relative flex h-full overflow-auto bg-canvas">
@@ -184,6 +613,7 @@ export function SandboxSetup({
         <p className="text-ink-2">{WORDS.intro}</p>
         <p className="text-ink-2">{WORDS.why[problem.code]}</p>
         {problem.apparmorBlock && <p className="text-ink-2">{WORDS.apparmorBlocked[problem.apparmorBlock]}</p>}
+        <BootUpdate update={update} onUpdate={onUpdate} />
         {problem.missingTools.length > 0 && (
           <ul className="flex flex-wrap gap-2 font-mono text-sm text-ink">
             {problem.missingTools.map((tool) => (
@@ -218,13 +648,7 @@ export function SandboxSetup({
           </p>
         )}
         <div>
-          <Button
-            variant={setUp ? "secondary" : "default"}
-            data-sandbox-retry
-            aria-busy={retrying}
-            disabled={busy}
-            onClick={onRetry}
-          >
+          <Button variant="default" data-sandbox-retry aria-busy={retrying} disabled={busy} onClick={onRetry}>
             {retrying ? WORDS.retrying : WORDS.retry}
           </Button>
         </div>

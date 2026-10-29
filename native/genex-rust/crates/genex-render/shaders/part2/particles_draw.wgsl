@@ -1,5 +1,6 @@
 // The particles' billboards (graph node 15): one camera-facing quad per drawn row, fogged like an
-// opaque surface at its centre; with renderer pass 2 A.11 rotated or stretched along the motion,
+// opaque surface at its centre and, for a lit emitter, lit by the sun through its shadow and the
+// sky there (the HDR scene; AAA materials, WP-13); with renderer pass 2 A.11 rotated or stretched along the motion,
 // textured from a flipbook atlas and faded where they near the opaque scene (soft particles).
 
 
@@ -12,6 +13,71 @@
 // The opaque scene's view depth at half the render size (`particles_depth.wgsl`; one texel of no
 // surface where the prepass did not run): soft billboards fade against it.
 @group(0) @binding(5) var particle_scene_depth: texture_2d<f32>;
+// The sun's cascaded shadow maps and their comparison sampler (AAA materials, WP-13): a lit
+// emitter's billboard is shadowed at its centre, once per vertex.
+@group(0) @binding(6) var particle_shadow_map: texture_depth_2d_array;
+@group(0) @binding(7) var particle_shadow_sampler: sampler_comparison;
+
+// A lit particle (`EmitterDesc::lit`): the share of the sun's light over pi a flake scatters toward
+// the camera from the side, and how much more it sends looking into the sun (forward scatter, a
+// lobe of power `PARTICLE_FORWARD_POWER`).
+const PARTICLE_SUN_SHARE: f32 = 0.5;
+const PARTICLE_FORWARD_GAIN: f32 = 0.8;
+const PARTICLE_FORWARD_POWER: f32 = 8.0;
+const PARTICLE_PI: f32 = 3.14159265;
+// The share of the sky behind a lit particle that comes through it: a flake, a drop or a puff is
+// thin and scatters forward, so against a bright overcast it glows, never a dark speck.
+const PARTICLE_TRANSLUCENCY: f32 = 0.6;
+// The environment mip the light behind a particle is read at, as a share of the last.
+const PARTICLE_BEHIND_MIP: f32 = 0.6;
+const PARTICLE_CASCADES: u32 = 4u;
+
+// The sun's visibility at `world` through the cascade its view depth falls in: one comparison tap
+// (a flake is smaller than a texel's penumbra), 1 beyond the drawn cascades or without shadows.
+fn particle_sun_visibility(world: vec3<f32>) -> f32 {
+    if frame.cascade_splits.w < 0.5 {
+        return 1.0;
+    }
+    let depth = dot(world - frame.camera_pos.xyz, frame.camera_forward.xyz);
+    let count = min(frame.shadow_counts.x, PARTICLE_CASCADES);
+    var cascade = PARTICLE_CASCADES;
+    for (var c = 0u; c < count; c++) {
+        if depth <= frame.cascade_ends[c] {
+            cascade = c;
+            break;
+        }
+    }
+    if cascade >= PARTICLE_CASCADES {
+        return 1.0;
+    }
+    let clip = frame.cascade_view_proj[cascade] * vec4<f32>(world, 1.0);
+    let ndc = clip.xyz / clip.w;
+    if abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z > 1.0 {
+        return 1.0;
+    }
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    let reference = clamp(ndc.z, 0.0, 1.0) - frame.cascade_bias[cascade];
+    return textureSampleCompareLevel(particle_shadow_map, particle_shadow_sampler, uv, i32(cascade), reference);
+}
+
+// The light on a lit particle at `center`: the sun through its shadow, scattered more looking
+// into it, plus the sky's mean radiance (the environment's roughest mip above and below, or the
+// flat ambient), and under an environment a share of what lies behind it along the view.
+fn particle_light(center: vec3<f32>) -> vec3<f32> {
+    let sun = normalize(frame.sun_dir.xyz);
+    let view = normalize(center - frame.camera_pos.xyz);
+    let forward = PARTICLE_FORWARD_GAIN * pow(max(dot(view, sun), 0.0), PARTICLE_FORWARD_POWER);
+    let sunlight = frame.sun_color.rgb * (particle_sun_visibility(center) * (PARTICLE_SUN_SHARE + forward) / PARTICLE_PI);
+    var sky = frame.ambient.rgb;
+    if frame.ambient.w > 0.5 {
+        let last = f32(textureNumLevels(particle_env_specular) - 1u);
+        let above = textureSampleLevel(particle_env_specular, particle_env_sampler, vec3<f32>(0.0, 1.0, 0.0), last).rgb;
+        let below = textureSampleLevel(particle_env_specular, particle_env_sampler, vec3<f32>(0.0, -1.0, 0.0), last).rgb;
+        let behind = textureSampleLevel(particle_env_specular, particle_env_sampler, view, last * PARTICLE_BEHIND_MIP).rgb;
+        sky = mix(0.5 * (above + below), behind, PARTICLE_TRANSLUCENCY);
+    }
+    return sunlight + sky;
+}
 
 // --- Fog (RQ4.3) -----------------------------------------------------------------------------
 // The `*_fogged` entry points take the fog the particle sits in, as the opaque forward shader does:
@@ -231,7 +297,12 @@ fn particle_vertex(vertex: u32, instance: u32) -> ParticleFogOut {
     out.life = shape.life.x;
     out.fog = particle_fog_terms(p.position_size.xyz);
     let terms = particle_hdr_terms(p.color.rgb, p.position_size.xyz, out.fog);
-    out.paint = vec4<f32>(terms[0], p.color.a);
+    var paint = terms[0];
+    let lit = particle_emitter.flutter.w;
+    if (particle_emitter.flags.x & PARTICLE_FLAG_LIT) != 0u && lit > 0.0 {
+        paint *= mix(vec3<f32>(1.0), particle_light(p.position_size.xyz), lit);
+    }
+    out.paint = vec4<f32>(paint, p.color.a);
     out.glow = terms[1];
     return out;
 }

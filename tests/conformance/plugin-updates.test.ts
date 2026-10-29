@@ -14,11 +14,13 @@ import {
   PluginSourceKind,
 } from "../../src/shared/plugins.ts";
 import {
+  chosenUpdates,
   createPluginsStore,
   installPluginUpdate,
   PLUGIN_INDEX_POLL_MS,
   PluginUpdateSource,
   pluginUpdates,
+  updateKey,
 } from "../../src/renderer/state/plugins.ts";
 import { createStudio, type StudioTimers } from "../../src/renderer/state/studio.ts";
 import type { VisibilitySource } from "../../src/renderer/state/visibility.ts";
@@ -94,6 +96,22 @@ describe("which installed plugins have an update waiting", () => {
   });
 });
 
+describe("choosing which updates to take", () => {
+  it("keeps every update but the unticked ones, and offers a newer release of an unticked plugin again", () => {
+    const list = [plugin("blender"), plugin("genex", { availableVersion: "1.5.0" })];
+    const [blender, genex] = pluginUpdates(list, index(["blender", "2.0.0"]));
+    assert.ok(blender && genex);
+    const skipped = new Set([updateKey(blender)]);
+    assert.deepEqual(
+      chosenUpdates([blender, genex], skipped).map((update) => update.plugin.manifest.id),
+      ["genex"],
+    );
+    const [newer] = pluginUpdates(list, index(["blender", "2.1.0"]));
+    assert.ok(newer);
+    assert.deepEqual(chosenUpdates([newer], skipped), [newer], "2.1.0 was never unticked");
+  });
+});
+
 describe("installing a plugin's update", () => {
   it("takes a seed through install's review, and an index release through update", async () => {
     const fake = fakeStudioApi();
@@ -154,6 +172,15 @@ describe("Update plugins: every waiting update, one after another", () => {
     assert.deepEqual(await store.updateAll(), [refused]);
     assert.deepEqual(fake.callsOf("pluginUpdate"), [["blender"]], "the next plugin is still updated");
     assert.equal(store.getState().updating, false);
+  });
+
+  it("leaves out the updates the person unticked", async () => {
+    const { fake, store } = await withUpdates();
+    const [seed] = pluginUpdates(store.getState().list, store.getState().index);
+    assert.ok(seed);
+    assert.deepEqual(await store.updateAll(new Set([updateKey(seed)])), []);
+    assert.deepEqual(fake.callsOf("pluginInstall"), [], "genex was unticked");
+    assert.deepEqual(fake.callsOf("pluginUpdate"), [["blender"]]);
   });
 
   it("is one run at a time", async () => {

@@ -24,8 +24,8 @@ import {
   leadWorking,
   onStartingPoint,
   partRows,
-  PictureSource,
   readyToPlay,
+  RoundPictureSource,
   resultGate,
   resultStatus,
   rowMeta,
@@ -763,8 +763,8 @@ describe("the picture a card shows", () => {
     const { rows } = rowsOf(restartedNight());
     const sword = must(rowOf(rows, "sword").steps[0], "the session step");
     assert.equal(sword.builder, "sword2");
-    assert.deepEqual(sword.picture, {
-      source: PictureSource.Builder,
+    assert.deepEqual(sword.roundPicture, {
+      source: RoundPictureSource.Builder,
       worker: "sword2",
       iteration: 1,
       start: { commit: "start", movedOnAt: "2026-09-19T15:44:00.000Z" },
@@ -774,20 +774,20 @@ describe("the picture a card shows", () => {
   it("shows a restarted loop's judged frame for a judged round and its own capture for the round in hand", () => {
     const land = rowOf(rowsOf(restartedNight()).rows, "land");
     assert.deepEqual(
-      land.steps.map((step) => [step.builder, step.picture.source]),
+      land.steps.map((step) => [step.builder, step.roundPicture.source]),
       [
-        ["land", PictureSource.Judged],
-        ["land2", PictureSource.Judged],
-        ["land2", PictureSource.Builder],
+        ["land", RoundPictureSource.Judged],
+        ["land2", RoundPictureSource.Judged],
+        ["land2", RoundPictureSource.Builder],
       ],
     );
     const [, judgedByLand2, inHand] = land.steps;
-    assert.deepEqual(must(judgedByLand2, "land2's judged step").picture, {
-      source: PictureSource.Judged,
+    assert.deepEqual(must(judgedByLand2, "land2's judged step").roundPicture, {
+      source: RoundPictureSource.Judged,
       shot: { camera: "default", path: "/runs/run_ice/land2/1/default.jpg" },
     });
-    assert.deepEqual(must(inHand, "the step in hand").picture, {
-      source: PictureSource.Builder,
+    assert.deepEqual(must(inHand, "the step in hand").roundPicture, {
+      source: RoundPictureSource.Builder,
       worker: "land2",
       iteration: 2,
       start: { commit: "start", movedOnAt: "2026-09-19T15:44:00.000Z" },
@@ -824,7 +824,7 @@ describe("the picture a card shows", () => {
     assert.equal(step.builder, "land2", "the worker on the step now, never the attempt a restart replaced");
     assert.deepEqual(
       step.tryPictures.map((picture) => picture.source),
-      [PictureSource.Judged, PictureSource.None],
+      [RoundPictureSource.Judged, RoundPictureSource.None],
     );
   });
 
@@ -857,7 +857,12 @@ describe("the picture a card shows", () => {
     assert.deepEqual(graph.restarts, [{ worker: "land2", part: "land", offset: 2 }]);
     const inHand = must(rowOf(rows, "land").steps.at(-1), "the step in hand");
     assert.equal(inHand.shown?.iteration, 3);
-    assert.deepEqual(inHand.picture, { source: PictureSource.Builder, worker: "land2", iteration: 1, start: null });
+    assert.deepEqual(inHand.roundPicture, {
+      source: RoundPictureSource.Builder,
+      worker: "land2",
+      iteration: 1,
+      start: null,
+    });
   });
 
   it("shows nothing for an undone try whose build showed no frame, never an older builder capture", () => {
@@ -866,7 +871,7 @@ describe("the picture a card shows", () => {
     events.push(judged("land", 4, "incumbent", { shots: [] }));
     const mountain = must(rowOf(rowsOf(events).rows, "land").steps.at(-1), "the mountain step");
     assert.equal(mountain.shown?.iteration, 4);
-    assert.deepEqual(mountain.picture, { source: PictureSource.None });
+    assert.deepEqual(mountain.roundPicture, { source: RoundPictureSource.None });
   });
 
   it("keeps a kept try's own builder capture when its pass saved no frame", () => {
@@ -875,7 +880,12 @@ describe("the picture a card shows", () => {
     events.push(judged("land", 4, "challenger", { shots: [] }));
     const mountain = must(rowOf(rowsOf(events).rows, "land").steps.at(-1), "the mountain step");
     assert.equal(mountain.shown?.iteration, 4);
-    assert.deepEqual(mountain.picture, { source: PictureSource.Builder, worker: "land", iteration: 4, start: null });
+    assert.deepEqual(mountain.roundPicture, {
+      source: RoundPictureSource.Builder,
+      worker: "land",
+      iteration: 4,
+      start: null,
+    });
   });
 
   it("gives every try of a step its own picture: the judged frame, nothing for a failed build, else its builder's capture", () => {
@@ -890,8 +900,8 @@ describe("the picture a card shows", () => {
       [4, 5],
     );
     assert.deepEqual(mountain.tryPictures, [
-      { source: PictureSource.None },
-      { source: PictureSource.Builder, worker: "land", iteration: 5, start: null },
+      { source: RoundPictureSource.None },
+      { source: RoundPictureSource.Builder, worker: "land", iteration: 5, start: null },
     ]);
     const shore = must(
       land.steps.find((step) => step.tries.some((node) => node.iteration === 2)),
@@ -899,7 +909,7 @@ describe("the picture a card shows", () => {
     );
     assert.deepEqual(
       shore.tryPictures.map((picture) => picture.source),
-      [PictureSource.Judged, PictureSource.Judged],
+      [RoundPictureSource.Judged, RoundPictureSource.Judged],
     );
   });
 
@@ -907,7 +917,7 @@ describe("the picture a card shows", () => {
     const { rows } = rowsOf(restartedNight());
     assert.deepEqual(must(rowOf(rows, "land").steps.at(-1), "the step in hand").tryPictures, [
       {
-        source: PictureSource.Builder,
+        source: RoundPictureSource.Builder,
         worker: "land2",
         iteration: 2,
         start: { commit: "start", movedOnAt: "2026-09-19T15:44:00.000Z" },
@@ -921,16 +931,16 @@ describe("the picture a card shows", () => {
     const graph = must(buildRunGraph(loopRun({ finished: false })), "the graph");
     const rows = partRows(graph, null);
     const sword = must(rowOf(rows, "sword").steps[0], "the session step");
-    assert.deepEqual(sword.picture, {
-      source: PictureSource.Builder,
+    assert.deepEqual(sword.roundPicture, {
+      source: RoundPictureSource.Builder,
       worker: "sword",
       iteration: 1,
       start: null,
     });
     const inHand = must(rowOf(rows, "land").steps.at(-1), "the step in hand");
     assert.deepEqual(
-      [inHand.builder, inHand.picture],
-      ["land", { source: PictureSource.Builder, worker: "land", iteration: 5, start: null }],
+      [inHand.builder, inHand.roundPicture],
+      ["land", { source: RoundPictureSource.Builder, worker: "land", iteration: 5, start: null }],
     );
   });
 
@@ -1024,6 +1034,8 @@ describe("why a worker stopped short, on its card", () => {
     verdict: null,
     note: null,
     merged: false,
+    startedSeq: null,
+    settledSeq: null,
   });
   it("says the end record's code in the app's words, and nothing without one: the record's own reason is the lead's", () => {
     const cases: Array<[string, WorkerInfo, string | null]> = [

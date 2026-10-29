@@ -152,9 +152,10 @@ fn copy_size(len: usize) -> u64 {
     (len as u64).next_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
 }
 
-/// The smallest table: one row of the largest table struct (an `Instance`, 160 bytes) fits, so
-/// an empty table still binds where a shader expects at least one element.
-const TABLE_MIN_BYTES: u64 = 256;
+/// The smallest table: one row of the largest table struct (a `GxMaterialExt`, 272 bytes) fits,
+/// so an empty table still binds where a shader expects at least one element.
+const TABLE_MIN_BYTES: u64 = 512;
+const _: () = assert!(TABLE_MIN_BYTES >= std::mem::size_of::<crate::abi::GxMaterialExt>() as u64);
 
 /// `bytes` rounded up to a multiple of 16 (wgpu's copy alignment), at least [`TABLE_MIN_BYTES`].
 pub(crate) fn aligned(bytes: u64) -> u64 {

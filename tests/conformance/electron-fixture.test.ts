@@ -10,6 +10,27 @@ test("macOS fixture launch requests mock cookie encryption before app arguments"
   ]);
   assert.deepEqual(fixtureElectronArgs(["."], "linux"), ["."]);
 });
+test("a macOS fixture launch can stand in a computer's language list for its process alone", () => {
+  const rows: Array<[string, string | undefined, string[]]> = [
+    ["a Japanese Mac", "ja-JP,en-US", ["-AppleLanguages", "(ja-JP, en-US)"]],
+    ["a Traditional Chinese Mac", "zh-Hant-TW", ["-AppleLanguages", "(zh-Hant-TW)"]],
+    ["none asked for", undefined, []],
+    ["a tag smuggling an argument", "ja-JP) --inspect (", []],
+    ["a switch in its place", "--remote-debugging-port=9222", []],
+    ["one good tag among bad ones", "ko-KR,;rm -rf,", ["-AppleLanguages", "(ko-KR)"]],
+  ];
+  for (const [name, list, extra] of rows)
+    assert.deepEqual(
+      fixtureElectronArgs(["."], "darwin", { STUDIO_FIXTURE_SYSTEM_LANGUAGES: list }),
+      ["--use-mock-keychain", ".", ...extra],
+      name,
+    );
+  assert.deepEqual(
+    fixtureElectronArgs(["."], "linux", { STUDIO_FIXTURE_SYSTEM_LANGUAGES: "ja-JP" }),
+    ["."],
+    "only macOS",
+  );
+});
 test("fixture launch disables Studio OS credentials and live checks regardless of inherited opt-ins", () => {
   const source = {
     PATH: "/fixture",

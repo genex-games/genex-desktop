@@ -1,6 +1,6 @@
 import type { ConnectionSnapshot } from "../shared/connections.ts";
+import { t } from "../shared/i18n.ts";
 import { McpHealth } from "../shared/mcp.ts";
-import { plural } from "../shared/skill-words.ts";
 
 type Source = ConnectionSnapshot["sources"][number];
 /** Configuration is not authentication, runtime readiness, or permission to spend. */
@@ -20,8 +20,13 @@ function needsAttention(source: Source): boolean {
 export function connectionHeadline(sources: Source[]): string {
   const enabled = sources.filter((s) => s.enabled);
   const attention = enabled.filter((s) => connectionReadiness(s) === "needs attention").length;
-  const checked = attention
-    ? ` · ${attention} need${attention === 1 ? "s" : ""} attention`
-    : " · permissions checked when used";
-  return `${plural(enabled.length, "tool source")} enabled${checked}`;
+  const count = enabled.length;
+  return attention
+    ? t(
+        "{count, plural, one {# tool source} other {# tool sources}} enabled · {attention, plural, one {# needs attention} other {# need attention}}",
+        { count, attention },
+      )
+    : t("{count, plural, one {# tool source} other {# tool sources}} enabled · permissions checked when used", {
+        count,
+      });
 }

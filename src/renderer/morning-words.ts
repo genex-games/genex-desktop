@@ -9,6 +9,7 @@
  * that promises a playable build must not appear over a card with no Play on it.
  */
 import { loopRunWords, withoutIds } from "./words.ts";
+import { t } from "../shared/i18n.ts";
 
 export interface MorningLoopRun {
   /** rounds a judge saw */
@@ -98,5 +99,7 @@ export function morningWords(loopRun: MorningLoopRun): MorningWords {
 
 /** Why a run has no report of its own. */
 function noReportWords(paused: boolean): string {
-  return paused ? "It was paused before it could write up the build." : "It ended before it could write up the build.";
+  return paused
+    ? t("It was paused before it could write up the build.")
+    : t("It ended before it could write up the build.");
 }

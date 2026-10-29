@@ -56,7 +56,10 @@
 //! ([`crate::settings::TaaQuality`]). The jitter is Halton(2, 3) keyed to the frame index
 //! ([`crate::jitter`]); history starts over on every [`crate::settle::HistoryReset`] (a camera cut
 //! among them, [`resets_history`]), when the node's history was (re)allocated, and never on an
-//! exposure change. Captures settle one whole jitter cycle on capture-owned history (RQ5.4).
+//! exposure change. Captures settle one whole jitter cycle on capture-owned history (RQ5.4),
+//! flagged [`TaaFlags::SETTLE`]: every re-render takes its raw sample with the box's weight, and
+//! the history is rectified only while auto exposure meters, so a still capture is its cycle's mean
+//! (R-12).
 //!
 //! The renderer encodes nodes 15a and 17 since RQ5.6: the jitter reaches `FrameUniforms::jitter`
 //! and every camera depth writer's `gx_clip_position`, the histories are the renderer's
@@ -170,6 +173,29 @@ pub const NOISE_REACTIVE_CUT: f32 = 8.0;
 /// clears the noise too: measured against the stale history of a reset frame, a cube's first
 /// outline was held as a faint ring after it moved away (tests/taa_frame.rs).
 pub const NOISE_HOLD_REACH: [f32; 2] = [2.0, 4.0];
+/// How far the history's footprint (the 2x2 texels it was read from) may lie outside this frame's
+/// colour box, in spans of the box plus [`STALE_FLOOR`] (tonemapped luma), before the history
+/// counts as stale, fully at the second (`GX_TAA_STALE_RATIO`), on a frame whose shadows may move
+/// ([`TaaFlags::SHADOWS_MOVE`]), under a still camera on one smooth surface: a stale pixel's box
+/// does not grow by its noise (the noise is kept: clearing it too popped a pixel of the Lakeside
+/// ridge's creeping shadow row, where a detail read as stale for one frame). A moving object's
+/// shadow edge that passed over a still floor leaves its history wholly outside the box. Without
+/// it the noise the passing edge raised kept the box grown for about twenty frames, and the
+/// template's turning block's shadow was held as a rounded blob (Bodycam, 2026-10-28: 156 ghost pixels at 384x256 against
+/// the TAA-off frame, now 27, worst 34 levels; tests/taa_frame.rs).
+pub const STALE_RATIO: [f32; 2] = [0.0, 0.5];
+/// See [`STALE_RATIO`] (`GX_TAA_STALE_FLOOR`).
+pub const STALE_FLOOR: f32 = 0.02;
+/// The camera's motion at the pixel (render pixels a frame) over which the stale test fades out,
+/// gone at the second (`GX_TAA_STALE_CAMERA_PX`): history the camera's motion resampled between
+/// texels strays from a tight colour box by itself (the bench-outdoor pans' far detail at 4 px a
+/// frame lost 0.90 -> 0.78 of its still sharpness without it).
+pub const STALE_CAMERA_PX: [f32; 2] = [0.05, 0.2];
+/// The neighbourhood's depth-key spread (a share of its closest key) over which the stale test
+/// fades out, gone at the second (`GX_TAA_STALE_DEPTH_SPREAD`): a sub-pixel detail the jitter
+/// missed this frame sits at a depth edge (a far tree's tip against the sky); a shadow passes over
+/// one smooth surface. The sky is never stale.
+pub const STALE_DEPTH_SPREAD: [f32; 2] = [0.02, 0.1];
 /// The colour box: the neighbourhood's mean ± this many standard deviations (tonemapped YCoCg),
 /// intersected with its min/max (`GX_TAA_VARIANCE_GAMMA` in taa.wgsl). FSR 2.2 weighs its samples
 /// `exp(-(2..3) d²)` by their distance from the unjittered centre at one deviation; measured here
@@ -236,11 +262,39 @@ impl TaaFlags {
     /// The history's rectification against the colour box, with the locks and the luma
     /// instability (always on in the renderer).
     pub const CLIP: TaaFlags = TaaFlags(1);
+    /// A settled capture's cycle (`GX_TAA_FLAG_SETTLE`): while the accumulation is above its
+    /// floor every frame takes its raw sample with the box's weight `1 / (n + 1)`, the reset
+    /// frame's too. Nothing moves across a capture's re-renders, and the reset frame's no-history
+    /// coverage took the filtered sample, which shrank that frame's share of a one-sample dither
+    /// towards its neighbours' (R-12: the LOD crossfade's stipple, D22). The renderer drops
+    /// [`TaaFlags::CLIP`] beside it once auto exposure has metered, so the cycle is its exact mean.
+    pub const SETTLE: TaaFlags = TaaFlags(2);
+    /// Shadows may have moved since last frame (`GX_TAA_FLAG_SHADOWS_MOVE`, [`shadows_move`]): a
+    /// caster moved, came or is skinned, or the sun turned. Only then does the resolve look for
+    /// stale history ([`STALE_RATIO`]): with every caster and the sun still, no shading on a still
+    /// surface changes, and a history outside the colour box is detail the jitter missed.
+    pub const SHADOWS_MOVE: TaaFlags = TaaFlags(4);
+
+    /// Both switches.
+    pub const fn with(self, other: TaaFlags) -> TaaFlags {
+        TaaFlags(self.0 | other.0)
+    }
 
     /// The bits the shader reads.
     pub const fn bits(self) -> u32 {
         self.0
     }
+}
+
+/// Whether this frame's shadows may have moved since last frame ([`TaaFlags::SHADOWS_MOVE`]): an
+/// instance row that moved, has no history (it came this frame) or is skinned (its previous-model
+/// rows, [`crate::motion::MotionHistory::apply`]), or a sun that turned.
+pub fn shadows_move(prev_models: &[crate::layout::GpuPrevModel], sun_turned: bool) -> bool {
+    let changed = |row: &crate::layout::GpuPrevModel| {
+        let flags = row.flags[0];
+        flags & crate::motion::MOTION_FLAG_NO_HISTORY != 0 || flags & crate::motion::MOTION_FLAG_STILL == 0
+    };
+    sun_turned || prev_models.iter().any(changed)
 }
 
 /// The resolve (graph node 17): a full-screen fragment pass.
@@ -287,11 +341,31 @@ struct ReactiveParticleOut {
     @location(1) alpha: f32,
 }
 
+// Ticks of its motion the coverage sweeps back over (Bodycam light fix): where a small falling
+// particle (a snowflake) was a frame or two ago is marked too, so TAA drops the history it left
+// there instead of holding it as noise and drawing the flake as a streak.
+const GX_REACTIVE_TRAIL_TICKS: f32 = 3.0;
+
+// A corner of the billboard's coverage: the billboard as drawn (`particle_corner_world`), swept
+// back along its motion across the view over at least GX_REACTIVE_TRAIL_TICKS.
+fn reactive_corner_world(p: Particle, shape: ParticleShape, corner: vec2<f32>) -> vec3<f32> {
+    let forward = frame.camera_forward.xyz;
+    let across = shape.motion.xyz - forward * dot(shape.motion.xyz, forward);
+    let trail = length(across) * max(particle_emitter.shape.w, GX_REACTIVE_TRAIL_TICKS);
+    if trail <= 1e-6 {
+        return particle_corner_world(p, shape, corner);
+    }
+    let half = p.position_size.w * 0.5;
+    let along = across / length(across);
+    let side = normalize(cross(along, forward));
+    return p.position_size.xyz + side * (corner.x * half) + along * (corner.y * (half + 0.5 * trail) - 0.5 * trail);
+}
+
 @vertex
 fn vs_reactive_particle(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> ReactiveParticleOut {
     let p = particles_drawn[instance];
     let corner = particle_quad_corner(vertex);
-    let world = particle_corner_world(p, particle_shapes_drawn[instance], corner);
+    let world = reactive_corner_world(p, particle_shapes_drawn[instance], corner);
     let clip = gx_clip_position(frame.view_proj, vec4<f32>(world, 1.0), gx_reactive_jitter.ndc.xy);
     return ReactiveParticleOut(clip, corner, p.color.a);
 }
@@ -1282,6 +1356,20 @@ pub fn taa_gpu_ms(gpu: &Gpu, render: (u32, u32), frames: u32) -> Result<Option<V
 mod tests {
     use super::*;
     use crate::settings::RenderSettings;
+
+    #[test]
+    fn shadows_move_when_a_caster_moves_comes_or_is_skinned_or_the_sun_turns() {
+        use crate::layout::GpuPrevModel;
+        use crate::motion::{MOTION_FLAG_MATCHED_BY_ID, MOTION_FLAG_NO_HISTORY, MOTION_FLAG_STILL};
+        let row = |flags: u32| GpuPrevModel { model: IDENTITY, flags: [flags, 0, 0, 0] };
+        let still = [row(MOTION_FLAG_STILL), row(MOTION_FLAG_STILL | MOTION_FLAG_MATCHED_BY_ID)];
+        assert!(!shadows_move(&still, false), "every caster and the sun still");
+        assert!(!shadows_move(&[], false), "nothing drawn");
+        assert!(shadows_move(&still, true), "the sun turned");
+        assert!(shadows_move(&[still[0], row(MOTION_FLAG_MATCHED_BY_ID)], false), "a named caster moved (or is skinned)");
+        assert!(shadows_move(&[still[0], row(0)], false), "an unnamed caster moved");
+        assert!(shadows_move(&[still[0], row(MOTION_FLAG_NO_HISTORY | MOTION_FLAG_STILL)], false), "a caster came this frame");
+    }
 
     #[test]
     fn accumulation_starts_whole_and_settles_at_the_floor() {

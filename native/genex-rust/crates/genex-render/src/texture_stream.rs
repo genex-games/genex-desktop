@@ -5,7 +5,7 @@
 //! not landed, so a swap is never one black frame.
 //!
 //! - **Rungs.** A texture is resident at its tail (the levels up to [`TAIL_SIDE`], loaded with its
-//!   cell) or at a size class's whole chain (`layout::TEXTURE_SIZE_CLASSES`), never above its own
+//!   cell) or at a size class's whole chain (`layout::TEXTURE_CLASS_SIDES`), never above its own
 //!   side. KTX 2.0 stores levels smallest first, so a promotion from rung `a` to `b` reads one byte
 //!   range ([`head_range`]) and the levels assembled from the tail and the head are bit-equal to the
 //!   whole file's ([`crate::texture::Ktx2Index::assemble`], STR-18).
@@ -24,7 +24,7 @@
 
 use std::ops::Range;
 
-use crate::layout::TEXTURE_SIZE_CLASSES;
+use crate::layout::TEXTURE_CLASS_SIDES;
 use crate::texture::{Ktx2Index, TextureFamily};
 
 /// The side of the tail every streamed texture keeps resident from its cell's load.
@@ -267,7 +267,7 @@ fn tail_of(side: u32) -> u32 {
 /// to its own side.
 pub fn rungs(side: u32) -> Vec<u32> {
     let tail = tail_of(side);
-    std::iter::once(tail).chain(TEXTURE_SIZE_CLASSES.into_iter().filter(|class| *class > tail && *class <= side)).collect()
+    std::iter::once(tail).chain(TEXTURE_CLASS_SIDES.into_iter().filter(|class| *class > tail && *class <= side)).collect()
 }
 
 /// The smallest rung of a `side` texture at least `needed` texels wide (its largest when none is).

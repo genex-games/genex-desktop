@@ -1,0 +1,51 @@
+{
+  "id": "rust.terrain",
+  "runtime": "rust-wgpu",
+  "title": "Ground that spans the world: one heightmap terrain with layers, grass and rocks standing on it, in Rust",
+  "tags": [
+    "terrain",
+    "ground",
+    "heightmap",
+    "hills",
+    "landscape",
+    "valley",
+    "beach",
+    "grass",
+    "meadow",
+    "layers",
+    "scatter",
+    "rocks",
+    "bushes",
+    "rust",
+    "wgpu",
+    "genex"
+  ],
+  "checkClass": "terrain",
+  "kind": "technique",
+  "pack": "rust",
+  "note": "Hills, valleys and beaches are one Terrain made in on_reset from a pure height function, painted by layers, grassed, and drawn with frame.terrain.",
+  "intent": "Ground across the world is one heightmap Terrain made once in on_reset, never a field of cubes. Terrain::from_fn([samples, samples], origin, spacing, height) takes a pure height function (genex::math for sin and cos, no world, no clock), or Terrain::from_heights(samples, origin, spacing, &heights) row-major. .with_layers(vec![..]) sets up to 16 layers, TerrainLayer::textured(albedo, data, tile) or TerrainLayer::flat(color); .with_control(&texels) paints one TerrainTexel::blend(base, overlay, amount) per height sample. A grassy layer gets .with_grass(Grass::meadow(density, height)); paint that layer near the grass's colour: low presets draw the ground alone. Draw it every frame with frame.terrain(&ground): one draw that never pops or cracks. terrain.height(x, z) puts the player and things on the ground, the same bits everywhere. Rocks and bushes come from terrain.scatter(&Scatter::new(density, &layers).on_flat_ground(0.9), min, max) once, kept as an InstanceGroup drawn with frame.group. Refusals (terrain-heights-invalid, terrain-layers-invalid, terrain-control-invalid) change nothing. A frame draws one terrain; a world past about a kilometre streams (rust.streamed-world).",
+  "sketch": "// src/facets/ground.rs — the facet's own module; src/main.rs adds its two FACET WIRING lines.\n// World (src/main.rs) holds player: Vec3, ground: Option<Terrain> and rocks: Option<InstanceGroup>.\nuse super::World;\nuse genex::prelude::*;\nuse genex::{Grass, InstanceGroup, Scatter, Terrain, TerrainLayer, TerrainTexel};\n\n/// Samples a side: 0.5 m apart over 192 m (at most 2049).\nconst SIDE: u32 = 385;\nconst SPACING: f32 = 0.5;\nconst ORIGIN: f32 = -96.0;\n\n/// The ground's height: pure (no world, no clock) and genex::math, so every destination agrees.\nfn hills(x: f32, z: f32) -> f32 {\n    6.0 * genex::math::sin(x / 23.0) * genex::math::cos(z / 31.0) + 1.5 * genex::math::sin((x + z) / 9.0)\n}\n\n/// One control texel per height sample: rock where the ground is steep, grass elsewhere.\nfn paint(i: u32) -> TerrainTexel {\n    let (x, z) = (ORIGIN + (i % SIDE) as f32 * SPACING, ORIGIN + (i / SIDE) as f32 * SPACING);\n    let slope = (hills(x + SPACING, z) - hills(x, z)).abs() / SPACING;\n    TerrainTexel::blend(0, 1, (slope * 1.5).min(1.0))\n}\n\npub fn wire(game: &mut Game<World>) {\n    game.on_reset(|sim, _, _, gfx| {\n        let layers = vec![\n            // 0: grass, painted close to the grass's own colour (low presets draw the ground alone)\n            TerrainLayer::flat(Color::rgb(70, 100, 44)).with_grass(Grass::meadow(36.0, 0.5)),\n            TerrainLayer::flat(Color::rgb(128, 124, 116)), // 1: rock\n        ];\n        let texels: Vec<TerrainTexel> = (0..SIDE * SIDE).map(paint).collect();\n        let made = Terrain::from_fn([SIDE, SIDE], vec2(ORIGIN, ORIGIN), SPACING, hills)\n            .and_then(|heights| heights.with_layers(layers))\n            .and_then(|layered| layered.with_control(&texels));\n        // A refusal (terrain-heights-invalid, -layers-invalid, -control-invalid) changes nothing.\n        let Ok(terrain) = made else { return };\n        // Rocks stand on the ground: scattered once, at this loading point, drawn as one group.\n        let rule = Scatter::new(0.05, &[0, 1]).with_scale(0.6, 1.4).on_flat_ground(0.9).with_cap(4000);\n        let spots = terrain.scatter(&rule, vec2(-90.0, -90.0), vec2(90.0, 90.0));\n        sim.world.rocks = InstanceGroup::models(&gfx.assets().model(\"rocks/boulder.glb\"), spots).ok();\n        let at = sim.world.player;\n        sim.world.player = vec3(at.x, terrain.height(at.x, at.z), at.z); // feet on the ground\n        sim.world.ground = Some(terrain);\n    });\n    game.on_draw(|sim, frame, _| {\n        frame.tag(\"ground\"); // counts the draws that follow\n        if let Some(terrain) = &sim.world.ground {\n            frame.terrain(terrain); // one draw, finer near the camera, no pops or cracks\n        }\n        frame.tag(\"rocks\");\n        if let Some(rocks) = &sim.world.rocks {\n            frame.group(rocks);\n        }\n    });\n    game.probe(\"ground\", |sim| json!({ \"made\": sim.world.ground.is_some(), \"y\": sim.world.player.y }));\n}\n",
+  "port": "The world's owner makes and draws the terrain; another facet places its things with terrain.height and never draws a second ground.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Terrain)",
+      "note": "Terrain::from_fn or from_heights, layers and a control texel per sample, grass on a layer, terrain.height, terrain.scatter and the three refusals."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Determinism)",
+      "note": "A height function uses genex::math, so the ground and everything placed on it are the same bits on every destination."
+    },
+    {
+      "source": "src/game-template-rust/docs/GENEX_API.md (Retained instance groups)",
+      "note": "Scattered rocks are made once and drawn as one group with frame.group."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

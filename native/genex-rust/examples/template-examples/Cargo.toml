@@ -1,0 +1,93 @@
+# The Rust template's copyable examples (src/game-template-rust/docs/examples/), built as the lane
+# builds a game folder, so they keep compiling and passing clippy as the facade changes: each
+# example's `src/main.rs` is a binary here, and tests/ seeds them, drives them and (on the host
+# GPU, `--ignored metal`) writes a capture of each.
+[package]
+name = "template-examples"
+description = "The Rust template's copyable examples: a lit interior room, an interior kit level, an FPS facet set, the first-person arms kit, the soldier kit, a third-person character, a crowd, an explosion, menus with save slots, the look recipes, a snowy yard a forest and set dressing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+# `cargo run -p template-examples --bin interior-room`: the room in a window (its CC0 maps read from
+# beside the binary, stand-in colours without them).
+[[bin]]
+name = "interior-room"
+path = "../../../../src/game-template-rust/docs/examples/interior-room/src/main.rs"
+
+[[bin]]
+name = "interior-kit"
+path = "../../../../src/game-template-rust/docs/examples/interior-kit/src/main.rs"
+
+[[bin]]
+name = "fps"
+path = "../../../../src/game-template-rust/docs/examples/fps/src/main.rs"
+
+[[bin]]
+name = "fps-arms"
+path = "../../../../src/game-template-rust/docs/examples/fps-arms/src/main.rs"
+
+[[bin]]
+name = "third-person"
+path = "../../../../src/game-template-rust/docs/examples/third-person/src/main.rs"
+
+[[bin]]
+name = "crowd"
+path = "../../../../src/game-template-rust/docs/examples/crowd/src/main.rs"
+
+[[bin]]
+name = "explosion"
+path = "../../../../src/game-template-rust/docs/examples/explosion/src/main.rs"
+
+[[bin]]
+name = "menus-saves"
+path = "../../../../src/game-template-rust/docs/examples/menus-saves/src/main.rs"
+
+[[bin]]
+name = "set-dressing"
+path = "../../../../src/game-template-rust/docs/examples/set-dressing/src/main.rs"
+
+[[bin]]
+name = "soldier"
+path = "../../../../src/game-template-rust/docs/examples/soldier/src/main.rs"
+
+# The yard dressed from the Content Library (its entries read from beside the binary, stand-ins without them).
+[[bin]]
+name = "library-yard"
+path = "../../../../src/game-template-rust/docs/examples/library-yard/src/main.rs"
+
+# The look recipes: one light-and-look pair per scene type on a greybox stage.
+[[bin]]
+name = "looks"
+path = "../../../../src/game-template-rust/docs/examples/looks/src/main.rs"
+
+[[bin]]
+name = "exterior-snow"
+path = "../../../../src/game-template-rust/docs/examples/exterior-snow/src/main.rs"
+
+# `cargo run -p template-examples --bin forest`: a winter birch grove and a summer forest, every plant
+# grown by `gfx.plant` (no asset files).
+[[bin]]
+name = "forest"
+path = "../../../../src/game-template-rust/docs/examples/forest/src/main.rs"
+
+[features]
+default = ["studio"]
+studio = ["genex/studio"]
+
+[dependencies]
+# What the examples' genex.toml switch on: physics and animation (the FPS set, the third-person
+# hero), navigation (the crowd) and audio (the explosion).
+genex = { workspace = true, features = ["physics", "animation", "nav", "audio"] }
+
+[dev-dependencies]
+# The FPS rows' enemy and the third-person hero: the characters example's mannequin GLB, written
+# in code.
+characters = { path = "../characters" }
+image = { workspace = true }

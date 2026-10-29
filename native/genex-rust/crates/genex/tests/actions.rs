@@ -93,7 +93,9 @@ fn while_a_hud_text_field_has_focus_space_does_not_fire_jump() {
     rt.inject(Input::key_tap(Key::Space));
     rt.step(FIXED_STEP_MS);
     assert_eq!(rt.sim().world.jumps, 1, "nothing focused: Space is jump");
-    let (x, y) = (12.0 / 400.0, 10.0 / 300.0);
+    // The field sits inside the HUD margin (R-25): aim at its centre.
+    let field = rt.hud_widgets().into_iter().next().expect("the text field");
+    let [x, y] = field.center_fraction([400, 300]);
     rt.inject(Input::pointer(x, y));
     rt.step(FIXED_STEP_MS);
     rt.inject(Input::click_at(x, y));

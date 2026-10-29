@@ -290,6 +290,7 @@ export function refusalProblem(refusal: {
     lines: refusal.lines ?? [],
     needsInstall: false,
     install: null,
+    skippedScripts: null,
     showingLastBuild: refusal.showingLastBuild ?? false,
     at: refusal.at,
     reason: refusal.reason,
@@ -339,6 +340,8 @@ type RunStep = Pick<RunRequest, "env" | "policy" | "label">;
  * cancelled once no caller waits on it any more (or by `cancelAll`).
  */
 interface InFlight {
+  /** The game it builds (its folder or a copy of it). */
+  project: string;
   controller: AbortController;
   done: Promise<BuildOutcome>;
   /** The callers still waiting on it; one without a signal waits until it ends. */
@@ -396,7 +399,7 @@ export class CppBuilds {
     const controller = new AbortController();
     const start = () => this.#ensure(pending, controller.signal);
     const done = cancelled ? cancelled.done.then(start, start) : start();
-    const flight: InFlight = { controller, done, waiters: 0 };
+    const flight: InFlight = { project: pending.input.project, controller, done, waiters: 0 };
     this.#inFlight.set(pending.bin, flight);
     const forget = () => {
       if (this.#inFlight.get(pending.bin) === flight) this.#inFlight.delete(pending.bin);
@@ -448,6 +451,11 @@ export class CppBuilds {
    */
   cancelAll(): void {
     for (const flight of this.#inFlight.values()) flight.controller.abort();
+  }
+
+  /** Composer Stop: aborts `project`'s builds in flight or waiting, of its folder and every copy; other games' go on. */
+  cancelGame(project: string): void {
+    for (const flight of this.#inFlight.values()) if (flight.project === project) flight.controller.abort();
   }
 
   /**
@@ -897,6 +905,7 @@ export class CppBuilds {
       lines: note ? [note, ...outputLines(result, PROBLEM_LINES - 1)] : outputLines(result, PROBLEM_LINES),
       needsInstall: false,
       install: null,
+      skippedScripts: null,
       showingLastBuild: lastGood !== null,
       at: this.#at(),
       reason: failureReason(result, signal),

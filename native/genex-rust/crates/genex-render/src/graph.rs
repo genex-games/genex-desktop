@@ -79,8 +79,8 @@ pub enum NodeId {
     Ao,
     /// 10a: contact shadows (RQ4).
     ContactShadows,
-    /// 10b: screen-space reflections (renderer pass 2 B.9): the surface pass, the nearest-depth
-    /// Hi-Z, the trace and the resolve.
+    /// 10b: screen-space reflections (renderer pass 2 B.9): the nearest-depth Hi-Z, the trace and
+    /// the resolve over the surface texel the prepass wrote (lane FR).
     Ssr,
     /// 11: sky LUTs, aerial perspective and the environment bake (RQ2).
     Environment,

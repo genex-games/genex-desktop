@@ -20,6 +20,7 @@ import {
   checkLinuxIsolation,
   isolationProblem,
 } from "../../src/substrate/linux-isolation.ts";
+import { ownBubblewrap } from "../../src/substrate/linux-bubblewrap.ts";
 import { SandboxUnavailableError } from "../../src/substrate/sandbox-unavailable.ts";
 import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -83,6 +84,8 @@ describe("the command that installs the profile", { skip: POSIX_ONLY }, () => {
     await stub("sudo", 'exec "$@"');
     await stub("tee", 'echo "$1" > "$ROOT/tee-target"; cat > "$ROOT/written"');
     await stub("apparmor_parser", 'echo "$*" > "$ROOT/parser-args"');
+    await stub("install", 'printf "%s\\n" "$@" > "$ROOT/install-args"');
+    await stub("bwrap", "exit 0");
     const result = spawnSync("/bin/sh", ["-c", command], {
       cwd: root,
       env: { PATH: `${bin}:/usr/bin:/bin`, ROOT: root },
@@ -91,10 +94,12 @@ describe("the command that installs the profile", { skip: POSIX_ONLY }, () => {
     const read = (name: string) => readFile(path.join(root, name), "utf8").catch(() => null);
     return {
       root,
+      bin,
       status: result.status,
       written: await read("written"),
       target: (await read("tee-target"))?.trim(),
       parser: (await read("parser-args"))?.trim(),
+      install: (await read("install-args"))?.trim().split("\n") ?? null,
     };
   }
 
@@ -106,6 +111,40 @@ describe("the command that installs the profile", { skip: POSIX_ONLY }, () => {
     assert.equal(ran.written, appArmorProfile(DEB_EXEC));
     assert.equal(ran.target, "/etc/apparmor.d/genex");
     assert.equal(ran.parser, "-r /etc/apparmor.d/genex");
+  });
+
+  it("copies nothing beside the app unless asked", async () => {
+    const ran = await runCommand(appArmorAllowCommand(DEB_EXEC) ?? "");
+    assert.equal(ran.install, null);
+  });
+
+  it("where the system confines bubblewrap, also gives the app its own copy beside it", async () => {
+    const command = appArmorAllowCommand(DEB_EXEC, { profile: true, ownBubblewrap: true });
+    assert.ok(command);
+    const ran = await runCommand(command);
+    assert.equal(ran.status, 0);
+    assert.equal(ran.written, appArmorProfile(DEB_EXEC));
+    assert.deepEqual(ran.install, ["-m", "0755", path.join(ran.bin, "bwrap"), "/usr/lib/genex/bwrap"]);
+  });
+
+  it("without the namespace restriction, only copies bubblewrap", async () => {
+    const command = appArmorAllowCommand(DEB_EXEC, { profile: false, ownBubblewrap: true });
+    assert.ok(command);
+    const ran = await runCommand(command);
+    assert.equal(ran.status, 0);
+    assert.equal(ran.written, null);
+    assert.deepEqual(ran.install, ["-m", "0755", path.join(ran.bin, "bwrap"), "/usr/lib/genex/bwrap"]);
+  });
+
+  it("carries a hostile path into the copy's target literally, running nothing it holds", async () => {
+    for (const execPath of ["/home/a b/Genex/genex", "/home/$(touch pwned)/genex", "/home/x; touch pwned; /genex"]) {
+      const command = appArmorAllowCommand(execPath, { profile: true, ownBubblewrap: true });
+      assert.ok(command, execPath);
+      const ran = await runCommand(command);
+      assert.equal(ran.status, 0, execPath);
+      assert.equal(ran.install?.at(-1), path.posix.join(path.posix.dirname(execPath), "bwrap"), execPath);
+      assert.equal(existsSync(path.join(ran.root, "pwned")), false, execPath);
+    }
   });
 
   it("carries a hostile but representable path into the profile literally, running nothing it holds", async () => {
@@ -147,14 +186,29 @@ describe("AppArmor's user-namespace restriction", () => {
 
 describe("the isolation problem", () => {
   it("under AppArmor's restriction offers the profile for this executable", () => {
-    assert.deepEqual(isolationProblem({ details: [BWRAP_REFUSAL], restricted: true, execPath: DEB_EXEC }), {
-      code: SandboxProblemCode.IsolationBlocked,
-      platform: StudioPlatform.Linux,
-      missingTools: [],
-      installCommands: [],
-      details: [BWRAP_REFUSAL],
-      allowCommand: appArmorAllowCommand(DEB_EXEC),
-    });
+    assert.deepEqual(
+      isolationProblem({ details: [BWRAP_REFUSAL], restricted: true, execPath: DEB_EXEC, bwrapConfined: false }),
+      {
+        code: SandboxProblemCode.IsolationBlocked,
+        platform: StudioPlatform.Linux,
+        missingTools: [],
+        installCommands: [],
+        details: [BWRAP_REFUSAL],
+        allowCommand: appArmorAllowCommand(DEB_EXEC),
+      },
+    );
+  });
+
+  it("where the system confines bubblewrap, the command also copies it beside the app", () => {
+    const confined = { details: [BWRAP_REFUSAL], execPath: DEB_EXEC, bwrapConfined: true };
+    assert.equal(
+      isolationProblem({ ...confined, restricted: true }).allowCommand,
+      appArmorAllowCommand(DEB_EXEC, { profile: true, ownBubblewrap: true }),
+    );
+    assert.equal(
+      isolationProblem({ ...confined, restricted: false }).allowCommand,
+      appArmorAllowCommand(DEB_EXEC, { profile: false, ownBubblewrap: true }),
+    );
   });
 
   it("offers no command without the restriction, or for an executable the profile cannot name", () => {
@@ -162,7 +216,7 @@ describe("the isolation problem", () => {
       [false, DEB_EXEC],
       [true, "/opt/Genex*/genex"],
     ] as const) {
-      const problem = isolationProblem({ details: [BWRAP_REFUSAL], restricted, execPath });
+      const problem = isolationProblem({ details: [BWRAP_REFUSAL], restricted, execPath, bwrapConfined: false });
       assert.equal(problem.code, SandboxProblemCode.IsolationBlocked);
       assert.equal(problem.allowCommand, undefined, `${restricted} ${execPath}`);
       assert.deepEqual(problem.details, [BWRAP_REFUSAL]);
@@ -170,50 +224,56 @@ describe("the isolation problem", () => {
   });
 });
 
+/** A sandbox-runtime stand-in whose wrapped command is `argv`; `wrapped` counts the wraps. */
+function runtime(argv: string[]) {
+  const calls = { wrapped: 0 };
+  const fake = {
+    isSupportedPlatform: () => true,
+    checkDependencies: () => ({ errors: [], warnings: [] }),
+    initialize: async () => {},
+    reset: async () => {},
+    updateConfig: () => {},
+    wrapWithSandboxArgv: async () => {
+      calls.wrapped++;
+      return { argv, env: {} };
+    },
+    annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
+  } as unknown as SandboxRuntime;
+  return { fake, calls };
+}
+
+async function sandbox(fake: SandboxRuntime, platform: NodeJS.Platform, enabled = true) {
+  const root = await tmpDir("linux-isolation-");
+  return ProcessSandbox.create({
+    writableRoots: [root],
+    scratchDir: path.join(root, "scratch"),
+    secretPaths: [],
+    runtime: fake,
+    platform,
+    enabled,
+  });
+}
+
+async function restrictedProc(): Promise<string> {
+  const proc = await tmpDir("proc-");
+  await mkdir(path.join(proc, "sys", "kernel"), { recursive: true });
+  await writeFile(path.join(proc, "sys", "kernel", "apparmor_restrict_unprivileged_userns"), "1\n");
+  return proc;
+}
+
 describe("checking the sandbox at startup", { skip: POSIX_ONLY }, () => {
-  /** A sandbox-runtime stand-in whose wrapped command is `argv`; `wrapped` counts the wraps. */
-  function runtime(argv: string[]) {
-    const calls = { wrapped: 0 };
-    const fake = {
-      isSupportedPlatform: () => true,
-      checkDependencies: () => ({ errors: [], warnings: [] }),
-      initialize: async () => {},
-      reset: async () => {},
-      updateConfig: () => {},
-      wrapWithSandboxArgv: async () => {
-        calls.wrapped++;
-        return { argv, env: {} };
-      },
-      annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
-    } as unknown as SandboxRuntime;
-    return { fake, calls };
-  }
-
-  async function sandbox(fake: SandboxRuntime, platform: NodeJS.Platform, enabled = true) {
-    const root = await tmpDir("linux-isolation-");
-    return ProcessSandbox.create({
-      writableRoots: [root],
-      scratchDir: path.join(root, "scratch"),
-      secretPaths: [],
-      runtime: fake,
-      platform,
-      enabled,
-    });
-  }
-
-  async function restrictedProc(): Promise<string> {
-    const proc = await tmpDir("proc-");
-    await mkdir(path.join(proc, "sys", "kernel"), { recursive: true });
-    await writeFile(path.join(proc, "sys", "kernel", "apparmor_restrict_unprivileged_userns"), "1\n");
-    return proc;
-  }
-
   it("a sandbox that cannot start a process is the setup problem, with bwrap's own words", async () => {
     const { fake } = runtime(["/bin/sh", "-c", `echo '${BWRAP_REFUSAL}' >&2; exit 1`]);
     const linux = await sandbox(fake, StudioPlatform.Linux);
     try {
       const procRoot = await restrictedProc();
-      const check = checkLinuxIsolation(linux, { platform: StudioPlatform.Linux, procRoot, execPath: DEB_EXEC });
+      const etcRoot = await tmpDir("etc-");
+      const check = checkLinuxIsolation(linux, {
+        platform: StudioPlatform.Linux,
+        procRoot,
+        etcRoot,
+        execPath: DEB_EXEC,
+      });
       await assert.rejects(check, (error: unknown) => {
         assert.ok(error instanceof SandboxUnavailableError);
         assert.equal(error.problem.code, SandboxProblemCode.IsolationBlocked);
@@ -248,6 +308,64 @@ describe("checking the sandbox at startup", { skip: POSIX_ONLY }, () => {
       assert.equal(calls.wrapped, 0);
     } finally {
       await Promise.all([mac.dispose(), off.dispose()]);
+    }
+  });
+});
+
+describe("checking the sandbox where Ubuntu confines bubblewrap", { skip: POSIX_ONLY }, () => {
+  it("under Ubuntu's confinement of /usr/bin/bwrap, the setup command also copies it beside the app", async () => {
+    const { fake } = runtime(["/bin/sh", "-c", "echo 'apply-seccomp: write /proc/self/setgroups' >&2; exit 1"]);
+    const linux = await sandbox(fake, StudioPlatform.Linux);
+    try {
+      const etcRoot = await tmpDir("etc-");
+      await mkdir(path.join(etcRoot, "apparmor.d"));
+      await writeFile(path.join(etcRoot, "apparmor.d", "bwrap-userns-restrict"), "profile bwrap /usr/bin/bwrap {}\n");
+      const procRoot = await restrictedProc();
+      const check = checkLinuxIsolation(linux, {
+        platform: StudioPlatform.Linux,
+        procRoot,
+        etcRoot,
+        execPath: DEB_EXEC,
+      });
+      await assert.rejects(check, (error: unknown) => {
+        assert.ok(error instanceof SandboxUnavailableError);
+        assert.equal(
+          error.problem.allowCommand,
+          appArmorAllowCommand(DEB_EXEC, { profile: true, ownBubblewrap: true }),
+        );
+        return true;
+      });
+    } finally {
+      await linux.dispose();
+    }
+  });
+});
+
+describe("the app's own bubblewrap", () => {
+  it("is the copy beside the executable when there is one, else none (the system's then runs)", async () => {
+    const dir = await tmpDir("genex-exec-");
+    const execPath = path.join(dir, "genex");
+    assert.equal(ownBubblewrap(execPath), null);
+    await writeFile(path.join(dir, "bwrap"), "#!/bin/sh\n");
+    assert.equal(ownBubblewrap(execPath), path.join(dir, "bwrap"));
+  });
+
+  it("is what the Linux sandbox runs, and only there", async () => {
+    const dir = await tmpDir("genex-sandbox-");
+    const bubblewrap = path.join(dir, "bwrap");
+    for (const [platform, expected] of [
+      [StudioPlatform.Linux, bubblewrap],
+      [StudioPlatform.Mac, undefined],
+    ] as const) {
+      const box = await ProcessSandbox.create({
+        writableRoots: [dir],
+        scratchDir: path.join(dir, `scratch-${platform}`),
+        secretPaths: [],
+        platform,
+        enabled: false,
+        bubblewrap,
+      });
+      assert.equal(box.toRuntimeConfig(box.policy).bwrapPath, expected, platform);
     }
   });
 });

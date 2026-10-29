@@ -10,6 +10,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { currentLocale, t } from "../shared/i18n.ts";
 import { type EngineStatus, EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { OpenRouterSignInOutcome, type OpenRouterSignInResult } from "../shared/openrouter-login.ts";
 import { OPENROUTER_API } from "../substrate/engines/openrouter.ts";
@@ -32,20 +33,20 @@ const LISTEN_TRIES = 3;
 /** The name the key gets in the person's OpenRouter key list (they may change it there). */
 const KEY_LABEL = "Genex";
 
-/** What the person reads, in the app and on the page the browser lands on. */
+/** What the person reads, in the app and on the page the browser lands on, in main's language. */
 const MESSAGE = {
-  denied: "OpenRouter didn't connect Genex. Connect again, or paste a key instead.",
-  noKey: "OpenRouter didn't give Genex a key. Connect again.",
-  unreachable: "OpenRouter couldn't be reached. Check your connection and connect again.",
-  expired: "The sign-in took too long. Connect again.",
-  noBrowser: "Couldn't open your browser. Paste a key instead.",
-  noCallback: "Couldn't start the sign-in on this Mac. Paste a key instead.",
-  connectedTitle: "Genex is connected to OpenRouter",
-  connectedLine: "You can close this tab and go back to Genex.",
-  failedTitle: "OpenRouter didn't connect",
-  failedLine: (reason: string) => `${reason} Go back to Genex to try again.`,
-  notThisSignIn: "This page isn't from the sign-in Genex started.",
-  alreadyAnswered: "This sign-in is already finishing in Genex.",
+  denied: () => t("OpenRouter didn't connect Genex. Connect again, or paste a key instead."),
+  noKey: () => t("OpenRouter didn't give Genex a key. Connect again."),
+  unreachable: () => t("OpenRouter couldn't be reached. Check your connection and connect again."),
+  expired: () => t("The sign-in took too long. Connect again."),
+  noBrowser: () => t("Couldn't open your browser. Paste a key instead."),
+  noCallback: () => t("Couldn't start the sign-in on this Mac. Paste a key instead."),
+  connectedTitle: () => t("Genex is connected to OpenRouter"),
+  connectedLine: () => t("You can close this tab and go back to Genex."),
+  failedTitle: () => t("OpenRouter didn't connect"),
+  failedLine: (reason: string) => t("{reason} Go back to Genex to try again.", { reason }),
+  notThisSignIn: () => t("This page isn't from the sign-in Genex started."),
+  alreadyAnswered: () => t("This sign-in is already finishing in Genex."),
 } as const;
 
 /** What the sign-in needs from the app around it. */
@@ -106,7 +107,7 @@ const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (c) => `&#
 
 /** The small page the browser lands on: no scripts, nothing loaded from anywhere. */
 function page(response: ServerResponse, status: number, title: string, line: string): void {
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+  const body = `<!doctype html><html lang="${currentLocale()}"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-content:center;gap:8px;text-align:center;font:15px/22px -apple-system,system-ui,sans-serif;background:#fafafa;color:#0c0c0c}h1{margin:0;font-size:22px;font-weight:500}p{margin:0;color:#707172}@media (prefers-color-scheme:dark){body{background:#0e0d0f;color:#eeeef0}p{color:#a8a9ac}}</style>
 </head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(line)}</p></body></html>`;
   response.writeHead(status, {
@@ -159,7 +160,7 @@ async function listenOnLoopback(handler: (request: IncomingMessage, response: Se
       closeAll([v4]);
     }
   }
-  throw new Error(MESSAGE.noCallback);
+  throw new Error(MESSAGE.noCallback());
 }
 
 /** Where codes are redeemed, and how. */
@@ -179,14 +180,14 @@ async function redeem(exchange: Exchange, sign: Pending, code: string): Promise<
       signal: AbortSignal.any([sign.abort.signal, AbortSignal.timeout(EXCHANGE_TIMEOUT_MS)]),
     });
   } catch {
-    throw new Error(MESSAGE.unreachable);
+    throw new Error(MESSAGE.unreachable());
   }
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
-    throw new Error(MESSAGE.noKey);
+    throw new Error(MESSAGE.noKey());
   }
   const body = (await response.json().catch(() => null)) as { key?: unknown } | null;
-  if (typeof body?.key !== "string" || !body.key) throw new Error(MESSAGE.noKey);
+  if (typeof body?.key !== "string" || !body.key) throw new Error(MESSAGE.noKey());
   return body.key;
 }
 
@@ -202,7 +203,7 @@ async function connectWithCode(
     if (status.code === EngineStatusCode.Ready) return { outcome: OpenRouterSignInOutcome.Connected };
     return failed(status.detail);
   } catch (error) {
-    return failed(error instanceof Error ? error.message : MESSAGE.noKey);
+    return failed(error instanceof Error ? error.message : MESSAGE.noKey());
   }
 }
 
@@ -230,21 +231,21 @@ async function answerCallback(
   // OpenRouter returns no state when the person declines; an answer without a code ends only this sign-in.
   const declined = !code && url.searchParams.has("error") && !url.searchParams.has("state");
   if (!declined && !stateMatches(url, sign.state)) {
-    page(response, 400, MESSAGE.failedTitle, MESSAGE.notThisSignIn);
+    page(response, 400, MESSAGE.failedTitle(), MESSAGE.notThisSignIn());
     return;
   }
   if (sign.answered) {
-    page(response, 409, MESSAGE.failedTitle, MESSAGE.alreadyAnswered);
+    page(response, 409, MESSAGE.failedTitle(), MESSAGE.alreadyAnswered());
     return;
   }
   sign.answered = true;
   answering.onReturn?.();
   const result = code
     ? await connectWithCode(answering.exchange, sign, code, answering.saveKey)
-    : failed(MESSAGE.denied);
+    : failed(MESSAGE.denied());
   if (result.outcome === OpenRouterSignInOutcome.Failed)
-    page(response, 200, MESSAGE.failedTitle, MESSAGE.failedLine(result.error));
-  else page(response, 200, MESSAGE.connectedTitle, MESSAGE.connectedLine);
+    page(response, 200, MESSAGE.failedTitle(), MESSAGE.failedLine(result.error));
+  else page(response, 200, MESSAGE.connectedTitle(), MESSAGE.connectedLine());
   answering.finish(sign, result);
 }
 
@@ -302,7 +303,7 @@ export function createOpenRouterLogin(deps: OpenRouterLoginDeps): OpenRouterLogi
     async start(saveKey) {
       if (pending) finish(pending, { outcome: OpenRouterSignInOutcome.Cancelled });
       const { sign, ended } = newSignIn(deps.timeoutMs ?? SIGN_IN_TIMEOUT_MS, (late) =>
-        finish(late, failed(MESSAGE.expired)),
+        finish(late, failed(MESSAGE.expired())),
       );
       pending = sign;
       const answering: Answering = { exchange, saveKey, onReturn: deps.onReturn, finish };
@@ -316,10 +317,11 @@ export function createOpenRouterLogin(deps: OpenRouterLoginDeps): OpenRouterLogi
         if (pending !== sign) closeAll(sign.servers);
         sign.authUrl = authorizationUrl(authBase, loopback.port, challengeOf(sign.verifier), sign.state);
       } catch {
-        finish(sign, failed(MESSAGE.noCallback));
+        finish(sign, failed(MESSAGE.noCallback()));
         return ended;
       }
-      if (pending === sign) await deps.openExternal(sign.authUrl).catch(() => finish(sign, failed(MESSAGE.noBrowser)));
+      if (pending === sign)
+        await deps.openExternal(sign.authUrl).catch(() => finish(sign, failed(MESSAGE.noBrowser())));
       return ended;
     },
     async reopen() {

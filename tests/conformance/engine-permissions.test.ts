@@ -287,6 +287,18 @@ describe("a chat's own Claude session asks the person", () => {
       assert.ok((options.disallowedTools as string[]).includes(tool), `${tool} stays off`);
   });
 
+  it("a blind judge plays with its live tools alone: no file, shell, edit or question tool", async () => {
+    const { fn, seen } = fakeQuery();
+    await (await engineFor(fn)).delegate({ prompt: "play it", cwd: "/tmp/blind", readOnly: true, blind: true });
+    const options = seen[0]!;
+    for (const tool of ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "AskUserQuestion"])
+      assert.ok((options.disallowedTools as string[]).includes(tool), `${tool} is not a blind judge's`);
+    // Its built-ins are an allowlist, not only a block list: a live judge was offered Skill,
+    // Workflow (sub-agents with file tools), ScheduleWakeup and ReportFindings, which Claude Code
+    // added after the block list was written. Tool search stays: it loads the deferred live tools.
+    assert.deepEqual(options.tools, ["ToolSearch"], "no built-in but tool search");
+  });
+
   /**
    * Auto's classifier reads the studio's rules on top of Claude Code's own ("$defaults" first, its
    * soft and hard blocks untouched), in every mode: the picker can move a running session to Auto.
@@ -537,6 +549,19 @@ describe("a chat's own Claude session asks the person", () => {
       assert.ok(!ruleDenies(fence, "Read", path.join(home, "projects", name, "x")), `own stays reachable: ${name}`);
     // Top-level entries come first: the prompt history is still fenced.
     assert.ok(ruleDenies(fence, "Read", path.join(home, "history.jsonl")));
+  });
+
+  it("keeps the home rules within their budget when the rules fill it to the last character", async () => {
+    // Equal rules, one length after another: some length divides the budget, so the rules
+    // fill it exactly, and the array's own brackets must still fit.
+    const root = await tmpDir("claude-home-budget-");
+    for (let pad = 1; pad <= 60; pad++) {
+      const home = path.join(root, `home-${pad}`);
+      for (let i = 0; i < 45; i++)
+        await mkdir(path.join(home, `${String(i).padStart(2, "0")}-${"x".repeat(pad)}`), { recursive: true });
+      const fence = await homeFence({ home, warn: () => {} });
+      assert.ok(JSON.stringify(fence).length <= 4_000, `pad ${pad}: ${JSON.stringify(fence).length} characters`);
+    }
   });
 
   it("hands the host Claude Code's question, reason cleaned of terminal codes", async () => {

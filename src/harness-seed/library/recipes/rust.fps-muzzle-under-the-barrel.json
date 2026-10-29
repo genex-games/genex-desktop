@@ -1,0 +1,39 @@
+{
+  "id": "rust.fps-muzzle-under-the-barrel",
+  "runtime": "rust-wgpu",
+  "title": "The Rust muzzle flash starts at the barrel's end, from the gun's own transform",
+  "tags": ["muzzle", "flash", "emitter", "barrel", "weapon", "parent", "fps", "float", "recoil", "shot", "light"],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "Draw the flash and its light at the barrel's end computed from the gun's transform each frame, never at a world point kept from the shot.",
+  "intent": "A flash left at a world position stays where the barrel was, which reads as a light hanging in the air once the gun kicks or the camera turns. With no parenting in the facade, compute the barrel's end every frame from the same Transform the gun was drawn with (gun.translation + gun.rotation * MUZZLE) and draw the flash there under frame.tag(\"muzzle\"): a small emissive sphere or card (Material::emissive) plus a short-range frame.point_light, for two or three ticks after the shot, driven by the tick the world recorded for the shot rather than a timer of its own. Shells and smoke start from their own constants in the gun's space the same way. Record the flash's and the barrel's world points in the world for a probe, and give the check a demo that fires once.",
+  "sketch": "use genex::prelude::*;\n\n/// The barrel's end in the gun's own space (metres): the one place the flash, the light and the smoke start.\nconst MUZZLE: Vec3 = Vec3::new(0.0, 0.035, -0.19);\nconst FLASH_TICKS: u64 = 3;\n\nfn draw_muzzle(w: &super::World, frame: &mut Frame, gun: Transform) {\n    let since = w.tick.saturating_sub(w.fired_tick);\n    if since >= FLASH_TICKS { return; }\n    // The same transform the gun was drawn with: the flash cannot be left behind in the world.\n    let at = gun.translation + gun.rotation * MUZZLE;\n    frame.tag(\"muzzle\");\n    frame.sphere_with(at, 0.03, &Material::emissive(Color::rgb(255, 196, 120), 30.0));\n    frame.point_light(at, 4.0, Color::rgb(255, 180, 110), 6.0);\n}\n\n/// The demo the check reads: one shot, then how far the flash sat from the barrel's end.\nfn fire_demo(d: &mut DemoDriver<super::World>) -> Value {\n    d.sim_mut().world.fire_requested = true;\n    d.advance_ms(17);\n    let w = &d.sim().world;\n    json!({ \"muzzleFromBarrel\": w.last_flash_at.distance(w.last_barrel_end) })\n}\n",
+  "check": {
+    "id": "muzzle-on-weapon",
+    "kind": "demo",
+    "name": "fire",
+    "expr": "result.muzzleFromBarrel <= 0.05",
+    "weight": "normal",
+    "note": "After a demo named fire shoots once, the flash sat within 5 cm of the barrel's end (the demo returns muzzleFromBarrel) — it moves with the gun instead of floating in the frame."
+  },
+  "port": "The viewmodel facet draws the flash from the gun's transform and registers the fire demo; the combat code only records the shot's tick.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/lighting.md",
+      "note": "Material::emissive and frame.point_light: emission lights the picture, pair it with a light."
+    },
+    {
+      "source": "library/recipes/fps.muzzle-under-the-barrel.json",
+      "note": "The three.js recipe fps.muzzle-under-the-barrel, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

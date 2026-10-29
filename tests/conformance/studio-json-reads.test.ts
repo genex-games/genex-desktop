@@ -3,9 +3,11 @@
  * process writes. studio.json is read never through a link, never blocking on a FIFO and never past
  * a cap, so a hostile one reads as absent (with a warning beside where the game plays); the page,
  * the main entry and package.json are read without blocking on a FIFO or a device. Each row plants
- * one hostile entry in a game and lists the library under a one-second deadline: the listing
- * resolves, the game reads exactly as its twin without that file, nothing in the game changes and
- * the bytes of a file outside it appear nowhere.
+ * one hostile entry in a game and lists the library: the listing resolves (under a one-second
+ * deadline when the entry is a FIFO, the only entry a read can block on), the game reads exactly as
+ * its twin without that file, nothing in the game changes and the bytes of a file outside it appear
+ * nowhere. A row with no FIFO runs without a deadline: there it could only measure the machine's
+ * load, never a blocked read.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -39,6 +41,11 @@ async function within<T>(work: Promise<T>, label: string): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** `work` under the deadline when `fifos` could block it; with none it has nothing to block on. */
+function blockable<T>(work: Promise<T>, label: string, fifos: readonly string[]): Promise<T> {
+  return fifos.length > 0 ? within(work, label) : work;
 }
 
 /** How often, and how many times, a blocked listing's FIFOs are given a writer before the row gives up. */
@@ -201,16 +208,17 @@ describe("reading a game's own files never blocks, follows a link or reads past 
         const before = await treeFacts(env.hostile);
         const pending = env.games.list();
         listing = pending;
-        const listed = await within(pending, "games.list()");
+        const listed = await blockable(pending, "games.list()", fifos);
         const hostile = listed.find((game) => game.name === "hostile");
         const twin = listed.find((game) => game.name === "twin");
         assert.ok(hostile && twin, "both games are listed");
         assert.deepEqual(reading(hostile), reading(twin), "the game reads exactly as its twin without the file");
         assert.equal(hostile.title, "hostile", "the title is the folder's");
 
-        const destinations = await within(
+        const destinations = await blockable(
           readGameDestinations(env.hostile, hostile.shape, StudioPlatform.Mac),
           "destinations",
+          fifos,
         );
         const twinDestinations = await readGameDestinations(env.twin, twin.shape, StudioPlatform.Mac);
         assert.deepEqual(destinations.destinations, twinDestinations.destinations);
@@ -258,7 +266,7 @@ describe("opening a folder reads its own README and .gitignore safely", {
       homeDir: base,
       platform: StudioPlatform.Mac,
     });
-    await within(games.adopt(dir), "adopt");
+    await games.adopt(dir);
     const notes = await readFile(path.join(dir, "NOTES.md"), "utf8");
     assert.ok(!notes.includes(OUTSIDE_TOKEN), "the linked file's bytes are not in NOTES.md");
     assert.equal(await readlink(path.join(dir, "README.md")), outside, "the link is left as it was");
@@ -435,7 +443,7 @@ describe("opening a folder never writes through a link planted in it", {
       });
       const before = await treeFacts(outside);
       const promised = await games.plannedWrites(dir);
-      await within(games.adopt(dir), "adopt");
+      await games.adopt(dir);
       assert.deepEqual(await treeFacts(outside), before, "nothing outside the folder was created or changed");
       for (const planted of row.links) {
         assert.equal(await readlink(path.join(dir, planted.at)), path.join(outside, planted.to), planted.at);

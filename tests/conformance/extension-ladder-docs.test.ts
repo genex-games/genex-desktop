@@ -107,8 +107,11 @@ function bulletCodes(text: string): string[] {
 }
 
 describe("the extension ladder guidance names the contract's codes", () => {
-  it("the Rust template's Extension ladder section names only known refusals, and every extension refusal", async () => {
-    const text = section(await readFile(path.join(TEMPLATE, "CLAUDE.md"), "utf8"), "Extension ladder");
+  it("the Rust contract's Extension ladder section names only known refusals, and every extension refusal", async () => {
+    // The guide keeps a two-line pointer; the game folder's contract page holds the levels and codes.
+    const pointer = section(await readFile(path.join(TEMPLATE, "CLAUDE.md"), "utf8"), "Extension ladder");
+    assert.ok(pointer.includes("docs/CONTRACT.md"), "the guide points at the contract's ladder");
+    const text = section(await readFile(path.join(TEMPLATE, "docs", "CONTRACT.md"), "utf8"), "Extension ladder");
     const named = tableCodes(text);
     assert.ok(named.length >= AGENT_FACING.length);
     for (const code of named) assert.ok(KNOWN_CODES.has(code), `${code} is not a refusal code`);
@@ -237,6 +240,7 @@ async function gateRig(ejected: boolean): Promise<GateRig> {
       return { ok: true, output: out, lastGood: out, problem: null, ran: true, rust: await admittedReport(out) };
     },
     cancelAll: () => {},
+    cancelGame: () => {},
     sweep: async () => 0,
   };
   const lanes = new GameBuildLanes({ [GameStack.RustWgpu]: lane });

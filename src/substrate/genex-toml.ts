@@ -7,9 +7,10 @@
  * [game]
  * title = "Pond"            # required
  * world_size = [960, 540]   # optional, each side 64..=4096
+ * fit = "expand"            # optional: letterbox (default) | expand
  * save_name = "pond"        # optional: letters, digits, space, _ - .
  *
- * [crates]                  # optional: the reviewed allowlist (noise, fastrand) by requirement,
+ * [crates]                  # optional: the reviewed allowlist (noise, fastrand, pathfinding) by requirement,
  * noise = "0.9"             # or a crate the person approved for this game, at its exact version
  * tidy = "=1.0.0"
  *
@@ -35,7 +36,7 @@
  * bloom_intensity = 0.04    # 0..=1
  * ev_min = -6               # auto exposure's metered EV range, within ±16 (default -8..=8)
  * ev_max = 8
- * adaptation_speed_up = 1   # EV per second, 0 < speed <= 20 (defaults 1 and 3)
+ * adaptation_speed_up = 4   # EV per second, 0 < speed <= 20 (defaults 4 and 3)
  * adaptation_speed_down = 3
  *
  * [render.loading]          # the loading screen until the first lit frame (`shared/loading-style.ts`)
@@ -63,6 +64,9 @@
  *
  * [audio]                   # optional: a game without sound leaves the mixer and decoders out of its build
  * enabled = false           # default true
+ *
+ * [nav]                     # optional: a game without walkers leaves navigation's engine out of its build
+ * enabled = false           # default true; [streaming] and [animation] switch their systems alike
  *
  * [[texture]]               # optional: a loose texture's usage, where no material slot tells it
  * path = "textures/flow.png"   # under assets/: a PNG, JPEG or WebP (`isTextureRowPath`)
@@ -133,6 +137,7 @@ import {
   isBloomRadius,
   isBloomThreshold,
   isContactShadowLength,
+  isLocalExposureContrast,
   isExposureEv,
   isFogBaseHeight,
   isFogColor,
@@ -178,6 +183,8 @@ export const GenexTomlCode = {
   InvalidTitle: "invalid-title",
   /** A world size side outside 64..=4096. */
   InvalidWorldSize: "invalid-world-size",
+  /** A `[game] fit` other than a {@link GameFit} spelling. */
+  InvalidFit: "invalid-fit",
   /** A save name with characters outside letters, digits, space, `_`, `-`, `.`, or `.`/`..`. */
   InvalidSaveName: "invalid-save-name",
   /** A crate off the reviewed allowlist, named by anything but an exact version (`=X.Y.Z`). */
@@ -280,7 +287,10 @@ export type WgslKind = (typeof WgslKind)[keyof typeof WgslKind];
  */
 export const RUST_ENGINE_FOLDER = "engine";
 
-/** Extra crates a game may name without a person's approval: genex's `GAME_CRATE_ALLOWLIST`. */
+/**
+ * Extra crates a game may name without a person's approval: genex's `GAME_CRATE_ALLOWLIST`, both
+ * held to `tests/fixtures/game-crate-allowlist.json` (owner call 8).
+ */
 export const GAME_CRATE_ALLOWLIST: readonly string[] = Object.freeze(["fastrand", "noise", "pathfinding"]);
 
 /**
@@ -371,6 +381,20 @@ export const NET_MATCH_CONFIG_MAX_KEYS = 16;
 export const NET_MATCH_KNOB_MAX = 1_000_000;
 /** A knob's name: Genex's camelCase spelling, a lower-case letter then letters and digits, 32 at most. */
 const NET_MATCH_KNOB_NAME = /^[a-z][A-Za-z0-9]{0,31}$/;
+
+/** How a game's world fills a window of another aspect (`[game] fit`, genex's `Fit`); wire values. */
+export const GameFit = {
+  /** The world keeps its aspect between black bars (the default). */
+  Letterbox: "letterbox",
+  /** The world stays whole and centred and the view grows to fill the window. */
+  Expand: "expand",
+} as const;
+export type GameFit = (typeof GameFit)[keyof typeof GameFit];
+
+/** Whether `value` is a {@link GameFit} spelling. */
+export function isGameFit(value: string): value is GameFit {
+  return Object.values<string>(GameFit).includes(value);
+}
 
 /** The world target when `world_size` is absent. */
 const DEFAULT_WORLD_SIZE = [960, 540] as const;
@@ -468,6 +492,8 @@ export interface NetToml {
 export interface GenexToml {
   title: string;
   worldSize: readonly [number, number];
+  /** `[game] fit` as written, checked by {@link checkGame}; absent or null: letterbox. */
+  fit?: string | null;
   saveName: string | null;
   /** By name. */
   crates: readonly GameCrate[];
@@ -491,6 +517,15 @@ export interface GenexToml {
    * kira, cpal and symphonia); every sound is missing `audio-disabled`. Absent or true keeps it (G6 AU-11).
    */
   audio?: boolean;
+  /**
+   * `[nav] enabled`: false links the facade without its `nav` feature, so the runtime links no
+   * navigation engine and `game.navigation` is refused `nav-disabled`. Absent or true keeps it (release R-1).
+   */
+  nav?: boolean;
+  /** `[streaming] enabled`: false links the facade without `streaming`; `game.streaming` is refused `streaming-disabled`. */
+  streaming?: boolean;
+  /** `[animation] enabled`: false links the facade without `animation`; an animator is refused `animation-disabled`. */
+  animation?: boolean;
   /** `[[texture]]` rows in file order: loose textures' usages (C-10); absent from a manifest built by hand. */
   textures?: readonly TextureRow[];
   /** `[[asset_group]]` rows in file order (C-30); absent from a manifest built by hand. */
@@ -687,6 +722,9 @@ const TOP_KEYS = [
   "web",
   "physics",
   "audio",
+  "nav",
+  "streaming",
+  "animation",
   "texture",
   "asset_group",
   "assets",
@@ -701,7 +739,7 @@ const GENEX_RELEASE = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 const SECTION_HEADER =
   /^\s*\[\[?\s*("[^"]*"|'[^']*'|[A-Za-z0-9_-]+)(?:\s*\.\s*(?:"[^"]*"|'[^']*'|[A-Za-z0-9_-]+))*\s*\]\]?\s*(#.*)?$/;
 const REQUEST_KEYS = ["name", "version", "reason"] as const;
-const GAME_KEYS = ["title", "world_size", "save_name"] as const;
+const GAME_KEYS = ["title", "world_size", "fit", "save_name"] as const;
 const WGSL_KEYS = ["path", "kind", "api"] as const;
 /** The extension API a `[[wgsl]]` row that names none is written against. */
 const DEFAULT_WGSL_API = 1;
@@ -713,7 +751,7 @@ const GPU_KEYS = ["native_features"] as const;
 /** `[web]`'s keys (genex's `WebSection`). */
 const WebKey = { WasmBudgetMb: "wasm_budget_mb" } as const;
 const WEB_KEYS: readonly string[] = Object.values(WebKey);
-/** The one key of a build switch, `[physics]` or `[audio]` (genex's `PhysicsSection`, `AudioSection`). */
+/** The one key of a build switch, `[physics]`, `[audio]`, `[nav]`, `[streaming]` or `[animation]` (genex's `*Section`). */
 const SwitchKey = { Enabled: "enabled" } as const;
 const SWITCH_KEYS: readonly string[] = Object.values(SwitchKey);
 /** The `[net]` table's name, and its keys (genex's `NetSection`). */
@@ -820,6 +858,7 @@ function shapeManifest(document: TomlTable): Shaped {
     const manifest: GenexToml = {
       title: string(game.title, "game.title"),
       worldSize: worldSize(game.world_size),
+      fit: game.fit === undefined ? null : string(game.fit, "game.fit"),
       saveName: game.save_name === undefined ? null : string(game.save_name, "game.save_name"),
       crates: crates(document.crates),
       crateRequests: crateRequests(document.crate_request),
@@ -830,6 +869,9 @@ function shapeManifest(document: TomlTable): Shaped {
       wasmBudgetMb: webBudget(document.web),
       physics: switchEnabled(document.physics, "physics"),
       audio: switchEnabled(document.audio, "audio"),
+      nav: switchEnabled(document.nav, "nav"),
+      streaming: switchEnabled(document.streaming, "streaming"),
+      animation: switchEnabled(document.animation, "animation"),
       assets: assetsTable(document.assets),
     };
     return { ok: true, manifest, featureNames, render, rawTextures, assetGroups };
@@ -1005,7 +1047,12 @@ const NUMERIC_LOOK_KEYS = [
   LookKey.FogStart,
   LookKey.FogMaxOpacity,
   LookKey.ContactShadowLength,
+  LookKey.LocalExposureHighlights,
+  LookKey.LocalExposureShadows,
 ] as const;
+
+/** The `[render.look]` keys whose values are switches. */
+const BOOLEAN_LOOK_KEYS = [LookKey.FogAerialPerspective, LookKey.DoorwayAdaptation] as const;
 
 /** `[render.look]`: its known keys, the vocabulary keys as strings, the switch as a boolean, the colour as numbers and the rest as numbers. */
 function renderLook(value: TomlValue | undefined): RawLook {
@@ -1018,11 +1065,11 @@ function renderLook(value: TomlValue | undefined): RawLook {
   for (const key of NUMERIC_LOOK_KEYS) {
     if (look[key] !== undefined) raw.numbers.push([key, decimal(look[key], `render.look.${key}`)]);
   }
-  const aerial = look[LookKey.FogAerialPerspective];
-  if (aerial !== undefined) {
-    if (typeof aerial !== "boolean")
-      throw new ShapeError(`render.look.${LookKey.FogAerialPerspective} must be true or false`);
-    raw.booleans.push([LookKey.FogAerialPerspective, aerial]);
+  for (const key of BOOLEAN_LOOK_KEYS) {
+    const on = look[key];
+    if (on === undefined) continue;
+    if (typeof on !== "boolean") throw new ShapeError(`render.look.${key} must be true or false`);
+    raw.booleans.push([key, on]);
   }
   const color = look[LookKey.FogColor];
   if (color !== undefined) {
@@ -1105,7 +1152,7 @@ function assetsTable(value: TomlValue | undefined): AssetsToml | null {
   };
 }
 
-/** A build switch's `enabled` (`[physics]`, `[audio]`), true when the file has no table or the table no key. */
+/** A build switch's `enabled` (`[physics]`, `[audio]`, `[nav]`, `[streaming]`, `[animation]`), true when the file has no table or the table no key. */
 function switchEnabled(value: TomlValue | undefined, name: string): boolean {
   if (value === undefined) return true;
   const section = table(value, `[${name}]`);
@@ -1315,6 +1362,8 @@ function checkGame(manifest: GenexToml): GenexTomlRefusal | null {
   const [width, height] = manifest.worldSize;
   const inRange = (side: number) => side >= MIN_WORLD_PX && side <= MAX_WORLD_PX;
   if (!inRange(width) || !inRange(height)) return refuse(GenexTomlCode.InvalidWorldSize, `${width}x${height}`);
+  const fit = manifest.fit ?? null;
+  if (fit !== null && !isGameFit(fit)) return refuse(GenexTomlCode.InvalidFit, JSON.stringify(fit));
   if (manifest.saveName !== null && !validSaveName(manifest.saveName))
     return refuse(GenexTomlCode.InvalidSaveName, manifest.saveName);
   return null;
@@ -1480,6 +1529,8 @@ const EFFECT_NUMBERS: ReadonlyArray<
   [LookKey.FogStart, isFogStart, (look, value) => (look.fogStart = value)],
   [LookKey.FogMaxOpacity, isFogOpacity, (look, value) => (look.fogMaxOpacity = value)],
   [LookKey.ContactShadowLength, isContactShadowLength, (look, value) => (look.contactShadowLength = value)],
+  [LookKey.LocalExposureHighlights, isLocalExposureContrast, (look, value) => (look.localExposureHighlights = value)],
+  [LookKey.LocalExposureShadows, isLocalExposureContrast, (look, value) => (look.localExposureShadows = value)],
 ];
 
 /** Bloom's threshold and spread, GTAO's strength and radius, the fog and the contact shadows' length (RQ4), in file-key order. */
@@ -1495,8 +1546,11 @@ function effectsOf(raw: RawLook, bad: (key: string, value: unknown) => never): R
     if (!isFogColor(color)) bad(LookKey.FogColor, `[${color.join(", ")}]`);
     look.fogColor = [color[0] ?? 0, color[1] ?? 0, color[2] ?? 0];
   }
-  const aerial = new Map(raw.booleans).get(LookKey.FogAerialPerspective);
+  const booleans = new Map(raw.booleans);
+  const aerial = booleans.get(LookKey.FogAerialPerspective);
   if (aerial !== undefined) look.fogAerialPerspective = aerial;
+  const doorway = booleans.get(LookKey.DoorwayAdaptation);
+  if (doorway !== undefined) look.doorwayAdaptation = doorway;
   return look;
 }
 
@@ -1623,6 +1677,7 @@ function effectLines(look: RenderLook): ReadonlyArray<readonly [string, string |
   const float = (value: number | undefined) => (value === undefined ? undefined : tomlFloat(value));
   const color = look.fogColor === undefined ? undefined : `[${look.fogColor.map(tomlFloat).join(", ")}]`;
   const aerial = look.fogAerialPerspective === undefined ? undefined : String(look.fogAerialPerspective);
+  const doorway = look.doorwayAdaptation === undefined ? undefined : String(look.doorwayAdaptation);
   return [
     [LookKey.BloomThreshold, float(look.bloomThreshold)],
     [LookKey.BloomRadius, float(look.bloomRadius)],
@@ -1636,6 +1691,9 @@ function effectLines(look: RenderLook): ReadonlyArray<readonly [string, string |
     [LookKey.FogColor, color],
     [LookKey.FogAerialPerspective, aerial],
     [LookKey.ContactShadowLength, float(look.contactShadowLength)],
+    [LookKey.LocalExposureHighlights, float(look.localExposureHighlights)],
+    [LookKey.LocalExposureShadows, float(look.localExposureShadows)],
+    [LookKey.DoorwayAdaptation, doorway],
   ];
 }
 

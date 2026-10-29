@@ -28,11 +28,11 @@ import {
   type Rig,
 } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { ctxRecorder } from "../helpers/ctx-recorder.ts";
+import { type CtxHandler, ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { fakeFinishReview, reviewerAnswer, seatedReviewer } from "../helpers/reviewer.ts";
 import { CLOSE_SETTLE_MS } from "../../src/harness-seed/loop/director/budgets.ts";
 import { CALL_MARGIN_MS } from "../../src/harness-seed/loop/finish-check.ts";
-import { LEAD_CALL_MS } from "../../src/harness-seed/loop/finish-contract.ts";
+import { LEAD_CALL_MS, StopWhy } from "../../src/harness-seed/loop/finish-contract.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
 import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
@@ -1305,11 +1305,20 @@ describe("the run's plan, before anyone builds", () => {
   it("takes what kind of game this is on the plan, and refuses a kind that is not one", () => {
     const one = JSON.stringify([{ id: "board" }]);
     const board = (
-      compilePlan({ summary: "a chess board that reads", workers: one, kind: "static-board" }) as { plan: any }
+      compilePlan({ summary: "a chess board that reads", workers: one, kind: "static-board", start: "none" }) as {
+        plan: any;
+      }
     ).plan;
     assert.deepEqual(
       board.game,
-      { kind: "static-board", hud: false, mouseLook: false, keyboardMove: false, playScript: null },
+      {
+        kind: "static-board",
+        hud: false,
+        mouseLook: false,
+        keyboardMove: false,
+        playScript: null,
+        start: { keys: [] },
+      },
       "a declared kind brings its own traits and nothing else",
     );
 
@@ -1318,6 +1327,7 @@ describe("the run's plan, before anyone builds", () => {
         summary: "a builder you pan around",
         workers: one,
         kind: "free-camera",
+        start: "none",
         play_script: JSON.stringify([{ type: "drag", fromX: 100, fromY: 100, x: 300, y: 200 }]),
       }) as { plan: any }
     ).plan;
@@ -2373,10 +2383,11 @@ function runEventTypes(events: Awaited<ReturnType<typeof waitForLog>>, runId: st
   return types;
 }
 
-/** A run as the director's tool handler reads it, with a builder `plaza` and a recording host. */
-function markingLoopRun(state: string) {
+/** A run as the director's tool handler reads it, with a builder `plaza` and a recording host (answering `handlers` too). */
+function markingLoopRun(state: string, handlers: Record<string, CtxHandler> = {}) {
   const rec = ctxRecorder({
     handlers: {
+      ...handlers,
       "artifact.read": () => null,
       "artifact.write": () => 1,
       "events.head": () => null,
@@ -2387,6 +2398,7 @@ function markingLoopRun(state: string) {
   });
   const integrated: unknown[] = [];
   const cards: string[] = [];
+  const plains: Array<string | null> = [];
   const log: Array<{ seq: number; text: string }> = [];
   const plaza = { id: "plaza", title: "Plaza", state, mode: "loop" };
   const loopRun = {
@@ -2411,8 +2423,9 @@ function markingLoopRun(state: string) {
       loopRun.state.integrationHead = "bbb";
       return "merged plaza";
     },
-    decision: async (text: string) => {
+    decision: async (text: string, plain?: string | null) => {
       cards.push(text);
+      plains.push(plain ?? null);
     },
     note: (text: string) => log.push({ seq: log.length + 1, text }),
     notesSince: (seq: number) => log.filter((entry) => entry.seq > seq),
@@ -2420,7 +2433,7 @@ function markingLoopRun(state: string) {
     routeUserSteers: async () => {},
     inbox: { steering: async () => [], finishing: async () => false },
   };
-  return { loopRun, rec, integrated, cards, log };
+  return { loopRun, rec, integrated, cards, plains, log };
 }
 
 /** The `worker_finished` records a director appended, by their payloads. */
@@ -2533,6 +2546,59 @@ describe("the director's worker_mark and readers, in Genex's one worker model", 
     const failedWithCommit = { ...failed.loopRun.state.workers.get("plaza"), from: "base1", lastCommit: "own1" };
     await recordBuilderEnded(failed.loopRun as never, failedWithCommit as never, "it broke");
     assert.equal(workerFinishes(failed.rec)[0]?.delivered, undefined, "only a finished builder hands work back");
+  });
+
+  it("WIN-275: a builder its engine refused for a sandbox this computer cannot run ends in that code; worker_start then starts nothing on that engine and the person is told once, with Codex offered", async () => {
+    const { recordBuilderEnded } = await import("../../src/harness-seed/loop/workers/director-pool.ts");
+    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
+    const refusals = await import("../../src/harness-seed/loop/workers/sandbox-refusal.ts");
+    const ready = { code: "ready", detail: "" };
+    const engines = () => [
+      { id: "claude-code", kind: "delegated", status: ready },
+      { id: "codex", kind: "delegated", status: ready },
+    ];
+    const marking = markingLoopRun("failed", { "engine.describe": engines });
+    try {
+      const plaza = marking.loopRun.state.workers.get("plaza");
+      Object.assign(plaza as object, { sandboxRefused: true });
+      await recordBuilderEnded(marking.loopRun as never, plaza as never, "lead-facing words");
+      assert.equal(workerFinishes(marking.rec)[0]?.stopCode, "sandbox_unavailable");
+      refusals.noteSandboxRefusal("claude-code", "sandbox required but unavailable");
+      for (const isolation of ["copy", "read"]) {
+        const args = { id: `paving-${isolation}`, task: "Pave the plaza.", isolation };
+        const answer = String(await handler(marking.loopRun as never, "worker_start", args));
+        assert.match(
+          answer,
+          /^Not started: sandbox required but unavailable\. Every worker_start on Claude Code/,
+          isolation,
+        );
+        assert.match(answer, /do the work yourself/, isolation);
+        assert.match(answer, /pick Codex for Workers/, `${isolation}: the other signed-in engine is offered`);
+      }
+      assert.deepEqual(marking.rec.paramsOf("engine.delegate"), [], "nothing reached the engine");
+      assert.equal(marking.plains.length, 1, "the person is told once");
+      assert.match(
+        String(marking.plains[0]),
+        /^Claude Code can't run workers on (Windows|this computer) yet, so the lead builds on its own\. Pick Codex for Workers to use them\.$/,
+      );
+      const told: Array<string | null | undefined> = [];
+      const windows = {
+        ctx: { call: async () => [] },
+        decision: async (_: string, plain?: string | null) => told.push(plain),
+      };
+      await refusals.tellSandboxRefusal(
+        windows,
+        refusals.noteSandboxRefusal("claude-code", "sandbox required but unavailable"),
+        "win32",
+      );
+      assert.deepEqual(
+        told,
+        ["Claude Code can't run workers on Windows yet, so the lead builds on its own."],
+        "no Codex signed in: none offered",
+      );
+    } finally {
+      refusals.forgetSandboxRefusals();
+    }
   });
 
   it("a builder that stops short says why in the app's own code: the lead stopped it, the Loop ended first, or an error", async () => {
@@ -2785,6 +2851,30 @@ describe("the director's finish claim", () => {
     assert.deepEqual(theirs.checks(), []);
   });
 
+  it("a timed build's finish once its hours are spent closes as its time running out; an idle or asked-for wrap-up does not", async () => {
+    const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
+    const timed = { wallClockMs: 60 * 60_000, completionPolicy: "duration" };
+    // A wrap-up brings `softDeadline` to now whatever its cause; the run's own clock keeps its cap.
+    const wrappedUp = (cap: number, over: { finishing?: boolean } = {}) => {
+      const run = claimingLoopRun([], over);
+      run.loopRun.run.budgets = timed;
+      run.loopRun.softDeadline = Date.now() - 1000;
+      run.loopRun.clock = { started: cap - 60 * 60_000, softDeadline: cap, finalDeadline: cap + 15 * 60_000 };
+      return run;
+    };
+    const late = wrappedUp(Date.now() - 60_000);
+    await finish(late.loopRun as never, { summary: "where it got to", land: "yes" });
+    assert.equal(late.closes[0]?.ended, StopWhy.Time, "the wrap-up at the cap: the hours ran out");
+    const idle = wrappedUp(Date.now() + 60 * 60_000);
+    await finish(idle.loopRun as never, { summary: "nothing more to do", land: "yes" });
+    assert.equal(idle.closes.length, 1, "an idle lead's wrap-up closes it");
+    assert.equal(idle.closes[0]?.ended, undefined, "with an hour left, not as its time running out");
+    const asked = wrappedUp(Date.now() + 60 * 60_000, { finishing: true });
+    await finish(asked.loopRun as never, { summary: "as far as it got", land: "no", victory: "no" });
+    assert.equal(asked.closes.length, 1, "the person's own finish closes it");
+    assert.equal(asked.closes[0]?.ended, undefined, "the person's finish is no time-out");
+  });
+
   it("a claim with no time left in the lead's call for a reviewer is not counted, and the run goes on", async () => {
     const { finish } = await import("../../src/harness-seed/loop/director/integrate.ts");
     const { loopRun, rec, closes, checks } = claimingLoopRun([]);
@@ -3032,7 +3122,7 @@ describe("the director's finish claim", () => {
     const landed = claimingLoopRun([reviewerAnswer("no", notDone)], { log });
     landed.state.finishTally = tally();
     const said = String(await finish(landed.loopRun as never, { summary: "red", land: "yes", victory: "yes" }));
-    assert.match(said, /3 of 3 in a row\): The plaza is still grey\./, said);
+    assert.match(said, /\(3 in a row\): The plaza is still grey\./, said);
     assert.match(said, /the run is closed/, "then the landing");
     assert.equal(landed.closes[0]?.victory, false);
     assert.deepEqual(landed.loopRun.report.notDone, notDone);
@@ -3048,7 +3138,7 @@ describe("the director's finish claim", () => {
     for (const done of waits) done();
     const told = String(await answer);
     assert.ok(told.endsWith(CLAIM_ANSWER.closingUnwon), told);
-    assert.match(told, /3 of 3 in a row/);
+    assert.match(told, /\(3 in a row\)/);
     assert.ok(!told.includes(CLAIM_ANSWER.closing), "never that the reviewer accepted it");
   });
 
@@ -3228,7 +3318,11 @@ describe("the director's finish claim", () => {
       any
     >;
     restoreLoopRun(back as never, now);
-    assert.deepEqual(back.state.finishTally, { ...tally, checking: false }, "a check under way then is not now");
+    assert.deepEqual(
+      back.state.finishTally,
+      { ...tally, checking: false, notDone: [] },
+      "a check under way then is not now; an older tally reads as naming nothing not done",
+    );
     const never = loopRunWith({ baseHeads: new Set() });
     recordLoopRun(never as never, now);
     assert.equal(
@@ -3589,6 +3683,8 @@ describe("a director's run through the real core and harness", () => {
       [
         // Flipped: a lead may look at an app window (look-only, in every mode).
         "app_look",
+        // Flipped: Local Blender asks the person on a card to download its pinned Blender.
+        "blender__install",
         "blender__model",
         "blender__retrieve",
         "blender__status",
@@ -3596,6 +3692,9 @@ describe("a director's run through the real core and harness", () => {
         // skies, as the Blender plugin offers its tools.
         "cc0__fetch",
         "cc0__search",
+        // Flipped: the CC0 Library packs a fetched scan into a Terrain layer's textures. A tool has
+        // no stack scope (only skills do), so a web lead is offered it too.
+        "cc0__terrain-layer",
         "computer",
         "finish",
         "genex__asset",
@@ -3616,6 +3715,10 @@ describe("a director's run through the real core and harness", () => {
         "job_stop",
         "job_tail",
         "judge",
+        // Flipped: the bundled Content Library (`library`) offers its pre-processed CC0 entries; like
+        // every plugin tool it reaches a web lead too, while its skill serves Rust games only.
+        "library__add",
+        "library__search",
         "look",
         "note",
         // Flipped: a lead may look for a Genex plugin and show the person its card, in the chat its
@@ -3849,6 +3952,11 @@ describe("a director's run through the real core and harness", () => {
       assert.equal(outcome.finished.victory, false, "no victory over the reviewer's no");
       assert.equal(outcome.finished.stoppedBecause, "the reviewer did not accept the finish", "one fixed phrase");
       assert.deepEqual(outcome.finished.notDone, NOT_DONE, "what isn't done, in its own field");
+      assert.deepEqual(
+        outcome.finished.stillToFix,
+        { done: [], notDone: NOT_DONE, why: StopWhy.Stuck, hours: null },
+        "its result card's list, and that the no's stopped it",
+      );
       for (const reason of NOT_DONE)
         assert.ok(String(outcome.finished.summary).includes(reason), String(outcome.finished.summary));
       // The no's stop the Loop; the build that runs still lands by the close's own rule, as a clock's close does.
@@ -3858,7 +3966,7 @@ describe("a director's run through the real core and harness", () => {
     });
   });
 
-  it("a time-out after a no makes no claim and names what the reviewer found not done", async () => {
+  it("a lead's session that ends after a no makes no claim and names what the reviewer found not done", async () => {
     const said: string[] = [];
     const { finished, reviewers } = await claimRun(
       "director-timed-out",
@@ -3872,6 +3980,12 @@ describe("a director's run through the real core and harness", () => {
     assert.equal(reviewers.length, 1, "the run's own close asks no reviewer");
     assert.equal(finished.victory, false);
     assert.deepEqual(finished.notDone, NOT_DONE, "the report names what the reviewer found not done");
+    // The lead's session ended within seconds of a quarter hour: its card says it stopped, not that its time ran out.
+    assert.deepEqual(
+      finished.stillToFix,
+      { done: [], notDone: NOT_DONE, why: StopWhy.Ended, hours: null },
+      "its card lists what the no found not done",
+    );
     for (const reason of NOT_DONE)
       assert.ok(String(finished.summary).includes(reason), `the card's summary names it: ${finished.summary}`);
     for (const reason of NOT_DONE)
@@ -5926,7 +6040,8 @@ describe("a director's run through the real core and harness", () => {
             assert.match(request.prompt, /Keep going and land the saved sign/);
             assert.deepEqual(
               (request.interviewTools ?? []).map((tool) => tool.name),
-              ["resume_run"],
+              // Named flip: a new Loop's start, for one asked in words, sits beside the resume.
+              ["start_autopilot", "resume_run"],
             );
             return {
               ok: true,
@@ -6031,7 +6146,8 @@ describe("a director's run through the real core and harness", () => {
           assert.equal(sessions, 1, "no second session answers a follow-up while the first director is building");
           const sent = await rig.core.store.listEvents(threadId);
           assert.equal(customEvents(sent, "coordinator_message_queued").length, 1);
-          // Live chat: handed to the lead, whose first turn cannot be cut short to read it.
+          // Live chat: handed to the lead, whose first turn — a fresh session, none to resume yet —
+          // cannot be cut short to read it.
           assert.deepEqual(
             customEvents(sent, "coordinator_message_delivered").map((e) => [e.into, e.how]),
             [[runId, "lead"]],
@@ -7156,7 +7272,7 @@ describe("a director's run through the real core and harness", () => {
         seen.director.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         // The director looked and decided this is not the top-down game the file says.
-        results.planned = text(await call("plan", { ...planFor("core"), kind: "first-person" }));
+        results.planned = text(await call("plan", { ...planFor("core"), kind: "first-person", start: '["Enter"]' }));
         // A worker with no seam owns nearly the whole repository, so it starts alone…
         results.startedCore = json(
           await call("worker_start", {

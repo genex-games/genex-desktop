@@ -40,7 +40,8 @@ use crate::budget::MaterialClass;
 use crate::caps::check_texture;
 use crate::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use crate::error::{RenderCode, RenderError};
-use crate::layout::texture_ref;
+use crate::device_class::TargetOs;
+use crate::layout::{TEXTURE_CLASS_SLOTS, texture_ref};
 use crate::settings::{QualityPreset, TextureClass, TextureQuality};
 
 /// Every layer's side: textures are resampled to it.
@@ -85,23 +86,38 @@ impl TextureKind {
     }
 }
 
-/// A texture a renderer holds: its array (kind and size class) and layer.
+/// A texture a renderer holds: its array (kind, size class and the slot that class takes) and
+/// layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId {
     kind: TextureKind,
     class: TextureClass,
+    slot: u32,
     layer: u32,
 }
 
 impl TextureId {
     /// The texture at `layer` of the 256 class's `kind` array (it may name no texture).
     pub const fn new(kind: TextureKind, layer: u32) -> TextureId {
-        TextureId { kind, class: TextureClass::S256, layer }
+        TextureId { kind, class: TextureClass::S256, slot: 0, layer }
     }
 
-    /// The texture at `layer` of size class `class`'s `kind` array.
+    /// The texture at `layer` of size class `class`'s `kind` array, in the slot `class` takes on
+    /// its own ladder ([`class_ladder`]: its index up to 2048, the top slot for 4096 and 8192).
     pub const fn in_class(kind: TextureKind, class: TextureClass, layer: u32) -> TextureId {
-        TextureId { kind, class, layer }
+        let slot = if class.index() < TEXTURE_CLASS_SLOTS as u32 { class.index() } else { TEXTURE_CLASS_SLOTS as u32 - 1 };
+        TextureId { kind, class, slot, layer }
+    }
+
+    /// The texture at `layer` of size class `class`'s `kind` array held in class slot `slot` (the
+    /// slot the arrays' ladder gives it).
+    pub const fn in_slot(kind: TextureKind, class: TextureClass, slot: u32, layer: u32) -> TextureId {
+        TextureId { kind, class, slot, layer }
+    }
+
+    /// The class slot its array is bound in.
+    pub const fn slot(self) -> u32 {
+        self.slot
     }
 
     /// Its array.
@@ -119,9 +135,10 @@ impl TextureId {
         self.layer
     }
 
-    /// The material texture reference naming it (`layout::texture_ref`): class 0 is the bare layer.
+    /// The material texture reference naming it (`layout::texture_ref`, its slot and layer): slot
+    /// 0 is the bare layer.
     pub const fn reference(self) -> u32 {
-        texture_ref(self.class.index(), self.layer)
+        texture_ref(self.slot, self.layer)
     }
 }
 
@@ -165,6 +182,36 @@ impl TextureData {
     pub fn rgba(&self) -> &[u8] {
         &self.rgba
     }
+}
+
+/// The longest side a texture source is kept at once decoded in a browser: the web's largest size
+/// class, since no array there stores more. Bodycam B1: a 4K map was kept whole for device-loss
+/// replay, 64 MiB of a browser's heap per map.
+pub const WEB_SOURCE_TEXTURE_MAX_SIDE: u32 = TextureClass::S2048.side();
+/// The longest side a texture source is kept at natively: the 8192 class (WP-9; before it a 4096
+/// map was cut to 2048 here, whatever the preset).
+pub const NATIVE_SOURCE_TEXTURE_MAX_SIDE: u32 = TextureClass::S8192.side();
+/// The longest side a texture source is kept at on this build.
+#[cfg(not(target_arch = "wasm32"))]
+pub const SOURCE_TEXTURE_MAX_SIDE: u32 = NATIVE_SOURCE_TEXTURE_MAX_SIDE;
+/// The longest side a texture source is kept at on this build.
+#[cfg(target_arch = "wasm32")]
+pub const SOURCE_TEXTURE_MAX_SIDE: u32 = WEB_SOURCE_TEXTURE_MAX_SIDE;
+
+/// `texture` with its longer side held to [`SOURCE_TEXTURE_MAX_SIDE`] ([`capped_source_at`]).
+pub fn capped_source(texture: &TextureData, kind: TextureKind) -> std::borrow::Cow<'_, TextureData> {
+    capped_source_at(texture, kind, SOURCE_TEXTURE_MAX_SIDE)
+}
+
+/// `texture` with its longer side held to `max_side` (aspect kept, filtered as `kind` says);
+/// borrowed untouched when it already fits, so its texels are the same bits.
+pub fn capped_source_at(texture: &TextureData, kind: TextureKind, max_side: u32) -> std::borrow::Cow<'_, TextureData> {
+    let side = texture.width.max(texture.height);
+    if side <= max_side {
+        return std::borrow::Cow::Borrowed(texture);
+    }
+    let shrink = |px: u32| ((u64::from(px) * u64::from(max_side) / u64::from(side)) as u32).max(1);
+    std::borrow::Cow::Owned(resample(texture, shrink(texture.width), shrink(texture.height), kind))
 }
 
 /// Mip levels of a `px`-sided square down to one texel.
@@ -429,10 +476,12 @@ const TOKSVIG_MIN_LENGTH: f32 = 1.0 / 255.0;
 // ---------------------------------------------------------------------------------------------
 // Size classes (RQ6.4)
 
-/// Layers per kind of each size class, by device class (before the preset's cap): what a class
-/// pre-sizes on its first texture and reserves in the budget ledger, sized so each class's default
-/// preset with its arrays fits the class budget at its reference resolution
-/// (tests/texture_classes.rs). Phones hold no 2048 class and mobile-mid no 1024 class.
+/// Layers per kind of the web's four size classes (256, 512, 1024, 2048), by device class (before
+/// the preset's cap): what a class pre-sizes on its first texture and reserves in the budget
+/// ledger ([`material_arrays`]), sized so each class's default preset with its arrays fits the
+/// class budget at its reference resolution (tests/texture_classes.rs). Phones hold no 2048 class
+/// and mobile-mid no 1024 class. A native desktop scales them with its budget instead
+/// ([`TextureQuality::layer_budget_mib`]).
 const fn device_layer_caps(class: DeviceClass) -> [u32; 4] {
     match (class.form, class.tier) {
         (FormFactor::Desktop, PerformanceTier::Ultra) => [64, 16, 8, 2],
@@ -447,14 +496,62 @@ const fn device_layer_caps(class: DeviceClass) -> [u32; 4] {
 
 /// The texture quality `preset` gives `class`: the largest size class (512 on low, 1024 on
 /// medium, 2048 from high on desktops; phones stop at 1024 and clamp to 512 on low) and Toksvig
-/// normal-map mips on every preset. [`TextureQuality::OFF`] is today's single 256 class.
+/// normal-map mips on every preset. [`TextureQuality::OFF`] is today's single 256 class. A native
+/// desktop goes further ([`native_textures`]).
 pub fn preset_textures(preset: QualityPreset, class: DeviceClass) -> TextureQuality {
     let max_class = match (class.form, preset) {
         (_, QualityPreset::Low) => TextureClass::S512,
         (FormFactor::Mobile, _) | (FormFactor::Desktop, QualityPreset::Medium) => TextureClass::S1024,
         _ => TextureClass::S2048,
     };
-    TextureQuality { max_class, toksvig: true }
+    TextureQuality { max_class, toksvig: true, layer_budget_mib: 0 }
+}
+
+/// The share of a native desktop's memory budget the material arrays may take (WP-9), percent.
+pub const MATERIAL_BUDGET_SHARE_PERCENT: u64 = 40;
+/// The largest class each destination holds: a native desktop the 8192 class (on an explicit
+/// choice, [`native_textures`]), a browser 2048 and a phone 1024, whatever is asked.
+pub const NATIVE_DESKTOP_MAX_CLASS: TextureClass = TextureClass::S8192;
+
+/// The largest class `class` on `os` may hold: [`NATIVE_DESKTOP_MAX_CLASS`] on a native desktop
+/// (macOS, Windows, Linux), 2048 in a browser, 1024 on a phone.
+pub fn destination_max_class(class: DeviceClass, os: TargetOs) -> TextureClass {
+    let native_desktop = matches!(os, TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux) && class.form == FormFactor::Desktop;
+    match (native_desktop, class.form) {
+        (true, _) => NATIVE_DESKTOP_MAX_CLASS,
+        (false, FormFactor::Desktop) => TextureClass::S2048,
+        (false, FormFactor::Mobile) => TextureClass::S1024,
+    }
+}
+
+/// `textures` (a preset's, [`preset_textures`]) on `class` under `os` with a memory budget of
+/// `budget_bytes` and an explicit `asked` largest class (a game's or the person's, held to
+/// [`destination_max_class`]). On a native desktop (WP-9) a preset reaching 2048 reaches 4096, and
+/// the layer caps scale with [`MATERIAL_BUDGET_SHARE_PERCENT`] of the budget; elsewhere the preset's
+/// classes and the class's fixed layer rows stay as they were. Texture quality off stays off.
+pub fn native_textures(textures: TextureQuality, class: DeviceClass, os: TargetOs, budget_bytes: u64, asked: Option<TextureClass>) -> TextureQuality {
+    if textures == TextureQuality::OFF {
+        return textures;
+    }
+    let cap = destination_max_class(class, os);
+    let native_desktop = cap == NATIVE_DESKTOP_MAX_CLASS;
+    let widened = if native_desktop && textures.max_class == TextureClass::S2048 { TextureClass::S4096 } else { textures.max_class };
+    let max_class = asked.unwrap_or(widened).min(cap);
+    let share = budget_bytes / 100 * MATERIAL_BUDGET_SHARE_PERCENT / (1024 * 1024);
+    let layer_budget_mib = if native_desktop { u32::try_from(share).unwrap_or(u32::MAX) } else { 0 };
+    TextureQuality { max_class, layer_budget_mib, ..textures }
+}
+
+/// The four classes the shader slots hold when `max_class` is the largest (WP-9), smallest first:
+/// the web's 256/512/1024/2048 up to 2048; 256/1024/2048/4096 for 4096 (a 512 source takes the
+/// 1024 class); 256/1024/4096/8192 for 8192 (a 2048 source takes 4096). Slot 0 is always the
+/// growing 256 class.
+pub const fn class_ladder(max_class: TextureClass) -> [TextureClass; TEXTURE_CLASS_SLOTS] {
+    match max_class {
+        TextureClass::S4096 => [TextureClass::S256, TextureClass::S1024, TextureClass::S2048, TextureClass::S4096],
+        TextureClass::S8192 => [TextureClass::S256, TextureClass::S1024, TextureClass::S4096, TextureClass::S8192],
+        _ => [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048],
+    }
 }
 
 /// The smallest size class whose side holds the longer side of a `width` × `height` source,
@@ -465,19 +562,40 @@ pub fn class_for_source(width: u32, height: u32, max_class: TextureClass) -> Tex
 }
 
 /// Layers per kind of each size class (by class index) on `class` at `quality`: zero above the
-/// quality's largest class; [`TextureQuality::OFF`] is today's one growing 256 class of
-/// [`MAX_TEXTURE_LAYERS`].
-pub fn class_layer_caps(class: DeviceClass, quality: TextureQuality) -> [u32; 4] {
+/// quality's largest class and for a class its ladder leaves out ([`class_ladder`]);
+/// [`TextureQuality::OFF`] is today's one growing 256 class of [`MAX_TEXTURE_LAYERS`]. With a
+/// layer budget ([`TextureQuality::layer_budget_mib`]) each class past 512 holds the layers its
+/// slice of the budget pays for in RGBA8 (the top class half, the next a quarter, then an eighth),
+/// never fewer than the fixed row and at most [`MAX_TEXTURE_LAYERS`].
+pub fn class_layer_caps(class: DeviceClass, quality: TextureQuality) -> [u32; TextureClass::ALL.len()] {
+    let mut held = [0; TextureClass::ALL.len()];
     if quality == TextureQuality::OFF {
-        return [MAX_TEXTURE_LAYERS, 0, 0, 0];
+        held[0] = MAX_TEXTURE_LAYERS;
+        return held;
     }
-    let caps = device_layer_caps(class);
-    let mut held = [0; 4];
-    for texture_class in TextureClass::ALL.into_iter().filter(|texture_class| *texture_class <= quality.max_class) {
-        let at = texture_class.index() as usize;
-        held[at] = caps[at];
+    let rows = device_layer_caps(class);
+    let ladder = class_ladder(quality.max_class);
+    let budget = u64::from(quality.layer_budget_mib) * 1024 * 1024;
+    for (slot, texture_class) in ladder.into_iter().enumerate().filter(|(_, texture_class)| *texture_class <= quality.max_class) {
+        let row = rows.get(texture_class.index() as usize).copied().unwrap_or(0);
+        let from_top = (TEXTURE_CLASS_SLOTS - 1 - slot) as u32;
+        held[texture_class.index() as usize] = budget_layers(row, texture_class, budget, from_top);
     }
     held
+}
+
+/// The layers `texture_class` holds from a `budget` of material bytes when it is `from_top` slots
+/// under the ladder's top: its share of the budget (half for the top, halving per slot down) over
+/// a colour and a data layer of RGBA8 with mips, at least `row`; `row` alone without a budget and
+/// for the 256 and 512 classes.
+fn budget_layers(row: u32, texture_class: TextureClass, budget: u64, from_top: u32) -> u32 {
+    if budget == 0 || texture_class <= TextureClass::S512 {
+        return row;
+    }
+    let slice = budget >> (from_top + 1);
+    let pair = 2 * MaterialClass { size_px: texture_class.side(), layers: 1 }.bytes();
+    let layers = u32::try_from(slice / pair.max(1)).unwrap_or(MAX_TEXTURE_LAYERS);
+    layers.max(row).min(MAX_TEXTURE_LAYERS)
 }
 
 /// The budget-ledger entries of the material arrays `class` reserves at `quality`: one entry per
@@ -511,11 +629,6 @@ pub fn fitted_textures(quality: TextureQuality, reserved: &[MaterialClass], fitt
         .find(survives)
         .unwrap_or(TextureClass::S256);
     TextureQuality { max_class, ..quality }
-}
-
-/// The size class whose arrays are `side` texels.
-fn class_of_side(side: u32) -> TextureClass {
-    TextureClass::ALL.into_iter().find(|class| class.side() == side).unwrap_or(TextureClass::S256)
 }
 
 /// The layer book of one texture array (STR-3): a reference count per layer and a free list.
@@ -599,6 +712,9 @@ impl TextureLayers {
 pub(crate) struct TextureArray {
     kind: TextureKind,
     family: TextureFamily,
+    /// The size class it holds and the slot that class is bound in.
+    class: TextureClass,
+    slot: u32,
     side: u32,
     cap: u32,
     growing: bool,
@@ -616,20 +732,23 @@ impl TextureArray {
         TextureArray::growing(device, kind, MAX_TEXTURE_LAYERS)
     }
 
-    /// An RGBA8 256 array growing by copy to at most `cap` layers, one blank layer to start.
+    /// An RGBA8 256 array (slot 0) growing by copy to at most `cap` layers, one blank layer to
+    /// start.
     fn growing(device: &Device, kind: TextureKind, cap: u32) -> TextureArray {
         let family = TextureFamily::Rgba8;
         let (texture, view) = array_texture(device, kind, family, TEXTURE_LAYER_PX, 1);
         let layers = TextureLayers::new(cap);
-        TextureArray { kind, family, side: TEXTURE_LAYER_PX, cap, growing: true, layers, chains: Vec::new(), texture, view }
+        let class = TextureClass::S256;
+        TextureArray { kind, family, class, slot: 0, side: TEXTURE_LAYER_PX, cap, growing: true, layers, chains: Vec::new(), texture, view }
     }
 
-    /// A size-class array of `side` texels holding at most `cap` layers, allocated on its first
-    /// texture.
-    fn presized(device: &Device, kind: TextureKind, family: TextureFamily, side: u32, cap: u32) -> TextureArray {
+    /// A size-class array of `class` bound in `slot`, holding at most `cap` layers, allocated on
+    /// its first texture.
+    fn presized(device: &Device, kind: TextureKind, family: TextureFamily, (class, slot): (TextureClass, u32), cap: u32) -> TextureArray {
         let placeholder = family.block_side();
         let (texture, view) = array_texture(device, kind, family, placeholder, 1);
-        TextureArray { kind, family, side, cap, growing: false, layers: TextureLayers::new(cap), chains: Vec::new(), texture, view }
+        let side = class.side();
+        TextureArray { kind, family, class, slot, side, cap, growing: false, layers: TextureLayers::new(cap), chains: Vec::new(), texture, view }
     }
 
     /// The view the shaders sample.
@@ -690,7 +809,7 @@ impl TextureArray {
     /// named as `kind` (this array's kind, or [`TextureKind::Normal`] in a data array).
     fn add_chain(&mut self, device: &Device, queue: &Queue, chain: Vec<TextureData>, kind: TextureKind) -> Result<TextureId, RenderError> {
         let layer = self.take_layer(device)?;
-        let id = TextureId::in_class(kind, class_of_side(self.side), layer);
+        let id = TextureId::in_slot(kind, self.class, self.slot, layer);
         if !self.growing {
             upload(queue, &self.texture, layer, &chain);
             return Ok(id);
@@ -721,7 +840,7 @@ impl TextureArray {
     fn add_blocks(&mut self, device: &Device, queue: &Queue, levels: &[Vec<u8>], kind: TextureKind) -> Result<TextureId, RenderError> {
         let layer = self.take_layer(device)?;
         upload_blocks(queue, &self.texture, self.family, layer, levels);
-        Ok(TextureId::in_class(kind, class_of_side(self.side), layer))
+        Ok(TextureId::in_slot(kind, self.class, self.slot, layer))
     }
 
     /// One more reference to the texture in `layer`: its count after, or None when it is free.
@@ -748,13 +867,14 @@ impl TextureArray {
     }
 }
 
-/// The material texture arrays of every size class (RQ6.4): one colour and one data array per
-/// class, each holding at most its [`class_layer_caps`] layers. With [`TextureQuality::OFF`] it
-/// is today's single growing 256 class.
+/// The material texture arrays of every size class slot (RQ6.4): one colour and one data array
+/// per class of the quality's ladder ([`class_ladder`]), each holding at most its
+/// [`class_layer_caps`] layers. With [`TextureQuality::OFF`] it is today's single growing 256 class.
 pub struct ClassArrays {
     class: DeviceClass,
     quality: TextureQuality,
     family: TextureFamily,
+    /// By slot.
     arrays: Vec<[TextureArray; 2]>,
 }
 
@@ -775,19 +895,21 @@ impl ClassArrays {
     pub fn with_family(device: &Device, class: DeviceClass, quality: TextureQuality, family: TextureFamily) -> ClassArrays {
         let caps = class_layer_caps(class, quality);
         let growing = quality == TextureQuality::OFF;
-        let arrays = TextureClass::ALL
+        let arrays = class_ladder(quality.max_class)
             .into_iter()
-            .map(|texture_class| {
-                let (side, cap) = (texture_class.side(), caps[texture_class.index() as usize]);
-                let stored = if texture_class == TextureClass::S256 { TextureFamily::Rgba8 } else { family };
-                let fallback = family != TextureFamily::Rgba8 && texture_class == TextureClass::S256;
+            .enumerate()
+            .map(|(slot, texture_class)| {
+                let cap = caps[texture_class.index() as usize];
+                let base = texture_class == TextureClass::S256;
+                let stored = if base { TextureFamily::Rgba8 } else { family };
+                let fallback = family != TextureFamily::Rgba8 && base;
                 [TextureKind::Color, TextureKind::Data].map(|kind| {
-                    if growing && texture_class == TextureClass::S256 {
+                    if growing && base {
                         TextureArray::new(device, kind)
                     } else if fallback {
                         TextureArray::growing(device, kind, cap)
                     } else {
-                        TextureArray::presized(device, kind, stored, side, cap)
+                        TextureArray::presized(device, kind, stored, (texture_class, slot as u32), cap)
                     }
                 })
             })
@@ -842,6 +964,11 @@ impl ClassArrays {
         self.place(device, queue, data, TextureKind::Normal, |side| normal_mip_chain(data, side, toksvig))
     }
 
+    /// The slots' arrays of one kind (`at`: 0 colour, 1 data), smallest class first.
+    fn slots(&self, at: usize) -> impl DoubleEndedIterator<Item = &TextureArray> {
+        self.arrays.iter().map(move |pair| &pair[at])
+    }
+
     fn place(
         &mut self,
         device: &Device,
@@ -853,18 +980,20 @@ impl ClassArrays {
         let at = usize::from(kind.is_data());
         // An image goes only where RGBA8 is stored: every class, or class 0 under a compressed
         // family (A6.4).
-        let rgba8 = |class: &TextureClass| self.arrays[class.index() as usize][at].family == TextureFamily::Rgba8;
-        let room = |class: &TextureClass| rgba8(class) && self.arrays[class.index() as usize][at].has_room();
-        let largest = TextureClass::ALL.into_iter().rev().filter(rgba8).find(|class| self.arrays[class.index() as usize][at].cap > 0).unwrap_or(TextureClass::S256);
+        let rgba8 = |array: &&TextureArray| array.family == TextureFamily::Rgba8;
+        let largest = self.slots(at).rev().filter(rgba8).find(|array| array.cap > 0).map_or(TextureClass::S256, |array| array.class);
         let wanted = class_for_source(data.width, data.height, largest.min(self.quality.max_class));
         // The wanted class or a smaller one (resampled down), else a larger one (resampled up:
-        // memory the ledger reserved anyway) rather than refusing while any class has room.
-        let smaller = TextureClass::ALL.into_iter().rev().filter(|class| *class <= wanted).find(room);
-        let chosen = smaller.or_else(|| TextureClass::ALL.into_iter().filter(|class| *class > wanted).find(room));
-        let Some(chosen) = chosen else {
+        // memory the ledger reserved anyway) rather than refusing while any class has room. A class
+        // the ladder leaves out (a 512 source under the 4096 ladder) takes the next one up.
+        let room = |array: &&TextureArray| rgba8(array) && array.has_room();
+        let held = self.slots(at).find(|array| array.class >= wanted).map_or(wanted, |array| array.class);
+        let smaller = self.slots(at).rev().filter(|array| array.class <= held).find(room);
+        let chosen = smaller.or_else(|| self.slots(at).filter(|array| array.class > held).find(room)).map(|array| array.slot);
+        let Some(slot) = chosen else {
             return Err(RenderError::refused(RenderCode::TextureTooLarge, format!("every {kind:?} size class is full")));
         };
-        let array = &mut self.arrays[chosen.index() as usize][at];
+        let array = &mut self.arrays[slot as usize][at];
         let side = array.side;
         array.add_chain(device, queue, chain(side), kind)
     }
@@ -884,18 +1013,18 @@ impl ClassArrays {
             return Err(RenderError::refused(RenderCode::TextureInvalid, format!("an {} texture for a {kind:?} slot", if texture.is_srgb() { "sRGB" } else { "linear" })));
         }
         let at = usize::from(kind.is_data());
-        let held = |class: &TextureClass| self.arrays[class.index() as usize][at].family == self.family;
-        let largest = TextureClass::ALL.into_iter().rev().filter(held).find(|class| self.arrays[class.index() as usize][at].cap > 0).unwrap_or(TextureClass::S256);
+        let family = self.family;
+        let held = |array: &&TextureArray| array.family == family;
+        let largest = self.slots(at).rev().filter(held).find(|array| array.cap > 0).map_or(TextureClass::S256, |array| array.class);
         let wanted = class_for_source(texture.side(), texture.side(), largest.min(self.quality.max_class));
-        let fits = |class: &TextureClass| held(class) && *class <= wanted && class.side() <= texture.side();
-        if !TextureClass::ALL.iter().any(fits) {
+        let fits = |array: &&TextureArray| held(array) && array.class <= wanted && array.side <= texture.side();
+        if !self.slots(at).any(|array| fits(&array)) {
             return Err(RenderError::refused(RenderCode::TextureInvalid, format!("{} texels is under the family's smallest size class", texture.side())));
         }
-        let room = |class: &TextureClass| fits(class) && self.arrays[class.index() as usize][at].has_room();
-        let Some(chosen) = TextureClass::ALL.into_iter().rev().find(room) else {
+        let Some(slot) = self.slots(at).rev().filter(fits).find(|array| array.has_room()).map(|array| array.slot) else {
             return Err(RenderError::refused(RenderCode::TextureTooLarge, format!("every {kind:?} size class it fits is full")));
         };
-        let array = &mut self.arrays[chosen.index() as usize][at];
+        let array = &mut self.arrays[slot as usize][at];
         let levels = texture.chain_from(array.side).ok_or_else(|| RenderError::refused(RenderCode::TextureInvalid, "no level of the class's side"))?;
         array.add_blocks(device, queue, levels, kind)
     }
@@ -923,9 +1052,35 @@ impl ClassArrays {
         self.arrays.iter().flatten().map(TextureArray::cached_bytes).sum()
     }
 
-    /// The view the shaders sample for `class`'s `kind` array.
+    /// The view the shaders sample for `class`'s `kind` array ([`ClassArrays::slot_of`]).
     pub fn view(&self, class: TextureClass, kind: TextureKind) -> &TextureView {
         self.array(class, kind).view()
+    }
+
+    /// The view the shaders bind in class slot `slot` (0..[`TEXTURE_CLASS_SLOTS`]) for `kind`.
+    pub fn slot_view(&self, slot: usize, kind: TextureKind) -> &TextureView {
+        self.arrays[slot.min(TEXTURE_CLASS_SLOTS - 1)][usize::from(kind.is_data())].view()
+    }
+
+    /// Every slot's view of `kind`, slot 0 first (what a shader binds per slot).
+    pub fn slot_views(&self, kind: TextureKind) -> [&TextureView; TEXTURE_CLASS_SLOTS] {
+        std::array::from_fn(|slot| self.slot_view(slot, kind))
+    }
+
+    /// Every slot's colour then data view, slot 0 first: the eight arrays an impostor bake binds.
+    pub fn slot_pairs(&self) -> [&TextureView; 2 * TEXTURE_CLASS_SLOTS] {
+        std::array::from_fn(|at| self.slot_view(at / 2, if at % 2 == 0 { TextureKind::Color } else { TextureKind::Data }))
+    }
+
+    /// The classes the slots hold, smallest first ([`class_ladder`] of the quality).
+    pub fn ladder(&self) -> [TextureClass; TEXTURE_CLASS_SLOTS] {
+        class_ladder(self.quality.max_class)
+    }
+
+    /// The slot `class` is bound in: its own, or for a class the ladder leaves out the next larger
+    /// class's (the top slot past them all).
+    pub fn slot_of(&self, class: TextureClass) -> usize {
+        self.ladder().iter().position(|held| *held >= class).unwrap_or(TEXTURE_CLASS_SLOTS - 1)
     }
 
     /// The GPU texture behind `class`'s `kind` array (captures and readback tests).
@@ -951,11 +1106,12 @@ impl ClassArrays {
     }
 
     fn array(&self, class: TextureClass, kind: TextureKind) -> &TextureArray {
-        &self.arrays[class.index() as usize][usize::from(kind.is_data())]
+        &self.arrays[self.slot_of(class)][usize::from(kind.is_data())]
     }
 
     fn array_mut(&mut self, id: TextureId) -> &mut TextureArray {
-        &mut self.arrays[id.class().index() as usize][usize::from(id.kind().is_data())]
+        let slot = (id.slot() as usize).min(TEXTURE_CLASS_SLOTS - 1);
+        &mut self.arrays[slot][usize::from(id.kind().is_data())]
     }
 }
 

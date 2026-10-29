@@ -23,6 +23,7 @@ import {
 } from "react";
 import type { EngineDescriptor } from "../types.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
 import type { ModelInstallJob } from "../../shared/model-install.ts";
@@ -72,6 +73,7 @@ import {
   ConnectViewKind,
   installsCli,
   markState,
+  startTrouble,
   type ConnectView,
   type Subscription,
 } from "./state.ts";
@@ -91,9 +93,9 @@ type Hardware = Awaited<ReturnType<typeof window.studio.hardware>>;
 const COMPOSER = { left: 120, top: 130, width: 520 } as const;
 const SEND = { x: COMPOSER.left + COMPOSER.width - 26, y: COMPOSER.top + 62 } as const;
 const ROLES = [
-  { name: "Plan your game", does: "the idea becomes tasks", left: 7, at: ROLE_AT.planner },
-  { name: "Build with workers", does: "every piece at once", left: 260, at: ROLE_AT.workers },
-  { name: "Reviewers test it", does: "and approve each build", left: 513, at: ROLE_AT.reviewers },
+  { name: t("Plan your game"), does: t("the idea becomes tasks"), left: 7, at: ROLE_AT.planner },
+  { name: t("Build with workers"), does: t("every piece at once"), left: 260, at: ROLE_AT.workers },
+  { name: t("Reviewers test it"), does: t("and approve each build"), left: 513, at: ROLE_AT.reviewers },
 ] as const;
 /** The welcome's typing: a calm start while the caret blinks, then each letter. */
 const TYPE_START_MS = 1400;
@@ -208,9 +210,9 @@ function pointerAt(phase: number, still: boolean): "off" | "on" | "gone" {
 }
 
 function welcomeCaption(beat: 0 | 1, writing: boolean): string {
-  if (beat === 1) return "Multi-agent workflows. Custom plugins. Assets for games.";
-  if (writing) return "Type your own idea. It waits for you after setup.";
-  return "Open source AI harness for game development";
+  if (beat === 1) return t("Multi-agent workflows. Custom plugins. Assets for games.");
+  if (writing) return t("Type your own idea. It waits for you after setup.");
+  return t("Open source AI harness for game development");
 }
 
 /** The welcome's two beats, its script, and what the person does to it: write an idea, send it, jump a beat. */
@@ -375,8 +377,8 @@ function WelcomeComposer({ w }: { w: WelcomeModel }): JSX.Element {
       <input
         ref={w.input}
         className="onboarding-idea text-composer"
-        aria-label="Describe a game"
-        placeholder="Describe a game…"
+        aria-label={t("Describe a game")}
+        placeholder={t("Describe a game…")}
         value={value}
         data-let-go={w.letGo || undefined}
         disabled={!composerOn}
@@ -400,7 +402,7 @@ function WelcomeComposer({ w }: { w: WelcomeModel }): JSX.Element {
       <button
         type="button"
         className="composer-send onboarding-send"
-        aria-label="Send idea"
+        aria-label={t("Send idea")}
         data-state={value.trim() ? "ready" : "idle"}
         data-pressed={pressing || undefined}
         disabled={!composerOn || nothingToSend}
@@ -469,7 +471,7 @@ function WelcomeSteps({ w }: { w: WelcomeModel }): JSX.Element {
           key={step}
           type="button"
           className="onboarding-step"
-          aria-label={`Show step ${step + 1} of 2`}
+          aria-label={t("Show step {step} of {total}", { step: step + 1, total: 2 })}
           aria-current={step === beat ? "step" : undefined}
           onClick={() => w.jump(step)}
         >
@@ -507,7 +509,7 @@ function Welcome({
   return (
     <section className={`onboarding-screen onboarding-welcome ${back ? "onboarding-enter-back" : ""}`}>
       <header className="onboarding-hello">
-        <p>welcome to</p>
+        <p>{t("welcome to")}</p>
         <GenexLogo className="onboarding-wordmark" />
       </header>
       <div ref={fit} className="onboarding-fit">
@@ -525,7 +527,7 @@ function Welcome({
         data-onboarding-action={OnboardingAction.Next}
         onClick={() => onNext(w.writing ? w.draft.trim() : "")}
       >
-        Next
+        {t("Next")}
       </Button>
       <WelcomeSteps w={w} />
     </section>
@@ -586,7 +588,7 @@ function followPull(
 ) {
   if (progress.status === "error") {
     setPulling(null);
-    setError(progress.error ?? "Download failed");
+    setError(progress.error ?? t("Download failed"));
     return;
   }
   if (progress.status === "success") {
@@ -696,8 +698,8 @@ function CodeForm({
     <form className="onboarding-code" onSubmit={onSubmit}>
       <input
         autoFocus
-        aria-label="Code from the sign-in page"
-        placeholder="Paste the code"
+        aria-label={t("Code from the sign-in page")}
+        placeholder={t("Paste the code")}
         value={code}
         spellCheck={false}
         autoComplete="off"
@@ -705,7 +707,7 @@ function CodeForm({
         onChange={(event) => onCode(event.target.value)}
       />
       <Button type="submit" variant="default" disabled={!code.trim()}>
-        Continue
+        {t("Continue")}
       </Button>
     </form>
   );
@@ -738,7 +740,7 @@ function ConnectContent({
           <button
             type="button"
             className="onboarding-status-cancel"
-            aria-label="Cancel sign-in"
+            aria-label={t("Cancel sign-in")}
             onClick={() => onCancel(id)}
           >
             <Icon name="close" size={14} />
@@ -843,7 +845,8 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
   const recheck = async (id: Subscription) => {
     setChecking((current) => ({ ...current, [id]: true }));
     try {
-      await auth(id).refresh();
+      // A CLI that is signed in but did not start is looked at by starting it again.
+      await Promise.all([auth(id).refresh(), window.studio.refreshModels(id).catch(() => false)]);
     } finally {
       setChecking((current) => ({ ...current, [id]: false }));
     }
@@ -865,6 +868,8 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
   };
   const trouble = (id: Subscription): string | null | undefined => {
     if (views[id].kind === ConnectViewKind.On) return null;
+    const notStarting = startTrouble(id, auth(id).engine);
+    if (notStarting) return notStarting;
     const installProblem = installer(id).problem;
     if (installProblem) return installProblem;
     if (id === EngineId.ClaudeCode)
@@ -1006,9 +1011,9 @@ function Connect({
     >
       <TopBar onBack={onBack} onSkip={anyOn ? undefined : onSkip} />
       <h1 ref={heading} tabIndex={-1} className="onboarding-title">
-        Bring your AI subscription
+        {t("Bring your AI subscription")}
       </h1>
-      <p className="onboarding-lede">Genex builds with the Claude or ChatGPT plan you already pay for.</p>
+      <p className="onboarding-lede">{t("Genex builds with the Claude or ChatGPT plan you already pay for.")}</p>
       <div ref={area} className="onboarding-marks">
         <ArtCanvas
           width={MARKS.width}
@@ -1041,10 +1046,10 @@ function Connect({
 
 /** The model row's second line: its size and what it is good at, the download's progress, or that it is here. */
 function modelDetail(local: LocalModel, pick: ModelPick): string {
-  if (local.installed) return "Downloaded · runs on this Mac";
+  if (local.installed) return t("Downloaded · runs on this Mac");
   if (local.state === ChipState.Downloading)
-    return `${((pick.sizeGb * local.percent) / 100).toFixed(1)} of ${pick.sizeGb} GB`;
-  return `${pick.sizeGb} GB · ${pick.about}`;
+    return t("{done} of {size} GB", { done: ((pick.sizeGb * local.percent) / 100).toFixed(1), size: pick.sizeGb });
+  return t("{size} GB · {about}", { size: pick.sizeGb, about: pick.about });
 }
 
 /** The model row's action: Download, the download's percent (with Cancel for Bonsai), or Ready. */
@@ -1053,7 +1058,7 @@ function ModelAction({ local, pick }: { local: LocalModel; pick: ModelPick }): J
     return (
       <div role="status" className="onboarding-status" data-on>
         <Check />
-        Ready
+        {t("Ready")}
       </div>
     );
   if (local.state === ChipState.Downloading)
@@ -1061,7 +1066,11 @@ function ModelAction({ local, pick }: { local: LocalModel; pick: ModelPick }): J
       <div role="status" className="flex items-center gap-2">
         <span className="onboarding-percent">{local.percent}%</span>
         {pick.engine === EngineId.Bonsai && (
-          <Button variant="ghost" onClick={local.cancel} aria-label={`Cancel downloading ${local.name}`}>
+          <Button
+            variant="ghost"
+            onClick={local.cancel}
+            aria-label={t("Cancel downloading {name}", { name: local.name })}
+          >
             <Icon name="close" size={14} />
           </Button>
         )}
@@ -1069,7 +1078,7 @@ function ModelAction({ local, pick }: { local: LocalModel; pick: ModelPick }): J
     );
   return (
     <Button variant="default" onClick={() => void local.download()}>
-      Download
+      {t("Download")}
     </Button>
   );
 }
@@ -1082,7 +1091,7 @@ function ModelRow({ local, pick }: { local: LocalModel; pick: ModelPick }): JSX.
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2.5">
           <span className="onboarding-model-name">{local.name}</span>
-          <span className="onboarding-tag">Best fit</span>
+          <span className="onboarding-tag">{t("Best fit")}</span>
         </div>
         <span className="onboarding-model-detail">{modelDetail(local, pick)}</span>
       </div>
@@ -1093,7 +1102,7 @@ function ModelRow({ local, pick }: { local: LocalModel; pick: ModelPick }): JSX.
         <span
           className="onboarding-model-bar"
           role="progressbar"
-          aria-label={`Downloading ${local.name}`}
+          aria-label={t("Downloading {name}", { name: local.name })}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={local.percent}
@@ -1110,20 +1119,21 @@ function LocalBody({ local }: { local: LocalModel }): JSX.Element {
   if (local.hardwareError)
     return (
       <p role="alert" className="onboarding-problem">
-        Couldn't look at this Mac. {local.hardwareError}
+        {t("Couldn't look at this Mac. {error}", { error: local.hardwareError })}
       </p>
     );
   if (!local.hardware)
     return (
       <p role="status" className="onboarding-note">
-        Looking at this Mac…
+        {t("Looking at this Mac…")}
       </p>
     );
   if (!pick)
     return (
       <p className="onboarding-note">
-        No local model fits this Mac's {Math.round(local.hardware.hardware.usableModelGb ?? 0)} GB. Connect a
-        subscription instead.
+        {t("No local model fits this Mac's {size} GB. Connect a subscription instead.", {
+          size: Math.round(local.hardware.hardware.usableModelGb ?? 0),
+        })}
       </p>
     );
   return <ModelRow local={local} pick={pick} />;
@@ -1185,9 +1195,9 @@ function Local({
     <section className="onboarding-screen onboarding-local onboarding-enter">
       <TopBar onBack={onBack} onSkip={anyOn ? undefined : onSkip} />
       <h1 ref={heading} tabIndex={-1} className="onboarding-title">
-        Run a model on this Mac
+        {t("Run a model on this Mac")}
       </h1>
-      <p className="onboarding-lede">Free and private. Slower than Claude or ChatGPT.</p>
+      <p className="onboarding-lede">{t("Free and private. Slower than Claude or ChatGPT.")}</p>
       <ArtCanvas
         width={CHIP.width}
         height={CHIP.height}
@@ -1200,7 +1210,7 @@ function Local({
       <p role="alert" className="onboarding-problem">
         {local.error ?? ""}
       </p>
-      {downloading && <p className="onboarding-note onboarding-rise">It keeps downloading if you go back.</p>}
+      {downloading && <p className="onboarding-note onboarding-rise">{t("It keeps downloading if you go back.")}</p>}
       <StartBuilding anyOn={anyOn} onStart={onStart} />
     </section>
   );
@@ -1330,7 +1340,7 @@ export function Onboarding({
       ref={root}
       role="dialog"
       aria-modal="true"
-      aria-label="Welcome to Genex"
+      aria-label={t("Welcome to Genex")}
       tabIndex={-1}
       className="onboarding"
       data-closing={closing || undefined}

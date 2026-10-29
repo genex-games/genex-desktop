@@ -12,16 +12,28 @@
 //! STR-14): the compiled table first, as a slice of the program's own bytes with no copy, then
 //! files under `assets/` read on the job pool ([`genex_render::jobs::Pool`]). A file's path is
 //! checked by the same code as the sim's reads and the presenter's ([`AssetFiles`]: the asset-path
-//! rule, no link at the name, the real path inside the folder, a regular file within
+//! rule, no link at the name or on the way to it, a regular file within
 //! [`ASSET_READ_MAX_BYTES`]), and its range against the file's size, all before anything is
 //! opened: a FIFO, a device or a range past the end is refused without opening it.
+//!
+//! [`CellPacks`] reads a compiled cell pack whole (release R-8): `world.json` and every listed cell
+//! body, from a game's compiled asset table or any [`AssetSource`] (natively [`AssetFiles`], whose
+//! checks every read passes first). [`pack`] is the facade's view of the pack format, so a game
+//! crate that depends only on `genex` reads a pack (`genex::pack`) and digests what it read
+//! (`genex::digest`).
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use genex_core::cell::CellId;
+use genex_core::digest::{FNV_OFFSET_BASIS, fnv1a64_from};
+use genex_core::paths::is_safe_asset_path;
 use genex_render::jobs::Priority;
+use genex_stream::pack::{CellPack, PACK_WORLD_FILE, PackError, PackWorld, cell_file};
+use genex_stream::StreamViewCode;
 
-use crate::gfx::AssetError;
+use crate::gfx::{AssetError, AssetErrorCode, AssetSource, AssetTable};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use files::StreamFiles;
@@ -82,6 +94,141 @@ pub trait AsyncSource {
 
     /// Requests made and not yet answered by a poll.
     fn in_flight(&self) -> usize;
+}
+
+/// The cell pack format as a game reads it (release R-8): the reader [`CellPacks`], what a cell
+/// body holds, and the refusals.
+pub mod pack {
+    pub use super::{CellPacks, PackReadError, PackRefusal};
+    pub use genex_stream::StreamViewCode;
+    pub use genex_stream::pack::{
+        CELL_COLLIDERS_MAX, CELL_GROUPS_MAX, CELL_INSTANCES_MAX, CELL_MODELS_MAX, CELL_THINGS_MAX, CellPack, ColliderShapeKind, NavSource, PACK_CELL_BYTES_MAX,
+        PACK_CELLS_MAX, PACK_FORMAT, PACK_VERSION, PACK_WORLD_BYTES_MAX, PACK_WORLD_FILE, PackCollider, PackEntry, PackError, PackGroup, PackModel,
+        PackShape, PackTerrain, PackThing, PackTransform, PackWorld, cell_file, pack_file,
+    };
+}
+
+/// Why a pack read was refused: the asset folder refused a file, or the pack format did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PackRefusal {
+    /// A file was not read: an unsafe path, a link, missing, too large ([`AssetErrorCode`]).
+    Asset(AssetErrorCode),
+    /// A file was read and is not a v1 pack, or not the bytes `world.json` lists ([`StreamViewCode`]).
+    Pack(StreamViewCode),
+}
+
+impl PackRefusal {
+    /// The wire spelling: the asset code's, or the pack code's.
+    pub const fn wire(self) -> &'static str {
+        match self {
+            PackRefusal::Asset(code) => code.wire(),
+            PackRefusal::Pack(code) => code.wire(),
+        }
+    }
+}
+
+/// A refused pack read: the refusal, the file it is about (under `assets/`) and what was wrong,
+/// for a person to read (never matched on). Nothing past the refused file was read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackReadError {
+    /// The typed refusal.
+    pub refusal: PackRefusal,
+    /// The file under `assets/` it is about (the folder itself when that was refused).
+    pub path: String,
+    /// What was wrong.
+    pub detail: String,
+}
+
+impl PackReadError {
+    fn asset(path: &str, error: &AssetError) -> PackReadError {
+        PackReadError { refusal: PackRefusal::Asset(error.code()), path: path.to_owned(), detail: error.detail().to_owned() }
+    }
+
+    fn pack(path: &str, error: &PackError) -> PackReadError {
+        PackReadError { refusal: PackRefusal::Pack(error.code), path: path.to_owned(), detail: format!("{} (at byte {})", error.detail, error.at) }
+    }
+}
+
+impl std::fmt::Display for PackReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}: {}", self.refusal.wire(), self.path, self.detail)
+    }
+}
+
+impl std::error::Error for PackReadError {}
+
+/// A compiled cell pack read whole: the host compiles a world's placement (`world/*.cells.json`)
+/// into `assets/<folder>/` (`world.json` and `cells/<x>_<z>.cell`). Every listed cell is read and
+/// checked against its listed size and FNV-1a 64; an unlisted cell is empty. The same pack gives
+/// the same [`CellPacks::digest`] on every destination.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CellPacks {
+    folder: String,
+    world: PackWorld,
+    cells: BTreeMap<CellId, CellPack>,
+}
+
+impl CellPacks {
+    /// The pack at `assets/<folder>/` in a game's compiled asset table (`include_bytes!` rows,
+    /// the table [`crate::install_with_assets`] takes): the same on every destination, so cell
+    /// builders registered at install can use it.
+    pub fn from_table(table: AssetTable, folder: &str) -> Result<CellPacks, PackReadError> {
+        CellPacks::read(&table, folder)
+    }
+
+    /// The pack at `assets/<folder>/` from `source`. A folder that is not a plain path under
+    /// `assets/` is refused before anything is read; then `world.json`, then each listed body in
+    /// ascending cell order, each read through the source's own checks (natively no link at a name
+    /// below the asset folder). The first refusal ends the read.
+    pub fn read(source: &dyn AssetSource, folder: &str) -> Result<CellPacks, PackReadError> {
+        if !is_safe_asset_path(folder) {
+            let error = AssetError::new(AssetErrorCode::UnsafePath, "the pack folder is not a plain path under assets/");
+            return Err(PackReadError::asset(folder, &error));
+        }
+        let world_path = format!("{folder}/{PACK_WORLD_FILE}");
+        let text = source.read(&world_path).map_err(|error| PackReadError::asset(&world_path, &error))?;
+        let world = PackWorld::read(&text).map_err(|error| PackReadError::pack(&world_path, &error))?;
+        let mut cells = BTreeMap::new();
+        for entry in world.cells() {
+            let path = format!("{folder}/{}", cell_file(entry.cell));
+            let body = source.read(&path).map_err(|error| PackReadError::asset(&path, &error))?;
+            let pack = CellPack::read(entry, &body).map_err(|error| PackReadError::pack(&path, &error))?;
+            cells.insert(entry.cell, pack);
+        }
+        Ok(CellPacks { folder: folder.to_owned(), world, cells })
+    }
+
+    /// The folder under `assets/` it was read from.
+    pub fn folder(&self) -> &str {
+        &self.folder
+    }
+
+    /// The pack's `world.json`: the cell size, the bounds and the listed cells.
+    pub fn world(&self) -> &PackWorld {
+        &self.world
+    }
+
+    /// The content of `cell`; None for a cell the pack does not list (an empty cell).
+    pub fn cell(&self, cell: CellId) -> Option<&CellPack> {
+        self.cells.get(&cell)
+    }
+
+    /// Every listed cell's content, in ascending cell order (by `x`, then `z`).
+    pub fn cells(&self) -> impl Iterator<Item = &CellPack> {
+        self.cells.values()
+    }
+
+    /// The FNV-1a 64 of the pack: the cell size, then each listed cell's `x`, `z`, body size and
+    /// body digest (little-endian), ascending. Equal packs give equal digests on every destination.
+    pub fn digest(&self) -> u64 {
+        let start = fnv1a64_from(&self.world.cell_size().to_le_bytes(), FNV_OFFSET_BASIS);
+        self.world.cells().iter().fold(start, |hash, entry| {
+            let hash = fnv1a64_from(&entry.cell.x.to_le_bytes(), hash);
+            let hash = fnv1a64_from(&entry.cell.z.to_le_bytes(), hash);
+            let hash = fnv1a64_from(&entry.bytes.to_le_bytes(), hash);
+            fnv1a64_from(&entry.fnv.to_le_bytes(), hash)
+        })
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

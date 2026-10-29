@@ -481,6 +481,18 @@ export interface MeshoptSimplifierModule {
     targetError: number,
     flags?: readonly MeshoptSimplifyFlag[],
   ): [Uint32Array, number];
+  /**
+   * Simplified indices that ignore topology (seams, separate parts merge), reaching the target where
+   * {@link simplifyWithAttributes} stops short; a `vertexLock` of 1 keeps that vertex.
+   */
+  simplifySloppy(
+    indices: Uint32Array,
+    vertexPositions: Float32Array,
+    vertexPositionsStride: number,
+    vertexLock: Uint8Array | null,
+    targetIndexCount: number,
+    targetError: number,
+  ): [Uint32Array, number];
   /** The factor that turns a relative error into an object-space distance. */
   getScale(vertexPositions: Float32Array, vertexPositionsStride: number): number;
 }

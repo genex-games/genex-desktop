@@ -6,6 +6,30 @@ and `gfx.music(path)`, the update and UI hooks play them through `ctx.audio`, an
 `Sound`, `Music`, `PlayOpts`, `MusicOpts`, `Bus`, `Voice`, `Spatial`, `Listener`, `AudioSetup`,
 `Duck`, `ReverbZone`, `ReverbPreset` and `ZoneShape`.
 
+Every type and call in one line:
+
+```rust
+use genex::prelude::*;                                         // Sound, Music, PlayOpts, MusicOpts, Bus, Voice, Listener, AudioSetup, Duck, ReverbZone, ReverbPreset, ZoneShape
+use genex::audio::{SoundRefusal, ZoneId};                      // what sound.refusal() and add_zone answer
+gfx.sound("sfx/step.wav"); gfx.music("music/theme.ogg");       // on_reset -> Sound, Music (missing, never a panic)
+sound.refusal(); sound.is_missing(); sound.seconds();          // -> Option<SoundRefusal>, bool, f32; Music the same
+ctx.audio.play(&sound); ctx.audio.play_at(&sound, at);         // -> Voice
+ctx.audio.play_with(&hum, PlayOpts::default().looped().on(Bus::Ambience).volume_db(-6.0)); // -> Voice
+// PlayOpts::default() then .looped() .on(bus) .volume_db(db) .max_instances(n); PlayOpts::ui() for menu sounds
+// Bus::Music | Bus::Sfx (the default) | Bus::Ui | Bus::Voice | Bus::Ambience
+ctx.audio.stop(voice, fade_s); ctx.audio.stop_bus(bus, fade_s);
+ctx.audio.set_position(voice, at); ctx.audio.teleport(voice, at);
+ctx.audio.set_volume(voice, db, fade_s); ctx.audio.set_pitch(voice, rate, fade_s);
+ctx.audio.playing(voice); ctx.audio.position_s(voice);         // -> bool, Option<f32>
+ctx.audio.bus_volume(bus, db, fade_s); ctx.audio.master_volume(db, fade_s);
+ctx.audio.music(&music, MusicOpts::default()); ctx.audio.stop_music(fade_s);
+ctx.audio.listener(Some(Listener { position, forward, up }));  // None: back to the game camera
+ctx.audio.add_zone(zone); ctx.audio.remove_zone(id);           // -> ZoneId; zone: a ReverbZone (below)
+game.audio(AudioSetup { ducks: vec![duck], zones: vec![zone], occlusion: true, ..AudioSetup::default() });
+// Duck { trigger: Bus::Voice, target: Bus::Music, depth_db, attack_s, release_s }
+// ReverbZone { name, shape: ZoneShape::Box { min, max } | ZoneShape::Sphere { center, radius }, preset: ReverbPreset::CAVE, send_db, uniformity }
+```
+
 ```rust
 // World holds `step: Option<Sound>` and the player's `position: Vec3`.
 game.on_reset(|sim, _, _, gfx| sim.world.step = Some(gfx.sound("sfx/step.wav")));
@@ -50,6 +74,12 @@ the ears (never an observer or debug camera). `PlayOpts::ui()` plays menu sounds
 The buses are `music`, `sfx`, `ui`, `voice` and `ambience`; the settings menu's Audio tab (`docs/api/settings.md`) sets the
 person's volume for each, outside the simulation.
 
+A sound plays once unless its options loop it: `ctx.audio.play_with(&hum, PlayOpts::default()
+.looped().on(Bus::Ambience).volume_db(-6.0))` plays an engine hum, rain or a room tone until
+`ctx.audio.stop(voice, fade_s)`, so keep the answered `Voice` in the world. `.on(bus)` picks its
+bus (`Bus::Music`, `Bus::Sfx`, the default, `Bus::Ui`, `Bus::Voice`, `Bus::Ambience`) and
+`.volume_db(db)` its level.
+
 A play keeps at most 4 voices of one sound (`MAX_INSTANCES_DEFAULT`): another play of it steals the
 oldest. `ctx.audio.play_with(&steps, PlayOpts::default().max_instances(8))` sets the cap, and
 `.max_instances(0)` removes it, as a ring of looping emitters of one sound needs.
@@ -89,11 +119,9 @@ device class (48 rendered voices on desktop, 32 on the web, 24 on phones, 64 log
 are virtual and resume at the right offset). Rendered samples differ by target and are display
 only.
 
-`native/genex-rust/examples/audio-yard` plays every call on this page along a 20 s walk: footsteps
-and a gun burst capped by `max_instances`, dialogue ducking the music, a crossfade at a cave's
-reverb zone, a wall occluding a generator, a Doppler fly-by and UI clicks. Its rows pin one logical
-digest that native, x86_64 and wasm32 reach at all three pool sizes, and its captures equal those of
-the same game with every audio call left out.
+`docs/examples/explosion/` loads one sound in `on_reset` and plays it where the blast happened;
+the engine's own audio rows pin one logical digest that native, x86_64 and wasm32 reach at all three
+pool sizes, and captures that equal those of the same game with every audio call left out.
 
 ## Checking sound
 
@@ -118,8 +146,8 @@ A game that plays no sound sets `[audio] enabled = false` in `genex.toml`: it bu
 mixer and the decoders, the largest audio share of a web build. Its code compiles unchanged, but
 every `gfx.sound` and `gfx.music` handle is missing (`audio-disabled`), `ctx.audio.play` answers
 `Voice::NONE`, `playing` is false, no device opens, and `state().volatile.audio` is
-`{ "enabled": false, "issues": [...] }` once the game asked for a sound. Turn it back on before
-adding sound.
+`{ "enabled": false, "issues": [...] }` once the game asked for a sound. The template ships audio
+off: set `[audio] enabled = true` in the change that adds the first sound.
 
 ## Devices
 

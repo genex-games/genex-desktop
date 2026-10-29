@@ -92,6 +92,7 @@ fn the_lod_extras_schema_is_the_fixtures() {
     let numbers = [
         ("schemaVersion", mesh::LOD_SCHEMA_VERSION),
         ("maxLevels", mesh::LOD_MAX_LEVELS),
+        ("maxCasterLevels", mesh::LOD_MAX_CASTER_LEVELS),
         ("minTriangles", mesh::LOD_MIN_TRIANGLES),
     ];
     for (key, value) in numbers {
@@ -177,7 +178,8 @@ fn the_terrain_calls_and_refusals_are_the_fixtures() {
 #[test]
 fn the_game_systems_blocks_are_the_fixtures() {
     use genex::manifest::{
-        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS, STREAM_CALLS,
+        ANIMATION_CALLS, ASSET_CALLS, ASSET_REFUSALS, CAMERA_CALLS, INPUT_CALLS, LOD_CALLS, LOD_REFUSALS, NAV_CALLS, SETTINGS_CALLS,
+        STREAM_CALLS,
     };
     let pinned = fixture();
     let animation: Vec<&str> = genex_anim::AnimationErrorCode::ALL
@@ -193,7 +195,7 @@ fn the_game_systems_blocks_are_the_fixtures() {
     let lod = genex::LodRefusalCode::ALL.map(genex::LodRefusalCode::wire);
     assert_eq!(LOD_REFUSALS, lod, "the manifest's lod refusals are LodRefusalCode's");
     let settings: Vec<&str> = genex::settings::SettingsErrorCode::ALL.iter().map(|code| code.wire()).collect();
-    let blocks: [(&str, &[&str], &[&str]); 7] = [
+    let blocks: [(&str, &[&str], &[&str]); 8] = [
         ("animation", &ANIMATION_CALLS, &animation[..]),
         ("stream", &STREAM_CALLS, &stream),
         ("nav", &NAV_CALLS, &nav),
@@ -201,6 +203,7 @@ fn the_game_systems_blocks_are_the_fixtures() {
         ("assets", &ASSET_CALLS, &ASSET_REFUSALS),
         ("lod", &LOD_CALLS, &LOD_REFUSALS),
         ("settings", &SETTINGS_CALLS, &settings),
+        ("cameraRig", &CAMERA_CALLS, &[]),
     ];
     for (key, calls, refusals) in blocks {
         assert_eq!(names(&pinned[key]["calls"]), calls, "{key} calls");
@@ -302,7 +305,10 @@ fn the_render_facts_are_the_fixtures() {
     use genex::present::{AssetIssueCode, TextureOrigin};
     use genex_render::texture::TextureFamily;
     let pinned = fixture();
-    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues"]);
+    assert_eq!(names(&pinned["runtimeRender"]["keys"]), ["textures", "assetIssues", "look", "exposure"]);
+    use genex_render::post::exposure::ExposureWarning;
+    let warnings = [ExposureWarning::EvMinRaisedWithDoorwayAdaptation, ExposureWarning::DoorwayAdaptationUnderManual];
+    assert_eq!(names(&pinned["runtimeRender"]["exposureWarnings"]), warnings.map(ExposureWarning::wire));
     assert_eq!(names(&pinned["runtimeRender"]["issueCodes"]), AssetIssueCode::ALL.map(AssetIssueCode::wire));
     let families: Vec<&str> = TextureFamily::ALL.into_iter().map(|family| TextureOrigin::Family(family).wire()).chain([TextureOrigin::Source.wire()]).collect();
     assert_eq!(names(&pinned["runtimeRender"]["families"]), families);
@@ -371,6 +377,24 @@ fn the_grading_and_lens_calls_are_the_fixtures_and_each_is_a_call_of_the_facade(
         .motion_blur(MotionBlur::shutter(0.5));
 }
 
+/// Lane UQ: the upscaling knob's calls are the fixture's and real calls of the facade, and its mode
+/// spellings and frame-rate targets are the renderer's.
+#[test]
+fn the_upscaling_calls_modes_and_frame_rates_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::render::{RenderConfig, UpscaleMode};
+    let pinned = fixture();
+    assert_eq!(pinned_calls(&pinned, "upscaling"), [".upscale", ".upscale_locked", "genex::render::lock_upscale"]);
+    assert_eq!(names(&pinned["upscaling"]["modes"]), UpscaleMode::ALL.map(UpscaleMode::wire));
+    let rates: Vec<u64> = pinned["upscaling"]["frameRates"].as_array().expect("frame rates").iter().filter_map(serde_json::Value::as_u64).collect();
+    assert_eq!(rates, genex_render::drs::FRAME_RATE_TARGETS.map(u64::from));
+    let default = RenderConfig::from_build().upscale(UpscaleMode::Balanced);
+    assert_eq!((default.upscale.mode, default.upscale.locked), (Some(UpscaleMode::Balanced), false));
+    let locked = RenderConfig::new().upscale_locked(UpscaleMode::Native);
+    assert_eq!((locked.upscale.mode, locked.upscale.locked), (Some(UpscaleMode::Native), true));
+    // Outside a UI hook the hold does nothing.
+    genex::render::lock_upscale(Some(UpscaleMode::Native));
+}
+
 #[test]
 fn the_cloud_calls_are_the_fixture_s_and_each_is_a_call_of_the_facade() {
     use genex::render::{Clouds, Environment, SkyParams};
@@ -416,4 +440,129 @@ fn the_night_sky_and_subsurface_calls_are_the_fixtures_and_each_is_a_call_of_the
     frame.environment(Environment::Sky(sky));
     let leaf = Material::color(Color::rgb(60, 110, 30)).with_subsurface(Subsurface::new([0.2, 0.3, 0.05], 0.15).with_transmission(0.6));
     assert!(leaf.subsurface().is_some());
+}
+
+/// Bodycam B2b, B2c and B7: the material texture and UV calls, and the built-mesh calls and
+/// refusals (`gfx.mesh`), each a call of the facade.
+#[test]
+fn the_material_and_mesh_calls_are_the_fixtures_and_each_is_a_call_of_the_facade() {
+    use genex::{MeshData, MeshErrorCode};
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "materials"),
+        [
+            ".with_metal_rough_texture",
+            ".with_orm_texture",
+            ".with_occlusion_texture",
+            ".with_uv_scale",
+            ".with_world_uv",
+            ".with_uv_offset",
+            ".with_uv_jitter",
+            ".with_uv_rotation",
+            ".with_stochastic_tiling",
+            ".with_macro_variation"
+        ]
+    );
+    let plaster = Material::color(Color::WHITE)
+        .with_metal_rough_texture("textures/plaster_rough.png")
+        .with_orm_texture("textures/plaster_orm.png")
+        .with_occlusion_texture("textures/plaster_ao.png", 0.8)
+        .with_uv_scale(4.0, 3.0)
+        .with_world_uv(2.0)
+        .with_uv_offset(0.25, 0.5)
+        .with_uv_jitter(7)
+        .with_uv_rotation(0.3)
+        .with_stochastic_tiling(true)
+        .with_macro_variation(0.15, 3.0);
+    assert_eq!(plaster.occlusion_texture(), Some(("textures/plaster_ao.png", 0.8)));
+    let variation = plaster.uv_variation();
+    assert!(variation.stochastic && variation.rotation == 0.3 && variation.macro_strength == 0.15);
+    // A panel's jitter is a pure function of its seed: the same everywhere, different per panel.
+    let jitter = |seed: u32| Material::default().with_uv_jitter(seed).uv_variation().offset;
+    assert_eq!(jitter(7), variation.offset);
+    assert_eq!(jitter(7), jitter(7));
+    assert_ne!(jitter(7), jitter(8));
+    assert!((0..64).map(jitter).all(|offset| offset.iter().all(|value| (0.0..1.0).contains(value))));
+    assert_eq!(pinned_calls(&pinned, "mesh"), ["gfx.mesh", "MeshData::new", ".vertex", ".triangle", ".quad", ".cuboid", ".check"]);
+    let refusals = MeshErrorCode::ALL.map(MeshErrorCode::wire);
+    assert_eq!(names(&pinned["mesh"]["refusals"]), refusals);
+    let mut data = MeshData::new();
+    let a = data.vertex(Vec3::ZERO, Vec3::Z, genex::glam::Vec2::ZERO);
+    let b = data.vertex(Vec3::X, Vec3::Z, genex::glam::Vec2::X);
+    let c = data.vertex(Vec3::Y, Vec3::Z, genex::glam::Vec2::Y);
+    data.triangle(a, b, c).quad([Vec3::ZERO, Vec3::X, Vec3::ONE, Vec3::Y], 1.0).cuboid(Vec3::ZERO, Vec3::ONE, 1.0);
+    assert!(data.check().is_ok());
+    let mut game = Game::new(());
+    game.on_reset(move |_, _, _, gfx| assert!(gfx.mesh(&data).is_ok()));
+}
+
+/// The Physics page's calls (lane PH): Rapier 0.36 through `genex::physics`, as `docs/api/physics.md`
+/// teaches them. They are Rapier's own names, pinned so the page, the physics recipe and the
+/// template guide teach only calls this chain makes.
+#[cfg(feature = "physics")]
+#[test]
+fn the_physics_calls_are_the_fixtures_and_each_is_a_call_of_rapier() {
+    use genex::physics::{
+        Ball, ColliderBuilder, Pose, QueryFilter, Ray, RevoluteJointBuilder, RigidBodyBuilder, RopeJointBuilder,
+    };
+    let pinned = fixture();
+    assert_eq!(
+        pinned_calls(&pinned, "physics"),
+        [
+            "RigidBodyBuilder::dynamic", "RigidBodyBuilder::fixed", "RigidBodyBuilder::kinematic_position_based",
+            ".translation", ".linvel", ".linear_damping", ".ccd_enabled", "ColliderBuilder::cuboid", "ColliderBuilder::ball",
+            "ColliderBuilder::cylinder", ".mass", ".density", ".friction", ".restitution", "physics.insert",
+            "physics.insert_body", "physics.remove_body", "physics.bodies.get", "physics.bodies.get_mut",
+            "physics.colliders.get", "body.set_next_kinematic_translation", "body.apply_impulse",
+            "body.apply_impulse_at_point", "body.translation", "body.rotation", "body.linvel", "body.angvel",
+            "body.is_sleeping", "body.is_dynamic", "physics.active_bodies", "Ray::new", "ray.point_at", "physics.cast_ray",
+            "QueryFilter::default", "QueryFilter::only_dynamic", ".exclude_rigid_body", "physics.intersect_shape", "Pose::from_translation",
+            "Ball::new", "collider.parent", "physics.contact_pair", "pair.has_any_active_contact",
+            "RopeJointBuilder::new", "RevoluteJointBuilder::new", ".local_anchor2", ".limits",
+            "physics.insert_impulse_joint", "handle.into_raw_parts", "body.set_position", "Pose::from_parts",
+            "body.set_linvel", "body.set_angvel",
+        ]
+    );
+    // Every pinned name is a real call, chained as the Physics page teaches it.
+    let mut physics = PhysicsWorld::default();
+    let ground = ColliderBuilder::cuboid(20.0, 0.5, 20.0).friction(0.8);
+    let (_, floor) = physics.insert(RigidBodyBuilder::fixed().translation(vec3(0.0, -0.5, 0.0)), ground);
+    let crate_box = ColliderBuilder::cuboid(0.5, 0.5, 0.5).mass(20.0).friction(0.7).restitution(0.05);
+    let (handle, _) = physics.insert(RigidBodyBuilder::dynamic().translation(vec3(0.0, 0.5, 0.0)), crate_box);
+    let barrel = ColliderBuilder::cylinder(0.6, 0.4).density(300.0);
+    let (_, barrel_collider) = physics.insert(RigidBodyBuilder::dynamic().translation(vec3(3.0, 0.6, 0.0)), barrel);
+    let shot = RigidBodyBuilder::dynamic().translation(vec3(0.0, 1.0, 8.0)).linvel(vec3(0.0, 0.0, -60.0)).ccd_enabled(true);
+    let (shot, _) = physics.insert(shot, ColliderBuilder::ball(0.1).density(7800.0));
+    let trolley = physics.insert_body(RigidBodyBuilder::kinematic_position_based().translation(vec3(-8.0, 12.0, 0.0)));
+    let wrecking = RigidBodyBuilder::dynamic().translation(vec3(-8.0, 4.5, 0.0)).linear_damping(0.05);
+    let (ball, _) = physics.insert(wrecking, ColliderBuilder::ball(1.0).mass(600.0));
+    physics.insert_impulse_joint(trolley, ball, RopeJointBuilder::new(8.0));
+    let post = physics.insert_body(RigidBodyBuilder::fixed().translation(vec3(6.0, 1.05, 0.0)));
+    let door = physics.insert(RigidBodyBuilder::dynamic().translation(vec3(6.5, 1.05, 0.0)), ColliderBuilder::cuboid(0.5, 1.0, 0.05));
+    let hinge = RevoluteJointBuilder::new(Vec3::Y).local_anchor2(vec3(-0.5, 0.0, 0.0)).limits([-1.57, 1.57]);
+    physics.insert_impulse_joint(post, door.0, hinge);
+    if let Some(body) = physics.bodies.get_mut(trolley) {
+        body.set_next_kinematic_translation(vec3(-7.0, 12.0, 0.0));
+    }
+    physics.step();
+    let near: Vec<_> = physics
+        .intersect_shape(Pose::from_translation(Vec3::ZERO), &Ball::new(4.0), QueryFilter::only_dynamic())
+        .filter_map(|(_, collider)| collider.parent())
+        .collect();
+    assert!(near.contains(&handle), "the crate is in the blast");
+    let ray = Ray::new(vec3(0.0, 0.5, 6.0), vec3(0.0, 0.0, -1.0));
+    let (hit, toi) = physics.cast_ray(&ray, 100.0, true, QueryFilter::default().exclude_rigid_body(shot)).expect("the crate");
+    let point = ray.point_at(toi);
+    assert_eq!(physics.colliders.get(hit).and_then(|collider| collider.parent()), Some(handle));
+    let touching = physics.contact_pair(floor, barrel_collider).is_some_and(|pair| pair.has_any_active_contact());
+    let body = physics.bodies.get_mut(handle).expect("the crate");
+    body.apply_impulse(vec3(0.0, 100.0, 0.0), true);
+    body.apply_impulse_at_point(vec3(0.0, 0.0, -50.0), point, true);
+    let state = (body.translation(), *body.rotation(), body.linvel(), body.angvel(), body.is_sleeping());
+    body.set_position(Pose::from_parts(state.0, state.1), true);
+    body.set_linvel(state.2, true);
+    body.set_angvel(state.3, true);
+    let (slot, generation) = handle.into_raw_parts();
+    assert!(touching && !state.4 && body.is_dynamic() && physics.active_bodies().count() > 0 && slot + generation < u32::MAX);
+    assert!(physics.bodies.get(handle).is_some() && physics.remove_body(handle).is_some());
 }

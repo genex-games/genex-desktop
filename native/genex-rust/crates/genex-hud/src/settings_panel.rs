@@ -1,8 +1,9 @@
 //! The in-game graphics settings panel: an egui widget a game shows from its `on_ui` hook
 //! (through `genex::render::settings_panel`, which fills it from the renderer's settings). It
 //! knows nothing about the renderer: it shows the [`SettingsPanel`] it is given (a row of quality
-//! presets, a render-scale slider, a "Detail distance" slider, one switch per feature and the device
-//! class detected) and answers
+//! presets, rows of upscaling modes and frame-rate targets, a dynamic-resolution switch, a
+//! render-scale slider, a "Detail distance" slider, one switch per feature and the device class
+//! detected) and answers
 //! what the person changed as [`PanelChange`]s. The caller applies them outside the simulation.
 //!
 //! Like every HUD widget it runs inside the tick from the tick's merged input, so a play script
@@ -18,6 +19,12 @@ pub struct PanelWords<'a> {
     pub heading: &'a str,
     /// The preset row's label.
     pub quality: &'a str,
+    /// The upscaling row's label (Native, Quality, Balanced, Performance).
+    pub upscale: &'a str,
+    /// The frame-rate row's label.
+    pub frame_rate: &'a str,
+    /// The dynamic-resolution switch's label.
+    pub dynamic_resolution: &'a str,
     /// The render-scale slider's label.
     pub render_scale: &'a str,
     /// The "Detail distance" slider's label (how far levels of detail keep their finer shapes).
@@ -37,6 +44,9 @@ impl PanelWords<'static> {
     pub const ENGLISH: PanelWords<'static> = PanelWords {
         heading: "Graphics",
         quality: "Quality",
+        upscale: "Upscaling",
+        frame_rate: "Frame rate",
+        dynamic_resolution: "Dynamic resolution",
         render_scale: "Render scale",
         detail: "Detail distance",
         features: "Features",
@@ -64,6 +74,13 @@ pub struct SettingsPanel<'a> {
     pub presets: &'a [String],
     /// The entry chosen.
     pub preset: usize,
+    /// The upscaling choices by label (the caller's first is usually "Auto") and the entry chosen;
+    /// `None` hides the row (a game that holds its mode).
+    pub upscale: Option<(&'a [String], usize)>,
+    /// The frame-rate targets by label and the entry chosen; `None` hides the row.
+    pub frame_rate: Option<(&'a [String], usize)>,
+    /// Whether dynamic resolution is on; `None` hides the switch.
+    pub dynamic_resolution: Option<bool>,
     /// The render scale in force (of the output size).
     pub render_scale: f32,
     /// The range the slider moves over.
@@ -84,6 +101,12 @@ pub struct SettingsPanel<'a> {
 pub enum PanelChange {
     /// A preset choice, by index.
     Preset(usize),
+    /// An upscaling choice, by index.
+    Upscale(usize),
+    /// A frame-rate choice, by index.
+    FrameRate(usize),
+    /// Dynamic resolution switched on or off.
+    DynamicResolution(bool),
     /// A new render scale.
     RenderScale(f32),
     /// A new "Detail distance" (a share of the preset's).
@@ -112,6 +135,13 @@ pub fn settings_panel_with_words(ui: &mut Ui, panel: &SettingsPanel<'_>, words: 
         egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
             ui.heading(words.heading);
             preset_choice(ui, panel, words, &mut changes);
+            if let Some(index) = panel.upscale.and_then(|(choices, chosen)| choice_row(ui, words.upscale, choices, chosen)) {
+                changes.push(PanelChange::Upscale(index));
+            }
+            if let Some(index) = panel.frame_rate.and_then(|(choices, chosen)| choice_row(ui, words.frame_rate, choices, chosen)) {
+                changes.push(PanelChange::FrameRate(index));
+            }
+            dynamic_switch(ui, panel, words, &mut changes);
             scale_slider(ui, panel, words, &mut changes);
             detail_slider(ui, panel, words, &mut changes);
             feature_switches(ui, panel, words, &mut changes);
@@ -135,6 +165,28 @@ fn preset_choice(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>,
     });
     if chosen != panel.preset {
         changes.push(PanelChange::Preset(chosen));
+    }
+}
+
+/// A labelled row of choices like the presets' (wrapping, each its own focusable button); answers
+/// the entry chosen this tick when it is another.
+fn choice_row(ui: &mut Ui, label: &str, choices: &[String], chosen: usize) -> Option<usize> {
+    let mut picked = chosen;
+    ui.label(label);
+    ui.horizontal_wrapped(|ui| {
+        for (index, choice) in choices.iter().enumerate() {
+            ui.selectable_value(&mut picked, index, choice.as_str());
+        }
+    });
+    (picked != chosen).then_some(picked)
+}
+
+/// The dynamic-resolution switch, when the caller offers it.
+fn dynamic_switch(ui: &mut Ui, panel: &SettingsPanel<'_>, words: &PanelWords<'_>, changes: &mut Vec<PanelChange>) {
+    let Some(on) = panel.dynamic_resolution else { return };
+    let mut state = on;
+    if ui.checkbox(&mut state, words.dynamic_resolution).changed() {
+        changes.push(PanelChange::DynamicResolution(state));
     }
 }
 
@@ -207,6 +259,9 @@ mod tests {
         SettingsPanel {
             presets,
             preset: 0,
+            upscale: None,
+            frame_rate: None,
+            dynamic_resolution: None,
             render_scale: 1.0,
             scale_range: (0.5, 1.0),
             features: &FEATURES,
@@ -284,6 +339,53 @@ mod tests {
         let far = SettingsPanel { detail: Some((9.0, (0.5, 2.0))), ..offered };
         let (changes, _) = run(&far, egui::RawInput::default());
         assert!(changes.is_empty(), "a value outside the range is shown clamped: {changes:?}");
+    }
+
+    /// The labels of the widgets `panel` draws.
+    fn labels(panel: &SettingsPanel<'_>) -> Vec<String> {
+        let mut hud = crate::Hud::new();
+        hud.run([640, 480], 0.0, &crate::HudInput::default(), |ui| {
+            settings_panel(ui, panel);
+        });
+        hud.widgets().iter().map(|widget| widget.label.clone()).collect()
+    }
+
+    /// Lane UQ (new behaviour): the upscaling and frame-rate rows and the dynamic-resolution switch
+    /// are drawn with their labels when offered and hidden otherwise (a game that holds its mode).
+    #[test]
+    fn the_upscaling_frame_rate_and_dynamic_resolution_rows_are_offered_or_hidden() {
+        let presets = presets();
+        let modes: Vec<String> = ["Auto (Quality)", "Native", "Quality", "Balanced", "Performance"].map(str::to_owned).to_vec();
+        let rates: Vec<String> = ["Auto (60 fps)", "30 fps", "60 fps"].map(str::to_owned).to_vec();
+        let offered = SettingsPanel { upscale: Some((&modes, 0)), frame_rate: Some((&rates, 0)), dynamic_resolution: Some(true), ..panel(&presets) };
+        let shown = labels(&offered);
+        for label in ["Upscaling", "Auto (Quality)", "Native", "Performance", "Frame rate", "30 fps", "Dynamic resolution"] {
+            assert!(shown.iter().any(|shown| shown == label), "{label:?} not in {shown:?}");
+        }
+        let hidden = labels(&panel(&presets));
+        for label in ["Upscaling", "Native", "Frame rate", "Dynamic resolution"] {
+            assert!(!hidden.iter().any(|shown| shown == label), "{label:?} drawn without an offer: {hidden:?}");
+        }
+        let (changes, _) = run(&offered, egui::RawInput::default());
+        assert!(changes.is_empty(), "an untouched row changes nothing: {changes:?}");
+    }
+
+    /// Lane UQ: an upscaling mode is chosen from the keyboard like a preset (Tab past the preset
+    /// row's three entries to the second mode, Space).
+    #[test]
+    fn an_upscaling_mode_is_chosen_from_the_keyboard() {
+        let presets = presets();
+        let modes: Vec<String> = ["Auto", "Native", "Quality"].map(str::to_owned).to_vec();
+        let offered = SettingsPanel { upscale: Some((&modes, 0)), ..panel(&presets) };
+        let ctx = egui::Context::default();
+        crate::fonts::install_fonts(&ctx);
+        let mut chosen = Vec::new();
+        let tab = [egui::Key::Tab];
+        for pressed in [&tab[..], &tab, &tab, &tab, &tab, &[egui::Key::Space], &[]] {
+            let mut output = ctx.run_ui(keys([640.0, 480.0], pressed), |ui| chosen.extend(settings_panel(ui, &offered)));
+            output.textures_delta.clear();
+        }
+        assert_eq!(chosen, vec![PanelChange::Upscale(1)], "five Tabs reach Native, Space chooses it");
     }
 
     #[test]

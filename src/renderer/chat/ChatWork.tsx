@@ -110,7 +110,7 @@ function workLine(props: ChatWorkProps, leadFrame: AgentScreenFrame | undefined)
       {
         key: WorkKind.Build,
         node: (
-          <div className="flex min-w-0 flex-col gap-2">
+          <div className="chat-work-build flex min-w-0 flex-col gap-2">
             <BuildStatus
               {...(props.runStarted !== undefined ? { since: props.runStarted } : {})}
               budgetMs={props.budgetMs}

@@ -41,7 +41,7 @@ fn vs_spot_shadow_fade(@location(0) position: vec3<f32>, @location(4) slot: u32,
     let row = instances[visible[at]];
     let fade_grow = lod_grows[at];
     let spot = pass_view.view - 1u - frame.shadow_counts.x;
-    return SpotShadowFadeOut(gx_spot_matrix(spot) * (row.model * vec4<f32>(position * fade_grow.y, 1.0)), fade_grow.x);
+    return SpotShadowFadeOut(gx_spot_matrix(spot) * gx_row_world(row, position * fade_grow.y, frame.texture_lod.y), fade_grow.x);
 }
 
 // The other level's texels cut away by the unturned dither (the sun casters' rule), so each
@@ -59,6 +59,6 @@ fn vs_spot_shadow(@location(0) position: vec3<f32>, @location(4) slot: u32, @bui
     // The pass view is the spot's cull view: after the camera and the drawn cascades.
     let spot = pass_view.view - 1u - frame.shadow_counts.x;
     var out: SpotShadowOut;
-    out.clip = gx_spot_matrix(spot) * (row.model * vec4<f32>(position, 1.0));
+    out.clip = gx_spot_matrix(spot) * gx_row_world(row, position, frame.texture_lod.y);
     return out;
 }

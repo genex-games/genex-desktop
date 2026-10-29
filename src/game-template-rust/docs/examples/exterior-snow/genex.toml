@@ -1,0 +1,36 @@
+# The exterior-snow example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Exterior snow"
+fit = "expand"
+
+# Desktops and phones each start on their own preset. Judge it at `high` (parallax, TAA, shafts);
+# check `low` and a phone too: they keep the cover and the weather, without parallax.
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure pulls whatever it meters toward middle grey, so a snow field turns grey: open it up
+# a stop, as a photographer does in snow, and the yard reads near white.
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 1.0
+
+# A yard 60 m across: the sun's cascades cover 60 m.
+[render.shadows]
+distance = 60
+
+[physics]
+enabled = false
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

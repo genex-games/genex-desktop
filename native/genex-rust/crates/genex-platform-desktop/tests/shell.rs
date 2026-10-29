@@ -5,9 +5,9 @@
 use genex_platform_desktop::winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use genex_platform_desktop::winit::keyboard::KeyCode;
 use genex_platform_desktop::{
-    FrameControl, FrameSample, HEADLESS_ENV, HeadlessOptions, InputSampler, Letterbox, MAX_TEXT_CHARS, NO_WINDOW_ENV,
+    FULLSCREEN_ENV, FrameControl, FrameSample, Fullscreen, HEADLESS_ENV, HeadlessOptions, InputSampler, Letterbox, MAX_TEXT_CHARS, NO_WINDOW_ENV,
     ShellClock, ShellCore, ShellErrorCode, ShellEvent, ShellFrame, ShellGame, ShellMode, ShellSurface,
-    WHEEL_PIXELS_PER_NOTCH, event_loop_created, run_headless, windows_forbidden,
+    WHEEL_PIXELS_PER_NOTCH, event_loop_created, fullscreen_asked, run_headless, windows_forbidden,
 };
 use std::process::Command;
 
@@ -30,6 +30,26 @@ fn the_mode_is_chosen_at_run_time_by_flag_or_environment() {
         assert_eq!(ShellMode::select(&args(argv), env), mode, "{argv:?} {env:?}");
     }
     assert_eq!(HEADLESS_ENV, "GENEX_HEADLESS");
+}
+
+/// A window asks for fullscreen by flag or environment, read exactly like the headless switch.
+#[test]
+fn a_window_is_fullscreen_by_flag_or_environment() {
+    let rows: [(&[&str], Option<&str>, Fullscreen); 9] = [
+        (&[], None, Fullscreen::Off),
+        (&["--fullscreen"], None, Fullscreen::Borderless),
+        (&[], Some("1"), Fullscreen::Borderless),
+        (&[], Some("0"), Fullscreen::Off),
+        (&["--fullscreen=yes", "fullscreen"], Some("true"), Fullscreen::Off),
+        (&["--fullscreen"], Some("0"), Fullscreen::Borderless),
+        (&["--fullscreen=native"], None, Fullscreen::Native),
+        (&[], Some("native"), Fullscreen::Native),
+        (&["--fullscreen"], Some("Native"), Fullscreen::Borderless),
+    ];
+    for (argv, env, fullscreen) in rows {
+        assert_eq!(fullscreen_asked(&args(argv), env), fullscreen, "{argv:?} {env:?}");
+    }
+    assert_eq!(FULLSCREEN_ENV, "GENEX_FULLSCREEN");
 }
 
 #[test]

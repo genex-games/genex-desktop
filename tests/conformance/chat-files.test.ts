@@ -28,7 +28,7 @@ import {
   credentialRoots,
   openModeFor,
 } from "../../src/main/chat-files.ts";
-import { fileLinkTitle, linkifyHtml } from "../../src/renderer/ui/file-links.ts";
+import { fileLinkTitle, fileNameOfPath, linkifyHtml } from "../../src/renderer/ui/file-links.ts";
 import { markdownHtml } from "../../src/renderer/ui/markdown-html.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
@@ -93,11 +93,37 @@ test("names in any script and between any quotes are names", () => {
   assert.deepEqual(names("и т.д. и т.п."), []);
 });
 
+test("a chat on Windows names files with drive letters and backslashes", () => {
+  assert.deepEqual(names(String.raw`Wrote C:\Users\Dima\AI Games\rift\src\game.js, then ran it.`), [
+    String.raw`C:\Users\Dima\AI Games\rift\src\game.js`,
+  ]);
+  assert.deepEqual(names("Open C:/Users/Dima/AI Games/rift/docs/DESIGN.md: it lists everything"), [
+    "C:/Users/Dima/AI Games/rift/docs/DESIGN.md",
+  ]);
+  assert.deepEqual(names(String.raw`Edited src\game.ts:42, .\docs\DESIGN.md and ..\shared\a.ts.`), [
+    String.raw`src\game.ts:42`,
+    String.raw`.\docs\DESIGN.md`,
+    String.raw`..\shared\a.ts`,
+  ]);
+  assert.deepEqual(names(String.raw`copy d:\out\shot.png assets\hero.png`), [
+    String.raw`d:\out\shot.png`,
+    String.raw`assets\hero.png`,
+  ]);
+  // Escapes and a bare drive are not files.
+  assert.deepEqual(names(String.raw`match \d+\.js and C:\ or C: drive`), []);
+  for (const code of [String.raw`C:\Users\Dima\AI Games\rift\a.js`, "C:/tmp/out.mp4", String.raw`src\game.ts`])
+    assert.equal(wholeFileName(code), code);
+  assert.equal(chatFileName("file:///C:/Users/Dima/AI%20Games/a.md", "win32"), "C:/Users/Dima/AI Games/a.md");
+  assert.equal(chatFileName("file:///Users/me/a.md", "win32"), "/Users/me/a.md");
+});
+
 test("finding names stays fast on text built to be slow", () => {
   const started = performance.now();
   for (const text of [
     "a.".repeat(40_000),
     `/A${" Bb".repeat(16_000)}/x.js`,
+    `C:\\A${" Bb".repeat(16_000)}\\x.js`,
+    "a\\".repeat(30_000),
     "ab/".repeat(30_000),
     ` /a${" B".repeat(20_000)}`,
     `${"x".repeat(90_000)}.js`,
@@ -259,7 +285,7 @@ test("a name is read the way the chat wrote it, and clipped names are not files"
 });
 
 function fixture() {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "chat-files-")));
+  const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), "chat-files-")));
   const home = path.join(root, "home");
   const game = path.join(home, "AI Games", "rift");
   const env = {
@@ -430,7 +456,8 @@ test("Studio and a chat without a game resolve only what they can reach", async 
   const draft = scope({ game: null });
   assert.deepEqual(await chat.resolve(draft, [{ name: "docs/DESIGN.md" }, { name: "~/Movies/trailer.mov" }]), [
     null,
-    { open: "app", path: "~/Movies/trailer.mov" },
+    // Home is `~`, then the platform's own separators.
+    { open: "app", path: `~${path.sep}${path.join("Movies", "trailer.mov")}` },
   ]);
 });
 
@@ -516,4 +543,13 @@ test("a Claude Code tool names its file in the row's chip", () => {
   ]);
   const rows = entries.flatMap((entry) => (entry.kind === "tools" ? entry.rows : []));
   assert.equal(rows[0]?.chip, "src/a.js");
+});
+
+test("a file a person's message carries shows by its own name; a short name is left as written", () => {
+  assert.equal(fileNameOfPath("/Users/me/Downloads/notes.txt"), "notes.txt");
+  assert.equal(fileNameOfPath("~/Desktop/level.pdf"), "level.pdf");
+  assert.equal(fileNameOfPath("file:///Users/me/Downloads/level%20plan.pdf"), "level plan.pdf");
+  assert.equal(fileNameOfPath("C:\\Users\\me\\notes.txt"), "notes.txt");
+  assert.equal(fileNameOfPath("src/game.js"), null);
+  assert.equal(fileNameOfPath("notes.txt"), null);
 });

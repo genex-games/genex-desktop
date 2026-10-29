@@ -5,6 +5,7 @@
 import { GENEX_LOOKUPS, genexEndedUnmade, genexRefused, isGenexSource } from "../shared/asset-making.ts";
 import { digestOperation } from "../shared/game-assets.ts";
 import { GenexOperation } from "../shared/genex.ts";
+import { t } from "../shared/i18n.ts";
 import type { AssetInfo, AssetState } from "./run-graph.ts";
 import {
   digestField,
@@ -24,6 +25,8 @@ export const AssetCardState = {
   Generating: "generating",
   Delivered: "delivered",
   Failed: "failed",
+  /** still open when the run or chat turn that asked for it ended: nothing will deliver it now */
+  Unfinished: "unfinished",
 } as const satisfies Record<string, AssetState>;
 
 /** The `source` of an asset Blender made; any other source is a plugin id. */
@@ -31,6 +34,9 @@ export const BLENDER_SOURCE = "blender";
 
 /** Genex's in-game checks: they land on the job they check, never a card of their own. */
 const CHECK_OPERATIONS: ReadonlySet<string> = new Set([GenexOperation.InspectUse, GenexOperation.VerifyUse]);
+
+/** The plugin's own word, in its JSON result, for a job that failed though the call itself came back ok. */
+const PLUGIN_FAILED = "failed";
 
 /** How many folds `cardHolding` follows before giving up on a cycle. */
 const MAX_FOLD_HOPS = 32;
@@ -81,6 +87,62 @@ export function keptAssetJobs(ledger: AssetLedger): AssetInfo[] {
   return ledger.jobs.filter((job) => !ledger.dropped.has(job));
 }
 
+/** Whether a card is still on its way: asked for, or being made. */
+const stillOpen = (job: AssetInfo): boolean =>
+  job.state === AssetCardState.Requested || job.state === AssetCardState.Generating;
+
+/** Where a run's asset jobs have got to, as the assets tile counts them. */
+export interface AssetCounts {
+  made: number;
+  failed: number;
+  /** still on their way while the run goes on */
+  making: number;
+  /** still open when the run ended: nothing will deliver them now */
+  unfinished: number;
+  /** delivered jobs whose copy is in the game, of those the inventory knows */
+  inGame: number;
+  known: number;
+}
+
+/** The tile's counts of a run's asset jobs. */
+export function assetCounts(jobs: readonly AssetInfo[]): AssetCounts {
+  const made = jobs.filter((job) => job.state === AssetCardState.Delivered);
+  const count = (state: AssetState) => jobs.filter((job) => job.state === state).length;
+  return {
+    made: made.length,
+    failed: count(AssetCardState.Failed),
+    making: jobs.filter(stillOpen).length,
+    unfinished: count(AssetCardState.Unfinished),
+    inGame: made.filter((job) => job.inGame).length,
+    known: made.filter((job) => job.inGame !== undefined).length,
+  };
+}
+
+/** Whether `later` is the same worker's same asset as `failed`: its part, plugin, tool and name. */
+const sameAsset = (failed: AssetInfo, later: AssetInfo): boolean =>
+  later.facetId === failed.facetId &&
+  later.source === failed.source &&
+  later.tool === failed.tool &&
+  later.name === failed.name;
+
+/**
+ * The ledger once its log is read. A failure the same worker retried successfully under the same
+ * name folds into that success, whether the success kept a card of its own or was folded as work
+ * on another asset. Once the run or chat turn that asked is over (`over`), a job still open is
+ * not finished: nothing will deliver it now, so it is never "making" after the end.
+ */
+export function settleAssetJobs(ledger: AssetLedger, over: boolean): void {
+  ledger.jobs.forEach((job, index) => {
+    if (job.state !== AssetCardState.Failed || job.facetId === null) return;
+    const retried = ledger.jobs
+      .slice(index + 1)
+      .some((later) => later.state === AssetCardState.Delivered && sameAsset(job, later));
+    if (retried) ledger.dropped.add(job);
+  });
+  if (!over) return;
+  for (const job of ledger.jobs) if (stillOpen(job)) job.state = AssetCardState.Unfinished;
+}
+
 type CardIdentity = Pick<AssetInfo, "name" | "at" | "source" | "pluginName" | "callId" | "jobId">;
 
 /** A card with nothing learned yet: asked for, no files, no render. */
@@ -117,7 +179,7 @@ export function blenderAsset(payload: Payload, place: AssetPlace): AssetInfo {
   const file = strOrNull(payload.file);
   const ok = payload.ok === true;
   const identity: CardIdentity = {
-    name: str(payload.name, "asset"),
+    name: str(payload.name, t("asset")),
     at: strOrNull(payload.at) ?? place.at,
     source: BLENDER_SOURCE,
     pluginName: "Blender",
@@ -183,7 +245,7 @@ export function assetRequested(ledger: AssetLedger, payload: Payload, place: Ass
     return;
   }
   const identity: CardIdentity = {
-    name: prompt ?? digestField(args, "name") ?? operation ?? tool ?? "asset",
+    name: prompt ?? digestField(args, "name") ?? operation ?? tool ?? t("asset"),
     at: strOrNull(payload.at) ?? place.at,
     source: str(payload.pluginId, "plugin"),
     pluginName: strOrNull(payload.pluginName),
@@ -287,6 +349,17 @@ function indexJob(
 }
 
 /**
+ * Why a returned call failed, or null when it did not: the call itself failed, or the plugin's own
+ * result says the job failed (`status: "failed"` with its `error`) though the call came back ok.
+ */
+function callFailure(payload: Payload): { error: string | null } | null {
+  if (payload.ok === false) return { error: strOrNull(payload.error) };
+  const result = parseJson(payload.result);
+  if (result?.status !== PLUGIN_FAILED) return null;
+  return { error: strOrNull(result.error) ?? strOrNull(payload.error) };
+}
+
+/**
  * How a Genex call's reply ended its job, when it did. Genex answers a request it refused before
  * starting a generation, and a generation that failed, with a job that failed rather than an error.
  */
@@ -305,11 +378,12 @@ function genexEnding(job: AssetInfo, payload: Payload): { refused: boolean; erro
  */
 function settleCall(ledger: AssetLedger, job: AssetInfo, payload: Payload): void {
   const ending = job.state === AssetCardState.Delivered ? null : genexEnding(job, payload);
+  const failure = callFailure(payload);
   if (ending?.refused) {
     ledger.dropped.add(job);
-  } else if (payload.ok === false || ending) {
+  } else if (failure || ending) {
     job.state = AssetCardState.Failed;
-    job.error = strOrNull(payload.error) ?? ending?.error ?? null;
+    job.error = failure?.error ?? ending?.error ?? null;
   } else if (job.files.length) {
     job.state = AssetCardState.Delivered;
     job.file = job.files[0] ?? job.file;
@@ -338,6 +412,7 @@ function foldDerivedWork(ledger: AssetLedger, job: AssetInfo, payload: Payload):
   source.derived.push({
     pluginName: job.pluginName,
     name: job.name,
+    facetId: job.facetId,
     files: job.files,
     size: numberList(stats?.size),
     triangles: stats ? num(stats.triangles) : null,
@@ -357,13 +432,15 @@ export function assetDelivered(ledger: AssetLedger, payload: Payload, place: Ass
   if (!jobId || source === BLENDER_SOURCE) return;
   const rows = records(payload.files);
   const files = rows.map((row) => str(row.file)).filter(Boolean);
+  // A delivery that landed no file (a lookup the host still records) made nothing.
+  if (!files.length) return;
   const bytes = rows.reduce((total, row) => total + (num(row.bytes) ?? 0), 0);
   const at = strOrNull(payload.at) ?? place.at;
   const job = ledger.byJob.get(jobId) ?? openDeliveryCard(ledger, place, { jobId, source, at, payload });
   ledger.dropped.delete(job);
   job.state = AssetCardState.Delivered;
   job.ok = true;
-  job.files = files.length ? files : job.files;
+  job.files = files;
   job.file = job.files[0] ?? job.file;
   job.bytes = bytes || job.bytes;
   job.render = strOrNull(payload.render) ?? job.render;

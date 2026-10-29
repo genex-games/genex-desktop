@@ -92,8 +92,10 @@ const GOLDEN: [(&str, usize); 35] = [
     // measured from, its bias, its far rule and two spare words.
     ("LodRow", 32),
     ("PassView", 16),
-    // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`).
-    ("CullViews", 912),
+    // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`);
+    // lane FQ flipped 912 -> 928: each sun cascade's caster error (`GpuCullViews::shadow_lod`).
+    // AAA review WP-15 flipped 928 -> 2080: twelve more cull views (two point lights' faces).
+    ("CullViews", 2080),
     ("DrawIndexedArgs", 20),
     ("MeshVertex", 48),
     ("SkinVertex", 32),
@@ -124,7 +126,11 @@ const GOLDEN: [(&str, usize); 35] = [
     ("LightExt", 32),
     // Renderer pass 2 B.1 flipped 32 -> 64: the subsurface scatter colour and thickness, and the
     // forward-scatter power, diffuse transmission and scattering depth (two rows).
-    ("GxMaterialExt", 64),
+    // Bodycam B2b flipped 64 -> 96: the UV mapping row (scale, offset) and the tiling row (world
+    // projection and stochastic flags, rotation, macro variation). AAA materials flipped 96 -> 272:
+    // eleven layer rows (cover, its shape and look, detail and its look, the second layer, its
+    // shape and tint, parallax, the lobes, the sheen).
+    ("GxMaterialExt", 272),
     // Renderer pass 2 A.0 (LG-16) flipped 32 -> 64: the clusterable kinds' index ranges and the
     // decals' and probes' own depth mappings (lights, decals and probes share one index space).
     ("LightBinParams", 64),
@@ -132,7 +138,7 @@ const GOLDEN: [(&str, usize); 35] = [
     // balance a 3x3 matrix (three 16-byte columns) where the gains row was (96 before). P2-0.10
     // flipped 128 -> 144: AgX punchy's curve row (Godot's AgX, contrast, toe, slope and w). A.2
     // flipped 144 -> 256: grading's seven rows (global knobs, ranges, five per-section knobs).
-    ("GxTonemapParams", 256),
+    ("GxTonemapParams", 288),
 ];
 
 fn parse(name: &str, source: &str) -> naga::Module {
@@ -1266,7 +1272,8 @@ fn the_r2_nodes_have_landed_and_asking_for_occlusion_schedules_its_node() {
 fn the_frame_grows_past_the_frozen_v1_prefix_with_every_cascade() {
     use genex_render::layout::{GpuFrame, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS, SHADOW_CASCADES};
     use std::mem::offset_of;
-    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 1 + 4 + 4));
+    // AAA review WP-15 flipped MAX_VIEWS 1 + 4 + 4 -> 1 + 4 + 16: two shadowed point lights' faces.
+    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 1 + 4 + 16));
     assert_eq!(size_of::<GxFrameV1>() as u64, GX_FRAME_V1_BYTES, "the v1 frame is frozen");
     assert!(size_of::<GpuFrame>() as u64 > GX_FRAME_V1_BYTES, "the renderer's frame grows");
     assert_eq!(SHADOW_CASCADES, 2, "the v1 prefix carries two cascades");
@@ -1321,8 +1328,9 @@ fn the_cull_views_reserve_every_view_and_the_cull_shader_reads_them() {
     let naga::TypeInner::Array { size, stride, .. } = member_type(&module, "CullViews", "planes") else { panic!("CullViews.planes") };
     assert_eq!(*size, naga::ArraySize::Constant(std::num::NonZeroU32::new(MAX_VIEWS as u32).expect("views")));
     assert_eq!(*stride as usize, 6 * 16, "six planes per view");
-    // Pass 2 A6.9 flipped MAX_VIEWS * 96 + 16 -> + 48: the LOD view and its flags after `params`.
-    assert_eq!(size_of::<GpuCullViews>(), MAX_VIEWS * 96 + 48);
+    // Pass 2 A6.9 flipped MAX_VIEWS * 96 + 16 -> + 48: the LOD view and its flags after `params`;
+    // lane FQ -> + 64: each sun cascade's caster error (`shadow_lod`).
+    assert_eq!(size_of::<GpuCullViews>(), MAX_VIEWS * 96 + 64);
     assert!(size_of::<GpuCullViews>() as u64 <= wgpu::Limits::defaults().max_uniform_buffer_binding_size, "a core uniform");
 }
 
@@ -1591,7 +1599,8 @@ fn the_stage_zero_contract_slots_hold_todays_values() {
 /// table the forward frame's binding 31 names), within WebGPU core's eight storage buffers per
 /// stage. Named flips: the fade table went from reserved and unbound (`binding 31 is free`) to
 /// bound and written by the cull, and its row from 4 bytes (f32 per instance row) to 8 (fade and
-/// grow per slot); the cull's storage buffers from 5 to 7 of 8.
+/// grow per slot); the cull's storage buffers from 5 to 7 of 8, then to 8 of 8 with instance
+/// occlusion's history (binding 11, horde 10k: read and written, the last free storage buffer).
 #[test]
 fn the_cull_reads_the_lod_rows_and_writes_the_fade_table_within_cores_storage_limit() {
     use genex_render::cull::{CULL_FADES_BINDING, CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY};
@@ -1613,7 +1622,10 @@ fn the_cull_reads_the_lod_rows_and_writes_the_fade_table_within_cores_storage_li
     assert_eq!((stride(lod_rows), stride(fades)), (LOD_ROW_BYTES, INSTANCE_FADE_BYTES));
     let core = wgpu::Limits::defaults();
     let declared = module.global_variables.iter().filter(|(_, global)| matches!(global.space, naga::AddressSpace::Storage { .. })).count() as u32;
-    assert_eq!(declared, 7, "the cull group's storage buffers");
+    assert_eq!(declared, 8, "the cull group's storage buffers");
+    let history = global("occ_history");
+    assert_eq!(history.binding.as_ref().map(|at| (at.group, at.binding)), Some((0, genex_render::cull::CULL_HISTORY_BINDING)));
+    assert_eq!(history.space, naga::AddressSpace::Storage { access: naga::StorageAccess::LOAD | naga::StorageAccess::STORE });
     assert!(declared <= core.max_storage_buffers_per_shader_stage, "{declared} of {}", core.max_storage_buffers_per_shader_stage);
     for entry in [CULL_MARK_ENTRY, CULL_SCAN_ENTRY, CULL_SCATTER_ENTRY] {
         let used = storage_buffers_used(&module, &info, entry);
@@ -1873,4 +1885,42 @@ fn vertex_skinning_reads_two_vertex_tables_and_leaves_the_forward_fragment_uncha
         assert!(used.contains(&"skin_vertex_rows".to_owned()) && used.contains(&"skin_vertex_table".to_owned()), "{name}: {used:?}");
         assert!(used.len() as u32 <= core.max_storage_buffers_per_shader_stage, "{name}: {used:?}");
     }
+}
+
+/// Lane FR: the prepass's surface twin (`shaders::PREPASS_SURFACE`) draws the plain batches into
+/// the motion prepass's three targets and the reflections' surface texel through the frame group,
+/// the pass view and the motion node's group, so it holds the motion prepass's vertex tables and
+/// the forward fragment's, within WebGPU core's per-stage limits, its four attachments within
+/// core's bytes per sample and its varyings within core's inter-stage variables: the same on
+/// every destination that traces (desktop `high` and `ultra`, a desktop browser's too).
+#[test]
+fn the_prepass_surface_twin_stays_within_webgpu_core_limits() {
+    let core = wgpu::Limits::defaults();
+    let module = parse("prepass-surface", shader("prepass-surface"));
+    let info = validated("prepass-surface", &module);
+    let used = storage_buffers_used(&module, &info, "vs_prepass_surface");
+    assert!(used.contains(&"prev_models".to_owned()), "the vertex stage reads last frame's rows: {used:?}");
+    let frame = layout_storage_buffers(&genex_render::renderer::frame_layout_entries(), wgpu::ShaderStages::VERTEX);
+    // The motion node's group shows two tables to the vertex stage, as on the motion prepass.
+    assert!(frame + 2 <= core.max_storage_buffers_per_shader_stage, "{} vertex storage buffers in the layout", frame + 2);
+    for stage in [naga::ShaderStage::Vertex, naga::ShaderStage::Fragment] {
+        let counts = stage_counts_in(&module, &info, stage);
+        assert!(counts.storage_buffers <= core.max_storage_buffers_per_shader_stage, "{stage:?}: {counts:?}");
+        assert!(counts.sampled_textures <= core.max_sampled_textures_per_shader_stage, "{stage:?}: {counts:?}");
+        assert!(counts.samplers <= core.max_samplers_per_shader_stage, "{stage:?}: {counts:?}");
+        assert!(counts.uniform_buffers <= core.max_uniform_buffers_per_shader_stage, "{stage:?}: {counts:?}");
+    }
+    let targets = genex_render::motion::surface_targets();
+    assert!(targets.len() as u32 <= core.max_color_attachments);
+    // WebGPU's rule: each target's byte cost after its component alignment.
+    let bytes = targets.iter().flatten().fold(0u32, |sum, target| {
+        let align = target.format.target_component_alignment().expect("a colour target");
+        sum.div_ceil(align) * align + target.format.target_pixel_byte_cost().expect("a colour target")
+    });
+    assert!(bytes <= core.max_color_attachment_bytes_per_sample, "{bytes} bytes per sample");
+    let entry = module.entry_points.iter().find(|point| point.name == "vs_prepass_surface").expect("the vertex entry");
+    let result = entry.function.result.as_ref().expect("its outputs");
+    let naga::TypeInner::Struct { members, .. } = &module.types[result.ty].inner else { panic!("a struct of outputs") };
+    let varyings = members.iter().filter(|member| matches!(member.binding, Some(naga::Binding::Location { .. }))).count() as u32;
+    assert!(varyings <= core.max_inter_stage_shader_variables, "{varyings} varyings");
 }

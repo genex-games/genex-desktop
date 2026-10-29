@@ -36,6 +36,7 @@ import {
   type AssetListing,
   type BundleExec,
   bundleIdentityEntries,
+  gameModeEntries,
   CODESIGN_PATH,
   copyListedAssets,
   listAdmittedAssets,
@@ -170,9 +171,8 @@ const RAYLIB_LICENCES = {
   miniaudio: ["src", "external", "miniaudio.h"],
 } as const;
 const ANGLE_LICENCES = "licenses";
-/** The app's marketing version and category. */
+/** The app's marketing version. */
 const SHORT_VERSION = "1.0";
-const APP_CATEGORY = "public.app-category.games";
 const DITTO = "/usr/bin/ditto";
 const XCRUN = "/usr/bin/xcrun";
 const SPCTL = "/usr/sbin/spctl";
@@ -455,7 +455,7 @@ function appInfoPlist(request: MacExportRequest, now: number): string {
     ["CFBundleDisplayName", plistString(request.title || DEFAULT_APP_NAME)],
     ["CFBundleShortVersionString", plistString(SHORT_VERSION)],
     ["CFBundleVersion", plistString(bundleVersion(now))],
-    ["LSApplicationCategoryType", plistString(APP_CATEGORY)],
+    ...gameModeEntries(),
   ]);
 }
 

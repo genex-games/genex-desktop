@@ -351,7 +351,7 @@ fn metal_the_reduce_bakes_a_cell_as_its_cpu_twin_and_publishes_it_whole() {
         let (colour, distance) = test_face(face);
         (colour, distance.map(|d| d / dir[axis].abs()))
     };
-    let want = ambient_cube_of(&sees, CAPTURE_SIDE, volume.reach_max());
+    let want = ambient_cube_of(&sees, CAPTURE_SIDE, volume.reach_max(), genex_render::irradiance::bounce_gain(volume.bounce));
     for (face, expected) in want.iter().enumerate() {
         let [x, y, z] = atlas_texel(layout.origins[1], volume.cells, [0, 0, 0], face);
         let got = atlas[(x + y * width + z * width * height) as usize];
@@ -389,6 +389,10 @@ fn grid_quality(leak_control: bool) -> Quality {
     quality.exposure = true;
     quality.environment = high.environment;
     quality.environment.irradiance_leak_control = leak_control;
+    // These rows characterize the volumes a scene declares: no rooms added, no relight (AAA
+    // review WP-12's auto rooms have their own rows).
+    quality.environment.auto_rooms = genex_render::irradiance::AutoRooms::OFF;
+    quality.environment.irradiance_relight = false;
     quality.lights = high.lights;
     quality.shadows = high.shadows;
     quality

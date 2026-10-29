@@ -2,7 +2,7 @@
  * The native run registry: every C++ · raylib game the studio started, how each one is stopped
  * (`quit`, SIGTERM to its group, SIGKILL to the group and every listed descendant, reaped inside
  * the stop budget), which runs each lifecycle moment ends (never pauses), the pidfile the next boot
- * sweeps an orphan by, the memory cap, and the status and log events the renderer reads. The games
+ * sweeps an orphan by, the memory budget and cap, and the status and log events the renderer reads. The games
  * are in memory, behind the real port; time is a fake clock and no row waits out a NATIVE_* constant.
  */
 import assert from "node:assert/strict";
@@ -20,7 +20,7 @@ import {
   BootStage,
   GameBoxProblem,
   NATIVE_CALL_TIMEOUT_MS,
-  NATIVE_GAME_MEMORY_MAX_BYTES,
+  NATIVE_GAME_MEMORY_BUDGET_BYTES,
   NATIVE_HEARTBEAT_MS,
   NATIVE_LOG_BATCH_MAX,
   NATIVE_QUIT_GRACE_MS,
@@ -79,6 +79,13 @@ function fakeClock() {
   };
   return { timers, advance, settle, now: () => now };
 }
+
+const GIB = 1024 ** 3;
+/** The rig's host: a 36 GiB Mac, whose memory cap is 9 GiB (`nativeGameMemoryCapBytes`). */
+const HOST_RAM_BYTES = 36 * GIB;
+const HOST_CAP_BYTES = 9 * GIB;
+/** How often the registry samples a running game's memory (`MEMORY_SAMPLE_MS` in native-runs.ts). */
+const MEMORY_SAMPLE_MS = 5000;
 
 /** A long CPU-bound step: past a heartbeat's silence (`NATIVE_HEARTBEAT_MS`), inside the step's deadline. */
 const LONG_STEP_MS = 7000;
@@ -299,6 +306,7 @@ async function registry(overrides: Partial<NativeRunsOptions> = {}, behaviour: B
       if (event.type === UiEvent.NativeLog) logs.push(event.payload);
     },
     sampleFootprint: async () => 1024,
+    ramBytes: HOST_RAM_BYTES,
     descendants: async () => [],
     startedAt: async (pid) => `Thu Oct  1 12:00:00 2026 ${pid}`,
     signal: (pid, signal) => void killed.push([pid, signal]),
@@ -465,21 +473,94 @@ describe("how a run ends on its own", () => {
     assert.deepEqual(r.games[0]?.signals, ["SIGKILL"]);
   });
 
-  it("a game over the memory cap is killed memory-cap, and the kill is logged with the footprint it measured", async () => {
+  // Flipped (MC): a game past the 4 GiB budget used to be killed memory-cap; it now keeps running,
+  // and its status records the peak over the budget. The kill moved to the host's own cap.
+  it("a game past the 4 GiB budget keeps running, and its status records the peak, the budget and the cap", async () => {
     const lines: string[] = [];
-    const r = await registry({
-      sampleFootprint: async () => NATIVE_GAME_MEMORY_MAX_BYTES + 1,
-      log: (line) => void lines.push(line),
-    });
+    const r = await registry({ sampleFootprint: async () => 5 * GIB, log: (line) => void lines.push(line) });
     await started(r, request("pong", NativeRunMode.Headless));
     await r.clock.advance(NATIVE_HEARTBEAT_MS * 2);
     const last = r.statuses.at(-1);
+    assert.equal(last?.state, NativeRunState.Ready, "over the budget is not over the cap");
+    assert.equal(last?.refusal, null);
+    assert.deepEqual(last?.memory, {
+      peakBytes: 5 * GIB,
+      budgetBytes: NATIVE_GAME_MEMORY_BUDGET_BYTES,
+      capBytes: HOST_CAP_BYTES,
+      overBudget: true,
+    });
+    assert.deepEqual(r.runs.state("pong", NativeRunMode.Headless)?.memory, last?.memory, "native.state reads it too");
+    assert.deepEqual(r.games[0]?.signals, [], "nothing was signalled");
+    assert.equal(lines.filter((line) => line.includes(NativeRefusal.MemoryCap)).length, 0);
+  });
+
+  it("a game under the budget records its peak, not over it", async () => {
+    const r = await registry({ sampleFootprint: async () => GIB });
+    await started(r, request("pong", NativeRunMode.Headless));
+    await r.clock.advance(MEMORY_SAMPLE_MS);
+    assert.deepEqual(r.statuses.at(-1)?.memory, {
+      peakBytes: GIB,
+      budgetBytes: NATIVE_GAME_MEMORY_BUDGET_BYTES,
+      capBytes: HOST_CAP_BYTES,
+      overBudget: false,
+    });
+  });
+
+  it("the peak only rises: a sample below it changes nothing, and over budget stays over budget", async () => {
+    const samples = [GIB, 5 * GIB, 2 * GIB, 6 * GIB, 3 * GIB];
+    let next = 0;
+    const r = await registry({ sampleFootprint: async () => samples[Math.min(next++, samples.length - 1)] ?? null });
+    await started(r, request("pong", NativeRunMode.Headless));
+    const peaks: Array<number | undefined> = [];
+    const over: Array<boolean | undefined> = [];
+    for (const _ of samples) {
+      await r.clock.advance(MEMORY_SAMPLE_MS);
+      const memory = r.runs.state("pong", NativeRunMode.Headless)?.memory;
+      peaks.push(memory?.peakBytes);
+      over.push(memory?.overBudget);
+    }
+    assert.deepEqual(peaks, [GIB, 5 * GIB, 5 * GIB, 6 * GIB, 6 * GIB]);
+    assert.deepEqual(over, [false, true, true, true, true]);
+    const announced = r.statuses.filter((status) => status.memory).map((status) => status.memory?.peakBytes);
+    assert.deepEqual(
+      announced,
+      [GIB, 5 * GIB, 6 * GIB],
+      "native.status goes out when the peak rises, not every sample",
+    );
+  });
+
+  it("a game past the host's cap is killed memory-cap, and the kill names the footprint it measured and the cap", async () => {
+    const lines: string[] = [];
+    const r = await registry({ sampleFootprint: async () => 10 * GIB, log: (line) => void lines.push(line) });
+    const run = await started(r, request("pong", NativeRunMode.Headless));
+    const pending = run.port.call(NativeOp.State).catch((error: unknown) => error);
+    await r.clock.advance(MEMORY_SAMPLE_MS);
+    const last = r.statuses.at(-1);
     assert.equal(last?.state, NativeRunState.Killed);
     assert.equal(last?.refusal, NativeRefusal.MemoryCap);
+    assert.equal(last?.memory?.peakBytes, 10 * GIB, "the status keeps the footprint that killed it");
+    assert.equal(last?.memory?.capBytes, HOST_CAP_BYTES);
     const killed = lines.filter((line) => line.includes(NativeRefusal.MemoryCap));
     assert.equal(killed.length, 1, `one line names the kill: ${JSON.stringify(lines)}`);
     assert.ok(killed[0]?.includes(last?.runId ?? "no run"), "the line names the run");
-    assert.match(killed[0] ?? "", /4096\.0 MiB/, "the line names the footprint it measured");
+    assert.match(killed[0] ?? "", /10240\.0 MiB/, "the line names the footprint it measured");
+    assert.match(killed[0] ?? "", /9216\.0 MiB cap/, "the line names the cap");
+    void pending;
+  });
+
+  it("the cap follows the host's memory: a 16 GiB host kills past 8 GiB, an 8 GiB host past 4 GiB", async () => {
+    const rows: Array<[ram: number, footprint: number, state: NativeRunState]> = [
+      [16 * GIB, 7 * GIB, NativeRunState.Ready],
+      [16 * GIB, 8 * GIB + 1, NativeRunState.Killed],
+      [8 * GIB, 4 * GIB, NativeRunState.Ready],
+      [8 * GIB, 4 * GIB + 1, NativeRunState.Killed],
+    ];
+    for (const [ramBytes, footprint, state] of rows) {
+      const r = await registry({ ramBytes, sampleFootprint: async () => footprint });
+      await started(r, request("pong", NativeRunMode.Headless));
+      await r.clock.advance(MEMORY_SAMPLE_MS);
+      assert.equal(r.statuses.at(-1)?.state, state, `${ramBytes / GIB} GiB host, ${footprint} B`);
+    }
   });
 
   /** /proc/<pid>/status as Linux writes it, with the game's own anonymous and shared-memory pages. */
@@ -487,7 +568,7 @@ describe("how a run ends on its own", () => {
     `Name:\tgame\nVmRSS:\t${anonKb + shmemKb + 9000} kB\nRssAnon:\t${anonKb} kB\nRssFile:\t9000 kB\nRssShmem:\t${shmemKb} kB\n`;
 
   it("on a Linux host, a game over the cap is killed memory-cap: the sum over bubblewrap and every descendant", async () => {
-    const third = Math.ceil(NATIVE_GAME_MEMORY_MAX_BYTES / 1024 / 3) + 1;
+    const third = Math.ceil(HOST_CAP_BYTES / 1024 / 3) + 1;
     const read: number[] = [];
     const r = await registry({
       platform: "linux",
@@ -1310,6 +1391,56 @@ describe("a GPU that hangs, a device that comes back, and where a capture came f
     const count = r.statuses.length;
     await r.clock.advance(NATIVE_REAP_MARGIN_MS);
     assert.equal(r.statuses.length, count, "nothing more happened");
+  });
+
+  it("an embedded run builds the folder Live serves, and starts again on another one at the canvas's last size", async () => {
+    const root = await tmpDir("native-runs-live-root-");
+    const asked: Array<{ root: string | undefined; surface: NativeStartRequest["surface"] }> = [];
+    const r = await registry(
+      {
+        root,
+        prepare: async (req) => {
+          asked.push({ root: req.root, surface: req.surface && { ...req.surface } });
+          const runDir = path.join(root, req.runId);
+          await mkdir(path.join(runDir, "state"), { recursive: true });
+          req.onAdmitting?.();
+          return {
+            runId: req.runId,
+            runDir,
+            exe: path.join(runDir, "bundle", "Game.app", "Contents", "MacOS", "game"),
+            bundle: path.join(runDir, "bundle"),
+            state: path.join(runDir, "state"),
+            bundleId: "games.genex.game.0123456789ab",
+          };
+        },
+      },
+      V2_GAME,
+    );
+    const surface = { width: 320, height: 180, dpr: 2 };
+    const first = r.runs.embed({ project: "pond", target: BuildTarget.Mac, surface, root: "/copies/show-a" });
+    await r.clock.settle();
+    const shown = await first;
+    assert.equal(r.runs.resize("pond", { width: 640, height: 360, dpr: 2 }), true);
+    const again = r.runs.reembed("pond", "/copies/show-b");
+    await r.clock.settle();
+    const copy = await again;
+    assert.deepEqual(
+      asked.map((ask) => ask.root),
+      ["/copies/show-a", "/copies/show-b"],
+    );
+    assert.deepEqual(asked[1]?.surface, { width: 640, height: 360, dpr: 2 }, "the canvas's last size");
+    assert.equal(r.runs.state("pond", NativeRunMode.Embedded)?.runId, copy?.runId);
+    assert.notEqual(copy?.runId, shown.runId);
+    assert.ok(
+      r.statuses.some((status) => status.runId === shown.runId && ENDED.has(status.state)),
+      "the run of the other folder ended",
+    );
+    const folder = r.runs.reembed("pond", undefined);
+    await r.clock.settle();
+    await folder;
+    assert.equal(asked.at(-1)?.root, undefined, "back on the game folder");
+    assert.equal(await r.runs.reembed("tetris", "/copies/show-c"), null, "a game Live draws no run of starts none");
+    assert.equal(asked.length, 3);
   });
 
   /** A frames host that records every ring it announces. */

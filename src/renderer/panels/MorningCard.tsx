@@ -1,3 +1,4 @@
+import type { KeepBuildingTap } from "../keep-building.ts";
 import { LearningSummary } from "../chat/LearningSummary.tsx";
 /**
  * The morning card — the last thing a run writes into the chat, and usually the first thing
@@ -10,6 +11,7 @@ import { LearningSummary } from "../chat/LearningSummary.tsx";
  */
 import { type JSX, type ReactNode, useEffect, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import type { RunSummary } from "../../shared/run-summary.ts";
 import { useRunSummary } from "../use-run-summary.ts";
 import { RunOutcome } from "./RunOutcome.tsx";
@@ -24,6 +26,8 @@ import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
 import type { LoopProfile } from "../../shared/project-facts.ts";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
+import { type StillToFix, stopWhyLine } from "../chat-entries.ts";
+import { StillToFixCard } from "../chat/StillToFixCard.tsx";
 
 /** How long a finished build's card keeps the place of a result that has not come yet. */
 const RESULT_WAIT_MS = 3 * SECOND_MS;
@@ -79,11 +83,49 @@ export interface MorningCardProps {
   assets?: AssetDeliveredPayload[];
   /** stopped with a follow-up waiting: that message answers "what next", so the card only shows the result */
   handedOff?: boolean;
+  /** ended without the reviewer's yes: what is done and still to fix, which the card lists in place of the report */
+  stillToFix?: StillToFix | null;
+  /** Keep building on what is left (the chat's Loop again); none where no chat can take it */
+  onKeepBuilding?: KeepBuildingTap | null;
   onShowLive?: () => void;
   onOpenAssets?: () => void;
   onOpenStudio?: () => void;
   onResume?: () => void;
   onNotice?: Notify;
+}
+
+/** Keep building on what is left, when there is something left and a chat to take it. */
+function keepOf(
+  stillToFix: StillToFix | null,
+  onKeepBuilding: KeepBuildingTap | null,
+): (() => Promise<boolean>) | null {
+  return stillToFix && onKeepBuilding ? () => onKeepBuilding(stillToFix.notDone) : null;
+}
+
+/** The card's lead: what is done and still to fix with its actions, else the run's report. */
+function ReportOrLeft({
+  summary,
+  stillToFix,
+  onKeepBuilding,
+  children,
+}: {
+  summary: string | null;
+  stillToFix: StillToFix | null;
+  onKeepBuilding: (() => Promise<boolean>) | null;
+  children: ReactNode;
+}): JSX.Element | null {
+  if (stillToFix)
+    return (
+      <StillToFixCard
+        done={stillToFix.done}
+        notDone={stillToFix.notDone}
+        why={stopWhyLine(stillToFix.why, stillToFix.hours, stillToFix.notDone.length > 0)}
+        onKeepBuilding={onKeepBuilding}
+      >
+        {children}
+      </StillToFixCard>
+    );
+  return summary ? <Markdown text={summary} /> : null;
 }
 
 export function MorningCard({
@@ -104,6 +146,8 @@ export function MorningCard({
   after,
   assets,
   handedOff = false,
+  stillToFix = null,
+  onKeepBuilding = null,
   onShowLive,
   onOpenAssets,
   onOpenStudio,
@@ -138,7 +182,9 @@ export function MorningCard({
         return Boolean(outcome.head) || outcome.landed === true;
       });
   // A landed build the outcome already plays speaks for itself; the "because" line would repeat it.
-  const showBecause = !handedOff && !(outcomeHasPlayback && outcome?.landed === true);
+  // What is left to fix says why the Loop stopped and what to do: no report or "because" beside it.
+  const showBecause = !handedOff && !stillToFix && !(outcomeHasPlayback && outcome?.landed === true);
+  const keep = keepOf(stillToFix, handedOff ? null : onKeepBuilding);
   const showLive = (): void => {
     // A landed build is already the game folder; loading it puts the stage back on the real
     // thing after a run in which a merged build may have been shown from a worktree.
@@ -153,14 +199,14 @@ export function MorningCard({
       return (
         <Button
           key={action}
-          title="Pick the build up where it left off"
+          title={t("Pick the build up where it left off")}
           data-run-resume={runId ?? undefined}
           onClick={() => onResume?.()}
         >
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
-          Resume
+          {t("Resume")}
         </Button>
       );
     }
@@ -170,7 +216,7 @@ export function MorningCard({
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
-          Play
+          {t("Play")}
         </Button>
       );
     }
@@ -178,7 +224,7 @@ export function MorningCard({
     return (
       <Button
         key={action}
-        title="Load this build in the Live tab from a copy; your game folder stays as it is"
+        title={t("Load this build in the Live tab from a copy; your game folder stays as it is")}
         onClick={() => {
           webBuildShown(project);
           void window.studio.showBuild(project, commit).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
@@ -188,13 +234,15 @@ export function MorningCard({
         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
           <path d="M8 5v14l11-7z" />
         </svg>
-        Play
+        {t("Play")}
       </Button>
     );
   };
   return (
     <div data-testid="morning-card" className="flex min-w-0 flex-col gap-1.5">
-      {words.summary && <Markdown text={words.summary} />}
+      <ReportOrLeft summary={words.summary} stillToFix={stillToFix} onKeepBuilding={keep}>
+        {actions.map(button)}
+      </ReportOrLeft>
       {/* The result loads after the card shows: its place is kept, silently, while it may still come, so
           nothing moves when it lands; a result that never comes closes the place, a late one opens in it. */}
       <Presence>
@@ -204,14 +252,13 @@ export function MorningCard({
             capturePath={after}
             summary={summary}
             onPlay={() => {
-              if (project && summary.head)
-                return window.studio
-                  .showBuild(project, summary.head)
-                  .then(() => {
-                    webBuildShown(project);
-                    onShowLive?.();
-                  })
-                  .catch((error) => onNotice?.(String(error), ToastTone.Error));
+              if (!project || !summary.head) return;
+              // Live opens at once with what it shows, and says this build is on its way until it is in.
+              onShowLive?.();
+              return window.studio
+                .showBuild(project, summary.head)
+                .then(() => webBuildShown(project))
+                .catch((error) => onNotice?.(String(error), ToastTone.Error));
             }}
           />
         ))}
@@ -227,7 +274,7 @@ export function MorningCard({
           <LearningSummary text={words.learned} onOpenStudio={onOpenStudio} />
         </div>
       ) : null}
-      {actions.length > 0 && <div className="flex flex-wrap gap-1.5">{actions.map(button)}</div>}
+      {!stillToFix && actions.length > 0 && <div className="flex flex-wrap gap-1.5">{actions.map(button)}</div>}
     </div>
   );
 }

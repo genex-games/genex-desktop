@@ -4,7 +4,16 @@
  */
 import path from "node:path";
 import { lstat, open, readdir, readFile, rename, rm } from "node:fs/promises";
-import { GenexJobStatus, GenexOperation, type GenexJob } from "../../shared/genex.ts";
+import {
+  GENEX_FAILURE_NEXT,
+  GENEX_FAILURE_NEXT_DEFAULT,
+  GenexFailureCode,
+  GenexJobStatus,
+  GenexOperation,
+  type GenexJob,
+  type GenexJobFailure,
+} from "../../shared/genex.ts";
+import { isCreditKind } from "../../shared/play-credits.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { API_REQUEST_TIMEOUT_MS, isGenexAssetUrl, readCapped } from "./http.ts";
 
@@ -135,6 +144,50 @@ export function applyFoundGeneration(job: GenexJob, found: FoundGeneration): voi
   if (typeof quoted === "number" && Number.isSafeInteger(quoted)) job.creditsQuoted = quoted;
 }
 
+/** The failure code of each remote status that ends a generation without a result. */
+const FAILURE_FOR_REMOTE = new Map<string, GenexFailureCode>([
+  [GenexRemoteStatus.Failed, GenexFailureCode.GenerationFailed],
+  [GenexRemoteStatus.Canceled, GenexFailureCode.GenerationCanceled],
+]);
+
+/** A generation as Genex reports one that ended: its `status`, `kind` and the provider's `error`. */
+interface EndedGeneration {
+  status?: unknown;
+  kind?: unknown;
+  error?: unknown;
+}
+
+/**
+ * The typed failure of a generation Genex reports failed or canceled, by its `status` and `kind`
+ * fields (never its message, which is kept as the provider's words); null for any other answer.
+ */
+export function generationFailure(generation: EndedGeneration | null | undefined): GenexJobFailure | null {
+  const code = typeof generation?.status === "string" ? FAILURE_FOR_REMOTE.get(generation.status) : undefined;
+  if (!code) return null;
+  const kind = typeof generation?.kind === "string" ? generation.kind : null;
+  const next = (isCreditKind(kind) ? GENEX_FAILURE_NEXT[kind] : undefined) ?? GENEX_FAILURE_NEXT_DEFAULT;
+  return { code, kind, providerError: typeof generation?.error === "string" ? generation.error : null, next };
+}
+
+/** The failed generation a CLI error carries: the pinned CLI fails a read with the generation's JSON as its message. */
+export function cliGenerationFailure(message: string): GenexJobFailure | null {
+  const start = message.indexOf("{");
+  if (start < 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(message.slice(start, message.lastIndexOf("}") + 1));
+    return typeof parsed === "object" && parsed !== null ? generationFailure(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Record a run's failure on `job`: its message, and the failed generation it carries (none after a stop). */
+export function recordCliFailure(job: GenexJob, message: string, aborted: boolean): void {
+  job.error = message;
+  const failure = aborted ? null : cliGenerationFailure(message);
+  if (failure) job.failure = failure;
+}
+
 /** Statuses that say the submit may or may not have reached Genex. */
 const UNCERTAIN_SUBMIT = new Set<string>([GenexJobStatus.Submitting, GenexJobStatus.Unresolved]);
 /** Statuses after which nothing is left to download. */
@@ -159,10 +212,12 @@ export function failedJobStatus(job: GenexJob, aborted: boolean): GenexJobStatus
 }
 
 /**
- * The status a failed job settles in after reconciling. A read never leaves an unresolved create
- * behind, and an unresolved submit with no request or generation id never reached Genex.
+ * The status a failed job settles in after reconciling. A generation Genex reports failed is
+ * failed, whoever asked; otherwise a read never leaves an unresolved create behind, and an unresolved submit with no request or generation id never reached Genex.
  */
 export function settledFailureStatus(job: GenexJob, readOnly: boolean, aborted: () => boolean): string {
+  // Genex answered: the generation itself failed, so there is nothing left to retrieve.
+  if (job.failure) return GenexJobStatus.Failed;
   if (readOnly) return aborted() ? GenexJobStatus.Stopped : GenexJobStatus.RetrievalFailed;
   const neverAdmitted = job.status === GenexJobStatus.Unresolved && !job.requestId && !job.generationId;
   if (neverAdmitted) return aborted() ? GenexJobStatus.Stopped : GenexJobStatus.Failed;

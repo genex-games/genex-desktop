@@ -31,7 +31,9 @@
  *   build's, and compares the medians: old commits are never rebuilt. `--save-bin <tier>` saves the
  *   current build's executable there, with what it was built from (`SOURCE_SHA`, and `SOURCE_TREE`:
  *   the commit, whether it was a snapshot, and a sha256 of the working tree's tracked diff of
- *   `native/genex-rust` when it was not), so a saved side is never an unidentified dirty tree.
+ *   `native/genex-rust` when it was not), so a saved side is never an unidentified dirty tree. The A/B
+ *   names the saved side, and decides its Lakeside rule, from those files, never from the checkout it
+ *   runs in; a folder without them is `unknown`.
  * - `--head` builds the committed HEAD (a `git archive` snapshot with the harness's files laid over it,
  *   in its own cargo target) instead of the working tree, so a baseline is HEAD's renderer whatever
  *   other work is half-edited around it; `--rev <commit>` snapshots that commit instead (a saved
@@ -1060,23 +1062,53 @@ function measureSide(exe: string, setup: RunSetup, runs: number, tag: string): P
   return merged;
 }
 
-/**
- * The commit a saved executable was built from (its folder's `SOURCE_SHA`), if recorded, marked
- * `+dirty-<diff hash>` when `SOURCE_TREE` says it was built from a working tree with tracked changes.
- */
-function savedSourceSha(exe: string): string | undefined {
-  const file = path.join(path.dirname(exe), "SOURCE_SHA");
-  if (!existsSync(file)) return undefined;
-  const sha = readFileSync(file, "utf8").trim().slice(0, 12);
-  const treeFile = path.join(path.dirname(exe), "SOURCE_TREE");
-  if (!existsSync(treeFile)) return sha;
-  const tree = JSON.parse(readFileSync(treeFile, "utf8")) as SourceTree;
-  return tree.trackedDiffSha256 === null ? sha : `${sha}+dirty-${tree.trackedDiffSha256.slice(0, 8)}`;
+/** The `build.sha` of a saved side whose folder records no `SOURCE_SHA`. */
+const UNKNOWN_BUILD = "unknown";
+
+/** What a saved executable was built from, as its folder (`SOURCE_SHA`, `SOURCE_TREE`) records it. */
+interface SavedSource {
+  /** The commit, or null when the folder records none. */
+  commit: string | null;
+  /** The commit's first 12 characters, with `+dirty-<diff hash>` for a working tree with tracked changes. */
+  label: string;
+  trackedChanges: boolean;
 }
 
-function withSha(record: PerfRecord, sha: string | undefined): PerfRecord {
-  if (sha !== undefined) record.build.sha = sha;
-  return record;
+function savedSource(exe: string): SavedSource {
+  const file = path.join(path.dirname(exe), "SOURCE_SHA");
+  if (!existsSync(file)) return { commit: null, label: UNKNOWN_BUILD, trackedChanges: false };
+  const commit = readFileSync(file, "utf8").trim();
+  const label = commit.slice(0, 12);
+  const treeFile = path.join(path.dirname(exe), "SOURCE_TREE");
+  if (!existsSync(treeFile)) return { commit, label, trackedChanges: false };
+  const diff = (JSON.parse(readFileSync(treeFile, "utf8")) as SourceTree).trackedDiffSha256;
+  if (diff === null) return { commit, label, trackedChanges: false };
+  return { commit, label: `${label}+dirty-${diff.slice(0, 8)}`, trackedChanges: true };
+}
+
+/** The saved side of an A/B: its merged record, the commit it was built from, and whether its Lakeside rows gate. */
+export interface SavedBaseline {
+  record: PerfRecord;
+  commit: string | null;
+  lakesideGated: boolean;
+}
+
+/**
+ * Merge the runs of the saved executable `exe` and stamp them with what its folder says it was
+ * built from. A saved executable records the commit of the checkout it runs in, which says nothing
+ * about the build, so the record's `build` and the Lakeside rule ({@link lakesideGatedFor}, asked
+ * with the bare commit, never the dirty label) come from `SOURCE_SHA` and `SOURCE_TREE`; a folder
+ * without them is `unknown` and keeps the exemption.
+ */
+export function savedBaseline(
+  exe: string,
+  runs: readonly PerfRecord[],
+  isAncestor: (ancestor: string, sha: string) => boolean | null,
+): SavedBaseline {
+  const source = savedSource(exe);
+  const record = mergeRuns(runs);
+  record.build = { ...record.build, sha: source.label, trackedChanges: source.trackedChanges };
+  return { record, commit: source.commit, lakesideGated: lakesideGatedFor(source.commit ?? "", isAncestor) };
 }
 
 /** Interleave `runs` runs of the saved executable and the current one, and merge each side. */
@@ -1086,16 +1118,14 @@ function interleave(
   setup: RunSetup,
   runs: number,
   tag: string,
-): { a: PerfRecord; b: PerfRecord } {
+): { a: SavedBaseline; b: PerfRecord } {
   const [as, bs]: [PerfRecord[], PerfRecord[]] = [[], []];
-  // A saved executable reads the checkout's HEAD when it runs: its record says what it was built from.
   const savedSetup: RunSetup = { ...setup, source: `saved executable ${path.relative(PERF_DIR, saved)}` };
-  const savedSha = savedSourceSha(saved);
   for (let n = 1; n <= runs; n++) {
-    as.push(withSha(runOnce(saved, savedSetup, `${tag}-saved-run${n}`), savedSha));
+    as.push(runOnce(saved, savedSetup, `${tag}-saved-run${n}`));
     bs.push(runOnce(current, setup, `${tag}-current-run${n}`));
   }
-  return { a: mergeRuns(as), b: mergeRuns(bs) };
+  return { a: savedBaseline(saved, as, gitIsAncestor), b: mergeRuns(bs) };
 }
 
 /** `--statistic`, or the mode's default: the median for an interleaved A/B, the best run against a stored baseline. */
@@ -1144,7 +1174,8 @@ function recordBaseline(name: string, exe: string, setup: RunSetup, runs: number
 
 function runAb(tier: string, exe: string, setup: RunSetup, runs: number, tag: string, statistic: Statistic): number {
   const saved = savedExecutable(tier);
-  const { a, b } = interleave(saved, exe, setup, runs, `${tag}-ab-${tier}`);
+  const { a: side, b } = interleave(saved, exe, setup, runs, `${tag}-ab-${tier}`);
+  const a = side.record;
   const oldBench = path.basename(saved).startsWith(BENCH_BIN);
   const common = b.rows
     .filter((r) => a.rows.some((x) => x.row === r.row && sizeKey(x.size) === sizeKey(r.size)))
@@ -1155,7 +1186,7 @@ function runAb(tier: string, exe: string, setup: RunSetup, runs: number, tag: st
     statistic,
     minFrames: gateFrames(setup),
     rows: [...new Set(common)],
-    lakesideGated: lakesideGatedFor(a.build.sha, gitIsAncestor),
+    lakesideGated: side.lakesideGated,
   });
   printComparison(
     `A/B ${tier} (${a.build.sha}) vs current (${b.build.sha}), ${statistic} of ${runs} interleaved runs`,

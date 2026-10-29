@@ -10,6 +10,7 @@ import { type EngineTrustAnswer, ExtensionRefusal } from "../../../shared/game-c
 import { type GameProject, GameStack, stackOf } from "../../../shared/game-project.ts";
 import { type Notify, notifyProblem } from "../../state/toasts.ts";
 import { Button } from "../../ui/Button.tsx";
+import { t } from "../../../shared/i18n.ts";
 
 /** Where the row stands: the flag, or the warning before it is turned on. */
 const TrustStep = {
@@ -21,20 +22,21 @@ type TrustStep = (typeof TrustStep)[keyof typeof TrustStep];
 
 /** The row's own words. */
 const MESSAGE = {
-  heading: "Trust this game’s code",
-  off: "Off: unsafe code and build scripts in this game don’t build.",
-  on: "On: this game’s unsafe code and its own build script build. The sandbox is unchanged.",
-  warning:
+  heading: t("Trust this game’s code"),
+  off: t("Off: unsafe code and build scripts in this game don’t build."),
+  on: t("On: this game’s unsafe code and its own build script build. The sandbox is unchanged."),
+  warning: t(
     "Only trust code you’ve read. Unsafe code can crash the game or corrupt its memory, and a build script runs on this Mac at every build. Both stay inside the sandbox: no network, and writes only to the build folder.",
-  trust: "Trust",
-  confirm: "Trust this game",
-  cancel: "Cancel",
-  untrust: "Stop trusting",
+  ),
+  trust: t("Trust"),
+  confirm: t("Trust this game"),
+  cancel: t("Cancel"),
+  untrust: t("Stop trusting"),
   refusal: {
-    [ExtensionRefusal.Unavailable]: "This version of Genex can’t trust a game’s code.",
-    [ExtensionRefusal.TrustPersonOnly]: "Only you can trust a game, here in Genex.",
+    [ExtensionRefusal.Unavailable]: t("This version of Genex can’t trust a game’s code."),
+    [ExtensionRefusal.TrustPersonOnly]: t("Only you can trust a game, here in Genex."),
   } as Partial<Record<ExtensionRefusal, string>>,
-  refused: "The trust setting didn’t change.",
+  refused: t("The trust setting didn’t change."),
 } as const;
 
 /** What the row says for `step`, or the last answer's refusal. */

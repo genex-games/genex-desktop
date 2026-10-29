@@ -1,9 +1,10 @@
 import type { AudioPlaybackEvidence } from "./audio-observation.ts";
+import { CreditKind } from "./play-credits.ts";
 import { type CaptureSource, type StillExposure, StillMimeType } from "./preview-contract.ts";
 
 /** The bundled Genex plugin's id: the host's own Genex surfaces (its page, the promo) look it up by this. */
 export const GENEX_PLUGIN_ID = "genex";
-/** The Genex Tools skill that teaches an agent to write a Genex plugin (`plugins_find` names it). */
+/** The Genex plugin's skill that teaches an agent to write a Genex plugin (`plugins_find` names it). */
 export const GENEX_PLUGIN_AUTHOR_SKILL = "plugin-author";
 
 /**
@@ -16,24 +17,55 @@ export const GenexAction = {
   Unlock: "unlock",
   Connect: "connect",
   Terms: "terms",
+  /** Whether the signed-in account still has Genex's updated terms to accept: `{ pending }`. */
+  TermsStatus: "terms-status",
   Disconnect: "disconnect",
   CancelConnect: "cancel-connect",
   Approve: "approve",
   PublishStatus: "publish-status",
   PublishDraft: "publish-draft",
   PublishGallery: "publish-gallery",
+  /** Publish a game that has only apps, no web build: send them and list the game (`genex native publish --gallery`). */
+  PublishApps: "publish-apps",
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
+  CoverAuto: "cover-auto",
+  CoverPick: "cover-pick",
 } as const;
+export type GenexAction = (typeof GenexAction)[keyof typeof GenexAction];
+
+/**
+ * The Genex actions that belong to the person's account, not the agent's tools: signing in and
+ * out, the account's status and terms, and Publish with its cover and clip. They run while the
+ * Genex plugin is off.
+ */
+export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
+  GenexAction.Status,
+  GenexAction.Unlock,
+  GenexAction.Connect,
+  GenexAction.Terms,
+  GenexAction.TermsStatus,
+  GenexAction.Disconnect,
+  GenexAction.CancelConnect,
+  GenexAction.PublishStatus,
+  GenexAction.PublishDraft,
+  GenexAction.PublishGallery,
+  GenexAction.PublishApps,
+  GenexAction.PublishAllowUpload,
+  GenexAction.PublishOpen,
+  GenexAction.PublishBadge,
+  GenexAction.CoverAuto,
+  GenexAction.CoverPick,
+];
 
 /**
  * The Genex SDK packages a game may add, each at the exact version Studio installs. The agent names
  * a package; the version always comes from here. Multiplayer's card asks for `^0.16.0`.
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.16.1",
-  "@genex-ai/embed-sdk": "0.30.0",
+  "@genex-ai/multiplayer": "0.17.1",
+  "@genex-ai/embed-sdk": "0.33.0",
 } as const;
 /** A Genex SDK package a game may add. */
 export type GenexGamePackage = keyof typeof GENEX_GAME_PACKAGES;
@@ -49,6 +81,51 @@ export const GENEX_EMBED_VENDOR = {
   Entry: "genex/embed-sdk/index.js",
   Connect: "genex/connect.js",
 } as const;
+
+/**
+ * Where Studio's copy of `@genex-ai/multiplayer` sits under the vendor folder: its entry and its
+ * schema entry, built together so both share one copy of Colyseus's schema (a state class defined
+ * with one is unknown to the other). A template game maps both in its import map.
+ */
+export const GENEX_MULTIPLAYER_VENDOR = {
+  Dir: "genex/multiplayer",
+  Entry: "genex/multiplayer/index.js",
+  Schema: "genex/multiplayer/schema.js",
+} as const;
+
+/**
+ * What a template game's import map maps for each package, at `/vendor`: the specifiers it imports
+ * and Studio's copy of each. Multiplayer always brings player identity (`genexPackageSet`).
+ */
+export const GENEX_STUDIO_IMPORTS = {
+  "@genex-ai/embed-sdk": { "@genex-ai/embed-sdk": `/vendor/${GENEX_EMBED_VENDOR.Entry}` },
+  "@genex-ai/multiplayer": {
+    "@genex-ai/multiplayer": `/vendor/${GENEX_MULTIPLAYER_VENDOR.Entry}`,
+    "@genex-ai/multiplayer/schema": `/vendor/${GENEX_MULTIPLAYER_VENDOR.Schema}`,
+  },
+} as const satisfies Record<GenexGamePackage, Readonly<Record<string, string>>>;
+
+/** The packages a request installs: multiplayer always brings its player-identity dependency. */
+export function genexPackageSet(name: GenexGamePackage): GenexGamePackage[] {
+  return name === "@genex-ai/multiplayer" ? [name, "@genex-ai/embed-sdk"] : [name];
+}
+
+/** The import-map entries a template game needs for `name`, its dependency included. */
+export function studioSdkImports(name: GenexGamePackage): Record<string, string> {
+  return Object.assign({}, ...genexPackageSet(name).map((pkg) => GENEX_STUDIO_IMPORTS[pkg]));
+}
+
+/**
+ * The packages an import map takes from Studio's copies: each whose specifiers all map exactly to
+ * Studio's files. A Genex name mapped anywhere else (a CDN, the game's own file) turns nothing on.
+ */
+export function studioSdkPackages(imports: Readonly<Record<string, unknown>>): GenexGamePackage[] {
+  return (Object.keys(GENEX_STUDIO_IMPORTS) as GenexGamePackage[]).filter((pkg) =>
+    Object.entries(GENEX_STUDIO_IMPORTS[pkg]).every(
+      ([specifier, url]) => Object.hasOwn(imports, specifier) && imports[specifier] === url,
+    ),
+  );
+}
 /** Whether a name is one of those packages: an own key, never an inherited one. */
 export function isGenexGamePackage(name: unknown): name is GenexGamePackage {
   return typeof name === "string" && Object.hasOwn(GENEX_GAME_PACKAGES, name);
@@ -208,6 +285,52 @@ export const GenexUseVerification = {
 } as const;
 export type GenexUseVerification = (typeof GenexUseVerification)[keyof typeof GenexUseVerification];
 
+/** Why Genex took a job no further than asking: the person has something to do first. Wire values. */
+export const GenexBlocked = {
+  /** Genex's terms changed and the account has not accepted them yet. */
+  Terms: "terms",
+} as const;
+export type GenexBlocked = (typeof GenexBlocked)[keyof typeof GenexBlocked];
+
+/** What the Genex plugin announces to the app while a call runs (`events.emit`), by `kind`. Wire values. */
+export const GenexPluginEvent = {
+  /** The account's terms changed state: `{ kind, pending }`, so the app reads the account again. */
+  Terms: "terms",
+} as const;
+export type GenexPluginEvent = (typeof GenexPluginEvent)[keyof typeof GenexPluginEvent];
+
+/** Why a generation failed, as `GenexJob.failure.code` says it to the agent. Wire values: never rename one. */
+export const GenexFailureCode = {
+  /** Genex's provider ran the generation and it failed: the same input usually fails the same way. */
+  GenerationFailed: "generation-failed",
+  /** Genex canceled the generation. */
+  GenerationCanceled: "generation-canceled",
+} as const;
+export type GenexFailureCode = (typeof GenexFailureCode)[keyof typeof GenexFailureCode];
+
+/** What the agent can do after a failed generation, by its kind; a kind not listed gets {@link GENEX_FAILURE_NEXT_DEFAULT}. */
+export const GENEX_FAILURE_NEXT: Readonly<Partial<Record<CreditKind, string>>> = Object.freeze({
+  [CreditKind.Character]:
+    "Do not resubmit the same character. Make the body with operation model, then rig it with character.import (Uthana) and add clips with character.animate: each clip is a GLB of its own, which the game joins to the rig with with_clip_files.",
+  [CreditKind.ModelRig]:
+    "Rig the model with character.import (Uthana) instead; it takes a humanoid GLB from this game.",
+  [CreditKind.ModelAnimation]:
+    "Animate through Uthana instead: character.import the model, then character.animate one clip at a time; the game joins the clip GLBs with with_clip_files.",
+});
+/** What the agent can do after a failed generation of a kind {@link GENEX_FAILURE_NEXT} does not list. */
+export const GENEX_FAILURE_NEXT_DEFAULT =
+  "Change the input (a shorter prompt, another reference image or model) or use another operation; resubmitting the same input usually fails the same way.";
+
+/** A failed generation, typed for the agent: why, of which kind, the provider's own words and what to do next. */
+export interface GenexJobFailure {
+  code: GenexFailureCode;
+  /** The generation's kind as Genex names it (`CreditKind`'s spelling), or null when it gave none. */
+  kind: string | null;
+  /** The provider's own message, for the log and the agent; never matched on. */
+  providerError: string | null;
+  next: string;
+}
+
 export interface GenexJob {
   id: string;
   project: string;
@@ -223,6 +346,10 @@ export interface GenexJob {
   creditsRefunded?: number;
   files: string[];
   error?: string;
+  /** Set when Genex's provider failed or canceled the generation (`generation-failed`, `generation-canceled`). */
+  failure?: GenexJobFailure;
+  /** Set when the job went no further than asking the person for something first. */
+  blocked?: GenexBlocked;
   creditsQuoted?: number;
   createdAt: string;
   use?: {
@@ -271,7 +398,7 @@ export interface GenexPublishJob {
   kind: GenexPublishKind;
   state: GenexPublishJobState;
   phase: GenexPublishPhase;
-  deployment?: { id: string; digest: string; files: Array<{ path: string; sha256: string }> };
+  deployment?: { id: string; digest: string; files: Array<{ path: string; sha256: string; bodySha256?: string }> };
   expectedStagingRevision?: string;
   stagingUrl?: string;
   uploadedAt?: string;
@@ -351,8 +478,8 @@ export function withoutGenexSources<T extends Output>(files: readonly T[]): T[] 
   return files.filter((file) => !(isSource(file) && finished.has(file.generationId)));
 }
 
-/** What genex__cover does: photograph the genex-cover demo and keep it, or report the cover's state. */
-export const GenexCoverOperation = { Shoot: "shoot", Status: "status" } as const;
+/** What genex__cover does: photograph the genex-cover demo and keep it, record the genex-clip demo, or report. */
+export const GenexCoverOperation = { Shoot: "shoot", Status: "status", Clip: "clip" } as const;
 export type GenexCoverOperation = (typeof GenexCoverOperation)[keyof typeof GenexCoverOperation];
 
 /** The folder of the Genex plugin's storage that holds one folder per game's cover, `covers/<project>/`. */
@@ -363,6 +490,15 @@ export const GENEX_COVER_SHOT_FILE = {
   [StillMimeType.Png]: "shot.png",
   [StillMimeType.Jpeg]: "shot.jpg",
 } as const satisfies Record<StillMimeType, string>;
+
+/** The folder beside the kept shot that holds the recent frames as `<sha256>.png|jpg`, listed in `candidates.json`. */
+export const GENEX_COVER_CANDIDATES_DIR = "candidates";
+
+/** The kept cover clip's video beside its record (`clip.json`) in `covers/<project>/`, named by its type. */
+export const GENEX_COVER_CLIP_FILE = {
+  "video/webm": "clip.webm",
+  "video/mp4": "clip.mp4",
+} as const;
 
 /** Mirror of Genex's cover upload limit (the CLI's `COVER_MAX_BYTES`, the API's `COVER_MAX_UPLOAD_BYTES`). */
 export const GENEX_COVER_MAX_BYTES = 8 * 1024 * 1024;
@@ -377,7 +513,20 @@ export interface GenexCoverShot {
   source: CaptureSource;
   stats: StillExposure;
   takenAt: string;
+  /** Who staged the frame: the game's genex-cover demo, or Studio's plain frame of a game with none. Absent: the demo. */
+  origin?: GenexCoverOrigin;
+  /** The person picked this frame among the candidates: Studio and a publish shoot no new one over it. */
+  pinned?: boolean;
 }
+
+/** Who staged a kept cover frame (`GenexCoverShot.origin`). Persisted: never rename one. */
+export const GenexCoverOrigin = {
+  /** The game's own `genex-cover` demo. */
+  Demo: "demo",
+  /** Studio's plain frame of the game as it loads, for a game with no genex-cover demo yet. */
+  Studio: "studio",
+} as const;
+export type GenexCoverOrigin = (typeof GenexCoverOrigin)[keyof typeof GenexCoverOrigin];
 
 /** Genex's luma numbers on a refused frame, as the CLI reports them (0–1). */
 export interface GenexCoverFrameStats {
@@ -408,12 +557,52 @@ export interface GenexCoverSent {
   settled?: GenexCoverOutcome;
 }
 
+/** Answers that mean the owner chose the game's cover on genex.games: that choice stands. */
+const OWNER_CHOSE = new Set<GenexCoverOutcome>([GenexCoverOutcome.KeptOwner, GenexCoverOutcome.Outranked]);
+
+/** Whether the last send found the owner's own cover, then or when these bytes were first sent. */
+export function ownerChoseCover(last: GenexCoverSent | null | undefined): boolean {
+  if (!last) return false;
+  return [last.kind, last.settled].some((kind) => kind !== undefined && OWNER_CHOSE.has(kind));
+}
+
 /** The game's Genex cover as the plugin reports it: the kept shot, the last send, and whether one runs. */
 export interface GenexCoverRecord {
   shot: GenexCoverShot | null;
   last: GenexCoverSent | null;
   /** A send is running for this game right now. */
   sending: boolean;
+  /** The recent frames the person can flip between, newest first, the kept shot among them. Absent from older plugins. */
+  candidates?: GenexCoverShot[];
+  /** The kept genex-clip recording, or null; absent from a plugin older than clips. */
+  clip?: GenexCoverClip | null;
+  /** How the last clip send went; null before any. */
+  clipLast?: GenexCoverSent | null;
+  /** When the agent itself last kept a shot and a clip; absent from a plugin older than this. */
+  agentTook?: GenexCoverAgentTook;
+}
+
+/**
+ * When the agent itself last kept the game's cover shot and clip (`genex__cover` shoot and clip),
+ * ISO; a kind it never took is absent. Studio's own takes and a publish's shot leave it, so Publish
+ * knows a frame the person asked the agent for has come (`covers/<project>/agent.json`).
+ */
+export interface GenexCoverAgentTook {
+  shot?: string;
+  clip?: string;
+}
+
+/** The game's kept cover clip (`covers/<project>/clip.json`), beside its video: five seconds of real play. */
+export interface GenexCoverClip {
+  sha256: string;
+  mimeType: string;
+  bytes: number;
+  width: number;
+  height: number;
+  durationMs: number;
+  /** Share of sampled frame pairs that differ: a frozen recording is near 0. */
+  motion: number;
+  takenAt: string;
 }
 
 /** What Studio knows about this game's Genex pages. Never a credential, never the user's game folder. */
@@ -443,4 +632,93 @@ export interface GenexPublishState {
    * Absent from a Genex plugin older than covers.
    */
   cover?: GenexCoverRecord;
+  /**
+   * The game's Mac, Windows and Linux apps as its last publish sent them, answered beside the record like
+   * the cover. Absent from a Genex plugin older than native builds.
+   */
+  native?: GenexNativeRecord;
+  /**
+   * The game's project as remixers get it, answered beside the record like the cover. Absent from a
+   * Genex plugin older than remixing from the app.
+   */
+  remix?: GenexRemixRecord;
+}
+
+/** One app a publish sent: live for desktop players under `version`. */
+export interface GenexNativeSent {
+  platform: string;
+  arch: string;
+  version: string;
+  sizeBytes: number;
+  /** The archive's sha256 as Genex keeps it: the build a clip of a game with only apps names. */
+  sha256?: string;
+  publishedAt: string;
+}
+
+/** One app a publish could not send, and Genex's or the CLI's words for why. */
+export interface GenexNativeFailure {
+  platform: string;
+  arch: string;
+  error: string;
+}
+
+/** How Genex answered the listing of a game that has only apps. Wire values: never rename one. */
+export const GenexListingState = { Published: "published", Held: "held", Refused: "refused" } as const;
+export type GenexListingState = (typeof GenexListingState)[keyof typeof GenexListingState];
+
+/** Genex's answer to listing a game that has only apps: listed, held for review, or refused, and why. */
+export interface GenexNativeListing {
+  state: GenexListingState;
+  detail: string | null;
+}
+
+/**
+ * A publish's apps (`genex native publish`): they go after the web build is public, one at a time,
+ * and an app that fails never fails the publish. `supported` is false while Studio's pinned CLI is
+ * older than native builds: the dialog then says they are coming soon and nothing is sent.
+ */
+/** Why a game's project did not go for remixing, by code. Wire values: never rename one. */
+export const GenexRemixProblem = {
+  /** The game folder has no git repository, so which files are its own is unknown. */
+  NoRepository: "no-repository",
+  /** Nothing of the game's own is left once caches, secrets and links are taken out. */
+  Empty: "empty",
+  /** More than Genex keeps of a game's source. */
+  TooBig: "too-big",
+  /** The CLI could not send it. */
+  Failed: "failed",
+} as const;
+export type GenexRemixProblem = (typeof GenexRemixProblem)[keyof typeof GenexRemixProblem];
+
+/**
+ * The game's project as remixers get it, answered beside the publish record like the cover. Remixing
+ * is allowed only with the project: a publish whose project could not go turns remixing off on Genex,
+ * so no one remixes a game without its project. `supported` is false while Studio's pinned CLI cannot
+ * send a game's project: the dialog then offers no choice and nothing changes on Genex.
+ */
+export interface GenexRemixRecord {
+  supported: boolean;
+  /** The project is being sent now (Allow remixing on a game already published). */
+  sending: boolean;
+  /** Whether the person last chose to allow remixing; absent before any choice. */
+  allowed?: boolean;
+  /** When the project last went to Genex; absent while remixers would get nothing of the game. */
+  sentAt?: string;
+  /** How big the project that went was. */
+  files?: number;
+  bytes?: number;
+  /** Why the last try did not send it. */
+  problem?: GenexRemixProblem;
+}
+
+export interface GenexNativeRecord {
+  supported: boolean;
+  /** Apps are being sent now. */
+  sending: boolean;
+  /** The publish the record belongs to; absent before any. */
+  jobId?: string;
+  sent: GenexNativeSent[];
+  failed: GenexNativeFailure[];
+  /** A game with only apps is listed with its first app that goes: Genex's answer. */
+  listing?: GenexNativeListing;
 }

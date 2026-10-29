@@ -824,6 +824,26 @@ const INPUT_MODULE = [
   "",
 ].join("\n");
 
+/**
+ * Headless Chromium refuses every pointer lock (WrongDocumentError): a stand-in lock the page's own
+ * calls take and let go, with the browser's pointerlockchange; mouse moves keep their movement.
+ */
+const STAND_IN_POINTER_LOCK = `{
+  let locked = null;
+  Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get: () => locked });
+  const change = (element) => {
+    locked = element;
+    document.dispatchEvent(new Event("pointerlockchange"));
+  };
+  Element.prototype.requestPointerLock = function () {
+    change(this);
+    return Promise.resolve();
+  };
+  Document.prototype.exitPointerLock = function () {
+    if (locked) change(null);
+  };
+}`;
+
 interface InputWindow {
   __inputs: Array<Record<string, unknown>>;
   __flushed: Array<{ error: string | null; names: string[] }>;
@@ -848,13 +868,17 @@ describe("the Rust web shell's input and a lost device", { skip: browserSkip() }
     await browser?.close();
   });
 
-  /** A booted page of the stand-in game, at a 16:9 viewport, its pads stubbed by `pads` (an init script). */
-  async function booted(pads = "") {
+  /**
+   * A booted page of the stand-in game, at a 16:9 viewport, its pads stubbed by `pads` (an init
+   * script), opened with `query` (Live adds `mouseLook` for a game played with mouse look).
+   */
+  async function booted(pads = "", query = "?paused") {
     const context = await browser.newContext({ viewport: { width: 640, height: 360 }, deviceScaleFactor: 1 });
     const page = await context.newPage();
     await page.addInitScript(CORE_ADAPTER);
+    await page.addInitScript(STAND_IN_POINTER_LOCK);
     if (pads) await page.addInitScript(pads);
-    await page.goto(`${served.origin}/index.html?paused`);
+    await page.goto(`${served.origin}/index.html${query}`);
     await page.waitForFunction(
       (running) => (window as unknown as ShellWindow).GenexShell?.status.state === running,
       ShellState.Running,
@@ -933,6 +957,39 @@ describe("the Rust web shell's input and a lost device", { skip: browserSkip() }
     }
   });
 
+  it("a game played with mouse look takes the pointer lock on a click; locked moves are look until focus goes", async () => {
+    const { context, page, inputs } = await booted("", "?paused&mouseLook");
+    try {
+      await page.mouse.click(320, 180);
+      await page.waitForFunction(() => document.pointerLockElement?.id === "game", null, { timeout: BOOT_TIMEOUT_MS });
+      const click = await inputs();
+      assert.deepEqual(click[0]?.down, ["Mouse1"], "the click that locks is still the game's press");
+      await page.mouse.move(330, 175);
+      const moved = await inputs();
+      const looks = moved.filter((input) => input.look).map((input) => input.look as { x: number; y: number });
+      const total = looks.reduce((sum, look) => ({ x: sum.x + look.x, y: sum.y + look.y }), { x: 0, y: 0 });
+      assert.deepEqual(total, { x: 10, y: -5 }, `a locked move with no button held is look: ${JSON.stringify(moved)}`);
+      await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+      await page.waitForFunction(() => document.pointerLockElement === null, null, { timeout: BOOT_TIMEOUT_MS });
+      await inputs();
+      await page.mouse.move(400, 200);
+      assert.deepEqual(await inputs(), [], "unlocked, a move with no button held is no look");
+    } finally {
+      await context.close();
+    }
+    const plain = await booted();
+    try {
+      await plain.page.mouse.click(320, 180);
+      assert.equal(
+        await plain.page.evaluate(() => document.pointerLockElement),
+        null,
+        "a game without mouse look keeps a free cursor",
+      );
+    } finally {
+      await plain.context.close();
+    }
+  });
+
   it("the wheel reaches the game in pixels", async () => {
     const { context, page, inputs } = await booted();
     try {
@@ -973,5 +1030,66 @@ describe("the Rust web shell's input and a lost device", { skip: browserSkip() }
     } finally {
       await context.close();
     }
+  });
+});
+
+// ── the studio's wait for the page ──
+
+/** A stand-in for Studio's page shim's clock: records what the shell tells it about its readiness. */
+const RECORDING_CLOCK = `{
+  window.__readiness = [];
+  const note = (word) => (why) => window.__readiness.push(why ? word + ":" + why : word);
+  window.__studioClock = { hold: note("hold"), ready: note("ready"), release: note("release") };
+}`;
+
+/** What the shell told the clock by the time its boot ended (running, or on a card). */
+async function readinessOf(
+  browser: Browser,
+  module: string,
+): Promise<{ state: string; told: string[]; reason: string | null }> {
+  const root = await tmpDir("rust-shell-readiness-");
+  await writeFile(path.join(root, "index.html"), webShellPage(await readFile(SHELL, "utf8"), "Ready"));
+  await writeFile(path.join(root, "game.js"), module);
+  await writeFile(path.join(root, "assets.json"), JSON.stringify({ version: 1, files: [] }));
+  const served = await serve(root);
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(CORE_ADAPTER);
+    await page.addInitScript(RECORDING_CLOCK);
+    await page.goto(`${served.origin}/index.html?paused`);
+    const told = () => page.evaluate(() => (window as unknown as { __readiness: string[] }).__readiness);
+    await page.waitForFunction(() => (window as unknown as { __readiness: string[] }).__readiness.length > 1, null, {
+      timeout: BOOT_TIMEOUT_MS,
+    });
+    const status = await page.evaluate(() => (window as unknown as ShellWindow).GenexShell.status);
+    return { state: status.state, told: await told(), reason: status.reason };
+  } finally {
+    await context.close();
+    served.close();
+  }
+}
+
+describe("the Rust web shell tells Studio when its game is on screen (B6)", { skip: browserSkip() }, () => {
+  let browser: Browser;
+  before(async () => {
+    browser = await chromium.launch({ headless: true });
+  });
+  after(async () => {
+    await browser?.close();
+  });
+
+  it("holds Studio's wait from the start of its boot and ends it at the first lit frame, never at the loading screen", async () => {
+    const booted = await readinessOf(browser, assetModule([]));
+    assert.equal(booted.state, ShellState.Running, JSON.stringify(booted));
+    assert.deepEqual(booted.told, ["hold", "ready:first-lit-frame"]);
+  });
+
+  it("lets Studio's wait go when the boot ends on a card", async () => {
+    const broken = BROKEN.find((row) => row.name === "studio_boot throws");
+    assert.ok(broken?.module);
+    const failed = await readinessOf(browser, broken.module);
+    assert.equal(failed.state, ShellState.Failed);
+    assert.deepEqual(failed.told, ["hold", "release"]);
   });
 });

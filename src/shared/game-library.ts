@@ -2,6 +2,7 @@ import { validateCoverSurface } from "./cover-shader.ts";
 import { coverKeySeed, coverRecipeFromSeed, validateCoverRecipe, type CoverRecipe } from "./cover-recipe.ts";
 import type { BuildTarget } from "./game-project.ts";
 import type { DestinationCheck } from "./native-contract.ts";
+import { t } from "./i18n.ts";
 /** Host-owned presentation metadata. Folder identity and game files never change on rename. */
 export type CoverStyle = "world" | "relic" | "city";
 export type LegacyShaderCover = {
@@ -25,6 +26,11 @@ export interface GameLibraryEntry {
   removed?: boolean;
   /** Folder trust is host metadata; project files cannot grant it. */
   trustProjectSettings?: boolean;
+  /**
+   * A copy of someone else's game (a Play remix) whose setup scripts the person has not trusted:
+   * its packages install with none of them. Host metadata, like the trust above.
+   */
+  guardScripts?: boolean;
   cover?: GameCover;
   primaryThreadId?: string;
   /**
@@ -38,6 +44,8 @@ export interface GameLibraryEntry {
   scaffoldStamp?: string;
   /** The title waits for the game's first idea; any title given since clears it. */
   provisional?: boolean;
+  /** New game made it and no answer has ended with it built yet (`GameProject.awaitingFirstBuild`). */
+  awaitingFirstBuild?: boolean;
 }
 export interface GameUpdate {
   title?: string;
@@ -63,7 +71,7 @@ export function coverFromBrief(brief: string, style: CoverStyle = "world"): Extr
 
 export function validateGameTitle(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 80 || /[\x00-\x1f]/.test(value)) {
-    throw new Error("Enter a game name between 1 and 80 characters.");
+    throw new Error(t("Enter a game name between 1 and 80 characters."));
   }
   return value.trim();
 }
@@ -111,7 +119,7 @@ export function validateGameCover(cover: GameCover): void {
     return;
   }
   if (isProceduralCover(cover) || isImageCover(cover)) return;
-  throw new Error("Choose a PNG, JPEG or WebP image, or a valid cover recipe.");
+  throw new Error(t("Choose a PNG, JPEG or WebP image, or a valid cover recipe."));
 }
 
 const UNKEYED_COVER: CoverRecipe = { kind: "recipe", family: "clouds", palette: "genex", seed: 23, placeholder: true };

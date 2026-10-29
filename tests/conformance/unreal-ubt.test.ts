@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { after, describe, it } from "node:test";
+import { after, describe, it, type TestContext } from "node:test";
 import {
   type CompileError,
   CompileFailure,
@@ -34,6 +34,12 @@ import { tmpDir } from "../helpers/tmp.ts";
 
 const FIXTURES = path.join(import.meta.dirname, "..", "fixtures", "unreal-ubt");
 const fixture = (name: string) => readFile(path.join(FIXTURES, name), "utf8");
+
+/**
+ * A hang guard for the queue's cases, which take milliseconds and wait on what happened, never on
+ * a clock: a queue that never hands a slot on fails the case instead of holding the file open.
+ */
+const CASE_TIMEOUT_MS = 30_000;
 
 const ENGINE = "/Users/Shared/Epic Games/UE_5.8";
 const PROJECT = "/Users/me/Games/rush/unreal/GxCpp.uproject";
@@ -410,119 +416,134 @@ describe("when UBT doesn't run", () => {
 });
 
 /**
- * A runner whose runs wait until the test lets each one finish; records the order runs started in.
- * `untilStarted(n)` resolves once n runs have started (an event, never a clock), and `releaseAll`
- * finishes every run so a failed row leaves no compile holding a slot for the next one.
+ * Compiles on one runner whose runs wait until the test lets each one finish. A compile reads its
+ * own clock first as it leaves the queue (its seconds don't count the wait), so `begun` is the
+ * order the queue handed out slots. `started` is the order runs reached UBT: each compile reads
+ * its project's folder first, so two that take free slots together start either way round. A run
+ * let finish before it started finishes as soon as it starts. Whatever still waits when the test
+ * ends is let finish and awaited, so a failed check can't keep the process-wide slots busy for
+ * the next test, or hold the file open until the compile deadline.
  */
-function gated(output: string) {
+function gated(t: TestContext, output: string) {
+  const begun: string[] = [];
   const started: string[] = [];
-  const releases = new Map<string, () => void>();
   const signals = new Map<string, AbortSignal>();
-  const waiters: Array<{ count: number; resolve: () => void }> = [];
+  const finishes = new Map<string, () => void>();
+  const released = new Set<string>();
+  const compiles: Array<Promise<CompileResult>> = [];
+  const waiters: Array<() => void> = [];
+  let ending = false;
+  const changed = () => {
+    for (const wake of waiters.splice(0)) wake();
+  };
   const run: RunCommand = (_file, args, { signal }) => {
-    const name = args[0] ?? "";
-    started.push(name);
-    signals.set(name, signal);
-    for (const waiter of waiters.filter(({ count }) => started.length >= count)) waiter.resolve();
+    const target = args[0] ?? "";
+    started.push(target);
+    signals.set(target, signal);
+    changed();
     return new Promise((resolve) => {
       const finish = () => resolve({ code: 0, output });
-      releases.set(name, finish);
+      finishes.set(target, finish);
       if (signal.aborted) resolve({ code: null, output: "" });
+      if (ending || released.has(target)) finish();
       signal.addEventListener("abort", () => resolve({ code: null, output: "" }), { once: true });
     });
   };
-  const release = (module: string) => releases.get(`${module}Editor`)?.();
-  const untilStarted = (count: number) =>
-    started.length >= count ? Promise.resolve() : new Promise<void>((resolve) => waiters.push({ count, resolve }));
-  const releaseAll = () => {
-    for (const finish of releases.values()) finish();
+  const clock = (target: string) => () => {
+    if (!begun.includes(target)) {
+      begun.push(target);
+      changed();
+    }
+    return 0;
   };
-  return { run, started, release, signals, untilStarted, releaseAll };
-}
-
-/** Lets queued promise callbacks run. */
-const settle = () => sleep(5);
-
-/**
- * A sandbox preparer answering as a loaded machine may: the first request only after the second
- * one, so the compiles holding the two slots start Build.sh in either order.
- */
-function loadedSandbox(): PrepareSandbox {
-  let calls = 0;
-  let releaseFirst: (() => void) | null = null;
-  return async (request) => {
-    calls += 1;
-    if (calls === 1) await new Promise<void>((resolve) => (releaseFirst = resolve));
-    else releaseFirst?.();
-    return instantSandbox(request);
+  const until = async (seen: string[], count: number) => {
+    while (seen.length < count) await new Promise<void>((wake) => waiters.push(wake));
+  };
+  t.after(async () => {
+    ending = true;
+    for (const finish of finishes.values()) finish();
+    await Promise.allSettled(compiles);
+  });
+  return {
+    begun,
+    started,
+    signals,
+    /** Starts compiling `module` on this runner. */
+    compile(module: string, overrides: Partial<CompileOptions> = {}) {
+      const target = `${module}Editor`;
+      const compile = compileEditor(options({ module, run, now: clock(target), ...overrides }));
+      compiles.push(compile);
+      return compile;
+    },
+    /** Lets `module`'s run finish, now or as soon as it starts. */
+    release(module: string) {
+      released.add(`${module}Editor`);
+      finishes.get(`${module}Editor`)?.();
+    },
+    /** Resolves once `count` compiles have left the queue. */
+    untilBegun: (count: number) => until(begun, count),
+    /** Resolves once `count` runs have reached UBT. */
+    untilStarted: (count: number) => until(started, count),
   };
 }
 
 describe("at most two compiles at once", () => {
-  it("queues the rest in order and starts each when a slot frees", async (t) => {
+  it("queues the rest in order and starts each when a slot frees", { timeout: CASE_TIMEOUT_MS }, async (t) => {
     assert.equal(MAX_PARALLEL_COMPILES, 2);
-    const gate = gated(await fixture("builder-inc.log"));
-    t.after(gate.releaseAll);
-    const prepareSandbox = loadedSandbox();
-    const compiles = ["A", "B", "C", "D"].map((module) =>
-      compileEditor(options({ module, run: gate.run, prepareSandbox })),
-    );
-    // The two slot holders may start Build.sh in either order; the queue behind them keeps its own.
-    await gate.untilStarted(2);
-    await settle();
-    assert.deepEqual([...gate.started].sort(), ["AEditor", "BEditor"]);
+    const gate = gated(t, await fixture("builder-inc.log"));
+    const compiles = ["A", "B", "C", "D"].map((module) => gate.compile(module));
+    await gate.untilBegun(2);
+    assert.deepEqual(gate.begun, ["AEditor", "BEditor"]);
     gate.release("B");
-    await gate.untilStarted(3);
-    await settle();
-    assert.deepEqual(gate.started.slice(2), ["CEditor"]);
+    await gate.untilBegun(3);
+    assert.deepEqual(gate.begun, ["AEditor", "BEditor", "CEditor"]);
     gate.release("A");
-    await gate.untilStarted(4);
-    assert.deepEqual(gate.started.slice(2), ["CEditor", "DEditor"]);
+    await gate.untilBegun(4);
+    assert.deepEqual(gate.begun, ["AEditor", "BEditor", "CEditor", "DEditor"]);
     gate.release("C");
     gate.release("D");
     const results = await Promise.all(compiles);
     assert.ok(results.every((r) => r.ok));
   });
 
-  it("a compile stopped while it waits leaves the queue without running, and its turn passes on", async (t) => {
-    const gate = gated(await fixture("builder-inc.log"));
-    t.after(gate.releaseAll);
-    const prepareSandbox = loadedSandbox();
+  it("a compile stopped while it waits leaves the queue without running, and its turn passes on", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async (t) => {
+    const gate = gated(t, await fixture("builder-inc.log"));
     const stop = new AbortController();
-    const a = compileEditor(options({ module: "A", run: gate.run, prepareSandbox }));
-    const b = compileEditor(options({ module: "B", run: gate.run, prepareSandbox }));
-    const c = compileEditor(options({ module: "C", run: gate.run, prepareSandbox, signal: stop.signal }));
-    const d = compileEditor(options({ module: "D", run: gate.run, prepareSandbox }));
-    await gate.untilStarted(2);
+    const a = gate.compile("A");
+    const b = gate.compile("B");
+    const c = gate.compile("C", { signal: stop.signal });
+    const d = gate.compile("D");
+    await gate.untilBegun(2);
     stop.abort();
     const stopped = await c;
     assert.equal(stopped.ok, false);
     assert.equal(stopped.failure, CompileFailure.Aborted);
     gate.release("A");
-    await gate.untilStarted(3);
-    await settle();
-    assert.deepEqual([...gate.started.slice(0, 2)].sort(), ["AEditor", "BEditor"]);
-    assert.deepEqual(gate.started.slice(2), ["DEditor"]);
+    await gate.untilBegun(3);
+    assert.deepEqual(gate.begun, ["AEditor", "BEditor", "DEditor"]);
     gate.release("B");
     gate.release("D");
     await Promise.all([a, b, d]);
+    assert.deepEqual([...gate.started].sort(), ["AEditor", "BEditor", "DEditor"], "C never ran");
   });
 
-  it("a compile stopped while it runs is asked to end, frees its slot and says it was stopped", async (t) => {
-    const gate = gated(await fixture("builder-inc.log"));
-    t.after(gate.releaseAll);
-    const prepareSandbox = loadedSandbox();
+  it("a compile stopped while it runs is asked to end, frees its slot and says it was stopped", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async (t) => {
+    const gate = gated(t, await fixture("builder-inc.log"));
     const stop = new AbortController();
-    const a = compileEditor(options({ module: "A", run: gate.run, prepareSandbox, signal: stop.signal }));
-    const b = compileEditor(options({ module: "B", run: gate.run, prepareSandbox }));
-    const c = compileEditor(options({ module: "C", run: gate.run, prepareSandbox }));
+    const a = gate.compile("A", { signal: stop.signal });
+    const b = gate.compile("B");
+    const c = gate.compile("C");
     await gate.untilStarted(2);
     stop.abort();
     const stopped = await a;
     assert.equal(stopped.failure, CompileFailure.Aborted);
     assert.equal(gate.signals.get("AEditor")?.aborted, true);
-    await gate.untilStarted(3);
-    assert.deepEqual(gate.started.slice(2), ["CEditor"]);
+    await gate.untilBegun(3);
+    assert.deepEqual(gate.begun, ["AEditor", "BEditor", "CEditor"]);
     gate.release("B");
     gate.release("C");
     await Promise.all([b, c]);
@@ -530,8 +551,10 @@ describe("at most two compiles at once", () => {
 });
 
 describe("a stop at the edges of a compile", () => {
-  it("a compile stopped just as its slot is handed over never runs, and passes the slot on", async () => {
-    const gate = gated(await fixture("builder-inc.log"));
+  it("a compile stopped just as its slot is handed over never runs, and passes the slot on", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async (t) => {
+    const gate = gated(t, await fixture("builder-inc.log"));
     const stop = new AbortController();
     // The abort lands right when the slot is handed over: after its "abort" listener is removed.
     const remove = stop.signal.removeEventListener.bind(stop.signal);
@@ -539,19 +562,20 @@ describe("a stop at the edges of a compile", () => {
       remove(...args);
       stop.abort();
     };
-    const a = compileEditor(options({ module: "A", run: gate.run }));
-    const b = compileEditor(options({ module: "B", run: gate.run }));
-    const c = compileEditor(options({ module: "C", run: gate.run, signal: stop.signal }));
-    const d = compileEditor(options({ module: "D", run: gate.run }));
-    await settle();
+    const a = gate.compile("A");
+    const b = gate.compile("B");
+    const c = gate.compile("C", { signal: stop.signal });
+    const d = gate.compile("D");
+    await gate.untilBegun(2);
     gate.release("A");
     const stopped = await c;
     assert.equal(stopped.failure, CompileFailure.Aborted);
-    await settle();
-    assert.deepEqual(gate.started, ["AEditor", "BEditor", "DEditor"], "C never spawned; D got its slot");
+    await gate.untilBegun(3);
+    assert.deepEqual(gate.begun, ["AEditor", "BEditor", "DEditor"], "D got C's slot");
     gate.release("B");
     gate.release("D");
     await Promise.all([a, b, d]);
+    assert.deepEqual([...gate.started].sort(), ["AEditor", "BEditor", "DEditor"], "C never spawned");
   });
 
   it("a stop that comes after UBT already succeeded keeps the success", async () => {
@@ -575,9 +599,9 @@ describe("a compile stopped or late", () => {
     assert.equal(calls.length, 0);
   });
 
-  it("a compile past its deadline is ended and says so", async () => {
-    const gate = gated(await fixture("builder-inc.log"));
-    const result = await compileEditor(options({ module: "Slow", run: gate.run, timeoutMs: 20 }));
+  it("a compile past its deadline is ended and says so", async (t) => {
+    const gate = gated(t, await fixture("builder-inc.log"));
+    const result = await gate.compile("Slow", { timeoutMs: 20 });
     assert.equal(result.ok, false);
     assert.equal(result.failure, CompileFailure.TimedOut);
     assert.equal(result.retryable, false);

@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
+import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/message-queue.ts";
 import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
 import { EventKind } from "../../src/shared/event-log.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
@@ -447,6 +448,73 @@ describe("the end of a turn that changed what the project is", () => {
       "a failed turn": { before: WEB, after: GODOT, answer: { ok: false, errorText: "it broke" } },
     };
     for (const [label, row] of Object.entries(rows)) assert.equal((await turnOn(row)).length, 1, label);
+  });
+
+  it("a switch sent while the session goes on with the new kind still switches it: the Loop turned on reaches it", async () => {
+    const log: Array<{ id: string; data: Record<string, unknown> }> = [];
+    let legs = 0;
+    let cut = () => {};
+    let going = () => {};
+    const continuing = new Promise<void>((resolve) => {
+      going = resolve;
+    });
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        "events.append": (p) => {
+          for (const data of p.batch as Array<Record<string, unknown>>)
+            log.push({ id: String(log.length + 1).padStart(6, "0"), data });
+          return null;
+        },
+        "events.list": () => log,
+        "events.messages": () => [{ role: "user", content: TURN.text }],
+        "game.contentStamp": () => ({ all: "a", source: "a" }),
+        "game.list": () => [legs > 0 ? game(GODOT) : game(WEB)],
+        "plugins.tools": () => ({ tools: [], guidance: "", revision: 1 }),
+        "engine.describe": () => [{ id: CLAUDE, label: "Claude Code", kind: "delegated" }],
+        "preview.ready": () => ({ ready: false }),
+        "engine.steer": (p) => {
+          cut();
+          return { how: "interrupt", accepted: (p.messages as Array<{ id: string }>).map((m) => m.id) };
+        },
+        "engine.delegate": async () => {
+          legs += 1;
+          const reply = { ok: true, engine: CLAUDE, turns: 1, usage: {}, sessionId: "s1", summary: "Done." };
+          if (legs !== 2) return reply;
+          // The session going on with the new kind works until the person's message cuts it.
+          const cutNow = new Promise<void>((resolve) => {
+            cut = resolve;
+          });
+          going();
+          await cutNow;
+          return { ...reply, ok: false, stopReason: "stopped", turns: 2, summary: "" };
+        },
+      },
+    });
+    const host = { call: (method: string, p: Record<string, unknown>) => recorder.ctx.call(method, p), notify() {} };
+    const queue = new MessageQueue(host as never, (action, steer) =>
+      runDelegatedTurn(recorder.ctx as never, { ...TURN, project: NAME, asked: action, steer } as never),
+    );
+    const send = (text: string, extra: Record<string, unknown> = {}) =>
+      queue.enqueue({ type: "user_message", threadId: TURN.threadId, text, engine: CLAUDE, ...extra });
+    try {
+      await send("port it");
+      await continuing;
+      await send("make it in the loop", { autopilot: {} });
+      for (let n = 0; n < 2000 && legs < 3; n++) await new Promise((resolve) => setImmediate(resolve));
+      const delegated = recorder.paramsOf("engine.delegate");
+      assert.equal(delegated.length, 3, "the session went on after the cut");
+      const prompt = String(delegated[2]?.prompt);
+      assert.ok(prompt.startsWith("While you were working, the user changed how you work"), prompt);
+      assert.match(prompt, /make it in the loop/);
+      const loopMessage = [...messageQueueState(log as never).messages.values()].find(
+        (m) => m.action?.text === "make it in the loop",
+      );
+      assert.equal(loopMessage?.state, "delivered");
+    } finally {
+      cut();
+      queue.stop();
+    }
   });
 
   it("with Loop on, the session that goes on starts the build with its launch tool instead of building it itself", async () => {

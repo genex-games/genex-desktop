@@ -491,10 +491,23 @@ export function linuxPackageScriptFiles(dir: string): Record<LinuxPackageScript,
   };
 }
 
-/** Write the maintainer scripts where the makers read them (the make step's `preMake` hook). */
-export async function writeLinuxPackageScripts(dir: string): Promise<void> {
+/** A generated maintainer script with another one's text (its own `exit 0` last) run after it. */
+export function withFollowing(generated: string, following: string | undefined): string {
+  return following ? `${generated.replace(/exit 0\n$/, "")}${following}` : generated;
+}
+
+/**
+ * Write the maintainer scripts where the makers read them (the make step's `preMake` hook), each
+ * followed by `following`'s script of the same name, when it has one (the rpm's repository
+ * scriptlets: a package has one %post and one %postun).
+ */
+export async function writeLinuxPackageScripts(
+  dir: string,
+  following: Partial<Record<LinuxPackageScript, string>> = {},
+): Promise<void> {
   await mkdir(dir, { recursive: true });
   const scripts = linuxPackageScripts();
   const files = linuxPackageScriptFiles(dir);
-  for (const key of Object.values(LinuxPackageScript)) await writeFile(files[key], scripts[key], { mode: 0o755 });
+  for (const key of Object.values(LinuxPackageScript))
+    await writeFile(files[key], withFollowing(scripts[key], following[key]), { mode: 0o755 });
 }

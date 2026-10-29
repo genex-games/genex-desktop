@@ -13,8 +13,9 @@ import { problemWords } from "../words.ts";
 import { ToastTone, type Notify } from "../state/toasts.ts";
 
 /**
- * How long a Stop that is still settling ignores the button: a double press must not cancel the
- * follow-up taking over, but a Stop the work never heard must be possible to ask again.
+ * How long after a Stop it acted on the chat ignores the button: a double press must not cancel
+ * the follow-up taking over, even when the stopped work ended at once and that follow-up has
+ * begun, but a Stop the work never heard must be possible to ask again.
  */
 export const STOP_RETRY_MS = 5 * SECOND_MS;
 
@@ -36,10 +37,7 @@ export function stopSettled(mark: StopMark, events: readonly EventEnvelope[]): b
   return events.some((event) => event.id > mark.after && endsStoppedWork(event));
 }
 
-/**
- * The chat says "Stopping" from the press until the stopped work records its end, and while it
- * does, a second Stop cannot cancel the follow-up that is taking over.
- */
+/** The chat says "Stopping" from the press until the stopped work records its end. */
 export function isStopping(
   mark: StopMark | null,
   state: { threadId: string | null | undefined; running: boolean; events: readonly EventEnvelope[] },
@@ -47,16 +45,19 @@ export function isStopping(
   return Boolean(mark && mark.thread === state.threadId && state.running && !stopSettled(mark, state.events));
 }
 
-/** A Stop is settling and was asked too recently to ask again. */
-function justAsked(state: { stopping: boolean; mark?: StopMark | null }, now: number): boolean {
-  if (!state.stopping) return false;
-  return !state.mark || now - state.mark.at < STOP_RETRY_MS;
+/**
+ * This chat's last Stop was acted on less than `STOP_RETRY_MS` ago, whether or not the work it
+ * stopped has ended; with no mark, only a Stop still settling counts.
+ */
+function justAsked(threadId: string, state: { stopping: boolean; mark?: StopMark | null }, now: number): boolean {
+  if (!state.mark) return state.stopping;
+  return state.mark.thread === threadId && now - state.mark.at < STOP_RETRY_MS;
 }
 
 /**
  * The Stop button: mark where it was pressed and cancel this chat's own turn. Returns the mark,
- * or null when there is no chat or a Stop is settling and was asked less than `STOP_RETRY_MS` ago.
- * A refused Stop goes to `onFailed`.
+ * or null when there is no chat or this chat's last Stop was acted on less than `STOP_RETRY_MS`
+ * ago. A refused Stop goes to `onFailed`.
  */
 export function requestChatStop(
   api: { cancelTurn(threadId: string): Promise<unknown> },
@@ -69,10 +70,11 @@ export function requestChatStop(
   },
   onFailed: (err: unknown) => void,
 ): StopMark | null {
+  const { threadId } = state;
   const now = state.now ?? Date.now();
-  if (!state.threadId || justAsked(state, now)) return null;
-  const mark = { thread: state.threadId, after: state.events.at(-1)?.id ?? "", at: now };
-  stopTurn(api, state.threadId, onFailed);
+  if (!threadId || justAsked(threadId, state, now)) return null;
+  const mark = { thread: threadId, after: state.events.at(-1)?.id ?? "", at: now };
+  stopTurn(api, threadId, onFailed);
   return mark;
 }
 

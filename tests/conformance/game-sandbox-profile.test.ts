@@ -52,7 +52,7 @@ import {
   withRules,
 } from "../../scripts/spike/rust-wgpu/seatbelt-measure.ts";
 import { MINUTE_MS } from "../../src/shared/duration.ts";
-import { darwinUserCacheDir } from "../../src/substrate/plugins/native-process.ts";
+import { darwinUserCacheDir } from "../../src/substrate/seatbelt.ts";
 import { buildProbe, macClang, macClangSkip, type ProbeRunDir, probePipe, probeRunDir } from "../helpers/macho.ts";
 import { buildPond, HEADLESS_EXECUTABLE } from "../helpers/rust-pond-binary.ts";
 import { tmpDir } from "../helpers/tmp.ts";

@@ -40,6 +40,7 @@ import type { GameProject } from "../../src/shared/game-project.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
 import { isAgentTool, PluginSourceKind } from "../../src/shared/plugins.ts";
 import { FolderHolds } from "../../src/shared/project-facts.ts";
+import { FindNext, PluginOffer } from "../../src/shared/project-tools.ts";
 import { inspectPackage, validateManifest } from "../../src/substrate/plugins/manifest.ts";
 import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
@@ -737,6 +738,7 @@ async function toyPorter(t: { after: (fn: () => Promise<void>) => void }): Promi
   await cp(TOY_PLUGIN, dir, { recursive: true });
   const manifest = JSON.parse(await readFile(path.join(dir, "plugin.json"), "utf8"));
   manifest.id = id;
+  manifest.engine.id = id;
   manifest.tools.push({
     name: "start-toy",
     description: "Make this game a toy project, in place.",
@@ -788,6 +790,7 @@ async function unrealStandIn(t: { after: (fn: () => Promise<void>) => void }): P
   await cp(TOY_PLUGIN, dir, { recursive: true });
   const manifest = JSON.parse(await readFile(path.join(dir, "plugin.json"), "utf8"));
   manifest.id = id;
+  manifest.engine.id = id;
   const real = unrealManifest as unknown as { tools: Array<{ name: string }>; scaffolds: unknown };
   manifest.tools.push(
     ...real.tools.filter((declared) => ["new-game", "new-plugin", "engine-status"].includes(declared.name)),
@@ -876,6 +879,7 @@ async function shipStandIn(t: { after: (fn: () => Promise<void>) => void }) {
   const manifest = JSON.parse(await readFile(path.join(dir, "plugin.json"), "utf8"));
   const real = unrealManifest as unknown as { tools: Array<{ name: string }>; locks: unknown[] };
   manifest.id = id;
+  manifest.engine.id = id;
   manifest.locks.push(...real.locks);
   manifest.tools.push(...real.tools.filter((declared) => ["plugin-build", "editor-activity"].includes(declared.name)));
   manifest.detect.push({ fact: "unreal-plugin", files: ["**/*.uplugin"], notUnder: ["**/GenexEditorHelper/"] });
@@ -983,7 +987,7 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
     const game = await lite.core.createGame("Kite Racer");
     const { prompt, bridged, capture } = await chatTurn(game.name, "make a kite racing game", { tools: [] });
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, [], "no question card");
+    assert.deepEqual(bridged, ["start_autopilot"], "no question card, only Auto's Loop start");
     assert.equal(capture, true, "the builder captures the web preview");
   });
 
@@ -1189,7 +1193,7 @@ describe("Unreal asked for with the plugin off: find the plugin, or go on with g
     const game = await lite.core.createGame("Plain Start");
     const { prompt, bridged, capture } = await chatTurn(game.name, "make a game", { tools: [] });
     assert.doesNotMatch(prompt, /Unreal/);
-    assert.deepEqual(bridged, [], "no question card");
+    assert.deepEqual(bridged, ["start_autopilot"], "no question card, only Auto's Loop start");
     assert.equal(capture, true, "a web build");
   });
 
@@ -1523,7 +1527,7 @@ describe("an Unreal C++ editor plugin: build, test and package it", () => {
   });
 });
 
-describe("a Godot game, no plugin: generic tools, jobs and looking at the app", () => {
+describe("a Godot game with its plugin off: generic tools, jobs and looking at the app", () => {
   it("opening it plans and writes no web starter", async () => {
     await opensWithoutStarter(Project.GodotGame);
   });
@@ -1614,15 +1618,18 @@ describe("a Godot game, no plugin: generic tools, jobs and looking at the app", 
     assert.ok(!job?.policy.allowWrite?.includes(gameDir), "never the game itself");
     assert.equal(looked(worked[1]).pictures, 1, "the worker looks too");
   });
-  it("plugins_find finds no Godot plugin and offers to write one", async () => {
-    // Genex's own plugins, and no catalog: nothing knows a Godot project.
+  it("plugins_find suggests turning on the bundled Godot plugin, which ships off", async () => {
+    // Genex's own plugins, and no catalog: the bundled Godot plugin knows a Godot project.
     const find = lite.api() as unknown as Record<string, (params: unknown) => Promise<unknown>>;
     const answer = (await find[HostMethod.PluginsFind]?.({ fact: "godot-project" })) as {
-      plugins: unknown[];
+      plugins: Array<{ id: string; offer?: string }>;
       next: string;
     };
-    assert.deepEqual(answer.plugins, []);
-    assert.equal(answer.next, "write-plugin");
+    assert.deepEqual(
+      answer.plugins.map((plugin) => [plugin.id, plugin.offer]),
+      [["godot", PluginOffer.TurnOn]],
+    );
+    assert.equal(answer.next, FindNext.Suggest);
   });
 });
 
@@ -1826,6 +1833,7 @@ describe("a Genex plugin for an engine Genex lacks: written, loaded by the perso
     { part: "assets", read: (m) => sectionOf(m, "assets") },
     { part: "workerTypes", read: (m) => sectionOf(m, "workerTypes") },
     { part: "scaffolds", read: (m) => sectionOf(m, "scaffolds") },
+    { part: "judges", read: (m) => sectionOf(m, "judges") },
     {
       part: "tools[].needs",
       read: (m) => toolOf(m, "build")?.needs,
@@ -1931,7 +1939,7 @@ describe("a Genex plugin for an engine Genex lacks: written, loaded by the perso
   it("the plugin-author skill writes a plugin like this one into a local folder", async () => {
     const dir = await mkdtemp(path.join(cases, "plugin-author-"));
     const binding = { project: "plugin-author", directory: dir };
-    // The guide comes with Genex Tools, on as it ships.
+    // The guide comes with the Genex plugin, on as it ships.
     const genexWas = lite.core.plugins.enabled(GENEX_PLUGIN);
     await lite.core.plugins.setEnabled(GENEX_PLUGIN, true);
     const { folder } = await writeSkillExample(lite.core.plugins, binding, dir).finally(() =>

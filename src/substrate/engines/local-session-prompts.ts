@@ -3,7 +3,7 @@
  * descriptions, and the notes the studio puts in front of it when a round goes wrong.
  */
 import { MINUTE_MS } from "../../shared/duration.ts";
-import { PERMISSION_MODE_WORDS, PermissionMode } from "../../shared/permissions.ts";
+import { PERMISSION_MODE_NAMES, PermissionMode } from "../../shared/permissions.ts";
 import type { DelegateOwnership } from "./types.ts";
 
 /** The most of the workspace's own instructions (CLAUDE.md) the system prompt carries. */
@@ -45,7 +45,7 @@ const MODE_NOTE: Record<PermissionMode, string> = {
 
 /** The note a session reads at its next round when the user switched the chat's mode while it ran. */
 export function modeChangedNote(mode: PermissionMode): string {
-  return `Studio notice: the user switched this chat's permission mode to ${PERMISSION_MODE_WORDS[mode].label}. ${MODE_NOTE[mode]}`;
+  return `Studio notice: the user switched this chat's permission mode to ${PERMISSION_MODE_NAMES[mode]}. ${MODE_NOTE[mode]}`;
 }
 
 /** What the model reads when the user denied a call with words of their own. */

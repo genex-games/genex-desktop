@@ -86,7 +86,7 @@ fn the_material_scenes_walkers_fit_every_classs_compute_cap() {
             for os in [TargetOs::MacOs, TargetOs::Web, TargetOs::Android] {
                 let cap = skinned_compute_instances_max(class, os);
                 assert!(drawn.skinned.len() as u32 <= cap, "frame {frame}: {} walkers over {}'s cap {cap}", drawn.skinned.len(), class.wire());
-                assert_eq!(vertex_skinned_draws_within(&drawn, &library, SkinVertexPolicy::Auto, cap), uncapped, "frame {frame}, {} on {os:?}", class.wire());
+                assert_eq!(vertex_skinned_draws_within(&drawn, &library, SkinVertexPolicy::Auto, cap, &[]), uncapped, "frame {frame}, {} on {os:?}", class.wire());
             }
         }
     }

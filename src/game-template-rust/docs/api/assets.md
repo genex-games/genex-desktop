@@ -1,8 +1,17 @@
 # Reading assets
 
 A reset may read the game's own files while it builds the world: a level's JSON, a table of
-waves, the triangles of a model for a navmesh or a collider. The bytes are part of the build, so
-the same seed gives the same checksum on every destination.
+waves, the triangles of a model for a navmesh or a collider. (Content Library entries: `docs/api/library.md`.) The bytes are part of the build, so
+the same seed gives the same checksum on every destination. Every type and call in one line:
+
+```rust
+use genex::{AssetBytes, AssetError, AssetInfo, ModelTriangles}; // the crate root; Assets and Model are in the prelude
+gfx.assets().bytes(path);                  // -> Result<AssetBytes, AssetError>
+bytes.json(); bytes.as_str(); bytes.digest(); // -> Result<Value, AssetError>, Option<&str>, u64
+gfx.assets().triangles(&model);            // -> Result<Arc<ModelTriangles>, AssetError>
+gfx.assets().info(path);                   // -> Option<AssetInfo> { bytes, group }
+error.code().wire(); error.detail();       // an AssetError's code and detail are calls
+```
 
 ```rust
 game.on_reset(|sim, _seed, _rng, gfx| {
@@ -36,7 +45,7 @@ Reads follow one rule on every destination (desktop, web, phones):
 
 | Refusal | When |
 |-|-|
-| `unsafe-path` | The path is absolute, climbs (`..`), has `.`, an empty segment, a backslash or NUL, is a link, or leads out of `assets/` once links are followed. |
+| `unsafe-path` | The path is absolute, climbs (`..`), has `.`, an empty segment, a backslash or NUL, or is a link or passes through one under `assets/`. |
 | `missing` | The build has no file at the path. |
 | `too-large` | The file is over 256 MiB. |
 | `malformed` | `triangles` of a file that is not a GLB with triangles (or a `.gltf` whose buffers are not embedded), or of a GLB refused before it is read: a damaged container, an index naming an entry that does not exist, data past its buffer, a layout glTF does not give an attribute, or a node that is its own ancestor; `.json()` of bytes that are not JSON. |
@@ -45,6 +54,17 @@ Reads follow one rule on every destination (desktop, web, phones):
 
 Each refusal is an `AssetError` with `.code()` (`AssetErrorCode`, its wire spelling from
 `.code().wire()`) and `.detail()` for a log line.
+
+## Files you write yourself
+
+Every file under `assets/` ships, whoever made it: a GLB your script wrote, a merged file, a
+download. Studio's import step checks each GLB with the Khronos glTF validator before the build.
+Accessor `min`/`max` that disagree with the data, or are missing where glTF needs them, are
+rewritten from the data (the receipt lists `ACCESSOR_BOUNDS_REPAIRED`). Any other error leaves the
+file out of the build. The game console then says which file, why and what to do:
+`Studio left assets/x.glb out of this build (validation-failed: ACCESSOR_INDEX_OOB, …), so the game
+reads it as missing. To fix: …`. Read `console_log` when a read refuses `missing` for a file that
+is there.
 
 On a phone the compiled table is read first, then the files the build ships beside the game: the
 app bundle's `assets/` on iOS, and the APK's `assets/` on Android (read by range through
@@ -76,3 +96,6 @@ game.on_reset(|sim, _seed, _rng, gfx| {
   joints, a node with two parents, a cycle, a non-finite transform). Nothing crashes. A path the
   build does not have shows the checker when drawn with `frame.model`; a GLB the renderer reads
   but that has no usable skin still draws there as a static model.
+- A clip file with a skeleton and no skinned mesh (Uthana's one GLB per clip) is no character of
+  its own: add it to the rig with `hero.with_clip_files(gfx.assets(), &[("Fire", "fire.glb")])`
+  (`docs/api/animation.md`) instead of merging files.

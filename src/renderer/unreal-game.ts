@@ -4,7 +4,8 @@
  * outside the game folder, and the bundled plugin that opens the editor. Pure, so each rule is
  * tested without a DOM.
  */
-import { GameEngine, engineOf, projectName } from "../shared/game-engine.ts";
+import { engineLoopGate, engineProjectInFolder, engineRewindNote } from "./engine-game.ts";
+import { GameEngine, engineOf } from "../shared/game-engine.ts";
 import type { GameProject } from "../shared/game-project.ts";
 import { UNREAL_PLUGIN_ID } from "../shared/observers.ts";
 import type { PluginInfo } from "../shared/plugins.ts";
@@ -38,6 +39,7 @@ export const UnrealStageStep = {
   NotAnswering: "not-answering",
   PortBlocked: "port-blocked",
   OpenWhenFree: "open-when-free",
+  Crashed: "crashed",
 } as const;
 export type UnrealStageStep = (typeof UnrealStageStep)[keyof typeof UnrealStageStep];
 
@@ -93,7 +95,7 @@ export function parseStageStatus(value: unknown): UnrealStageStatus | null {
 }
 
 /** The part of a game these rules read: its folder and its engine record. */
-type LinkedGame = Pick<GameProject, "engine"> & Partial<Pick<GameProject, "dir">>;
+type LinkedGame = Pick<GameProject, "engine"> & Partial<Pick<GameProject, "dir" | "linkedEngine">>;
 
 /** The `.uproject` an Unreal game builds in, or null for a web game (or no game). */
 export function unrealProjectOf(game: LinkedGame | null | undefined): string | null {
@@ -102,53 +104,27 @@ export function unrealProjectOf(game: LinkedGame | null | undefined): string | n
   return engine.project;
 }
 
-const SEPARATOR = /[\\/]/;
-const TRAILING_SEPARATORS = /[\\/]+$/;
-
-/** Whether `file` lies under `folder`, by spelling: `/a/game-copy` is not under `/a/game`. */
-function under(file: string, folder: string): boolean {
-  const base = folder.replace(TRAILING_SEPARATORS, "");
-  if (!base || !file.startsWith(base)) return false;
-  return SEPARATOR.test(file.charAt(base.length));
-}
-
 /**
- * What Rewind adds for an Unreal game whose project lives outside the game folder: its checkpoints
- * hold only that folder, so what was changed in Unreal stays. Null for a web game, and for a
- * project inside the game folder, which Rewind restores with the rest. The record holds the
- * project's real path while the game's folder may be spelled through a link; a mismatch reads as
- * outside, so the note errs toward saying what Rewind can't undo.
+ * What Rewind adds for an Unreal game whose project lives outside the game folder (`engineRewindNote`
+ * for Unreal): its checkpoints hold only that folder, so what was changed in Unreal stays. Null for
+ * any other game, and for a project inside the game folder, which Rewind restores with the rest.
  */
 export function unrealRewindNote(game: LinkedGame | null | undefined): string | null {
-  const project = unrealProjectOf(game);
-  if (!project) return null;
-  if (unrealProjectInFolder(game)) return null;
-  return UNREAL_WORDS.rewindNote(projectName(project));
-}
-
-/** How many folders above the project's own the Loop's caption names: "Documents › Unreal Projects". */
-const PLACE_FOLDERS = 2;
-
-/** Where a project's folder sits, as the panel names places: the folders above it, joined by ›. */
-function placeOf(project: string): string {
-  const folders = project.split(SEPARATOR).filter(Boolean).slice(0, -2);
-  return folders.slice(-PLACE_FOLDERS).join(" › ");
+  return unrealProjectOf(game) ? engineRewindNote(game) : null;
 }
 
 /**
- * Why Mode has no Loop for an Unreal game whose project lies outside its folder: Rewind can't undo
- * what a Loop changes there, where the project is, and the two ways to a Loop.
+ * Why Mode has no Loop for an Unreal game whose project lies outside its folder (`engineLoopGate`
+ * for Unreal): Rewind can't undo what a Loop changes there, where the project is, and the two ways
+ * to a Loop.
  */
 export function unrealLoopGate(game: LinkedGame | null | undefined): string {
-  const project = unrealProjectOf(game);
-  if (!project) return UNREAL_WORDS.loopUnavailable(null, "");
-  return UNREAL_WORDS.loopUnavailable(projectName(project), placeOf(project));
+  return unrealProjectOf(game) ? engineLoopGate(game) : UNREAL_WORDS.loopUnavailable(null, "");
 }
 
 /** Whether an Unreal game's project lies inside its own folder (New game puts it in `unreal/`). */
 export function unrealProjectInFolder(game: LinkedGame | null | undefined): boolean {
-  const project = unrealProjectOf(game);
-  return Boolean(project && game?.dir && under(project, game.dir));
+  return unrealProjectOf(game) !== null && engineProjectInFolder(game);
 }
 
 /** The Unreal plugin that can open the editor: installed, on, allowed and declaring Open in Unreal; else null. */

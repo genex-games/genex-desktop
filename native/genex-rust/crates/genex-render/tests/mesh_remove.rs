@@ -159,7 +159,7 @@ fn a_library_without_removals_packs_back_to_back_as_before() {
 #[test]
 fn removal_refusals_leave_the_library_as_it_was() {
     let mut library = MeshLibrary::new();
-    let chain = LodChain { levels: vec![LodLevel { indices: vec![0, 4, 1], error: 0.1 }] };
+    let chain = LodChain { casters: 0, levels: vec![LodLevel { indices: vec![0, 4, 1], error: 0.1 }] };
     let part = library.add_part(ModelPart { mesh: grid(2, 0.0), meshlets: None, lods: Some(chain) }).expect("part");
     let level = library.lods(part).expect("levels").levels[0];
     let mesh = grid(1, 0.0);

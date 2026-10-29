@@ -1,26 +1,36 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { IconButton } from "../ui/kit.tsx";
 import { UserMessage } from "../chat/UserMessage.tsx";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { CHAT_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 
-/** Sent during work and not saved yet: it waits where it will be queued, and cannot be removed yet. */
+/** The line under a follow-up until the work reads it: Sending…, always 24px tall (Remove's height), so nothing moves. */
+function SendingLine({ children }: { children?: ReactNode }) {
+  return (
+    <div className="flex min-h-6 items-center gap-0.5 text-xs text-ink-3">
+      <span role="status">{CHAT_WORDS.sendingMessage}</span>
+      {children}
+    </div>
+  );
+}
+
+/** Sent during work and not saved yet: it waits where it will wait once saved. */
 export function SendingMessage({ text, frames }: { text: string; frames?: ReferenceFrame[] }) {
   return (
     <div data-sending-message className="flex min-w-0 flex-col items-end gap-0.5">
       <UserMessage text={text} pending frames={frames} />
-      <div className="flex min-h-6 items-center text-xs text-ink-3">
-        <span role="status">{CHAT_WORDS.sendingMessage}</span>
-      </div>
+      <SendingLine />
     </div>
   );
 }
 
 /**
- * Waiting input sits below the current work until it is delivered; Remove withdraws it. One
- * handed to the running turn reads Sending… until that turn reads it, and can no longer be removed.
- * How it arrives and leaves is the conversation's (`Presence`).
+ * A saved follow-up waiting below the current work: it reads Sending… until the work reads it. One
+ * the running turn has not taken (it waits for a turn of its own: a slash command for Studio's chat,
+ * a model without sessions, a picture not saved in the game) can be withdrawn with Remove; one
+ * handed to the running turn no longer can. How it arrives and leaves is the conversation's (`Presence`).
  */
 export function QueuedMessage({
   threadId,
@@ -56,20 +66,18 @@ export function QueuedMessage({
         pending
         {...(images ? { threadId, imagesOf: messageId, imageCount: images.count } : {})}
       />
-      {/* Remove's height either way, so nothing moves when a message the turn did not read waits as Queued. */}
-      <div className="flex min-h-6 items-center gap-0.5 text-xs text-ink-3">
-        <span role="status">{sending ? CHAT_WORDS.sendingMessage : CHAT_WORDS.queued}</span>
+      <SendingLine>
         {!sending && (
           <IconButton
             icon="trash"
-            label="Remove queued message"
+            label={t("Remove queued message")}
             size={12}
             className="chat-queued-remove"
             disabled={removing}
             onClick={() => void remove()}
           />
         )}
-      </div>
+      </SendingLine>
     </div>
   );
 }

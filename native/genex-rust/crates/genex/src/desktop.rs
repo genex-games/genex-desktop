@@ -29,8 +29,9 @@ use genex_render::compile::{CompileTally, compile_tally};
 use crate::present::Presenter;
 use crate::runtime::{Runtime, View};
 use genex_core::input::{FrameSample as CoreSample, Vec2};
+use crate::desktop_bench::{Bench, BenchPlan};
 use genex_platform_desktop::{
-    FrameControl, FrameSample, ShellError, ShellFrame, ShellGame, ShellMode, ShellOptions, ShellSurface, run_with,
+    FrameControl, FrameSample, Fullscreen, ShellError, ShellFrame, ShellGame, ShellMode, ShellOptions, ShellSurface, fullscreen_from_process, run_with,
 };
 use genex_render::capture::{Capture, check_capture_size};
 use genex_render::{Gpu, RenderCode, RenderError};
@@ -47,10 +48,34 @@ const PREFERRED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 /// Bytes per pixel of [`PREFERRED_FORMAT`].
 const BYTES_PER_PIXEL: u32 = 4;
 
+/// A window's swapchain as the shell uses it: `wgpu::Surface`, or a test's recording stand-in.
+trait WindowSurface {
+    /// Configure the swapchain with `config`.
+    fn configure(&self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration);
+    /// The next frame's texture, or why there is none.
+    fn current_texture(&self) -> wgpu::CurrentSurfaceTexture;
+}
+
+impl WindowSurface for wgpu::Surface<'static> {
+    fn configure(&self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+        wgpu::Surface::configure(self, device, config);
+    }
+
+    fn current_texture(&self) -> wgpu::CurrentSurfaceTexture {
+        self.get_current_texture()
+    }
+}
+
 /// A configured window surface.
 struct Window {
-    surface: wgpu::Surface<'static>,
+    surface: Box<dyn WindowSurface>,
+    /// The configuration the swapchain holds now.
     config: wgpu::SurfaceConfiguration,
+    /// The configuration it waits for while a warm-up thread may submit
+    /// ([`Presenter::warm_in_flight`]): applied at the first frame after it.
+    pending: Option<wgpu::SurfaceConfiguration>,
+    /// Whether the swapchain was configured at all (an unconfigured one gives no texture).
+    configured: bool,
 }
 
 /// The runtime behind the desktop shell.
@@ -70,6 +95,8 @@ pub(crate) struct DesktopGame<W> {
     loading: Option<Loading>,
     /// The audio device a windowed run opens on its first frame (AU-8); never a headless one.
     audio: crate::audio::Device,
+    /// A dev build's measured run (`GENEX_BENCH`, [`crate::desktop_bench`]).
+    bench: Option<Bench>,
 }
 
 /// The loading screen a window shows, its look, and the compile pool's counts when the boot began.
@@ -105,7 +132,7 @@ impl<W: Default + 'static> DesktopGame<W> {
         }
         presenter.set_off_thread_changes(true);
         runtime.start();
-        DesktopGame { runtime, presenter, window: None, shell_surface: None, surface_requests: 0, drawn: 0, presented: 0, loading: None, audio: crate::audio::Device::default() }
+        DesktopGame { runtime, presenter, window: None, shell_surface: None, surface_requests: 0, drawn: 0, presented: 0, loading: None, audio: crate::audio::Device::default(), bench: None }
     }
 
     fn configure(&mut self, surface: wgpu::Surface<'static>, size: [u32; 2]) {
@@ -127,22 +154,50 @@ impl<W: Default + 'static> DesktopGame<W> {
             view_formats: Vec::new(),
             color_space: wgpu::SurfaceColorSpace::default(),
         };
-        surface.configure(&gpu.device, &config);
-        self.presenter.set_window_size((config.width, config.height));
-        self.window = Some(Window { surface, config });
+        self.window = Some(Window { surface: Box::new(surface), config: config.clone(), pending: None, configured: false });
+        self.configure_window(config);
+    }
+
+    /// Configure the window's swapchain with `config` now, or once no warm-up thread may submit
+    /// ([`Presenter::warm_in_flight`]; then at the first frame after it, with the last `config`
+    /// given). The presenter learns the window's size when the swapchain takes it.
+    fn configure_window(&mut self, config: wgpu::SurfaceConfiguration) {
+        let warming = self.presenter.warm_in_flight();
+        let Some(window) = self.window.as_mut() else { return };
+        if warming {
+            window.pending = Some(config);
+            return;
+        }
+        window.surface.configure(&self.presenter.gpu().device, &config);
+        window.config = config;
+        window.pending = None;
+        window.configured = true;
+        self.presenter.set_window_size((window.config.width, window.config.height));
+    }
+
+    /// The window's next texture, after a configuration that waited for a warm-up (the swapchain
+    /// keeps its last one meanwhile); None (the frame is skipped) when there is none, a lost or
+    /// outdated swapchain being configured again.
+    fn window_texture(&mut self) -> Option<wgpu::SurfaceTexture> {
+        if let Some(pending) = self.window.as_mut().and_then(|window| window.pending.take()) {
+            self.configure_window(pending);
+        }
+        let window = self.window.as_ref().filter(|window| window.configured)?;
+        match window.surface.current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Some(texture),
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                let config = window.pending.clone().unwrap_or_else(|| window.config.clone());
+                self.configure_window(config);
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Letterbox the world target onto the window; a lost or outdated surface is configured again.
     fn present(&mut self) {
-        let Some(window) = self.window.as_mut() else { return };
-        let texture = match window.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                window.surface.configure(&self.presenter.gpu().device, &window.config);
-                return;
-            }
-            _ => return,
-        };
+        let Some(texture) = self.window_texture() else { return };
+        let Some(window) = self.window.as_ref() else { return };
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (format, size) = (window.config.format, [window.config.width, window.config.height]);
         self.present_into(&view, format, size);
@@ -202,15 +257,8 @@ impl<W: Default + 'static> DesktopGame<W> {
 
     /// One frame of the loading screen on the window.
     fn present_loading(&mut self, frame_ms: f64) {
-        let Some(window) = self.window.as_mut() else { return };
-        let texture = match window.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                window.surface.configure(&self.presenter.gpu().device, &window.config);
-                return;
-            }
-            _ => return,
-        };
+        let Some(texture) = self.window_texture() else { return };
+        let Some(window) = self.window.as_ref() else { return };
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (format, size) = (window.config.format, [window.config.width, window.config.height]);
         self.paint_loading(&view, format, size, frame_ms);
@@ -237,10 +285,101 @@ impl<W: Default + 'static> DesktopGame<W> {
         read_texture(self.presenter.gpu(), &texture, size)
     }
 
+    /// Close the profiler's frame with the GPU time the settings last measured (timestamp
+    /// queries; none without them) and the per-node samples that landed, as a studio run's frames
+    /// do.
+    fn close_profile_frame(&mut self, interval_ms: f64) {
+        let timestamps = self.presenter.gpu().device.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+        let source = if timestamps { genex_profile::GpuTimeSource::Timestamps } else { genex_profile::GpuTimeSource::None };
+        let gpu_ms = self.runtime.render().borrow().status().gpu_ms;
+        let samples = self.presenter.take_node_samples();
+        let profiling = self.runtime.profiling();
+        profiling.set_gpu_source(source);
+        profiling.record_nodes(&samples);
+        let index = profiling.frame_index();
+        profiling.new_frame(interval_ms, gpu_ms.map(|ms| (index, f64::from(ms))));
+    }
+
+    /// Set a measured run's scene up once the loading screen is done: its seed, its demo, live
+    /// play, its render settings and output, then its clock.
+    fn begin_bench(&mut self) {
+        let Some(bench) = self.bench.as_mut().filter(|bench| !bench.begun()) else { return };
+        let plan = bench.plan.clone();
+        if let Some(seed) = plan.seed {
+            self.runtime.seed(seed);
+        }
+        if let Some(demo) = plan.demo.as_deref()
+            && self.runtime.demo(demo).is_err()
+        {
+            eprintln!("genex: the bench's demo {demo} is not one of the game's");
+        }
+        self.runtime.start();
+        let features: Vec<(&str, bool)> = plan.features.iter().map(|(name, on)| (name.as_str(), *on)).collect();
+        let class = plan.device_class.as_deref().map(Some);
+        match crate::render::RenderChange::from_spellings(None, class, &features, plan.scale_lock.map(Some)) {
+            Ok(change) => {
+                self.runtime.render().borrow_mut().apply(&change);
+            }
+            Err(refusal) => eprintln!("genex: the bench's render settings were refused: {}", refusal.wire()),
+        }
+        if plan.upscale.is_some() {
+            self.runtime.render().borrow_mut().lock_upscale(plan.upscale);
+        }
+        self.presenter.set_output_capped(!plan.native_output);
+        if plan.nodes {
+            self.runtime.profiling().arm(true);
+        }
+        bench.begin();
+    }
+
+    /// Note a measured run's frame (a profile report every window); at its end write its record
+    /// and close the window.
+    fn bench_frame(&mut self, shell_ms: f64, work_ms: f64, ticks: u32, drew: bool) -> FrameControl {
+        let Some(bench) = self.bench.as_mut() else { return FrameControl::Continue };
+        if let Some(window) = self.window.as_ref() {
+            bench.surface = [window.config.width, window.config.height];
+        }
+        bench.scale_factor = self.shell_surface.as_ref().map_or(1.0, ShellSurface::scale);
+        let over = bench.frame(shell_ms, work_ms, ticks, drew);
+        let status = self.runtime.render().borrow().status();
+        let degraded: Vec<String> = status.degraded.iter().map(|d| format!("{}:{}", d.reason.wire(), d.subject.clone().unwrap_or_default())).collect();
+        bench.note_render(status.scale, &degraded);
+        if bench.report_due() || over {
+            let class = self.runtime.render().borrow().status().device_class.wire();
+            bench.keep_report(self.runtime.profiling().report_json(Bench::report_frames(), destination(), &class));
+            if bench.plan.nodes {
+                self.runtime.profiling().arm(true);
+            }
+        }
+        if !over {
+            return FrameControl::Continue;
+        }
+        let status = self.runtime.render().borrow().status();
+        let renderer = self.presenter.resilient.renderer().renderer();
+        let features: serde_json::Map<String, serde_json::Value> = status.features.iter().map(|(feature, on)| (feature.wire().to_owned(), (*on).into())).collect();
+        let render = serde_json::json!({
+            "deviceClass": status.device_class.wire(),
+            "preset": status.preset.wire(),
+            "scale": status.scale,
+            "upscale": self.runtime.render().borrow().upscale().map(|(mode, source)| serde_json::json!({ "mode": mode.wire(), "source": format!("{source:?}") })),
+            "output": self.presenter.last_output().map(|(w, h)| [w, h]),
+            "renderSize": [renderer.render_size().0, renderer.render_size().1],
+            "gpuMs": status.gpu_ms,
+            "cpuMs": status.cpu_ms,
+            "features": features,
+            "degraded": status.degraded.iter().map(|d| format!("{}:{}", d.reason.wire(), d.subject.clone().unwrap_or_default())).collect::<Vec<_>>(),
+            "characters": status.characters.to_json(),
+        });
+        bench.write(render);
+        FrameControl::Exit
+    }
+
     /// A windowed frame opens the audio device once (a person sees and hears the run); a headless
     /// one never does. Each frame then reports the device to `volatile.audio.device`.
     fn follow_audio(&mut self, frame: &ShellFrame) {
-        if !self.audio.tried() && crate::audio::may_open_device(frame.headless, false) {
+        // A measured run is silent unless its plan asks for sound.
+        let silent = self.bench.as_ref().is_some_and(|bench| !bench.plan.audio);
+        if !self.audio.tried() && !silent && crate::audio::may_open_device(frame.headless, false) {
             self.audio.open_for(&mut self.runtime);
         } else if self.audio.is_open() {
             self.runtime.note_audio_device(true, self.audio.fault());
@@ -287,13 +426,11 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
     }
 
     fn surface_resized(&mut self, size: [u32; 2], _scale: f64) {
-        let device = self.presenter.gpu().device.clone();
-        let Some(window) = self.window.as_mut() else { return };
-        window.config.width = size[0].max(1);
-        window.config.height = size[1].max(1);
-        window.surface.configure(&device, &window.config);
-        let size = (window.config.width, window.config.height);
-        self.presenter.set_window_size(size);
+        let Some(window) = self.window.as_ref() else { return };
+        let mut config = window.pending.clone().unwrap_or_else(|| window.config.clone());
+        config.width = size[0].max(1);
+        config.height = size[1].max(1);
+        self.configure_window(config);
     }
 
     fn surface_lost(&mut self) {
@@ -313,6 +450,7 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
         self.runtime.set_os_locale(tag);
     }
 
+    #[allow(clippy::disallowed_types, clippy::disallowed_methods, reason = "host glue: a measured run times the frame's work by the wall clock; the simulation never sees it")]
     fn frame(&mut self, frame: ShellFrame) -> FrameControl {
         if self.presenter.resilient.is_lost() {
             self.recover();
@@ -329,13 +467,21 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
             self.loading = None;
         }
         self.follow_audio(&frame);
+        self.begin_bench();
+        let began = std::time::Instant::now();
         // One profiler frame per shell frame (PROF-5): the ticks, the draw and the present.
+        let armed = self.runtime.profiling().armed().then(|| self.runtime.profiling().frame_index());
+        self.presenter.set_node_frame(armed);
         let scope = crate::profile::engine_scope(crate::profile::EngineScope::Frame);
         self.runtime.sample_input(&core_sample(&frame.sample));
         let ticks = self.runtime.advance_live(frame.frame_ms);
         // The first frame draws even before a tick: the window never shows an empty target.
-        if ticks > 0 || self.drawn == 0 {
-            match self.presenter.draw_view(&mut self.runtime, View::Game) {
+        let draws = ticks > 0 || self.drawn == 0;
+        if draws {
+            let _draw = crate::profile::engine_scope(crate::profile::EngineScope::Draw);
+            let camera = self.bench.as_ref().and_then(|bench| bench.plan.camera.clone());
+            let view = camera.as_deref().map_or(View::Game, View::Named);
+            match self.presenter.draw_view(&mut self.runtime, view) {
                 Some(Ok(_)) => self.drawn += 1,
                 Some(Err(error)) => eprintln!("genex: render failed: {error}"),
                 None => {}
@@ -349,8 +495,9 @@ impl<W: Default + 'static> ShellGame for DesktopGame<W> {
             self.present();
         }
         drop(scope);
-        self.runtime.profiling().new_frame(frame.frame_ms, None);
-        FrameControl::Continue
+        self.close_profile_frame(frame.frame_ms);
+        let work_ms = began.elapsed().as_secs_f64() * 1000.0;
+        self.bench_frame(frame.frame_ms, work_ms, ticks, draws)
     }
 }
 
@@ -380,11 +527,15 @@ pub(crate) fn run<W: Default + 'static>(mut runtime: Runtime<W>, assets: AssetTa
     crate::crash::set_identity(destination(), dev, &format!("genex-rust/{}/desktop", destination()), u64::from(CRASH_CONTRACT_VERSION));
     crate::crash::install_file_sink(runtime.saves());
     runtime.profiling().start(dev);
-    let game = open(runtime, assets).unwrap_or_else(|error| {
+    let mut game = open(runtime, assets).unwrap_or_else(|error| {
         eprintln!("genex: {error}");
         std::process::exit(EXIT_SHELL_FAILED);
     });
-    let options = ShellOptions { max_frames: None, studio: false };
+    // Only a dev build takes a measured run's plan; an export never reads it.
+    game.bench = if dev { BenchPlan::from_process().map(Bench::new) } else { None };
+    let asked = game.bench.as_ref().map_or(Fullscreen::Off, |bench| bench.plan.fullscreen);
+    let fullscreen = if asked == Fullscreen::Off { fullscreen_from_process() } else { asked };
+    let options = ShellOptions { max_frames: None, studio: false, fullscreen };
     if let Err(error) = run_with(game, ShellMode::from_process(), options) {
         eprintln!("genex: {error}");
         std::process::exit(EXIT_SHELL_FAILED);
@@ -436,6 +587,9 @@ pub struct DesktopShot {
     /// The size the last frame was rendered at: the window's letterbox in its own pixels, capped
     /// by the class (renderer pass 2, P2-0.9 step B), not the world size.
     pub output: [u32; 2],
+    /// The size the last frame's world was rendered at before its upscale to `output` (its render
+    /// scale's share of it, lane UQ).
+    pub render: [u32; 2],
     /// The window's pixels, BGRA, rows top to bottom, the world letterboxed with black bars.
     pub bgra: Vec<u8>,
     /// Frames the shell ran.
@@ -483,13 +637,14 @@ pub fn desktop_shot<W: Default + 'static>(
     let mut presenter = Presenter::open_with_root(runtime.world_size(), assets, None).map_err(DesktopShotError::Gpu)?;
     // As a window's surface is configured before its first frame.
     presenter.set_window_size((window[0], window[1]));
-    let options = ShellOptions { max_frames: Some(frames.max(1)), studio: false };
+    let options = ShellOptions { max_frames: Some(frames.max(1)), studio: false, fullscreen: Fullscreen::Off };
     let shell = run_with(DesktopGame::new(runtime, presenter), ShellMode::Headless, options);
     let (mut game, exit) = shell.map_err(DesktopShotError::Shell)?;
     let capture = game.present_offscreen(window).map_err(DesktopShotError::Readback)?;
     let bgra = capture.bgra().to_vec();
-    let (width, height) = game.presenter.resilient.renderer().renderer().size();
-    Ok(DesktopShot { state: game.runtime.state(), window, output: [width, height], bgra, frames: exit.frames, drawn: game.drawn })
+    let renderer = game.presenter.resilient.renderer().renderer();
+    let ((width, height), (render_w, render_h)) = (renderer.size(), renderer.render_size());
+    Ok(DesktopShot { state: game.runtime.state(), window, output: [width, height], render: [render_w, render_h], bgra, frames: exit.frames, drawn: game.drawn })
 }
 
 /// GPU rows: the shell's headless mode on the host GPU (Metal on the Mac). Run with
@@ -613,11 +768,71 @@ mod tests {
         assert_eq!(game.drawn, 1, "the game's first frame drew");
     }
 
+    /// A window surface that records each configure's size and has no texture to give: outdated
+    /// until it is first configured (as a resized swapchain is), then timing out.
+    #[derive(Clone, Default)]
+    struct RecordingSurface {
+        configured: std::rc::Rc<std::cell::RefCell<Vec<(u32, u32)>>>,
+    }
+
+    impl WindowSurface for RecordingSurface {
+        fn configure(&self, _device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+            self.configured.borrow_mut().push((config.width, config.height));
+        }
+
+        fn current_texture(&self) -> wgpu::CurrentSurfaceTexture {
+            if self.configured.borrow().is_empty() { wgpu::CurrentSurfaceTexture::Outdated } else { wgpu::CurrentSurfaceTexture::Timeout }
+        }
+    }
+
+    impl RecordingSurface {
+        fn configured(&self) -> Vec<(u32, u32)> {
+            self.configured.borrow().clone()
+        }
+    }
+
+    /// Lane UP (HZ's one-off crash, again on a fullscreen switch during the boot's warm-up): wgpu's
+    /// `Surface::configure` waits for the queue to go idle and refuses, as an uncaptured validation
+    /// error ("Failed to wait for GPU to come idle before reconfiguring the Surface"), when another
+    /// thread submits meanwhile. The warm-up thread renders and submits, so a window resized (or
+    /// outdated) while it runs is configured only after it is done, at the size it was last given.
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    fn metal_a_window_resized_while_a_warm_up_renders_is_configured_after_it() {
+        let Some(mut game) = desktop_game() else { return };
+        let hold = genex_render::compile::hold();
+        game.begin_loading();
+        assert!(game.presenter.boot_warming(), "the boot's warm-up runs on its thread");
+        let surface = RecordingSurface::default();
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: PREFERRED_FORMAT,
+            width: 96,
+            height: 64,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: Vec::new(),
+            color_space: wgpu::SurfaceColorSpace::default(),
+        };
+        game.window = Some(Window { surface: Box::new(surface.clone()), config, pending: None, configured: true });
+        game.surface_resized([200, 100], 2.0);
+        game.surface_resized([240, 120], 2.0);
+        game.frame(shell_frame(true));
+        assert_eq!(surface.configured(), Vec::new(), "no configure while the warm-up may submit");
+        drop(hold);
+        while game.presenter.boot_warming() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        game.frame(shell_frame(true));
+        assert_eq!(surface.configured(), vec![(240, 120)], "configured once the warm-up is done, at the last size");
+    }
+
     #[test]
     #[ignore = "needs the host GPU: run with --ignored metal"]
     fn metal_a_headless_desktop_run_ticks_live_and_draws_each_frame() {
         let Some(game) = desktop_game() else { return };
-        let options = ShellOptions { max_frames: Some(12), studio: false };
+        let options = ShellOptions { max_frames: Some(12), studio: false, fullscreen: Fullscreen::Off };
         let (game, exit) = run_with(game, ShellMode::Headless, options).expect("the shell ran");
         assert_eq!(exit.frames, 12);
         assert!(game.runtime.sim().world.ticks > 0, "live play ticked");

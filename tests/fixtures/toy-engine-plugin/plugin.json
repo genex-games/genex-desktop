@@ -6,7 +6,9 @@
   "publisher": "Genex tests",
   "description": "A made-up engine for tests: it carries every section a plugin can declare, so tests see which ones Genex keeps.",
   "backend": "backend.mjs",
-  "capabilities": [],
+  "capabilities": [
+    "game-engine"
+  ],
   "detect": [
     {
       "fact": "toy-project",
@@ -18,6 +20,28 @@
       ]
     }
   ],
+  "engine": {
+    "id": "toy-engine",
+    "label": "Toy",
+    "projectFiles": [
+      ".toyproj"
+    ],
+    "fact": "toy-project",
+    "projectInFolder": false,
+    "play": {
+      "players": 3,
+      "clock": "none",
+      "pointer": true
+    },
+    "apps": {
+      "mac": [
+        "com.example.toy"
+      ],
+      "windows": [
+        "ToyEditor.exe"
+      ]
+    }
+  },
   "tools": [
     {
       "name": "build",
@@ -91,6 +115,147 @@
         "type": "object",
         "properties": {}
       }
+    },
+    {
+      "name": "play-open",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "Start a toy play of up to three players. Answers {width, height, joined, players}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "players": {
+            "type": "number",
+            "description": "How many players, 1 to 3; absent is one."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-input",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "Hold keys for a player for seconds. Answers {held, gameSeconds}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "string",
+            "description": "Web key codes joined by commas."
+          },
+          "seconds": {
+            "type": "number",
+            "description": "Seconds to hold them."
+          },
+          "dx": {
+            "type": "number",
+            "description": "Mouse motion to the right."
+          },
+          "dy": {
+            "type": "number",
+            "description": "Mouse motion down."
+          },
+          "wheel": {
+            "type": "number",
+            "description": "Wheel notches, up positive."
+          },
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to 3; absent is player 1."
+          }
+        },
+        "required": [
+          "keys",
+          "seconds"
+        ]
+      }
+    },
+    {
+      "name": "play-shot",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "A stand-in picture of what a player sees. Answers {data, mime, width, height}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to 3; absent is player 1."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-state",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "A player's state in the toy play.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "number",
+            "description": "Which player, 1 to 3; absent is player 1."
+          }
+        }
+      }
+    },
+    {
+      "name": "play-pause",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "The toy play cannot pause: answers unsupported.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean",
+            "description": "True stands the play still."
+          }
+        },
+        "required": [
+          "paused"
+        ]
+      }
+    },
+    {
+      "name": "play-close",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "End the toy play. Answers {closed}.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "toy-probe",
+      "audience": "harness",
+      "needs": [
+        "toy-editor"
+      ],
+      "description": "Measure the open toy play for a judge. Answers {note, images}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "players": {
+            "type": "number",
+            "description": "How many players the play opened, 1 to 3; absent is one."
+          }
+        }
+      }
     }
   ],
   "skills": [
@@ -130,7 +295,8 @@
     },
     {
       "on": "checkpoint.before",
-      "tool": "save-scenes"
+      "tool": "save-scenes",
+      "messages": true
     },
     {
       "on": "checkpoint.after",
@@ -160,6 +326,23 @@
         "toy-project"
       ],
       "tool": "capture"
+    }
+  ],
+  "judges": [
+    {
+      "id": "crowd",
+      "label": "Crowd",
+      "facts": [
+        "toy-project"
+      ],
+      "brief": "judges/crowd.md",
+      "players": 3,
+      "probe": "toy-probe"
+    },
+    {
+      "id": "plain",
+      "label": "Plain",
+      "brief": "judges/plain.md"
     }
   ],
   "workspace": {

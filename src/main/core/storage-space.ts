@@ -9,7 +9,8 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { HOUR_MS } from "../../shared/duration.ts";
-import { outcomeEnded } from "../../shared/run-summary.ts";
+import { t } from "../../shared/i18n.ts";
+import { type OutcomeView, outcomeEnded } from "../../shared/run-summary.ts";
 import { NO_STORAGE, type StorageFreed, StorageKind, type StorageSpace } from "../../shared/storage-space.ts";
 import { clearSideTracks, historySpace } from "../../substrate/history-space.ts";
 import { isInside } from "../../substrate/paths.ts";
@@ -18,9 +19,10 @@ import type { GameHistorySpace } from "../../shared/game-history.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { safePathSegment } from "./run-shots.ts";
 
+/** What the person reads in Settings → Storage when freeing space is refused. */
 const MESSAGE = {
-  busy: "Wait for this game's work to finish, then free its space.",
-  unknownGame: (project: string) => `There is no game named "${project}".`,
+  busy: () => t("Wait for this game's work to finish, then free its space."),
+  unknownGame: (project: string) => t('There is no game named "{game}".', { game: project }),
 } as const;
 
 /** Where shown builds' copies are made under scratch (`previews.ts` `showBuild`). */
@@ -96,7 +98,7 @@ export class StorageSpaceService {
   async free(project?: string): Promise<StorageFreed> {
     if (project !== undefined) {
       const freed = await this.#freeGame(project, await this.#gameDir(project));
-      if (freed === null) throw new Error(MESSAGE.busy);
+      if (freed === null) throw new Error(MESSAGE.busy());
       return { freedBytes: freed, skipped: [] };
     }
     const games = (await this.#core.games.list()).map((game) => game.name);
@@ -136,7 +138,10 @@ export class StorageSpaceService {
       for (const holding of await this.#holdings(old))
         if (holding.project === project) freed += await this.#remove(holding);
       const scratch = this.#core.layout.scratch;
-      return freed + (await clearSideTracks(dir, old.get(project) ?? NO_RUNS, { scratch })).freedBytes;
+      const cleared = await clearSideTracks(dir, old.get(project) ?? NO_RUNS, { scratch });
+      // The copies' build folders go with them: the lanes' sweep removes those whose source is gone.
+      void this.#x.gameBuilds.sweep().catch(() => {});
+      return freed + cleared.freedBytes;
     });
   }
 
@@ -195,8 +200,9 @@ export class StorageSpaceService {
   }
 
   /**
-   * The runs of each game that ended and are not going any more, but its newest of them: Activity
-   * lists runs newest first, so the first ended one of a game is the one that stays.
+   * The runs of each game that ended and are not going any more, but its newest finished one (its
+   * latest build): Activity lists runs newest first, so the first finished run of a game is the one
+   * that stays, and failed or cancelled runs after it never take its place.
    */
   async #oldRuns(): Promise<OldRuns> {
     const newest = new Map<string, string>();
@@ -205,8 +211,9 @@ export class StorageSpaceService {
       if (!project || !runId || !runOutcome) continue;
       if (!outcomeEnded(runOutcome) || this.#x.activeRunIds.has(runId)) continue;
       const kept = newest.get(project);
-      if (kept === undefined) newest.set(project, runId);
-      else if (kept !== runId) old.set(project, (old.get(project) ?? new Set()).add(runId));
+      if (kept === runId) continue;
+      if (kept === undefined && isBuild(runOutcome)) newest.set(project, runId);
+      else old.set(project, (old.get(project) ?? new Set()).add(runId));
     }
     return old;
   }
@@ -245,6 +252,11 @@ export class StorageSpaceService {
       return game === undefined || game === project;
     });
   }
+}
+
+/** Whether a run that ended left a build: it finished, rather than failing or being cancelled. */
+function isBuild(outcome: OutcomeView): boolean {
+  return outcome.state === "finished";
 }
 
 /** Add what a game's history frees now to `space`; what is under an hour old waits for a later clean-up. */

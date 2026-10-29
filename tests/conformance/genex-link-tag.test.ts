@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { tagGenexLink } from "../../src/plugins/genex/http.ts";
+import { browserGenexLink, tagGenexLink } from "../../src/plugins/genex/http.ts";
 
 describe("tagging a genex.games page for the browser", () => {
   it("adds s=desktop to a page of the website, on either stand", () => {
@@ -56,5 +56,24 @@ describe("tagging a genex.games page for the browser", () => {
       "",
     ];
     for (const link of untouched) assert.equal(tagGenexLink(link), link, link);
+  });
+});
+
+describe("a Genex page the app opens in the browser", () => {
+  it("opens only an https address, tagged, and refuses everything else before anything opens", () => {
+    assert.equal(
+      browserGenexLink("https://genex.games/device?code=AB12"),
+      "https://genex.games/device?code=AB12&s=desktop",
+    );
+    const hostile = [
+      "http://genex.games/device",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "data:text/html,<script>1</script>",
+      "genex://open",
+      "not a url",
+      "",
+    ];
+    for (const address of hostile) assert.throws(() => browserGenexLink(address), /Not an address/, address);
   });
 });

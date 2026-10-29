@@ -11,6 +11,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { errorMessage } from "../../shared/errors.ts";
 import { AppLookAccessKind } from "../../shared/jobs.ts";
+import { PLUGIN_STILL_DEFAULT_BYTES, type PluginBinding, type PluginStillOrder } from "../../shared/plugins.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import {
   AccessStep,
@@ -27,9 +28,12 @@ import {
 import { ensureDirBelow, writeFileInDir } from "../../substrate/fsx.ts";
 import { type NeverTouchList, pathVerdict } from "../../substrate/engines/never-touch.ts";
 import { assertRelativePath, isBelow } from "../../substrate/paths.ts";
+import { HOST_BUNDLE_ID } from "../../substrate/cua-embedded.ts";
 import type { StudioCore } from "../studio-core.ts";
-import { APP_LOOK_ANSWER, APP_LOOK_TOOL, type LookedWindow } from "./app-look-tool-prompts.ts";
+import { APP_LOOK_ANSWER, APP_LOOK_TOOL, GAME_WINDOW, type LookedWindow } from "./app-look-tool-prompts.ts";
 import { ProjectToolSeat } from "./project-tools.ts";
+import { NEVER_DRIVEN_BUNDLES } from "./desktop-target.ts";
+import { type ViewPreviews, viewStill } from "./view-still.ts";
 
 /** The longest an app's name or a window's title reads in an answer. */
 const NAME_MAX_CHARS = 120;
@@ -51,11 +55,84 @@ export interface LookSave {
   planning(): Promise<boolean>;
 }
 
-/** Whom a look answers to: the game, the chat its access line goes to (none: no line), and where it may save (none: nowhere). */
+/**
+ * A game Genex runs in its own preview, which `app_look` lists as the window named `game`: Genex's
+ * windows are never looked at, so without it a session with no capture of its own (a Loop's
+ * reviewer) found no game on screen at all.
+ */
+export interface LookGame {
+  /** The game's picture now, or why there is none. */
+  look(): Promise<{ image: AppLookImage } | { problem: string }>;
+}
+
+/**
+ * Whom a look answers to: the game, the chat its access line goes to (none: no line), where it may
+ * save (none: nowhere) and the game Genex runs that it may look at (none: only windows on screen).
+ */
 export interface LookCaller {
   project: string;
   chatThreadId: string | null;
   save?: LookSave | null;
+  game?: LookGame | null;
+}
+
+/** The game's view a look photographs, and the window it is taken on (the ship review's size). */
+const GAME_LOOK_ORDER: PluginStillOrder = {
+  camera: "default",
+  width: 1600,
+  height: 900,
+  maxBytes: PLUGIN_STILL_DEFAULT_BYTES,
+};
+
+/**
+ * The game served from `binding.directory` as Live serves it, looked at on a hidden window of its
+ * own (never Live): loaded, past its first lit frame and put in play, then photographed (`viewStill`).
+ */
+export function servedGameLook(previews: ViewPreviews, binding: PluginBinding): LookGame {
+  return {
+    look: async () => {
+      const answer = await viewStill(previews, binding, GAME_LOOK_ORDER);
+      if ("stillProblem" in answer) {
+        const { code, reason } = answer.stillProblem;
+        return { problem: reason ? `${code} (${reason})` : code };
+      }
+      return { image: { mimeType: "image/jpeg", data: Buffer.from(answer.still.preview).toString("base64") } };
+    },
+  };
+}
+
+/** Whether `app_look` was asked for the game Genex runs, by its id. */
+const asksForGame = (caller: LookCaller, window: string): caller is LookCaller & { game: LookGame } =>
+  Boolean(caller.game) && window.toLowerCase() === GAME_WINDOW;
+
+/** The game Genex runs, looked at: its picture, or why there is none. */
+async function lookAtGame(caller: LookCaller & { game: LookGame }): Promise<LiveToolResult> {
+  const looked = await caller.game.look();
+  if ("problem" in looked) return refusal(APP_LOOK_ANSWER.gameNotLooked(looked.problem));
+  return { text: APP_LOOK_ANSWER.gameLooked(caller.project), images: [looked.image] };
+}
+
+/** A list's answer with the game Genex runs named after the windows on screen, when the caller may look at it. */
+function withGameListed(answer: LiveToolResult, caller: LookCaller): LiveToolResult {
+  if (!caller.game) return answer;
+  const line = APP_LOOK_ANSWER.gameListed(caller.project);
+  if (typeof answer === "string") return `${answer}\n${line}`;
+  return { ...answer, text: `${answer.text}\n${line}` };
+}
+
+/** The apps computer control never drives, by bundle id in lower case: `app_look` never looks at them either. */
+const NEVER_LOOKED_BUNDLES: ReadonlySet<string> = new Set(
+  [...NEVER_DRIVEN_BUNDLES, HOST_BUNDLE_ID].map((id) => id.toLowerCase()),
+);
+
+/**
+ * Whether `app_look` refuses a window: a password manager's, any app computer control never drives
+ * (System Settings, the system's password prompts), or Genex's own (this process owns its windows).
+ * It only looks, so it needs no Settings switch, but it never sees what computer control may never touch.
+ */
+export function lookRefused(window: AppWindow): boolean {
+  if (refusedApp(window) || window.pid === process.pid) return true;
+  return NEVER_LOOKED_BUNDLES.has(window.bundleId?.toLowerCase() ?? "");
 }
 
 /** The chats told this app session that access is missing, per core. */
@@ -181,7 +258,7 @@ async function savePicture(caller: LookCaller, file: string, image: AppLookImage
 
 /** One window's look, as the agent reads it; with `save`, its picture also kept in the caller's folder. */
 async function lookAt(core: StudioCore, caller: LookCaller, window: AppWindow, save: string | null) {
-  if (refusedApp(window)) return refusal(APP_LOOK_ANSWER.refused);
+  if (lookRefused(window)) return refusal(APP_LOOK_ANSWER.refused);
   const looked = await core.appLook.look(window);
   if (isAppLookProblem(looked)) return problemAnswer(core, caller, looked);
   const unsaved = save === null ? undefined : await savePicture(caller, save, looked.image);
@@ -197,21 +274,28 @@ async function lookAt(core: StudioCore, caller: LookCaller, window: AppWindow, s
 }
 
 /**
- * `app_look`: the windows on screen without arguments (a password manager's left out), else the
- * window asked for, looked at. Access missing answers what the person must turn on.
+ * `app_look`: the windows on screen without arguments (the ones it never looks at left out, see
+ * {@link lookRefused}), else the window asked for, looked at. Access missing answers what the person must turn on.
  */
 export async function runAppLook(
   core: StudioCore,
   args: Record<string, unknown>,
   caller: LookCaller,
 ): Promise<LiveToolResult> {
-  const missing = await missingAccess(core.screenAccess);
-  if (missing.length) return accessMissing(core, caller, missing);
-  const windows = await core.appLook.windows();
-  if (isAppLookProblem(windows)) return problemAnswer(core, caller, windows);
   const app = text(args.app);
   const window = text(args.window);
-  if (!app && !window) return APP_LOOK_ANSWER.windows(windows.filter((shown) => !refusedApp(shown)).map(named));
+  // The game Genex runs is Genex's own to show: no window list and no macOS access in the way.
+  if (!app && asksForGame(caller, window)) return lookAtGame(caller);
+  const listing = !app && !window;
+  const missing = await missingAccess(core.screenAccess);
+  if (missing.length) {
+    const told = await accessMissing(core, caller, missing);
+    return listing ? withGameListed(told, caller) : told;
+  }
+  const windows = await core.appLook.windows();
+  if (isAppLookProblem(windows)) return problemAnswer(core, caller, windows);
+  if (listing)
+    return withGameListed(APP_LOOK_ANSWER.windows(windows.filter((shown) => !lookRefused(shown)).map(named)), caller);
   const picked = pickWindow(windows, { app, window });
   const save = typeof args.save === "string" ? args.save.trim() : null;
   return picked ? lookAt(core, caller, picked, save) : refusal(APP_LOOK_ANSWER.noMatch);

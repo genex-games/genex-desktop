@@ -441,7 +441,8 @@ test("--surface native --size WxH asks the run's pinned capture at that size", a
     "x2160",
     "0x2160",
     "63x64",
-    "4097x64",
+    // Native captures reach 8K (the native cap is 8192 a side): one past it is refused.
+    "8193x64",
     "2560.5x1440",
     "-2560x1440",
     "2560x1440x2",

@@ -123,14 +123,17 @@ const VEHICLE_GAME_INI = [
   "ProjectID=4AE0D26944C3F40803A6CCAEBEC6B72C",
 ].join("\n");
 
-/** What Epic's SaveConfigValues makes of VEHICLE_ENGINE_INI for a project named GxCar, worked by hand from its source. */
+/**
+ * What Epic's SaveConfigValues makes of VEHICLE_ENGINE_INI for a project named GxCar, worked by hand
+ * from its source, then Genex's Mac step: the ray tracing line Epic added is turned off.
+ */
 const VEHICLE_ENGINE_INI_CREATED = `${[
   "[URL]",
   "GameName=GxCar",
   "",
   "[/Script/Engine.RendererSettings]",
   "r.ReflectionMethod=1",
-  "r.RayTracing=True",
+  "r.RayTracing=False",
   "r.RayTracing=False",
   "; a comment",
   "r.Shadow.Virtual.Enable=1",
@@ -430,6 +433,29 @@ describe("A new game from a template", () => {
     const config = path.join(f.parent, "GxCar", "Config");
     assert.equal(await readFile(path.join(config, "DefaultEngine.ini"), "utf8"), VEHICLE_ENGINE_INI_CREATED);
     assert.equal(await readFile(path.join(config, "DefaultGame.ini"), "utf8"), VEHICLE_GAME_INI_CREATED);
+  });
+
+  // UE 5.8 on a Mac hangs the GPU rendering a ray-traced level behind another app; Lumen still lights it in software.
+  it("turns hardware ray tracing off in a game made on a Mac, and keeps Epic's value elsewhere", async () => {
+    for (const [platform, traced] of [
+      ["darwin", false],
+      ["win32", true],
+    ] as const) {
+      const f = await fixture();
+      const template = BlueprintTemplate.Vehicle;
+      await createProject({
+        engine: f.engine,
+        template,
+        name: "GxCar",
+        parent: f.parent,
+        platform,
+        newId: () => PROJECT_ID,
+      });
+      const engineIni = await readFile(path.join(f.parent, "GxCar", "Config", "DefaultEngine.ini"), "utf8");
+      const values = [...engineIni.matchAll(/^r\.RayTracing=(\w+)\r?$/gm)].map((m) => m[1]);
+      assert.ok(values.length > 0, platform);
+      assert.equal(values.includes("True"), traced, `${platform}: ${values.join(",")}`);
+    }
   });
 
   it("writes Windows line endings in the config files it edits on Windows", async () => {

@@ -30,11 +30,13 @@
       redirect lands it outside assets/ or on another origin; nothing it carried is admitted.
 
       Streaming (game systems STR-14b): the plan holds only the map's boot and sim groups (a cell
-      pack's index, everything outside the streamed groups); a pack's cells and terrain tiles and
-      each named group's files are fetched while playing. Each frame, before the game's, the shell
-      hands the module the pieces fetched since (studio_assets_arrived, oldest first, at most
-      STREAM_HANDOFF_BYTES a frame but always one), then asks studio_assets_wanted for the pieces
-      the game wants now and fetches each with a Range request, at most ASSET_FETCHES at once. A
+      pack's index, everything outside the streamed groups). A pack's cells and terrain tiles and a
+      named group's files arrive while playing, when the game wants them: the cells around its
+      anchors and the groups it requires. Each frame, before the game's, the shell hands the module
+      the pieces fetched since (studio_assets_arrived, oldest first, at most STREAM_HANDOFF_BYTES a
+      frame but always one), then asks studio_assets_wanted (which first hands the files that
+      arrived to the sim's reads) for the pieces the game wants now and has not asked for before,
+      and fetches each with a Range request, at most ASSET_FETCHES at once. A
       server that ignores Range answers the whole file, which is read up to the piece's end and
       sliced. A piece over STREAM_FETCH_MAX_BYTES is refused unfetched (asset-too-large); a refused
       fetch or a piece the module refuses is logged and the game plays on. Fetched bytes wait in the
@@ -108,6 +110,11 @@
       runs, whose synchronous calls then find them compiled. A dry boot that fails or takes longer
       than RECORD_TIMEOUT_MS is skipped: the boot then counts the pipelines it creates.
 
+      Readiness: under Studio (its page shim's window.__studioClock) the boot holds the page's
+      readiness from its start (hold()) and declares it ready at the first lit frame (ready()), so
+      Studio's wait ends when the game is on screen, never while the loading screen is up; a boot
+      that ends on a card lets it go (release()). An export has no __studioClock and calls nothing.
+
       Frames: the canvas follows its displayed size from the moment it is shown (a resize, or the
       Live view getting its size while studio_boot still runs). Each animation frame feeds the game
       whole refreshes of the display (its rate measured from the frame intervals), not the frame's
@@ -138,7 +145,9 @@
       with the pointer (a click no tick saw is also sent as a tap), the pointer's movement as look
       while Mouse1 is held or the pointer is locked to the canvas, the wheel in pixels, and real
       gamepads in the browser's standard mapping with their Gamepad.id (so the game can tell the
-      pad's family), polled each animation frame. Where the browser offers the keyboard's layout
+      pad's family), polled each animation frame. A page opened with ?mouseLook (Live's, for a game
+      whose studio.json declares game.mouseLook) asks for the pointer lock on a press into the
+      game, as Native does; Esc, or the canvas, the window or the page losing focus, lets it go. Where the browser offers the keyboard's layout
       map (Chromium), its key labels are sent once, for display only.
     -->
     <style>
@@ -460,6 +469,8 @@
       /** Alignments, which an adapter may only lower. */
       const CORE_ALIGNMENTS = { minUniformBufferOffsetAlignment: 256, minStorageBufferOffsetAlignment: 256 };
       const GPU_UNSUPPORTED = "gpu-unsupported";
+      /** The boot answer's `fit` of a game that fills the canvas (genex's `Fit::Expand`): no bars. */
+      const FIT_EXPAND = "expand";
       const BOOT_FAILED = "boot-failed";
       const Reason = {
         NoWebGpu: "no-webgpu",
@@ -556,8 +567,8 @@
       const STREAM_HANDOFF_BYTES = 8 * 1024 * 1024;
       /** The WebGPU features of the compressed texture families, in the order the plan is told them. */
       const TEXTURE_FEATURES = ["texture-compression-bc", "texture-compression-astc", "texture-compression-etc2"];
-      /** A screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
-      const MOBILE_SHORT_SIDE_CSS_PX = 900;
+      /** A touch screen whose short side is at most this many CSS pixels is a phone's (genex-render's WEB_MOBILE_SHORT_SIDE_CSS_PX). */
+      const MOBILE_SHORT_SIDE_CSS_PX = 600;
       /** Why an asset stopped the boot (the module's own refusals keep their codes). Wire values. */
       const AssetFailure = {
         FetchFailed: "asset-fetch-failed",
@@ -640,6 +651,8 @@
         status,
         module: null,
         world: null,
+        /** Whether the game fills the canvas around its world (`fit = "expand"`): no bars to miss. */
+        fills: false,
         progress: null,
         adapter: null,
         streaming,
@@ -687,12 +700,14 @@
 
       /**
        * Whether the hints say phone or tablet (genex-render's WebHints::is_mobile): a mobile user
-       * agent, touch with a coarse pointer, or a short screen side of at most MOBILE_SHORT_SIDE_CSS_PX.
+       * agent, touch with a coarse pointer, or a touch screen whose short side is at most
+       * MOBILE_SHORT_SIDE_CSS_PX. A screen without touch is a desktop's at any size.
        */
       function isMobile(hints) {
-        const coarseTouch = hints.maxTouchPoints > 0 && hints.coarsePointer;
-        const smallScreen = hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
-        return hints.uaMobile === true || coarseTouch || smallScreen;
+        const touch = hints.maxTouchPoints > 0;
+        const coarseTouch = touch && hints.coarsePointer;
+        const smallTouchScreen = touch && hints.shortSideCssPx > 0 && hints.shortSideCssPx <= MOBILE_SHORT_SIDE_CSS_PX;
+        return hints.uaMobile === true || coarseTouch || smallTouchScreen;
       }
 
       /** One element with its text (never markup) and attributes. */
@@ -761,6 +776,7 @@
           reason: refusal.reason ?? null,
           limit: refusal.limit ?? null,
         });
+        studioReadiness("release");
         renderUnsupportedCard();
         reportUnsupported();
       }
@@ -771,6 +787,7 @@
        */
       function showFailed(error) {
         Object.assign(status, { state: State.Failed, code: BOOT_FAILED, reason: String(error?.message ?? error) });
+        studioReadiness("release");
         const words = MESSAGE.failed;
         showCard(State.Failed, [
           element("h1", words.title, { id: "unsupported-title" }),
@@ -791,6 +808,7 @@
        */
       async function showDeviceLost(game, error) {
         Object.assign(status, { state: State.Failed, code: FrameFailure.DeviceLost, reason: String(error?.message ?? error) });
+        studioReadiness("release");
         await flushSaves(game);
         const words = MESSAGE.deviceLost;
         showCard(State.Failed, [
@@ -839,6 +857,19 @@
       }
 
       /** The loading screen gone at once (a card takes the page) and its stall watch stopped. */
+      /**
+       * Studio's page shim, told where the boot's readiness stands: "hold" (the shell declares it),
+       * "ready" (the first lit frame is on screen) or "release" (a card ended the boot). Nothing
+       * outside Studio, where the page has no __studioClock.
+       */
+      function studioReadiness(verb, why) {
+        try {
+          window.__studioClock?.[verb]?.(why);
+        } catch {
+          // Studio's clock refusing a word never stops the game.
+        }
+      }
+
       function stopLoading() {
         clearTimeout(loading.watchdog);
         loader.hidden = true;
@@ -848,6 +879,7 @@
       /** The first lit frame is on screen: the loading screen fades out and leaves. */
       function finishLoading() {
         progress(LoadStage.Ready);
+        studioReadiness("ready", "first-lit-frame");
         loader.setAttribute("aria-busy", "false");
         loader.classList.add("leaving");
         setTimeout(() => {
@@ -861,6 +893,7 @@
         if (!booting() || status.state === State.Running) return;
         const count = done !== null && total !== null ? `: ${done} of ${total}` : "";
         Object.assign(status, { state: State.Failed, code: BOOT_TIMEOUT, reason: `${stage}${count}` });
+        studioReadiness("release");
         const words = MESSAGE.timeout;
         showCard(State.Failed, [
           element("h1", words.title, { id: "unsupported-title" }),
@@ -2074,6 +2107,7 @@
             }
             noteTrap(error);
             Object.assign(status, { state: State.Failed, code: FrameFailure.Failed, reason: String(error?.message ?? error) });
+            studioReadiness("release");
             return;
           }
           requestAnimationFrame(frame);
@@ -2096,7 +2130,8 @@
 
       /**
        * A page pointer event as the `input` verb's pointer, a fraction of the world picture, or null
-       * on a letterbox bar. The canvas's own size when the boot named no world.
+       * on a letterbox bar. The canvas's own size when the boot named no world. A game that fills
+       * the canvas has no bars: past its world the pointer holds at the world's nearest edge.
        */
       function worldPointer(event) {
         const box = canvas.getBoundingClientRect();
@@ -2106,6 +2141,8 @@
         const x = ((event.clientX - box.left) / box.width) * canvas.width - view.x;
         const y = ((event.clientY - box.top) / box.height) * canvas.height - view.y;
         const inside = x >= 0 && y >= 0 && x < view.width && y < view.height;
+        const edge = (value) => Math.min(1, Math.max(0, value));
+        if (shell.fills) return { x: edge(x / view.width), y: edge(y / view.height) };
         return inside ? { x: x / view.width, y: y / view.height } : null;
       }
 
@@ -2168,6 +2205,24 @@
         if (kept > 0) call(game, "input", { layout });
       }
 
+      /**
+       * Ask for the pointer lock on the canvas (mouse look); a refusal (no gesture, the page not
+       * focused) leaves the cursor free, and the next press asks again.
+       */
+      function lockPointer() {
+        try {
+          const asked = canvas.requestPointerLock?.();
+          if (typeof asked?.catch === "function") asked.catch(() => {});
+        } catch {
+          // The cursor stays free: the next press asks again.
+        }
+      }
+
+      /** Let the pointer lock go (focus left the game): the mouse is a cursor again. */
+      function unlockPointer() {
+        if (document.pointerLockElement === canvas) document.exitPointerLock?.();
+      }
+
       /** Release every key and button the page holds (focus left the game: its keyup would go elsewhere). */
       function releaseAll(game, input) {
         const held = [...input.held];
@@ -2181,9 +2236,14 @@
        * when focus or the page goes; Mouse1 held from pointerdown to pointerup (a click no tick saw
        * is sent as a tap too, so it is never lost), the pointer and, while it is held or the pointer
        * is locked, its movement as `look`; the wheel; real gamepads polled each animation frame.
+       * With `mouseLook` a press into the game asks for the pointer lock, which focus leaving lets go.
        */
-      function listen(game) {
+      function listen(game, { mouseLook = false } = {}) {
         const input = { held: new Set(), pads: new Map(), ticked: false };
+        const leave = () => {
+          unlockPointer();
+          releaseAll(game, input);
+        };
         const keyEvent = (field) => (event) => {
           if (event.repeat) return;
           if (field === "down") input.held.add(event.code);
@@ -2193,17 +2253,33 @@
         };
         canvas.addEventListener("keydown", keyEvent("down"));
         canvas.addEventListener("keyup", keyEvent("up"));
-        canvas.addEventListener("blur", () => releaseAll(game, input));
-        window.addEventListener("blur", () => releaseAll(game, input));
+        canvas.addEventListener("blur", leave);
+        window.addEventListener("blur", leave);
         document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") releaseAll(game, input);
+          if (document.visibilityState === "hidden") leave();
         });
+        /**
+         * The press's pointer for the canvas, so a drag off it still reaches the game: never under
+         * pointer lock (mouse look holds the pointer already, and Chromium throws InvalidStateError
+         * there, once per click), never for a press a script made, and a pointer let go before the
+         * press was handled (NotFoundError) is not taken either.
+         */
+        const capturePress = (event) => {
+          if (document.pointerLockElement || !event.isTrusted || !canvas.setPointerCapture) return;
+          try {
+            canvas.setPointerCapture(event.pointerId);
+          } catch (error) {
+            if (!(error instanceof DOMException)) throw error;
+          }
+        };
         canvas.addEventListener("pointerdown", (event) => {
           canvas.focus();
           const pointer = worldPointer(event);
           // A press on a letterbox bar is on no part of the game.
           if (!pointer) return;
-          canvas.setPointerCapture?.(event.pointerId);
+          // Asked inside the press itself: a pointer lock needs the person's gesture.
+          if (mouseLook && document.pointerLockElement !== canvas) lockPointer();
+          capturePress(event);
           input.held.add(MOUSE1);
           input.ticked = false;
           call(game, "input", { pointer, down: [MOUSE1] });
@@ -2234,6 +2310,7 @@
       }
 
       async function boot() {
+        studioReadiness("hold");
         progress(LoadStage.Wasm);
         const refusal = await preflight();
         if (refusal) return showUnsupported(refusal);
@@ -2263,8 +2340,9 @@
         Object.assign(status, { state: State.Running, receipt: answer.receipt });
         const [worldWidth, worldHeight] = Array.isArray(answer.world) ? answer.world : [];
         if (worldWidth > 0 && worldHeight > 0) shell.world = [worldWidth, worldHeight];
+        shell.fills = answer.fit === FIT_EXPAND;
         bindStudio(game);
-        const input = listen(game);
+        const input = listen(game, { mouseLook: params.has("mouseLook") });
         listenForSaves(game);
         if (!params.has("paused")) window.__studio.start();
         run(game, input);

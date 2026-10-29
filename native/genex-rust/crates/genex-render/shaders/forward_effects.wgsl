@@ -75,7 +75,8 @@ fn gx_screen_texel(world_pos: vec3<f32>, size: vec2<u32>) -> vec2<i32> {
 // back to the scene's units by this frame's pre-exposure (`cascade_splits.z`, as output.wgsl
 // applies it).
 fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
-    if !gx_ao_drawn() {
+    // A view model at the lens is no part of the scene the term was made from.
+    if !gx_ao_drawn() || gx_view_model {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     let last = vec2<i32>(textureDimensions(ao_map)) - vec2<i32>(1);
@@ -90,7 +91,7 @@ fn gx_ambient_occlusion(world_pos: vec3<f32>) -> vec4<f32> {
 // The sun's screen-space contact shadow at `world_pos` (1: unshadowed): the mask at the render
 // size (through the joint-bilateral upsample), the texel under the pixel.
 fn gx_contact_shadow(world_pos: vec3<f32>) -> f32 {
-    if !GX_CONTACT_SHADOWS {
+    if !GX_CONTACT_SHADOWS || gx_view_model {
         return 1.0;
     }
     return textureLoad(contact_shadow_mask, gx_screen_texel(world_pos, textureDimensions(contact_shadow_mask)), 0).r;

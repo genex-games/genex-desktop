@@ -34,6 +34,7 @@
   "get_editor_property",
   "set_editor_property"
  ],
+ "AnimBlueprint": [],
  "AnimGraphNode_OrientationDriver": [
   "node"
  ],
@@ -41,26 +42,59 @@
  "AnimNode_SplineIK": [
   "offset"
  ],
+ "AnimPose": [
+  "get_bone_pose",
+  "get_editor_property",
+  "set_editor_property"
+ ],
+ "AnimPoseEvaluationOptions": [
+  "get_editor_property",
+  "set_editor_property"
+ ],
+ "AnimPoseExtensions": [
+  "get_anim_pose_at_time",
+  "get_bone_pose",
+  "get_class",
+  "get_default_object",
+  "get_editor_property",
+  "get_name",
+  "get_path_name",
+  "set_editor_property"
+ ],
+ "AnimPoseSpaces": [
+  "LOCAL",
+  "WORLD",
+  "name"
+ ],
  "AnimSequence": [
+  "get_anim_pose_at_time",
   "get_class",
   "get_default_object",
   "get_editor_property",
   "get_name",
   "get_path_name",
   "get_play_length",
+  "get_skeleton",
   "set_editor_property"
  ],
  "AnimSequenceBase": [
+  "get_anim_pose_at_time",
   "get_class",
   "get_default_object",
   "get_editor_property",
   "get_name",
   "get_path_name",
   "get_play_length",
+  "get_skeleton",
   "set_editor_property"
  ],
  "AnimSyncMarker": [
   "time"
+ ],
+ "AnimationMode": [
+  "ANIMATION_BLUEPRINT",
+  "ANIMATION_SINGLE_NODE",
+  "name"
  ],
  "Array": [],
  "AssetData": [
@@ -115,6 +149,7 @@
   "name"
  ],
  "AutoMapChainType": [
+  "EXACT",
   "FUZZY",
   "name"
  ],
@@ -144,6 +179,7 @@
  ],
  "BlueprintEditorLibrary": [
   "compile_blueprint",
+  "create_blueprint_asset_with_parent",
   "generated_class",
   "get_class",
   "get_default_object",
@@ -160,7 +196,11 @@
   "BS_UP_TO_DATE_WITH_WARNINGS"
  ],
  "BodySetup": [],
+ "BoneChain": [
+  "get_editor_property"
+ ],
  "Box": [],
+ "BoxSphereBounds": [],
  "CameraActor": [
   "attach_to_component",
   "destroy_actor",
@@ -231,6 +271,9 @@
  "CustomizableObject": [
   "compile"
  ],
+ "CustomizableObjectInstance": [
+  "bake"
+ ],
  "DeterminismTestResult": [
   "seed"
  ],
@@ -269,12 +312,16 @@
   "append_simple_extrude_polygon",
   "append_simple_swept_polygon",
   "apply_mesh_polygroup_bevel",
+  "get_all_bones_info",
+  "get_all_triangle_indices",
   "get_all_vertex_positions",
+  "get_bone_children",
   "get_class",
   "get_default_object",
   "get_editor_property",
   "get_name",
   "get_path_name",
+  "get_vertex_bone_weights",
   "recompute_normals",
   "set_all_mesh_vertex_positions",
   "set_editor_property",
@@ -334,6 +381,11 @@
   "set_volumetric_fog_extinction_scale",
   "set_volumetric_fog_scattering_distribution"
  ],
+ "FKChainRotationMode": [
+  "INTERPOLATED",
+  "ONE_TO_ONE",
+  "name"
+ ],
  "FirstPersonPrimitiveType": [
   "FIRST_PERSON",
   "NONE",
@@ -354,8 +406,12 @@
   "get_player_pawn",
   "get_time_seconds",
   "get_world_delta_seconds",
-  "set_editor_property"
+  "is_game_paused",
+  "set_editor_property",
+  "set_game_paused"
  ],
+ "GeometryScriptBoneInfo": [],
+ "GeometryScriptBoneWeight": [],
  "GeometryScriptCalculateNormalsOptions": [
   "get_editor_property",
   "set_editor_property"
@@ -369,6 +425,10 @@
   "CONVEX_HULLS",
   "name"
  ],
+ "GeometryScriptCopyMeshFromAssetOptions": [
+  "get_editor_property",
+  "set_editor_property"
+ ],
  "GeometryScriptCopyMeshToAssetOptions": [
   "get_editor_property",
   "set_editor_property"
@@ -378,6 +438,10 @@
   "set_editor_property"
  ],
  "GeometryScriptMeshBevelOptions": [
+  "get_editor_property",
+  "set_editor_property"
+ ],
+ "GeometryScriptMeshReadLOD": [
   "get_editor_property",
   "set_editor_property"
  ],
@@ -401,18 +465,35 @@
   "PER_FACE",
   "name"
  ],
+ "GeometryScriptTriangleList": [
+  "convert_triangle_list_to_array",
+  "get_editor_property",
+  "set_editor_property"
+ ],
  "GeometryScriptVectorList": [
   "convert_vector_list_to_array",
   "get_editor_property",
   "set_editor_property"
  ],
  "GeometryScript_AssetUtils": [
+  "copy_mesh_from_skeletal_mesh",
   "copy_mesh_to_static_mesh",
   "get_class",
   "get_default_object",
   "get_editor_property",
   "get_name",
   "get_path_name",
+  "set_editor_property"
+ ],
+ "GeometryScript_BoneWeights": [
+  "get_all_bones_info",
+  "get_bone_children",
+  "get_class",
+  "get_default_object",
+  "get_editor_property",
+  "get_name",
+  "get_path_name",
+  "get_vertex_bone_weights",
   "set_editor_property"
  ],
  "GeometryScript_Collision": [
@@ -426,6 +507,7 @@
  ],
  "GeometryScript_List": [
   "convert_array_to_vector_list",
+  "convert_triangle_list_to_array",
   "convert_vector_list_to_array",
   "get_class",
   "get_default_object",
@@ -453,6 +535,7 @@
   "set_editor_property"
  ],
  "GeometryScript_MeshQueries": [
+  "get_all_triangle_indices",
   "get_all_vertex_positions",
   "get_class",
   "get_default_object",
@@ -535,8 +618,20 @@
  ],
  "IKRetargetBatchOperationInputs": [
   "get_editor_property",
+  "search",
   "set_editor_property"
  ],
+ "IKRetargetFKChainsController": [
+  "get_class",
+  "get_default_object",
+  "get_editor_property",
+  "get_name",
+  "get_path_name",
+  "get_settings",
+  "set_editor_property",
+  "set_settings"
+ ],
+ "IKRetargetFKChainsOpSettings": [],
  "IKRetargetFactory": [
   "get_class",
   "get_default_object",
@@ -545,6 +640,19 @@
   "get_path_name",
   "set_editor_property"
  ],
+ "IKRetargetOpControllerBase": [],
+ "IKRetargetRunIKRigChainSettings": [],
+ "IKRetargetRunIKRigController": [
+  "get_class",
+  "get_default_object",
+  "get_editor_property",
+  "get_name",
+  "get_path_name",
+  "get_settings",
+  "set_editor_property",
+  "set_settings"
+ ],
+ "IKRetargetRunIKRigOpSettings": [],
  "IKRetargeter": [
   "get_class",
   "get_default_object",
@@ -555,28 +663,45 @@
  ],
  "IKRetargeterController": [
   "add_default_ops",
+  "add_retarget_op",
+  "assign_ik_rig_to_all_ops",
   "auto_align_all_bones",
+  "auto_align_bones",
   "auto_map_chains",
   "get_class",
   "get_controller",
+  "get_current_retarget_pose_name",
   "get_default_object",
   "get_editor_property",
   "get_name",
   "get_num_retarget_ops",
+  "get_op_controller",
   "get_path_name",
+  "get_rotation_offset_for_retarget_pose_bone",
+  "remove_all_ops",
+  "reset_retarget_pose",
   "set_editor_property",
-  "set_ik_rig"
+  "set_ik_rig",
+  "set_preview_mesh",
+  "set_rotation_offset_for_retarget_pose_bone"
  ],
  "IKRigController": [
+  "apply_auto_fbik",
   "apply_auto_generated_retarget_definition",
   "get_class",
   "get_controller",
   "get_default_object",
   "get_editor_property",
   "get_name",
+  "get_num_solvers",
   "get_path_name",
+  "get_ref_pose_transform_of_bone",
+  "get_retarget_chain_end_bone",
+  "get_retarget_chain_start_bone",
   "get_retarget_chains",
+  "get_retarget_root",
   "set_editor_property",
+  "set_retarget_chain_start_bone",
   "set_skeletal_mesh"
  ],
  "IKRigDefinition": [
@@ -638,6 +763,7 @@
   "set_static_mesh",
   "static_mesh"
  ],
+ "IntVector": [],
  "InterchangeCombineStaticMeshesBehavior": [
   "ALL",
   "name"
@@ -721,7 +847,11 @@
   "set_use_temperature",
   "set_volumetric_scattering_intensity"
  ],
+ "LocationVolume": [
+  "load"
+ ],
  "Material": [
+  "get_base_material",
   "get_class",
   "get_default_object",
   "get_editor_property",
@@ -739,11 +869,13 @@
   "get_editor_property",
   "get_name",
   "get_path_name",
+  "has_material_usage",
   "recompile_material",
   "set_editor_property",
   "set_material_instance_parent",
   "set_material_instance_scalar_parameter_value",
   "set_material_instance_vector_parameter_value",
+  "set_material_usage",
   "update_material_instance"
  ],
  "MaterialExpression": [
@@ -859,6 +991,7 @@
   "set_editor_property"
  ],
  "MaterialInstanceConstant": [
+  "get_base_material",
   "get_class",
   "get_default_object",
   "get_editor_property",
@@ -875,6 +1008,7 @@
   "set_editor_property"
  ],
  "MaterialInterface": [
+  "get_base_material",
   "get_class",
   "get_default_object",
   "get_editor_property",
@@ -889,7 +1023,12 @@
   "MP_ROUGHNESS",
   "name"
  ],
+ "MaterialUsage": [
+  "MATUSAGE_SKELETAL_MESH",
+  "name"
+ ],
  "MathLibrary": [
+  "atan",
   "atan2",
   "class_is_child_of",
   "cos",
@@ -900,7 +1039,8 @@
   "get_path_name",
   "log",
   "set_editor_property",
-  "sin"
+  "sin",
+  "tan"
  ],
  "MeshComponent": [
   "set_collision_enabled",
@@ -913,7 +1053,9 @@
  "MetasoundFrontendVersion": [
   "number"
  ],
- "Name": [],
+ "Name": [
+  "is_none"
+ ],
  "NiagaraSystemCollection": [
   "release"
  ],
@@ -1035,10 +1177,17 @@
   "set_folder_path"
  ],
  "PrimitiveComponent": [],
+ "Quat": [
+  "get_editor_property",
+  "log",
+  "rotator",
+  "set_editor_property"
+ ],
  "RetargetAutoAlignMethod": [
   "CHAIN_TO_CHAIN",
   "name"
  ],
+ "RetargetFKChainSettings": [],
  "RetargetSourceOrTarget": [
   "SOURCE",
   "TARGET",
@@ -1071,7 +1220,12 @@
   "name"
  ],
  "ShapeComponent": [],
+ "SkeletalMaterial": [
+  "get_editor_property"
+ ],
  "SkeletalMesh": [
+  "get_bone_children",
+  "get_bone_parent",
   "get_bounds",
   "get_class",
   "get_default_object",
@@ -1079,6 +1233,27 @@
   "get_name",
   "get_path_name",
   "set_editor_property"
+ ],
+ "SkeletalMeshActor": [
+  "attach_to_component",
+  "destroy_actor",
+  "get_actor_forward_vector",
+  "get_actor_label",
+  "get_actor_location",
+  "get_actor_rotation",
+  "get_class",
+  "get_component_by_class",
+  "get_components_by_class",
+  "get_default_object",
+  "get_editor_property",
+  "get_name",
+  "get_path_name",
+  "get_velocity",
+  "set_actor_label",
+  "set_actor_location_and_rotation",
+  "set_actor_scale3d",
+  "set_editor_property",
+  "set_folder_path"
  ],
  "SkeletalMeshComponent": [
   "attach_to_component",
@@ -1088,13 +1263,21 @@
   "get_editor_property",
   "get_name",
   "get_path_name",
+  "get_skinned_asset",
   "get_socket_location",
+  "set_animation",
+  "set_animation_mode",
   "set_collision_enabled",
   "set_editor_property",
   "set_material",
   "set_mobility",
+  "set_play_rate",
+  "set_position",
   "set_relative_location_and_rotation",
-  "set_skeletal_mesh"
+  "set_skeletal_mesh",
+  "set_skeletal_mesh_asset",
+  "set_update_animation_in_editor",
+  "skeletal_mesh"
  ],
  "Skeleton": [
   "get_class",
@@ -1237,10 +1420,12 @@
  ],
  "SubobjectDataBlueprintFunctionLibrary": [
   "get_class",
+  "get_data",
   "get_default_object",
   "get_editor_property",
   "get_name",
   "get_object",
+  "get_object_for_blueprint",
   "get_path_name",
   "get_variable_name",
   "set_editor_property"
@@ -1299,7 +1484,8 @@
  "Transform": [
   "get_editor_property",
   "scale3d",
-  "set_editor_property"
+  "set_editor_property",
+  "translation"
  ],
  "UnrealEditorSubsystem": [
   "get_class",
@@ -1314,12 +1500,14 @@
  ],
  "UserWidget": [],
  "Vector": [
+  "cross",
   "get_editor_property",
   "length",
   "rotator",
   "set_editor_property"
  ],
  "Vector2D": [
+  "cross",
   "get_editor_property",
   "length",
   "set_editor_property",
@@ -1334,6 +1522,10 @@
  ],
  "ViewportCapture": [
   "grid"
+ ],
+ "VisibilityBasedAnimTickOption": [
+  "ALWAYS_TICK_POSE_AND_REFRESH_BONES",
+  "name"
  ],
  "WheelStatus": [
   "get_editor_property"
@@ -1359,6 +1551,7 @@
  "log": null,
  "log_flush": null,
  "log_warning": null,
+ "new_object": null,
  "register_slate_post_tick_callback": null,
  "uclass": null,
  "unregister_slate_post_tick_callback": null

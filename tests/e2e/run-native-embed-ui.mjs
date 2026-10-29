@@ -2,7 +2,7 @@
  * Live's Web | Native view (M5a L4), in an owned `studio:dev` fixture profile over the
  * `native-game` fixture, with no provider calls and no game process: the fixture's scripted
  * registry answers `nativeEmbed` with a ready embedded run that draws no frames, and says the
- * input, resizes and sight it then receives in that run's `native.log` (`fixture-native.ts`).
+ * input, resizes and sight it then receives in that run's `native.log` (`fixture-native-runs.ts`).
  * `npm run test:ui -- native-embed-ui` checks:
  *
  * - pong-cpp (Browser + Mac) has Web | Native, Web by default; Native mounts the canvas, takes the

@@ -237,7 +237,10 @@ export async function decideExit(loop: FacetLoop, round: FacetRound): Promise<Ro
   // building, keeps the build stage's exit.
   const ranAsFinish = roundStage(round, loop.spec) === FacetStage.Finish;
   const finishing = ranAsFinish && isFinishing(loop.spec) && !loop.legacy;
-  round.finished = finishing ? finishDone(exit) : facetIsDone({ ...exit, verdict: round.verdict, legacy: loop.legacy });
+  const lookBlockers: string[] = round.taste?.lookBlockers ?? [];
+  round.finished = finishing
+    ? finishDone({ ...exit, lookBlockers })
+    : facetIsDone({ ...exit, verdict: round.verdict, legacy: loop.legacy });
   if (round.finished) {
     result.satisfied = true;
     stopWith(result, StopCode.Done, round.finished);

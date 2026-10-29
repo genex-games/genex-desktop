@@ -4,6 +4,7 @@
  * editor's shots; `export-reference` keeps the engine's reference for the gate. The editor is a
  * stand-in.
  */
+import { setAgentsSetting } from "../../src/substrate/engine-agents.ts";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -303,6 +304,8 @@ describe("the Unreal Loop's tools", () => {
         t.signal,
       );
       assert.equal(applying.state, PartRunState.Applying, JSON.stringify(applying));
+      // The person chose to have agents wait while they play.
+      await setAgentsSetting(w.storage, false);
       w.state.personPie = true;
       const probe = (await w.tools.call(
         LeadLoopToolName.EditorActivity,

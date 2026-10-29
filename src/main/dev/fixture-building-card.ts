@@ -1,12 +1,15 @@
 /**
  * The `building-card` fixture: a racing Loop still going, for the chat's Building card and its list
- * of parts. Of the plan's five parts two are added, one works on its second round with its time
- * left, one was stopped and restarted (`replaces`, one row) and works on its first round, and one
- * has not started. Written once the app has started: the start closes every run an earlier app left
- * open, so a Loop still going written before it would read as stopped.
+ * of parts, after five earlier Loops of the same chat that finished, so Builds holds its six builds
+ * in the picker (more than its three tabs). Of the
+ * plan's five parts two are added, one works on its second round with its time left, one was
+ * stopped and restarted (`replaces`, one row) and works on its first round, and one has not
+ * started; the Loop was given 4 hours, and its lead takes the chat's messages (live chat). Written
+ * once the app has started: the start closes every run an earlier app left open, so a Loop still
+ * going written before it would read as stopped.
  */
 import { CustomEvent, customRecord } from "../../shared/custom-events.ts";
-import { MINUTE_MS } from "../../shared/duration.ts";
+import { HOUR_MS, MINUTE_MS } from "../../shared/duration.ts";
 import { type EventData, EventKind } from "../../shared/event-log.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { WorkerEnd, WorkerIsolation, WorkerStopCode } from "../../shared/workers.ts";
@@ -15,6 +18,52 @@ import { FIXTURE_MODEL, fixtureRun } from "./fixture-kit.ts";
 
 const RUN_ID = "fixture-building-card";
 const GOAL = "Make a night street race on rain-slicked city streets.";
+/** One of the chat's earlier Loops, finished: what was asked, its plan, and each part's merged build. */
+interface EarlierLoop {
+  runId: string;
+  goal: string;
+  summary: string;
+  parts: ReadonlyArray<[id: string, title: string, head: string]>;
+}
+
+/** The chat's earlier Loops, oldest first: with this one, more builds than Builds shows as tabs. */
+const EARLIER: readonly EarlierLoop[] = [
+  {
+    runId: "fixture-building-card-earlier",
+    goal: "Give the cars arcade handling and a drift boost.",
+    summary: "Arcade handling for every car, and a boost for holding a drift.",
+    parts: [
+      ["handling", "Arcade handling", "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d"],
+      ["drift", "Drift boost", "0b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e"],
+    ],
+  },
+  {
+    runId: "fixture-building-card-laps",
+    goal: "Add a lap timer and a ghost car of my best lap.",
+    summary: "A lap timer, and a ghost replaying the best lap.",
+    parts: [["laps", "Lap timer and best-lap ghost", "0c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f"]],
+  },
+  {
+    runId: "fixture-building-card-camera",
+    goal: "Please fix the camera shaking on sharp turns.",
+    summary: "A chase camera that stays steady through tight corners.",
+    parts: [["camera", "Steady chase camera", "0d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60"]],
+  },
+  {
+    runId: "fixture-building-card-rain",
+    goal: "Put rain and puddle reflections on the night streets.",
+    summary: "Rain over the city, and the street lights in its puddles.",
+    parts: [["rain", "Rain and puddle reflections", "0e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071"]],
+  },
+  {
+    runId: "fixture-building-card-garage",
+    goal: "Add a garage screen where I can pick my car's color.",
+    summary: "A garage before each race, with a paint picker.",
+    parts: [["garage", "Garage and paint picker", "0f60718293a4b5c6d7e8f90a1b2c3d4e5f607182"]],
+  },
+];
+/** The time the Loop was given, shown under the card's clock ("up to 4h"). */
+const LOOP_MS = 4 * HOUR_MS;
 /** How long the car part's round has left when the fixture is written. */
 const CARS_LEFT_MS = 25 * MINUTE_MS;
 
@@ -66,14 +115,42 @@ function added(run: Scoped, workerId: string, title: string, head: string): Even
   ];
 }
 
+/** One of the chat's earlier Loops: its ask, its plan, every part added, and its close. */
+function finishedLoop(project: string, loop: EarlierLoop): EventData[] {
+  const run = fixtureRun({ runId: loop.runId, project });
+  return [
+    { type: EventKind.Messages, messages: [{ role: "user", content: loop.goal }] },
+    run(CustomEvent.RunStarted, { goal: loop.goal, engine: EngineId.ClaudeCode, model: FIXTURE_MODEL }),
+    run(CustomEvent.AutopilotStarted, { director: true, maxParallel: 2, facets: [], workerRecords: true }),
+    run(CustomEvent.AutopilotPlanReview, {
+      summary: loop.summary,
+      waitMinutes: 0,
+      facets: loop.parts.map(([id, title]) => ({ id, title, identity: [], cameras: [], checks: [] })),
+    }),
+    ...loop.parts.flatMap(([id, title, head]) => added(run, id, title, head)),
+    run(CustomEvent.RunFinished, { stoppedBecause: "every part was added and checked" }),
+  ];
+}
+
 /** The Loop: its plan, two parts added, one at work with its time left, one restarted, one waiting. */
 function buildingLoop(project: string, now: number): EventData[] {
   const run = fixtureRun({ runId: RUN_ID, project });
   const stopped = "stopped by the director: the facades start again on the new street grid";
   return [
     { type: EventKind.Messages, messages: [{ role: "user", content: GOAL }] },
-    run(CustomEvent.RunStarted, { goal: GOAL, engine: EngineId.ClaudeCode, model: FIXTURE_MODEL }),
-    run(CustomEvent.AutopilotStarted, { director: true, maxParallel: 3, facets: [], workerRecords: true }),
+    run(CustomEvent.RunStarted, {
+      goal: GOAL,
+      engine: EngineId.ClaudeCode,
+      model: FIXTURE_MODEL,
+      budgets: { wallClockMs: LOOP_MS },
+    }),
+    run(CustomEvent.AutopilotStarted, {
+      director: true,
+      maxParallel: 3,
+      facets: [],
+      workerRecords: true,
+      liveChat: true,
+    }),
     run(CustomEvent.AutopilotPlanReview, {
       summary: "A night street race: a lit circuit, cars with a wet finish, and their sound.",
       waitMinutes: 0,
@@ -121,5 +198,6 @@ function buildingLoop(project: string, now: number): EventData[] {
 export async function seedBuildingCard(core: StudioCore, project: string, threadId: string): Promise<void> {
   const events = await core.store.listEvents(threadId);
   if (events.some((e) => customRecord(e.data)?.payload.runId === RUN_ID)) return;
-  await core.append(buildingLoop(project, Date.now()), threadId);
+  const earlier = EARLIER.flatMap((loop) => finishedLoop(project, loop));
+  await core.append([...earlier, ...buildingLoop(project, Date.now())], threadId);
 }

@@ -18,7 +18,7 @@ import type { TokenUsage } from "../../../src/shared/eval-lane.ts";
 import { numberField, parseStampedStream, recordField, stringField, type StampedLine } from "./honesty.ts";
 import type { ObservationEvent, SessionRef, ToolCallEvent } from "./observation.ts";
 import type { StreamReading } from "./observe.ts";
-import { classifyTool, isLookAtPage } from "./tool-category.ts";
+import { classifyTool, isLookAtPage } from "../../../src/shared/tool-category.ts";
 import { addUsage } from "./usage.ts";
 import {
   LifecyclePhase,
@@ -30,7 +30,7 @@ import {
   ToolCategory,
 } from "../vocabulary.ts";
 
-export { unwrapShell } from "./tool-category.ts";
+export { unwrapShell } from "../../../src/shared/tool-category.ts";
 
 /** The stream's event types (Codex's wire spelling). */
 const StreamEvent = {

@@ -45,6 +45,11 @@ const COLLIDER_BYTES: u64 = 1024;
 const INSTANCE_BYTES: u64 = 64;
 /// The view radius a registration draws without `view_radius`, in cells.
 pub const STREAM_VIEW_RADIUS_DEFAULT_CELLS: f32 = 4.0;
+/// Whether this build streams worlds (the facade's `streaming` feature; `[streaming] enabled =
+/// false` in a game's genex.toml leaves it out, release R-1). Without it `install` refuses
+/// `game.streaming` `streaming-disabled`, and the commit slot, the cell builds, the saved section
+/// and the presenter's view set compile to nothing; `sim.stream` stays an unregistered sim set.
+pub(crate) const STREAMING_BUILT: bool = cfg!(feature = "streaming");
 /// The `state()` key streaming adds while it is registered (display only).
 pub(crate) const RUNTIME_KEY: &str = "__stream";
 

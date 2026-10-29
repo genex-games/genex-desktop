@@ -10,6 +10,7 @@ import { type BuildParts, buildChecklist, checklistCaption, runPlanParts } from 
 import { buildCaption, currentWorkLabel } from "./current-work.ts";
 import { currentWorkItems, finishingRun, runBudgetMs, runStartedAt } from "./transcript.ts";
 import type { ChatThread } from "./use-chat-thread.ts";
+import { setupBuildCaption, useSetupBuild } from "./setup-build.ts";
 import { usePlanReview } from "./use-plan-review.ts";
 
 const NO_ITEMS: NonNullable<ChatWorkProps["details"]> = [];
@@ -137,11 +138,14 @@ function useWorkWords(
   );
   // The parts' counts do not move with the clock: they are read once per change of the run.
   const list = useMemo(() => (parts ? buildChecklist({ ...parts, now: Date.now() }) : null), [parts]);
+  // Before the lead has parts, the build the run's start waits on is what is happening.
+  const setup = useSetupBuild(chat.project, activeRunId);
+  const setupCaption = setupBuildCaption({ ...setup, leadStarted: list !== null || finishing });
   return {
     current: currentWorkLabel(activity, outcome, finishing, workItems, plan?.state),
-    caption: list
-      ? checklistCaption(list, finishing)
-      : buildCaption(activity, outcome, finishing, workItems, plan?.state),
+    caption:
+      setupCaption ??
+      (list ? checklistCaption(list, finishing) : buildCaption(activity, outcome, finishing, workItems, plan?.state)),
     parts: list ? parts : null,
     runStarted,
     budgetMs,

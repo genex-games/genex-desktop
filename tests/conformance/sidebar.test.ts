@@ -118,16 +118,16 @@ describe("the game library's navigation", () => {
   });
   it("has a keyboard-reachable overflow and confirmation before removal", () => {
     assert.match(sidebar, /DropdownMenuTrigger asChild/);
-    assert.match(sidebar, /aria-label=\{`Actions for/);
+    assert.match(sidebar, /aria-label=\{t\("Actions for \{game\}"/);
     assert.match(theme, /sidebar-game:focus-within \.sidebar-game-menu/);
     assert.match(read("src/renderer/panels/GameDialogs.tsx"), /files and conversation history stay/);
   });
   it("keeps New game and search above the scrolling library", () => {
     assert.match(sidebar, /sidebar-fixed/);
     assert.match(sidebar, /data-sidebar-scroll/);
-    assert.match(sidebar, />\s*New game\s*</);
-    assert.match(sidebar, /label="Create game"[^>]*onClick=\{onNewGame\}/);
-    assert.match(sidebar, /<span>Games<\/span>/);
+    assert.match(sidebar, />\s*\{t\("New game"\)\}\s*</);
+    assert.match(sidebar, /label=\{t\("Create game"\)\}[^>]*onClick=\{onNewGame\}/);
+    assert.match(sidebar, /<span>\{t\("Games"\)\}<\/span>/);
     assert.doesNotMatch(sidebar, /New chat in|toggleFolder|<ChatRow/);
   });
   it("uses shared keyboard search rather than an inline filter", () => {

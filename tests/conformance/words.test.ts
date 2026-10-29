@@ -12,12 +12,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { MAX_FINISH_REJECTIONS } from "../../src/shared/finish-check.ts";
 import {
   autopilotStartWords,
   backgroundCount,
   BUILD_HISTORY_WORDS,
   FINISH_CHECK_WORDS,
+  STILL_TO_FIX_WORDS,
   JOBS_EYEBROW,
   JOBS_WORDS,
   LEAD_WORDS,
@@ -69,7 +69,7 @@ import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { DirectorTool } from "../../src/harness-seed/loop/director/tool-specs.ts";
 import { WorkerTool } from "../../src/shared/workers.ts";
 import { APP_LOOK_TOOL_NAME, JobTool } from "../../src/shared/jobs.ts";
-import { connectorStep, showsPlayView, StepAction } from "../../src/renderer/chat/connector-steps.ts";
+import { connectorStep, showsPlayView, StepAction, startsPlay } from "../../src/renderer/chat/connector-steps.ts";
 import type { RunSummary } from "../../src/shared/run-summary.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
 
@@ -190,27 +190,27 @@ describe("the lead, its workers and the finish check on the graph", () => {
 });
 
 describe("the finish check's words", () => {
-  it("the finish check words take the shared cap and say reviewer", () => {
-    const cap = String(MAX_FINISH_REJECTIONS);
-    assert.equal(FINISH_CHECK_WORDS.stoppedWord, `${cap} no's in a row`);
-    assert.equal(FINISH_CHECK_WORDS.roundWord(2, 1), `2 reasons · round 1 of ${cap}`);
-    assert.equal(FINISH_CHECK_WORDS.roundWord(1, 2), `1 reason · round 2 of ${cap}`);
-    assert.equal(
-      FINISH_CHECK_WORDS.chat.rejected(1, "No finish line."),
-      `The reviewer sent the work back (1 of ${cap}): No finish line.`,
+  it("the final look speaks to the person: no reviewer, rounds, counts of no's or claims", () => {
+    assert.equal(FINISH_CHECK_WORDS.leftWord(1), "1 thing left");
+    assert.equal(FINISH_CHECK_WORDS.leftWord(2), "2 things left");
+    assert.match(
+      STILL_TO_FIX_WORDS.ask(["The lap timer resets"]),
+      /^Keep building: fix what’s left\.\n- The lap timer resets$/,
     );
-    assert.match(FINISH_CHECK_WORDS.moreNos(1), /^Two more no's in a row/);
-    assert.match(FINISH_CHECK_WORDS.moreNos(MAX_FINISH_REJECTIONS - 1), /^One more no in a row/);
-    for (const text of [
+    const words = [
+      FINISH_CHECK_WORDS.name,
+      ...Object.values(FINISH_CHECK_WORDS.state),
+      FINISH_CHECK_WORDS.placeholder,
+      FINISH_CHECK_WORDS.about,
+      FINISH_CHECK_WORDS.checking,
       FINISH_CHECK_WORDS.doneWord,
       FINISH_CHECK_WORDS.unanswered,
-      FINISH_CHECK_WORDS.chat.checking,
-      FINISH_CHECK_WORDS.chat.accepted,
-      FINISH_CHECK_WORDS.chat.unanswered("its session ended"),
-      FINISH_CHECK_WORDS.chat.stopped("No timer."),
-    ])
-      assert.match(text, /\breviewer\b/i, text);
-    assert.doesNotMatch(FINISH_CHECK_WORDS.chat.stopped("No timer."), /\b3\b/, "no literal count in the stop line");
+      FINISH_CHECK_WORDS.keepsWorking,
+      FINISH_CHECK_WORDS.endedAfterNo,
+      STILL_TO_FIX_WORDS.title,
+      STILL_TO_FIX_WORDS.keepBuilding,
+    ];
+    for (const text of words) assert.doesNotMatch(text, /\b(reviewer|round|claim|no's|finish check)\b/i, text);
   });
 });
 
@@ -251,8 +251,8 @@ describe("statusWords", () => {
       short: "The lead",
     });
     assert.deepEqual(statusWords(`${run} · lead in place finishing`), {
-      line: "A reviewer is checking the lead's finish",
-      short: "Checking",
+      line: "A second AI is looking at your game",
+      short: "Final look",
     });
   });
 
@@ -1200,6 +1200,18 @@ describe("tools", () => {
     assert.equal(showsPlayView(step(build, "capture_play", { name: "jump" }), false), true);
   });
 
+  it("describing one tool of a toolset reads as reading the toolset, never as calling that tool", () => {
+    const toolset = "EditorToolset.EditorAppToolset";
+    const described = connectorStep({ tool: "describe_toolset", toolset, toolName: "StartPIE" });
+    assert.deepEqual(described, {
+      action: StepAction.ReadToolset,
+      object: "EditorAppToolset",
+      tool: "describe_toolset",
+    });
+    assert.deepEqual([startsPlay(described), showsPlayView(described, false)], [false, false]);
+    assert.equal(connectorStep({ tool: "call_tool", toolset, toolName: "StartPIE" }).action, StepAction.Played);
+  });
+
   it("folds a delegated minute into one closed line", () => {
     assert.equal(toolGroupHeader(1), "1 tool call");
     assert.equal(toolGroupHeader(37), "37 tool calls");
@@ -1225,7 +1237,7 @@ describe("what the user is told when something refuses", () => {
     );
     assert.match(
       problemWords(new Error('commit 69f573d411 is not in "skate"\'s history')),
-      /not in this game\'s history/,
+      /not in this game's history/,
     );
   });
 

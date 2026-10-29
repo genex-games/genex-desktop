@@ -41,6 +41,17 @@ export const ICON_TOOLS: readonly GenexTool[] = [
 /** A tool's mark. */
 export const toolMark = (id: GenexTool): string => MARK[id];
 
+/** The marks drawn light for a dark tile; a light theme shows them dark (`data-light-mark`). */
+const LIGHT_MARKS: ReadonlySet<GenexTool> = new Set([
+  GenexTool.GptImage,
+  GenexTool.ElevenLabs,
+  GenexTool.Uthana,
+  GenexTool.Publishing,
+]);
+
+/** Whether a tool's mark is drawn light, for a dark tile. */
+export const markIsLight = (id: GenexTool): boolean => LIGHT_MARKS.has(id);
+
 /** Every tool's name, the short name a small chip uses, and what it does, checked to cover each tool. */
 const COPY: Record<GenexTool, { name: string; short: string; line: string }> = GENEX_WORDS.router.tools;
 

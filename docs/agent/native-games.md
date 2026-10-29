@@ -19,8 +19,10 @@ its own frames service. The windowed one keeps `com.apple.view-bridge` denied; t
 `admitMacBundle` ([`native-bundle.ts`](../../src/substrate/native-bundle.ts)) reads the Mach-O
 itself: thin arm64, link-time imports only from the system and the store's ANGLE (Metal still maps
 OpenGL.framework at run time), one rpath, no Mach-O or hard-linked asset. `assembleRunDir` copies
-the pinned ANGLE and each re-checked asset into a per-run `.app` no agent reads, signed ad hoc; the
-game speaks on fd 3. Game reports are never host facts: capture digests are recomputed, captures
+the pinned ANGLE and each re-checked asset into a per-run `.app` no agent reads, signed ad hoc; a
+window run's Info.plist, like a Mac export's, declares the game category and Game Mode support
+(`gameModeEntries`: `LSApplicationCategoryType`, `LSSupportsGameMode`, `GCSupportsGameMode`), a
+background run's none. The game speaks on fd 3. Game reports are never host facts: capture digests are recomputed, captures
 read only from a real `state/captures`. An overlay `allowWrite` never lifts a base `denyWrite`
 (`mergeOverlay`). Frames reach Live through the frames addon
 (`dist/resources/native/genex-frames.node`, `process.dlopen` in `native-frames.ts` only): it
@@ -51,13 +53,58 @@ build (Live, Mac Play, `native.build`, exports, prepare) goes through `GameBuild
 stack without a lane `lane-missing`. Raylib's lane is `CppBuilds`; Rust's
 is `RustBuilds` ([`src/main/rust-build.ts`](../../src/main/rust-build.ts)) in `layout.rustBuilds`,
 denied to prewarm, over the store's Rust toolchain and the payload's genex release and `clippy.toml`
-([`core/rust-lane.ts`](../../src/main/core/rust-lane.ts)). It
-builds the Mac and the web (packaged by
-[`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell); the phones'
+([`core/rust-lane.ts`](../../src/main/core/rust-lane.ts)). Each source folder of a game (the
+game folder, every worker worktree, Play-latest, playtest and integration copy) has its own build
+folder, `<game>-<sha12(real source)>/<target>-<lock12>`, and they share the compiled engine
+([`rust-build-cache.ts`](../../src/main/rust-build-cache.ts), receipt `cache`): where the lane's
+root clones copy-on-write ([`clone-tree.ts`](../../src/substrate/clone-tree.ts): `cp -c` on
+APFS, since Node's `COPYFILE_FICLONE` copies there; reflinks on btrfs and XFS) a new folder's
+target is cloned from the most recently admitted idle copy of the same game, destination and lock
+whose clone succeeds (`copy`; a target holding a link, as cargo's dSYM link after a Mac export, is
+passed over), else the store's prewarm (`prewarm`), else empty (`cold`), and copies build in
+parallel; the donor's next build waits for the clone. The admitted executable in `<bin>.out` is a
+clone of cargo's too (`TreeCloner.cloneFile`: Node's `COPYFILE_FICLONE` copies every byte on APFS). Where it cannot (Windows, NTFS, ext4, HFS+) the game's
+copies build one at a time in one target, `shared/<game>-targets/<target>-<lock12>`. Turns go by
+`BuildPriority` (`game-build.ts`; default from the purpose): the person's builds (Live, Play, Native,
+exports) take a free slot of `rustBuildsMax(cores)`, else one of their own past it, and the shared
+target next; agents' (judging) take slots in the order asked; background prebuilds only a slot nobody
+else waits for, under `nice -n 10`. A person joining a waiting build raises it. A clean checkout's
+Live or judging build is also keyed by content ([`rust-build-content.ts`](../../src/main/rust-build-content.ts):
+the commit's tree, lock, destination, profile, flavour, trust, eject, grant, SDK, the host's own
+code and web shell), recorded as
+`<bin>.content` only when its stage is that tree file for file; any copy of the same content is
+served that admitted output (or waits for its build under way) instead of building. The person's
+Live builds skip clippy (judges keep it; a judge never reuses an unlinted build). Clippy denies
+every warning but its style and complexity groups, `approx_constant` and rustc's `unused` group
+(code a game does not use yet; a dropped `Result` stays an error); the store `clippy.toml`'s
+determinism bans stay errors (`CLIPPY_LINT_LEVELS`). A failed step's lines are its first error as
+rustc renders it, empty gutter lines dropped, then how many more errors named a place; the note the
+console and the agents read (`buildFailureNote`) names the exit, never the command and its
+environment, which the stage's Details keep. The computer's `check` (`PreviewService.checkBuild`)
+asks the lane for a check (`GameBuildOptions.check`): identity, lock and clippy on the stage in the
+build's sandbox, whatever the purpose, then nothing is imported, built, admitted or announced; a
+build of the folder never shares a check, and waits for it. Play plays one
+copy per commit (`show/<game>-<commit12>`, `PreviewService.playCopy`), and a healthy integrated Rust
+build is prebuilt there in the background, web and this host's desktop
+([`play-prebuilds.ts`](../../src/main/core/play-prebuilds.ts)). Every command
+starts with `RUSTC_BOOTSTRAP` set empty as the prewarm's `rustEnv` does, or proc-macro2's build
+script reruns and every derive-using unit with it. The sweep (`gameBuilds.sweep()`: at start, after
+a worktree goes and after freeing a game's space; the lane's own before it makes a new build
+folder, so a copy removed without a worktree hook goes before the next one costs disk) removes a build folder whose source is gone, an
+unstamped one after `UNSTAMPED_GRACE_MS`, one of a lock that is neither current nor a game's recorded
+lock the store still holds (`installedRustLock`), and a shared target no copy builds in, never one building,
+lending or served by a preview, nor anything through a link; one it cannot remove is skipped.
+Composer Stop cancels only the chat's own game's builds (`gameBuilds.cancelGame`: its folder's and
+every copy's) and agent runs; another game's go on. It builds the Mac and the web (packaged by
+[`rust-build-web.ts`](../../src/main/rust-build-web.ts) with the app's shell; Live opens a
+`game.mouseLook` game's page at `index.html?mouseLook`, and the shell then takes the pointer lock
+on a click, as Native does; under Studio's page shim the shell holds the page's readiness from its
+boot's start, `__studioClock.hold()`, and declares it at the first lit frame, so no quiet settles
+its loading screen as booted); the phones'
 builders and settings ([`rust-build-mobile.ts`](../../src/main/rust-build-mobile.ts)), registered
 by `rustTargetBuilders`, build on a Mac (Android also on Linux);
-Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register once
-the Rust recipe pins their cross components, else `target-unbuilt`. Live and judging builds of a desktop
+Windows' and Linux's ([`rust-cross-lane.ts`](../../src/main/core/rust-cross-lane.ts)) register
+while the Rust recipe pins their cross components, else `target-unbuilt`. Live and judging builds of a desktop
 destination link the facade's dev flavour (`studio` feature: the game serves fd 3, contract v2);
 an export and every web build never do (`RustFlavour`, `rust-manifest.ts`). A `[net] enabled = true`
 game (G6 MP-5b) links the facade's `net-loopback` (the in-process room) in Live, judging and the
@@ -73,12 +120,12 @@ Publishing (MP-5c): `assertPublishable` admits a Rust game by its web build and 
 `publicCopyFiles` is the lane's web export; `readGenexGameManifest` carries `[net.matchmaking]` as
 `genex.matchmaking`; `plugins.preflightMultiplayer` answers `RustNoWeb`, then the account and the
 draft route (`RustReady`), never Genex's npm packages. Non-export builds and
-prewarms optimize dependencies (`RUST_DEV_PROFILE_SETTINGS`). Mac embedded and
+prewarms share one profile (`RUST_DEV_PROFILE_SETTINGS`: dependencies at opt-level 3 without debug assertions or overflow checks, the game at 1 with both). Mac embedded and
 headless runs use only lane-admitted bytes (receipt digests); window runs and desktop
 exports stay `lane-missing`. Rust creation ([`stack-gate.ts`](../../src/main/core/stack-gate.ts),
 the bootstrap's `rustCreation`) is open in development builds and where the Rust lane runs, else
-`stack-gated`. Rust games build on their recorded lock while kept (`currentLock(stack, project)`,
-its genex release). New games default by
+`stack-gated`. Rust games build on their recorded lock while kept and installed, else on the current lock,
+which their next own-folder build records (`currentLock(stack, project)`, its genex release). New games default by
 `defaultStackFor` ([`toolchain.ts`](../../src/shared/toolchain.ts)); raylib is never creatable
 (`raylib-creation-retired`). A preview lease declares the stacks its harness serves
 (`preview.acquire {stacks}`); a lease declaring none is refused a Rust game. A Rust run is refused
@@ -144,7 +191,7 @@ table `tests/fixtures/humanoid-aliases.json`); the host checks both in the recei
 iOS ASTC, Android ASTC and ETC2, the web all three), never RGBA8; a phone drops a source image its
 families cover and family mips above `PHONE_MAX_TEXTURE_PX`. It writes
 `assets/genex-asset-index.json` (ids from a trusted `genex-assets.lock`, files and bytes per
-family, `deps`, `boot`), and the receipt's `package` gives the bytes. On the web, `webAssetMap` ([`rust-build-web.ts`](../../src/main/rust-build-web.ts)) writes `assets.json` v2: each family file carries its `family` and the texture it is `of`, so the module plans only the family the shell's adapter samples (`studio_assets_plan(map, {features, mobile})`); the image is tagged `source`, and left out, only when the runtime never falls back to it (every shipped family, none RGBA8, each at least 512 px). Map v2 also puts each file in its fetch group (STR-14b): a cell pack's `world.json` and terrain index in `sim`, its cells and terrain tiles in `stream`, each `[[asset_group]]`'s files in `named` with the group's name, and a streamed KTX2's head and levels as smallest-first `ranges`. The shell preloads only the boot and sim groups and fetches the rest while playing by `Range`, at most six at once (`WEB_STREAM_LIMITS`: 64 MiB before the first frame, 64 MiB per streamed fetch); a redirect off the page's origin or out of `assets/` is refused. A `[net]` game's web build (MP-5a) also serves the pinned `@genex-ai/multiplayer` bridge (`MULTIPLAYER_BRIDGE_PIN`, store component `genex-mp-bridge`) and its ESM shim (`MP_BRIDGE_SHIM`) under `mp/`; only that page carries the import map and script tag, and the receipt records `mpBridgeBytes` and `mpBridgeGzip`. Streaming reads only the
+family, `deps`, `boot`), and the receipt's `package` gives the bytes. On the web, `webAssetMap` ([`rust-build-web.ts`](../../src/main/rust-build-web.ts)) writes `assets.json` v2: each family file carries its `family` and the texture it is `of`, so the module plans only the family the shell's adapter samples (`studio_assets_plan(map, {features, mobile})`); the image is tagged `source`, and left out, only when the runtime never falls back to it (every shipped family, none RGBA8, each at least 512 px). Map v2 also puts each file in its fetch group (STR-14b): a cell pack's `world.json` and terrain index in `sim`, its cells and terrain tiles in `stream`, each `[[asset_group]]`'s files in `named` with the group's name, and a streamed KTX2's head and levels as smallest-first `ranges`. The shell preloads only the boot and sim groups and fetches the rest while playing by `Range` once the module wants them (each frame genex-platform-web's `web_stream` wants the named groups the game requires and the cell bodies and terrain tiles around its anchors, and hands what arrived to the sim's reads at the next frame boundary; `state().volatile.webStream` reports it), at most six at once (`WEB_STREAM_LIMITS`: 64 MiB before the first frame, 64 MiB per streamed fetch); a redirect off the page's origin or out of `assets/` is refused. A `[net]` game's web build (MP-5a) also serves the pinned `@genex-ai/multiplayer` bridge (`MULTIPLAYER_BRIDGE_PIN`, store component `genex-mp-bridge`) and its ESM shim (`MP_BRIDGE_SHIM`) under `mp/`; only that page carries the import map and script tag, and the receipt records `mpBridgeBytes` and `mpBridgeGzip`. Streaming reads only the
 index ([`stream-facts.ts`](../../src/substrate/asset-import/stream-facts.ts)): a GLB's `mesh`
 lists its levels coarse first with their byte ranges, the head and vertex ranges every level
 needs, and its UV texel density; a KTX2 file's `levels` run smallest first with their ranges.
@@ -191,8 +238,12 @@ Windows/Linux use Zig; `admitCrossOutput` records refusal `DestinationCheck`s.
 Desktop exports stage privately at the current lock; certificate signing uses its own sandbox and Java proxy.
 Mac Play, agent runs and embedding use `NativeRuns`: prepare, `spawnGame`, nonce `ready`,
 `NativeGamePort`. Stop requests quit, then TERM/KILL; boot sweeps orphans; app death kills registered
-groups. A v2 game that misses a step or capture deadline, or goes silent owing one, is killed
-`gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. A run that ends
+groups. Every 5 s the registry samples a run's memory (a Mac's `phys_footprint`, GPU memory
+included; a Linux box's process tree) and keeps the peak on its status (`memory`). Past the 4 GiB
+budget (`NATIVE_GAME_MEMORY_BUDGET_BYTES`) the run keeps going, marked `overBudget`; past the host's
+cap, `nativeGameMemoryCapBytes(os.totalmem())` (`max(8 GiB, RAM / 4)`, at most `RAM / 2`; the
+Windows Job Object's limit too), it is killed `memory-cap`. A v2 game that misses a step or capture
+deadline, or goes silent owing one, is killed `gpu-hang`; one that restores a lost GPU device gets a new Live ring generation. A run that ends
 crashed names its record in its status (`crash`): the game's own last `crash` record (a forged host
 kind or writer is `reply-invalid`), else a host-made `hang` (killed `unresponsive` or `gpu-hang`) or
 `process-exit`. [`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps it in the game's
@@ -221,3 +272,13 @@ through a host-level verified download cache (`download-cache.ts`, in every prof
 `denyWrite`); installs, prewarm and builds stay per profile. A developer profile may seed its prewarm
 from the normal profile's manifest-checked, relocatable outputs (`prewarm-seed.ts`), never the reverse.
 A live developer profile seeds its Rust stack from the dev store, digest-checked (`rust-seed.ts`).
+
+## Profiles and crash records
+
+A Rust game's `profile` verb answers
+`studio:native.profile` (Live's profile strip, polled only while open) and `preview.frameProfile`,
+checked by [`native-profile.ts`](../../src/substrate/native-profile.ts).
+[`game-crashes.ts`](../../src/main/core/game-crashes.ts) keeps a run's last `crash` record (or a
+host-made `hang` or `process-exit`) in the game's `.studio/crashes/` (at most 32, one per
+signature), appends `game_crashed` once, serves `game.crashes` and Live's crash card;
+`crash-symbolicate.ts` names frames with the sandboxed `genex-symbolicate`; nothing uploads.

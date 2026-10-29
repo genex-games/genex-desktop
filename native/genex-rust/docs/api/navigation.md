@@ -7,6 +7,39 @@
 `use genex::nav::{NavArea, NavConfig, NavInput, NavMesh};` (`NavObstacle`, `NavMeshSource`,
 `NavBudget` and the caps are there too).
 
+Every type and call in one line (`nav` is `sim.nav`):
+
+```rust
+use genex::nav::{AgentId, NavAgent, NavArea, NavBody, NavConfig, NavDebug, NavError, NavFilter, NavInput, NavLink, NavLinkKind, NavMesh, NavObstacle, NavStatus};
+game.navigation(NavConfig::walker(radius, height).with_tile(16.0)); // also with_climb, with_slope, with_cells(cell, height)
+game.nav_bake("market", |gfx| input);                          // an offline bake, read back with NavMesh::from_bytes_for(&input, &config, bytes)
+NavInput::new().with_triangles(&vertices, &indices, NavArea::WALK); // -> Result<NavInput, NavError>; with_mesh, with_box, with_terrain, with_area_volume, with_bounds
+input.with_static_colliders(&sim.physics, area); input.with_colliders(&sim.physics, |view| Some(area)); // physics builds
+NavMesh::bake(&input, sim.nav.config()); NavMesh::bake_tile(&input, &config, cell); // -> Result<NavMesh, NavError>, Result<NavTile, NavError>
+mesh.to_bytes(); mesh.source();                                // -> Vec<u8>, NavMeshSource
+sim.nav.add_mesh(&mesh); sim.nav.update(ctx.dt);               // -> Result<(), NavError>; update once per tick
+nav.add_tile(&tile); nav.remove_tile(cell); nav.tiles(); nav.digest(); config.tile_of(point); // cell: CellId
+nav.set_area_cost(NavArea::ROAD, 0.8); nav.set_area_open(NavArea::DOOR, false); // WALK, ROAD, GRASS, WATER, DOOR, NavArea::custom(8..=62)
+nav.add_obstacle(NavObstacle::Avoid { position, radius });     // -> Result<NavObstacleId, NavError>; CarveCylinder { base, radius, height }, CarveBox { transform }
+nav.move_obstacle(id, shape); nav.remove_obstacle(id); nav.pending_rebuilds();
+nav.add_agent(NavAgent::new(at).with_speed(desired, max));     // -> Result<AgentId, NavError>
+nav.move_to(agent, target); nav.stop(agent); nav.remove_agent(agent); // -> bool
+nav.desired_velocity(agent); nav.set_position(agent, feet, velocity); // -> Vec3, bool
+nav.status(agent); nav.next_corner(agent);                     // -> Option<NavStatus>, Option<Vec3>
+nav.add_link(NavLink::between(from, to, NavLinkKind::Ladder).both_ways()); // -> Result<NavLinkId, NavError>
+nav.take_link(agent); nav.finish_link(agent); nav.set_link_open(link, false); nav.remove_link(link);
+nav.add_body(NavBody { position, velocity, radius }); nav.set_body(body, position, velocity); nav.remove_body(body);
+nav.closest_point(near, reach); nav.path(from, to, &NavFilter::new()); // -> Option<NavPoint>, Option<NavPath>
+nav.raycast(from, to, &filter); nav.move_along(from, to, &filter); nav.distance_to_wall(at, reach);
+nav.random_point(&mut rng, around, radius, &filter);           // -> Option<NavPoint>
+Value::from(&nav.probe()); nav.snapshot(); nav.restore(&snapshot); // probe and snapshot answer genex-core's json: Value::from makes a genex::Value
+frame.nav_debug(&sim.nav, NavDebug::mesh().with_links().with_paths()); // or NavDebug::borders(), NavDebug::everything()
+```
+
+A game whose genex.toml sets `[nav] enabled = false` is built without navigation:
+`game.navigation` and `game.nav_bake` fail install `nav-disabled`. Delete that line (or set it
+to `true`) to use this page.
+
 ```rust
 game.navigation(NavConfig::walker(0.4, 1.8).with_tile(16.0));
 game.on_reset(|sim, _, _, _| {
@@ -58,7 +91,7 @@ game.on_update(|sim, ctx| sim.nav.update(ctx.dt));
 - **Caps.** `NAV_TILES_MAX` 4096, `NAV_OBSTACLES_MAX` 256, `NAV_INPUT_TRIANGLES_MAX` 4,194,304,
   obstacles at most 256 m from their centre.
 
-- **Agents.** `sim.nav.add_agent(NavAgent::new(at))` adds one (`with_speed(desired, max)`,
+- **Agents.** `sim.nav.add_agent(NavAgent::new(at))` adds one (`.with_speed(desired, max)`,
   `with_radius`, `with_reach`, `with_links(&[kinds])`, `with_area_cost(area, cost)`); at most
   `NAV_AGENTS_MAX` 1024, and `nav.remove_agent(agent)` removes one. `nav.move_to(agent, target)`
   and `nav.stop(agent)` set its goal. The game moves it: after `nav.update(dt)`, read

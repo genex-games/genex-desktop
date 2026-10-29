@@ -1,25 +1,51 @@
 import type { PluginInfo, PluginToolbarItem, PluginToolbarStatus } from "./plugins.ts";
+import { CoreFact, type GameKind, scopeReaches } from "./project-facts.ts";
 import { UiEvent } from "./ui-events.ts";
 
-/** One button contributed to the stage strip; `key` is the value of `data-plugin-toolbar`. */
+/**
+ * One button contributed to the stage strip; `key` is the value of `data-plugin-toolbar`.
+ * `outOfScope`: its `facts` don't reach the open game, so it shows only while its status says
+ * `shown` (`visibleToolbarEntries`), but is still asked for that status.
+ */
 export interface PluginToolbarEntry {
   key: string;
   plugin: PluginInfo;
   item: PluginToolbarItem;
+  outOfScope?: true;
 }
 const TONES = new Set(["ok", "warn", "err", "info"]);
 
-/** Buttons to render for the current project: enabled, installed plugins only; items that need a project wait for one. */
-export function toolbarItems(plugins: readonly PluginInfo[], project: string | null | undefined): PluginToolbarEntry[] {
+/** Whether an item's `facts` reach the open game: always for an unscoped item, never without a game. */
+const inScope = (item: PluginToolbarItem, project: string | null | undefined, game: GameKind | undefined): boolean =>
+  !item.facts || Boolean(project && game && scopeReaches(item.facts, game));
+
+/**
+ * The buttons of the current project: enabled, installed plugins only; items that need a project
+ * wait for one; an item scoped to facts that don't reach `game` comes marked `outOfScope`.
+ */
+export function toolbarItems(
+  plugins: readonly PluginInfo[],
+  project: string | null | undefined,
+  game?: GameKind,
+): PluginToolbarEntry[] {
   const entries: PluginToolbarEntry[] = [];
   for (const plugin of plugins) {
     if (!plugin.enabled || plugin.removed || plugin.unlisted) continue;
     for (const item of plugin.manifest.toolbar ?? []) {
       if (item.requiresProject !== false && !project) continue;
-      entries.push({ key: `${plugin.manifest.id}:${item.id}`, plugin, item });
+      const key = `${plugin.manifest.id}:${item.id}`;
+      entries.push(inScope(item, project, game) ? { key, plugin, item } : { key, plugin, item, outOfScope: true });
     }
   }
   return entries;
+}
+
+/** The buttons the strip draws: every one in scope, and one out of scope only while its status says `shown`. */
+export function visibleToolbarEntries(
+  entries: readonly PluginToolbarEntry[],
+  status: Readonly<Record<string, PluginToolbarStatus | undefined>>,
+): PluginToolbarEntry[] {
+  return entries.filter((entry) => !entry.outOfScope || status[entry.key]?.shown === true);
 }
 
 const text = (value: unknown, max: number): string | undefined => {
@@ -45,6 +71,7 @@ export function toolbarStatusFrom(value: unknown): PluginToolbarStatus | null {
   if (raw.disabled !== undefined) status.disabled = Boolean(raw.disabled);
   if (raw.attention !== undefined) status.attention = Boolean(raw.attention);
   if (raw.dot !== undefined) status.dot = Boolean(raw.dot);
+  if (raw.shown !== undefined) status.shown = Boolean(raw.shown);
   if (typeof raw.tone === "string" && TONES.has(raw.tone)) status.tone = raw.tone as PluginToolbarStatus["tone"];
   return status;
 }
@@ -61,9 +88,53 @@ export interface ToolbarUpdateWords {
  * once the update is applied or waits for the plugin's sessions to end.
  */
 export function toolbarUpdateStatus(plugin: PluginInfo, words: ToolbarUpdateWords): PluginToolbarStatus | null {
-  const version = plugin.availableVersion;
-  if (!version || plugin.pendingVersion) return null;
+  const version = updateDue(plugin);
+  if (!version) return null;
   return { badge: words.badge, title: words.title(plugin.manifest.name, version) };
+}
+
+/** The bundled version the plugin's buttons send the user to update to, or null when none is due. */
+const updateDue = (plugin: PluginInfo): string | null =>
+  plugin.availableVersion && !plugin.pendingVersion ? plugin.availableVersion : null;
+
+/**
+ * Multiplayer stands beside Publish, only on a game built at least once (`awaitingFirstBuild`) that
+ * is not multiplayer already and has something in it (an empty one has nothing to play together),
+ * whose page is its own or whose engine takes Genex's multiplayer in its project: an engine's web
+ * export (`webFolderOf`) is a build, made again from its project, that the chat never edits, so
+ * only an engine whose project carries Genex's multiplayer (`engineMultiplayer`, Godot's addon) gets it.
+ */
+export const showsMultiplayer = (game: {
+  publish: boolean;
+  builtOnce: boolean;
+  multiplayer: boolean;
+  emptyGame: boolean;
+  webExport: boolean;
+  engineMultiplayer: boolean;
+}): boolean =>
+  [game.publish, game.builtOnce, !game.multiplayer, !game.emptyGame, !game.webExport || game.engineMultiplayer].every(
+    Boolean,
+  );
+
+/** The engines whose project takes Genex's multiplayer itself: Godot (its plugin's addon) and Unity (its package). */
+const ENGINE_MULTIPLAYER: ReadonlySet<string> = new Set([CoreFact.GodotProject, CoreFact.UnityProject]);
+
+/** Whether the game's engine project takes Genex's multiplayer itself: a Godot or a Unity game. */
+export const takesEngineMultiplayer = (game: GameKind): boolean =>
+  game.facts.some((fact) => ENGINE_MULTIPLAYER.has(fact.id));
+
+/** What Multiplayer's press does, by where Genex stands. */
+export const MultiplayerPress = { SetUp: "set-up", Update: "update", Ask: "ask" } as const;
+export type MultiplayerPress = (typeof MultiplayerPress)[keyof typeof MultiplayerPress];
+
+/**
+ * Multiplayer's press with `genex`, the Genex plugin while it is on (undefined while off or not
+ * installed): bring Genex in, update an older one first as its own buttons do (an older Genex's
+ * instructions refuse a game made from the template), or ask the game's chat.
+ */
+export function multiplayerPress(genex: PluginInfo | undefined): MultiplayerPress {
+  if (!genex) return MultiplayerPress.SetUp;
+  return updateDue(genex) ? MultiplayerPress.Update : MultiplayerPress.Ask;
 }
 
 /**
@@ -121,5 +192,7 @@ export function toolbarReaction(
 ): { key: string; update: PluginToolbarStatus } | "refresh" | null {
   if (event.type === UiEvent.PluginsChanged) return "refresh";
   if (event.type === UiEvent.GameChanged) return gameRecordChanged(event.payload, project) ? "refresh" : null;
+  // A turn's tools may have changed what a button says (an engine chosen, a project made).
+  if (event.type === UiEvent.DelegationFinished) return project && event.payload.project === project ? "refresh" : null;
   return event.type === UiEvent.PluginEvent ? toolbarChange(event.payload, entries) : null;
 }

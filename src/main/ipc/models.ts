@@ -2,7 +2,7 @@
 import { modelProgress } from "../model-progress.ts";
 import { SUBSCRIPTION_ENGINES, type StudioCore } from "../studio-core.ts";
 import { type ModelPullProgress, UiEvent } from "../../shared/ui-events.ts";
-import type { ProviderUsageReport } from "../../shared/provider-usage.ts";
+import type { ProviderUsageService } from "../core/provider-usage.ts";
 import { isBonsaiModelId } from "../../substrate/bonsai/manifest.ts";
 import { BonsaiEngine } from "../../substrate/engines/bonsai.ts";
 import { LocalServerEngine } from "../../substrate/engines/local-server.ts";
@@ -13,8 +13,9 @@ import type { SubscriptionEngine } from "../login-controllers.ts";
 import type { OpenRouterLogin } from "../openrouter-login.ts";
 import type { IpcHandle } from "./registrar.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
-import { type EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import type { EngineStatus } from "../../shared/engine-descriptor.ts";
 
 /** The engines whose model list Settings may ask to refresh. */
 const REFRESHABLE: ReadonlySet<string> = new Set([
@@ -37,14 +38,17 @@ const isApiKeyEngine = (engine: unknown): engine is ApiKeyEngine =>
   typeof (engine as Partial<ApiKeyEngine> | null)?.saveKey === "function" &&
   typeof (engine as Partial<ApiKeyEngine> | null)?.clearKey === "function";
 
-/** Why a local model request from the renderer is refused. */
+/**
+ * Why a local model request from the renderer is refused. The functions are words the person reads
+ * in Settings; `unknownProvider` and `noModel` answer only a malformed call from our own renderer.
+ */
 const MESSAGE = {
   unknownProvider: "Unknown coding provider",
-  noKeyEngine: "OpenRouter is unavailable",
-  noLocalServer: "Local servers are unavailable",
-  bonsaiUnavailable: "Bonsai runtime is unavailable",
+  noKeyEngine: () => t("OpenRouter is unavailable"),
+  noLocalServer: () => t("Local servers are unavailable"),
+  bonsaiUnavailable: () => t("Bonsai runtime is unavailable"),
   noModel: "Name the model to delete",
-  cannotRemove: "This model cannot be deleted here",
+  cannotRemove: () => t("This model cannot be deleted here"),
 } as const;
 
 export interface ModelsIpcDeps {
@@ -53,11 +57,13 @@ export interface ModelsIpcDeps {
   pushUiEvent(event: UiEvent): void;
   /** OpenRouter's browser sign-in, which hands the key it gets to the engine. */
   openRouterLogin: OpenRouterLogin;
+  /** The subscriptions' plan limits, kept live (`core/provider-usage.ts`). */
+  usage: Pick<ProviderUsageService, "snapshot" | "refresh">;
 }
 
 export function registerModelsIpc(
   handle: IpcHandle,
-  { core, subscription, pushUiEvent, openRouterLogin }: ModelsIpcDeps,
+  { core, subscription, pushUiEvent, openRouterLogin, usage }: ModelsIpcDeps,
 ): void {
   handle("studio:engines", async () => core.engines.describe());
   handle("studio:models.refresh", async (payload) => {
@@ -69,17 +75,11 @@ export function registerModelsIpc(
   });
   registerApiKeyIpc(handle, { core, pushUiEvent, openRouterLogin });
   registerLocalServerIpc(handle, { core, pushUiEvent });
-  // The composer's plan limits: every signed-in subscription, read without starting a turn.
+  // The plan limits as they stand, at once; a fresh read starts, and each subscription's answer
+  // arrives as a `provider.usage` push.
   handle("studio:provider-usage", async () => {
-    const reports = await Promise.all(
-      SUBSCRIPTION_ENGINES.map(async (id): Promise<ProviderUsageReport | null> => {
-        if (!core.engines.has(id)) return null;
-        const engine = core.engines.get(id);
-        if ((await engine.status().catch(() => null))?.code !== EngineStatusCode.Ready) return null;
-        return { engine: id, usage: (await engine.readUsage?.().catch(() => null)) ?? null };
-      }),
-    );
-    return reports.filter((report): report is ProviderUsageReport => report !== null);
+    void usage.refresh().catch(() => {});
+    return usage.snapshot();
   });
   handle("studio:hardware", async () => hardwareReport());
   handle("studio:engines.recheck", async (payload) => {
@@ -117,7 +117,7 @@ export function registerModelsIpc(
     if (typeof model !== "string" || !model) throw new Error(MESSAGE.noModel);
     const id = isBonsaiModelId(model) ? EngineId.Bonsai : EngineId.Ollama;
     const engine = core.engines.has(id) ? core.engines.get(id) : null;
-    if (!engine?.removeModel) throw new Error(MESSAGE.cannotRemove);
+    if (!engine?.removeModel) throw new Error(MESSAGE.cannotRemove());
     await engine.removeModel(model);
     pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: id } });
     return true;
@@ -128,7 +128,7 @@ export function registerModelsIpc(
     );
     if (isBonsaiModelId(payload.model)) {
       const engine = core.engines.get(EngineId.Bonsai);
-      if (!(engine instanceof BonsaiEngine)) throw new Error(MESSAGE.bonsaiUnavailable);
+      if (!(engine instanceof BonsaiEngine)) throw new Error(MESSAGE.bonsaiUnavailable());
       const unsubscribe = engine.runtime.onInstall((job) => pushUiEvent({ type: UiEvent.ModelInstall, payload: job }));
       try {
         await engine.runtime.install(payload.model, progressUpdates.update);
@@ -168,7 +168,7 @@ function registerApiKeyIpc(
 ): void {
   const keyEngine = (): ApiKeyEngine => {
     const engine = core.engines.has(EngineId.OpenRouter) ? core.engines.get(EngineId.OpenRouter) : null;
-    if (!isApiKeyEngine(engine)) throw new Error(MESSAGE.noKeyEngine);
+    if (!isApiKeyEngine(engine)) throw new Error(MESSAGE.noKeyEngine());
     return engine;
   };
   handle("studio:openrouter.key.save", async (payload) => {
@@ -201,7 +201,7 @@ function registerLocalServerIpc(
 ): void {
   const localServer = (): LocalServerEngine => {
     const engine = core.engines.has(EngineId.LocalServer) ? core.engines.get(EngineId.LocalServer) : null;
-    if (!(engine instanceof LocalServerEngine)) throw new Error(MESSAGE.noLocalServer);
+    if (!(engine instanceof LocalServerEngine)) throw new Error(MESSAGE.noLocalServer());
     return engine;
   };
   const changed = (): void => pushUiEvent({ type: UiEvent.EnginesChanged, payload: { engine: EngineId.LocalServer } });

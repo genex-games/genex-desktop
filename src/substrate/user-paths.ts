@@ -8,6 +8,7 @@
 import { readdir, realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isImageFile } from "./game-workspace.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 
@@ -38,6 +39,8 @@ export interface NamedPaths {
   stillRoots: string[];
   /** Image files found in those roots, or named directly. */
   stillFiles: string[];
+  /** Folders of named files that are not pictures (a dropped document): the agent reads them there. */
+  fileRoots: string[];
 }
 
 export function isStillDirName(name: string): boolean {
@@ -53,6 +56,21 @@ export function isTooBroad(dir: string, home = os.homedir()): boolean {
     return true;
   }
   return false;
+}
+
+/** The home folder itself, or a drive's root. */
+function isHomeOrRoot(dir: string, home: string): boolean {
+  const resolved = path.resolve(dir);
+  return resolved === path.resolve(home) || path.parse(resolved).root === resolved;
+}
+
+/** A `file:` URL's path on this computer, or null when it is not one. */
+function fileUrlPath(url: string): string | null {
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return null;
+  }
 }
 
 /** How a platform writes an absolute path, a home-relative one, and either bare in a sentence. */
@@ -92,6 +110,11 @@ export function extractCandidatePaths(
     if (!spelling.absolute.test(next)) return;
     found.push(spelling.paths.normalize(next));
   };
+  // A file URL carries a path with spaces whole (`file:///Users/me/level%20plan.pdf`).
+  for (const match of text.matchAll(/file:\/\/[^\s'"`]+/g)) {
+    const named = fileUrlPath(match[0]);
+    if (named) add(named);
+  }
   for (const match of text.matchAll(/['"`]([^'"`]+)['"`]/g)) {
     const inner = match[1] ?? "";
     if (spelling.absolute.test(inner) || spelling.home.test(inner)) add(inner);
@@ -107,6 +130,7 @@ interface NamedPathsFound {
   home: string;
   stillRoots: Set<string>;
   stillFiles: Set<string>;
+  fileRoots: Set<string>;
   workspaces: string[];
 }
 
@@ -115,9 +139,17 @@ function considerWorkspace(found: NamedPathsFound, dir: string): void {
   found.workspaces.push(dir);
 }
 
-/** A named picture: it is a still, its folder a still root, and the folder (or its parent) the workspace. */
+/**
+ * A named picture: it is a still, its folder a still root, and the folder (or its parent) the
+ * workspace. Any other file is only read where it is: its folder joins the reads, nothing more.
+ */
 function addNamedFile(found: NamedPathsFound, file: string): void {
-  if (!isImageFile(file)) return;
+  if (!isImageFile(file)) {
+    const folder = path.dirname(file);
+    // A file kept loose in the home folder (or at a drive's root) is no reason to open all of it.
+    if (!isHomeOrRoot(folder, found.home)) found.fileRoots.add(folder);
+    return;
+  }
   found.stillFiles.add(file);
   const folder = path.dirname(file);
   found.stillRoots.add(folder);
@@ -145,7 +177,13 @@ async function addNamedDir(found: NamedPathsFound, dir: string): Promise<void> {
 
 export async function resolveNamedPaths(text: string, options: { home?: string } = {}): Promise<NamedPaths> {
   const home = options.home ?? os.homedir();
-  const found: NamedPathsFound = { home, stillRoots: new Set(), stillFiles: new Set(), workspaces: [] };
+  const found: NamedPathsFound = {
+    home,
+    stillRoots: new Set(),
+    stillFiles: new Set(),
+    fileRoots: new Set(),
+    workspaces: [],
+  };
 
   for (const candidate of extractCandidatePaths(text, home)) {
     const resolved = await existingPath(candidate);
@@ -160,6 +198,7 @@ export async function resolveNamedPaths(text: string, options: { home?: string }
     workspace: found.workspaces[0] ?? null,
     stillRoots: [...found.stillRoots],
     stillFiles: [...found.stillFiles],
+    fileRoots: [...found.fileRoots],
   };
 }
 

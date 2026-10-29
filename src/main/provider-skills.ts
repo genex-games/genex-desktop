@@ -1,10 +1,11 @@
 /** Discovery only: never sends a model prompt, executes a skill, or imports user tools. */
-import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { spawnCommand } from "../substrate/command-launch.ts";
 import { resolveCodingCli } from "../substrate/engines/external-cli.ts";
+import { stopChild } from "../substrate/process-tree.ts";
 import { isBelow, isInside, toPosixRelative } from "../substrate/paths.ts";
 import { codexSubscriptionEnv } from "../substrate/engines/codex-cli.ts";
 import {
@@ -16,6 +17,7 @@ import {
 } from "../shared/provider-skills.ts";
 import { LoginSource } from "../shared/engine-descriptor.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 import { SECOND_MS } from "../shared/duration.ts";
 import { EngineId } from "../shared/providers.ts";
 import { CodingCliState } from "../shared/coding-cli.ts";
@@ -30,24 +32,32 @@ const SKILL_FILE_MAX_BYTES = 256 * 1024;
 const SKILL_WALK_MAX_DEPTH = 6;
 const SKILL_WALK_MAX_FOLDERS = 2000;
 
-/** What the Skills panel reads when discovery could not finish; each names the next step. */
+/**
+ * What the Skills panel reads when discovery could not finish; each names the next step.
+ * `invalidSkillMetadata` is caught where it is thrown and replaced with a warning, so it stays English.
+ */
 const MESSAGE = {
-  codexUnavailable: "Codex CLI is unavailable. Check Model Providers, then refresh skills.",
-  codexTimedOut: "Codex skill discovery timed out. Refresh to retry.",
-  codexNotStarted: "Could not start Codex skill discovery. Check Model Providers.",
-  codexExited: "Codex closed before returning its skills. Refresh to retry.",
-  codexPipeClosed: "Codex skill discovery closed. Refresh to retry.",
-  codexOversized: "Codex returned an oversized skill inventory.",
-  codexRefused: "Codex could not list skills with this configuration. Check the CLI, then refresh.",
-  codexUnreadable: "Codex reported unreadable skills. Check its configuration, then refresh.",
-  claudeLimit: "Some skill folders exceeded the discovery limit.",
-  claudePlugins: "Could not read the installed Claude plugin inventory.",
-  claudeNote:
-    "Installed globally. Studio currently loads project skills only; these personal skills are not enabled in its Claude sessions.",
-  openCodeUnavailable: "OpenCode CLI is unavailable. Check Model Providers, then refresh skills.",
-  openCodeNote: "Installed globally. Studio's OpenCode sessions load no skills, so these are not enabled in them.",
-  codexNote:
-    "Reported by the selected Codex CLI profile. Availability does not mean a skill was used in a conversation.",
+  codexUnavailable: () => t("Codex CLI is unavailable. Check Model Providers, then refresh skills."),
+  codexTimedOut: () => t("Codex skill discovery timed out. Refresh to retry."),
+  codexNotStarted: () => t("Could not start Codex skill discovery. Check Model Providers."),
+  codexExited: () => t("Codex closed before returning its skills. Refresh to retry."),
+  codexPipeClosed: () => t("Codex skill discovery closed. Refresh to retry."),
+  codexOversized: () => t("Codex returned an oversized skill inventory."),
+  codexRefused: () => t("Codex could not list skills with this configuration. Check the CLI, then refresh."),
+  codexUnreadable: () => t("Codex reported unreadable skills. Check its configuration, then refresh."),
+  claudeLimit: () => t("Some skill folders exceeded the discovery limit."),
+  claudePlugins: () => t("Could not read the installed Claude plugin inventory."),
+  claudeNote: () =>
+    t(
+      "Installed globally. Studio currently loads project skills only; these personal skills are not enabled in its Claude sessions.",
+    ),
+  openCodeUnavailable: () => t("OpenCode CLI is unavailable. Check Model Providers, then refresh skills."),
+  openCodeNote: () =>
+    t("Installed globally. Studio's OpenCode sessions load no skills, so these are not enabled in them."),
+  codexNote: () =>
+    t("Reported by the selected Codex CLI profile. Availability does not mean a skill was used in a conversation."),
+  unreadableSkill: (name: string) => t("Could not read skill {name}.", { name }),
+  unreadableScope: (scope: string) => t("Could not read {scope} skills.", { scope }),
   invalidSkillMetadata: "Invalid skill metadata",
 } as const;
 
@@ -81,13 +91,20 @@ export function normalizeCodexSkills(value: unknown): ProviderSkill[] {
 async function codexCatalog(cwd: string, home: string | null): Promise<unknown> {
   const cli = await resolveCodingCli(EngineId.Codex);
   const executable = cli.status.path;
-  if (cli.status.state !== CodingCliState.Ready || !executable) throw new Error(MESSAGE.codexUnavailable);
+  if (cli.status.state !== CodingCliState.Ready || !executable) throw new Error(MESSAGE.codexUnavailable());
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ["app-server"], {
+    // npm installs Codex as `codex.cmd` on Windows, which only `spawnCommand` can start.
+    const child = spawnCommand(executable, ["app-server"], {
       cwd,
       env: codexSubscriptionEnv({ ...cli.env, ...(home ? { CODEX_HOME: home } : {}) }),
       stdio: ["pipe", "pipe", "ignore"],
     });
+    const { stdin, stdout } = child;
+    if (!stdin || !stdout) {
+      void stopChild(child);
+      reject(new Error(MESSAGE.codexNotStarted()));
+      return;
+    }
     let bytes = 0;
     let done = false;
     const finish = (error?: Error, value?: unknown) => {
@@ -95,22 +112,22 @@ async function codexCatalog(cwd: string, home: string | null): Promise<unknown> 
       done = true;
       clearTimeout(timer);
       lines.close();
-      child.kill();
+      void stopChild(child, { signal: "SIGTERM" });
       if (error) reject(error);
       else resolve(value);
     };
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish(new Error(MESSAGE.codexTimedOut));
+      void stopChild(child);
+      finish(new Error(MESSAGE.codexTimedOut()));
     }, CODEX_DISCOVERY_TIMEOUT_MS);
-    const lines = createInterface({ input: child.stdout });
-    const send = (data: unknown) => child.stdin.write(`${JSON.stringify(data)}\n`);
-    child.on("error", () => finish(new Error(MESSAGE.codexNotStarted)));
-    child.on("exit", () => finish(new Error(MESSAGE.codexExited)));
-    child.stdin.on("error", () => finish(new Error(MESSAGE.codexPipeClosed)));
-    child.stdout.on("data", (chunk) => {
+    const lines = createInterface({ input: stdout });
+    const send = (data: unknown) => stdin.write(`${JSON.stringify(data)}\n`);
+    child.on("error", () => finish(new Error(MESSAGE.codexNotStarted())));
+    child.on("exit", () => finish(new Error(MESSAGE.codexExited())));
+    stdin.on("error", () => finish(new Error(MESSAGE.codexPipeClosed())));
+    stdout.on("data", (chunk) => {
       bytes += chunk.length;
-      if (bytes > CODEX_INVENTORY_MAX_BYTES) finish(new Error(MESSAGE.codexOversized));
+      if (bytes > CODEX_INVENTORY_MAX_BYTES) finish(new Error(MESSAGE.codexOversized()));
     });
     lines.on("line", (line) => {
       let data: { id?: number; error?: unknown; result?: unknown };
@@ -121,7 +138,7 @@ async function codexCatalog(cwd: string, home: string | null): Promise<unknown> 
       }
       if (data.id !== 1 && data.id !== 2) return;
       if (data.error) {
-        finish(new Error(MESSAGE.codexRefused));
+        finish(new Error(MESSAGE.codexRefused()));
         return;
       }
       if (data.id === 1) {
@@ -209,13 +226,13 @@ async function listSkill(scan: SkillRootScan, dir: string, file: string, name: s
       scope: scan.scope,
     });
   } catch {
-    scan.output.warnings.push(`Could not read skill ${name}.`);
+    scan.output.warnings.push(MESSAGE.unreadableSkill(name));
   }
 }
 
 async function walkSkills(scan: SkillRootScan, dir: string, depth: number): Promise<void> {
   if (depth > SKILL_WALK_MAX_DEPTH || ++scan.visited > SKILL_WALK_MAX_FOLDERS) {
-    warnOnce(scan.output, MESSAGE.claudeLimit);
+    warnOnce(scan.output, MESSAGE.claudeLimit());
     return;
   }
   const actual = await realpath(dir);
@@ -245,7 +262,7 @@ async function scanSkillRoot(
   try {
     await walkSkills({ ...inventory, roots, scope, commands, visited: 0 }, root, 0);
   } catch {
-    inventory.output.warnings.push(`Could not read ${scope} skills.`);
+    inventory.output.warnings.push(MESSAGE.unreadableScope(scope));
   }
 }
 
@@ -259,7 +276,7 @@ async function scanInstalledPlugins(inventory: SkillInventoryScan, home: string)
     for (const [name, versions] of Object.entries(registry.plugins ?? {}))
       for (const version of Array.isArray(versions) ? versions : []) await scanPlugin(inventory, cache, name, version);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") inventory.output.warnings.push(MESSAGE.claudePlugins);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") inventory.output.warnings.push(MESSAGE.claudePlugins());
   }
 }
 
@@ -290,7 +307,7 @@ export async function claudeGlobalSkills(
     source: "installed-files",
     skills: [],
     warnings: [],
-    note: MESSAGE.claudeNote,
+    note: MESSAGE.claudeNote(),
     builders: ProviderBuilderUse.NotLoaded,
   };
   const inventory: SkillInventoryScan = { output, seen: new Set(), directories: new Set() };
@@ -328,14 +345,14 @@ export async function codexGlobalSkills(cwd: string, login: CodexSkillLogin | nu
     source: "native-catalog",
     skills: [],
     warnings: [],
-    note: MESSAGE.codexNote,
+    note: MESSAGE.codexNote(),
     builders: codexBuilderUse(login?.source ?? LoginSource.None),
   };
   try {
     const value = await codexCatalog(cwd, login?.home ?? null);
     output.skills = normalizeCodexSkills(value);
     if ((value as { data?: Array<{ errors?: unknown[] }> }).data?.some((group) => group.errors?.length))
-      output.warnings.push(MESSAGE.codexUnreadable);
+      output.warnings.push(MESSAGE.codexUnreadable());
   } catch (error) {
     output.warnings.push(errorMessage(error));
   }
@@ -370,11 +387,11 @@ export async function openCodeGlobalSkills(
     source: "installed-files",
     skills: [],
     warnings: [],
-    note: MESSAGE.openCodeNote,
+    note: MESSAGE.openCodeNote(),
     builders: ProviderBuilderUse.NotLoaded,
   };
   if (!(await cliReady().catch(() => false))) {
-    output.warnings.push(MESSAGE.openCodeUnavailable);
+    output.warnings.push(MESSAGE.openCodeUnavailable());
     return output;
   }
   const inventory: SkillInventoryScan = { output, seen: new Set(), directories: new Set() };

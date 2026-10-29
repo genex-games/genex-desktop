@@ -66,7 +66,7 @@ fn rows_every(step: u32) -> Vec<u32> {
 
 /// The strip's four levels.
 fn chain() -> LodChain {
-    LodChain { levels: (1..=4).map(|k| LodLevel { indices: rows_every(1 << k), error: ERRORS[k - 1] }).collect() }
+    LodChain { casters: 0, levels: (1..=4).map(|k| LodLevel { indices: rows_every(1 << k), error: ERRORS[k - 1] }).collect() }
 }
 
 fn levels(data: &SkinnedMeshData) -> Vec<SkinnedLevel> {
@@ -520,7 +520,7 @@ fn character(columns: u32, rows: u32) -> SkinnedModel {
     let nodes = vec![SkeletonNode { parent: None, rest: Trs::IDENTITY }, SkeletonNode { parent: Some(0), rest: Trs::IDENTITY }];
     let skeleton = Skeleton { nodes, joints: vec![0, 1], inverse_bind: vec![translation(0.0, 0.0, 0.0), translation(0.0, 0.0, 0.0)], mesh_node: None };
     let data = SkinnedMeshData { mesh: MeshData { vertices, indices: grid(1) }, skin, skeleton, animations: Vec::new() };
-    let chain = LodChain { levels: (1..=4).map(|k| LodLevel { indices: grid(1 << k), error: ERRORS[k - 1] }).collect() };
+    let chain = LodChain { casters: 0, levels: (1..=4).map(|k| LodLevel { indices: grid(1 << k), error: ERRORS[k - 1] }).collect() };
     let levels = skinned_levels(&data.mesh, &data.skin, &[SkinPart::whole(&data.mesh)], &[Some(chain)]);
     SkinnedModel { parts: vec![SkinPart::whole(&data.mesh)], data, levels }
 }

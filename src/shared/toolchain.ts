@@ -717,11 +717,13 @@ export function parseAndroidLicence(payload: unknown): AndroidLicence {
 }
 
 /**
- * What a Rust · wgpu game needs per destination. Browser and Mac only so far: the Windows and Linux
- * rows join {@link RUST_CROSS_COMPONENTS} (with the host's Rust and the vendored crates) once
- * their lanes pin those components in `rust-recipe.json`, and the mobile ones with theirs. Until
- * then the lane refuses Windows and Linux `target-unbuilt` and setup offers neither
- * ({@link rustCrossPinned}).
+ * What a Rust · wgpu game needs per destination: the host's Rust sysroot and the vendored crates,
+ * the browser's standard library and packaging tools, each cross destination's
+ * {@link RUST_CROSS_COMPONENTS}, and each phone's standard libraries. The lane registers a cross
+ * builder, and setup offers it, only while its row lists every cross component
+ * ({@link rustCrossPinned}). A phone's row is what its lane build compiles with: the person's own
+ * SDK parts ({@link USER_SIDE_COMPONENTS}) are found outside the store, and the packaging tools
+ * (bundletool, the store's JDK) are its export's (`mobile-export-deps.ts`), so neither is a lock entry here.
  */
 const RUST_REQUIRED_COMPONENTS = {
   [BuildTarget.Web]: [
@@ -732,10 +734,10 @@ const RUST_REQUIRED_COMPONENTS = {
     ToolchainId.RustVendor,
   ],
   [BuildTarget.Mac]: [ToolchainId.Rust, ToolchainId.RustVendor],
-  [BuildTarget.Windows]: [],
-  [BuildTarget.Linux]: [],
-  [BuildTarget.Ios]: [],
-  [BuildTarget.Android]: [],
+  [BuildTarget.Windows]: [ToolchainId.Rust, ToolchainId.RustVendor, ...RUST_CROSS_COMPONENTS[BuildTarget.Windows]],
+  [BuildTarget.Linux]: [ToolchainId.Rust, ToolchainId.RustVendor, ...RUST_CROSS_COMPONENTS[BuildTarget.Linux]],
+  [BuildTarget.Ios]: [ToolchainId.Rust, ToolchainId.RustVendor, ToolchainId.RustStdIos, ToolchainId.RustStdIosSim],
+  [BuildTarget.Android]: [ToolchainId.Rust, ToolchainId.RustVendor, ToolchainId.RustStdAndroid],
 } as const satisfies StackComponents;
 
 /**

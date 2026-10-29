@@ -84,6 +84,9 @@ class Class(Object):
 class Name(str):
     """FName."""
 
+    def is_none(self) -> bool:
+        return self == 'None'
+
 
 class Text(str):
     """FText."""
@@ -345,6 +348,89 @@ class StaticMeshEditorSubsystem:
         return True
 
 
+class BoxSphereBounds:
+    def __init__(self, origin: Vector, box_extent: Vector) -> None:
+        self.origin, self.box_extent = origin, box_extent
+
+
+def _leaf(path: str) -> str:
+    return path.rsplit('/', 1)[-1]
+
+
+class Skeleton(Object):
+    """A skeleton asset, by its path."""
+
+    def __init__(self, path: str = '/Game/Skeleton') -> None:
+        self.path = path
+
+    def get_path_name(self) -> str:
+        return f'{self.path}.{_leaf(self.path)}'
+
+    def get_name(self) -> str:
+        return _leaf(self.path)
+
+
+class SkeletalMesh(Object):
+    """A rigged mesh asset: its path, its skeleton, its reference-pose bounds (`extent`, half sizes in cm)
+    and its bones' parents (`parents`, bone: parent, the root's parent None). For the IK Rig and Geometry
+    Script stand-ins it also carries the chains auto-characterisation finds (`chains`, name: (start, end)),
+    the retarget root (`root`), the reference pose (`reference`, bone: ((x, y, z), quat)) and its LOD 0
+    (`vertices`, `triangles`, `weights`: per vertex [(bone, weight)])."""
+
+    def __init__(self, path: str = '/Game/Mesh', extent: Vector | None = None, parents: dict | None = None,
+                 skeleton: Skeleton | None = None, chains: dict | None = None, root: str = '',
+                 reference: dict | None = None) -> None:
+        self.path, self.extent = path, extent or Vector(40.0, 20.0, 90.0)
+        self.parents = parents or {}
+        self.skeleton = skeleton or Skeleton(f'{path}_Skeleton')
+        self.chains, self.root, self.reference = chains or {}, root, reference or {}
+        self.vertices: list = []
+        self.triangles: list = []
+        self.weights: list = []
+        self.materials: list = []
+
+    def get_path_name(self) -> str:
+        return f'{self.path}.{_leaf(self.path)}'
+
+    def get_name(self) -> str:
+        return _leaf(self.path)
+
+    def get_editor_property(self, name: str):
+        return {'skeleton': self.skeleton, 'physics_asset': None, 'materials': self.materials}[name]
+
+    def get_bounds(self) -> BoxSphereBounds:
+        return BoxSphereBounds(Vector(0.0, 0.0, self.extent.z), self.extent)
+
+    def get_bone_parent(self, bone_name: str) -> Name:
+        """Unreal answers the root's (and an unknown bone's) parent as the name None."""
+        return Name(self.parents.get(str(bone_name)) or 'None')
+
+    def get_bone_children(self, bone_name: str) -> list:
+        return [Name(bone) for bone, parent in self.parents.items() if parent == str(bone_name)]
+
+
+class AnimSequenceBase(Object):
+    """A clip: its path, length, skeleton and `pose_at(seconds)` (bone: ((x, y, z), quat), component space)."""
+
+    def __init__(self, path: str = '/Game/Anim', seconds: float = 1.0, skeleton: Skeleton | None = None,
+                 pose_at=None) -> None:
+        self.path, self.seconds, self.skeleton = path, seconds, skeleton
+        self.pose_at = pose_at or (lambda seconds: {})
+
+    def get_path_name(self) -> str:
+        return f'{self.path}.{_leaf(self.path)}'
+
+    def get_play_length(self) -> float:
+        return self.seconds
+
+    def get_skeleton(self) -> Skeleton | None:
+        return self.skeleton
+
+
+class AnimSequence(AnimSequenceBase):
+    """A clip made by an import or a retarget."""
+
+
 class SoundWave(Object):
     def __init__(self, duration: float) -> None:
         self.duration = duration
@@ -367,9 +453,28 @@ class Texture2D(Object):
 class MaterialInterface(Object):
     """A material or a material instance."""
 
+    def get_base_material(self):
+        return None
+
 
 class MaterialInstanceConstant(MaterialInterface):
-    """A material an import made beside its mesh."""
+    """A material an import made beside its mesh; `parent` is the material it instances."""
+
+    def __init__(self, parent=None) -> None:
+        self.parent = parent
+
+    def get_base_material(self):
+        return self.parent.get_base_material() if self.parent else None
+
+
+class SkeletalMaterial(Object):
+    """A skeletal mesh's material slot."""
+
+    def __init__(self, material_interface=None) -> None:
+        self.material_interface = material_interface
+
+    def get_editor_property(self, name: str):
+        return {'material_interface': self.material_interface}[name]
 
 
 class StaticMeshComponent(MeshComponent):
@@ -401,13 +506,37 @@ class StaticMeshComponent(MeshComponent):
 class SkeletalMeshComponent(MeshComponent):
     """A posed skeletal mesh: its bones' world locations by name; its bounds hold them (or `bounds`)."""
 
-    def __init__(self, name: str, bones: dict[str, Vector], location: Vector | None = None, visible: bool = True,
+    def __init__(self, name: str = 'SkeletalMeshComponent', bones: dict[str, Vector] | None = None,
+                 location: Vector | None = None, visible: bool = True,
                  bounds: tuple[Vector, Vector] | None = None, **props) -> None:
         super().__init__(name, location, None, None, visible, **props)
-        self.bones, self.bounds = bones, bounds
+        self.bones, self.bounds = bones or {}, bounds
 
     def get_all_socket_names(self) -> list[Name]:
         return [Name(name) for name in self.bones]
+
+    def get_skinned_asset(self):
+        return self.props.get('skinned_asset')
+
+    def set_skeletal_mesh_asset(self, new_mesh) -> None:
+        _record('skeletal_mesh', new_mesh.get_name())
+        self.props['skinned_asset'] = new_mesh
+
+    def set_update_animation_in_editor(self, new_update_state: bool) -> None:
+        self.props['update_in_editor'] = new_update_state
+
+    def set_animation_mode(self, animation_mode, force_init_anim_script_instance: bool = True) -> None:
+        self.props['animation_mode'] = animation_mode.name
+
+    def set_play_rate(self, rate: float) -> None:
+        self.props['play_rate'] = rate
+
+    def set_animation(self, new_anim_to_play) -> None:
+        self.props['animation'] = new_anim_to_play
+
+    def set_position(self, pos: float, fire_notifies: bool = True) -> None:
+        _record('pose_at', pos)
+        self.props['position'] = pos
 
     def get_socket_location(self, name: str) -> Vector:
         return self.bones[str(name)]
@@ -578,6 +707,10 @@ class FirstPersonPrimitiveType:
     WORLD_SPACE_REPRESENTATION = _EnumValue('WORLD_SPACE_REPRESENTATION')
 
 
+class MaterialUsage:
+    MATUSAGE_SKELETAL_MESH = _EnumValue('MATUSAGE_SKELETAL_MESH')
+
+
 def get_default_object(cls):
     return cls.cdo if isinstance(cls, Class) else cls()
 
@@ -590,14 +723,43 @@ class BlueprintStatus:
 
 class Blueprint(Object):
     """A Blueprint that always compiles; its components ([(name, template)]) and member variables
-    ({name: the pin type's export text}) are what the editor would list."""
+    ({name: the pin type's export text}) are what the editor would list; `generated` is its class."""
 
-    def __init__(self, components: list | None = None, variables: dict[str, str] | None = None) -> None:
+    def __init__(self, components: list | None = None, variables: dict[str, str] | None = None,
+                 generated: 'Class | None' = None, name: str = '') -> None:
         self.components = components or []
         self.variables = variables or {}
+        self.generated, self.name = generated, name
 
     def get_editor_property(self, name: str):
         return BlueprintStatus.BS_UP_TO_DATE
+
+    def generated_class(self) -> 'Class':
+        return self.generated
+
+    def get_name(self) -> str:
+        return self.name or super().get_name()
+
+    def get_path_name(self) -> str:
+        return self.generated.path if self.generated else ''
+
+
+class AnimBlueprint(Blueprint):
+    """An anim Blueprint: its defaults (`generated.cdo`) hold its variables' values."""
+
+
+class _Defaults(Object):
+    """A generated class's defaults: its variables by name, read and set as editor properties."""
+
+    def __init__(self, **values) -> None:
+        self.props = dict(values)
+
+    def get_editor_property(self, name: str):
+        return self.props[name]
+
+    def set_editor_property(self, name: str, value, notify_mode=None) -> None:
+        _record('set_default', name)
+        self.props[name] = value
 
 
 class EdGraphPinType(Object):
@@ -647,6 +809,14 @@ class AddNewSubobjectParams:
 
 
 class SubobjectDataBlueprintFunctionLibrary:
+    @staticmethod
+    def get_data(handle):
+        return handle
+
+    @staticmethod
+    def get_object_for_blueprint(data, blueprint):
+        return data[1]
+
     @staticmethod
     def get_variable_name(data) -> Name:
         return Name(data[0])
@@ -825,8 +995,8 @@ class EditorAssetLibrary:
         return path in state['assets']
 
     @staticmethod
-    def list_assets(path: str, recursive: bool = True) -> list[str]:
-        return sorted(a for a in state['assets'] if a.startswith(path + '/'))
+    def list_assets(directory_path: str, recursive: bool = True, include_folder: bool = False) -> list[str]:
+        return sorted(a for a in state['assets'] if a.startswith(directory_path + '/'))
 
     @staticmethod
     def save_directory(path: str, only_if_is_dirty: bool = True, recursive: bool = True) -> bool:
@@ -970,18 +1140,19 @@ class AssetTools:
             made = state['imports'].get(task.filename, [])
             task.imported_object_paths = [f'{path}.{path.rsplit("/", 1)[-1]}' for path, _ in made]
             for path, asset in made:
-                if isinstance(asset, StaticMesh):
+                if isinstance(asset, Object):
                     asset.path = path
                 state['loaded'][path] = asset
+                state['assets'].add(path)
                 state['registry'].append(AssetData(path, type(asset).__name__, asset=asset))
 
     def create_asset(self, *args):
         """Records the call; a Material is made (and listed) at <package_path>/<asset_name>, other assets aren't."""
         _record('create_asset', args)
         name, folder, asset_class = args[0], args[1], args[2]
-        if asset_class is not Material:
+        if asset_class not in (Material, IKRigDefinition, IKRetargeter):
             return None
-        made = Material(f'{folder}/{name}')
+        made = asset_class(f'{folder}/{name}')
         state['assets'].add(made.path)
         state['loaded'][made.path] = made
         return made
@@ -1062,6 +1233,15 @@ class GameplayStatics:
         return state['game_seconds']
 
     @staticmethod
+    def set_game_paused(world_context_object, paused: bool) -> bool:
+        state['paused'] = bool(paused)
+        return True
+
+    @staticmethod
+    def is_game_paused(world_context_object) -> bool:
+        return state.get('paused', False)
+
+    @staticmethod
     def get_world_delta_seconds(world_context_object) -> float:
         return state['world_delta']
 
@@ -1071,6 +1251,18 @@ class BlueprintEditorLibrary:
     @staticmethod
     def compile_blueprint(blueprint) -> None:
         _record('compile', blueprint)
+
+    @staticmethod
+    def create_blueprint_asset_with_parent(asset_path: str, parent_class: 'Class') -> Blueprint:
+        """A child Blueprint whose components start as the parent's (its defaults' `components`), each its own copy."""
+        _record('create_blueprint', asset_path, parent_class.get_name())
+        inherited = getattr(parent_class.cdo, 'components', []) if parent_class.cdo is not None else []
+        components = [[name, type(template)(name)] for name, template in inherited]
+        name = asset_path.rsplit('/', 1)[-1]
+        made = Blueprint(components, generated=Class(path=f'{asset_path}.{name}_C', cdo=_Defaults()), name=name)
+        state['loaded'][asset_path] = made
+        state['assets'].add(asset_path)
+        return made
 
     @staticmethod
     def list_member_variable_names(blueprint: Blueprint, include_inherited_members: bool = True) -> list[str]:
@@ -1200,15 +1392,39 @@ class CameraActor(Actor):
         self.components = [self.camera_component]
 
 
-_SPAWN_AS_ITSELF = (PlayerStart, StaticMeshActor, CameraActor)
+class SkeletalMeshActor(Actor):
+    """A placed skeletal mesh; its mesh, animation and pose are its component's."""
+
+    def __init__(self, label: str = 'SkeletalMeshActor', location: Vector | None = None) -> None:
+        super().__init__(label, location)
+        self.skeletal_mesh_component = SkeletalMeshComponent('SkeletalMeshComponent', {}, location=self.location)
+        self.components = [self.skeletal_mesh_component]
+
+
+_SPAWN_AS_ITSELF = (PlayerStart, StaticMeshActor, CameraActor, SkeletalMeshActor)
 
 
 class Transform:
-    def __init__(self, location: Vector | None = None, rotation: Rotator | None = None,
-                 scale: Vector | None = None) -> None:
+    """A location, rotation (a Rotator as made, or a Quat as an engine call answers it) and scale."""
+
+    def __init__(self, location: Vector | None = None, rotation=None, scale: Vector | None = None) -> None:
         self.location = location or Vector()
         self.rotation = rotation or Rotator()
         self.scale = scale or Vector(1.0, 1.0, 1.0)
+
+    @property
+    def translation(self) -> Vector:
+        return self.location
+
+
+class Quat:
+    def __init__(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, w: float = 1.0) -> None:
+        self.x, self.y, self.z, self.w = x, y, z, w
+
+
+def _transform(pose: tuple) -> Transform:
+    """An engine Transform of a ((x, y, z), (qx, qy, qz, qw)) pose."""
+    return Transform(Vector(*pose[0]), Quat(*pose[1]))
 
 
 class Array(list):
@@ -1291,8 +1507,16 @@ class GeometryScript_MeshQueries:
         """Like Unreal's: the mesh, then its out-params (the positions, whether ids have gaps)."""
         return target_mesh, GeometryScriptVectorList(target_mesh.vertices), False
 
+    @staticmethod
+    def get_all_triangle_indices(target_mesh: DynamicMesh, skip_gaps: bool = False) -> tuple:
+        return target_mesh, GeometryScriptTriangleList(target_mesh.triangles), False
+
 
 class GeometryScript_List:
+    @staticmethod
+    def convert_triangle_list_to_array(triangle_list: 'GeometryScriptTriangleList') -> Array:
+        return Array(IntVector(*t) for t in triangle_list.triangles)
+
     @staticmethod
     def convert_vector_list_to_array(vector_list: GeometryScriptVectorList) -> Array:
         return Array(vector_list.vectors)
@@ -1352,12 +1576,16 @@ class Material(MaterialInterface):
         self.path = path
         self.expressions: list = []
         self.links: list[tuple] = []
+        self.usages: set = set()
 
     def get_name(self) -> str:
         return self.path.rsplit('/', 1)[-1]
 
     def get_path_name(self) -> str:
         return f'{self.path}.{self.get_name()}'
+
+    def get_base_material(self):
+        return self
 
 
 class MaterialFactoryNew(Object):
@@ -1430,6 +1658,372 @@ class MaterialEditingLibrary:
     @staticmethod
     def recompile_material(material: Material) -> None:
         _record('recompile_material', material.path)
+
+    @staticmethod
+    def has_material_usage(material: Material, usage) -> bool:
+        return usage.name in material.usages
+
+    @staticmethod
+    def set_material_usage(material: Material, usage) -> bool:
+        """Marks the usage; True when the material needs a recompile for it."""
+        _record('set_material_usage', material.path, usage.name)
+        added = usage.name not in material.usages
+        material.usages.add(usage.name)
+        return added
+
+
+def new_object(type, outer=None, name='None', base_type=None):
+    return type()
+
+
+class BoneChain(Object):
+    def __init__(self, chain_name: str) -> None:
+        self.chain_name = Name(chain_name)
+
+    def get_editor_property(self, name: str):
+        return {'chain_name': self.chain_name}[name]
+
+
+class IKRigDefinition(Object):
+    """An IK Rig, as its controller leaves it: the mesh, chains, root and solvers."""
+
+    def __init__(self, path: str = '') -> None:
+        self.path, self.mesh, self.chains, self.root, self.solvers = path, None, {}, '', 0
+
+    def get_path_name(self) -> str:
+        return f'{self.path}.{_leaf(self.path)}'
+
+
+class IKRigDefinitionFactory(Object):
+    pass
+
+
+class IKRigController:
+    """An IK Rig's controller: auto-characterisation reads the mesh's `chains` and `root`, the reference
+    pose its `reference`; apply_auto_fbik adds one solver when the mesh has chains (`state['fbik_fails']` refuses)."""
+
+    def __init__(self, rig: IKRigDefinition) -> None:
+        self.rig = rig
+
+    @staticmethod
+    def get_controller(in_ik_rig_definition: IKRigDefinition) -> 'IKRigController':
+        return IKRigController(in_ik_rig_definition)
+
+    def set_skeletal_mesh(self, skeletal_mesh: SkeletalMesh) -> bool:
+        self.rig.mesh = skeletal_mesh
+        return True
+
+    def apply_auto_generated_retarget_definition(self) -> bool:
+        self.rig.chains, self.rig.root = dict(self.rig.mesh.chains), self.rig.mesh.root
+        return bool(self.rig.chains)
+
+    def apply_auto_fbik(self) -> bool:
+        if state.get('fbik_fails') or not self.rig.chains:
+            return False
+        _record('apply_auto_fbik', self.rig.mesh.get_name())
+        self.rig.solvers = 1
+        return True
+
+    def get_num_solvers(self) -> int:
+        return self.rig.solvers
+
+    def get_retarget_chains(self) -> list:
+        return [BoneChain(name) for name in self.rig.chains]
+
+    def get_retarget_chain_start_bone(self, chain_name: str) -> Name:
+        return Name(self.rig.chains[str(chain_name)][0])
+
+    def get_retarget_chain_end_bone(self, chain_name: str) -> Name:
+        return Name(self.rig.chains[str(chain_name)][1])
+
+    def get_retarget_root(self) -> Name:
+        return Name(self.rig.root)
+
+    def set_retarget_chain_start_bone(self, chain_name: str, start_bone_name: str) -> bool:
+        _record('chain_start', self.rig.mesh.get_name(), str(chain_name), str(start_bone_name))
+        name = str(chain_name)
+        self.rig.chains[name] = (str(start_bone_name), self.rig.chains[name][1])
+        return True
+
+    def get_ref_pose_transform_of_bone(self, bone_name: str) -> 'Transform':
+        return _transform(self.rig.mesh.reference[str(bone_name)])
+
+
+class RetargetSourceOrTarget:
+    SOURCE = _EnumValue('SOURCE')
+    TARGET = _EnumValue('TARGET')
+
+
+class AutoMapChainType:
+    EXACT = _EnumValue('EXACT')
+    FUZZY = _EnumValue('FUZZY')
+
+
+class FKChainRotationMode:
+    INTERPOLATED = _EnumValue('INTERPOLATED')
+    ONE_TO_ONE = _EnumValue('ONE_TO_ONE')
+
+
+class _ChainSettings(Object):
+    """A struct of settings by name, read and written with get/set_editor_property."""
+
+    def __init__(self, **props) -> None:
+        self.props = props
+
+    def get_editor_property(self, name: str):
+        return self.props[name]
+
+    def copied(self) -> '_ChainSettings':
+        return type(self)(**{k: [c.copied() for c in v] if isinstance(v, list) else v for k, v in self.props.items()})
+
+
+class RetargetFKChainSettings(_ChainSettings):
+    pass
+
+
+class IKRetargetFKChainsOpSettings(_ChainSettings):
+    pass
+
+
+class IKRetargetRunIKRigChainSettings(_ChainSettings):
+    pass
+
+
+class IKRetargetRunIKRigOpSettings(_ChainSettings):
+    pass
+
+
+class RetargetAutoAlignMethod:
+    CHAIN_TO_CHAIN = _EnumValue('CHAIN_TO_CHAIN')
+
+
+class IKRetargeter(Object):
+    """A retargeter, as its controller leaves it: rigs by side, its op stack (names) and the retarget poses'
+    local rotation offsets (`offsets`, side name: {bone: Quat})."""
+
+    def __init__(self, path: str = '') -> None:
+        self.path, self.rigs, self.ops = path, {}, []
+        self.offsets: dict = {'SOURCE': {}, 'TARGET': {}}
+        self.op_controllers: dict = {}
+
+    def get_path_name(self) -> str:
+        return f'{self.path}.{_leaf(self.path)}'
+
+    def get_name(self) -> str:
+        return _leaf(self.path) if self.path else super().get_name()
+
+
+class IKRetargetFactory(Object):
+    pass
+
+
+class IKRetargetOpControllerBase(Object):
+    """An op's controller; an op with settings answers a copy from get_settings and stores one with set_settings."""
+
+    def __init__(self, settings: _ChainSettings | None = None) -> None:
+        self.settings = settings
+
+
+class IKRetargetFKChainsController(IKRetargetOpControllerBase):
+    def get_settings(self) -> _ChainSettings:
+        return self.settings.copied()
+
+    def set_settings(self, in_settings: _ChainSettings) -> None:
+        self.settings = in_settings.copied()
+
+
+class IKRetargetRunIKRigController(IKRetargetOpControllerBase):
+    def get_settings(self) -> _ChainSettings:
+        return self.settings.copied()
+
+    def set_settings(self, in_settings: _ChainSettings) -> None:
+        self.settings = in_settings.copied()
+
+
+DEFAULT_OPS = ('PelvisMotion', 'FKChains', 'RunIKRig', 'RootMotion')
+
+
+class IKRetargeterController:
+    def __init__(self, asset: IKRetargeter) -> None:
+        self.asset = asset
+
+    @staticmethod
+    def get_controller(in_retargeter_asset: IKRetargeter) -> 'IKRetargeterController':
+        return IKRetargeterController(in_retargeter_asset)
+
+    def set_ik_rig(self, source_or_target, ik_rig: IKRigDefinition) -> None:
+        self.asset.rigs[source_or_target.name] = ik_rig
+
+    def set_preview_mesh(self, source_or_target, in_preview_mesh) -> None:
+        self.asset.rigs[f'{source_or_target.name}_mesh'] = in_preview_mesh
+
+    def remove_all_ops(self) -> bool:
+        _record('remove_all_ops')
+        had = bool(self.asset.ops)
+        self.asset.ops, self.asset.op_controllers = [], {}
+        return had
+
+    def get_current_retarget_pose_name(self, source_or_target) -> Name:
+        return Name('Default Pose')
+
+    def reset_retarget_pose(self, pose_to_reset: str, bones_to_reset: list, source_or_target) -> None:
+        _record('reset_retarget_pose', str(pose_to_reset), source_or_target.name)
+        self.asset.offsets[source_or_target.name] = {}
+
+    def auto_align_bones(self, bones_to_align: list, method, source_or_target) -> None:
+        _record('auto_align_bones', tuple(str(b) for b in bones_to_align), source_or_target.name)
+
+    def add_default_ops(self) -> None:
+        _record('add_default_ops')
+        self.asset.ops += [op for op in state.get('default_ops', DEFAULT_OPS) if op not in self.asset.ops]
+
+    def add_retarget_op(self, in_ik_retarget_op_type: str) -> int:
+        _record('add_retarget_op', in_ik_retarget_op_type)
+        self.asset.ops.append(in_ik_retarget_op_type.rsplit('.', 1)[-1].replace('IKRetarget', '').replace('Op', ''))
+        return len(self.asset.ops) - 1
+
+    def get_num_retarget_ops(self) -> int:
+        return len(self.asset.ops)
+
+    def get_op_controller(self, in_op_index: int):
+        """FK Chains and Run IK Rig hold a setting per chain of the target rig; other ops have none."""
+        op = self.asset.ops[in_op_index]
+        if op not in self.asset.op_controllers:
+            chains = list(self.asset.rigs['TARGET'].chains) if 'TARGET' in self.asset.rigs else []
+            if op == 'FKChains':
+                rows = [RetargetFKChainSettings(target_chain_name=Name(c), rotation_mode=FKChainRotationMode.INTERPOLATED)
+                        for c in chains]
+                made = IKRetargetFKChainsController(IKRetargetFKChainsOpSettings(chains_to_retarget=rows))
+            elif op == 'RunIKRig':
+                rows = [IKRetargetRunIKRigChainSettings(target_chain_name=Name(c), enable_ik=True) for c in chains]
+                made = IKRetargetRunIKRigController(IKRetargetRunIKRigOpSettings(chains=rows))
+            else:
+                made = IKRetargetOpControllerBase()
+            self.asset.op_controllers[op] = made
+        return self.asset.op_controllers[op]
+
+    def assign_ik_rig_to_all_ops(self, in_source_or_target, in_ik_rig: IKRigDefinition) -> None:
+        _record('assign_ik_rig_to_all_ops', in_source_or_target.name)
+
+    def auto_map_chains(self, auto_map_type, force_remap: bool, op_name: str = 'None') -> None:
+        _record('auto_map_chains', auto_map_type.name, force_remap)
+
+    def auto_align_all_bones(self, source_or_target, method=None) -> None:
+        _record('auto_align_all_bones', source_or_target.name, method.name if method else None)
+
+    def get_rotation_offset_for_retarget_pose_bone(self, bone_name: str, source_or_target) -> 'Quat':
+        return self.asset.offsets[source_or_target.name].get(str(bone_name), Quat())
+
+    def set_rotation_offset_for_retarget_pose_bone(self, bone_name: str, rotation_offset: 'Quat', skeleton_mode) -> None:
+        _record('rotation_offset', str(bone_name), skeleton_mode.name)
+        self.asset.offsets[skeleton_mode.name][str(bone_name)] = rotation_offset
+
+
+class IKRetargetBatchOperationInputs(Object):
+    pass
+
+
+class IKRetargetBatchOperation:
+    @staticmethod
+    def run_batch_retarget(inputs: IKRetargetBatchOperationInputs) -> list:
+        """One new clip per asset to retarget, named with the suffix in the target path, on the target's skeleton;
+        its pose at t is `state['retargeted'](t)` (the target's reference pose without one)."""
+        props = inputs.props
+        _record('run_batch_retarget', props['target_path'])
+        state['batch_inputs'] = props
+        made = []
+        for source in props['assets_to_retarget']:
+            path = f"{props['target_path']}/{_leaf(str(source.package_name))}{props['suffix']}"
+            mesh = props['target_mesh']
+            state['loaded'][path] = AnimSequence(path, 1.0, mesh.skeleton, state.get('retargeted', lambda t: mesh.reference))
+            made.append(AssetData(path, 'AnimSequence'))
+        return made
+
+
+class AnimPoseSpaces:
+    LOCAL = _EnumValue('LOCAL')
+    WORLD = _EnumValue('WORLD')
+
+
+class AnimPoseEvaluationOptions(Object):
+    pass
+
+
+class AnimPose(Object):
+    def __init__(self, bones: dict) -> None:
+        self.bones = bones
+
+
+class AnimPoseExtensions:
+    @staticmethod
+    def get_anim_pose_at_time(animation_sequence_base: AnimSequenceBase, time: float, evaluation_options):
+        return AnimPose(animation_sequence_base.pose_at(time))
+
+    @staticmethod
+    def get_bone_pose(pose: AnimPose, bone_name: str, space=None) -> 'Transform':
+        return _transform(pose.bones[str(bone_name)])
+
+
+class AnimationMode:
+    ANIMATION_BLUEPRINT = _EnumValue('ANIMATION_BLUEPRINT')
+    ANIMATION_SINGLE_NODE = _EnumValue('ANIMATION_SINGLE_NODE')
+
+
+class VisibilityBasedAnimTickOption:
+    ALWAYS_TICK_POSE_AND_REFRESH_BONES = _EnumValue('ALWAYS_TICK_POSE_AND_REFRESH_BONES')
+
+
+class IntVector:
+    def __init__(self, x: int = 0, y: int = 0, z: int = 0) -> None:
+        self.x, self.y, self.z = x, y, z
+
+
+class GeometryScriptTriangleList:
+    def __init__(self, triangles: list | None = None) -> None:
+        self.triangles = list(triangles or [])
+
+
+class GeometryScriptCopyMeshFromAssetOptions:
+    def __init__(self, **props) -> None:
+        self.props = props
+
+
+class GeometryScriptMeshReadLOD:
+    def __init__(self, **props) -> None:
+        self.props = props
+
+
+class GeometryScriptBoneInfo:
+    def __init__(self, index: int, name: str) -> None:
+        self.index, self.name = index, Name(name)
+
+
+class GeometryScriptBoneWeight:
+    def __init__(self, bone_index: int, weight: float) -> None:
+        self.bone_index, self.weight = bone_index, weight
+
+
+class GeometryScript_AssetUtils:
+    @staticmethod
+    def copy_mesh_from_skeletal_mesh(from_skeletal_mesh_asset: SkeletalMesh, to_dynamic_mesh, asset_options,
+                                     requested_lod, debug=None) -> tuple:
+        mesh = from_skeletal_mesh_asset
+        to_dynamic_mesh.vertices = [Vector(*v) for v in mesh.vertices]
+        to_dynamic_mesh.triangles, to_dynamic_mesh.weights = list(mesh.triangles), list(mesh.weights)
+        to_dynamic_mesh.bones = sorted({bone for influences in mesh.weights for bone, _ in influences})
+        return to_dynamic_mesh, _EnumValue('SUCCESS')
+
+
+class GeometryScript_BoneWeights:
+    @staticmethod
+    def get_all_bones_info(target_mesh, debug=None) -> tuple:
+        return target_mesh, Array(GeometryScriptBoneInfo(i, name) for i, name in enumerate(target_mesh.bones))
+
+    @staticmethod
+    def get_vertex_bone_weights(target_mesh, vertex_id: int, profile=None) -> tuple:
+        index = {name: i for i, name in enumerate(target_mesh.bones)}
+        weights = Array(GeometryScriptBoneWeight(index[bone], weight) for bone, weight in target_mesh.weights[vertex_id])
+        return target_mesh, weights, bool(weights)
 
 
 def __getattr__(name: str):

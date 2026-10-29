@@ -1,7 +1,7 @@
 /**
  * The Rust lane's Windows and Linux destinations as the core registers them
  * (`src/main/core/rust-cross-lane.ts`, M4.6): a cross builder registers only once the Rust recipe
- * pins its components (today none: both stay `target-unbuilt`), and each destination's settings
+ * pins its components (the recipe pins both), and each destination's settings
  * read the store's llvm-mingw, or zig, cargo-zigbuild and the Linux sysroot, at the build's own
  * lock. A component the lock does not pin, one not installed at the pin, a receipt for another
  * version and a hostile pin locate nothing and create nothing.
@@ -36,9 +36,13 @@ import { tmpDir } from "../helpers/tmp.ts";
 
 const RUST_REQUIRED = STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu];
 
-/** The Rust row with `targets`' cross components pinned, as a recipe that pins them would list them. */
+/** The Rust row with only `targets`' cross components pinned, as a recipe that pins them alone would list them. */
 function pinned(...targets: Array<keyof typeof RUST_CROSS_COMPONENTS>): StackComponents {
-  const table: Record<BuildTarget, readonly ToolchainId[]> = { ...RUST_REQUIRED };
+  const table: Record<BuildTarget, readonly ToolchainId[]> = {
+    ...RUST_REQUIRED,
+    [BuildTarget.Windows]: [],
+    [BuildTarget.Linux]: [],
+  };
   for (const target of targets)
     table[target] = [ToolchainId.Rust, ToolchainId.RustVendor, ...RUST_CROSS_COMPONENTS[target]];
   return table;
@@ -86,12 +90,33 @@ async function store(): Promise<string> {
 }
 
 describe("the Rust lane's cross builders", () => {
-  it("today the recipe pins no cross component: Windows and Linux stay the lane's refusing placeholders", () => {
-    assert.equal(rustCrossPinned(BuildTarget.Windows), false);
-    assert.equal(rustCrossPinned(BuildTarget.Linux), false);
+  // Flipped (cross lanes pinned): the recipe now pins every cross component, so both builders register.
+  it("the recipe pins every cross component: Windows and Linux register their builders, and a Mac's setup offers both", () => {
+    assert.equal(rustCrossPinned(BuildTarget.Windows), true);
+    assert.equal(rustCrossPinned(BuildTarget.Linux), true);
     const builders = rustTargetBuilders();
-    assert.deepEqual(builders[BuildTarget.Windows], { ready: false });
-    assert.deepEqual(builders[BuildTarget.Linux], { ready: false });
+    assert.equal(builders[BuildTarget.Windows], RUST_WINDOWS_BUILDER);
+    assert.equal(builders[BuildTarget.Linux], RUST_LINUX_BUILDER);
+    assert.deepEqual(setupTargets(GameStack.RustWgpu, ToolchainHost.MacArm64), [
+      BuildTarget.Web,
+      BuildTarget.Mac,
+      BuildTarget.Windows,
+      BuildTarget.Linux,
+    ]);
+  });
+
+  it("the phones' rows name their standard libraries and the lane's base, never the person's own SDK parts", () => {
+    assert.deepEqual(RUST_REQUIRED[BuildTarget.Ios], [
+      ToolchainId.Rust,
+      ToolchainId.RustVendor,
+      ToolchainId.RustStdIos,
+      ToolchainId.RustStdIosSim,
+    ]);
+    assert.deepEqual(RUST_REQUIRED[BuildTarget.Android], [
+      ToolchainId.Rust,
+      ToolchainId.RustVendor,
+      ToolchainId.RustStdAndroid,
+    ]);
   });
 
   it("a recipe pinning a destination's cross components registers that destination's builder alone", () => {

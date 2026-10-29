@@ -20,7 +20,7 @@ export function BuildChecklist({
   onOpenBuilds?: () => void;
 }): JSX.Element {
   return (
-    <div id={id} data-build-checklist className="relative z-[1] flex min-w-0 flex-col gap-1 px-2 pt-2 pb-1">
+    <div id={id} data-build-checklist className="relative z-[1] flex min-w-0 flex-col gap-1 px-2 pt-[3px] pb-1">
       <ul aria-label={WORDS.list} className="m-0 flex min-w-0 list-none flex-col p-0">
         {list.rows.map((row) => (
           <li key={row.id} data-part-row={row.mark} className="flex min-w-0 items-start gap-2.5 py-1 text-chat-sub">
@@ -33,7 +33,7 @@ export function BuildChecklist({
         ))}
       </ul>
       {onOpenBuilds ? (
-        <button type="button" data-open-build onClick={onOpenBuilds} className="build-checklist-open text-chat-sub">
+        <button type="button" data-open-build onClick={onOpenBuilds} className="build-checklist-open pill-quiet">
           {WORDS.open}
           <Icon name="chevron-right" size={12} strokeWidth={2} />
         </button>

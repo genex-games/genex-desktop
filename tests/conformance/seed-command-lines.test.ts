@@ -29,6 +29,7 @@ const OWNERS = new Set([
   "loop/repo.ts",
   "loop/shell.ts",
   "loop/workers/pool-merge.ts",
+  "loop/workers/handback.ts",
   "loop/workers/game-change.ts",
   "loop/director/proof-git.ts",
   "loop/director/open/folder-git.ts",

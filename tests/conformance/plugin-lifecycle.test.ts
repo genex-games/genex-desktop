@@ -62,6 +62,9 @@ test("a plugin backend starts with the basics and nothing else of Studio's envir
   ])
     assert.equal(windows[name], parent[name as keyof typeof parent], name);
   assert.equal(windows.GITHUB_TOKEN, undefined);
+  // A development test of Unity's setup card gives the backend a made-up Mac to look in.
+  const testMac = pluginBackendEnv({ ...parent, STUDIO_ENGINE_TEST_ROOT: "/tmp/test-mac" }, "darwin");
+  assert.equal(testMac.STUDIO_ENGINE_TEST_ROOT, "/tmp/test-mac");
 });
 
 /** A local plugin whose every action answers with the PATH its backend was started with. */

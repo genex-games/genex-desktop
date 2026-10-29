@@ -293,6 +293,39 @@ fn the_import_step_s_sidecars_upload_bc_for_every_image_on_a_bc_device() {
     assert!(loaded.issues.is_empty(), "{:?}", loaded.issues);
 }
 
+/// A second model holding the crate's very images (a kit piece exported with the same scans).
+const CRATE_B: &str = "props/crate-b.glb";
+
+/// A frame drawing the crate and its twin.
+fn drawing_both() -> Frame {
+    let mut frame = drawing(CRATE);
+    frame.model(&genex::Assets::default().model(CRATE_B), Transform::from_xyz(3.0, 0.0, 0.0));
+    frame
+}
+
+// WP-9: the same images embedded in two GLBs (or their identical sidecars) upload once, so a kit
+// of pieces sharing 2k or 4k scans no longer multiplies boot time and GPU memory by the pieces.
+#[test]
+fn two_glbs_holding_the_same_images_upload_each_image_once() {
+    let twin = serde_json::json!({ "genex_textures": { "v": 1, "images": [
+        { "image": 0, "kind": "color", "stem": "crate-b.t0" },
+        { "image": 1, "kind": "normal", "stem": "crate-b.t1" },
+        { "image": 2, "kind": "data", "stem": "crate-b.t2" },
+    ] } });
+    let plain = Files::new(vec![(CRATE, crate_glb(serde_json::Value::Null)), (CRATE_B, crate_glb(serde_json::Value::Null))]);
+    let loaded = load(&drawing_both(), &plain, Recording::offering(&[TextureFamily::Bc7]));
+    assert_eq!(loaded.calls, ["image Color 2x2", "image Normal 2x2", "image Data 2x2"], "the twin's images reuse the crate's");
+    let mut files = imported_files();
+    files.files.extend([
+        (CRATE_B, crate_glb(twin)),
+        ("props/crate-b.t0.bc.ktx2", bc_color()),
+        ("props/crate-b.t1.bc.ktx2", bc_linear()),
+        ("props/crate-b.t2.bc.ktx2", bc_linear()),
+    ]);
+    let loaded = load(&drawing_both(), &files, Recording::offering(&[TextureFamily::Bc7]));
+    assert_eq!(loaded.calls, ["family bc", "bc Color", "bc Normal", "bc Data"], "the twin's sidecars reuse the crate's: {:?}", loaded.log);
+}
+
 #[test]
 fn a_glb_without_the_block_or_a_device_without_the_family_decodes_the_embedded_images() {
     let rgba8 = ["image Color 2x2", "image Normal 2x2", "image Data 2x2"];

@@ -33,7 +33,7 @@ import {
 } from "../shared/native-contract.ts";
 import { openNoFollow } from "./fsx.ts";
 import { bundleExecutable, isBundleId, isRunId, RunDirLayout } from "./native-bundle.ts";
-import { darwinUserCacheDir, LEAVE_GROUP_SYSCALLS, quote } from "./plugins/native-process.ts";
+import { darwinUserCacheDir, LEAVE_GROUP_SYSCALLS, quote } from "./seatbelt.ts";
 
 const MESSAGE = {
   Unsupported: (mode: string) => `a ${mode} run has no game profile`,

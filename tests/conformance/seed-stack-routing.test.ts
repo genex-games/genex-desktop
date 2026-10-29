@@ -385,8 +385,10 @@ describe("Genex online play asks a C++ game for nothing it cannot have", () => {
       await core.games.scaffold("web", { title: "web" });
       const cpp = await api()["plugins.preflightMultiplayer"]({ project: "pong" });
       assert.deepEqual(cpp, { ready: false, reason: MULTIPLAYER_REASON.CppGame, hostedVerified: false });
+      // FLIPPED by the merge of dev: a template game takes Studio's copies of Genex's packages
+      // (`takesGenexPackages`), so a three.js game passes the stack and manifest steps to the account.
       const three = await api()["plugins.preflightMultiplayer"]({ project: "web" });
-      assert.deepEqual(three, { ready: false, reason: MULTIPLAYER_REASON.NoManifest, hostedVerified: false });
+      assert.deepEqual(three, { ready: false, reason: MULTIPLAYER_REASON.Locked, hostedVerified: false });
     } finally {
       await close();
     }

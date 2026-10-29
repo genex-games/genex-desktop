@@ -28,6 +28,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { isInside } from "../src/substrate/paths.ts";
 import { EngineId } from "../src/shared/providers.ts";
+import { normalizeToolName } from "../src/shared/tool-category.ts";
 import { readPriceTable, type ModelPrice, type PriceTable } from "./evals/prices.ts";
 
 /** The repository the census runs from, where `evals/prices.json` lives. */
@@ -204,20 +205,6 @@ function priceTokens(session: Session, price: ModelPrice | null, tokens: Request
 }
 
 /* ------------------------------------------------------------------ tools */
-
-const BRIDGE_TOOL = /(?:^|[\s"'`/])\.studio\/bridge\/tool\.mjs\s+([a-z][a-z0-9_]*)/;
-
-/**
- * One name for the same tool on both engines. Claude calls the studio's tools over MCP; Codex
- * runs the bridge in a shell. Both become `studio:<tool>` so a per-role tool profile compares.
- */
-export function normalizeToolName(name: string, argumentText: string): string {
-  const mcp = /^mcp__studio__(.+)$/.exec(name);
-  if (mcp) return `studio:${mcp[1]}`;
-  const bridge = BRIDGE_TOOL.exec(argumentText || "");
-  if (bridge) return `studio:${bridge[1]}`;
-  return name;
-}
 
 const countTool = (session: Session, name: string) => {
   session.tools[name] = (session.tools[name] ?? 0) + 1;
@@ -581,14 +568,22 @@ export function ownedByStudio(cwd: string | null | undefined, homes: Homes): boo
   if (homes.gameRoots.some((root) => isInside(root, cwd))) return true;
   if (!STUDIO_SCRATCH_PREFIXES.some((prefix) => path.basename(cwd).startsWith(prefix))) return false;
   // macOS hands `os.tmpdir()` back as /var/folders/... and reports the same folder to a child
-  // process as /private/var/folders/..., so the temp root is matched through both names.
+  // process as /private/var/folders/..., so the temp root is matched through both names. Windows
+  // often hands it back as an 8.3 short name (`RUNNER~1`) while the engine starts a session in the
+  // folder's real path, so the real path counts too.
   const parent = path.dirname(path.resolve(cwd));
   const tmp = path.resolve(homes.tmpDir);
-  return (
-    isInside(tmp, parent) ||
-    isInside(path.join("/private", tmp), parent) ||
-    isInside(tmp.replace(/^\/private/, ""), parent)
-  );
+  const names = [tmp, path.join("/private", tmp), tmp.replace(/^\/private/, ""), realTempPath(tmp)];
+  return names.some((name) => name !== null && isInside(name, parent));
+}
+
+/** The temp root's real path (long names, links resolved), or null when it cannot be read. */
+function realTempPath(tmp: string): string | null {
+  try {
+    return fs.realpathSync.native(tmp);
+  } catch {
+    return null;
+  }
 }
 
 export interface Look {

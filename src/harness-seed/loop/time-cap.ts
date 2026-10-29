@@ -8,6 +8,7 @@
  * director/cap-lines.ts says the lines. A module no earlier harness had.
  */
 import { timedWorkRemaining } from "./director/budgets.ts";
+import { durationCommission } from "./director/commission.ts";
 import { WrapCause } from "./director/wake-schedule.ts";
 import type { FinishTally } from "./finish-check.ts";
 import { HOUR_MS, MINUTE_MS } from "./time.ts";
@@ -71,6 +72,13 @@ export function capPhase(now: number, clock: CapClock): CapPhase {
   return CapPhase.Working;
 }
 
+/** A timed Loop's hours, as its result card says them (`stillToFixOf`); null for an ∞ or goal Loop. */
+export function loopHoursOf(run: Pick<Run, "reference" | "budgets">): number | null {
+  const total = run.budgets?.wallClockMs;
+  const timed = durationCommission(run) && typeof total === "number" && Number.isFinite(total) && total > 0;
+  return timed ? total / HOUR_MS : null;
+}
+
 /** A Loop's hours: an ∞ Loop's are `UNTIL_DONE_CAP_MS`, a timed one's its own. */
 export function capHoursMs(run: Pick<Run, "budgets">, totalMs: number): number {
   return run.budgets?.untilSatisfied === true ? UNTIL_DONE_CAP_MS : totalMs;
@@ -97,7 +105,17 @@ export interface ClosingRun {
 
 /** Whether no claim of the run reached a reviewer since it last opened: none was asked, none is under review, no no stands. */
 export function noClaimRead(tally: Partial<FinishTally> | null | undefined): boolean {
-  return !tally?.asked && !tally?.checking && !tally?.reasons?.length;
+  return !tally?.asked && !tally?.checking && !tally?.reasons?.length && !tally?.notDone?.length;
+}
+
+/**
+ * A timed Loop's working time left at `now`, for its finish check: with more than the finish
+ * contract's `FINISH_TIME_LEFT_MS` left, no row of the reviewer's no's stops it. Null for an ∞ Loop
+ * (its no's stop it as they always have) and for one with no working deadline.
+ */
+export function timeLeftOf(run: Pick<Run, "reference" | "budgets">, softDeadline: number, now: number): number | null {
+  if (!durationCommission(run) || !Number.isFinite(softDeadline)) return null;
+  return Math.max(0, softDeadline - now);
 }
 
 /**

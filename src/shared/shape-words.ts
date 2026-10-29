@@ -2,8 +2,8 @@
  * A project's shape, in the words a person reads — and the choices the Open Game sheet offers.
  *
  * `ProjectShape` is the studio's own vocabulary — `three-vite`, `engine-export`, `serve: "dist"`
- * — and it reaches three surfaces at once: the Open Game sheet, the toast that says what was
- * opened, and the stage header. One table, so all three say the same thing. The sheet's rows are
+ * — and it reaches two surfaces at once: the Open Game sheet and the toast that says what was
+ * opened. One table, so both say the same thing. The sheet's rows are
  * here too, as data: what a folder offers is worth testing without a window. (The harness's own
  * status vocabulary is a different job and lives in `renderer/words.ts`; nothing here reads a run.)
  */
@@ -16,19 +16,31 @@ import {
   type ProjectShape,
   stackOf,
 } from "./game-project.ts";
+import { t } from "./i18n.ts";
 
-/** For each kind: the phrase that finishes "This folder holds …", and the stage header's chip. */
-const KINDS: Record<ProjectKind, { phrase: string; chip: string }> = {
-  "studio-template": { phrase: "a game made from the Genex starter", chip: "studio starting point" },
-  "three-vite": { phrase: "a 3D game with its own build", chip: "3D · own build" },
-  "three-modules": { phrase: "a 3D game that runs as written", chip: "3D · runs as written" },
-  canvas2d: { phrase: "a 2D canvas game", chip: "2D canvas" },
-  phaser: { phrase: "a Phaser game", chip: "Phaser" },
-  "engine-export": { phrase: "a game exported from a game engine", chip: "engine export" },
-  "own-script": { phrase: "a game with its own scripts", chip: "own scripts" },
-  [ProjectKind.RaylibCpp]: { phrase: "a C++ game built with raylib", chip: "C++ · raylib" },
-  [ProjectKind.RustWgpu]: { phrase: "a Rust game built with genex", chip: "Rust · wgpu" },
+/** For each kind: the phrase that finishes "This folder holds …"; functions, so each reads the current language. */
+const KINDS: Record<ProjectKind, () => string> = {
+  "studio-template": () => t("a game made from the Genex starter"),
+  "three-vite": () => t("a 3D game with its own build"),
+  "three-modules": () => t("a 3D game that runs as written"),
+  canvas2d: () => t("a 2D canvas game"),
+  phaser: () => t("a Phaser game"),
+  "engine-export": () => t("a game exported from a game engine"),
+  "own-script": () => t("a game with its own scripts"),
+  [ProjectKind.RaylibCpp]: () => "a C++ game built with raylib",
+  [ProjectKind.RustWgpu]: () => "a Rust game built with genex",
 };
+
+/** A compiled game's stack in the two or three words the stage header has room for. */
+const STACK_CHIPS = {
+  [GameStack.RaylibCpp]: "C++ · raylib",
+  [GameStack.RustWgpu]: "Rust · wgpu",
+} as const satisfies Record<CompiledStack, string>;
+
+/** The stage header's chip for a compiled game: its stack. */
+export function stackChip(stack: CompiledStack): string {
+  return STACK_CHIPS[stack];
+}
 
 /** How the studio runs a compiled game: with the stack's own managed toolchain. */
 const COMPILED_RUNS = {
@@ -38,25 +50,25 @@ const COMPILED_RUNS = {
 
 /** What this folder holds, as a phrase: "This folder holds …". */
 export function kindWords(kind: ProjectKind): string {
-  return KINDS[kind].phrase;
-}
-
-/** The same fact in the two or three words a header has room for. */
-export function kindChip(kind: ProjectKind): string {
-  return KINDS[kind].chip;
+  return KINDS[kind]();
 }
 
 /** How the studio will run it: its own C++ build, the game's build it runs first, or nothing at all. */
 export function runsWords(shape: ProjectShape): string {
   const stack = stackOf(shape);
   if (isCompiledStack(stack)) return COMPILED_RUNS[stack];
-  if (!shape.build) return `opens ${shape.entry.split("?")[0]} directly, with no build step`;
-  return `built with ${shape.build}, then shown from ${shape.serve === "." ? "the folder" : `${shape.serve}/`}`;
+  if (!shape.build) return t("opens {entry} directly, with no build step", { entry: shape.entry.split("?")[0] ?? "" });
+  if (shape.serve === ".") return t("built with {build}, then shown from the folder", { build: shape.build });
+  return t("built with {build}, then shown from {folder}", { build: shape.build, folder: `${shape.serve}/` });
 }
 
 /** The toast after a folder is opened: what was found, and that it was not rewritten. */
 export function openedWords(title: string, shape: ProjectShape): string {
-  return `${title} is ${kindWords(shape.kind)} — Genex keeps it as it is and ${runsWords(shape)}.`;
+  return t("{title} is {kind} — Genex keeps it as it is and {runs}.", {
+    title,
+    kind: kindWords(shape.kind),
+    runs: runsWords(shape),
+  });
 }
 
 /**
@@ -65,8 +77,11 @@ export function openedWords(title: string, shape: ProjectShape): string {
  * can change (a Godot or Unity export). Play and screenshots still work, and the
  * harness refuses the run in its own words (`loop/main.ts` `loopRunRefusal`).
  */
-export const ENGINE_EXPORT_REFUSAL =
-  "This game was exported from a game engine. Genex can open it, play it and take screenshots — it cannot edit or judge a game that is already compiled. To have builders work on it, open the folder with the project's own scenes and scripts.";
+export function engineExportRefusal(): string {
+  return t(
+    "This game was exported from a game engine. Genex can open it, play it and take screenshots — it cannot edit or judge a game that is already compiled. To have builders work on it, open the folder with the project's own scenes and scripts.",
+  );
+}
 
 /** Whether an unattended build can be started on this shape at all. */
 export function canBuildUnattended(kind: ProjectKind): boolean {
@@ -93,10 +108,16 @@ export interface OpenChoice {
 export function nestedWords(nested: string[]): string[] {
   if (nested.length === 0) return [];
   const names = nested.map((rel) => `${rel}/`).join(", ");
-  const one = nested.length === 1;
+  const count = nested.length;
   return [
-    `${names} ${one ? "is a repository of its own" : "are repositories of their own"} — Genex adds ${one ? "its" : "their"} files to this folder's history the first time a build goes live, so work inside ${one ? "it" : "them"} is not lost.`,
-    `${one ? "Its own history is" : "Their own histories are"} kept beside ${one ? "it" : "them"}, renamed to .git.studio-backup.`,
+    t(
+      "{count, plural, one {{names} is a repository of its own — Genex adds its files to this folder's history the first time a build goes live, so work inside it is not lost.} other {{names} are repositories of their own — Genex adds their files to this folder's history the first time a build goes live, so work inside them is not lost.}}",
+      { count, names },
+    ),
+    t(
+      "{count, plural, one {Its own history is kept beside it, renamed to .git.studio-backup.} other {Their own histories are kept beside them, renamed to .git.studio-backup.}}",
+      { count },
+    ),
   ];
 }
 
@@ -138,19 +159,19 @@ export function openOptions(inspection: FolderInspection): OpenOption[] {
     if (preflight.needsInstall) {
       facts.push(
         preflight.install
-          ? `Its packages aren’t installed yet — “${preflight.install}” runs on one press.`
-          : "Its packages aren’t installed yet.",
+          ? t("Its packages aren’t installed yet — “{install}” runs on one press.", { install: preflight.install })
+          : t("Its packages aren’t installed yet."),
       );
     }
     facts.push(
       preflight.git === "repo"
-        ? "Genex saves each change to the folder’s own Git history."
-        : "Genex starts Git history here, so any change can be undone.",
+        ? t("Genex saves each change to the folder’s own Git history.")
+        : t("Genex starts Git history here, so any change can be undone."),
     );
     facts.push(...nestedWords(preflight.nested));
     return {
       id: candidate.rel,
-      label: candidate.rel === "." ? "This folder" : `${candidate.rel}/`,
+      label: candidate.rel === "." ? t("This folder") : `${candidate.rel}/`,
       headline: kindWords(shape.kind),
       detail: runsWords(shape),
       facts,
@@ -161,7 +182,7 @@ export function openOptions(inspection: FolderInspection): OpenOption[] {
         ...(candidate.rel === "." ? {} : { subdir: candidate.rel }),
         ...(preflight.nested.length > 0 ? { versionNested: true } : {}),
       },
-      button: candidate.rel === "." ? "Open this game" : `Open ${candidate.rel}/`,
+      button: candidate.rel === "." ? t("Open this game") : t("Open {folder}", { folder: `${candidate.rel}/` }),
     };
   });
   // `starter` is empty when the folder is a game of its own — its own row above says it. A folder
@@ -178,29 +199,29 @@ function folderWords(
 ): Pick<OpenOption, "headline" | "detail" | "button"> {
   if (beside) {
     return {
-      headline: "no game of its own",
-      detail: "the game inside it stays exactly where it is",
-      button: "Keep this folder",
+      headline: t("no game of its own"),
+      detail: t("the game inside it stays exactly where it is"),
+      button: t("Keep this folder"),
     };
   }
   if (ownFiles) {
     return {
-      headline: "files of its own, no web page",
-      detail: "Genex keeps every file as it is and writes no starter game",
-      button: "Open this folder",
+      headline: t("files of its own, no web page"),
+      detail: t("Genex keeps every file as it is and writes no starter game"),
+      button: t("Open this folder"),
     };
   }
   if (webStarter) {
     return {
-      headline: "a web game with no page yet",
-      detail: "Genex adds the starter's missing files and keeps every file that is there",
-      button: "Open this folder",
+      headline: t("a web game with no page yet"),
+      detail: t("Genex adds the starter's missing files and keeps every file that is there"),
+      button: t("Open this folder"),
     };
   }
   return {
-    headline: "an empty folder",
-    detail: "Genex keeps it empty; your first message decides what it becomes",
-    button: "Start a game here",
+    headline: t("an empty folder"),
+    detail: t("Genex keeps it empty; your first message decides what it becomes"),
+    button: t("Start a game here"),
   };
 }
 
@@ -209,10 +230,10 @@ function folderOption(inspection: FolderInspection): OpenOption {
   const beside = inspection.candidates.length > 0;
   return {
     id: ".",
-    label: "This folder",
+    label: t("This folder"),
     ...folderWords(beside, inspection),
     facts: [
-      ...(beside ? ["No starter game is written beside the game you already have."] : []),
+      ...(beside ? [t("No starter game is written beside the game you already have.")] : []),
       ...nestedWords(inspection.nested),
     ],
     problems: [],

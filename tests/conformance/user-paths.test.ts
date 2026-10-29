@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
 import { extractCandidatePaths, isTooBroad, resolveNamedPaths } from "../../src/substrate/user-paths.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -53,5 +54,25 @@ describe("named paths in chat", () => {
     assert.equal(named.workspace, await realpath(game));
     assert.ok(named.stillRoots.some((dir) => dir.endsWith(`${path.sep}ref`)));
     assert.ok(named.stillFiles.some((file) => file.endsWith(`${path.sep}main.png`)));
+  });
+
+  it("a file that is not a picture opens its folder to reading, never as the workspace or a still", async () => {
+    const root = await tmpDir("named-paths-");
+    const downloads = path.join(root, "Downloads");
+    await mkdir(downloads, { recursive: true });
+    const notes = path.join(downloads, "level notes.txt");
+    await writeFile(notes, "Three lanes, rain at night.");
+    const named = await resolveNamedPaths(`Use this\n\n${pathToFileURL(notes).href}`, { home: os.homedir() });
+    assert.deepEqual(named.fileRoots, [await realpath(downloads)]);
+    assert.equal(named.workspace, null);
+    assert.deepEqual(named.stillRoots, []);
+    assert.deepEqual(named.stillFiles, []);
+  });
+
+  it("a file loose in the home folder opens nothing more to reading", async () => {
+    const home = await realpath(await tmpDir("named-home-"));
+    const notes = path.join(home, "notes.txt");
+    await writeFile(notes, "todo");
+    assert.deepEqual((await resolveNamedPaths(`see ${notes}`, { home })).fileRoots, []);
   });
 });

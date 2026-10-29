@@ -20,16 +20,21 @@ import {
   API_HOSTS,
   CC0_USER_AGENT,
   type Cc0Net,
+  CURATED_HOSTS,
   createCc0Net,
   DOWNLOAD_HOSTS,
+  FETCH_HOSTS,
   REDIRECT_HOSTS,
 } from "../../src/plugins/cc0/net.ts";
 import { type Cc0Delivery, cc0LockFacts } from "../../src/plugins/cc0/provenance.ts";
 import { AssetLicence, AssetOrigin, TextureUsageSource } from "../../src/shared/asset-db.ts";
+import { MODEL_TIER_TRIANGLES } from "../../src/shared/model-budget.ts";
 import type { PluginContext, PluginScalar } from "../../src/plugin-sdk/index.d.ts";
 import { md5, sha256 } from "../../src/substrate/cc0-fetch.ts";
 import { deliverAssetFiles } from "../../src/substrate/genex-delivery.ts";
+import { inspectGlb } from "../../src/substrate/asset-import/inspect.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
+import { bumpyGltf } from "../helpers/dense-glb.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const PLUGIN_DIR = path.resolve(import.meta.dirname, "../../src/plugins/cc0");
@@ -252,6 +257,44 @@ describe("cc0__fetch from Poly Haven", () => {
     );
   });
 
+  it("decimates a model heavier than the tier named to its budget before it reaches the game", async () => {
+    const host = await fakeHost();
+    const fir = bumpyGltf(120, "fir.bin");
+    const gltfUrl = `${PH}/gltf/1k/fir/fir_1k.gltf`;
+    const binUrl = `${PH}/gltf/8k/fir/fir.bin`;
+    const files = {
+      gltf: { "1k": { gltf: { ...file(fir.gltf, gltfUrl), include: { "fir.bin": file(fir.bin, binUrl) } } } },
+    };
+    const { net } = stubNet(
+      { "https://api.polyhaven.com/files/fir": files, "https://api.polyhaven.com/info/fir": { ...INFO, name: "Fir" } },
+      { [gltfUrl]: fir.gltf, [binUrl]: fir.bin },
+    );
+    const plugin = createCc0Plugin({ net });
+    const result = await call(plugin, Cc0Tool.Fetch, { source: "polyhaven", id: "fir", tier: "clutter" }, host.ctx);
+    const decimated = result.decimated as { tier: string; before: number; after: number };
+    assert.equal(decimated.tier, "clutter");
+    assert.equal(decimated.before, 28_800);
+    assert.ok(decimated.after <= MODEL_TIER_TRIANGLES.clutter, `${decimated.after} triangles`);
+    const [delivered] = result.files as Array<{ path: string; sha256: string; bytes: number }>;
+    const glb = new Uint8Array(await readFile(path.join(host.game, delivered?.path ?? "")));
+    assert.equal(inspectGlb(glb)?.triangles, decimated.after);
+    assert.equal(delivered?.sha256, sha256(glb), "the lock records the bytes delivered");
+    const untiered = await call(plugin, Cc0Tool.Fetch, { source: "polyhaven", id: "fir" }, host.ctx);
+    assert.notEqual(untiered.jobId, result.jobId, "a tiered fetch lands in its own folder");
+    assert.equal(untiered.decimated, undefined, "under the import cap, no tier keeps it whole");
+  });
+
+  it("refuses a tier it does not know before asking the network anything", async () => {
+    const host = await fakeHost();
+    const { net, asked } = stubNet({}, {});
+    await assert.rejects(
+      call(createCc0Plugin({ net }), Cc0Tool.Fetch, { source: "polyhaven", id: "fir", tier: "huge" }, host.ctx),
+      /manifest-invalid: tier: one of hero, vegetation, prop, clutter/,
+    );
+    assert.deepEqual(asked, []);
+    await nothingWritten(host);
+  });
+
   it("refuses a URL on a host off the allowlist before downloading anything", async () => {
     const host = await fakeHost();
     const evil = "https://evil.example/wooden_crate_diff_1k.jpg";
@@ -367,7 +410,7 @@ describe("cc0__fetch from the curated manifest", () => {
       assert.equal(asset.licence, "CC0-1.0");
       for (const entry of asset.files) {
         assert.match(entry.sha256, /^[0-9a-f]{64}$/);
-        assert.ok(DOWNLOAD_HOSTS.has(new URL(entry.url).hostname), entry.url);
+        assert.ok(FETCH_HOSTS.has(new URL(entry.url).hostname), entry.url);
       }
     }
   });
@@ -480,16 +523,85 @@ describe("cc0__search", () => {
     );
     assert.equal(result.credit, "Powered by Poly Haven");
   });
+
+  const search = async (list: string, entries: Record<string, unknown>, args: Record<string, PluginScalar>) => {
+    const host = await fakeHost();
+    const { net } = stubNet({ [`https://api.polyhaven.com/assets?t=${list}`]: entries }, {});
+    return (await call(createCc0Plugin({ net }), Cc0Tool.Search, args, host.ctx)).results as Array<
+      Record<string, unknown>
+    >;
+  };
+
+  it("matches any word: more words first, a name before a tag, then downloads; never part of a word", async () => {
+    const results = await search(
+      "textures",
+      {
+        aerial_grass: {
+          name: "Aerial Grass",
+          tags: ["ground", "meadow"],
+          categories: ["terrain"],
+          download_count: 500,
+        },
+        snow_02: { name: "Snow 02", tags: ["white"], categories: ["outdoor"], download_count: 100 },
+        snow_field: { name: "Snow Field", tags: ["ground"], categories: ["terrain"], download_count: 5 },
+        brick_wall: { name: "Brick Wall", tags: ["bricks"], categories: ["wall"], download_count: 900 },
+        snowmobile_track: { name: "Track", tags: ["snowmobile"], categories: ["vehicle"], download_count: 800 },
+      },
+      { query: "snow ground", source: "polyhaven" },
+    );
+    assert.deepEqual(
+      results.map((r) => r.id),
+      ["snow_field", "snow_02", "aerial_grass"],
+    );
+  });
+
+  it("reads a plural word as its singular and keeps the all-words result on top", async () => {
+    const results = await search(
+      "models",
+      {
+        fir_tree_01: { name: "Fir Tree 01", tags: ["conifer"], categories: ["nature", "trees"], download_count: 74 },
+        fire_alarm: { name: "Fire Alarm", tags: ["alarm"], categories: ["office"], download_count: 900 },
+        jacaranda_tree: { name: "Jacaranda Tree", tags: ["flowers"], categories: ["trees"], download_count: 148 },
+      },
+      { query: "fir trees", kind: "model" },
+    );
+    assert.deepEqual(
+      results.map((r) => r.id),
+      ["fir_tree_01", "jacaranda_tree"],
+    );
+  });
+
+  it("gives a model result its triangles and how they stand against the import cap", async () => {
+    const results = await search(
+      "models",
+      {
+        fir_tree_01: { name: "Fir Tree 01", categories: ["trees"], download_count: 74, polycount: 7_853_731 },
+        painted_wooden_bench: { name: "Painted Wooden Bench", categories: ["seating"], polycount: 630 },
+      },
+      { query: "tree bench", kind: "model" },
+    );
+    const fir = results.find((r) => r.id === "fir_tree_01");
+    const bench = results.find((r) => r.id === "painted_wooden_bench");
+    assert.equal(fir?.triangles, 7_853_731);
+    assert.equal(fir?.budget, "over-import-cap");
+    assert.equal(typeof fir?.hint, "string");
+    assert.equal(bench?.triangles, 630);
+    assert.equal(bench?.budget, "within");
+    assert.equal(bench?.hint, undefined);
+  });
 });
 
 describe("the CC0 plugin's network and package", () => {
   it("declares exactly the hosts it reaches, and names itself with its manifest's version", async () => {
     const manifest = validateManifest(JSON.parse(await readFile(path.join(PLUGIN_DIR, "plugin.json"), "utf8")));
-    assert.deepEqual(new Set(manifest.network?.hosts), new Set([...API_HOSTS, ...DOWNLOAD_HOSTS, ...REDIRECT_HOSTS]));
+    assert.deepEqual(
+      new Set(manifest.network?.hosts),
+      new Set([...API_HOSTS, ...DOWNLOAD_HOSTS, ...CURATED_HOSTS, ...REDIRECT_HOSTS]),
+    );
     assert.ok(CC0_USER_AGENT.startsWith(`Genex-CC0/${manifest.version} `));
     assert.deepEqual(
       manifest.tools.map((tool) => tool.name),
-      [Cc0Tool.Search, Cc0Tool.Fetch],
+      [Cc0Tool.Search, Cc0Tool.Fetch, Cc0Tool.TerrainLayer],
     );
     assert.ok(
       manifest.tools.every((tool) => tool.confirmation === undefined),
@@ -542,5 +654,118 @@ describe("the CC0 plugin's network and package", () => {
   it("packs a glTF whose resources it lacks as a refusal, never a GLB with holes", () => {
     assert.throws(() => packGlb(GLTF, new Map([["wooden_crate.bin", BIN]])), { code: "zip-member-missing" });
     assert.throws(() => packGlb(encode('{"asset":{"version":"1.0"}}'), new Map()), { code: "manifest-invalid" });
+  });
+});
+
+/** The Universal Animation Library as Quaternius uploaded it to OpenGameArt (CC0), served from its file store. */
+const UAL_ON_OGA = "https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip";
+
+/** A network over a stub `fetch` that answers `routes` and records every request it is asked. */
+function recordingNet(routes: Record<string, () => Response>) {
+  const asked: string[] = [];
+  const fetchStub = (async (input: URL | string) => {
+    const url = String(input);
+    asked.push(url);
+    const route = routes[url];
+    if (!route) throw new Error(`unexpected fetch ${url}`);
+    return route();
+  }) as typeof fetch;
+  return { net: createCc0Net({ fetch: fetchStub }), asked };
+}
+
+describe("Quaternius' download host (owner call AN-21)", () => {
+  it("downloads the Universal Animation Library from OpenGameArt's file store", async () => {
+    const zip = encode("PK the-universal-animation-library");
+    const { net, asked } = recordingNet({ [UAL_ON_OGA]: () => new Response(zip) });
+    assert.deepEqual(await net.download(new URL(UAL_ON_OGA), zip.byteLength), zip);
+    assert.deepEqual(asked, [UAL_ON_OGA]);
+  });
+
+  it("refuses every hostile shape of that host before a single request", async () => {
+    const hostile = [
+      "https://user:secret@opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "https://opengameart.org:8443/sites/default/files/universal_animation_librarystandard.zip",
+      "http://opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "https://www.opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+      "https://opengameart.org.evil.example/sites/default/files/universal_animation_librarystandard.zip",
+      "https://evil.example/opengameart.org/sites/default/files/universal_animation_librarystandard.zip",
+    ];
+    const { net, asked } = recordingNet({});
+    for (const url of hostile) {
+      await assert.rejects(net.download(new URL(url), 1024), { code: "host-not-allowed" }, url);
+    }
+    await assert.rejects(net.json(new URL(UAL_ON_OGA)), { code: "host-not-allowed" }, "it lists nothing");
+    assert.deepEqual(asked, []);
+  });
+
+  it("follows no redirect from it to a host off the list", async () => {
+    const { net, asked } = recordingNet({
+      [UAL_ON_OGA]: () => new Response(null, { status: 302, headers: { location: "https://evil.example/ual.zip" } }),
+    });
+    await assert.rejects(net.download(new URL(UAL_ON_OGA), 1024), { code: "host-not-allowed" });
+    assert.deepEqual(asked, [UAL_ON_OGA]);
+  });
+
+  it("is never reached through an API answer: only a curated row may name it", async () => {
+    const host = await fakeHost();
+    const oga = "https://opengameart.org/sites/default/files/wooden_crate_diff_1k.jpg";
+    const { net, asked } = stubNet({ [FILES_URL]: polyHavenFiles({ diffUrl: oga }), [INFO_URL]: INFO }, {});
+    await assert.rejects(
+      call(
+        createCc0Plugin({ net }),
+        Cc0Tool.Fetch,
+        { source: "polyhaven", id: "wooden_crate", resolution: "1k", maps: "diff" },
+        host.ctx,
+      ),
+      /host-not-allowed/,
+    );
+    assert.ok(!asked.includes(oga));
+    await nothingWritten(host);
+  });
+
+  it("delivers a curated row pinned on it by its sha256, and refuses one off the curated hosts", async () => {
+    const glb = encode("glTF-the-universal-animation-library");
+    const url = "https://opengameart.org/sites/default/files/UAL_Standard.glb";
+    const row = (at: string): CuratedManifest => ({
+      assets: [
+        {
+          id: "quaternius-ual",
+          kind: "model",
+          licence: "CC0-1.0",
+          page: "https://opengameart.org/content/universal-animation-library",
+          authors: ["Quaternius"],
+          files: [{ name: "UAL_Standard.glb", url: at, bytes: glb.byteLength, sha256: sha256(glb), map: "model" }],
+        },
+      ],
+      held: [],
+    });
+    const host = await fakeHost();
+    const { net } = stubNet({}, { [url]: glb });
+    const result = await call(
+      createCc0Plugin({ net, curated: row(url) }),
+      Cc0Tool.Fetch,
+      { source: "curated", id: "quaternius-ual" },
+      host.ctx,
+    );
+    const [only] = result.files as Array<{ sha256: string }>;
+    assert.equal(only?.sha256, sha256(glb));
+    const elsewhere = await fakeHost();
+    const off = stubNet({}, {});
+    await assert.rejects(
+      call(
+        createCc0Plugin({ net: off.net, curated: row("https://evil.example/UAL_Standard.glb") }),
+        Cc0Tool.Fetch,
+        { source: "curated", id: "quaternius-ual" },
+        elsewhere.ctx,
+      ),
+      /host-not-allowed/,
+    );
+    assert.deepEqual(off.asked, []);
+    await nothingWritten(elsewhere);
+  });
+
+  it("is declared in the plugin's network hosts", async () => {
+    const manifest = validateManifest(JSON.parse(await readFile(path.join(PLUGIN_DIR, "plugin.json"), "utf8")));
+    assert.ok(manifest.network?.hosts.includes("opengameart.org"));
   });
 });

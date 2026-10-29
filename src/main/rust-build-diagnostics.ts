@@ -9,6 +9,7 @@
  * stdout, so a line that is not a JSON object of a known shape is skipped, and every string kept
  * is capped.
  */
+import type { RustTargetSeed, RustTargetSharing } from "./rust-build-cache.ts";
 import path from "node:path";
 import { isInside, toPosixRelative } from "../substrate/paths.ts";
 import type { CrateRefusal } from "../shared/crate-requests.ts";
@@ -101,6 +102,8 @@ export interface RustBuildReceipt {
   steps: Array<{ step: RustBuildStep; ms: number; code: number | null }>;
   /** The admitted `out/` files, `/`-separated, with their sha256 and size. */
   outputs: Array<{ path: string; sha256: string; bytes: number }>;
+  /** How the host shares compiled dependencies, and where this build's target folder came from (`rust-build-cache.ts`). */
+  cache?: { sharing: RustTargetSharing; seed: RustTargetSeed };
   /** A web build's packaging: the tools, the module's sizes against the budget, the served files. */
   web?: WebReceipt;
   /** The import step over the stage (C-2): each staged asset's action and refusal. */
@@ -141,6 +144,8 @@ export interface CargoMessages {
   diagnostics: RustDiagnostic[];
   /** The rendered text of the first error with spans (else the first error), split into lines; empty when none. */
   rendered: string[];
+  /** How many errors named a place in the code: rustc's closing `aborting due to …` names none. */
+  located: number;
   /** Executables Cargo reported for a binary target of the package at `manifest`, in order. */
   executables: string[];
   /** `build-finished`'s verdict, or null when cargo never said. */
@@ -157,6 +162,12 @@ const NOTES_KEPT = 4;
 const RENDERED_LINES_KEPT = 12;
 /** The longest line of cargo output the lane reads as a message; anything longer is skipped. */
 const MESSAGE_LINE_MAX_CHARS = 1024 * 1024;
+/** A rendered line that is only rustc's gutter (`    |`): it says nothing, so the agent never reads it. */
+const GUTTER_ONLY = /^\s*\|\s*$/;
+/** What a problem says after the first error about the rest. */
+const MESSAGE = {
+  moreErrors: (count: number) => `…and ${count} more error${count === 1 ? "" : "s"}`,
+} as const;
 /** The clippy lint prefix: a diagnostic whose code has it came from clippy. */
 const CLIPPY_PREFIX = "clippy::";
 
@@ -205,6 +216,7 @@ export function parseCargoMessages(output: string, stageRoot: string, manifest: 
   return {
     diagnostics: kept.map((error) => error.diagnostic),
     rendered: kept[0]?.rendered ?? [],
+    located: read.errors.filter((error) => error.diagnostic.file !== null).length,
     executables: read.executables,
     success: read.success,
   };
@@ -228,9 +240,14 @@ function readMessage(read: MessagesRead, message: Record<string, unknown>, stage
   if (raw && diagnostic) read.errors.push({ diagnostic, rendered: renderedLines(raw) });
 }
 
-/** The lines a problem shows for `messages`: the first error's rendered text, else nothing. */
-export function diagnosticLines(messages: Pick<CargoMessages, "rendered">): string[] {
-  return messages.rendered.slice(0, RENDERED_LINES_KEPT);
+/**
+ * The lines a problem shows for `messages`: the first error's rendered text without its empty
+ * gutter lines, then how many more errors named a place; nothing when there is no error.
+ */
+export function diagnosticLines(messages: Pick<CargoMessages, "rendered" | "located">): string[] {
+  const lines = messages.rendered.filter((line) => !GUTTER_ONLY.test(line)).slice(0, RENDERED_LINES_KEPT);
+  const more = messages.located - 1;
+  return lines.length && more > 0 ? [...lines, MESSAGE.moreErrors(more)] : lines;
 }
 
 /**

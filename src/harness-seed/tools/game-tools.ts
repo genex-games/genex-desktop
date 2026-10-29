@@ -5,7 +5,7 @@
  * and change notification stay true no matter how the agent rewrites this file.
  */
 import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
-import { clampRunHours, MAX_RUN_HOURS } from "../loop/config.ts";
+import { clampRunHours, hoursNamed, MAX_RUN_HOURS } from "../loop/config.ts";
 import { HostMethod } from "../loop/host-methods.ts";
 import { EngineId } from "../loop/model-roles.ts";
 import { StopReason } from "../loop/outage.ts";
@@ -117,6 +117,13 @@ const IN_SCOPE_WORDS = "what this build delivers, each item in the user's words"
 const CUT_WORDS =
   "what a game like this often has that this build will not (a reference is a look bar, not a feature list)";
 
+/**
+ * A launch's hours, for a Loop an Auto chat was asked for in words (delegated-turn.ts `autoLaunchFor`
+ * bridges this tool only while it has them); with Loop on the composer's hours win.
+ */
+const LOOP_HOURS_WORDS =
+  "The hours the user named, digits only (3, 1.5); 0 when they said until done; leave it out when they named none (the Loop switch's hours, if on, else until done).";
+
 /** A launch's in-scope and cut lists as the run carries them to its scope (chat-dispatch.ts `intakeRun`); none when unnamed. */
 function scopeArgs(args: AnyRecord): { inScope?: string[]; cut?: string[] } {
   const inScope = scopeItems(args.in_scope);
@@ -140,6 +147,20 @@ function pinProject(args: AnyRecord, ctx: ToolCtx): { project?: string; error?: 
   if (!args.project) return { error: "No project is open in this chat." };
   return { project: args.project };
 }
+
+/**
+ * The Loop a chat's own turn asks for in words, when no Loop switch's commission reached the call (a
+ * direct engine's tool loop, Loop off): the hours named, else until done. None in a run's turn, a
+ * coordinator's follow-up or the Studio's own chat: those never start a Loop.
+ */
+function loopAskedInChat(args: AnyRecord, ctx: ToolCtx): AnyRecord | null {
+  if (ctx.runId || ctx.followupOf || ctx.studioThread) return null;
+  const hours = hoursNamed(args.hours);
+  return hours > 0 ? { hours } : {};
+}
+
+/** The Loop a launch is for: the Loop switch's commission, else the one the chat asked for in words. */
+const autopilotOf = (args: AnyRecord, ctx: ToolCtx): AnyRecord | null => ctx.autopilot ?? loopAskedInChat(args, ctx);
 
 export const tools: HarnessTool[] = [
   {
@@ -330,7 +351,7 @@ export const tools: HarnessTool[] = [
       "(crate-declined, crate-advisory, crate-licence, crate-banned, crate-build-script, crate-proc-macro, …); " +
       "a known security advisory, a licence off the list or a banned crate refuses it even after the person approves. " +
       'Once vendored, name it in genex.toml under [crates] at that exact version (tidy = "=1.0.0"). ' +
-      "Prefer the facade and the reviewed crates (noise, fastrand) first.",
+      "Prefer the facade and the reviewed crates (noise, fastrand, pathfinding) first.",
     parameters: {
       type: "object",
       properties: {
@@ -485,7 +506,8 @@ export const tools: HarnessTool[] = [
       if (!loop || noHours) {
         return {
           ok: false,
-          content: "Loop is off in the composer. Ask the user to turn on Loop and set hours, then call this again.",
+          content:
+            "No Loop hours reached this call, so nothing started. Start the Loop with start_autopilot and the hours the user named instead.",
         };
       }
       const frames = attachedFrames(loop.frames);
@@ -526,7 +548,7 @@ export const tools: HarnessTool[] = [
   {
     name: "start_autopilot",
     description:
-      "Launch a build — only when Loop is on and the ask is to build the game or change it substantially, never for research, a plan or a small change. Know first what the game is and how it should look; when nobody said, ask_user instead. The build runs as the launch rules say for this project; it starts from this folder as you leave it when your reply ends. Call it once, last, then recap.",
+      "Launch a build (a Loop) — when Loop is on and the ask is to build the game or change it substantially, or, Loop on or off, when the user asks for a Loop in words; never for research, a plan or a small change. Know first what the game is and how it should look; when nobody said, ask_user instead. The build runs as the launch rules say for this project; it starts from this folder as you leave it when your reply ends. Call it once, last, then recap.",
     parameters: {
       type: "object",
       properties: {
@@ -538,16 +560,16 @@ export const tools: HarnessTool[] = [
         in_scope: list(IN_SCOPE_WORDS),
         cut: list(CUT_WORDS),
         targets: targetsParam(LAUNCH_TARGETS),
+        hours: { type: "number", description: LOOP_HOURS_WORDS },
       },
       required: ["goal", "direction"],
     },
     async execute(args, ctx) {
-      const autopilot = ctx.autopilot;
+      const autopilot = autopilotOf(args, ctx);
       if (!autopilot) {
         return {
           ok: false,
-          content:
-            "No hours are set in the composer. Ask the user to pick hours there (∞ until satisfied, or a number of hours), then call this again.",
+          content: "A Loop starts from the chat, not from a build's own turn: nothing started.",
         };
       }
       const frames = attachedFrames(autopilot.frames);

@@ -16,6 +16,7 @@
 
 use genex_render::mesh::{GlbModel, LOD_MAX_LEVELS, LOD_SELECT_WGSL, LodFault, MeshData, select_lod};
 use genex_render::scene::{CameraDesc, FramePlan, Material, MeshId, MeshLibrary, Scene, translation};
+use genex_render::shadow::caster_error_texels;
 use genex_render::{Gpu, Renderer};
 use serde_json::{Value, json};
 
@@ -99,7 +100,7 @@ fn a_scaled_node_scales_its_levels_error() {
 #[test]
 fn hostile_lod_extras_are_refused_with_a_typed_warning_and_the_mesh_still_loads_whole() {
     type Damage = fn(&mut Value);
-    let rows: [(&str, LodFault, Damage); 8] = [
+    let rows: [(&str, LodFault, Damage); 11] = [
         ("another version", LodFault::UnknownVersion, |l| l["version"] = json!(99)),
         ("not an object", LodFault::UnknownVersion, |l| *l = json!("levels")),
         ("too many levels", LodFault::OverLimit, |l| {
@@ -115,6 +116,10 @@ fn hostile_lod_extras_are_refused_with_a_typed_warning_and_the_mesh_still_loads_
             l["levels"] = json!(levels);
         }),
         ("a negative error", LodFault::NotCoarser, |l| l["levels"][0]["error"] = json!(-1.0)),
+        // Lane FR: at most one casters' level, and never every level.
+        ("two caster levels", LodFault::OverLimit, |l| l["casters"] = json!(2)),
+        ("every level the casters'", LodFault::OverLimit, |l| l["casters"] = json!(l["levels"].as_array().map_or(0, Vec::len))),
+        ("a caster count that is not a number", LodFault::OverLimit, |l| l["casters"] = json!("1")),
     ];
     for (name, fault, damage) in rows {
         let bytes = edited(|json| damage(&mut json["meshes"][0]["primitives"][0]["extras"]["genex_lods"]));
@@ -289,10 +294,13 @@ fn a_part_with_levels_draws_each_instance_once_at_the_level_its_distance_picks()
         let wanted = select_lod(&errors, distance, ppu, 1.0);
         assert!((*level as i64 - wanted as i64).abs() <= 1, "instance {draw}: drawn at {level}, the exact select gives {wanted}");
     }
-    // Every shadow cascade draws an instance at the camera's level, never twice.
+    // Every shadow cascade draws an instance once, at the camera's level or the coarser level its
+    // map cannot tell apart (lane FQ, `a_sun_cascade_casts_the_coarsest_level_its_filter_hides`).
     for view in 1..plan.views as usize {
+        let floor = cascade_floor(&plan, &library, mesh, view);
         for (draw, level) in drawn_levels(&plan, view, count).into_iter().enumerate() {
-            assert!(level.is_none_or(|level| level == camera[draw]), "view {view}, instance {draw}: {level:?} against the camera's {}", camera[draw]);
+            let wanted = camera[draw].max(floor[draw]);
+            assert!(level.is_none_or(|level| level == wanted), "view {view}, instance {draw}: {level:?}, want {wanted} (the camera's {})", camera[draw]);
         }
     }
     // An orthographic camera turns the levels off: every instance draws the mesh itself.
@@ -300,6 +308,45 @@ fn a_part_with_levels_draws_each_instance_once_at_the_level_its_distance_picks()
     flat.camera.ortho_height = Some(20.0);
     let flat_plan = FramePlan::build(&flat, &library, LOD_WIDTH as f32 / LOD_HEIGHT as f32).expect("plan");
     assert!(drawn_levels(&flat_plan, 0, count).into_iter().flatten().all(|level| level == 0));
+}
+
+/// The coarsest level of `mesh` each instance of `plan` may cast in sun cascade view `view`: the
+/// last whose world error is within the cascade's texels times its filter's
+/// [`caster_error_texels`] (0: the mesh itself).
+fn cascade_floor(plan: &FramePlan, library: &MeshLibrary, mesh: MeshId, view: usize) -> Vec<usize> {
+    let (set, settings) = (plan.cascades.as_ref().expect("cascades"), plan.shadows.as_ref().expect("shadows"));
+    let allowed = set.texel_world[view - 1] * caster_error_texels(settings.filter);
+    let (entry, lods) = (library.entry(mesh).expect("base"), library.lods(mesh).expect("levels"));
+    let rows = plan.batches[0].first_row as usize..(plan.batches[0].first_row + plan.batches[0].instance_count) as usize;
+    plan.instances[rows].iter().map(|row| lods.errors.iter().take_while(|error| *error / entry.radius * row.bounds[3] <= allowed).count()).collect()
+}
+
+/// Lane FQ (10,000 ghouls): a sun cascade's casters were drawn at the camera's level, which keeps a
+/// crowd's full mesh to 180 m, so a far cascade drew every ghoul's every triangle (the cascades'
+/// cost is their casters' triangles). A cascade now casts each instance at the coarsest level whose
+/// error its map cannot show through its filter's narrowest kernel (`caster_error_texels` of its
+/// texels), and never finer than the camera's: the near cascades, whose texels are small, keep
+/// the camera's level.
+#[test]
+fn a_sun_cascade_casts_the_coarsest_level_its_filter_hides() {
+    let part = sphere_part();
+    let mut library = MeshLibrary::new();
+    let mesh = library.add_part(part).expect("added");
+    let count = 24;
+    let scene = receding_spheres(mesh, count, true);
+    let mut plan = FramePlan::build(&scene, &library, LOD_WIDTH as f32 / LOD_HEIGHT as f32).expect("plan");
+    plan.set_lod_height(LOD_HEIGHT);
+    let camera: Vec<usize> = drawn_levels(&plan, 0, count).into_iter().flatten().collect();
+    let mut coarser = 0;
+    for view in 1..plan.views as usize {
+        let floor = cascade_floor(&plan, &library, mesh, view);
+        for (draw, level) in drawn_levels(&plan, view, count).into_iter().enumerate() {
+            let Some(level) = level else { continue };
+            assert_eq!(level, camera[draw].max(floor[draw]), "view {view}, instance {draw} (the camera draws {})", camera[draw]);
+            coarser += usize::from(level > camera[draw]);
+        }
+    }
+    assert!(coarser > 0, "a cascade casts some sphere coarser than the camera draws it");
 }
 
 #[test]
@@ -316,6 +363,73 @@ fn a_chain_reaching_past_its_mesh_is_dropped_and_the_mesh_draws_whole() {
     assert_eq!(library.len(), before + 1, "no level mesh is added");
     let plan = FramePlan::build(&receding_spheres(mesh, 4, false), &library, 1.0).expect("plan");
     assert_eq!(plan.batches.len(), 1);
+}
+
+/// Lane FR: the importer's finned golden (`tests/conformance/rust-assets-lods.test.ts` writes it:
+/// a sphere with thin two-sided flaps) opens its chain with a level for the shadow casters alone.
+#[test]
+fn the_importers_finned_golden_loads_with_its_casters_level() {
+    let bytes = import_fixture("lods-finned.glb");
+    let model = GlbModel::from_glb(&bytes).expect("the golden loads");
+    let [part] = model.parts() else { panic!("one part") };
+    assert!(part.lod_warnings.is_empty(), "{:?}", part.lod_warnings);
+    let chain = part.lods.as_ref().expect("a chain");
+    assert_eq!(chain.casters, 1, "its first level is the casters'");
+    assert!(chain.levels.len() >= 2, "and the camera keeps a level after it");
+    let primitives = split(&bytes).0["meshes"][0]["primitives"].as_array().map_or(0, Vec::len);
+    assert_eq!(primitives, 1);
+    // Extras without the key (every chain an earlier import wrote) have none.
+    assert_eq!(sphere_part().lods.expect("a chain").casters, 0);
+}
+
+/// The sphere's chain with a casters' level in front (lane FR): its first level's triangles, at a
+/// twentieth of its error, so the sun's cascades cast it where their texels allow; and the sphere
+/// with the camera's levels alone (the chain without the casters' level).
+fn casters_part() -> (genex_render::scene::ModelPart, genex_render::scene::ModelPart) {
+    let mut part = sphere_part();
+    let chain = part.lods.as_mut().expect("a chain");
+    chain.levels.truncate(LOD_MAX_LEVELS as usize - 1);
+    let camera = part.clone();
+    let chain = part.lods.as_mut().expect("a chain");
+    let mut fine = chain.levels[0].clone();
+    fine.error *= 0.05;
+    chain.levels.insert(0, fine);
+    chain.casters = 1;
+    (part, camera)
+}
+
+/// Lane FR, red first: a chain whose first level is its shadow casters' alone. The camera chooses
+/// among the mesh and the levels after it exactly as the chain without it does, so its picture and
+/// its selection are unchanged; a sun cascade casts the casters' level where its texels hide that
+/// level's error and the camera draws the mesh itself.
+#[test]
+fn a_casters_level_is_cast_by_the_sun_and_never_drawn_by_the_camera() {
+    let (part, camera_part) = casters_part();
+    let mut library = MeshLibrary::new();
+    let mesh = library.add_part(part).expect("added");
+    assert_eq!(library.lods(mesh).expect("levels").casters, 1);
+    let mut without = MeshLibrary::new();
+    let plain = without.add_part(camera_part).expect("added");
+    let count = 24;
+    let plan_of = |library: &MeshLibrary, mesh: MeshId| {
+        let mut plan = FramePlan::build(&receding_spheres(mesh, count, true), library, LOD_WIDTH as f32 / LOD_HEIGHT as f32).expect("plan");
+        plan.set_lod_height(LOD_HEIGHT);
+        plan
+    };
+    let (plan, reference) = (plan_of(&library, mesh), plan_of(&without, plain));
+    let camera: Vec<usize> = drawn_levels(&plan, 0, count).into_iter().flatten().collect();
+    let wanted: Vec<usize> = drawn_levels(&reference, 0, count).into_iter().flatten().map(|level| if level == 0 { 0 } else { level + 1 }).collect();
+    assert_eq!(camera, wanted, "the camera draws what the chain without the casters' level draws");
+    let mut cast = 0;
+    for view in 1..plan.views as usize {
+        let floor = cascade_floor(&plan, &library, mesh, view);
+        for (draw, level) in drawn_levels(&plan, view, count).into_iter().enumerate() {
+            let Some(level) = level else { continue };
+            assert_eq!(level, camera[draw].max(floor[draw]), "view {view}, instance {draw} (the camera draws {})", camera[draw]);
+            cast += usize::from(level == 1);
+        }
+    }
+    assert!(cast > 0, "a cascade casts some sphere at the casters' level");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -481,6 +595,27 @@ fn metal_far_instances_draw_a_coarser_level_and_the_gpu_cull_keeps_the_cpus_leve
     plain.render(&gpu, &near(plain_mesh), genex_render::CullPath::Gpu).expect("frame");
     let (with_levels, without) = (renderer.capture(&gpu).expect("capture"), plain.capture(&gpu).expect("capture"));
     assert_eq!(with_levels.digest(), without.digest(), "level 0 is the mesh itself");
+}
+
+/// Lane FR: the GPU cull keeps the CPU cull's levels, slot for slot, for a chain with a casters'
+/// level, in the camera and every cascade.
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_the_gpu_cull_keeps_the_cpus_levels_for_a_chain_with_a_casters_level() {
+    let Some(gpu) = gpu() else { return };
+    let mut renderer = Renderer::new(&gpu, LOD_WIDTH, LOD_HEIGHT).expect("renderer");
+    let (part, _) = casters_part();
+    let mesh = renderer.add_model_parts(&gpu, vec![part]).expect("added")[0];
+    let scene = receding_spheres(mesh, 300, true);
+    renderer.render(&gpu, &scene, genex_render::CullPath::Gpu).expect("frame");
+    let mut plan = FramePlan::build(&scene, renderer.library(), LOD_WIDTH as f32 / LOD_HEIGHT as f32).expect("plan");
+    plan.set_lod_height(LOD_HEIGHT);
+    assert!(plan.views > 1, "the sun's cascades are culled too");
+    assert_gpu_cull_equals_cpu(&gpu, &renderer, &plan);
+    let camera = renderer.read_view_args(&gpu, 0).expect("args");
+    assert_eq!(camera[1].instance_count, 0, "the camera never draws the casters' level");
+    let cast: u32 = (1..plan.views).map(|view| renderer.read_view_args(&gpu, view).expect("args")[1].instance_count).sum();
+    assert!(cast > 0, "a cascade casts it");
 }
 
 /// The median of `samples`.

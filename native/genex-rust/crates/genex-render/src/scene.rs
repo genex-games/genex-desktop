@@ -13,16 +13,19 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
+use genex_core::map::FastMap;
+
 use crate::caps::BUFFER_MAX_BYTES;
 use crate::cull::{CullLod, active_views, cascade_view, cpu_cull_view};
 use crate::error::{RenderCode, RenderError};
-use crate::instance::instance_row;
+use crate::instance::{instance_row, swaying};
 use crate::layout::{GpuBatch, GpuMeshlet, GpuCullViews, GpuFrame, GpuInstance, GpuLight, GpuMaterial, GpuMaterialExt, GpuSkinJob, GpuSkinVertex, MAX_CASCADES, NO_BATCH, SHADOW_CASCADES};
-use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex};
+use crate::mesh::{LOD_NOMINAL_HEIGHT, LOD_THRESHOLD_PX, LodChain, MeshData, Vertex, casters_lod};
 use crate::mesh_arena::{ArenaStream, Rewrite, RowAllocator};
 use crate::meshlet::{self, MeshletLibrary, MeshletRange, MeshletSet};
 use crate::motion::{DrawId, MotionKeys, MotionRow, RowKind};
@@ -36,7 +39,7 @@ use crate::skinned_lod::{SkinLods, SkinnedLevel, SkinnedLodInput, SkinnedPick, p
 use crate::transparent::back_to_front;
 
 pub use crate::cull::{CpuCull, frustum_planes, frustum_planes_for, in_frustum};
-pub use crate::pbr::{Lighting, Material, PointLight, srgb_to_linear};
+pub use crate::pbr::{Lighting, Material, PointLight, UvMapping, UvVariation, srgb_to_linear};
 
 /// A mesh in a [`MeshLibrary`]: its slot and the generation of that slot it was handed out in
 /// (game systems STR-2). Removing a mesh moves its slot to the next generation, so the slot can
@@ -136,6 +139,8 @@ struct PlannedPart {
     levels: Vec<MeshData>,
     /// The chain's errors, when the part kept one.
     errors: Option<Vec<f32>>,
+    /// How many of its first levels only shadow casters draw (lane FR).
+    casters: u32,
 }
 
 impl PlannedPart {
@@ -145,7 +150,8 @@ impl PlannedPart {
         let vertex_count = mesh.vertices.len() as u32;
         let chain = lods.filter(|chain| chain.levels.iter().all(|level| level.indices.iter().all(|index| *index < vertex_count)));
         let levels = chain.iter().flat_map(|chain| chain.levels.iter().map(|level| level_mesh(&mesh, &level.indices))).collect();
-        PlannedPart { errors: chain.map(|chain| chain.errors()), mesh, meshlets, levels }
+        let casters = chain.as_ref().map_or(0, |chain| chain.casters);
+        PlannedPart { errors: chain.map(|chain| chain.errors()), casters, mesh, meshlets, levels }
     }
 }
 
@@ -168,6 +174,9 @@ pub struct MeshLods {
     pub levels: Vec<MeshId>,
     /// Their object-space errors, never decreasing.
     pub errors: Vec<f32>,
+    /// How many of the first levels only shadow casters draw (lane FR,
+    /// [`crate::mesh::LOD_CASTERS_TAG`]): the camera's selection skips them.
+    pub casters: u32,
 }
 
 /// A library mesh's impostor level (game systems LOD-15): one more level past its mesh levels,
@@ -598,7 +607,7 @@ impl MeshLibrary {
 
     /// Push a part and its levels at the rows taken for them, in order.
     fn push_part(&mut self, part: PlannedPart, placements: &mut impl Iterator<Item = Placement>) -> MeshId {
-        let PlannedPart { mesh, meshlets, levels, errors } = part;
+        let PlannedPart { mesh, meshlets, levels, errors, casters } = part;
         let (center, radius) = mesh.bounds();
         let mut next = || placements.next().expect("a placement per part and level");
         let id = self.push(mesh, EntryRole::Mesh, meshlets, next());
@@ -610,7 +619,7 @@ impl MeshLibrary {
             ids.push(level_id);
         }
         if let Some(errors) = errors.filter(|_| !ids.is_empty()) {
-            self.lods.insert(id.index, MeshLods { levels: ids, errors });
+            self.lods.insert(id.index, MeshLods { levels: ids, errors, casters });
         }
         id
     }
@@ -1506,6 +1515,11 @@ fn same_bits(a: &Material, b: &Material) -> bool {
         && a.double_sided == b.double_sided
         && a.occlusion_texture == b.occlusion_texture
         && bits(a.occlusion_strength, b.occlusion_strength)
+        && a.uv == b.uv
+        && a.variation == b.variation
+        && a.subsurface == b.subsurface
+        && a.view_model == b.view_model
+        && a.layers == b.layers
 }
 
 /// A transparent instance before sorting.
@@ -1562,6 +1576,8 @@ struct LodMesh {
     count: usize,
     levels: Vec<MeshId>,
     errors: Vec<f32>,
+    /// Its chain's caster levels (lane FR).
+    casters: u32,
     radius: f32,
     far: bool,
     /// Its impostor level (game systems LOD-15): its chain's LOD rows carry it.
@@ -1571,7 +1587,7 @@ struct LodMesh {
 impl LodMesh {
     /// The LOD row of its level `level` batch (a fade twin's when `fade`).
     fn lod(&self, level: u32, fade: bool) -> [u32; 3] {
-        chain_lod(level, &self.errors, self.radius, self.impostor, fade)
+        casters_lod(chain_lod(level, &self.errors, self.radius, self.impostor, fade), self.casters)
     }
 }
 
@@ -1623,6 +1639,7 @@ impl Rows {
             let kept = if impostor.is_some() { crate::mesh::LOD_IMPOSTOR_MESH_LEVELS } else { usize::MAX };
             let level_meshes: Vec<MeshId> = lods.map_or_else(Vec::new, |lods| lods.levels.iter().copied().take(kept).collect());
             let errors: Vec<f32> = lods.map_or_else(Vec::new, |lods| lods.errors.iter().copied().take(kept).collect());
+            let casters = lods.map_or(0, |lods| lods.casters);
             let chained = lods.is_some() || impostor.is_some();
             for level in 0..=level_meshes.len() {
                 let (level_mesh, geometry) = match level.checked_sub(1) {
@@ -1632,12 +1649,12 @@ impl Rows {
                 self.slot_base[variant * self.slot_count + level_mesh.raw() as usize] = self.slots;
                 let mut row = batch(self.slots as usize, count, geometry.first_index, geometry.index_count, geometry.base_vertex);
                 row.first_row = first_row;
-                row.lod = if chained { chain_lod(level as u32, &errors, entry.radius, impostor, false) } else { [0; 3] };
+                row.lod = if chained { casters_lod(chain_lod(level as u32, &errors, entry.radius, impostor, false), casters) } else { [0; 3] };
                 self.batches.push(row);
                 self.slots += count as u32;
             }
             if let Some(species) = impostor.and_then(|impostor| impostor.species) {
-                self.push_impostor_batch(first_row, count, chain_lod(level_meshes.len() as u32 + 1, &errors, entry.radius, impostor, false), species);
+                self.push_impostor_batch(first_row, count, casters_lod(chain_lod(level_meshes.len() as u32 + 1, &errors, entry.radius, impostor, false), casters), species);
             }
             self.lod_batches |= chained;
             // A clustered mesh's meshlet path culls its instances itself: it is never thinned
@@ -1648,7 +1665,7 @@ impl Rows {
             let far = self.lod_rows[first_row as usize..].iter().any(|row| row.far_rule != FAR_RULE_NONE);
             if chained || far {
                 let levels = std::iter::once(*mesh).chain(level_meshes).collect();
-                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, radius: entry.radius, far, impostor });
+                self.lod_meshes.push(LodMesh { variant, first_row, count, levels, errors, casters, radius: entry.radius, far, impostor });
             }
         }
         Ok(())
@@ -1725,8 +1742,9 @@ impl Rows {
         for at in &drawn.draws {
             let draw = &scene.draws[*at];
             let row = instance_row(&draw.model, entry.center, entry.radius, materials.row(&draw.material));
+            // Model wind: the LOD row keeps the still sphere, so a sway never moves a switch.
             self.lod_rows.push(lod_row(&draw.model, row.bounds, &draw.lod));
-            self.instances.push(row);
+            self.instances.push(swaying(row, draw.material.sway));
             self.motion.extend(key_of.get(*at).copied().flatten());
         }
         self.instances.len() - first
@@ -1735,20 +1753,23 @@ impl Rows {
     /// One opaque retained group's rows: its cached rows under this frame's material row, and its
     /// span (A.0b).
     fn push_group(&mut self, GroupDraw { group, material, id, lod }: &GroupDraw, entry: &MeshEntry, keys: &mut DrawKeys, materials: &mut Materials) {
+        let group_material = material;
         let material = materials.row(material);
         let first = self.instances.len();
         self.instances.extend_from_slice(&group.rows(entry.center, entry.radius));
         self.lod_rows.extend_from_slice(&group.lod_rows(entry.center, entry.radius, lod));
-        if material != 0 {
+        let sway = group_material.sway;
+        if material != 0 || sway.is_some() {
             for row in &mut self.instances[first..] {
-                row.material = material;
+                *row = swaying(GpuInstance { material: if material != 0 { material } else { row.material }, ..*row }, sway);
             }
         }
         for _ in 0..group.len() {
             self.motion.extend(keys.row(*id, group.mesh(), RowKind::Opaque, None));
         }
         let rows = group.len() as u32;
-        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius), lod: *lod });
+        let wind = sway.map_or([0; 3], crate::wind::Sway::words);
+        self.retained.push(RetainedSpan { group: group.clone(), first_row: first as u32, rows, material, bounds: (entry.center, entry.radius), lod: *lod, wind });
     }
 
     /// One skinned part's batch in `variant`'s region (its slot base there): one row per draw
@@ -1876,6 +1897,14 @@ fn skinned_picks(scene: &Scene, library: &MeshLibrary, view: [f32; 4], band: f32
     scene.skinned.iter().map(pick).collect()
 }
 
+/// The level each skinned draw of `scene` skins on an output of `target` (game systems AN-25), as
+/// [`FramePlan::build_with_skin_levels`] picks them: the base whole for a skin without levels.
+pub fn skinned_levels(scene: &Scene, library: &MeshLibrary, target: LodTarget) -> Vec<SkinnedPick> {
+    let eye = scene.camera.eye;
+    let view = [eye[0], eye[1], eye[2], target.view_w(lod_per_height(&scene.camera))];
+    skinned_picks(scene, library, view, fade_band(scene.lod_band))
+}
+
 /// LOD's screen-size metric (game systems AN-17; STR-19 and the skinned paths read it too): the
 /// pixels the diameter of the world sphere `sphere` (centre xyz, radius) covers at the nominal
 /// output height ([`LOD_NOMINAL_HEIGHT`]) from `camera`, on the cull's own scale (the LOD view's w,
@@ -1933,6 +1962,31 @@ fn same_palette(a: &[[f32; 16]], b: &[[f32; 16]]) -> bool {
     bytemuck::cast_slice::<[f32; 16], u32>(a) == bytemuck::cast_slice::<[f32; 16], u32>(b)
 }
 
+/// Each skinned draw's pose owner (AN-16b): the first draw of `scene` keyed alike by `key_of`
+/// (its level, say) that poses the same skin with a bit-identical palette, itself for the first
+/// of its pose and for a draw `key_of` leaves out (None). A hash of the palette's bits finds the
+/// candidates, so a frame of N draws compares palettes about N times, not N^2 / 2.
+pub(crate) fn pose_owners<K: Hash + Eq>(scene: &Scene, key_of: impl Fn(usize) -> Option<K>) -> Vec<usize> {
+    let mut seen: FastMap<(SkinId, K, u64), Vec<usize>> = FastMap::with_capacity_and_hasher(scene.skinned.len(), Default::default());
+    let mut owner_of = |(at, draw): (usize, &SkinnedDraw)| {
+        let Some(key) = key_of(at) else { return at };
+        let owners = seen.entry((draw.skin, key, palette_hash(&draw.joints))).or_default();
+        if let Some(owner) = owners.iter().copied().find(|owner| same_palette(&scene.skinned[*owner].joints, &draw.joints)) {
+            return owner;
+        }
+        owners.push(at);
+        at
+    };
+    scene.skinned.iter().enumerate().map(&mut owner_of).collect()
+}
+
+/// A hash of a palette's bits (the same for bit-identical palettes).
+fn palette_hash(palette: &[[f32; 16]]) -> u64 {
+    let mut hasher = genex_core::map::FastHasher::default();
+    hasher.write(bytemuck::cast_slice::<[f32; 16], u8>(palette));
+    hasher.finish()
+}
+
 /// Refuse `mesh-invalid` a part list that does not describe `mesh` (AN-16a).
 fn check_skin_parts(mesh: &MeshData, parts: &[SkinPart]) -> Result<(), RenderError> {
     let refuse = |detail: String| Err(RenderError::refused(RenderCode::MeshInvalid, detail));
@@ -1967,6 +2021,8 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool], picks: &
     let pick_of = |at: usize| picks.get(at).copied().unwrap_or(SkinnedPick::BASE);
     let mut frame = SkinnedFrame { parts: Vec::with_capacity(scene.skinned.len()), joints: Vec::new(), uses: Vec::with_capacity(scene.skinned.len()) };
     let mut dst_base = 0u32;
+    // Each draw's job owner: the first draw on compute posing its skin and level with its palette.
+    let owners = pose_owners(scene, |at| (!skins_in_vertex(at)).then(|| pick_of(at)));
     for (at, draw) in scene.skinned.iter().enumerate() {
         let entry = mesh_entry(library, draw.skin.mesh)?;
         if draw.joints.len() != draw.skin.joints as usize {
@@ -1989,12 +2045,9 @@ fn skinned_parts(scene: &Scene, library: &MeshLibrary, vertex: &[bool], picks: &
             continue;
         }
         let pick = pick_of(at);
-        let shared = scene.skinned[..at]
-            .iter()
-            .enumerate()
-            .position(|(k, earlier)| !skins_in_vertex(k) && earlier.skin == draw.skin && pick_of(k) == pick && same_palette(&earlier.joints, &draw.joints));
-        if let Some(earlier) = shared {
-            frame.uses.push(frame.uses[earlier].clone());
+        let owner = owners[at];
+        if owner != at {
+            frame.uses.push(frame.uses[owner].clone());
             continue;
         }
         // Every level's rows measure from the posed sphere of the base mesh (AN-25).
@@ -2083,13 +2136,19 @@ impl FramePlan {
     /// or in the fade band the two levels it crossfades, both skinned by compute (a marked draw in a
     /// band leaves the vertex path for that frame).
     pub fn build_with_skin_levels(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, (motion, vertex): (bool, &[bool]), target: LodTarget) -> Result<FramePlan, RenderError> {
+        let picks = skinned_levels(scene, library, target);
+        FramePlan::build_with_picks(scene, library, aspect, options, (motion, vertex), &picks)
+    }
+
+    /// [`FramePlan::build_with_skin_levels`] with the levels [`skinned_levels`] picked for its
+    /// target (the renderer picks them once for the skin paths and the plan).
+    pub(crate) fn build_with_picks(scene: &Scene, library: &MeshLibrary, aspect: f32, options: &PlanOptions, (motion, vertex): (bool, &[bool]), picks: &[SkinnedPick]) -> Result<FramePlan, RenderError> {
         let depth_reversed = options.depth_reversed;
         let band = fade_band(scene.lod_band);
         let lod_per_height = lod_per_height(&scene.camera);
         let eye = scene.camera.eye;
-        let picks = skinned_picks(scene, library, [eye[0], eye[1], eye[2], target.view_w(lod_per_height)], band);
         let vertex: Vec<bool> = vertex.iter().enumerate().map(|(at, marked)| *marked && !picks.get(at).is_some_and(|pick| pick.is_band())).collect();
-        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, &vertex, &picks)?;
+        let SkinnedFrame { parts, joints, uses } = skinned_parts(scene, library, &vertex, picks)?;
         let mut materials = Materials::default();
         let mut keys = DrawKeys { keys: motion.then(MotionKeys::default) };
         // Opaque draws by variant and mesh as indices into the scene's draws (and, with motion,
@@ -2179,7 +2238,7 @@ impl FramePlan {
         }
         skinned_rows.sort_by_key(|row| (row.variant, row.part));
         fade_skinned_rows.sort_by_key(|row| (row.variant, row.part));
-        let vertex_skinned = vertex_skinned_parts(scene, library, (&vertex, &picks), &mut materials);
+        let vertex_skinned = vertex_skinned_parts(scene, library, (&vertex, picks), &mut materials);
         rows.push_skinned_variant(scene, &parts, &skinned_rows, DrawVariant::PLAIN.index(), &mut materials);
         let plain_batches = rows.batches.len() as u32;
         let mut variants = Vec::new();
@@ -2223,9 +2282,12 @@ impl FramePlan {
         cull_views.lod_params[1] = band.to_bits();
         cull_views.lod_params[2] = far_rules.len() as u32;
         cull_views.planes[0] = camera_planes;
-        if let Some(set) = &shadows {
+        if let (Some(set), Some(settings)) = (&shadows, &settings) {
+            let texels = crate::shadow::caster_error_texels(settings.filter);
             for (c, planes) in set.planes.iter().enumerate().take(drawn_cascades(set)) {
                 cull_views.planes[cascade_view(c) as usize] = *planes;
+                // The error its map cannot show (lane FQ): its casters' coarsest level within it.
+                cull_views.shadow_lod[c] = set.texel_world[c] * texels;
             }
         }
         let skinned_vertices = parts.iter().map(|p| p.job.count).sum();
@@ -2313,7 +2375,7 @@ impl FramePlan {
             return Vec::new();
         }
         let batches: Vec<GpuBatch> = self.impostor_batches.iter().map(|impostor| self.batches[impostor.batch as usize]).collect();
-        let cull = cpu_cull_view(&self.cull_views.planes[0], &self.cull_lod(), &batches, &self.instances, self.visible_slots as usize, false);
+        let cull = cpu_cull_view(&self.cull_views.planes[0], &self.cull_lod(), &batches, &self.instances, self.visible_slots as usize, (false, 0.0));
         let mut out = Vec::new();
         for ((impostor, batch), count) in self.impostor_batches.iter().zip(&batches).zip(&cull.counts) {
             let fade_batch = batch.lod[0] & crate::mesh::LOD_FADE_TAG != 0;
@@ -2329,7 +2391,8 @@ impl FramePlan {
     /// The reference cull of view `view` (0 the camera, 1 + c shadow cascade c); every view but
     /// the camera casts a chain's last mesh level in its impostor's place (game systems LOD-15).
     pub fn cpu_cull_view(&self, view: usize) -> CpuCull {
-        cpu_cull_view(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize, view != 0)
+        let caster_error = view.checked_sub(1).and_then(|lane| self.cull_views.shadow_lod.get(lane)).copied().unwrap_or(0.0);
+        cpu_cull_view(&self.cull_views.planes[view], &self.cull_lod(), &self.batches, &self.instances, self.visible_slots as usize, (view != 0, caster_error))
     }
 
     /// What the cull reads to choose levels: the LOD view, the fade band and the LOD rows.

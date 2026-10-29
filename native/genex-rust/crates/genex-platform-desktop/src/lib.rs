@@ -12,6 +12,10 @@
 //! protocol's key names and a [`ShellSurface`] it can give wgpu, never winit's own types, and a
 //! surface exists only between `resumed` and `suspended` ([`ShellCore`]).
 //!
+//! A windowed run opens at the game's world size, borderless fullscreen with `--fullscreen` or
+//! `GENEX_FULLSCREEN=1`, or exclusive fullscreen at the monitor's largest mode (its panel's own
+//! pixels) with `--fullscreen=native` or `GENEX_FULLSCREEN=native` ([`fullscreen_asked`]).
+//!
 //! Input past the keyboard: Mouse1 emulates one touch ([`MOUSE_TOUCH_ID`], [`SampledTouch`]) so
 //! touch controls work with a mouse; gamepads come from gilrs mapped onto the standard order
 //! ([`standard_button`], [`standard_axis`]) on exports only, because a Studio run reads pads only
@@ -40,7 +44,10 @@ pub use crate::core::{FrameControl, ShellCore, ShellEvent, ShellFrame, ShellGame
 pub use gamepad::{GamepadPolicy, Gamepads, PadEvent, PadSlots, standard_axis, standard_button};
 pub use headless::{HEADLESS_FRAME_MS, HeadlessOptions, ShellClock, ShellExit, SystemClock, run_headless};
 pub use letterbox::Letterbox;
-pub use mode::{HEADLESS_ENV, HEADLESS_FLAG, NO_WINDOW_ENV, ShellMode, windows_forbidden, windows_forbidden_here};
+pub use mode::{
+    FULLSCREEN_ENV, FULLSCREEN_FLAG, FULLSCREEN_NATIVE_FLAG, Fullscreen, HEADLESS_ENV, HEADLESS_FLAG, NO_WINDOW_ENV, ShellMode, fullscreen_asked, fullscreen_from_process, windows_forbidden,
+    windows_forbidden_here,
+};
 pub use sample::{FrameSample, InputSampler, MAX_TEXT_CHARS, WHEEL_PIXELS_PER_NOTCH, key_name};
 pub use surface::ShellSurface;
 pub use touch::{MAX_TOUCH_STEPS, MOUSE_TOUCH_ID, SampledTouch, TouchPhase};
@@ -57,12 +64,14 @@ pub struct ShellOptions {
     pub max_frames: Option<u64>,
     /// The run belongs to Studio: real gamepads stay off, pads come only from the host.
     pub studio: bool,
+    /// How a windowed run fills its monitor ([`fullscreen_from_process`]).
+    pub fullscreen: Fullscreen,
 }
 
 /// Run `game` in `mode` until it exits (or its window closes): the one entry point both modes
 /// share. `max_frames` bounds a spike or test run. Outside Studio: an export reads real gamepads.
 pub fn run<G: ShellGame + 'static>(game: G, mode: ShellMode, max_frames: Option<u64>) -> Result<(G, ShellExit), ShellError> {
-    run_with(game, mode, ShellOptions { max_frames, studio: false })
+    run_with(game, mode, ShellOptions { max_frames, studio: false, fullscreen: Fullscreen::Off })
 }
 
 /// [`run`] with every option.
@@ -75,7 +84,7 @@ pub fn run_with<G: ShellGame + 'static>(game: G, mode: ShellMode, options: Shell
         }
         ShellMode::Windowed => {
             let gamepads = GamepadPolicy::for_run(mode, options.studio);
-            run_windowed(game, WindowedOptions { max_frames: options.max_frames, gamepads })
+            run_windowed(game, WindowedOptions { max_frames: options.max_frames, gamepads, fullscreen: options.fullscreen })
         }
     }
 }

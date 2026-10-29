@@ -88,11 +88,15 @@ export interface CapturedImage extends CapturedFile {
 export type FinishCheckStep = 'checking' | 'accepted' | 'rejected' | 'unanswered';
 // ↑ src/shared/finish-check.ts
 
-/** A finish check's round as the host answers it: the reviewer's yes or no with reasons, or no answer and why. */
+/** A finish check's round as the host answers it: the reviewer's yes or no with reasons and what isn't done, or no answer and why. */
 export interface FinishRoundAnswer {
   round: number;
   step: FinishCheckStep;
   reasons?: string[];
+  /** What the reviewer found not done, when it named any. */
+  notDone?: string[];
+  /** What the reviewer found done, in a few words each, when it named any. */
+  done?: string[];
   why?: string;
 }
 // ↑ src/shared/harness-api.ts
@@ -234,6 +238,11 @@ export interface StudioToolSpec {
     properties: Record<string, { type: string; description?: string }>;
     required?: string[];
   };
+  /**
+   * Called only when the person asks for it in words (an Auto chat's Loop start): it doesn't make the
+   * session an interview, so messages still join it mid-turn, and no nudge names it.
+   */
+  onlyWhenAsked?: boolean;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -338,8 +347,26 @@ export interface DelegatePlaytestGrant {
   handle?: string;
   entry?: string;
   setup?: PreviewSetup | null;
-  role?: "playtester" | "scout";
+  /** A `judge` plays blind (no files, no shell) on a stepped clock, with only the `computer` tool. */
+  role?: "playtester" | "scout" | "judge";
   label?: string;
+  /** A goal the studio checks after every move; the first time it holds is studio-verified. */
+  quest?: { id: string; until: NonNullable<PreviewSetup["verify"]> };
+  /** The most moves (input actions, waits, batch steps) the session may make, counted by the host. */
+  maxActions?: number;
+  /** How the build's clock is held between moves: wall-time pacing, or seeded exact steps. */
+  pacing?: "paced" | "stepped";
+  /**
+   * How many players a game played in its engine's editor opens for this session (1 to
+   * `MAX_PLAY_PLAYERS`, never more than its engine declares); absent is one.
+   */
+  players?: number;
+  /**
+   * A judge the game's engine plugin declares (`PluginJudge.id`), for a `judge` role on a game played
+   * in its editor: the host appends its brief to the session's rubric, opens its players and runs
+   * its probe once the play opens. A judge the game does not have is refused.
+   */
+  judge?: string;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -540,7 +567,7 @@ export type AssetImportStatus = 'pending' | 'ready' | 'refused';
 export type AssetImportRefusal = 'unsupported-by-raylib' | 'unsupported-by-rust' | 'unsafe-path' | 'escapes-game' | 'missing' | 'not-regular-file' | 'too-large' | 'malformed' | 'unsupported-extension' | 'converter-missing' | 'importer-failed' | 'validation-failed';
 // ↑ src/shared/game-assets.ts
 
-export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning' | 'albedo-out-of-range' | 'metallic-partial' | 'ior-out-of-range' | 'triangles-over-budget';
+export type ImportIssueCode = 'lock-edited' | 'usage-unknown' | 'usage-conflict' | 'resampled' | 'validation-warning' | 'albedo-out-of-range' | 'metallic-partial' | 'ior-out-of-range' | 'triangles-over-budget' | 'decimated';
 // ↑ src/shared/asset-db.ts
 
 /** One issue on a lock row. */
@@ -1121,15 +1148,16 @@ export type Billing = "local" | "subscription" | "metered";
 
 /** What the sign-in card and the Models room say for a subscription. */
 export interface SignInCopy {
-  /** "your Claude subscription": the thing the user already pays for. */
-  readonly product: string;
   readonly card: string;
   readonly account: string;
   readonly install: string;
   /** The vendor's own install page for the CLI. */
   readonly installUrl: string;
   readonly get: string;
-  readonly who: string;
+  /** The flat sign-in card's line: the thing the user already pays for, put to work. */
+  readonly useLine: string;
+  /** The sign-in card's line while the subscription is not signed in: why, and who handles the password. */
+  readonly signInLine: string;
 }
 // ↑ src/shared/providers.ts
 
@@ -1199,6 +1227,13 @@ export interface EngineDescriptor {
 }
 // ↑ src/shared/engine-descriptor.ts
 
+export type Locale = 'en' | 'ru' | 'es' | 'pt-BR' | 'de' | 'fr' | 'ja' | 'ko' | 'zh-Hans';
+// ↑ src/shared/locale.ts
+
+/** What Settings remembers: a language, or the computer's. */
+export type LanguageChoice = Locale | "system";
+// ↑ src/shared/locale.ts
+
 export interface StudioSettingsView {
   /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
   learning: boolean;
@@ -1212,6 +1247,10 @@ export interface StudioSettingsView {
   blender?: boolean;
   /** Resume builds automatically after an engine limit resets or the loop restarts; on by default. */
   autoResume?: boolean;
+  /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
+  computerControl?: boolean;
+  /** The app's language for main's menus, dialogs and notifications; System by default. */
+  language?: LanguageChoice;
 }
 // ↑ src/shared/studio-api.ts
 
@@ -1255,6 +1294,10 @@ export interface StudioActivityItem {
   runId?: string;
   snapshotId?: string;
   undone?: boolean;
+  /** A learned change the person took back themselves (Undo), not one a later restore took back. */
+  undoneByUser?: true;
+  /** A restart of Studio that failed: the one recovery the person must act on. */
+  restartFailed?: true;
   outcome?: RunOutcomeKind;
   /** The run's own plain report, when it wrote one. */
   report?: string;
@@ -1291,6 +1334,23 @@ export interface CompleteResponse {
 }
 // ↑ src/shared/engine-requests.ts
 
+export type InputRoute = 'browser' | 'bridge' | 'os-background' | 'os-foreground' | 'page' | 'editor';
+// ↑ src/shared/computer-target.ts
+
+/** What a finished computer session's trace adds up to, as a delegation's result carries it. */
+export interface ComputerTraceSummary {
+  /** Where the trace was written; null before the first action. */
+  path: string | null;
+  steps: number;
+  /** True when every move ran on a stepped clock: the same seed and inputs replay the same run. */
+  deterministic: boolean;
+  /** The index of the action after which the studio verified the goal was reached, or null. */
+  reachedAt: number | null;
+  /** Every route the session's input took: evidence is as strong as the weakest of them. */
+  routes?: InputRoute[];
+}
+// ↑ src/shared/computer-target.ts
+
 export interface DelegateResult {
   requestedModel?: string;
   cliVersion?: string;
@@ -1322,6 +1382,14 @@ export interface DelegateResult {
   contextTokens?: number;
   /** A `compact` delegation compacted the session, which goes on under the same id. */
   compacted?: boolean;
+  /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
+  trace?: ComputerTraceSummary;
+  /**
+   * Genex tool calls the session made after its turn ended (a background task woke it), which no
+   * answer could reach: by the name the agent called it by, without the server's prefix, and its
+   * arguments as JSON.
+   */
+  cutAfterTurn?: Array<{ tool: string; args: string }>;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -1367,6 +1435,22 @@ export interface HardwareReport {
   };
 }
 // ↑ src/shared/studio-api.ts
+
+export type UsageState = 'checking' | 'ready' | 'failed' | 'not_shared' | 'signed_out';
+// ↑ src/shared/provider-usage.ts
+
+/**
+ * One subscription and where its plan limits stand. `usage` always belongs to `account`, the
+ * account in use: a switch never shows the last account's numbers.
+ */
+export interface ProviderUsageReport {
+  engine: string;
+  state: UsageState;
+  /** The account in use (`terminal`, `studio`, `account-N`), or null when the engine names none. */
+  account: string | null;
+  usage: ProviderUsage | null;
+}
+// ↑ src/shared/provider-usage.ts
 
 /** Host-owned presentation metadata. Folder identity and game files never change on rename. */
 export type CoverStyle = "world" | "relic" | "city";
@@ -1445,6 +1529,11 @@ export interface GameLibraryEntry {
   removed?: boolean;
   /** Folder trust is host metadata; project files cannot grant it. */
   trustProjectSettings?: boolean;
+  /**
+   * A copy of someone else's game (a Play remix) whose setup scripts the person has not trusted:
+   * its packages install with none of them. Host metadata, like the trust above.
+   */
+  guardScripts?: boolean;
   cover?: GameCover;
   primaryThreadId?: string;
   /**
@@ -1458,6 +1547,8 @@ export interface GameLibraryEntry {
   scaffoldStamp?: string;
   /** The title waits for the game's first idea; any title given since clears it. */
   provisional?: boolean;
+  /** New game made it and no answer has ended with it built yet (`GameProject.awaitingFirstBuild`). */
+  awaitingFirstBuild?: boolean;
 }
 // ↑ src/shared/game-library.ts
 
@@ -1466,6 +1557,37 @@ export type ProjectKind = 'studio-template' | 'three-vite' | 'three-modules' | '
 
 export type TargetRefusal = 'mac-builds-need-a-mac' | 'not-runnable-here' | 'no-game-box' | 'not-a-destination' | 'stack-is-fixed' | 'no-judging-target' | 'kind-unsupported' | 'stack-gated' | 'toolchain-offline';
 // ↑ src/shared/game-targets.ts
+
+/**
+ * The runtimes a game declares in its studio.json: never the desktop or a VM, which only the person
+ * grants, nor the editor, which the game's matching engine plugin supplies.
+ */
+export type GameRuntime = 'browser' | 'bridge';
+// ↑ src/shared/computer-target.ts
+
+/** An engine runtime a plugin declares, by id, and the arguments the studio starts it with. */
+export interface PlayEngine {
+  runtime: string;
+  args: string[];
+}
+// ↑ src/shared/game-project.ts
+
+/**
+ * The command that starts a Play Protocol game, as studio.json declares it: a plain path inside
+ * the project (resolved by real path before it runs) and its arguments, each passed as one word.
+ */
+export interface PlayCommand {
+  command: string;
+  args: string[];
+  /**
+   * An engine an enabled plugin runs for the game instead (a Godot game's own Godot): the plugin's
+   * declared native runtime, by its id, and its arguments. The studio finds the runtime where the
+   * plugin says it is and starts it in its native-job sandbox with a window and the GPU, which an
+   * engine needs to draw; the command stays for a person to run. Absent when unusable.
+   */
+  engine?: PlayEngine;
+}
+// ↑ src/shared/game-project.ts
 
 /**
  * How a project runs. The studio's own template needs no build: `index.html` loads `src/main.js`
@@ -1509,6 +1631,13 @@ export interface ProjectShape {
    * refuses every change with `kind-unsupported`. Absent for every kind this version knows.
    */
   readOnly?: TargetRefusal;
+  /**
+   * How the studio runs and reaches the game: its own browser window (the default, when absent)
+   * or a process speaking the Genex Play Protocol (`docs/play-protocol.md`).
+   */
+  runtime?: GameRuntime;
+  /** How a `bridge` game is started; absent for a browser game or when studio.json's is unusable. */
+  play?: PlayCommand;
 }
 // ↑ src/shared/game-project.ts
 
@@ -1522,9 +1651,71 @@ export interface GameDestinations {
 }
 // ↑ src/shared/game-project.ts
 
-/** A game linked to an Unreal project: its `.uproject` (absolute, real path) and when Genex linked it. */
-export type EngineBinding = { kind: 'unreal'; project: string; linkedAt: string; };
+export type EngineId = string;
 // ↑ src/shared/game-engine.ts
+
+/**
+ * A published game's ids at its engine's service, kept beside a link when the project lives there
+ * rather than in a file on this computer: decimal strings, never numbers, which would lose digits.
+ */
+export interface EngineRemote {
+  placeId: string;
+  universeId: string;
+}
+// ↑ src/shared/game-engine.ts
+
+/**
+ * A game linked to an engine project: the engine (an installed plugin's `engine.id`), the project
+ * file (absolute, real path, of a kind that engine declares), when Genex linked it, and the
+ * published game's ids when the project lives at the engine's service.
+ */
+export type EngineBinding = {
+  kind: EngineId;
+  project: string;
+  linkedAt: string;
+  remote?: EngineRemote;
+};
+// ↑ src/shared/game-engine.ts
+
+/**
+ * What the app reads of a linked game's engine, as its plugin declares it, carried on the game's
+ * descriptor: the name the person reads, the project files whose names it shows, and whether the
+ * Loop needs the project inside the game folder.
+ */
+export interface LinkedEngine {
+  label: string;
+  projectFiles: string[];
+  projectInFolder: boolean;
+}
+// ↑ src/shared/game-engine.ts
+
+/**
+ * API 3: a blind judge an engine plugin declares (`judges`). It plays a game in the engine's editor
+ * through the play tools, never sees code, and answers from playing. Data only: the host runs it.
+ */
+export interface PluginJudge {
+  /** Unique in the manifest: what an agent names the judge by. */
+  id: string;
+  /** What the person and the agent read it as, 1-40 characters on one line. */
+  label: string;
+  /** The facts of the games it judges; every game the plugin plays in its editor when absent. */
+  facts?: string[];
+  /** The package's Markdown file holding its brief, appended to the judge's rubric (at most `MAX_JUDGE_BRIEF_CHARS`). */
+  brief: string;
+  /** How many players its play opens, 1 to the engine's `play.players`; one when absent. */
+  players?: number;
+  /**
+   * A quiet harness tool of the plugin, needing the play tools' locks, that the host runs once in
+   * the judge's play right after it opens: its `note` and `images` (measurements and pictures,
+   * never source) open the judge's first message.
+   */
+  probe?: string;
+}
+// ↑ src/shared/plugins.ts
+
+/** A judge as a game's descriptor and an agent name it. */
+export type JudgeRef = Pick<PluginJudge, "id" | "label">;
+// ↑ src/shared/plugins.ts
 
 export type FactSource = 'core' | 'link' | 'scaffold';
 // ↑ src/shared/project-facts.ts
@@ -1573,6 +1764,15 @@ export interface GameProject {
   nativeChecks?: Partial<Record<BuildTarget, DestinationCheck>>;
   /** The engine project Genex linked this game to; absent for a web game (`shared/game-engine.ts`). */
   engine?: EngineBinding;
+  /** The linked engine as its plugin declares it (its name, project files, project in the folder); absent for a web game. */
+  linkedEngine?: LinkedEngine;
+  /**
+   * True when an engine plugin that is on plays this game in its editor (its play tools hold the
+   * game's link): judges and the computer play it there. Filled by the harness's `game.list`.
+   */
+  editorPlay?: boolean;
+  /** The judges that play this game in its editor, as its engine plugin declares them; only with `editorPlay`. */
+  judges?: JudgeRef[];
   /**
    * What the folder holds, by `shared/project-facts.ts`: the core table, the enabled plugins'
    * `detect` and the engine link. Empty while the first message has not picked a kind.
@@ -1605,6 +1805,18 @@ export interface GameProject {
   scaffoldStamp?: string;
   /** Named before anyone said what the game is: its first idea renames it in place (`nameFromIdea`). */
   provisional?: boolean;
+  /**
+   * New game made it and no answer in its chats has ended with the game made yet; absent once one
+   * has, and for every game New game did not make, which came with a game of its own.
+   */
+  awaitingFirstBuild?: true;
+  /** The game loads Genex's multiplayer: its package.json names it, or its page maps Studio's copy. */
+  multiplayer?: true;
+  /**
+   * The game is played with mouse look (studio.json `game.mouseLook`, as its kind or plan declared
+   * it): a click into Live's Native view locks the pointer and its moves turn the camera.
+   */
+  mouseLook?: true;
 }
 // ↑ src/shared/game-project.ts
 
@@ -1885,7 +2097,7 @@ export interface ProfileUnavailable {
 export type FrameProfileAnswer = ProfileAnswers[FrameProfileAction] | ProfileUnavailable;
 // ↑ src/shared/frame-profile.ts
 
-export type CaptureSurface = 'canvas' | 'page' | 'auto';
+export type CaptureSurface = 'page' | 'canvas' | 'auto';
 // ↑ src/shared/preview-contract.ts
 
 export interface PixelStats {
@@ -2072,13 +2284,7 @@ export interface BuildObservation {
 }
 // ↑ src/shared/preview-contract.ts
 
-/**
- * An agent's screen — the hidden preview window one worker is driving with the computer
- * tool, as the studio window shows it: the last frame, where the cursor is, what the agent
- * just did. Main emits `preview.screen` (opened/closed) and `preview.frame` (a new picture);
- * the Builds graph shows each on the node of the part it works on, the lead's on the lead's.
- */
-export type AgentScreenRole = "builder" | "playtester" | "scout" | "judge" | "director";
+export type AgentScreenRole = 'judge' | 'playtester' | 'builder' | 'scout' | 'director' | 'operator';
 // ↑ src/shared/agent-screen.ts
 
 export interface AgentScreen {
@@ -2121,6 +2327,13 @@ export interface AgentScreenFrame extends AgentScreen {
 export type StudioPlatform = 'linux' | 'darwin' | 'win32';
 // ↑ src/shared/boot.ts
 
+/** The setup scripts a script-free install skipped: the game's own, and its packages' by name. */
+export interface SetupScripts {
+  own: boolean;
+  packages: string[];
+}
+// ↑ src/shared/build-problem.ts
+
 export type BuildProblemCode = 'mac-builds-need-a-mac' | 'not-a-destination' | 'command-failed' | 'in-source-build' | 'toolchain-missing' | 'toolchain-stale' | 'clt-missing' | 'unsupported-host' | 'not-hosted' | 'timed-out' | 'cancelled' | 'toolchain-unprepared' | 'gate-refused';
 // ↑ src/shared/build-problem.ts
 
@@ -2151,6 +2364,11 @@ export interface BuildProblem {
   install: string | null;
   /** The stage is showing the last build that worked instead of nothing at all. */
   showingLastBuild: boolean;
+  /**
+   * A remix's setup scripts its script-free install skipped, which it may need to build: the stage
+   * offers to run them once the person trusts the game. Null for a game whose scripts ran.
+   */
+  skippedScripts: SetupScripts | null;
   at: string;
   /** Typed reason; absent on problems written before this field existed (read as CommandFailed). */
   reason?: BuildProblemCode;
@@ -2276,6 +2494,21 @@ export interface NativeBootProgress {
 export type CrashKind = 'device-lost' | 'panic' | 'gpu-validation' | 'wasm-trap' | 'native-fault' | 'out-of-memory' | 'hang' | 'process-exit';
 // ↑ src/shared/crash-record.ts
 
+/**
+ * A run's memory as the host samples it (a Mac's `phys_footprint`, GPU memory included on Apple
+ * Silicon; a Linux box's process tree): the highest footprint so far (it only rises), the budget
+ * a game should fit in for phones and the web, and this host's kill cap. `overBudget` is set once
+ * the peak passed the budget: the run keeps going. A run killed past the cap ends `memory-cap`
+ * with `peakBytes` the footprint that killed it.
+ */
+export interface NativeRunMemory {
+  peakBytes: number;
+  budgetBytes: number;
+  capBytes: number;
+  overBudget: boolean;
+}
+// ↑ src/shared/native-contract.ts
+
 /** What a run looks like to the renderer, the harness and `studio:native.state`. */
 export interface NativeRunStatus {
   project: string;
@@ -2300,6 +2533,8 @@ export interface NativeRunStatus {
   progress?: NativeBootProgress | null;
   /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
   crash?: { crashId: string; kind: CrashKind } | null;
+  /** What the host measured of the game's memory; absent or null before its first sample. */
+  memory?: NativeRunMemory | null;
   startedAt: string;
   endedAt: string | null;
 }
@@ -2804,6 +3039,11 @@ export interface HarnessHostApi {
       pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
+  /**
+   * The language Genex speaks (Settings, else the computer's): its tag and its own name. An agent
+   * answers Genex's own messages in it (a resume, a continue), and the person in theirs.
+   */
+  "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };
@@ -2853,19 +3093,23 @@ export interface HarnessHostApi {
    * End the held round of a run: the host records its outcome and counts the no's in a row from its
    * own records (`stopped` once they reach the cap). `unanswered` turns the held answer into no
    * answer, with why (a yes that lapsed, a turn that ended); nothing turns a no or no answer into a yes.
+   * `timeLeftMs`, a timed Loop's working time left: with more than `FINISH_TIME_LEFT_MS` no row of
+   * no's stops it (`timeLeft`); an ∞ Loop names none.
    */
   "finish.settle": {
-    params: { project: string; runId: string; round: number; unanswered?: string | null };
-    result: FinishRoundAnswer & { rejections: number; stopped: boolean };
+    params: { project: string; runId: string; round: number; unanswered?: string | null; timeLeftMs?: number | null };
+    result: FinishRoundAnswer & { rejections: number; stopped: boolean; timeLeft?: boolean };
   };
   /**
    * Steer: messages the person sent while the chat's turn works, into the session answering that
    * turn (`chatTurn` is `into`). `accepted` lists what the session took; `how` is how (`SteerDelivery`
-   * in `shared/message-queue.ts`), null when it took nothing. `interrupt: false` takes them only
-   * into a session that reads them mid-turn, and never cuts one short.
+   * in `shared/message-queue.ts`), null when it took nothing. A session is cut only between tool
+   * calls, never inside one. `interrupt: false` takes them only into a session that reads them
+   * mid-turn, and never cuts one short; `native: false` never hands them to it mid-turn: the session
+   * is cut at its next step (a message that changes how the turn runs, steer-switch.ts).
    */
   "engine.steer": {
-    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean };
+    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean; native?: boolean };
     result: { how: SteerDelivery | null; accepted: string[] };
   };
   "coordinator.tool": {
@@ -2877,6 +3121,11 @@ export interface HarnessHostApi {
     result: Array<{ project: string; cwd: string; engine: string; startedAt: number }>;
   };
   "engine.hardware": { params: void; result: HardwareReport };
+  /**
+   * Where each subscription's plan limits stand (`core/provider-usage.ts`, the panel's own reports):
+   * sanitized, never an account id or a credential. Empty where the app tracks none.
+   */
+  "engine.usage": { params: void; result: ProviderUsageReport[] };
 
   // — games —
   "game.list": { params: void; result: GameProject[] };
@@ -3032,6 +3281,48 @@ export interface HarnessHostApi {
     result: (PixelDiff & { heatmapPath: string | null }) | null;
   };
   /**
+   * The `computer` tool, run by the host on a window the harness leased: the same tool every
+   * session engine holds, for an engine whose tool loop is the harness's own (Ollama). `describe`
+   * answers the tool's schema instead of running an action; otherwise `args` is one call.
+   */
+  "preview.computer": {
+    params: DelegatePlaytestGrant & {
+      handle: string;
+      args?: Record<string, unknown>;
+      describe?: boolean;
+      /** Start a new session on this window even when one for the same build and round exists: reloaded, reseeded, its own trace. */
+      fresh?: boolean;
+    };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult; trace: ComputerTraceSummary };
+  };
+  /**
+   * The `desktop` tool, run by the host for an engine whose tool loop is the harness's own
+   * (Ollama): the person's computer, behind the consent asked on a card in `threadId`. `describe`
+   * answers the tool's schema and starts the chat's session afresh; `unavailable` says why there is
+   * none (computer control off in Settings, no desktop driver, no chat to ask in).
+   */
+  "desktop.computer": {
+    params: { project: string; threadId?: string; args?: Record<string, unknown>; describe?: boolean };
+    result: { tool: LiveToolSpec } | { answer: LiveToolResult } | { unavailable: string };
+  };
+  /**
+   * `judge_play`, run by the host for an engine whose tool loop is the harness's own (Ollama), as
+   * session engines are handed it (`core/judge-play-tool.ts`): a blind judge plays the game, the
+   * chat's model playing, and the outcome is one line in `threadId`. `unavailable` says why not
+   * (no chat to record in, a game the studio does not play in a window).
+   */
+  "judge.play": {
+    params: {
+      project: string;
+      threadId?: string;
+      args?: Record<string, unknown>;
+      engine?: string;
+      model?: string;
+      effort?: string;
+    };
+    result: { answer: LiveToolResult } | { unavailable: string };
+  };
+  /**
    * Input to a leased game, in order. A play script's `touch` action (contract v2: one finger's
    * start, move or end in world coordinates) reaches a Rust game's native `input` op.
    */
@@ -3104,6 +3395,8 @@ export interface HarnessHostApi {
       live: boolean;
       headless: boolean;
       memory: { freeMb: number; totalMb: number };
+      /** The most workers the person's Settings let one chat run at once. */
+      workers: number;
       /** The host's platform, which with `native.gameBox` picks a C++ game's judging target; absent from a host without native runs. */
       host?: StudioPlatform | null;
       /** Native runs: whether this host has a game box for its own OS, and its native leases. */
@@ -3235,10 +3528,15 @@ export interface AutopilotCommission {
   roles?: RunRoles;
   /** Request host-owned explicit approval before execution (default off). */
   reviewPlan?: boolean;
+  /**
+   * The person's Keep building tap after a Loop ended with something still to fix: the finished
+   * build reopens, or the next Loop starts, with no turn deciding whether it is a contained change.
+   */
+  keepBuilding?: boolean;
 }
 // ↑ src/shared/protocol.ts
 
-export type MessageOrigin = 'command-result';
+export type MessageOrigin = 'command-result' | 'plugin-turned-on' | 'setup-card' | 'tag-retry';
 // ↑ src/shared/protocol.ts
 
 export interface RunReference {
@@ -3360,6 +3658,8 @@ export type DispatchAction =
       pickedImages?: number;
       /** Reference files this message saved in the game (relative paths); a rewind with files removes them. */
       references?: string[];
+      /** Every file its attached pictures are saved as in the game (relative), already there or not: a run's lead reads them. */
+      pictureFiles?: string[];
       /** Composer Loop: the chat may start an unattended build when the ask needs one. */
       loop?: LoopCommission;
       /** Composer Autopilot: the chat may launch a build that decomposes into facets and runs until satisfied. */
@@ -3393,6 +3693,24 @@ export type DispatchAction =
    * message id), forwarded to the harness's worker pool for that turn. Answers with the tool's result.
    */
   | { type: "worker_tool"; threadId: string; turn: string; name: string; args: Record<string, unknown> }
+  /**
+   * A judge that plays (`judge_play`), asked for by the chat's own session after a change: one blind
+   * judge plays the game in `root` (the game folder, as the host resolved it) on a hidden window and
+   * answers `ask`, held to `goalState` when given. Answers with the judge's outcome, never throws.
+   */
+  | {
+      type: "chat_judge";
+      threadId: string;
+      project: string;
+      root: string;
+      engine: string;
+      model?: string;
+      effort?: string;
+      ask: string;
+      goalState?: string;
+      /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
+      judge?: string;
+    }
   | { type: "skillopt_start"; threadId: string; options?: Record<string, unknown> }
   | { type: "boot_notice"; notice: BootNotice };
 // ↑ src/shared/protocol.ts

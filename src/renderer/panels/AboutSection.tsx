@@ -23,6 +23,7 @@ function resultLine(result: UpdateCheckResult): string {
   if (result.status === UpdateCheckStatus.Current) return ABOUT_WORDS.current;
   if (result.status === UpdateCheckStatus.Downloading) return ABOUT_WORDS.downloading;
   if (result.status === UpdateCheckStatus.Off) return ABOUT_WORDS.off;
+  if (result.status === UpdateCheckStatus.System) return ABOUT_WORDS.system;
   if (result.status === UpdateCheckStatus.Failed) return ABOUT_WORDS.failed;
   return result.update?.action === UpdateAction.Download ? ABOUT_WORDS.available(version) : ABOUT_WORDS.ready(version);
 }

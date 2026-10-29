@@ -195,9 +195,9 @@ build) are drafts the owner pins before a first baseline. Private holdouts live 
 marked holdout; holdout rows never enter Git or an export.
 
 Anti-fitting is a static check: `npm run check:isolation` (in `check:static` and CI, public
-cases only) scans the seed, the game template, plugin skills and `*-prompts.ts` for any 7-word
-brief shingle or traced checklist phrase of 4 or more words; `--with-holdouts` adds the private
-cases locally.
+cases and the [AA+ suite](#the-aa-release-gate)) scans the seed, every game template, plugin skills,
+`*-prompts.ts` and the graders' rubrics for any 7-word brief shingle or traced checklist phrase of
+4 or more words; `--with-holdouts` adds the private cases locally.
 
 ## Metrics
 
@@ -215,7 +215,7 @@ blocks from it. A missing measurement is never zero: a pin is a value, `{unavail
 | `time.builds`, `delegationP50Ms` | Chat delegations and facet builds (Genex lanes) |
 | `tokens` | Uncached input, cache write, cache read, output, reasoning; by role (lead, workers, judges, subagents, auxiliary) and by model; `coverage` full, stream-only, partial-judges, trace-dirty or unmeasured |
 | `context` | Peak and compactions |
-| `calls` | Model calls, and tool calls by `ToolCategory` (`src/shared/eval-lane.ts`: read, search, edit, shell, build, install, browser, studio, subagent, web, planning, skill, other) |
+| `calls` | Model calls, and tool calls by `ToolCategory` (`src/shared/eval-lane.ts`: read, search, edit, shell, build, install, browser, studio, subagent, web, planning, skill, other), all classified by `src/shared/tool-category.ts`. In Genex lanes and the app's field rows a tool call is a `tool_use` part of a delegated record; raw Claude and Codex lanes count the stream's tool calls |
 | `cost.apiEquivalentUsd` | Tokens priced by `evals/prices.json`; one unpriced model makes it `unavailable: price-unknown` |
 | `outcome`, `output` | How the run ended, harness failure, typed no-build, questions, trace completeness, provider noise; `validateGameDir` of the stop-time snapshot, `verifiedBeforeDone` |
 
@@ -423,6 +423,92 @@ each case's `p/r → p/r`. Descriptive metrics carry no direction words.
   no-build run as 0, per family and combined; pairwise tallies read only each run pair's latest
   judging pass and show forfeit wins and losses apart from judged ones.
 
+## The AA+ release gate
+
+The Rust stack's release gate measures whether a generation reaches AA+ (review WP-16 and its
+release-gate line): held-out prompts, measurable floors, a blind taste comparison and a per-prompt
+grade with its evidence. Code is in `scripts/evals/aaa/`, the suite in
+[`evals/aaa/suite.json`](../evals/aaa/suite.json). It grades finished runs and never starts one.
+
+**Suite.** Eight briefs in a user's words: the gen3 bodycam goal (the user's three sentences; the
+goal's last sentence was the harness's own origin line), a winter courtyard, a forest hike, a
+rainy night street, a rally stage, third-person action, a hospital horror interior and a sunny
+village. Each names its `look` (`bright`, or `dark` for a night or horror brief), the views a
+judge must see (a role and `interior`/`exterior`), a `motion` demo (a 3 s sprint, walk or drive)
+and any `transitions` (a doorway), and CC0 Poly Haven panoramas as references. A prompt's version
+is sha256[:12] of its own canonical JSON. `check:isolation` holds the briefs out of the harness
+seed, every game template (Rust and C++ included, with their API docs and examples), plugin skills,
+prompt modules and the graders' rubrics, `taste-prompt.md` among them.
+
+**Evidence** (`genex-aaa-evidence/1`, `evidence.ts`): captures (role, size, `clean` with stylised
+post off, `native` with no upscale, mean luma, darkest-bin share), surface look facts (distance,
+texel density, normal and ORM), the provenance audit's props (origin `primitive`, `kit`, `cc0`,
+`generated`, `generator` or `unknown`; organic; cards), flat-material screen share, and per-tick
+camera (`tMs`, `y`, `rollDeg`, `pitchDeg`) and metered-EV tracks. Every fact names its source:
+`probe` and `engine` facts pass or fail a floor; a `reconstructed` fact (read from code or a
+review) can fail one but never certify it. An unmeasured section is null or empty and leaves its
+floor unknown, which never passes.
+
+**Rubric** (`rubric.ts`; thresholds are the review's proposals, to tune with the owner):
+
+| Floor | AA | AA+ | AAA-ish |
+| --- | --- | --- | --- |
+| `view-coverage`, `clean-resolution` | every view captured clean at ≥1600×900 | | |
+| `native-4k` | | every view clean and native at 3840×2160 | |
+| `luma-band` | bright: mean luma 90–130 inside, 90–175 outside, ≤15% below luma 8; dark: 25–95, ≤40% | | |
+| `doorway` | ≤1 EV per 0.5 s, ≤0.25 EV overshoot | | |
+| `comfort` | bob ≤3 cm peak to peak below 3 Hz, roll ±1.5° (≤2° absolute), ≤5% of roll and pitch power above 6 Hz | | |
+| `reduced-motion` | | keeps ≤10% of bob and roll | |
+| `near-maps` | normal and ORM on every surface within 10 m | | |
+| `texel-density` (within 10 m) | ≥256 px/m | ≥512 px/m | ≥1024 px/m |
+| `no-primitive-props` | no primitive prop within 5 m or organic | | |
+| `organic-cards` | | every organic prop has cards or twigs | |
+| `flat-coverage` | ≤5% of the screen | ≤2% | |
+| `taste` | | judged aa-plus | judged aaa-ish |
+
+A grade is the highest tier whose checks, and every lower tier's, all pass; the report lists the
+checks blocking the next one. Without a taste verdict no prompt reaches AA+.
+
+**Taste** (`taste.ts`, `taste-prompt.md`): per view, the largest clean capture of at least
+1600×900 beside that role's reference stills, judged blind on four anchored tiers. It speaks
+through the checklist graders' model seam; `--taste-family` picks the families (default `gpt`,
+not the Claude builder; a judge of the builder's family is marked `sameFamily`), each casting
+`--votes` (3) at medium effort and taking its median. Families and views combine by their lowest
+tier. A view without a judgeable capture or references leaves taste unmeasured.
+
+**References** (`references.ts`): `aaa references --live` asks only `api.polyhaven.com` and
+`dl.polyhaven.org`, checks each tonemapped panorama against its listed md5, cuts a 1600×900, 60°
+still per yaw into `$GENEX_EVALS_HOME/aaa/references/`, and records the CC0 licence and authors in
+`references.json` there. Nothing from it enters Git.
+
+**Side by side** (`compare.ts`, `pairwise-taste-prompt.md`): `aaa compare <candidate> --baseline
+<baseline>` grades both bundles of one prompt and writes `compare.json` and a `compare.md` page
+with both sides' captures per view role (roles, never camera names), the checks that moved
+(unmeasured and failing rank alike, so a newly measured failure is not a regression), and every
+measured number next to its baseline. `--taste live` adds a blind pairwise look judge per view
+against the references, both orders per family; a side wins only when the orders and the families
+agree. The verdict is `clearly-better` (exit 0) when the grade rose, or held with no check
+regressed and at least three improved, and the judge prefers the baseline on no view;
+`worse` when the grade fell, more checks regressed than improved or the judge prefers the baseline
+on more views; otherwise `not-clearly-better`.
+
+**Gate** (`report.ts`): passes when at least three different prompts, each run on the suite's
+current brief (a run's goal opens with it), were graded and every graded run is AA+ or better.
+
+Running it against a live profile (the run itself is the [owned live profile](STUDIO-DEVELOPER-FIELD-GUIDE.md#run-an-owned-development-profile)
+workflow, outside this CLI):
+
+1. `npm run eval -- aaa suite` prints each brief, its views and demos. Send the brief to a fresh
+   Rust game in a live `studio:dev` profile and let the Loop finish.
+2. Write `roles.json` mapping the game's camera names to the prompt's view roles, and a
+   `genex-aaa-facts/1` file with what the shots cannot show (the engine's look facts, the
+   provenance audit, the motion and doorway tracks, clean native captures).
+3. `npm run eval -- aaa collect --prompt <id> --run <profile>/core/runs/<runId> --roles roles.json
+   --facts facts.json --out <bundle>` reads the integration head's judge shots and stats.
+4. `npm run eval -- aaa references --live` once, then `npm run eval -- aaa grade <bundle>...
+   --out <dir> --taste live --live` writes `report.json` and `report.md` and exits 0 only when
+   the gate passes.
+
 ## Commands
 
 `npm run eval -- --help` lists every command and `<command> --help` gives its usage. Shared exit
@@ -451,6 +537,11 @@ exit 64, and with it they exit 1 in CI.
 | `review <campaign> [--graders] [--sample N] [--seed S] [--reviewer ID]` | | Blind review page | |
 | `gc --older-than <N>d [--apply]` | | Lists (or removes) old run folders, snapshot-server copies and caches, and leftover lane roots | |
 | `validate-ledger` | | Checks every ledger line | |
+| `aaa suite` | | Lists the [AA+ suite](#the-aa-release-gate) | |
+| `aaa collect --prompt <id> --run <dir> --roles <file> --out <dir> [--shots <dir>] [--facts <file>] [--clean yes\|no]` | | Writes an evidence bundle | |
+| `aaa grade <bundle>... --out <dir> [--taste off\|live] [--taste-family …] [--builder-family …] [--votes n] [--references <dir>]` | with `--taste live` | Grades bundles and judges the gate | 1 also a failed gate, 2 references not fetched |
+| `aaa compare <bundle> --baseline <bundle> --out <dir> [--taste off\|live] [--taste-family …] [--references <dir>]` | with `--taste live` | Candidate against a baseline run, side by side | 1 also not clearly better, 2 references not fetched |
+| `aaa references [--dir <dir>]` | yes | Fetches the CC0 reference stills | |
 
 `gc` never removes a run a committed baseline names, a symlink (at any level, the folders it reads
 included) or the ledger. It makes read-only clones writable just before removing them, and opens
@@ -541,7 +632,10 @@ calibration results and human labels.
   days) and posted by `src/main/run-sharing.ts` with no credentials or redirects. Its tokens are
   normalized like the ledger's, its first boot is `build_observation.ready.pageMs`, its
   `recordedAt` is the finish hour, and a chat build's row comes from the handled message's own
-  turn (a message that opened no turn shares nothing). A 410 on a POST pauses sending for a day;
+  turn (a message that opened no turn shares nothing); a run's records in that thread stay in the
+  run's row. Its `calls.tools` counts builder tool calls by category, as a Genex lane does; rows
+  from app versions up to 0.1.7 counted the chat's own tool requests in total only, so split any
+  `calls.tools` analysis by `app.version`. A 410 on a POST pauses sending for a day;
   Delete what I shared keeps working while it is paused, and a partial delete reports the rows
   it removed. Only a packaged app with no `--studio-*` switch, dev profile or test user data
   sends. [PRIVACY.md](../PRIVACY.md) is the consent text; `RUN_SHARING_CONSENT_VERSION`
@@ -603,10 +697,12 @@ five-minute rows read `unknown`); both set `STUDIO_BROWSER_TESTS=1`.
 - Edit-existing, follow-up and long-horizon cases run as plain builds: no start-folder seeding or
   follow-up turns yet.
 - The prober writes PNG frames and no video; pairwise rows are never published.
-- Field rows count tool calls in total only (`byCategory` is empty).
 - The lane root keeps the evals home out of an agent's casual listing, not out of reach: its
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME` still names a folder inside it.
 - Studio scratch sessions are attributed by time, so two streams sharing one engine home (a Genex
   Codex lane's Claude judges beside a Genex Claude lane) can cross-attribute them.
+- The AA+ gate's floors need facts the engine and harness do not report yet (look facts,
+  provenance, per-tick camera and EV tracks, clean native captures); until they do, a run's facts
+  file carries them, and reconstructed ones can only fail. Its thresholds are proposals.
 - Grader thresholds (known-good 0.75, `minActionableDelta` 0.10) and the draft cases are owner
   placeholders; changing an endpoint moves `ENDPOINTS_SHA`.

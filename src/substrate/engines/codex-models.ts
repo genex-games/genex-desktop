@@ -3,6 +3,7 @@ import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { CatalogError, CATALOG_DEADLINE_MS } from "./model-catalog.ts";
 import { ModelContextSource, type EngineModel } from "./types.ts";
 import { codexControl } from "./codex-control.ts";
+import { t } from "../../shared/i18n.ts";
 
 const MAX_PAGES = 20;
 const PAGE_SIZE = 100;
@@ -23,7 +24,8 @@ const pageSchema = z.object({
   ),
   nextCursor: z.string().nullish(),
 });
-const malformed = () => new CatalogError(ModelCatalogProblemCode.Malformed, "The CLI returned an invalid model list.");
+const malformed = () =>
+  new CatalogError(ModelCatalogProblemCode.Malformed, t("The CLI returned an invalid model list."));
 /** Validate a complete provider page without guessing model versions. */
 export function codexModelPage(value: unknown): { models: EngineModel[]; cursor: string | null } {
   const parsed = pageSchema.safeParse(value);

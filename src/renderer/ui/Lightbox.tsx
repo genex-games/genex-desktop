@@ -4,6 +4,7 @@
  */
 import * as Dialog from "@radix-ui/react-dialog";
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Icon } from "./icons.tsx";
 import { prefersReducedMotion } from "./media-queries.ts";
 
@@ -78,7 +79,7 @@ export function Lightbox({
           {children}
           <div className="absolute top-5 right-5 z-10 flex gap-2">
             {actions}
-            <Dialog.Close aria-label="Close" title="Close" data-icon-only className="lightbox-button">
+            <Dialog.Close aria-label={t("Close")} title={t("Close")} data-icon-only className="lightbox-button">
               <Icon name="close" size={18} />
             </Dialog.Close>
           </div>

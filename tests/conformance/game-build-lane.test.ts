@@ -148,6 +148,7 @@ function commandsUnder(root: string, calls: RunRequest[]) {
 function recordingLane(outcome: BuildOutcome) {
   const calls: Array<{ input: CppBuildInput; signal: AbortSignal | undefined }> = [];
   const counts = { cancelAll: 0, sweep: 0 };
+  const cancelledGames: string[] = [];
   const cpp = {
     ensure: async (input: CppBuildInput, options: { signal?: AbortSignal } = {}) => {
       calls.push({ input, signal: options.signal });
@@ -156,12 +157,15 @@ function recordingLane(outcome: BuildOutcome) {
     cancelAll: () => {
       counts.cancelAll += 1;
     },
+    cancelGame: (project: string) => {
+      cancelledGames.push(project);
+    },
     sweep: async () => {
       counts.sweep += 1;
       return 2;
     },
   };
-  return { cpp, calls, counts };
+  return { cpp, calls, counts, cancelledGames };
 }
 
 const BUILT: BuildOutcome = { ok: true, output: "/builds/out", lastGood: "/builds/out", problem: null, ran: true };
@@ -300,6 +304,7 @@ describe("the build-lane seam's dispatch", () => {
         return BUILT;
       },
       cancelAll: () => {},
+      cancelGame: () => {},
       sweep: async () => 0,
     });
     const lanes = new GameBuildLanes({ [GameStack.RaylibCpp]: stand("raylib"), [GameStack.ThreeJs]: stand("three") });
@@ -320,6 +325,8 @@ describe("the build-lane seam's dispatch", () => {
     assert.equal(await lanes.sweep(), 4);
     assert.deepEqual(first.counts, { cancelAll: 1, sweep: 1 });
     assert.deepEqual(second.counts, { cancelAll: 1, sweep: 1 });
+    lanes.cancelGame("pond");
+    assert.deepEqual([first.cancelledGames, second.cancelledGames], [["pond"], ["pond"]], "one game's, in every lane");
     assert.equal(new GameBuildLanes({}).laneFor(GameStack.RaylibCpp), null);
     assert.equal(await new GameBuildLanes({}).sweep(), 0);
   });

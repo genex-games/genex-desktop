@@ -38,8 +38,9 @@
 @group(0) @binding(13) var<storage, read_write> indices: array<u32>;
 @group(0) @binding(14) var hiz: texture_2d<f32>;
 // Each view's region (`meshlet_cull::GpuViewRegion`): x its first index, y its first drawn slot,
-// z and w their capacities (sized on the CPU for the instances its frustum may hold).
-@group(0) @binding(15) var<uniform> regions: array<vec4<u32>, 9>;
+// z and w their capacities (sized on the CPU for the instances its frustum may hold). One per
+// `layout::MAX_VIEWS`.
+@group(0) @binding(15) var<uniform> regions: array<vec4<u32>, 21>;
 
 // Items one workgroup of the scan covers (`meshlet_cull::SCAN_BLOCK`).
 const GX_SCAN_BLOCK: u32 = 256u;
@@ -214,8 +215,11 @@ fn candidate_visible(view: u32, row: Instance, meshlet: Meshlet) -> bool {
     }
     let centre = (row.model * vec4<f32>(meshlet.bounds.xyz, 1.0)).xyz;
     let scale = max(max(length(row.model[0].xyz), length(row.model[1].xyz)), length(row.model[2].xyz));
-    let radius = meshlet.bounds.w * scale;
-    if !sphere_in_view(view, centre, radius) || faces_away(view, row, meshlet) {
+    // A swaying row's clusters move by up to its reach and turn with it: their spheres grow by
+    // it and their cones never cull (model wind).
+    let swaying = gx_sway_on(gx_row_wind(row));
+    let radius = meshlet.bounds.w * scale + gx_sway_reach(row);
+    if !sphere_in_view(view, centre, radius) || (!swaying && faces_away(view, row, meshlet)) {
         return false;
     }
     let occlusion = (cull.capacity.w & GX_FLAG_OCCLUSION) != 0u;

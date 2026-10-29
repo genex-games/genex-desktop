@@ -6,6 +6,7 @@ import { type RefObject, useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
+import { t } from "../../shared/i18n.ts";
 import { previewBytes } from "../asset-bytes.ts";
 import { assetTitle } from "../asset-names.ts";
 import { Icon } from "../ui/icons.tsx";
@@ -28,7 +29,7 @@ const SECONDS_PER_MINUTE = MINUTE_MS / SECOND_MS;
 
 /** What the strip says in place of a waveform it would not draw. */
 const MESSAGE = {
-  tooLarge: "Large audio plays without a waveform",
+  tooLarge: t("Large audio plays without a waveform"),
 } as const;
 
 type Wave = { peaks: number[]; duration: number };
@@ -181,7 +182,7 @@ function PlayButton({ sound, name, className }: { sound: Sound; name: string; cl
   return (
     <button
       type="button"
-      aria-label={`${isPlaying ? "Pause" : "Play"} ${name}`}
+      aria-label={isPlaying ? t("Pause {name}", { name }) : t("Play {name}", { name })}
       title={failed ? ASSET_WORDS.playFailed : undefined}
       disabled={failed}
       onClick={() => void toggle()}
@@ -221,8 +222,8 @@ function Waveform({ sound, name, className }: { sound: Sound; name: string; clas
           max={duration}
           step={0.01}
           value={Math.min(time, duration)}
-          aria-label={`Seek ${name}`}
-          aria-valuetext={`${clock(time)} of ${clock(duration)}`}
+          aria-label={t("Seek {name}", { name })}
+          aria-valuetext={t("{time} of {duration}", { time: clock(time), duration: clock(duration) })}
           onChange={(event) => void seek(Number(event.target.value))}
           className="absolute inset-0 m-0 h-full w-full cursor-pointer opacity-0"
         />
@@ -296,7 +297,7 @@ export function AudioTile({ project, asset, onOpen }: { project: string; asset: 
     >
       <button
         type="button"
-        aria-label={`Preview ${fileName}`}
+        aria-label={t("Preview {file}", { file: fileName })}
         title={fileName}
         onClick={onOpen}
         className="absolute inset-0 cursor-pointer rounded-card"

@@ -1,4 +1,5 @@
 /** Profile-local appearance data. No CSS, scripts, extensions or file includes are evaluated. */
+import { t } from "../../shared/i18n.ts";
 import { channels, fromOklch, oklch, rgbHex } from "../../shared/oklch.ts";
 /** A colour scheme: every theme has a light side and a dark side. */
 export const Scheme = {
@@ -30,6 +31,36 @@ export const COLOR_ROLES = [
   "danger",
 ] as const;
 export type ColorRole = (typeof COLOR_ROLES)[number];
+/**
+ * Play's tinted families (people.css): the profile chips and edit button, the tint buttons (Invite,
+ * Join, Copy), the credits card and the invite card, each a hue the stylesheet mixes into its fill and
+ * edge. Unset, each wears the Play / Create switch's selected blue, the credits card the chips' hue.
+ */
+export const PLAY_HUE_ROLES = ["peopleChip", "peopleTint", "creditsCard", "inviteCard"] as const;
+export type PlayHueRole = (typeof PLAY_HUE_ROLES)[number];
+/**
+ * Play's people, stats and credits colours set by name (people.css): the chips' label and number, the
+ * primary button, genex.games' blue, playing now, Pro, the request count, the stats' line and changes,
+ * and the credit shard. Unset, each keeps the stylesheet's own colour for the scheme.
+ */
+export const PEOPLE_ROLES = [
+  "peopleChipText",
+  "peopleChipNumber",
+  "playBlue",
+  "peoplePrimary",
+  "peoplePrimaryShade",
+  "peopleLive",
+  "peopleLiveText",
+  "peoplePro",
+  "peopleRequest",
+  "statsLine",
+  "statsUp",
+  "statsDown",
+  "shardLight",
+  "shardMid",
+  "shardDark",
+] as const;
+export type PeopleRole = (typeof PEOPLE_ROLES)[number];
 /** Roles a palette may set or leave to the app, which derives each from the core roles until it is set. */
 export const DETAIL_ROLES = [
   "accentFill",
@@ -60,10 +91,21 @@ export const DETAIL_ROLES = [
   "meterFull",
   "promptEdge",
   "viewSwitch",
+  "playSelected",
+  "playSelectedEdge",
+  "playTrack",
+  "playTrackEdge",
+  "playSelectedText",
+  "playTab",
+  "playTabEdge",
+  "playTabText",
+  "playSearchFocus",
   "wireArt",
   "hatch",
   "hatchGround",
   "settingsTab",
+  ...PLAY_HUE_ROLES,
+  ...PEOPLE_ROLES,
 ] as const;
 export type DetailRole = (typeof DETAIL_ROLES)[number];
 /** Every role a palette can carry: the core ones, then the details. */
@@ -108,10 +150,38 @@ const DETAIL_SOURCE: Record<DetailRole, ColorRole> = {
   meterFull: "danger",
   promptEdge: "border",
   viewSwitch: "accent",
+  playSelected: "accent",
+  playSelectedEdge: "accent",
+  playTrack: "hover",
+  playTrackEdge: "controlBorder",
+  playSelectedText: "foreground",
+  playTab: "background",
+  playTabEdge: "border",
+  playTabText: "muted",
+  playSearchFocus: "controlBorder",
   wireArt: "accent",
   hatch: "foreground",
   hatchGround: "background",
   settingsTab: "accent",
+  peopleChip: "accent",
+  peopleTint: "accent",
+  creditsCard: "accent",
+  inviteCard: "accent",
+  peopleChipText: "accent",
+  peopleChipNumber: "accent",
+  playBlue: "accent",
+  peoplePrimary: "accent",
+  peoplePrimaryShade: "accent",
+  peopleLive: "success",
+  peopleLiveText: "success",
+  peoplePro: "accent",
+  peopleRequest: "accent",
+  statsLine: "accent",
+  statsUp: "success",
+  statsDown: "danger",
+  shardLight: "accent",
+  shardMid: "accent",
+  shardDark: "accent",
 };
 /** The variable each place-dependent detail is drawn as; unset, theme.css falls back per place. */
 const PLACE_VARIABLE: Partial<Record<DetailRole, string>> = {
@@ -139,10 +209,38 @@ const PLACE_VARIABLE: Partial<Record<DetailRole, string>> = {
   meterFull: "--meter-full",
   promptEdge: "--prompt-edge",
   viewSwitch: "--switch-fill",
+  playSelected: "--play-selected",
+  playSelectedEdge: "--play-selected-edge",
+  playTrack: "--play-switch-track",
+  playTrackEdge: "--play-switch-edge",
+  playSelectedText: "--play-selected-text",
+  playTab: "--play-tab-backing",
+  playTabEdge: "--play-tab-edge",
+  playTabText: "--play-tab-text",
+  playSearchFocus: "--play-search-focus",
   wireArt: "--wire-art",
   hatch: "--hatch-stripe",
   hatchGround: "--hatch-ground",
   settingsTab: "--settings-tab",
+  peopleChip: "--people-chip-hue",
+  peopleTint: "--people-tint-hue",
+  creditsCard: "--credits-card-hue",
+  inviteCard: "--people-invite-hue",
+  peopleChipText: "--people-chip-ink",
+  peopleChipNumber: "--people-chip-number",
+  playBlue: "--play-blue",
+  peoplePrimary: "--people-primary-top",
+  peoplePrimaryShade: "--people-primary-bottom",
+  peopleLive: "--people-live",
+  peopleLiveText: "--people-live-ink",
+  peoplePro: "--people-pro",
+  peopleRequest: "--people-request",
+  statsLine: "--stats-line",
+  statsUp: "--stats-up",
+  statsDown: "--stats-down",
+  shardLight: "--shard-light",
+  shardMid: "--shard-mid",
+  shardDark: "--shard-dark",
 };
 /** The variable each shadow is drawn as; unset, theme.css keeps the place's own. */
 const SHADOW_VARIABLE: Record<ShadowPlace, string> = {
@@ -186,7 +284,7 @@ export const PRESETS: ThemePreset[] = [
     Scheme.Dark,
     [
       "#0f0f10",
-      "#dee0e2",
+      "#ecf0f3",
       "#151516",
       "#0d0d0e",
       "#19191a",
@@ -202,13 +300,24 @@ export const PRESETS: ThemePreset[] = [
     ],
     {
       icon: "#939393",
-      iconSelected: "#b3b6f5",
+      iconSelected: "#5474d0",
       logo: "#ffffff",
       logoShade: "#efefef",
       graph: "#4d7fd6",
       art: "#6c80be",
       artPaper: "#1b1a1b",
       promptEdge: "#292929",
+      playSelected: "#2454d2",
+      playSelectedEdge: "#24304e",
+      playTrack: "#141417",
+      playTrackEdge: "#1f2021",
+      playTab: "#0d0d0e",
+      playTabEdge: "#232325",
+      peopleChip: "#4169d1",
+      inviteCard: "#4160b1",
+      peopleChipText: "#e3e6f4",
+      peopleChipNumber: "#d8ddf4",
+      peoplePrimaryShade: "#1a34b5",
     },
   ),
   preset(
@@ -257,7 +366,21 @@ export const PRESETS: ThemePreset[] = [
       meterHigh: "#f1cb46",
       meterFull: "#d13c4a",
       promptEdge: "#e9e9ea",
+      playSelected: "#1661d9",
+      playSelectedEdge: "#cadbf6",
+      playTrack: "#ffffff",
+      playTrackEdge: "#ebebeb",
+      playTab: "#ffffff",
+      playTabEdge: "#f1f1f1",
       wireArt: "#a2abd5",
+      peopleChip: "#bfbfbf",
+      peopleTint: "#c3d5ff",
+      creditsCard: "#b1c3e6",
+      inviteCard: "#a9b8d9",
+      peopleChipText: "#3f61b2",
+      peopleChipNumber: "#3a5ace",
+      peoplePrimary: "#5b84e3",
+      peoplePrimaryShade: "#4561e4",
       shadows: {
         panel: { y: 17, blur: 40, spread: -10, color: "#000000", alpha: 0 },
         promptBar: { y: 3, blur: 8, spread: 0, color: "#000000", alpha: 3 },
@@ -404,14 +527,14 @@ export const THEME_FILE_MAX_BYTES = 128 * 1024;
 /** What a theme import that cannot be read tells the person, and the one build defect it can hit. */
 const MESSAGE = {
   presetMissing: (scheme: Scheme) => `The ${scheme} Genex preset is missing.`,
-  unclosedComment: "Close the unfinished JSON comment.",
-  newerFormat: "This theme uses a newer format. Choose a version 1 theme.",
-  notOpaqueToken: (role: string) => `Use an opaque sRGB color token for ${role}.`,
-  includesFile: "This theme includes another file. Export its resolved colors from VS Code first.",
-  notHex: (key: string) => `Use a hex color for ${key}.`,
-  tooLarge: "Choose a theme smaller than 128 KB.",
-  notJson: "Use a valid JSON or JSONC theme file.",
-  noColors: "No supported UI colors found. Choose a Genex token file or a VS Code color theme.",
+  unclosedComment: t("Close the unfinished JSON comment."),
+  newerFormat: t("This theme uses a newer format. Choose a version 1 theme."),
+  notOpaqueToken: (role: string) => t("Use an opaque sRGB color token for {role}.", { role }),
+  includesFile: t("This theme includes another file. Export its resolved colors from VS Code first."),
+  notHex: (key: string) => t("Use a hex color for {key}.", { key }),
+  tooLarge: t("Choose a theme smaller than 128 KB."),
+  notJson: t("Use a valid JSON or JSONC theme file."),
+  noColors: t("No supported UI colors found. Choose a Genex token file or a VS Code color theme."),
 } as const;
 /** The contrast a theme starts at: its palette as designed. */
 export const DEFAULT_CONTRAST = 50;
@@ -538,7 +661,7 @@ function savedPreset(value: unknown, kept: ThemePreset[]): ThemePreset | null {
   if (!scheme || !complete) return null;
   if (kept.some((p) => p.id === id)) return null;
   const name =
-    typeof item.name === "string" ? item.name.trim().slice(0, PRESET_NAME_MAX) || "Custom theme" : "Custom theme";
+    typeof item.name === "string" ? item.name.trim().slice(0, PRESET_NAME_MAX) || t("Custom theme") : t("Custom theme");
   return { id, name, scheme, colors: palette as Palette, contrast: contrastOf(item.contrast) };
 }
 
@@ -758,6 +881,12 @@ export function themeVariables(p: Palette, contrast = DEFAULT_CONTRAST): Record<
     "--border": edge,
     "--input": controlBorder,
     "--line-strong": controlBorder,
+    // A box inside a card (a setup step): as quiet as the card's own edge where light, which a
+    // dark card would swallow, so there it takes the control edge.
+    "--line-soft": luminance(p.background) > LIGHT_BACKGROUND ? edge : controlBorder,
+    // Every floating menu's one edge (dropdowns, popovers, the composer's menus): the prompt bar's
+    // where light; a dark menu's fill swallows that, so there it takes the control edge.
+    "--menu-edge": luminance(p.background) > LIGHT_BACKGROUND ? "var(--prompt-bar-edge)" : controlBorder,
     "--accent-primary": p.accent,
     "--accent-primary-dark": p.accent,
     "--accent-ink": accentInk,
@@ -1010,11 +1139,11 @@ export function importTheme(
   const result = tokens ? tokenColors(metadata, data) : vscodeColors(raw, data, base);
   if (!Object.keys(result).length) throw new Error(MESSAGE.noColors);
   const shadows = shadowsOf(metadata.shadows);
-  const name = String(metadata.name ?? raw.name ?? "Imported theme")
+  const name = String(metadata.name ?? raw.name ?? t("Imported theme"))
     .trim()
     .slice(0, PRESET_NAME_MAX);
   return {
-    name: name || "Imported theme",
+    name: name || t("Imported theme"),
     scheme,
     colors: shadows ? { ...base, ...result, shadows } : { ...base, ...result },
     contrast: contrastOf(metadata.contrast),

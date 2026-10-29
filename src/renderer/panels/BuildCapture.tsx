@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import { type RunGraph, runIdOf } from "../run-graph.ts";
 import { IMAGE_OUTLINE } from "./inspector/pictures.tsx";
 import { pollWhile } from "./run-stills.ts";
@@ -19,14 +20,17 @@ async function latestCapture(
   if (!runId || !latestCaptureAvailable || typeof window.studio.buildPreview !== "function") return null;
   try {
     const latest = await window.studio.buildPreview({ runId, facetId, iteration });
-    if (!latest) return { file: null, caption: "Recorded check capture" };
+    if (!latest) return { file: null, caption: t("Recorded check capture") };
     return {
       file: latest.path ?? null,
-      caption: `${latest.camera} · captured ${new Date(latest.capturedAt).toLocaleTimeString()}`,
+      caption: t("{camera} · captured {time}", {
+        camera: latest.camera,
+        time: new Date(latest.capturedAt).toLocaleTimeString(intlLocale()),
+      }),
     };
   } catch (error) {
     if (/No handler registered|not a function/i.test(String(error))) latestCaptureAvailable = false;
-    return latestCaptureAvailable ? { file: null, caption: "Recorded check capture" } : null;
+    return latestCaptureAvailable ? { file: null, caption: t("Recorded check capture") } : null;
   }
 }
 
@@ -37,12 +41,12 @@ async function captureFile(
   iteration: number,
   fallback: string | null,
 ): Promise<{ file: string | null; caption: string }> {
-  if (fallback) return { file: fallback, caption: "Recorded check capture" };
+  if (fallback) return { file: fallback, caption: t("Recorded check capture") };
   const latest = await latestCapture(graph, facetId, iteration);
-  if (latest || !graph.runDir) return latest ?? { file: null, caption: "Recorded check capture" };
+  if (latest || !graph.runDir) return latest ?? { file: null, caption: t("Recorded check capture") };
   return {
     file: `${graph.runDir}/facet_${facetId}/self/iter_${String(iteration).padStart(3, "0")}/c1_default.jpg`,
-    caption: "First saved capture (this session)",
+    caption: t("First saved capture (this session)"),
   };
 }
 
@@ -88,8 +92,8 @@ function useSavedFrame(
 
 /** What the empty frame says: the agent is working, none was saved, or nothing while the first read runs. */
 function missingFrameNote(active: boolean, looked: boolean): string | null {
-  if (active) return "Agent is working. The first preview appears after it saves a screenshot.";
-  return looked ? "No screenshot was saved for this stage." : null;
+  if (active) return t("Agent is working. The first preview appears after it saves a screenshot.");
+  return looked ? t("No screenshot was saved for this stage.") : null;
 }
 
 /**
@@ -118,7 +122,7 @@ export function BuildCapture({
       {frame ? (
         <img
           src={frame.src}
-          alt={`Saved preview for ${facetId}`}
+          alt={t("Saved preview for {part}", { part: facetId })}
           className="block aspect-video w-full rounded-[10px] bg-inset object-cover"
           style={{ boxShadow: IMAGE_OUTLINE }}
         />
@@ -132,7 +136,7 @@ export function BuildCapture({
       )}
       {frame?.caption ? (
         <span className="text-micro leading-relaxed text-ink-3">
-          {frame.caption} · A screenshot does not establish that gameplay checks passed.
+          {t("{caption} · A screenshot does not establish that gameplay checks passed.", { caption: frame.caption })}
         </span>
       ) : null}
     </div>

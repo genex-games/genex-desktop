@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { type ClaudeLoginState, isClaudeLoginActive } from "../../shared/claude-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { t } from "../../shared/i18n.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { SUBSCRIPTION_ENGINES, useClaudeLogin, useSubscriptionAuth } from "../subscription-auth.ts";
 import type { EngineDescriptor } from "../types.ts";
@@ -22,8 +23,11 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { CODE_FALLBACK_LABEL, useCodeFallback } from "../ui/SignInCard.tsx";
-import { problemWords } from "../words.ts";
+import { useCodeFallback } from "../ui/SignInCard.tsx";
+import { ViewSwitcher } from "../ui/view-switcher.tsx";
+import { PROVIDER_ACCOUNT_WORDS, problemWords } from "../words.ts";
+import { NEW_ACCOUNT, type SubscriptionAccountView } from "../../shared/subscription-accounts.ts";
+import { accountLabel, activeAccount, switchAccount, useSubscriptionAccounts } from "../subscription-accounts.ts";
 import { useCliInstall } from "../cli-install.ts";
 import { SHOW_TERMINAL_EVENT } from "./terminal-events.ts";
 import { PickerModels } from "./PickerModels.tsx";
@@ -35,10 +39,14 @@ import { LocalServerRow } from "./LocalServerRow.tsx";
 const PROVIDERS: Record<string, ProviderWords> = {
   [EngineId.ClaudeCode]: {
     name: "Claude Code",
-    plans: "Claude Pro or Max",
+    plans: t("Claude Pro or Max"),
     guide: "https://code.claude.com/docs/en/setup",
   },
-  [EngineId.Codex]: { name: "Codex", plans: "ChatGPT Plus or Pro", guide: "https://developers.openai.com/codex/cli/" },
+  [EngineId.Codex]: {
+    name: "Codex",
+    plans: t("ChatGPT Plus or Pro"),
+    guide: "https://developers.openai.com/codex/cli/",
+  },
 };
 
 /** "max" / "claude_max" → "Max plan". */
@@ -47,7 +55,7 @@ function planName(plan?: string): string | null {
     ?.replace(/^claude[_-]?/i, "")
     .replace(/[_-]+/g, " ")
     .trim();
-  return word ? `${word.charAt(0).toUpperCase()}${word.slice(1)} plan` : null;
+  return word ? t("{plan} plan", { plan: `${word.charAt(0).toUpperCase()}${word.slice(1)}` }) : null;
 }
 
 type Account = EngineDescriptor["account"];
@@ -59,8 +67,9 @@ interface RowActions {
   /** Asks the CLI for its model list again. */
   refreshModels: () => Promise<void>;
   openGuide: () => Promise<void>;
-  signOut: () => Promise<void>;
-  signIn: (options?: { separate?: boolean }) => Promise<void>;
+  /** Sign Studio out of one of its own accounts (Studio's first when unnamed). */
+  signOut: (account?: string) => Promise<void>;
+  signIn: (options?: { separate?: boolean; account?: string }) => Promise<void>;
 }
 
 /** The row's in-app install of its CLI (`useCliInstall`). */
@@ -78,75 +87,124 @@ function missingView(
   if (install.installing)
     return {
       tone: RowTone.Busy,
-      status: outdated ? "Updating…" : "Installing…",
-      line: `${outdated ? "Updating" : "Installing"} ${words.name}. This can take a minute.`,
+      status: outdated ? t("Updating…") : t("Installing…"),
+      line: outdated
+        ? t("Updating {name}. This can take a minute.", { name: words.name })
+        : t("Installing {name}. This can take a minute.", { name: words.name }),
       actions: null,
     };
   const actions = (
     <>
       <Button variant="default" onClick={() => void install.install()}>
-        {outdated ? `Update ${words.name}` : `Install ${words.name}`}
+        {outdated ? t("Update {name}", { name: words.name }) : t("Install {name}", { name: words.name })}
       </Button>
-      {install.problem && <Button onClick={() => void act.openGuide()}>Install guide</Button>}
-      <Button onClick={() => void act.recheck()}>Check again</Button>
+      {install.problem && <Button onClick={() => void act.openGuide()}>{t("Install guide")}</Button>}
+      <Button onClick={() => void act.recheck()}>{t("Check again")}</Button>
     </>
   );
   if (outdated)
-    return { tone: RowTone.Warning, status: "Update needed", line: "This version is too old for Studio.", actions };
+    return {
+      tone: RowTone.Warning,
+      status: t("Update needed"),
+      line: t("This version is too old for Studio."),
+      actions,
+    };
   if (runtime)
     return {
       tone: RowTone.Warning,
-      status: "Needs Node.js",
-      line: `This ${words.name} install needs Node.js, which isn't installed. Install the native version instead.`,
+      status: t("Needs Node.js"),
+      line: t("This {name} install needs Node.js, which isn't installed. Install the native version instead.", {
+        name: words.name,
+      }),
       actions,
     };
-  return { tone: RowTone.Off, status: "Not installed", line: `Install it to use your ${words.plans} plan.`, actions };
+  return {
+    tone: RowTone.Off,
+    status: t("Not installed"),
+    line: t("Install it to use your {plans} plan.", { plans: words.plans }),
+    actions,
+  };
 }
 
-/** Where a Claude sign-in is waiting, by its phase. */
-const CLAUDE_SIGN_IN_LINE: Partial<Record<ClaudeLoginState["phase"], string>> = {
-  code: "Paste the code the sign-in page shows you.",
-  terminal: "Finish signing in in Studio's terminal.",
-  verifying: "Checking the sign-in…",
+/** Where a Claude sign-in is waiting, by its phase, as the waiting strip says it. */
+const CLAUDE_SIGN_IN_STEP: Partial<Record<ClaudeLoginState["phase"], string>> = {
+  terminal: PROVIDER_ACCOUNT_WORDS.inTerminal,
+  verifying: PROVIDER_ACCOUNT_WORDS.verifying,
 };
 
-/** A sign-in is under way: where to finish it and, for Claude, its terminal, page and cancel. */
-function signingInView(
-  engineId: string,
-  login: ClaudeLoginState | null,
-  act: RowActions,
-  codeFallback: ReturnType<typeof useCodeFallback>,
-): RowView {
-  if (engineId === EngineId.Codex)
-    return {
-      tone: RowTone.Busy,
-      status: "Signing in…",
-      line: "Finish signing in in your browser.",
-      actions: <Button onClick={() => void act.run(() => window.studio.codexLoginCancel())}>Cancel</Button>,
-    };
+/** A sign-in is under way: the row says so and offers Cancel; the waiting strip below holds its steps. */
+function signingInView(engineId: string, act: RowActions): RowView {
+  const cancel = engineId === EngineId.Codex ? window.studio.codexLoginCancel : window.studio.claudeLoginCancel;
+  return {
+    tone: RowTone.Busy,
+    status: t("Signing in…"),
+    line: null,
+    actions: <Button onClick={() => void act.run(() => cancel())}>{t("Cancel")}</Button>,
+  };
+}
+
+/**
+ * The sign-in's waiting strip: the step it waits on, shimmering, and its two small helps beside it
+ * (the sign-in page again, the code the browser showed); asked for, the code box takes its place.
+ */
+function SignInStrip({
+  engineId,
+  login,
+  act,
+  codeFallback,
+  code,
+  setCode,
+}: {
+  engineId: string;
+  login: ClaudeLoginState | null;
+  act: RowActions;
+  codeFallback: ReturnType<typeof useCodeFallback>;
+  code: string;
+  setCode: (code: string) => void;
+}): JSX.Element {
+  if (codeFallback.pasting)
+    return (
+      <div className="sign-in-strip" data-sign-in-strip="code">
+        <CodeEntry act={act} code={code} setCode={setCode} />
+      </div>
+    );
+  const claude = engineId === EngineId.ClaudeCode;
   const phase = login?.phase;
-  const waitingOnBrowser = phase === "code" && !codeFallback.pasting;
-  const line = (!waitingOnBrowser && phase && CLAUDE_SIGN_IN_LINE[phase]) || "Finish signing in in your browser.";
-  const actions = (
-    <>
+  const step = (claude && phase && CLAUDE_SIGN_IN_STEP[phase]) || PROVIDER_ACCOUNT_WORDS.waiting;
+  const openPage = claude ? window.studio.claudeLoginOpenBrowser : window.studio.codexLoginOpenBrowser;
+  const canOpen = claude ? Boolean(login?.hasBrowserUrl) : true;
+  return (
+    <div className="sign-in-strip" data-sign-in-strip="waiting">
+      <span className="chat-status-shimmer min-w-0 flex-1 truncate" data-shimmer>
+        {step}
+      </span>
       {phase === "terminal" && (
-        <Button onClick={() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT))}>Show terminal</Button>
+        <Button
+          className="h-7 bg-control-hover px-2.5"
+          onClick={() => window.dispatchEvent(new Event(SHOW_TERMINAL_EVENT))}
+        >
+          {PROVIDER_ACCOUNT_WORDS.showTerminal}
+        </Button>
       )}
-      {login?.hasBrowserUrl && (
-        <Button onClick={() => void act.run(() => window.studio.claudeLoginOpenBrowser())}>Open sign-in page</Button>
+      {canOpen && (
+        <Button className="h-7 bg-control-hover px-2.5" onClick={() => void act.run(() => openPage())}>
+          {PROVIDER_ACCOUNT_WORDS.openPage}
+        </Button>
       )}
-      {waitingOnBrowser && <Button onClick={codeFallback.pasteCode}>{CODE_FALLBACK_LABEL}</Button>}
-      <Button onClick={() => void act.run(() => window.studio.claudeLoginCancel())}>Cancel</Button>
-    </>
+      {claude && phase === "code" && (
+        <Button className="h-7 bg-control-hover px-2.5" onClick={codeFallback.pasteCode}>
+          {PROVIDER_ACCOUNT_WORDS.haveCode}
+        </Button>
+      )}
+    </div>
   );
-  return { tone: RowTone.Busy, status: "Signing in…", line, actions };
 }
 
 /** Where the connected account's login comes from. */
 function loginSource(account: Account): string | null {
-  if (account?.source === "system") return "Using your Terminal login";
-  if (account?.source === "isolated") return "Signed in for Studio only";
-  if (account?.source === "env" && account.variable) return `Set by ${account.variable}`;
+  if (account?.source === "system") return t("Using your Terminal login");
+  if (account?.source === "isolated") return t("Signed in for Studio only");
+  if (account?.source === "env" && account.variable) return t("Set by {variable}", { variable: account.variable });
   return null;
 }
 
@@ -161,24 +219,27 @@ function ItemWords({ title, line }: { title: string; line: string }): JSX.Elemen
 }
 
 function AccountMenu({
-  engineId,
   words,
   account,
+  accounts,
   act,
   install,
 }: {
-  engineId: string;
   words: ProviderWords;
   account: Account;
+  accounts: readonly SubscriptionAccountView[];
   act: RowActions;
   install: RowInstall;
 }): JSX.Element {
   const version = account?.cli.version;
+  // Studio can sign out of its own accounts; the Terminal login is the CLI's, signed out in Terminal.
+  const inUse = account?.source === "isolated" ? activeAccount(accounts) : null;
+  const signOutOf = inUse && !inUse.terminal ? inUse : null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button aria-label={`${words.name} account`}>
-          Account
+        <Button aria-label={t("{name} account", { name: words.name })}>
+          {t("Account")}
           <Icon name="chevron-down" size={14} />
         </Button>
       </DropdownMenuTrigger>
@@ -189,28 +250,22 @@ function AccountMenu({
             void act.refreshModels();
           }}
         >
-          <ItemWords title="Check connection" line="Also refreshes the model list" />
+          <ItemWords title={t("Check connection")} line={t("Also refreshes the model list")} />
         </DropdownMenuItem>
         <DropdownMenuItem disabled={install.installing} onSelect={() => void install.update()}>
-          {version ? <ItemWords title={`Update ${words.name}`} line={`You have ${version}`} /> : `Update ${words.name}`}
+          {version ? (
+            <ItemWords title={t("Update {name}", { name: words.name })} line={t("You have {version}", { version })} />
+          ) : (
+            t("Update {name}", { name: words.name })
+          )}
         </DropdownMenuItem>
-        {account?.source !== "env" && <DropdownMenuSeparator />}
-        {account?.source !== "env" && (
-          <DropdownMenuItem
-            onSelect={() =>
-              void act.run(() => act.signIn(engineId === EngineId.Codex ? undefined : { separate: true }))
-            }
-          >
-            <ItemWords title="Use a different account…" line="Your Terminal login stays as it is" />
-          </DropdownMenuItem>
-        )}
-        {account?.source === "isolated" && (
-          <DropdownMenuItem onSelect={() => void act.signOut()}>
-            {account.afterSignOut === "terminal" ? (
-              <ItemWords title="Switch back to your Terminal login" line="Signs Studio out of this account" />
-            ) : (
-              "Sign out"
-            )}
+        {signOutOf && <DropdownMenuSeparator />}
+        {signOutOf && (
+          <DropdownMenuItem onSelect={() => void act.signOut(signOutOf.id)}>
+            <ItemWords
+              title={PROVIDER_ACCOUNT_WORDS.signOut(accountLabel(signOutOf))}
+              line={PROVIDER_ACCOUNT_WORDS.signOutLine}
+            />
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -221,10 +276,11 @@ function AccountMenu({
 /** Why a provider needs signing in: an account set by the environment, an API key in the way, or none yet. */
 function signInLine(words: ProviderWords, engine: EngineDescriptor): string {
   const account = engine.account;
-  if (account?.source === "env" && account.variable) return `Check the account set by ${account.variable}.`;
+  if (account?.source === "env" && account.variable)
+    return t("Check the account set by {variable}.", { variable: account.variable });
   if (/api key/i.test(engine.status.detail))
-    return `${words.name} is using an API key. Sign in to use your ${words.plans} plan.`;
-  return `Use your ${words.plans} plan.`;
+    return t("{name} is using an API key. Sign in to use your {plans} plan.", { name: words.name, plans: words.plans });
+  return t("Use your {plans} plan.", { plans: words.plans });
 }
 
 /** The row for a provider's state: missing, signing in, connected, needing sign-in, or unreachable. */
@@ -234,58 +290,55 @@ function rowView(row: {
   words: ProviderWords;
   cliMissing: boolean;
   signingIn: boolean;
-  login: ClaudeLoginState | null;
   loginError: string | null | undefined;
   act: RowActions;
   install: RowInstall;
-  codeFallback: ReturnType<typeof useCodeFallback>;
+  accounts: readonly SubscriptionAccountView[];
 }): RowView {
   const { engineId, engine, words, act } = row;
   if (row.cliMissing) return missingView(words, engine.account?.cli, act, row.install);
-  if (row.signingIn) return signingInView(engineId, row.login, act, row.codeFallback);
+  if (row.signingIn) return signingInView(engineId, act);
   if (engine.status.code === EngineStatusCode.Ready && row.install.installing)
     return {
       tone: RowTone.Busy,
-      status: "Updating…",
-      line: `Updating ${words.name}. This can take a minute.`,
+      status: t("Updating…"),
+      line: t("Updating {name}. This can take a minute.", { name: words.name }),
       actions: null,
     };
   if (engine.status.code === EngineStatusCode.Ready)
     return {
       tone: RowTone.Connected,
-      status: "Connected",
+      status: t("Connected"),
       line: [planName(engine.usage?.plan), loginSource(engine.account)].filter(Boolean).join(" · ") || null,
       actions: (
-        <AccountMenu engineId={engineId} words={words} account={engine.account} act={act} install={row.install} />
+        <AccountMenu words={words} account={engine.account} accounts={row.accounts} act={act} install={row.install} />
       ),
     };
   if (engine.status.code === EngineStatusCode.NeedsLogin)
     return {
       tone: RowTone.Off,
-      status: "Not connected",
+      status: t("Not connected"),
       line: signInLine(words, engine),
       actions: (
         <Button variant="default" onClick={() => void act.run(() => act.signIn())}>
-          {row.loginError ? "Try again" : "Sign in"}
+          {row.loginError ? t("Try again") : t("Sign in")}
         </Button>
       ),
     };
   return {
     tone: RowTone.Danger,
-    status: "Couldn't check",
-    line: `${words.name} didn't answer. Check your internet connection, then try again.`,
-    actions: <Button onClick={() => void act.recheck()}>Try again</Button>,
+    status: t("Couldn't check"),
+    line: t("{name} didn't answer. Check your internet connection, then try again.", { name: words.name }),
+    actions: <Button onClick={() => void act.recheck()}>{t("Try again")}</Button>,
   };
 }
 
 /** The Claude sign-in's code box, while the sign-in page is waiting for the code. */
 function CodeEntry({
-  login,
   act,
   code,
   setCode,
 }: {
-  login: ClaudeLoginState | null;
   act: RowActions;
   code: string;
   setCode: (code: string) => void;
@@ -298,21 +351,20 @@ function CodeEntry({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <input
-        aria-label="Code from the sign-in page"
-        placeholder="Paste the code"
+        aria-label={t("Code from the sign-in page")}
+        placeholder={t("Paste the code")}
         value={code}
         onChange={(event) => setCode(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && code.trim()) void submitCode();
         }}
-        className="h-8 w-52 rounded-control border border-input bg-field px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent-ink"
+        // The person has just come back from the browser holding the code; the box takes it.
+        autoFocus
+        className="h-8 w-52 rounded-control border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent-ink"
       />
       <Button variant="default" disabled={!code.trim()} onClick={() => void submitCode()}>
-        Continue
+        {t("Continue")}
       </Button>
-      {login?.hasBrowserUrl && (
-        <Button onClick={() => void act.run(() => window.studio.claudeLoginOpenBrowser())}>Open sign-in page</Button>
-      )}
     </div>
   );
 }
@@ -350,9 +402,9 @@ function useRowActions(
     recheck,
     refreshModels: () => run(() => window.studio.refreshModels(engineId)),
     openGuide: () => run(() => window.studio.openUrl(guide)),
-    signOut: () =>
+    signOut: (account) =>
       run(async () => {
-        await window.studio.subscriptionForgetStudioLogin(engineId);
+        await window.studio.subscriptionForgetStudioLogin(engineId, account);
         await refresh();
       }),
     signIn,
@@ -406,10 +458,59 @@ function CatalogLine({
       {note && <span title={note.detail}>{note.text}</span>}
       {note?.retry && (
         <Button disabled={note.retrying} onClick={() => void act.refreshModels()}>
-          {note.retrying ? "Trying again…" : "Try again"}
+          {note.retrying ? t("Trying again…") : t("Try again")}
         </Button>
       )}
-      {install.problem && <Button onClick={() => void act.openGuide()}>Installation guide</Button>}
+      {install.problem && <Button onClick={() => void act.openGuide()}>{t("Installation guide")}</Button>}
+    </div>
+  );
+}
+
+/**
+ * The provider's accounts as tabs under its name: the one in use is selected, another runs from the
+ * next message once clicked (signing in on the web first when it is signed out), and + adds one.
+ */
+function AccountTabs({
+  engineId,
+  words,
+  accounts,
+  act,
+}: {
+  engineId: string;
+  words: ProviderWords;
+  accounts: readonly SubscriptionAccountView[];
+  act: RowActions;
+}): JSX.Element {
+  const items = accounts.map((account) => ({ key: account.id, label: accountLabel(account) }));
+  const active = activeAccount(accounts)?.id ?? "";
+  const pick = (account: string): Promise<void> =>
+    act.run(async () => {
+      await switchAccount(engineId, account, act.signIn);
+      await act.recheck();
+    });
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5" data-account-tabs={engineId}>
+      <ViewSwitcher
+        items={items}
+        active={active}
+        sans
+        label={PROVIDER_ACCOUNT_WORDS.tabs(words.name)}
+        className="min-w-0 max-w-full overflow-x-auto"
+        dataAttribute="data-account"
+        onSelect={(account) => {
+          if (account !== active) void pick(account);
+        }}
+      />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-7"
+        aria-label={PROVIDER_ACCOUNT_WORDS.add}
+        title={PROVIDER_ACCOUNT_WORDS.add}
+        onClick={() => void pick(NEW_ACCOUNT)}
+      >
+        <Icon name="plus" size={14} />
+      </Button>
     </div>
   );
 }
@@ -422,11 +523,13 @@ function ProviderRow({
   const { engine, waiting, error, signIn, refresh } = useSubscriptionAuth(engines, onEnginesRefresh, engineId);
   const login = useClaudeLogin(engineId);
   const cliMissing = cliMissingFor(engine);
-  const words = PROVIDERS[engineId] ?? { name: engine?.label ?? "", plans: "subscription", guide: "" };
+  const words = PROVIDERS[engineId] ?? { name: engine?.label ?? "", plans: t("subscription"), guide: "" };
   const act = useRowActions(engineId, words.guide, refresh, signIn);
   const install = useCliInstall(engineId);
   const codeFallback = useCodeFallback(login?.phase);
   const [code, setCode] = useState("");
+  // Read again whenever the engines are: a sign-in or a switch elsewhere changes the list.
+  const { accounts } = useSubscriptionAccounts(engineId, engine);
 
   // Coming back from installing the CLI in another app is the moment to look again.
   useEffect(() => {
@@ -438,29 +541,31 @@ function ProviderRow({
 
   if (!engine) return null;
   const { claudeLogin, signingIn, loginError } = signInState(engineId, login, waiting, error);
-  const view = rowView({
-    engineId,
-    engine,
-    words,
-    cliMissing,
-    signingIn,
-    login: claudeLogin,
-    loginError,
-    act,
-    install,
-    codeFallback,
-  });
+  const view = rowView({ engineId, engine, words, cliMissing, signingIn, loginError, act, install, accounts });
   // Signed in with a working CLI: the model list belongs to the row, also while the CLI updates.
   const connected = !cliMissing && !signingIn && engine.status.code === EngineStatusCode.Ready;
   // A recheck keeps the row's line and actions in place; only the status says it is looking.
   const tone = act.checking ? RowTone.Busy : view.tone;
-  const status = act.checking ? "Checking…" : view.status;
+  const status = act.checking ? t("Checking…") : view.status;
   // A sign-in error belongs to the Sign in button; it is noise once the row is about something else.
   const signInTrouble = !cliMissing && !signingIn && engine.status.code === EngineStatusCode.NeedsLogin;
   const problem = act.actionError ?? install.problem ?? (signInTrouble ? loginError : null);
+  // Accounts to switch between, once there is one: never while signing in, nor for a login the environment sets.
+  const showAccounts = !cliMissing && !signingIn && engine.account?.source !== "env" && accounts.length > 0;
   return (
     <section aria-label={words.name} className="settings-card gap-2">
       <RowHeading words={words} version={engine.account?.cli.version} tone={tone} status={status} view={view} />
+      {showAccounts && <AccountTabs engineId={engineId} words={words} accounts={accounts} act={act} />}
+      {signingIn && (
+        <SignInStrip
+          engineId={engineId}
+          login={claudeLogin}
+          act={act}
+          codeFallback={codeFallback}
+          code={code}
+          setCode={setCode}
+        />
+      )}
       {/* The model catalog belongs to a connected account; a signed-out row keeps its one Sign in action. */}
       {connected && (
         <>
@@ -468,7 +573,6 @@ function ProviderRow({
           <PickerModels engine={engine} name={words.name} />
         </>
       )}
-      {signingIn && codeFallback.pasting && <CodeEntry login={claudeLogin} act={act} code={code} setCode={setCode} />}
       {problem && (
         <p role="alert" className="text-body-sm text-red">
           {problemWords(problem)}

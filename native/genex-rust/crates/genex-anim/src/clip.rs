@@ -252,6 +252,12 @@ impl Clip {
     pub fn ignored_channels(&self) -> &[IgnoredChannel] {
         &self.ignored
     }
+
+    /// The same clip under `name` (a clip file's unnamed animation, named by the game).
+    pub fn renamed(mut self, name: impl Into<String>) -> Clip {
+        self.name = name.into();
+        self
+    }
 }
 
 /// The clips of a GLB, in file order, on `rig` (imported from the same bytes). Refused
@@ -265,6 +271,28 @@ pub fn import_clips(bytes: &[u8], rig: &Rig) -> Result<Vec<Clip>, AnimationError
     check_targets(gltf.document.as_json())?;
     let folded = folded_ancestors(&gltf, rig);
     gltf.animations().map(|animation| read_clip(&gltf, &animation, rig, &folded)).collect()
+}
+
+/// The clips of another GLB on `rig`, in file order: a skeleton-only clip file (one per clip, as
+/// Uthana delivers them) or any file whose nodes carry the rig's joint names. Each channel's node
+/// is the rig's joint of the same name ([`crate::skeleton::Skeleton::find`]: the exact name, then
+/// the part after the last `|` or `:` ignoring case); a node no joint names is skipped like a
+/// node outside the skeleton. Refused as [`import_clips`] refuses the file, and
+/// `animation-clip-missing` when it has no animation or none of its channels names a joint.
+pub fn import_clips_by_name(bytes: &[u8], rig: &Rig) -> Result<Vec<Clip>, AnimationError> {
+    let gltf = open(bytes)?;
+    check_targets(gltf.document.as_json())?;
+    if gltf.animations().len() == 0 {
+        return Err(AnimationError::clip_missing("the file has no animation"));
+    }
+    let names: Vec<Option<&str>> = gltf.nodes().map(|node| node.name()).collect();
+    let named = rig.by_names(&names);
+    let folded = folded_ancestors(&gltf, &named);
+    let clips: Vec<Clip> = gltf.animations().map(|animation| read_clip(&gltf, &animation, &named, &folded)).collect::<Result<_, _>>()?;
+    if clips.iter().all(|clip| clip.tracks().is_empty()) {
+        return Err(AnimationError::clip_missing("none of the file's channels names a joint of the rig"));
+    }
+    Ok(clips)
 }
 
 /// Every channel's target, which `gltf`'s validation leaves unchecked and its accessors unwrap: a

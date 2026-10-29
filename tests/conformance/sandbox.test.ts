@@ -192,6 +192,22 @@ describe("sandboxed spawn", () => {
     assert.notEqual(result.code, 0);
   });
 
+  it("denies reads of Roblox's sign-ins: the cookie jars, local storage and StudioMCP's token", async () => {
+    for (const target of [
+      path.join(os.homedir(), "Library", "HTTPStorages", "com.Roblox.RobloxStudio.binarycookies"),
+      path.join(os.homedir(), "Library", "HTTPStorages", "com.roblox.RobloxPlayer.binarycookies"),
+      path.join(os.homedir(), "Library", "Roblox", "StudioMCP", "auth.token"),
+      path.join(os.homedir(), "Library", "Roblox", "LocalStorage"),
+    ]) {
+      const result = await sandbox.run({
+        command: `cat ${JSON.stringify(target)}; ls ${JSON.stringify(target)}`,
+        cwd: workspace,
+      });
+      // Never echo what was read: on a failure the cookie itself would land in the test log.
+      assert.ok(result.stdout === "", `nothing of ${target} is read`);
+    }
+  });
+
   it("refuses an outbound host at the filtering proxy, without needing the internet", async () => {
     // The proxy judges the host name before any lookup, so a reserved name answers the same on
     // an offline machine: 403 is the refusal, where a DNS failure would read 000.
@@ -365,7 +381,7 @@ describe("sandboxed spawn", () => {
       command: "printf 'from-opened' > note.txt && cat note.txt",
       cwd: extra,
     });
-    assert.equal(result.code, 0);
+    assert.equal(result.code, 0, JSON.stringify(result));
     assert.equal(await readFile(path.join(extra, "note.txt"), "utf8"), "from-opened");
 
     const denied = await sandbox.run({
@@ -1223,5 +1239,114 @@ describe("ProcessSandbox.spawnGame", () => {
       assert.deepEqual(await child.exited, { code: null, signal: "SIGTERM" });
       await box.dispose();
     });
+  });
+});
+
+/**
+ * A game's build and its package install run held to their own folders: the game and the build's
+ * own scratch. Everything else the sandbox lets an agent write — other games, the games folder,
+ * other builds' scratch — is out of reach for that run, however the command spells the path.
+ */
+describe("a run confined to its own game", {
+  skip: process.platform === "win32" && "srt-win grants writes for the whole session, not per command",
+}, () => {
+  let base: string;
+  let mine: string;
+  let theirs: string;
+  let shadow: string;
+  let confined: ProcessSandbox;
+
+  before(async () => {
+    base = await realpath(await tmpDir("studio-sandbox-confine-"));
+    mine = path.join(base, "games", "mine");
+    theirs = path.join(base, "games", "theirs");
+    shadow = path.join(base, "scratch", "builds", "mine");
+    for (const dir of [mine, theirs, path.join(base, "scratch", "builds", "theirs")])
+      await mkdir(dir, { recursive: true });
+    await symlink(theirs, path.join(mine, "linked"));
+    confined = await ProcessSandbox.create({
+      writableRoots: [path.join(base, "games")],
+      scratchDir: path.join(base, "scratch"),
+      secretPaths: [],
+    });
+  });
+
+  const confine = () => ({ write: [mine, shadow], tmp: path.join(shadow, "tmp") });
+
+  it("writes its own game, its own scratch and its own temp folder", async () => {
+    const result = await confined.run({
+      command: `printf a > made.txt && printf b > ${JSON.stringify(path.join(shadow, "out.txt"))} && printf c > "$TMPDIR/t.txt" && echo $TMPDIR`,
+      cwd: mine,
+      confine: confine(),
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.sandboxed, true);
+    assert.equal(result.stdout.trim(), path.join(shadow, "tmp"));
+    assert.equal(await readFile(path.join(mine, "made.txt"), "utf8"), "a");
+    assert.equal(await readFile(path.join(shadow, "out.txt"), "utf8"), "b");
+    assert.equal(await readFile(path.join(shadow, "tmp", "t.txt"), "utf8"), "c");
+  });
+
+  it("makes its folders before it starts, so a cache that is not there yet can be written", async () => {
+    const cache = path.join(base, "scratch", "package-cache");
+    const result = await confined.run({
+      command: `printf x > ${JSON.stringify(path.join(cache, "index.json"))}`,
+      cwd: mine,
+      confine: { write: [mine, cache], tmp: path.join(shadow, "tmp") },
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(await readFile(path.join(cache, "index.json"), "utf8"), "x");
+  });
+
+  const HOSTILE: Array<{ name: string; target: () => string; landed: () => string }> = [
+    {
+      name: "another game",
+      target: () => path.join(theirs, "planted.txt"),
+      landed: () => path.join(theirs, "planted.txt"),
+    },
+    {
+      name: "the games folder",
+      target: () => path.join(base, "games", "new-game.txt"),
+      landed: () => path.join(base, "games", "new-game.txt"),
+    },
+    {
+      name: "another game's build scratch",
+      target: () => path.join(base, "scratch", "builds", "theirs", "index.html"),
+      landed: () => path.join(base, "scratch", "builds", "theirs", "index.html"),
+    },
+    {
+      name: "the sandbox's shared scratch",
+      target: () => path.join(base, "scratch", "note.txt"),
+      landed: () => path.join(base, "scratch", "note.txt"),
+    },
+    {
+      name: "a dot-dot path out of its own game",
+      target: () => `${mine}/../theirs/dotdot.txt`,
+      landed: () => path.join(theirs, "dotdot.txt"),
+    },
+    {
+      name: "a link in its own game to another game",
+      target: () => path.join(mine, "linked", "through-link.txt"),
+      landed: () => path.join(theirs, "through-link.txt"),
+    },
+  ];
+
+  for (const row of HOSTILE)
+    it(`cannot write ${row.name}`, async () => {
+      const result = await confined.run({
+        command: `printf x > ${JSON.stringify(row.target())}`,
+        cwd: mine,
+        confine: confine(),
+      });
+      assert.notEqual(result.code, 0, `writing ${row.name} must fail`);
+      await assert.rejects(() => stat(row.landed()), /ENOENT/);
+    });
+
+  it("leaves a run without a confinement its sandbox's writable roots", async () => {
+    const result = await confined.run({
+      command: `printf x > ${JSON.stringify(path.join(theirs, "agent.txt"))}`,
+      cwd: mine,
+    });
+    assert.equal(result.code, 0, result.stderr);
   });
 });

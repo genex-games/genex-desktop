@@ -36,7 +36,11 @@ import { LOCK_FILE_OF_STACK, type ToolchainLock } from "../../src/shared/toolcha
 import { shellQuote } from "../../src/substrate/shell-quote.ts";
 import { crossPrewarmDigest } from "../../src/substrate/toolchain-store/locate.ts";
 import { CURRENT_LOCK_FILE, isToolchainLock, LOCKS_FOLDER } from "../../src/substrate/toolchain-store/lock.ts";
-import { RUST_PREWARM_FILE, RustStoreFolder } from "../../src/substrate/toolchain-store/rust-locate.ts";
+import {
+  RUST_DEV_PROFILE_SETTINGS,
+  RUST_PREWARM_FILE,
+  RustStoreFolder,
+} from "../../src/substrate/toolchain-store/rust-locate.ts";
 
 /** The destinations zig cross-builds, whose prewarm the cross format also decides. */
 const CROSS_DESTINATIONS: ReadonlySet<string> = new Set<string>([BuildTarget.Windows, BuildTarget.Linux]);
@@ -232,7 +236,8 @@ export function devStoreRustLockFile(env: NodeJS.ProcessEnv = process.env, repo:
 
 /**
  * Whether the Rust dev store prewarmed `target` for the lock in `lockFile`: that lock's
- * `locks/<digest12>/targets/<target>/rust-prewarm.json` names the same lock and destination.
+ * `locks/<digest12>/targets/<target>/rust-prewarm.json` names the same lock and destination, built
+ * with this checkout's cargo profile (an older one is a prewarm to redo: `dev-store.ts --stack rust-wgpu`).
  */
 function rustPrewarmed(store: string, lockFile: string, target: BuildTarget): boolean {
   const lock = readJson(lockFile);
@@ -240,7 +245,13 @@ function rustPrewarmed(store: string, lockFile: string, target: BuildTarget): bo
   if (!digest) return false;
   const folder = path.join(store, LOCKS_FOLDER, digest.slice(0, 12), RustStoreFolder.Targets, target);
   const record = readJson(path.join(folder, RUST_PREWARM_FILE));
-  return isRecord(record) && record.lock === digest && record.target === target && Array.isArray(record.outputs);
+  const named = isRecord(record) && record.lock === digest && record.target === target;
+  return named && Array.isArray(record.outputs) && sameProfile(record.profile);
+}
+
+/** Whether a prewarm record's `profile` is this checkout's {@link RUST_DEV_PROFILE_SETTINGS}. */
+function sameProfile(profile: unknown): boolean {
+  return Array.isArray(profile) && profile.join("\u0000") === RUST_DEV_PROFILE_SETTINGS.join("\u0000");
 }
 
 /**

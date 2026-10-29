@@ -45,7 +45,7 @@ function PopoverContent({
   > & {
     /**
      * The material. `popover` is THE floating surface and the default — nothing
-     * mints a second one. `none` drops the fill, the hairline and the ring so a
+     * mints a second one. `none` drops the fill and the edge so a
      * caller can wear a NAMED material instead (today: the mention picker in
      * `surface-glass`, the composer's own glass, because that panel is the bar's
      * drawer rather than a menu near it).
@@ -77,7 +77,8 @@ function PopoverContent({
           data-slot="popover-content"
           className={cn(
             "text-popover-foreground rounded-xl shadow-lg",
-            surface === "popover" && "bg-popover border border-border/50 ring-1 ring-foreground/10",
+            // One edge, every menu's (`--menu-edge`): a ring beside it would draw a second line.
+            surface === "popover" && "bg-popover border border-menu-edge",
             "origin-(--transform-origin) max-w-(--available-width)",
             // Motion tokens only — open on --duration-fast, close quicker on
             // --duration-quick, the pairing every overlay here uses.

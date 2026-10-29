@@ -1,0 +1,34 @@
+# The set-dressing example's manifest (copy it over the game's own genex.toml, keeping your title).
+[game]
+title = "Set dressing"
+fit = "expand"
+
+# Judge it at a desktop preset (`high` or `ultra`); check it at `low` and as a phone too.
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+# Auto exposure meters each camera: the room against its windows, the street in the sun.
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+
+# The street is 80 m long: the sun's cascades cover 60 m of it.
+[render.shadows]
+distance = 60
+
+[physics]
+enabled = false
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false
+
+[animation]
+enabled = false

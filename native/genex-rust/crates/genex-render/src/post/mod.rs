@@ -4,6 +4,9 @@
 
 /// The tonemap node (graph node 21) and the luminance-weighted MSAA resolve (node 16): RQ1.1.
 pub mod tonemap;
+/// Local exposure: a bilateral grid the tonemap moves each region towards middle grey by (AAA
+/// push P3).
+pub mod local_exposure;
 /// Auto and manual exposure (graph node 20): RQ1.2.
 pub mod exposure;
 /// Threshold-free, energy-conserving bloom (graph node 19): RQ4.0 contract, RQ4.2.

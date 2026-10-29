@@ -212,6 +212,27 @@ describe("a Loop's reviewer", () => {
     for (const thread of others) assert.deepEqual(await rows(thread.id), [], `none in ${thread.id}`);
   });
 
+  it("a reviewer of a web game finds the game itself in app_look's list, though it runs inside Genex", {
+    timeout: CASE_TIMEOUT_MS,
+  }, async () => {
+    // A web game runs in Genex's own preview, whose windows app_look never looks at: the reviewer
+    // listed the windows on screen, found no game and judged from stills (B5).
+    const { api, game, project, whileRunning } = await workerChat({ appLook: stubAppLook() });
+    const answers: unknown[] = [];
+    whileRunning(async (request) => {
+      answers.push(await request.onLiveTool?.(APP_LOOK_TOOL_NAME, {}));
+      answers.push(await request.onLiveTool?.(APP_LOOK_TOOL_NAME, { window: "game" }));
+    });
+    await api["engine.delegate"]?.({ engine: CLAUDE, prompt: "check", project: game, ...reviewerAsk(project.dir) });
+    whileRunning(async () => {});
+    const [listed, looked] = answers.map((answer) => JSON.stringify(answer));
+    assert.match(listed!, /Fixture App/, "the windows on screen are still listed");
+    assert.match(listed!, /game · /, "and the game itself, by the id a look takes");
+    assert.ok(looked && !/No window on screen matches/.test(looked), `the game is looked at: ${looked}`);
+    // This rig has no hidden window: the look says so in its own words, never a stale picture.
+    assert.match(looked!, /no hidden window/);
+  });
+
   it("a Stop by its run reaches that run's reviewer and nothing else", { timeout: CASE_TIMEOUT_MS }, async () => {
     const { api, game, project, seen, delegate, runWorker, untilSeen, whileRunning } = await workerChat();
     whileRunning(

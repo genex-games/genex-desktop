@@ -6,7 +6,13 @@ import { promisify } from "node:util";
 import { TerminalFlow } from "./terminal-flow.ts";
 import { LinkScanner } from "./terminal-links.ts";
 import { LoginTerminalOutput } from "./terminal-login-output.ts";
-import { HostCommand, HostEventType, INTERRUPTED_EXIT_CODE, type TerminalLaunch } from "./terminal-service.ts";
+import {
+  HostCommand,
+  HostEventType,
+  HostFailure,
+  INTERRUPTED_EXIT_CODE,
+  type TerminalLaunch,
+} from "./terminal-service.ts";
 import { TerminalKind, terminalSize, TERMINAL_LIMITS } from "../shared/terminal.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { StudioPlatform } from "../shared/boot.ts";
@@ -23,10 +29,11 @@ const PS_MAX_BUFFER = 4 * 1024 * 1024;
 const TERM_GRACE_MS = 1000;
 /** How often the host checks that the app that started it is still alive. */
 const OWNER_POLL_MS = 2000;
-/** What the terminal panel reads when a session breaks, and why the host refuses to run. */
+/**
+ * Why the host refuses to run. A session that breaks ends with a {@link HostFailure} instead of
+ * words: this process never learns the app's language, so main says it.
+ */
 const MESSAGE = {
-  bufferFull: "Terminal output exceeded its buffer limit. Open a new session.",
-  broken: "Could not start or communicate with the terminal. Open a new session.",
   notUtilityProcess: "the terminal host runs only as an Electron utility process",
 } as const;
 
@@ -42,7 +49,7 @@ let started = false,
   stopping = false,
   finished = false,
   cleanupDone = false;
-let result: { code: number; error?: string } | undefined;
+let result: { code: number; failure?: HostFailure } | undefined;
 let filter: LoginTerminalOutput | undefined;
 /** OpenCode's sign-in draws its own prompts: its pages are noticed, its output left as it is. */
 let links: LinkScanner | undefined;
@@ -70,7 +77,7 @@ const output = (data: string): void => {
   try {
     flow.append(data);
   } catch {
-    result = { code: 1, error: MESSAGE.bufferFull };
+    result = { code: 1, failure: HostFailure.BufferFull };
     void stop();
     return;
   }
@@ -218,7 +225,7 @@ parent.on("message", ({ data: message }: { data: Record<string, any> }) => {
   try {
     COMMANDS[message.type as HostCommand]?.(message);
   } catch {
-    result = { code: 1, error: MESSAGE.broken };
+    result = { code: 1, failure: HostFailure.Broken };
     void stop();
   }
 });

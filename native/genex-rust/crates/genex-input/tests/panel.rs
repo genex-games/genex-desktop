@@ -19,7 +19,7 @@ use genex_input::binding::{Binding, KeyCode, PadButton, Stick};
 use genex_input::glyph::{Glyph, GlyphShape, KeyLabels};
 use genex_input::id::{ActionId, ContextId, ControlId};
 use genex_input::map::{ActionMap, Context};
-use genex_input::paint::{TouchArea, glyph_ui, paint_touch_controls};
+use genex_input::paint::{AtlasImage, TouchArea, glyph_ui, glyph_ui_with, paint_touch_controls};
 use genex_input::panel::{ControlsChange, ControlsPanel, ControlsView, controls_panel};
 use genex_input::state::Device;
 use genex_input::touch::{Anchor, StickMode, TouchControls, TouchState, evaluate_touch};
@@ -403,4 +403,71 @@ fn a_glyph_is_a_labelled_cap() {
     }
     let update = update.expect("AccessKit is on");
     assert!(node_by_label(&update, "Cross").is_some(), "{:?}", labels(&update));
+}
+
+/// How many painted shapes are of `kind` (`Rect`, `Text`, `Circle`).
+fn count(shapes: &[String], kind: &str) -> usize {
+    shapes.iter().filter(|shape| shape.contains(&format!("shape: {kind}("))).count()
+}
+
+#[test]
+fn a_floating_sticks_zone_is_outlined_only_while_a_finger_is_down() {
+    // Red before R-26: the zone's outline showed at rest, a white box over the corner of the game.
+    let controls = TouchControls::new().stick(MOVE_STICK, Anchor::BottomLeft([160.0, 160.0]), 80.0, StickMode::Floating);
+    let screen = egui::Rect::from_min_size(Pos2::ZERO, SCREEN.into());
+    let (_, rest) = paint(&controls, screen, Vec::new());
+    assert_eq!(count(&rest, "Rect"), 0, "no outline at rest: {rest:?}");
+    let elsewhere = TouchPoint { id: 5, x: 640.0, y: 200.0, phase: TouchPhase::Began };
+    let (_, touching) = paint(&controls, screen, vec![elsewhere]);
+    assert_eq!(count(&touching, "Rect"), 1, "the zone shows while a finger is down: {touching:?}");
+    let centre = controls.controls()[0].centre(WORLD);
+    let on_stick = TouchPoint { id: 6, x: centre[0], y: centre[1], phase: TouchPhase::Began };
+    let (_, held) = paint(&controls, screen, vec![on_stick]);
+    assert_eq!(count(&held, "Rect"), 1, "and while the stick itself is held");
+}
+
+#[test]
+fn sticks_and_dpads_paint_their_shape_not_their_id_and_a_given_label_shows() {
+    // Red before R-26: a stick and a d-pad painted their id ("move", "dpad") as text.
+    let screen = egui::Rect::from_min_size(Pos2::ZERO, SCREEN.into());
+    let stick = TouchControls::new().stick(MOVE_STICK, Anchor::BottomLeft([160.0, 160.0]), 80.0, StickMode::Fixed);
+    let dpad = TouchControls::new().dpad(DPAD, Anchor::TopRight([120.0, 120.0]), 160.0);
+    for controls in [&stick, &dpad] {
+        let (update, shapes) = paint(controls, screen, Vec::new());
+        assert_eq!(count(&shapes, "Text"), 0, "no id text: {shapes:?}");
+        let name = &controls.controls()[0].label;
+        assert!(node_by_label(&update, name).is_some(), "the id stays the AccessKit name");
+    }
+    let labelled = stick.clone().label("Move");
+    let (update, shapes) = paint(&labelled, screen, Vec::new());
+    assert_eq!(count(&shapes, "Text"), 1, "a given label is painted");
+    assert!(node_by_label(&update, "Move").is_some(), "{:?}", labels(&update));
+    let (_, button) = paint(&layout(), screen, Vec::new());
+    assert_eq!(count(&button, "Text"), 1, "a button still paints its label (Jump)");
+}
+
+#[test]
+fn an_atlas_icon_replaces_the_text_cap_and_keeps_the_label() {
+    let ctx = context();
+    let glyph = Glyph { label: "Cross".to_owned(), shape: GlyphShape::FaceButton, device: Device::KeyboardMouse };
+    let image = AtlasImage { texture: egui::TextureId::User(7), uv: [0.25, 0.5, 0.375, 0.625] };
+    let run = |image: Option<AtlasImage>| {
+        let mut last = None;
+        for tick in 0..2 {
+            let mut output = ctx.run_ui(raw(tick, SCREEN, Vec::new()), |ui| {
+                glyph_ui_with(ui, &glyph, image);
+            });
+            output.textures_delta.clear();
+            let shapes: Vec<String> = output.shapes.iter().map(|shape| format!("{shape:?}")).collect();
+            last = Some((output.platform_output.accesskit_update.expect("AccessKit is on"), shapes));
+        }
+        last.expect("two frames ran")
+    };
+    let (update, shapes) = run(Some(image));
+    assert!(node_by_label(&update, "Cross").is_some(), "{:?}", labels(&update));
+    assert_eq!(count(&shapes, "Text"), 0, "no text cap: {shapes:?}");
+    assert!(shapes.iter().any(|shape| shape.contains("User(7)")), "the atlas texture is drawn: {shapes:?}");
+    let (_, plain) = run(None);
+    assert_eq!(count(&plain, "Text"), 1, "without an atlas the text cap is unchanged");
+    assert!(!plain.iter().any(|shape| shape.contains("User(7)")));
 }

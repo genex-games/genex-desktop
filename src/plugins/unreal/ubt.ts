@@ -169,6 +169,11 @@ const CONFLICTING_REASON = "ConflictingInstance";
 const CONFLICTING = /A conflicting instance of \S*UnrealBuildTool_Mutex/;
 /** An absolute path left in a message once the project and engine folders are taken out: kept as its base name. */
 const ABSOLUTE_PATH = /(?<![\w./:])\/(?:[^\s/'"`():,;]+\/)+([^\s/'"`():,;]*)/g;
+/** The same on Windows: `C:\…`, `C:/…` or a `\\server\share\…` path, with either separator. */
+const WINDOWS_ABSOLUTE_PATH = /(?<![\w.\\/:])(?:[A-Za-z]:[\\/]|\\\\)(?:[^\s\\/'"`():,;]+[\\/])+([^\s\\/'"`():,;]*)/g;
+/** A Windows folder (a drive's or a share's), whose spelling is compared without case. */
+const WINDOWS_FOLDER = /^(?:[A-Za-z]:|\\\\)/;
+const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g;
 const ERROR_CODE = /^[A-Z0-9_]+$/;
 
 /** Folders whose paths are taken out of messages: the project's (relative files) and the engine's. */
@@ -285,7 +290,7 @@ function invalidInput(options: CompileOptions): string | undefined {
 /** The folder and its real path, when they differ (macOS temp folders live behind /var → /private/var). */
 async function spellings(folder: string): Promise<string[]> {
   const real = await realpath(folder).catch(() => folder);
-  return [...new Set([folder, real])].map((f) => f.replace(/\/+$/, ""));
+  return [...new Set([folder, real])].map((f) => f.replace(/[\\/]+$/, ""));
 }
 
 async function rootsOf(options: CompileOptions): Promise<Roots> {
@@ -302,17 +307,31 @@ async function rootsOf(options: CompileOptions): Promise<Roots> {
  */
 function fileFor(file: string, roots: Roots): { file: string; foreign: boolean } {
   const absolute = path.isAbsolute(file) ? path.normalize(file) : path.resolve(roots.engine[0] ?? "/", file);
-  const root = roots.project.find((r) => absolute.startsWith(`${r}/`));
-  if (root) return { file: absolute.slice(root.length + 1), foreign: false };
-  const engine = roots.engine.some((r) => absolute.startsWith(`${r}/`));
+  const root = roots.project.find((r) => underFolder(r, true).test(absolute));
+  if (root) return { file: absolute.replace(underFolder(root, true), ""), foreign: false };
+  const engine = roots.engine.some((r) => underFolder(r, true).test(absolute));
   return { file: path.basename(absolute), foreign: !engine };
+}
+
+/**
+ * A folder and the separator after it, as a pattern: either separator wherever it has one, and
+ * any case for a Windows folder (Windows reads `C:\Users\Ana` and `c:/users/ana` as one folder).
+ */
+function underFolder(folder: string, anchored: boolean): RegExp {
+  const body = folder
+    .split(/[\\/]/)
+    .map((part) => part.replace(REGEX_SPECIAL, "\\$&"))
+    .join("[\\\\/]");
+  const flags = `${anchored ? "" : "g"}${WINDOWS_FOLDER.test(folder) ? "i" : ""}`;
+  return new RegExp(`${anchored ? "^" : ""}${body}[\\\\/]`, flags);
 }
 
 /** A message with the project's and engine's folders taken out and any other absolute path cut to its base name. */
 function scrubbed(message: string, roots: Roots): string {
   let text = message.trim();
   for (const root of [...roots.project, ...roots.engine].sort((a, b) => b.length - a.length))
-    text = text.split(`${root}/`).join("");
+    text = text.replace(underFolder(root, false), "");
+  text = text.replace(WINDOWS_ABSOLUTE_PATH, (_match, base: string) => base);
   text = text.replace(ABSOLUTE_PATH, (_match, base: string) => base);
   return text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS - ELLIPSIS.length)}${ELLIPSIS}` : text;
 }

@@ -3,7 +3,7 @@
 This index and its topic pages are the contract a game's Rust code is written against. Studio
 copies them read-only into every Rust game folder as `docs/GENEX_API.md` and `docs/api/`. The
 facade crate is `genex`; everything they teach comes from `use genex::prelude::*;`, except
-where a page names its own `use genex::…;` line.
+where a page names its own `use genex::…;` line. Each scene type's look is `docs/look-recipes.md`.
 
 ## A game
 
@@ -14,7 +14,7 @@ use genex::prelude::*;
 struct World { score: u32 }
 
 fn main() {
-    let mut game = Game::new(World::default()).title("Pond").world_size(960, 540);
+    let mut game = Game::new(World::default()).title("Pond").world_size(960, 540).fit(Fit::Expand);
     game.on_update(|sim, ctx| if ctx.keys.pressed(Key::Space) { sim.world.score += 1; });
     game.on_draw(|sim, frame, _camera| { frame.tag("score").cube(Transform::IDENTITY, Color::WHITE); });
     game.probe("score", |sim| json!(sim.world.score));
@@ -22,45 +22,53 @@ fn main() {
 }
 ```
 
-The game folder holds `src/main.rs`, `src/facets/*.rs`, `assets/` and `genex.toml`. It has no
+The game folder holds `src/main.rs`, `src/facets/*.rs`, `assets/` and `genex.toml`, no
 `Cargo.toml`: the host writes the manifest and lock. Game code never uses `unsafe`, build
 scripts, cargo configuration or renderer internals.
 
 ## Topics
 
-This index holds the hooks and the rules every game follows. Every other topic is a page of its
-own beside it in `docs/api/`: read the page of each topic a change touches (nearly every game
-needs Ctx and Drawing).
+This index holds the hooks and rules; each topic is a page in `docs/api/`. Read each one a
+change touches.
 
 | Topic | Page | What it covers |
 |-|-|-|
 | Ctx | `docs/api/ctx.md` | Raw keys, touches, pads, pointer, text, `ctx.rng`, `ctx.dt`, `ctx.tick`. |
 | Input | `docs/api/input.md` | Actions, touch controls, rebinding, prompts, replays. |
-| Drawing | `docs/api/drawing.md` | Tags, models, cubes, spheres, lines, the clear colour, models from `assets/`. |
-| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals, the stable checksum. |
+| Drawing | `docs/api/drawing.md` | Tags, models from `assets/`, `gfx.mesh` meshes, cubes, spheres, lines, clear colour. |
+| Camera | `docs/api/camera.md` | Vertical `fovy`, `FirstPersonRig` and comfort caps. |
+| Reading assets | `docs/api/assets.md` | What a reset may read from `assets/`, refusals. |
+| Content Library | `docs/api/library.md` | Ready-made CC0 surfaces, skies, props, trees. |
+| Mesh builders | `docs/api/meshes.md` | Rounded cuboids, extrude, lathe, sweep, displace. |
+| Set dressing (scatter) | `docs/api/scatter.md` | Seeded clutter, debris, decals on surfaces and paths. |
 | UI | `docs/api/ui.md` | `on_ui`: the HUD, menus and the kit. |
-| Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts and `xx-pseudo`. |
+| Text | `docs/api/text.md` | Fluent files, `tr`, plurals, locales, fonts, `xx-pseudo`. |
 | Settings | `docs/api/settings.md` | The settings menu: tabs, presets, routing, the saved file. |
 | Characters | `docs/api/characters.md` | The character controller and ragdolls. |
+| Physics | `docs/api/physics.md` | Rapier bodies, joints, forces, queries, drawing, saves. |
 | Animation | `docs/api/animation.md` | Clips, graphs, animators, `frame.character` and `frame.model_posed`. |
-| Navigation | `docs/api/navigation.md` | Walkers, bakes, tiles, carving, agents, links, queries and refusals. |
-| Streaming a large world | `docs/api/streaming.md` | Cells: anchors, the sim radius, builders, entered and left cells, holds, terrain tiles, refusals. |
-| Terrain | `docs/api/terrain.md` | Heightmap ground across the world: making it, drawing it and its refusals. |
+| Navigation | `docs/api/navigation.md` | Walkers, bakes, carving, agents, links, queries. |
+| Streaming a large world | `docs/api/streaming.md` | Cells, anchors, builders, holds, terrain tiles. |
+| Terrain | `docs/api/terrain.md` | Heightmap ground across the world. |
+| Vegetation | `docs/api/vegetation.md` | `gfx.plant` trees and grass, `Model::with_wind`. |
 | Water | `docs/api/water.md` | `frame.water`: one flat level the ground hides. |
 | Particles | `docs/api/particles.md` | Emitters drawn as a pure function of the tick. |
-| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb zones, occlusion and `audioLevel`. |
-| Saves | `docs/api/saves.md` | Save slots: sections, migrations, autosave, loading and replay, refusals. |
-| Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, Studio's loopback room, scripted players, feel rules. |
-| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials and emission, reflection probes, irradiance volumes, decals, the sky and HDR maps. |
-| Rendering | `docs/api/rendering.md` | Presets, device classes, features, `[render]`, the settings panel, shadows, draw ids, camera cuts. |
-| Grading and the lens | `docs/api/grading.md` | Build order, grade, white balance, LUTs, depth of field, motion blur. |
-| Loading screen | `docs/api/loading-screen.md` | The loading screen every destination draws, styled. |
-| Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling for big meshes, and when a game opts in. |
-| Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once and drawn as a group. |
-| Custom materials and post passes | `docs/api/custom-materials.md` | Extension ladder level 2: WGSL materials and post passes declared in `genex.toml`. |
-| Custom GPU passes | `docs/api/gpu-passes.md` | Extension ladder level 3: raw wgpu work through `genex::gpu`, at the frame's stages. |
-| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, `volatile.profile`, the `profile` verb, the overlay, crashes. |
-| genex.toml | `docs/api/genex-toml.md` | Every key of the game's build input: the game, physics, crates, WGSL sources, native features and the web. |
+| Layered materials and weather | `docs/api/layered-materials.md` | Covers, layers, parallax, lobes, weather. |
+| Audio | `docs/api/audio.md` | Sounds, music, buses, spatial voices, reverb, `audioLevel`. |
+| Saves | `docs/api/saves.md` | Save slots, migrations, autosave, replay. |
+| Multiplayer | `docs/api/net.md` | `sim.net`, `game.net`, the loopback room, scripted players. |
+| Lighting, materials and environment | `docs/api/lighting.md` | Lights, materials, probes, volumes, decals, sky, HDR maps. |
+| Rendering | `docs/api/rendering.md` | Presets, classes, features, `[render]`, shadows, draw ids. |
+| Resolution | `docs/api/resolution.md` | Sides, textures, budgets. |
+| Grading and the lens | `docs/api/grading.md` | Grade, white balance, LUTs, depth of field, motion blur. |
+| Loading screen | `docs/api/loading-screen.md` | The loading screen, styled. |
+| Big meshes (meshlets) | `docs/api/meshlets.md` | Meshlets and occlusion culling, and when to opt in. |
+| Retained instance groups | `docs/api/instance-groups.md` | Many copies of one shape, made once, drawn as a group. |
+| Custom materials and post passes | `docs/api/custom-materials.md` | Ladder level 2: WGSL materials and post passes in `genex.toml`. |
+| Custom GPU passes | `docs/api/gpu-passes.md` | Ladder level 3: raw wgpu through `genex::gpu` at the frame's stages. |
+| Profiling | `docs/api/profiling.md` | `profile_scope!`, counters, the `profile` verb, crashes. |
+| Performance and budgets | `docs/api/performance.md` | Per-class and per-preset budgets, hard caps, content costs. |
+| genex.toml | `docs/api/genex-toml.md` | Every build input key. |
 
 ## Hooks
 
@@ -119,11 +127,12 @@ so a draw that needs the time reads a tick the world keeps from `on_update` (`ct
   (a probe named like a `state()` key), `duplicate-camera-name`, `duplicate-eye`,
   `duplicate-demo`, `invalid-name`, `duplicate-facet-state` (one state type registered twice),
   `invalid-world-size`, `duplicate-streaming`, `duplicate-input`, `duplicate-touch-controls`,
-  `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second registration), `streaming-invalid` (the
-  Streaming and Navigation pages say when), `input-invalid` (the Input page explains it),
-  `audio-zone-limit` (more than 16 reverb zones),
+  `duplicate-audio`, `duplicate-saves`, `duplicate-ui`, `duplicate-net` (each a second
+  registration), `streaming-invalid` (Streaming and Navigation pages), `input-invalid` (Input
+  page), `audio-zone-limit` (more than 16 reverb zones),
   `save-schema-invalid`, `save-section-reserved` (a `genex.` name), `duplicate-save-section`,
-  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps) and `settings-invalid`.
+  `ui-locale-invalid`, `net-config-invalid` (`game.net` caps), `settings-invalid`, `nav-disabled`
+  and `streaming-disabled` (that system is off in genex.toml).
   `game.gpu_pass` panics `gpu-pass-invalid` as it is registered: an empty, overlong or repeated
   pass name, or one pass over the cap.
 
@@ -133,15 +142,14 @@ The studio and its checks drive a running game through a fixed set of verbs; the
 calls them and cannot add one. `seed(n)`, `start`, `pause` and `step(ms)` control time;
 `state` reads the probes and runtime keys; `input` injects keys, pointer, look, wheel, text,
 pads and touches; `capture` renders a view; `renderSettings` reads or changes the renderer's
-quality for this session (see Rendering); `cameras`, `eyes`, `debugCamera`, `demos` and `demo`
+quality for this session (`docs/api/rendering.md`); `cameras`, `eyes`, `debugCamera`, `demos` and `demo`
 reach what the game registered. `docs/CONTRACT.md` lists each verb and the refusals a run can
 answer.
 
 ## Determinism
 
-A simulation replays bit for bit from its seed on every destination, or two builds cannot be
-compared. The studio's build lints every game with a file of refused paths, and a refused path is
-a build failure, not a warning.
+A simulation replays bit for bit from its seed on every destination. The studio's build lints
+every game with a file of refused paths; a refused path fails the build.
 
 - Use `genex::math` (`sin`, `cos`, `atan2`, `exp`, `pow`, `sqrt`, ...) for transcendental math:
   it is libm on every target. The lane refuses std's `f32::sin`, `f32::powf`, `f32::powi` and
@@ -171,8 +179,8 @@ shop::wire(&mut game);
 // ── END FACET WIRING ──
 ```
 
-Both lines of each facet live inside the block in `main`, so workers that add facets in
-parallel merge by keeping every line. Facets reach the entry file's types as `super::World`.
+Parallel workers merge the block by keeping every line. A facet reaches the entry's types as
+`super::World`.
 
 ## Extension ladder
 

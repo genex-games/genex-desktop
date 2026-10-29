@@ -23,6 +23,7 @@ headline metric; everything else about it is a diagnostic.
 | Build turn | turn starts | turn's result recorded | ms outside model time | director `hostTimings` spans, `build_observation` (not yet aggregated) |
 | Scroll | a fling in a long chat | rows drawn where it lands | frames painted with a blank block, beside a GPU-heavy game | `npm run test:ui -- chat-scroll-ui` (screencast frames, CPU profile, trace) |
 | Run graph | run event | graph committed | ms; commits per event | `graph-commit`, Profiler counts (`event-batch` is never emitted) |
+| Play | Play pressed in the switch | the first screen's covers loaded | ms after a relaunch and switching back; covers on screen still blank in a fast scroll | trace (cover requests), dev-control snapshot `play` (cards, covers on screen shown or blank, clips) |
 | Idle | nothing happening | — | CPU %, rAF/s, memory after an hour of Autopilot | trace and heap on demand |
 
 A journey that is "not yet" instrumented gets its marks before anyone optimizes it.
@@ -102,12 +103,39 @@ counters carry the regression gates.
 - Endless "working" animations (status shimmer, busy dots and spinners, the working node's pulse)
   run only while the window is in front and was touched in the last two minutes
   (`renderer/motion-rest.ts`); while one runs, Chromium draws every frame.
+- A live home background asks for no frames while Play or Plugins covers home (`ShaderCanvas`
+  `covered`): the workspace is only hidden there, which its IntersectionObserver cannot see, so it
+  drew every frame unseen.
+- Play's covers load with their page rather than as they near the screen (a card's
+  `content-visibility` hid a lazy cover until it was almost in view), the next page is read two
+  screens ahead, and a cover the window has shown starts shown when Play opens again.
+- A size read in an effect waits for a ResizeObserver's first call instead of forcing a layout
+  mid-commit.
 - Live's native view follows a resize in the window's own frame: main keeps the slot's right and
   bottom margins until the renderer measures again (`main/preview-anchor.ts`).
 - Coding-CLI discovery reads the login shell's PATH once and asks an unchanged binary for
-  `--version`/`--help` once; sessions reuse both until Recheck.
+  `--version`/`--help` once, an answer kept across launches; sessions reuse both until Recheck.
+  Concurrent ordinary readers share discovery; cancellable and forced reads keep their own work.
+  Only the latest request in the current settings generation may replace its cached answer.
+- The launch's bootstrap does not wait for the engine checks: it carries the engines the last
+  launch checked while this launch's checks run (`main/engine-boot.ts`).
 - Plugin packages are inspected from directory listings, several folders at a time; event bodies
   are read through a sliding window.
+- Sidebar ordering and keyboard navigation index conversation activity in one history pass;
+  sort comparisons do not scan the history. Bounded event pages materialize only their selected
+  references, including the placeholder rows for damaged bodies.
+- Concurrent run-summary readers share a matching evidence-version scan; a subsequent read
+  still validates the files. Toolbar status batches run one at a time, with at most one queued
+  refresh after a burst; teardown cancels timers and ignores late answers.
+- Log email scrubbing begins only at the start of a possible local part, so long non-address
+  words do not cause repeated scans. Job logs respect the writer's backpressure until their cap;
+  their exit watcher distinguishes buffered output from an idle orphan pipe.
+- The launch's seed upgrade (`substrate/seed-upgrade.ts`) hashes the seed and the harness
+  workspace, and rewrites renamed names, 32 files at a time rather than one after another.
+- Each harness boot (launch, restart, self-edit reload) runs with `NODE_COMPILE_CACHE` in the
+  sandbox's scratch (`harness-compile-cache`), flushed once the harness is ready, so a boot reuses
+  the type-stripped, compiled seed (Node 24, Linux: importing the seed 640 → 225 ms median). Entries
+  are keyed by file content, so the agent's edits compile afresh.
 
 ## Packaged builds
 
@@ -116,11 +144,18 @@ differs from an owned development build:
 
 - **Renderer:** minified, production React, no StrictMode replays, no Profiler or journey marks.
   Owned builds overstate render cost; a packaged measurement needs `--studio-diagnostics`.
-- **Main bundle:** `main.mjs` is not minified in any mode, and no build uses a V8 code cache, so
-  every launch parses and compiles it. Heavy packages load on first use, not at its top.
+- **Main bundle:** `main.mjs` is a small entry (`main/boot.ts`) that turns on V8's compile cache
+  and then imports the app, `app.mjs`, which is not minified in any mode. A packaged normal launch
+  keeps the compiled code in `<userData>/v8-compile-cache` (`main/compile-cache.ts`), written 30 s
+  after launch and at quit, so later launches skip most parsing and compiling (Electron 43, Linux:
+  the bundle's import 238 → 168 ms median). Development, test and runner launches never write it.
+  Heavy packages load on first use, not at its top.
 - **Archive:** the app loads from `app.asar` with integrity validation; `dist/resources` (harness
   seed, vendored TypeScript, three.js, plugin payloads), node-pty and the sandbox vendor folder
-  are unpacked because they are spawned or served.
+  are unpacked because they are spawned or served. Packages esbuild bundles (React, xterm,
+  `es-module-lexer`, `update-electron-app`, …) are devDependencies, so the packager's prune leaves
+  them out of `app.asar`; `dependencies` holds only what the bundles load from `node_modules` at run
+  time (the `external` list in `scripts/build.mjs`, and `zod`, which the agent SDK peers on).
 - **Fuses:** `NODE_OPTIONS` and `--inspect` are off, so a packaged app cannot be profiled with a
   Node inspector; use diagnostics and Chromium traces.
 - **First launch:** Gatekeeper verifies the signed bundle once, which lengthens the first start.

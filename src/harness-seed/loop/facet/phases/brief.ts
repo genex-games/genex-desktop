@@ -1,4 +1,5 @@
 /** The brief (`.studio/BRIEF.md` in the worktree) and the prompt that points at it. */
+import { rotateSession } from "../session-rotation.ts";
 import { renderLiveness } from "../../judge.ts";
 import {
   CRAFT_ADOPT_SCORE,
@@ -20,6 +21,8 @@ import { fitBrief } from "../brief-fit.ts";
 import { blockBench } from "../build-block-prompts.ts";
 import { openCarriedFixes } from "../carried-fixes.ts";
 import { withIdentity } from "../../workers/identity.ts";
+import { CRAFT_FILE_PATH, craftBlock, writeGameCraft } from "../../game-craft.ts";
+import { workingGoal } from "../../goal-prompts.ts";
 
 /** A template game's entry module, when the shape names none. */
 const DEFAULT_ENTRY = "src/main.js";
@@ -44,6 +47,7 @@ export async function writeBrief(loop: FacetLoop, round: FacetRound): Promise<Ro
   // ── the brief: `.studio/BRIEF.md` in the worktree, plus the prompt that points at it ──
   pickRecipes(loop, round);
   const recipesFile = await writeRecipesFile(loop, round);
+  await pickCraft(loop);
   // The four sections the prompt no longer renders for a delegated engine (M4.8b) live here, and
   // the whole of it stays within BRIEF_MAX_CHARS (loop/brief-budget.ts).
   const fitted = fitBrief(
@@ -75,6 +79,7 @@ export async function writeBrief(loop: FacetLoop, round: FacetRound): Promise<Ro
     incumbentEvidence: loop.incumbentEvidence,
     pairs: loop.lastPairs,
   });
+  await rotateSession(loop, round.iteration);
   round.prompt = facetPromptFor(loop, round, {
     resumed: Boolean(loop.sessionId),
     briefText: delegated ? null : round.brief,
@@ -127,6 +132,32 @@ function pickRecipes(loop: FacetLoop, round: FacetRound): void {
   round.injectedWithFix = pinFixRecipe(round.injected, loop.currentFix, round.fixDefects[0]?.id ?? null);
 }
 
+/** How the brief's craft block opens: chosen before anything failed, unlike the recipes retrieved for this round. */
+const CRAFT_HEADING =
+  "## Craft for this game (the studio's recipes for its kind and your part, chosen before anything failed — port what fits)";
+
+/**
+ * The game's craft (loop/game-craft.ts), once per loop: the recipes for its kind and for the run's
+ * and this part's words, written whole to `.studio/CRAFT.md` for a delegated builder that reads
+ * files, and named in every round's brief. Before it, a first-person Rust worker got a recipe only
+ * once a check on its board had failed — Bodycam's hands recipe never reached anyone.
+ */
+async function pickCraft(loop: FacetLoop): Promise<void> {
+  if (loop.craft !== undefined) return;
+  const { ctx, delegated, game, run, spec, workdir } = loop;
+  // A loop built without a workspace (an older caller, a bench) has no library to choose from.
+  if (!ctx?.workspace) {
+    loop.craft = "";
+    return;
+  }
+  const { picks, file } = await writeGameCraft(ctx.workspace, delegated ? workdir : null, {
+    kind: typeof game?.kind === "string" ? game.kind : null,
+    stack: facetStack(loop),
+    texts: [workingGoal(run), run.reference?.name ?? "", spec.title, spec.intent, ...(spec.identity ?? [])],
+  });
+  loop.craft = craftBlock(picks, file ? CRAFT_FILE_PATH : null, { heading: CRAFT_HEADING });
+}
+
 /** Everything `renderBrief` renders: the contract, the board, the last attempts, the recipes and this round's move and fix. */
 function briefInput(loop: FacetLoop, round: FacetRound) {
   const { critic, game, lessons, ownShape, ownsMain, result, run, shape, spec } = loop;
@@ -150,6 +181,7 @@ function briefInput(loop: FacetLoop, round: FacetRound) {
     comparison: last?.iteration === round.iteration - 1 ? { flips: last.flips, regressions: last.regressions } : null,
     attempts: result.attempts,
     recipes: round.injectedWithFix,
+    craft: loop.craft ?? null,
     spike: round.spikeText,
     steering: round.userSteering,
     integration: loop.integrationNote,

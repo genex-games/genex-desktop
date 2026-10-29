@@ -19,7 +19,9 @@ import { setTimeout as pause } from "node:timers/promises";
 import type { PluginContext } from "../../src/plugin-sdk/index.d.ts";
 import {
   automationArgs,
+  editorCmdPath,
   type ProgramOutcome,
+  programEnv,
   type RunProgram,
   systemRunProgram,
 } from "../../src/plugins/unreal/automation-tests.ts";
@@ -27,6 +29,8 @@ import { CppEditorTool } from "../../src/plugins/unreal/cpp-tools.ts";
 import { ReopenState } from "../../src/plugins/unreal/editor-reopen.ts";
 import { createLoopTools, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { ShipState, ShipToolName } from "../../src/plugins/unreal/plugin-ship.ts";
+import { PACKAGE_TIMEOUT_MS } from "../../src/plugins/unreal/uat.ts";
+import { type PluginSandboxJob, PluginService, SandboxJobState } from "../../src/shared/plugins.ts";
 import { type BuildSandboxRequest, prepareBuildSandbox } from "../../src/plugins/unreal/ubt-sandbox.ts";
 import {
   CompileFailure,
@@ -70,6 +74,7 @@ const SAVED = { saved: true, dirty: [], ms: 30 };
 const QUIT_TAKES_MS = 6_000;
 const OPEN_TAKES_MS = 20_000;
 const SEPARATE_LINKS = process.platform === "win32" && "links need privileges on Windows";
+const SEATBELT = process.platform === "win32" && "the build sandbox is macOS's Seatbelt profile";
 const PROCESS_GROUPS = process.platform === "win32" && "process groups are POSIX";
 /** How long a forked backend may take to import itself and start its job (a slow CI runner included). */
 const BACKEND_START_MS = 20_000;
@@ -106,6 +111,12 @@ type Options = {
   quitGate?: Promise<void>;
   /** The host project has its own C++ module (default), or none yet. */
   module?: boolean;
+  /** The computer the backend runs on: a Mac (default) or Windows. */
+  platform?: NodeJS.Platform;
+  /** Genex's side of the backend's host calls (default: every call answers the plugin's storage). */
+  host?: (storage: string) => (method: string, args?: unknown) => Promise<unknown>;
+  /** The game's folder's name (default `game`). */
+  gameName?: string;
 };
 
 /** Settles a background job: yields until `done` says so. */
@@ -127,7 +138,7 @@ const argOf = (args: readonly string[], name: string) =>
 /** A host project with its plugin and the Genex editor helper, in a game, open in a stand-in Unreal, through the plugin's tools. */
 async function shipWorld(options: Options = {}) {
   const root = await realpath(await tmpDir("studio-plugin-ship-"));
-  const game = path.join(root, "game");
+  const game = path.join(root, options.gameName ?? "game");
   const unreal = path.join(game, "unreal");
   const storage = path.join(root, "storage");
   const engineDir = path.join(root, "engine");
@@ -196,10 +207,11 @@ async function shipWorld(options: Options = {}) {
     });
   const stopped = new AbortController();
   const deps = {
-    platform: "darwin" as const,
+    platform: options.platform ?? "darwin",
     engine: async () => ({ version: "5.8", directory: engineDir }),
     project: async () => projectFile,
-    xcode: async () => ({ state: XcodeState.Ready, app: XCODE_APP }),
+    xcode: async () =>
+      options.platform === "win32" ? { state: XcodeState.NotApplicable } : { state: XcodeState.Ready, app: XCODE_APP },
     compile: async (compile: CompileOptions) => {
       events.push("compile");
       compiles.push(compile);
@@ -254,7 +266,7 @@ async function shipWorld(options: Options = {}) {
     directory: game,
     signal: new AbortController().signal,
     callId: 1,
-    host: (async () => storage) as never,
+    host: (options.host?.(storage) ?? (async () => storage)) as never,
   };
   const toolsOf = () => createLoopTools(deps as never);
   let tools = toolsOf();
@@ -341,6 +353,51 @@ describe("plugin-build", () => {
 });
 
 describe("plugin-test", () => {
+  it("the headless editor is the Mac's UnrealEditor-Cmd, or Windows' Win64 UnrealEditor-Cmd.exe", () => {
+    assert.equal(
+      editorCmdPath("/Users/Shared/Epic Games/UE_5.8", "darwin"),
+      "/Users/Shared/Epic Games/UE_5.8/Engine/Binaries/Mac/UnrealEditor-Cmd",
+    );
+    assert.equal(
+      editorCmdPath("C:\\Program Files\\Epic Games\\UE_5.8", "win32"),
+      "C:\\Program Files\\Epic Games\\UE_5.8\\Engine\\Binaries\\Win64\\UnrealEditor-Cmd.exe",
+    );
+  });
+
+  it("the headless editor keeps only the small environment, plus the basics Windows needs to start", () => {
+    const parent = {
+      HOME: "/Users/ana",
+      PATH: "/usr/bin",
+      SECRET_TOKEN: "x",
+      SystemRoot: "C:\\Windows",
+      TEMP: "C:\\Users\\ana\\AppData\\Local\\Temp",
+    };
+    assert.deepEqual(programEnv(parent, "darwin"), { HOME: "/Users/ana", PATH: "/usr/bin" });
+    const windows = {
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      TEMP: "C:\\Temp",
+      USERPROFILE: "C:\\Users\\ana",
+      LOCALAPPDATA: "C:\\Users\\ana\\AppData\\Local",
+      SECRET_TOKEN: "x",
+    };
+    assert.deepEqual(programEnv(windows, "win32"), {
+      PATH: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      TEMP: "C:\\Temp",
+      USERPROFILE: "C:\\Users\\ana",
+      LOCALAPPDATA: "C:\\Users\\ana\\AppData\\Local",
+    });
+  });
+
+  it("plugin-test on Windows runs the engine's Win64 UnrealEditor-Cmd.exe", async () => {
+    const w = await shipWorld({ platform: "win32" });
+    assert.deepEqual(await w.call(ShipToolName.PluginTest), { started: true, filter: PLUGIN });
+    await w.settled("test");
+    const [run] = w.programs;
+    assert.equal(run?.file, path.win32.join(w.engineDir, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe"));
+  });
+
   it("plugin-test runs the plugin's tests headless as a job and reports passes and failures", async () => {
     const w = await shipWorld();
     const tests = path.join(w.unreal, "Saved", "Genex", "Tests", PLUGIN);
@@ -353,7 +410,7 @@ describe("plugin-test", () => {
     assert.deepEqual(done.test.failures, [{ name: "LevelTools.Grid.Snaps", messages: ["Expected 16, got 15"] }]);
     assert.equal(done.test.report, `unreal/Saved/Genex/Tests/${PLUGIN}/summary.md`);
     const [run] = w.programs;
-    assert.equal(run?.file, path.join(w.engineDir, "Engine", "Binaries", "Mac", "UnrealEditor-Cmd"));
+    assert.equal(run?.file, path.posix.join(w.engineDir, "Engine", "Binaries", "Mac", "UnrealEditor-Cmd"));
     assert.deepEqual(run?.args, automationArgs(w.projectFile, PLUGIN, tests));
     for (const arg of [
       "-ExecCmds=Automation RunTests LevelTools",
@@ -406,7 +463,9 @@ describe("plugin-test", () => {
 });
 
 describe("plugin-package", () => {
-  it("plugin-package runs BuildPlugin in the build sandbox and reports the package path", async () => {
+  it("plugin-package runs BuildPlugin in the build sandbox and reports the package path", {
+    skip: SEATBELT,
+  }, async () => {
     const w = await shipWorld();
     assert.deepEqual(await w.call(ShipToolName.PluginPackage), { started: true });
     const done = await w.settled("package");
@@ -489,6 +548,163 @@ describe("plugin-package", () => {
     assert.match(failed.package.error ?? "", /Paper2D/);
     const failedNote = await readFile(path.join(failing.unreal, "Saved", "Genex", "Packages", `${PLUGIN}.md`), "utf8");
     assert.match(failedNote, /Paper2D/);
+  });
+});
+
+/** Genex's side of the plugin's sandbox jobs on Windows: every host call recorded, each job's end set by the test. */
+function sandboxHost() {
+  const calls: Array<{ method: string; args: unknown }> = [];
+  const jobs = new Map<string, PluginSandboxJob>();
+  const host = (storage: string) => async (method: string, args?: unknown) => {
+    calls.push({ method, args });
+    const id = (args as { id?: string } | undefined)?.id ?? "";
+    if (method === PluginService.SandboxRun) {
+      const job: PluginSandboxJob = { id: `job-${jobs.size + 1}`, state: SandboxJobState.Running };
+      jobs.set(job.id, job);
+      return { id: job.id };
+    }
+    if (method === PluginService.SandboxResult) return jobs.get(id) ?? null;
+    if (method === PluginService.SandboxStop) {
+      const job = jobs.get(id);
+      if (job?.state !== SandboxJobState.Running) return { stopped: false };
+      job.state = SandboxJobState.Stopped;
+      return { stopped: true };
+    }
+    return storage;
+  };
+  const end = (id: string, ended: Partial<PluginSandboxJob>) =>
+    Object.assign(jobs.get(id) ?? assert.fail(`no job ${id}`), ended);
+  const runs = () => calls.filter((call) => call.method === PluginService.SandboxRun).map((call) => call.args);
+  return { calls, jobs, host, end, runs };
+}
+
+/** What BuildPlugin leaves in the package folder on Windows: the descriptor and one module. */
+async function windowsPackage(packageDir: string) {
+  await mkdir(path.join(packageDir, "Binaries", "Win64"), { recursive: true });
+  await writeFile(path.join(packageDir, `${PLUGIN}.uplugin`), JSON.stringify({ FileVersion: 3, VersionName: "1.2" }));
+  await writeFile(path.join(packageDir, "Binaries", "Win64", "UnrealEditor-LevelTools.dll"), "x".repeat(2048));
+}
+
+describe("plugin-package on Windows", () => {
+  it("hands RunUAT.bat to Genex's sandbox as a host job, and writes the note on first sight of its end", async () => {
+    const h = sandboxHost();
+    const w = await shipWorld({ platform: "win32", host: h.host });
+    assert.deepEqual(await w.call(ShipToolName.PluginPackage), { started: true });
+    const packageDir = path.join(w.unreal, "Saved", "Genex", "Packages", PLUGIN);
+    assert.deepEqual(h.runs(), [
+      {
+        program: path.join(w.engineDir, "Engine", "Build", "BatchFiles", "RunUAT.bat"),
+        args: [
+          "BuildPlugin",
+          `-Plugin=${path.join(w.unreal, "Plugins", PLUGIN, `${PLUGIN}.uplugin`)}`,
+          `-Package=${packageDir}`,
+          "-TargetPlatforms=Win64",
+          "-NoP4",
+        ],
+        reads: [w.engineDir, w.unreal],
+        writes: [packageDir],
+        scratchEnv: ["uebp_LogFolder"],
+        timeoutMs: PACKAGE_TIMEOUT_MS,
+      },
+    ]);
+    assert.deepEqual(w.commands, [], "no RunUAT.sh");
+    assert.deepEqual(w.sandboxes, [], "no Seatbelt profile");
+    assert.ok(existsSync(packageDir), "the package folder is where the Mac's is, made before the job");
+    assert.equal((await w.status()).package.state, ShipState.Running, "running while the host says so");
+
+    await windowsPackage(packageDir);
+    h.end("job-1", {
+      state: SandboxJobState.Exited,
+      exitCode: 0,
+      stdout: "BUILD SUCCESSFUL\n",
+      stderr: "",
+      seconds: 300,
+    });
+    const done = await w.status();
+    assert.equal(done.package.state, ShipState.Done, done.package.error);
+    assert.equal(done.package.package, `unreal/Saved/Genex/Packages/${PLUGIN}`);
+    assert.equal(done.package.note, `unreal/Saved/Genex/Packages/${PLUGIN}.md`);
+    assert.deepEqual(done.proof, [`unreal/Saved/Genex/Packages/${PLUGIN}.md`]);
+    const note = await readFile(path.join(w.unreal, "Saved", "Genex", "Packages", `${PLUGIN}.md`), "utf8");
+    assert.match(note, /The plugin was packaged in 300 s\./);
+    assert.match(note, /Version: 1\.2/);
+    assert.match(note, /2 files/);
+    assert.match(note, /Platforms: Win64/);
+    const reads = h.calls.filter((call) => call.method === PluginService.SandboxResult).length;
+    await w.status();
+    assert.equal(
+      h.calls.filter((call) => call.method === PluginService.SandboxResult).length,
+      reads,
+      "an ended job is read once",
+    );
+  });
+
+  it("a failed package keeps its errors in the note; a job Genex no longer knows reads as failed", async () => {
+    const h = sandboxHost();
+    const w = await shipWorld({ platform: "win32", host: h.host });
+    await w.call(ShipToolName.PluginPackage);
+    h.end("job-1", {
+      state: SandboxJobState.Exited,
+      exitCode: 1,
+      stdout: "ERROR: Unable to find plugin dependency 'Paper2D'\nBUILD FAILED\n",
+      stderr: "",
+      seconds: 12,
+    });
+    const failed = await w.status();
+    assert.equal(failed.package.state, ShipState.Failed);
+    assert.match(failed.package.error ?? "", /Paper2D/);
+    const note = await readFile(path.join(w.unreal, "Saved", "Genex", "Packages", `${PLUGIN}.md`), "utf8");
+    assert.match(note, /Paper2D/);
+
+    await w.call(ShipToolName.PluginPackage);
+    h.jobs.delete("job-2");
+    const lost = await w.status();
+    assert.equal(lost.package.state, ShipState.Failed);
+    assert.match(lost.package.error ?? "", /Genex no longer knows/);
+  });
+
+  it("stop ends the host's job; a job that timed out says so", async () => {
+    const h = sandboxHost();
+    const w = await shipWorld({ platform: "win32", host: h.host });
+    await w.call(ShipToolName.PluginPackage);
+    assert.deepEqual(await w.call(ShipToolName.PluginPackage, { stop: true }), { stopped: true });
+    assert.deepEqual(h.calls.at(-1), { method: PluginService.SandboxStop, args: { id: "job-1" } });
+    assert.equal((await w.status()).package.state, ShipState.Stopped);
+
+    await w.call(ShipToolName.PluginPackage);
+    h.end("job-2", { state: SandboxJobState.TimedOut, exitCode: null, stdout: "", stderr: "", seconds: 2700 });
+    const late = await w.status();
+    assert.equal(late.package.state, ShipState.Failed);
+    assert.match(late.package.error ?? "", /stopped after 2700 s/);
+  });
+
+  it("while the host's job runs the project's other jobs wait, and start once it has ended", async () => {
+    const h = sandboxHost();
+    const w = await shipWorld({ platform: "win32", host: h.host });
+    await w.call(ShipToolName.PluginPackage);
+    await assert.rejects(w.call(ShipToolName.PluginTest), /being packaged/);
+    assert.deepEqual(await w.call(ShipToolName.PluginPackage), { started: true }, "asked again, it's the same job");
+    assert.equal(h.runs().length, 1);
+    h.end("job-1", { state: SandboxJobState.Exited, exitCode: 1, stdout: "BUILD FAILED\n", stderr: "", seconds: 3 });
+    assert.deepEqual(await w.call(ShipToolName.PluginTest), { started: true, filter: PLUGIN });
+  });
+
+  it("a game folder cmd.exe can't carry starts nothing; one with &, ^, spaces and ' is handed over as it is", async (t) => {
+    const refused = ["100% game", "Hi! game", ...(process.platform === "win32" ? [] : ['Say "hi"'])];
+    for (const gameName of refused)
+      await t.test(gameName, async () => {
+        const h = sandboxHost();
+        const w = await shipWorld({ platform: "win32", host: h.host, gameName });
+        await assert.rejects(w.call(ShipToolName.PluginPackage), /can't carry/);
+        assert.deepEqual(h.runs(), [], "nothing started");
+        assert.equal(existsSync(path.join(w.unreal, "Saved", "Genex", "Packages")), false, "nothing made or emptied");
+        assert.equal((await w.status()).package.state, ShipState.Idle);
+      });
+    const h = sandboxHost();
+    const w = await shipWorld({ platform: "win32", host: h.host, gameName: "Tom & Jerry ^1 (it's)" });
+    await w.call(ShipToolName.PluginPackage);
+    const [run] = h.runs() as Array<{ writes: string[] }>;
+    assert.deepEqual(run?.writes, [path.join(w.unreal, "Saved", "Genex", "Packages", PLUGIN)]);
   });
 });
 
@@ -835,8 +1051,9 @@ describe("what a job leaves", () => {
     const written = await readFile(path.join(failing.unreal, "Saved", "Genex", "Tests", PLUGIN, "summary.md"), "utf8");
     for (const said of [JSON.stringify(done), written]) {
       assert.ok(!said.includes(failing.root), "no path of the project's folder");
-      assert.doesNotMatch(said, /\/Users\//, "no home path");
-      assert.match(said, /Plugins\/LevelTools\/Source\/Grid\.cpp/, "a file in the project, relative");
+      assert.doesNotMatch(said, /\/Users\/|[A-Za-z]:[\\/]+Users/i, "no home path");
+      // Relative with the host's own separator: `Plugins\LevelTools\Source/Grid.cpp` on Windows.
+      assert.match(said, /Plugins[\\/]+LevelTools[\\/]+Source[\\/]+Grid\.cpp/, "a file in the project, relative");
     }
   });
 

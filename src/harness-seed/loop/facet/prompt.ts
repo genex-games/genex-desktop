@@ -10,6 +10,7 @@ import { FacetStage, moveEscalated, stageOf } from "./stage.ts";
 import { FINISH_FIX_ASK, FINISH_PROMPT_LINE, finishLossEscalate } from "./stage-prompts.ts";
 import { scopeLines } from "../scope-prompts.ts";
 import { visionBriefLines } from "../vision-prompts.ts";
+import { artPassLines } from "../look-bar-prompts.ts";
 import { heldHudPromptDraws } from "../held-hud-prompts.ts";
 import { appliesToBuild } from "../applies-to-build.ts";
 import { screenOwnerLine } from "../screen-owner-prompts.ts";
@@ -557,6 +558,7 @@ function openingHead(p: PromptInput): string[] {
   const { run, spec: facet, pointsAtBrief } = p;
   const scope = scopeLines(run);
   const vision = visionBriefLines(run);
+  const art = artPassLines(run);
   return [
     `You are building ONE FACET of a game inside Autopilot run ${run.runId}, iteration ${p.iteration}.`,
     ``,
@@ -565,6 +567,8 @@ function openingHead(p: PromptInput): string[] {
     ...(scope ? [scope] : []),
     // Where the whole world is going (loop/vision.ts): the direction to grow toward; nothing without one.
     ...(vision ? [vision] : []),
+    // Where every asset comes from (loop/look-bar.ts): nothing for a run without an art pass.
+    ...(art ? [art] : []),
     `PROJECT: ${run.project}`,
     // A game that declares no kind says nothing here.
     kindLine(p.game),

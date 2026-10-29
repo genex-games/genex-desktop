@@ -54,7 +54,7 @@ import { WEB_FILES } from "../../src/main/rust-build-web.ts";
 import { CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import { SECOND_MS } from "../../src/shared/duration.ts";
 import { WEB_WASM_BUDGET_DEFAULT_BYTES } from "../../src/shared/game-export-contract.ts";
-import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
+import { ALL_BUILD_TARGETS, BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
 import {
   NATIVE_CAPTURE_FORMAT,
   NATIVE_PROTOCOL_VERSION,
@@ -184,11 +184,16 @@ async function stagedGenex(output: string): Promise<string | undefined> {
   return lines.find((line) => line.startsWith("genex = "))?.slice("genex = ".length);
 }
 
-/** The facade's two spellings: the dev flavour with the studio, an export's bare release. */
-const DEV_FACADE = '{ version = "=0.1.0", features = ["studio"] }';
-const EXPORT_FACADE = '"=0.1.0"';
-/** A web build's facade: the web shell's crate under the facade's name, never the studio feature. */
-const WEB_FACADE = '{ package = "genex-platform-web", version = "=0.1.0" }';
+/**
+ * The facade's two spellings: the dev flavour with the studio, an export without it. Flipped
+ * (release R-2): the template switches nav, streaming and animation off, so each line names the
+ * defaults it keeps. Flipped again (gate GR): audio is off too, so only physics stays.
+ */
+const DEV_FACADE = '{ version = "=0.1.0", default-features = false, features = ["studio", "physics"] }';
+const EXPORT_FACADE = '{ version = "=0.1.0", default-features = false, features = ["physics"] }';
+/** A web build's facade: the web shell's crate under the facade's name, never the studio feature (flipped with R-2 and GR). */
+const WEB_FACADE =
+  '{ package = "genex-platform-web", version = "=0.1.0", default-features = false, features = ["physics"] }';
 
 describe("host-only: game.scaffold → the core's Rust lane → fd 3 → capture", { skip: SKIP_UNLESS_MAC }, () => {
   it("builds the scaffolded game in the dev flavour, which serves protocol 2 and a capture the host verifies", async () => {
@@ -354,11 +359,10 @@ describe("the core's Rust lane: flavours and the web branch (stub store)", { ski
     });
   }
 
-  it("registers the web and phone builders over the lane's table", () => {
+  // Flipped (cross lanes pinned): Windows and Linux were refusing placeholders until the recipe pinned their components.
+  it("registers the web, phone and cross builders over the lane's table", () => {
     const builders = rustTargetBuilders();
-    for (const target of [BuildTarget.Mac, BuildTarget.Web, BuildTarget.Ios, BuildTarget.Android])
-      assert.equal(builders[target].ready, true, target);
-    for (const target of [BuildTarget.Windows, BuildTarget.Linux]) assert.equal(builders[target].ready, false, target);
+    for (const target of ALL_BUILD_TARGETS) assert.equal(builders[target].ready, true, target);
   });
 });
 

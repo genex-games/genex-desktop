@@ -487,3 +487,47 @@ fn metal_an_output_size_applies_from_the_next_frame() {
     let next = resilient.capture().expect("next frame");
     assert_eq!((next.width(), next.height()), LARGE_WINDOW, "the next frame at the new size");
 }
+
+/// Lane EF: under `Fit::Expand` an output at a 21:9 or a 4:3 window's aspect presents with no bars
+/// (no edge pixel of the window is black), the 2D layer keeps the world on the letterbox's
+/// rectangle (a rectangle at world (40, 20) sized 80x40 lands where the letterbox would put it),
+/// and the same frame under letterbox shows its black bars (the control).
+#[test]
+#[ignore = "needs a GPU: run with --ignored metal"]
+fn metal_expand_presents_without_bars_and_keeps_the_2d_world_on_the_letterbox() {
+    use genex_render::immediate::FrameRenderer;
+    use genex_render::letterbox::Fit;
+    const BLACK: [u8; 4] = [0, 0, 0, 255];
+    const WHITE: [u8; 4] = [255, 255, 255, 255];
+    let Some(gpu) = gpu() else { return };
+    for window in [(420, 180), (320, 240)] {
+        let edges = |shot: &Capture| {
+            let (w, h) = (shot.width() - 1, shot.height() - 1);
+            [(0, 0), (w, 0), (0, h), (w, h), (w / 2, 0), (w / 2, h), (0, h / 2), (w, h / 2)].map(|(x, y)| px(shot, x, y))
+        };
+        let mut frame = ImmediateFrame::from_scene(detailed_scene());
+        frame.rect(Rect2d::new(40.0, 20.0, 80.0, 40.0), WHITE);
+        let mut letterboxed = FrameRenderer::new(&gpu, SMALL_WORLD.0, SMALL_WORLD.1, RenderOptions::default()).expect("renderer");
+        letterboxed.render(&gpu, &frame, CullPath::Gpu, None).expect("frame");
+        let barred = letterboxed.renderer_mut().present_to_texture(&gpu, window).expect("present");
+        assert!(edges(&barred).contains(&BLACK), "{window:?}: the letterbox keeps its bars");
+        let mut expanded = FrameRenderer::new(&gpu, SMALL_WORLD.0, SMALL_WORLD.1, RenderOptions::default()).expect("renderer");
+        expanded.renderer_mut().set_fit(Fit::Expand);
+        expanded.renderer_mut().set_output_size(window).expect("output size");
+        expanded.render(&gpu, &frame, CullPath::Gpu, None).expect("frame");
+        let filled = expanded.renderer_mut().present_to_texture(&gpu, window).expect("present");
+        for (i, edge) in edges(&filled).into_iter().enumerate() {
+            assert_ne!(edge, BLACK, "{window:?}: edge sample {i} is a bar");
+        }
+        // The rectangle at its letterboxed place: world (40, 20)-(120, 60) scaled into the window.
+        let place = letterbox(window, SMALL_WORLD);
+        let scale = f64::from(place.width) / f64::from(SMALL_WORLD.0);
+        let at = |x: f64, y: f64| (place.x + (x * scale) as u32, place.y + (y * scale) as u32);
+        for (x, y) in [at(42.0, 22.0), at(118.0, 58.0), at(80.0, 40.0)] {
+            assert_eq!(px(&filled, x, y), WHITE, "{window:?}: inside the rectangle at ({x}, {y})");
+        }
+        for (x, y) in [at(37.0, 40.0), at(123.0, 40.0), at(80.0, 17.0), at(80.0, 63.0)] {
+            assert_ne!(px(&filled, x, y), WHITE, "{window:?}: outside the rectangle at ({x}, {y})");
+        }
+    }
+}

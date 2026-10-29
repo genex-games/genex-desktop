@@ -95,6 +95,13 @@ export class HarnessInbox {
     else this.#queue.push(line);
   }
 
+  /** Finish the connection once what was written has gone; anything still queued is dropped. */
+  end(): void {
+    this.#closed = true;
+    this.#queue = [];
+    this.#socket?.end();
+  }
+
   /** Drop the connection and anything still queued. */
   close(): void {
     this.#closed = true;

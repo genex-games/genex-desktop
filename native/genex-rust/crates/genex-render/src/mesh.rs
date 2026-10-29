@@ -34,7 +34,9 @@ pub use mesh_lod::{
 // The LOD fade band (game systems LOD-01).
 pub use mesh_lod::{LOD_FADE_TAG, LodBand, fade_batch_lod, lod_band, lod_band_keep, lod_row_keep, lod_row_keep_far};
 // The impostor as a chain level (game systems LOD-15).
-pub use mesh_lod::{LOD_IMPOSTOR_MESH_LEVELS, LOD_IMPOSTOR_TAG, impostor_batch_lod, impostor_level_error, lod_row_keep_view};
+pub use mesh_lod::{LOD_IMPOSTOR_MESH_LEVELS, LOD_IMPOSTOR_TAG, LOD_PLANNED_TAG, caster_level, impostor_batch_lod, impostor_level_error, lod_row_keep_view};
+// A chain's shadow casters' level (lane FR).
+pub use mesh_lod::{LOD_CASTERS_TAG, LOD_MAX_CASTER_LEVELS, camera_skips, casters_lod};
 // Skinned primitives' levels (game systems AN-25).
 pub(crate) use mesh_lod::{LodMerge, read_lod_extras};
 

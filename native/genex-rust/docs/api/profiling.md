@@ -3,6 +3,16 @@
 A game times its own work with `genex::profile_scope!` and reports a number per frame with
 `genex::profile::counter`. Both are write-only: nothing a tick computes can read them, so the
 checksums are the same with profiling on, off or never started.
+Every call in one line:
+
+```rust
+use genex::profile::ScopeName;
+genex::profile_scope!("enemy_ai");                             // a string literal; times to the end of the block
+const ENEMIES: ScopeName = ScopeName::new("enemies");          // a const, so a bad name fails the build
+genex::profile::counter(ENEMIES, value);                       // value: f64, -> ()
+```
+
+Nothing reads a profile back in game code: the summary is `state().volatile.profile`, for checks.
 
 ```rust
 use genex::profile::ScopeName;
@@ -39,6 +49,9 @@ game.on_update(|sim, ctx| {
   `top` lists the 8 heaviest scopes by p95, and `game: true` marks the game's own scopes. The
   summary is at most 4 KiB. A run whose shell never started profiling, such as a test that drives
   `Runtime` directly, has no `volatile.profile`.
+- **On the web** (Web Live and an export) the shell does not start profiling yet: there is no
+  `volatile.profile`, Studio's `profile` verb answers `unknown-op`, and a scope costs its
+  thread-local read. Time a hitch on a native run (Native Live).
 - **Studio's `profile` verb** reads the summary, a `ProfileReport` v2 of the last frames (with the
   hitches kept), arms per-node GPU timing, or writes a Chrome trace into `state/profile/`. The
   project's CONTRACT.md lists each action. An agent reads these, and a game never calls them.
@@ -81,3 +94,28 @@ corner: CPU and GPU frame times, hitches, the heaviest scopes (the game's in blu
 counters. It is painted over the window after the HUD and outside the tick, so it is never in a
 capture, never in `state().hud.items`, and showing it changes nothing a tick sees. Exports do not
 offer the chord.
+
+## A measured window run
+
+Studio's runs draw headless, so a dev build can also be timed in a real window on the person's
+display. Start the built game from a shell with `GENEX_BENCH` set to a JSON plan:
+
+```sh
+GENEX_BENCH='{"seed":7,"demo":"genex-clip","camera":"horde","fullscreen":"native",
+  "upscale":"quality","nativeOutput":true,"nodes":false,"seconds":60,"out":"/tmp/bench.json"}' ./game
+```
+
+After the loading screen the run seeds, runs the demo, starts live play on the named camera and
+measures for `seconds`, then writes `out` and exits. `fullscreen` is `true` (borderless at the
+desktop's resolution) or `"native"` (exclusive at the display's own pixels). `renderScaleLock`
+holds the render scale (of the output: 1.0 renders every window pixel); leave it out to let
+dynamic resolution move it within the upscaling mode. `upscale` holds a mode (`"native"`,
+`"quality"`, `"balanced"` or `"performance"`; left out, the person's, the game's or the
+calibration's), and the record names the mode drawn. `nativeOutput` lifts the output cap,
+so even a class that keeps its reference resolution draws the window's own pixels. `deviceClass`
+and `features` set what the `renderSettings` verb would, `nodes` keeps per-node GPU timing armed
+(the reports then time each frame-graph node; on Apple GPUs passes overlap, so trust the totals),
+and `audio` (off by default) opens the sound device. The record lists every frame (time, interval, ticks, whether it drew), the surface, output
+and render sizes, and the profile reports. Exports ignore the variable. Any desktop build also
+opens fullscreen with `--fullscreen` or `GENEX_FULLSCREEN=1`, or at the display's own pixels with
+`--fullscreen=native` or `GENEX_FULLSCREEN=native`.

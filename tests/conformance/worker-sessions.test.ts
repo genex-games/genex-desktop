@@ -28,6 +28,7 @@ import type {
   WorkerSeat,
 } from "../../src/substrate/engines/types.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
+import { wokenSession } from "../helpers/scripted-claude.ts";
 import { ruleDenies } from "../helpers/claude-rules.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -385,5 +386,47 @@ describe("a worker's session follows the chat's mode", () => {
     }
     for (const tool of ["Edit", "Write", "Bash"])
       assert.ok((reader.disallowedTools as string[]).includes(tool), `a reader in place never edits: ${tool}`);
+  });
+});
+
+describe("a worker whose session goes on after its turn ended", () => {
+  it("a background task woke it after its last result, when no tool call could be answered: it ends not ok, saying so, with what it said as its turn ended", async () => {
+    const f = await fixture();
+    const messages = wokenSession();
+    const engine = new ClaudeCodeEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: f.engineHome,
+      systemHome: path.join(f.root, "no-system-login"),
+      queryFn: (() => ({
+        async *[Symbol.asyncIterator]() {
+          for (const message of messages) yield message;
+        },
+      })) as never,
+      protectedPaths: [path.dirname(f.engineHome)],
+    });
+    const worker = seat(f, PermissionMode.AcceptEdits);
+    const answer = await engine.delegate({ prompt: "Make the character.", cwd: f.copy, worker } as never);
+    assert.equal(answer.ok, false, "what it did after its input ended is not finished work");
+    assert.match(String(answer.errorText), /after its turn ended/);
+    assert.match(String(answer.summary), /^The generation is still running/, "not what it said once woken");
+  });
+
+  it("a lead or chat woken the same way keeps its result, and hands back the Genex calls it made that no answer could reach", async () => {
+    const f = await fixture();
+    const messages = wokenSession();
+    const engine = new ClaudeCodeEngine({
+      resolveCli: fixtureCodingCli,
+      engineHome: f.engineHome,
+      systemHome: path.join(f.root, "no-system-login"),
+      queryFn: (() => ({
+        async *[Symbol.asyncIterator]() {
+          for (const message of messages) yield message;
+        },
+      })) as never,
+      protectedPaths: [path.dirname(f.engineHome)],
+    });
+    const answer = await engine.delegate({ prompt: "Lead the Loop.", cwd: f.copy } as never);
+    assert.equal(answer.ok, true);
+    assert.deepEqual(answer.cutAfterTurn, [{ tool: "genex__asset", args: '{"command":"sleep 180"}' }]);
   });
 });

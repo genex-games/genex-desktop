@@ -1,0 +1,39 @@
+{
+  "id": "rust.fps-crosshair-off-in-ads",
+  "runtime": "rust-wgpu",
+  "title": "The Rust crosshair hides while aiming down sights",
+  "tags": ["crosshair", "ads", "aim", "hud", "hide", "reticle", "sight", "demo", "fps", "egui"],
+  "checkClass": "fps",
+  "kind": "craft",
+  "kinds": ["first-person"],
+  "pack": "fps",
+  "note": "The HUD's on_ui and the ads demo read one predicate, so the crosshair is not drawn while aiming down sights.",
+  "intent": "A crosshair floating beside the iron sight is the tell that the HUD and the weapon do not know about each other. Drive the crosshair from the same aim value the viewmodel lerps by: one predicate on the world (crosshair_visible(&world)), read by the HUD's on_ui before it paints the crosshair and returned by the ads demo as crosshairVisible, so the check measures what the HUD does. Fade it out over the same 150 ms as the gun's move rather than popping.",
+  "sketch": "use genex::prelude::*;\n\n/// The one predicate the HUD draws by and the ads demo reports.\npub fn crosshair_visible(w: &super::World) -> bool { w.aim < 0.5 }\n\npub fn wire(game: &mut Game<super::World>) {\n    game.on_ui(|sim, ui, _ctx| {\n        if !crosshair_visible(&sim.world) { return; } // hidden down the sights, never beside them\n        draw_crosshair(ui);\n    });\n    game.demo(\"ads\", |d| {\n        d.sim_mut().world.aim_held = true;\n        d.advance_ms(400);\n        json!({ \"crosshairVisible\": crosshair_visible(&d.sim().world) })\n    });\n}\n\nfn draw_crosshair(ui: &mut egui::Ui) { ui.label(\"+\"); }\n",
+  "check": {
+    "id": "crosshair-hides-in-ads",
+    "kind": "demo",
+    "name": "ads",
+    "expr": "result.crosshairVisible == false",
+    "weight": "normal",
+    "note": "The same ads demo returns crosshairVisible from the predicate the HUD draws by — the crosshair is hidden while aiming down sights."
+  },
+  "port": "The player facet owns the aim value and the predicate; the HUD facet reads it, and the ads demo returns it.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/ui.md",
+      "note": "on_ui draws the HUD with egui; hud.items names what the last tick drew."
+    },
+    {
+      "source": "library/recipes/fps.crosshair-off-in-ads.json",
+      "note": "The three.js recipe fps.crosshair-off-in-ads, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

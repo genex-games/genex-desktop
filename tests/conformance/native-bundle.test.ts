@@ -46,6 +46,7 @@ import {
   admitRustMachO,
   admitWgpuBundle,
   assembleRunDir,
+  assembleWgpuRunDir,
   type BundleExec,
   checkMacAngle,
   type MacAngle,
@@ -71,6 +72,7 @@ import {
   macClangSkip,
   machO,
 } from "../helpers/macho.ts";
+import { admittedReport } from "../helpers/rust-admitted.ts";
 import { closeBeforeCleanup, tmpDir } from "../helpers/tmp.ts";
 import { ApplePlatform, iosBinary, iosSimulatorBinary, M2, macBinary } from "../fixtures/rust-bundles/binaries.ts";
 
@@ -561,6 +563,16 @@ describe("assembleRunDir", { skip: POSIX }, () => {
     return { base, runs, out, angle, bundle: await admitted(out, mode) };
   }
 
+  /** What a window run declares (lane FR): a game, so macOS Game Mode may engage in fullscreen. */
+  const GAME_ENTRIES = [
+    "\t<key>LSApplicationCategoryType</key>",
+    "\t<string>public.app-category.games</string>",
+    "\t<key>LSSupportsGameMode</key>",
+    "\t<true/>",
+    "\t<key>GCSupportsGameMode</key>",
+    "\t<true/>",
+  ];
+
   const PLIST = (uiElement: boolean) =>
     [
       '<?xml version="1.0" encoding="UTF-8"?>',
@@ -581,7 +593,7 @@ describe("assembleRunDir", { skip: POSIX }, () => {
       "\t<string>13.0</string>",
       "\t<key>NSHighResolutionCapable</key>",
       "\t<true/>",
-      ...(uiElement ? ["\t<key>LSUIElement</key>", "\t<true/>"] : []),
+      ...(uiElement ? ["\t<key>LSUIElement</key>", "\t<true/>"] : GAME_ENTRIES),
       "</dict>",
       "</plist>",
       "",
@@ -1222,6 +1234,45 @@ describe("Rust · wgpu Mach-O admission for the Mac and iOS (M3.5)", () => {
       assert.equal(refusedAs(bytes, target), expected);
     });
   }
+
+  it("a wgpu window run's bundle declares a game for Game Mode, still signed ad hoc; a headless run's does not", async () => {
+    const { base, runs } = await workspace("wgpu-game-mode-");
+    const plistOf = async (mode: NativeRunMode, runId: string) => {
+      const out = await outWith(path.join(base, runId), { game: macBinary(), headless: macBinary() });
+      const admission = await admitWgpuBundle(out, { mode });
+      assert.ok(admission.ok, admission.ok ? "" : `${admission.refusal}: ${admission.detail}`);
+      const { exec, calls } = fakeExec();
+      const admittedFiles = (await admittedReport(out)).receipt?.outputs ?? [];
+      const run = await assembleWgpuRunDir({
+        root: runs,
+        runId,
+        admitted: admission.bundle,
+        bundleId: BUNDLE_ID,
+        uiElement: false,
+        gameName: "Horde",
+        exec,
+        admittedFiles,
+      });
+      const app = path.join(run.bundle, NATIVE_BUNDLE_APP);
+      assert.deepEqual(
+        calls,
+        [["/usr/bin/codesign", "--force", "-s", "-", "--timestamp=none", app]],
+        "the app alone, ad hoc",
+      );
+      return readFile(path.join(app, "Contents", "Info.plist"), "utf8");
+    };
+    const window = await plistOf(NativeRunMode.Window, RUN_ID);
+    const value = (plist: string, key: string) => new RegExp(`<key>${key}</key>\\n\\t([^\\n]*)`).exec(plist)?.[1];
+    assert.equal(value(window, "LSApplicationCategoryType"), "<string>public.app-category.games</string>");
+    assert.equal(value(window, "LSSupportsGameMode"), "<true/>");
+    assert.equal(value(window, "GCSupportsGameMode"), "<true/>");
+    assert.equal(value(window, "LSUIElement"), undefined);
+    const headless = await plistOf(NativeRunMode.Headless, "fedcba9876543210");
+    assert.equal(value(headless, "LSUIElement"), "<true/>");
+    for (const key of ["LSApplicationCategoryType", "LSSupportsGameMode", "GCSupportsGameMode"]) {
+      assert.equal(value(headless, key), undefined, `a background run claims no ${key}`);
+    }
+  });
 
   it("holds the Mac run's admission to the same allow-list: a framework outside it is refused", async () => {
     const base = await tmpDir("wgpu-allow-");

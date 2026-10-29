@@ -219,8 +219,9 @@ pub const CAPTURE_FORMAT: &str = "bgra8";
 /// `state/` while the game runs, so the game drops the oldest. Eight, not one: a capture still
 /// being read is never the one removed.
 pub const CAPTURES_KEPT: u32 = 8;
-/// The longest side a capture may have (`NATIVE_CAPTURE_MAX_PX`).
-pub const CAPTURE_MAX_PX: u32 = 4096;
+/// The longest side a capture may have (`NATIVE_CAPTURE_MAX_PX`): a native target's largest, an
+/// 8K frame (WP-9 flipped 4096 -> 8192).
+pub const CAPTURE_MAX_PX: u32 = protocol::NATIVE_MAX_WORLD_PX;
 /// The most bytes one capture file may hold (`NATIVE_CAPTURE_MAX_BYTES`).
 pub const CAPTURE_MAX_BYTES: u64 = CAPTURE_MAX_PX as u64 * CAPTURE_MAX_PX as u64 * 4;
 /// Trace files a run keeps under `state/profile/`: the host copies each when its answer arrives and
@@ -788,6 +789,8 @@ pub struct SpelledChange {
     pub render_scale_lock: Option<Option<f64>>,
     /// `Some(Some(ms))` is the frame time dynamic resolution holds, `Some(None)` gives the class's back.
     pub frame_budget_ms: Option<Option<f64>>,
+    /// `Some(Some(json))` overlays these `[render.look]` keys, `Some(None)` gives the game's look back.
+    pub look: Option<Option<String>>,
 }
 
 /// `change` by its wire spellings.
@@ -799,6 +802,7 @@ pub fn spell_change(change: &RenderSettingsChange) -> SpelledChange {
         reset_features: change.reset_features,
         render_scale_lock: change.render_scale_lock,
         frame_budget_ms: change.frame_budget_ms,
+        look: change.look.clone(),
     }
 }
 

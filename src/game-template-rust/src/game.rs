@@ -1,7 +1,7 @@
 //! The game's world and its rules. The starter is a floor and one metal block that turns under the
 //! physical sky and an afternoon sun, a gear button that opens the graphics settings, a probe the
 //! checks can read and a camera that shows it all; replace the scene with the game in the brief and
-//! keep a way to reach the settings panel (a pause or options menu).
+//! keep a way to reach the settings menu (a pause or options menu).
 
 use genex::prelude::*;
 use genex::render::Environment;
@@ -28,8 +28,6 @@ const BLOCK_COLOR: Color = Color::rgb(224, 168, 72);
 const BLOCK_ROUGHNESS: f32 = 0.3;
 /// The gear button's label (checks find it in `state().hud.items`; `settings_button` draws the gear).
 pub const SETTINGS_BUTTON: &str = "Settings";
-/// Clear of the screen edges (a phone's rounded corners and notch).
-const EDGE_MARGIN: i8 = 16;
 /// The settings panel's width, in world pixels.
 const PANEL_WIDTH: f32 = 300.0;
 
@@ -59,14 +57,16 @@ fn draw(world: &World, frame: &mut Frame) {
     let floor = Transform::from_xyz(0.0, -0.5, 0.0).with_scale(vec3(FLOOR_SIDE, 1.0, FLOOR_SIDE));
     let block = Transform::from_xyz(0.0, 0.5, 0.0).with_rotation(Quat::from_rotation_y(world.spin));
     frame.tag("floor").cube_with(floor, &Material::color(FLOOR_COLOR).with_roughness(FLOOR_ROUGHNESS));
-    frame.tag("block").cube_with(block, &Material::color(BLOCK_COLOR).with_metallic(1.0).with_roughness(BLOCK_ROUGHNESS));
+    // The block moves, so it is drawn under an id that stays with it: TAA follows its pixels.
+    frame.tag("block").id("block").cube_with(block, &Material::color(BLOCK_COLOR).with_metallic(1.0).with_roughness(BLOCK_ROUGHNESS));
+    frame.end_id();
 }
 
 /// The gear button in the top-right corner and, while it is open, the graphics settings panel
 /// under it: the person's quality choice, saved on this device and never part of the simulation.
+/// The hook's ui already sits inside the safe area and a 16 pt margin.
 fn settings(world: &mut World, ui: &mut egui::Ui) {
-    let margin = egui::Frame::new().inner_margin(egui::Margin::same(EDGE_MARGIN));
-    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| margin.show(ui, |ui| {
+    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
         if genex::render::settings_button(ui, SETTINGS_BUTTON).clicked() {
             world.settings_open = !world.settings_open;
         }
@@ -77,5 +77,5 @@ fn settings(world: &mut World, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), genex::render::settings_panel);
             });
         }
-    }));
+    });
 }

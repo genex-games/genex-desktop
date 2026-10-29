@@ -1,0 +1,103 @@
+{
+  "about": "What Genex generated for the interior kit (genex__asset, image lane fal-image and model lane Tripo), on 2026-10-28. images: download each url as <name>.png into a folder and pass it to build_kit.py. hero: the model's GLB fitted by hero.py with the arguments given.",
+  "images": [
+    {
+      "name": "peel",
+      "generation": "cmvrvvlk8053f2zqmfu3qj64j",
+      "url": "https://assets.genex.technology/generations/cmvrvvlk8053f2zqmfu3qj64j/image-main",
+      "prompt": "Close-up, front-on flat photo of pale blue Soviet oil paint peeling off a white plaster wall: a ragged band where big flakes of blue paint have curled and fallen away exposing bare white and grey plaster, cracked paint edges, a few flakes hanging. Even lighting, the whole frame filled.",
+      "options": "--aspect landscape --quality high",
+      "makes": "decals/peel_edge.png, decals/peel_patch.png and their normals"
+    },
+    {
+      "name": "leak",
+      "generation": "cmvrvvmi804xe3fo2rxws7kiz",
+      "url": "https://assets.genex.technology/generations/cmvrvvmi804xe3fo2rxws7kiz/image-main",
+      "prompt": "Water damage on a plain whitewashed plaster wall, front-on flat photo: brown and rust-coloured tide-mark stains and long drips running down from the top edge, darker rings at the edges of the stain, a little green mould, the rest of the wall plain white. Even lighting, no shadows.",
+      "options": "--aspect portrait --quality high",
+      "makes": "decals/leak.png"
+    },
+    {
+      "name": "ceiling_stain",
+      "generation": "cmvrvvkpe04x03fo20m8se88c",
+      "url": "https://assets.genex.technology/generations/cmvrvvkpe04x03fo20m8se88c/image-main",
+      "prompt": "A large brown water stain on a white plaster ceiling seen from directly below: concentric yellow-brown tide-mark rings, a darker centre, a few small cracks and flaking whitewash, the rest plain white. Even flat lighting.",
+      "options": "--aspect square --quality high",
+      "makes": "decals/ceiling_stain.png"
+    },
+    {
+      "name": "grime",
+      "generation": "cmvrvvl4m04x43fo215h9c0ob",
+      "url": "https://assets.genex.technology/generations/cmvrvvl4m04x43fo215h9c0ob/image-main",
+      "prompt": "The bottom of a plain white painted wall above the floor, front-on flat photo of a long horizontal strip: dark grey grime and dirt rising from the floor line, black shoe scuff marks, mop splash marks and a dirty tide line, fading out to clean white wall at the top. Even lighting.",
+      "options": "--aspect landscape --quality high",
+      "makes": "decals/grime_base.png"
+    },
+    {
+      "name": "chalk",
+      "generation": "cmvrvvnu704xp3fo2nbte5or7",
+      "url": "https://assets.genex.technology/generations/cmvrvvnu704xp3fo2nbte5or7/image-main",
+      "prompt": "Chalk on a dark slate-green school blackboard, front-on, the board filling the whole frame with no frame or wall visible: a half-erased mathematics lesson in handwritten Cyrillic, a few equations, a drawn right triangle with labelled sides, the date in the corner, large grey smudges and swirls of erased chalk dust.",
+      "options": "--aspect landscape --quality high",
+      "makes": "decals/chalk.png (its date wiped)"
+    },
+    {
+      "name": "poster_space",
+      "generation": "cmvrvvm0404x93fo23fiu9uhn",
+      "url": "https://assets.genex.technology/generations/cmvrvvm0404x93fo23fiu9uhn/image-main",
+      "prompt": "A faded Soviet 1960s school wall poster about space exploration, screen-printed in red, cream and dark blue: a cosmonaut in a white helmet looking up, a rocket climbing over the curve of the Earth, stars, a large bold Cyrillic headline КОСМОС at the top. Flat front-on scan of the whole poster filling the frame edge to edge, aged yellowed paper, small creases, slight sun fading.",
+      "options": "--aspect portrait --quality high",
+      "makes": "decals/poster_space.png"
+    },
+    {
+      "name": "poster_study",
+      "generation": "cmvrvvkac04ww3fo21hpditak",
+      "url": "https://assets.genex.technology/generations/cmvrvvkac04ww3fo21hpditak/image-main",
+      "prompt": "A faded Soviet 1970s classroom poster: a boy and a girl pioneer with red neckerchiefs reading a book together at a school desk, simple flat offset-print illustration in red, ochre and teal, a bold Cyrillic slogan УЧИТЬСЯ at the top. Flat front-on scan of the whole poster filling the frame edge to edge, yellowed paper, foxing spots, fold creases.",
+      "options": "--aspect portrait --quality high",
+      "makes": "decals/poster_study.png"
+    },
+    {
+      "name": "poster_table",
+      "generation": "cmvrvvmxs053j2zqm8vuu655h",
+      "url": "https://assets.genex.technology/generations/cmvrvvmxs053j2zqm8vuu655h/image-main",
+      "prompt": "An old Soviet classroom wall chart of Mendeleev's periodic table of the elements, grid of coloured element boxes with symbols, Cyrillic title at the top, faded print colours on yellowed paper. Flat front-on scan of the whole chart filling the frame edge to edge, creases and stains.",
+      "options": "--aspect landscape --quality high",
+      "makes": "decals/poster_table.png"
+    },
+    {
+      "name": "poster_defence",
+      "generation": "cmvrvvndk04xk3fo2ptciw8nk",
+      "url": "https://assets.genex.technology/generations/cmvrvvndk04xk3fo2ptciw8nk/image-main",
+      "prompt": "A Soviet 1970s civil defence instructional poster for schools: numbered illustrated steps showing how to put on a gas mask, simple two-colour print in red and black on cream paper, Cyrillic heading ГРАЖДАНСКАЯ ОБОРОНА. Flat front-on scan of the whole poster filling the frame edge to edge, aged, torn corner, water stain.",
+      "options": "--aspect portrait --quality high",
+      "makes": "decals/poster_defence.png"
+    }
+  ],
+  "hero": [
+    {
+      "name": "lockers",
+      "generation": "cmvrw61jg050z3fo2pkxsuvag",
+      "url": "https://assets.genex.technology/generations/cmvrw61jg050z3fo2pkxsuvag/model-glb",
+      "prompt": "A bank of three tall narrow steel school lockers, 1.85 m tall, 1.0 m wide, 0.45 m deep, doors closed",
+      "options": "--image <reference> --face-limit 20000",
+      "reference": {
+        "generation": "cmvrw47dx055s2zqm4xjtsjoo",
+        "url": "https://assets.genex.technology/generations/cmvrw47dx055s2zqm4xjtsjoo/image-main",
+        "prompt": "Product photo of a single bank of three tall narrow steel school lockers standing side by side, Soviet 1970s, front three-quarter view, full height visible on a plain light grey studio background. Each locker door is tall and narrow, about five times taller than wide; the whole bank is 1.85 m tall and 1.0 m wide. Pale blue-grey enamel paint chipped at the edges to rusty steel, horizontal vent slots at the top and bottom of each door, a small handle and hasp, a low plinth.",
+        "options": "--aspect portrait --quality high"
+      },
+      "hero_py": "1.85 +x wall",
+      "makes": "hero/lockers.glb"
+    },
+    {
+      "name": "car-shell",
+      "generation": "cmvrvuwvn04wm3fo2g8jqspx9",
+      "url": "https://assets.genex.technology/generations/cmvrvuwvn04wm3fo2g8jqspx9/model-glb",
+      "prompt": "Abandoned rusty 1970s Soviet compact four-door sedan car body shell, boxy three-box shape with a flat bonnet and square headlight holes, no wheels, resting on the ground on its bare hubs, faded pale green paint flaking to heavy orange-brown rust, all windows broken out, empty interior, dented doors, chrome bumpers rusted. About 4.1 m long, 1.6 m wide, 1.4 m tall.",
+      "options": "--auto-size --face-limit 30000",
+      "hero_py": "1.5 +x free",
+      "makes": "hero/car-shell.glb"
+    }
+  ]
+}

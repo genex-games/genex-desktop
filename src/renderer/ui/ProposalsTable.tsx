@@ -10,7 +10,7 @@ import { type DiffLine, DiffTone, editDiff } from "../edit-diff.ts";
 import { SUGGESTION_WORDS } from "../words.ts";
 import { Button } from "./Button.tsx";
 import { Icon } from "./icons.tsx";
-import { plural, proposalTitle } from "../../shared/skill-words.ts";
+import { proposalTitle } from "../../shared/skill-words.ts";
 
 /** A suggestion's include box: filled, with a check, while the suggestion is included. */
 function IncludedMark({ included }: { included: boolean }): JSX.Element {
@@ -159,7 +159,7 @@ export function SuggestionReview({
     >
       <header className="flex flex-col gap-0.5 border-b border-line px-4 py-3">
         <h2 id={`${id}-title`} className="font-medium text-ink">
-          {SUGGESTION_WORDS.title(plural(proposals.length, "change"))}
+          {SUGGESTION_WORDS.title(proposals.length)}
         </h2>
         <p className="text-chat-sub text-ink-3">{SUGGESTION_WORDS.subtitle}</p>
       </header>
@@ -238,7 +238,7 @@ export function SuggestionReview({
             {SUGGESTION_WORDS.discard}
           </Button>
           <Button variant="default" disabled={busy || included.length === 0} onClick={() => onApply(included)}>
-            {SUGGESTION_WORDS.apply(plural(included.length, "change"))}
+            {SUGGESTION_WORDS.apply(included.length)}
           </Button>
         </span>
       </footer>

@@ -12,11 +12,14 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { ToolchainService } from "../../src/main/core/toolchains.ts";
-import { BuildTarget } from "../../src/shared/game-project.ts";
+import { StudioPlatform } from "../../src/shared/boot.ts";
+import { BuildTarget, GameStack } from "../../src/shared/game-project.ts";
+import { STACK_HOST_MATRIX } from "../../src/shared/game-targets.ts";
 import {
   ArchiveFormat,
   missingFor,
   PrewarmState,
+  STACK_REQUIRED_COMPONENTS,
   type ToolchainEntry,
   ToolchainHost,
   ToolchainId,
@@ -493,6 +496,13 @@ describe("the Rust stack's pins", () => {
     ToolchainId.ColyseusSource,
     // The browser's relay bridge (MP-5a), installed only for a [net] game's web export.
     ToolchainId.MultiplayerBridge,
+    // The cross and phone destinations' standard libraries and the Linux build's front end.
+    ToolchainId.RustStdWindows,
+    ToolchainId.RustStdLinux,
+    ToolchainId.RustStdIos,
+    ToolchainId.RustStdIosSim,
+    ToolchainId.RustStdAndroid,
+    ToolchainId.CargoZigbuild,
   ];
 
   /** The spike's verified pins table (`scripts/spike/rust-wgpu/pins.md`): url → sha256. */
@@ -524,6 +534,23 @@ describe("the Rust stack's pins", () => {
     const pins = await spikePins();
     for (const entry of RUST_MANIFEST)
       for (const archive of entry.archives) assert.equal(archive.sha256, pins.get(archive.url), archive.url);
+  });
+
+  it("pins every component each destination a Rust lane host builds needs for that host, downloadable or bundled", () => {
+    const rust = STACK_REQUIRED_COMPONENTS[GameStack.RustWgpu];
+    const hosts = [
+      [ToolchainHost.MacArm64, StudioPlatform.Mac],
+      [ToolchainHost.LinuxX64, StudioPlatform.Linux],
+    ] as const;
+    for (const [host, platform] of hosts)
+      for (const target of STACK_HOST_MATRIX[GameStack.RustWgpu][platform].build)
+        for (const id of rust[target]) {
+          // The vendored set joins once the owner publishes a genex release (rust-release.ts pin).
+          if (id === ToolchainId.RustVendor) continue;
+          const entry = manifestEntry(id, host);
+          assert.ok(entry, `${id} for ${target} on ${host}`);
+          assert.equal(isDownloadable(entry), true, `${id} for ${target} on ${host}`);
+        }
   });
 
   it("the Mac's Rust sysroot is five dist tarballs, one folder each", () => {

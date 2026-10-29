@@ -11,6 +11,7 @@ written against; this page says which file is whose.
 | `src/facets/<slug>.rs` | One facet each: `pub fn wire(game: &mut Game<super::World>)`, its own state through `game.facet_state::<T>()`. |
 | `assets/` | Models, textures and sounds the game loads, committed with it. |
 | `web/shell.html` | The studio's page around the browser build. Not edited by the game. |
+| `docs/ASSETS.md` | The game's asset ledger: one `- <tag>: <file>` line per sourced model, added by whoever delivers it. |
 | `docs/GENEX_API.md` | The facade's reference, read-only. |
 | `docs/api/` | The reference's topic pages, read-only. |
 | `engine/` | Only after the person ejected the engine: the game's own copy of the genex crates, the entry owner's code. The studio writes its `Cargo.toml` files (so its build scripts never build, trusted or not) and the `[engine]` row of `genex.toml`; a build whose row differs from the person's eject is refused `engine-unrecorded`. |
@@ -57,7 +58,7 @@ one and cannot add one. A verb the game does not know answers `unknown-op`.
 | `visible` | Show or hide a window run. |
 | `surface` | Embedded runs: create the shared-image ring Live draws from. |
 | `release` | Embedded runs: give a finished frame slot back to the game. |
-| `renderSettings` | Read the renderer's quality, or change it with `{set: {preset, deviceClass, features, renderScaleLock, frameBudgetMs}}`: a preset, an emulated device class (to see the game "as a phone"), feature switches, a render-scale lock and the frame time dynamic resolution holds (1-100 ms), for this session only. A game advertises it in its `ready` receipt (`renderSettingsApi`); until then it answers `unavailable`. An unknown preset, class or feature answers `unknown-preset`, `unknown-device-class` or `unknown-render-feature`; a scale lock outside 0.5 to 1 answers `invalid-render-scale` and a budget outside its range `invalid-frame-budget`; a member of the wrong type answers `bad-argument`. A change holds for the rest of the session: `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null}}` gives the game's own settings back. |
+| `renderSettings` | Read the renderer's quality, or change it with `{set: {preset, deviceClass, features, renderScaleLock, frameBudgetMs, look}}`: a preset, an emulated device class (to see the game "as a phone"), feature switches, a render-scale lock, the frame time dynamic resolution holds (1-100 ms) and `[render.look]` keys laid over the game's look (tune exposure, bloom or fog live, no rebuild; copy the values into `genex.toml` after), for this session only. A game advertises it in its `ready` receipt (`renderSettingsApi`); until then it answers `unavailable`. An unknown preset, class or feature answers `unknown-preset`, `unknown-device-class` or `unknown-render-feature`; a scale lock outside 0.5 to 1 answers `invalid-render-scale` a budget outside its range `invalid-frame-budget` and a look key the game cannot read `invalid-look`; a member of the wrong type answers `bad-argument`. A change holds for the rest of the session: `{set: {preset: null, deviceClass: null, features: null, renderScaleLock: null, frameBudgetMs: null, look: null}}` gives the game's own settings back. |
 | `bakeAssets` | Run one bake the game registered, `{kind, name}` with kind `nav` or `impostor` and a name of lowercase letters, digits, `-` and `_` (at most 64), into the run's `state/bakes/<kind>/<name>`, and answer the bake with its `bytes` and `digest`. The studio's build sends it to a headless run after a dev build; a game never calls it and an agent cannot send it. The output goes to the build's stage and the studio's cache, never into the game folder. Kind `nav` runs a `game.nav_bake`, and a bake the nav refuses answers its `nav-*` code. Kind `impostor` bakes one `game.impostor_bake` model's atlas at one class row on this GPU and answers it as an RGBA8 KTX2 file, which a run loads instead of baking; a model with no impostor answers `impostor-invalid`, and a render error its code (`device-lost` included). A name the game did not register answers `unknown-bake`, and an output past 256 MiB `bake-too-large` (nothing written). The file is written through a staging file renamed onto it. A dev build's `ready` receipt lists the game's bakes as `bakes: [{kind, name}]`; an export answers `unknown-op`. |
 | `profile` | The game's frame profile, `{action, frames?, mode?}`: `summary` (what `state().volatile.profile` holds), `report` (a `ProfileReport` v2 of the last `frames`, default 120, at most 240, with every kept hitch; at most 256 KiB, `truncated` past it), `arm` (`mode` `frame` or `nodes`: per-node GPU timing until `frame` again or 1,800 frames pass) or `trace` (a Chrome trace of the report window into the run's `state/profile/`, answering its `bytes` and `digest`). Dev builds only: an export (and the web build, which an export serves) answers `unknown-op`; a dev build whose runtime serves no profiles yet answers `unavailable`, and an argument outside its shape (an unknown action, `frames` not a whole number of at least 1, `arm` without a known `mode`) `bad-argument`. `frames` past 240 is clamped to 240. A trace is written as `state/profile/trace-<seq>.json` (the newest 8 kept) and answered with its `seq`, `bytes` and `digest`. |
 | `saves` | The game's save slots, `{op, slot?, label?, envelope?}`: `list` (`{slots, bytes, quota}`), `read` (a slot's decoded envelope, or `{tooLarge, bytes, digest}` past 1,020 KiB), `write` (seed a slot with a fixture envelope, validated and migrated as a load is), `save` (optional `label`, at most 64 characters), `load` (answered once it applied: `{tick, checksum, checksumMatch}`; a differing checksum reports `save-restore-diverged`; `checksumMatch` is null while a streamed world's cells still build, and its check runs at the next tick) and `delete`. A slot name is lowercase letters, digits and `-`, at most 32 bytes, not starting with `-`. The studio refuses an argument out of shape `bad-argument` before it is sent; a game refuses with a `save-*` code and changes nothing; one that registered no saves answers `save-not-configured`; a build made before the verb answers `unknown-op`. |
@@ -143,7 +144,44 @@ data, never prose to match: read the code, then read the run's `problem`.
 | `engine-unrecorded` | `genex.toml`'s `[engine]` row and the person's eject disagree (a row the person never made, or one removed or changed): nothing was built. Put the row back as the eject wrote it. |
 | `ready-timeout` | The game did not announce itself within the start deadline: 20 s from its start or from the facade's last `starting` event (each finished boot step), at most 60 s in all. |
 | `unresponsive` | The game stopped answering verbs. A verb asked while the game starts waits for its `ready`. |
-| `memory-cap` | The game passed its memory cap. |
+| `memory-cap` | The game's memory passed this computer's cap (8 GiB, a quarter of a larger computer's memory, at most half of a smaller one's) and the host stopped it; the failure names the footprint and the cap. Past 4 GiB a desktop run keeps going: the look warns, with the peak, only when the game also ships to the web or a phone. |
 | `unknown-op` | The game has no such verb. |
 | `unavailable` | The game knows the verb but this build cannot serve it yet (`renderSettings` before the renderer's settings, `reloadAssets` before its runtime lands). |
 | `busy` | The game is still applying an earlier `reloadAssets`: the studio asks again once it settles. |
+
+## Extension ladder
+
+When the brief needs more than the facade gives, climb one level at a time and stop at the lowest
+level that works. Every level keeps captures, Live, determinism and Stop working, and none loosens
+the sandbox.
+
+0. **Hooks**: `on_reset`, `on_update`, `on_ui`, the draw and probe hooks, demos.
+1. **Your own modules**: any safe Rust in `src/game.rs`, `src/facets/` and modules beside them,
+   against the genex API and the reviewed crates.
+2. **WGSL**: a `[[wgsl]]` source in `genex.toml`, checked by naga against WebGPU core.
+3. **Custom GPU passes**: `game.gpu_pass(..)` through `genex::gpu` (`docs/api/gpu-passes.md`).
+4. **Crate requests**: the `request_crate` tool; only the person approves.
+5. **Eject**: only the person copies the engine into this folder's `engine/`, and only the person
+   sets the game's trust flag for `unsafe` and build scripts, both in Studio's window. You may
+   suggest either in chat with the reason; never ask for `unsafe` or a build script to get past a
+   refusal. After an eject, `engine/` is the entry owner's code (its `Cargo.toml` files are the
+   studio's, so its build scripts never build, trusted or not), engine updates stop, and Live,
+   capture and export wait until the current build passes the `check_conformance` tool: run it
+   after every `engine/` change. Never write or remove the `[engine]` row in `genex.toml`: only
+   the person's eject does, and a build whose row differs from it is refused.
+
+A refusal names its level. Read the code, not the words:
+
+| Code | What to do |
+| --- | --- |
+| `gpu-pass-invalid` | Fix the pass the code names in `state().volatile.customPasses` (its WGSL, layout or limits). |
+| `native-feature-missing`, `native-features-web` | Drop the native feature, or keep it and accept no web build and fewer devices. |
+| `dependency-not-allowed` | Use the facade or a reviewed crate, or ask with `request_crate`. |
+| `crate-declined`, `crate-advisory`, `crate-licence`, `crate-banned`, `crate-build-script`, `crate-proc-macro` | The person or Genex's checks refused the crate (an advisory, a licence or a ban refuses even an approved one): build it from the facade instead. |
+| `crate-unvetted` | From an older ledger: ask for the crate again with `request_crate`; a missing audit no longer refuses. |
+| `crate-checker-unavailable`, `crate-check-failed` | Genex could not check the crate, so nothing was added and the request is still waiting: ask the person to approve it again (once Genex can install its checker, for the first). |
+| `crate-policy-tampered` | Genex's crate policy is not the shipped one, so nothing was added: tell the person what the code says. |
+| `unsafe-code`, `build-script-refused` | Remove the `unsafe` block or the build script; only the person can trust a game. |
+| `trust-person-only` | A game file or `genex.toml` claimed trust: remove the claim. |
+| `conformance-required` | Run `check_conformance` and fix the check it names, then try again. |
+| `eject-target-exists`, `eject-source-tampered`, `eject-lock-missing`, `eject-needs-mac` | The person's eject did nothing; tell them what the code says. |

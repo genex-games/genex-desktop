@@ -89,7 +89,7 @@ pub(super) fn push(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut
     let own = model.path() == Some(nodes);
     let skin = assets.posed.skin(nodes).filter(|skin| own && skin.skin.joint_count() as usize == palette.len());
     let Some(skin) = skin else {
-        return push_shape(sink, assets, missing, &Shape::Model { model: model.clone(), transform, tint, material: None });
+        return push_shape(sink, assets, missing, &Shape::Model { model: model.clone(), transform, tint, material: None, cover: None });
     };
     let loaded = assets.model(nodes);
     let materials = (0..skin.skin.part_count() as usize)

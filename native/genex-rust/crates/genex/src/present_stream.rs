@@ -57,7 +57,7 @@ use genex_render::jobs::{Job, Pool, Priority};
 use genex_render::presets::{STREAM_POOL_DESKTOP_BYTES, STREAM_POOL_PHONE_BYTES, STREAM_POOL_WEB_UNKNOWN_BYTES, stream_budget};
 use genex_render::timing::Clock;
 use genex_render::RenderError;
-use genex_stream::grid::{Grid, view_cells};
+use genex_stream::grid::{Grid, STREAM_VIEW_CELLS_MAX, view_cells};
 use genex_stream::{EntryState, Requester, Residency, ResidencyClock, ResidencyLimits, ResidencyStats, Want};
 use glam::{Vec2, Vec3};
 
@@ -74,6 +74,9 @@ use meshes::CoarsePlan;
 
 /// The most models one cell may draw; a cell past it is refused and draws nothing.
 pub const STREAM_VIEW_CELL_MODELS_MAX: usize = 1024;
+/// Cell sides past the view radius a built cell stays in the view set before it is dropped, so a
+/// camera on the view's edge does not rebuild and re-upload it (STR-20, release R-9).
+pub const STREAM_VIEW_HYSTERESIS_CELLS: f32 = 1.0;
 /// What a model is expected to hold before its bytes were ever read: the pool reserves this much
 /// for a load it starts (the asset index's sizes replace it in STR-19).
 pub const STREAM_VIEW_MODEL_ESTIMATE_BYTES: u64 = 1024 * 1024;
@@ -191,6 +194,9 @@ pub struct ViewStats {
     pub groups: u32,
     /// Their instances together.
     pub group_instances: u64,
+    /// Retained groups handed to the renderer since the start: each uploads its rows once, so a
+    /// cell kept through the view hysteresis adds none when it comes back (STR-20, release R-9).
+    pub groups_added: u64,
     /// How the last settled capture's drain ended (STR-25).
     pub drain: DrainReport,
     /// Drains that ran out of time since the start.
@@ -200,7 +206,7 @@ pub struct ViewStats {
 impl ViewStats {
     /// `state().volatile.__stream.view`: `{residentBytes, heldBytes, inFlight, queued, evicted,
     /// refused, cells, cellsBuilt, cellsRefused, finished, finishMs, uploadBytes, loading, groups,
-    /// groupInstances, drainPasses, drainMs, drainTimeouts}`, plus `timeout:
+    /// groupInstances, groupsAdded, drainPasses, drainMs, drainTimeouts}`, plus `timeout:
     /// "stream-drain-timeout"` while the last drain ran out of time. Display only, never in the
     /// checksum.
     pub fn volatile_value(&self) -> CoreValue {
@@ -221,6 +227,7 @@ impl ViewStats {
             ("loading", u64::from(self.loading_draws)),
             ("groups", u64::from(self.groups)),
             ("groupInstances", self.group_instances),
+            ("groupsAdded", self.groups_added),
             ("drainPasses", u64::from(self.drain.passes)),
             ("drainTimeouts", self.drain_timeouts),
         ] {
@@ -316,6 +323,8 @@ pub struct StreamView {
     /// The dearest finish seen, in milliseconds: what the next one is expected to cost.
     dearest_ms: f64,
     cells_refused: u64,
+    /// Groups handed to the renderer since the start ([`ViewStats::groups_added`]).
+    groups_added: u64,
     /// The last drain, and the drains that ran out of time (STR-25).
     drain: DrainReport,
     drain_timeouts: u64,
@@ -349,6 +358,7 @@ impl StreamView {
             cell_size: None,
             dearest_ms: 0.0,
             cells_refused: 0,
+            groups_added: 0,
             drain: DrainReport::default(),
             drain_timeouts: 0,
             last: ViewStats::default(),
@@ -389,6 +399,7 @@ impl StreamView {
             residency: self.residency.stats(),
             cells_built: built as u32,
             cells_refused: self.cells_refused,
+            groups_added: self.groups_added,
             drain: self.drain,
             drain_timeouts: self.drain_timeouts,
             ..self.last
@@ -428,6 +439,9 @@ impl StreamView {
     /// `game.streaming`. A lost device stops the frame (`device-lost`): the load it was finishing
     /// waits for the next frame.
     pub fn update<W>(&mut self, runtime: &Runtime<W>, camera: &Camera, io: ViewIo<'_>) -> Result<(), RenderError> {
+        if !crate::stream::STREAMING_BUILT {
+            return Ok(());
+        }
         let Some(inputs) = runtime.stream_view() else { return Ok(()) };
         if self.seed != Some(inputs.seed) {
             self.forget_cells();
@@ -435,10 +449,11 @@ impl StreamView {
         }
         self.cell_size = Some(inputs.cell_size);
         let ground = Vec2::new(camera.position.x, camera.position.z);
-        let wanted = wanted_cells(&inputs, ground);
+        let wanted = cells_within(&inputs, ground, inputs.view_metres);
+        let kept = cells_within(&inputs, ground, kept_metres(&inputs));
         self.last = ViewStats { cells_wanted: wanted.len() as u32, ..ViewStats::default() };
         self.read_plans(io.source);
-        self.follow(&wanted, &inputs);
+        self.follow(&wanted, &kept, &inputs);
         self.take_builds(ground, inputs.cell_size);
         self.start_reads(io.source);
         self.take_answers();
@@ -452,6 +467,9 @@ impl StreamView {
     /// Append the frame's view-set draws to `frame` (module doc), and the cell overlay when the
     /// frame asked for it ([`Frame::cells_debug`]).
     pub fn draw_into(&mut self, frame: &mut Frame) {
+        if !crate::stream::STREAMING_BUILT {
+            return;
+        }
         let mut loading = 0u32;
         let mut drew_any = false;
         for cell in self.cells.values() {
@@ -518,10 +536,12 @@ impl StreamView {
         }
     }
 
-    /// Follow the wanted cells: a cell that left gives back its models' references and its build;
-    /// a new one starts building.
-    fn follow(&mut self, wanted: &[CellId], inputs: &ViewInputs) {
-        let gone: Vec<CellId> = self.cells.keys().filter(|cell| wanted.binary_search(cell).is_err()).copied().collect();
+    /// Follow the wanted cells: a cell past the kept radius (the view radius and its hysteresis)
+    /// gives back its models' references and its build; a new wanted one starts building. A cell
+    /// between the two radii stays as it is, so a camera wobbling across the view's edge rebuilds
+    /// and uploads nothing again (STR-20, release R-9).
+    fn follow(&mut self, wanted: &[CellId], kept: &[CellId], inputs: &ViewInputs) {
+        let gone: Vec<CellId> = self.cells.keys().filter(|cell| kept.binary_search(cell).is_err()).copied().collect();
         for cell in gone {
             self.drop_cell(cell);
         }
@@ -555,7 +575,8 @@ impl StreamView {
             };
             let priority_px = cell_priority(cell, ground, cell_size);
             let keyed = models.into_iter().map(|draw| self.request_model(draw, priority_px)).collect();
-            let keyed_groups = groups.into_iter().map(|group| self.request_group(group, priority_px)).collect();
+            let keyed_groups: Vec<ViewGroup> = groups.into_iter().map(|group| self.request_group(group, priority_px)).collect();
+            self.groups_added += keyed_groups.len() as u64;
             self.groups.insert(cell, keyed_groups);
             self.cells.insert(cell, ViewCell::Built(keyed));
         }
@@ -700,7 +721,7 @@ impl StreamView {
         let loaded = match answer {
             Ok(bytes) => {
                 let read = ReadModel { path: &path, bytes, rest: source };
-                crate::present::load_model(&path, &read, uploads, log)?
+                crate::present::load_model(&path, (&read, uploads), &mut assets.shared_textures, log)?
             }
             Err(detail) => {
                 log(&format!("model {path:?} could not be read: {detail}; drawing the missing-asset checker"));
@@ -823,14 +844,21 @@ impl StreamView {
     }
 }
 
-/// The world cells within the view radius of `ground`, ascending (none when the registration's
-/// grid or radius is refused, which install already refused).
-fn wanted_cells(inputs: &ViewInputs, ground: Vec2) -> Vec<CellId> {
+/// The world cells within `metres` of `ground` (by each cell's nearest point), ascending (none
+/// when the registration's grid or radius is refused, which install already refused).
+fn cells_within(inputs: &ViewInputs, ground: Vec2, metres: f32) -> Vec<CellId> {
     let Ok(grid) = Grid::new(inputs.cell_size) else { return Vec::new() };
-    let Ok(view) = view_cells(&grid, ground, inputs.view_metres, inputs.view_metres) else { return Vec::new() };
+    let Ok(view) = view_cells(&grid, ground, metres, metres) else { return Vec::new() };
     let mut cells: Vec<CellId> = view.detail.into_iter().chain(view.far).filter(|cell| grid.contains(*cell)).collect();
     cells.sort_unstable();
     cells
+}
+
+/// How far a built cell stays in the view set: the view radius plus
+/// [`STREAM_VIEW_HYSTERESIS_CELLS`] cell sides, within the view cap.
+fn kept_metres(inputs: &ViewInputs) -> f32 {
+    let cap = inputs.cell_size * STREAM_VIEW_CELLS_MAX as f32;
+    (inputs.view_metres + inputs.cell_size * STREAM_VIEW_HYSTERESIS_CELLS).min(cap).max(inputs.view_metres)
 }
 
 /// Run every builder on `cell` (on a worker) and keep what it draws, in registration then build

@@ -26,8 +26,11 @@ export interface PreviewIpcDeps {
   /** The window's live preview; replaced when the window is. */
   preview(): GamePreview | null;
   previewBoundsSeen: PreviewBoundsRecord;
-  /** The game's full screen (`game-full-screen.ts`); absent where there is no window to fill. */
-  fullScreen?: { enter(): void; active(): boolean };
+  /**
+   * Live's full screens (`game-full-screen.ts`): the web game view's, or with `native` the Native
+   * canvas's; `active` is the web view's alone. Absent where there is no window to fill.
+   */
+  fullScreen?: { enter(view: { native: boolean }): void; active(): boolean };
 }
 
 export function registerPreviewIpc(
@@ -39,6 +42,8 @@ export function registerPreviewIpc(
     if (!view) throw new Error(MESSAGE.noGameView);
     return view;
   };
+  // The page names a game; the core checks Live holds that game's folder before loading anything.
+  handle("studio:preview.web-build", async (payload) => core.loadWebBuild(String(payload.project)));
   handle("studio:preview.load", async (payload) => {
     await core.games.touch(payload.project).catch(() => {});
     // A game with no kind yet has no page: Live shows its first-idea state and loads nothing.
@@ -71,6 +76,8 @@ export function registerPreviewIpc(
     );
     return true;
   });
+  // The game as it looks now, for the stage to hold while a dialog covers the view.
+  handle("studio:preview.cover-still", async () => (await preview()?.coverStill()) ?? null);
   handle("studio:preview.stop", async () => {
     await core.stopLive();
     return true;
@@ -79,8 +86,9 @@ export function registerPreviewIpc(
     await core.playLive();
     return true;
   });
-  handle("studio:preview.fullscreen", async () => {
-    fullScreen?.enter();
+  handle("studio:preview.fullscreen", async (payload) => {
+    // Anything but a plain `true` is the web game view's full screen, as it always was.
+    fullScreen?.enter({ native: payload?.native === true });
     return true;
   });
   // Anything but a plain `false` leaves the sound on.
@@ -104,7 +112,9 @@ export function registerPreviewIpc(
   handle("studio:preview.live", async () => livePreview().liveStatus());
   // Why the stage is not showing the game's own build, and the one button that opens the network.
   handle("studio:build.problem", async (payload) => core.buildProblem(payload.project));
-  handle("studio:packages.install", async (payload) => core.installPackages(payload.project));
+  handle("studio:packages.install", async (payload) =>
+    core.installPackages(payload.project, { scripts: payload.scripts === true }),
+  );
 }
 
 /** The window size a slot was measured in, when the renderer sent a usable one. */

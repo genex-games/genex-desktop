@@ -1,0 +1,722 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><!-- STUDIO_PANEL_FONTS --><style>
+:root{--bg:#0e0d0f;--fg:#dee0e2;--accent:#3c44c4;--accent-fill:var(--accent);--accent-text:#fff;--accent-hover:color-mix(in srgb,var(--accent) 88%,#fff);--ok:#7cd194;--warn:#efbe72;--err:#f08287;--outline:rgb(255 255 255/.1);color-scheme:dark;
+  --quiet:color-mix(in srgb,var(--fg) 64%,var(--bg));--line:color-mix(in srgb,var(--fg) 9%,var(--bg));--hover:color-mix(in srgb,var(--fg) 10%,var(--bg));--field:color-mix(in srgb,var(--fg) 7%,var(--bg));--menu:color-mix(in srgb,var(--fg) 6%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.26);
+  /* Genex's engine panels group what belongs together in outlined blocks: an edge, a fill one step above the page, a foot a half step, and the tiles and row hovers inside them. */
+  --edge:color-mix(in srgb,var(--fg) 12%,var(--bg));--block:color-mix(in srgb,var(--fg) 3%,var(--bg));--foot:color-mix(in srgb,var(--fg) 1.5%,var(--bg));--tile:color-mix(in srgb,var(--fg) 8%,var(--bg));--row-hover:color-mix(in srgb,var(--fg) 7%,var(--bg));
+  /* Genex's type: words in Zalando Sans SemiExpanded, actions and machine text in Geist Mono (inlinePanelFonts). */
+  --sans:"Zalando Sans SemiExpanded","TikTok Sans Genex",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  /* A mark drawn in the current colour: the arrow of a button that opens another app or page, a warning's sign, and a tick. */
+  --arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 17L17 7M9 7h8v8'/%3E%3C/svg%3E");
+  --warning:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10.3 4.8 3.4 17a2 2 0 0 0 1.7 3h13.8a2 2 0 0 0 1.7-3L13.7 4.8a2 2 0 0 0-3.4 0z'/%3E%3Cpath d='M12 10v3.5M12 16.6v.1'/%3E%3C/svg%3E");
+  --tick:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E")}
+/* Chosen for at least 4.5:1 on every light theme's background. */
+:root[data-scheme="light"]{--ok:#1d7f46;--warn:#95570b;--err:#b3303d;--outline:rgb(0 0 0/.1);--menu:color-mix(in srgb,#fff 70%,var(--bg));--shadow:0 0 0 1px var(--line),0 16px 48px rgb(0 0 0/.12);color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;padding:20px;font:14px/20px var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased}
+@media (max-width:480px){body{padding:16px}}
+main,main > section{display:grid;gap:24px;min-width:0}
+h2,h3{margin:0;font-size:15px;line-height:22px;font-weight:500;overflow-wrap:anywhere}
+h2:focus{outline:none}
+/* A view's own title (Get Godot, Choose a project, a new project); the project view's is its name, in its block. */
+h2.title{font-size:17px;line-height:24px}
+p{margin:0;text-wrap:pretty}
+p:empty{display:none}
+.quiet{color:var(--quiet)}
+.small{font-size:13px;line-height:18px}
+.intro{display:grid;gap:6px}
+.view-head{display:flex;align-items:center;gap:4px;min-width:0}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+/* Genex's buttons: 32px, a rounded fill and no border, the label in Geist Mono. */
+button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:32px;padding:0 14px;font-family:var(--mono);font-size:14px;font-weight:400;letter-spacing:-.02em;white-space:nowrap;color:inherit;background:var(--field);border:0;border-radius:11px;cursor:pointer;transition:scale 120ms,background 120ms;-webkit-tap-highlight-color:transparent}
+button:hover{background:var(--hover)}
+button:active:not(:disabled){scale:.96}
+button.primary{background:var(--accent-fill);color:var(--accent-text)}
+button.primary:hover{background:var(--accent-hover)}
+button.quiet{background:transparent;color:var(--quiet);padding:0 10px}
+button.quiet:hover{background:var(--hover);color:var(--fg)}
+button.icon{width:32px;padding:0;flex:none;background:transparent;color:var(--quiet)}
+button.icon:hover{background:var(--hover);color:var(--fg)}
+.view-head > button.icon{margin-inline-start:-8px}
+button.external{padding-inline-end:12px}
+button.external::after{content:"";width:14px;height:14px;flex:none;background:currentColor;-webkit-mask:var(--arrow) center/contain no-repeat;mask:var(--arrow) center/contain no-repeat}
+button:disabled{opacity:.5;cursor:not-allowed;scale:none}
+button:disabled:hover{background:var(--field)}
+button.primary:disabled:hover{background:var(--accent-fill)}
+button.quiet:disabled:hover{background:transparent;color:var(--quiet)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+/*
+ * A block: one subject (this game's project, this computer, the list) in an outlined box. Its
+ * label sits above it; inside, a rule divides each shown part from the one before, and its actions
+ * sit in its foot, the main one first and Change project and ⋯ at its end.
+ */
+.group{display:grid;gap:8px;min-width:0}
+.label{margin:0;padding-inline-start:2px;font-size:13px;line-height:18px;font-weight:400;color:var(--quiet)}
+.block{min-width:0;background:var(--block);border:1px solid var(--edge);border-radius:14px}
+.block > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line)}
+.pad{padding:14px 16px}
+.foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 12px 12px 16px;background:var(--foot);border-radius:0 0 13px 13px}
+.foot .end{display:flex;align-items:center;gap:2px;margin-inline-start:auto;margin-inline-end:-4px}
+.tile{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:11px;background:var(--tile);color:var(--quiet)}
+.tile.small{width:32px;height:32px;border-radius:9px}
+.tile.new{background:color-mix(in srgb,var(--accent) 22%,var(--bg));color:var(--fg)}
+.path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
+/* A fact: its name in the quiet ink, its value at the end in mono; in This computer, the thing in ink and its version quiet. */
+.fact{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px}
+.fact .k{flex:1;min-width:0;color:var(--quiet)}
+.fact .v{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;text-align:end}
+.mac .fact .k{color:var(--fg)}
+.mac .fact .v{color:var(--quiet)}
+/* A fact that is in order: a tick in a green disc; one that isn't yet: an empty ring. */
+.ticked{width:20px;height:20px;flex:none;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.ticked::before{content:"";width:11px;height:11px;background:currentColor;-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
+.ticked.not{background:none;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--fg) 22%,var(--bg))}
+.ticked.not::before{content:none}
+/* The project's head: its picture, name and place, and where it stands. */
+.head{display:flex;align-items:center;gap:14px;padding:16px}
+.who{flex:1;min-width:0;display:grid;gap:2px}
+.who h2{font-size:16px;line-height:22px}
+/* Where the project stands, a dot and one word as the toolbar button says it; Ready is the green dot alone, its word for screen readers. */
+.state{display:inline-flex;align-items:center;gap:6px;flex:none;height:24px;padding:0 9px;border-radius:12px;background:color-mix(in srgb,currentColor 12%,transparent);font-family:var(--mono);font-size:12px;line-height:18px;letter-spacing:-.02em;color:var(--quiet)}
+.state:has(> #state-word:empty){display:none}
+.state::before{content:"";width:6px;height:6px;flex:none;border-radius:50%;background:currentColor}
+.state[data-tone="unset"]::before{background:none;box-shadow:inset 0 0 0 1.5px currentColor}
+.state[data-tone="ok"]{color:var(--ok);padding:0;background:none}
+.state[data-tone="ok"]::before{width:9px;height:9px}
+.state[data-tone="ok"] #state-word{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.msg{display:grid;gap:6px;padding:14px 16px}
+@media (max-width:480px){.head .tile{display:none}}
+/* The list: rows of the projects on this computer, the whole row the button. */
+.label-row{display:flex;align-items:center;gap:12px;min-height:32px}
+.label-row .label{flex:1}
+.count{margin-inline-start:4px;font-family:var(--mono)}
+.list{margin:0;padding:0;list-style:none;max-height:min(420px,60vh);overflow:hidden auto}
+.list > li + li{border-top:1px solid var(--line)}
+.row{width:100%;min-height:60px;display:flex;align-items:center;gap:12px;padding:8px 12px 8px 16px;font-family:var(--sans);font-size:15px;line-height:22px;font-weight:400;letter-spacing:0;text-align:start;white-space:normal;background:transparent;border:0;border-radius:0}
+.list > li:first-child .row{border-radius:13px 13px 0 0}
+.list > li:last-child .row{border-radius:0 0 13px 13px}
+.list > li:only-child .row{border-radius:13px}
+.row:hover{background:var(--row-hover)}
+.row:focus-visible{outline-offset:-2px}
+.row-text{flex:1;min-width:0;display:grid;gap:1px}
+.row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .version{flex:none;min-width:28px;text-align:end;font-family:var(--mono);font-size:12px;letter-spacing:-.02em;color:var(--quiet)}
+.row .chevron{display:flex;flex:none;color:var(--quiet)}
+.row:hover .chevron{color:var(--fg)}
+.tag{flex:none;height:22px;display:inline-flex;align-items:center;padding:0 8px;border-radius:11px;background:var(--tile);color:var(--quiet);font-size:12px;line-height:16px;white-space:nowrap}
+.tag.here{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--fg)}
+.filter{display:flex;align-items:center;gap:8px;width:200px;max-width:50%;height:32px;padding:0 10px;border-radius:10px;background:var(--field);color:var(--quiet);cursor:text}
+.filter input{flex:1;min-width:0;padding:0;border:0;outline:0;background:transparent;color:var(--fg);font:13px/18px var(--mono);letter-spacing:-.02em}
+.filter:focus-within{box-shadow:inset 0 0 0 1px var(--edge)}
+.new-row{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 12px 14px 16px}
+.new-row .row-name{font-size:15px;line-height:22px}
+.new-row .row-text{flex:1 1 180px}
+/* A new project's templates: one card each, the chosen one outlined in the accent. */
+.cards{border:0;padding:0;margin:0;min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.cards:disabled .card{opacity:.5;cursor:default}
+.card{position:relative;display:grid;align-content:start;gap:8px;cursor:pointer;font-size:14px;line-height:20px;color:var(--quiet);transition:color 150ms}
+.card:hover,.card:has(input:checked){color:var(--fg)}
+.card input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.card .blank{display:grid;place-items:center;width:100%;aspect-ratio:16/10;border-radius:10px;outline:1px solid var(--outline);outline-offset:-1px;background:var(--field);font:500 22px/1 var(--mono);color:var(--quiet)}
+.card:has(input:checked) .blank{outline:2px solid var(--accent);outline-offset:2px;color:var(--fg)}
+.card:has(input:focus-visible) .blank{outline:2px solid var(--fg);outline-offset:2px}
+.card strong{color:var(--fg);font-weight:500}
+.field{display:grid;gap:6px}
+.field label{font-size:13px;line-height:18px;color:var(--quiet)}
+.field input[type="text"]{width:100%;max-width:300px;min-height:36px;padding:0 12px;font:15px/22px var(--sans);color:inherit;background:var(--field);border:0;border-radius:10px}
+.field input[type="text"]:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.field input[aria-invalid="true"]{box-shadow:inset 0 0 0 1px var(--err)}
+/* The ⋯ menu at the foot's end: rarer actions. */
+.menu{position:relative}
+.menu summary{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:11px;color:var(--quiet);list-style:none;cursor:pointer}
+.menu summary::-webkit-details-marker{display:none}
+.menu .dots{fill:currentColor;stroke:none}
+.menu summary:hover,.menu[open] summary{background:var(--hover);color:var(--fg)}
+.menu-body{position:absolute;z-index:1;bottom:calc(100% + 4px);right:0;display:grid;gap:4px;min-width:220px;max-width:min(280px,calc(100vw - 32px));padding:4px;border-radius:12px;background:var(--menu);box-shadow:var(--shadow)}
+.menu-body .actions{display:grid;gap:2px}
+.menu-body button{justify-content:flex-start;width:100%;background:transparent;font-family:var(--sans);letter-spacing:0;padding:0 10px}
+.menu-body button:hover{background:var(--hover)}
+.menu-body p{padding:4px 10px 6px}
+/* Genex's live status: a small orb that breathes, as the chat's status line has. */
+.orb{width:14px;height:14px;flex:none;border-radius:50%;background:radial-gradient(circle at 38% 36%,var(--fg) 0 14%,color-mix(in srgb,var(--accent) 65%,var(--fg)) 40%,var(--accent) 72%,transparent 74%);animation:breathe 2.1s ease-in-out infinite}
+@keyframes breathe{50%{opacity:.5}}
+.waiting{display:flex;align-items:center;gap:8px;font-size:13px;line-height:18px;color:var(--quiet)}
+/* What an action left to say: a row of the block in quiet ink. */
+.note{padding:12px 16px;color:var(--quiet);overflow-wrap:anywhere}
+.error{color:var(--err);white-space:pre-wrap;overflow-wrap:anywhere}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){scale:none}.orb{animation:none}}
+/* On a dialog's card the dialog holds the heading and the padding: the page keeps a thin edge for focus rings. */
+:root[data-surface="card"] body{padding:4px}
+/* Last, so it wins over every class that sets a display. */
+[hidden]{display:none}
+</style></head><body>
+<main id="app" aria-busy="true">
+  <p id="checking" class="quiet" role="status" data-t>Looking for Godot…</p>
+
+  <section id="get" hidden aria-labelledby="get-title">
+    <div class="intro" data-panel-head><h2 id="get-title" class="title" tabindex="-1" data-t>Get Godot</h2><p id="get-why" class="quiet"></p></div>
+    <div class="block">
+      <div class="pad"><p id="get-how" data-t>Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.</p></div>
+      <div class="foot"><button type="button" id="get-godot" class="primary external" data-t>Get Godot</button><button type="button" id="recheck" data-t>Check again</button></div>
+    </div>
+    <p id="get-waiting" class="waiting" role="status"><span class="orb" aria-hidden="true"></span><span id="get-waiting-text" data-t>Waiting for Godot in Applications. This page moves on by itself.</span></p>
+  </section>
+
+  <section id="pick" hidden aria-labelledby="pick-title">
+    <div class="view-head" data-panel-head><button type="button" id="back" class="icon" aria-label="Back" data-t="aria-label" data-panel-back hidden><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button><h2 id="pick-title" class="title" tabindex="-1" data-t>Choose a project</h2></div>
+    <div class="block"><div class="new-row">
+      <span class="tile small new" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span>
+      <div class="row-text"><span class="row-name" data-t>New Godot project</span><span id="pick-new-text" class="quiet small"></span></div>
+      <button type="button" id="new-here" class="primary" data-t>New project</button>
+    </div></div>
+    <div class="group">
+      <div class="label-row">
+        <h3 id="pick-have" class="label"><span data-t>On this computer</span><span id="pick-count" class="count"></span></h3>
+        <label id="filter-field" class="filter" hidden><svg width="14" height="14" viewBox="0 0 24 24" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><span class="sr-only" data-t>Filter projects</span><input id="filter" type="text" placeholder="Filter" data-t="placeholder" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <ul id="projects" class="block list" aria-labelledby="pick-have"></ul>
+      <p id="no-projects" class="quiet small" hidden></p>
+      <div class="actions"><button type="button" id="choose"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75" aria-hidden="true"><path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg><span data-t>Choose a project.godot…</span></button></div>
+      <p id="outside-note" class="quiet small" data-t hidden>Outside game: chats use it, Rewind and Loops can't reach it.</p>
+    </div>
+  </section>
+
+  <section id="new" hidden aria-labelledby="new-title">
+    <div class="intro" data-panel-head><h2 id="new-title" class="title" tabindex="-1" data-t>New Godot project</h2><p id="new-where" class="quiet"></p></div>
+    <fieldset id="cards" class="cards"><legend class="sr-only" data-t>Template</legend>
+      <label class="card"><input type="radio" name="template" value="3d" checked><span class="blank" aria-hidden="true">3D</span><span><strong>3D</strong> · <span data-t>a player that walks and jumps under a sky</span></span></label>
+      <label class="card"><input type="radio" name="template" value="2d"><span class="blank" aria-hidden="true">2D</span><span><strong>2D</strong> · <span data-t>a player that moves around the screen</span></span></label>
+    </fieldset>
+    <div class="block">
+      <div class="field pad"><label for="name" data-t>Name</label><input id="name" type="text" autocomplete="off" maxlength="40" spellcheck="false" aria-describedby="name-error"><p id="name-error" class="error small" role="alert"></p></div>
+      <div class="foot"><button type="button" id="create" class="primary" data-t>Create</button><button type="button" id="cancel-new" data-t>Cancel</button></div>
+    </div>
+    <p id="creating" class="waiting" role="status" hidden><span class="orb" aria-hidden="true"></span><span data-t>Making the project and its first import…</span></p>
+  </section>
+
+  <section id="project" hidden aria-labelledby="project-name">
+    <div class="group">
+      <p class="label" data-t>This game's project</p>
+      <div class="block">
+        <div class="head">
+          <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true"><rect x="4" y="7.5" width="16" height="12" rx="4"/><path d="M8.5 7.5 7.5 4.5M15.5 7.5l1-3M10 16h4"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor"/></svg></span>
+          <div class="who"><h2 id="project-name" tabindex="-1" data-t>Godot project</h2><p id="project-path" class="path"></p></div>
+          <span id="state" class="state" role="status"><span id="state-word"></span></span>
+        </div>
+        <div class="msg"><p id="headline"></p><p id="say" class="quiet"></p></div>
+        <div id="fact-engine" class="fact" hidden><span class="k" data-t>Made with</span><span id="project-engine" class="v"></span></div>
+        <div id="fact-reach" class="fact" hidden><span class="k" data-t>Rewind and Loops</span><span class="v" data-t>Outside game: chats only</span></div>
+        <p id="note" class="note" role="status" hidden></p>
+        <div class="foot">
+          <button type="button" id="primary" class="primary" hidden></button>
+          <div class="end">
+            <button type="button" id="change" data-t>Change project</button>
+            <details id="more" class="menu">
+              <summary aria-label="More" data-t="aria-label"><svg class="dots" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.5" cy="12" r="1.5"/></svg></summary>
+              <div class="menu-body">
+                <div class="actions"><button type="button" id="web-export" data-t>Export for the web</button><button type="button" id="open-again" data-t hidden>Open in Godot</button></div>
+                <p id="more-hint" class="quiet small"></p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="group mac">
+      <p class="label" data-t>This computer</p>
+      <div class="block">
+        <div class="fact"><span class="ticked" aria-hidden="true"></span><span class="k">Godot</span><span id="installed" class="v"></span></div>
+        <div class="fact"><span id="templates-mark" class="ticked" aria-hidden="true"></span><span class="k" data-t>Web export template</span><span id="templates" class="v"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <p id="error" class="error" role="alert"></p>
+</main>
+<!-- STUDIO_PANEL_SDK -->
+<script type="module">
+const api = window.studioPlugin;
+// The panel's words are in Genex's language once the host has named it (plugin-sdk/words.js).
+await api.ready;
+const { t } = api;
+const $ = (id) => document.getElementById(id);
+/** How often the panel asks again while it is shown: Godot may have been installed, or opened, since. */
+const REFRESH_MS = 4000;
+/** A first import of a new project, or an export, is quick next to this. */
+const LONG_ACTION_MS = 6 * 60 * 1000;
+/** Past this many projects, the list gets its filter. */
+const FILTER_FROM = 7;
+const QUIET_SHARE_MIN = 64;
+const TEXT_CONTRAST_MIN = 4.5;
+const HOVER_SHARE = 88;
+const WHITE = "#ffffff";
+const BLACK = "#000000";
+const GAME_NAME = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/;
+const READY = "ready";
+const View = { Get: "get", Project: "project", Pick: "pick", New: "new" };
+const Action = {
+  Status: "status",
+  Create: "create",
+  OpenEditor: "open-editor",
+  GetGodot: "get-godot",
+  DownloadGodot: "download-godot",
+  SetUp: "set-up",
+  WebExport: "web-export",
+  UseProject: "use-project",
+};
+const Tone = { Ok: "ok", Unset: "unset", Quiet: "" };
+/** Where Genex's install of Godot is (the backend's `GodotJobState`), and why a request failed (Studio's `PanelErrorCode`). Wire values: never rename. */
+const JobState = { Running: "running", Failed: "failed" };
+const ErrorCode = { Cancelled: "cancelled" };
+const MEGABYTE = 1024 * 1024;
+/** The folder Godot keeps its projects in, as a path: never translated. */
+const PROJECTS_FOLDER = "Documents › Godot Projects";
+/** Godot's own menus to its export templates, in Godot's English: never translated. */
+const TEMPLATES_CLICKS = "Editor › Manage Export Templates";
+const WORDS = {
+  getWhy: t("Genex builds Godot games with Godot 4.3 or newer."),
+  getHow: t(
+    "Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.",
+  ),
+  getHowWindows: t(
+    "Genex downloads Godot 4 from Godot's own releases into its own folder. It's free and open source, about 86 MB.",
+  ),
+  elsewhereWhy: t("Genex builds Godot games on a Mac or a Windows PC."),
+  elsewhereHow: t("You can still download Godot 4 from godotengine.org and use it on its own. It's free and open source."),
+  older: (version) =>
+    t(
+      "This Mac has Godot {version}. Genex builds with Godot 4.3 or newer in the 4 line: get a current Godot 4 and put it in Applications beside yours.",
+      { version },
+    ),
+  olderWindows: (version) =>
+    t(
+      "This PC has Godot {version}. Genex builds with Godot 4.3 or newer in the 4 line: get a current Godot 4 beside it.",
+      { version },
+    ),
+  waitMac: t("Waiting for Godot in Applications. This page moves on by itself."),
+  downloading: (done, total) =>
+    t("Downloading Godot, {done} of {total} MB. This page moves on by itself.", {
+      done: Math.round(done / MEGABYTE),
+      total: Math.round(total / MEGABYTE),
+    }),
+  installing: t("Installing Godot. This page moves on by itself."),
+  get: t("Get Godot"),
+  tryAgain: t("Try again"),
+  notSetUp: t("Not set up"),
+  notOpen: t("Not open"),
+  ready: t("Ready"),
+  setUpHead: t("Set up for Genex's play"),
+  setUpSay: t(
+    "Genex adds its addon to the project so its computer tool, playtesters and judges can play it, and your open Godot saves before save points.",
+  ),
+  setUp: t("Set up for Genex"),
+  openHead: t("Open in your Godot"),
+  openSay: t("Opens the project in your own Godot editor. Genex never drives it; it reloads the files Genex changes."),
+  open: t("Open in Godot"),
+  openNowHead: t("Open in Godot now"),
+  openNowSay: t("Your Godot has the project open: it reloads the files Genex changes, and saves for save points."),
+  inUse: t("In use"),
+  outside: t("Outside game"),
+  newInGame: t("In this game's godot/ folder."),
+  newGame: t("Genex makes a new game for it."),
+  noProjects: t("No Godot projects in {folder} or Godot's own list yet.", { folder: PROJECTS_FOLDER }),
+  badName: t("Use 1 to 40 letters, digits, spaces, dashes or underscores, starting with a letter or digit."),
+  creating: t("Creating…"),
+  create: t("Create"),
+  installed: (s) => `${s.godot.version}${s.godot.mono ? " .NET" : ""}`,
+  projectName: t("Godot project"),
+  templatesReady: t("Installed"),
+  templatesMissing: t("In Godot: {clicks}", { clicks: TEMPLATES_CLICKS }),
+  exportHint: t("Writes web/ at the game's root: Live's Web game tab plays it and Publish puts it online."),
+  exporting: t("Exporting…"),
+  export: t("Export for the web"),
+  pickerTitle: t("Choose a Godot project"),
+};
+
+let closed = false;
+let refreshing = false;
+let busy = false;
+let last = null;
+const ui = { view: View.Project, filter: "" };
+
+const setText = (node, text) => {
+  if (node.textContent !== text) node.textContent = text;
+};
+const showError = (e) => setText($("error"), e ? String(e?.message ?? e) : "");
+
+/** Whether every part of Genex's play is in the project (the backend's `AddonState`). */
+const isSetUp = (setup) =>
+  Boolean(setup) && setup.addon === "current" && [setup.autoload, setup.editor, setup.launcher, setup.bridge].every(Boolean);
+
+/** The view the status calls for: Get Godot, a new game, the chosen view, or Choose a project while the game has none. */
+function viewFor(s) {
+  if (s.readiness !== READY) return View.Get;
+  if (!s.game) return View.New;
+  if (ui.view === View.Project && !s.project) return View.Pick;
+  return ui.view;
+}
+
+/** Shows one section, the others hidden. */
+function show(id) {
+  for (const section of ["checking", View.Get, View.Pick, View.New, View.Project]) $(section).hidden = section !== id;
+}
+
+/** Whether Genex builds Godot games on this computer: a Mac or a Windows PC. */
+const buildsHere = (s) => Boolean(s.mac || s.windows);
+
+/** Why Get Godot shows: the Godot Genex needs, the older one this computer has, or that it builds elsewhere. */
+function getWhy(s) {
+  if (!buildsHere(s)) return WORDS.elsewhereWhy;
+  if (!s.version) return WORDS.getWhy;
+  return s.windows ? WORDS.olderWindows(s.version) : WORDS.older(s.version);
+}
+
+/** How to get Godot: into Applications on a Mac, Genex's download on Windows, on its own elsewhere. */
+function getHow(s) {
+  if (s.windows) return WORDS.getHowWindows;
+  return s.mac ? WORDS.getHow : WORDS.elsewhereHow;
+}
+
+/** The wait under Get Godot: for Godot in Applications on a Mac; on Windows, how far Genex's download got. */
+function waitText(s) {
+  if (!s.windows) return WORDS.waitMac;
+  const job = s.installing;
+  if (job?.unpacking) return WORDS.installing;
+  return job?.total ? WORDS.downloading(job.done ?? 0, job.total) : WORDS.installing;
+}
+
+/**
+ * Get Godot: on a Mac, where to put Godot and the wait for it; on Windows, Genex's own download,
+ * its progress while it runs and Try again after it stopped; elsewhere nothing to get or wait for.
+ */
+function renderGet(s) {
+  const running = s.installing?.state === JobState.Running;
+  const failed = s.installing?.state === JobState.Failed;
+  setText($("get-why"), getWhy(s));
+  setText($("get-how"), getHow(s));
+  setText($("get-godot"), failed ? WORDS.tryAgain : WORDS.get);
+  $("get-godot").classList.toggle("external", !s.windows);
+  $("get-godot").hidden = !buildsHere(s);
+  $("get-godot").disabled = running;
+  $("get-waiting").hidden = s.windows ? !running : !s.mac;
+  setText($("get-waiting-text"), waitText(s));
+  if (s.windows && failed && !s.installing.stopped) showError(s.installing.why);
+}
+
+/**
+ * Windows's Get Godot: Genex's download, which Studio asks the person to confirm first. It answers
+ * once Godot is in place; the page follows it meanwhile, so this never holds the page busy.
+ */
+async function downloadGodot() {
+  showError(null);
+  try {
+    await api.call("action", Action.DownloadGodot, {});
+  } catch (e) {
+    if (e?.code !== ErrorCode.Cancelled) showError(e);
+  }
+  await refresh();
+}
+
+/** A project's tag: In use, Outside game, or none. */
+function tagOf(p) {
+  if (p.inUse) return WORDS.inUse;
+  return p.outside ? WORDS.outside : "";
+}
+
+/** One project row: tile, name, path, a tag, version and chevron; the whole row the button. */
+function projectRow(p) {
+  const li = document.createElement("li");
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "row";
+  row.title = p.folder;
+  row.innerHTML =
+    '<span class="tile small" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75"><rect x="4" y="7.5" width="16" height="12" rx="4"/><path d="M8.5 7.5 7.5 4.5M15.5 7.5l1-3"/></svg></span><span class="row-text"><span class="name"></span><span class="path"></span></span>';
+  row.querySelector(".name").textContent = p.name;
+  row.querySelector(".path").textContent = p.shown;
+  const tag = tagOf(p);
+  if (tag) {
+    const chip = document.createElement("span");
+    chip.className = p.inUse ? "tag here" : "tag";
+    chip.textContent = tag;
+    row.append(chip);
+  }
+  const version = document.createElement("span");
+  version.className = "version";
+  version.textContent = p.version;
+  row.append(version);
+  row.insertAdjacentHTML(
+    "beforeend",
+    '<span class="chevron" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" stroke-width="1.75"><path d="M9 6l6 6-6 6"/></svg></span>',
+  );
+  row.onclick = () => void choose(p);
+  li.append(row);
+  return li;
+}
+
+function renderPick(s) {
+  $("back").hidden = !s.project;
+  setText($("pick-new-text"), s.game ? WORDS.newInGame : WORDS.newGame);
+  const all = s.projects ?? [];
+  const needle = ui.filter.trim().toLowerCase();
+  const shown = needle ? all.filter((p) => `${p.name} ${p.shown}`.toLowerCase().includes(needle)) : all;
+  setText($("pick-count"), all.length ? ` ${all.length}` : "");
+  $("filter-field").hidden = all.length < FILTER_FROM;
+  $("projects").replaceChildren(...shown.map(projectRow));
+  $("projects").hidden = shown.length === 0;
+  setText($("no-projects"), WORDS.noProjects);
+  $("no-projects").hidden = all.length > 0;
+  $("outside-note").hidden = !all.some((p) => p.outside && !p.inUse);
+}
+
+function renderNew(s) {
+  setText($("new-where"), s.game ? WORDS.newInGame : WORDS.newGame);
+  $("cancel-new").hidden = !s.game;
+}
+
+/** The project's one step and its words: set it up, open it, or nothing while Godot has it open. */
+function stepOf(s) {
+  if (!isSetUp(s.setup))
+    return { tone: Tone.Unset, word: WORDS.notSetUp, head: WORDS.setUpHead, say: WORDS.setUpSay, act: Action.SetUp, label: WORDS.setUp };
+  if (s.editorOpen)
+    return { tone: Tone.Ok, word: WORDS.ready, head: WORDS.openNowHead, say: WORDS.openNowSay, act: null, label: "" };
+  return { tone: Tone.Quiet, word: WORDS.notOpen, head: WORDS.openHead, say: WORDS.openSay, act: Action.OpenEditor, label: WORDS.open };
+}
+
+function renderProject(s) {
+  setText($("project-name"), s.projectName ?? WORDS.projectName);
+  setText($("project-path"), s.projectShown ?? "");
+  $("project-path").title = s.project ?? "";
+  const step = stepOf(s);
+  $("state").dataset.tone = step.tone;
+  setText($("state-word"), step.word);
+  setText($("headline"), step.head);
+  setText($("say"), step.say);
+  $("primary").hidden = !step.act;
+  $("primary").dataset.act = step.act ?? "";
+  $("primary").classList.toggle("external", step.act === Action.OpenEditor);
+  setText($("primary"), step.label);
+  const own = (s.projects ?? []).find((p) => p.inUse);
+  $("fact-engine").hidden = !own?.version;
+  setText($("project-engine"), own?.version ? `Godot ${own.version}` : "");
+  $("fact-reach").hidden = !s.outside;
+  $("open-again").hidden = !s.editorOpen;
+  setText($("more-hint"), WORDS.exportHint);
+  setText($("installed"), s.godot ? WORDS.installed(s) : "");
+  $("installed").title = s.godot?.binary ?? "";
+  $("templates-mark").classList.toggle("not", !s.webTemplates);
+  setText($("templates"), s.webTemplates ? WORDS.templatesReady : WORDS.templatesMissing);
+}
+
+/** Draws the view the status calls for. */
+function render(s) {
+  last = s;
+  $("app").setAttribute("aria-busy", "false");
+  const view = viewFor(s);
+  show(view);
+  if (view === View.Get) renderGet(s);
+  if (view === View.Pick) renderPick(s);
+  if (view === View.New) renderNew(s);
+  if (view === View.Project) renderProject(s);
+}
+
+async function refresh() {
+  if (refreshing || closed || busy) return;
+  refreshing = true;
+  try {
+    const s = await api.call("action", Action.Status, {});
+    if (!closed) render(s);
+  } catch (e) {
+    if (!closed) showError(e);
+  } finally {
+    refreshing = false;
+  }
+}
+
+/** Runs an action with its button waiting; the answer, or null after showing what went wrong. */
+async function act(button, name, args, options) {
+  showError(null);
+  busy = true;
+  button.disabled = true;
+  try {
+    return await api.call("action", name, args ?? {}, options);
+  } catch (e) {
+    showError(e);
+    return null;
+  } finally {
+    busy = false;
+    button.disabled = false;
+  }
+}
+
+/** Moves to a view and draws it from the last status, its title focused for screen readers. */
+function go(view) {
+  ui.view = view;
+  $("more").open = false;
+  if (last) render(last);
+  const title = { [View.Pick]: "pick-title", [View.New]: "new-title", [View.Project]: "project-name" }[view];
+  if (title) $(title).focus();
+}
+
+/** Uses a project in this game: the one in use is just shown; another is linked, wherever it is. */
+async function choose(p) {
+  if (!p.inUse) {
+    const linked = await act($("choose"), Action.UseProject, { folder: p.folder });
+    if (!linked) return;
+  }
+  go(View.Project);
+  void refresh();
+}
+
+async function chooseFile() {
+  try {
+    const file = await api.chooseFile({ title: WORDS.pickerTitle, extensions: ["godot"] });
+    if (file) await choose({ folder: file.replace(/[\\/]project\.godot$/, ""), inUse: false });
+  } catch (e) {
+    showError(e);
+  }
+}
+
+async function create() {
+  const name = $("name").value.trim();
+  const valid = GAME_NAME.test(name);
+  $("name").setAttribute("aria-invalid", valid ? "false" : "true");
+  setText($("name-error"), valid ? "" : WORDS.badName);
+  if (!valid) {
+    $("name").focus();
+    return;
+  }
+  const template = document.querySelector('input[name="template"]:checked')?.value ?? "3d";
+  $("cards").disabled = true;
+  $("name").disabled = true;
+  $("creating").hidden = false;
+  setText($("create"), WORDS.creating);
+  const made = await act($("create"), Action.Create, { template, name }, { timeoutMs: LONG_ACTION_MS });
+  $("cards").disabled = false;
+  $("name").disabled = false;
+  $("creating").hidden = true;
+  setText($("create"), WORDS.create);
+  if (!made) return;
+  $("name").value = "";
+  go(View.Project);
+  void refresh();
+}
+
+async function webExport() {
+  $("more").open = false;
+  $("note").hidden = true;
+  setText($("web-export"), WORDS.exporting);
+  const done = await act($("web-export"), Action.WebExport, {}, { timeoutMs: LONG_ACTION_MS });
+  setText($("web-export"), WORDS.export);
+  if (!done?.note) return;
+  setText($("note"), done.note);
+  $("note").hidden = false;
+}
+
+$("get-godot").onclick = () => void (last?.windows ? downloadGodot() : act($("get-godot"), Action.GetGodot));
+$("recheck").onclick = () => void refresh();
+$("back").onclick = () => go(View.Project);
+$("change").onclick = () => go(View.Pick);
+$("new-here").onclick = () => go(View.New);
+$("cancel-new").onclick = () => go(last?.project ? View.Project : View.Pick);
+$("choose").onclick = () => void chooseFile();
+$("create").onclick = () => void create();
+// Panels run in a frame without allow-forms, so nothing here is a form: Enter creates.
+$("name").onkeydown = (event) => {
+  if (event.key === "Enter") void create();
+};
+$("filter").oninput = () => {
+  ui.filter = $("filter").value;
+  if (last) renderPick(last);
+};
+$("primary").onclick = async () => {
+  const name = $("primary").dataset.act;
+  if (!name) return;
+  await act($("primary"), name, {}, { timeoutMs: LONG_ACTION_MS });
+  void refresh();
+};
+$("open-again").onclick = () => void act($("open-again"), Action.OpenEditor);
+$("web-export").onclick = () => void webExport();
+
+/** A CSS colour as sRGB channels 0–255, read through a canvas so any CSS spelling works; black if unreadable. */
+function channels(colour) {
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.fillStyle = colour;
+  const hex = /^#(..)(..)(..)$/.exec(probe.fillStyle);
+  return hex ? hex.slice(1).map((x) => Number.parseInt(x, 16)) : [0, 0, 0];
+}
+
+/** WCAG relative luminance of sRGB channels 0–255. */
+function luminance(rgb) {
+  const [r, g, b] = rgb.map((c) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two sRGB colours. */
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const hexOf = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+const mix = (fg, bg, share) => fg.map((c, i) => Math.round((c * share) / 100 + (bg[i] * (100 - share)) / 100));
+
+/** The quiet text colour: the least share of the text colour, from 64%, that still reads at 4.5:1 on the background. */
+function quietColour(fg, bg) {
+  for (let share = QUIET_SHARE_MIN; share < 100; share++) {
+    const quiet = mix(fg, bg, share);
+    if (contrast(quiet, bg) >= TEXT_CONTRAST_MIN) return hexOf(quiet);
+  }
+  return hexOf(fg);
+}
+
+/** The primary button's colours: the host's when it sends them, else its accent with whichever of white or black reads better. */
+function accentButton(theme) {
+  if (theme.accentFill && theme.accentForeground && theme.accentHover)
+    return { fill: theme.accentFill, text: theme.accentForeground, hover: theme.accentHover };
+  const accent = channels(theme.accent);
+  const white = contrast(accent, channels(WHITE)) >= contrast(accent, channels(BLACK));
+  const away = channels(white ? BLACK : WHITE);
+  return { fill: theme.accent, text: white ? WHITE : BLACK, hover: hexOf(mix(accent, away, HOVER_SHARE)) };
+}
+
+/** The host's theme colours; the quiet text follows its background. */
+function applyTheme(c) {
+  const root = document.documentElement;
+  root.style.setProperty("--bg", c.theme.background);
+  root.style.setProperty("--fg", c.theme.foreground);
+  root.style.setProperty("--accent", c.theme.accent);
+  const button = accentButton(c.theme);
+  root.style.setProperty("--accent-fill", button.fill);
+  root.style.setProperty("--accent-text", button.text);
+  root.style.setProperty("--accent-hover", button.hover);
+  const bg = channels(c.theme.background);
+  root.style.setProperty("--quiet", quietColour(channels(c.theme.foreground), bg));
+  const [r, g, b] = bg.map((x) => x / 255);
+  root.dataset.scheme = 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark";
+}
+
+const readContext = () =>
+  api
+    .call("context")
+    .then(applyTheme)
+    .catch(() => {});
+void readContext();
+api.onContextChanged?.(() => {
+  void readContext();
+  void refresh();
+});
+void refresh();
+const timer = setInterval(() => {
+  if (document.visibilityState === "visible") void refresh();
+}, REFRESH_MS);
+window.addEventListener("pagehide", () => {
+  closed = true;
+  clearInterval(timer);
+});
+</script></body></html>

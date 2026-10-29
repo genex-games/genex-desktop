@@ -62,6 +62,33 @@ fn pcg32_matches_the_reference_stream() {
 }
 
 #[test]
+fn the_rng_names_models_reach_for_draw_the_same_stream() {
+    // Bodycam B7: generated games call `rng.f32()` and `rng.range(a, b)`.
+    let (mut by_alias, mut by_name) = (Pcg32::seeded(11), Pcg32::seeded(11));
+    for _ in 0..100 {
+        assert_eq!(by_alias.f32().to_bits(), by_name.unit().to_bits());
+        assert_eq!(by_alias.range(-2.0, 3.0).to_bits(), by_name.range_f32(-2.0, 3.0).to_bits());
+    }
+    #[derive(Default)]
+    struct Drift {
+        x: f32,
+    }
+    let run = |alias: bool| {
+        let mut game = genex::Game::new(Drift::default());
+        if alias {
+            game.on_update(|sim, ctx| sim.world.x += ctx.rng.f32() + ctx.rng.range(-2.0, 3.0));
+        } else {
+            game.on_update(|sim, ctx| sim.world.x += ctx.rng.unit() + ctx.rng.range_f32(-2.0, 3.0));
+        }
+        let mut runtime = genex::Runtime::new(game).expect("a game");
+        runtime.seed(5);
+        runtime.step(500.0);
+        runtime.checksum()
+    };
+    assert_eq!(run(true), run(false), "ctx.rng.f32 and range are unit and range_f32");
+}
+
+#[test]
 fn glam_is_scalar_so_gpu_structs_cannot_rely_on_its_alignment() {
     assert_eq!(core::mem::align_of::<glam::Vec4>(), 4);
     assert_eq!(core::mem::align_of::<glam::Mat4>(), 4);

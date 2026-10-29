@@ -58,9 +58,13 @@ import {
 import { tmpDir } from "../helpers/tmp.ts";
 
 const { RaylibCpp, RustWgpu } = GameStack;
-const RUST_WEB = STACK_REQUIRED_COMPONENTS[RustWgpu][BuildTarget.Web];
+/** What a Mac's Rust setup installs. Flipped (cross lanes pinned): Browser and Mac only before; Windows and Linux too now. */
 const RUST_ALL: readonly ToolchainId[] = [
-  ...new Set([...RUST_WEB, ...STACK_REQUIRED_COMPONENTS[RustWgpu][BuildTarget.Mac]]),
+  ...new Set(
+    [BuildTarget.Web, BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux].flatMap(
+      (target) => STACK_REQUIRED_COMPONENTS[RustWgpu][target],
+    ),
+  ),
 ];
 const RUST_TARGETS = setupTargets(RustWgpu, ToolchainHost.MacArm64);
 
@@ -195,7 +199,10 @@ describe("the Toolchain sheet keeps its C++ words and rows for a C++ game", () =
     const status = mac([], { rustLock: lockOf(RUST_ALL), kept: ["loop/judge.ts"] });
     const view = sheetView(status, null, setupTargets(RaylibCpp, ToolchainHost.MacArm64));
     assert.deepEqual(view.keptPreRust, []);
-    assert.ok(!view.components.some((id) => RUST_ALL.includes(id)));
+    // Flipped (cross lanes pinned): zig and the Linux headers serve both stacks' Linux builds, so the row names the Rust-only ones.
+    const cpp: readonly ToolchainId[] = Object.values(STACK_REQUIRED_COMPONENTS[RaylibCpp]).flat();
+    const rustOnly = RUST_ALL.filter((id) => !cpp.includes(id));
+    assert.ok(!view.components.some((id) => rustOnly.includes(id)));
   });
 
   it("the C++ sheet's Command Line Tools row reads the tools probe alone, as it always did", () => {

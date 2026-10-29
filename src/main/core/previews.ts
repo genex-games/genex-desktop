@@ -7,12 +7,13 @@ import {
   genexJobDir,
   isGenexInspectionFile,
   readContainedImage,
+  readGenexCoverClip,
   readGenexCoverShot,
   readGenexJobs,
 } from "../game-assets.ts";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { ensureDir } from "../../substrate/fsx.ts";
 import {
   confinedCaptureDir,
@@ -39,7 +40,7 @@ import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
-import { buildFailureNote, servedAfterBuild, type BuildOutcome } from "../game-build.ts";
+import { buildFailureNote, servedAfterBuild, type BuildOutcome, type GameBuildOptions } from "../game-build.ts";
 import { CPP_ENTRY, CppBuildPurpose, refusalProblem } from "../cpp-build.ts";
 import { BuildProblemCode, type BuildProblem, type InstallResult } from "../../shared/build-problem.ts";
 import {
@@ -62,13 +63,20 @@ import {
   WRITER_COPY_MAX_BYTES,
 } from "../../substrate/snapshots.ts";
 import { sizeWords } from "../../shared/byte-size.ts";
-import { isAssetPath, ruleMatches } from "../../shared/project-workspace.ts";
+import { isAssetPath, ruleMatches, webFolderOf } from "../../shared/project-workspace.ts";
+import { engineWebFolderOf, isEngineWebFolder } from "../../shared/project-facts.ts";
 import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import type { Revision } from "../../shared/optimization.ts";
 import { capActions } from "../../substrate/preview-input.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
-import { LIVE_HANDLE, PreviewPool, type PreviewPoolOptions, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
+import {
+  LIVE_HANDLE,
+  PreviewActor,
+  PreviewPool,
+  type PreviewPoolOptions,
+  STAND_IN_HANDLE,
+} from "../../substrate/preview-pool.ts";
 import { NativeLeasePort } from "../../substrate/native-game-port.ts";
 import { NativeError, NativeRefusal, NativeRunMode } from "../../shared/native-contract.ts";
 import { awaitReady, bootBudget, unlockGesture, type ReadyResult } from "../../substrate/preview-ready.ts";
@@ -90,14 +98,21 @@ import { serial } from "./serial.ts";
 import { isInside, samePath, toPosixRelative } from "../../substrate/paths.ts";
 import { isEffectivelyBlack } from "../../substrate/pixel-stats.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ReadyPhase, CaptureSurface, GameClock, GameFront } from "../../shared/preview-contract.ts";
 import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { type LiveAssetsPage, servedOutputOf } from "../asset-watch.ts";
-import { LiveGate, type LiveOffer } from "./live-gate.ts";
-import type { LiveBehindEvent } from "../../shared/live-behind.ts";
+import { buildFinished, LiveGate, type LiveLoad, type LiveOffer, readBuild } from "./live-gate.ts";
+import {
+  type LiveBehindEvent,
+  LivePrepare,
+  type LivePrepareTarget,
+  LiveUpdateKind,
+  WebBuildLoad,
+} from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
 import {
   type GameWindowFocus,
@@ -106,6 +121,11 @@ import {
   liveAudible,
   type LiveSound,
 } from "../game-sound.ts";
+import { liveMaxFps } from "../live-pace.ts";
+import { PlayStage } from "../../shared/play-timing.ts";
+import { cleanTreeOf } from "../rust-build-content.ts";
+import { importRefusalNotes } from "../rust-import-notes.ts";
+import type { PlayClock } from "./play-timings.ts";
 
 /** The most cameras one capture photographs. */
 const MAX_CAPTURE_CAMERAS = 8;
@@ -164,7 +184,13 @@ const LIVE_TIED_MODES = [NativeRunMode.Window, NativeRunMode.Embedded] as const;
 /** How many of a too-large copy's largest folders its refusal names. */
 const COPY_FOLDERS_NAMED = 3;
 
-/** Errors the user reads when a build cannot be shown or landed, and why a reference is no still. */
+/**
+ * Errors the user reads when a build cannot be shown or landed, and why a reference is no still.
+ * The entries that call `t()` are the person's words, in their language; the bench, window and
+ * still words are a worker's or the harness's and stay English, as do the landing refusals
+ * `problemWords` reads by their English (`notCommitHash`, `notInHistory`, `contractorBuilding`,
+ * `uncommittedEdits`, `landingConflicted`).
+ */
 const MESSAGE = {
   // Every copy holds the whole game, whatever the task, and the person reads it when a build
   // cannot start: so it names no worker and no smaller task. What to do comes first: a lead's
@@ -185,12 +211,16 @@ const MESSAGE = {
   benchBuilt:
     "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
   benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
+  /** A capture whose page spent its boot budget: said first, so no frame below is read as the game. */
+  notLoaded: (ready: ReadyResult) =>
+    `NOT LOADED: the page had not finished loading after ${Math.round(ready.budgetMs / SECOND_MS)}s (${ready.reason ?? "it never reported itself ready"}). The frames below show what it drew so far, most likely its loading screen, not the game: do not judge the game from them. Capture again; if it keeps happening, the game's boot is too slow or it never draws its first frame.`,
   benchAfter:
     "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
   profilingNeedsStage: "profiling requires a stage preview",
   noNativeProfiling: "a native run's lease cannot profile a candidate: profiling reads a web build in a browser window",
-  previewChanged: "The selected preview changed while this build was preparing. Open the build again when ready.",
-  noGameInSnapshot: "that snapshot has no game to play",
+  previewChanged: () =>
+    t("The selected preview changed while this build was preparing. Open the build again when ready."),
+  noGameInSnapshot: () => t("that snapshot has no game to play"),
   sessionEnded: "the session ended before its window opened",
   captureNotADestination: (target: string, targets: readonly string[]) =>
     `"${target}" is not one of this game's destinations (${targets.join(", ") || "none"}): capture one of those.`,
@@ -212,14 +242,18 @@ const MESSAGE = {
   notCommitHash: (commit: string) => `"${commit}" is not a commit hash`,
   notInHistory: (commit: string, project: string) => `commit ${commit} is not in "${project}"'s history`,
   claudeFolder: (commit: string, files: string[]) =>
-    `build ${commit} changes the game's .claude folder (${files.join(", ")}), Claude Code's own settings, so it was not landed`,
+    t("build {commit} changes the game's .claude folder ({files}), Claude Code's own settings, so it was not landed", {
+      commit,
+      files: files.join(", "),
+    }),
   contractorBuilding: (project: string) =>
     `a contractor is building in "${project}" right now — wait for it to finish before landing a build`,
   uncommittedEdits: (files: number) =>
     `the game folder has uncommitted edits (${files} file(s)) — commit or discard them before landing a build`,
   landingConflicted: (revision: string, excerpt: string) =>
     `landing ${revision} conflicted with the game folder; nothing was changed (${excerpt})`,
-  noSuchGame: (project: string) => `there is no game called "${project}"`,
+  noSuchGame: (project: string) => t('there is no game called "{game}"', { game: project }),
+  noPackages: () => t("this game has no package.json, so there is nothing to install"),
   stillUnreadable: "unreadable",
   stillTooLarge: `larger than ${REFERENCE_MAX_MB} MB`,
   stillNotJudgeable: (what: string) => `${what} — the reviewers cannot read it; re-save as JPEG or PNG`,
@@ -229,6 +263,9 @@ const MESSAGE = {
   snapshotNotBuilt: "the snapshot's web build failed; the game's console says why",
   buildDidNotRun: (reason: string, lines: readonly string[]) =>
     `the game's build did not run (${reason})${lines.length ? `: ${lines.join(", ")}` : ""}`,
+  checkedClean: (workspace: string) =>
+    `${workspace} compiles clean: no compiler or lint error. Nothing was reloaded; reload to see it running.`,
+  nothingToCheck: "this game has no compile step to check: reload to see your edits",
 } as const;
 
 /** A reference file that could not become a still, and why. */
@@ -310,15 +347,19 @@ function captureAnswer({
   lines,
   errors,
   setupNote,
+  notLoaded,
 }: {
   bench: { entry: string } | null;
   root: string;
   lines: readonly string[];
   errors: Parameters<typeof consoleErrorsLine>[0];
   setupNote: string | null;
+  /** The wait of a page that never finished loading; null when it did. */
+  notLoaded: ReadyResult | null;
 }): string {
   const workspace = path.basename(root);
   return [
+    ...(notLoaded ? [MESSAGE.notLoaded(notLoaded)] : []),
     bench ? MESSAGE.benchCaptured(bench.entry, workspace) : `Captured your CURRENT build (workspace ${workspace}):`,
     ...lines,
     consoleErrorsLine(errors),
@@ -398,6 +439,15 @@ async function placeCamera(port: PreviewPort, camera: string, placeable: boolean
   return actual;
 }
 
+/**
+ * The page the preview opens from the game's own folder: its shape's entry, or for a game whose web
+ * game is in a folder of it (an engine's web export, `webFolderOf`) that folder's page.
+ */
+function sourceEntry(game: GameProject | undefined, shape: ProjectShape): string {
+  const folder = game ? webFolderOf(game) : null;
+  return folder ? `${folder}/${TEMPLATE_SHAPE.entry}` : shape.entry;
+}
+
 /** The address a load answers with when the build had nothing to serve. */
 function unservedUrl(p: { project: string; entry?: string | undefined }): string {
   return `game://${p.project}/${p.entry ?? "index.html"}`;
@@ -405,6 +455,8 @@ function unservedUrl(p: { project: string; entry?: string | undefined }): string
 
 /** A build failure said on a window's console: its load error, and that the window does not show the asked build. */
 const BUILD_FAILED_NOTE = { loadError: true, buildFailed: true } as const;
+/** The console level a file the import step left out is said at (`preview.ts`'s own warnings' level). */
+const IMPORT_NOTE_LEVEL = "warning";
 
 /** Where a capture's frame came from when the port does not say (a web page): every field unknown. */
 const UNKNOWN_PROVENANCE: CaptureProvenance = {
@@ -441,6 +493,44 @@ export interface ServedEntry {
   stale: string | null;
   /** The build the page is: its stack, destination and, for a lane's build, its module digest and lock; null for a stale fallback. */
   build: BuildIdentity | null;
+  /** A digest of every file a lane admitted for the page (the receipt's outputs); null for any other page or a stale fallback. */
+  outputs: string | null;
+}
+
+/** A compiled game's web page as a lane's build serves it: its output folder, or the last good one under its problem. */
+function compiledServed(
+  built: { stack: GameStack; outcome: BuildOutcome; served: { dir: string; stale: boolean }; note: string | null },
+  entry: string,
+): ServedEntry {
+  const { stack, outcome, served, note } = built;
+  const build = {
+    stack,
+    target: BuildTarget.Web,
+    digest: webModuleDigest(outcome),
+    lock: outcome.rust?.receipt?.lock ?? null,
+  };
+  return {
+    entry,
+    root: served.dir,
+    loopback: false,
+    insertMap: false,
+    stale: served.stale ? note : null,
+    build: served.stale ? null : build,
+    outputs: served.stale ? null : outputsDigest(outcome),
+  };
+}
+
+/** A digest of every file the lane admitted for a build (its receipt's outputs); null for a build with no receipt. */
+function outputsDigest(outcome: BuildOutcome): string | null {
+  const outputs = outcome.rust?.receipt?.outputs;
+  return outputs ? createHash("sha256").update(JSON.stringify(outputs)).digest("hex") : null;
+}
+
+/** Whether `dir` is a real folder holding a clean checkout of `commit`: a copy Play may play again. */
+async function isCleanCopyOf(dir: string, commit: string): Promise<boolean> {
+  if (!(await lstat(dir).catch(() => null))?.isDirectory()) return false;
+  const head = (await git(dir, ["rev-parse", "--verify", "HEAD"]).catch(() => "")).trim();
+  return head === commit && (await cleanTreeOf(dir)) !== null;
 }
 
 /** The SHA-256 of a Rust web build's module, as the lane admitted it; null for any other build. */
@@ -459,12 +549,102 @@ interface ServeOptions {
   fallback?: boolean;
   /** Default: Live for a load that may fall back, Judging for one that may not. */
   purpose?: CppBuildPurpose;
+  /** The person's Play this load serves, timed (`play-timings.ts`); absent: nobody's. */
+  clock?: PlayClock;
+}
+
+/** What a load for the person's Play adds: the build's purpose and the Play's clock. */
+export interface PlayServe {
+  purpose?: CppBuildPurpose;
+  clock?: PlayClock;
 }
 
 /** A compiled game whose destinations leave the browser out: Live has no page of it to show. */
 function notForTheBrowser(game: GameProject | undefined): boolean {
   if (!isCompiledStack(stackOf(game?.shape ?? TEMPLATE_SHAPE))) return false;
   return !destinationsOf(game ?? {}).targets.includes(BuildTarget.Web);
+}
+
+/** Under scratch: the build copies Play plays, one per commit. */
+const SHOW_FOLDER = "show";
+/** A Play's `copy` mark when it played a copy an earlier Play or prebuild made. */
+const COPY_REUSED = "reused";
+/** A Play's `candidate` mark when the build's very output already loaded without a problem in a window. */
+const CANDIDATE_BOOTED_BEFORE = "booted-before";
+/** How many lane outputs the service remembers as booted. */
+const BOOTED_KEPT = 64;
+/** A Play's `built` mark when the lane served an admitted build without building (`PlayStage.Built`'s detail). */
+const BUILT_REUSED = "reused";
+/** How often a Play's page is asked where its boot is, and for how long at most. */
+const PAGE_BOOT_POLL_MS = 100;
+const PAGE_BOOT_WATCH_MS = 3 * MINUTE_MS;
+/** The web shell's boot, as `window.GenexShell` says it (`shell.html`): its state and its loading stage. */
+const PAGE_BOOT_PROBE =
+  "(() => { const s = window.GenexShell; return s ? { shell: true, state: s.status?.state ?? null, stage: s.progress?.stage ?? null } : null; })()";
+/** The shell's states and the stage its loading screen leaves at (`shell.html`). Wire values. */
+const PageBoot = { Ready: "ready", Failed: "failed", Unsupported: "unsupported" } as const;
+
+/**
+ * A Play's page, watched until its first frame: each loading stage the web shell passes is a mark,
+ * the loading screen leaving ends the Play. A page with no shell ends it at once (its load is its
+ * first frame as far as Studio can tell); a page that fails ends it failed. Never throws.
+ */
+async function watchPageBoot(port: PreviewPort, clock: PlayClock): Promise<void> {
+  const until = Date.now() + PAGE_BOOT_WATCH_MS;
+  let stage: string | null = null;
+  while (Date.now() < until) {
+    const boot = pageBootOf(await port.evaluate(PAGE_BOOT_PROBE).catch(() => null));
+    if (!boot) return clock.end(PlayStage.FirstFrame, null);
+    if (boot.state === PageBoot.Failed || boot.state === PageBoot.Unsupported)
+      return clock.end(PlayStage.Failed, String(boot.state));
+    if (typeof boot.stage === "string" && boot.stage !== stage) {
+      if (boot.stage === PageBoot.Ready) return clock.end(PlayStage.FirstFrame, null);
+      stage = boot.stage;
+      clock.mark(PlayStage.PageStage, { detail: stage });
+    }
+    // Unref'd: a page still booting never keeps the app (or a test) from ending.
+    await sleep(PAGE_BOOT_POLL_MS, undefined, { ref: false });
+  }
+  clock.end(PlayStage.Failed, PAGE_BOOT_TIMED_OUT);
+}
+/** What a build for a Play is handed besides the game: the Play's clock, which the lane marks. */
+function playBuild(clock: PlayClock | undefined): GameBuildOptions {
+  return clock ? { timing: clock.sink } : {};
+}
+
+/** A Play's build answered: reused when the lane served an admitted build without building. */
+function markBuilt(clock: PlayClock | undefined, outcome: BuildOutcome | null): void {
+  const reused = outcome?.ran === false && outcome.ok;
+  clock?.mark(PlayStage.Built, { detail: reused ? BUILT_REUSED : null });
+}
+
+/** Live was given a Play's page: it is served, and its boot is watched to its first frame. */
+function watchPlay(port: PreviewPort, clock: PlayClock | undefined): void {
+  if (!clock) return;
+  clock.mark(PlayStage.Served);
+  void watchPageBoot(port, clock);
+}
+
+/** What {@link PAGE_BOOT_PROBE} answered, or null for a page with no shell. */
+function pageBootOf(value: unknown): { state: unknown; stage: unknown } | null {
+  if (typeof value !== "object" || value === null) return null;
+  if (Reflect.get(value, "shell") !== true) return null;
+  return { state: Reflect.get(value, "state"), stage: Reflect.get(value, "stage") };
+}
+/** Why a watched page ended its Play: it never reached its first frame in {@link PAGE_BOOT_WATCH_MS}. */
+const PAGE_BOOT_TIMED_OUT = "page-boot-timed-out";
+
+/** The query the web shell reads for a game played with mouse look (`shell.html`'s `mouseLook`). */
+const MOUSE_LOOK_QUERY = "?mouseLook";
+
+/**
+ * The page a compiled game's build opens at: Live's (a played snapshot's too) of a game played with
+ * mouse look (`GameProject.mouseLook`) asks the web shell for it, which then takes the pointer lock
+ * on a click as Native does; a judged page drives look through the `input` verb.
+ */
+function compiledEntry(game: GameProject | undefined, purpose: CppBuildPurpose): string {
+  const looks = purpose === CppBuildPurpose.Live && game?.mouseLook === true;
+  return looks ? `${CPP_ENTRY}${MOUSE_LOOK_QUERY}` : CPP_ENTRY;
 }
 
 /** The port's load options for a served entry. */
@@ -588,6 +768,15 @@ function invalidStillSize(maxPx: number | undefined): boolean {
 }
 
 /**
+ * What an agent-screen frame reads of a target: a picture, its size and the pointer. Every preview
+ * port is one; a Play Protocol game's target is adapted to it (`computer-tools.ts`).
+ */
+export type FramePort = Pick<
+  PreviewPort,
+  "screenshot" | "screenshotCard" | "screenshotWithStats" | "resizeImage" | "viewSize" | "pointer"
+>;
+
+/**
  * Whether the preview serves a game on its loopback origin: one built from its own sources, or a
  * template game that loads the Genex SDK, whose local test mode only a loopback origin gets.
  */
@@ -602,6 +791,18 @@ async function servedOnLoopback(
 
 /** Whether Live's page binds the asset swap's verb (`window.__studio.reloadAssets`, the Rust web shell's). */
 const RELOAD_VERB_PROBE = `typeof window.__studio?.reloadAssets === "function"`;
+/** An engine's web build of a game as Live saw it: its folder (null for none), its files' print, whether it is finished. */
+interface WebBuildSeen {
+  project: string;
+  folder: string | null;
+  print: string | null;
+  /** Whole and left alone for a while (`buildFinished`): never a build still being written. */
+  finished: boolean;
+}
+
+/** The same build of the same game: its folder, and files that did not change. */
+const sameWebBuild = (seen: WebBuildSeen | null, now: WebBuildSeen): boolean =>
+  seen?.project === now.project && seen.folder === now.folder && seen.print === now.print;
 
 export class PreviewService {
   readonly #core: StudioCore;
@@ -614,6 +815,17 @@ export class PreviewService {
   readonly #frames = new Map<string, PendingFrame>();
   /** The build trouble last said on each window, so a judged load that built nothing says why. */
   readonly #buildNotes = new WeakMap<PreviewPort, string | null>();
+  /**
+   * The files the import step left out of the build each window serves (B8), said again after
+   * every load and reload of it, because loading a page clears its console.
+   */
+  readonly #importNotes = new WeakMap<PreviewPort, readonly string[]>();
+  /**
+   * The compiled build output each window was last given to serve (a lane's `<bin>.out`), so the
+   * build lanes' sweep keeps it. A window that moved on keeps its entry until it loads another
+   * build: the sweep keeps a folder a little longer, never removes one in view.
+   */
+  readonly #servedBuilds = new Map<PreviewPort, string>();
   #stageVisible = true;
   /** The person watches a game in Live, whatever briefly covers it (the renderer's `watchingLive`). */
   #liveWatched = true;
@@ -629,6 +841,14 @@ export class PreviewService {
   #embeddedProject: string | null = null;
   /** Pooled windows a computer session plays in, by how many sessions hold each: none changes size. */
   readonly #sessionWindows = new Map<string, number>();
+  /** The engine's web build Live last loaded with its game folder (`engineWebFolderOf`), and its files' print. */
+  #liveWebBuild: WebBuildSeen | null = null;
+  /** The person stopped Live's game (`stopLive`): nothing loads into it until Play or a load of theirs. */
+  #liveStopped = false;
+  /** Lane outputs (by `ServedEntry.outputs`) that loaded without a problem in some window, oldest first. */
+  readonly #booted = new Set<string>();
+  /** The person's Play each window is loading for, timed (`play-timings.ts`), while that load runs. */
+  readonly #playClocks = new Map<string, PlayClock>();
 
   constructor(core: StudioCore, x: CoreInternals) {
     this.#core = core;
@@ -669,11 +889,16 @@ export class PreviewService {
     this.#updateVisibility();
   }
 
-  #updateVisibility(): void {
+  /** Whether an agent looks at Live: a session lent it, or a run's harness looks through it. */
+  #liveObserved(): boolean {
     // A run's harness looks through Live only where this build opens no hidden windows
     // (`harnessWindow`); elsewhere it has the stand-in, and a hidden Live rests during a run.
     const runLooksAtLive = this.#x.activeRunIds.size > 0 && !this.#core.options.createHeadlessPreview;
-    const observed = this.#liveObservers > 0 || runLooksAtLive;
+    return this.#liveObservers > 0 || runLooksAtLive;
+  }
+
+  #updateVisibility(): void {
+    const observed = this.#liveObserved();
     const preview = this.#optionalPreview();
     preview?.setObserved?.(observed);
     preview?.setVisible?.(this.#stageVisible || observed);
@@ -681,6 +906,7 @@ export class PreviewService {
     // it is on screen whenever the person watches Live.
     this.#embeddedVisible(this.#liveWatched || observed);
     this.#applySound();
+    this.#applyPace();
   }
 
   /**
@@ -717,6 +943,7 @@ export class PreviewService {
   setForeground(foreground: boolean): void {
     this.#sound = { ...this.#sound, foreground };
     this.#applySound();
+    this.#applyPace();
   }
 
   /**
@@ -781,6 +1008,12 @@ export class PreviewService {
       this.#applyGameSound();
     });
     return runs;
+  }
+
+  /** Live draws at the display's rate while Genex is in front or an agent looks at it, slower behind another app. */
+  #applyPace(): void {
+    const pace = { foreground: this.#sound.foreground, observed: this.#liveObserved() };
+    this.#optionalPreview()?.setMaxFps?.(liveMaxFps(pace));
   }
 
   /**
@@ -860,12 +1093,15 @@ export class PreviewService {
     options: ServeOptions = {},
   ): Promise<ServedEntry | null> {
     this.#buildNotes.delete(port);
+    this.#importNotes.delete(port);
     const descriptor = await this.#game(project);
     const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
     if (isCompiledStack(stackOf(shape))) return this.#servedCompiled(project, root, entry, port, options, descriptor);
-    const base = root ?? this.#core.games.dirFor(project);
+    const game = this.#core.games.dirFor(project);
+    const base = root ?? game;
     const loopback = await servedOnLoopback(descriptor, shape, base);
-    const outcome = await this.#core.builds.ensure({ project, dir: base, shape });
+    const guarded = await this.#core.scriptsGuarded(project);
+    const outcome = await this.#core.builds.ensure({ project, dir: base, game, shape, guarded });
     const note = this.#reportBuild(project, root, outcome, port);
     const served = servedAfterBuild(outcome, { fallback: options.fallback === true });
     if (!served) return null;
@@ -874,18 +1110,48 @@ export class PreviewService {
     const asSource = path.resolve(served.dir) === path.resolve(base);
     const build = { stack: stackOf(shape), target: BuildTarget.Web, digest: null, lock: null };
     return {
-      entry: entry ?? (asSource ? shape.entry : path.basename(shape.entry)),
+      entry: entry ?? (asSource ? sourceEntry(descriptor, shape) : path.basename(shape.entry)),
       root: asSource ? (root ?? undefined) : served.dir,
       loopback,
       insertMap: true,
       stale: served.stale ? note : null,
       build: served.stale ? null : build,
+      outputs: null,
     };
+  }
+
+  /** The compiled build outputs the preview windows were last given to serve. */
+  servedBuildFolders(): string[] {
+    return [...this.#servedBuilds.values()];
   }
 
   /** A game of the library by name, or undefined when there is none (or the library cannot be read). */
   async #game(project: string): Promise<GameProject | undefined> {
     return (await this.#core.games.list().catch(() => [] as GameProject[])).find((g) => g.name === project);
+  }
+
+  /**
+   * A compiled game's fast check (the computer's `check`): `root`'s web build through the
+   * build-lane seam with `check`, so its lane runs only its compiler gate (Rust: clippy in the
+   * build's own sandbox) and nothing is built, served, loaded or reported to the stage. The answer
+   * is the agent's: the build problem's note, or that it compiles clean.
+   */
+  async checkBuild(project: string, root: string): Promise<string> {
+    const descriptor = await this.#game(project);
+    const shape = descriptor?.shape ?? TEMPLATE_SHAPE;
+    if (!isCompiledStack(stackOf(shape))) return MESSAGE.nothingToCheck;
+    const game = {
+      project,
+      dir: root,
+      shape,
+      destinations: destinationsOf(descriptor ?? {}),
+      lock: await this.#gameLock(project, shape),
+      recordLock: false,
+    };
+    const receipt = await this.#x.gameBuilds.ensure(game, BuildTarget.Web, CppBuildPurpose.Judging, { check: true });
+    if (!receipt.outcome) return MESSAGE.laneMissing(receipt.stack);
+    const { problem } = receipt.outcome;
+    return problem ? problemNote(problem) : MESSAGE.checkedClean(path.basename(root));
   }
 
   /**
@@ -931,8 +1197,10 @@ export class PreviewService {
       },
       BuildTarget.Web,
       purpose,
+      playBuild(options.clock),
     );
     const { outcome } = receipt;
+    markBuilt(options.clock, outcome);
     if (!outcome) {
       port.note?.("error", MESSAGE.laneMissing(receipt.stack), BUILD_FAILED_NOTE);
       return null;
@@ -940,20 +1208,8 @@ export class PreviewService {
     const note = this.#reportBuild(project, root, outcome, port);
     const served = servedAfterBuild(outcome, { fallback });
     if (!served) return null;
-    const build = {
-      stack: receipt.stack,
-      target: BuildTarget.Web,
-      digest: webModuleDigest(outcome),
-      lock: outcome.rust?.receipt?.lock ?? null,
-    };
-    return {
-      entry: entry ?? CPP_ENTRY,
-      root: served.dir,
-      loopback: false,
-      insertMap: false,
-      stale: served.stale ? note : null,
-      build: served.stale ? null : build,
-    };
+    this.#servedBuilds.set(port, served.dir);
+    return compiledServed({ stack: receipt.stack, outcome, served, note }, entry ?? compiledEntry(descriptor, purpose));
   }
 
   /**
@@ -975,11 +1231,17 @@ export class PreviewService {
     const note = outcome.problem ? problemNote(outcome.problem) : null;
     this.#buildNotes.set(port, note);
     if (note) port.note?.("error", note, BUILD_FAILED_NOTE);
+    this.#importNotes.set(port, importRefusalNotes(outcome.rust?.receipt?.assets));
     if (root === null) {
       if (outcome.problem) this.#x.buildProblems.set(project, outcome.problem);
       else this.#x.buildProblems.delete(project);
     }
     return note;
+  }
+
+  /** The files the import step left out of `port`'s build, on its console (warnings: the page still runs). */
+  #sayImportNotes(port: PreviewPort): void {
+    for (const note of this.#importNotes.get(port) ?? []) port.note?.(IMPORT_NOTE_LEVEL, note);
   }
 
   /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
@@ -1014,6 +1276,26 @@ export class PreviewService {
     const url = await port.load(p.project, p.entry, checkedRoot ?? undefined);
     remembered.loaded = url;
     return url;
+  }
+
+  /**
+   * The build copy Live serves of `project` (a shown build, a run's worktree), which Live's Native
+   * view builds instead of the game folder; undefined while Live serves the game folder or another game.
+   */
+  liveRootOf(project: string): string | undefined {
+    const live = this.#x.servedRoots.get(LIVE_HANDLE);
+    return live?.project === project && live.root !== null ? live.root : undefined;
+  }
+
+  /**
+   * `handle` now serves `served`. Live's Native view plays what Live shows: when Live serves another
+   * folder of the same game, its embedded run (when the person watches one) starts again on it.
+   */
+  #serve(handle: string, served: ServedRoot): void {
+    const before = handle === LIVE_HANDLE ? this.#x.servedRoots.get(LIVE_HANDLE) : undefined;
+    this.#x.servedRoots.set(handle, served);
+    if (before?.project !== served.project || before.root === served.root) return;
+    void this.#x.nativeRuns?.reembed(served.project, served.root ?? undefined).catch(() => {});
   }
 
   /** Live is changing games: the previous game's Play window and embedded runs end (its agents' runs are theirs). */
@@ -1081,29 +1363,29 @@ export class PreviewService {
     port: PreviewPort,
   ): Promise<string> {
     const remembered = { project: p.project, root: checkedRoot, entry: p.entry, loaded: null as string | null };
-    this.#x.servedRoots.set(handle, remembered);
+    this.#serve(handle, remembered);
     const isLive = handle === LIVE_HANDLE;
     const revisionBefore = isLive ? await this.previewRevision(p.project, checkedRoot) : null;
     const print = isLive ? await this.#live.printBefore(p.project, checkedRoot) : undefined;
+    const webBuild = isLive && checkedRoot === null ? await this.#webBuildSeen(p.project) : null;
     if (isLive)
       this.#showIdentity({ project: p.project, head: null, state: PreviewIdentityState.Loading, error: null });
+    const clock = this.#playClocks.get(handle);
     try {
-      const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
-      if (!served) {
-        if (isLive) await this.#liveNothingServed(p.project, checkedRoot, print);
-        else await this.#leaveNoPage(port);
-        return unservedUrl(p);
-      }
+      const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive, clock });
+      if (!served) return await this.#servedNothing(p, port, isLive ? { root: checkedRoot, print } : null);
+      // A load starts the page again, whether or not it then arrives: Live's game is no longer stopped.
+      if (isLive) this.#liveStopped = false;
       const url = await port.load(p.project, served.entry, served.root, servedLoadOptions(served));
+      watchPlay(port, clock);
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
-      if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
+      if (isLive) await this.#liveCurrent(p.project, { print, root: checkedRoot }, webBuild);
       remembered.loaded = servedKey(served);
-      // Which game Live plays decides which Play window it outvoices.
-      if (isLive) this.#applyGameSound();
-      if (isLive) await this.#identifyLoaded(p.project, checkedRoot, served.stale, revisionBefore);
+      if (isLive) await this.#liveAnnounced(p.project, checkedRoot, served.stale, revisionBefore);
       // Loading clears the port's error, and the build is still broken: the agent loop and the
       // judges read that flag, so the failure is put back on the page the user can see.
       if (served.stale) port.note?.("error", served.stale, BUILD_FAILED_NOTE);
+      this.#sayImportNotes(port);
       return url;
     } catch (error) {
       if (isLive)
@@ -1115,6 +1397,34 @@ export class PreviewService {
         });
       throw error;
     }
+  }
+
+  /** A load served nothing: Live says why (`#liveNothingServed`); any other window is left on no page. */
+  async #servedNothing(
+    p: HarnessParams<"preview.load">,
+    port: PreviewPort,
+    live: { root: string | null; print: string | null | undefined } | null,
+  ): Promise<string> {
+    if (live) await this.#liveNothingServed(p.project, live.root, live.print);
+    else await this.#leaveNoPage(port);
+    return unservedUrl(p);
+  }
+
+  /** Live has loaded what was asked: what waited for Reload is current, and so is the web build it saw. */
+  async #liveCurrent(project: string, loaded: LiveLoad, webBuild: WebBuildSeen | null): Promise<void> {
+    await this.#live.loaded(project, loaded);
+    this.#liveLoaded(webBuild);
+  }
+
+  /** Which game Live plays decides which Play window it outvoices; the stage then names what it shows. */
+  async #liveAnnounced(
+    project: string,
+    root: string | null,
+    stale: string | null,
+    revisionBefore: string | null,
+  ): Promise<void> {
+    this.#applyGameSound();
+    await this.#identifyLoaded(project, root, stale, revisionBefore);
   }
 
   /** Live was served nothing: the strip says why, and a Play window it outvoiced is heard again. */
@@ -1277,7 +1587,8 @@ export class PreviewService {
     for (const camera of camerasForShot(sc, shot.bench, shot.cameras, known))
       lines.push(await this.#captureCamera(port, screen, { ...shot, camera, known, source, build: loaded.build }));
     const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
-    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote: loaded.setupNote });
+    const { setupNote, notLoaded } = loaded;
+    return captureAnswer({ bench: shot.bench, root: shot.workspace, lines, errors, setupNote, notLoaded });
   }
 
   /**
@@ -1380,7 +1691,9 @@ export class PreviewService {
     sc: NonNullable<DelegateRequest["selfCapture"]>,
     session: SessionPort,
     { target, bench }: { target: string; bench: { entry: string } | null },
-  ): Promise<{ problem: string } | { setupNote: string | null; build: BuildIdentity | null }> {
+  ): Promise<
+    { problem: string } | { setupNote: string | null; build: BuildIdentity | null; notLoaded: ReadyResult | null }
+  > {
     const loaded = await this.loadServed(port, sc.project, target, bench?.entry ?? sc.entry);
     if (loaded.problem) {
       session.loaded = null;
@@ -1389,8 +1702,10 @@ export class PreviewService {
     const applied = bench ? null : await this.applySetup(port, sc.setup);
     session.loaded = bench ? null : { root: target, at: Date.now() };
     // A page the studio never heard report itself ready is still photographed — the frames
-    // just come with the sentence that says what they are worth.
-    return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null, build: loaded.build };
+    // come under the sentence that says, first, that they are not the game (not again as a note).
+    const notLoaded = loaded.ready?.timedOut ? loaded.ready : null;
+    const note = notLoaded ? null : loaded.note;
+    return { setupNote: [note, applied].filter(Boolean).join("; ") || null, build: loaded.build, notLoaded };
   }
 
   /**
@@ -1626,9 +1941,41 @@ export class PreviewService {
     root: string | null,
     entry?: string,
     forceLoopback = false,
+    play: PlayServe = {},
   ): Promise<LoadedServed> {
-    const served = await this.servedEntry(project, root, entry, port);
+    const served = await this.servedEntry(project, root, entry, port, play);
     if (!served) return { problem: await this.#leaveNoPage(port), note: null, ready: null, build: null };
+    return await this.#loadChecked(port, project, served, forceLoopback);
+  }
+
+  /** `served` loaded into `port` and checked as `loadServed` checks it; a lane's output that loads is remembered as booted. */
+  async #loadChecked(
+    port: PreviewPort,
+    project: string,
+    served: ServedEntry,
+    forceLoopback = false,
+  ): Promise<LoadedServed> {
+    const loaded = await this.#loadAndCheck(port, project, served, forceLoopback);
+    if (!loaded.problem && served.outputs) this.#rememberBooted(served.outputs);
+    return loaded;
+  }
+
+  /** A lane's output that loaded without a problem: Play does not boot it again in its hidden window. */
+  #rememberBooted(outputs: string): void {
+    this.#booted.delete(outputs);
+    this.#booted.add(outputs);
+    for (const old of this.#booted) {
+      if (this.#booted.size <= BOOTED_KEPT) break;
+      this.#booted.delete(old);
+    }
+  }
+
+  async #loadAndCheck(
+    port: PreviewPort,
+    project: string,
+    served: ServedEntry,
+    forceLoopback: boolean,
+  ): Promise<LoadedServed> {
     const budgetMs = await this.bootMsFor(project);
     // `shim.readyMs` is the same number: one budget, so the page and the studio give up together.
     const loaded = await port.load(project, served.entry, served.root, {
@@ -1714,7 +2061,7 @@ export class PreviewService {
 
   /** A new picture of a worker's window, downscaled for its node, with the cursor and the deed. */
   async frame(
-    port: PreviewPort,
+    port: FramePort,
     screen: AgentScreen,
     jpeg: Buffer | null,
     caption: string | null,
@@ -1756,7 +2103,7 @@ export class PreviewService {
     }
   }
 
-  async #captureFrame(port: PreviewPort, screen: AgentScreen, deed: FrameDeed, state: PendingFrame): Promise<void> {
+  async #captureFrame(port: FramePort, screen: AgentScreen, deed: FrameDeed, state: PendingFrame): Promise<void> {
     const { jpeg } = deed;
     try {
       if (!jpeg && port.screenshotCard) {
@@ -1780,7 +2127,7 @@ export class PreviewService {
     }
   }
 
-  #publishFrame(port: PreviewPort, screen: AgentScreen, jpeg: Buffer, { caption, act }: FrameDeed): void {
+  #publishFrame(port: FramePort, screen: AgentScreen, jpeg: Buffer, { caption, act }: FrameDeed): void {
     const size = port.viewSize?.() ?? COMPUTER_VIEW;
     const cursor = port.pointer?.() ?? { x: Math.round(size.width / 2), y: Math.round(size.height / 2) };
     const frame: AgentScreenFrame = {
@@ -1804,40 +2151,112 @@ export class PreviewService {
     this.#core.snapshots.register({ name: project, dir: projectDir });
     const resolved = (await git(projectDir, ["rev-parse", "--verify", `${commit}^{commit}`]).catch(() => "")).trim();
     if (!resolved) throw new Error(MESSAGE.notInHistory(commit, project));
-    // Prepare an independent revision. A failed build must never delete the currently served one.
-    const showDir = path.join(
-      this.#core.layout.scratch,
-      "show",
-      `${project}-${resolved.slice(0, 12)}-${randomUUID().slice(0, 8)}`,
-    );
-    await ensureDir(path.dirname(showDir));
-    await this.#core.snapshots.worktreeAt(project, resolved, showDir, await this.nestedPolicy(projectDir));
+    const clock = this.#core.playTimings.start({ project, target: BuildTarget.Web, commit: resolved });
+    // Live keeps what it shows meanwhile, and the stage says the build Play asked for is on its way.
+    this.#live.updating(project, { kind: LiveUpdateKind.Play, commit: resolved, since: Date.now() });
+    try {
+      return await this.#showBuild(project, projectDir, resolved, clock);
+    } catch (error) {
+      clock.end(PlayStage.Failed, errorMessage(error));
+      throw error;
+    } finally {
+      this.#live.updating(project, null, resolved);
+    }
+  }
+
+  /** Play's background build of `commit` for `project` started (`since`) or ended (null): what Live's line says. */
+  prebuilding(project: string, commit: string, since: number | null): void {
+    // The person's own Play of it says more: a background build never takes or clears its line.
+    if (this.#live.state(project).updating?.kind === LiveUpdateKind.Play) return;
+    const updating = since === null ? null : { kind: LiveUpdateKind.Prebuild, commit, since };
+    this.#live.updating(project, updating, commit);
+  }
+
+  async #showBuild(
+    project: string,
+    projectDir: string,
+    resolved: string,
+    clock: PlayClock,
+  ): Promise<{ dir: string; commit: string }> {
+    // The commit's own copy, made once: a failed build must never delete the currently served one.
+    const { dir: showDir, made } = await this.playCopy(project, projectDir, resolved);
+    clock.mark(PlayStage.Copy, { detail: made ? null : COPY_REUSED });
     const previous = this.#x.servedRoots.get(LIVE_HANDLE);
-    // A preview candidate may never borrow the user's Live window.
+    // A preview candidate may never borrow the user's Live window. It is the person's own window
+    // past the agents' share: every caller plays a build the person asked for (their Play, or the
+    // lead's show_build answering their own message), so a run holding every window never refuses it.
     let candidateHandle: string | undefined;
     let liveAttempted = false;
     try {
-      const lease = await this.pool().acquire({ label: `preview-candidate:${project}` });
+      const lease = await this.pool().acquire({ label: `preview-candidate:${project}`, by: PreviewActor.Person });
+      clock.mark(PlayStage.Window);
       candidateHandle = lease.handle;
       const port = this.pool().port(lease.handle);
-      const candidate = await this.loadServed(port, project, showDir);
+      const candidate = await this.#candidate(port, project, showDir, clock);
       if (candidate.problem) throw new Error(candidate.problem);
-      if (this.#x.servedRoots.get(LIVE_HANDLE) !== previous) throw new Error(MESSAGE.previewChanged);
+      if (this.#x.servedRoots.get(LIVE_HANDLE) !== previous) throw new Error(MESSAGE.previewChanged());
       liveAttempted = true;
-      await this.loadPreview({ project, root: showDir });
+      this.#playClocks.set(LIVE_HANDLE, clock);
+      try {
+        await this.loadPreview({ project, root: showDir });
+      } finally {
+        this.#playClocks.delete(LIVE_HANDLE);
+      }
     } catch (error) {
       if (liveAttempted && previous)
         await this.loadPreview({ project: previous.project, root: previous.root, entry: previous.entry }).catch(
           () => {},
         );
-      await this.#core.snapshots.removeWorktree(project, showDir).catch(() => {});
-      await rm(showDir, { recursive: true, force: true }).catch(() => {});
+      // Only a copy this Play made goes: an earlier one may be what Live shows.
+      if (made && this.#x.servedRoots.get(LIVE_HANDLE)?.root !== showDir) {
+        await this.#core.snapshots.removeWorktree(project, showDir).catch(() => {});
+        await rm(showDir, { recursive: true, force: true }).catch(() => {});
+      }
       throw error;
     } finally {
       if (candidateHandle) await this.pool().release(candidateHandle);
     }
     await this.#core.games.touch(project).catch(() => {});
     return { dir: showDir, commit: resolved };
+  }
+
+  /**
+   * The build copy Play plays `commit` from, under scratch's `show/`: the copy an earlier Play or
+   * prebuild made of it while it is still that commit's clean checkout (`made: false`), else a new
+   * worktree beside it. One copy per commit means one build folder per commit, which the Rust lane
+   * finds built (lane PW).
+   */
+  async playCopy(project: string, projectDir: string, commit: string): Promise<{ dir: string; made: boolean }> {
+    const shows = path.join(this.#core.layout.scratch, SHOW_FOLDER);
+    const stable = path.join(shows, `${project}-${commit.slice(0, 12)}`);
+    if (await isCleanCopyOf(stable, commit)) return { dir: stable, made: false };
+    const taken = await lstat(stable).catch(() => null);
+    const dir = taken ? `${stable}-${randomUUID().slice(0, 8)}` : stable;
+    await ensureDir(shows);
+    await this.#core.snapshots.worktreeAt(project, commit, dir, await this.nestedPolicy(projectDir));
+    return { dir, made: true };
+  }
+
+  /**
+   * The person's hidden window plays the copy's build before Live is given it, so a build that does
+   * not load never replaces what Live shows. A build whose very output already loaded without a
+   * problem in any window (a judge's look, an earlier Play) is not booted again (`booted`).
+   */
+  async #candidate(
+    port: PreviewPort,
+    project: string,
+    root: string,
+    clock: PlayClock,
+  ): Promise<{ problem: string | null }> {
+    const served = await this.servedEntry(project, root, undefined, port, { purpose: CppBuildPurpose.Live, clock });
+    if (!served) return { problem: await this.#leaveNoPage(port) };
+    if (served.outputs && this.#booted.has(served.outputs)) {
+      clock.mark(PlayStage.Candidate, { detail: CANDIDATE_BOOTED_BEFORE });
+      return { problem: null };
+    }
+    const loaded = await this.#loadChecked(port, project, served);
+    clock.mark(PlayStage.Candidate);
+    return { problem: loaded.problem };
   }
 
   /** Whether the studio may version this game's own nested repositories inside a fork of it. */
@@ -1936,10 +2355,13 @@ export class PreviewService {
 
   async readProjectAsset(p: ProjectAssetRead): Promise<{ mimeType: string; data: string } | null> {
     if (!p || typeof p.project !== "string") return null;
+    // The game's kept Genex cover clip: its place is the host's, from the game's name alone; a video as it was kept.
+    if (p.scope === ProjectAssetScope.GenexCoverClip)
+      return readGenexCoverClip(this.#core.layout.engineHomes, p.project);
     const resize = this.#resizeTo(p.maxPx);
-    // The game's kept Genex cover shot: its place is the host's, from the game's name alone.
+    // The game's kept Genex cover shot or one of its candidates: the same place, from the same name.
     if (p.scope === ProjectAssetScope.GenexCover)
-      return readGenexCoverShot(this.#core.layout.engineHomes, p.project, resize);
+      return readGenexCoverShot(this.#core.layout.engineHomes, p.project, { ...resize, candidate: p.candidate });
     if (typeof p.file !== "string") return null;
     if (p.scope === ProjectAssetScope.GenexInspection) {
       const dir = genexJobDir(this.#core.layout.engineHomes, p.project, String(p.jobId ?? ""));
@@ -2008,7 +2430,7 @@ export class PreviewService {
    */
   async playGameSnapshot(snapshotId: string, project: string): Promise<{ dir: string; snapshotId: string }> {
     const record = this.#core.snapshotIndex.get(snapshotId);
-    if (!record?.git.game) throw new Error(MESSAGE.noGameInSnapshot);
+    if (!record?.git.game) throw new Error(MESSAGE.noGameInSnapshot());
     await this.#core.assertProjectAllowed(this.#core.games.dirFor(project));
     this.#core.snapshots.register({ name: project, dir: this.#core.games.dirFor(project) });
     const playDir = path.join(this.#core.layout.scratch, "review-play", project);
@@ -2125,10 +2547,19 @@ export class PreviewService {
    * only thing the studio ever opens the network for, it happens because the user pressed a
    * button, and it opens exactly one domain for exactly this command.
    */
-  async installPackages(project: string): Promise<InstallResult> {
+  /**
+   * The stage's Install packages. Someone else's game installs the guarded way, no setup script
+   * running, until the person trusts its scripts (`scripts`): from then on they run.
+   */
+  async installPackages(project: string, options: { scripts?: boolean } = {}): Promise<InstallResult> {
     const descriptor = (await this.#core.games.list()).find((game) => game.name === project);
     if (!descriptor) throw new Error(MESSAGE.noSuchGame(project));
-    const result = await this.#core.builds.install({ project, dir: descriptor.dir, shape: descriptor.shape });
+    if (options.scripts) await this.#core.games.trustScripts(project);
+    const source = { project, dir: descriptor.dir, shape: descriptor.shape };
+    const guarded = await this.#core.scriptsGuarded(project);
+    const result = guarded
+      ? ((await this.#core.builds.installGuarded(source)) ?? { ok: false, lines: [MESSAGE.noPackages()] })
+      : await this.#core.builds.install(source);
     if (result.ok) this.#x.buildProblems.delete(project);
     return result;
   }
@@ -2159,10 +2590,15 @@ export class PreviewService {
     const last = this.#x.servedRoots.get(handle);
     if (isLive && last) await this.#endLiveTiedRuns(last.project);
     const print = isLive && last ? await this.#live.printBefore(last.project, last.root) : undefined;
+    const webBuild = await this.#reloadStarting(handle, last);
     // Reload means "what is on disk NOW" — for a game with its own build, that is a rebuild.
     const rebuilt = last ? await this.#rebuildServed(port, last, handle, p?.retry === true) : false;
-    if (!rebuilt) await port.reload();
+    if (!rebuilt) {
+      await port.reload();
+      this.#sayImportNotes(port);
+    }
     if (last && isLive) await this.#live.loaded(last.project, { print, root: last.root });
+    if (isLive) this.#liveLoaded(webBuild);
     return true;
   }
 
@@ -2170,6 +2606,7 @@ export class PreviewService {
   stopLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
       await this.#optionalPreview()?.stop?.();
+      this.#liveStopped = true;
     });
   }
 
@@ -2177,6 +2614,7 @@ export class PreviewService {
   playLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
       await this.#optionalPreview()?.resume?.();
+      this.#liveStopped = false;
     });
   }
 
@@ -2184,10 +2622,127 @@ export class PreviewService {
 
   /**
    * Something would have changed Live — a checkpoint, a rewind, the harness loading the game or a
-   * build in the stand-in. It waits for the person's Reload instead (`live.behind`).
+   * build in the stand-in. It waits for the person's Reload instead (`live.behind`), except a Unity
+   * or Godot game's web build that appeared or was built again since Live loaded the game folder:
+   * the engine's own output, never edited, which Live loads at once.
    */
-  offerLive(offer: LiveOffer): Promise<void> {
-    return this.#live.offer(offer);
+  async offerLive(offer: LiveOffer): Promise<void> {
+    const folder = await this.#offersGameFolder(offer);
+    const loaded = folder && (await this.loadWebBuild(offer.project)) === WebBuildLoad.Loaded;
+    if (!loaded) await this.#live.offer(offer);
+  }
+
+  /** Whether an offer is of the game folder itself: no build named by commit, no other folder. */
+  async #offersGameFolder(offer: LiveOffer): Promise<boolean> {
+    if (offer.commit) return false;
+    return offer.root === null || sameRealPath(offer.root, this.#core.games.dirFor(offer.project));
+  }
+
+  /**
+   * Live loads the game's finished engine web build it lacks (`#missingWebBuild`). Asked first
+   * outside Live's queue, so an offer with no build to bring never waits behind a load; then again
+   * inside it, one decision per Live operation, so a checkpoint's offer and the Web game tab never
+   * load it twice. A load that fails keeps Live as it is.
+   */
+  async loadWebBuild(project: string): Promise<WebBuildLoad> {
+    const missing = await this.#missingWebBuild(project);
+    if (!missing) return WebBuildLoad.Kept;
+    if (!missing.finished) return WebBuildLoad.Unfinished;
+    return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
+      const now = await this.#missingWebBuild(project);
+      if (!now) return WebBuildLoad.Kept;
+      if (!now.finished) return WebBuildLoad.Unfinished;
+      try {
+        const checkedRoot = await this.#x.assertHarnessRoot(project, null);
+        this.#x.profileSources.delete(LIVE_HANDLE);
+        await this.#loadServedPreview({ project }, LIVE_HANDLE, checkedRoot, this.preview());
+        return WebBuildLoad.Loaded;
+      } catch {
+        return WebBuildLoad.Kept;
+      }
+    });
+  }
+
+  /**
+   * Live's background build of a compiled game's folder for `target` after the folder changed
+   * under it (a checkpoint, a landing, the person's edits): Web for its web view, Mac for its Native
+   * view, through the same lane, purpose, folder and lock as the load (or the embedded run) that
+   * Reload then makes, so that one finds the build made or joins the one under way. Live itself is
+   * left as it is. Only while Live runs this game's own folder, for a destination the game names.
+   */
+  async prepareLiveBuild(project: string, target: LivePrepareTarget): Promise<LivePrepare> {
+    const served = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (served?.project !== project || served.root !== null) return LivePrepare.Skipped;
+    const game = await this.#game(project);
+    const stack = game ? stackOf(game.shape) : null;
+    const builds = game && stack !== null && isCompiledStack(stack) && destinationsOf(game).targets.includes(target);
+    if (!game || !builds) return LivePrepare.Skipped;
+    const receipt = await this.#x.gameBuilds.ensure(
+      {
+        project,
+        dir: this.#core.games.dirFor(project),
+        shape: game.shape,
+        destinations: destinationsOf(game),
+        lock: await this.#prepareLock(project, game.shape, target),
+        recordLock: true,
+      },
+      target,
+      CppBuildPurpose.Live,
+    );
+    return receipt.outcome?.ok ? LivePrepare.Built : LivePrepare.Failed;
+  }
+
+  /** The lock Live's Reload builds `target` on: the web load's (`#gameLock`), or the embedded run's (the stack's current lock, `native-prepare.ts`). */
+  async #prepareLock(project: string, shape: ProjectShape, target: LivePrepareTarget): Promise<ToolchainLock | null> {
+    const stack = stackOf(shape);
+    if (target === BuildTarget.Web || !isCompiledStack(stack)) return this.#gameLock(project, shape);
+    return this.#core.toolchains.currentLock(stack, project).catch(() => null);
+  }
+
+  /**
+   * The game's engine web build Live lacks while it runs this game's own folder (never a build the
+   * person chose to view, never a stopped game): one Live has not loaded, finished or still being
+   * written, as when the game was opened before its export existed. Null when there is none.
+   */
+  async #missingWebBuild(project: string): Promise<WebBuildSeen | null> {
+    const served = this.#x.servedRoots.get(LIVE_HANDLE);
+    if (served?.project !== project || served.root !== null || this.#liveStopped) return null;
+    const now = await this.#webBuildSeen(project);
+    if (now.folder === null || sameWebBuild(this.#liveWebBuild, now)) return null;
+    return now;
+  }
+
+  /** A load reached Live: the engine web build it shows (null for none). */
+  #liveLoaded(webBuild: WebBuildSeen | null): void {
+    this.#liveWebBuild = webBuild;
+  }
+
+  /**
+   * A reload is starting: Live's game runs again, whether or not the page then arrives, and the
+   * engine web build a reload of Live's game folder is about to show (null for any other reload).
+   */
+  async #reloadStarting(handle: string, served: ServedRoot | undefined): Promise<WebBuildSeen | null> {
+    if (handle !== LIVE_HANDLE) return null;
+    this.#liveStopped = false;
+    if (!served || served.root !== null) return null;
+    return this.#webBuildSeen(served.project);
+  }
+
+  /**
+   * The game's engine web build as it is now: its folder (null when it has none), its files' print and
+   * whether it is finished. A game with no `web/` folder is not walked for its kinds.
+   */
+  async #webBuildSeen(project: string): Promise<WebBuildSeen> {
+    const none: WebBuildSeen = { project, folder: null, print: null, finished: false };
+    const dir = this.#core.games.dirFor(project);
+    const names = await readdir(dir).catch(() => [] as string[]);
+    if (!names.some(isEngineWebFolder)) return none;
+    const game = await this.#core.games.kindOf(project).catch(() => null);
+    const folder = game ? engineWebFolderOf(game) : null;
+    const build = folder ? await readBuild(path.join(dir, folder)) : null;
+    if (!game || !folder || !build) return { ...none, folder };
+    const kinds = game.facts.map((fact) => fact.id);
+    return { project, folder, print: build.print, finished: buildFinished(build, kinds, Date.now()) };
   }
 
   /**
@@ -2243,6 +2798,9 @@ export class PreviewService {
       await this.reloadPreview({ retry: p.retry === true });
       return;
     }
+    // As a plain Reload does: Live's Native view starts the Mac build again from what is on disk
+    // once the run it showed has ended (`afterReload` in the renderer's native store).
+    await this.#endLiveTiedRuns(waiting.project);
     try {
       if (waiting.commit) await this.showBuild(waiting.project, waiting.commit);
       else await this.loadPreview({ project: waiting.project, ...(waiting.root ? { root: waiting.root } : {}) });
@@ -2346,6 +2904,7 @@ export class PreviewService {
     await port.load(last.project, served.entry, served.root, servedLoadOptions(served));
     last.loaded = key;
     if (served.stale) port.note?.("error", served.stale, BUILD_FAILED_NOTE);
+    this.#sayImportNotes(port);
     return true;
   }
 }

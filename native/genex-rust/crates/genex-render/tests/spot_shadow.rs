@@ -250,6 +250,39 @@ fn metal_with_no_shadow_slot_a_shadow_asking_spot_draws_the_lights_spot_golden_b
     assert!(shadows_off.bgra() == golden.as_slice(), "shadows switched off: the lights/spot golden, byte for byte");
 }
 
+/// AAA review WP-15: a shadowed point light casts a shadow all round. A bulb 3 m over the floor
+/// with a box on each side: with its cube map (one shadowed point light) the floor behind every
+/// box is dark, each through another face; without it, lit.
+#[test]
+#[ignore = "GPU: run with -- --ignored metal"]
+fn metal_a_shadowed_point_light_darkens_the_floor_behind_a_box_on_every_side() {
+    let _row = gpu_row();
+    let Some(gpu) = gpu() else { return };
+    let size = (WIDTH, HEIGHT);
+    let bulb = [0.0, 3.0, 0.0];
+    let boxes = [([1.5, 1.0, 0.0], 0.6), ([-1.5, 1.0, 0.0], 0.6), ([0.0, 1.0, 1.5], 0.6), ([0.0, 1.0, -1.5], 0.6)];
+    let camera = CameraDesc::look_at([0.0, 11.0, 0.01], [0.0, 0.0, 0.0]);
+    let mut scene = ground_scene(camera, Vec::new(), &boxes);
+    scene.lighting.points.push(genex_render::lights::PointLight { position: bulb, range: 12.0, color: [255; 3], intensity: 12.0 });
+    scene.lighting.shadowed_points = vec![0];
+    let unshadowed = {
+        let mut renderer = spot_renderer(&gpu, size, 0);
+        draw(&gpu, &mut renderer, &scene, CullPath::Gpu).1
+    };
+    let mut renderer = spot_renderer(&gpu, size, 0);
+    let mut quality = spot_quality(0);
+    quality.lights.shadowed_points = 1;
+    renderer.set_quality(&quality);
+    let (capture, shadowed) = draw(&gpu, &mut renderer, &scene, CullPath::Gpu);
+    write_evidence("point-shadow-four-boxes", &capture);
+    for (at, _) in boxes {
+        let behind = floor_shadow(bulb, at);
+        let (open, dark) = (radiance_at(&unshadowed, &camera, size, behind), radiance_at(&shadowed, &camera, size, behind));
+        assert!(open > 0.02, "the floor behind the box at {at:?} is lit without the cube ({open})");
+        assert!(dark < open * SHADOWED_SHARE, "the box at {at:?} shadows the floor behind it: {dark} of {open}");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // CPU rows: slots, views and culls of a planned frame
 

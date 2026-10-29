@@ -7,6 +7,7 @@
 import type { FormEvent, JSX, KeyboardEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { BackdropShaderKind, SHADER_PROMPT_MAX_CHARS } from "../../shared/backdrop-shader.ts";
+import { t } from "../../shared/i18n.ts";
 import { useAppearance } from "../appearance/store.ts";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
 import { Button } from "../ui/Button.tsx";
@@ -22,45 +23,50 @@ import { useBackdrop } from "./store.ts";
 import { themeReading } from "./theme-reading.ts";
 
 const MESSAGE = {
-  label: "Describe your background",
-  kind: "Kind",
+  label: t("Describe your background"),
+  kind: t("Kind"),
   kinds: [
-    { key: BackdropShaderKind.Filter, label: "Filter the picture" },
-    { key: BackdropShaderKind.Scene, label: "Its own scene" },
+    { key: BackdropShaderKind.Filter, label: t("Filter the picture") },
+    { key: BackdropShaderKind.Scene, label: t("Its own scene") },
   ],
   placeholders: {
-    [BackdropShaderKind.Filter]: "A night-vision security camera, its timestamp burned in",
-    [BackdropShaderKind.Scene]: "Koi drifting through a neon night market, seen from above",
+    [BackdropShaderKind.Filter]: t("A night-vision security camera, its timestamp burned in"),
+    [BackdropShaderKind.Scene]: t("Koi drifting through a neon night market, seen from above"),
   } satisfies Record<BackdropShaderKind, string>,
-  ideas: "Ideas",
+  ideas: t("Ideas"),
   ideasFor: {
     [BackdropShaderKind.Filter]: [
-      "Melting VHS tape with tracking errors",
-      "Infrared satellite scan sweeping across",
-      "Newspaper halftone, the ink bleeding",
-      "Sonar returns painting the scene in sweeps",
+      t("Melting VHS tape with tracking errors"),
+      t("Infrared satellite scan sweeping across"),
+      t("Newspaper halftone, the ink bleeding"),
+      t("Sonar returns painting the scene in sweeps"),
     ],
     [BackdropShaderKind.Scene]: [
-      "Wireframe terrain flying by at dusk",
-      "Radar sweep over a sleeping city grid",
-      "A dead terminal's cursor leaving trails",
-      "Particles orbiting a faint signal",
+      t("Wireframe terrain flying by at dusk"),
+      t("Radar sweep over a sleeping city grid"),
+      t("A dead terminal's cursor leaving trails"),
+      t("Particles orbiting a faint signal"),
     ],
   } satisfies Record<BackdropShaderKind, readonly string[]>,
-  make: "Make it",
-  cancel: "Cancel",
-  model: (name: string) => `Made by ${name}`,
-  connect: "Connect AI model",
-  writing: "Writing your background…",
-  fixing: "Fixing a shader error…",
-  refining: "Looking at it and making it better…",
+  make: t("Make it"),
+  cancel: t("Cancel"),
+  model: (name: string) => t("Made by {name}", { name }),
+  connect: t("Connect AI model"),
+  writing: t("Writing your background…"),
+  fixing: t("Fixing a shader error…"),
+  refining: t("Looking at it and making it better…"),
   problems: {
-    [MakeProblem.NoModel]: "Connect an AI model to make a background.",
-    [MakeProblem.NoReply]: "The model didn't answer. Try again.",
-    [MakeProblem.Refused]: "The model's shader couldn't run. Try again, or describe it another way.",
-    [MakeProblem.Broken]: "The model's shader didn't compile. Try again, or describe it another way.",
-    [MakeProblem.NoGpu]: "This Mac can't draw live backgrounds.",
-    [MakeProblem.Full]: `You have ${MAX_MADE_SHADERS} backgrounds. Remove one to make another.`,
+    [MakeProblem.NoModel]: t("Connect an AI model to make a background."),
+    [MakeProblem.NoReply]: t("The model didn't answer. Try again."),
+    [MakeProblem.Refused]: t("The model's shader couldn't run. Try again, or describe it another way."),
+    [MakeProblem.Broken]: t("The model's shader didn't compile. Try again, or describe it another way."),
+    [MakeProblem.NoGpu]: t("This Mac can't draw live backgrounds."),
+    [MakeProblem.Full]: t(
+      "You have {count, plural, one {# background} other {# backgrounds}}. Remove one to make another.",
+      {
+        count: MAX_MADE_SHADERS,
+      },
+    ),
   } satisfies Record<MakeProblem, string>,
 } as const;
 

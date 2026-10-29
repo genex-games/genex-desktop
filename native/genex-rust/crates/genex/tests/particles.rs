@@ -4,7 +4,7 @@
 //! A frame draws an emitter once, in call order.
 
 use genex::math::vec3;
-use genex::{Color, Frame, Particles, ParticlesErrorCode};
+use genex::{Color, Frame, PARTICLES_MAX, Particles, ParticlesErrorCode};
 
 #[test]
 fn the_same_emitter_made_again_is_the_same_emitter() {
@@ -55,4 +55,36 @@ fn a_frame_draws_each_emitter_once_in_call_order() {
     frame.particles(&rain).particles(&steam).particles(&Particles::rain(vec3(0.0, 9.0, 0.0), vec3(6.0, 0.0, 6.0)));
     let drawn: Vec<u64> = frame.drawn_particles().iter().map(Particles::version).collect();
     assert_eq!(drawn, vec![rain.version(), steam.version()], "the rain made again is the rain drawn already");
+}
+
+/// Ticks a second: velocities are world units a tick.
+const TICKS_PER_SECOND: f32 = 60.0;
+
+#[test]
+fn snow_and_dust_are_soft_round_dots_well_within_an_emitter_s_cap() {
+    let snow = Particles::snow(vec3(0.0, 10.0, 0.0), vec3(12.0, 0.0, 12.0));
+    let dust = Particles::dust(vec3(0.0, 1.5, 0.0), vec3(3.0, 1.5, 3.0));
+    for (name, preset) in [("snow", &snow), ("dust", &dust)] {
+        let desc = preset.desc();
+        assert!(desc.check().is_ok(), "{name} passes the renderer's limits");
+        assert!(preset.alive() <= PARTICLES_MAX, "{name}: {} alive", preset.alive());
+        assert!(desc.stretch == 0.0 && preset.flipbook().is_none(), "{name} draws the round dot, not a streak or a sprite");
+        assert!(desc.soft_distance > 0.0 && desc.near_fade > 0.0, "{name} is soft and fades in front of the lens");
+        assert!(!desc.sorted, "{name} draws in spawn order");
+    }
+    assert!((8_000..=12_000).contains(&snow.alive()), "snow holds {} flakes", snow.alive());
+    assert!((200..=2_000).contains(&dust.alive()), "dust holds {} motes", dust.alive());
+
+    let fall = -snow.desc().velocity[1] * TICKS_PER_SECOND;
+    assert!((0.9..=1.1).contains(&fall), "snow falls about 1 m/s ({fall})");
+    assert_eq!(snow.desc().origin, [0.0, 10.0, 0.0], "flakes fall from the box's top");
+    assert!(snow.desc().collides(), "flakes settle where they land");
+
+    let desc = dust.desc();
+    let [vx, vy, vz] = desc.velocity;
+    let drift = ((vx * vx + vy * vy + vz * vz).sqrt() + desc.spread * 3f32.sqrt()) * TICKS_PER_SECOND;
+    assert!(drift < 0.05, "a mote drifts under 5 cm/s ({drift})");
+    assert_eq!(desc.gravity, [0.0; 3]);
+    assert_eq!(desc.extent, [3.0, 1.5, 3.0], "motes are born throughout the box");
+    assert_ne!(snow.version(), dust.version());
 }

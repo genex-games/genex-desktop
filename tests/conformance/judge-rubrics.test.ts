@@ -51,7 +51,10 @@ function frozenBlock(): string {
   return readFileSync(pathMod.join(fixtureDir, "artefact-classes-shared.md"), "utf8").replace(/\n+$/, "");
 }
 
-/** Classes added to the shared block since it was frozen: the HUD's two (WP-HUD). */
+/**
+ * Classes added to the shared block since it was frozen: the HUD's two (WP-HUD). The fixture was
+ * refrozen when the look blockers joined (Bodycam rerun): they are part of it.
+ */
 const ADDED_SINCE_FROZEN = ["hud-crowding", "jagged-hud"];
 
 /** A rendered block with the added classes' bullets taken out: what is left is the frozen text. */
@@ -111,8 +114,10 @@ describe("the artefact classes the three judges share", () => {
     assertAdded(filterArtefactClasses(sharedBlock(), ["template", "racing"]));
     const puzzle = filterArtefactClasses(sharedBlock(), ["template", "puzzle"]);
     assert.equal(puzzle.includes("[no-hands]"), false, "a puzzle has no first-person hands to miss");
+    assert.equal(puzzle.includes("- `[dark-viewmodel]`"), false, "nor a first-person viewmodel to light");
     const bullets = (block: string) => (block.match(/^- `\[[a-z-]+\]`/gm) ?? []).length;
-    assert.equal(bullets(puzzle), bullets(all) - 1, "exactly one class was dropped");
+    // Flipped (Bodycam look blockers): [dark-viewmodel] is first-person only too, so two classes drop.
+    assert.equal(bullets(puzzle), bullets(all) - 2, "exactly the two first-person classes were dropped");
   });
 
   it("never lets a {when:} clause reach a judge", () => {

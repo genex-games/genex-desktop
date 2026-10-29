@@ -11,6 +11,7 @@ import {
   commitAll,
   GIT,
   gitAt,
+  gitExec,
   gitlinks,
   headOf,
   isAncestor,
@@ -32,6 +33,7 @@ import {
   trimLedger,
 } from "../ledger.ts";
 import { unionMergeMain } from "../merge.ts";
+import { resolveStudioJson } from "../studio-json-merge.ts";
 import { wiringFor } from "../native-loop.ts";
 import { failedObservationRule, NativeVerdict } from "../native-verdict.ts";
 import { skipOptimization } from "../optimization.ts";
@@ -47,7 +49,7 @@ import { demosNamedBy, dependentsOf, lookOf, lostRegistrations, lostWords, setup
 import type { LostRegistration } from "../registry.ts";
 import { list, slug, yes } from "./args.ts";
 import { CLOSE_SETTLE_MS } from "./budgets.ts";
-import { finishWaitsForCap } from "../time-cap.ts";
+import { finishWaitsForCap, loopHoursOf } from "../time-cap.ts";
 import { workerDigest } from "./digests.ts";
 import { resolveByWorker, unresolvedOf } from "./conflict-worker.ts";
 import { contractAloneOnStart } from "./contract-gate.ts";
@@ -60,7 +62,8 @@ import { closeReaders } from "../workers/director-pool.ts";
 import { shipFinishLine } from "./art-direction-prompts.ts";
 import { shipClaimRefusal } from "./blocker-prompts.ts";
 import { closeUnderWay, holdFinish, latchClose, releaseFinish } from "./close-latch.ts";
-import { FINISH_REPORT } from "../finish-check.ts";
+import { FINISH_REPORT, type StillToFix, stillToFixOf } from "../finish-check.ts";
+import { StopWhy } from "../finish-contract.ts";
 import {
   CLAIM_ANSWER,
   checkClaim,
@@ -732,6 +735,9 @@ export async function integrate(loopRun: LoopRun, args: AnyRecord) {
 
 // ── the close ──
 
+/** What the report says when no art director looked at the head the run closed on. */
+const NO_ART_VERDICT = "no judge looked at this build's look, so the run has no art verdict on it";
+
 /** Did a judge pass this head's evidence, including the native checks it owes? */
 function judgePassedChecks(judged: LastJudge | null, head: string | null): boolean {
   return Boolean(judged && judged.head === head && judged.ok);
@@ -808,6 +814,10 @@ async function landWhatRuns(
   if (judgePassedChecks(before, head) && !judgePassedChecks(state.lastJudge, head)) state.lastJudge = before;
   // The judge's look may carry the landing, but what the landing claims is the close's own look.
   state.healthByHead.set(head, health.ok === true);
+  // The head that lands always gets the art director's look against the references, reported and never
+  // a veto: the close's judge carries it (tools.ts `judgeTheLanding`); when another judge already held
+  // its word on this head, the art director looks on its own.
+  if (typeof loopRun.closeShipReview === "function") await loopRun.closeShipReview(head, bound.judgeBy);
   const judged = judgePassedChecks(state.lastJudge, head);
   if (health.ok === true || judged) return landIntegration(true);
   if (failedObservationRule(health, VerdictRule.DoesNotStart) === NativeVerdict.Rule) {
@@ -872,6 +882,8 @@ interface CloseOptions {
   wait?: (ms: number) => Promise<void>;
   /** The head a reviewer said yes to: a close that lands any other head is no victory. */
   reviewed?: string | null;
+  /** Why the run stops short of its goal, for its result card (`leftToFixOf`): its time, or the no's. */
+  ended?: StopWhy;
 }
 
 /** The close itself (`closeTheLoopRun`). */
@@ -888,9 +900,11 @@ async function closeOnce(
     judgeBy,
     wait,
     reviewed,
+    ended,
   }: CloseOptions,
 ): Promise<AnyRecord> {
   const { closeRun, ctx, report, runningWorkers, settleWorkers, stopWorker } = loopRun;
+  if (ended) loopRun.state.endedWhy = ended;
   for (const worker of runningWorkers()) await stopWorker(worker, stopWhy, "finalization");
   await settleWorkers(settleMs);
   // The readers of the run's shared pool stop with its builders.
@@ -1013,6 +1027,7 @@ async function closeOnFinish(
     victory: close.victory,
     ...(claims ? { judgeBy: claimJudgeBy(call.started), ...(call.wait ? { wait: call.wait } : {}) } : {}),
     ...(close.reviewed === undefined ? {} : { reviewed: close.reviewed }),
+    ...(close.why ? { ended: close.why } : {}),
   });
   if (!claims) return finishAnswer(loopRun, await closing);
   // A claim's call answers by its end: a close still running then lands after it. A claim that
@@ -1031,6 +1046,7 @@ interface ClosingVerdict {
   notDone?: string[];
   told?: string;
   reviewed?: string | null;
+  why?: StopWhy;
 }
 
 /**
@@ -1067,7 +1083,12 @@ async function closingOf(
   finishing: { summary: string; args: AnyRecord; call: FinishCall; victory: boolean; claims: boolean; land: boolean },
 ): Promise<({ close: true } & ClosingVerdict) | { close: false; answer: string }> {
   const { summary, args, call, land } = finishing;
-  const finished = { close: true as const, because: "the director finished the run", summary };
+  const finished = {
+    close: true as const,
+    because: "the director finished the run",
+    summary,
+    ...(pastItsCap(loopRun) ? { why: StopWhy.Time } : {}),
+  };
   if (!finishing.claims) return { ...finished, victory: finishing.victory };
   // The reviewer reads what would land, and its yes speaks for that head only.
   const read = await commitWhatWouldLand(loopRun);
@@ -1075,6 +1096,16 @@ async function closingOf(
   if (!verdict.close) return verdict;
   if (verdict.victory && (await loopRun.syncHead()) !== read) return { close: false, answer: CLAIM_ANSWER.moved };
   return { ...finished, ...verdict, ...(verdict.victory ? { reviewed: read } : {}) };
+}
+
+/**
+ * Whether a finish comes once the run's hours are spent, for its result card: against the run's own
+ * clock, whose cap no wrap-up moves (an idle lead's, the person's finish or a failed turn's wrap-up
+ * brings `softDeadline` forward to now; the time is not up for those).
+ */
+function pastItsCap(loopRun: LoopRun): boolean {
+  const cap = loopRun.clock?.softDeadline ?? loopRun.softDeadline;
+  return Number.isFinite(cap) && Date.now() >= cap;
 }
 
 /** What this run can honestly claim about the head it landed (`landingWords`, above). */
@@ -1193,10 +1224,21 @@ export async function landIntegration(loopRun: LoopRun, land: boolean): Promise<
   const changed = await gameFolderChanges(loopRun);
   if (changed.held)
     return notLanded(LANDING_WORDS.uncommitted(changed.paths, integrationRef), NotLandedReason.UncommittedChanges);
+  const message = `director ${run.runId}: integrated build`;
+  const label = `director:${run.runId}:land`;
   const merge = await mergeNoFf(ctx, { project: run.project }, state.integrationHead, {
-    message: `director ${run.runId}: integrated build`,
-    label: `director:${run.runId}:land`,
+    message,
+    label,
     listConflicts: true,
+    // The studio's own kind declaration may sit in the folder's studio.json beside the build's:
+    // merged by its keys, so the same `game` block on both sides is no conflict.
+    resolve: () =>
+      resolveStudioJson(
+        (command) => gitExec(ctx, { project: run.project }, command, { label: `${label}:studio-json` }),
+        {
+          message,
+        },
+      ),
   });
   if (!merge.ok) {
     // Git refused to write over uncommitted changes, or the build conflicts with commits made in
@@ -1276,6 +1318,35 @@ async function keepTheRecord(loopRun: LoopRun, landed: AnyRecord, because: strin
   }
 }
 
+/**
+ * How the run ended, in its journal and report: paused or done, and what a close without a yes leaves
+ * for its result card. A run whose landing the user's Stop refused (a finish then closing included),
+ * or one a lost provider cut short (a limit, a sign-in, an outage) before a finish, is paused: Resume
+ * picks it up at its integration head (kept reachable by the ref) once the user, the limit or the
+ * provider allows. A Stop pressed once the landing is done ends nothing more: the run is done.
+ */
+export function endedAs(loopRun: LoopRun, landed: AnyRecord): void {
+  const { journal, report, state } = loopRun;
+  const stopRefusedLanding = landed.why === NotLandedReason.Stopped;
+  const pausedByStopOrLimit = stopRefusedLanding || (!state.finish && Boolean(state.limit));
+  const goalsBlocked = state.goals && goalDecision(state.goals, state.integrationHead) === GoalStatus.Blocked;
+  journal.phase = pausedByStopOrLimit || goalsBlocked ? JournalPhase.Paused : JournalPhase.Done;
+  report.executionStatus = executionStatusOf(report, journal.phase);
+  const left = leftToFixOf(loopRun);
+  if (left) report.stillToFix = left;
+}
+
+/**
+ * What a close that is neither the goal reached nor a pause leaves for its result card: the last
+ * no's lists, why the run stopped (as its close said, else the person's Stop or another end), its hours.
+ */
+function leftToFixOf(loopRun: LoopRun): StillToFix | null {
+  const { ctx, journal, report, run, state } = loopRun;
+  if (journal.phase !== JournalPhase.Done || report.victory === true) return null;
+  const why = state.endedWhy ?? (ctx.cancelled ? StopWhy.Person : StopWhy.Ended);
+  return stillToFixOf(state.finishTally, { why, hours: loopHoursOf(run) });
+}
+
 /** How a close describes the run: failed, paused (a resume picks it up) or completed. */
 function executionStatusOf(report: AnyRecord, phase: string): ExecutionStatus {
   if (report.failure) return ExecutionStatus.Failed;
@@ -1348,7 +1419,8 @@ export async function closeRun(loopRun: LoopRun, landed: AnyRecord): Promise<voi
   report.landingResult = landingResult(landed);
   // Whether the art director would ship the head this close stands on: reported, never a veto.
   const shipReview = typeof loopRun.shipReport === "function" ? loopRun.shipReport() : null;
-  if (shipReview) report.shipReview = shipReview;
+  // A close no judge looked at for its look says so: "it starts" is never an art verdict.
+  report.shipReview = shipReview ?? { head: state.integrationHead, judged: false, why: NO_ART_VERDICT };
   // The run's last verdict, in the same shape as every other: what became of the build, and
   // whether anybody preferred it. Emitted here rather than at each caller so a close by finish,
   // by the clock, by a limit, by a quit or by a crash all leave one.
@@ -1371,13 +1443,7 @@ export async function closeRun(loopRun: LoopRun, landed: AnyRecord): Promise<voi
     reason: "Director runs finish without the optimization stage",
   }).catch(() => null);
   report.finishedAt = new Date().toISOString();
-  // A run the user stopped, or one a lost provider cut short (a limit, a sign-in, an outage), is
-  // paused: Resume picks it up at its integration head (kept reachable by the ref) once the user,
-  // the limit or the provider allows.
-  const pausedByStopOrLimit = !state.finish && (ctx.cancelled || Boolean(state.limit));
-  const goalsBlocked = state.goals && goalDecision(state.goals, state.integrationHead) === GoalStatus.Blocked;
-  journal.phase = pausedByStopOrLimit || goalsBlocked ? JournalPhase.Paused : JournalPhase.Done;
-  report.executionStatus = executionStatusOf(report, journal.phase);
+  endedAs(loopRun, landed);
   journal.director.integrationHead = state.integrationHead;
   await protectHead(state.integrationHead);
   await saveJournal();

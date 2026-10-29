@@ -37,7 +37,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::cluster::{CAP_FADE_SHARE, ClusterSphere, MAX_BINNED_DECALS};
-use crate::layout::{LIGHT_EXT_VEC4S, MAX_SHADOWED_SPOTS, NO_TEXTURE, SPOT_MATRIX_VEC4S};
+use crate::layout::{LIGHT_EXT_VEC4S, MAX_SHADOW_SLOTS, NO_TEXTURE, SPOT_MATRIX_VEC4S};
 use crate::texture::{TextureId, TextureKind, srgb_to_linear};
 
 /// `vec4<f32>`s one decal takes in the `light_ext` table ([`GpuDecal`]; `GX_DECAL_ROW_VEC4S`).
@@ -268,7 +268,7 @@ const _: () = assert!(size_of::<GpuDecal>() == DECAL_ROW_VEC4S * 16);
 /// lights: after every light's extension rows and every shadowed spot's matrix slot (filled or
 /// not), so the rows' place never depends on the spots this frame shadows.
 pub const fn rows_base(lights: usize) -> usize {
-    LIGHT_EXT_VEC4S * lights + SPOT_MATRIX_VEC4S * MAX_SHADOWED_SPOTS
+    LIGHT_EXT_VEC4S * lights + SPOT_MATRIX_VEC4S * MAX_SHADOW_SLOTS
 }
 
 /// The decals a frame draws: `decals` held ([`Decal::held`]; the dropped ones left out), cut to
@@ -370,7 +370,7 @@ fn corner_pixels(view_proj: &Mat4, model: &Mat4, near: f32, (width, height): (f3
 
 /// The `light_ext` table's bytes with `decals` (rows in binned order) after `light_ext`'s own
 /// bytes (every light's extension rows, then the shadowed spots' matrices): the spot slots padded
-/// with zeros to [`MAX_SHADOWED_SPOTS`], then the rows from [`rows_base`]. Without decals the
+/// with zeros to [`MAX_SHADOW_SLOTS`], then the rows from [`rows_base`]. Without decals the
 /// bytes are `light_ext` unchanged.
 pub fn append_rows(mut light_ext: Vec<u8>, lights: usize, decals: &[GpuDecal]) -> Vec<u8> {
     if decals.is_empty() {

@@ -10,6 +10,7 @@ import {
   unifiedEffort,
   roleChoices,
   autoChoice,
+  withoutFreeWord,
 } from "../../src/renderer/model-choices.ts";
 import { sendKey } from "../../src/renderer/chat/send-route.ts";
 import type { ComposerModel } from "../../src/renderer/chat/use-composer-model.ts";
@@ -540,8 +541,8 @@ test("OpenCode with no provider signed in lists its first three free models, mar
   ]);
   const rows = choices.filter((choice) => !choice.hidden);
   assert.ok(
-    rows.every((choice) => choice.detail === "Free" && choice.free === true),
-    "each says it costs nothing",
+    rows.every((choice) => choice.detail === undefined && choice.free === true),
+    "each says it costs nothing in a tag beside its name, not on a line of its own",
   );
   assert.deepEqual(visible(toChoices([openCodeFreeOnly], { opencode: { "opencode/exo-free": false } })), [
     "opencode::opencode/big-pickle",
@@ -598,4 +599,14 @@ test("with nothing picked, the picker never chooses a paid or hidden model on th
     "a timed build never starts on a paid model",
   );
   assert.equal(sendKey(composer(toChoices([openRouter(ready), claude])), timed), "claude-code::claude-opus-5-5");
+});
+
+test("a free model's own trailing Free gives way to its tag", () => {
+  assert.equal(withoutFreeWord("Cat Jam Free"), "Cat Jam");
+  assert.equal(withoutFreeWord("DeepSeek V4.1 Flash Free"), "DeepSeek V4.1 Flash");
+  assert.equal(withoutFreeWord("Ling 3.1 (free)"), "Ling 3.1");
+  assert.equal(withoutFreeWord("qwen3:free"), "qwen3");
+  assert.equal(withoutFreeWord("Big Pickle"), "Big Pickle");
+  assert.equal(withoutFreeWord("Freedom 2"), "Freedom 2", "only a trailing word goes");
+  assert.equal(withoutFreeWord("Free"), "Free", "a name that is only the word keeps it");
 });

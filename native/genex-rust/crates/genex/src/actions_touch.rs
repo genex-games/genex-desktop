@@ -15,8 +15,11 @@ use crate::input::TickInput;
 use genex_core::input::{TickInput as CoreTick, TouchPhase as CorePhase, TouchPoint};
 use genex_input::paint::{TouchArea, paint_touch_controls};
 use genex_input::state::Device;
-use genex_input::touch::{TouchControls, TouchFrame, TouchState, evaluate_touch};
+use genex_input::touch::{TouchControls, TouchFrame, TouchState, evaluate_touch_from};
 use serde_json::{Value, json};
+
+/// The touch id the facade gives the desktop mouse (Mouse1).
+const MOUSE_FINGER: u32 = 0;
 
 impl<W> Game<W> {
     /// On-screen sticks, buttons and d-pads for touch screens, read through `touch:<id>`
@@ -61,8 +64,9 @@ impl State {
             return (Vec::new(), input.touches.all().to_vec());
         };
         let tick = with_touches(&input.core, input.touches.all());
+        let mouse = emulated_finger(&input.core, input.touches.all());
         let holds = self.holds.get_or_insert_with(|| TouchState::new(layout));
-        let frame = evaluate_touch(layout, world, holds, &tick);
+        let frame = evaluate_touch_from(layout, world, holds, &tick, mouse);
         let free = input.touches.all().iter().filter(|touch| !frame.claimed(touch.id)).copied().collect();
         let values = frame.values().to_vec();
         self.frame = Some(frame);
@@ -111,6 +115,14 @@ impl State {
             .collect();
         Some(json!({ "shown": layout.visible(device), "held": held }))
     }
+}
+
+/// The finger the facade emulated from Mouse1 on this tick: touch 0 when the merged tick has no
+/// real finger 0 (`input::touches_of`). It presses only a layout shown on every device.
+fn emulated_finger(core: &CoreTick, touches: &[Touch]) -> Option<u32> {
+    let real = core.touches.iter().any(|touch| touch.id == MOUSE_FINGER);
+    let emulated = !real && touches.iter().any(|touch| touch.id == MOUSE_FINGER);
+    emulated.then_some(MOUSE_FINGER)
 }
 
 /// The merged tick with the facade's touches (touch 0 following Mouse1 included) as its fingers.

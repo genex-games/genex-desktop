@@ -3,12 +3,14 @@
  * Game sheet shows about a picked folder. `substrate/game-workspace.ts` decides and writes these
  * and re-exports the types; the renderer reads them through `window.studio`.
  */
-import type { EngineBinding } from "./game-engine.ts";
+import type { GameRuntime } from "./computer-target.ts";
+import type { EngineBinding, LinkedEngine } from "./game-engine.ts";
 import type { ExportWarning, GpuQualification } from "./game-export-contract.ts";
 import type { GameLibraryEntry } from "./game-library.ts";
 import type { TargetRefusal } from "./game-targets.ts";
 import type { DestinationCheck } from "./native-contract.ts";
 import type { HookEvent } from "./plugin-hooks.ts";
+import type { JudgeRef } from "./plugins.ts";
 import type { FolderHolds, ProjectFact } from "./project-facts.ts";
 
 /** The runtime a game is written for. Wire values (studio.json `stack`): never rename one. */
@@ -161,6 +163,15 @@ export interface GameProject {
   nativeChecks?: Partial<Record<BuildTarget, DestinationCheck>>;
   /** The engine project Genex linked this game to; absent for a web game (`shared/game-engine.ts`). */
   engine?: EngineBinding;
+  /** The linked engine as its plugin declares it (its name, project files, project in the folder); absent for a web game. */
+  linkedEngine?: LinkedEngine;
+  /**
+   * True when an engine plugin that is on plays this game in its editor (its play tools hold the
+   * game's link): judges and the computer play it there. Filled by the harness's `game.list`.
+   */
+  editorPlay?: boolean;
+  /** The judges that play this game in its editor, as its engine plugin declares them; only with `editorPlay`. */
+  judges?: JudgeRef[];
   /**
    * What the folder holds, by `shared/project-facts.ts`: the core table, the enabled plugins'
    * `detect` and the engine link. Empty while the first message has not picked a kind.
@@ -193,6 +204,18 @@ export interface GameProject {
   scaffoldStamp?: string;
   /** Named before anyone said what the game is: its first idea renames it in place (`nameFromIdea`). */
   provisional?: boolean;
+  /**
+   * New game made it and no answer in its chats has ended with the game made yet; absent once one
+   * has, and for every game New game did not make, which came with a game of its own.
+   */
+  awaitingFirstBuild?: true;
+  /** The game loads Genex's multiplayer: its package.json names it, or its page maps Studio's copy. */
+  multiplayer?: true;
+  /**
+   * The game is played with mouse look (studio.json `game.mouseLook`, as its kind or plan declared
+   * it): a click into Live's Native view locks the pointer and its moves turn the camera.
+   */
+  mouseLook?: true;
 }
 
 /**
@@ -286,6 +309,35 @@ export interface ProjectShape {
    * refuses every change with `kind-unsupported`. Absent for every kind this version knows.
    */
   readOnly?: TargetRefusal;
+  /**
+   * How the studio runs and reaches the game: its own browser window (the default, when absent)
+   * or a process speaking the Genex Play Protocol (`docs/play-protocol.md`).
+   */
+  runtime?: GameRuntime;
+  /** How a `bridge` game is started; absent for a browser game or when studio.json's is unusable. */
+  play?: PlayCommand;
+}
+
+/**
+ * The command that starts a Play Protocol game, as studio.json declares it: a plain path inside
+ * the project (resolved by real path before it runs) and its arguments, each passed as one word.
+ */
+export interface PlayCommand {
+  command: string;
+  args: string[];
+  /**
+   * An engine an enabled plugin runs for the game instead (a Godot game's own Godot): the plugin's
+   * declared native runtime, by its id, and its arguments. The studio finds the runtime where the
+   * plugin says it is and starts it in its native-job sandbox with a window and the GPU, which an
+   * engine needs to draw; the command stays for a person to run. Absent when unusable.
+   */
+  engine?: PlayEngine;
+}
+
+/** An engine runtime a plugin declares, by id, and the arguments the studio starts it with. */
+export interface PlayEngine {
+  runtime: string;
+  args: string[];
 }
 
 /** The stack and destinations a game was created with; a game that records none is a Three.js browser game. */
@@ -407,6 +459,11 @@ export interface GameName {
   title: string;
   /** The message named no game (a greeting, a test) or the model gave no name: the title waits for an idea. */
   provisional?: boolean;
+  /**
+   * The engine the person picked is out of usage until a reset (a weekly or monthly cap), in its
+   * own words: its first turn cannot run, so no game is made from this message.
+   */
+  limited?: string;
 }
 
 export interface GameLocation {
@@ -504,4 +561,13 @@ export interface AttachReport {
   reason: string | null;
   loadError: string | null;
   consoleErrors: number | null;
+}
+
+/**
+ * Whether a studio.json record declares mouse look: its `game` block's `mouseLook`, which the
+ * harness writes with every trait decided (`writeDeclaredGame`). Only a plain `true` counts.
+ */
+export function declaresMouseLook(meta: unknown): boolean {
+  const game: unknown = typeof meta === "object" && meta !== null ? Reflect.get(meta, "game") : undefined;
+  return typeof game === "object" && game !== null && Reflect.get(game, "mouseLook") === true;
 }

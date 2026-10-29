@@ -29,7 +29,7 @@ import {
 } from "./honesty.ts";
 import type { ModelCallEvent, ObservationEvent, SessionRef, ToolCallEvent } from "./observation.ts";
 import type { ModelUsageReading, StreamReading } from "./observe.ts";
-import { LOOK_AT_PAGE_COMMAND, classifyTool, commandHead } from "./tool-category.ts";
+import { LOOK_AT_PAGE_COMMAND, classifyTool, commandHead } from "../../../src/shared/tool-category.ts";
 import { addUsage, maxUsage, promptTokens } from "./usage.ts";
 import {
   LifecyclePhase,

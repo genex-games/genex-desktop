@@ -40,7 +40,7 @@
 //! All of it is CPU f32 with libm, so the cascade matrices have the same bits on every target.
 
 use crate::compile::Compiled;
-use glam::{Mat4, Vec3, Vec4Swizzles};
+use glam::{Mat4, Vec3, Vec3Swizzles, Vec4Swizzles};
 use wgpu::{Device, Features, RenderPipeline, ShaderModule, Texture, TextureFormat, TextureView};
 
 use crate::cull::{frustum_planes, in_frustum};
@@ -62,6 +62,8 @@ const HARDWARE_REACH_TEXELS: f32 = 1.0;
 const PCF3_REACH_TEXELS: f32 = 2.0;
 const PCF5_REACH_TEXELS: f32 = 3.0;
 const PCSS_REACH_TEXELS: f32 = 17.0;
+/// PCSS's narrowest kernel radius in texels (`GX_PCSS_MIN_TEXELS`, sun.wgsl).
+const PCSS_MIN_TEXELS: f32 = 3.0;
 /// Texels a cascade's map moves by as it snaps to whole texels, at most (half), rounded up.
 const SNAP_TEXELS: f32 = 1.0;
 /// The largest share of a map's side its edges may take ([`edge_texels`] on a tiny map).
@@ -87,6 +89,9 @@ const HELD_DEPTH_SLACK: f32 = 0.25;
 const OPEN_PLANE: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 /// A cascade frustum's near plane among [`frustum_planes`]'s six (left, right, bottom, top, near, far).
 const NEAR_PLANE: usize = 4;
+/// The slots a cull view held to its receivers fills with sides along the light (lane FQ): the
+/// box's four and the open near plane's, which no depth needs.
+const LATERAL_SLOTS: [usize; crate::cascade_hull::SIDES_MAX] = [0, 1, 2, 3, NEAR_PLANE];
 
 /// The casters' constant depth bias, in units of the map's depth resolution.
 pub(crate) const CASTER_CONSTANT_BIAS: i32 = 2;
@@ -159,6 +164,21 @@ pub(crate) fn caster_pipeline(device: &Device, spec: &CasterSpec<'_>) -> Compile
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// The error, in a cascade's texels, a caster's level may show in that cascade under `filter` (lane
+/// FQ): the narrowest kernel the receivers read the map through, past which a silhouette's error
+/// blurs into the filter's own. PCSS's narrowest radius (`GX_PCSS_MIN_TEXELS`, sun.wgsl) and its
+/// bilinear neighbour; the PCF kernels' and the hardware tap's own reach. The cull casts each
+/// instance at the coarsest level within it, never finer than the camera's (`shaders/cull.wgsl`
+/// `gx_cull_caster_level`, [`crate::mesh::lod_row_keep_view`]).
+pub fn caster_error_texels(filter: ShadowFilter) -> f32 {
+    match filter {
+        ShadowFilter::Hardware2x2 => HARDWARE_REACH_TEXELS,
+        ShadowFilter::Pcf3x3 => PCF3_REACH_TEXELS,
+        ShadowFilter::Pcf5x5 => PCF5_REACH_TEXELS,
+        ShadowFilter::PcssLite | ShadowFilter::Pcss => PCSS_MIN_TEXELS + 1.0,
+    }
 }
 
 /// The texels each side of a tight cascade's map beyond its slice sphere for `filter` (renderer
@@ -450,7 +470,23 @@ pub fn keeps_legacy_fit(settings: &ShadowSettings) -> bool {
 /// [`ShadowSettings::cascades`] slices at the settings' split up to their distance, each fit
 /// receiver-tight around `bounds` (world spheres of the frame's opaque rows: centre, radius) at
 /// [`ShadowSettings::map_px`]. The legacy layout ([`keeps_legacy_fit`]) gets [`cascades`].
+///
+/// With [`ShadowSettings::receiver_cull`] each cascade's cull view is then held to the casters a
+/// receiver reading it can see ([`cull_to_receivers`]); its map is the fit's either way.
 pub fn fit<I>(camera: &CameraDesc, aspect: f32, sun_dir: [f32; 3], settings: &ShadowSettings, bounds: I) -> Cascades
+where
+    I: Iterator<Item = [f32; 4]> + Clone,
+{
+    let mut set = fitted(camera, aspect, sun_dir, settings, bounds);
+    // A cadence holds maps across camera moves: those keep the fit's cull view.
+    if settings.receiver_cull && settings.far_cadence <= 1 {
+        cull_to_receivers(&mut set, camera, aspect, settings.filter);
+    }
+    set
+}
+
+/// [`fit`]'s cascades before the receivers hold their cull views.
+fn fitted<I>(camera: &CameraDesc, aspect: f32, sun_dir: [f32; 3], settings: &ShadowSettings, bounds: I) -> Cascades
 where
     I: Iterator<Item = [f32; 4]> + Clone,
 {
@@ -474,6 +510,75 @@ where
         set.shared_bias = set.bias[0];
     }
     set
+}
+
+/// The widest lookup across a cascade's map any receiver makes, in its texels: PCSS's widest
+/// kernel (`GX_PCSS_MAX_TEXELS`, shaders/lighting/sun.wgsl) and its bilinear neighbour, or the
+/// filter's own reach ([`edge_texels`]) when wider.
+const RECEIVER_REACH_TEXELS: f32 = 17.0;
+/// How far, in light depth per unit of a lookup's reach across the map, a receiver's comparison
+/// may lie past the receiver itself: the receiver-plane bias follows a receiver's slope up to
+/// this (`GX_SHADOW_MAX_RECEIVER_SLOPE`), so a blocker that far behind the receiver still counts.
+const RECEIVER_SLOPE_MAX: f32 = 16.0;
+/// Texels of light depth kept past the receivers besides (the comparison and slope biases).
+const RECEIVER_DEPTH_TEXELS: f32 = 8.0;
+/// A held cull view's sides move by whole steps of this many texels (and its depth by this many
+/// texels' depth), so a camera moving within a step keeps a cascade's cull view, and with it the
+/// static shadow cache's key.
+const RECEIVER_STEP_TEXELS: f32 = 16.0;
+
+/// Hold each cascade's cull view to the casters that can shadow a receiver reading it (horde 10k).
+/// A receiver reads cascade `c` from any view depth up to `c`'s end (its own cascade, the blend
+/// band into the next, and PCSS reading a coarser cascade for a wide penumbra), so the receivers
+/// of `c` lie in the camera's frustum from its near plane to `c`'s end; every lookup reaches
+/// across the map at most `RECEIVER_REACH_TEXELS` (or `filter`'s reach) and along the light at most
+/// that times `RECEIVER_SLOPE_MAX` past the receiver. A caster outside that frustum's light-space
+/// box widened by those reaches (beside it, or farther from the sun than its deepest point) cannot
+/// shadow any receiver reading `c`: the cull drops it, and the near plane stays open (pancaking).
+/// The box's sides and depth snap outward to whole steps ([`RECEIVER_STEP_TEXELS`]). Exact for
+/// every receiver in the frustum whose slope to the light is under `RECEIVER_SLOPE_MAX` (the
+/// filter's own cap); the maps and the matrices are untouched.
+pub fn cull_to_receivers(set: &mut Cascades, camera: &CameraDesc, aspect: f32, filter: ShadowFilter) {
+    let reach_texels = RECEIVER_REACH_TEXELS.max(edge_texels(filter));
+    let side = set.map_px.max(1) as f32;
+    for c in 0..set.count() {
+        let m = Mat4::from_cols_array(&set.view_proj[c]);
+        let corners = slice_corners(camera, aspect, camera.near, set.splits[c]);
+        let (mut lo, mut hi, mut deepest) = (glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN), f32::MIN);
+        for corner in corners {
+            let at = m.project_point3(Vec3::from(corner));
+            lo = lo.min(at.xy());
+            hi = hi.max(at.xy());
+            deepest = deepest.max(at.z);
+        }
+        let texel_ndc = 2.0 / side;
+        let step = RECEIVER_STEP_TEXELS * texel_ndc;
+        let reach = reach_texels * texel_ndc;
+        let lo = (glam::Vec2::splat(-1.0)).max(((lo - reach) / step).floor() * step);
+        let hi = (glam::Vec2::splat(1.0)).min(((hi + reach) / step).ceil() * step);
+        // NDC depth per world unit along the light, and the lookups' reach past the receivers.
+        let depth_per_world = m.row(2).truncate().length();
+        let past = (RECEIVER_SLOPE_MAX * reach_texels + RECEIVER_DEPTH_TEXELS) * set.texel_world[c] * depth_per_world;
+        let depth_step = RECEIVER_STEP_TEXELS * set.texel_world[c] * depth_per_world;
+        let far = (((deepest + past) / depth_step).ceil() * depth_step).min(1.0);
+        let (x, y, z) = (m.row(0), m.row(1), m.row(2));
+        let plane = |p: glam::Vec4| (p / p.truncate().length()).to_array();
+        // The box's sides, then the sides of the receivers' light-space polygon chosen among them
+        // (lane FQ, `cascade_hull`): each a plane along the light.
+        let boxed = [Vec3::new(1.0, 0.0, -lo.x), Vec3::new(-1.0, 0.0, hi.x), Vec3::new(0.0, 1.0, -lo.y), Vec3::new(0.0, -1.0, hi.y)];
+        let points = corners.map(|corner| m.project_point3(Vec3::from(corner)).xy());
+        let sides = crate::cascade_hull::sides(&points, &boxed, reach, step);
+        let planes = &mut set.planes[c];
+        for (slot, held) in LATERAL_SLOTS.into_iter().zip(sides.iter().map(Some).chain(std::iter::repeat(None))) {
+            planes[slot] = held.map_or(OPEN_PLANE, |side| plane(x * side.x + y * side.y + glam::Vec4::new(0.0, 0.0, 0.0, side.z)));
+        }
+        planes[NEAR_PLANE + 1] = tighter(planes[NEAR_PLANE + 1], plane(glam::Vec4::new(-z.x, -z.y, -z.z, far - z.w)));
+    }
+}
+
+/// Of two parallel inward planes (the same unit normal), the one that keeps less.
+fn tighter(fit: [f32; 4], held: [f32; 4]) -> [f32; 4] {
+    if held[3] < fit[3] { held } else { fit }
 }
 
 /// Which cascades a frame redraws ([`CascadeHistory::advance`]).

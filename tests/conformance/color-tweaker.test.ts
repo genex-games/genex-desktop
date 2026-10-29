@@ -5,6 +5,8 @@ import {
   type ColorRole,
   DEFAULT_CONTRAST,
   hex,
+  PEOPLE_ROLES,
+  PLAY_HUE_ROLES,
   PRESETS,
   Scheme,
   type ThemePreset,
@@ -486,4 +488,96 @@ test("the selected Settings tab's text is the accent ink until set, read as text
     ROLE_GROUPS.some((group) => group.roles.includes("settingsTab")),
     "the panel offers it",
   );
+});
+
+test("Play's switch and tabs take their blue, track, texts, edges and the unselected tabs' backing from the palette when given, Play's own until then", () => {
+  // Genex's own presets set some of Play's colours: start from one that sets none.
+  const plain = Object.fromEntries(
+    Object.entries(genexDark.colors).filter(([role]) => !role.startsWith("play")),
+  ) as typeof genexDark.colors;
+  for (const [role, variable] of [
+    ["playSelected", "--play-selected"],
+    ["playSelectedEdge", "--play-selected-edge"],
+    ["playTrack", "--play-switch-track"],
+    ["playTrackEdge", "--play-switch-edge"],
+    ["playSelectedText", "--play-selected-text"],
+    ["playTab", "--play-tab-backing"],
+    ["playTabEdge", "--play-tab-edge"],
+    ["playTabText", "--play-tab-text"],
+    ["playSearchFocus", "--play-search-focus"],
+  ] as const) {
+    assert.equal(themeVariables(plain, DEFAULT_CONTRAST)[variable], undefined, `${role} unset`);
+    assert.equal(themeVariables({ ...plain, [role]: "#2f6bff" }, DEFAULT_CONTRAST)[variable], "#2f6bff");
+    assert.ok(hex(shownColor(plain, role)), `${role}: the panel shows a colour while it is unset`);
+    assert.ok(
+      ROLE_GROUPS.some((group) => group.roles.includes(role)),
+      `the panel offers ${role}`,
+    );
+  }
+});
+
+/** A preset's colours with none of Play's people, stats or card colours set: the stylesheet's own show. */
+const withoutPlayColours = (colors: ThemePreset["colors"]): ThemePreset["colors"] =>
+  Object.fromEntries(
+    Object.entries(colors).filter(
+      ([role]) =>
+        !role.startsWith("play") &&
+        !(PEOPLE_ROLES as readonly string[]).includes(role) &&
+        !(PLAY_HUE_ROLES as readonly string[]).includes(role),
+    ),
+  ) as ThemePreset["colors"];
+
+test("Play's people, stats and credits colours are the stylesheet's own until set, then their own", () => {
+  const dark = withoutPlayColours(genexDark.colors);
+  const light = withoutPlayColours(preset("genex-light").colors);
+  for (const [role, variable, onDark, onLight] of [
+    ["peopleChipText", "--people-chip-ink", "#9fb0ff", "#3d58d8"],
+    ["peopleChipNumber", "--people-chip-number", "#d3dbff", "#1e33b4"],
+    ["playBlue", "--play-blue", "#4b60bf", "#4b60bf"],
+    ["peoplePrimary", "--people-primary-top", "#4b60bf", "#4b60bf"],
+    ["peoplePrimaryShade", "--people-primary-bottom", "#3f51a8", "#3f51a8"],
+    ["peopleLive", "--people-live", "#22a55b", "#22a55b"],
+    ["peopleLiveText", "--people-live-ink", "#5fd18b", "#16803f"],
+    ["peoplePro", "--people-pro", "#8d9bff", "#4353d9"],
+    ["peopleRequest", "--people-request", "#3f61f5", "#3f61f5"],
+    ["statsLine", "--stats-line", "#7d8ff0", "#4b60bf"],
+    ["statsUp", "--stats-up", "#5fd18b", "#16803f"],
+    ["statsDown", "--stats-down", "#ff8a7a", "#b42318"],
+    ["shardLight", "--shard-light", "#aeb7e2", "#aeb7e2"],
+    ["shardMid", "--shard-mid", "#6b7fdc", "#4b60bf"],
+    ["shardDark", "--shard-dark", "#4555a8", "#313e7c"],
+  ] as const) {
+    assert.equal(themeVariables(dark, DEFAULT_CONTRAST)[variable], undefined, `${role} unset`);
+    assert.equal(themeVariables({ ...dark, [role]: "#2f6bff" }, DEFAULT_CONTRAST)[variable], "#2f6bff");
+    assert.equal(shownColor(dark, role), onDark, `${role} on a dark canvas`);
+    assert.equal(shownColor(light, role), onLight, `${role} on a light canvas`);
+    assert.equal(shownColor({ ...dark, [role]: "#2f6bff" }, role), "#2f6bff");
+    assert.ok(
+      ROLE_GROUPS.some((group) => group.roles.includes(role)),
+      `the panel offers ${role}`,
+    );
+  }
+});
+
+test("Play's chips, tint buttons and cards wear the Play switch's selected blue until given their own hue", () => {
+  const plain = withoutPlayColours(genexDark.colors);
+  const blue = { ...plain, playSelected: "#2f6bff" };
+  for (const [role, variable] of [
+    ["peopleChip", "--people-chip-hue"],
+    ["peopleTint", "--people-tint-hue"],
+    ["creditsCard", "--credits-card-hue"],
+    ["inviteCard", "--people-invite-hue"],
+  ] as const) {
+    assert.equal(themeVariables(blue, DEFAULT_CONTRAST)[variable], undefined, `${role} unset`);
+    assert.equal(shownColor(plain, role), shownColor(plain, "playSelected"), `${role} shows Play's own blue`);
+    assert.equal(shownColor(blue, role), "#2f6bff", `${role} follows the palette's Play blue`);
+    assert.equal(themeVariables({ ...blue, [role]: "#ff7a00" }, DEFAULT_CONTRAST)[variable], "#ff7a00");
+    assert.equal(shownColor({ ...blue, [role]: "#ff7a00" }, role), "#ff7a00");
+    assert.ok(
+      ROLE_GROUPS.some((group) => group.roles.includes(role)),
+      `the panel offers ${role}`,
+    );
+  }
+  // The credits card follows the chips' hue until it has its own.
+  assert.equal(shownColor({ ...blue, peopleChip: "#ff7a00" }, "creditsCard"), "#ff7a00");
 });

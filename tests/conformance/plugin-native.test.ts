@@ -53,7 +53,8 @@ async function setup() {
       },
     ],
   };
-  const service = new PluginNativeServices(root, []),
+  // The pins below carry no platform, so they are Apple Silicon's: this computer reads as one.
+  const service = new PluginNativeServices(root, [], { platform: "darwin-arm64" }),
     binding = { project: "game", directory: game };
   const call = (method: string, args: any, signal = new AbortController().signal, source = "tool") =>
     service.call(manifest, pkg, storage, method, args, binding, { method: source, name: "install", signal }, () => {});
@@ -120,6 +121,17 @@ test("runtime discovery supports spaced symlinks and accurately reports missing 
     );
     assert.equal(
       (await f.service.detect({ ...spec, version: { ...spec.version, minimum: "900.0.0" } }, f.storage)).state,
+      "incompatible",
+    );
+    // A runtime that names a first release x.y (Godot's 4.3) reads as x.y.0 against the minimum.
+    const twoParts = { ...spec.version, pattern: "version (\\d+\\.\\d+)" };
+    const short = await f.service.detect({ ...spec, version: twoParts }, f.storage);
+    assert.equal(short.state, "ready");
+    assert.match(String(short.version), /^\d+\.\d+$/);
+    const [major = 0, minor = 0] = String(short.version).split(".").map(Number);
+    const above = `${major}.${minor + 1}.0`;
+    assert.equal(
+      (await f.service.detect({ ...spec, version: { ...twoParts, minimum: above } }, f.storage)).state,
       "incompatible",
     );
   } finally {
@@ -216,6 +228,41 @@ test("install and cancellation cannot be agent-authorized; failed preflight is d
     const job = (await f.call("runtime.installation", { runtime: "shell" })) as any;
     assert.equal(job.active, false);
     assert.ok(["cancelled", "failed"].includes(job.phase));
+  } finally {
+    await f.close();
+  }
+});
+
+test("an agent's install tool the person confirms starts the pinned download and answers at once", async () => {
+  const f = await setup();
+  try {
+    // More than any disk holds, so the download stops at its space check, before any network.
+    f.manifest.nativeRuntimes![0]!.install = {
+      action: "install",
+      url: "https://example.invalid/runtime.tgz",
+      sha256: "0".repeat(64),
+      bytes: 1,
+      unpackedBytes: Number.MAX_SAFE_INTEGER,
+      format: "tar.gz",
+      entry: "bin",
+      executable: "bin/tool",
+      notices: ["LICENSE"],
+    };
+    await assert.rejects(f.call("runtime.install", { runtime: "shell" }), /trusted setup/, "no install tool: refused");
+    f.manifest.tools.push({
+      name: "install",
+      description: "Download the pinned runtime",
+      parameters: { type: "object", properties: {} },
+    });
+    await assert.rejects(f.call("runtime.install", { runtime: "shell" }), /trusted setup/, "no card: refused");
+    f.manifest.tools[0]!.confirmation = "Download the pinned runtime";
+    assert.equal(validateManifest(f.manifest).apiVersion, 3);
+    assert.deepEqual(await f.call("runtime.install", { runtime: "shell" }), { started: true });
+    // The person's own action joins the download under way, or starts it again: either ends the same.
+    await assert.rejects(f.call("runtime.install", { runtime: "shell" }, new AbortController().signal, "action"));
+    const job = (await f.call("runtime.installation", { runtime: "shell" })) as any;
+    assert.equal(job.active, false);
+    assert.equal(job.phase, "failed");
   } finally {
     await f.close();
   }

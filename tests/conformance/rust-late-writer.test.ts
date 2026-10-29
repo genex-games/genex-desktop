@@ -352,6 +352,7 @@ function writingLate(lane: GameBuildLane, late: LateWrite): GameBuildLane {
       return outcome;
     },
     cancelAll: () => lane.cancelAll(),
+    cancelGame: (project) => lane.cancelGame(project),
     sweep: () => lane.sweep(),
   };
 }
@@ -435,6 +436,7 @@ describe("a Rust game's Mac run uses only the bytes its lane admitted", { skip: 
     const lane: GameBuildLane = {
       ensure: async (): Promise<BuildOutcome> => ({ ok: true, output: out, lastGood: out, problem: null, ran: true }),
       cancelAll: () => {},
+      cancelGame: () => {},
       sweep: async () => 0,
     };
     const deps = r.deps({ gameBuilds: new GameBuildLanes({ [GameStack.RustWgpu]: lane }) });

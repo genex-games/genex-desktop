@@ -44,9 +44,9 @@ renderer enables it. In-pass nodes draw inside one world pass.
 | 2 | Level-3 `before-cull` | compute |
 | 3 | skinning | compute |
 | 4 | light binning | compute |
-| 5 | cull (instances; meshlets pass 1 with R2) | compute |
-| 6 | shadows | pass |
-| 7 | depth/normal prepass | pass |
+| 5 | cull (instances, an occluded cascade keeping last frame's casters; meshlets pass 1 with R2) | compute |
+| 6 | shadows (an occluded cascade: first draws, its Hi-Z, cull phase 2, second draws) | pass + compute |
+| 7 | depth/normal prepass, then the camera's instance Hi-Z and final cull (`occlusion`) | pass + compute |
 | 8 | occlusion: Hi-Z build, meshlet cull pass 2, prepass part 2 | compute + pass |
 | 9 | Level-3 `after-prepass` | pass |
 | 10, 10a | ambient occlusion; contact shadows, then the sun-shadow mask (`post::sun_mask`) | pass |
@@ -312,7 +312,9 @@ through every level of detail.
 A particle is a pure function of its emitter and the tick, so Live and a capture agree and nothing
 is read back. A compute pass ahead of the world pass writes every row; graph node 15 draws them as
 billboards after the transparent draws, through the air and the fog at their centres (the froxel
-fog where it runs). Each feature is per emitter:
+fog where it runs). Presets: `fountain`, `steam`, `rain`, `snow` (soft round 2.5 cm flakes at
+1 m/s, settling briefly) and `dust` (faint 5 mm motes throughout a box). Each feature is per
+emitter:
 
 - **Soft** (`soft_distance`, after three.js's `SoftParticles.js`): a billboard fades as it nears
   the opaque scene behind it. It reads the prepass depth as view depth at half the render size
@@ -366,7 +368,11 @@ every target is pooled under its own ledger row.
   texel (`prepass normal roughness`), which the screen-space reflections' surface pass writes.
 - Binding 30 of the forward frame group (`FRAME_REFLECTIONS_BINDING`) holds the screen
   reflections (rgb, a confidence): the stage's 16th sampled texture of 16 (owner decision D1), a
-  zero texel on frames that trace none.
+  zero texel on frames that trace none. A frame nothing in can reflect (`ssr::frame_can_reflect`,
+  lane FQ: no instance whose material's roughness factor is under the cutoff or that has a
+  metallic-roughness texture, no binned decal that sets a roughness under it) traces none: the
+  trace would have resolved every texel to zero, so node 10b opens no pass and the pyramid is still
+  built for the next frame.
 - `shaders/screen/normal_roughness_unpack.wgsl` is the readers' half of the packing (the code range
   and `gx_unpack_normal`, `gx_unpack_roughness`), which B.9's passes include alone.
 
@@ -408,12 +414,18 @@ On the frame (`src/renderer/ssr_draw.rs`, graph node 10b `ssr`, after the contac
 frame of the HDR scene under TAA whose quality traces runs, once the previous frame left its
 colour pyramid on the same history and size:
 
-- the surface pass (`shaders/screen/ssr_surface.wgsl`, `fs_ssr_surface` in the forward module):
-  the opaque plain batches drawn again `Equal` over the prepass depth with the forward vertex
-  shader, writing the normal and roughness the forward pass shades with (normal maps, specular
-  AA, the decals' wet patches: Harbour's puddles are decals at roughness 0.04 over the asphalt).
-  The prepass itself keeps its vertex normals. Variants, meshlets, the terrain, grass and custom
-  geometry keep the cleared texel (fully rough), so the probes reflect them;
+- the surface texel, in the prepass (lane FR; `shaders/screen/prepass_surface.wgsl` in
+  `shaders::PREPASS_SURFACE`, the forward module's surface twin): the prepass draws everything else
+  first, then the opaque plain batches in a pass of their own over that depth, writing its three
+  targets and the normal and roughness the forward pass shades with (`gx_ssr_surface_texel`:
+  normal maps, specular AA, the decals' wet patches: Harbour's puddles are decals at roughness
+  0.04 over the asphalt) in one draw. The prepass's normals stay the vertex normals. A batch that
+  variants, meshlets, the terrain, grass or custom geometry hide fails the depth test and leaves
+  the cleared texel (fully rough), and prepass part 2's meshlets write it
+  (`fs_prepass_motion_rough`), so the probes reflect them. Before lane FR the batches were drawn a
+  third time for it, `Equal` over the prepass depth (vertex 0.63 and fragment 0.49 ms busy at
+  Ashen Horde's 10k peak); the texels are the same (`tests/ssr_prepass.rs`: a traced street is
+  byte-identical, `FrameStats::camera_opaque_passes` 3 to 2);
 - `SsrNode::encode` with the jitter-free camera, last frame's view-projection along TAA's
   reprojection row and the exposure ratio between the frames;
 - after TAA, `PyramidNode` over TAA's output: the next frame's reflected colour. The water reads
@@ -614,6 +626,43 @@ a still camera draws the same picture every frame. A settled capture draws witho
 shot asks (`Renderer::set_capture_lens`, the Studio capture's `lens` argument). They take no
 forward binding (`renderer/lens.rs` holds their targets).
 
+## Sun cascades: the casters each one draws
+
+`shadow::cull_to_receivers` (horde 10k) holds each cascade's cull view to the casters that can
+shadow a receiver reading it, after `shadow::fit` places the cascade: a receiver reads cascade `c`
+from any view depth up to `c`'s end (its own cascade, the blend band, PCSS's coarser cascade for a
+wide penumbra), so its receivers lie in the camera frustum from the near plane to `c`'s end. A
+caster outside that frustum's light-space polygon, widened by the widest lookup across the map
+(PCSS's 16 texels and the bilinear one, or the filter's reach) and along the light by that reach
+times the receiver-plane bias's slope cap (16), cannot shadow any of them and is culled; the near
+plane stays open (pancaking). Seen along the light the frustum is a convex polygon of up to six
+sides; `cascade_hull::sides` (lane FQ) fills the cull view's five side slots (the box's four and
+the open near plane's) greedily from its edges and the box's sides, so a camera looking across the
+light no longer draws the casters in the box's empty corners (the posts row with the sun beside the
+camera: 1,266 casters where the box drew 1,961). The sides snap outward to 16-texel steps, so a
+camera moving inside a step keeps the cull view (and the static shadow cache's key). The maps and
+matrices are the fit's:
+the pictures are bit for bit the same (`tests/shadow_cascades.rs`), exact for every receiver in
+the frustum whose slope to the light is under the cap. It stands down under a far cadence (a held
+map outlives its camera) and on frames with a Level-3 pass (`ExtensionDemand::level3`: it may read
+the maps anywhere); `Renderer::set_shadow_receiver_cull(false)` turns it off.
+
+A cascade's cost is its casters' triangles (lane FQ, Metal System Trace of 10,000 ghouls: the map's
+size changes nothing, every caster at its coarsest level halves the four cascades). A sun cascade
+casts each instance with levels at the coarsest mesh level whose world error is within
+`shadow::caster_error_texels` of its own texels (PCSS: its narrowest kernel, 3 texels, and the
+bilinear neighbour; the PCF kernels and the hardware tap their reach), never finer than the
+camera's level (`GpuCullViews::shadow_lod`, `gx_cull_caster_level` and its CPU twin
+`mesh::caster_level`). A silhouette's error inside the narrowest kernel the receivers read the
+map through blurs into the filter's own; the near cascades' texels are too small for any level,
+so contact shadows near the camera keep the camera's level, and the level is per cascade, not per
+distance, so a moving camera never switches it. A skinned band's levels are skinned for the camera
+alone (`mesh::LOD_PLANNED_TAG`): its casters keep the camera's band. At the 10k horde's peak the
+far cascade's casters take level 1 (3.3 to 2.45 ms busy) and the picture holds (SSIM 0.9999 against
+the camera-level casters, no pixel over 24 levels). A chain's casters' level (`casters` in
+`genex_lods`, lane FR) gives the nearer cascades a step their texels can hide where the
+half-triangle level's error is too large.
+
 ## Sun-shadow mask
 
 On desktop `high` and `ultra` under TAA with PCSS (`post::sun_mask`, node 10a after the contact
@@ -648,8 +697,8 @@ On the frame it is graph node 17 under `Quality::taau` (`high` and `ultra`): a T
 depth key the convert's disocclusion test reads, so the step keeps the history; a step back to
 scale 1 starts TAA over), the jitter
 and mip bias follow `taau::frame_jitter` and `taau::frame_texture_lod_bias`, exposure, bloom and the
-tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (ultra's RCAS
-does, at output size) and a settled capture re-renders one cycle of its phases (within the wire's
+tonemap read the scene at output size (`Renderer::hdr_scene_size`), EASU does not run (nor RCAS, unless
+a game asks for `TaaSharpen`) and a settled capture re-renders one cycle of its phases (within the wire's
 16). A frame whose depth of field, motion blur or `post-hdr` passes read the scene at render size
 keeps TAA at render size and EASU. At scale 1 nothing changes. `tests/frame_hooks.rs` holds 4K from
 0.67 within 10% of native 4K's sharpness (TAA then EASU kept 0.89 of it).
@@ -659,9 +708,36 @@ keeps TAA at render size and EASU. At scale 1 nothing changes. `tests/frame_hook
 A renderer is made at the game's logical `world_size` (`Renderer::logical_size`: the 2D layer's
 coordinates and the default output) and draws at whatever output it is given
 (`Renderer::set_output_size`; the scale, DRS, TAA, FSR1 and the ledger follow at the next frame).
-Live frames draw at the window's letterbox in its own pixels, capped at the Live class's
-reference resolution's pixels (`letterbox::output_for_window`); captures and goldens draw at the
-world size, or at the size a capture asks for (`capture --size`). Every shell (a window, the web
+Live frames draw at the window's letterbox in its own pixels (`letterbox::output_for_window`),
+capped at the Live class's reference resolution's pixels, or, where Live upscales temporally to
+the window, at four times its render budget (below); captures and goldens draw at the world size,
+or at the size a capture asks for (`capture --size`).
+
+Upscaling modes (`upscale`, lane UQ; owner's calls: on by default, Native only when the person or
+the game asks). A Live frame renders its `UpscaleMode`'s share of the window a side: Native 1
+(every pixel through TAA), Quality 0.6875 (22/32: the image rows dip at 21/32), Balanced 0.59375,
+Performance 0.5. On a native desktop
+the default is `upscale::calibrated_mode`: the best of Quality, Balanced and Performance whose
+render pixels fit `calibrated_pixel_budget` (the class's reference pixels at its nominal scale,
+2560x1440 on desktop high and ultra; Studio's measured score moves the class), never Native, held
+to that budget past 5K (lane UP's render budget). Phones and browsers keep their class's own scale
+until a mode is chosen. The facade multiplies every Live scale (the class's DRS steps, the nominal
+scale, the budget fit) by the mode's share of the output (`upscale::output_scale`: the window's on
+a TAAU desktop, more of a capped output elsewhere), so DRS moves below the mode (Quality at the
+Mac's 3456x2169 full screen renders 2376x1491, its steps down to 0.53; `drs` learns how the frame's
+cost follows the pixels from its step changes and climbs back when the next step fits, lane FQ,
+and sheds a preset's features only for frames the lowest step cannot fit in the interval). With
+dynamic resolution off the nominal step is the only one and nothing is shed. Where Live upscales
+temporally to the window (`presets::upscales_to_native`: `high` and `ultra`) its output is the
+window's own pixels up to four times `presets::render_pixel_budget`
+(`presets::native_output_cap_px`; the floor is `RENDER_SCALE_MIN`). Screen effects hold their own pixel budget
+(`presets::effect_budgeted`, `screen_effect_budget_px`: 1080p on a desktop, where ultra's AO
+budget was measured): full-resolution AO runs at half resolution with the joint-bilateral upsample
+past it, decided at the nominal step. SSR already traces at half the render size and bloom's chain
+starts at most 540 rows; the shadow maps and cascades keep the preset's row, sized for the
+reference render the budget holds. The web (its memory budget), phones and presets without TAAU
+keep the reference cap. `tests/upscale_quality.rs` holds each mode's frames to native ones (SSIM,
+shimmer, ghosting). Every shell (a window, the web
 canvas, a phone, Studio's Live ring) shows the world target through `Resilient::present`, which
 letterboxes it with `letterbox::present`: a texel-for-texel copy at its own size, FSR1 EASU + RCAS
 into a larger letterbox (a window past the cap), a Catmull-Rom filter widened to the ratio into a
@@ -669,6 +745,14 @@ smaller one. `Renderer::present` and `present_to_texture` go the same way; nothi
 nearest-texel. Live paints the HUD over the letterbox after that, at the window's pixels
 (`genex::present::Presenter::present`); a capture paints it into the world target at its own
 pixels per point (node 24). The ledger counts the window present's images (`BudgetInput::window`).
+
+A game whose fit is `expand` (`letterbox::Fit`, `Renderer::set_fit`) fills the window instead:
+Live draws at the window's own aspect (`letterbox::output_for`), the present covers the whole
+window (`letterbox::present::present_view`), the 2D layer shows `Renderer::view_rect` (the world
+grown on the output's long side, the world whole and centred on the letterbox's rectangle) and
+the camera's aspect follows the output (the facade widens a tall output's field of view to keep
+the world's width). Input and the HUD stay on the world's rectangle, and a capture at the world
+size is the letterbox picture.
 
 Each dynamic-resolution step draws into targets of its exact size (`target_pool`). On desktop a
 step change keeps the targets it replaced, and those a step draws without (FSR1's at scale 1), as
@@ -759,6 +843,17 @@ node). `select_lod` picks the coarsest level whose error projects to at most a p
 compared as `error * pixels_per_unit <= threshold_px * distance` so `gx_lod_select`
 (`shaders/geometry/lod_select.wgsl`) picks the same level on every GPU.
 
+`casters` (lane FR; absent for none, at most 1, never every level) counts the first levels only
+shadow casters draw. The import step writes one when the chain has room and its half-triangle
+level strays past 2% of the GLB's extent (a ghoul pose: 10.8 cm, thin flaps and spikes the
+quadrics cannot see): a finer level simplified on positions alone, every vertex left past the
+bound locked with its triangles and the level made again until none strays (a pose: 1,189 to
+about 850 triangles at 2.8 to 3.0 cm). `LodChain::casters` carries it, the batches of its chain
+are tagged `mesh::LOD_CASTERS_TAG`, and the camera's band (`mesh_lod::camera_band`,
+`gx_cull_camera_band`) chooses among the mesh and the levels after it exactly as the chain without
+it, crossfading from the mesh itself to level 2; a sun cascade's `caster_level` may cast it. A
+skinned mesh drops it (its casters cast the camera's band).
+
 A GLB without `genex_lods` (it skipped the import step) gets its chain at load:
 `mesh_lod_runtime::add_runtime_chains` (game systems LOD-21), called by the facade's model load
 (`genex::present`) and again by a device-loss replay. It uses the importer's parameters (half
@@ -801,9 +896,13 @@ motion prepass holds all of core's eight).
 The twins draw through faded pipelines (`renderer/variants.rs`: the `*_fade` entry points of
 `forward.wgsl`, `prepass.wgsl` and `shadow.wgsl`, `GX_LOD_FADE`). The two levels of a crossfade
 cover each pixel, or each MSAA sample, exactly once by a dither threshold (`gx_lod_fade_*` in
-`common.wgsl`: interleaved gradient noise, turned by the golden ratio each frame on TAA paths):
+`common.wgsl`: interleaved gradient noise, turned each frame on TAA paths by the frame's base-2
+radical inverse over eight frames, the shortest jitter cycle):
 - MSAA covers samples with `sample_mask`, both levels in proportion, so a pixel shows no stipple;
-- TAA and a one-sample path keep or drop whole pixels, and the resolve averages the levels;
+- TAA and a one-sample path keep or drop whole pixels; any eight consecutive frames keep each
+  pixel's incoming level in `floor(8 s)` or `ceil(8 s)` of them, so the resolve's average shows
+  every pixel at its share and a settled crossfade steps from pixel to pixel no more than twice
+  MSAA's (`tests/lod_fade.rs`);
 - an `Equal` main pass and an alpha-tested batch's shading apply the cut their depth step or the
   prepass applied (coincident levels both pass the test); an alpha-tested batch keeps
   alpha-to-coverage and cuts whole pixels, never writing `sample_mask` beside it;
@@ -909,6 +1008,37 @@ instanced call; a fragment reading `gx_draw` is handed its instance's row (`@loc
 opens by copying it (`extension::opened_draw_row`), so `gx_draw` reads as before. API 1 keeps
 loading unchanged. Level-3 passes register at stage ids (`before-cull`, `after-prepass`, `after-opaque`,
 `after-transparent`, `post-hdr`, `post`) that never change once shipped.
+
+## Instance occlusion (horde 10k)
+
+The instance path culls by occlusion on its own (`src/occlusion.rs`, `renderer/instance_occlusion.rs`,
+the phases of `shaders/cull.wgsl`), with no switch to turn on: a frame of at least
+`INSTANCE_OCCLUSION_MIN_ROWS` (1024) opaque rows on the GPU-driven path occludes.
+
+- **Camera** (one pass, exact): the prepass draws every copy in the frustum, a Hi-Z of its depth
+  is built (`instance hi-z`), and the camera's lists are culled again against it (phase
+  `Final`) before the world pass, the screen effects and TAA's reactive pass read them. It needs
+  the prepass and a one-sample world pass.
+- **Sun cascades** (two passes): the cull's first phase keeps, in an occluded cascade, the casters
+  it saw last frame; the cascade draws them, its Hi-Z is built (`shadow hi-z`, shared by the
+  cascades in turn), phase `Second` re-tests every caster, writes the next history and keeps the
+  visible ones the first phase left, and a second depth pass draws them. Only Live frames, and
+  only a cascade drawn whole this frame (not held by its cadence, not drawn from the static shadow
+  cache), occlude; spot shadows do not. With a low sun a crowd's front ranks hide the rest from the
+  sun as from the camera.
+- **History:** one word per (view, row) in three slots (Live's pair and a spare), after each row's
+  last-frame row found through its identity (the draw id, else the mesh and ordinal, as motion
+  vectors match rows), so a copy that changes mesh keeps its history. A row without a match draws
+  in the first phase.
+- **Exactness:** each Hi-Z texel holds the farthest depth drawn so far, so a copy it hides would
+  have lost every depth test: the pictures and the maps are the ones without occlusion, bit for bit
+  (`tests/instance_occlusion.rs`). The history only decides what draws first.
+- **When it pays:** each Hi-Z phase counts the rows it tested and those it found visible; the
+  counts come back a frame or two later, and a view whose Hi-Z hid under a fifth of what it tested
+  (`OCCLUSION_PAYS_MIN`: an open field, a crowd seen from above) sits out for 240 frames, then
+  measures again. A walled scene, a city block or a forest behind a hill keeps it.
+- `Renderer::set_instance_occlusion(InstanceOcclusion::Off)` draws every copy in a frustum
+  (tests and cost rows compare against it). The cull's storage buffers are 8 of WebGPU core's 8.
 
 ## Meshlets and Hi-Z occlusion (R2)
 

@@ -2,7 +2,7 @@
 //! but for the 4-space indent and the state type's `Ord` (P11 breaks heap ties by state), plus
 //! rows for P11 (successor order never changes the result) and P12 (the node cap).
 
-use super::{AStarProblem, find_path, find_path_capped};
+use super::{AStarProblem, find_path, find_path_capped, open_key};
 
 struct AdjacencyListProblemState {
     adjacency: Vec<(f32, i32, usize)>,
@@ -287,4 +287,166 @@ fn a_capped_search_heads_toward_the_goal() {
     assert_eq!(partial.len(), 3, "4 expansions reach depth 3 along the optimal path");
     let full = find_path(&problem).path.expect("a path");
     assert_eq!(partial[..], full[..3]);
+}
+
+/// The search as it stood before R-19 (`std` `BinaryHeap` of full entries ordered by two
+/// `total_cmp`s, the state and the index; a table lookup on every pop), kept as the oracle the
+/// faster search must match pop for pop.
+mod before_r19 {
+    use core::cmp::{Ordering, Reverse};
+    use std::collections::BinaryHeap;
+
+    use genex_core::map::FastMap;
+
+    use super::super::{AStarProblem, PathResult, PathStats};
+
+    struct Node<P: AStarProblem> {
+        cost: f32,
+        state: P::StateType,
+        previous_node: Option<(usize, P::ActionType)>,
+    }
+
+    struct OpenEntry<S> {
+        estimate: f32,
+        cost: f32,
+        state: S,
+        index: usize,
+    }
+
+    impl<S: Ord> PartialEq for OpenEntry<S> {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other) == Ordering::Equal
+        }
+    }
+
+    impl<S: Ord> Eq for OpenEntry<S> {}
+
+    impl<S: Ord> PartialOrd for OpenEntry<S> {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl<S: Ord> Ord for OpenEntry<S> {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.estimate
+                .total_cmp(&other.estimate)
+                .then_with(|| other.cost.total_cmp(&self.cost))
+                .then_with(|| self.state.cmp(&other.state))
+                .then_with(|| self.index.cmp(&other.index))
+        }
+    }
+
+    fn recover<P: AStarProblem>(index: usize, nodes: &[Node<P>]) -> Vec<P::ActionType> {
+        let mut path = Vec::new();
+        let mut node_index = index;
+        while let Some((previous, action)) = &nodes[node_index].previous_node {
+            path.push(action.clone());
+            node_index = *previous;
+        }
+        path.reverse();
+        path
+    }
+
+    fn try_add<P: AStarProblem>(problem: &P, best: &mut FastMap<P::StateType, f32>, nodes: &mut Vec<Node<P>>, open: &mut BinaryHeap<Reverse<OpenEntry<P::StateType>>>, node: Node<P>) {
+        let estimate = node.cost + problem.heuristic(&node.state);
+        let entry = best.entry(node.state.clone()).or_insert(f32::INFINITY);
+        if *entry <= estimate {
+            return;
+        }
+        *entry = estimate;
+        let index = nodes.len();
+        open.push(Reverse(OpenEntry { estimate, cost: node.cost, state: node.state.clone(), index }));
+        nodes.push(node);
+    }
+
+    pub(super) fn find_path_capped<P: AStarProblem>(problem: &P, max_explored: u32) -> PathResult<P::ActionType> {
+        let mut stats = PathStats { explored_nodes: 0, capped: false };
+        let mut best: FastMap<P::StateType, f32> = FastMap::default();
+        let mut nodes: Vec<Node<P>> = Vec::new();
+        let mut open = BinaryHeap::new();
+        let mut successors = Vec::new();
+        try_add(problem, &mut best, &mut nodes, &mut open, Node { cost: 0.0, state: problem.initial_state(), previous_node: None });
+        let mut nearest: Option<(f32, f32, usize)> = None;
+        while let Some(Reverse(entry)) = open.pop() {
+            let node = &nodes[entry.index];
+            if best.get(&node.state).is_some_and(|b| *b < entry.estimate) {
+                continue;
+            }
+            if stats.explored_nodes >= max_explored {
+                stats.capped = true;
+                let partial = nearest.map(|(_, _, index)| recover(index, &nodes));
+                return PathResult { stats, path: None, partial };
+            }
+            stats.explored_nodes += 1;
+            if problem.is_goal_state(&node.state) {
+                return PathResult { stats, path: Some(recover(entry.index, &nodes)), partial: None };
+            }
+            let heuristic = entry.estimate - entry.cost;
+            let closer = nearest.is_none_or(|(h, c, _)| heuristic.total_cmp(&h).then(entry.cost.total_cmp(&c)) == Ordering::Less);
+            if closer {
+                nearest = Some((heuristic, entry.cost, entry.index));
+            }
+            let current_cost = node.cost;
+            let state = node.state.clone();
+            successors.clear();
+            problem.successors(&state, &mut successors);
+            for (action_cost, action, next) in successors.drain(..) {
+                try_add(problem, &mut best, &mut nodes, &mut open, Node { cost: current_cost + action_cost, state: next, previous_node: Some((entry.index, action)) });
+            }
+        }
+        PathResult { stats, path: None, partial: None }
+    }
+}
+
+/// A seeded random graph: `states` states, a few edges each, costs and heuristics drawn from a
+/// handful of values so estimates tie often (the tie rule is what the oracle row must cover).
+fn random_problem(seed: u64, states: usize) -> AdjacencyListProblem {
+    let mut rng = genex_core::rng::Pcg32::seeded(seed);
+    let mut problem = AdjacencyListProblem { states: Vec::with_capacity(states), start: 0, end: states - 1 };
+    for state in 0..states {
+        let edges = 1 + rng.below(4) as usize;
+        let adjacency = (0..edges)
+            .map(|action| {
+                let next = rng.below(states as u32) as usize;
+                let cost = [0.5, 1.0, 1.0, 2.0, 0.25][rng.below(5) as usize];
+                (cost, (state * 8 + action) as i32, next)
+            })
+            .collect();
+        let heuristic = [0.0, 0.5, 1.0][rng.below(3) as usize];
+        problem.states.push(AdjacencyListProblemState { adjacency, heuristic: if state == states - 1 { 0.0 } else { heuristic } });
+    }
+    problem
+}
+
+#[test]
+fn r19_search_pops_exactly_as_the_search_before_it() {
+    // R-19: the packed key, the index heap and the push chains are a faster form of one order;
+    // over many tie-heavy graphs and node caps, the path, the partial path and the work equal
+    // the earlier search's.
+    for seed in 1..=300u64 {
+        let problem = random_problem(seed, 4 + (seed % 60) as usize);
+        for cap in [1, 3, 8, 25, u32::MAX] {
+            let now = find_path_capped(&problem, cap);
+            let before = before_r19::find_path_capped(&problem, cap);
+            assert_eq!((now.path, now.partial, now.stats), (before.path, before.partial, before.stats), "seed {seed} cap {cap}");
+        }
+    }
+}
+
+#[test]
+fn the_open_key_orders_as_the_two_total_cmps() {
+    // Lower estimate first, then the larger cost: over signed zeros, infinities, NaNs and
+    // neighbouring floats, the packed key's order is the P11 order of its two parts.
+    let values = [f32::NEG_INFINITY, -2.5, -1.0, -f32::MIN_POSITIVE, -0.0, 0.0, f32::MIN_POSITIVE, 1.0, 1.0 + f32::EPSILON, 2.5, f32::MAX, f32::INFINITY, f32::NAN, -f32::NAN];
+    for &estimate_a in &values {
+        for &cost_a in &values {
+            for &estimate_b in &values {
+                for &cost_b in &values {
+                    let expected = estimate_a.total_cmp(&estimate_b).then_with(|| cost_b.total_cmp(&cost_a));
+                    assert_eq!(open_key(estimate_a, cost_a).cmp(&open_key(estimate_b, cost_b)), expected, "({estimate_a}, {cost_a}) vs ({estimate_b}, {cost_b})");
+                }
+            }
+        }
+    }
 }

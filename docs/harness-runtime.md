@@ -27,6 +27,8 @@ Rust · wgpu games. Every mode (director, autopilot, facet loop, gauntlet, spike
 control flow and takes its stack's text from one table (`stackPlannerLines`, `facetLinesFor`,
 `loop/rust-briefs.ts`): the planner's rules, the builder and contract-wiring briefs, the facet's
 recipes (`library/recipes/rust.*.json`) and the code reviewer's rubric (`judge/code-review-rust.md`).
+A seed Rust recipe's sketch calls only names the facade pins or defines: `unpinnedSketchCalls`
+(`loop/library.ts`) names any other call, and `npm run verify:harness` refuses a seed recipe with one.
 Checks follow `STACK_CHECK_SUPPORT`: scene checks are unmeasured and a look with no captured frame
 fails its vision and play checks. A web build refused `gpu-unsupported` (a preview without WebGPU)
 leaves parity unavailable, not failed, and the gate is weighed over the other destinations. Tolerances
@@ -50,7 +52,73 @@ judgement (racing and flight then hold W/ArrowUp through the rest of the drive, 
 the game's racing line when it has one and released before the cameras; a declared script holds
 nothing; a front-end kept for its owner, `begin:false`, is pressed by nothing, not even a declared
 script), and `gameLine(run.game)` is the first line of
-every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` may declare `start.keys`. A play script may
+every judge call (for a kept front-end it says nothing was pressed and `[dead-input]` does not apply). A game with a title and no `__studio.begin()` declares `start.keys`; the director's `plan`
+refuses a kind without `start` (keys, or `none` for a game that boots into play). Both evidence
+passes press the keys before the opening sample (the web pass once `begin()` refuses), until `state().flow` says play began; a game that
+reports no `flow` (a Rust or C++ game unless it adds a `flow` probe) gets one settle step and a
+warning asking for it. A judge's `[dead-input]` defect is read off state, never asked of a frame
+(`facet/defects.ts`): it goes to the defect ledger, and the kind's look and move probes measure it.
+
+The look a run is held to is one table for every stack (`loop/look-bar.ts`). The look blockers —
+`[primitive]`, `[dark-viewmodel]`, `[crushed-shadow]`, `[placeholder-particles]`,
+`[sky-contradicts]`, `[visible-tiling]`, `[not-shipped]`, `[flat-material]`, `[stick-tree]` and
+`[slab-snow]`, plus the harness's own `[art-source-mismatch]`, `[exposure-pump]` and
+`[uncomfortable-camera]` (`judge/artefact-classes.md`) — hold the work open in code: a taste
+verdict naming one, in `defects` or in `polish` (moved into `defects`), is never `satisfied`, a
+finisher's `finishDone` waits while one remains, and the ship review makes it a `blocker` whatever
+severity it gave, so `ship` is false. A run whose ask sets a visual bar (`asksForLook`: reference
+stills, or a photoreal, realistic, AAA or beautiful brief) is held to it:
+
+- Keeping. A round that adds a look blocker is not kept, whatever checks flipped
+  (`facet/rules.ts acceptRound`, verdict source `look-blocked`). Added means: the taste judge lists it
+  in `added` under its ART BAR line ("worse against the art bar" is a regression, even where the
+  other build lacks the thing), the engine's look facts show it (`loop/look-facts.ts`, reading
+  `state().__render.look`), or the harness measures it (`loop/provenance.ts`, `loop/temporal-checks.ts`)
+  where the accepted build did not have it or had it less badly. The accepted build is measured on its
+  own evidence (`facet/incumbent-findings.ts`); one that reported no look facts, or that nothing was
+  measured on, makes no finding the round's.
+- Eyes. Facet rounds are captured at 1600×900, like the art director's look. A round with no frame a
+  judge can be shown is captured once more, then left Unmeasured (`unseen`), never judged blind.
+  `references/*` load onto every run that brought no stills (`loop/reference-stills.ts`). A demo whose
+  end frame is another frame of the same pass is flagged as not having moved the game. When
+  `judge/pin.json` names a `second` engine, a second taste judge looks too and its blockers count.
+- The close. The head a run lands always gets the art director's look against the references (in
+  the close's own judge when that judge asks a question); a report with none says it has no art
+  verdict (`shipReview.judged: false`).
+- Measured. Every playable camera (the default view, the harness's eyes and each part's `hero`) sits in
+  its luminance band, the rule the eval rubric and the docs' calibration page share: mean luma 90-130 for
+  an interior, 90-175 outdoors or where the plan does not say, darkest bin ≤ 15%; 25-95 with up to 40%
+  black for a night or horror look (`"night": true` on the sky row). A plan part's `setting`
+  (`interior`, `exterior`) places its hero camera. Below the band is `[crushed-shadow]`, above it `[blown]`; `demo:doorway`'s exposure trace moves at most 1 EV per half
+  second with no overshoot; `demo:sprint-run`'s pose (the trace the demo returns, or the rig's
+  `volatile.cameraMotion`) stays inside the engine rig's comfort caps. The doorway and sprint checks run on
+  every run whose game has those demos.
+- The art pass. The director's `plan` refuses such a run without `art=`: every area's assets by tier
+  (hero, mid, scatter, sky), each with its `kind`, its draw `tags` and its source — a Genex generation,
+  a CC0 model, a scan, a `blender-kit` (the modular shell only: never a hero, a prop, a character or
+  anything organic, and it names the scans it wears) or code with a why; a bpy script of untouched
+  primitives counts as code. At round end the provenance audit follows each planned tag to its model,
+  its `genex-assets.lock` row and its normal maps. A re-plan that adds a part gives `art=` again. It is
+  kept on `run.art`, counts the Genex generations it reserves, and every builder's brief carries it
+  with the greybox rule and the boot rule (`loop/look-bar-prompts.ts`, `loop/destination-budgets.ts`).
+- Assets first (`director/sourcing.ts`). `worker_start` waits, up to 30 minutes from the art pass, until
+  `docs/ASSETS.md` in the integration names a file for every planned prop, organic and character tag
+  (`- <tag>: <file>`), except for the sourcing worker (the part `id=sourcing`). Once one part builds, another
+  waits, up to 45 minutes, for an art director's review with no blocker. A plan part's `hero` camera is
+  in every art director's look.
+- Mandates and budgets. A `worker_start` or `worker_steer` move asking for billboards, 1k or low-res
+  textures, or shake is refused (`loop/quality-lint.ts`); a plan that gives one file to two parts is
+  answered with a warning naming them (`director/ownership.ts`). Budgets are said per destination: a native game's slow web preview is the preview's boot,
+  and no judge or director meets a budget by dropping maps. The harness's own look on such a run waits
+  45 s for the page to say it is ready, whatever `studio.json` declares (`loop/ready-wait.ts`).
+
+Builder sessions are rotated every three rounds (`facet/session-rotation.ts`); the round after is briefed
+whole. `worker_start` weighs the builder's plan limits, the same reports the app's usage panel shows
+(host method `engine.usage`): from 85% of a window used, its answer says the worker may stop on it
+(`director/usage-forecast.ts`). A look blocker the judges keep naming becomes the game's lesson with the rule that fixes it
+(`ledger.ts`, `look-bar-rules.ts`).
+
+A play script may
 `touch` (a tap at `x`/`y` in world pixels, a hold with `ms`, a swipe to `toX`/`toY`, an `id` for
 the finger): it reaches a Rust · wgpu game's contract v2 run or web page through `preview.input`;
 any other preview answers `touch-not-taken`, the script skips that touch, and the look warns that
@@ -81,7 +149,8 @@ read these signals.
 Where learning goes. Four places, and they are not interchangeable: a check earned into
 `library/checks.json` (five technical checks ship; a planner's check earns its place by being
 used), a craft recipe in `library/recipes` (opinions about how a thing should look — retrieved
-when a check fails or a judge names the defect, never imposed), a skill file (how an agent works),
+when a check fails or a judge names the defect, and offered up front by kind and brief as below,
+never imposed; each is written for one stack, so a Rust game reads `rust.*` ports), a skill file (how an agent works),
 and a prompt (what a role is). `library/games/<game>.jsonl` and `.md` hold what a run learned
 about one game and belong to the harness workspace, never the user's repository.
 
@@ -282,13 +351,17 @@ conflict, base and facet builders, the Unreal lead's typed workers; `loop/worker
 classic Autopilot's builders keep their own brief. A folder with no
 kind yet is told to start web with `start_web_game` or find a plugin with `plugins_find` (a folder of
 notes is told to read them first); with an engine plugin's kind on offer (`plugins.tools`'s
-`kinds`) every fresh brief until it has a kind asks with the question card, and a brief without the
-card (a local turn's too) names each kind's tool for a request that names that engine. A folder of its own files of a kind no
+`kinds`) every fresh brief until it has a kind asks with the question card (a request naming an
+engine none of its options covers goes to `plugins_find` instead), a resumed session keeps the card
+while the folder has no kind, and a brief without the card (a local turn's too) names each kind's
+tool for a request that names that engine. The web starter's rules reach such a brief as the web
+answer's only. A folder of its own files of a kind no
 rule knows is told to look through them first. Each kind gets its own rules, named by folder when
-there are several. A kind no plugin covers (Godot, Unity, Blender, an Unreal plugin, an Unreal project
-with the plugin off, an unknown one) calls `plugins_find` first, shows the card with
+there are several. A kind no plugin that is on covers (Unity, Blender, an Unreal plugin, a Godot or
+Unreal project with its plugin off, an unknown one) calls `plugins_find` first, shows the card with
 `plugins_suggest` and ends its reply, offers to write a plugin when none fits, and goes on with its
-files and the shell only on the person's word (`pluginFirstRule`). An Unreal project the game is not
+files and the shell only on the person's word (`pluginFirstRule`); a kind a plugin that is on makes
+(one of `kinds` names it, as Godot's plugin does Genex's own `godot-project`) skips that. An Unreal project the game is not
 linked to is never worked on through the Unreal tools: they reach the Unreal panel's project until
 `use-project` links it. A local turn's
 operating rules are split: `prompts/operating-rules.md` for every turn and
@@ -380,7 +453,8 @@ search default.
 Connector tools are host-owned and arrive from one list. Studio main is the only MCP client: the
 connector registry connects each enabled connector, namespaces its tools `<connector>__<tool>` and
 appends them to the same `liveTools` every path already carries, so Claude Code gets them on the
-in-process `studio` server, Codex through the file bridge and the local harness over `mcp.tools` /
+in-process `studio` server, Codex through the file bridge (or, opted in, as app-server dynamic
+tools: [Model setup and activity](connections-and-context.md#model-setup-and-activity)) and the local harness over `mcp.tools` /
 `mcp.invoke`. The harness never speaks MCP itself, and it never learns a connector's name from a
 prompt file: guidance is one short paragraph the registry composes for whatever was in scope (the
 user's own connectors and those a plugin brings in separate blocks), tool
@@ -394,6 +468,10 @@ outlives its session's turn and a harness restart, and stops when its run settle
 `run.settled`), when its worker's chat turn returns, or when Genex quits. The harness neither starts
 one nor writes its `job_started` / `job_ended` records; a start follows the chat's mode at the call
 ([tool permissions](tool-permissions.md#jobs)).
+Job output pauses both pipes when the log writer is full, resumes when it drains, and keeps
+draining without retaining output after the size cap. A normal exit waits for buffered output
+before closing the log; the orphan-pipe deadline still ends an idle or already-capped pipe.
+A failed writer reports its error and releases its pipes rather than leaving a paused job behind.
 So is `app_look`, look-only and in every mode, which a seated reader worker gets as its one host
 tool ([looking at apps](tool-permissions.md#looking-at-apps)).
 
@@ -475,7 +553,9 @@ as `final-commit-failed`. A landing that git refuses over uncommitted changes in
 or one into a folder with something staged or a merge of its own under way (which the failed
 merge's abort would undo, so it is not tried), is refused as `uncommitted-changes` and names them
 without blaming anyone; a conflict with commits there, or a hook or lock that refuses the merge,
-stays `could-not-land` with git's words.
+stays `could-not-land` with git's words. A conflict in `studio.json` alone (the studio's own kind
+declaration beside the lead's `game` block) is merged by its keys (`loop/studio-json-merge.ts`):
+equal values are one, a key one side added is kept, and only a key both set apart still refuses.
 
 Genex's moments. Every restore of a game folder (`snapshot.restore` naming the game, and the
 person's file Rewind) runs the enabled plugins' `restore.before` and `restore.after` steps around
@@ -541,7 +621,9 @@ held, records the round's `checking` step, runs the reviewer as `engine.delegate
 harness may settle a held answer as no answer (a yes that lapsed, a turn that ended), never as a
 yes; the host counts the no's in a row from its own records (`rejectionsInRow`, since the run was
 last opened: a reopened run starts over, a resumed one goes on), writes the outcome and answers
-`stopped` at the cap. A run's start, pause or close drops its held round: a review or settle still
+`stopped` at the cap, unless the settle names more than `FINISH_TIME_LEFT_MS` (20 min) of a timed
+Loop's working time left (`timeLeftMs`, from `time-cap.ts` `timeLeftOf`; an ∞ Loop names none): then
+the no records `timeLeft` and the Loop goes on whatever the row. A run's start, pause or close drops its held round: a review or settle still
 waiting then records nothing more and starts no reviewer. `finish_check` is a
 host-only record: a harness batch carrying one is refused whole. The
 host seats the reviewer in a fresh home of its own (a folder no box writes), reading the lead's folder and the run's captures, with
@@ -556,9 +638,33 @@ person's word (`loop/finish-log.ts`: a steer the lead took from their message, o
 that message's), the rest as relayed by the chat's agent, labels `run.goal` as the launch wrote it,
 and counts the pictures attached. A proof file is read by handle, never through a link or a FIFO, and
 only while its name still leads to it inside the folder.
-It answers `{"verdict":"yes"|"no","reasons":[…],"notDone":[…]}`: yes ends the Loop, no goes back to
-the lead with its reasons, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it; an answer that
-says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
+The lead's `remaining` (what it says is not done yet, one item a line, `remainingOf`: at most
+`REMAINING_MAX` items of `REMAINING_ITEM_CHARS`) comes before its claim and is never clipped with it,
+and the brief asks the reviewer to open pictures of its own choosing in the folder and to judge how
+a thing looks only from a close front or side picture.
+In a Loop in place, a claim that names what remains while more than `GAPS_FIRST_MIN_MS` (20 min) of
+working time is left reaches no reviewer: the lead is told to work on what remains first
+(`open/finish.ts` `gapsFirst`), and nothing is recorded.
+It answers `{"verdict":"yes"|"no","reasons":[…],"done":[…],"notDone":[…]}`: `reasons` say what it
+checked and found, met or not, `done` and `notDone` are short checklist items of what the proof shows
+and what it doesn't show yet; they stay apart in the record and the answer, and only `notDone` is
+what is still to fix on the "Almost there" card, in Builds' "Final look" and in the report
+(`notDoneOf`; a record that names none falls back to its reasons). The chat says nothing per round.
+Every Loop's close that is neither a yes nor a pause writes `run_finished.stillToFix` (`stillToFixOf`):
+the last no's `done` and `notDone`, why it stopped (`StopWhy`: its time, the no's, another end) and
+its hours (`loopHoursOf`); a time-out with no no lists nothing and still has the card. The chat's card
+reads only that, so a page that lost the run's start still shows it. A Stop pauses every Loop (a web
+finish whose landing it refused too; one after the landing ends nothing more), and a pause keeps its
+own reason and Resume. Keep building is offered on the
+chat's newest card until the person writes again, and on Builds' newest ended build, while nothing runs
+or waits paused. It sends through the composer's Loop (`loopOn`) marked `keepBuilding`, and goes once
+it went out. That mark reopens the finished build, or launches the next Loop as the launch tool would (an
+Autopilot run on the base goal plus what is left, its reference, ∞ under `MAX_RUN_HOURS`), with no
+turn deciding (chat-dispatch.ts `keepBuildingNow`); a tap always takes a turn of its own. Yes ends the Loop, no
+goes back to the lead with both, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it, a timed Loop
+only once little time is left; after a row it went on past, a claim whose proof names no file made
+since the last no is turned back before any review (`freshProofIn`), and nothing is recorded. An answer
+that says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
 `finish_check` record the host writes (`checking`, then `accepted`, `rejected` or `unanswered`, with
 the round, the reasons, the count and the reviewer); a claim no engine here can review, or one whose
 model can't hold the brief, asks nothing and records nothing. The whole check fits inside the lead's one call (`LEAD_CALL_MS`,
@@ -610,6 +716,12 @@ or turn that ended while the reviewer read ends nothing more, a claim the run's 
 to review is told so (the wrap-up asks for claims early enough), and `LeadJournal.finishTally` keeps the
 count. Its start says `finishCheck: true`, so its graph is a tree from the start. The critic stays
 advice.
+
+A web run's start (`prepareLoopRun`) loads the game and looks at it before the lead's session opens,
+and on a compiled game each load may wait minutes on a cold build. Those steps are stop-aware
+(`unlessStopped` in `director/setup.ts`): a Stop ends the step it waits on within `CANCEL_POLL_MS`
+and skips every later look, so the run closes as the person's stop (`closeStoppedStart`) and no
+lead opens.
 
 The open Loop. `runDirector(ctx, { …, profile: LoopProfile.Open })` runs the director's wake loop on a
 project that isn't a web game, led in place (`loop/director/open/`). `prepareLoopRun` branches inside `director/setup.ts` (`prepareOpenLoopRun`, its state helpers
@@ -675,10 +787,16 @@ session of this attempt worked keeps nothing and spends none of its hours. No fi
 if the goal is reached. Its wake messages are
 `openDigest` (`open/digest.ts`: the person's words first, news no turn took, the lines Genex carried,
 its latest save points with the rest counted, a fresh-look reminder after `FRESH_EYES_MS` with no read-only worker, its own
-wrap-up and idle question). `save_point {label, summary}` is Genex's checkpoint on the git-write
+wrap-up and idle question). `save_point {label, summary, shows?}` is Genex's checkpoint on the git-write
 queue (the plugins' steps around the snapshot; their notes in the answer, their pictures the round's
 thumbnails on the "lead" part, `facet_iteration` and `integration_merge`; the host keeps them as the
-observer's capture); a block or Genex's hold keeps nothing and says why. `rewind {label}` and
+observer's capture); a block or Genex's hold keeps nothing and says why. `shows` names the picture in
+the folder that shows the change (a PNG or JPEG really inside it, read before the snapshot): it is
+the round's `shown` picture, apart from the thumbnails; a save point without one is answered with a
+reminder, and one naming no readable picture says why. `pause {why}` is for what only the person
+can do (a tool, editor or app the work needs is gone, an install, a permission): it sets
+`OpenLoop.halted` to the lead's words, so the Loop closes paused with them as the reason once the
+turn ends, and its acts are refused meanwhile, as below. `rewind {label}` and
 `restart` (offered only when a plugin hooks `restore.*`) only note what the turn's end runs (a rewind
 keeps the snapshot its label named when asked; a Stop leaves it unrun, and the resumed brief says so):
 `LoopRun.afterTurn` (`open/between.ts`, which the wake loop awaits; a look at the app the turn started
@@ -686,7 +804,15 @@ settles first, and no recovery starts during it) first autosaves a turn that kep
 folder changed, or `onlyIfUnsaved` where a plugin saves the app; never while a writer in place works),
 then restores the save point (`snapshot.restore`, then `waitReady`; Plan mode holds it even where no
 plugin hooks `restore.*`) or fires `restore.before` and `restore.after` with no file changed, both
-waiting while a writer in place works, each outcome a carried line. `finish` waits for that turn's
+waiting while a writer in place works, each outcome a carried line. When the turn kept a save point
+(its own or the autosave) and the folder was not taken back, the judges the game's engine plugin
+declares (`game.list`'s `judges`, on a game marked `editorPlay`) play it one at a time
+(`open/judge-rounds.ts`): each a blind `judge_play` naming its judge, its answer recorded as a run check
+and carried to the lead. A round starts only with `ROUND_MIN_MS` (3 minutes) of working time left and
+no finish asked for, plays no judge past the working time, and a Stop, a hold or the close ends it
+before the next judge. A game with no judges (Unreal, a web game) has no rounds; the lead's
+`judge_play` is offered for any game marked `editorPlay` (an older host's: an Unreal game), naming the
+game's judges by id. `finish` waits for that turn's
 end and for a writer in place, and a timed Loop's claim waits for its last turn. The health
 watch (`open/health.ts`) rides the wake loop's rounds and a turn's, one look at a time beside them
 (never awaited): `health` every `HEALTH_POLL_MS` when hooked, never once the Loop closes or its
@@ -707,7 +833,10 @@ too), says nothing and keeps no journal; the teardown waits for it a while (`set
 closing Loop's lead hears no more news. While a turn works, `open/news.ts` steers (`interrupt: false`, once each) a pool
 worker's end and question (`NoteKind.WorkerAsks`), a job's end, the app's crash
 (`NoteKind.AppCrashed`) and a reminder `SAVE_REMINDER_MS` after the last save point; a line the
-session read (`DelegateResult.steered`) is not told again, one it never read rides the next digest.
+session read (`DelegateResult.steered`) is not told again, one it never read rides the next digest:
+an engine that can't read mid-turn (Codex, Bonsai) hears news only when its turn ends, at most
+`OPEN_TURN_MS` later. The person's words do cut such a turn, its first included
+([hearing it](conversation-coordinator.md#live-chat-during-a-build)).
 
 One Loop for every project. Run dispatch (`conductRun`) takes the game from the list it already
 read and its profile (`loopProfileOf`): a web game keeps the director on an engine that keeps a
@@ -738,7 +867,7 @@ resume of a run that runner wrote, to the Unreal runner (`loop/loop-switch.ts`) 
 Loop passes on the one Loop. Through the real studio (`one-loop-projects.test.ts`), a Loop on the toy
 plugin's project, and on a copy of that plugin with every tool renamed, runs the plugin's steps at its
 moments, its worker type and its observer, and ends on the reviewer's yes with no seed change; a Loop
-on a Godot folder with no plugin runs with Genex's own tools, lends no window and writes no web file.
+on a Godot folder with its plugin off runs with Genex's own tools, lends no window and writes no web file.
 
 One seam per worker. In a game the user brought, a worker is given a path, a folder or a glob to
 own (`*` and `?` stop at a slash, `**` crosses them; a glob must be quoted in the tool call), and
@@ -903,8 +1032,13 @@ A refused resume (`facet_session_reset`) and a context overflow start a fresh se
 prompt.
 
 A worker's copy of the game (`snapshot.worktree`, `harness-rpc/snapshot.ts`) holds every file the
-commit tracks; of what it receives outside history, the files of the game's nested repositories, it
-leaves out the game's ignore and `copySkip` rules (only the ignore rules when the copy versions those
+commit tracks. Each regular file the game folder still holds as committed is cloned from there
+(`worktreeAt`, `substrate/snapshots.ts`: `cp -c` on macOS, an APFS clone that shares the blocks, a
+reflink on Linux) and git writes the rest; git then records every file's stat and writes again any
+clone that does not read as committed, so the copy is exactly the commit's. A large project's
+content (an Unreal `Content/`) costs a copy neither the time of writing it again nor its disk;
+Windows checks every file out. Of what it receives outside history, the files of the game's nested
+repositories, it leaves out the game's ignore and `copySkip` rules (only the ignore rules when the copy versions those
 repositories). A copy larger than `WRITER_COPY_MAX_BYTES` (2 GB, `substrate/snapshots.ts`) is
 refused before anything is made (`SnapshotRefusal.CopyTooLarge`), with its size and largest
 folders; every caller gets that answer, the director's integration and play copies included, in
@@ -920,9 +1054,10 @@ host hands those tools only to the chat's own session answering that turn, only 
 tools, and never to a worker (depth one). Each call is forwarded as the `worker_tool` dispatch to
 the pool of that turn; a call for any other turn starts nothing.
 
-The pool (`loop/workers/pool.ts`, `pool-start.ts`, `pool-merge.ts`) runs up to
-`MAX_WORKERS_AT_ONCE` (8) at once, under the Settings ceiling the host keeps per chat on its
-workers, readers and writers alike. A chat turn on a local model's engine opens no pool: only a
+The pool (`loop/workers/pool.ts`, `pool-start.ts`, `pool-merge.ts`) runs as many workers at once
+as the person's Settings allow (`preview.capacity` `workers`, the ceiling the host keeps per chat on
+its workers, readers and writers alike), at most `MAX_WORKERS_AT_ONCE` (8): `worker_start`'s
+description says the number, and a start past it is refused in its own answer, before anything is made. A chat turn on a local model's engine opens no pool: only a
 delegated engine carries a worker's seat.
 
 - `worker_start {title, task, isolation, type?, research?, inputs?}`: a reader (`read`) works in the
@@ -939,13 +1074,21 @@ delegated engine carries a worker's seat.
   host honours by seating it in the chat's permission mode.
 - `worker_status` and `worker_wait` (at most `MAX_WORKER_WAIT_S`) read each worker's line. A worker
   whose question waits in the chat (a pending `tool_permission` row naming it) shows as waiting for
-  the person, and `worker_wait` wakes for it.
+  the person, and `worker_wait` wakes for it. An ended worker keeps its own last words
+  (`WorkerRecord.report`, up to `WORKER_REPORT_CHARS`) and a copy the files its work changes
+  (`changed`): `worker_status <id>` answers them in full, `worker_wait` answers them for each worker
+  that ended while it waited, and the list of every worker names each by its report's first sentence.
+- A worker's brief says its turn is its whole job: never ended to wait, never waiting by sleep or a
+  background command. A worker's Claude Code session that a background task woke after its input
+  ended (no tool call can be answered then) ends not ok, saying so, with its last words kept
+  (`claude-code.ts` `wokeAfterEnd`); a lead's or the chat's session keeps its last result's verdict.
 - `worker_steer` interrupts that worker alone (`engine.interrupt {cwd, worker}`) and resumes its
   session with the words in front; `worker_stop` aborts it alone (`engine.abort {cwd, worker}`),
   sent again while the host finds no session to stop (one still being seated), and a stopped
   worker takes no further leg.
 - `worker_mark used` merges a copy's commit into the game folder with the director's merge
-  (`mergeNoFf`, conflicts listed and the merge aborted). Conflicts, and the lead's uncommitted
+  (`mergeNoFf`, conflicts listed and the merge aborted); a clean merge names the pictures the work
+  changed, for the lead to look at before building on them. Conflicts, and the lead's uncommitted
   files the work also changes, go back to the lead with their names; `rejected` drops the copy.
   A verdict stands once given, and a writer in place that finished and changed the game folder is
   in the game already (`WorkerRecord.changedGame`, from a fingerprint of the folder's working tree
@@ -1028,7 +1171,15 @@ whole to `.studio/RECIPES.md`; the brief keeps their titles and intents, and onl
 keeps its sketch inline. Retrieval keeps to the run's game kind (a recipe's optional `kinds`; none
 means every kind), needs `CRAFT_ADOPT_SCORE` unless the recipe is the check's own, and takes exact
 matches only for a first round's unscored checks, and THE FIX's recipe keeps to the game kind
-too. A builder's `capture` (Claude Code, Codex and local sessions alike) shoots its part's own
+too. Beside that retrieval, the game's craft is chosen before anything fails
+(`loop/game-craft.ts`): every recipe for the declared kind on the game's stack, plus any whose tags
+two words of the brief name, at most ten. It is written whole to `.studio/CRAFT.md` and listed in
+the director's opening brief, in the `plan` answer that declares a kind (only recipes not yet
+listed), in each single-session builder's brief and in every round of a loop builder's BRIEF.md
+(director/craft.ts, facet/phases/brief.ts). A timed director run of at most four working hours also
+hears the layer order for a bar its clock may not reach — greybox, geometry, light and materials,
+then what sits closest to the camera — and is told to name the layer the time reaches in the plan's
+risks (director/layer-prompts.ts); the person's hours are never lengthened. A builder's `capture` (Claude Code, Codex and local sessions alike) shoots its part's own
 cameras unless it names others, and `page=bench/<part>.html` loads a bench page (an existing `.html`
 file inside the workspace, by real path; anything else, or any page of a game served from its
 build output, is refused and nothing loads) through the served root with no setup. A rebaseline
@@ -1054,8 +1205,10 @@ the three Electron runners that share `dist`; standalone `test:e2e`, `test:build
 `test:shapes:e2e` still build their own current output. Readiness keeps its separate immutable
 builds because it tests isolation. Add packaged checks when that surface changes. The
 source/document ownership areas in knowledge-map.json route changes to maintained topic docs.
-`verify:context` checks links, documented commands, source ownership and Git artifact policy.
-It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
+`verify:context` checks links, documented commands, source ownership and Git artifact policy,
+and `scripts/check-template-docs.ts` checks the Rust template's pages: every path they name opens
+in the game folder, compiled snippets equal the example regions they mirror, and other Rust
+snippets call only names the facade crates define. It is read-only and stores no per-edit fingerprints. Review prose against changed behavior
 and summarize that review in the PR; a structural pass does not certify semantic accuracy.
 
 The existing coordinator records an aborted delegated turn as error; the fixture
@@ -1231,6 +1384,14 @@ wrap-up invites no claim). `finish user_asked=` still stops everything at once. 
 `wrap_up` too, and starts no worker once anybody asked to finish; its wrap-up starts when the turn
 that recorded the ask ends.
 
+An ask to stop and start a new Loop is `wrap_up` with `next_goal` (and `next_hours` when named):
+the new Loop rides on the same `run_control` record (`next-loop-record.ts`), and once the run has
+closed `handleRunStart` starts it on the same game with the run's engine, model and roles, as a
+launch from the chat would (`next-loop.ts`); a Stop pressed since starts nothing. Outside a run, the
+chat's own turn always holds the Loop's start for one asked in words (`delegated-turn.ts`
+`autoLaunchFor`), with the Loop switch on or off and after a run it led, finished or paused: the
+hours named win, else the switch's, else until done.
+
 The art director is the one absolute judge (`loop/ship-review.ts`, rubric `judge/ship-review.md`):
 one build, every frame the evidence pass took of a registered camera, the player's eyes and each
 demo's end, then the first, middle and last motion frames and the reference (at most 14), captured
@@ -1301,6 +1462,26 @@ every 60 working minutes (`VERIFY_NUDGE_EVERY_MS`) and after each ship review ad
 OUTCOMES, asking for `playtest goal=<id>` on each one still unverified (journaled as
 `verifyNudgedWorkedMs`; never in the wrap-up).
 
+**Judges that play.** `loop/hands-on-judge.ts` sends a blind `judge` (computer tool only, stepped
+clock, no setup script) into a build with a quest the studio checks after every move; a direct
+engine plays the same tool through `preview.computer` (`loop/computer-loop.ts`), as the direct
+playtester does when the host serves it. A quest is set for one question (`quest.checkId`, or the
+only one asked): its "yes" passes only when `trace.reachedAt` is set and the frame it cites, read
+by `preview.statsOf` from the trace row that saved it at or after that move, is lit; otherwise it
+is unmeasured. Every other answer is the model's word (`model-said`). No window is unmeasured,
+never a fail. The director's `playtest goal_state=…` uses it, as does the integration play when a
+play check says `"reaches":"setup"` and the run's setup has a `verify` (otherwise the playtester
+plays). Facet scoring escalates an unmeasured or below-0.5 picture answer to one probe per pass
+(`loop/vision-escalation.ts`, at most 8 a run, counted in the journal's run): a probe has no quest,
+so what it resolves is recorded `model-said` at 0.4; a confident answer is never overturned, and a
+flip stands only when a second picture look at the probe's frames agrees. A verified session is
+kept as a route (`loop/routes.ts`): its computer calls, replayed at the end of every leased
+evidence pass one at a time through a fresh `preview.computer` session (judge, stepped, the kept
+quest); an older host is reported, not replayed. A deterministic route that misses the goal fails
+a check naming the step and the replay's trace, a non-deterministic one is only reported, and
+three divergences retire it. The host keeps `objective: "studio-verified"` only for a trace it saw
+reach its goal. A run turns all of this off with `handsOnJudges: false`.
+
 The initial plan freezes required acceptance scenarios in the versioned director journal. A
 reopened build is a goal commission, the Loop's hours or ∞ its ceiling (`reopen-run.ts`
 `reopenBudgets`), and takes none of the finished run's outcomes: its journal records
@@ -1345,7 +1526,7 @@ up and land a build nobody could check. The engines call a revoked or disabled a
 failure (`auth`): Claude Code from the CLI's own error code on the reply (`authentication_failed`,
 `oauth_org_not_allowed`, `account_on_hold`, `billing_error`) or the access words both engines share
 (`engines/common.ts` `isAccessLost`), also when the result's subtype says success. A lead turn a lost provider ended — a sign-in, a limit it will not wait out,
-an outage the patience ladder could not outlast, a 529 the session returned included — pauses the
+an outage the patience ladder could not outlast, a 529 or an unreachable network (`ENOTFOUND`) the session returned included — pauses the
 run (`afterTurn`'s `providerLost`, `state.limit`): no wrap-up, the workers stopped, nothing landed
 or judged (`NotLandedReason.Paused`), `run_finished.limit` naming its kind, and no learning pass
 until the run ends. A sign-in, cap or reset-naming limit opens that engine's circuit for the run
@@ -1360,6 +1541,31 @@ worker's clock stands still (`facet/paused-clock.ts`): its deadline moves on by 
 up to the run's working deadline, as the outage ladder's waits do. A worker the provider ended before
 any round of it was judged gives its goal attempt back (`attempt-refund.ts` `refundProviderAttempt`), so a
 restart is never refused for progress it never had the chance to make.
+
+### A workers' engine that cannot run its sandbox
+
+A worker always runs its commands in a sandbox, never without it: Claude Code's worker box keeps
+`failIfUnavailable: true`, because its sandboxed commands run unasked and the CLI itself is not inside
+ProcessSandbox. On Windows, where Claude Code's own sandbox cannot start, a worker (and an unattended
+builder) runs its commands in Genex's instead: the session gets no box of Claude Code's and none of
+its process-starting built-ins (`Bash`, `PowerShell`, `Monitor`, `REPL`: an allowlist), and runs each
+command through the studio's `run_command` in a `ProcessSandbox` made for the session on its first
+command (`engines/claude-code.ts` `studioShell`, `engines/session-commands.ts`). That box is the one
+Claude Code's would have been: the worker's roots (in Bypass the home folder too), the sign-in homes
+and the never-touch list denied, no network. The host reads the tool as `Bash` (its question card,
+the never-touch screen, the log). Its commands run under Git Bash, one at a time, nothing in the
+background, and a saved "always allow" rule for `Bash` does not cover them. A chat's session runs
+its commands in Bash on a turn the person answers and through `run_command` on an unattended one, so
+a resumed session is told which shell this turn has (`SHELL_THIS_TURN`). Where a CLI still refuses
+its box, it refuses the session before the model says anything, and the engine reports it
+as `StopReason.SandboxUnavailable` with the CLI's own words (`engines/claude-code.ts`
+`sandboxRefusal`); a session that already replied keeps its ordinary failure. The refusal holds that
+engine for an hour across every pool and Loop of the harness (`loop/workers/sandbox-refusal.ts`): a
+director's builder facet stops on its first build (`StopCode.SandboxUnavailable`: no judge, strike,
+outage wait or rollback, its goal attempt given back), a pool worker ends with
+`WorkerStopCode.SandboxUnavailable`, and every later `worker_start` on that engine starts nothing and
+tells the lead to do the work itself, naming the other workers' engine when the host reports it
+signed in. A Loop's person is told once on a decision card, with that engine offered for Workers.
 
 ### Automatic resume
 

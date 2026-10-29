@@ -1,0 +1,17 @@
+{
+  "about": "Every value name these seed modules exported before messages without a queue (origin/dev at beacc0cc, read with Object.keys of the imported module). A seed upgrade keeps any of them once the in-app agent edited it, so switches (loop/steer-switch.ts, loop/steer-switch-prompts.ts, loop/turn-switch.ts, loop/person-wrote.ts, loop/workers/carry.ts) and the existing modules they touch may import only these names from them: a name the change needs comes from a module of its own.",
+  "modules": {
+    "loop/message-queue.ts": ["MESSAGE_ATTEMPTS","MessageQueue","SERVES_LIVE_CHAT","interruptedReplyNotice","messageQueueState","steersInto"],
+    "loop/chat-steer.ts": ["steeredCall"],
+    "loop/chat-dispatch.ts": ["coordinatorReopens","handleUserMessage","intakeBudgets","judgeableFirst","launchFromIntake","launchPromise","openLaunchPromise","ownSessionAfterLoopRun","ownSessionReopens","rewindMoodBoard","startsNextOpenLoop"],
+    "loop/delegated-turn.ts": ["DELEGATE_TOOL","MessageUsageSource","SERVES_AFTER_LOOP_RUN","SERVES_REOPEN","runDelegatedTurn"],
+    "loop/live-chat.ts": ["buildHolds","chatWaitsFor","leadDoor","openBuildOf","passCtx","runUnderWay","stopRun","stopRunsOf"],
+    "loop/director/lead-line.ts": ["leadLineOf","leadLinesChanged","openLeadLine"],
+    "loop/director/wake.ts": ["BUSY_RETRY_MS","LIMIT_WAIT_MARGIN_MS","MAX_BUSY_RETRIES","MAX_FRESH_SESSIONS","MAX_LIMIT_WAITS","SERVES_LEAD","SERVES_OPEN_LOOP","SYSTEM_CLOCK","WAKE_ENDING","WAKE_POLL_MS","WRAP_UP_MIN_MS","fitHappened","journalWake","runWakeLoop"],
+    "loop/outage.ts": ["EngineFailure","OUTAGE_DELAYS","StopReason","engineLimitOf","isEngineLimit","isTransientProviderError","limitWords","outageDelays","withProviderPatience"],
+    "loop/workers/chat-workers.ts": ["chatWorkerTool","chatWorkersGrant","closeChatWorkers","openChatWorkers","withChatWorkers"],
+    "loop/workers/run-pool.ts": ["closeRunPool","holdsWorker","openRunPool","runPool","runPoolCall","runPoolStatus"],
+    "loop/workers/pool.ts": ["openPool"],
+    "loop/director/tools.ts": ["SERVES_LEAD","closeJudgeAsk","handler","judge","judgeTheLanding","landingJudgeUntil","playtest","show","statusText","wait","workersEngineLimit"]
+  }
+}

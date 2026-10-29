@@ -16,6 +16,7 @@ import { folderLabelOf } from "../../workers/identity.ts";
 import { durationCommission } from "../commission.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { restartsApp } from "./contract.ts";
+import { judgedInEditor, loopJudges } from "./judge-rounds.ts";
 import { openBrief, type OpenBriefFacts } from "./prompts.ts";
 
 /** The folder in a project where the person leaves references for its Loop. */
@@ -58,6 +59,8 @@ async function briefBase(loopRun: LoopRun, startNotes: readonly string[]): Promi
     appSaved: hooksOn(game, HookEvent.CheckpointBefore),
     restart: restartsApp(game),
     cppRestart: (gameFacts ?? []).some((fact) => fact.id === CoreFact.UnrealProject),
+    judge: judgedInEditor(loopRun),
+    judges: loopJudges(loopRun),
     savePoints: open?.journal.savePoints ?? [],
     untilFinish: !durationCommission(run),
     skills: await skillsFor(loopRun),

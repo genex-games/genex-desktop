@@ -1,13 +1,14 @@
 /**
  * The anti-fitting checker (§6.4), a static check in the `check-vocabulary.ts` mould rather than a
  * test, because a test that reads `src/**` as text is refused by `check-test-style.ts`. It looks
- * for the eval cases inside what the in-app agent reads: a seven-word run of any brief, or a traced
- * checklist phrase, in the harness seed, the game template, plugin skills or a `*-prompts.ts`
- * module is a leak. Village tuning is semantic and invisible here; that is what `Exposure` carries.
+ * for the eval cases and the AA+ suite's briefs inside what the in-app agent reads: a seven-word run
+ * of any brief, or a traced checklist phrase, in the harness seed, any game template, plugin skills
+ * or a `*-prompts.ts` module is a leak. Village tuning is semantic and invisible here; that is what `Exposure` carries.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { AAA_SUITE_FILE, readAaaSuite } from "./aaa/suite.ts";
 import { type ParsedCase, readCases, readHoldoutCases } from "./cases.ts";
 import { resolveEvalsHome } from "./home.ts";
 
@@ -77,7 +78,8 @@ const NON_WORD = /[^\p{L}\p{N}]+/u;
 const ELLIPSIS = /\.{3}|…/;
 const SCANNED_TEXT = /\.(?:md|txt|json|[cm]?[jt]sx?|html|css|glsl|wgsl|ya?ml)$/;
 const SKIPPED_DIRS = new Set(["node_modules", "dist", "out", ".git"]);
-const WHOLE_TREES = ["src/harness-seed/", "src/game-template/"];
+/** Every game template is read by in-app agents: the Rust and C++ ones carry their API docs. */
+const WHOLE_TREES = ["src/harness-seed/", "src/game-template/", "src/game-template-rust/", "src/game-template-cpp/"];
 const PLUGIN_SKILLS = /^src\/plugins\/[^/]+\/skills\//;
 const PROMPT_MODULE = /-prompts\.ts$/;
 /**
@@ -87,6 +89,8 @@ const PROMPT_MODULE = /-prompts\.ts$/;
 export const GRADER_RUBRIC_FILES = [
   "scripts/evals/grade/checklist/checklist-prompts.ts",
   "scripts/evals/grade/pairwise-prompt.md",
+  "scripts/evals/aaa/taste-prompt.md",
+  "scripts/evals/aaa/pairwise-taste-prompt.md",
 ] as const;
 
 /** Lowercase words with apostrophes folded in and every other non-letter a break. */
@@ -166,6 +170,12 @@ export function isolationInputs(cases: readonly ParsedCase[]): { briefs: Isolati
   return { briefs, terms };
 }
 
+/** The AA+ release-gate briefs (`evals/aaa/suite.json`), held out the same way; none when the file is absent. */
+export function aaaIsolationBriefs(root: string): IsolationBrief[] {
+  if (!fs.existsSync(path.join(root, AAA_SUITE_FILE))) return [];
+  return readAaaSuite(root).map((prompt) => ({ caseId: `aaa:${prompt.id}`, text: prompt.brief }));
+}
+
 /** Whether a repository path is something the in-app agent reads as instructions or code. */
 function isInstructionFile(rel: string): boolean {
   if (!SCANNED_TEXT.test(rel)) return false;
@@ -211,7 +221,9 @@ export function isolationLines(report: IsolationReport): string[] {
  */
 export function checkIsolation(root: string, holdoutHome: string | null = null): { ok: boolean; lines: string[] } {
   const cases = [...readCases(root), ...(holdoutHome ? readHoldoutCases(holdoutHome) : [])];
-  const { briefs, terms } = isolationInputs(cases);
+  const inputs = isolationInputs(cases);
+  const briefs = [...inputs.briefs, ...aaaIsolationBriefs(root)];
+  const { terms } = inputs;
   const files = isolationFiles(root).map((rel) => ({ path: rel, text: fs.readFileSync(path.join(root, rel), "utf8") }));
   const report = findLeaks(briefs, terms, files);
   const lines = isolationLines(report);
@@ -219,7 +231,7 @@ export function checkIsolation(root: string, holdoutHome: string | null = null):
   const exempt = report.exempt.length ? `; exempt by length: ${report.exempt.join(", ")}` : "";
   return {
     ok: true,
-    lines: [`Isolation: ${cases.length} cases, ${terms.length} terms, ${files.length} files, no leaks${exempt}`],
+    lines: [`Isolation: ${briefs.length} briefs, ${terms.length} terms, ${files.length} files, no leaks${exempt}`],
   };
 }
 

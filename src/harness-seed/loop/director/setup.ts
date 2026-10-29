@@ -4,11 +4,13 @@
  * (`buildStartingPoint`) — and before both, `prepareLoopRun`, which builds the run itself.
  */
 
+import { loadReferenceStills } from "../reference-stills.ts";
 import { DEFAULT_WALL_CLOCK_MS, MIN_DELEGATE_TIMEOUT_MS, PAGE_SEED } from "../config.ts";
 import { gatherEvidence } from "../evidence.ts";
 import { commitAll, GIT, gitAt, gitlinks, headOf, resetClean, shortSha } from "../git.ts";
 import { keptContractWords } from "../contract-kept.ts";
 import { HostMethod } from "../host-methods.ts";
+import { editorPlayOf } from "../engine-judges.ts";
 import { factsOfGame, LoopProfile } from "../folder-facts.ts";
 import { AttachedContract, StudioContract } from "../page-contract.ts";
 import { readDeclaredGame } from "../kinds.ts";
@@ -22,7 +24,7 @@ import { runRef } from "../repo.ts";
 import { EventKind, JournalPhase, RunEvent, RunMode } from "../run-events.ts";
 import { createRunInbox } from "../run-inbox.ts";
 import { isCommit } from "../shell.ts";
-import { MINUTE_MS } from "../time.ts";
+import { CANCEL_POLL_MS, MINUTE_MS, sleep } from "../time.ts";
 import { stackOfShape, templateShapeFor } from "../native-loop.ts";
 import { runScaffoldAsk } from "../run-scaffold.ts";
 import { bindLoopRun, BuildTarget, WindowLease } from "./loop-run.ts";
@@ -80,6 +82,29 @@ const TEMPLATE_SHAPE = { entry: "index.html", main: "src/main.js", build: null }
 const GameShapeKind = { OwnScript: "own-script", StudioTemplate: "studio-template" } as const;
 /** An open Loop's shape: no page, no entry module, no build step of the web method's. */
 const OPEN_SHAPE = { entry: "", main: "", build: null };
+
+/**
+ * The answer of `step`, or null as soon as the run is stopped (looked at every `CANCEL_POLL_MS`). A start
+ * step that waits on the game (a load whose cold build takes minutes) never holds a Stop: the
+ * stormvale-rust start sat in one build after another, each Stop only cancelling the one it was in.
+ */
+async function unlessStopped<T>(ctx: Pick<HarnessCtx, "cancelled">, step: () => Promise<T>): Promise<T | null> {
+  // A stopped run starts no step.
+  if (ctx.cancelled) return null;
+  const work = step();
+  // What is let go of may still fail: nobody is waiting for it any more.
+  work.catch(() => {});
+  let waiting = true;
+  const stopped = (async () => {
+    while (waiting && !ctx.cancelled) await sleep(CANCEL_POLL_MS);
+    return null;
+  })();
+  try {
+    return await Promise.race([work, stopped]);
+  } finally {
+    waiting = false;
+  }
+}
 
 /**
  * What a run learns from the session before it: its journal and the director's memory file — the
@@ -297,15 +322,18 @@ async function readyTheGame(loopRun: LoopRun): Promise<string> {
     await decision(kept.record, kept.plain);
     note(kept.record);
   }
-  await ctx.call(HostMethod.PreviewLoad, { project: run.project }).catch(() => {});
+  // Loading builds a compiled game: a Stop while it builds goes on without it.
+  await unlessStopped(ctx, () => ctx.call(HostMethod.PreviewLoad, { project: run.project }).catch(() => {}));
   const games = await ctx.call(HostMethod.GameList, {}).catch(() => []);
   const game = games.find((g: AnyRecord) => g.name === run.project);
   const projectDir = game?.dir ?? null;
   if (!projectDir) throw new Error(`project ${run.project} has no folder`);
   loopRun.gameFacts = factsOfGame(game);
   // The moments the game's plugins hook, as `hooksOn` reads them: a web game lists none.
-  loopRun.game = { hookEvents: game?.hookEvents };
+  loopRun.game = { hookEvents: game?.hookEvents, ...editorPlayOf(game) };
   loopRun.leaseGame = leaseGameOf(game);
+  // Budgets are said per destination (destination-budgets.ts): every look reads them off the run.
+  if (game?.destinations) loopRun.run.destinations = game.destinations;
   return projectDir;
 }
 
@@ -323,17 +351,19 @@ function leaseGameOf(game: AnyRecord | undefined): LeaseGame {
 async function observeStart(loopRun: LoopRun): Promise<Evidence | null> {
   const { ctx, lookAtStart, run } = loopRun;
   const seen = await lookAtStart(undefined);
-  if (seen) return seen;
-  const asBase = await gatherEvidence(ctx, {
-    run,
-    iterationId: "base",
-    labelPrefix: "iter_000_base",
-    seed: PAGE_SEED,
-    eyes: true,
-    motion: 0,
-    audio: false,
-    scaffold: true,
-  }).catch(() => null);
+  if (seen || ctx.cancelled) return seen;
+  const asBase = await unlessStopped(ctx, () =>
+    gatherEvidence(ctx, {
+      run,
+      iterationId: "base",
+      labelPrefix: "iter_000_base",
+      seed: PAGE_SEED,
+      eyes: true,
+      motion: 0,
+      audio: false,
+      scaffold: true,
+    }).catch(() => null),
+  );
   return asBase?.ok === true && asBase.emptyScene === true ? asBase : null;
 }
 
@@ -629,7 +659,10 @@ export async function prepareLoopRun(
   const priorLedger = await loadPriorLedger(ctx, threadId, run, gameKind);
   const gameLessons = await loadGameLessons(ctx.workspace, run.project).catch(() => []);
   run.gameLessons = gameLessons;
+  // The game's references/ stills reach every judge and the report, whether or not the run brought them.
+  const referenceNotes = await loadReferenceStills(ctx, run).catch(() => []);
   const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
+  report.notes = [...(report.notes ?? []), ...referenceNotes];
   await announceRunStart(ctx, threadId, run, { resume, liveChat }, capacity);
 
   // A game that came with its own shape is photographed BEFORE the studio touches it: the
@@ -795,7 +828,9 @@ async function prepareOpenLoopRun(
   const game = await openGame(ctx, run);
   // A refused run keeps the record it came with: its refusal says nothing of a cap it never ran under.
   if (!refused) recordCreditCap(run, spentBefore);
+  const referenceNotes = await loadReferenceStills(ctx, run).catch(() => []);
   const report = loopRunReport(run, resume ? await earlierReport(ctx, threadId, run.runId) : null);
+  report.notes = [...(report.notes ?? []), ...referenceNotes];
   // A run refused at once announces nothing here: its refusal writes its whole record (`refuseResume`).
   if (!refused)
     await announceRunStart(
@@ -810,7 +845,7 @@ async function prepareOpenLoopRun(
   const facts = openLoopRunFacts({ threadId, run, priorJournal }, game, baseCommit, runClock);
   Object.assign(loopRun, openLoopRunData(facts, { inbox, clock: runClock, report }));
   loopRun.gameFacts = game.facts;
-  loopRun.game = { hookEvents: game.hookEvents };
+  loopRun.game = { hookEvents: game.hookEvents, ...editorPlayOf(game) };
   // What the lead asked of a turn's end that a pause cut off is said, never run over the next turn's work.
   const journal = openJournalOf(priorJournal);
   const open = openLoopOf(game, journal ? settledAcrossPause(journal) : newOpenJournal(), clock);
@@ -829,10 +864,10 @@ async function prepareOpenLoopRun(
   return loopRun;
 }
 
-/** One look at the live game folder, as the run's "before". Null unless it can be observed. */
+/** One look at the live game folder, as the run's "before". Null unless it can be observed, and once the run is stopped. */
 export async function lookAtStart(loopRun: LoopRun, labelPrefix?: string) {
   const { ctx, run } = loopRun;
-  try {
+  const look = async () => {
     await ctx.call(HostMethod.PreviewLoad, { project: run.project });
     const evidence = await gatherEvidence(ctx, {
       run,
@@ -844,9 +879,9 @@ export async function lookAtStart(loopRun: LoopRun, labelPrefix?: string) {
       audio: false,
     });
     return evidence?.ok === true ? evidence : null;
-  } catch {
-    return null;
-  }
+  };
+  // A stopped run looks no more: its Stop never waits for the game's build.
+  return await unlessStopped(ctx, () => look().catch(() => null));
 }
 
 // ── the sessions that prepare the run ──

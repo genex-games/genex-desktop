@@ -19,12 +19,17 @@ import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
 import { type LiveProfileState, liveProfileStoreFor } from "./live-profile.ts";
 import { type NativeGame, type NativeState, type NativeStore, nativeOf, nativeStoreFor } from "./native.ts";
+import type { PeopleState } from "./people.ts";
+import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
+import type { ProviderUsageState } from "./provider-usage.ts";
+import type { SharingState } from "./sharing.ts";
 import { type SessionState, SessionStatus } from "./session.ts";
 import { studio } from "./studio.ts";
 import { activeThread, isGameThread, roomOf, threadMeta, studioThreadOf, type ThreadsState } from "./threads.ts";
 import type { ToastsState } from "./toasts.ts";
 import type { UpdateState } from "./update.ts";
+import type { AgentsStartState } from "./agents-start.ts";
 
 export { useShallow } from "zustand/react/shallow";
 
@@ -36,6 +41,9 @@ export const useThreads = <T>(select: Selector<ThreadsState, T>): T => useStore(
 export const useLibrary = <T>(select: Selector<LibraryState, T>): T => useStore(studio().library, select);
 export const useEngines = <T>(select: Selector<EnginesState, T>): T => useStore(studio().engines, select);
 export const usePlugins = <T>(select: Selector<PluginsState, T>): T => useStore(studio().plugins, select);
+export const usePlay = <T>(select: Selector<PlayState, T>): T => useStore(studio().play, select);
+export const usePeople = <T>(select: Selector<PeopleState, T>): T => useStore(studio().people, select);
+export const useSharing = <T>(select: Selector<SharingState, T>): T => useStore(studio().sharing, select);
 export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
   useStore(studio().agentScreens, select);
 export const useCommandRuns = <T>(select: Selector<CommandRunsState, T>): T => useStore(studio().commandRuns, select);
@@ -48,7 +56,10 @@ export const useLiveProfile = <T>(select: Selector<LiveProfileState, T>): T =>
   useStore(liveProfileStoreFor(studio().api), select);
 export const useLaunch = <T>(select: Selector<LaunchState, T>): T => useStore(studio().launch, select);
 export const useUpdate = <T>(select: Selector<UpdateState, T>): T => useStore(studio().update, select);
+export const useAgentsStart = <T>(select: Selector<AgentsStartState, T>): T => useStore(studio().agentsStart, select);
 export const useModelPicker = <T>(select: Selector<ModelPickerState, T>): T => useStore(studio().modelPicker, select);
+export const useProviderUsage = <T>(select: Selector<ProviderUsageState, T>): T =>
+  useStore(studio().providerUsage, select);
 /** The boot store lives beside the studio, not in it: it decides whether the studio starts at all. */
 export const useBoot = <T>(store: BootStore, select: Selector<BootStoreState, T>): T => useStore(store, select);
 
@@ -130,6 +141,9 @@ export const useRustCreation = (): boolean => useSession((s) => s.rustCreation);
 
 /** The new-game stack switch main read from the settings. */
 export const useStackDefaultSwitch = (): StackDefaultSwitch => useSession((s) => s.stackDefault);
+
+/** The website Play links to: genex.games', unless a development profile points Play elsewhere. */
+export const usePlayWeb = (): string => useSession((s) => s.playWeb);
 
 /** The session as the shell reads it: two booleans, so a change of error text never re-renders. */
 export const useSessionView = () =>

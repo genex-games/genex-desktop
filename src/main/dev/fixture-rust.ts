@@ -26,15 +26,24 @@
 import { createHash } from "node:crypto";
 import { copyFile, lstat, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { gitOrNull } from "../../substrate/snapshots.ts";
+import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { BuildTarget, GameStack } from "../../shared/game-project.ts";
 import { ToolchainHost, ToolchainId, type ToolchainLock, toolchainHostOf } from "../../shared/toolchain.ts";
 import { shellQuote } from "../../substrate/spawn.ts";
 import { treeDigest } from "../../substrate/toolchain-store/archive.ts";
 import { ReceiptSource, type ToolchainReceipt } from "../../substrate/toolchain-store/install.ts";
-import { lockFolder, RECEIPT_FILE, RUST_COMPONENT_LAYOUT } from "../../substrate/toolchain-store/locate.ts";
+import {
+  lockFolder,
+  MOBILE_COMPONENT_LAYOUT,
+  RECEIPT_FILE,
+  RUST_COMPONENT_LAYOUT,
+} from "../../substrate/toolchain-store/locate.ts";
 import { lockOf, writeCurrentLock } from "../../substrate/toolchain-store/lock.ts";
 import {
   RUST_BASE_FILE,
+  RUST_DEV_PROFILE_SETTINGS,
   RUST_HOST_TRIPLE,
   RUST_PREWARM_FILE,
   RUST_TRIPLE,
@@ -90,8 +99,11 @@ export const FIXTURE_RUST_WEB_FILES = { module: "game.js", wasm: "game_bg.wasm",
 const WEB_OUTPUT_DIR = "share/genex-fixture-web";
 /** In the sysroot: the dev-flavour game the stub cargo admits (a script starting the fd-3 stub). */
 const STUDIO_GAME_FILE = "share/genex-fixture/studio-game";
-/** What the stub cargo looks for in the staged manifest: the facade's `studio` feature (`cargoManifest`). */
-const STUDIO_FEATURE_LINE = 'features = ["studio"]';
+/**
+ * What the stub cargo looks for in the staged manifest: the facade's `studio` feature
+ * (`cargoManifest`), always the first named, alone or before the system switches a game keeps.
+ */
+const STUDIO_FEATURE_START = 'features = ["studio"';
 /** The compiler flags the lane builds every game with, recorded in each prewarm as the store does. */
 const FIXTURE_RUSTFLAGS = ["-F", "unsafe_code"];
 /** In each prewarmed target folder: the one output the record names, so a locate finds it present. */
@@ -110,8 +122,17 @@ interface FakeRustComponent {
   version: string;
   /** The component's own host, or null for a target library or the vendored tree. */
   hosted: boolean;
+  /** The destination a standard library is for; absent for a tool or the vendored tree. */
+  target?: BuildTarget;
   files: Readonly<Record<string, string>>;
 }
+
+/** The phones' standard libraries the mobile fixture's lock names, as `STACK_REQUIRED_COMPONENTS` asks. */
+const PHONE_STDS = [
+  [ToolchainId.RustStdIos, BuildTarget.Ios],
+  [ToolchainId.RustStdIosSim, BuildTarget.Ios],
+  [ToolchainId.RustStdAndroid, BuildTarget.Android],
+] as const;
 
 /** The lock the stub's `generate-lockfile` writes: the game and the vendored genex, nothing else. */
 export function fixtureRustLock(): string {
@@ -158,8 +179,44 @@ function forcedErrorFormat(): string {
     .replaceAll(String(COLUMN_SLOT), "%s");
 }
 
+/** How long the stub cargo's clippy and build take, in ms, for the browser and for a desktop triple (PW's Play timings). */
+export interface FixtureRustDelays {
+  web: { clippy: number; build: number };
+  desktop: { clippy: number; build: number };
+}
+
+/** A stub that answers at once: every fixture launch but one that asks for delays. */
+export const NO_RUST_DELAYS: FixtureRustDelays = { web: { clippy: 0, build: 0 }, desktop: { clippy: 0, build: 0 } };
+
+/** The longest a stub step may be asked to take: a contended Play is minutes, never more. */
+const STUB_DELAY_MAX_MS = 10 * 60 * 1000;
+
+/**
+ * The delays a fixture launch asks for: `STUDIO_FIXTURE_RUST_WEB_MS` and `STUDIO_FIXTURE_RUST_MAC_MS`,
+ * each `<clippy ms>,<build ms>` (a Mac build's receipt was clippy 19 s, build 43 s; the web's 0.7 s and
+ * 1.4 s). Anything else, or a number out of range, is no delay.
+ */
+export function fixtureRustDelays(env: NodeJS.ProcessEnv): FixtureRustDelays {
+  const pair = (value: string | undefined) => {
+    const [clippy, build] = (value ?? "").split(",").map((part) => Number(part.trim()));
+    const fits = (ms: number | undefined): ms is number =>
+      typeof ms === "number" && Number.isInteger(ms) && ms >= 0 && ms <= STUB_DELAY_MAX_MS;
+    return fits(clippy) && fits(build) ? { clippy, build } : { clippy: 0, build: 0 };
+  };
+  return { web: pair(env.STUDIO_FIXTURE_RUST_WEB_MS), desktop: pair(env.STUDIO_FIXTURE_RUST_MAC_MS) };
+}
+
+/** `ms` as `sleep`'s seconds, or nothing for no delay. */
+function stubSleep(ms: number): string {
+  return ms > 0 ? `/bin/sleep ${(ms / 1000).toFixed(3)}` : ":";
+}
+
 /** The stub `cargo`: a lock, the forced error, or the artifact a destination's build would name. */
-export function stubRustCargo(webOutput: string, studioGame: string): string {
+export function stubRustCargo(
+  webOutput: string,
+  studioGame: string,
+  delays: FixtureRustDelays = NO_RUST_DELAYS,
+): string {
   const wasm = shellQuote(path.join(webOutput, FIXTURE_RUST_WEB_FILES.wasm));
   const studio = shellQuote(studioGame);
   return `#!/bin/sh
@@ -194,13 +251,19 @@ if /usr/bin/grep -q ${FIXTURE_RUST_FORCE_ERROR} "$stage/src/main.rs" 2>/dev/null
   echo "error: could not compile \\\`genex-game\\\` (bin \\"game\\") due to 1 previous error" >&2
   exit 101
 fi
+case "$sub:$triple" in
+  clippy:wasm32-*) ${stubSleep(delays.web.clippy)} ;;
+  build:wasm32-*) ${stubSleep(delays.web.build)} ;;
+  clippy:*) ${stubSleep(delays.desktop.clippy)} ;;
+  build:*) ${stubSleep(delays.desktop.build)} ;;
+esac
 if [ "$sub" = clippy ]; then echo '{"reason":"build-finished","success":true}'; exit 0; fi
 out="$CARGO_TARGET_DIR/$triple/$profile"
 /bin/mkdir -p "$out" || exit 101
 case "$triple" in
   wasm32-*) exe="$out/game.wasm"; /bin/cp ${wasm} "$exe" || exit 101 ;;
   *) exe="$out/game"
-     if /usr/bin/grep -qF ${shellQuote(STUDIO_FEATURE_LINE)} "$manifest"; then
+     if /usr/bin/grep -qF ${shellQuote(STUDIO_FEATURE_START)} "$manifest"; then
        /bin/cp ${studio} "$exe" && /bin/chmod 755 "$exe" || exit 101
      else
        printf '#!/bin/sh\\necho "genex fixture game: built by the stub cargo; it draws nothing"\\n' > "$exe" || exit 101
@@ -293,7 +356,7 @@ exit 1
  * wasm-bindgen serves the copy of the committed output inside its own component folder: a build's
  * sandbox reads the store, never the checkout (the core denies the home folder it sits in).
  */
-function fakeRustComponents(store: string): FakeRustComponent[] {
+function fakeRustComponents(store: string, kind: RustFixtureKind): FakeRustComponent[] {
   const vendored = `${RUST_VENDOR_LAYOUT}/genex-${FIXTURE_GENEX_VERSION}`;
   const bindgen = { id: ToolchainId.WasmBindgen, version: "0.2.129" };
   const webOutput = path.join(fakeComponentFolder(store, bindgen), ...WEB_OUTPUT_DIR.split("/"));
@@ -312,8 +375,16 @@ function fakeRustComponents(store: string): FakeRustComponent[] {
       id: ToolchainId.RustStdWasm,
       version: FIXTURE_RUSTC_IDENTITY.release,
       hosted: false,
+      target: BuildTarget.Web,
       files: { [`${RUST_COMPONENT_LAYOUT.wasmStd}/libstd.rlib`]: PLACEHOLDER },
     },
+    ...(kind === RustFixtureKind.Mobile ? PHONE_STDS : []).map(([id, target]) => ({
+      id,
+      version: FIXTURE_RUSTC_IDENTITY.release,
+      hosted: false,
+      target,
+      files: { [`${MOBILE_COMPONENT_LAYOUT.std[id]}/libstd.rlib`]: PLACEHOLDER },
+    })),
     {
       ...bindgen,
       hosted: true,
@@ -397,7 +468,7 @@ async function seedRustComponent(
     sha12,
     bytes,
     host: component.hosted ? place.host : null,
-    target: component.id === ToolchainId.RustStdWasm ? BuildTarget.Web : null,
+    target: component.target ?? null,
     source: ReceiptSource.Archive,
     installedAt: WHEN,
   };
@@ -415,13 +486,19 @@ export function fixtureRustTargets(kind: RustFixtureKind): BuildTarget[] {
 async function seedRustLockFolder(
   store: string,
   lock: ToolchainLock,
-  place: { host: ToolchainHost; webOutput: string; vendor: string; targets: readonly BuildTarget[] },
+  place: {
+    host: ToolchainHost;
+    webOutput: string;
+    vendor: string;
+    targets: readonly BuildTarget[];
+    delays: FixtureRustDelays;
+  },
 ): Promise<void> {
   const hostTriple = RUST_HOST_TRIPLE[place.host];
   const sysroot = rustSysroot(store, lock);
   const webOutput = path.join(componentDir(store, lock, ToolchainId.WasmBindgen), WEB_OUTPUT_DIR);
   await writeTree(sysroot, {
-    "bin/cargo": stubRustCargo(webOutput, path.join(sysroot, ...STUDIO_GAME_FILE.split("/"))),
+    "bin/cargo": stubRustCargo(webOutput, path.join(sysroot, ...STUDIO_GAME_FILE.split("/")), place.delays),
     [STUDIO_GAME_FILE]: stubStudioGame(),
     "bin/rustc": stubRustc(hostTriple),
     "bin/cargo-clippy": STUB_CLIPPY,
@@ -454,6 +531,7 @@ async function seedRustPrewarm(store: string, lock: ToolchainLock, target: Build
     target,
     triple,
     rustflags: FIXTURE_RUSTFLAGS,
+    profile: [...RUST_DEV_PROFILE_SETTINGS],
     steps: [],
     outputs: [output],
     units: 0,
@@ -487,7 +565,7 @@ async function isFixtureStore(store: string): Promise<boolean> {
  */
 export async function seedFixtureRustStore(
   store: string,
-  options: { webOutput: string; kind?: RustFixtureKind; platform?: NodeJS.Platform },
+  options: { webOutput: string; kind?: RustFixtureKind; platform?: NodeJS.Platform; delays?: FixtureRustDelays },
 ): Promise<ToolchainLock | null> {
   const linked = await lstat(store).catch(() => null);
   if (linked?.isSymbolicLink() || !(await isFixtureStore(store))) return null;
@@ -495,14 +573,16 @@ export async function seedFixtureRustStore(
   await writeFile(path.join(store, FIXTURE_STORE_MARKER), "A Genex fixture's disposable toolchain store.\n");
   const host = toolchainHostOf(options.platform ?? process.platform, process.arch) ?? ToolchainHost.MacArm64;
   const entries: ToolchainLock["entries"] = {};
-  for (const component of fakeRustComponents(store)) {
+  const kind = options.kind ?? RustFixtureKind.Game;
+  for (const component of fakeRustComponents(store, kind)) {
     const receipt = await seedRustComponent(store, component, { host, webOutput: options.webOutput });
     entries[component.id] = { version: receipt.version, sha12: receipt.sha12 };
   }
   const lock = lockOf(entries);
   const vendor = path.join(componentDir(store, lock, ToolchainId.RustVendor), RUST_VENDOR_LAYOUT);
-  const targets = fixtureRustTargets(options.kind ?? RustFixtureKind.Game);
-  await seedRustLockFolder(store, lock, { host, webOutput: options.webOutput, vendor, targets });
+  const targets = fixtureRustTargets(kind);
+  const delays = options.delays ?? NO_RUST_DELAYS;
+  await seedRustLockFolder(store, lock, { host, webOutput: options.webOutput, vendor, targets, delays });
   await writeCurrentLock(store, lock, GameStack.RustWgpu);
   return lock;
 }
@@ -530,7 +610,127 @@ async function seedRustMobileGame(core: StudioCore): Promise<void> {
 export async function seedRustFixture(core: StudioCore, kind: RustFixtureKind): Promise<void> {
   await seedRustGame(core);
   if (kind === RustFixtureKind.Mobile) await seedRustMobileGame(core);
-  await seedFixtureRustStore(core.layout.toolchains, { webOutput: fixtureRustWebOutput(), kind });
+  const delays = fixtureRustDelays(process.env);
+  await seedFixtureRustStore(core.layout.toolchains, { webOutput: fixtureRustWebOutput(), kind, delays });
+  startFixtureContention(core, process.env);
+  startFixtureOffer(core, process.env);
   // The person's crate card in Settings → Toolchains: one request in each state it shows.
   await seedFixtureCrateRequests(core.layout.toolchains, FIXTURE_RUST_GAME.name);
+}
+
+/** How many copies the contention may build at most, and how long each holds its window once loaded. */
+const CONTEND_COPIES_MAX = 12;
+const CONTEND_HOLD_MS = 2 * 60 * 1000;
+/** Where the contention's copies of the game live, under the app's scratch. */
+const CONTEND_FOLDER = "fixture-contend";
+
+/**
+ * A fake run's checks while the person presses Play (lane PW): `STUDIO_FIXTURE_RUST_CONTEND=<n>[,<after ms>]`
+ * makes `n` copies of the fixture's game, each with a file of its own (so no two share a build), and
+ * `after ms` after the launch starts an agent's judged look at each one's Mac build: native leases and
+ * build slots, held {@link CONTEND_HOLD_MS} once loaded. Nothing without the variable; never fails the seed.
+ */
+export function startFixtureContention(core: StudioCore, env: NodeJS.ProcessEnv): void {
+  const [count, after] = (env.STUDIO_FIXTURE_RUST_CONTEND ?? "").split(",").map((part) => Number(part.trim()));
+  if (!Number.isInteger(count) || !count || count < 1 || count > CONTEND_COPIES_MAX) return;
+  const delayMs = Number.isInteger(after) && after !== undefined && after >= 0 ? after : 0;
+  void contend(core, count, delayMs).catch(() => {});
+}
+
+async function contend(core: StudioCore, count: number, delayMs: number): Promise<void> {
+  await sleep(delayMs);
+  const project = FIXTURE_RUST_GAME.name;
+  const gameDir = core.games.dirFor(project);
+  const head = (await gitOrNull(gameDir, ["rev-parse", "HEAD"]))?.trim();
+  if (!head) return;
+  core.snapshots.register({ name: project, dir: gameDir });
+  const looks: Array<Promise<void>> = [];
+  for (let i = 0; i < count; i++) {
+    const dir = path.join(core.layout.scratch, CONTEND_FOLDER, `${project}-${i}-${Date.now()}`);
+    await mkdir(path.dirname(dir), { recursive: true });
+    await core.snapshots.worktreeAt(project, head, dir);
+    await writeFile(path.join(dir, "assets", `contend-${i}.txt`), `copy ${i}\n`);
+    looks.push(core.fixtureAgentLook(project, dir, BuildTarget.Mac, CONTEND_HOLD_MS));
+  }
+  await Promise.all(looks);
+}
+
+/** How long the offered build waits for Live to show the fixture's game, and how often it looks. */
+const OFFER_WAIT_MS = 15 * 60 * 1000;
+const OFFER_POLL_MS = 1000;
+/** The canvas Live's Native view asks for in the fixture's timed Plays. */
+const PLAY_SURFACE = { width: 1280, height: 720, dpr: 2 } as const;
+
+/**
+ * A build for the person to Play (lane PW). `STUDIO_FIXTURE_RUST_OFFER=1` commits a change of the
+ * fixture's game in a copy of its own (the game folder's HEAD stays) and offers that commit to Live
+ * once Live shows the game, so the stage's Update plays it as Play latest does.
+ * `STUDIO_FIXTURE_RUST_HEALTHY=1` first records that commit integrated healthy (Play's background
+ * build of it starts). `STUDIO_FIXTURE_RUST_PLAY=<after ms>[,<plays>]` instead presses Play on that commit itself, `after ms`
+ * after the launch, through the same `showBuild` the Play buttons call, then starts Live's Native
+ * view on the copy Live shows; `plays` times (default 2: the second Play of the same commit). Each
+ * Play is a `[play]` line in the Studio log. A fresh commit each launch: no earlier build of it exists.
+ */
+export function startFixtureOffer(core: StudioCore, env: NodeJS.ProcessEnv): void {
+  const [after, plays] = (env.STUDIO_FIXTURE_RUST_PLAY ?? "").split(",").map((part) => Number(part.trim()));
+  const playing = Number.isInteger(after) && after !== undefined && after >= 0;
+  if (env.STUDIO_FIXTURE_RUST_OFFER !== "1" && !playing) return;
+  const times = Number.isInteger(plays) && plays !== undefined && plays > 0 && plays <= 5 ? plays : 2;
+  const healthy = env.STUDIO_FIXTURE_RUST_HEALTHY === "1";
+  void fixtureCommit(core)
+    .then(async (commit) => {
+      if (!commit) return;
+      if (healthy) await integratedHealthy(core, commit);
+      return playing ? playTimes(core, commit, after, times) : offerBuild(core, commit);
+    })
+    .catch(() => {});
+}
+
+/** The commit integrated healthy, as a run's lead records it: what starts Play's background build of it. */
+async function integratedHealthy(core: StudioCore, commit: string): Promise<void> {
+  const project = FIXTURE_RUST_GAME.name;
+  const thread = await core.threadForGame(project);
+  const health = customEventData(CustomEvent.IntegrationHealth, { head: commit, ok: true, problems: [] });
+  await core.append([health], thread);
+}
+
+/** A commit of the fixture's game made in a copy of its own, with a file the game folder lacks; null when git cannot. */
+async function fixtureCommit(core: StudioCore): Promise<string | null> {
+  const project = FIXTURE_RUST_GAME.name;
+  const gameDir = core.games.dirFor(project);
+  const head = (await gitOrNull(gameDir, ["rev-parse", "HEAD"]))?.trim();
+  if (!head) return null;
+  core.snapshots.register({ name: project, dir: gameDir });
+  const dir = path.join(core.layout.scratch, CONTEND_FOLDER, `${project}-offer-${Date.now()}`);
+  await mkdir(path.dirname(dir), { recursive: true });
+  await core.snapshots.worktreeAt(project, head, dir);
+  await writeFile(path.join(dir, "assets", "offered.txt"), `offered ${new Date().toISOString()}\n`);
+  const identity = ["-c", "user.name=Genex fixture", "-c", "user.email=fixture@genex.invalid"];
+  await gitOrNull(dir, ["add", "-A"]);
+  await gitOrNull(dir, [...identity, "commit", "-q", "-m", "fixture: a build to play"]);
+  const commit = (await gitOrNull(dir, ["rev-parse", "HEAD"]))?.trim();
+  return commit && commit !== head ? commit : null;
+}
+
+async function offerBuild(core: StudioCore, commit: string): Promise<void> {
+  const project = FIXTURE_RUST_GAME.name;
+  const until = Date.now() + OFFER_WAIT_MS;
+  while (Date.now() < until) {
+    await core.offerBuild(project, commit).catch(() => null);
+    if (core.liveState(project).commit === commit) return;
+    await sleep(OFFER_POLL_MS);
+  }
+}
+
+/** Play on `commit`, `times` times one after another, each with Live's Native view on the copy Live then shows. */
+async function playTimes(core: StudioCore, commit: string, afterMs: number, times: number): Promise<void> {
+  const project = FIXTURE_RUST_GAME.name;
+  await sleep(afterMs);
+  for (let i = 0; i < times; i++) {
+    const shown = await core.showBuild(project, commit).catch(() => null);
+    const root = shown?.dir;
+    await core.nativeRuns
+      .embed({ project, target: BuildTarget.Mac, surface: { ...PLAY_SURFACE }, ...(root ? { root } : {}) })
+      .catch(() => null);
+  }
 }

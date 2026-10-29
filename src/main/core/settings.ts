@@ -1,7 +1,13 @@
-/** The studio's own settings (Studio's header and Settings → Harness) and the bounds they are read within. */
+/** The studio's own settings (Studio's header, Settings → Harness and Permissions) and the bounds they are read within. */
 import { DEFAULT_BUILDERS, MAX_BUILDERS } from "../../shared/builders.ts";
 import { parseStackDefaultSwitch, type StackDefaultSwitch } from "../../shared/game-project.ts";
 import { DEFAULT_POOL_MAX, MAX_POOL_MAX } from "../../substrate/preview-pool.ts";
+import { isLanguageChoice, type LanguageChoice, SYSTEM_LANGUAGE } from "../../shared/locale.ts";
+
+/** A saved language, or System for anything this version does not know. */
+export function savedLanguage(value: unknown): LanguageChoice {
+  return isLanguageChoice(value) ? value : SYSTEM_LANGUAGE;
+}
 
 /** 1..MAX_POOL_MAX; anything unusable is the default. */
 export function clampAgents(value: unknown): number {
@@ -67,6 +73,19 @@ export interface StudioSettings {
    * bounded per run, never after the user's Stop or Finish (`core/auto-resume.ts`).
    */
   autoResume: boolean;
+  /**
+   * Let agents control your computer (Settings → Permissions, default OFF for every install, new
+   * or existing; macOS and Windows). Off, no session is handed the `desktop` tool, no consent card shows,
+   * cua-driver never starts and `desktop.computer` answers that it is off; turning it off stops a
+   * running driver. On, each chat session and each app still asks first (`core/desktop-tools.ts`).
+   */
+  computerControl: boolean;
+  /**
+   * The app's language (Settings → Appearance), or System for the computer's. The window keeps
+   * its own copy to load before main answers (`renderer/language.ts`); main's menus, dialogs and
+   * notifications read this one.
+   */
+  language: LanguageChoice;
   /**
    * The new-game stack switch (`stackDefault` in settings.json; no Settings control: the owner's
    * rollback). Absent is the shipped switch (`host-conditional`); `three-js` starts Create game on

@@ -45,14 +45,17 @@ import path from "node:path";
 import { GIT, gitAt } from "./git.ts";
 import { MIN_DELEGATE_TIMEOUT_MS, PLAN_REVIEW_WAIT_MS } from "./config.ts";
 import { FINISH_REPORT, notDoneOf } from "./finish-check.ts";
+import { StopWhy } from "./finish-contract.ts";
 import { closeSettled, closeUnderWay, latchClose } from "./director/close-latch.ts";
 import { fireHooks, HookEvent, notesText, runScope } from "./hooks.ts";
 import { type HeldBack, heldTurnEnding, runHeldWords } from "./director/held-words.ts";
 import { LoopProfile } from "./folder-facts.ts";
+import { judgedInEditor, loopJudges } from "./director/open/judge-rounds.ts";
 import { loopSkill } from "./loop-skills.ts";
 import { closeRunPool } from "./workers/run-pool.ts";
 import { leadsOpenLoop } from "./director/open/active-work.ts";
 import { briefWriter } from "./director/open/brief.ts";
+import { openingCraft } from "./director/craft.ts";
 import { closeInPlace, refuseResume } from "./director/open/close.ts";
 import { MESSAGE as OPEN_END, openEndWords, timeUpWithoutYes } from "./director/open/finish.ts";
 import { openBetweenTurns } from "./director/open/between.ts";
@@ -447,6 +450,7 @@ function openingBrief(
   resume: string | null,
   start: AnyRecord,
   loop: DirectorLoop,
+  craft = "",
 ): string {
   const { capacity, finalDeadline, gameLessons, integrationWorktree, lead, nestedRepos, ownShape, run, shape } =
     loopRun;
@@ -466,6 +470,7 @@ function openingBrief(
     startingPoint: start.startingPoint,
     startObserved: Boolean(state.startEvidence),
     gameLessons,
+    craft,
     contract: start.contract,
     loop,
     lead: lead ? { gameFolder: lead.folder } : null,
@@ -622,6 +627,21 @@ function sessionEndWords(
 }
 
 /**
+ * Whether a web run's session ended on its clock, as `sessionEndWords` reads it: no Stop, limit, held
+ * turn, idle lead, finish or failed turn ended it first. Its result card then says its time ran out.
+ */
+function endedOnTheClock(
+  loopRun: LoopRun,
+  close: { result: Partial<DelegateResult>; at: number; wrapCause: WrapCause | null },
+): boolean {
+  const { ctx, softDeadline, state } = loopRun;
+  if (ctx.cancelled || state.limit || heldTurnEnding(close.result)) return false;
+  const { wrapCause } = close;
+  if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
+  return close.at >= softDeadline - OUT_OF_TIME_MS;
+}
+
+/**
  * What a web close says it left undone, in the report's field and the summary: the reviewer's last
  * no, else, when its time ran out with no claim read (`unchecked`), that no reviewer read one.
  */
@@ -663,6 +683,7 @@ export async function closeLeftOpen(
       because,
       notDone,
       unchecked: timeUp && noClaimRead(state.finishTally),
+      ...(timeUp ? { why: StopWhy.Time } : {}),
     });
   }
   // Out of time with no claim checked: the report says no reviewer read one (time-cap.ts), in its
@@ -672,10 +693,12 @@ export async function closeLeftOpen(
   const undone = closeUndone(notDone, unchecked);
   if (undone) loopRun.report.notDone = undone.notDone;
   const paused = Boolean(state.limit);
+  const onTheClock = endedOnTheClock(loopRun, { result, at: now, wrapCause });
   await closeTheLoopRun({
     land: !paused,
     paused,
     ...(undone ? { summary: undone.summary } : {}),
+    ...(onTheClock ? { ended: StopWhy.Time } : {}),
     stopWhy: "the build is over",
     settleMs: OPEN_LOOP_RUN_SETTLE_MS,
     because: (landed: AnyRecord) =>
@@ -817,10 +840,18 @@ async function runTurnLoop(loopRun: LoopRun, talk: DirectorTalk, brief: string):
  * recorded on the run's log. The long turn opens none, and its chat waits for the run as it
  * always did.
  */
-function leadLine(loopRun: LoopRun, loop: DirectorLoop): LeadLine | null {
+function leadLine(
+  ctx: HarnessCtx,
+  { run, threadId }: { run: Run; threadId: string },
+  loop: DirectorLoop,
+  prepared: () => LoopRun | undefined,
+): LeadLine | null {
   if (loop !== DirectorLoop.Wake) return null;
-  const { ctx, report, run, state, threadId } = loopRun;
-  return openLeadLine(run.runId, threadId, () => !state.finished && !ctx.cancelled && !report.failure, ctx);
+  const going = () => {
+    const loopRun = prepared();
+    return !loopRun || (!loopRun.state.finished && !loopRun.report.failure);
+  };
+  return openLeadLine(run.runId, threadId, () => !ctx.cancelled && going(), ctx);
 }
 
 /** The wake loop's run, and the close of whatever its lead left open — what it never heard goes back to the chat first. */
@@ -905,18 +936,29 @@ export async function runDirector(
     }),
   );
   const options = { threadId, run, resume, oneSession, liveChat, ...(open ? { profile, clock } : {}) };
-  const loopRun = await prepareLoopRun(measured, options, LOOP_RUN_MODULES);
-  // A paused run its open Loop can't pick up is refused before anything of it runs or is written over.
-  const refused = loopRun.open?.refused;
-  if (refused) {
-    await refuseResume(loopRun, refused, loopRun.open?.refusalPauses === true);
-    return loopRun.report;
+  // The lead takes the chat from the run's start: a start that waits minutes on the game's build
+  // (stormvale-rust) never leaves a message sending. What it never heard goes back with a Stop.
+  const line = leadLine(ctx, { run, threadId }, loop, () => tracing);
+  let loopRun: LoopRun;
+  let session: SessionParts;
+  try {
+    loopRun = await prepareLoopRun(measured, options, LOOP_RUN_MODULES);
+    // A paused run its open Loop can't pick up is refused before anything of it runs or is written over.
+    const refused = loopRun.open?.refused;
+    if (refused) {
+      await line?.release({ heardNone: true });
+      await refuseResume(loopRun, refused, loopRun.open?.refusalPauses === true);
+      return loopRun.report;
+    }
+    tracing = loopRun;
+    keepTimings(loopRun, timings);
+    if (oneSession) await seatTheLead(loopRun);
+    session = await sessionParts(ctx, loopRun, loop);
+  } catch (err) {
+    // No lead ever heard the chat: what it was handed goes back before the run's failure is told.
+    await line?.release({ heardNone: true });
+    throw err;
   }
-  tracing = loopRun;
-  keepTimings(loopRun, timings);
-  if (oneSession) await seatTheLead(loopRun);
-  const session = await sessionParts(ctx, loopRun, loop);
-  const line = leadLine(loopRun, loop);
   await leadTheRun(loopRun, { ...session, loop, line, clock });
   return loopRun.report;
 }
@@ -953,7 +995,11 @@ async function sessionParts(ctx: HarnessCtx, loopRun: LoopRun, loop: DirectorLoo
   const open = leadsOpenLoop(loopRun);
   const skill = open ? "" : await directorSkill(ctx, loopRun);
   const types = loopRun.open?.pool?.state.types ?? [];
-  const tools = open ? openTools(types, { restart: restartsApp(loopRun.game) }) : runTools(loop, loopRun);
+  const workers = loopRun.open?.pool?.state.allowed;
+  const judge = judgedInEditor(loopRun);
+  const tools = open
+    ? openTools(types, { restart: restartsApp(loopRun.game), workers, judge, judges: loopJudges(loopRun) })
+    : runTools(loop, loopRun);
   const talk = directorTalk(loopRun, referenceImages(run), tools);
   directors.set(run.runId, open ? openHandler(loopRun) : loopRun.handler);
   // Between an open Loop's turns, Genex keeps what its lead left and runs the rewind or restart it asked for.
@@ -996,7 +1042,9 @@ async function briefOf(
   start: StartOfRun,
 ): Promise<() => string> {
   if (leadsOpenLoop(loopRun)) return briefWriter(loopRun, start.notes ?? []);
-  return () => openingBrief(loopRun, parts.skill, parts.resumeNote, start, parts.loop);
+  // The game's craft is chosen once, as the session opens (director/craft.ts).
+  const craft = await openingCraft(loopRun).catch(() => "");
+  return () => openingBrief(loopRun, parts.skill, parts.resumeNote, start, parts.loop, craft);
 }
 
 /**

@@ -1,11 +1,17 @@
 /**
- * The Genex plugin's page, below its title: the account card, the tools it routes, the skills it
- * gives agents and what it is. The page is app-wide: one balance covers every game,
- * a game's own spend is in its usage panel, and Publish lives on the game's stage.
+ * The Genex plugin's page, below its title, in two tabs: Tools (the Connect band with the account,
+ * what waits for review, the tools it routes, the skills it gives agents and what it is) and Credits
+ * (the balance, what credits pay for at live prices, recent spends). The page is app-wide: one
+ * balance covers every game, a game's own spend is in its usage panel, and Publish lives on the
+ * game's stage.
  */
-import type { JSX } from "react";
+import type { JSX, KeyboardEvent } from "react";
+import { useId } from "react";
 import { GenexAction } from "../../../../shared/genex.ts";
+import { GenexAccountStatus } from "../../../../shared/genex-account.ts";
 import type { PluginInfo } from "../../../../shared/plugins.ts";
+import { signInToGenex } from "../../../play/use-genex-sign-in.ts";
+import { usePeople } from "../../../state/hooks.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { Icon } from "../../../ui/icons.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
@@ -15,9 +21,12 @@ import { isActive } from "../labels.ts";
 import type { PluginsPage } from "../page.ts";
 import { Section } from "../rows.tsx";
 import type { ShownSkill } from "../skills-sections.ts";
+import { turnOnAndConnect } from "./connect-genex.ts";
 import { GenexAccount } from "./GenexAccount.tsx";
+import { GenexCreditsTab } from "./GenexCreditsTab.tsx";
+import { chooseGenexTab, GENEX_TABS, GenexTab, useGenexTab } from "./genex-tab.ts";
 import { type GenexJobRow, genexJobRows, JobState } from "./genex-view.ts";
-import { ROUTED_TOOLS, toolCopy } from "./routed-tools.ts";
+import { markIsLight, ROUTED_TOOLS, toolCopy } from "./routed-tools.ts";
 import { type GenexLive, useGenexStatus } from "./use-genex-status.ts";
 
 /** The tools Genex routes, each with its mark and what it does. */
@@ -31,9 +40,13 @@ function RoutedTools(): JSX.Element {
           const tool = toolCopy(id);
           return (
             <li key={id} className="genex-tool" data-genex-tool={id}>
-              <span className="genex-tool-mark" aria-hidden="true">
-                <img src={mark} alt="" draggable={false} />
-              </span>
+              <img
+                className="genex-tool-mark"
+                src={mark}
+                alt=""
+                draggable={false}
+                data-light-mark={markIsLight(id) || undefined}
+              />
               <span className="genex-tool-copy">
                 <span className="genex-tool-name">{tool.name}</span>
                 <span className="genex-tool-line">{tool.line}</span>
@@ -128,15 +141,62 @@ function WaitingForReview({ live }: { live: GenexLive }): JSX.Element | null {
   );
 }
 
-/** The account card (the shared balance, never a game's spend) and what waits for review in the open game. */
-function LiveAccount({ detail, page }: { detail: PluginInfo; page: PluginsPage }): JSX.Element {
-  const live = useGenexStatus(detail, page.project);
+/**
+ * The Connect band and what waits for review in the open game. While the plugin is off the band
+ * offers Connect, which turns it on and signs in when the app isn't; once on it shows the
+ * account (the shared balance, never a game's spend). It stays one band across the switch.
+ */
+function ConnectSection({ detail, page }: { detail: PluginInfo; page: PluginsPage }): JSX.Element {
+  const active = isActive(detail);
+  const live = useGenexStatus(detail, page.project, active);
+  const signedIn = usePeople((s) => s.account === GenexAccountStatus.SignedIn);
+  const off = active
+    ? undefined
+    : { onConnect: () => void turnOnAndConnect(detail, page, { signedIn, signIn: signInToGenex }) };
   return (
     <>
-      <GenexAccount live={live} problem={page.error} />
-      <WaitingForReview live={live} />
+      <GenexAccount live={live} problem={page.error} busy={page.busy} off={off} />
+      {active && <WaitingForReview live={live} />}
       {live.review && <PluginApproval review={live.review} onClose={live.closeReview} />}
     </>
+  );
+}
+
+/** The page's tabs: Tools (with the account) and Credits; arrow keys move along them. */
+function GenexTabs({ tab, ids }: { tab: GenexTab; ids: string }): JSX.Element {
+  const words = GENEX_WORDS.tabs;
+  const label: Record<GenexTab, string> = {
+    [GenexTab.Tools]: words.tools,
+    [GenexTab.Credits]: words.credits,
+  };
+  const keys = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    const moves: Record<string, number> = { ArrowLeft: index - 1, ArrowRight: index + 1 };
+    const next = GENEX_TABS[moves[event.key] ?? -1];
+    if (!next) return;
+    event.preventDefault();
+    chooseGenexTab(next);
+    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-genex-tab="${next}"]`)?.focus();
+  };
+  return (
+    <div className="genex-tabs" role="tablist" aria-label={words.label}>
+      {GENEX_TABS.map((id, index) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          id={`${ids}-${id}`}
+          aria-controls={`${ids}-panel`}
+          aria-selected={id === tab}
+          tabIndex={id === tab ? 0 : -1}
+          data-genex-tab={id}
+          className="genex-tab"
+          onClick={() => chooseGenexTab(id)}
+          onKeyDown={(event) => keys(event, index)}
+        >
+          {label[id]}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -150,28 +210,27 @@ export function GenexDetail({
   page: PluginsPage;
   onSkill: (skill: ShownSkill) => void;
 }): JSX.Element {
-  const active = isActive(detail);
+  const tab = useGenexTab();
+  const ids = useId();
   return (
-    <div className="genex-page">
-      <PluginNotes detail={detail} />
-      <div className="extensions-detail-actions">
-        <UpdateButton detail={detail} page={page} />
+    <div className="genex-page" data-genex-page={tab}>
+      <GenexTabs tab={tab} ids={ids} />
+      <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-${tab}`} className="contents">
+        {tab === GenexTab.Tools && (
+          <>
+            <ConnectSection detail={detail} page={page} />
+            <PluginNotes detail={detail} />
+            <div className="extensions-detail-actions">
+              <UpdateButton detail={detail} page={page} />
+            </div>
+            <RoutedTools />
+            <PluginSkills detail={detail} onSkill={onSkill} />
+            <Information detail={detail} />
+          </>
+        )}
+        {/* Credits are the account's, which stays signed in with the plugin off. */}
+        {tab === GenexTab.Credits && <GenexCreditsTab />}
       </div>
-      {active ? (
-        <LiveAccount detail={detail} page={page} />
-      ) : (
-        <>
-          <p className="genex-off">{GENEX_WORDS.account.off}</p>
-          {page.error && (
-            <p role="alert" className="extensions-error">
-              {page.error}
-            </p>
-          )}
-        </>
-      )}
-      <RoutedTools />
-      <PluginSkills detail={detail} onSkill={onSkill} />
-      <Information detail={detail} />
     </div>
   );
 }

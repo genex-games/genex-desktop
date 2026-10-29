@@ -195,7 +195,11 @@ to one (`PluginConsent.approveForMode`, `by: mode`). A connector's card ("Let th
 ask again for this action in <name>") and Don't allow; Always allow saves that exact tool (`McpRegistry.alwaysAllow`): the person's own connector
 in connectors.json, where its card's checkbox shows it, and a plugin's in `always-allowed.json`
 beside it, listed on the plugin's page under Connections with **Ask every time** to take it back.
-A plugin tool's own `confirmation` card never offers it. A local plugin's agent tool asks each call
+A plugin tool's own `confirmation` card never offers it, and no chat mode answers it, Bypass
+included: it asks every call. The Roblox Studio plugin puts Roblox's AI tools, uploads and Creator
+Store inserts behind such cards (`generate-mesh`, `upload-image`, `insert-asset` and the rest),
+because they run on the person's Roblox account, and its connection never offers Studio's own
+copies of them, whose cards Auto and Bypass would skip ([plugins](plugins.md)). A local plugin's agent tool asks each call
 too ("<Plugin> was loaded from a folder on this Mac and runs with your access"), and its card offers
 Always allow for that tool alone, kept until the plugin's code changes or it is turned off and listed
 on its page with **Ask every time**; Bypass and a run's own consent never answer it. A tool of a
@@ -267,11 +271,15 @@ Its seat (`WorkerSeat`, `#workerReach`) carries:
   stays read-only);
 - its write roots: its working folder, the folders the person granted the chat
   (`ChatPermissionService.chatDirs`) and the enabled plugins' `folders`
-  (`PluginRegistry.workerFolders`), by their real paths; a folder that does not exist yet is left
+  (`PluginRegistry.workerFolders`), and the folder of the Godot project the game is linked to when it
+  lies outside the game (`DelegationService.#linkedFolders`: Godot's agents change scenes and scripts
+  as files; the chat's own session and leads read, and as their mode allows write, the same folder),
+  by their real paths; a folder that does not exist yet is left
   out, and so is one that is, holds or sits in a never-touch root (`writableRoots`);
 - the never-touch list ([`never-touch-list.ts`](../src/main/core/never-touch-list.ts)): the sign-ins
   (each coding CLI's whole home, the stores every agent's box denies (`baseDenyRead`: `~/.ssh`,
-  `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/Library/Keychains`), `~/.genex`, Genex's secrets and
+  `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/Library/Keychains`, `~/Library/HTTPStorages`,
+  `~/Library/Roblox`), `~/.genex`, Genex's secrets and
   engine homes), Genex's own data (this profile's data folder and the other profiles the app names
   at start, `StudioCoreOptions.neverTouch`: the normal profile's and a developer build's
   `.studio-dev/profiles`), and every other game's folder (the normal profile's `~/AI Games` too when
@@ -389,7 +397,10 @@ sits only in the row's `input` (`{title, command, folder}`), folded under Detail
 
 A job ends by itself, by `job_stop`, at its time limit (`hours`, 2 by default, at most 24), when
 its run settles (the harness's own `run.settled`: its lead's and its workers' jobs), when the chat
-turn that started its worker returns, and when Genex quits. A harness crash or restart ends none.
+turn that started its worker returns, and when Genex quits. A harness crash or restart ends none. When Genex itself died, its next start marks
+each job still recorded as running interrupted and ends its process group (Windows: its tree,
+through `taskkill`) when that process's start time still matches the one recorded, so a reused id
+is never hit.
 The chat's own session's jobs outlive its turns, and its next turn is told which ended
 (`jobNotice`); a run's lead hears its run's ends through `jobs.list`, the harness's one read of the
 registry ([harness runtime](harness-runtime.md)). Each start and end is a host record in its chat
@@ -441,8 +452,14 @@ The app runs it host-side, never inside an agent's box: Core Graphics' window li
 (through System Events) by `osascript` JavaScript for Automation scripts that are constants, the
 window's pid, title and place passed only as arguments; the picture by `screencapture -l`, shrunk by
 `sips` in a fresh folder of Genex's scratch, read and removed. It never looks at a password
-manager's window (Keychain Access, Passwords, 1Password, Bitwarden, LastPass, Dashlane), and leaves
-them out of the list.
+manager's window (Keychain Access, Passwords, 1Password, Bitwarden, LastPass, Dashlane), at an app
+computer control never drives (System Settings, the system's password prompts and the rest of
+`NEVER_DRIVEN_BUNDLES`) or at Genex's own windows (`lookRefused`), and leaves them out of the list.
+A game that plays in the browser runs inside Genex, so for a Loop's reviewer the list ends with the
+game itself as the window named `game`: `app_look {window: "game"}` loads the build in the folder
+the reviewer reads on a hidden pooled window of its own (never Live), past its first lit frame and
+in play, and answers that picture (`servedGameLook`, through `viewStill`), with no macOS access
+needed; no window free or a build that fails to load answers why.
 
 macOS asks the person for Screen Recording and Accessibility. Genex asks once, at the first look that
 finds either missing (`<engine homes>/app-look-access.json` remembers it asked); the first tree read
@@ -451,6 +468,21 @@ told what the person must turn on and not to retry, and the chat gets one `app_l
 app session (a host record the harness cannot write), with **Open Privacy settings**
 (`studio:app-look.open-settings`, native), which opens only that System Settings pane. Fixture
 profiles look at a stub window; other systems answer that it works on macOS only for now.
+
+## Do it for me
+
+`game.engine.assist` ([computer use](computer-use.md#the-persons-computer)) lets an engine plugin
+hand a setup click to its game's chat. The person starts one: a plugin action they pressed, or a
+tool call whose own `confirmation` card they approved with their own click (the registry marks that
+call `confirmed`; a yes given by a mode or a local plugin's own access card never counts). A plugin
+that came with Genex may also start one from its own tools for the setup it knows, its task its own
+code's words; a Genex moment's or an observer's step never starts one, and any other plugin's agent
+reaches it only through a card that asks in every mode. The task is posted verbatim as "<plugin> asks: <task>". A plugin that came with
+Genex asks nothing more; any other shows the task on its card first, every time. With computer
+control off, the studio's own card (`studio-computer-setting`, "Computer control") asks to turn it
+on, in words that say it is for every chat, with Turn on and Not now; an earlier no in the chat
+never answers a new press. The chat's session then asks its own session and app cards as any
+other desktop session does.
 
 ## A Loop's reviewer
 
@@ -472,7 +504,8 @@ the chats' coordinator homes, the exports). A Codex or OpenCode reviewer's box r
 so it is only told those, and Genex's secrets and engine homes, are off limits, and its brief names
 the folder it reads, not its home. Its
 seat (`ProjectToolSeat.Reviewer`) is offered `app_look` alone, whose access line goes to the run's
-chat; its brief names `app_look` only on an engine that carries a seat.
+chat, and which shows it a browser game as the window `game` ([Looking at apps](#looking-at-apps));
+its brief names `app_look` only on an engine that carries a seat.
 
 ## Other engines
 
@@ -508,10 +541,22 @@ reads of it at its next round.
 Codex runs Auto as before (`workspace-write` in the game folder, no network, never asks), Bypass
 with `--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
 as a read-only session) where only the studio's bridge is writable, told it plans
-(`planModeNote`). A pick applies to its next turn. Every `codex exec` runs with Codex's own
+(`planModeNote`). A pick applies to its next turn. On Windows every launch also turns on Codex's own
+restricted-token sandbox (`windows.sandbox="unelevated"`, `windowsSandboxArgs`): Genex runs Codex
+without the person's config, and without that sandbox Codex refuses every command it does not know
+to be safe under `approval_policy=never` ("blocked by policy"). Every Codex launch runs with Codex's own
 sub-agents (`multi_agent`, `multi_agent_v2`) and its screen and browser hands (`computer_use`,
-`in_app_browser`, `browser_use`, `browser_use_external`) disabled, all of which Codex turns on by
-default (`CODEX_SUBAGENT_FEATURES`, `CODEX_SCREEN_FEATURES`).
+`in_app_browser`, `browser_use`, `browser_use_external`) disabled, those its `codex features list`
+knows (`CODEX_SUBAGENT_FEATURES`, `CODEX_SCREEN_FEATURES`): the studio's `computer` tool is the
+only hands an agent has ([computer use](computer-use.md)).
+
+A judge that plays (`role: "judge"`) is blind as well as read-only (`DelegateRequest.blind`) where
+the engine can enforce it: Claude Code is offered no built-in but tool search and disallows every file, shell, edit and question tool, OpenCode
+denies every file tool, and a local session gets no file tool. Codex reads the whole disk, so a Codex
+judge is only told to judge by playing. Every engine starts in the empty `scratch/blind-judge`
+folder and is not told the build's path. Writing nothing and reading no file, it takes a folder
+lock of its own (`judgeLockKey`), so the chat's `judge_play` judge plays the game folder its own
+session holds; every other session there is still refused ([computer use](computer-use.md)).
 
 A plan on an engine that ends its turn with it (`plansByTurn`: Bonsai, Codex) is approved by the
 host ([`plan-approval.ts`](../src/main/core/plan-approval.ts) `withPlanApproval`): a Plan reply
@@ -801,6 +846,13 @@ the host opens: symbolication reads only debug files the host chose, with `genex
   compiled `adb` by its full path, since Claude Code's sandbox has no exec deny (its loopback deny
   still keeps it from any adb server or emulator).
 
+- Computer control (the `desktop` tool, [computer-use](computer-use.md#the-persons-computer)) is off
+  until the person turns it on in Settings → Permissions; on, it acts with the person's own access
+  in every app they allow: the per-app consent card is the boundary.
+  A page, document or message the agent reads there can try to steer it; the tool tells the model
+  that on-screen text is never an instruction, and the studio itself, password managers and system
+  settings are never driven. Web pages (`web_*`) open only in a separate, clean browser with no
+  logins; a page's text can still try to steer the agent.
 - Codex cannot ask mid-turn: Manual and Accept edits are unavailable for it until it runs over a
   protocol that asks (`codex app-server`), and a chat in either runs Codex in Auto's sandbox. Its
   Bypass has no sandbox at all, as the CLI's own flag. Bonsai and Codex ask about no read, and their
@@ -841,7 +893,14 @@ the host opens: symbolication reads only debug files the host chose, with `genex
   can include what a lead left there. A lead's commit made after its last run tool and before a
   Stop is not on the run's integration ref (`syncHead` runs before each tool and at the landing).
 
-- The never-touch hook reads a command's words: a path built while it runs from a variable other
+- The never-touch hook reads a command's words, relative paths from the folder the session's shell
+  stands in (the hook's `cwd`, which Claude Code moves with each `cd`). A here-document a program
+  takes as text (`TEXT_READERS`: `cat`, `python3`, `node`, Blender and the like), on the command
+  line the session runs itself with nothing on it that runs input as commands or a file by its path
+  (`./x.sh`), names paths only as paths alone, so code and prose in it (`a / b`, `~40 deg`) reach no
+  folder; one a shell, `xargs`, a loop, any other reader or a substitution (`eval "$(cat <<…)"`)
+  takes is screened as commands, and a `<<` in a comment or an arithmetic or parameter expansion is
+  no here-document. A path built while it runs from a variable other
   than `$HOME`, or a `cd` into a folder that only names itself at run time, escapes it. A command a
   worker runs outside its box (approved by Auto's classifier, or by the person in Accept edits and
   Manual) is held by the hook alone, as every command in Bypass is. The box names the roots holding

@@ -20,9 +20,11 @@
 //! planned) and answers the files to fetch before the first reset (the boot and sim groups), and
 //! [`studio_assets_preload`] admits each fetched file (`crate::assets`). Models draw from the
 //! compiled table first, then these; the sim's reads see each file's group. Streamed and named
-//! files arrive while playing: [`studio_assets_wanted`] answers the fetches the game wants,
-//! [`studio_assets_arrived`] admits each (a whole file or one planned range) and
-//! [`studio_assets_release`] drops one again.
+//! files arrive while playing (`crate::web_stream`): each frame, before the game's,
+//! [`studio_assets_wanted`] hands the files that arrived since to the sim's source and answers the
+//! fetches the game wants now (the named groups it requires, the cell bodies and terrain tiles of
+//! the cells around its anchors), [`studio_assets_arrived`] admits each (a whole file or one
+//! planned range) and [`studio_assets_release`] drops one again.
 //!
 //! Frames are drawn by genex's shared presenter (`genex::present::Presenter`), the one a native
 //! run draws with, behind the [`Screen`] painter: the game's Level-3 custom GPU passes (installed
@@ -71,6 +73,7 @@
 //! on the browser's device under error scopes and answers what each reported.
 
 use crate::assets::WebAssets;
+use crate::web_stream::{self, WebStream};
 use crate::web_audio::{UNLOCK_EVENTS, Unlock, level_answer};
 use genex::audio::Device;
 use crate::draw::AssetTable;
@@ -146,9 +149,12 @@ struct Shell {
     /// The started game.
     game: Option<Box<dyn GameHandle>>,
     assets: AssetTable,
-    /// The staged assets: before boot the whole plan and the files fetched for it (the preloaded
-    /// ones move to the game at boot), after it the plan of the streamed and named files.
+    /// The staged assets before boot: the whole plan and the files fetched for it (the preloaded
+    /// ones move to the game at boot).
     fetched: WebAssets,
+    /// After boot, the plan of the streamed and named files, the pieces asked for and the files
+    /// delivered to the sim (`crate::web_stream`).
+    stream: Option<WebStream>,
     graphics: Option<Graphics>,
     /// The named camera or eye the frame is drawn from; None for the game's own.
     view: Option<String>,
@@ -192,6 +198,7 @@ pub fn install_named<W: Default + 'static>(name: &str, game: Game<W>, assets: As
         game: None,
         assets,
         fetched: WebAssets::default(),
+        stream: None,
         graphics: None,
         view: None,
         draws: 0,
@@ -212,12 +219,13 @@ fn started(game: &mut Option<Box<dyn GameHandle>>) -> Result<&mut dyn GameHandle
 }
 
 /// Start the installed game once (its first reset reads the preloaded saves and `assets`, the
-/// files fetched before boot); answers its world size.
-fn start_game(shell: &mut Shell, assets: WebSource) -> Result<[u32; 2], JsValue> {
+/// files fetched before boot); answers its world size and fit.
+fn start_game(shell: &mut Shell, assets: WebSource) -> Result<([u32; 2], genex::Fit), JsValue> {
     if let Some(start) = shell.waiting.take() {
         shell.game = Some(start(Box::new(assets)));
     }
-    Ok(started(&mut shell.game)?.world_size())
+    let game = started(&mut shell.game)?;
+    Ok((game.world_size(), game.fit()))
 }
 
 fn refusal(code: &str, detail: impl std::fmt::Display) -> JsValue {
@@ -389,14 +397,14 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
     // One set of fetched files serves the sim's reads (attached before its first reset) and the
     // presenter's models.
     // The preloaded files move to the game's source with their groups; the shell keeps the plan
-    // of the streamed and named files for the fetches made while playing.
+    // of the streamed and named files for the fetches made while playing, and delivers what
+    // arrives to the same source.
     let models = with_shell(|shell| {
-        let fetched = std::mem::take(&mut shell.fetched);
-        shell.fetched = fetched.streaming_part();
-        let groups = fetched.groups();
-        Ok(WebSource::new(shell.assets, fetched).with_groups(groups))
+        let (source, stream) = web_stream::boot(shell.assets, std::mem::take(&mut shell.fetched));
+        shell.stream = Some(stream);
+        Ok(source)
     })?;
-    let world = with_shell(|shell| start_game(shell, models.clone()))?;
+    let (world, fit) = with_shell(|shell| start_game(shell, models.clone()))?;
     let mut graphics = match open_graphics(canvas, world, models).await {
         Ok(graphics) => graphics,
         Err(error) => return Ok(boot_refused(&error)),
@@ -405,6 +413,7 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
         graphics.screen.presenter.set_web_hints(hints);
     }
     graphics.screen.presenter.set_clock(page_clock());
+    graphics.screen.delivered = with_shell(|shell| Ok(shell.stream.as_ref().map(WebStream::delivered)))?;
     let receipt: Value = serde_json::from_str(&graphics.screen.presenter.gpu().receipt().to_json()).unwrap_or(Value::Null);
     with_shell(|shell| {
         graphics.screen.install(started(&mut shell.game)?);
@@ -420,7 +429,7 @@ pub async fn studio_boot(canvas: Option<HtmlCanvasElement>, hints: Option<String
     with_shell(|shell| {
         shell.graphics = Some(graphics);
         STUDIO.with_borrow_mut(Studio::mark_ready);
-        Ok(json!({ "ok": true, "receipt": receipt, "world": world }).to_string())
+        Ok(json!({ "ok": true, "receipt": receipt, "world": world, "fit": fit.as_str() }).to_string())
     })
     .inspect(|_| listen_for_unlock())
 }
@@ -1423,14 +1432,22 @@ pub fn studio_assets_plan(map: &str, adapter: Option<String>) -> Result<js_sys::
     })
 }
 
-/// The fetches the game wants since the last call, `[[path, offset, bytes], …]`: a streamed or
-/// named file's planned ranges not yet admitted, or the whole file. Each is fetched (a `Range`
-/// request for a piece) and handed to [`studio_assets_arrived`].
+/// The shell's streaming state once `studio_boot` started the game; `not-booted` before.
+fn stream_of(stream: &mut Option<WebStream>) -> Result<&mut WebStream, JsValue> {
+    stream.as_mut().ok_or_else(|| refusal(NOT_BOOTED, "studio_boot has not started the game"))
+}
+
+/// Each frame, before the game's: the files that arrived since reach the sim's reads, then the
+/// fetches the game wants now and were not asked for before, `[[path, offset, bytes], …]`: the
+/// pieces of the named groups it requires and of the cells around its anchors (a streamed file's
+/// planned ranges, or the whole file). Each is fetched (a `Range` request for a piece) and handed
+/// to [`studio_assets_arrived`]. Nothing before boot.
 #[wasm_bindgen]
 pub fn studio_assets_wanted() -> Result<js_sys::Array, JsValue> {
     with_shell(|shell| {
         let wanted = js_sys::Array::new();
-        for fetch in shell.fetched.take_wanted() {
+        let (Some(game), Some(stream)) = (shell.game.as_ref(), shell.stream.as_mut()) else { return Ok(wanted) };
+        for fetch in stream.frame(&game.stream_wants()) {
             // Offsets and lengths are inside a file of at most MAX_ASSET_BYTES, far below 2^53.
             let row = js_sys::Array::of3(&JsValue::from_str(&fetch.path), &JsValue::from(fetch.offset as f64), &JsValue::from(fetch.bytes as f64));
             wanted.push(&row);
@@ -1440,12 +1457,13 @@ pub fn studio_assets_wanted() -> Result<js_sys::Array, JsValue> {
 }
 
 /// Admit bytes fetched while playing: the whole of a planned file (offset 0) or exactly one of its
-/// planned ranges, with the recorded length and FNV-1a 64; refused (`asset-not-planned`,
-/// `asset-size-mismatch`, `asset-digest-mismatch`) with nothing admitted otherwise.
+/// planned ranges, with the recorded length and FNV-1a 64; refused (`asset-size-mismatch`,
+/// `asset-digest-mismatch`) with nothing admitted otherwise. A piece no longer wanted (its cell
+/// left) or never asked for is dropped. The file reaches the sim's reads at the next frame.
 #[wasm_bindgen]
 pub fn studio_assets_arrived(path: &str, offset: f64, bytes: js_sys::Uint8Array) -> Result<(), JsValue> {
     let Some(offset) = whole_offset(offset) else { return Err(refusal(crate::assets::AssetRefusal::NotPlanned.wire(), "the offset is not a whole byte")) };
-    with_shell(|shell| shell.fetched.arrived(path, offset, bytes.to_vec()).map_err(|error| refusal(error.code().wire(), &error)))
+    with_shell(|shell| stream_of(&mut shell.stream)?.arrived(path, offset, bytes.to_vec()).map_err(|error| refusal(error.code().wire(), &error)))
 }
 
 /// `offset` as a byte position, when the page sent a whole, non-negative number below 2^53.
@@ -1454,11 +1472,11 @@ fn whole_offset(offset: f64) -> Option<u64> {
     whole.then_some(offset as u64)
 }
 
-/// Drop a streamed or named file's admitted bytes so it can be wanted again; a boot or sim file
+/// Drop a streamed or named file's bytes (admitted or delivered) so it can be wanted again; a boot or sim file
 /// stays resident (`asset-group-invalid`), an unplanned path is `asset-not-planned`.
 #[wasm_bindgen]
 pub fn studio_assets_release(path: &str) -> Result<(), JsValue> {
-    with_shell(|shell| shell.fetched.release(path).map_err(|error| refusal(error.code().wire(), &error)))
+    with_shell(|shell| stream_of(&mut shell.stream)?.release(path).map_err(|error| refusal(error.code().wire(), &error)))
 }
 
 /// Admit one fetched file (its path as planned and its bytes): refused unless the plan named it

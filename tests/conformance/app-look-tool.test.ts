@@ -18,6 +18,8 @@ import { APP_LOOK_TOOL_NAME, type AppLookAccessPayload, AppLookAccessKind } from
 import { PERMISSION_MODES, PermissionMode } from "../../src/shared/permissions.ts";
 import {
   type AppLookAccessStatus,
+  type AppLookPort,
+  type AppWindow,
   type ScreenAccess,
   ScreenAccessState,
   stubAppLook,
@@ -276,6 +278,80 @@ describe("app_look", () => {
     const answer = await runAppLook(core, { app: "Fixture App", save: "Saved/Shots/w.jpg" }, caller);
     assert.doesNotMatch(textOf(answer), /The picture was not saved/);
     assert.ok(existsSync(path.join(real, "Saved", "Shots", "w.jpg")), "kept in the folder the link names");
+  });
+
+  it("never looks at an app computer control never drives, nor at Genex's own windows, and never lists them", async () => {
+    const at = (id: number, app: string, bundleId: string, pid = 100 + id): AppWindow => ({
+      id,
+      app,
+      bundleId,
+      pid,
+      title: `${app} window`,
+      bounds: { x: 0, y: 0, width: 400 + id, height: 300 },
+      onScreen: true,
+    });
+    const refused: AppWindow[] = [
+      at(2, "System Settings", "com.apple.systempreferences"),
+      at(3, "System Settings", "com.apple.SystemSettings"),
+      at(4, "SecurityAgent", "com.apple.SecurityAgent"),
+      at(5, "loginwindow", "com.apple.loginwindow"),
+      at(6, "KeePassXC", "com.keepassxc.keepassxc"),
+      at(7, "1Password", "com.1password.1password"),
+      at(8, "Genex", "games.genex.desktop"),
+      at(9, "Electron", "com.github.Electron", process.pid),
+    ];
+    const game = at(1, "Toy Game", "com.example.toy-game");
+    const looked: number[] = [];
+    const port: AppLookPort = {
+      windows: async () => [game, ...refused],
+      look: async (window) => {
+        looked.push(window.id);
+        return { window, image: null, tree: "AXWindow", truncated: false };
+      },
+    };
+    const core = { screenAccess: null, appLook: port } as never;
+    const caller = { project: "p", chatThreadId: null };
+    const listed = textOf(await runAppLook(core, {}, caller));
+    assert.match(listed, /1 · Toy Game/);
+    for (const window of refused) {
+      assert.doesNotMatch(listed, new RegExp(`^${window.id} ·`, "m"), `${window.app} is not listed`);
+      for (const args of [{ window: String(window.id) }, { app: window.bundleId ?? "" }]) {
+        const answer = await runAppLook(core, args, caller);
+        assert.match(textOf(answer), /Genex does not look at/, `${window.app} by ${Object.keys(args)[0]}`);
+        assert.deepEqual(imagesOf(answer), []);
+      }
+    }
+    assert.deepEqual(looked, [], "no refused window was ever looked at");
+    await runAppLook(core, { app: "Toy Game" }, caller);
+    assert.deepEqual(looked, [1]);
+  });
+
+  it("a game Genex runs is looked at as the window named game, with no macOS access asked", async () => {
+    let looks = 0;
+    const picture = { mimeType: "image/jpeg" as const, data: "R0FNRQ==" };
+    const game = {
+      look: async () => {
+        looks++;
+        return { image: picture };
+      },
+    };
+    // The game's look reaches neither the window list nor macOS access: an empty core proves it.
+    const core = {} as Parameters<typeof runAppLook>[0];
+    const looked = await runAppLook(core, { window: "game" }, { project: "pond", chatThreadId: null, game });
+    assert.equal(looks, 1);
+    assert.match(textOf(looked), /^Genex — pond: the game/);
+    assert.deepEqual(imagesOf(looked), [picture]);
+    const failed = await runAppLook(
+      core,
+      { window: "Game" },
+      {
+        project: "pond",
+        chatThreadId: null,
+        game: { look: async () => ({ problem: "the build failed to load" }) },
+      },
+    );
+    assert.match(textOf(failed), /could not show the game: the build failed to load/);
+    assert.equal(typeof failed === "object" && failed.isError, true);
   });
 
   it("its spec takes which window to look at, and where to keep its picture", () => {

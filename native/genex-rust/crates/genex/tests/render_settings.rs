@@ -87,7 +87,10 @@ fn feature_switches_and_the_render_scale_follow_the_same_order() {
     control.set_person(person);
     assert!(on(&control, RenderFeature::Shadows), "the person's switch beats genex.toml");
     assert_eq!(control.live_frame().quality.render_scale, 0.75);
-    assert_eq!(control.live_frame().scale, 0.75, "dynamic resolution starts at the nominal step");
+    // Flipped by lane UQ (was 0.75): on a native desktop the render scale is a share of the
+    // calibrated Quality mode's 0.6875, so the nominal step is 0.52: the floor step beside it.
+    assert_eq!(control.upscale_scale(), 0.6875);
+    assert_eq!(control.live_frame().scale, genex_render::settings::RENDER_SCALE_MIN, "dynamic resolution starts at the nominal step");
 
     let off = RenderChange { features: vec![(RenderFeature::Shadows, false)], ..RenderChange::default() };
     assert!(!control.apply(&off).features.contains(&(RenderFeature::Shadows, true)), "the verb's switch beats the person's");
@@ -134,7 +137,13 @@ fn the_session_texture_arrays_hold_whatever_the_person_the_verb_or_a_capture_ask
     let mut control = control(RenderConfig::new());
     let session = control.texture_arrays();
     assert_eq!(session.0, class("desktop-high"), "the detected class");
-    assert_eq!(session.1, preset_quality(QualityPreset::High, class("desktop-high")).textures, "the class's own preset");
+    // WP-9: a native desktop's own preset widens to the 4096 class with its share of the budget;
+    // the boot fit may then step the largest class down, never up.
+    let high = class("desktop-high");
+    let budget = genex_render::presets::class_budget_bytes(high, &mac());
+    let native = genex_render::texture::native_textures(preset_quality(QualityPreset::High, high).textures, high, TargetOs::MacOs, budget, None);
+    let fitted_from_native = (session.1.toksvig, session.1.layer_budget_mib) == (native.toksvig, native.layer_budget_mib) && session.1.max_class <= native.max_class;
+    assert!(fitted_from_native, "the class's own preset at the native class and budget share, as fitted: {:?} from {native:?}", session.1);
     assert_eq!(control.live_frame().quality.textures, session.1, "Live reports the arrays it draws from");
     control.set_person(person_preset(QualityPreset::Low));
     assert_eq!(control.texture_arrays(), session, "the person's preset keeps them");
@@ -453,12 +462,14 @@ fn dynamic_resolution_runs_the_class_table_and_never_rises_past_the_budget() {
         control.probe(mac(), None);
         control.apply(&RenderChange { device_class: Some(Some(class)), ..RenderChange::default() });
         let steps = control.scale_steps().to_vec();
-        let table: Vec<f32> = class_defaults(class).drs_steps.iter().map(|scale| bucket(*scale)).collect();
+        // Lane UQ: each step is the table's times the upscaling mode's share (1 on phones).
+        let held = |scale: f32| bucket((scale * control.upscale_scale()).max(genex_render::settings::RENDER_SCALE_MIN));
+        let table: Vec<f32> = class_defaults(class).drs_steps.iter().map(|scale| held(*scale)).collect();
         assert!(steps.iter().all(|step| table.contains(step)), "{}: {steps:?} come from its table {table:?}", class.wire());
         assert_eq!(steps[0], table[0], "{}: the table's lowest step is the floor", class.wire());
         let quality = control.live_frame().quality;
         let profile = control.live_profile();
-        let nominal = bucket(quality.render_scale);
+        let nominal = held(quality.render_scale);
         for step in steps.iter().filter(|step| **step > nominal) {
             let input = BudgetInput::new(output, *step, profile.scene_format, false);
             let bytes = ledger(&quality, &input).total();
@@ -620,10 +631,10 @@ fn a_game_asks_for_four_cascades_at_high_and_only_high_on_a_desktop_gets_them() 
 fn the_same_request_on_a_phone_is_held_to_the_mobile_caps() {
     let mut phone = control(RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4).map_size(4096).filter(ShadowFilter::Pcss)));
     emulate(&mut phone, "mobile-high", QualityPreset::High);
-    assert_eq!(shadow_row(&phone), (2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "2 x 1536 Depth16, no PCSS, far cascade every 2nd frame");
+    assert_eq!(shadow_row(&phone), (2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "2 x 1536 Depth16, no PCSS, far cascade every 2nd frame");
     emulate(&mut phone, "mobile-low", QualityPreset::High);
     // Pass-1 gate finding 02 flips the weakest phone's cap (named in the log): two 512 px cascades (was one of 768).
-    assert_eq!(shadow_row(&phone), (2, 512, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "the weakest phone: two 512 px cascades");
+    assert_eq!(shadow_row(&phone), (2, 512, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "the weakest phone: two 512 px cascades");
     let (capture, _) = phone.capture_frame();
     assert_eq!(capture.quality.shadows.cascades, 2, "a capture as that phone draws what the phone draws");
 }
@@ -657,8 +668,12 @@ fn genex_toml_and_the_facade_set_the_shadow_distance_and_blend_band_on_every_pre
     assert_eq!(reach(&game), (150, 20), "genex.toml's [render.shadows] at high");
     game.apply(&preset(QualityPreset::Medium));
     assert_eq!(reach(&game), (150, 20), "and at every other preset");
+    // Release R-13 flipped (was 40; named in the PR): a high-tier phone reaches desktop high's 80
+    // units at most, the mid and low phones 40.
     emulate(&mut game, "mobile-high", QualityPreset::Medium);
-    assert_eq!(reach(&game).0, 40, "a phone reaches 40 units at most");
+    assert_eq!(reach(&game).0, 80, "a high-tier phone reaches 80 units at most");
+    emulate(&mut game, "mobile-mid", QualityPreset::Medium);
+    assert_eq!(reach(&game).0, 40, "a mid-tier phone reaches 40 units at most");
     let code = RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().distance(5).blend_band(0.9));
     assert_eq!(reach(&control(code)), (10, 50), "a request is held to 10..=400 units and half a cascade");
 }
@@ -892,7 +907,8 @@ mod metal {
         let mut presenter = presenter([160, 90])?;
         let mut game = scene_game();
         let no_ao = ClassOverride { switches: vec![(RenderFeature::Ao, false), (RenderFeature::Taa, false)], ..ClassOverride::default() };
-        game.render_settings(RenderConfig::new().class(genex::render::REFERENCE_CLASS, no_ao));
+        // Native, so Live renders the capture's pixels (lane UQ: a desktop upscales by default).
+        game.render_settings(RenderConfig::new().class(genex::render::REFERENCE_CLASS, no_ao).upscale(genex::render::UpscaleMode::Native));
         let mut runtime = Runtime::new(game).expect("installs");
         if let Some(person) = person {
             presenter.draw_view(&mut runtime, View::Game)?.expect("a first Live frame");
@@ -1035,14 +1051,16 @@ mod metal {
         let mut presenter = presenter([320, 180])?;
         let mut runtime = Runtime::new(scene_game().world_size(320, 180)).expect("installs");
         presenter.draw_view(&mut runtime, View::Game)?.expect("a first Live frame");
-        let nominal = runtime.render().borrow().live_frame().scale;
+        // The capture's own pinned nominal step (lane UQ: Live's is its upscaling mode's).
+        let nominal = runtime.render().borrow().capture_frame().1.scale;
+        let live_nominal = runtime.render().borrow().live_frame().scale;
         if dropped {
             let target = runtime.render().borrow().gpu_target_ms();
             for frame in 0..60u64 {
                 let now = std::time::Duration::from_millis(16 * frame);
                 runtime.render().borrow_mut().observe(Some(1.0), Some(&[target * 3.0]), 16.0, now);
             }
-            assert!(runtime.render().borrow().live_frame().scale < nominal, "dynamic resolution dropped Live's step");
+            assert!(runtime.render().borrow().live_frame().scale < live_nominal, "dynamic resolution dropped Live's step");
         }
         for _ in 0..3 {
             presenter.draw_view(&mut runtime, View::Game)?.expect("Live at the step");
@@ -1502,6 +1520,9 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         });
         let heavy = Heavy { iterations: std::rc::Rc::clone(&iterations), pipeline: None, group: None, uniforms: None };
         game.gpu_pass("heavy", PassStage::AfterOpaque, heavy);
+        // The row's premise is Live at scale 1: the game asks for Native (lane UQ: a desktop
+        // upscales by default).
+        game.render_settings(RenderConfig::new().upscale(genex::render::UpscaleMode::Native));
         let mut runtime = Runtime::new(game).expect("installs");
         assert!(presenter.install_for(&mut runtime).is_empty(), "the load pass is admitted");
         let handle = runtime.render();
@@ -1555,4 +1576,33 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         assert!(full == 1.0 || released.over == 0, "{}", busy_host("frames of the class's time crossed it", &released));
         assert_eq!(full, 1.0, "and the full scale");
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Look hot reload (WP-9 iteration speed): `renderSettings {set: {look: {..}}}` overlays
+// `[render.look]` keys on the running game's look, no rebuild; `look: null` gives it back.
+
+#[test]
+fn a_verb_look_overlays_its_keys_on_the_game_s_look_until_cleared() {
+    let game = RenderConfig::from_toml("[render.look]\ntonemapper = \"agx\"\nev_compensation = 0.5\nbloom_intensity = 0.02\n").expect("a look");
+    let mut control = control(game.clone());
+    let base = control.look();
+    let overlay = RenderChange::look_from_json(r#"{"ev_compensation": 1.5, "exposure": "auto"}"#).expect("known look keys");
+    control.apply(&RenderChange { look: Some(Some(overlay)), ..RenderChange::default() });
+    let live = control.live_frame().look;
+    assert_eq!(live.ev_compensation, 1.5, "the verb's key wins");
+    assert_eq!(live.exposure, genex::render::ExposureMode::Auto);
+    assert_eq!((live.tonemapper, live.bloom_intensity), (base.tonemapper, base.bloom_intensity), "keys it leaves out stay the game's");
+    assert_eq!(control.capture_frame().0.look, live, "captures draw the overlaid look too");
+    control.apply(&RenderChange { look: Some(None), ..RenderChange::default() });
+    assert_eq!(control.live_frame().look, base, "look: null gives the game's look back");
+}
+
+#[test]
+fn a_verb_look_with_an_unknown_key_or_a_bad_value_is_refused_invalid_look() {
+    for json in [r#"{"exposure_bias": 1}"#, r#"{"tonemapper": 3}"#, r#"[1, 2]"#, "not json"] {
+        assert_eq!(RenderChange::look_from_json(json), Err(RenderRefusal::InvalidLook), "{json}");
+    }
+    assert_eq!(RenderRefusal::InvalidLook.wire(), "invalid-look");
+    assert!(RenderChange::look_from_json("{}").is_ok(), "an empty overlay changes nothing");
 }

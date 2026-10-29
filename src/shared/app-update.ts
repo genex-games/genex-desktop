@@ -36,6 +36,8 @@ export const UpdateCheckStatus = {
   Downloading: "downloading",
   /** A newer version waits (`ReadyUpdate`): relaunch or download. */
   Waiting: "waiting",
+  /** Linux from the Genex package repository: the system's own updates bring new versions. */
+  System: "system",
   /** This build never checks: a development, test or self-packaged launch. */
   Off: "off",
   /** The check did not finish: offline, the service failed, or it took too long. */

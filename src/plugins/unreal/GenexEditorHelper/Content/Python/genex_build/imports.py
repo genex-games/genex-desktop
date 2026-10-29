@@ -8,14 +8,28 @@ models never share material names, and it answers the real asset paths Unreal ga
 names them after the file and its nodes; a path may hold a dash, and the tools take it as is). Imports
 never pop the Content Browser over the viewport: Interchange's "select imported assets" switch is
 turned off first, so later captures stay clean. Every import runs to the end before it answers.
+
+A rigged .glb whose skeleton hangs under a scaled root (a centimetre Armature at 0.01) is imported
+from a copy with that scale baked in (rig_math), written to the project's Saved/Genex/imports/, and
+the answer says so (skeletonScale); one the bake can't take still imports, with scaleWarning. A
+character's own materials are marked for use on skinned meshes (skinnedMaterials): Unreal otherwise
+draws the default grey material in its place in game, though the editor shows the textures.
+
+Importing again into a folder that already holds an import doesn't import over it (Unreal's importer
+then imports nothing): the same file, unchanged, answers the first import's answer again (reused),
+so a build script that imports can run again; any other file is refused with the way out. What each
+folder holds is recorded in Saved/Genex/imports/records.json.
 """
 
+import json
 import os
+import pathlib
 import time
+import zlib
 
 import unreal
 
-from genex_build import mesh_math
+from genex_build import mesh_math, rig_math
 from genex_loop import assets, editor, paths
 from genex_loop.errors import Refused, short_message
 
@@ -30,6 +44,12 @@ BROWSER_SYNC = 'Interchange.FeatureFlags.Import.SyncToBrowser'
 CONVEX_HULLS = 8
 CONVEX_HULL_VERTS = 16
 CONVEX_PRECISION = 100_000
+# Where baked copies and the record of each import folder's file go, below the project's Saved/Genex.
+IMPORTS_FOLDER = 'imports'
+RECORDS_FILE = 'records.json'
+GLB = '.glb'
+# How many of an occupied folder's assets a refusal names.
+NAMED_ASSETS = 4
 
 MESSAGE = {
     'no_game': ('This Unreal project is not a Genex game\'s unreal/ folder, so it has no assets folder to '
@@ -42,10 +62,14 @@ MESSAGE = {
     'no_main': 'It imported no {main}, only {made}.',
     'skeleton': 'skeleton must be an existing Skeleton asset (the one import_character answered).',
     'skeleton_scale': ('This file\'s skeleton is scaled {scale} at its root (an exporter\'s centimetre Armature, or '
-                       'a root bone left at that scale), so Unreal imported it that many times too small or large. Have '
-                       'a blender_prep sub-agent pass it through Local Blender with rig on: Genex applies an armature\'s '
-                       'scale to its bones and its clips as it exports the GLB (its script deletes helper objects such as '
-                       'a stray Icosphere). Then import that GLB.'),
+                       'a root bone left at that scale), so Unreal imported it that many times too small or large. '
+                       'Genex takes that scale out of a .glb whose scale is the same on every axis, but not out of this '
+                       'file: export the character as such a .glb (Genex\'s Blender plugin with rig on applies the '
+                       'scale as it exports) and import that.'),
+    'taken': ('{folder} already holds an earlier import of another file ({assets}), and importing over it imports '
+              'nothing. Import this file under a new name (such as {name}_2) and point the level and the build scripts '
+              'at the new asset; delete the old folder in a build script (unreal.EditorAssetLibrary.delete_directory) '
+              'once nothing uses it.'),
     'playing': ('A play session is running, and an import or retarget during play makes only part of the asset (a '
                 'Skeleton without its mesh, a mesh without triangles). Call release_all, then StopPIE, then try again.'),
 }
@@ -85,6 +109,64 @@ def check_import(dest: object, name: object) -> str:
     if not paths.is_name(name):
         raise Refused(paths.MESSAGE['name'], name=name)
     return f'{dest}/{name}'
+
+
+def _imports_folder() -> str:
+    return os.path.join(editor.project_dir(), *paths.GENEX_FOLDER, IMPORTS_FOLDER)
+
+
+def _records() -> dict:
+    """{content folder: {file, fingerprint, answer}} of the imports made so far; {} when unreadable."""
+    try:
+        with open(os.path.join(_imports_folder(), RECORDS_FILE), encoding='utf-8') as handle:
+            found = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def _write_file(path: str, data: bytes) -> None:
+    """Writes `data` to `path` whole: a reader never sees half a file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = f'{path}.partial'
+    # Called through their classes, so Genex's Unreal-names check sees standard library calls, not engine ones.
+    pathlib.Path.write_bytes(pathlib.Path(temporary), data)
+    os.replace(temporary, path)
+
+
+def _record(folder: str, source: str, digest: str, answer: dict) -> None:
+    records = _records()
+    records[folder] = {'file': source, 'fingerprint': digest, 'answer': answer}
+    _write_file(os.path.join(_imports_folder(), RECORDS_FILE), json.dumps(records, indent=1).encode('utf-8'))
+
+
+def _read(file: str) -> bytes:
+    return pathlib.Path.read_bytes(pathlib.Path(file))
+
+
+def _digest(file: str) -> str:
+    """The file's size and CRC-32: what tells the same file, unchanged, from any other."""
+    data = _read(file)
+    return f"{len(data)}:{zlib.crc32(data):08x}"
+
+
+def _main_asset(answer: dict) -> str | None:
+    return answer.get('asset') or answer.get('mesh') or next((a['path'] for a in answer.get('animations', [])), None)
+
+
+def earlier_import(folder: str, name: str, digest: str) -> dict | None:
+    """The answer to give again when `folder` already holds this same file's import (reused), None when the folder
+    holds nothing yet; Refused when it holds anything else (see the module notes)."""
+    held = [str(path).split('.')[0] for path in unreal.EditorAssetLibrary.list_assets(folder, True, False)]
+    if not held:
+        return None
+    record = _records().get(folder) or {}
+    answer = record.get('answer')
+    same = record.get('fingerprint') == digest and isinstance(answer, dict)
+    if same and unreal.EditorAssetLibrary.does_asset_exist(_main_asset(answer) or ''):
+        return {**answer, 'reused': True}
+    listed = ', '.join(held[:NAMED_ASSETS]) + (', ...' if len(held) > NAMED_ASSETS else '')
+    raise Refused(MESSAGE['taken'].format(folder=folder, assets=listed, name=name), folder=folder)
 
 
 def check_collision(collision: object, nanite: object) -> None:
@@ -204,46 +286,88 @@ def import_model(file: str, dest: str, name: str, collision: str, nanite: bool) 
     folder = check_import(dest, name)
     check_collision(collision, nanite)
     source = game_asset(file, assets.MODELS, MODEL_MAX_BYTES)
+    digest = _digest(source)
+    again = earlier_import(folder, name, digest)
+    if again is not None:
+        return again
     started = time.perf_counter()
     made = run_import(source, folder, model_pipeline(nanite))
     mesh = _main(made, unreal.StaticMesh, 'StaticMesh')
     set_nanite(mesh, nanite)
     set_collision(mesh, collision)
     unreal.EditorAssetLibrary.save_loaded_asset(mesh, False)
-    return {'asset': mesh.get_path_name().split('.')[0], 'class': 'StaticMesh', 'folder': folder,
-            'sourceTriangles': mesh_math.source_triangles(source), 'naniteTriangles': mesh.get_num_nanite_triangles(),
-            'fallbackTriangles': mesh.get_num_triangles(0), 'boundsCm': _bounds(mesh), 'collision': collision,
-            'nanite': nanite, 'meshes': len(_of_class(made, unreal.StaticMesh)), 'ms': editor.elapsed_ms(started)}
+    answer = {'asset': mesh.get_path_name().split('.')[0], 'class': 'StaticMesh', 'folder': folder,
+              'sourceTriangles': mesh_math.source_triangles(source), 'naniteTriangles': mesh.get_num_nanite_triangles(),
+              'fallbackTriangles': mesh.get_num_triangles(0), 'boundsCm': _bounds(mesh), 'collision': collision,
+              'nanite': nanite, 'meshes': len(_of_class(made, unreal.StaticMesh))}
+    _record(folder, source, digest, answer)
+    return {**answer, 'ms': editor.elapsed_ms(started)}
 
 
 def _paths(found: list) -> list[str]:
     return [asset.get_path_name().split('.')[0] for asset in found]
 
 
-def scale_warning(source: str) -> dict:
-    """A rigged glTF whose skeleton hangs under a scaled root (an exporter's centimetre Armature at 0.01) lands that
-    much too small or large in Unreal, and no import option undoes it cleanly (Interchange's uniform offset scales a
-    skinned mesh twice): the answer says so and how to fix the file."""
+def rig_source(source: str, folder: str) -> tuple[str, dict]:
+    """(the file to import, what the answer adds): a .glb whose skeleton is scaled at its root is imported from a
+    copy with the scale baked in, under Saved/Genex/imports/<folder below /Game>/ ({skeletonScale}); a file the bake
+    can't take is imported as it is ({scaleWarning}); any other file as it is ({})."""
     counter = mesh_math.source_counter_scale(source)
-    return {} if counter == 1.0 else {'scaleWarning': MESSAGE['skeleton_scale'].format(scale=round(1 / counter, 4))}
+    if counter == 1.0:
+        return source, {}
+    baked = None
+    if source.lower().endswith(GLB):
+        baked = rig_math.bake(_read(source))
+    if baked is None:
+        return source, {'scaleWarning': MESSAGE['skeleton_scale'].format(scale=round(1 / counter, 4))}
+    data, taken = baked
+    copy = os.path.join(_imports_folder(), *folder.split('/')[2:], os.path.basename(source))
+    _write_file(copy, data)
+    return copy, {'skeletonScale': {'baked': round(taken, 6), 'file': copy}}
+
+
+def skinned_materials(mesh) -> list[str]:
+    """The game's own base materials on a skeletal mesh that weren't marked for skinned meshes, marked and
+    saved; Unreal draws the default material in game for one without that flag. Engine materials are left."""
+    library = unreal.MaterialEditingLibrary
+    usage = unreal.MaterialUsage.MATUSAGE_SKELETAL_MESH
+    marked: list[str] = []
+    for slot in mesh.get_editor_property('materials'):
+        material = slot.get_editor_property('material_interface')
+        base = material.get_base_material() if material else None
+        if base is None or not base.get_path_name().startswith('/Game/') or library.has_material_usage(base, usage):
+            continue
+        if library.set_material_usage(base, usage):
+            library.recompile_material(base)
+        unreal.EditorAssetLibrary.save_loaded_asset(base, False)
+        marked.append(base.get_path_name())
+    return marked
 
 
 def import_character(file: str, dest: str, name: str) -> dict:
     """A rigged character from a model file of the game's assets: its skeletal mesh, skeleton, physics asset and clips."""
     folder = check_import(dest, name)
     source = game_asset(file, assets.MODELS, MODEL_MAX_BYTES)
+    digest = _digest(source)
+    again = earlier_import(folder, name, digest)
+    if again is not None:
+        return again
     started = time.perf_counter()
-    made = run_import(source, folder, character_pipeline())
+    imported, rig = rig_source(source, folder)
+    made = run_import(imported, folder, character_pipeline())
     mesh = _main(made, unreal.SkeletalMesh, 'SkeletalMesh')
     skeleton = mesh.get_editor_property('skeleton')
     physics = mesh.get_editor_property('physics_asset')
     extent = mesh.get_bounds().box_extent
     clips = _of_class(made, unreal.AnimSequence)
-    return {'mesh': _paths([mesh])[0], 'skeleton': _paths([skeleton])[0] if skeleton else None,
-            'physicsAsset': _paths([physics])[0] if physics else None,
-            'boundsCm': [round(extent.x * 2), round(extent.y * 2), round(extent.z * 2)],
-            'animations': [{'path': p, 'seconds': round(c.get_play_length(), 2)} for p, c in zip(_paths(clips), clips)],
-            'folder': folder, 'ms': editor.elapsed_ms(started), **scale_warning(source)}
+    skinned = skinned_materials(mesh)
+    answer = {'mesh': _paths([mesh])[0], 'skeleton': _paths([skeleton])[0] if skeleton else None,
+              'physicsAsset': _paths([physics])[0] if physics else None,
+              'boundsCm': [round(extent.x * 2), round(extent.y * 2), round(extent.z * 2)],
+              'animations': [{'path': p, 'seconds': round(c.get_play_length(), 2)} for p, c in zip(_paths(clips), clips)],
+              'folder': folder, **rig, **({'skinnedMaterials': skinned} if skinned else {})}
+    _record(folder, source, digest, answer)
+    return {**answer, 'ms': editor.elapsed_ms(started)}
 
 
 def import_animation(file: str, skeleton: str, dest: str, name: str) -> dict:
@@ -253,21 +377,33 @@ def import_animation(file: str, skeleton: str, dest: str, name: str) -> dict:
     if not isinstance(target, unreal.Skeleton):
         raise Refused(MESSAGE['skeleton'], skeleton=skeleton)
     source = game_asset(file, ANIMATIONS, MODEL_MAX_BYTES)
+    digest = _digest(source)
+    again = earlier_import(folder, name, digest)
+    if again is not None:
+        return again
     started = time.perf_counter()
-    made = run_import(source, folder, animation_pipeline(target))
+    imported, rig = rig_source(source, folder)
+    made = run_import(imported, folder, animation_pipeline(target))
     clips = _of_class(made, unreal.AnimSequence)
     if not clips:
         _main(made, unreal.AnimSequence, 'AnimSequence')
-    return {'animations': [{'path': p, 'seconds': round(c.get_play_length(), 2)} for p, c in zip(_paths(clips), clips)],
-            'skeleton': _paths([target])[0], 'folder': folder, 'ms': editor.elapsed_ms(started), **scale_warning(source)}
+    answer = {'animations': [{'path': p, 'seconds': round(c.get_play_length(), 2)} for p, c in zip(_paths(clips), clips)],
+              'skeleton': _paths([target])[0], 'folder': folder, **rig}
+    _record(folder, source, digest, answer)
+    return {**answer, 'ms': editor.elapsed_ms(started)}
 
 
 def import_sound(file: str, dest: str, name: str) -> dict:
     """A sound wave from a .wav, .mp3, .ogg or .flac file of the game's assets."""
     folder = check_import(dest, name)
     source = game_asset(file, SOUNDS, SOUND_MAX_BYTES)
+    digest = _digest(source)
+    again = earlier_import(folder, name, digest)
+    if again is not None:
+        return again
     started = time.perf_counter()
     made = run_import(source, folder)
     sound = _main(made, unreal.SoundWave, 'SoundWave')
-    return {'asset': _paths([sound])[0], 'seconds': round(sound.get_editor_property('duration'), 2),
-            'folder': folder, 'ms': editor.elapsed_ms(started)}
+    answer = {'asset': _paths([sound])[0], 'seconds': round(sound.get_editor_property('duration'), 2), 'folder': folder}
+    _record(folder, source, digest, answer)
+    return {**answer, 'ms': editor.elapsed_ms(started)}

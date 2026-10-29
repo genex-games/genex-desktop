@@ -2,9 +2,45 @@
 
 A rigged GLB animates in three steps. `on_reset` makes the character's animator, `on_update`
 advances it by `ctx.dt`, and `on_draw` draws it. Start with the simple animator; move to a graph
-when you need parameters, layers or blend spaces. The types are in `genex::animation`, and
+when you need parameters, layers or blends (`Motion::blend1d`, `Motion::blend2d`,
+`Motion::directional`). The types are in `genex::animation`, and
 `Animator` is also in the prelude. Animation needs no physics: a game with physics off keeps
-all of it.
+all of it. Every type and call in one line:
+
+```rust
+use genex::animation::{BodyPart, ClipId, EventId, FloatParam, Mask, Motion, TriggerParam};
+use genex::{AnimationError, CharacterAsset, CharacterDraw, Skeleton}; // the crate root
+gfx.character("characters/hero.glb");      // -> Result<CharacterAsset, AnimationError>
+hero.clip("Walk"); hero.clip_names();      // -> Option<ClipId>, the names in file order
+hero.path(); hero.joint_count(); hero.skeleton(); // -> &str, usize, &Skeleton
+Animator::simple(&hero); hero.animator(&graph); // -> Result<Animator, AnimationError>
+let mut g = hero.graph();                  // the builder; g.build() -> Result<AnimGraph, AnimationError>
+g.float("speed", 0.0); g.trigger("attack"); // -> FloatParam, TriggerParam: keep them in the world
+g.layer("base"); g.state(base, "idle", Motion::clip(idle)); // -> LayerId, StateId
+Motion::blend1d(speed, &[(1.4, walk), (4.0, run)]).speed_by(rate); // -> BlendMotion; also Motion::blend2d, Motion::directional
+hero.clip_ground_speed(walk);               // -> Option<f32>, m/s of its root motion
+g.event(clip, 0.3, "hit");                  // -> EventId
+animator.update(ctx.dt);                    // -> AnimatorStep { root_motion, events }
+frame.character_with(&animator, at, &CharacterDraw::new().tint(Color::RED));
+use genex::animation::{JointId, Limb, LimbTarget, LookTarget}; // sockets and IK
+animator.socket(joint, model);              // joint: JointId, model: Mat4 -> Mat4, the joint in the world
+animator.look_at(Some(LookTarget { target, weight: 1.0 })); // character space; None lets go
+animator.reach(Limb::RightArm, Some(LimbTarget { target, pole, weight: 1.0 }));
+```
+
+A `CharacterAsset` keeps its fields private: read it through the calls above. An
+`AnimationError`'s `code` and `detail` are fields. The prelude's `Condition` is the input page's;
+a graph's conditions come from its parameters (`speed.above(0.1)`, `attack.fired()`).
+
+Common mistakes:
+
+- `CharacterAsset` has no `joint` method. A joint is a `JointId` from `hero.skeleton()`'s `find`,
+  which takes the joint's name (exact, else the part after `|` or `:` ignoring case, so `"hips"`
+  finds `mixamorig:Hips`) and answers `Option<JointId>`. Its transform is the animator's:
+  `animator.socket(joint, model)`, `model` being the `Mat4` the character is drawn at (a
+  `Transform`'s `matrix`).
+- `LookTarget` and `LimbTarget` have no `new`: write the struct, `LookTarget { target, weight }`
+  (a `Vec3` in character space, an `f32` in 0..=1), and pass it as `Some(..)`.
 
 ## The simple animator (start here)
 
@@ -81,6 +117,49 @@ sim.world.hero = Some(animator);
 - `hero.with_retargeted_clips(&ual)?` adds another humanoid's clips, retargeted onto this
   skeleton (a UAL walk on a Meshy hero). Each limb points where the source's does, and the hips'
   travel scales by leg length. Call `.with_root_motion(..)` after it.
+- `hero.with_clip_files(gfx.assets(), &[("Idle", "gunman/idle.glb"), ("Fire", "gunman/fire.glb")])?`
+  adds clips kept in files of their own, such as Uthana's one skeleton-only GLB per clip. Each
+  file's first animation joins under the name you give it. Its channels drive the joints their
+  nodes are named after (the exact name, then the part after the last `:` or `|`). Nothing is
+  retargeted, so the files must come from this rig. No merge script is needed. It refuses
+  `animation-asset-invalid` for a file the build does not have or a name already taken, and
+  `animation-clip-missing` for a file with no animation or none that names a joint.
+
+## Locomotion that does not slide
+
+A walking character's feet slide when the clip's stride does not match the ground the body
+covers. Three calls stop it:
+
+```rust
+// on_reset: extract root motion, then put each clip at its own ground speed.
+let Ok(hero) = hero.with_root_motion(&MotionSettings::DEFAULT) else { return };
+let (Some(walk), Some(run)) = (hero.clip("Walk"), hero.clip("Run")) else { return };
+let (Some(walk_speed), Some(run_speed)) = (hero.clip_ground_speed(walk), hero.clip_ground_speed(run)) else { return };
+let mut g = hero.graph();
+let speed = g.float("speed", 0.0);
+let rate = g.float("rate", 1.0);
+let base = g.layer("base");
+g.state(base, "move", Motion::blend1d(speed, &[(0.0, idle), (walk_speed, walk), (run_speed, run)]).speed_by(rate));
+// on_update: the body's own ground speed; past the fastest clip, play it faster.
+let ground = vec2(velocity.x, velocity.z).length();
+hero.set_float(speed, ground);
+hero.set_float(rate, if ground > run_speed { ground / run_speed } else { 1.0 });
+hero.update(ctx.dt);
+hero.plant_feet(at, height_ground(|x, z| Some(terrain.height(x, z))));
+```
+
+- A blend plays its clips in step: one shared phase, advanced over the weighted mean of the
+  clips' lengths, so walk and run plant the same foot together and the step rate changes
+  smoothly. Author or pick clips that start on the same foot. A blend always loops.
+- `Motion::blend1d(float, points)` weighs clips on a line (outside it the end plays alone);
+  `Motion::blend2d(vec2, points)` over a triangulation (aim pitch and yaw);
+  `Motion::directional(vec2, points)` by velocity, +x right and +y forward in character space
+  (an 8-way strafe set with the idle at the origin). Each refuses `animation-graph-invalid` for
+  no point, more than 32, a point that is not finite, two at one place or a clip it lacks.
+- `.speed_by(param)` multiplies the blend's rate; `.speed(s)` fixes it.
+- `animator.plant_feet(..)` after the update locks a planted foot where it stands and bends the
+  leg onto the ground (below). An NPC on `CharacterMotion::Root(step.root_motion)` moves exactly
+  as its feet do.
 
 ## Advancing (on_update)
 
@@ -102,6 +181,17 @@ if step.events.iter().any(|event| event.event == hit) { /* deal damage */ }
   `.in_transition(layer)` read it.
 - `animator.reach(limb, target)` and `.look_at(target)` aim limbs and the head (IK, character
   space). `.socket(joint, model)` is a joint's world matrix, for a sword tip.
+- `animator.plant_feet(model, ground)` right after `animator.update(ctx.dt)` keeps the feet on
+  slopes and steps. `model` is the `Transform` you draw the character at; `ground` is
+  `character.ground_ray(&sim.physics)` with physics, or
+  `genex::animation::height_ground(|x, z| Some(terrain.height(x, z)))`. Each leg bends onto the
+  ground, each foot turns to the slope (at most 30°), the pelvis drops by the lower foot's offset,
+  and a standing foot holds its place until the animation lifts it (an ankle within 3 cm of its
+  rest height is down). `socket`, `pose`, `palette` and `frame.character` show the planted pose
+  until the next update; `snapshot` and `restore` carry the foot locks. It returns a `FootPlan`
+  (`plan.feet` per foot, `plan.pelvis`) for a probe. A rig without a humanoid's legs, no ground
+  under the feet, or a character in the air (the pelvis would drop more than a third of its hip
+  height) is left as animated.
 - `animator.snapshot()` and `.restore(..)` carry the whole state, floats as bits.
 - `game.probe("hero", |sim| sim.world.hero.as_ref().map_or(Value::Null, Animator::probe))` gives each layer's state, clip time and
   transition, and the parameters. `animator.digest()` hashes the whole state.
@@ -118,22 +208,31 @@ frame.skeleton_debug(hero, at);
 - `frame.character(..)` is one logical draw under the current tag. The presenter skins the GLB in
   the animator's pose (every skinned primitive, each part with its own material). A missing file
   draws the magenta checker; a file the renderer cannot skin draws its model in bind pose.
+- The file's armature counts. Mixamo, Meshy, Tripo and Uthana rigs hang the mesh and the root
+  joint under an "Armature" node turned 90° about X at scale 0.01, with the joints in
+  centimetres. The character still stands upright at its real size, where its bind-pose model and
+  every `socket` put it. Don't bake the turn into the file or add a yaw or scale offset for it.
+  `hero.skeleton().mesh_frame()` is that node's frame.
 - In Live a far character's pose is held between evaluations: every tick near the camera, every
   2nd, 4th or 8th tick as its projected height (LOD's screen-size metric, from the game camera)
-  falls past 240, 120 and 60 pixels of a 1080-pixel view. A capture is always full rate. Drawing
-  never moves the animator or the simulation.
+  falls past 240, 120 and 60 pixels of a 1080-pixel view. An animator drawn by several characters
+  in one frame (a crowd's shared run cycle) is evaluated once, every tick, and they all draw that
+  pose. A capture is always full rate. Drawing never moves the animator or the simulation.
 - A character under 240 pixels whose materials are all plain and opaque is skinned in the vertex
   stage. Nearer characters, and characters with masked, double-sided or transparent parts, are
   skinned by a compute pass. The vertex path keeps no skinned vertex buffers, and it draws the
   same picture as the compute pass, including the shadows and the motion vectors.
-- Each device class skins at most so many characters by compute in a frame: 128 on
-  `desktop-ultra`, 100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on
-  `mobile-high`, 12 on `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the
-  smallest on screen are skinned in the vertex stage too (masked, double-sided and transparent ones
-  stay on compute), so a crowd keeps its picture and holds no more skinned memory.
+- Characters of one GLB in the very same pose (a crowd drawn with a few shared animators) are
+  skinned once: the pose stays on the compute pass at any size, and every character showing it is
+  drawn from that one result, culled on the GPU for the view and each shadow cascade.
+- Each device class skins at most so many poses by compute in a frame: 128 on `desktop-ultra`,
+  100 on `desktop-high`, 64 on `desktop-mid`, 32 on `desktop-low`, 16 on `mobile-high`, 12 on
+  `mobile-mid`, 8 on `mobile-low`, and at most 40 in a browser. Past it the poses smallest on
+  screen are skinned in the vertex stage too (masked, double-sided and transparent ones stay on
+  compute), so a crowd keeps its picture and holds no more skinned memory.
   `state().volatile.render.characters` shows the last frame's `drawn`, `evaluated` and `held`
-  characters and its `computeSkinned` and `vertexSkinned` counts against `computeMax`; it is never
-  part of the checksum.
+  characters and how many are `computeSkinned` and `vertexSkinned`, with the class's `computeMax`
+  poses; it is never part of the checksum.
 - A character GLB with simplified levels (the Studio's import writes them on every primitive of a
   model of 512 or more triangles, skinned ones included) skins only the level its distance picks,
   with the screen-size metric and crossfades models use: the compute pass near, the vertex stage
@@ -184,4 +283,6 @@ if let Some(door) = &sim.world.door { frame.model_posed(&sim.world.door_model, d
   file does not have (`play`, `play_once`).
 - `animation-retarget-unmapped`: a retarget where either character lacks a humanoid bone (the
   toes are optional). It names the bone and the character.
+- `animation-disabled`: `gfx.character`, `gfx.node_clips` or an animator in a game whose
+  genex.toml sets `[animation] enabled = false`. Turn animation back on.
 - `ragdoll-profile-invalid` and `character-shape-invalid`: see `docs/api/characters.md`.

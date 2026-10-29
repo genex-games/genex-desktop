@@ -1,6 +1,7 @@
 import path from "node:path";
 import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { type PluginManifest, type PluginScan, type PluginSource, PluginSourceKind } from "../shared/plugins.ts";
+import { t } from "../shared/i18n.ts";
 import type { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { inspectPackage } from "../substrate/plugins/manifest.ts";
 import { scanPackage } from "../substrate/plugins/scan.ts";
@@ -8,8 +9,10 @@ import { packageCopyFilter } from "../substrate/plugins/pack.ts";
 
 /** Why a local folder could not be installed again, as the plugin panel shows it. */
 const MESSAGE = {
-  folderGone: "The folder this plugin was loaded from is gone; load it again",
-  differentPlugin: "The local folder now contains a different plugin. Load it as a new plugin instead.",
+  folderGone: () => t("The folder this plugin was loaded from is gone; load it again"),
+  differentPlugin: () => t("The local folder now contains a different plugin. Load it as a new plugin instead."),
+  connectorHasId: (id: string) =>
+    t('A connector already uses the id "{id}"; remove or rename that connector before installing this plugin', { id }),
 } as const;
 
 /**
@@ -20,15 +23,15 @@ export const pluginOriginWords = (origin?: PluginSource): string => {
   const commit = `GitHub ${origin?.repo}@${(origin?.sha ?? "").slice(0, 12)}`;
   switch (origin?.kind) {
     case PluginSourceKind.Index:
-      return `${commit} (cataloged, not audited)`;
+      return t("{commit} (cataloged, not audited)", { commit });
     case PluginSourceKind.Github:
-      return `${commit} (not in the catalog)`;
+      return t("{commit} (not in the catalog)", { commit });
     case PluginSourceKind.Catalog:
-      return "a curated release (cataloged, not audited)";
+      return t("a curated release (cataloged, not audited)");
     case PluginSourceKind.Local:
-      return origin.directory ? `the folder ${origin.directory}` : "a local folder";
+      return origin.directory ? t("the folder {folder}", { folder: origin.directory }) : t("a local folder");
     default:
-      return "Genex (built in)";
+      return t("Genex (built in)");
   }
 };
 
@@ -51,10 +54,7 @@ export function reviewPluginInstall(
 ): PluginInstallReview {
   const from: PluginSource = origin ?? { kind: PluginSourceKind.Bundled };
   registry.assertInstallable(manifest, from);
-  if (connectorIds.includes(manifest.id))
-    throw new Error(
-      `A connector already uses the id "${manifest.id}"; remove or rename that connector before installing this plugin`,
-    );
+  if (connectorIds.includes(manifest.id)) throw new Error(MESSAGE.connectorHasId(manifest.id));
   const replaces = registry.replacement(manifest, from);
   return replaces ? { replaces } : {};
 }
@@ -85,7 +85,7 @@ export async function installLocalPlugin(
     (s) => s.isDirectory(),
     () => false,
   );
-  if (!stillThere) throw new Error(MESSAGE.folderGone);
+  if (!stillThere) throw new Error(MESSAGE.folderGone());
   await inspectPackage(directory);
   const staging = path.join(registry.root, "staging");
   await mkdir(staging, { recursive: true });
@@ -99,7 +99,7 @@ export async function installLocalPlugin(
       filter: packageCopyFilter(directory),
     });
     const manifest = await inspectPackage(snapshot);
-    if (expectedId && manifest.id !== expectedId) throw new Error(MESSAGE.differentPlugin);
+    if (expectedId && manifest.id !== expectedId) throw new Error(MESSAGE.differentPlugin());
     const scan = await scanPackage(snapshot, manifest);
     const previous = registry.list().find((p) => p.manifest.id === manifest.id);
     if (!(await confirm(manifest, origin, scan, previous?.manifest))) return;

@@ -45,11 +45,11 @@ import { ASSET_INDEX_FILE, type AssetIndex } from "../../src/main/rust-package-a
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import { ExportWarningCode, WEB_BUDGET_MB_BYTES } from "../../src/shared/game-export-contract.ts";
 import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
-import type { ToolchainLock } from "../../src/shared/toolchain.ts";
+import { ToolchainId, type ToolchainLock } from "../../src/shared/toolchain.ts";
 import { fnv1a64Hex } from "../../src/substrate/native-game-port.ts";
 import { type RunRequest, type RunResult, shellQuote } from "../../src/substrate/spawn.ts";
 import { readCurrentLock } from "../../src/substrate/toolchain-store/lock.ts";
-import { RustMissing, rustSysroot } from "../../src/substrate/toolchain-store/rust-locate.ts";
+import { rustSysroot } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -340,7 +340,11 @@ describe("the core's Rust locate: the store's toolchain, the payload's gate", { 
       assert.equal(found.toolchain.clippyConf, payload);
       assert.deepEqual(found.toolchain.reads, [store, payload]);
     }
-    assert.deepEqual(await locate(lock, BuildTarget.Ios), { ok: false, missing: [RustMissing.Base] });
+    // Flipped (phone rows pinned): an iPhone build names its standard libraries, which this lock lacks; it was the base before.
+    assert.deepEqual(await locate(lock, BuildTarget.Ios), {
+      ok: false,
+      missing: [ToolchainId.RustStdIos, ToolchainId.RustStdIosSim],
+    });
   });
 
   for (const [name, plant] of HOSTILE_PAYLOAD_FILES) {
@@ -391,7 +395,12 @@ describe("the core's Rust stage: the genex release the shipped lock line pins", 
       // Flipped (G6 MP-5b): the stage also hands the lane the game's [net], null for the template.
       net: null,
     });
-    assert.match(await readFile(path.join(into, "Cargo.toml"), "utf8"), /^genex = "=0\.1\.0"$/m);
+    // Flipped (release R-2): the template switches off nav, streaming and animation, so the facade
+    // is linked without default features. Flipped again (gate GR): audio is off too, keeping physics.
+    assert.match(
+      await readFile(path.join(into, "Cargo.toml"), "utf8"),
+      /^genex = \{ version = "=0\.1\.0", default-features = false, features = \["physics"\] \}$/m,
+    );
   });
 
   it("hands the lane the web budget a game names in [web]", async () => {
@@ -542,6 +551,49 @@ describe("the core's Rust lane: a web export (stub cargo)", { skip: SKIP_ON_WIND
   });
 });
 
+/** The `--config profile.…` settings of a shell-quoted cargo command, in order. */
+function profileSettings(command: string): string[] {
+  return [...command.matchAll(/'--config' '(profile\.[^']*)'/g)].map((match) => match[1] ?? "");
+}
+
+describe("the core's Rust lane: Live builds run optimized (stub cargo)", { skip: SKIP_UNLESS_MAC }, () => {
+  // OPT: the engine and every dependency at opt-level 3, the game crate at 1 (still incremental),
+  // line tables kept; MK: the dependencies without debug assertions or overflow checks; exactly the
+  // store prewarm's settings, so a first build clones every unit.
+  it("passes the prewarm's profile to every Live build and to clippy and the build of every judging build, Mac and web, and none to an export", async () => {
+    const { store, lock } = await fixtureStore();
+    const resources = await shippedResources();
+    const dir = await templateGame();
+    const liveProfile = [
+      "profile.dev.opt-level=1",
+      'profile.dev.package."*".opt-level=3',
+      'profile.dev.debug="line-tables-only"',
+      'profile.dev.package."*".debug-assertions=false',
+      'profile.dev.package."*".overflow-checks=false',
+    ];
+    const purposes = [CppBuildPurpose.Live, CppBuildPurpose.Judging, CppBuildPurpose.Export];
+    for (const target of [BuildTarget.Mac, BuildTarget.Web])
+      for (const purpose of purposes) {
+        const { sandbox, requests } = openSandbox();
+        const lane = await coreLane(store, resources, sandbox, rustTargetBuilders());
+        const outcome = await lane.ensure({ ...rustGame(dir), lock }, target, purpose);
+        assert.equal(outcome.ok, true, `${target} ${purpose}: ${JSON.stringify(outcome.problem)}`);
+        const cargo = requests.filter((request) =>
+          [RustBuildStep.Clippy, RustBuildStep.Build].some((step) => request.label?.endsWith(`:${step}`)),
+        );
+        // The person's Live build skips clippy (PW): the judges ran it on what they passed.
+        const steps = purpose === CppBuildPurpose.Live ? 1 : 2;
+        assert.equal(cargo.length, steps, `${target} ${purpose}: the build ran, clippy too unless Live`);
+        for (const request of cargo) {
+          const settings = profileSettings(request.command);
+          if (purpose === CppBuildPurpose.Export)
+            assert.ok(!settings.some((setting) => setting.startsWith("profile.dev.")), `${target}: ${settings}`);
+          else assert.deepEqual(settings, liveProfile, `${target} ${purpose} ${request.label}`);
+        }
+      }
+  });
+});
+
 describe("the core's Rust lane builds over the store and the payload (stub cargo)", { skip: SKIP_UNLESS_MAC }, () => {
   it("a forced error is the first problem; clippy read the payload's gate and every tool came from the store", async () => {
     const { store, lock } = await fixtureStore();
@@ -551,7 +603,7 @@ describe("the core's Rust lane builds over the store and the payload (stub cargo
     await writeFile(main, `${await readFile(main, "utf8")}\nconst _FORCED: i32 = ${FIXTURE_RUST_FORCE_ERROR};\n`);
     const { sandbox, requests } = openSandbox();
     const lane = await coreLane(store, resources, sandbox);
-    const outcome = await lane.ensure({ ...rustGame(dir), lock }, BuildTarget.Mac, CppBuildPurpose.Live);
+    const outcome = await lane.ensure({ ...rustGame(dir), lock }, BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(outcome.ok, false);
     assert.equal(outcome.problem?.reason, BuildProblemCode.CommandFailed);
     assert.equal(outcome.rust?.refusal, null, JSON.stringify(outcome.rust));

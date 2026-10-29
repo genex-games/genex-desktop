@@ -110,8 +110,8 @@ export async function codexAuthStatus(
 
 /**
  * The account's plan limits from `codex app-server`: initialize, one `account/rateLimits/read`,
- * then close. Nothing else is sent, so no thread starts and nothing is spent. Null when the
- * CLI cannot answer in time; the caller keeps whatever it read before.
+ * then close. Nothing else is sent, so no thread starts and nothing is spent. Throws when the
+ * CLI cannot answer in time, so a failed read is never taken for a plan without limits.
  */
 export async function readCodexRateLimits(
   binary: string,
@@ -123,11 +123,37 @@ export async function readCodexRateLimits(
   try {
     await control.initialize();
     return await control.request("account/rateLimits/read", { excludeResetCreditDetails: true });
+  } finally {
+    await control.close();
+  }
+}
+
+/**
+ * The signed-in account's email from `codex app-server` (`account/read`): initialize, one request,
+ * close. Null when the CLI cannot answer in time or names no email.
+ */
+export async function readCodexAccountEmail(
+  binary: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs = RATE_LIMITS_TIMEOUT_MS,
+): Promise<string | null> {
+  const control = codexControl(binary, args, env, timeoutMs);
+  try {
+    await control.initialize();
+    return accountEmailOf(await control.request("account/read", { refreshToken: false }));
   } catch {
     return null;
   } finally {
     await control.close();
   }
+}
+
+/** The email in an `account/read` answer (`{ account: { email } }`), if it names one. */
+export function accountEmailOf(answer: unknown): string | null {
+  const account = (answer as { account?: { email?: unknown } } | null)?.account;
+  const email = account?.email;
+  return typeof email === "string" && email.includes("@") ? email : null;
 }
 
 /** Ask the selected CLI/account to refresh its catalog without starting a model turn. */

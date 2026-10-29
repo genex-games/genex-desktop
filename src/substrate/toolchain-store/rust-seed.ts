@@ -9,7 +9,9 @@
  *   wgpu lock. Every component it names, except the vendored set, must be at the shipped recipe's
  *   pin (`rust-recipe.json`); the vendored set is held to the tree digest its install recorded.
  * - Each component is located in the source store by its receipt, refused when its folder or
- *   anything under it is a link or a special file, and digested (`treeDigest`) before any copy.
+ *   anything under it is a special file or a link other than its own relative ones (an archive's,
+ *   such as llvm-mingw's shared include folders: in the tree as written and followed), and
+ *   digested (`treeDigest`, those links by path and target) before any copy; links are copied as links.
  * - Copies are clones where the disk can (`COPYFILE_FICLONE`) into the target store's own
  *   `.staging`, held to the source's digest (and the vendored tree to its recorded one), then
  *   renamed into place. A component the target already holds at its pin is kept as it is.
@@ -19,7 +21,7 @@
  *   missing one, a link, or a digest that is not the recorded one.
  */
 import { constants as FS } from "node:fs";
-import { copyFile, lstat, mkdir, realpath, rename, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, realpath, rename, rm, symlink } from "node:fs/promises";
 import path from "node:path";
 import { GameStack } from "../../shared/game-project.ts";
 import {
@@ -31,12 +33,12 @@ import {
 } from "../../shared/toolchain.ts";
 import { readRegularFile } from "../fsx.ts";
 import { isInside } from "../paths.ts";
-import { type TreeDigest, treeDigest } from "./archive.ts";
+import { type TreeDigest, type TreeEntries, treeDigest, treeEntries } from "./archive.ts";
 import { removeEmptyStaging, STAGING_FOLDER } from "./install.ts";
 import { componentFolder, locateComponents } from "./locate.ts";
 import { isToolchainLock } from "./lock.ts";
 import { entrySha12, manifestEntry } from "./manifest.ts";
-import { ownSeedStore, SeedError, SeedRefusal, walk } from "./prewarm-seed.ts";
+import { ownSeedStore, SeedError, SeedRefusal } from "./prewarm-seed.ts";
 import { stackOfLock } from "./retention.ts";
 import { checkedVendorTree, verifyVendorTree } from "./rust-install.ts";
 
@@ -44,6 +46,8 @@ import { checkedVendorTree, verifyVendorTree } from "./rust-install.ts";
 const LOCK_FILE_MAX_BYTES = 64 * 1024;
 /** The staging folder one seed clones into, inside the target store's `.staging`. */
 const SEED_STAGING_PREFIX = "seed-rust-";
+/** A component keeps the relative links its archive made inside it; any other link is refused. */
+const OWN_LINKS = { links: true } as const;
 
 const MESSAGE = {
   NoLockFile: (file: string) => `${file} is not a plain lock file (absent, a link or not a regular file).`,
@@ -149,10 +153,13 @@ async function plainFolderUnder(root: string, folder: string): Promise<string> {
   return real;
 }
 
-/** A tree's digest, a link or special file in it refused `not-regular`. */
+/**
+ * A component's digest with its own relative links (an archive's, such as llvm-mingw's shared
+ * include folders); any other link or a special file is refused `not-regular`.
+ */
 async function digestOf(folder: string): Promise<TreeDigest> {
   try {
-    return await treeDigest(folder);
+    return await treeDigest(folder, OWN_LINKS);
   } catch (error) {
     if (error instanceof ToolchainError) throw new SeedError(SeedRefusal.NotRegular, MESSAGE.NotRegular(error.message));
     throw error;
@@ -214,13 +221,26 @@ async function holdsAlready(root: string, component: SourceComponent): Promise<b
   const folder = componentFolder(root, component.id, component.pin);
   const info = await lstat(folder).catch(() => null);
   if (!info?.isDirectory()) return false;
-  const tree = await treeDigest(folder).catch(() => null);
+  const tree = await treeDigest(folder, OWN_LINKS).catch(() => null);
   return tree !== null && tree.sha256 === component.tree.sha256 && tree.files === component.tree.files;
 }
 
-/** Clones `component` into `staging`, file by file (never a link), and holds the copy to its source's digest. */
+/** The component's entries, a link that is not its own or a special file refused `not-regular`. */
+async function entriesOf(folder: string): Promise<TreeEntries> {
+  try {
+    return await treeEntries(folder, OWN_LINKS);
+  } catch (error) {
+    if (error instanceof ToolchainError) throw new SeedError(SeedRefusal.NotRegular, MESSAGE.NotRegular(error.message));
+    throw error;
+  }
+}
+
+/**
+ * Clones `component` into `staging` file by file, makes its own relative links last (as the
+ * store's extractor does, so no write passes through one), and holds the copy to its source's digest.
+ */
 async function cloneVerified(component: SourceComponent, staging: string): Promise<void> {
-  const { folders, files } = await walk(component.folder);
+  const { folders, files, links } = await entriesOf(component.folder);
   await mkdir(staging, { recursive: true });
   for (const rel of folders) await mkdir(path.join(staging, ...rel.split("/")), { recursive: true });
   for (const rel of files)
@@ -229,6 +249,7 @@ async function cloneVerified(component: SourceComponent, staging: string): Promi
       path.join(staging, ...rel.split("/")),
       FS.COPYFILE_EXCL | FS.COPYFILE_FICLONE,
     );
+  for (const { rel, target } of links) await symlink(target, path.join(staging, ...rel.split("/")));
   const copied = await digestOf(staging);
   const same = copied.sha256 === component.tree.sha256 && copied.files === component.tree.files;
   if (!same) throw new SeedError(SeedRefusal.TreeDigest, MESSAGE.CopyDiffers(component.id));

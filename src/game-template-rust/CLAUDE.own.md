@@ -24,6 +24,14 @@ leave the rest standing.
    be compared. Whatever this game already loads keeps loading; new models come from the studio's
    own tools; `references/` is for you to LOOK at.
 
+Before writing a system of your own, use the facade's: input, UI and settings, saves, streaming,
+navigation, characters and animation, sound, terrain, multiplayer, profiling and crash records,
+each a page in `docs/api/` that `docs/GENEX_API.md` lists. Physics, sound, navigation, streaming
+and animation each have a `genex.toml` table with an `enabled` switch, and a switched-off system's
+calls are refused (`audio-disabled`, `nav-disabled`, `streaming-disabled`, `animation-disabled`;
+Rapier code does not compile). Read the game's `genex.toml` before calling one, and switch one on
+only when the brief needs it.
+
 Two lessons every contractor re-learned: before re-tuning lighting or a material, capture the game
 and look at what it already draws; and a check that cannot pass as written is not yours to force —
 write a `HARNESS:` line naming the check id and why in your notes

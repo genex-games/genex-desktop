@@ -15,6 +15,13 @@ licenses and terms of included third-party software.
   `@modelcontextprotocol/sdk`, `@xterm/*`, `zod` and their dependencies) keep their license
   files in the packaged `node_modules`.
 - Electron supplies its own license and Chromium notices.
+- On macOS and Windows, cua-driver (MIT) keeps its license and cua's notices under
+  `dist/resources/cua-driver` ([Vendored Cua Driver](#vendored-cua-driver-cua-driver)).
+- On Windows, Git for Windows (GPL-2.0 and its components' licenses) keeps its `LICENSE.txt` and
+  `usr/share/licenses` under `resources/git`
+  ([Bundled Git for Windows](#bundled-git-for-windows)).
+- On Windows, Microsoft's Visual C++ runtime DLL ships beside sandbox-runtime's `srt-win.exe`
+  ([Visual C++ runtime](#visual-c-runtime-windows)).
 - The TypeScript 7 compiler (Apache-2.0), `@types/node` and `undici-types` (MIT) that the
   self-edit type gate runs keep their license and notice files under `dist/resources/tsc`.
 - The Rust asset importer's tools under `dist/resources/importer-tools` (Basis Universal, Draco,
@@ -29,6 +36,24 @@ licenses and terms of included third-party software.
   trademark of the Blender Foundation; Local Blender uses it only to identify Blender, which it
   runs (https://www.blender.org/about/logo/). No endorsement is implied.
 - `src/plugins/genex/icon.png` is Genex's own icon from genex.games.
+- `src/plugins/godot/icon.svg` and the `godot` glyph in `src/renderer/ui/icons.tsx` redraw the
+  head of the Godot logo as simplified line art. The Godot logo is by Andrea Calabró, licensed
+  under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); these drawings change it.
+  Godot and the Godot logo are trademarks of the Godot Foundation, used only to identify Godot,
+  which the Godot plugin runs. Genex is not affiliated with or endorsed by the Godot Foundation.
+- `src/plugins/unreal/icon.svg` and the `unreal` glyph in `src/renderer/ui/icons.tsx` draw a U in
+  a ring to identify Unreal Engine, which the Unreal plugin runs. Unreal and Unreal Engine are
+  trademarks or registered trademarks of Epic Games, Inc. in the United States and elsewhere.
+  Genex is not affiliated with or endorsed by Epic Games.
+- `src/plugins/unity/icon.svg`, the `unity` glyph in `src/renderer/ui/icons.tsx` and the project
+  tile in `src/plugins/unity/panel.html` show the Unity logo, unaltered (its path from Simple Icons
+  13.21.0, CC0-1.0), only to identify Unity, which the Unity plugin runs. Unity and the Unity logo
+  are trademarks or registered trademarks of Unity Technologies or its affiliates in the U.S. and
+  elsewhere. Genex is not affiliated with or endorsed by Unity Technologies.
+- The `linux` glyph in `src/renderer/ui/icons.tsx` draws Tux, Linux's penguin (its path from
+  Simple Icons 16.35.0, CC0-1.0, without the feet lines), only to show that a game has a
+  Linux version. Tux was drawn by Larry Ewing with The GIMP. Linux is a registered trademark of
+  Linus Torvalds.
 
 ## Routed tool marks
 
@@ -46,11 +71,40 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.36.4 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  `@genex-ai/cli-demo` 1.36.13 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.4), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.13), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
+
+## Adapted Roblox skill
+
+`src/plugins/roblox/skills/get-started.md` (shipped as
+`dist/resources/plugins/roblox/skills/get-started.md`) adapts the `roblox-get-started` skill from
+Roblox's [roblox-studio-agent-plugin](https://github.com/Roblox/roblox-studio-agent-plugin)
+(plugin version 0.2.1, `skills/roblox-get-started`), MIT, Copyright (c) 2026 Roblox Corporation. It
+is rewritten for Genex's Roblox Studio button and keeps the original's license text at its end.
+The Roblox Studio plugin's other skills are Genex's own. Roblox and Roblox Studio are trademarks of
+Roblox Corporation; Genex is not affiliated with Roblox Corporation.
+
+## Luau checks downloaded on request
+
+The Roblox Studio plugin's **Add Luau checks** downloads these public releases from GitHub, each
+pinned by version, size and sha256 (`src/plugins/roblox/luau-tools.ts`), only when the person
+confirms it. None of them is in the app's build or this repository; they are kept in the plugin's
+own storage (`<plugin storage>/luau/<name>-<version>/`) and run on the person's computer to check a
+game's scripts.
+
+- [luau-lsp](https://github.com/JohnnyMorganz/luau-lsp) 1.70.1 (`luau-lsp-macos.zip`,
+  `luau-lsp-win64.zip`), MIT, Copyright (c) 2022 JohnnyMorganz; and its Roblox type definitions
+  `scripts/globalTypes.None.d.luau` at the same tag, from the same repository and license.
+- [selene](https://github.com/Kampfkarren/selene) 0.32.0 (`selene-0.32.0-macos.zip`,
+  `selene-0.32.0-windows.zip`), Mozilla Public License 2.0. selene fetches Roblox's API library
+  itself on its first run.
+- [StyLua](https://github.com/JohnnyMorganz/StyLua) 2.6.0 (`stylua-macos-aarch64.zip`,
+  `stylua-macos-x86_64.zip`, `stylua-windows-x86_64.zip`), Mozilla Public License 2.0.
+
+Each release ships its own license; Genex neither changes nor redistributes these programs.
 
 ## Vendored three.js
 
@@ -60,10 +114,43 @@ tree includes third-party libraries under their own terms, listed with their lic
 [three.js add-on libraries](#threejs-add-on-libraries); the Assets viewer also copies the Draco and
 Basis Universal decoders to `dist/renderer/decoders`.
 
+## Vendored Cua Driver (cua-driver)
+
+On macOS and Windows, computer control runs cua-driver 0.35.2 from
+[trycua/cua](https://github.com/trycua/cua) (MIT, Copyright (c) 2025 Cua AI, Inc.), bundled as
+`dist/resources/cua-driver/cua-driver` (`cua-driver.exe` on Windows): the executable from cua's
+release, on macOS thinned to the app's architecture and signed with the app's identity, on Windows
+as cua signed it (`scripts/vendor-cua-driver.ts`). Its license and cua's third-party notices for that release
+(code derived from trope-cua, Interface-Agent, yabai, QuickJS-ng, rquickjs and T3 Code, all MIT)
+ship beside it as `LICENSE.md` and `THIRD_PARTY_NOTICES.md`, copied from `build/cua-driver/`. The
+bundled copy runs with cua's telemetry and update check turned off.
+
+## Bundled Git for Windows
+
+The Windows app ships Git for Windows 2.56.0.windows.2, the portable edition from
+[git-for-windows/git](https://github.com/git-for-windows/git), as `resources/git` beside the app:
+Git (GPL-2.0) and the MSYS2 and MinGW-w64 programs and libraries it is built with, each under its
+own license. Its `LICENSE.txt` and the license files in `usr/share/licenses` ship unchanged with
+it. The copy is the release's own files with its documentation, graphical tools, Vim and Git
+Credential Manager left out (`scripts/vendor-git-for-windows.ts`); nothing in it is modified. The
+source of every part is published with that release on GitHub and in the MSYS2 and Git for Windows
+package repositories it names.
+
+## Visual C++ runtime (Windows)
+
+The Windows app ships Microsoft's Visual C++ 2015-2022 runtime library `vcruntime140.dll`
+(Copyright (c) Microsoft Corporation) beside sandbox-runtime's `srt-win.exe`, which imports it and
+would not start without it: Windows does not include it. Packaging copies it unchanged, for that
+executable's architecture, from the Visual C++ redistributable folder of the Visual Studio that
+builds the package (`VC\Redist\MSVC\<version>\<arch>\Microsoft.VC14x.CRT`,
+`scripts/package-vc-runtime.cjs`): app-local deployment, which the Distributable Code terms of the
+Visual Studio license allow. It remains under those terms. Any other Visual C++ runtime DLL a
+bundled program imports ships the same way, and the packaged smoke fails when one is missing.
+
 ## Vendored Genex embed SDK (@genex-ai/embed-sdk)
 
 Template games and published games that bring no SDK of their own use Genex's player-identity SDK,
-`@genex-ai/embed-sdk` 0.30.0 (MIT, as its package.json declares; the package ships no license
+`@genex-ai/embed-sdk` 0.33.0 (MIT, as its package.json declares; the package ships no license
 file). Its browser modules are copied unchanged to `dist/resources/vendor/genex/embed-sdk` and to
 `dist/resources/plugins/genex/embed-sdk`, and from there into a published game's
 `vendor/genex/embed-sdk`.
@@ -103,16 +190,34 @@ SOFTWARE.
 
 ## Fonts
 
-Zalando Sans SemiExpanded, Geist and Geist Mono are used as published under the SIL Open Font
-License 1.1 (Geist Mono as its Google Fonts Latin subset). Their OFL texts ship beside them in
-`dist/renderer/fonts`. Copies with their OFL texts in `design/genex-promo-video/public/fonts`
-render the Genex promo film.
+Zalando Sans SemiExpanded, Geist Mono, LINE Seed JP, TikTok Sans, Pretendard and Noto Sans SC
+are licensed under the SIL Open Font License 1.1; their OFL texts ship beside them in
+`dist/renderer/fonts`. Zalando Sans SemiExpanded, Geist Mono and LINE Seed JP are as published.
+TikTok Sans is cut to its Cyrillic and Greek at one width as "TikTok Sans Genex"; Pretendard
+(Reserved Font Name "Pretendard") is cut to its Hangul as "Genex Hangul"; Noto Sans SC is cut to
+the characters of GB 2312 ([sources](src/renderer/ui/GENEX-SOURCES.md#font-licenses)). Geist, as
+published, renders design studies in `design/`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
+`design/play-publish-video/public/fonts` render the promo films.
 
-## Promo film
+## Promo films
 
-The film in `src/renderer/media` is made by Genex with Remotion, which is not bundled, from
-recordings of genex.games. One clip, `village-game.mp4`, was generated through fal.ai with Nano
-Banana Pro and Seedance 2.5 (`design/genex-promo-video/README.md`).
+The films in `src/renderer/media` are made by Genex with Remotion, which is not bundled. The
+Genex promo film is made from recordings of genex.games; one clip, `village-game.mp4`, was
+generated through fal.ai with Nano Banana Pro and Seedance 2.5 (`design/genex-promo-video/README.md`).
+The Play film, `play-publish.mp4`, shows game covers from the public genex.games gallery
+(`design/play-publish-video/README.md`); its players and its desk were made with Genex image
+generation for the film.
+
+## Rust template's interior kit
+
+The trim sheet, props atlas and crack decal in `src/game-template-rust/docs/examples/interior-kit/assets/kit/`
+are cut and repainted from Poly Haven scans published under CC0-1.0 (`wood_table_worn`,
+`green_metal_rust`, `rusty_metal_02`, `concrete_wall_003`, `painted_plaster_wall`,
+`peeling_painted_wall`) by `native/genex-rust/examples/template-examples/kit/kit_sheets.py`; no
+credit is required. Its GLBs are made by Genex's own `interior_kit.py`. Its other decals (posters,
+chalk, peeling paint, water and grime) are keyed from images, and its `hero/` models fitted from
+models, that Genex generated for it (image generation through fal.ai, models through Tripo), listed
+in `kit/generated.json`.
 
 ## Downloaded components
 
@@ -1098,6 +1203,48 @@ stand-ins without them.
 | `metal_grate_rusty` | the drains along the kerbs, the manhole covers, the alley's gutter and the air conditioners' grilles | https://polyhaven.com/a/metal_grate_rusty (`metal_grate_rusty_diff_1k.jpg`, `metal_grate_rusty_nor_gl_1k.jpg`, `metal_grate_rusty_arm_1k.jpg`, from `https://dl.polyhaven.org/file/ph-assets/`) | Rob Tuytel, Dimitrios Savva, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 2,774,295 bytes |
 | `kloppenheim_01_puresky` | the overcast dusk sky map (B switches to it): image-based light and the backdrop | https://polyhaven.com/a/kloppenheim_01_puresky (`kloppenheim_01_puresky_2k.hdr`, from `https://dl.polyhaven.org/file/ph-assets/`) | Greg Zaal, Jarod Guest, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway | 3,187,954 bytes |
 
+## Genex Library pack
+
+The Genex Library (`src/plugins/library/`, `docs/api/library.md`) is not in this repository and
+does not ship inside Genex.app. Its catalog, `src/plugins/library/catalog.json`, names every entry
+with its source page, its authors and each upstream file's URL, size and md5. The entries are
+Poly Haven materials, HDRI skies and models published under CC0 1.0 (Poly Haven's licence,
+https://polyhaven.com/license), plus vegetation made by Genex's own generator. No attribution is
+required; the catalog gives it anyway.
+
+`scripts/library/build-library.ts` builds the pack from those pinned sources: it re-encodes maps as
+Basis KTX2, decimates models and bakes their levels, and records each output file's sha256 in the
+catalog. The `library` plugin downloads an entry's files only when a game adds it, and checks each
+file against that digest. Each delivery records the entry's source and authors. The pack adds no
+code: the encoder, simplifier and decoders it runs are the asset importer's, listed under "Asset
+importer decoders" and "Asset importer packages".
+
+## Soldier kit
+
+`src/game-template-rust/docs/examples/soldier/soldier.glb` is built by `soldier.py` from Quaternius'
+Universal Animation Library (Standard), CC0 1.0: its mannequin, skeleton and clips (Idle, Walk,
+Run, Sprint, CrouchIdle, CrouchWalk and Death, some turned, the strafes made from its walk). The
+library is `universal_animation_librarystandard.zip` (14,541,205 bytes, sha256
+`18ff1a7215f4852b320203e8aaf02a1578b5c8eef9027fbaedfcedc7b85a3ac2`) from
+https://opengameart.org/sites/default/files/universal_animation_librarystandard.zip (page
+https://quaternius.com), its `Godot/AnimationLibrary_Godot_Standard.glb`. The outfit and rifle carry
+the arms kit's scans below (Poly Haven's `book_pattern`, `leather_white` and `dark_wood`; ambientCG's
+`Metal029` and `Plastic014A`), tinted. CC0; the credit is given anyway.
+
+## First-person arms kit scans
+
+`src/game-template-rust/docs/examples/fps-arms/fps-arms.glb` carries five CC0 scans, resized
+(2k colour, 1k normal, 512 roughness/metal), some tinted, and packed into the GLB by
+`fps_arms.py`. Every one is CC0; the credits are given anyway.
+
+| Scan | Used for | Source | Authors | Licence |
+| --- | --- | --- | --- | --- |
+| `Metal029` | the rifle's black painted steel | https://ambientcg.com/view?id=Metal029 (`Metal029_2K-JPG.zip`: Color, NormalGL, Roughness, Metalness) | Lennart Demes, via ambientCG | CC0 1.0 (ambientCG's licence, https://docs.ambientcg.com/license/); no attribution is required and it is given anyway |
+| `Plastic014A` | the magazine's bakelite, tinted plum | https://ambientcg.com/view?id=Plastic014A (`Plastic014A_2K-JPG.zip`: Color, NormalGL, Roughness) | Lennart Demes, via ambientCG | CC0 1.0 (ambientCG's licence, https://docs.ambientcg.com/license/); no attribution is required and it is given anyway |
+| `dark_wood` | the handguards, grip and stock | https://polyhaven.com/a/dark_wood (`dark_wood_diff_2k.jpg`, `dark_wood_nor_gl_2k.jpg`, `dark_wood_arm_2k.jpg`) | Dario Barresi, Dimitrios Savva and Rico Cilliers, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+| `leather_white` | the gloves, tinted coyote | https://polyhaven.com/a/leather_white (`leather_white_diff_2k.jpg`, `leather_white_nor_gl_2k.jpg`, `leather_white_arm_2k.jpg`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+| `book_pattern` | the sleeves' olive cotton | https://polyhaven.com/a/book_pattern (`book_pattern_col1_2k.jpg`, `book_pattern_nor_gl_2k.jpg`, `book_pattern_arm_2k.jpg`) | Rob Tuytel, via Poly Haven | CC0 1.0 (Poly Haven's licence, https://polyhaven.com/license); no attribution is required and it is given anyway |
+
 ## Rust toolchain runtime
 
 Besides its crates (above), a Rust game links what the pinned toolchains compile into every
@@ -1208,14 +1355,19 @@ SOFTWARE.
   (https://code.claude.com/docs/en/legal-and-compliance). Its native CLI packages are excluded.
 - The Blender logo in `src/renderer/ui/brand.tsx` is a trademark of the Blender Foundation, used
   unaltered to refer to Blender under its logo guidelines (https://www.blender.org/about/logo/).
+- The X logo in `src/renderer/ui/brand.tsx` is a trademark of X Corp., used unaltered only to name
+  X on Post on X, under its brand toolkit (https://about.x.com/en/who-we-are/brand-toolkit).
+- The GitHub mark in `src/renderer/ui/brand.tsx` is Primer Octicons' `mark-github` (MIT,
+  © GitHub, Inc.) and a trademark of GitHub, Inc., used unaltered only to mark a link to a
+  community plugin publisher's GitHub profile (https://github.com/logos).
 
 ## Status not yet recorded
 
 These need an owner decision before public distribution; see
 [release readiness](docs/release-readiness.md#distribution-and-open-source).
 
-- Genex UI sources: components, theme tokens, the wordmark and the catalog-search engine were
-  adapted from the owner's `genex-cli-threejs` web app (`src/renderer/ui/GENEX-SOURCES.md`).
+- Genex UI sources: components, theme tokens, the wordmark, the coin mark and the catalog-search
+  engine were adapted from the owner's `genex-cli-threejs` web app (`src/renderer/ui/GENEX-SOURCES.md`).
   The owner's contributed adaptations are covered by the root MIT license. Genex's name and
   logo identify the product; the code license does not grant trademark rights.
 - The Genex guide https://genex.games/SKILL.md, vendored as `src/plugins/genex/skills/genex`:
@@ -1313,6 +1465,59 @@ SOFTWARE.
 ## Packages without a license file
 
 These npm packages ship in the app without a license file of their own; their notices follow.
+
+### @genex-ai/embed-sdk 0.33.0
+
+Bundled into `vendor/genex/`, the player-identity SDK a game made from Studio's template maps in its import
+map. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
+without a license file. The MIT terms:
+
+Copyright (c) 2026 Genex
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### @genex-ai/multiplayer 0.17.1
+
+Bundled into `vendor/genex/`, the multiplayer SDK a game made from Studio's template maps in its import
+map, and shipped as `genex-multiplayer-bridge.js` (its `dist/bridge.global.js`) beside a multiplayer
+Godot game's web export. Its package and repository (https://github.com/genex-games/genex) declare the MIT license
+without a license file. The MIT terms:
+
+Copyright (c) 2026 Genex
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ### github-url-to-object 4.0.6
 

@@ -5,6 +5,7 @@
  */
 
 import { SECOND_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 
 export const OLLAMA_REGISTRY = "https://registry.ollama.ai";
 
@@ -28,11 +29,12 @@ const DEFAULT_TAG = "latest";
 const HTTP_NOT_FOUND = 404;
 const MANIFEST_ACCEPT = "application/vnd.docker.distribution.manifest.v2+json";
 
+/** Why a lookup failed, as the Local models page shows it; functions, as main sets its language after this loads. */
 const MESSAGE = {
-  Answered: (status: number) => `The Ollama library answered ${status}.`,
-  UnreadableManifest: "The Ollama library returned an unreadable manifest.",
-  TimedOut: "The Ollama library did not answer in time.",
-  Unreachable: "Could not reach the Ollama library.",
+  Answered: (status: number) => t("The Ollama library answered {status}.", { status }),
+  UnreadableManifest: () => t("The Ollama library returned an unreadable manifest."),
+  TimedOut: () => t("The Ollama library did not answer in time."),
+  Unreachable: () => t("Could not reach the Ollama library."),
 } as const;
 
 export interface OllamaReference {
@@ -109,10 +111,10 @@ export async function lookupOllamaModel(
     if (response.status === HTTP_NOT_FOUND) return { ok: false, reason: OllamaLookupFailure.NotFound, id };
     if (!response.ok) return unavailable(MESSAGE.Answered(response.status));
     const sizeGb = manifestSizeGb(await response.json());
-    if (sizeGb === null) return unavailable(MESSAGE.UnreadableManifest);
+    if (sizeGb === null) return unavailable(MESSAGE.UnreadableManifest());
     return { ok: true, id, sizeGb };
   } catch (error) {
     const timedOut = (error as Error).name === "TimeoutError";
-    return unavailable(timedOut ? MESSAGE.TimedOut : MESSAGE.Unreachable);
+    return unavailable(timedOut ? MESSAGE.TimedOut() : MESSAGE.Unreachable());
   }
 }

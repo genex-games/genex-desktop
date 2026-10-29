@@ -37,7 +37,8 @@ connect module's `<script>` that `genex__package` added.
 
 In a game with its own `package.json`, Studio never runs `genex init`, so the game starts without `src/genex.config.ts` or `.env`, and
 "re-run `genex init`" is not available. After the first draft, `genex__publish-status` reports the
-game's `slug`. Write the config yourself, then publish a new draft:
+game's `slug`. Write the config yourself, then publish a new draft (a template game:
+`src/genex.config.js`, the same object without `as const`, imported as `./genex.config.js`):
 
 ```ts
 // src/genex.config.ts
@@ -54,10 +55,10 @@ export const GENEX = {
 does not apply: Studio pins its Genex packages. Other commands map onto Studio tools as the
 `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.4 sha256 14abda1a29978b7e0505d67a5f35cfe57cf4e6a8698ffa37ca0ce4e3f7bc9dbb -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md v1.36.13 sha256 fecb950fd6dfcb576ea6e80410d644d189fb965701a4091b28c825ad0e27f810 -->
 ---
 name: genex-threejs-embed-auth
-description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Load this UNCONDITIONALLY for every game, multiplayer or not, BEFORE writing any boot code — every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way.
+description: Wire up player identity AND durable game state for a Genex game via @genex-ai/embed-sdk. Load this UNCONDITIONALLY for every game, multiplayer or not, BEFORE writing any boot code — every player gets an identity (signed-in account or guest); per-player saves, shared world state, and leaderboards are one-line SDK calls; multiplayer requires the SDK's token either way. Also holds the shells table: what a game may do on its Genex page, in the app and on its own link.
 ---
 
 # Genex Three.js Embed Auth
@@ -75,11 +76,13 @@ for both, using the SDK's token. The SDK handles every context with one
   straight into guest play. No login screen either way.
 - **Standalone (someone opens the game's link directly):** the visit bounces
   once through Genex (at the CDN edge in production, so the game only loads
-  AFTER identity is resolved; the SDK does the same bounce itself in local
-  dev) — signed-in visitors arrive already authenticated on ANY game with
-  zero clicks; everyone else arrives as a guest with a small dismissible
-  "sign in to save progress" popover (rendered by the SDK — don't build your
-  own). Nobody ever hits a login wall on a published game.
+  AFTER identity is resolved; where the edge did not, the SDK makes the same
+  bounce itself) — signed-in visitors arrive already authenticated on ANY
+  game with zero clicks; everyone else arrives as a guest with a small
+  dismissible "sign in to save progress" popover (rendered by the SDK — don't
+  build your own). Nobody ever hits a login wall on a published game.
+- **Inside the Genex mobile app:** the app hands the game its player — the
+  signed-in account or a guest — with no bounce and no login screen.
 - **Local test mode (your own self-testing):** `?genex_local_test=1` on the
   local dev server boots a credential-less local session — see "Self-testing
   a draft" below.
@@ -87,6 +90,32 @@ for both, using the SDK's token. The SDK handles every context with one
 While identity is resolving (or blocked) the SDK shows its own full-screen
 overlay over the game, so never build a separate "connecting" screen for auth.
 Guest sessions have **no** overlay — the game just plays.
+
+## The four shells — read before you call a browser or device API
+
+Those four contexts are the **shells** a game runs in, and they differ in far
+more than identity. What a game may open, save, share, read from its URL or
+ask of the player's device is different in each one, and a call the shell
+refuses usually fails with no error at all.
+**Find the row in [references/shells.md](references/shells.md) before you
+write `navigator.*`, `window.open`, a download link, a dialog, or anything
+that reads the URL.** The digest:
+
+- **Which shell:** `getShell()` → `"page"` (the frame on the game's Genex
+  page, where most players are, and any other frame), `"app"`,
+  `"standalone"` or `"local"`.
+- **Share, copy, open a link, save a file, fullscreen, keep the screen on,
+  vibrate:** `share()`, `copyText()`, `openExternal()`, `saveFile()`,
+  `setFullscreen()`, `keepAwake()`, `haptic()`, from a click or tap handler,
+  before any `await`. They resolve with a reason and never throw.
+- **Your own URL parameters, and where the visitor came from:** `getEntry()`,
+  never `location` or `document.referrer`.
+- **Microphone, camera, location:** the build declares them at
+  `npx genex preview` / `npx genex publish`; the app refuses all three.
+- **Never:** `alert` / `confirm` / `prompt`, `window.open`, a link or form
+  that leaves the game, a service worker, reading the clipboard.
+- **Local test mode is a plain browser tab, not the frame.** A call that works
+  there can still be dead on the game's Genex page.
 
 ## Install
 
@@ -143,8 +172,9 @@ const { user, guest } = await waitForPlayer();
 // ./assets/avatar.vrm behind it (absent on old APIs / local test mode).
 // Peers resolve the same way via the multiplayer SDK's player.avatarUrl.
 
-// ACCOUNT gate — resolves ONLY for signed-in players (stays pending for
-// guests; resolves later if they sign in mid-game). Use ONLY for /state
+// ACCOUNT gate — resolves ONLY for signed-in players. For a guest it stays
+// pending for as long as this page is loaded: signing in loads the game
+// again, and the gate resolves on that load. Use ONLY for /state
 // saving/loading and other account-bound features.
 const { user: account } = await waitForAuth();
 ```
@@ -161,9 +191,10 @@ boot-path gate; `waitForAuth()` guards saves only.
   and player-name UI; resolves for guests and accounts alike, rejects only if
   the session ends up blocked.
 - `waitForAuth()` → `Promise<{ user }>` — the gate for `/state` calls and
-  account-bound features. Stays PENDING for guests (resolves live if they
-  sign in); rejects if blocked. Catch rejections and let the SDK's overlay
-  handle the UX (don't build your own sign-in UI).
+  account-bound features. Stays PENDING for a guest for the whole page load
+  (signing in loads the game again, and it resolves on that next load);
+  rejects if blocked. Catch rejections and let the SDK's overlay handle the
+  UX (don't build your own sign-in UI).
 - `isEmbedded()` → `boolean` — structural "is in an iframe" check; NOT the same
   question as "is signed in".
 - `getAuthState()` → `"pending" | "authenticated" | "guest" | "blocked"` —
@@ -180,8 +211,44 @@ boot-path gate; `waitForAuth()` guards saves only.
   automatic re-seat reads a fresh token. Tokens rotate automatically (~every
   10 minutes). Never cache the value across joins and never log it.
 - `on(event, cb)` → unsubscribe fn. Events: `"authenticated"`, `"guest"`,
-  `"blocked"`, `"error"`. A mid-game sign-in fires `"authenticated"` after
-  `"guest"` — progress saving can start right then, no reload.
+  `"blocked"`, `"error"`. A page load ends in one of the first three. Signing
+  in loads the game again, so the account arrives as `"authenticated"` on
+  the next load, not as a second event on this one.
+
+Where the game is running and what it was opened with (`@genex-ai/embed-sdk`
+0.32.0+; all three are safe to call before `initEmbed()`):
+
+- `getShell()` → `"page" | "app" | "standalone" | "local"` — which shell this
+  is. A fact about the page: not who is signed in, and not a permission. Any
+  frame is `"page"`, whoever frames it, and the whole page of any React
+  Native web view is `"app"`.
+- `getEntry()` → `{ search, params, hash, referrer }` — the link the game was
+  opened with: its own query (`search` as text, `params` as
+  `URLSearchParams`), its own fragment, and the origin of the site the visitor
+  came from, or `null`.
+- `onShellClosing(cb)` → unsubscribe fn — `cb` runs when the page is being
+  taken away: the tab closed or reloaded, the app closing the game. The last
+  chance for a small `savePlayerState()`, never the only one.
+
+Platform calls (0.32.0+): one call each that does the right thing in
+whichever shell the game is in. **Call them from a click or tap handler,
+before any `await`.** They resolve and never throw. What each one does in
+each shell is in [references/shells.md](references/shells.md).
+
+- `share({ text?, params? })` → `Promise<{ status, url }>`; `status` is
+  `"shared" | "copied" | "dismissed" | "unavailable"`. The SDK builds the
+  link; the game supplies only its own `params`.
+- `copyText(text)`, `keepAwake(on)`, `openExternal(url)`,
+  `saveFile(blob, name)`, `setFullscreen(on)` →
+  `Promise<{ ok: true } | { ok: false, error }>`; `error` is `unsupported` |
+  `needs_gesture` | `dismissed` | `busy` | `rate_limited` | `invalid_request`
+  | `too_large` | `timeout`. `unsupported` and `timeout` are ordinary answers,
+  not bugs.
+- `haptic(kind)` → nothing; `kind` is `"selection" | "light" | "medium" |
+  "heavy" | "success" | "warning" | "error"`.
+- `supports(name)` → `boolean`, synchronous: whether to draw the button at
+  all. `name` is `"share" | "copy" | "awake" | "haptic" | "open" | "save" |
+  "fullscreen"`.
 
 Durable state + leaderboards (all six are safe to call from boot — they wait
 for identity internally, never throw for guests, and reject only when the
@@ -192,8 +259,9 @@ session is blocked):
   overwrite it). `{ data: null, version: 0 }` when they never saved.
 - `savePlayerState(data, { ifVersion? }?)` → `Promise<{ saved, version?,
   conflict?, guest?, queued?, staging? }>` — save any JSON ≤ 256KB to their
-  slot. For guests the value is QUEUED in memory and auto-flushed if they sign
-  in mid-game — no extra code. Small saves survive tab close automatically.
+  slot. For a guest nothing is saved: the value is held in memory for this
+  page load only (`{ saved: false, guest: true, queued: true }`), and signing
+  in loads the game again. Small saves survive tab close automatically.
 - `loadWorldState()` / `saveWorldState(data, { ifVersion? }?)` — the game's
   ONE shared world slot (≤ 1MB, every player reads/writes the same blob) —
   level layouts, persistent-world object positions. Multiplayer games: only
@@ -202,7 +270,8 @@ session is blocked):
   `{ conflict: true, version }` — reload, merge, retry.
 - `submitScore(score, { board?, mode? }?)` → `Promise<{ submitted, best?,
   improved?, guest?, queued? }>` — keep-best leaderboard submit (`mode:
-  "min"` for lap-time boards). Guests: best value queues, flushes on sign-in.
+  "min"` for lap-time boards). A guest's score is not posted: the best value
+  is held in memory for this page load only.
 - `getLeaderboard({ board?, limit?, order? }?)` → `Promise<{ items, me }>` —
   top entries (verified display names — never trust client-side name input
   for this) + the signed-in player's own `{ rank, score }`. Works for guests
@@ -219,10 +288,11 @@ and saves there by design (a staging build with a changed save schema must
 never overwrite the save of the game people are playing). The helpers resolve
 `{ staging: true }` — `loadPlayerState()` → `{ data: null, version: 0,
 staging: true }`, `savePlayerState()` → `{ saved: false, staging: true }` —
-and never throw or fire `"error"` for it. Keep a localStorage fallback for
-progress, and if the game says anything about it, say "Preview build —
-progress isn't saved to your account". Never "offline" or "unavailable": the
-owner is testing their own game, and Genex is up.
+and never throw or fire `"error"` for it. Keep a local copy of progress
+(`localStorage`) so a preview stays playable — a cache for this device and
+this shell, never the save — and if the game says anything about it, say
+"Preview build — progress isn't saved to your account". Never "offline" or
+"unavailable": the owner is testing their own game, and Genex is up.
 
 
 ## Saving progress (per-player — every player has their own slot)
@@ -243,11 +313,35 @@ applyProgress(data ?? defaultProgress());
 void savePlayerState(progress);
 ```
 
-Guests need zero special handling: their saves queue in memory and auto-flush
-the moment they sign in mid-game (so a guest's progress follows them into
-their new account), and `waitForAuth()` resolving is the signal that a real
-account now exists. The SDK already tells guests to sign in (its popover / the
-dashboard's card) — don't add another prompt.
+Guests need no gating: the helpers resolve for them instead of failing. But
+**a guest's progress is not saved, and it does not follow them into an
+account.** The SDK holds a guest's latest save in memory for this page load
+only, and signing in on the game's page or its own address loads the game
+again (the SDK's popover and the Genex page both leave for the sign-in and
+come back to a fresh load), so that value is gone when the account arrives.
+Signing in from another tab changes nothing until the game is reloaded. If a
+guest's run should survive signing in, keep your own copy on the device and
+start from it when the account has no save of its own:
+
+```ts
+// at every checkpoint: the device's copy, then the save
+try { localStorage.setItem("progress", JSON.stringify(progress)); } catch {}
+void savePlayerState(progress);
+
+// at boot, in place of the plain load above. loadPlayerState() waits for the
+// player, so on the load after a sign-in this is already the account.
+const { data, guest, staging } = await loadPlayerState();
+let kept: unknown = null;
+try { kept = JSON.parse(localStorage.getItem("progress") ?? "null"); } catch {}
+applyProgress(data ?? kept ?? defaultProgress());
+// An account with no save of its own yet keeps what this device had.
+if (data === null && kept !== null && !guest && !staging) void savePlayerState(kept);
+```
+
+That copy is a cache for this device and this shell, never the save: an
+account that already has a save keeps it, and the copy does not exist on
+another device or on the game's other address. The SDK already tells guests
+to sign in (its popover / the dashboard's card) — don't add another prompt.
 
 **Per-player vs world:** `savePlayerState` is each player's own progress;
 `saveWorldState` is the game's ONE shared world (persistent-world layouts —
@@ -270,8 +364,9 @@ const { items, me } = await getLeaderboard({ limit: 10 });
 
 Scores are per-account (one row per player per board, real display names from
 their Genex account) and keep-best — submitting a worse score changes nothing
-(`improved: false`). Guests can READ leaderboards; their submits queue and
-post when they sign in. Send a consistent `mode` per board. Scores are
+(`improved: false`). Guests can READ leaderboards; a guest's submit is not
+posted, and signing in loads the game again, so submit when a signed-in
+player finishes a run. Send a consistent `mode` per board. Scores are
 client-reported (arcade-style trust) — don't present them as anti-cheat.
 
 ## NEVER log the tokens
@@ -309,8 +404,19 @@ carries a one-time pass (or an inert guest marker) in the URL that the SDK
 consumes and removes immediately. Unpublished drafts are the exception:
 strangers can't play them, so a draft link shows the SDK's sign-in gate
 instead (for self-testing, see local test mode below). Don't code around any
-of this: no `?`/`#` URL params of yours will be affected, and `isEmbedded()`
-/ the return-trip handling are internal SDK concerns.
+of this: `isEmbedded()` and the return-trip handling are internal SDK
+concerns.
+
+Your own `?query` comes through that round trip on every published game. Your
+`#fragment` and the site the visitor came from need `@genex-ai/embed-sdk`
+0.32.0+, written in `package.json` as a range that starts there (`^0.32.0`)
+when the build was shipped.
+Read all three with `getEntry()`, never from `location` or
+`document.referrer`: until `initEmbed()` has run the address bar still holds
+Genex's own fragment, and `document.referrer` is Genex's address or empty.
+`embed` and every key starting `genex_` are reserved. Sizes, the other
+reserved names and what each shell passes on are in
+[references/shells.md](references/shells.md).
 
 ### Self-testing a draft: local test mode
 
@@ -341,7 +447,10 @@ is ever minted): real sign-in (`waitForAuth()` stays pending, exactly like a
 guest), saves (they queue in memory), leaderboards (`getLeaderboard()`
 resolves `{ items: [], me: null }` locally), score submits, and multiplayer
 (`getColyseusAuth()` is `undefined`, so `connect()` fails at the relay —
-expected in this mode, not a bug to chase).
+expected in this mode, not a bug to chase). Nor anything the game's Genex
+page or the app refuses: this is a plain browser tab, so `window.open`, a
+download link and a browser dialog all work here and are dead there
+([references/shells.md](references/shells.md)).
 
 Rules:
 
@@ -356,8 +465,12 @@ Rules:
   local test mode cannot open the hosted draft; hosted draft access stays
   owner-only. Do NOT work around that gate: no undocumented URL fragments,
   no auth mocks, and never drive the user's own signed-in browser.
-- Opening localhost WITHOUT the marker keeps the normal real-auth flow (the
-  identity bounce) — that's for testing real sign-in, not for self-testing.
+- Opening localhost WITHOUT the marker boots local test mode too on
+  `@genex-ai/embed-sdk` 0.14.0+ (an older SDK runs the identity bounce
+  there). Keep the marker in every URL you open: it says what you meant and
+  works on every SDK since 0.5.0. `?genex_auth=1` opts that dev-server tab
+  back into the real identity flow — that's for debugging real sign-in, not
+  for self-testing.
 - The owner's draft run-through stays a required beat, not a fallback: push
   `genex preview` at each playable milestone and hand it off plainly ("check
   the draft — you can now X; ping me if something feels off"), then keep
@@ -386,12 +499,21 @@ Rules:
       overlay and the dashboard own all of that UX.
 - [ ] Self-test evidence captured in local test mode is labeled as such in the
       handoff ("local test mode — auth, saves, and multiplayer not exercised").
+- [ ] Every browser or device API the game calls has its row in
+      [references/shells.md](references/shells.md): sharing, copying, links
+      out, file saves and fullscreen go through the SDK calls, from a click
+      or tap handler; the game's own URL parameters come from `getEntry()`.
 
 ## Troubleshooting
 
-- **Game loads then immediately navigates away (standalone/local dev)** — the
+- **Game loads then immediately navigates away (the game's own link)** — the
   identity bounce, working as designed for EVERY standalone visit. It returns
-  to the game automatically (signed-in or as a guest) within a second.
+  to the game automatically (signed-in or as a guest) within a second. On a
+  dev server it only happens with `?genex_auth=1` or an SDK older than
+  0.14.0: open with `?genex_local_test=1`.
+- **Works locally or on the game's own link, does nothing on its Genex page
+  or in the app** — that shell refuses the call, with no error. Find the row
+  in [references/shells.md](references/shells.md) and make the call it names.
 - **`waitForAuth()` never resolves** — the player is a GUEST; that's the
   designed behavior. Anything that must run for guests belongs behind
   `waitForPlayer()` instead.
@@ -405,8 +527,9 @@ Rules:
   `[::1]` — not https, not a LAN IP), the page is not inside an iframe, and
   `@genex-ai/embed-sdk` is 0.5.0+ (older: apply the pending platform update).
 - **Multiplayer `connect()` fails in local test mode** — by design: no relay
-  credential exists there. Validate multiplayer on the hosted draft (the
-  owner's session) or the published game, and say plainly when it wasn't.
+  credential exists there. Validate multiplayer on the preview link (it plays in
+  rooms of its own; a normal and a private window are two players), and say
+  plainly when it wasn't.
 - **Multiplayer join rejected with 401** — the join ran before
   `waitForPlayer()` resolved, without `auth: () => getColyseusAuth()`, or with a
   stale cached token on reconnect (read it fresh each call).
@@ -419,8 +542,9 @@ Rules:
   switch to `savePlayerState`/`saveWorldState`, which handle every case.
 - **Saves/loads resolve `{ staging: true }`** — the build is on the preview
   channel (the draft workspace, `preview--<slug>`), where server saves are off
-  by design. Not an outage: keep the localStorage fallback and tell the player
-  "Preview build — progress isn't saved to your account", never "offline".
+  by design. Not an outage: keep the local copy (a cache for this device and
+  this shell, never the save) and tell the player "Preview build — progress
+  isn't saved to your account", never "offline".
 - **Saves or score submits return 429** — writing too often (per-player limits:
   60 player-saves/min, 120 world-saves/min, 30 score submits/min). Debounce to
   ~1 write/sec at checkpoints and never save in the render loop; back off a

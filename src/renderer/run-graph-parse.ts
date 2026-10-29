@@ -249,6 +249,12 @@ export function parseShots(value: unknown): Shot[] {
     .map((row) => ({ camera: str(row.camera, "shot"), path: String(row.path) }));
 }
 
+/** One picture a round names on its own (`shown`): null when it names none. */
+export function parseShot(value: unknown): Shot | null {
+  const [shot] = parseShots([value]);
+  return shot ?? null;
+}
+
 /** A critic's advice as the round shows it; null without one defect, a bold move or a gate answer. */
 export function parseAdvice(payload: Payload, at: string): AdviceInfo | null {
   const defects = records(payload.defects)

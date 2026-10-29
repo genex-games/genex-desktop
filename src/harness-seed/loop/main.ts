@@ -19,6 +19,7 @@ import { compactThread } from "./compact.ts";
 import { compactSession } from "./session-compact.ts";
 import { directorTool } from "./director.ts";
 import { chatWorkerTool } from "./workers/chat-workers.ts";
+import { CHAT_JUDGE_CAPABILITY, judgeFromChat, servesChatJudge } from "./chat-judge.ts";
 import { runSkillOpt } from "./skillopt.ts";
 import { learningOn } from "./learning.ts";
 import { loadSkills } from "./skills.ts";
@@ -132,7 +133,11 @@ export async function createStudio(host: Host) {
   return {
     status: () => status.summarize(),
     // A build whose jobs cross to or from a local engine only when every part it needs serves it.
-    capabilities: [...CAPABILITIES, ...(servesLocalRoles() ? [LOCAL_ROLES_CAPABILITY] : [])],
+    capabilities: [
+      ...CAPABILITIES,
+      ...(servesLocalRoles() ? [LOCAL_ROLES_CAPABILITY] : []),
+      ...(servesChatJudge() ? [CHAT_JUDGE_CAPABILITY] : []),
+    ],
 
     async healthcheck() {
       // Prove the loaded self can talk to the substrate and read its own state.
@@ -186,6 +191,10 @@ async function dispatch({ studio, messages, compactions, busyThreads }: Loop, ac
       // The chat's own session called a worker tool; the pool of its turn answers on the dispatch
       // result. Never throws: a refusal is a sentence to the lead.
       return chatWorkerTool(action);
+    case "chat_judge":
+      // The chat's own session asked a blind judge to play its game; the outcome travels back on
+      // the dispatch result for the host to record. Never throws: a refusal is an answer.
+      return judgeFromChat(studio.scoped(action.threadId, StatusLane.Chat), action);
     case "run_stop": {
       const active = studio.activeRuns.get(action.runId);
       if (active) {

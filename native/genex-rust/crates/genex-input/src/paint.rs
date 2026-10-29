@@ -87,7 +87,7 @@ pub fn paint_touch_controls(
             response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &control.label));
             let value = frame.value(control.id);
             match control.kind {
-                ControlKind::Stick(mode) => paint_stick(ui, control, mode, area, state, value),
+                ControlKind::Stick(mode) => paint_stick(ui, control, mode, area, state, frame),
                 ControlKind::Button => paint_button(ui, control, area, value),
                 ControlKind::Dpad => paint_dpad(ui, control, area, value),
             }
@@ -111,17 +111,23 @@ fn outline(ui: &Ui) -> Stroke {
     Stroke::new(OUTLINE_WIDTH, ui.visuals().widgets.inactive.fg_stroke.color)
 }
 
-fn paint_label(ui: &Ui, at: Pos2, text: &str, radius: f32) {
+/// The control's label, when it shows one (a stick or d-pad named by its id alone is drawn as its
+/// shape: its id is not a word for the player).
+fn paint_label(ui: &Ui, at: Pos2, control: &Control, radius: f32) {
+    if !control.shows_label {
+        return;
+    }
     let font = FontId::proportional((radius * LABEL_SCALE).max(1.0));
-    ui.painter().text(at, Align2::CENTER_CENTER, text, font, ui.visuals().text_color());
+    ui.painter().text(at, Align2::CENTER_CENTER, &control.label, font, ui.visuals().text_color());
 }
 
-fn paint_stick(ui: &Ui, control: &Control, mode: StickMode, area: TouchArea, state: &TouchState, value: [f32; 2]) {
+fn paint_stick(ui: &Ui, control: &Control, mode: StickMode, area: TouchArea, state: &TouchState, frame: &TouchFrame) {
     let painter = ui.painter();
     let radius = area.length(control.radius);
     let held = state.finger(control.id).is_some();
-    if mode == StickMode::Floating && !held {
-        // The zone a finger may begin in, outlined while no finger is down.
+    if mode == StickMode::Floating && frame.touching() {
+        // The zone a finger may begin in, outlined only while a finger is down (release R-26):
+        // at rest the corner of the game stays clear.
         let zone = area.rect_of(control.zone(area.world));
         painter.rect_stroke(zone, 0.0, Stroke::new(OUTLINE_WIDTH / 2.0, outline(ui).color), egui::StrokeKind::Inside);
     }
@@ -130,9 +136,10 @@ fn paint_stick(ui: &Ui, control: &Control, mode: StickMode, area: TouchArea, sta
         _ => area.point(control.centre(area.world)),
     };
     painter.circle(base, radius, fill(ui, false), outline(ui));
+    let value = frame.value(control.id);
     let knob = base + Vec2::new(value[0], value[1]) * radius;
     painter.circle_filled(knob, radius * KNOB_SCALE, fill(ui, held));
-    paint_label(ui, base, &control.label, radius);
+    paint_label(ui, base, control, radius);
 }
 
 fn paint_button(ui: &Ui, control: &Control, area: TouchArea, value: [f32; 2]) {
@@ -140,7 +147,7 @@ fn paint_button(ui: &Ui, control: &Control, area: TouchArea, value: [f32; 2]) {
     let radius = area.length(control.radius);
     let held = value[0] > 0.0;
     ui.painter().circle(centre, radius, fill(ui, held), outline(ui));
-    paint_label(ui, centre, &control.label, radius);
+    paint_label(ui, centre, control, radius);
 }
 
 fn paint_dpad(ui: &Ui, control: &Control, area: TouchArea, value: [f32; 2]) {
@@ -162,6 +169,32 @@ fn paint_dpad(ui: &Ui, control: &Control, area: TouchArea, value: [f32; 2]) {
         let colour = fill(ui, push >= ARROW_LIT);
         painter.add(Shape::convex_polygon(vec![tip, back + side, back - side], colour, outline(ui)));
     }
+    paint_label(ui, centre, control, half);
+}
+
+/// An opt-in atlas icon for a prompt (`crate::atlas`): the atlas image the caller registered with
+/// egui, and the cell's texture coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AtlasImage {
+    /// The atlas image's texture.
+    pub texture: egui::TextureId,
+    /// The cell, `[min u, min v, max u, max v]` (`GlyphAtlas::uv`).
+    pub uv: [f32; 4],
+}
+
+/// Draw `glyph` as its atlas icon when `image` is given (a square of the cap's height), else as
+/// [`glyph_ui`] draws it. Either way its AccessKit label is the glyph's label.
+pub fn glyph_ui_with(ui: &mut Ui, glyph: &Glyph, image: Option<AtlasImage>) -> egui::Response {
+    let Some(image) = image else { return glyph_ui(ui, glyph) };
+    let height = ui.text_style_height(&egui::TextStyle::Body) * GLYPH_HEIGHT_SCALE;
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(height), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &glyph.label));
+    if ui.is_rect_visible(rect) {
+        let [u0, v0, u1, v1] = image.uv;
+        let uv = Rect::from_min_max(Pos2::new(u0, v0), Pos2::new(u1, v1));
+        ui.painter().image(image.texture, rect, uv, Color32::WHITE);
+    }
+    response
 }
 
 /// Draw `glyph` as a cap of its shape with its label; its AccessKit label is the glyph's label.

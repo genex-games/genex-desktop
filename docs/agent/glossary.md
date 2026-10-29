@@ -140,6 +140,26 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   (manifest `observers`, `src/shared/observers.ts`): evidence the reviewer reads
   (`observers.capture`, `src/main/core/observers.ts`) and the Live view Genex draws for it
   (`src/renderer/live-views.ts`). Genex's own web preview is the built-in `preview` observer.
+- **Engine declaration**: a game-engine plugin's manifest `engine` `{id, label, projectFiles, fact,
+  projectInFolder, play?, apps?}` (`src/substrate/plugins/engine-manifest.ts`,
+  `src/shared/game-engine.ts`). The registry's catalog (`engines()`) lets a game link to it and
+  read as an engine game (`isEngineGame`); the core names no engine of its own.
+- **Play lane**: an engine editor's one play session, driven only by Genex's six play tools
+  (`EnginePlayTool`, `src/shared/engine-play.ts`) through `computer` and `judge_play` under the
+  plugin's lock; the editor's own play-driving tools stay hidden from agents.
+- **Judge probe**: a plugin judge's quiet harness tool (manifest `judges[].probe`) that measures
+  the play once it opens and adds its note and pictures to the judge's first answer
+  (`src/main/core/editor-play-session.ts`).
+- **Message checkpoint steps**: `checkpoint.before` hooks that opt in with `messages: true`, run
+  before each chat message's two checkpoints inside their 30-second wait so Rewind brings back the
+  engine's state too (`HookService.prepareMessageCheckpoint`, `src/main/core/rewind.ts`).
+- **Bring back newer version**: the undo of a Rewind that put game files back: the files, and
+  through the restore steps the engine's state, as they were just before it; the chat stays
+  rewound (`ChatRewindService.undo`, `undoRewindRefusal` in `src/shared/chat-rewind.ts`).
+- **Genex helper (Roblox)**: the Roblox plugin's Studio plugin (`src/plugins/roblox/helper/*.luau`,
+  built into `GenexStudioHelper.rbxmx`), Edit only, talking to the backend over a loopback
+  WebSocket (`helper-link.ts`): it binds a game to its Studio and carries scripts, place exports
+  and loads, multiplayer tests and model imports.
 - **The lead**: the chat's own session leading a Loop, as a web run's **Lead / one session** or the
   open profile's **lead in place**; the role the UI calls Main agent. Run copy says "the lead".
 - **Worker**: a session the lead or the chat's session starts (`worker_start`, `worker_status`,
@@ -151,7 +171,8 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
 - **Finish check**: the lead's `finish` claim checked by a reviewer. The seed asks `finish.review`
   and settles with `finish.settle` (`loop/finish-check.ts`); only the host seats the reviewer and
   writes the `finish_check` record (`src/main/core/finish-review.ts`); three no's in a row since
-  the run last opened stop it (`MAX_FINISH_REJECTIONS`, `src/shared/finish-check.ts`). Builds draws
+  the run last opened stop it (`MAX_FINISH_REJECTIONS`, `src/shared/finish-check.ts`), except a
+  timed Loop with more than `FINISH_TIME_LEFT_MS` (20 min) left, which keeps working. Builds draws
   it as Checking, Not yet, Done or Stopped (`FinishCheckState`, `FinishLook` in
   `src/renderer/run-tree.ts`).
 - **Soft cap**: a timed Loop's hours (`loop/time-cap.ts`): a heads-up 15 minutes before, time's up
@@ -261,7 +282,7 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   `rust-recipe.json`, beside libcolyseus for a `[net]` game's exports; a release build does not
   download them yet), installed only from the
   Toolchain sheet; a lock names the versions a game builds with by digest, one current lock per
-  compiled stack, and a game keeps its recorded lock across a bump
+  compiled stack, and a game keeps its recorded lock across a bump while the store holds it
   (`src/substrate/toolchain-store/`, `src/main/core/toolchains.ts`).
 - **Fixture profile**: a disposable `studio:dev` profile with scripted engines and native
   actions refused (`scripts/studio-dev.ts`, `src/main/dev/fixtures.ts`,

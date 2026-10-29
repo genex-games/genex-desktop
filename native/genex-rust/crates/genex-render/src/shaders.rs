@@ -30,33 +30,48 @@ pub const LIGHTING_CHUNKS: &[(&str, &str)] = &[
     ("output", include_str!("../shaders/lighting/output.wgsl")),
 ];
 
+/// The forward module's sources with `$extra` appended, in one `concat!` (a WGSL module is one
+/// string): [`FORWARD`] and its prepass-surface twin [`PREPASS_SURFACE`] share them.
+macro_rules! forward_wgsl {
+    ($($extra:expr),*) => {
+        shipped_wgsl!(concat!(
+            include_str!("../shaders/common.wgsl"),
+            include_str!("../shaders/clip_position.wgsl"),
+            include_str!("../shaders/effects.wgsl"),
+            include_str!("../shaders/forward_env.wgsl"),
+            include_str!("../shaders/pbr.wgsl"),
+            include_str!("../shaders/lighting/surface.wgsl"),
+            include_str!("../shaders/lighting/decals.wgsl"),
+            include_str!("../shaders/screen/ssr_apply.wgsl"),
+            include_str!("../shaders/lighting/ambient.wgsl"),
+            include_str!("../shaders/lighting/sun.wgsl"),
+            include_str!("../shaders/lighting/subsurface.wgsl"),
+            include_str!("../shaders/lighting/local_lights.wgsl"),
+            include_str!("../shaders/lighting/fog.wgsl"),
+            include_str!("../shaders/lighting/output.wgsl"),
+            include_str!("../shaders/forward_effects.wgsl"),
+            include_str!("../shaders/alpha_mask.wgsl"),
+            include_str!("../shaders/lighting/layers.wgsl"),
+            include_str!("../shaders/forward.wgsl"),
+            include_str!("../shaders/screen/normal_roughness_unpack.wgsl"),
+            include_str!("../shaders/screen/normal_roughness.wgsl"),
+            include_str!("../shaders/screen/ssr_surface.wgsl")
+            $(, $extra)*
+        ))
+    };
+}
+
 /// Forward metallic-roughness shading (opaque and blended) through the visible list: the common
 /// structs, the invariant clip position and the RQ4 effect declarations, the frame's environment
 /// bindings, the BRDF, the screen reflections' hand-over and the lighting chunks, the forward
 /// pass's effect accessors, then the forward entry points and the screen-space reflections'
-/// surface pass (renderer pass 2 B.9: A.6's normal and roughness packing and `fs_ssr_surface`).
-pub const FORWARD: &str = shipped_wgsl!(concat!(
-    include_str!("../shaders/common.wgsl"),
-    include_str!("../shaders/clip_position.wgsl"),
-    include_str!("../shaders/effects.wgsl"),
-    include_str!("../shaders/forward_env.wgsl"),
-    include_str!("../shaders/pbr.wgsl"),
-    include_str!("../shaders/lighting/surface.wgsl"),
-    include_str!("../shaders/lighting/decals.wgsl"),
-    include_str!("../shaders/screen/ssr_apply.wgsl"),
-    include_str!("../shaders/lighting/ambient.wgsl"),
-    include_str!("../shaders/lighting/sun.wgsl"),
-    include_str!("../shaders/lighting/subsurface.wgsl"),
-    include_str!("../shaders/lighting/local_lights.wgsl"),
-    include_str!("../shaders/lighting/fog.wgsl"),
-    include_str!("../shaders/lighting/output.wgsl"),
-    include_str!("../shaders/forward_effects.wgsl"),
-    include_str!("../shaders/alpha_mask.wgsl"),
-    include_str!("../shaders/forward.wgsl"),
-    include_str!("../shaders/screen/normal_roughness_unpack.wgsl"),
-    include_str!("../shaders/screen/normal_roughness.wgsl"),
-    include_str!("../shaders/screen/ssr_surface.wgsl")
-));
+/// surface texel (renderer pass 2 B.9: A.6's normal and roughness packing, `gx_ssr_surface_texel`).
+pub const FORWARD: &str = forward_wgsl!();
+/// The prepass's surface twin (lane FR): the forward module with the motion prepass's chunk and
+/// `vs_prepass_surface`/`fs_prepass_surface`, which draw the opaque plain batches into the motion
+/// prepass's three targets and the reflections' surface texel at once (`renderer/ssr_draw.rs`).
+pub const PREPASS_SURFACE: &str =
+    forward_wgsl!(include_str!("../shaders/prepass_motion.wgsl"), include_str!("../shaders/screen/prepass_surface.wgsl"));
 /// Depth-only shadow casters through a cascade's visible list.
 pub const SHADOW: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/common.wgsl"),
@@ -170,6 +185,8 @@ fn fs_post(in: GxPostInV2) -> @location(0) vec4<f32> {
 pub const TONEMAP: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/post/tonemap.wgsl")));
 /// The luminance-weighted MSAA resolve of the HDR scene (graph node 16 on desktop classes).
 pub const RESOLVE_HDR: &str = shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/post/resolve_hdr.wgsl")));
+/// Local exposure's bilateral grid of log luminance, before the tonemap (AAA push P3).
+pub const LOCAL_EXPOSURE: &str = shipped_wgsl!(include_str!("../shaders/post/local_exposure.wgsl"));
 /// Auto exposure's log-luminance histogram (graph node 20).
 pub const EXPOSURE_HISTOGRAM: &str =
     shipped_wgsl!(concat!(include_str!("../shaders/common.wgsl"), include_str!("../shaders/post/exposure_histogram.wgsl")));
@@ -208,6 +225,9 @@ pub const PREPASS: &str = shipped_wgsl!(concat!(
     include_str!("../shaders/clip_position.wgsl"),
     include_str!("../shaders/effects.wgsl"),
     include_str!("../shaders/alpha_mask.wgsl"),
+    include_str!("../shaders/screen/normal_roughness_unpack.wgsl"),
+    include_str!("../shaders/screen/normal_roughness.wgsl"),
+    include_str!("../shaders/prepass_motion.wgsl"),
     include_str!("../shaders/prepass.wgsl")
 ));
 /// Bloom's downsample (graph node 19; threshold-free, Karis-weighted first step).
@@ -233,6 +253,8 @@ pub const CONTACT_SHADOW: &str = shipped_wgsl!(concat!(include_str!("../shaders/
 pub const DEPTH_WRITING_VERTEX_ENTRIES: &[(&str, &str)] = &[
     ("forward", "vs_main"),
     ("prepass", "vs_prepass"),
+    // Lane FR: the prepass's surface twin draws the plain batches into the prepass depth.
+    ("prepass-surface", "vs_prepass_surface"),
     ("material-v2-sample", "gx_vs_material_v2"),
     // Renderer pass 2 A.7: the terrain's world-pass and motion-prepass vertices (its plain prepass
     // shares `vs_terrain`).
@@ -266,6 +288,7 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("post-v2-sample", POST_V2_SAMPLE),
     ("tonemap", TONEMAP),
     ("resolve-hdr", RESOLVE_HDR),
+    ("local-exposure", LOCAL_EXPOSURE),
     ("exposure-histogram", EXPOSURE_HISTOGRAM),
     ("exposure-adapt", EXPOSURE_ADAPT),
     ("background", BACKGROUND),
@@ -282,6 +305,7 @@ pub const SHADERS: &[(&str, &str)] = &[
     ("cloud-noise", crate::clouds::CLOUD_NOISE),
     ("ibl-backdrop", IBL_BACKDROP),
     ("prepass", PREPASS),
+    ("prepass-surface", PREPASS_SURFACE),
     ("bloom-down", BLOOM_DOWN),
     ("bloom-up", BLOOM_UP),
     ("aerial-perspective", AERIAL_PERSPECTIVE),

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { AAA_SUITE_FILE, readAaaSuite } from "../../scripts/evals/aaa/suite.ts";
 import { parseCases } from "../../scripts/evals/cases.ts";
 import {
   checkIsolation,
@@ -23,6 +24,8 @@ import {
   TERM_MIN_WORDS,
 } from "../../scripts/evals/check-isolation.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 
 const BRIEF = {
   caseId: "lantern-walk",
@@ -204,6 +207,20 @@ describe("the isolation walker and CLI check", () => {
     assert.equal(leaked.ok, false);
     assert.ok(leaked.lines.some((line) => line.startsWith(`${pairwiseRubric}: lantern-walk shingle`)));
     assert.ok(!leaked.lines.some((line) => line.startsWith(checklistRubric)));
+  });
+
+  it("holds the AA+ suite's briefs out of every game template, the Rust one included", async () => {
+    const dir = await repo();
+    fs.mkdirSync(path.join(dir, "evals/aaa"), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, AAA_SUITE_FILE), path.join(dir, AAA_SUITE_FILE));
+    assert.equal(checkIsolation(dir).ok, true);
+    const [bodycam] = readAaaSuite(dir);
+    const page = "src/game-template-rust/docs/api/example.md";
+    fs.mkdirSync(path.join(dir, path.dirname(page)), { recursive: true });
+    fs.writeFileSync(path.join(dir, page), `For example: ${bodycam?.brief}`);
+    const leaked = checkIsolation(dir);
+    assert.equal(leaked.ok, false);
+    assert.ok(leaked.lines.some((line) => line.startsWith(`${page}: aaa:${bodycam?.id} shingle`)));
   });
 
   it("fails a vacuous scan", async () => {

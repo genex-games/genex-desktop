@@ -1,21 +1,39 @@
 /**
- * The game's full screen in the studio window (`game-full-screen.ts`): the window, Live's view and
- * the exit button, a small transparent view of the studio's own above the game. Nothing is put
- * into the game's page; the button's page has no preload and reaches main only through the one
- * `window.open` it is allowed, which is refused and read as "exit".
+ * The game's full screen in the studio window (`game-full-screen.ts`): the window, Live's view (or
+ * Live's Native canvas in the studio's own page) and the exit button, a small transparent view of
+ * the studio's own above the game. Nothing is put into the game's page; the button's page has no
+ * preload and reaches main only through the one `window.open` it is allowed, which is refused and
+ * read as "exit".
  */
 import { type BrowserWindow, WebContentsView } from "electron";
-import { EXIT_FULL_SCREEN_URL, exitButtonPage, gameFullScreen, type GameFullScreen } from "./game-full-screen.ts";
+import { UiEvent } from "../shared/ui-events.ts";
+import {
+  EXIT_FULL_SCREEN_URL,
+  exitButtonPage,
+  type FullScreenDeps,
+  gameFullScreen,
+  type LiveFullScreens,
+  liveFullScreens,
+  nativeCanvasGame,
+} from "./game-full-screen.ts";
 import type { PreviewBoundsRecord } from "./ipc/preview.ts";
 import type { GamePreview } from "./preview.ts";
 import type { StudioCore } from "./studio-core.ts";
 
-/** The exit button's page, loaded again each time it is shown so its words unfold again. */
-const EXIT_PAGE_URL = `data:text/html;charset=utf-8,${encodeURIComponent(exitButtonPage())}`;
+/**
+ * The exit button's page, made and loaded again each time it is shown, so its words unfold again
+ * and are in the language the app is in then.
+ */
+function exitPageUrl(): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(exitButtonPage())}`;
+}
 /** A fully transparent view background: only the pill is drawn. */
 const TRANSPARENT = "#00000000";
 
-/** Build the full screen for `win` over Live's `view`; the slot comes back from what the page last measured. */
+/**
+ * Build Live's full screens for `win`: over Live's web `view`, and over Live's Native canvas in the
+ * studio's own page; the slot comes back from what the page last measured.
+ */
 export function wireGameFullScreen({
   studio,
   win,
@@ -26,7 +44,7 @@ export function wireGameFullScreen({
   win: BrowserWindow;
   view: GamePreview;
   boundsSeen: PreviewBoundsRecord;
-}): GameFullScreen {
+}): LiveFullScreens {
   const exitView = new WebContentsView({
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
@@ -36,7 +54,7 @@ export function wireGameFullScreen({
   win.contentView.addChildView(exitView);
   let shown = false;
 
-  const screen = gameFullScreen({
+  const shared: Omit<FullScreenDeps, "game" | "stage"> = {
     window: {
       isFullScreen: () => win.isFullScreen(),
       setFullScreen: (on) => win.setFullScreen(on),
@@ -45,22 +63,26 @@ export function wireGameFullScreen({
         return { width, height };
       },
     },
-    game: {
-      fill: (bounds) => view.fill(bounds),
-      focus: () => view.view?.webContents.focus(),
-    },
     exitButton: {
       show: (bounds) => {
         exitView.setBounds(bounds);
         if (shown) return;
         shown = true;
-        void exitView.webContents.loadURL(EXIT_PAGE_URL).catch(() => {});
+        void exitView.webContents.loadURL(exitPageUrl()).catch(() => {});
         exitView.setVisible(true);
       },
       hide: () => {
         shown = false;
         exitView.setVisible(false);
       },
+    },
+    clock: { setTimeout: (run, ms) => setTimeout(run, ms), clearTimeout: (handle) => clearTimeout(handle as never) },
+  };
+  const web = gameFullScreen({
+    ...shared,
+    game: {
+      fill: (bounds) => view.fill(bounds),
+      focus: () => view.view?.webContents.focus(),
     },
     stage: {
       cover: () => void studio.previewStageVisible(true, true),
@@ -76,18 +98,30 @@ export function wireGameFullScreen({
         });
       },
     },
-    clock: { setTimeout: (run, ms) => setTimeout(run, ms), clearTimeout: (handle) => clearTimeout(handle as never) },
   });
+  // The Native canvas is the studio's own page: it covers the window itself, and nothing of the
+  // web game view's is involved (it is out of sight while Native is shown).
+  const native = gameFullScreen({
+    ...shared,
+    game: nativeCanvasGame({
+      emit: (on) => studio.emit(UiEvent.NativeFullScreen, { on }),
+      focus: () => win.webContents.focus(),
+    }),
+    stage: { cover: () => {}, restore: () => {} },
+  });
+  const screens = liveFullScreens({ web, native });
 
   const exits = exitView.webContents;
   exits.setWindowOpenHandler(({ url }) => {
-    if (url === EXIT_FULL_SCREEN_URL) screen.exit();
+    if (url === EXIT_FULL_SCREEN_URL) screens.exit();
     return { action: "deny" };
   });
   exits.on("will-navigate", (event) => event.preventDefault());
-  exits.on("before-input-event", (_event, input) => screen.key(input));
-  view.view?.webContents.on("before-input-event", (_event, input) => screen.key(input));
-  win.on("resize", () => screen.resized());
-  win.on("leave-full-screen", () => screen.windowLeft());
-  return screen;
+  exits.on("before-input-event", (_event, input) => screens.key(input));
+  view.view?.webContents.on("before-input-event", (_event, input) => web.key(input));
+  // The Native canvas's keys reach the studio's own page: a held Esc there ends its full screen.
+  win.webContents.on("before-input-event", (_event, input) => native.key(input));
+  win.on("resize", () => screens.resized());
+  win.on("leave-full-screen", () => screens.windowLeft());
+  return screens;
 }

@@ -227,13 +227,13 @@ function nearest(search: Search, p: number): number {
   return Math.sqrt(best);
 }
 
-/**
- * The largest distance from a vertex `original` uses to the surface of `level` (both triangle
- * lists over `positions`, xyz floats); 0 for an empty original, infinity for an empty level.
- */
-export function vertexDeviation(positions: Float32Array, original: Uint32Array, level: Uint32Array): number {
-  if (!original.length) return 0;
-  if (!level.length) return Number.POSITIVE_INFINITY;
+/** Call `visit` with each vertex `original` uses that `level` drops, once, and its distance to `level`. */
+function eachDropped(
+  positions: Float32Array,
+  original: Uint32Array,
+  level: Uint32Array,
+  visit: (vertex: number, distance: number) => void,
+): void {
   const done = new Uint8Array(positions.length / AXES);
   // A vertex the level keeps lies on it.
   for (const vertex of level) done[vertex] = 1;
@@ -244,11 +244,41 @@ export function vertexDeviation(positions: Float32Array, original: Uint32Array, 
     seen: new Int32Array(level.length / TRIANGLE).fill(-1),
     range: new Int32Array(AXES * 2),
   };
-  let worst = 0;
   for (const vertex of original) {
     if (done[vertex]) continue;
     done[vertex] = 1;
-    worst = Math.max(worst, nearest(search, vertex));
+    visit(vertex, nearest(search, vertex));
   }
+}
+
+/**
+ * The largest distance from a vertex `original` uses to the surface of `level` (both triangle
+ * lists over `positions`, xyz floats); 0 for an empty original, infinity for an empty level.
+ */
+export function vertexDeviation(positions: Float32Array, original: Uint32Array, level: Uint32Array): number {
+  if (!original.length) return 0;
+  if (!level.length) return Number.POSITIVE_INFINITY;
+  let worst = 0;
+  eachDropped(positions, original, level, (_, distance) => {
+    worst = Math.max(worst, distance);
+  });
   return worst;
+}
+
+/**
+ * The vertices `original` uses that lie farther than `bound` from the surface of `level` (lane FR:
+ * the ones a finer level must keep), in first-use order; every dropped vertex for an empty level.
+ */
+export function verticesBeyond(
+  positions: Float32Array,
+  original: Uint32Array,
+  level: Uint32Array,
+  bound: number,
+): number[] {
+  const beyond: number[] = [];
+  if (!level.length) return [...new Set(original)];
+  eachDropped(positions, original, level, (vertex, distance) => {
+    if (distance > bound) beyond.push(vertex);
+  });
+  return beyond;
 }

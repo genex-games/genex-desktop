@@ -9,8 +9,8 @@
  * stage and one without a non-empty `clippy.toml` locates no toolchain, so no game builds without the gate.
  * A web build serves the template's WebGPU-only shell from `<resources>/game-template-rust/web/shell.html`
  * (the app's copy, never the game's), read the same way, and packs with the store's wasm-bindgen and wasm-opt.
- * The prewarmed target folders are not cloned into a build yet (`cloneRustTarget`): a destination
- * builds from its base alone, cold, prewarmed or not.
+ * A build folder's first target is a copy-on-write clone of another copy's of the same game, else
+ * of the store's prewarm (`cloneRustTarget`, `warmTarget`), else empty (`rust-build-cache.ts`).
  */
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
@@ -29,7 +29,9 @@ import {
 } from "../../substrate/rust-notices.ts";
 import { crateOverlayLayout } from "../../substrate/toolchain-store/crate-overlay.ts";
 import { readCurrentLock } from "../../substrate/toolchain-store/lock.ts";
+import { installedRustLocks } from "../../substrate/toolchain-store/retention.ts";
 import { locateRust } from "../../substrate/toolchain-store/rust-locate.ts";
+import { cloneRustTarget } from "../../substrate/toolchain-store/rust-prewarm.ts";
 import { FIXTURE_STORE_MARKER } from "../dev/fixture-toolchains.ts";
 import {
   RustBuilds,
@@ -256,15 +258,26 @@ export type CoreRustLaneOptions = Omit<RustBuildsOptions, "locate" | "currentLoc
   resources: string;
 };
 
-/** The core's Rust lane: the store's current Rust lock and toolchain, the shipped payload's release and gate. */
+/**
+ * The core's Rust lane: the store's current Rust lock and toolchain, the shipped payload's release
+ * and gate. The sweep keeps the folders of a lock a game records only while the store still holds
+ * that lock's toolchain: a game whose lock was removed builds on the current one, so its old
+ * folders are nothing any build reaches.
+ */
 export function createCoreRustBuilds(options: CoreRustLaneOptions): RustBuilds {
-  const { store, resources, ...lane } = options;
+  const { store, resources, retainedLocks, ...lane } = options;
   const payload = rustPayloadDir(resources);
   return new RustBuilds({
     ...lane,
+    ...(retainedLocks ? { retainedLocks: async () => installedRustLocks(store, await retainedLocks()) } : {}),
     locate: storeRustLocate(store, payload),
     currentLock: () => readCurrentLock(store, GameStack.RustWgpu),
     stage: shippedRustStage(payload),
     webShell: shippedWebShell(resources),
+    warmTarget: (lock, target, to) =>
+      cloneRustTarget(store, lock, target, to).then(
+        () => true,
+        () => false,
+      ),
   });
 }

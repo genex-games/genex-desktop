@@ -81,12 +81,12 @@ fn a_phone_never_becomes_mobile_ultra() {
     assert_eq!(classify_calibrated(&ios, Some(top)), class("mobile-high"));
 }
 
+// WP-9 flipped: a native desktop (macOS, Windows, Linux) now moves to its score's tier whatever
+// the distance, so a strong Windows or Linux GPU (desktop-mid by default) reaches ultra; phones and
+// browsers still move one tier at most.
 #[test]
-fn calibration_never_moves_a_class_more_than_one_tier() {
+fn calibration_moves_phones_and_browsers_at_most_one_tier() {
     let defaults = [
-        mac_integrated(),
-        DeviceFacts::new(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu),
-        DeviceFacts::new(TargetOs::Linux, Backend::Vulkan, DeviceType::Cpu),
         DeviceFacts::new(TargetOs::Ios, Backend::Metal, DeviceType::IntegratedGpu),
         android_vulkan(),
         web(None),
@@ -100,6 +100,23 @@ fn calibration_never_moves_a_class_more_than_one_tier() {
             assert_eq!(moved.form, start.form, "calibration never changes the form factor");
             assert!((index(moved.tier) - index(start.tier)).abs() <= 1, "{} -> {} at level {level}", start.wire(), moved.wire());
             assert!(DeviceClass::ALL.contains(&moved), "{} is a named class", moved.wire());
+        }
+    }
+}
+
+#[test]
+fn a_native_desktop_takes_its_scores_tier_so_windows_and_linux_reach_ultra() {
+    let natives = [
+        mac_integrated(),
+        DeviceFacts::new(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu),
+        DeviceFacts::new(TargetOs::Linux, Backend::Vulkan, DeviceType::DiscreteGpu),
+        DeviceFacts::new(TargetOs::Linux, Backend::Vulkan, DeviceType::Cpu),
+    ];
+    for facts in natives {
+        for tier in PerformanceTier::ALL {
+            let level = ScoreLevel::quantize(score_in(FormFactor::Desktop, tier), None);
+            let moved = classify_calibrated(&facts, Some(level));
+            assert_eq!(moved, DeviceClass::new(FormFactor::Desktop, tier), "{:?} {:?} at a {} score", facts.os, facts.device_type, tier.wire());
         }
     }
 }
@@ -142,15 +159,65 @@ fn desktop_firefox_shaped_hints_give_desktop_mid() {
         hardware_concurrency: Some(16),
         ua_mobile: Some(false),
     };
-    assert_eq!(classify(&web(Some(touch_laptop))), class("desktop-mid"), "touch with a fine pointer is a laptop");
+    assert_eq!(classify(&web(Some(touch_laptop))), class("desktop-high"), "touch with a fine pointer is a laptop");
+}
+
+#[test]
+fn a_macbook_air_browser_is_a_desktop_and_a_roomy_one_starts_high() {
+    // Bodycam B1: Studio's Live page on an 8 GB M1 MacBook Air (1440x900 screen, no touch) read as
+    // a phone (short side <= 900) and drew every judged frame at mobile-mid's `low`.
+    let air = WebHints {
+        max_touch_points: 0,
+        coarse_pointer: false,
+        short_side_css_px: 900,
+        device_memory_gb: Some(8.0),
+        hardware_concurrency: Some(8),
+        ua_mobile: Some(false),
+    };
+    assert_eq!(classify(&web(Some(air))), class("desktop-high"));
+    let small_laptop = WebHints { short_side_css_px: 768, device_memory_gb: Some(4.0), hardware_concurrency: Some(4), ..air };
+    assert_eq!(classify(&web(Some(small_laptop))), class("desktop-mid"), "a small screen without touch is still a laptop");
+    let hidden = WebHints { device_memory_gb: None, ..air };
+    assert_eq!(classify(&web(Some(hidden))), class("desktop-mid"), "a hidden deviceMemory reads as 4 GB");
+    let few_cores = WebHints { hardware_concurrency: Some(4), ..air };
+    assert_eq!(classify(&web(Some(few_cores))), class("desktop-mid"));
+}
+
+/// Bodycam B1, the three paths an M2 Pro MacBook took to `mobile-mid`, each with the hints its page
+/// sends (measured in Electron 2026-10-27 on a privileged secure scheme, as Studio serves games).
+#[test]
+fn studio_windows_on_a_mac_classify_as_a_desktop_on_every_path() {
+    // (1) A facet or capture window: offscreen 960x600, so `screen` is the window (short side 600).
+    let offscreen = WebHints {
+        max_touch_points: 0,
+        coarse_pointer: false,
+        short_side_css_px: 600,
+        device_memory_gb: Some(32.0),
+        hardware_concurrency: Some(14),
+        ua_mobile: Some(false),
+    };
+    assert_eq!(classify(&web(Some(offscreen))), class("desktop-high"), "was mobile-mid: the window's 600 px read as a phone");
+    // (2) The visible Live tab on a 14" MacBook at "Larger Text" (1352x878).
+    let larger_text = WebHints { short_side_css_px: 878, ..offscreen };
+    assert_eq!(classify(&web(Some(larger_text))), class("desktop-high"), "was mobile-mid: a scaled display read as a phone");
+    // (3) A desktop browser's tier: high where it reports the room, mid where it hides it (Safari
+    // shows neither deviceMemory nor userAgentData), and calibration moves either one tier.
+    let default_scaling = WebHints { short_side_css_px: 982, ..offscreen };
+    assert_eq!(classify(&web(Some(default_scaling))), class("desktop-high"), "was desktop-mid: the web tier was always mid");
+    let safari = WebHints { short_side_css_px: 982, ..WebHints::default() };
+    assert_eq!(classify(&web(Some(safari))), class("desktop-mid"));
 }
 
 #[test]
 fn a_small_screen_or_a_mobile_user_agent_is_mobile_and_unknown_hints_are_mobile_mid() {
-    let small = WebHints { short_side_css_px: 800, ..WebHints::default() };
-    assert_eq!(classify(&web(Some(small))).form, FormFactor::Mobile, "short side <= 900 CSS px");
-    let boundary = WebHints { short_side_css_px: 900, ..WebHints::default() };
+    let small_touch = WebHints { max_touch_points: 1, short_side_css_px: 480, ..WebHints::default() };
+    assert_eq!(classify(&web(Some(small_touch))).form, FormFactor::Mobile, "a touch screen with a short side <= 600 CSS px");
+    let boundary = WebHints { max_touch_points: 1, short_side_css_px: 600, ..WebHints::default() };
     assert_eq!(classify(&web(Some(boundary))).form, FormFactor::Mobile);
+    let small_touch_laptop = WebHints { max_touch_points: 10, short_side_css_px: 853, ..WebHints::default() };
+    assert_eq!(classify(&web(Some(small_touch_laptop))).form, FormFactor::Desktop, "a touch laptop at 150% is not a phone");
+    let small_no_touch = WebHints { short_side_css_px: 480, ..WebHints::default() };
+    assert_eq!(classify(&web(Some(small_no_touch))).form, FormFactor::Desktop, "without touch a small screen is a desktop's");
     let chrome_android = WebHints { short_side_css_px: 1200, ua_mobile: Some(true), ..WebHints::default() };
     assert_eq!(classify(&web(Some(chrome_android))).form, FormFactor::Mobile);
     assert_eq!(classify(&web(None)), class("mobile-mid"), "unknown hints: DRS or the person may promote");

@@ -22,7 +22,7 @@ import {
 } from "../../src/substrate/bonsai/manifest.ts";
 import { LocalSessions } from "../../src/substrate/engines/local-session.ts";
 import { summarizeLocalCheckpoint } from "../../src/substrate/engines/local-checkpoint.ts";
-import { download } from "../../src/substrate/bonsai/download.ts";
+import { download, DownloadStatus, type DownloadProgress } from "../../src/substrate/bonsai/download.ts";
 import { createHash } from "node:crypto";
 import { EngineError, DelegateEventType, type DelegateEvent } from "../../src/substrate/engines/types.ts";
 import { baseBrief } from "../../src/harness-seed/loop/autopilot.ts";
@@ -392,14 +392,18 @@ async function weightsServer(answer: (res: ServerResponse, start: number, reques
   return { url, ranges, close };
 }
 
-/** Send `bytes` from `start` as a full or ranged answer; `upTo` cuts the connection after that many. */
-function sendWeights(res: ServerResponse, bytes: Buffer, start: number, upTo = bytes.length - start) {
+/**
+ * Send `bytes` from `start` as a full or ranged answer; with `cut`, send only `cut.upTo` of them and
+ * drop the connection once `cut.saved` settles.
+ */
+function sendWeights(res: ServerResponse, bytes: Buffer, start: number, cut?: { upTo: number; saved: Promise<void> }) {
   res.writeHead(start ? 206 : 200, {
     "Content-Length": String(bytes.length - start),
     ...(start ? { "Content-Range": `bytes ${start}-${bytes.length - 1}/${bytes.length}` } : {}),
   });
-  if (upTo >= bytes.length - start) return void res.end(bytes.subarray(start));
-  res.write(bytes.subarray(start, start + upTo), () => setTimeout(() => res.socket?.destroy(), 30));
+  if (!cut) return void res.end(bytes.subarray(start));
+  res.write(bytes.subarray(start, start + cut.upTo));
+  void cut.saved.then(() => res.socket?.destroy());
 }
 
 const weightsSpec = (url: string, bytes: Buffer) => ({
@@ -411,13 +415,23 @@ const weightsSpec = (url: string, bytes: Buffer) => ({
 
 it("a download whose connection drops mid-file resumes from the saved bytes and finishes", async () => {
   const bytes = Buffer.from("weights that arrive over a connection that keeps dropping");
-  const server = await weightsServer((res, start, request) =>
-    sendWeights(res, bytes, start, request < 3 ? 12 : undefined),
-  );
+  // A connection drops only once the download reported saving what it sent: fetch throws away
+  // bytes it received but nobody read yet, so a drop on a timer races a slow file open (Windows).
+  let reportSaved = () => {};
+  const server = await weightsServer((res, start, request) => {
+    if (request >= 3) return sendWeights(res, bytes, start);
+    const saved = new Promise<void>((resolve) => {
+      reportSaved = resolve;
+    });
+    sendWeights(res, bytes, start, { upTo: 12, saved });
+  });
+  const progress = (report: DownloadProgress) => {
+    if (report.status === DownloadStatus.Downloading) reportSaved();
+  };
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-dropped-"));
   const waits: number[] = [];
   try {
-    const published = await download(weightsSpec(server.url, bytes), root, new AbortController().signal, () => {}, {
+    const published = await download(weightsSpec(server.url, bytes), root, new AbortController().signal, progress, {
       wait: async (ms) => void waits.push(ms),
     });
     assert.deepEqual(await readFile(published), bytes);
@@ -1349,6 +1363,33 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
     const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
     assert.match(nudge, /Finish now: answer, make the change, or launch the build with start_autopilot/);
     assert.doesNotMatch(nudge, /Implement the next concrete change/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("a local Auto chat that keeps reading is never nudged to start the Loop it may start only when asked", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-auto-idle-"));
+  const cwd = path.join(root, "game");
+  await mkdir(cwd);
+  await writeFile(path.join(cwd, "main.js"), "// existing");
+  let turns = 0;
+  const seen: string[] = [];
+  const sessions = new LocalSessions({
+    root: path.join(root, "sessions"),
+    protectedPaths: [],
+    contextWindow: 16384,
+    complete: async (r) => {
+      seen.push(r.messages.map((m) => m.content).join("\n"));
+      return reply("", [{ id: `r${turns++}`, name: "read_file", arguments: { path: "main.js" } }]);
+    },
+  });
+  try {
+    const autoLaunch = { ...launchTool, onlyWhenAsked: true };
+    await sessions.run({ cwd, prompt: "Make the sky darker", interviewTools: [autoLaunch] }, model);
+    const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
+    assert.match(nudge, /Implement the next concrete change/);
+    assert.doesNotMatch(nudge, /start_autopilot/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,4 +1,5 @@
 import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import { t } from "../../shared/i18n.ts";
 import { problemWords } from "../words.ts";
 import { Icon } from "../ui/icons.tsx";
 import { FileText } from "../ui/FileText.tsx";
@@ -12,7 +13,7 @@ export interface ChatChoice {
 /** The pick that is the person's own words, typed in the card. */
 const OWN = "\u0000own";
 /** What the own-words row says before anything is typed, unless the card says otherwise. */
-const OWN_PLACEHOLDER = "Write your own answer…";
+const OWN_PLACEHOLDER = t("Write your own answer…");
 
 /** A choice row's class: dimmed while the card cannot answer, else the cursor for its kind. */
 const choiceClass = (blocked: boolean, cursor: string): string =>
@@ -77,7 +78,7 @@ function OwnAnswer({
         type="radio"
         name={name}
         value={OWN}
-        aria-label="Your own answer"
+        aria-label={t("Your own answer")}
         checked={picked}
         onChange={() => {
           onPick();
@@ -90,7 +91,7 @@ function OwnAnswer({
         type="text"
         value={own}
         placeholder={placeholder}
-        aria-label="Your own answer"
+        aria-label={t("Your own answer")}
         onFocus={onPick}
         onChange={(event) => {
           onType(event.target.value);
@@ -112,7 +113,7 @@ function ChatAboutButton({ blocked, onClick }: { blocked: boolean; onClick: () =
       className={`chat-question-secondary ${blocked ? "opacity-50" : ""}`}
     >
       <Icon name="chat" size={14} />
-      Chat about this
+      {t("Chat about this")}
     </button>
   );
 }
@@ -179,8 +180,8 @@ export function ChatQuestion({
   children,
   disabled = false,
   error,
-  confirmLabel = "Continue",
-  reopenLabel = "Answer question",
+  confirmLabel = t("Continue"),
+  reopenLabel = t("Answer question"),
   answerPlaceholder = OWN_PLACEHOLDER,
 }: {
   title: string;
@@ -247,7 +248,7 @@ export function ChatQuestion({
             <button
               ref={close}
               type="button"
-              aria-label="Put question aside"
+              aria-label={t("Put question aside")}
               disabled={busy}
               onClick={putAside}
               className="-me-1 flex size-6 shrink-0 items-center justify-center rounded-control text-ink-3 enabled:hover:bg-control-hover enabled:hover:text-control-text-hover disabled:cursor-default"
@@ -263,7 +264,7 @@ export function ChatQuestion({
         )}
         {children}
         <fieldset disabled={blocked} className="mt-2 flex min-w-0 flex-col gap-0.5">
-          <legend className="sr-only">Choose an answer</legend>
+          <legend className="sr-only">{t("Choose an answer")}</legend>
           {choices.map((choice) => (
             <label key={choice.id} className={choiceClass(blocked, "cursor-pointer")}>
               <input
@@ -302,7 +303,7 @@ export function ChatQuestion({
       <QuestionFooter
         blocked={blocked}
         answerable={answerable}
-        submitLabel={busy ? "Sending…" : confirmLabel}
+        submitLabel={busy ? t("Sending…") : confirmLabel}
         canSubmit={ready}
         onChatAbout={
           onChatAbout &&

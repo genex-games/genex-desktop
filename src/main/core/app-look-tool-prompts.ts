@@ -23,6 +23,9 @@ export const APP_LOOK_TOOL: LiveToolSpec = {
 /** The most windows a list names. */
 const LISTED_MAX = 60;
 
+/** The id `app_look` takes for the game Genex runs in its own preview (never a window number). */
+export const GAME_WINDOW = "game";
+
 /** System Settings' names for what is missing. */
 const ACCESS_WORDS = {
   [AppLookAccessKind.Screen]: "Screen Recording",
@@ -54,9 +57,16 @@ export const APP_LOOK_ANSWER = {
   noPicture: (why: string) => `(no screenshot: ${why})`,
   noMatch: "No window on screen matches that. Call app_look with no arguments to list them.",
   notOnScreen: "That window is not on screen any more. Call app_look with no arguments to list them.",
-  refused: "Genex does not look at password managers.",
+  refused:
+    "Genex does not look at password managers, System Settings, the system's password prompts or its own windows.",
   unsupported: "app_look works on macOS only for now.",
   failed: (detail: string) => `Genex could not look at app windows: ${detail || "the command failed"}.`,
+  /** The game Genex runs inside its own window, listed after the windows on screen. */
+  gameListed: (project: string) =>
+    `${GAME_WINDOW} · Genex — ${project}: the game itself, as Genex runs the build you read. It runs inside Genex, so it is not among the windows above: call app_look with window "${GAME_WINDOW}" to look at it.`,
+  gameLooked: (project: string) =>
+    `Genex — ${project}: the game, after its first frame, on a window of its own (window ${GAME_WINDOW}). No accessibility tree: the game draws on a canvas.`,
+  gameNotLooked: (why: string) => `Genex could not show the game: ${why}.`,
   saved: (file: string) => `Saved the picture as ${file}.`,
   notSaved: (why: string) => `The picture was not saved: ${why}.`,
   saveNoPicture: "there was no picture to save",

@@ -65,6 +65,8 @@ export const GltfIssueCode = {
   IoError: "IO_ERROR",
   /** An embedded image that does not decode (`png-check.ts`): a warning on the image, never a refusal. */
   ImageDataInvalid: "IMAGE_DATA_INVALID",
+  /** Accessor bounds the import step wrote from the data before the gate (`bounds.ts`): a warning on the accessor. */
+  BoundsRepaired: "ACCESSOR_BOUNDS_REPAIRED",
 } as const;
 export type GltfIssueCode = (typeof GltfIssueCode)[keyof typeof GltfIssueCode];
 

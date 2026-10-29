@@ -12,11 +12,21 @@ import type { EventEnvelope } from "../../types/host-api.d.ts";
 import { HostMethod } from "../host-methods.ts";
 import { hasText } from "../text.ts";
 import { MINUTE_MS, SECOND_MS } from "../time.ts";
-import { MAX_WORKER_WAIT_S, WORKER_QUESTION_PENDING, WorkerIsolation, WorkerStopCode, WorkerTool } from "./contract.ts";
+import {
+  MAX_WORKER_WAIT_S,
+  MAX_WORKERS_AT_ONCE,
+  WORKER_QUESTION_PENDING,
+  WorkerIsolation,
+  WorkerStopCode,
+  WorkerTool,
+} from "./contract.ts";
+import { handedBack, saidOf } from "./handback.ts";
 import { commitCopy, keepWork, markWorker, removeCopy } from "./pool-merge.ts";
 import { releaseInPlace } from "./in-place.ts";
 import { ended, scopeEnd, startWorker } from "./pool-start.ts";
 import { POOL_WORDS } from "./prompts.ts";
+import { nextWords } from "../person-wrote.ts";
+import { WAIT_ENDED } from "../steer-switch-prompts.ts";
 import { questionOf, questionText } from "./questions.ts";
 import {
   cwdOf,
@@ -64,10 +74,12 @@ export async function openPool(scope: WorkerScope): Promise<WorkerPool> {
     .catch(() => null);
   const types = await ctx.call(HostMethod.PluginsWorkerTypes, { project }).catch(() => []);
   const cursor = await ctx.call(HostMethod.EventsHead, { threadId }).catch(() => null);
+  const capacity = await ctx.call(HostMethod.PreviewCapacity, {}).catch(() => null);
   const state: PoolState = {
     scope,
     records: readRecords(saved),
     types: Array.isArray(types) ? types : [],
+    allowed: allowedAtOnce(capacity?.workers),
     runs: new Map(),
     steers: new Map(),
     cursor: typeof cursor === "string" ? cursor : null,
@@ -86,6 +98,12 @@ export async function openPool(scope: WorkerScope): Promise<WorkerPool> {
     close: () => closePool(state),
     readQuestions: () => readQuestions(state),
   };
+}
+
+/** The most workers a pool runs at once: the person's Settings when the host says them, never past the pool's own cap. */
+function allowedAtOnce(settings: unknown): number {
+  const asked = Math.floor(Number(settings));
+  return Number.isFinite(asked) && asked >= 1 ? Math.min(asked, MAX_WORKERS_AT_ONCE) : MAX_WORKERS_AT_ONCE;
 }
 
 /** The workers a close stopped whose end was never recorded: no longer working, with no end time. */
@@ -150,20 +168,28 @@ function extraOf(record: WorkerRecord): string {
   return record.commit ? POOL_WORDS.ready(record.id) : POOL_WORDS.nothingChanged;
 }
 
-/** One worker's line. */
-function lineOf(state: PoolState, record: WorkerRecord): string {
+/** One worker's line; in a list of every worker, an ended one's report is named by its first sentence. */
+function lineOf(state: PoolState, record: WorkerRecord, listed: boolean): string {
   const minutes = Math.round(((record.endedAt ?? state.scope.clock.now()) - record.startedAt) / MINUTE_MS);
   const { id, title, isolation } = record;
-  return POOL_WORDS.status({ id, title, isolation, state: record.state, minutes, extra: extraOf(record) });
+  const extra = [extraOf(record), listed ? saidOf(record) : ""].filter(Boolean).join(" · ");
+  return POOL_WORDS.status({ id, title, isolation, state: record.state, minutes, extra });
 }
 
-/** `worker_status`: one worker's line, or every worker's. */
+/** One worker's line, then what it handed back. */
+function detailOf(state: PoolState, record: WorkerRecord): string {
+  return [lineOf(state, record, false), handedBack(record)].filter(Boolean).join("\n");
+}
+
+/** `worker_status`: one worker's line and its report in full, or every worker's line. */
 async function statusOf(state: PoolState, id: unknown): Promise<string> {
   await readQuestions(state);
-  const listed = hasText(id) ? state.records.filter((record) => record.id === id) : state.records;
-  if (hasText(id) && !listed.length) return POOL_WORDS.unknown(id);
-  if (!listed.length) return POOL_WORDS.none;
-  return listed.map((record) => lineOf(state, record)).join("\n");
+  if (hasText(id)) {
+    const record = recordOf(state, id);
+    return record ? detailOf(state, record) : POOL_WORDS.unknown(id);
+  }
+  if (!state.records.length) return POOL_WORDS.none;
+  return state.records.map((record) => lineOf(state, record, true)).join("\n");
 }
 
 /** `worker_wait`'s seconds as a whole number from 1 to the cap. */
@@ -178,24 +204,42 @@ function standing(records: readonly WorkerRecord[]): string {
 }
 
 /**
- * `worker_wait`: until the worker named (or any worker) ends or waits on the person, or the seconds
- * pass; answers where they stand then.
+ * `worker_wait`: until the worker named (or any worker) ends or waits on the person, the person
+ * writes in the chat (their words reach the lead's session at its next step, which this wait is),
+ * or the seconds pass; answers where they stand then, with the report of each that ended.
  */
 async function waitWorkers(state: PoolState, args: AnyRecord): Promise<string> {
   const id = [args.id, args.worker].find(hasText) ?? null;
   if (id && !recordOf(state, id)) return POOL_WORDS.unknown(id);
+  const endedBefore = new Set(state.records.filter((record) => !isWorking(record)).map((record) => record.id));
   const { clock } = state.scope;
   const deadline = clock.now() + waitSeconds(args.seconds) * SECOND_MS;
   const watched = () => (id ? state.records.filter((record) => record.id === id) : runningRecords(state));
-  // A question asked since the lead last looked wakes the wait at once.
-  const before = standing(watched());
-  await readQuestions(state);
-  while (standing(watched()) === before && clock.now() < deadline && watched().some(isWorking)) {
-    const runs = watched().flatMap((record) => state.runs.get(record.id) ?? []);
-    await Promise.race([...runs, clock.sleep(Math.min(QUESTION_POLL_MS, deadline - clock.now()))]);
+  const words = nextWords(state.scope.threadId);
+  let wrote = false;
+  void words.ended.then(() => {
+    wrote = true;
+  });
+  try {
+    // A question asked since the lead last looked wakes the wait at once.
+    const before = standing(watched());
     await readQuestions(state);
+    while (!wrote && standing(watched()) === before && clock.now() < deadline && watched().some(isWorking)) {
+      const runs = watched().flatMap((record) => state.runs.get(record.id) ?? []);
+      await Promise.race([...runs, words.ended, clock.sleep(Math.min(QUESTION_POLL_MS, deadline - clock.now()))]);
+      await readQuestions(state);
+    }
+  } finally {
+    words.cancel();
   }
-  return statusOf(state, id);
+  const status = id ? await statusOf(state, id) : await everyLine(state, endedBefore);
+  return wrote ? `${WAIT_ENDED.workers}\n\n${status}` : status;
+}
+
+/** Every worker's line, and in full what each one that ended since `endedBefore` handed back. */
+async function everyLine(state: PoolState, endedBefore: ReadonlySet<string>): Promise<string> {
+  const endedNow = state.records.filter((record) => !isWorking(record) && !endedBefore.has(record.id));
+  return [await statusOf(state, null), ...endedNow.map(handedBack)].join("\n\n");
 }
 
 // ── steer and stop ───────────────────────────────────────────────────────────────────────────

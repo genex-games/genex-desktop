@@ -443,7 +443,7 @@ describe("reopening the finished build once the reply has ended", () => {
     assert.equal(told[0]?.type, "messages");
     assert.match(
       String(told[0]?.words),
-      /The build goes on until your request is checked, by about .+ at the latest — keep the app open and the Mac awake\./,
+      /The build goes on until your request is checked, by about .+ at the latest — keep the app open and the computer awake\./,
     );
 
     assert.equal(starts.length, 1);
@@ -835,6 +835,29 @@ describe("the chat's message, from the queue to the reopened run (chat-dispatch.
     assert.ok(chat.store.journal.director.reopened, "the run started from the reopened journal");
   });
 
+  it("R9b. Keep building after a finished build its session led reopens it with no turn deciding: the session is never asked", async () => {
+    const chat = chatAfter(finishedJournal(), finishedLog(), []);
+    const keep = {
+      type: "user_message",
+      threadId: THREAD,
+      text: "Keep building: fix what’s left.\n- The plaza is still grey.",
+      engine: "codex",
+      project: "plaza",
+      messageId: "m9b",
+      autopilot: { hours: 2, keepBuilding: true },
+    };
+    await handleUserMessage(chat.studio as never, keep as never);
+    const registered = () =>
+      chat.log.filter((entry) => entry.data.event_type === "run_registered" && entry.data.payload?.runId === RUN);
+    for (let n = 0; n < 200 && registered().length < 2; n++) await sleep(10);
+    for (let n = 0; n < 200 && chat.studio.activeRuns.size + chat.studio.startingRuns.size > 0; n++) await sleep(10);
+    assert.equal(chat.requests.length, 0, "no session decided whether it was a contained change");
+    assert.equal(registered()[1]?.data.payload?.resumed, true, "the same build goes on");
+    assert.equal(registered()[1]?.data.payload?.budgets?.wallClockMs, 2 * HOUR_MS);
+    const steer = chat.log.find((entry) => entry.data.event_type === "run_steering");
+    assert.match(String(steer?.data.payload?.text), /The plaza is still grey/, "what is left is the build's ask");
+  });
+
   it("R9c. a command's result after a finished build its session led inherits no Loop from the question the session asked: nothing reopens", async () => {
     const words = "I ran this in the terminal:\nnpm test\n\nIt failed (exit code 1). It printed nothing.";
     const log = [
@@ -881,16 +904,22 @@ describe("the chat's message, from the queue to the reopened run (chat-dispatch.
     assert.equal("autopilot" in loopOn, false, "a message for a paused build drops its Loop");
     assert.equal(steersInto({ ...action, messageId: "m10", autopilot: { hours: 2 } }, loopOn), false);
     assert.equal(steersInto({ ...action, messageId: "m10" }, loopOn), true);
+    // Named flip: the session after a paused build now also holds the start of a new Loop, for one
+    // the user asks for in words; the paused build itself is still only resumed, never reopened.
     assert.deepEqual(
       (paused.requests[0]?.interviewTools ?? []).map((tool: { name: string }) => tool.name),
-      ["resume_run"],
+      ["start_autopilot", "resume_run"],
     );
 
     const loopOff = chatAfter(finishedJournal(), finishedLog(), [
       { name: "reopen_run", args: { text: "add enemies" } },
     ]);
     await handleUserMessage(loopOff.studio as never, { ...action } as never);
-    assert.equal(loopOff.requests[0]?.interviewTools, undefined);
+    // Named flip: with Loop off the session now holds only the start of a Loop asked for in words.
+    assert.deepEqual(
+      (loopOff.requests[0]?.interviewTools ?? []).map((tool: { name: string }) => tool.name),
+      ["start_autopilot"],
+    );
     await sleep(20);
     const registrations = loopOff.log.filter((entry) => entry.data.event_type === "run_registered");
     assert.equal(registrations.length, 1, "nothing reopened");

@@ -57,6 +57,11 @@ const MAX_STDERR_CHARS = 4_000;
 const CHILD_CLOSE_GRACE_MS = 2 * SECOND_MS;
 /** `tools/list` pages read before the list is taken as complete. */
 const MAX_TOOL_PAGES = 20;
+/**
+ * What a server that only speaks the older SSE transport answers the Streamable HTTP POST with:
+ * no such route, method not allowed, or a request it cannot read. A URL saved as HTTP then tries SSE.
+ */
+const SSE_ONLY_STATUSES: ReadonlySet<number> = new Set([400, 404, 405]);
 
 /** What a connector's failures say. */
 const MESSAGE = {
@@ -458,6 +463,21 @@ function serverIdentity(info: ReturnType<NonNullable<SdkClient["getServerVersion
   return { ...(title ? { title } : {}), icons: info?.icons };
 }
 
+/** The HTTP status an SDK transport error carries (`StreamableHTTPError`, `SseError`), if any. */
+function httpStatusOf(error: unknown): number | undefined {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "number" ? code : undefined;
+}
+
+/** A connection that failed, with the HTTP status a URL server answered when it gave one. */
+export class McpConnectFailed extends Error {
+  readonly status: number | undefined;
+  constructor(message: string, status: number | undefined) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export class McpConnection {
   readonly connector: McpConnector;
   health: McpHealth;
@@ -675,11 +695,33 @@ export class McpConnection {
     }
   }
 
+  /** Connect over the connector's transport; a URL saved as HTTP that answers like an SSE-only server gets SSE. */
   async #open(signal?: AbortSignal, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
+    try {
+      await this.#openOver(await this.#transportFor(), signal, timeoutMs);
+    } catch (error) {
+      if (!(await this.#speaksOnlySse(error))) throw error;
+      await this.#openOver(await this.#sseTransport(), signal, timeoutMs);
+    }
+  }
+
+  /** Whether a failed Streamable HTTP handshake is the refusal of a server that only speaks SSE. */
+  async #speaksOnlySse(error: unknown): Promise<boolean> {
+    if (this.connector.transport !== McpTransport.Http) return false;
+    const { StreamableHTTPError } = (await import("@modelcontextprotocol/sdk/client/streamableHttp.js")) as unknown as {
+      StreamableHTTPError: new (...args: never[]) => Error & { code?: number };
+    };
+    if (!(error instanceof StreamableHTTPError)) return false;
+    const unanswered = this.#transport;
+    this.#transport = undefined;
+    await unanswered?.close().catch(() => {});
+    return SSE_ONLY_STATUSES.has(error.code ?? 0);
+  }
+
+  async #openOver(transport: SdkTransport, signal?: AbortSignal, timeoutMs = CONNECT_TIMEOUT_MS): Promise<void> {
     const epoch = this.#epoch;
     const cancelled = () => epoch !== this.#epoch || Boolean(signal?.aborted);
     const client = await this.#newClient();
-    const transport = await this.#transportFor();
     this.#watch(client);
     if (cancelled()) throw new Error(MESSAGE.ConnectionCancelled);
     // Recorded before the handshake so a connect that times out still has its child to kill.
@@ -739,7 +781,7 @@ export class McpConnection {
           const message = this.#message(error);
           await this.close().catch(() => {});
           this.#setHealth(McpHealth.Failed, message);
-          throw new Error(message);
+          throw new McpConnectFailed(message, httpStatusOf(error));
         },
       )
       .finally(() => {

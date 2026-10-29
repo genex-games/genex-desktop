@@ -1,11 +1,10 @@
-import { lstat } from "node:fs/promises";
-import path from "node:path";
 import { type GameProject, GameStack, stackOf } from "../../shared/game-project.ts";
 import { GENEX_PLUGIN_ID } from "../../shared/genex.ts";
 import { PluginAccountState } from "../../shared/plugins.ts";
 import type { StudioCore } from "../studio-core.ts";
 import type { HarnessHostApi } from "../../shared/harness-api.ts";
 import { lacksRustWebBuild } from "./genex-publish.ts";
+import { takesGenexPackages } from "./genex-package.ts";
 
 type Readiness = HarnessHostApi["plugins.preflightMultiplayer"]["result"];
 
@@ -17,7 +16,7 @@ export const MULTIPLAYER_REASON = {
     "This Rust · wgpu game has no web build (Browser is not among its destinations, or genex.toml declares native-only GPU features), so it has no Genex draft to play online.",
   RustReady:
     "Turn on [net] enabled in genex.toml, export the web build, publish a draft, and test it in two windows. Studio's Live is a loopback room: multiplayer needs a real hosted two-client test.",
-  NoManifest: "The game needs a regular package.json before SDK installation.",
+  NoManifest: "The game needs a package.json (or to be made from Studio's template) before SDK installation.",
   NoInstall: "Enable Genex's pinned SDK installation tool before online work.",
   Locked: "Connect or unlock Genex before online work; account readiness is unavailable.",
   NoPublish: "Enable the consented Genex draft publishing route before online work.",
@@ -72,14 +71,13 @@ async function gameNamed(core: StudioCore, project: string): Promise<GameProject
 export async function preflightMultiplayer(core: StudioCore, project: string, threadId?: string): Promise<Readiness> {
   const binding = await core.pluginBinding(project, threadId);
   if (!binding) throw new Error("Open a game before checking prerequisites");
-  const manifest = await lstat(path.join(binding.directory, "package.json")).catch(() => null);
   // The bound game's own listing, as its builders are handed it (the web game's view, by stack).
   const game = await gameNamed(core, project);
   const stack = game ? stackOf(game.shape) : null;
   const tools = new Set(core.plugins.snapshot([], undefined, stack).tools.map((tool) => tool.name));
   const webBuild = game && stack === GameStack.RustWgpu ? !(await lacksRustWebBuild(game)) : true;
   return multiplayerReadiness({
-    manifest: manifest?.isFile() === true,
+    manifest: await takesGenexPackages(binding.directory),
     install: tools.has("genex__package"),
     publish: tools.has("genex__publish"),
     account: await core.plugins.accountState(GENEX_PLUGIN_ID),

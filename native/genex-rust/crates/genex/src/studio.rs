@@ -252,11 +252,13 @@ fn provenance_value(render: &CaptureRender) -> Option<Value> {
 
 /// The verb's change in the facade's types; a spelling the facade lacks is refused typed.
 fn facade_change(change: &RenderSettingsChange) -> Result<RenderChange, RenderSettingsRefusal> {
-    let SpelledChange { preset, device_class, features, reset_features, render_scale_lock, frame_budget_ms } = spell_change(change);
+    let SpelledChange { preset, device_class, features, reset_features, render_scale_lock, frame_budget_ms, look } = spell_change(change);
     let frame_budget_ms = frame_budget_ms.map(|budget| budget.map(|ms| ms as f32));
+    let refused = |refusal: crate::render::RenderRefusal| RenderSettingsRefusal::from_wire(refusal.wire()).unwrap_or(RenderSettingsRefusal::Unavailable);
+    let look = look.map(|keys| keys.map(|json| RenderChange::look_from_json(&json)).transpose()).transpose().map_err(refused)?;
     RenderChange::from_spellings(preset, device_class, &features, render_scale_lock)
-        .map(|change| RenderChange { reset_features, frame_budget_ms, ..change })
-        .map_err(|refusal| RenderSettingsRefusal::from_wire(refusal.wire()).unwrap_or(RenderSettingsRefusal::Unavailable))
+        .map(|change| RenderChange { reset_features, frame_budget_ms, look, ..change })
+        .map_err(refused)
 }
 
 /// `volatile.gpu`: the encoder's draws, compute dispatches and render passes for the last frame.

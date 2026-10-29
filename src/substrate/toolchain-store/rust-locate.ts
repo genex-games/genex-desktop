@@ -47,6 +47,9 @@ export const RUST_TRIPLE = {
   [BuildTarget.Android]: "aarch64-linux-android",
 } as const satisfies Record<BuildTarget, string>;
 
+/** The iOS Simulator's triple on Apple silicon: an iPhone game's second standard library (the Simulator export's build). */
+export const RUST_IOS_SIMULATOR_TRIPLE = "aarch64-apple-ios-sim";
+
 /** The triple of the sysroot each store host runs (its standard library comes with the `rust` component). */
 export const RUST_HOST_TRIPLE = {
   [ToolchainHost.MacArm64]: "aarch64-apple-darwin",
@@ -73,13 +76,29 @@ export const RUST_SIZES_FILE = "rust-sizes.json";
 export const RUST_TARGET_DIR = "target";
 /**
  * The dev profile's settings over cargo's defaults, as `--config` values, for every Rust build that
- * is not an export and for every prewarm (K6 rebuild speed): the engine and every other dependency
- * compile once at opt-level 1, so the executable a rebuild links is a third of the size (a faster
- * link, copy, digest and admission scan) and Live runs optimized engine code, while the game crate
- * keeps cargo's unoptimized, incremental dev settings and its debug info. A prewarm built without
- * them is another dependency build: a game's build cloning it would rebuild every dependency.
+ * is not an export and for every prewarm (K6 rebuild speed, OPT run speed): the engine and every
+ * other dependency compile once, in the prewarm, at opt-level 3, so Live, judging and playtests run
+ * wgpu, Rapier, glam and skinning near release speed; the game crate compiles at opt-level 1, which
+ * makes its own loops and the generic engine code it instantiates fast while its rebuild stays
+ * incremental and about as quick as unoptimized. Neither level changes a float result: rustc never
+ * contracts or reorders float operations at any opt-level, so the determinism rows hold. A prewarm
+ * built without these is another dependency build: a game's build cloning it would rebuild every
+ * dependency, so a prewarm records them and one made with others is stale. Debug info is line
+ * tables only (R-7), which backtraces and the symbolicator read.
+ *
+ * The dependencies run without debug assertions or overflow checks, as in an export (lane MK):
+ * kept, they cost a Live build of a 10,000-ghoul horde more than half its CPU frame (objc2 checks the
+ * signature of every Metal message, and wgpu, Rapier and the mixer check as they go), and the
+ * engine's own debug assertions are a handful of index checks. The game crate keeps cargo's dev
+ * defaults for both, so an agent's own arithmetic still traps in Live.
  */
-export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze(['profile.dev.package."*".opt-level=1']);
+export const RUST_DEV_PROFILE_SETTINGS: readonly string[] = Object.freeze([
+  "profile.dev.opt-level=1",
+  'profile.dev.package."*".opt-level=3',
+  'profile.dev.debug="line-tables-only"',
+  'profile.dev.package."*".debug-assertions=false',
+  'profile.dev.package."*".overflow-checks=false',
+]);
 /** In a destination's folder: the warm project's lock, as it was resolved offline. */
 export const RUST_WARM_LOCK_FILE = "Cargo.lock";
 /** The host-made naga validator (`rust-prewarm.ts`), in the tools folder. */
@@ -113,6 +132,8 @@ export interface RustPrewarmRecord {
   triple: string;
   /** The compiler flags every build cloning this folder must pass too, or it rebuilds every dependency. */
   rustflags: string[];
+  /** The cargo profile it was built with ({@link RUST_DEV_PROFILE_SETTINGS} when it was made); another is stale. */
+  profile: string[];
   steps: RustPrewarmStepRecord[];
   /** Target-folder-relative artifacts and build-script out dirs, from Cargo's JSON messages. */
   outputs: string[];
@@ -320,8 +341,12 @@ async function readRecord(file: string): Promise<Record<string, unknown> | null>
   return isJsonObject(value) && value.schema === RECORD_SCHEMA ? value : null;
 }
 
-/** Every triple a record may name: a destination's, or a store host's own. */
-const KNOWN_TRIPLES: ReadonlySet<string> = new Set([...Object.values(RUST_TRIPLE), ...Object.values(RUST_HOST_TRIPLE)]);
+/** Every triple a record may name: a destination's (the iOS Simulator's too), or a store host's own. */
+const KNOWN_TRIPLES: ReadonlySet<string> = new Set([
+  ...Object.values(RUST_TRIPLE),
+  RUST_IOS_SIMULATOR_TRIPLE,
+  ...Object.values(RUST_HOST_TRIPLE),
+]);
 
 const isCount = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
 const isStringList = (value: unknown): value is string[] =>
@@ -351,7 +376,7 @@ function isRustPrewarmRecord(
   record: Record<string, unknown>,
   target: BuildTarget,
 ): record is Record<string, unknown> & RustPrewarmRecord {
-  const lists = isStringList(record.rustflags) && isStringList(record.outputs);
+  const lists = isStringList(record.rustflags) && isStringList(record.outputs) && isStringList(record.profile);
   const steps = Array.isArray(record.steps) && record.steps.every(isPrewarmStep);
   const sizes = isCount(record.units) && isCount(record.bytes);
   const named = typeof record.lock === "string" && record.target === target && record.triple === RUST_TRIPLE[target];
@@ -365,7 +390,10 @@ export async function readRustBase(root: string, lock: ToolchainLock): Promise<R
   return record;
 }
 
-/** A destination's prewarm record, when it is this lock's, this destination's and made with `rustflags`. */
+/**
+ * A destination's prewarm record, when it is this lock's, this destination's and made with
+ * `rustflags` and this checkout's {@link RUST_DEV_PROFILE_SETTINGS}.
+ */
 export async function readRustPrewarm(
   root: string,
   lock: ToolchainLock,
@@ -375,7 +403,8 @@ export async function readRustPrewarm(
   const record = await readRecord(path.join(rustTargetFolder(root, lock, target), RUST_PREWARM_FILE));
   if (!record || record.lock !== lock.digest || !isRustPrewarmRecord(record, target)) return null;
   const sameFlags = rustflags === undefined || record.rustflags.join("\u0000") === rustflags.join("\u0000");
-  return sameFlags ? record : null;
+  const sameProfile = record.profile.join("\u0000") === RUST_DEV_PROFILE_SETTINGS.join("\u0000");
+  return sameFlags && sameProfile ? record : null;
 }
 
 const exists = (file: string) =>

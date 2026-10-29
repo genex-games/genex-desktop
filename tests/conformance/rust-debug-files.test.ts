@@ -421,9 +421,21 @@ describe("the kept debug folders' hostile table", () => {
 });
 
 describe("the Rust lane keeps an export's debug files outside out/", { skip: SKIP_ON_WINDOWS }, () => {
-  it("a Mac export builds with line tables, a packed dSYM and the debug map stripped; Live keeps cargo's dev profile", async () => {
+  it("a Mac export builds with line tables, a packed dSYM and the debug map stripped; Live keeps cargo's dev profile with line tables only", async () => {
     for (const [purpose, expected] of [
-      [CppBuildPurpose.Live, ['profile.dev.package."*".opt-level=1']],
+      // Flipped from the opt-level row alone (R-7): Live builds keep line tables only. Flipped again
+      // from dependencies at opt-level 1 over an unoptimized game crate (OPT), and again for the
+      // dependencies' debug assertions and overflow checks, now off (MK).
+      [
+        CppBuildPurpose.Live,
+        [
+          "profile.dev.opt-level=1",
+          'profile.dev.package."*".opt-level=3',
+          'profile.dev.debug="line-tables-only"',
+          'profile.dev.package."*".debug-assertions=false',
+          'profile.dev.package."*".overflow-checks=false',
+        ],
+      ],
       [CppBuildPurpose.Export, [...EXPORT_DEBUG_SETTINGS[DebugFileKind.Dsym]]],
     ] as const) {
       const parent = await realpath(await tmpDir("rust-debug-profile-"));

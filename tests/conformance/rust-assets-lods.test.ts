@@ -26,6 +26,7 @@ import { GltfComponent, meshToGlb, readGlb, writeGlb } from "../../src/substrate
 import { ImportConverter } from "../../src/substrate/asset-import/import-plan.ts";
 import {
   addLodExtras,
+  LOD_FINE_RELATIVE_ERROR,
   type LodSet,
   LodSkip,
   readLodSet,
@@ -271,7 +272,9 @@ describe("import-time LODs (genex_lods)", () => {
     const { json, bin } = readGlb(outcome.bytes) as { json: Json; bin: Uint8Array };
     const primitive = json.meshes[0].primitives[0];
     const extras = primitive.extras[LODS_EXTRAS_KEY];
-    assert.deepEqual(Object.keys(extras), Object.values(LodExtrasKey));
+    // Lane FR: `casters` is written only for a chain that opens with a casters' level.
+    const keys = Object.values(LodExtrasKey).filter((key) => key !== LodExtrasKey.Casters);
+    assert.deepEqual(Object.keys(extras), keys);
     assert.equal(extras.version, LOD_SCHEMA_VERSION);
     assert.ok(extras.levels.length >= 2 && extras.levels.length <= LOD_MAX_LEVELS, `${extras.levels.length} levels`);
     for (const level of extras.levels) assert.deepEqual(Object.keys(level), Object.values(LodLevelKey));
@@ -333,6 +336,9 @@ describe("import-time LODs (genex_lods)", () => {
     ["a level that is not whole triangles", LodFault.NotCoarser, (extras) => (extras.levels[0].count -= 1)],
     ["a finer level after a coarser one", LodFault.NotCoarser, (extras) => extras.levels.reverse()],
     ["a negative error", LodFault.NotCoarser, (extras) => (extras.levels[0].error = -1)],
+    ["two caster levels", LodFault.OverLimit, (extras) => (extras.casters = 2)],
+    ["every level the casters'", LodFault.OverLimit, (extras) => (extras.casters = extras.levels.length)],
+    ["a caster count that is not a number", LodFault.OverLimit, (extras) => (extras.casters = "1")],
   ];
   for (const [what, fault, damage] of hostile) {
     it(`extras with ${what} are refused ${fault}`, async () => {
@@ -360,6 +366,88 @@ describe("import-time LODs (genex_lods)", () => {
     // GF round 2: the golden was wound inward, so the runtime drew it inside out.
     for (const primitive of [0, 1])
       assert.equal(inwardTriangles(golden, primitive), 0, `primitive ${primitive} faces outward`);
+  });
+});
+
+/** How many thin flaps {@link finnedSphere} stands on the sphere. */
+const FINS = 24;
+/** How far each flap's tip stands off the sphere (a ghoul's rags, claws and ears: thin, two-sided). */
+const FIN_HEIGHT = 0.3;
+
+/**
+ * A 16 x 32 sphere with {@link FINS} thin two-sided flaps standing on edges of its surface, each a
+ * triangle and its reverse: the shape the simplifier's quadrics cannot see (a flap folds into its
+ * own plane at no cost), so a level that halves the triangles drops them whole.
+ */
+function finnedSphere(): { positions: Float32Array; indices: Uint32Array; glb: Uint8Array } {
+  const [rings, segments] = [16, 32];
+  const positions = [...spherePositions(rings, segments)];
+  const indices = [...sphereIndices(rings, segments)];
+  for (let fin = 0; fin < FINS; fin++) {
+    const r = 2 + Math.floor((fin * (rings - 4)) / FINS);
+    const s = (fin * 7) % segments;
+    const [a, b] = [r * (segments + 1) + s, r * (segments + 1) + s + 1];
+    const mid = [0, 1, 2].map((axis) => ((positions[a * 3 + axis] ?? 0) + (positions[b * 3 + axis] ?? 0)) / 2);
+    const tip = positions.length / 3;
+    const out = Math.hypot(...mid);
+    positions.push(...mid.map((value) => (value / out) * (1 + FIN_HEIGHT)));
+    indices.push(a, b, tip, b, a, tip);
+  }
+  const mesh = { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) };
+  return { ...mesh, glb: meshToGlb({ name: "finned", materials: [], primitives: [mesh] }) };
+}
+
+/** The largest side of the box around `positions` (meshoptimizer's scale). */
+function extentOf(positions: Float32Array): number {
+  const spans = [0, 1, 2].map((axis) => {
+    const values = positions.filter((_, at) => at % 3 === axis);
+    return Math.max(...values) - Math.min(...values);
+  });
+  return Math.max(...spans);
+}
+
+describe("a finer first level (lane FR)", () => {
+  it("a mesh whose half-triangle level drops its flaps gets a casters' level within 2% of its extent first", async () => {
+    const finned = finnedSphere();
+    const outcome = await addLodExtras(finned.glb);
+    assert.ok(outcome.simplified, JSON.stringify(outcome));
+    const { set } = levelsOf(outcome.bytes);
+    assert.equal(set.casters, 1, "the finer level is the shadow casters' alone");
+    const [fine, half] = set.levels;
+    assert.ok(fine && half, "at least two levels");
+    const bound = LOD_FINE_RELATIVE_ERROR * extentOf(finned.positions);
+    const deviation = vertexDeviation(finned.positions, fine.indices);
+    assert.ok(deviation <= bound, `the first level's vertices lie within ${bound}: ${deviation}`);
+    assert.ok(
+      fine.error >= Math.fround(deviation) && fine.error <= bound,
+      `its error ${fine.error} is honest and bounded`,
+    );
+    const triangles = finned.indices.length / 3;
+    assert.ok(
+      fine.indices.length / 3 <= triangles * 0.85,
+      `markedly coarser: ${fine.indices.length / 3} of ${triangles}`,
+    );
+    assert.ok(half.error > bound, `the halving level follows it: ${half.error}`);
+    assert.ok(half.indices.length <= fine.indices.length * 0.85, "and is markedly coarser again");
+  });
+
+  it("the finned model's chain is the runtime's golden (genex-render tests/glb_lods.rs loads it)", async () => {
+    const outcome = await addLodExtras(finnedSphere().glb);
+    assert.ok(outcome.simplified);
+    const golden = new Uint8Array(await readFile(path.join(FIXTURES, "asset-import", "lods-finned.glb")));
+    assert.equal(sha(outcome.bytes), sha(golden));
+  });
+
+  it("a mesh whose half-triangle level is already within the bound keeps its chain", async () => {
+    const plain = await addLodExtras(sphereGlb(32, 64));
+    assert.equal(levelsOf(plain.bytes).set.casters, 0, "no caster level");
+    const [first] = levelsOf(plain.bytes).set.levels;
+    assert.ok(first && first.indices.length / 3 <= 32 * 64, "a first level");
+    assert.ok(
+      first.error <= LOD_FINE_RELATIVE_ERROR * 2,
+      `a smooth sphere's first level is fine already: ${first.error}`,
+    );
+    assert.ok(first.indices.length / 3 <= 32 * 64 * 2 * 0.55, "and it is the half-triangle level");
   });
 });
 

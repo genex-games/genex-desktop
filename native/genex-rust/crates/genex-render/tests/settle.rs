@@ -698,8 +698,8 @@ fn metal_on_the_high_preset_a_capture_from_another_camera_leaves_the_next_live_f
     }
 }
 
-/// Every temporal feature on ultra (TAA with sharpening asked for, full-resolution GTAO with its
-/// history, PCSS, auto exposure): a capture after a hundred Live frames of another shot is the
+/// Every temporal feature on ultra (TAA, full-resolution GTAO with its history, PCSS, auto
+/// exposure): a capture after a hundred Live frames of another shot is the
 /// cold renderer's picture, re-rendered over the preset's whole jitter cycle.
 #[test]
 #[ignore = "needs a GPU: run with --ignored metal"]
@@ -708,7 +708,8 @@ fn metal_on_ultra_a_settled_capture_after_live_frames_equals_a_cold_one() {
     let ultra = || preset_renderer(&gpu, QualityPreset::Ultra, auto_look(3.0), (WIDTH, HEIGHT));
     let mut warmed = ultra();
     let quality = *warmed.renderer().quality();
-    assert!(quality.ao.temporal && quality.anti_aliasing == AntiAliasing::TaaSharpen, "{quality:?}");
+    // Release R-13 flips ultra's anti-aliasing to plain TAA (was TaaSharpen; named in the PR).
+    assert!(quality.ao.temporal && quality.anti_aliasing == AntiAliasing::Taa, "{quality:?}");
     assert_eq!(warmed.settle_frames(), quality.taa.jitter_cycle.frames());
     for tick in 1..=LIVE_FRAMES {
         warmed.render(&gpu, &circling(tick, 12.0), CullPath::Gpu, None).expect("Live frame circling");

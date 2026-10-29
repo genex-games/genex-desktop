@@ -486,8 +486,8 @@ export { NativeRefusal, TargetRefusal };
 
 /** Pixel layout of a native capture, rows top-down. */
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
-/** The longest side a capture may have. */
-export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The longest side a capture may have: an 8K frame. */
+export const NATIVE_CAPTURE_MAX_PX = 8192;
 /** The shortest side a capture may be asked to draw at: the world target's smallest. */
 export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes one capture may take. */
@@ -514,8 +514,12 @@ export const NATIVE_HEARTBEAT_MS = 5 * SECOND_MS;
 export const NATIVE_STDERR_LINE_MAX_CHARS = 2048;
 /** The most stderr lines one `native.log` event carries. */
 export const NATIVE_LOG_BATCH_MAX = 200;
-/** A game past this memory footprint is killed. */
-export const NATIVE_GAME_MEMORY_MAX_BYTES = 4 * 1024 ** 3;
+/**
+ * The memory a game should fit in to run on phones and the web. A desktop run past it keeps
+ * running (normal for a desktop game) and its `native.status` says so (`memory.overBudget`); the
+ * host kills a run only past its own cap, from the computer's memory (`memory.capBytes`).
+ */
+export const NATIVE_GAME_MEMORY_BUDGET_BYTES = 4 * 1024 ** 3;
 /** Embedded runs: the shared-image ring size. */
 export const NATIVE_FRAME_SLOTS = 3;
 /** Embedded runs: the longest side of a ring slot, in device pixels. */
@@ -680,6 +684,7 @@ export const RenderSettingsRefusal = {
   UnknownFeature: "unknown-render-feature",
   InvalidScale: "invalid-render-scale",
   InvalidFrameBudget: "invalid-frame-budget",
+  InvalidLook: "invalid-look",
 } as const;
 export type RenderSettingsRefusal = (typeof RenderSettingsRefusal)[keyof typeof RenderSettingsRefusal];
 
@@ -704,6 +709,8 @@ export interface RenderSettingsChange {
   renderScaleLock?: number | null;
   /** The frame time, in ms, dynamic resolution holds instead of the class's; null gives it back. */
   frameBudgetMs?: number | null;
+  /** `[render.look]` keys overlaid on the game's look, no rebuild; null gives its look back. */
+  look?: Record<string, unknown> | null;
 }
 
 /** What `renderSettings` answers: the settings in force after the call. */

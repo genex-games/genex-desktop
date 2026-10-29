@@ -44,8 +44,9 @@ suite for the game.
 
 ## One focused proof with two distinct identities
 
-Use regular + incognito guest identities, two accounts/devices, or ask the user to perform the exact
-sequence. Two tabs sharing one identity are one enforced seat.
+Run it on the preview link (`npx genex preview`): a preview plays in rooms of its own, apart from
+the live game. Use regular + incognito guest identities, two accounts/devices, or ask the user to
+perform the exact sequence. Two tabs sharing one identity are one enforced seat.
 
 1. Enter online using real clicks. Then press Space/Enter/the main action using real key input; confirm
    focus did not re-trigger Play/Leave and both sessions remain live.

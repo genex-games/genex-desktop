@@ -10,6 +10,11 @@
  * hidden window of its own, `STAND_IN_HANDLE`) wherever this build can make one, so nothing the
  * harness does changes what the person is watching; a build with no headless capability still
  * has only the live view.
+ *
+ * The person's own actions (a run card's Play, Play latest) have a hidden window of their own past
+ * the agents' ceiling (`PERSON_WINDOWS_MAX`, an acquire `by: PreviewActor.Person`), and a native
+ * lease of their own past `NATIVE_LEASES_MAX` (`PERSON_NATIVE_LEASES_MAX`), so a run that holds every
+ * builder's and lead's window and every judge's native run never refuses or delays the person's click.
  */
 import { shortId } from "./ids.ts";
 import { DEFAULT_BUILDERS, LEAD_WINDOWS, MAX_BUILDERS } from "../shared/builders.ts";
@@ -25,6 +30,23 @@ export const STAND_IN_HANDLE = "stand-in";
 export const VIEWPORT_MIN = { width: 320, height: 240 } as const;
 /** The largest size one leased window may take (`resize`): a 1920×1200 display; 1600×900 fits. */
 export const VIEWPORT_MAX = { width: 1920, height: 1200 } as const;
+
+/** Who a hidden window is for: the person's own action, or an agent's (every caller that names none). */
+export const PreviewActor = { Agent: "agent", Person: "person" } as const;
+export type PreviewActor = (typeof PreviewActor)[keyof typeof PreviewActor];
+
+/**
+ * Hidden windows only the person's own actions take, past the agents' ceiling. One Play at a time
+ * test-loads its build; a second while it does takes a free window of the agents' share, or is
+ * refused like theirs when none is free.
+ */
+export const PERSON_WINDOWS_MAX = 1;
+
+/**
+ * Native leases only the person's own actions take, past the agents' `NATIVE_LEASES_MAX`: a Play
+ * that needs a desktop build's run never waits for a run's judges to give theirs back (PW).
+ */
+export const PERSON_NATIVE_LEASES_MAX = 1;
 
 /** A window's size in pixels. */
 export interface ViewSize {
@@ -94,8 +116,12 @@ export class PreviewPool {
   #max: number;
   /** Hidden windows held, opening or still closing: what the ceiling (and the overflow past it) counts. */
   #reserved = 0;
+  /** The person's windows held, opening or still closing: counted apart, against `PERSON_WINDOWS_MAX`. */
+  #personReserved = 0;
   /** Native leases held, opening or still closing: counted apart, against `NATIVE_LEASES_MAX`. */
   #nativeReserved = 0;
+  /** The person's native leases held, opening or still closing: counted apart, against `PERSON_NATIVE_LEASES_MAX`. */
+  #personNativeReserved = 0;
   /** Native leases waiting for one to be given back, in the order they asked. */
   readonly #nativeWaiters = new Set<() => void>();
   readonly #creating = new Set<Promise<PreviewPort>>();
@@ -113,7 +139,10 @@ export class PreviewPool {
    * `owner` names who gives a lease back when its own `finally` can no longer run — a harness
    * boot (see {@link PreviewPool.releaseOwnedBy}). Leases the host holds for itself carry none.
    */
-  readonly #leases = new Map<string, { port: PreviewPort; facts: PreviewLeaseFacts; resized?: boolean }>();
+  readonly #leases = new Map<
+    string,
+    { port: PreviewPort; facts: PreviewLeaseFacts; resized?: boolean; person?: boolean }
+  >();
   /**
    * The stand-in, while it is open. It is not a lease: it replaces the live view the harness used
    * to drive, so it neither takes a builder's window nor counts toward `leaseCount`.
@@ -130,9 +159,17 @@ export class PreviewPool {
     this.#max = Math.max(0, options.max ?? DEFAULT_POOL_MAX);
   }
 
-  /** Hidden windows leased: native leases are counted apart ({@link PreviewPool.nativeLeaseCount}). */
+  /**
+   * Hidden windows the agents' share holds: native leases ({@link PreviewPool.nativeLeaseCount}) and
+   * the person's window ({@link PreviewPool.personLeaseCount}) are counted apart.
+   */
   get leaseCount(): number {
-    return [...this.#leases.values()].filter((lease) => !lease.facts.native).length;
+    return [...this.#leases.values()].filter((lease) => !lease.facts.native && !lease.person).length;
+  }
+
+  /** The person's windows and native leases held now. */
+  get personLeaseCount(): number {
+    return [...this.#leases.values()].filter((lease) => lease.person).length;
   }
 
   /** Native leases held now. */
@@ -163,12 +200,16 @@ export class PreviewPool {
   /**
    * A hidden window. `overflow` is for a host session whose only other choice was the person's own
    * window: it may go past `max` by up to `OVERFLOW_WINDOWS_MAX`, waits (until `signal` aborts) for
-   * a window to close beyond that, and gives the window back from its own `finally`.
+   * a window to close beyond that, and gives the window back from its own `finally`. `by:
+   * PreviewActor.Person` takes the person's window first ({@link PERSON_WINDOWS_MAX}); any other
+   * value is an agent's.
    */
   async acquire(options: {
     label: string;
     purpose?: "optimization";
     owner?: string;
+    /** Who the window is for; absent is an agent. */
+    by?: PreviewActor;
     overflow?: boolean;
     signal?: AbortSignal;
     /** The build the lease judges; absent, or the browser, is a hidden window. */
@@ -179,50 +220,62 @@ export class PreviewPool {
     if (!create) {
       throw new Error(MESSAGE.NoHeadless);
     }
-    if (this.#reserved >= this.#max && !options.overflow) {
-      throw new Error(MESSAGE.Exhausted(this.#reserved, this.#max));
-    }
-    if (options.overflow) await this.#overflowRoom(options.signal);
-    else this.#reserved++;
+    const person = options.by === PreviewActor.Person && this.#personReserved < PERSON_WINDOWS_MAX;
+    // No await unless it waits past the ceiling: a `disposeAll` called next must see this creation.
+    if (person) this.#personReserved++;
+    else if (options.overflow) await this.#overflowRoom(options.signal);
+    else this.#takeShared();
     let port: PreviewPort;
     const creation = Promise.resolve().then(() => create({ purpose: options.purpose }));
     this.#creating.add(creation);
     try {
       port = await creation;
     } catch (error) {
-      this.#reserved--;
-      this.#wakeWaiters();
+      this.#giveBackWindow(person);
       throw error;
     } finally {
       this.#creating.delete(creation);
     }
-    return this.#lease(port, {
-      label: options.label,
-      target: options.target ?? null,
-      owner: options.owner ?? null,
-      native: false,
-    });
+    const facts = { label: options.label, target: options.target ?? null, owner: options.owner ?? null, native: false };
+    return this.#lease(port, facts, person);
   }
 
-  #lease(port: PreviewPort, facts: PreviewLeaseFacts): PreviewLease {
+  /** Reserve a window of the agents' share, refused at the ceiling. */
+  #takeShared(): void {
+    if (this.#reserved >= this.#max) throw new Error(MESSAGE.Exhausted(this.#reserved, this.#max));
+    this.#reserved++;
+  }
+
+  /** A hidden window gone (or never opened): its place is free for the next one of its kind. */
+  #giveBackWindow(person: boolean): void {
+    if (person) this.#personReserved--;
+    else this.#reserved--;
+    // Only a window really gone makes room for a session waiting past the ceiling.
+    this.#wakeWaiters();
+  }
+
+  #lease(port: PreviewPort, facts: PreviewLeaseFacts, person = false): PreviewLease {
     const handle = shortId("pv");
-    this.#leases.set(handle, { port, facts });
+    this.#leases.set(handle, { port, facts, ...(person ? { person } : {}) });
     return { handle, port };
   }
 
   /**
-   * A native lease: a headless run of a C++ game, made by `createNative`. It waits (until `signal`
-   * aborts) while `NATIVE_LEASES_MAX` are held, and takes no hidden window's place.
+   * A native lease: a headless run of a C++ game, made by `createNative`. An agent's waits (until
+   * `signal` aborts) while `NATIVE_LEASES_MAX` are held; the person's takes their own first
+   * ({@link PERSON_NATIVE_LEASES_MAX}), so a Play never waits for a run's judges. It takes no hidden
+   * window's place.
    */
-  async #acquireNative(options: { label: string; owner?: string; signal?: AbortSignal; target: BuildTarget }) {
+  async #acquireNative(options: {
+    label: string;
+    owner?: string;
+    signal?: AbortSignal;
+    target: BuildTarget;
+    by?: PreviewActor;
+  }) {
     const create = this.#createNative;
     if (!create) throw new Error(MESSAGE.NoNative(options.target));
-    while (this.#nativeReserved >= NATIVE_LEASES_MAX) {
-      options.signal?.throwIfAborted();
-      await this.#nextNativeRelease(options.signal);
-    }
-    options.signal?.throwIfAborted();
-    this.#nativeReserved++;
+    const person = await this.#nativeRoom(options.by === PreviewActor.Person, options.signal);
     let port: PreviewPort;
     const creation = Promise.resolve().then(() =>
       create({ target: options.target, ...(options.owner ? { owner: options.owner } : {}) }),
@@ -231,18 +284,40 @@ export class PreviewPool {
     try {
       port = await creation;
     } catch (error) {
-      this.#nativeReserved--;
-      this.#wakeNative();
+      this.#giveBackNative(person);
       throw error;
     } finally {
       this.#creating.delete(creation);
     }
-    return this.#lease(port, {
-      label: options.label,
-      target: options.target,
-      owner: options.owner ?? null,
-      native: true,
-    });
+    const facts = { label: options.label, target: options.target, owner: options.owner ?? null, native: true };
+    return this.#lease(port, facts, person);
+  }
+
+  /**
+   * Waits (until `signal` aborts) for a native lease to be free, then reserves it before anything
+   * else runs: the person's own first when `person` asks, else one of the agents'. Answers whether
+   * it took the person's.
+   */
+  async #nativeRoom(person: boolean, signal: AbortSignal | undefined): Promise<boolean> {
+    for (;;) {
+      signal?.throwIfAborted();
+      if (person && this.#personNativeReserved < PERSON_NATIVE_LEASES_MAX) {
+        this.#personNativeReserved++;
+        return true;
+      }
+      if (this.#nativeReserved < NATIVE_LEASES_MAX) {
+        this.#nativeReserved++;
+        return false;
+      }
+      await this.#nextNativeRelease(signal);
+    }
+  }
+
+  /** A native lease gone (or never opened): its place is free for the next one of its kind. */
+  #giveBackNative(person: boolean): void {
+    if (person) this.#personNativeReserved--;
+    else this.#nativeReserved--;
+    this.#wakeNative();
   }
 
   /** Resolves when a native lease is given back; rejects when `signal` aborts first. */
@@ -307,13 +382,10 @@ export class PreviewPool {
       .then(() => {
         this.#retiring.delete(handle);
         if (lease.facts.native) {
-          this.#nativeReserved--;
-          this.#wakeNative();
+          this.#giveBackNative(lease.person === true);
           return;
         }
-        this.#reserved--;
-        // Only a window really gone makes room for a session waiting past the ceiling.
-        this.#wakeWaiters();
+        this.#giveBackWindow(lease.person === true);
       });
     // A failed cleanup keeps its reservation: the underlying session is not safe to reuse.
     this.#retiring.set(handle, disposal);

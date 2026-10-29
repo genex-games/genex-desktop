@@ -4,6 +4,7 @@ import path from "node:path";
 import type { WebContents } from "electron";
 import type { StudioCore } from "../studio-core.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { pressStageView } from "./stage-views.ts";
 import { sleep } from "./wait.ts";
 
 /** A thumbnail is rendered in the background; a heavy model takes a while. */
@@ -93,8 +94,8 @@ async function copyViewerFiles(core: StudioCore, project: string, dir: string): 
 
 /** Open the Assets stage and wait for the copied files and their thumbnails. */
 async function showAssets({ wc, check, waitFor }: AssetSmoke): Promise<void> {
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="live"]').click()`);
-  await wc.executeJavaScript(`document.querySelector('[data-stage-action="assets"]').click()`);
+  await pressStageView(wc, "live");
+  await pressStageView(wc, "assets");
   check(
     "viewer files appear in Assets",
     await waitFor(`!!document.querySelector('[data-asset-card="assets/viewer/animated.glb"]')`),

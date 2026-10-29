@@ -50,18 +50,26 @@ pub mod ui;
 /// Animation (AN-15): a character's graph and animators over genex-anim, advanced in `on_update`
 /// and drawn with `frame.character`.
 pub mod animation;
-mod camera;
+pub mod camera;
+mod camera_lens;
 mod character;
 mod ctx;
 mod decal;
 mod extend;
+mod foliage;
 mod frame;
 mod game;
 mod group;
 mod gfx;
 pub mod gpu;
 mod input;
+mod library;
 mod lod;
+mod mesh;
+mod mesh_ops;
+mod mesh_shapes;
+mod noise;
+mod scatter;
 #[doc(hidden)]
 pub mod loading;
 pub mod manifest;
@@ -69,6 +77,7 @@ mod map;
 pub mod math;
 /// Navigation: genex-nav's surface, the nav `sim.nav` holds and `game.navigation` registers.
 pub mod nav;
+pub mod plants;
 mod nav_bake;
 mod node_anim;
 /// How a game is drawn on each device: look, quality presets, device classes, the settings panel.
@@ -79,6 +88,7 @@ mod runtime;
 mod ragdoll;
 mod sim;
 mod particles;
+mod layers;
 mod stream;
 mod stream_groups;
 mod stream_source;
@@ -91,6 +101,9 @@ mod studio;
 /// The one presenter every shell draws with (native and web): host glue, not game API.
 #[doc(hidden)]
 pub mod present;
+/// The look facts the presenter measures for `state().__render.look` (display only).
+#[doc(hidden)]
+pub mod look_facts;
 /// The presenter's streamed view set (display state only).
 mod present_stream;
 /// The native presenter's headless device and model files.
@@ -98,20 +111,30 @@ mod present_stream;
 mod present_files;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 mod desktop;
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+mod desktop_bench;
 
 /// Time the rest of the enclosing block under a name checked when the game compiles
 /// (`genex::profile_scope!("enemy_ai")`); write-only, never in the checksum.
 pub use genex_profile::profile_scope;
 pub use camera::{Camera, Projection};
+/// How the world fills a window of another aspect: letterboxed, or expanded to fill it with the
+/// world kept whole and centred (`Game::fit`, `genex.toml [game] fit`).
+pub use genex_render::letterbox::Fit;
 pub use ctx::{Ctx, CtxRng, Key, Keys, Pads, Touch, TouchPhase, Touches};
 pub use decal::Decal;
+pub use foliage::{FOLIAGE_CUTOFF, WIND_STRENGTH_MAX, WindResponse};
 pub use extend::{CustomMaterial, ExtensionRefusal, ExtensionRefusalCode, PostPass};
 pub use frame::{
     Ambient, Color, CustomDraw, CustomMesh, DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, Draw, Frame, IrradianceVolume, Lights, Material, PointLight,
-    PostDraw, ReflectionProbe, Shape, SpotLight, Sun, Transform,
+    PostDraw, ReflectionProbe, Shape, SpotLight, Sun, Transform, DETAIL_FADE_METRES,
 };
 pub use game::{CameraRegistration, Game, PlayerRegistration};
 pub use particles::{PARTICLES_MAX, ParticleFlipbook, Particles, ParticlesError, ParticlesErrorCode};
+/// Layered materials and weather (AAA materials lane): cover, a second layer, weather presets.
+pub use layers::{Cover, LayerMask, MaterialLayer, Weather};
+/// Which weather preset a [`Weather`] is.
+pub use genex_render::weather::WeatherKind;
 pub use group::{Far, GroupShape, INSTANCE_GROUP_MAX, InstanceGroup, InstanceGroupError, InstanceGroupErrorCode};
 pub use terrain::{GRASS_DENSITY_MAX, GRASS_HEIGHT_MAX, Grass, Scatter, TERRAIN_LAYER_MAX, TERRAIN_SAMPLES_MAX, Terrain, TerrainError, TerrainErrorCode, TerrainLayer, TerrainTexel};
 /// The look a terrain's layers share (macro variation, wetness, the height blend's depth).
@@ -119,10 +142,21 @@ pub use genex_render::terrain::TerrainLook;
 /// How a material lets light through: subsurface scattering and diffuse transmission
 /// ([`Material::with_subsurface`]; renderer pass 2 B.1).
 pub use genex_render::subsurface::Subsurface;
+/// How a [`Material`]'s textures meet a surface ([`Material::with_uv_scale`], [`Material::with_world_uv`]; Bodycam B2b).
+pub use frame::UvMapping;
+/// What keeps a [`Material`]'s tiled textures from reading as a repeat (Bodycam B2b).
+pub use frame::UvVariation;
+pub use mesh::{MESH_PATH_PREFIX, MESH_TRIANGLES_MAX, MESH_VERTICES_MAX, MeshData, MeshError, MeshErrorCode};
+pub use mesh_ops::SUBDIVIDE_LEVELS_MAX;
+pub use mesh_shapes::{EXTRUDE_BEVEL_SEGMENTS, LATHE_SEGMENTS_MAX, PROFILE_SMOOTH_DEGREES, Profile, ROUND_SEGMENTS_MAX};
+pub use noise::{NOISE_OCTAVES_MAX, fbm3, noise3};
+pub use scatter::{DRESSING_CANDIDATES_MAX, DRESSING_TINT_BUCKETS, DRESSING_VARIANTS_MAX, Dressed, Dressing, Layer, Placed, SPLINE_SAMPLES_PER_SPAN, Spline, Surface, Zone};
 pub use gfx::{
     ASSET_READ_MAX_BYTES, AssetBytes, AssetError, AssetErrorCode, AssetGroup, AssetGroups, AssetInfo, AssetSource, AssetTable, Assets, CharacterAsset, Gfx,
     Model, ModelTriangles,
 };
+/// The Content Library (`docs/api/library.md`): `gfx.assets().library(id)` and what it hands out.
+pub use library::{LIBRARY_ASSET_FOLDER, LIBRARY_ENTRY_FILE, LIBRARY_ENTRY_SCHEMA, LibraryAsset, LibraryKind, library_folder};
 /// A model's levels of detail (game systems LOD-07): `Model::with_levels`, `Model::with_lod_bias`,
 /// `Assets::compound` and their refusals (`state().__render.lodRefused`).
 pub use lod::{Impostor, ImpostorLayout, LOD_BIAS_MAX, LOD_BIAS_MIN, LOD_LEVELS_MAX, LOD_NOMINAL_FOV_DEGREES, LodRefusalCode};
@@ -156,6 +190,10 @@ pub use present_files::AssetFiles;
 /// host glue.
 #[doc(hidden)]
 pub use stream_source::{AsyncSource, StreamAnswer, StreamBytes, StreamRequest};
+/// A compiled cell pack read whole and the pack format (release R-8): `genex::pack::CellPacks`.
+pub use stream_source::pack;
+/// FNV-1a 64, the digest the checksum and captures use, for a game's own digests (release R-8).
+pub use genex_core::digest;
 /// The native async source: the compiled table, then `assets/` by real path on the job pool.
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -177,6 +215,8 @@ pub use terrain_tiles::{
     TERRAIN_HEIGHT_RANGE_DEFAULT, TERRAIN_INDEX_BYTES_MAX, TERRAIN_TILE_BYTES_MAX, TERRAIN_TILE_SAMPLES, TERRAIN_TILES_FORMAT, TERRAIN_TILES_MAX,
     TERRAIN_TILES_VERSION, TerrainTiles,
 };
+/// Named asset groups loaded during play (STR-29): `sim.stream.require`, `ready`, `release_group`.
+pub use stream_groups::{GroupHandles, STREAM_GROUP_PREFETCH_TICKS, STREAM_GROUPS_REQUIRED_MAX};
 pub use stream_tick::{EnteredCell, STREAM_HOLD_LIVE_SLICE_MS, STREAM_HOLD_MAX_MS, STREAM_HOLD_OVERLAY_MS, StreamCommit, StreamState};
 #[cfg(feature = "physics")]
 /// A cell's static colliders and the ledger of streamed colliders (STR-10).
@@ -225,9 +265,10 @@ pub mod prelude {
     pub use crate::ui::{TextArgs, UiConfig, UiScale};
     pub use crate::math::{Mat3, Mat4, Quat, Vec2, Vec3, Vec4, vec2, vec3, vec4};
     pub use crate::{
-        Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Frame, Game, Gfx, Input, Key, Map,
-        Material, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
+        Assets, Camera, Color, Ctx, CustomMaterial, CustomMesh, DemoDriver, FacetState, Fit, Frame, Game, Gfx, Input, Key, Map,
+        Material, MeshData, Model, Pcg32, PhysicsWorld, PostPass, Projection, Set, Sim, Touch, Transform, Value, View, egui, json,
     };
+    pub use crate::{Cover, MaterialLayer, Weather};
     pub use crate::{Animator, Character, CharacterMotion, CharacterNav};
     // The derives a saved world names, with `#[serde(crate = "genex::serde")]`.
     pub use serde::{Deserialize, Serialize};

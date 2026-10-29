@@ -3,8 +3,8 @@ imported Nanite mesh is its fallback mesh (a 148k-triangle model reads as about 
 reports this one beside it. Reads .glb and .gltf (every mesh primitive drawn by a node, triangles
 only) and .obj (each face of n corners is n - 2 triangles); answers None for anything else or a
 file it can't read. Also the scale a rigged glTF's skeleton root carries (an exporter's centimetre
-Armature at 0.01), which Unreal's import bakes into the mesh, so the import counters it. Pure
-Python: reads the file, never runs or imports anything."""
+Armature at 0.01), which Unreal's import bakes into the mesh: rig_math takes it out of the file
+before the import. Pure Python: reads the file, never runs or imports anything."""
 
 import json
 import os
@@ -83,7 +83,7 @@ def source_triangles(file: str) -> int | None:
     return None
 
 
-def _parents(document: dict) -> dict[int, int]:
+def parents_of(document: dict) -> dict[int, int]:
     """Each node's parent, by index."""
     parents = {}
     for index, node in enumerate(document.get('nodes', [])):
@@ -101,17 +101,43 @@ def _uniform(node: dict) -> float:
     return sum(float(axis) for axis in scale) / 3
 
 
-def skeleton_counter_scale(document: dict) -> float:
-    """The uniform scale that undoes the scale of a glTF's first skin's root joint and the chain above it, or 1
-    when that scale is within a unit's tolerance of 1 or there is no skin. The root joint's own scale counts: an
-    Armature's 0.01 applied to the object alone leaves the root bone at x100 with every other bone in metres."""
+def depth_of(node: int, parents: dict[int, int]) -> int:
+    """How many ancestors the node has."""
+    depth, seen = 0, set()
+    while node in parents and node not in seen:
+        seen.add(node)
+        node = parents[node]
+        depth += 1
+    return depth
+
+
+def skeleton_root(document: dict) -> int | None:
+    """The node a glTF's skeleton hangs from: the shallowest joint of its first skin, or, in a file of clips
+    with no skin, the shallowest node an animation moves; None when it has neither."""
+    nodes = document.get('nodes', [])
     skins = document.get('skins', [])
     joints = skins[0].get('joints', []) if skins and isinstance(skins[0], dict) else []
+    if not joints:
+        joints = [channel.get('target', {}).get('node') for animation in document.get('animations', [])
+                  if isinstance(animation, dict) for channel in animation.get('channels', []) if isinstance(channel, dict)]
+    found = [j for j in joints if isinstance(j, int) and not isinstance(j, bool) and 0 <= j < len(nodes)]
+    if not found:
+        return None
+    parents = parents_of(document)
+    return min(found, key=lambda joint: (depth_of(joint, parents), joint))
+
+
+def skeleton_counter_scale(document: dict) -> float:
+    """The uniform scale that undoes the scale of a glTF's skeleton root (skeleton_root) and the chain above it,
+    or 1 when that scale is within a unit's tolerance of 1 or there is no skeleton. The root joint's own scale
+    counts: an Armature's 0.01 applied to the object alone leaves the root bone at x100 with every other bone
+    in metres."""
     nodes = document.get('nodes', [])
-    if not joints or not isinstance(joints[0], int) or not 0 <= joints[0] < len(nodes):
+    root = skeleton_root(document)
+    if root is None:
         return 1.0
-    parents = _parents(document)
-    product, at, seen = _uniform(nodes[joints[0]]), parents.get(joints[0]), set()
+    parents = parents_of(document)
+    product, at, seen = _uniform(nodes[root]), parents.get(root), set()
     while isinstance(at, int) and 0 <= at < len(nodes) and at not in seen:
         seen.add(at)
         product *= _uniform(nodes[at])

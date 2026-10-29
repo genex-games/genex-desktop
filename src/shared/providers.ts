@@ -6,6 +6,7 @@
  * it by `tests/conformance/providers.test.ts`. Adding a provider starts here
  * (docs/agent/recipes.md, "Provider or engine").
  */
+import { t } from "./i18n.ts";
 
 /**
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
@@ -33,15 +34,16 @@ export type RoleSupport = "presets" | "sessions" | "completion" | "single";
 
 /** What the sign-in card and the Models room say for a subscription. */
 export interface SignInCopy {
-  /** "your Claude subscription": the thing the user already pays for. */
-  readonly product: string;
   readonly card: string;
   readonly account: string;
   readonly install: string;
   /** The vendor's own install page for the CLI. */
   readonly installUrl: string;
   readonly get: string;
-  readonly who: string;
+  /** The flat sign-in card's line: the thing the user already pays for, put to work. */
+  readonly useLine: string;
+  /** The sign-in card's line while the subscription is not signed in: why, and who handles the password. */
+  readonly signInLine: string;
 }
 
 export interface ProviderInfo {
@@ -69,7 +71,10 @@ export const EngineId = {
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
-/** Every provider, subscriptions first in preference order. */
+/**
+ * Every provider, subscriptions first in preference order. Words a person reads are getters, so
+ * each read is in the current language (main loads this table before it sets its language).
+ */
 export const PROVIDERS = [
   {
     id: EngineId.ClaudeCode,
@@ -79,13 +84,27 @@ export const PROVIDERS = [
     roles: "presets",
     billing: "subscription",
     signIn: {
-      product: "your Claude subscription",
-      card: "Use your Claude subscription",
-      account: "Claude account",
-      install: "Claude Code isn't installed on this Mac.",
+      get card() {
+        return t("Use your Claude subscription");
+      },
+      get account() {
+        return t("Claude account");
+      },
+      get install() {
+        return t("Claude Code isn't installed on this Mac.");
+      },
       installUrl: "https://code.claude.com",
-      get: "Install Claude Code",
-      who: "Claude Code handles that part",
+      get get() {
+        return t("Install Claude Code");
+      },
+      get useLine() {
+        return t("Use your Claude subscription to build games.");
+      },
+      get signInLine() {
+        return t(
+          "Your Claude subscription expired or isn't signed in. The studio never sees your password — Claude Code handles that part.",
+        );
+      },
     },
   },
   {
@@ -96,13 +115,25 @@ export const PROVIDERS = [
     roles: "presets",
     billing: "subscription",
     signIn: {
-      product: "your ChatGPT subscription",
-      card: "Use your ChatGPT subscription",
-      account: "ChatGPT account",
-      install: "Codex isn't installed on this Mac.",
+      get card() {
+        return t("Use your ChatGPT subscription");
+      },
+      get account() {
+        return t("ChatGPT account");
+      },
+      get install() {
+        return t("Codex isn't installed on this Mac.");
+      },
       installUrl: "https://developers.openai.com/codex/cli",
-      get: "Install Codex",
-      who: "Codex handles that part",
+      get get() {
+        return t("Install Codex");
+      },
+      get useLine() {
+        return t("Use your ChatGPT subscription to build games.");
+      },
+      get signInLine() {
+        return t("Connect your ChatGPT subscription to build games. Codex handles sign-in in your browser.");
+      },
     },
   },
   {
@@ -143,7 +174,9 @@ export const PROVIDERS = [
   },
   {
     id: EngineId.LocalServer,
-    label: "Local server",
+    get label() {
+      return t("Local server");
+    },
     subscription: false,
     login: "none",
     roles: "sessions",

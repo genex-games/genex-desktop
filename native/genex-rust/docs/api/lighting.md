@@ -1,5 +1,41 @@
 # Lighting, materials and environment
 
+Every type and call in one line (each `frame.*` returns `&mut Frame`; each builder answers a new
+value):
+
+```rust
+use genex::prelude::*;                                      // Material, Color, Frame
+use genex::Subsurface;                                      // ::WAX, ::SKIN, ::LEAF, ::new(color, thickness)
+use genex::render::{Decal, IrradianceVolume, PointLight, ReflectionProbe, SpotLight};
+use genex::render::{Clouds, Environment, Fog, HdriEnvironment, HdriSun, Moon, SkyMedium, SkyParams};
+use genex::render::{QualityPreset, RenderConfig, ShadowConfig, ShadowFilter};
+use genex::render::units;                                   // physical units: lux, candela, lumens, nits, EV100
+frame.sun(direction, color, intensity); frame.ambient(color, intensity);
+frame.sun(direction, Color::WHITE, units::lux(100_000.0)); frame.ambient(sky, units::ambient_lux(20_000.0));
+units::lux(lux); units::candela(cd); units::lumens(lm); units::spot_lumens(lm, outer_degrees); units::nits(cd_m2);
+units::ambient_lux(lux); units::ev_from_ev100(ev100); units::kelvin(2700.0); // -> [u8; 3], Color::rgb(r, g, b)
+frame.point_light(position, range, color, intensity); frame.spot_light(position, direction, range, color, intensity);
+frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity).with_cone_degrees(25.0, 40.0).with_shadow(true));
+frame.point_light_with(&PointLight::new(position, range, color, intensity).with_shadow(true)); // a cube shadow map
+Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emissive(color, strength)
+// .with_base_texture(path) .with_normal_texture(path, strength) .with_metal_rough_texture(path) .with_orm_texture(path)
+// .with_occlusion_texture(path, strength) .with_emissive(color, strength) .with_emissive_texture(path) .with_untextured_color(color)
+// .with_uv_scale(u, v) .with_world_uv(metres) .with_uv_offset(u, v) .with_uv_rotation(radians) .with_uv_jitter(seed: u32)
+// .with_stochastic_tiling(true) .with_macro_variation(strength, metres) .with_subsurface(Subsurface::WAX)
+// .with_cover(Cover::snow(amount, slope, noise)) .with_detail(..) .with_layer(..) .with_parallax(..) .with_clearcoat(..) (docs/api/layered-materials.md)
+frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4).with_intensity(1.0));
+frame.irradiance_volume(&IrradianceVolume::new(min, max).with_cells([x, y, z]).with_blend(0.3).with_intensity(1.0));
+frame.decal(&Decal::on_wall(center, facing, width, height).with_base_texture(path)); // Decal::on_ground(center, width, length)
+frame.environment(Environment::sky());                      // Environment::Sky(SkyParams), ::hdri(path), ::Hdri(HdriEnvironment), ::Color
+SkyParams::default().with_stars(2e-5).with_moon(Some(Moon::new([x, y, z]))).with_clouds(Some(Clouds::default()));
+RenderConfig::new().fog(Fog::default().with_density(0.02)).local_exposure(0.5, 0.8);
+RenderConfig::new().shadows_at(QualityPreset::High, ShadowConfig::new().cascades(4).filter(ShadowFilter::Pcf5x5));
+```
+
+`Moon::new`, the sky's albedo, `Fog::with_color` and `Subsurface::new` take `[f32; 3]` arrays,
+not a `Vec3`; a sphere is `frame.sphere_with(center, radius, &material)`, never a `Transform`.
+There is no `Material::with_double_sided` (`docs/api/drawing.md` says how to draw both faces).
+
 Light a frame with `frame.sun(direction, color, intensity)` (towards the sun; it casts the
 shadows), `frame.ambient(color, intensity)`, `frame.point_light(position, range, color,
 intensity)` and `frame.spot_light(position, direction, range, color, intensity)` (a cone, full
@@ -7,9 +43,13 @@ strength within 20 degrees of `direction` and dark past 30); a frame that names 
 defaults (a white sun at 2.5 from `(0.4, 1, 0.3)`, white ambient at 0.08). For another cone or a
 shadow map, `frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity)
 .with_cone_degrees(25.0, 40.0).with_shadow(true))` (`use genex::render::SpotLight;`); the
-device's quality decides how many spots get a shadow map (none on `low` and `medium`, two on
-`high`, four on `ultra`, at most one on a phone), given to the asking spots on screen nearest the
-camera, and the rest light unshadowed. A spot keeps its map until another stays clearly nearer
+device's quality decides how many spots get a shadow map (none on `low` and `medium`, four on
+`high` and `ultra`, at most one on a phone), given to the asking spots on screen nearest the
+camera, and the rest light unshadowed. A point light casts shadows all round with
+`frame.point_light_with(&PointLight::new(position, range, color, intensity).with_shadow(true))`
+(`use genex::render::PointLight;`): a cube of six maps, so the device gives one to the nearest
+asking point light on screen on `high`, two on `ultra`, none on `low`, `medium` and phones; give
+it to the bulb or lantern that lights a room, not to every candle. A spot keeps its map until another stays clearly nearer
 for a quarter of a second; the two shadows then cross-fade over a quarter of a second, so none pops
 as the camera moves (a capture gives the maps to the nearest spots). Point and spot lights fade smoothly to nothing
 at their range, so give each the range it needs, not more: a lantern 3 to 4 units, a street lamp
@@ -17,7 +57,45 @@ at their range, so give each the range it needs, not more: a lantern 3 to 4 unit
 may hold hundreds; the preset caps how many a frame lights (phones at most 256), nearest first,
 fading the farthest kept ones out so a light crossing the cap never pops. Give a draw its surface with a `Material`:
 `Material::color(Color::rgb(255, 200, 80)).with_metallic(1.0).with_roughness(0.25)`, textures by
-asset path with `.with_base_texture("textures/bark.png")`, drawn with `frame.cube_with`,
+asset path with `.with_base_texture("textures/bark.png")`, `.with_normal_texture(path, strength)`
+and, for roughness and metalness, `.with_metal_rough_texture(path)` (glTF's packing: green
+roughness, blue metallic) or `.with_orm_texture(path)` for a packed occlusion-roughness-metallic
+map (the `_ORM` or `_ARM` file of a CC0 set: red occlusion as well); a separate occlusion map is
+`.with_occlusion_texture(path, strength)` (it darkens ambient light only, never the sun). The
+maps multiply `roughness` and `metallic`, so set both to 1 to take a map's values as they are.
+A texture covers each face of a mesh once by default; `.with_uv_scale(u, v)` repeats it `u` times
+across and `v` times down, and `.with_world_uv(metres)` projects it from the world along the
+axis each face looks at, repeating every `metres`: a 4 m wall drawn with `frame.cube_with`, a
+0.2 m sill and a floor then show one texel size, never a stretched photo. World projection is for
+geometry that stays put (a moving draw's texture slides) and for flat faces (a curved model shows
+seams; give it `.with_uv_scale`). A tiled texture then repeats, and a long corridor shows the same
+blotch every metre; break it up: `.with_uv_jitter(seed)` moves each panel's texture by an offset
+drawn from its seed (use the panel's index in the level: the same seed gives the same offset
+everywhere), `.with_uv_offset(u, v)` sets one, `.with_uv_rotation(radians)` turns the texture and
+its normal map (plaster, concrete or dirt; never brick or wood grain),
+`.with_stochastic_tiling(true)` blends every fetch from two copies at offsets that change across
+the surface so no tile shows twice (a second fetch of the colour, normal and roughness maps; keep it
+off a material with an emissive map), and `.with_macro_variation(strength, metres)` varies the
+base colour by up to `strength` (0.1 to 0.25 reads as wear) in patches of about `metres`, from the
+world position: what a single tile cannot hold. All are the same every frame and on every
+destination:
+
+```rust
+let plaster = Material::color(Color::rgb(214, 206, 188))
+    .with_base_texture("textures/plaster_albedo.jpg")
+    .with_normal_texture("textures/plaster_normal.png", 1.0)
+    .with_orm_texture("textures/plaster_orm.png")
+    .with_roughness(1.0)
+    .with_metallic(1.0)
+    .with_world_uv(1.5)
+    .with_stochastic_tiling(true)
+    .with_macro_variation(0.18, 3.0);
+for (index, panel) in level.panels.iter().enumerate() {
+    frame.cube_with(panel.transform, &plaster.clone().with_uv_jitter(index as u32));
+}
+```
+
+Drawn with `frame.cube_with`,
 `frame.sphere_with` or `frame.model_with` (a GLB's own materials, emission and textures load by
 themselves: an alpha-`MASK` leaf or fence is cut out in its shadow too, a `doubleSided` card
 draws both faces, an occlusion map darkens its crevices' ambient light). A missing texture leaves the surface untextured; `.with_untextured_color(color)` names
@@ -40,7 +118,38 @@ pine needles and other dense thin cards glow too brightly with it, so keep them 
 inside it: a leaf's millimetres, a candle's centimetre). The sun's light through it is shadowed by
 whatever stands between it and the sun. A model whose glTF material carries
 `KHR_materials_diffuse_transmission` lets light through the same way with no call (its factor, in
-the base colour).
+the base colour). `KHR_materials_clearcoat`, `sheen`, `specular`, `ior`, `transmission`, `volume`
+and `anisotropy` are read but not shaded yet: a car's lacquer, velvet or glass reads only through its
+base colour, roughness and metalness, so bake the look into those maps.
+
+Physical units: light a scene from real numbers with `use genex::render::units;`. The renderer's
+units stay relative; `units` fixes their scale so that scene EV 0 is EV100 12 (one scene unit is
+2844 lux, or 2844 cd/m²): a sunlit exterior then meters about +3.5 EV and a lit office about
+-4 EV, both inside auto exposure's default `ev_min`..`ev_max` (-8..8). The engine's default sun
+(2.5) is a bright overcast day (7100 lux). Pass the conversions where an intensity goes:
+
+| light | call | value |
+| --- | --- | --- |
+| sun, clear noon | `frame.sun(dir, Color::WHITE, units::lux(100_000.0))` | 35.2 |
+| sun outside the atmosphere (the physical sky's) | `units::lux(128_000.0)` | 45.0 |
+| overcast day | `units::lux(10_000.0)` | 3.5 |
+| sky fill without an environment | `frame.ambient(sky, units::ambient_lux(20_000.0))` | 2.24 |
+| full moon | `units::lux(0.25)` | 0.0001 |
+| candle (12 lm) | `frame.point_light(p, 2.0, Color::rgb(255, 147, 41), units::lumens(12.0))` | 0.00034 |
+| bulb, 60 W equivalent (800 lm) | `units::lumens(800.0)` | 0.0224 |
+| ceiling tube, 1.2 m (3000 lm, one point per tube end or a spot down) | `units::spot_lumens(3000.0, 60.0)` | 0.168 |
+| desk or wall spot (800 lm in a 40° cone) | `units::spot_lumens(800.0, 40.0)` | 0.191 |
+| street lamp (12 000 lm, a 60° spot down) | `units::spot_lumens(12_000.0, 60.0)` | 0.671 |
+| torch (300 lm in a 15° cone) | `units::spot_lumens(300.0, 15.0)` | 0.493 |
+| phone or monitor screen | `Material::emissive(c, units::nits(300.0))` | 0.105 |
+
+`units::kelvin(k)` is a light's colour (`let [r, g, b] = units::kelvin(2700.0);` then
+`Color::rgb(r, g, b)`): 1900 a candle, 2700 a warm bulb, 4000 a neutral tube, 5600 daylight, 6500
+an overcast sky. `units::reference` holds these levels as constants (`OFFICE_LUX`, `BULB_LUMENS`,
+`TUBE_LUMENS`, ...). Lights in real units pair with auto exposure (Rendering): a manual exposure
+draws one EV, `ev_compensation = units::manual_compensation_for_ev100(ev100)`. Light a room with
+its fixtures at their real flux (a classroom's 12 tubes, not 2), its windows with the sun and
+sky, and never add fill spots to fake bounce: the room's volume (below) carries the bounce.
 
 A room's polished floor reflects the sky until it has a reflection probe:
 `frame.reflection_probe(&ReflectionProbe::new(min, max).with_capture(eye).with_blend(0.4))`
@@ -53,7 +162,8 @@ captured from the scene the first frame the probe appears, and again when the sk
 probe's box or capture point moves: objects that move later are not in it. The device's quality
 gives cubes to the first probes a frame declares (4 on `low`, 8 on `medium`, 16 on `high` and
 `ultra`; 2 to 8 on phones); the rest reflect the sky. Give a probe to each room or courtyard,
-not to open ground (the sky is its reflection already).
+not to open ground (the sky is its reflection already). `.with_intensity(m)` scales what it
+reflects (1, the default, as captured; keep it 1 and fix the room's light instead).
 
 A room's surfaces take the sky's diffuse light through its walls, and a white floor stays white
 beside a sunlit red wall, until it has an irradiance volume:
@@ -61,7 +171,8 @@ beside a sunlit red wall, until it has an irradiance volume:
 (`use genex::render::IrradianceVolume;`) covers the axis-aligned box `min..max` with a grid of
 cells (about one per metre; `.with_cells([x, y, z])`, 1 to 32 each, at most 4096) baked from the
 scene: surfaces in it take their diffuse ambient light from the cells around them, the light the
-room's own walls, floor and lamps bounce, fading into the sky's over `blend` units past the box's
+room's own walls, floor and lamps bounce (the first bounce baked, the ones after it estimated, so a
+ceiling the sun never reaches still takes some), fading into the sky's over `blend` units past the box's
 faces. A cell behind a wall lends a surface no light, so a volume may reach across a wall into the
 next room or the street. The grid is baked a few cells a frame the first time the volume appears
 and fades in once baked, and again when the sky changes or the box or its cells change: objects
@@ -69,7 +180,28 @@ that move later do not change it. Only scenes the sky or an HDR map lights take 
 quality bakes the first volumes a frame declares (4 on `medium`, 8 on `high` and `ultra`; 2 to 4
 on phones at `high` and `ultra` only, none at a phone's own `medium` or `low` preset or on the
 low phones); the rest take the sky's light. Give a volume to each
-room or courtyard whose bounced colour matters, alongside its reflection probe.
+room or courtyard whose bounced colour matters, alongside its reflection probe, one per room (three
+classrooms are three volumes, never one box over all of them). `.with_intensity(m)` scales its
+light (1, the default, as baked; keep it 1). The renderer adds the rooms a game leaves out, and
+keeps them lit as the scene changes (dynamic probe GI):
+
+| quality | rooms added | Live bake | after the first bake |
+| --- | --- | --- | --- |
+| `low`, phones' own presets | none | none (the sky's light) | none |
+| `medium`, phones at `high`/`ultra` | a volume for each probe without one, a probe for each volume without one | 2 cells a frame | again when the sky changes |
+| `high` | those, and a 24 x 8 x 24 m volume (2 m cells) around the camera wherever no room holds it | 2 cells a frame | baked again, room after room, a batch every 4th frame, for as long as it is held |
+| `ultra` | as `high` | 4 cells a frame | as `high` |
+
+So on `high` and `ultra` a lamp switched on, a door opened or a moving sun reaches a room's bounced
+light within about ten seconds (a 200-cell room), and a volume that moves (the camera's own) keeps showing its last bake where
+it was baked until the new one is ready. A settled capture bakes every volume whole. A room's probe and
+volume also steer auto exposure: when the camera crosses into or out of either box, it adapts
+eight times faster for half a second, so stepping from a sunlit yard into a corridor reads at once
+(on by default; `[render.look] doorway_adaptation = false` turns it off). It works under auto
+exposure only: under manual exposure nothing adapts and `state().__render.exposure.warnings` says
+`doorway-adaptation-under-manual`. Keep `ev_min` at its default (-8) or lower with it: a raised
+floor stops the exposure brightening a dark room however fast it adapts (the warning
+`ev-min-raised-with-doorway-adaptation`): light the room instead (`docs/look-recipes.md`).
 
 Posters, puddles, grime and stains are decals, not thin boxes over a surface (which fight it for
 depth and float off it at a distance): `frame.decal(&Decal::on_wall(center, facing, width,
@@ -98,7 +230,7 @@ surfaces both see it through the atmosphere, so a sun 5 to 12 degrees up gives a
 and ground warm alike), a lower one a sunset, and one below the horizon a dusk that no longer
 lights the ground. Keep the sun's intensity at night and let it set: the stars come out as it goes
 down (`.with_stars(2e-5)` is their default brightness, 0 for none), and a moon,
-`.with_moon(Some(Moon::new(direction)))` (`use genex::render::Moon;`; `.with_moonlight(0.004)`, its
+`.with_moon(Some(Moon::new([x, y, z])))` (`use genex::render::Moon;`, a direction as an array; `.with_moonlight(0.004)`, its
 share of the sun's light, `.with_tint(..)`, `.with_earthshine(..)`, `.with_angular_radius_degrees(..)`),
 is lit by that sun with its phase: put it opposite the sun for a full moon. Once the sun has set the
 moon lights the ground and the sky, and reflections see the stars and the moonlit sky. Auto exposure
@@ -109,7 +241,12 @@ with an `.exposure_curve(..)` (Grading and the lens) keeps the night darker than
 `.with_layer(base_km, thickness_km)`, `.with_density(..)`, `.with_offset([x_km, z_km])` to let them
 drift, `.with_cirrus(0.6)` for high streaks) adds cumulus lit by the sun (by night, the moon),
 drawn in the sky and seen by reflections and the ambient light, on desktop `medium` and up; `low`
-and phones show a clear sky.
+and phones show a clear sky. On every preset clouds veil the sun the ground gets (about half at
+coverage 0.5), so a cloudy day's shadows are lit by the sky, never black. Snow and rain fall from
+an overcast sky: `Environment::Sky(SkyParams::overcast())`, a bright grey sky on every preset and
+a veiled sun, not a blue sky with a full sun. The snow on the ground and on props is a material
+cover laid by the weather (`frame.weather(&Weather::heavy_snow(), seconds)`, or
+`Cover::snow(..)`; `docs/api/layered-materials.md`), never white boxes.
 `Environment::hdri("env/sky.hdr")` lights the scene with an equirectangular
 Radiance `.hdr` under `assets/` (`HdriEnvironment::new(path).with_rotation_degrees(90.0)
 .with_intensity(0.5)`, inside `Environment::Hdri(..)`) and is drawn behind it. By default
@@ -125,6 +262,17 @@ replaces the clear colour; elsewhere the flat ambient light and the clear colour
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
 
+On desktop `ultra` screen-space GI adds the light nearby surfaces bounce (a red box tints the
+floor in front of it), beside the volumes' room-scale bounce; the other presets and phones keep
+the volumes alone.
+
+One exposure cannot hold a sunlit window and the dark room around it. On `high` and `ultra` local
+exposure moves each region towards middle grey: bright ones (the yard through a window) by
+`local_exposure_highlights` (default 0.6), dark ones (a corridor ceiling) by `local_exposure_shadows`
+(0.8), keeping the detail inside each; 0.25 is strongest, 1 turns that side off. In code:
+`RenderConfig::new().local_exposure(0.5, 0.8)`. Light the room
+first (lamps, a volume); local exposure only redistributes what reaches the camera.
+
 The air between is the look's fog, off by default: `[render.look]`'s `fog_*` keys, or in code
 `RenderConfig::new().fog(Fog::default().with_density(0.02).with_height(0.3, 0.0).with_range(0.0, 0.9)
 .with_color([1.0, 1.0, 1.0]))` (`use genex::render::Fog;`). Its in-scatter is the environment's
@@ -133,7 +281,9 @@ own scattering. On desktop and web `high` and `ultra` the fog is a lit volume wi
 `.with_volumetric(false)` keeps the plain height fog there too. In the volume the sun's shadows
 carve shafts (through a canopy, between buildings, in at a window) and point and spot lights glow
 in it, so a street lamp in a misty night needs no glow sprite; elsewhere the same fog is drawn
-without them. Fog gives depth: keep it thin outdoors, shape a valley's mist with the height
+without them. Inside a room's irradiance volume the fog takes the light the volume's cells see
+there instead of the horizon's, so a corridor's air glows where its windows and lamps light it, not
+with the sky through its walls. Fog gives depth: keep it thin outdoors, shape a valley's mist with the height
 falloff rather than more density, and check in a capture that the near ground keeps its colour.
 Never fake haze with stacked transparent planes.
 
@@ -141,8 +291,8 @@ Sun shadows are a row of the preset table, per device class, drawn as listed (th
 
 | preset | cascades x side | filter | depth, far cascades | reach | cascade blend, end fade |
 | --- | --- | --- | --- | --- | --- |
-| `low` | 2 x 1024 (phones: 2 x 768) | PCF 3x3 (phones: hardware 2x2) | 16-bit, every frame | 50 units | none, last 15 % |
-| `medium` | 2 x 1536 | PCF 3x3 | 32-bit, every frame | 50 units | 10 %, last 10 % |
+| `low` | 2 x 1024 (phones: 2 x 768) | PCF 5x5 (phones: hardware 2x2) | 16-bit, every frame | 50 units | none, last 15 % |
+| `medium` | 2 x 1536 | PCF 5x5 | 32-bit, every frame | 50 units | 10 %, last 10 % |
 | `high` | 3 x 2048 | PCSS-lite (soft contact shadows) | 32-bit, every frame | 80 units | 10 %, last 10 % |
 | `ultra` | 4 x 4096 | PCSS | 32-bit, every frame | 80 units | 10 %, last 10 % |
 
@@ -152,8 +302,12 @@ moves: the band lerps both cascades on every frame, PCSS finds the same blockers
 and the depth bias is one world-space distance per cascade, so a contact gap never changes size as
 other objects come into view. At `high` and `ultra` under TAA an opaque surface's soft sun shadow
 comes from a screen mask that averages PCSS over frames and filters it edge-aware, so a penumbra
-holds still on a pan; transparent surfaces filter inline. Phones are held to 2 cascades of at
-most 1536 px, no PCSS, 16-bit depth and 40 units, and the far cascade redraws every second frame
+holds still on a pan; transparent surfaces filter inline. A contact shadow's edge (PCSS's
+narrowest kernel, three texels) runs straight across the shadow map's texels instead of following
+their staircase. Phones are held to 2 cascades of at most 1536 px, 5x5 PCF in place of PCSS,
+16-bit depth and 40 units (on the high and ultra phone classes each preset's own reach up to 80
+units: `medium` 50, `high` and `ultra` 80, and a game may ask for up to 80), and the far cascade
+redraws every second frame
 (and on every frame something in it moves, so a walking character's shadow never steps at half
 rate); the weakest phone class draws 512 px cascades. A Live frame does not redraw a shadow map
 whose objects all stood still for a few frames (a mesh counts as still when every instance does);

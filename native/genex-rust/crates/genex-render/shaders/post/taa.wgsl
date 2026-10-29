@@ -14,7 +14,10 @@
 //   own, no reactive coverage) the box grows by the pixel's temporal noise (renderer pass 2, B.7:
 //   how far its raw sample strays from the history the box keeps, a running mean in the lock
 //   history's w) and a small floor, so a sub-pixel detail the jitter hits in some frames only, or
-//   a sharp shadow mask's texel, no longer clips its history to each frame's box and back. History
+//   a sharp shadow mask's texel, no longer clips its history to each frame's box and back; not
+//   where the history is stale (on a frame whose casters or sun moved, under a still camera on one
+//   smooth surface, its 2x2 footprint lies wholly outside the box: a passed shadow edge, Bodycam).
+//   History
 //   outside it is clipped towards it softly: the clip is undone by how much the pixel is locked (a
 //   thin feature, or an oscillation, seen within the last jitter cycle) or luma-unstable (its
 //   quantised luma rose and fell over the last four frames), scaled by 1 - sqrt(reactive), motion
@@ -68,6 +71,12 @@ struct TaaParams {
 
 // `post::taa::TaaFlags::CLIP`: rectify the history against the neighbourhood's colour box.
 const GX_TAA_FLAG_CLIP: u32 = 1u;
+// `post::taa::TaaFlags::SETTLE`: a settled capture's cycle takes every raw sample with the box's
+// weights while the accumulation is above its floor (R-12).
+const GX_TAA_FLAG_SETTLE: u32 = 2u;
+// `post::taa::TaaFlags::SHADOWS_MOVE`: a caster moved, came or is skinned, or the sun turned, so
+// the resolve looks for stale history.
+const GX_TAA_FLAG_SHADOWS_MOVE: u32 = 4u;
 // `post::taa::HANDBACK_FLAG`: the history is TAA upscaling's last output (alpha a weight).
 const GX_TAA_FLAG_HANDBACK: u32 = 128u;
 // `post::taa::JITTER_CYCLE_SHIFT`: where `counts.w` keeps the jitter cycle's frames.
@@ -111,6 +120,14 @@ const GX_TAA_NOISE_GROWTH_MOTION_PX: vec2<f32> = vec2<f32>(0.5, 1.5);
 // `post::taa::NOISE_HOLD_REACH`: history this many growths outside the box (the first to the
 // second) is clipped without the growth.
 const GX_TAA_NOISE_HOLD_REACH: vec2<f32> = vec2<f32>(2.0, 4.0);
+// `post::taa::STALE_RATIO` and `post::taa::STALE_FLOOR`: how far the history's footprint may lie
+// outside this frame's colour box (in spans of the box plus the floor) before the history counts
+// as stale, fully at the second; `STALE_CAMERA_PX` and `STALE_DEPTH_SPREAD`: the camera motion and
+// the neighbourhood's depth spread over which the test fades out.
+const GX_TAA_STALE_RATIO: vec2<f32> = vec2<f32>(0.0, 0.5);
+const GX_TAA_STALE_FLOOR: f32 = 0.02;
+const GX_TAA_STALE_CAMERA_PX: vec2<f32> = vec2<f32>(0.05, 0.2);
+const GX_TAA_STALE_DEPTH_SPREAD: vec2<f32> = vec2<f32>(0.02, 0.1);
 // `post::taa::LOCK_SIMILAR_RATIO`: two neighbours' lock lumas (perceived lightness of the
 // tonemapped colour) are similar within this ratio (FSR 2.2's 1.05 on lightness^(1/6)).
 const GX_TAA_LOCK_SIMILAR_RATIO: f32 = 1.3400956;
@@ -609,7 +626,16 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     // (pass-1 gate finding 05).
     let filtered = n.filtered.rgb / max(n.filtered.a, 1e-6);
     let at_floor = average <= gx_taa.params.x && !reset;
-    let unjittered = select(reactive, 1.0, (rejected && !reset) || at_floor);
+    // R-12: a capture's settling cycle (nothing moves across it) keeps every raw sample and the
+    // box's weights: its reset frame's no-history coverage took the filtered sample, which shrank
+    // that frame's share of a one-sample dither towards its neighbours' (the crossfade's stipple).
+    // Its history is rectified (`GX_TAA_FLAG_CLIP`) only while auto exposure meters the first
+    // frames, drawn at another pre-exposure (`Renderer::taa_row`).
+    let settling = (gx_taa.counts.w & GX_TAA_FLAG_SETTLE) != 0u && !at_floor;
+    let unjittered = select(select(reactive, 1.0, (rejected && !reset) || at_floor), 0.0, settling);
+    if settling && !reset {
+        weight = average;
+    }
     var current = mix(n.current, filtered, unjittered);
     // B.7: a pixel whose history lies off the screen takes a wider filter (only there: a branch
     // the frame's interior never takes).
@@ -638,7 +664,29 @@ fn fs_taa(in: TaaOut) -> TaaTargets {
     // D22: and not under a pan, where the growth held one surface's history over a noisy
     // neighbour's (a post's edge over the water's bands).
     let still = 1.0 - smoothstep(GX_TAA_NOISE_GROWTH_MOTION_PX.x, GX_TAA_NOISE_GROWTH_MOTION_PX.y, motion_px);
-    let settled = unmoved * still * (1.0 - saturate(reactive * GX_TAA_NOISE_REACTIVE_CUT)) * select(0.0, 1.0, at_floor);
+    // Bodycam: a moving object's shadow edge that passed over a still floor (or a highlight that
+    // slid off a turning face) leaves the history's footprint (the 2x2 texels it was read from)
+    // wholly outside this frame's colour box. Such a history is stale: no growth holds it (the
+    // noise its passing raised held the starter block's turning shadow as a rounded blob for about
+    // twenty frames, tests/taa_frame.rs; the noise itself is kept, so a frame that reads a detail
+    // as stale costs that frame's growth only: clearing it popped the ridge row). A sub-pixel
+    // detail the jitter missed this frame looks the same in one frame, so the test runs only where
+    // a shadow can have moved: on a frame whose casters or sun moved (GX_TAA_FLAG_SHADOWS_MOVE),
+    // under a still camera, on one smooth surface.
+    let footprint_lo = gx_taa_ycocg(gx_taa_tonemap(gx_taa_sane(resampled.footprint_lo * gx_taa.params.y))).x;
+    let footprint_hi = gx_taa_ycocg(gx_taa_tonemap(gx_taa_sane(resampled.footprint_hi * gx_taa.params.y))).x;
+    let gap = max(footprint_lo - colour_box.hi.x, colour_box.lo.x - footprint_hi);
+    let span = colour_box.hi.x - colour_box.lo.x + GX_TAA_STALE_FLOOR;
+    // History the camera's motion resampled between texels strays from a tight box by itself (the
+    // bench pans' far detail).
+    let camera_still = 1.0 - smoothstep(GX_TAA_STALE_CAMERA_PX.x, GX_TAA_STALE_CAMERA_PX.y, length(camera.yz));
+    // One smooth surface: the neighbourhood's depth keys within a few percent, not the sky (a far
+    // tree's tip against the sky sits at a depth edge).
+    let depth_spread = (n.key_hi - n.key_lo) / max(n.key_hi, 1e-20);
+    let smooth_surface = select(0.0, 1.0 - smoothstep(GX_TAA_STALE_DEPTH_SPREAD.x, GX_TAA_STALE_DEPTH_SPREAD.y, depth_spread), n.key_lo > 0.0);
+    let shadows_move = select(0.0, 1.0, (gx_taa.counts.w & GX_TAA_FLAG_SHADOWS_MOVE) != 0u);
+    let stale = smoothstep(GX_TAA_STALE_RATIO.x, GX_TAA_STALE_RATIO.y, gap / span) * camera_still * smooth_surface * shadows_move;
+    let settled = unmoved * still * (1.0 - stale) * (1.0 - saturate(reactive * GX_TAA_NOISE_REACTIVE_CUT)) * select(0.0, 1.0, at_floor);
     let growth = (GX_TAA_NOISE_BOX_SCALE * prev_noise + GX_TAA_NOISE_BOX_FLOOR) * settled;
     let excursion = abs(history_box.x - kept.x);
     let holds = 1.0 - smoothstep(GX_TAA_NOISE_HOLD_REACH.x * growth, GX_TAA_NOISE_HOLD_REACH.y * growth, excursion);

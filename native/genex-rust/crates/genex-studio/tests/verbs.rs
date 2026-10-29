@@ -683,7 +683,8 @@ fn hostile_capture_sizes_are_refused_and_draw_nothing() {
         ("a string", r#"{"width":"2560","height":1440}"#, true),
         ("a fraction", r#"{"width":2560.5,"height":1440}"#, true),
         ("under the smallest target", r#"{"width":63,"height":1440}"#, true),
-        ("over the capture cap", r#"{"width":4097,"height":1440}"#, true),
+        // WP-9 flipped 4097 -> 8193: a native capture side reaches 8192.
+        ("over the capture cap", r#"{"width":8193,"height":1440}"#, true),
         ("negative", r#"{"width":-2560,"height":1440}"#, true),
         ("a missing side", r#"{"width":2560}"#, true),
         ("an array", r#"[2560,1440]"#, true),

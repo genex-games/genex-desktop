@@ -14,6 +14,7 @@ import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { ThreadKind } from "../../src/shared/event-log.ts";
 import type { DispatchAction } from "../../src/shared/protocol.ts";
 import { writeEngineBinding } from "../../src/substrate/game-engine-binding.ts";
+import { ENGINES, UNREAL_ENGINE } from "../helpers/engines.ts";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { coreLite, type CoreLite } from "../helpers/core-lite.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -89,7 +90,7 @@ async function liveWorld(play: Play[] = []) {
   await mkdir(path.join(projects, "DirtTrack"));
   const uproject = path.join(projects, "DirtTrack", "DirtTrack.uproject");
   await writeFile(uproject, '{"FileVersion":3}\n');
-  await writeEngineBinding(unreal.dir, uproject);
+  await writeEngineBinding(unreal.dir, uproject, UNREAL_ENGINE.id, ENGINES);
   // The harness that owns the run answers its run tools; the host forwards them there.
   const dispatched: DispatchAction[] = [];
   Object.defineProperty(core.host, "hasCapability", { configurable: true, value: () => true });

@@ -1,5 +1,5 @@
 /**
- * The plugin-author skill Genex Tools carries, read the way an agent reads it (`genex__skill`, page
+ * The plugin-author skill the Genex plugin carries, read the way an agent reads it (`genex__skill`, page
  * by page) and its example plugin written where the skill says: each fenced block that follows a line
  * naming a file under `genex-plugins/`.
  */
@@ -8,7 +8,7 @@ import path from "node:path";
 import type { PluginBinding, PluginSkillPage } from "../../src/shared/plugins.ts";
 import type { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 
-/** The skill's name and the files it lists, as Genex Tools declares them. */
+/** The skill's name and the files it lists, as the Genex plugin declares them. */
 export const PLUGIN_AUTHOR = {
   skill: "plugin-author",
   tool: "genex__skill",

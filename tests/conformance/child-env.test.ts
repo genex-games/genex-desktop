@@ -17,6 +17,7 @@ import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { absoluteRule, claudeProjectDirName } from "../../src/substrate/engines/claude-permissions.ts";
 import { CodexEngine, type CodexExec } from "../../src/substrate/engines/codex.ts";
 import { codexSubscriptionEnv } from "../../src/substrate/engines/codex-cli.ts";
+import { windowsPowerShellEnv } from "../../src/substrate/child-env.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
 import { ruleDenies } from "../helpers/claude-rules.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -541,6 +542,8 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
       systemHome,
       queryFn: fn,
       protectedPaths: [path.join(root, "secrets")],
+      // Claude Code's own box; on Windows Genex's holds the same lists (claude-windows-commands.test.ts).
+      platform: "darwin",
     });
     await engine.delegate({ prompt: "build", cwd: root });
     const options = seen[0]! as {
@@ -628,5 +631,31 @@ describe("SEC-3: both CLIs' sign-in homes are off limits to every agent process"
       defaults,
       "never the home folder, its ancestors, the root or a relative data folder",
     );
+  });
+});
+
+describe("Windows PowerShell builds its own module path", () => {
+  it("never inherits one, whatever its case, and keeps everything else", () => {
+    // PowerShell 7 exports a module path that puts its own 7.x modules first; Windows PowerShell
+    // 5.1 handed it cannot load them and loses Get-FileHash, ConvertTo-Json and Get-Process (R12).
+    const PWSH7 = "C:\\Users\\ada\\Documents\\PowerShell\\Modules;C:\\Program Files\\PowerShell\\7\\Modules";
+    const table: Array<[string, Record<string, string | undefined>]> = [
+      ["as PowerShell spells it", { PSModulePath: PWSH7 }],
+      ["upper case", { PSMODULEPATH: PWSH7 }],
+      ["lower case", { psmodulepath: PWSH7 }],
+      ["twice", { PSModulePath: PWSH7, PSMODULEPATH: PWSH7 }],
+      ["empty", { PSModulePath: "" }],
+    ];
+    for (const [name, inherited] of table) {
+      const parent = { SystemRoot: "C:\\Windows", Path: "C:\\Windows\\System32", ...inherited };
+      const before = { ...parent };
+      assert.deepEqual(
+        windowsPowerShellEnv(parent),
+        { SystemRoot: "C:\\Windows", Path: "C:\\Windows\\System32" },
+        name,
+      );
+      assert.deepEqual(parent, before, `${name}: the parent is left as it was`);
+    }
+    assert.deepEqual(windowsPowerShellEnv({}), {});
   });
 });

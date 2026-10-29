@@ -34,10 +34,12 @@ import {
 import {
   CROSS_TARGET_TICKS,
   compareStates,
+  memoryWarnings,
   nativeEvidence,
   ParityRow,
   parityFor,
   REQUIRED_PARITY_ROWS,
+  runMemoryOf,
   runParityGate,
   type TargetParity,
   type ToleranceStore,
@@ -212,6 +214,9 @@ function fakeHost(quirks: GameQuirks = {}): CtxRecorder & { games: Map<string, F
     games.set(key, made);
     return made;
   };
+  // The gate reloads before each of its two replay runs (the first load is run 1), so the second
+  // replay run is the native game's third load.
+  const isSecondReplay = (handle: unknown, g: { runs: number }) => handle === NATIVE && g.runs > 2;
   const stateOf = (handle: unknown) => {
     const g = game(handle);
     return {
@@ -228,14 +233,14 @@ function fakeHost(quirks: GameQuirks = {}): CtxRecorder & { games: Map<string, F
       __render: { drawCalls: handle === NATIVE ? 4 : 9 },
       ...(quirks.extra ?? {}),
       ...(quirks.stateByTarget?.[TARGET_OF[String(handle)] ?? BuildTarget.Web] ?? {}),
-      ...(handle === NATIVE && g.runs > 1 ? (quirks.replayState ?? {}) : {}),
+      ...(isSecondReplay(handle, g) ? (quirks.replayState ?? {}) : {}),
     };
   };
   const tick = (handle: unknown) => {
     const g = game(handle);
     g.frame += 1;
     const target = TARGET_OF[String(handle)] ?? BuildTarget.Web;
-    const replay = handle === NATIVE && g.runs > 1 ? (quirks.replayDrift ?? 0) : 0;
+    const replay = isSecondReplay(handle, g) ? (quirks.replayDrift ?? 0) : 0;
     g.x += (g.held.has("KeyD") ? 1.5 : 0) + (quirks.drift?.[target] ?? 0) + replay;
   };
   const pageCall = (p: Record<string, unknown>) => {
@@ -1065,6 +1070,41 @@ describe("the judging target (D2)", () => {
     );
   });
 
+  it("a game on its title with declared start keys: they are pressed before the opening sample (Bodycam rerun BC3)", async () => {
+    const recorder = fakeHost();
+    const pressed: string[] = [];
+    recorder.handle(HostMethod.PreviewInput, (p) => {
+      for (const action of (p.actions ?? []) as Array<{ type: string; keys?: string[] }>)
+        pressed.push(`${action.type}:${(action.keys ?? []).join("+")}`);
+      return { ok: true, applied: 1, width: 640, height: 360 };
+    });
+    const game = { kind: "first-person", start: { keys: ["Enter"] } };
+    const evidence = await nativePass(ctxOf(recorder), {
+      run: raylibRun({ stack: GameStack.RustWgpu, game }),
+      handle: NATIVE,
+      seed: SEED,
+    });
+    const start = pressed.findIndex((word) => word.endsWith(":Enter"));
+    const walk = pressed.findIndex((word) => word.includes("w"));
+    assert.ok(start >= 0 && start < walk, `Enter before the scripted controls: ${pressed.join(" ")}`);
+    assert.ok(
+      evidence.warnings.some((warning) => /reports no state\(\)\.flow/.test(warning)),
+      JSON.stringify(evidence.warnings),
+    );
+    const plain = fakeHost();
+    const keys: string[] = [];
+    plain.handle(HostMethod.PreviewInput, (p) => {
+      keys.push(JSON.stringify(p.actions));
+      return { ok: true, applied: 1, width: 640, height: 360 };
+    });
+    await nativePass(ctxOf(plain), {
+      run: raylibRun({ stack: GameStack.RustWgpu, game: { kind: "first-person" } }),
+      handle: NATIVE,
+      seed: SEED,
+    });
+    assert.ok(!keys.some((actions) => actions.includes("Enter")), "nothing pressed that the game did not declare");
+  });
+
   it("a capture refused device-lost past its retries fails by camera, never silently", async () => {
     const recorder = fakeHost({ deviceLostOnce: ["default", "default"] });
     const evidence = await nativePass(ctxOf(recorder), {
@@ -1523,5 +1563,57 @@ describe("a Rust · wgpu game's evidence (M3.2)", () => {
     assert.equal(await store.read("pond", rustMac), 2e-5);
     assert.equal(await store.read("pond", raylibMac), 5e-4, "the raylib pair is untouched");
     assert.equal(await store.read("pond"), 5e-4, "a reader written before pairs reads the raylib pair");
+  });
+});
+
+describe("a native run's memory (MC)", () => {
+  const GIB = 1024 ** 3;
+  /** `native.status` of a ready run whose peak was `peakGib`, on a host whose cap is 9 GiB. */
+  const statusAt = (peakGib: number) => ({
+    backend: NativeBackend.MetalAngle,
+    state: "ready",
+    refusal: null,
+    memory: { peakBytes: peakGib * GIB, budgetBytes: 4 * GIB, capBytes: 9 * GIB, overBudget: peakGib > 4 },
+  });
+
+  it("a Browser + Mac look whose Mac run peaked over the budget passes and carries the warning on the look", async () => {
+    const recorder = fakeHost();
+    recorder.handle(HostMethod.NativeStatus, () => statusAt(5.3));
+    recorder.handle(HostMethod.GameList, () => [{ name: "pong", ...raylibGame([BuildTarget.Web, BuildTarget.Mac]) }]);
+    const evidence = {
+      ok: true,
+      problems: [],
+      warnings: [],
+      shots: [{ camera: "default" }, { camera: "top" }],
+    } as unknown as Evidence;
+    const looked = await withParity(
+      ctxOf(recorder),
+      { run: raylibRun(), iterationId: "i1", handle: WEB, seed: SEED } as never,
+      evidence,
+      null,
+    );
+    assert.equal(looked.parity?.pass, true, JSON.stringify(looked.parity));
+    assert.equal(looked.ok, true);
+    assert.equal(looked.warnings.length, 1, JSON.stringify(looked.warnings));
+    assert.match(looked.warnings[0] ?? "", /the Mac build used 5\.3 GiB at peak: fine on a desktop/);
+    assert.match(looked.warnings[0] ?? "", /4 GiB budget a game should fit in to run in a browser/);
+  });
+
+  it("names the phones a game ships to, and nothing for a desktop-only game", () => {
+    const memory = statusAt(6).memory;
+    const phones = { stack: GameStack.RustWgpu, targets: [BuildTarget.Mac, BuildTarget.Ios, BuildTarget.Android] };
+    assert.match(memoryWarnings(memory, BuildTarget.Mac, phones)[0] ?? "", /on an iPhone or on an Android phone/);
+    const desktops = { stack: GameStack.RustWgpu, targets: [BuildTarget.Mac, BuildTarget.Windows, BuildTarget.Linux] };
+    assert.deepEqual(memoryWarnings(memory, BuildTarget.Mac, desktops), []);
+    assert.deepEqual(memoryWarnings(memory, BuildTarget.Mac, null), [], "unknown destinations warn nothing");
+    assert.deepEqual(memoryWarnings(statusAt(3).memory, BuildTarget.Mac, phones), []);
+  });
+
+  it("reads a status's memory only in its shape", () => {
+    assert.deepEqual(runMemoryOf(statusAt(5)), statusAt(5).memory);
+    for (const memory of [null, 5, {}, { peakBytes: "5", budgetBytes: 1, capBytes: 1, overBudget: true }])
+      assert.equal(runMemoryOf({ memory }), null, JSON.stringify(memory));
+    assert.equal(runMemoryOf({ memory: { ...statusAt(5).memory, peakBytes: Number.NaN } }), null);
+    assert.equal(runMemoryOf(null), null);
   });
 });

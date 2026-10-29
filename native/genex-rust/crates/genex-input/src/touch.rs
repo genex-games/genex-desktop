@@ -12,7 +12,11 @@
 //! - only a finger that begins inside a zone takes the control;
 //! - an end, or a finger missing from the tick (lost), resets the control on that tick;
 //! - a floating stick's base sits where its finger lands inside a zone twice its radius;
-//! - evaluation never depends on whether the controls are shown ([`ShowWhen`] is display only).
+//! - evaluation never depends on whether the controls are shown ([`ShowWhen`] is display only);
+//! - the desktop mouse (the shell's touch 0 emulated from Mouse1) takes a control only in a layout
+//!   shown on every device ([`ShowWhen::Always`]), so a desktop player's click never presses a
+//!   control they cannot see. The rule reads the layout, never the device in use, so it is the
+//!   same on every replay.
 //!
 //! Pure like the action evaluation: no clock, no hash order, libm math, so a replay of the same
 //! touch rows gives the same values on every destination.
@@ -122,8 +126,12 @@ pub struct Control {
     pub id: ControlId,
     /// What it is.
     pub kind: ControlKind,
-    /// Its AccessKit label and painted text (a stick or d-pad is labelled by its id).
+    /// Its AccessKit label, prompt and painted text (a stick or d-pad is named by its id until
+    /// [`TouchControls::label`] names it).
     pub label: String,
+    /// Whether the painter writes the label on the control: always for a button, for a stick or
+    /// d-pad only once [`TouchControls::label`] named it (its ring or cross is its glyph).
+    pub shows_label: bool,
     /// Where its centre sits.
     pub at: Anchor,
     /// Its radius (a d-pad: half its side), in world pixels.
@@ -196,19 +204,33 @@ impl TouchControls {
     /// A stick of `radius` world pixels.
     #[must_use]
     pub fn stick(self, id: ControlId, at: Anchor, radius: f32, mode: StickMode) -> TouchControls {
-        self.with(Control { id, kind: ControlKind::Stick(mode), label: id.name().to_owned(), at, radius, pad: None })
+        self.with(Control { id, kind: ControlKind::Stick(mode), label: id.name().to_owned(), shows_label: false, at, radius, pad: None })
     }
 
     /// A round button of `radius` world pixels, labelled `label`.
     #[must_use]
     pub fn button(self, id: ControlId, label: &str, at: Anchor, radius: f32) -> TouchControls {
-        self.with(Control { id, kind: ControlKind::Button, label: label.to_owned(), at, radius, pad: None })
+        self.with(Control { id, kind: ControlKind::Button, label: label.to_owned(), shows_label: true, at, radius, pad: None })
     }
 
     /// A square d-pad `size` world pixels wide.
     #[must_use]
     pub fn dpad(self, id: ControlId, at: Anchor, size: f32) -> TouchControls {
-        self.with(Control { id, kind: ControlKind::Dpad, label: id.name().to_owned(), at, radius: size / 2.0, pad: None })
+        self.with(Control { id, kind: ControlKind::Dpad, label: id.name().to_owned(), shows_label: false, at, radius: size / 2.0, pad: None })
+    }
+
+    /// Name the last control `label`: its AccessKit label, its prompt and the text painted on it
+    /// (a stick or d-pad is otherwise drawn as its shape alone and named by its id).
+    #[must_use]
+    pub fn label(mut self, label: &str) -> TouchControls {
+        match self.controls.last_mut() {
+            Some(control) => {
+                control.label = label.to_owned();
+                control.shows_label = true;
+            }
+            None => self.note_misuse("label names no control: declare a stick, button or d-pad first"),
+        }
+        self
     }
 
     /// The last control also drives `target` on the virtual pad.
@@ -244,6 +266,12 @@ impl TouchControls {
             ShowWhen::Always => true,
             ShowWhen::Never => false,
         }
+    }
+
+    /// Whether the desktop mouse's finger may take a control: only when the layout is shown on
+    /// every device, so the player sees what a click presses.
+    pub fn takes_mouse(&self) -> bool {
+        self.show == ShowWhen::Always
     }
 
     /// Whether any control drives the virtual pad.
@@ -488,6 +516,7 @@ pub struct TouchFrame {
     values: Vec<(ControlId, [f32; 2])>,
     claimed: Vec<u32>,
     pad: Option<PadState>,
+    touching: bool,
 }
 
 impl TouchFrame {
@@ -511,6 +540,12 @@ impl TouchFrame {
         tick.touches.iter().filter(|touch| !self.claimed(touch.id))
     }
 
+    /// Whether a finger is down on this tick (began, held or tapped), on a control or not: the
+    /// painter outlines a floating stick's zone only then.
+    pub fn touching(&self) -> bool {
+        self.touching
+    }
+
     /// The virtual pad the controls with pad targets drive (connected, neutral at rest); `None`
     /// when no control has a pad target.
     pub fn virtual_pad(&self) -> Option<PadState> {
@@ -522,11 +557,19 @@ impl TouchFrame {
 /// holds each control's value. The layout must have passed [`TouchControls::validate`] for
 /// `world`; a state built for another layout is rebuilt first.
 pub fn evaluate_touch(controls: &TouchControls, world: [u32; 2], state: &mut TouchState, tick: &TickInput) -> TouchFrame {
+    evaluate_touch_from(controls, world, state, tick, None)
+}
+
+/// [`evaluate_touch`] on a tick whose finger `mouse` is the desktop mouse (the shell's touch
+/// emulated from Mouse1), not a finger on a screen: it takes a control only when
+/// [`TouchControls::takes_mouse`], and otherwise stays free for the game.
+pub fn evaluate_touch_from(controls: &TouchControls, world: [u32; 2], state: &mut TouchState, tick: &TickInput, mouse: Option<u32>) -> TouchFrame {
     if !state.ids.iter().copied().eq(controls.controls.iter().map(|control| control.id)) {
         *state = TouchState::new(controls);
     }
     release_gone(state, tick);
-    let tapped = claim_new(controls, world, state, tick);
+    let refused = mouse.filter(|_| !controls.takes_mouse());
+    let tapped = claim_new(controls, world, state, tick, refused);
     let mut values = Vec::with_capacity(controls.controls.len());
     let mut claimed: Vec<u32> = state.holds.iter().filter_map(|hold| hold.finger).collect();
     for (at, control) in controls.controls.iter().enumerate() {
@@ -541,7 +584,8 @@ pub fn evaluate_touch(controls: &TouchControls, world: [u32; 2], state: &mut Tou
     claimed.extend(tapped.iter().map(|(_, point)| point.id));
     claimed.sort_unstable();
     let pad = controls.has_virtual_pad().then(|| virtual_pad(controls, &values));
-    TouchFrame { values, claimed, pad }
+    let touching = tick.touches.iter().any(|touch| touch.phase != TouchPhase::Ended);
+    TouchFrame { values, claimed, pad, touching }
 }
 
 /// Let go of controls whose finger ended, began again (a reused id) or is missing from the tick.
@@ -556,10 +600,14 @@ fn release_gone(state: &mut TouchState, tick: &TickInput) {
 }
 
 /// Fingers that began (or tapped) on this tick take the free control they landed on, in finger
-/// order. A beginning finger holds it; a tap reads for this tick only. Answers the taps.
-fn claim_new(controls: &TouchControls, world: [u32; 2], state: &mut TouchState, tick: &TickInput) -> Vec<(usize, TouchPoint)> {
+/// order. A beginning finger holds it; a tap reads for this tick only; the `refused` finger takes
+/// nothing. Answers the taps.
+fn claim_new(controls: &TouchControls, world: [u32; 2], state: &mut TouchState, tick: &TickInput, refused: Option<u32>) -> Vec<(usize, TouchPoint)> {
     let mut tapped: Vec<(usize, TouchPoint)> = Vec::new();
-    let starts = tick.touches.iter().filter(|touch| matches!(touch.phase, TouchPhase::Began | TouchPhase::Tapped));
+    let starts = tick
+        .touches
+        .iter()
+        .filter(|touch| matches!(touch.phase, TouchPhase::Began | TouchPhase::Tapped) && Some(touch.id) != refused);
     for touch in starts {
         let point = [touch.x, touch.y];
         let Some(at) = controls.controls.iter().position(|control| control.hit(world, point)) else { continue };

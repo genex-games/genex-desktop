@@ -1,14 +1,11 @@
 /** Studio-owned agent sessions. A local completion model can execute the same host-granted
  * director/worker tools as a subscription, without borrowing a subscription's CLI or account. */
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
 import { EngineFailureKind, isContextFailure, StopReason } from "../../shared/engine-requests.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
@@ -16,9 +13,8 @@ import { PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
 import { credentialHomes } from "../credential-homes.ts";
 import { atomicWriteText } from "../fsx.ts";
-import { HOST_GIT_CONFIG } from "../snapshots.ts";
-import { ProcessSandbox } from "../spawn.ts";
 import type { Message, ToolCall, Usage } from "../types.ts";
+import { type SteerSession, steerSession } from "./claude-steer.ts";
 import { DEFAULT_COMPACTION_PERCENT, interruption } from "./common.ts";
 import { checkpointCut, type LocalCheckpoint, summarizeLocalCheckpoint } from "./local-checkpoint.ts";
 import {
@@ -30,6 +26,7 @@ import {
   progressCheckNote,
 } from "./local-session-prompts.ts";
 import { changesSomething, localMode, permitCall, sessionMode } from "./local-session-permissions.ts";
+import { type LocalInbox, localInbox, steerUserMessage, takesSteer } from "./local-session-steer.ts";
 import {
   executeLocalTool,
   INSPECTION_TOOLS,
@@ -38,6 +35,7 @@ import {
   type ToolContext,
 } from "./local-session-tools.ts";
 import { lockUnowned, releaseLocks } from "./ownership-locks.ts";
+import { type CommandSandbox, commandSandbox } from "./session-commands.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import {
   type CompleteRequest,
@@ -69,7 +67,6 @@ const LOCAL_SESSION_LIMITS = {
   /** Tool rounds without a workspace change before the session stops, and the rounds that get a nudge. */
   idleRoundLimit: 16,
   idleNudgeRounds: [6, 10] as readonly number[],
-  gitProbeTimeoutMs: 5 * SECOND_MS,
 } as const;
 
 /** How much of a workspace a progress stamp looks at. */
@@ -148,6 +145,10 @@ interface LocalRun {
   mode: PermissionMode | null;
   /** What the model reads at its next round about a mode the user switched to while it ran. */
   modeNote: string;
+  /** The person's messages sent while it runs, read at the top of the next round (`local-session-steer.ts`). */
+  inbox: LocalInbox;
+  /** The host's steer, when it asked to steer this session: told once, and what was read. */
+  steer: SteerSession | null;
 }
 
 /** What a session's file tools may reach. */
@@ -176,7 +177,20 @@ export class LocalSessions {
     return typeof window === "number" ? window : window(model);
   }
 
+  /** Run (or resume) one session to its ending. */
   async run(request: DelegateRequest, model: string): Promise<DelegateResult> {
+    // Steer: `ready` is said exactly once, whatever ends the session — one that never started
+    // took nothing mid-turn, and the host is waiting to hear so.
+    const steer = request.steer ? steerSession(request.steer.ready) : null;
+    try {
+      return await this.#claim(request, model, steer);
+    } finally {
+      steer?.tell(null);
+    }
+  }
+
+  /** The session, held as running while it runs: a resume on another model forks it first. */
+  async #claim(request: DelegateRequest, model: string, steer: SteerSession | null): Promise<DelegateResult> {
     const originalId = request.resume ?? randomUUID();
     if (!SESSION_ID.test(originalId)) throw new Error(MESSAGE.InvalidId);
     if (this.#active.has(originalId)) throw new Error(MESSAGE.AlreadyRunning);
@@ -197,7 +211,7 @@ export class LocalSessions {
         }
       }
       const resumed = id === originalId ? request : { ...request, resume: id };
-      return await this.#run(resumed, model, cwd, id);
+      return await this.#run(resumed, model, cwd, id, steer);
     } finally {
       this.#active.delete(originalId);
       this.#active.delete(id);
@@ -227,8 +241,14 @@ export class LocalSessions {
     });
   }
 
-  async #run(request: DelegateRequest, model: string, cwd: string, id: string): Promise<DelegateResult> {
-    const run = await this.#open(request, model, cwd, id);
+  async #run(
+    request: DelegateRequest,
+    model: string,
+    cwd: string,
+    id: string,
+    steer: SteerSession | null,
+  ): Promise<DelegateResult> {
+    const run = await this.#open(request, model, cwd, id, steer);
     const locks = request.ownership && !run.readonly ? await lockUnowned(cwd, request.ownership) : null;
     run.workspaceStamp = await stampWorkspace(cwd);
     const instructions = await run.tools
@@ -251,8 +271,10 @@ export class LocalSessions {
       },
     });
     try {
+      // The session has started: from here the person's messages reach it between rounds.
+      run.steer?.tell(takesSteer(request) ? run.inbox.send : null);
       await run.save();
-      while (run.turns < (request.maxTurns ?? LOCAL_SESSION_LIMITS.maxTurns)) {
+      while (run.turns < turnLimit(request)) {
         const ending = await this.#round(run);
         if (ending) return ending;
       }
@@ -264,6 +286,8 @@ export class LocalSessions {
         return localResult(run, false, interruption(request.signal?.aborted).stopReason);
       throw err;
     } finally {
+      // Whatever still waits was never read: not reported, so the host queues it again.
+      run.inbox.close();
       request.permissions?.onControl?.(null);
       if (locks) await releaseLocks(cwd, locks);
       await run.tools.sandbox?.dispose();
@@ -274,17 +298,20 @@ export class LocalSessions {
    * Load (or start) the session and everything it runs with: its history and requirements, the
    * files it may read and write, its tools, and the sandbox its commands run in.
    */
-  async #open(request: DelegateRequest, model: string, cwd: string, id: string): Promise<LocalRun> {
+  async #open(
+    request: DelegateRequest,
+    model: string,
+    cwd: string,
+    id: string,
+    steer: SteerSession | null,
+  ): Promise<LocalRun> {
     const started = Date.now();
     const signal = runSignal(request);
     await mkdir(this.options.root, { recursive: true });
     const sessionFile = path.join(this.options.root, `${id}.json`);
     const saved = await this.#loadSaved(request, sessionFile, { cwd, model });
     const messages = saved.messages;
-    const budget = localBudgetNote({
-      maxTurns: request.maxTurns ?? LOCAL_SESSION_LIMITS.maxTurns,
-      timeoutMs: request.timeoutMs,
-    });
+    const budget = localBudgetNote({ maxTurns: turnLimit(request), timeoutMs: request.timeoutMs });
     const requirements = continueHistory(saved, messages, request, budget);
     const save = () => atomicWriteText(sessionFile, JSON.stringify(saved), { mode: 0o600 });
     const { readRoots, forbidden, deniedWrites } = await this.#fileBounds(request, cwd);
@@ -337,6 +364,8 @@ export class LocalSessions {
       workspaceStamp: "",
       mode: localMode(this.engine, request.permissions),
       modeNote: "",
+      inbox: localInbox(signal),
+      steer,
     };
   }
 
@@ -377,18 +406,10 @@ export class LocalSessions {
   }
 
   /** The command sandbox: the workspace and a linked worktree's Git metadata are its only writable places. */
-  async #sandbox(cwd: string, id: string, forbidden: string[], deniedWrites: string[]): Promise<ProcessSandbox> {
-    // A linked worktree's index and objects live outside cwd; authorize only its Git metadata.
-    const gitMetadata: string[] = [];
-    for (const flag of ["--absolute-git-dir", "--git-common-dir"]) {
-      const answer = await promisify(execFile)("/usr/bin/git", [...HOST_GIT_CONFIG, "-C", cwd, "rev-parse", flag], {
-        timeout: LOCAL_SESSION_LIMITS.gitProbeTimeoutMs,
-      }).catch(() => null);
-      if (answer) gitMetadata.push(await realpath(path.resolve(cwd, answer.stdout.trim())));
-    }
+  #sandbox(cwd: string, id: string, forbidden: string[], deniedWrites: string[]): Promise<CommandSandbox> {
     const scratchRoot = this.options.scratchRoot ?? path.join(os.tmpdir(), `studio-${this.engine}`);
-    return ProcessSandbox.create({
-      writableRoots: [cwd, ...gitMetadata],
+    return commandSandbox({
+      cwd,
       scratchDir: path.join(scratchRoot, id),
       secretPaths: forbidden,
       denyWrite: deniedWrites,
@@ -403,6 +424,7 @@ export class LocalSessions {
       run.messages.push({ role: "user", content: run.modeNote });
       run.modeNote = "";
     }
+    await readSteers(run);
     const answer = await this.#completeWithCompaction(run);
     if ("ending" in answer) return answer.ending;
     const { response } = answer;
@@ -419,7 +441,7 @@ export class LocalSessions {
     await run.save();
     reportAssistant(run, response);
     const calls = response.message.tool_calls ?? [];
-    if (!calls.length) return localResult(run, response.stopReason !== StopReason.Length, response.stopReason);
+    if (!calls.length) return answered(run, response);
     const roundImages = await this.#runTools(run, calls);
     // Plan only looks: a round that changed nothing is what it is for, not a stall.
     if (!run.readonly && run.mode !== PermissionMode.Plan) {
@@ -570,6 +592,11 @@ function runSignal(request: DelegateRequest): AbortSignal {
   return AbortSignal.any(signals);
 }
 
+/** The model turns a run may take: the request's cap, or the session's own. */
+function turnLimit(request: DelegateRequest): number {
+  return request.maxTurns ?? LOCAL_SESSION_LIMITS.maxTurns;
+}
+
 /**
  * A session that may not edit: a read-only pass (playtest, scout) or a coordinator. A chat that
  * may launch a build is still a full contractor and keeps its write tools.
@@ -580,7 +607,9 @@ function isReadOnlySession(request: DelegateRequest): boolean {
 
 /** The launch tools a Loop chat was bridged, by name (its question tool is not one). */
 function launchToolNames(request: DelegateRequest): string[] {
-  return (request.interviewTools ?? []).map((t) => t.name).filter((name) => name !== StudioTool.AskUser);
+  return (request.interviewTools ?? [])
+    .filter((t) => t.name !== StudioTool.AskUser && t.onlyWhenAsked !== true)
+    .map((t) => t.name);
 }
 
 /**
@@ -672,6 +701,36 @@ function reportAssistant(run: LocalRun, response: CompleteResponse): void {
 }
 
 /**
+ * The person's messages sent since the last round, read before the model's next call: into the
+ * history in the order sent and saved, then each reported read where it was read (`steer_delivered`).
+ */
+async function readSteers(run: LocalRun): Promise<void> {
+  const messages = run.inbox.take();
+  if (!messages.length) return;
+  for (const message of messages) {
+    run.messages.push(steerUserMessage(message));
+    // The person's words are instructions: a compaction keeps them in order with the rest.
+    if (message.text) run.requirements.push(message.text);
+  }
+  await run.save();
+  for (const { id } of messages) {
+    run.steer?.steered.push(id);
+    run.request.onEvent?.({ type: DelegateEventType.SteerDelivered, payload: { id } });
+  }
+}
+
+/**
+ * The model answered without calling a tool: the session ends with that answer — unless the person
+ * sent a message while it was written and a turn is left, in which case one more round reads it.
+ * The check and the close are one step, so nothing is taken after the last look.
+ */
+function answered(run: LocalRun, response: CompleteResponse): DelegateResult | null {
+  if (run.inbox.waiting && run.turns < turnLimit(run.request)) return null;
+  run.inbox.close();
+  return localResult(run, response.stopReason !== StopReason.Length, response.stopReason);
+}
+
+/**
  * One tool call's answer; a thrown tool answers with its error, marked failed. A call the chat's
  * mode does not allow, or the user denied, answers with why it did not run.
  */
@@ -745,6 +804,7 @@ function localResult(run: LocalRun, ok: boolean, stopReason: string, errorText?:
     durationMs: Date.now() - run.started,
     ...(errorText ? { errorText } : {}),
     ...(run.tools.studioToolCalls.length ? { studioToolCalls: run.tools.studioToolCalls } : {}),
+    ...(run.steer ? { steered: [...run.steer.steered] } : {}),
   };
 }
 

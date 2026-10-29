@@ -51,10 +51,12 @@
         "docs/agent/feature-map.md",
         "docs/agent/architecture.md",
         "docs/agent/design.md",
+        "docs/agent/translation.md",
         "docs/local-models.md",
         "docs/connections-and-context.md",
         "docs/tool-permissions.md",
-        "docs/performance.md"
+        "docs/performance.md",
+        "docs/play.md"
       ],
       "commands": ["typecheck", "test:build-ui"]
     },
@@ -77,6 +79,7 @@
         "docs/product/studio-learning.md",
         "docs/product/projects-engines.md",
         "docs/agent/architecture.md",
+        "docs/play.md",
         "docs/conversation-coordinator.md",
         "docs/plugins.md",
         "docs/PLUGIN_GUIDE.md",
@@ -192,13 +195,22 @@
         "tests/conformance/page-serve.test.ts",
         "tests/conformance/page-shim.test.ts",
         "src/substrate/pixel-stats.ts",
-        "src/substrate/native-game-port.ts"
+        "src/substrate/native-game-port.ts",
+        "src/substrate/computer-*.ts",
+        "src/main/core/computer-*.ts",
+        "src/main/core/browser-preview-target.ts",
+        "src/shared/computer-target.ts",
+        "src/shared/play-protocol.ts",
+        "src/substrate/play-protocol-client.ts",
+        "src/main/core/game-bridge-target.ts"
       ],
       "documents": [
         "docs/agent/context.md",
         "docs/agent/architecture.md",
         "docs/product/builds-live.md",
-        "docs/performance.md"
+        "docs/performance.md",
+        "docs/computer-use.md",
+        "docs/play-protocol.md"
       ],
       "commands": ["check", "test:fast", "test:ui"]
     },
@@ -368,6 +380,9 @@
         "tests/conformance/third-party-notices.test.ts",
         "scripts/package-prune.cjs",
         "tests/conformance/package-prune.test.ts",
+        "scripts/package-vc-runtime.cjs",
+        "tests/conformance/package-vc-runtime.test.ts",
+        "tests/helpers/pe-image.ts",
         "scripts/appdmg-image-size/**",
         "tests/conformance/appdmg-image-size.test.ts",
         "scripts/package-signing.cjs",
@@ -503,6 +518,7 @@
         "docs/STUDIO-DEVELOPER-FIELD-GUIDE.md",
         "docs/release-readiness.md",
         "docs/agent/glossary.md",
+        "docs/agent/translation.md",
         "docs/agent/recipes.md",
         "src/AGENTS.md",
         "tests/AGENTS.md",
@@ -585,12 +601,16 @@
         "tests/fixtures/authoring-trial/**",
         "tests/conformance/rust-runtime.test.ts",
         "tests/conformance/rust-stream-determinism.test.ts",
+        "tests/conformance/rust-web-streamed-world.test.ts",
         "tests/conformance/rust-vendored-multiplayer.test.ts",
         "scripts/netcode/**",
         "tests/conformance/rust-netcode-conformance.test.ts",
         "tests/fixtures/rust-protocol-game/**",
         "tests/conformance/rust-performance.test.ts",
-        "tests/fixtures/bench-scene/**"
+        "tests/fixtures/bench-scene/**",
+        "src/shared/render-look.ts",
+        "tests/conformance/render-look.test.ts",
+        "tests/fixtures/render-look-v1.json"
       ],
       "documents": [
         "native/genex-rust/README.md",
@@ -691,6 +711,8 @@
         "tests/conformance/rust-lifecycle-real.test.ts",
         "tests/conformance/rust-embed-real.test.ts",
         "src/main/rust-build.ts",
+        "src/main/rust-build-cache.ts",
+        "src/substrate/clone-tree.ts",
         "src/main/rust-bake.ts",
         "src/main/rust-build-diagnostics.ts",
         "src/main/rust-stage.ts",
@@ -709,6 +731,8 @@
         "tests/helpers/dev-toolchains.ts",
         "tests/fixtures/rust-wasm/**",
         "tests/conformance/rust-build.test.ts",
+        "tests/conformance/rust-build-cache.test.ts",
+        "tests/conformance/clone-tree.test.ts",
         "tests/conformance/rust-bake.test.ts",
         "tests/conformance/rust-bake-real.test.ts",
         "src/main/rust-assets.ts",

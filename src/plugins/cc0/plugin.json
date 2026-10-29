@@ -1,19 +1,25 @@
 {
   "apiVersion": 4,
   "id": "cc0",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "name": "CC0 Library",
   "publisher": "Studio",
   "description": "Free CC0 models, textures and skies from Poly Haven and ambientCG, fetched into your game with their licence recorded. No account or credits.",
   "backend": "backend.mjs",
   "capabilities": ["network", "project.write", "jobs"],
   "network": {
-    "hosts": ["api.polyhaven.com", "dl.polyhaven.org", "ambientcg.com", "acg-download.struffelproductions.com"]
+    "hosts": [
+      "api.polyhaven.com",
+      "dl.polyhaven.org",
+      "ambientcg.com",
+      "acg-download.struffelproductions.com",
+      "opengameart.org"
+    ]
   },
   "tools": [
     {
       "name": "search",
-      "description": "Search the CC0 libraries: Poly Haven's models, textures and HDRI skies, and ambientCG's materials. Free, no account. Returns each result's source and id (what cc0__fetch takes), its name, authors, page, and for a model its polycount and size in millimetres. kind is model, texture or hdri (default texture); source narrows to polyhaven or ambientcg; limit is 1-24 (default 8). Search before generating a common prop, surface or sky.",
+      "description": "Search the CC0 libraries: Poly Haven's models, textures and HDRI skies, and ambientCG's materials. Free, no account. Any word may match a whole word of the name, tags or categories (a plural matches its singular): results matching more of your words come first, then name matches, then the most downloaded, so search with two or three plain nouns ('birch tree', 'snow ground'). Returns each result's source and id (what cc0__fetch takes), its name, authors, page, and for a model its triangles, budget (within, or over-import-cap past 250000) with a hint, and its size in millimetres. kind is model, texture or hdri (default texture); source narrows to polyhaven or ambientcg; limit is 1-24 (default 8). Search before generating a common prop, surface or sky.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -38,7 +44,7 @@
     },
     {
       "name": "fetch",
-      "description": "Fetch one CC0 asset into this game's assets/cc0/<job>/ folder. Studio downloads it, checks its size and digests and records it as CC0-1.0 with its source; you never download anything yourself. A Poly Haven model arrives as one self-contained GLB (its maps embedded); a texture as its maps (default diff, nor_gl and arm on Poly Haven; diff, nor_gl, rough, ao and metal on ambientCG); an HDRI as one .hdr. source is polyhaven, ambientcg or curated (a hand-picked, sha256-pinned pack by its id). resolution is 1k, 2k or 4k (default 1k): fetch the size it is seen at, phones 1k. maps names extra or different texture maps, comma-separated: diff, nor_gl, nor_dx, arm, rough, ao, metal, disp. Fetching the same asset and resolution again lands in the same folder.",
+      "description": "Fetch one CC0 asset into this game's assets/cc0/<job>/ folder. Studio downloads it, checks its size and digests and records it as CC0-1.0 with its source; you never download anything yourself. A Poly Haven model arrives as one self-contained GLB (its maps embedded); a texture as its maps (default diff, nor_gl and arm on Poly Haven; diff, nor_gl, rough, ao and metal on ambientCG); an HDRI as one .hdr. source is polyhaven, ambientcg or curated (a hand-picked, sha256-pinned pack by its id). resolution is 1k, 2k or 4k (default 1k): fetch the size it is seen at, phones 1k. maps names extra or different texture maps, comma-separated: diff, nor_gl, nor_dx, arm, rough, ao, metal, disp. A model heavier than its tier's budget arrives decimated to it (the answer's decimated names the tier and the triangles before and after); the import step then adds its LODs, and a game draws far copies as an impostor (.with_impostor(Impostor::hemi())). Fetching the same asset, resolution and tier again lands in the same folder.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -54,21 +60,60 @@
           },
           "maps": {
             "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "description": "A model's role, whose triangle budget the delivered GLB is decimated to when it is heavier: hero 250000, vegetation 40000, prop 30000, clutter 5000. Left out, only a model over the 250000 import cap is decimated, to it."
           }
         },
         "required": ["source", "id"]
+      }
+    },
+    {
+      "name": "terrain-layer",
+      "description": "Pack a texture scan already in this game (a cc0__fetch folder, or maps you name) into the two textures a Rust TerrainLayer::textured(albedo, data, tile) reads: <name>_albedo.png (colour, height in alpha) and <name>_data.png (OpenGL normal x and y, roughness, occlusion) under assets/terrain/. Local only: no download, no credits. folder is a game-relative folder whose maps are found by name (Poly Haven diff, nor_gl, nor_dx, rough, arm, ao, disp; ambientCG Color, NormalGL, NormalDX, Roughness, AmbientOcclusion, Displacement); diff, nor_gl, nor_dx, rough, arm, ao and disp name a map's game-relative path instead. A colour map is required; a missing role packs its neutral value and the answer lists it. Fetch the scan with disp for a height blend. Returns the paths TerrainLayer::textured takes, the Rust line and the genex.toml [[texture]] rows. Paths must stay inside the game; out must be under assets/.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The layer's file name stem, for example snow: letters, digits, _ and -."
+          },
+          "folder": {
+            "type": "string",
+            "description": "A game-relative folder of maps, for example the assets/cc0/<job> cc0__fetch answered."
+          },
+          "diff": { "type": "string", "description": "The colour map's game-relative path." },
+          "nor_gl": { "type": "string", "description": "An OpenGL normal map's path." },
+          "nor_dx": { "type": "string", "description": "A DirectX normal map's path (its green is flipped)." },
+          "rough": { "type": "string", "description": "A roughness map's path." },
+          "arm": { "type": "string", "description": "An ARM or ORM map's path (occlusion red, roughness green)." },
+          "ao": { "type": "string", "description": "An ambient occlusion map's path." },
+          "disp": { "type": "string", "description": "A displacement (height) map's path." },
+          "out": { "type": "string", "description": "The output folder under assets/ (default assets/terrain)." },
+          "size": {
+            "type": "number",
+            "description": "The longest output side: a power of two from 256 to 4096 (default 2048); the colour map's own size when smaller."
+          },
+          "normalize_height": {
+            "type": "boolean",
+            "description": "Stretch the height over its own range (default true)."
+          },
+          "tile": { "type": "number", "description": "Metres per repeat, for the Rust line (default 4)." }
+        },
+        "required": ["name"]
       }
     }
   ],
   "skills": [
     {
       "name": "cc0-library",
-      "text": "Free CC0 assets come from the CC0 Library: cc0__search finds Poly Haven models, textures and HDRI skies and ambientCG materials; cc0__fetch puts one into assets/cc0/<job>/ and records it as CC0-1.0 in the asset lock. Never download assets yourself or write licence rows by hand. Prefer a CC0 asset to generating a common prop, surface or sky. Fetch at the size it is seen at (1k by default, 1k on phones). A Poly Haven model arrives as one self-contained GLB: load the returned path. A texture arrives as maps whose role (diff colour, nor_gl normal, arm occlusion/roughness/metalness) says how to sample it. Search results from Poly Haven carry the line Powered by Poly Haven; keep it next to them when you show them to the person.",
+      "text": "Free CC0 assets come from the CC0 Library: cc0__search finds Poly Haven models, textures and HDRI skies and ambientCG materials; cc0__fetch puts one into assets/cc0/<job>/ and records it as CC0-1.0 in the asset lock. Never download assets yourself or write licence rows by hand. Prefer a CC0 asset to generating a common prop, surface or sky. Asset routing (search and fetch before you generate, generate before you model): Props seen up close (furniture, vehicles, weapons, bins, crates): a CC0 model fetched with its tier (cc0__search kind model, then cc0__fetch tier); never stacked cubes, cones or spheres, flat colour, a picture standing in for 3D. Anything organic (trees, bushes, rocks, food): a CC0 model fetched with its tier (cc0__search kind model, then cc0__fetch tier); never stacked cubes, cones or spheres, flat colour, left over budget. Surfaces (walls, floors, ground, bark, plating): a CC0 scan (cc0__fetch diff, nor_gl and arm at the size it is seen); never flat colour. The sky: a CC0 HDRI (cc0__fetch kind hdri); never flat colour. A model over its tier's budget: a CC0 model fetched with its tier (cc0__search kind model, then cc0__fetch tier); never left over budget. Tiers (triangles of LOD0): hero 250k, vegetation 40k, prop 30k, clutter 5k; a model heavier than its tier is decimated, and the import step decimates any static model past 250k. Every other class comes from the other asset plugins when they are on: never from a script of stacked primitives or flat colour. Fetch at the size it is seen at (1k by default, 1k on phones, 2k for what fills the screen). A Poly Haven model arrives as one self-contained GLB, decimated to the tier you pass: load the returned path. A texture arrives as maps whose role (diff colour, nor_gl normal, arm occlusion/roughness/metalness) says how to sample it. Search results from Poly Haven carry the line Powered by Poly Haven; keep it next to them when you show them to the person.",
       "stacks": ["three-js", "raylib-cpp"]
     },
     {
       "name": "cc0-library-rust",
-      "text": "Free CC0 assets come from the CC0 Library: cc0__search finds Poly Haven models, textures and HDRI skies and ambientCG materials; cc0__fetch puts one into assets/cc0/<job>/ and records it as CC0-1.0 in genex-assets.lock. Never download assets yourself or write lock rows by hand. Prefer a CC0 asset to generating a common prop, surface or sky. Fetch at the size it is seen at (1k by default, 1k on phones). A Poly Haven model arrives as one self-contained GLB: load it in on_reset with gfx.assets().model(\"cc0/<job>/<name>.glb\"), the returned path without its leading assets/, and verify state().__render.missingModels stays absent. A texture arrives as maps whose role (diff colour, nor_gl normal, arm occlusion/roughness/metalness) decides its usage at import; declare a [[texture]] row only for a v2-material loose map. Search results from Poly Haven carry the line Powered by Poly Haven; keep it next to them when you show them to the person.",
+      "text": "Free CC0 assets come from the CC0 Library: cc0__search finds Poly Haven models, textures and HDRI skies and ambientCG materials; cc0__fetch puts one into assets/cc0/<job>/ and records it as CC0-1.0 in genex-assets.lock. Never download assets yourself or write lock rows by hand. Prefer a CC0 asset to generating a common prop, surface or sky. Asset routing (search and fetch before you generate, generate before you model): Props seen up close (furniture, vehicles, weapons, bins, crates): a CC0 model fetched with its tier (cc0__search kind model, then cc0__fetch tier); never stacked cubes, cones or spheres, flat colour, a picture standing in for 3D. Anything organic (trees, bushes, rocks, food): a CC0 model fetched with its tier (cc0__search kind model, then cc0__fetch tier); never stacked cubes, cones or spheres, flat colour, left over budget. Surfaces (walls, floors, ground, bark, plating): a CC0 scan (cc0__fetch diff, nor_gl and arm at the size it is seen); never flat colour. The sky: a CC0 HDRI (cc0__fetch kind hdri); never flat colour. A model over its tier's budget: a CC0 model fetched with its tier (cc0__search kind model, then cc0__fetch tier); never left over budget. Tiers (triangles of LOD0): hero 250k, vegetation 40k, prop 30k, clutter 5k; a model heavier than its tier is decimated, and the import step decimates any static model past 250k. Every other class comes from the other asset plugins when they are on: never from a script of stacked primitives or flat colour. Fetch at the size it is seen at (2k for anything the camera comes near, 4k for a hero surface that fills a desktop screen, 1k on phones). A Poly Haven model arrives as one self-contained GLB, decimated to the tier you pass (a tree: tier vegetation), with LODs at import; give a tree or building .with_impostor(Impostor::hemi()) and register it with game.impostor_bake so far copies draw as its impostor. Load it in on_reset with gfx.assets().model(\"cc0/<job>/<name>.glb\"), the returned path without its leading assets/, and verify state().__render.missingModels stays absent. A texture arrives as maps whose role (diff colour, nor_gl normal, arm occlusion/roughness/metalness) decides its usage at import; declare a [[texture]] row only for a v2-material loose map. For a Terrain ground, cc0__fetch a texture (add disp to maps for the height blend), then cc0__terrain-layer on its folder, then pass the paths it answers to TerrainLayer::textured. Search results from Poly Haven carry the line Powered by Poly Haven; keep it next to them when you show them to the person.",
       "stacks": ["rust-wgpu"]
     }
   ],

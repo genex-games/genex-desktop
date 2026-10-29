@@ -3,11 +3,12 @@
 //! tick the frame is drawn at, never of earlier frames: Live and a capture of the same tick draw
 //! the same particles, nothing is read back, and the simulation and its checksum never see them.
 //!
-//! Start from [`Particles::steam`], [`Particles::rain`] or [`Particles::fountain`] and change what
-//! you need: soft billboards that fade where they meet the scene behind them, a flipbook atlas
-//! from the game's assets, back-to-front sorting, and collision with what the camera sees (a
-//! particle that falls behind a visible surface rests there and is gone; one that hits something
-//! out of view is not stopped).
+//! Start from [`Particles::steam`], [`Particles::rain`], [`Particles::snow`], [`Particles::dust`]
+//! or [`Particles::fountain`] and change what you need: soft billboards that fade where they meet
+//! the scene behind them, a flipbook atlas from the game's assets, back-to-front sorting, and
+//! collision with what the camera sees (a particle that falls behind a visible surface rests there
+//! and is gone; one that hits something out of view is not stopped). Rain, snow and dust are these
+//! soft billboards, never meshes.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -112,6 +113,9 @@ impl PartialEq for Particles {
     }
 }
 
+/// Ticks a second: the renderer's velocities and periods are per tick.
+const TICKS_PER_SECOND: f32 = 60.0;
+
 /// The most different emitters a process remembers; past them each new one is another version
 /// (a game making a fresh emitter every frame then fills the renderer's 16 and is refused, logged).
 const REMEMBERED_MAX: usize = 4096;
@@ -140,7 +144,7 @@ fn rgba(color: Color) -> [u8; 4] {
 }
 
 impl Particles {
-    fn of(desc: EmitterDesc) -> Particles {
+    pub(crate) fn of(desc: EmitterDesc) -> Particles {
         let look = ParticlesLook { desc, flipbook: None };
         Particles { inner: Arc::new(ParticlesInner { version: version_of(&look), look }) }
     }
@@ -167,6 +171,23 @@ impl Particles {
     /// out within two metres of the camera.
     pub fn rain(origin: Vec3, extent: Vec3) -> Particles {
         Particles::of(EmitterDesc::rain(origin.to_array(), extent.to_array(), 1))
+    }
+
+    /// Snow falling from the box centred on `top` with half sides `half_extent` (a y of 0: its top
+    /// face): soft round flakes 2.5 cm across falling 1 m/s and drifting, about 10 000 alive and
+    /// living 12 s, so they reach the ground from 8-10 m. A flake settles for half a second where
+    /// it lands on what the camera sees and fades in over two metres in front of the camera.
+    /// Draw weather with this, never with meshes.
+    pub fn snow(top: Vec3, half_extent: Vec3) -> Particles {
+        Particles::of(EmitterDesc::snow(top.to_array(), half_extent.max(Vec3::ZERO).to_array(), 1))
+    }
+
+    /// Dust motes hanging in the air of the box centred on `origin` with half sides `half_extent`
+    /// (a room, a sunbeam): faint warm specks 5 mm across, born anywhere in the box, drifting a
+    /// centimetre or two a second, 1 200 alive and living 20 s each. They are not lit by the sun:
+    /// size the box to the sunbeam for motes in the light.
+    pub fn dust(origin: Vec3, half_extent: Vec3) -> Particles {
+        Particles::of(EmitterDesc::dust(origin.to_array(), half_extent.max(Vec3::ZERO).to_array(), 1))
     }
 
     /// `per_tick` particles spawned each tick, each living `lifetime_ticks` (60 a second). Refused
@@ -256,6 +277,41 @@ impl Particles {
         }
         let flipbook = ParticleFlipbook { atlas: Arc::from(atlas), columns, rows, frames: frames.min(columns * rows), cycles, blend };
         Ok(self.changed(|look| look.flipbook = Some(flipbook)))
+    }
+
+    /// Lit by the sun through its shadows and by the sky by `share` (0..1; AAA materials): 1 for
+    /// snow, rain and dust, so a flake under a roof is as dark as the shade it is in; 0 (the
+    /// default) keeps the colour as given, for sparks and anything that glows.
+    pub fn with_lit(&self, share: f32) -> Particles {
+        self.changed(|look| look.desc.lit = share)
+    }
+
+    /// Sizes varied by up to `share` either way (0..0.9; 0.5 is from half to one and a half).
+    pub fn with_size_variance(&self, share: f32) -> Particles {
+        self.changed(|look| look.desc.size_variance = share)
+    }
+
+    /// Carried by gusts: up to `peak` metres a second more wind, swelling and dying every
+    /// `period_seconds` (at least half a second) and sweeping across as a front.
+    pub fn with_gusts(&self, peak: Vec3, period_seconds: f32) -> Particles {
+        self.changed(|look| {
+            look.desc.gust = (peak / TICKS_PER_SECOND).to_array();
+            look.desc.gust_period = period_seconds * TICKS_PER_SECOND;
+        })
+    }
+
+    /// Each particle swaying about its path by up to `reach` metres, one sway every
+    /// `period_seconds` (a snowflake's tumble; 0 reach: straight).
+    pub fn with_flutter(&self, reach: f32, period_seconds: f32) -> Particles {
+        self.changed(|look| look.desc.flutter = [reach, period_seconds * TICKS_PER_SECOND])
+    }
+
+    /// An endless field around the camera when `on` (weather): every particle is wrapped into the
+    /// box of the emitter's half extent around the camera, `origin` then the box centre's offset
+    /// from the camera, so the density holds wherever the camera goes and the emitter never moves.
+    /// [`crate::Weather`]'s layers are made this way.
+    pub fn following_camera(&self, on: bool) -> Particles {
+        self.changed(|look| look.desc.follow_camera = on)
     }
 
     /// Spawned in another pattern: emitters of the same kind with different seeds look different.

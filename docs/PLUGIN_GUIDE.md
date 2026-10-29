@@ -119,15 +119,16 @@ undeclared method is a compile error.
 | `assets.deliver` | `project.write` | Copies your output into a unique asset directory in the game; delivered files reach the host ledger |
 | `jobs.read` / `jobs.write` | `jobs` | Durable provider references. Not a credit ledger |
 | `events.emit` | `jobs` | Sanitized progress, attributed to the bound project/thread. `{kind:'toolbar', …}` updates a toolbar badge |
-| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each |
+| `observe` | `observe` | Loading/capture/audio evidence for authorized files in the bound worktree. API 3: with `still: { demo \| camera, width, height, maxBytes? }` and `files: []`, one named view on a hidden window at that size, as a PNG (or JPEG past `maxBytes`) with exposure numbers, or a `stillProblem` code; an older host ignores `still` and answers a plain observation (`PluginStillIgnored`), so check for each. API 3: with `clip: { demo, width, height, seconds? (2–10, 5), fps? (15–30, 30), maxBytes? (256 KiB–8 MiB, 8 MiB) }` and `files: []`, the demo stages a moment and returns, the host starts the clock and records that many seconds as MP4 or WebM with a JPEG `poster` and a 0–1 `motion` (about 0 when frozen), or a `clipProblem` with a still's codes (`PluginClipIgnored` from an older host) |
 | `export.stage` | `export` | Studio writes the public export of the bound game under `storage.root/publish/<project>/dist` and returns the result |
 | `credentials.session` | `credentials`, API 3 | Reuse an explicitly unlocked host-memory lease; never opens the OS store |
 | `runtime.detect` / `runtime.installation` | `native-runtime`, API 3 | Read declared native runtime readiness and durable installation progress |
-| `runtime.install` / `runtime.cancelInstall` | `native-runtime`, API 3 | Fixed pinned installation through a real declared user action; installation requires its confirmation |
+| `runtime.install` / `runtime.cancelInstall` | `native-runtime`, API 3 | Fixed pinned installation through a real declared user action, or an agent tool of the same name with a `confirmation` card the person answers (the call answers once the download starts); cancelling is the person's action only |
 | `native.run` / `native.jobs` / `native.result` | `native-runtime`, API 3 | Project-bound fixed job recipes, cancellation and durable results; no automatic replay |
-| `game.engine.link` / `game.engine.read` | `game-engine` | Link the bound game to an Unreal project file (checked by real path; the chat shows it with Undo), or read its link. The host keeps it in `storage.root/links/<game>.json`; a call to your MCP server never links a game |
-| `game.engine.steps` | `game-engine` | Show your steps card (your `steps` action's answer, read live) in the calling chat |
+| `game.engine.link` / `game.engine.read` | `game-engine` | Link the bound game to an engine project file, an Unreal `.uproject` or a Godot `project.godot` (checked by real path; the chat shows it with Undo), or read its link. The host keeps it in `storage.root/links/<game>.json`; a call to your MCP server never links a game |
+| `game.engine.steps` | `game-engine` | Show your setup card (your `steps` action's answer, read live) in the calling chat; see [Setup in the chat](#setup-in-the-chat) |
 | `game.snapshot` | `game-engine` | `{reason}` → `{snapshotId}`: a game snapshot of the bound game, listed in Rewind under `reason` (one plain line, at most 200 characters), before you change files there |
+| `game.engine.canAssist` | `game-engine` | `true` when Do it for me (`game.engine.assist`) can run for your plugin on this computer: a desktop with its driver, and apps your `engine.apps` names here. Asks nothing; offer the click path when it is `false` |
 | `game.engine.runs` | `game-engine` | `{game, title, project}[]`: the games whose run (a Loop) is going now that your plugin linked to a project, with that project file; needs no bound game. Read it before you offer to quit an editor a run may be using |
 | `game.create` | `game-engine` | `{title}` → `{project, directory}`: a new Genex game (title one plain line, at most 80 characters) for an engine project made with no game open; link it with `game.engine.link {project, game}`, which accepts only a game your plugin made, from outside any game |
 | `credentials.read` / `write` / `clear` | `credentials` | Plugin-scoped protected storage; only the reserved `unlock` / `connect` / `disconnect` actions authorize these |
@@ -212,6 +213,18 @@ optional leading `**/` for any depth; a `notUnder` glob ends with `/`. At most 8
 1–8 `files` and up to 8 `notUnder`; a fact id is lowercase letters, digits and dashes. Genex knows
 web, Unreal, Godot, Unity and Blender folders itself ([Project facts](plugins.md#project-facts)).
 
+A plugin that is an engine, with capability `game-engine`, declares it in `engine`, under your
+plugin's own id:
+`"engine": { "id": "toy-engine", "label": "Toy", "projectFiles": [".toyproj"], "fact": "toy-project", "projectInFolder": false, "play": { "players": 3, "clock": "none", "pointer": true } }`.
+`label` is the engine's name as people read it; `projectFiles` lists 1–4 extensions a project file
+has (one or two dotted parts, such as `.project.json`); `fact` is one your `detect` declares;
+`projectInFolder` is true when the project must sit inside the game folder for save points to hold
+it. Optional `play` says what your editor can do in play (`players` 1–8, `clock`, `pointer`,
+`state`), and `apps` names the apps your editor runs as (Mac bundle ids, Windows `.exe` names, at
+most 4 each), which computer use never drives to build or play; `playerApps` names the apps your
+published games are played in, which computer use never drives at all. See
+[The engine declaration](plugins.md#the-engine-declaration).
+
 What your engine generates while it runs stays out of the game's history when you say so:
 `"workspace": { "ignore": ["Cache/"], "copySkip": ["Cache/"] }` puts `/Cache/` (or `sub/Cache/` for
 a project in `sub`) in the game's `.gitignore` before its first commit and every snapshot after; `copySkip` names what
@@ -242,7 +255,9 @@ editor, the agents' work in it waits. Hooks run your harness tools at Genex's mo
 `context.hook` (`{ on, runId?, worker?, … }`, absent when called directly) and answers `{ block?,
 note?, pending?, images? }`. A handler that throws blocks a moment that can be blocked, so answer
 `note` for trouble that should not stop the work. It never changes another call's arguments, and
-git stays Genex's. An agent tool that `makes` a kind
+git stays Genex's. A quick `checkpoint.before` save may add `"messages": true` to run before each
+chat message's checkpoint too, so a Rewind brings back what it saved ([Before each chat
+message](plugins.md#before-each-chat-message)). An agent tool that `makes` a kind
 may name a harness tool in `ready` that answers `{ ready, note }`. See
 [Hooks](plugins.md#hooks-genexs-moments) and [Locks](plugins.md#locks-the-person-comes-first).
 
@@ -258,7 +273,10 @@ makes) keep finding facts your `detect` skips, even while your plugin is off. Se
 An observer is what Genex can capture of a project of your kind, for the reviewer who checks a
 Loop's finish: `"observers": [{ "id": "viewport", "facts": ["toy-project"], "tool": "capture" }]`
 names one of your harness tools that asks nothing and answers pictures. Add `"live": "stills"` to
-have Live show its latest pictures for such a project (`unreal-card` is the bundled Unreal
+have Live show its latest pictures for such a project, or `"live": "card", "status": "<action>"`
+for a card like Unreal's: the latest picture, the game's name, and what your action (one that asks
+nothing) answers, `{ line, hint?, button?: { label, action } | { label, panel: true } }`, one line
+each, the button one of your declared actions or your panel (`unreal-card` is the bundled Unreal
 plugin's own view; `preview` and `proof` are Genex's ids). Add `"label": "Board"` to name that
 view's tab when a folder has more than one view (1–24 characters, not a name the stage strip
 already shows); without it the tab takes your plugin's name. Your observer captures only while your
@@ -274,6 +292,40 @@ worker types, and your observers feed the reviewer who checks its finish. The to
 Genex's tests (`tests/fixtures/toy-engine-plugin/`) runs such a Loop, and so does a copy of it with
 every tool renamed. See [the open Loop](harness-runtime.md).
 
+### Setup in the chat
+
+When your engine (or anything else your plugin needs on the person's computer) is missing, don't
+answer the agent with instructions to pass on: show the **setup card** in the chat and let Genex do
+what it can. Unity, Godot and Unreal follow this one model; Roblox's card shows the same steps,
+with Do it for me (Genex's computer control in Studio) as a step's button:
+
+1. **The agent asks for it.** Declare an agent tool `show-steps`. While a step is open it calls the
+   host's `game.engine.steps`, which puts your card above the chat's composer, and answers the
+   agent in words that say to tell the person in one line and end its reply. Point to it from every
+   refusal of a tool that needs the missing piece (`new-game`) and from your `engine-status` note.
+2. **The card reads itself.** Declare a `steps` action (no `native`, no confirmation): Genex asks it
+   every few seconds while the card shows, so a step done outside Genex ticks by itself. It answers
+   a `PluginSetupCard` (`plugin-sdk/index.d.ts`): rows `{id, label, detail, done}`, with `you` on a
+   step only the person can do (signing in), `working` on one under way (its `detail` says how far:
+   "40 of 170 MB", "Downloading · 42%"), and a row `action` for that step's own button.
+3. **Do it for me.** `primary` names the action that does every step it can (download, check the
+   maker's signature with `codesign`, copy into Applications, then any installer the vendor ships
+   with a command line), started in the background and answered at once; the card follows it.
+   Stop where only the person's hands will do (an account sign-in, a license), mark that row `you`
+   and open the vendor's app for them. Never handle passwords.
+4. **A way out.** `secondary` takes Hide's place: **Don't use …** while idle (close the card for that
+   game and tell the agent to offer a web game), **Stop** while something runs (end it; it shows as
+   stopped, with Try again, and the agent is told nothing).
+5. **The chat goes on.** Once nothing is open the card's `doneSays` reaches the agent, unseen, and
+   the chat continues (say which tool to call next). When a step Genex ran stops, `stuckSays` reaches
+   it once: say what stopped and, where the vendor's own window could finish it, that the agent may
+   do so with the `desktop` tool when computer control is on.
+
+Turning on a plugin the agent suggested also continues the chat by itself, so a setup that starts
+with **Turn on** needs no message from the person. `STUDIO_ENGINE_TEST_ROOT` points a development
+profile at a made-up Mac (its `Applications/` and `home/`), so you can try your card on a computer
+that already has the engine.
+
 ## 3. Panels
 
 A panel is served into an opaque-origin sandboxed frame with
@@ -283,12 +335,13 @@ A panel is served into an opaque-origin sandboxed frame with
 - Inline your JavaScript and CSS. `<script src="…">` **will not load**. Put
   `<!-- STUDIO_PANEL_SDK -->` where the bridge goes and run
   `node src/plugin-sdk/inline-panel-sdk.mjs panel.html` (the scaffold already did): it pastes the
-  current `panel.js` and `ui.js` in, so the bridge matches `index.d.ts`.
+  current `panel.js`, `ui.js` and `words.js` in, with the translations from `locales/` beside the
+  panel, so the bridge matches `index.d.ts`.
 - No `fetch`, no forms, no external images, no external fonts. Images and fonts must be `data:` URLs
   (`inlinePanelFonts` in the same script pastes Genex's own type in at `<!-- STUDIO_PANEL_FONTS -->`), and
   `project.read` is utf8-only, so a panel cannot display a PNG read from the game folder.
 - The whole bridge is `window.studioPlugin`: `call(method, name?, args?)` with
-  `call('context')` → `{project, apiVersion, theme}` (`theme` carries `background`, `foreground`,
+  `call('context')` → `{project, apiVersion, theme, surface, locale}` (`theme` carries `background`, `foreground`,
   `accent` and the readable button colours `accentFill`, `accentForeground`, `accentHover`),
   `call('settings')` → your standard settings
   and `call('action', name, args)` → a declared action, plus
@@ -296,6 +349,36 @@ A panel is served into an opaque-origin sandboxed frame with
   `[a-z0-9]{1,10}`; native, so a fixture profile answers `unsupported-in-fixture`; see
   [Panels](plugins.md#panels-and-trusted-approval)). Nothing else crosses. A call the person
   cancelled in Studio's confirmation rejects with `code: "cancelled"`; stay quiet then.
+- A panel opened from the stage strip sits in a dialog (`context.surface` is `"card"`), and the
+  dialog is the window: mark each page's heading block `data-panel-head` (its `h2` is the dialog's
+  title, its first `p` the line under it) and each page's Back `data-panel-back`. On a card the SDK
+  hides both (the dialog draws them, and its arrow presses your Back), marks the document
+  `data-surface="card"` so you can drop your own padding, and sizes the frame to your content, so
+  the dialog scrolls once. A page without a marked heading keeps the manifest's panel title.
+- A panel speaks Genex's language (`context.locale`: `en`, `ru`, `es`, `pt-BR`, `de`, `fr`, `ja`,
+  `ko`, `zh-Hans`). Write each word once, in English, as `studioPlugin.t("Set up {name}", { name })`
+  in the ICU message syntax the app uses (`{count, plural, one {# file} other {# files}}`,
+  `{choice, select, …}`, `'{'` for a brace); `studioPlugin.formatList(items)` writes "a, b and c",
+  and `studioPlugin.locale` is the language the panel speaks, for `Intl`. Mark static words in the
+  page `data-t` (its text) or `data-t="title aria-label"` (those attributes). The SDK speaks once
+  the host has named the language, so make your script a module that starts with
+  `await studioPlugin.ready;` (`<script type="module">`); `ready` settles in English after two
+  seconds without an answer. Translations live in your package's `locales/<lang>.json`, keyed by
+  the English (`{"Set up {name}": "Настроить {name}"}`); `node src/plugin-sdk/panel-words.mjs
+  panel.html` writes `locales/messages.json`, the list of every English message the panel asks
+  for, and an empty catalog per language. A missing or broken translation shows the English. The
+  bundled panels (`src/plugins/unity/panel.html` and the others) do all of this.
+- Your manifest speaks it too. Genex looks up the plugin.json texts a person reads (`name`,
+  `description`, `setup`, panel titles, setting and action labels, `confirmation`s and a card
+  field's `label`, toolbar `label` and `ariaLabel`, `folders[].why`, Live tab and runtime labels) by
+  their English in the same `locales/<lang>.json` of the installed package, as plain text.
+  `panel-words.mjs` adds them to `messages.json` (`node src/plugin-sdk/panel-words.mjs plugin.json`
+  for a plugin without a panel). Ids, names, values and what agents read (tool descriptions,
+  skills) stay as written. The English shows for a missing translation, a catalog that isn't a JSON
+  object of strings or is over 512 KiB, and a translation that adds a line break or a control
+  character, grows past three times its English, or names a strip button Studio's own.
+- Buttons follow Genex's rule: a padded button has a background. An action for the whole panel
+  that you want quiet is a link (underlined words, no padding), never a padded button without a fill.
 
 `plugin:doctor` warns about both of these mistakes, naming the file.
 
@@ -307,7 +390,11 @@ Two different things, both asked by the host and never by the plugin or the agen
   the game folder. Studio asks the user before the backend sees the call. With no way to ask, the
   call fails closed. A declined or expired request reaches the agent as text
   (`{consent:'declined', by, message}`), never as an error — say in your skill text that a declined
-  request must not be repeated.
+  request must not be repeated. API 3: `confirmationInput: {parameter, label}` names one of the
+  tool's string parameters the person may edit on the card before Allow (a game's name, say); the
+  call runs with their edit.
+- **`tools[].timeoutMs`** (API 3) — whole milliseconds, 1,000 to 540,000: how long one call may
+  run when that is longer than the host's 190-second ceiling, such as an engine's import or export.
 - **`actions[].confirmation`** — a user-invoked action behind a Studio-owned review and a native
   dialog. Your optional `review` returns `{message, detail, images:[{label, dataUrl}]}`: `message`
   (at most 2,000 characters) is the dialog's question instead of the manifest's `confirmation`, and
@@ -388,8 +475,9 @@ What Studio will and will not do with it:
   PATH. (`host-cli` runs a program Studio itself ships and is reserved for the bundled Genex
   plugin.)
 - **`cwd`** is `storage` or `storage:project`, both inside your plugin's own storage — never the
-  package, which is replaced on update and deleted on remove. `HOME` is set to a folder inside that
-  directory, so a server that reads dotfiles on startup cannot reach the user's.
+  package, which is replaced on update and deleted on remove. `HOME` (and on Windows `USERPROFILE`,
+  `APPDATA` and `LOCALAPPDATA`) is set to a folder inside that directory, so a server that reads
+  dotfiles on startup cannot reach the user's.
 - **`env`** names *sources*, never values: `setting:<key>` (a declared setting), `literal:<value>`,
   or `credential-file` — which sets the variable to `/dev/fd/3` and sends your plugin's one
   credential, the bare token with no `NAME=` framing and no newline, down an anonymous pipe on
@@ -493,11 +581,30 @@ npm run plugin:submit -- ~/studio-plugins/my-plugin --catalog ~/genex-plugins \
 It packs the package as `plugin:pack` does, writes the immutable release record
 `records/<id>/<version>.json` and points the `index.json` entry at it, then checks the catalog the
 way its CI will, with the catalog's own validator. It refuses an official id (`genex`,
-`blender`), the scaffold's `Unpublished` publisher (the publisher owns every later release of the
+`blender`), an id that isn't yours (a community id is your GitHub name from `--repo`, alone or
+before a dash: `you` or `you-my-plugin`, so a vendor's bare name stays the vendor's), the
+scaffold's `Unpublished` publisher (the publisher owns every later release of the
 id), a bad source and a version already released, and keeps nothing it wrote when it refuses. The
 record copies `id`, `name`, `publisher`, `description`, `version` and `capabilities` from
 `plugin.json`; `category` is one of `assets`, `publishing`, `tools`, `analytics`, `other`, and
 `tier` is `community`.
+
+**Your plugin's page.** In the app, a community plugin is a tile under Community plugins: its
+name, `by` your GitHub name (from `--repo`, linking your profile) and its description. The tile
+opens its page, which Genex draws from the record: how to start, what it can do (from
+`capabilities`), the pinned source and your `--docs-url`, with an Install button; once installed,
+the tile shows its switch. "How to start" is Genex's install step, then your own `setup` steps
+from `plugin.json`, then when it is ready:
+
+```json
+"setup": ["Get an API key at example.com: Account, then Keys.", "Open its page in Genex and paste the key in Settings."]
+```
+
+`setup` is 1 to 6 steps of plain text, one line and at most 200 characters each: no markup,
+links, line breaks, control characters or text direction overrides. Genex draws them as text,
+and the plugin, the catalog's check and the app each refuse anything else. Without `setup`, a
+plugin that declares `credentials` gets a step to connect its account. `plugin:submit` copies
+`setup` into the record, and the catalog checks it matches the packed `plugin.json`.
 
 The artifact it prints (`<id>-<version>.json`, beside the clone; `--artifact <file>` to choose)
 belongs on your repository's GitHub release for that version, not in the catalog. Commit the
@@ -540,9 +647,10 @@ recipe, not Studio internals. Keep credentials, process launch parameters and pe
 out of agent tool schemas. Tools receive relative input references and return delivered relative
 file paths plus durable job IDs. Installation belongs to a separate confirmed action.
 
-For a custom panel, inline the distributed `plugin-sdk/panel.js`. Studio's bundled plugin build
-replaces `<!-- STUDIO_PANEL_SDK -->` with that script; external authors must do equivalent inlining
-in their own build. Referencing an external script URL or assuming `window.studioPlugin` exists
+For a custom panel, inline the distributed `plugin-sdk/panel.js` (and `ui.js` and `words.js` after
+it). Studio's bundled plugin build replaces `<!-- STUDIO_PANEL_SDK -->` with those scripts and the
+plugin's `locales/` translations (`inlinePanelSdk(html, sdkDir, localesDir)`); external authors must
+do equivalent inlining in their own build. Referencing an external script URL or assuming `window.studioPlugin` exists
 without the bootstrap produces a nonfunctional panel.
 
 A long install can call `studioPlugin.call('action', 'install', {}, {timeoutMs: 1800000})`. Query
@@ -590,7 +698,8 @@ or replace Studio's full installer validation, user consent, licensing review or
 ### Panel context notifications
 
 `studioPlugin.onContextChanged(callback)` returns an unsubscribe function. The host notifies
-the mounted plugin panel when its plugin changes; notifications carry no credentials. Re-read
+the mounted plugin panel when its plugin or the selected game changes; notifications carry no
+credentials. A request asked before a game change is still answered, for the game it was asked in. Re-read
 status through declared actions, coalesce refreshes and ignore stale in-flight responses.
 Declared Connect/Unlock actions can omit an extra confirmation: the UI gesture begins account
 setup, while OS/browser authorization remains intact. Disconnect and publish still require confirmation.

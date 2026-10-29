@@ -164,7 +164,10 @@
       "fog_max_opacity",
       "fog_color",
       "fog_aerial_perspective",
-      "contact_shadow_length"
+      "contact_shadow_length",
+      "local_exposure_highlights",
+      "local_exposure_shadows",
+      "doorway_adaptation"
     ],
     "qualityKeys": ["preset", "render_scale", "fps", "lod_threshold_px", "lod_fade_band", "far_density"],
     "renderKeys": ["form_factors", "preset", "look", "class", "shadows", "loading"],
@@ -192,7 +195,8 @@
       "unknown-device-class",
       "unknown-render-feature",
       "invalid-render-scale",
-      "invalid-frame-budget"
+      "invalid-frame-budget",
+      "invalid-look"
     ],
     "renderScale": { "min": 0.5, "max": 1 },
     "frameBudgetMs": { "min": 1, "max": 100 },
@@ -210,6 +214,7 @@
     "fogDistanceLimit": 100000,
     "fogColorMax": 16,
     "contactShadowLengthMax": 2,
+    "localExposureContrastMin": 0.25,
     "wgslApis": [1, 2],
     "captureSettleFramesMax": 16,
     "renderSettingsApi": 1,
@@ -231,6 +236,7 @@
       { "arg": {"set": {"frameBudgetMs": 0.5}}, "error": "invalid-frame-budget" },
       { "arg": {"set": {"frameBudgetMs": 101}}, "error": "invalid-frame-budget" },
       { "arg": {"set": {"frameBudgetMs": "4"}}, "error": "bad-argument" },
+      { "arg": {"set": {"look": 1.5}}, "error": "bad-argument" },
       { "arg": {"set": {"features": {"bloom": "off"}}}, "error": "bad-argument" },
       { "arg": {"set": "low"}, "error": "bad-argument" }
     ],

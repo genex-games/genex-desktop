@@ -5,6 +5,7 @@
  */
 import type { JSX } from "react";
 import { useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import { BackdropControls, resetBackdrop } from "../home-backdrop/BackdropControls.tsx";
 import { useGenerationModel } from "../home-backdrop/generation-model.ts";
 import { BackdropSource } from "../home-backdrop/settings.ts";
@@ -14,9 +15,9 @@ import { Icon } from "../ui/icons.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover.tsx";
 
 const MESSAGE = {
-  button: "Background",
-  heading: "Background",
-  reset: "Reset",
+  button: t("Background"),
+  heading: t("Background"),
+  reset: t("Reset"),
 } as const;
 
 /** `picked` is the model home's composer shows: the one Make your own writes with. */

@@ -17,6 +17,7 @@ import {
 } from "../../src/substrate/engines/ollama.ts";
 import { EngineError } from "../../src/substrate/engines/types.ts";
 import { EngineFailureKind } from "../../src/shared/engine-requests.ts";
+import { isTransientProviderError } from "../../src/harness-seed/loop/outage.ts";
 import { startFakeOllama, type FakeOllama } from "../helpers/fake-ollama.ts";
 import { cliName, writeCliLauncher } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -410,6 +411,40 @@ describe("ollama engine completions (real pi-ai over real HTTP)", () => {
     );
   });
 
+  it("retries a tool call Ollama could not parse, and succeeds when the model gets it right", async () => {
+    // What Ollama answers when the model writes prose where its template expects a tool call.
+    const server = await fake({ replies: [toolCallParseFailure(), { text: "built it" }] });
+    const response = await new OllamaEngine({ host: server.host }).complete({
+      model: "gpt-oss:20b",
+      messages: [{ role: "user", content: "make a platformer" }],
+    });
+    assert.equal(response.message.content, "built it");
+    assert.equal(server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).length, 2);
+  });
+
+  it("names a model that keeps writing malformed tool calls, not an unreachable Ollama", async () => {
+    const server = await fake({ replies: [toolCallParseFailure(), toolCallParseFailure(), toolCallParseFailure()] });
+    await assert.rejects(
+      () =>
+        new OllamaEngine({ host: server.host }).complete({
+          model: "gpt-oss:20b",
+          messages: [{ role: "user", content: "make a platformer" }],
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof EngineError);
+        // Not "unavailable": that reads as Ollama being down, and the run's outage patience
+        // would wait minutes for a server that is answering fine.
+        assert.equal(err.kind, EngineFailureKind.Other);
+        assert.match(err.message, /gpt-oss:20b/);
+        assert.match(err.message, /tool call/i);
+        assert.doesNotMatch(err.message, /\b500\b|unreachable/i);
+        assert.equal(isTransientProviderError(err), false);
+        return true;
+      },
+    );
+    assert.equal(server.requests.filter((r) => r.path.startsWith("/v1/chat/completions")).length, 3);
+  });
+
   it("says Ollama is not running when nothing answers, as a failure a fallback can take over", async () => {
     const server = await fake();
     const host = server.host;
@@ -594,3 +629,16 @@ describe("live check against the user's Ollama", () => {
     assert.ok(response.message.content.length > 0);
   });
 });
+
+/** Ollama's 500 for a model that wrote plain reasoning where its template expected a tool call. */
+function toolCallParseFailure(): { httpStatus: number; body: string } {
+  return {
+    httpStatus: 500,
+    body: JSON.stringify({
+      error: {
+        message:
+          "error parsing tool call: raw='The user wants a modern 3-D platformer. We need to interpret the request', err=invalid character 'T' looking for beginning of value",
+      },
+    }),
+  };
+}

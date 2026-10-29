@@ -19,7 +19,7 @@ import { CliInstallProblem } from "../shared/cli-install.ts";
 import type { CodingProvider } from "../shared/coding-cli.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineId } from "../shared/providers.ts";
-import { childEnv } from "./child-env.ts";
+import { childEnv, windowsPowerShellEnv } from "./child-env.ts";
 import { killProcessTree } from "./process-tree.ts";
 import { envValue, isWindows } from "./toolchain.ts";
 
@@ -151,7 +151,8 @@ export async function installCodingCli(
     const file = path.join(folder, `install${source.extension}`);
     await writeFile(file, script.text, { mode: 0o700 });
     const installer = installerOf(provider);
-    const env = childEnv(parent, { base: "contractor", vendor: installer.vendor, set: installer.set });
+    const contractor = childEnv(parent, { base: "contractor", vendor: installer.vendor, set: installer.set });
+    const env = isWindows(platform) ? windowsPowerShellEnv(contractor) : contractor;
     const exit = await (options.run ?? runInstaller)(installerCommand(provider, platform, file, parent), {
       env,
       timeoutMs: options.timeoutMs ?? INSTALL_TIMEOUT_MS,

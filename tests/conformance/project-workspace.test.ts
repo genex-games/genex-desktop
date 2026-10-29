@@ -7,11 +7,14 @@ import { readFileSync } from "node:fs";
 import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { CoreFact, type FactRef } from "../../src/shared/project-facts.ts";
+import { CoreFact, type FactRef, hasFact } from "../../src/shared/project-facts.ts";
 import { MEDIA_FORMATS } from "../../src/shared/game-assets.ts";
 import {
   type AssetFolder,
   assetFoldersFor,
+  deliveryFolderFor,
+  publishesAsWebGame,
+  webFolderOf,
   ignoreLine,
   ignoreRulesFor,
   isAssetPath,
@@ -73,6 +76,7 @@ describe("Genex's own table", () => {
       "game/Logs/",
       "game/obj/",
       "game/UserSettings/",
+      "game/Builds/",
     ]);
   });
 
@@ -265,7 +269,42 @@ const ASSET_FOLDER_CASES: Array<[string, FactRef[], PluginWorkspace[], AssetFold
   ["a linked fact outside the game adds none", [fact(CoreFact.UnityProject, "/elsewhere")], [], DEFAULTS],
 ];
 
+/** Facts, and the folder a plugin's delivered files land in (null: Genex's default, the game's root). */
+const DELIVERY_CASES: Array<[string, FactRef[], string | null]> = [
+  ["no facts", [], null],
+  ["a web game at the root", [fact(CoreFact.WebGame, ROOT)], null],
+  ["a Godot project in godot/: its own folder, where res:// reaches", [fact(CoreFact.GodotProject, "godot")], "godot"],
+  ["a Godot project at the root", [fact(CoreFact.GodotProject, ROOT)], ROOT],
+  [
+    "a web game at the root beside a Godot project keeps the root",
+    [fact(CoreFact.GodotProject, "godot"), fact(CoreFact.WebGame, ROOT)],
+    null,
+  ],
+  ["a web game in a folder doesn't", [fact(CoreFact.WebGame, "web"), fact(CoreFact.GodotProject, "godot")], "godot"],
+  ["an Unreal project keeps the root", [fact(CoreFact.UnrealProject, ROOT)], null],
+  ["a Godot project it cannot name safely", [fact(CoreFact.GodotProject, "../out")], null],
+  ["a linked Godot project outside the game", [fact(CoreFact.GodotProject, "/elsewhere")], null],
+];
+
 describe("where a project's assets live", () => {
+  it("delivers a plugin's files where the game's engine reads them", () => {
+    for (const [name, facts, folder] of DELIVERY_CASES) assert.equal(deliveryFolderFor(facts), folder, name);
+  });
+
+  it("plays and publishes a web game in a folder only when there is none at the root", () => {
+    const rows: Array<[string, FactRef[], string | null]> = [
+      ["a web game at the root", [fact(CoreFact.WebGame, ROOT), fact(CoreFact.WebGame, "web")], null],
+      ["a Godot game's web export", [fact(CoreFact.GodotProject, "godot"), fact(CoreFact.WebGame, "web")], "web"],
+      ["a Godot game with none", [fact(CoreFact.GodotProject, "godot")], null],
+      ["a folder it cannot name safely", [fact(CoreFact.WebGame, "../web")], null],
+    ];
+    for (const [name, facts, folder] of rows) {
+      assert.equal(webFolderOf({ facts }), folder, name);
+      assert.equal(publishesAsWebGame({ facts }), folder !== null || hasFact(facts, CoreFact.WebGame, ROOT), name);
+    }
+    assert.equal(webFolderOf({ facts: [] }), null, "a game with no kind yet is served at its root");
+  });
+
   it("finds each fact's asset folders", () => {
     for (const [name, facts, plugins, folders] of ASSET_FOLDER_CASES) {
       assert.deepEqual(assetFoldersFor(facts, plugins), folders, name);

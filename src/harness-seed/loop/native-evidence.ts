@@ -17,9 +17,14 @@
  *    `unmeasured` ("built, not run on this Mac"), never a pass. The verdict rides on the look
  *    (`withParity`) and becomes one board row (checks.ts).
  *
+ * Both read the run's memory from `native.status`: a run past the 4 GiB budget is fine on a
+ * desktop and warned, with its peak, only when the game also ships to the web or a phone; a run
+ * the host killed past its cap (`memory-cap`) fails naming the footprint and the cap.
+ *
  * A new module on purpose: a seed upgrade keeps any older module the agent edited, so it imports
  * the frame verdicts from their own module and only names its neighbours have always exported.
  */
+import { readyWaitOf } from "./ready-wait.ts";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -28,7 +33,7 @@ import { WINDOW_RETRIES_MS } from "./config.ts";
 import { type FrameLook, weighBlackness, weighDraws, weighDuplicates } from "./frame-verdicts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { isRecord } from "./json.ts";
-import { playScriptFor, wantsEyeCameras } from "./kinds.ts";
+import { playScriptFor, startKeysFor, wantsEyeCameras } from "./kinds.ts";
 import {
   BuildTarget,
   type Destinations,
@@ -43,6 +48,7 @@ import {
   RAYLIB_WEB_UNMEASURED,
   RUST_WEB_UNMEASURED,
   runRefusal,
+  servedStacks,
   TargetRefusal,
   leasedJudging,
 } from "./native-contract.ts";
@@ -52,9 +58,9 @@ import { PageMethod } from "./page-contract.ts";
 import { applyPlayScript } from "./play-script.ts";
 import { touchesSkipped } from "./native-refusal.ts";
 import { slug } from "./spec.ts";
-import { sleep } from "./time.ts";
+import { SECOND_MS, sleep } from "./time.ts";
 import type { AnyRecord, HarnessCtx, Run } from "../types/harness.d.ts";
-import type { BuildProblem, BuildProblemCode, StudioPlatform } from "../types/host-api.d.ts";
+import type { BuildProblem, BuildProblemCode, NativeRunMemory, StudioPlatform } from "../types/host-api.d.ts";
 import type { applySetup, consoleProblems, Evidence, GatherOptions, Shot } from "./evidence.ts";
 
 /**
@@ -143,6 +149,8 @@ export interface TargetParity {
   pass: boolean | null;
   reason: string;
   rows: ParityRowResult[];
+  /** What the next builder should know and that fails nothing (a run over the memory budget). */
+  warnings?: string[];
 }
 
 /** Every desktop destination's gate on one look, and what they add up to. */
@@ -202,6 +210,9 @@ const HOST_NAME = {
 } as const satisfies Record<StudioPlatform, string>;
 
 /** What the gate says, in its own words. */
+/** Leaving the title (`startNative`): the clock steps this long between reads of `flow.playing`, for at most this long. */
+const START_STEP_MS = 240;
+const START_WAIT_MAX_MS = 12 * SECOND_MS;
 const MESSAGE = {
   similarity: "frame similarity is unmeasured until PX10 sets its threshold",
   webUnheard: "the web build did not answer its sound level",
@@ -214,6 +225,8 @@ const MESSAGE = {
   noLease: (target: string) => `no ${target} lease was free to run the gate`,
   buildFailed: (target: string, why: string) => `the ${target} build failed: ${why}`,
   builtNotRun: (host: string) => `built, not run on this ${host}`,
+  builtWhereIntegrated: (target: string) =>
+    `not built in a worker's copy: the ${target} build is made where the run integrates, so each copy does not keep one of its own`,
   phoneNotBuilt: (target: string) =>
     `not built or run by the judge: an ${target} build is made by the export lane and runs only on a device the person starts from Studio, so its gameplay is judged on this computer's build`,
   hostRefusedBuild: (refusal: string, detail: string | null) =>
@@ -228,6 +241,10 @@ const MESSAGE = {
   refused: (refusal: string, detail: string | null) =>
     `the host refused the bundle: ${refusal}${detail ? ` (${detail})` : ""}`,
   notReady: (reason: string) => `the game never said it was ready: ${reason}`,
+  unreadPlay: (keys: string[]) =>
+    `the game reports no state().flow, so the harness pressed the declared start keys (${keys.join("/")}) without reading whether play began — report flow {playing, phase} in state() (a "flow" probe) so the drive knows`,
+  outsidePlay: (keys: string[]) =>
+    `the drive began outside play: the start keys (${keys.join("/")}) did not bring the game to flow.playing within ${START_WAIT_MAX_MS / SECOND_MS} s; the scripted controls landed in the front-end`,
   stepped: (witness: AnyRecord) =>
     `stepping moved nothing: frames ${witness.frameBefore} → ${witness.frameAfter}, ${witness.simulatedMs} ms simulated, ${witness.drawCalls} draws`,
   noFrame: (asked: readonly string[]) => `no camera produced a frame (asked for: ${asked.join(", ") || "none"})`,
@@ -240,7 +257,87 @@ const MESSAGE = {
   webUnjudged: "the web look judged no frames, so there is nothing to agree with",
   webWithoutWebGpu:
     "the web build could not run in this preview: it offers no WebGPU (gpu-unsupported), so cross-target agreement is unavailable, not failed",
+  overBudget: (target: string, peak: string, budget: string, small: string) =>
+    `the ${target} build used ${peak} GiB at peak: fine on a desktop, but over the ${budget} GiB budget a game should fit in to run ${small}, which this game also ships to; keep what those builds load under ${budget} GiB`,
+  memoryCap: (target: string, used: string, cap: string) =>
+    `the ${target} build used ${used} GiB and was stopped past this computer's ${cap} GiB memory cap (${NativeRefusal.MemoryCap})`,
 } as const;
+
+/** A desktop destination as a sentence names it: "the Mac build". */
+const DESKTOP_NAME: Readonly<Partial<Record<BuildTarget, string>>> = {
+  [BuildTarget.Mac]: "Mac",
+  [BuildTarget.Windows]: "Windows",
+  [BuildTarget.Linux]: "Linux",
+};
+/** The destinations a game must fit the memory budget for, as the warning names them. */
+const SMALL_DESTINATION_NAME: Readonly<Partial<Record<BuildTarget, string>>> = {
+  [BuildTarget.Web]: "in a browser",
+  [BuildTarget.Ios]: "on an iPhone",
+  [BuildTarget.Android]: "on an Android phone",
+};
+const GIB_BYTES = 1024 ** 3;
+
+// ── memory ────────────────────────────────────────────────────────────────────────────────
+
+/** What `native.status` says of a run's memory and whether the host killed it past the cap. */
+interface MemoryReading {
+  memory: NativeRunMemory | null;
+  killedPastCap: boolean;
+}
+
+const isBytes = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+
+/** A `native.status` answer's `memory`, or null when it has none or not in its shape. */
+export function runMemoryOf(status: unknown): NativeRunMemory | null {
+  const memory = isRecord(status) ? status.memory : null;
+  if (!isRecord(memory)) return null;
+  const { peakBytes, budgetBytes, capBytes, overBudget } = memory;
+  const counted = isBytes(peakBytes) && isBytes(budgetBytes) && isBytes(capBytes);
+  return counted && typeof overBudget === "boolean" ? { peakBytes, budgetBytes, capBytes, overBudget } : null;
+}
+
+/** Bytes in GiB as a sentence says them: "5.3", "4". */
+const gib = (bytes: number): string => String(Number((bytes / GIB_BYTES).toFixed(1)));
+const desktopName = (target: BuildTarget): string => DESKTOP_NAME[target] ?? target;
+
+/** The lease's run memory and whether it ended `memory-cap`; nothing when the host answers no status. */
+async function readMemory(ctx: HarnessCtx, project: string, handle: string | null | undefined): Promise<MemoryReading> {
+  const params = handle ? { project, handle } : { project };
+  const status: unknown = await ctx.call(HostMethod.NativeStatus, params).catch(() => null);
+  const killedPastCap = isRecord(status) && status.refusal === NativeRefusal.MemoryCap;
+  return { memory: runMemoryOf(status), killedPastCap };
+}
+
+/**
+ * The warning a run over the memory budget earns: none for a game that ships only to desktops (more
+ * than 4 GiB is normal there), or that names no destinations; else one naming the peak, the budget
+ * and the web or phone destinations it is too much for.
+ */
+export function memoryWarnings(
+  memory: NativeRunMemory | null,
+  target: BuildTarget,
+  destinations: Destinations | null | undefined,
+): string[] {
+  if (!memory?.overBudget) return [];
+  const small = (destinations?.targets ?? []).flatMap((entry) => SMALL_DESTINATION_NAME[entry] ?? []);
+  if (small.length === 0) return [];
+  const where = small.join(" or ");
+  return [MESSAGE.overBudget(desktopName(target), gib(memory.peakBytes), gib(memory.budgetBytes), where)];
+}
+
+/** The failure a run killed past the cap reads as: the footprint that killed it and the cap. */
+function memoryCapReason(target: BuildTarget, memory: NativeRunMemory): string {
+  return MESSAGE.memoryCap(desktopName(target), gib(memory.peakBytes), gib(memory.capBytes));
+}
+
+/** A gate whose run the host killed past its cap: the row that failed says so with the numbers. */
+function nameTheCap(rows: ParityRowResult[], target: BuildTarget, reading: MemoryReading): void {
+  if (!reading.killedPastCap || !reading.memory) return;
+  const failure = rows.find((entry) => entry.pass === false);
+  if (!failure) return;
+  failure.reason = memoryCapReason(target, reading.memory);
+  failure.refusal = NativeRefusal.MemoryCap;
+}
 
 // ── rows and verdicts ──────────────────────────────────────────────────────────────────────
 
@@ -480,6 +577,8 @@ const quote = (comparison: StateComparison): string =>
 /** What one gate is asked to look at. */
 export interface ParityRequest {
   run: Run;
+  /** The game's destinations: a run over the memory budget is warned only when they include the web or a phone. */
+  destinations?: Destinations;
   /** The desktop destination the gate runs (a build this host runs in its game box). */
   target: BuildTarget;
   /** The web lease the look judged (null: the studio's stand-in), which the cross-target drive steps. */
@@ -554,12 +653,17 @@ export async function runParityGate(ctx: HarnessCtx, request: ParityRequest): Pr
   const handle = await nativeLease(ctx, request);
   if (!handle) return targetParity(target, restUnmeasured(rows, MESSAGE.noLease(target)));
   const gate: GateRun = { ctx, request, rows, handle, openGl: admitted.openGl, shots: [] };
+  let reading: MemoryReading = { memory: null, killedPastCap: false };
   try {
     for (const step of GATE_STEPS) if (!(await step(gate))) break;
+    reading = await readMemory(ctx, request.run.project, handle);
   } finally {
     await ctx.call(HostMethod.PreviewRelease, { handle }).catch(() => {});
   }
-  return targetParity(target, restUnmeasured(rows, MESSAGE.notRun));
+  nameTheCap(rows, target, reading);
+  const parity = targetParity(target, restUnmeasured(rows, MESSAGE.notRun));
+  const warnings = memoryWarnings(reading.memory, target, request.destinations);
+  return warnings.length ? { ...parity, warnings } : parity;
 }
 
 /**
@@ -604,8 +708,13 @@ async function admitBuild(
 async function nativeLease(ctx: HarnessCtx, request: ParityRequest): Promise<string | null> {
   const retries = request.retriesMs ?? WINDOW_RETRIES_MS;
   const label = `parity:${request.target}`;
+  // The lease declares the stacks this harness serves, as every lease does (`acquireFor`): the host
+  // loads a Rust game only through a lease whose harness says it serves Rust games.
+  const stacks = [...servedStacks()];
   for (let attempt = 0; ; attempt++) {
-    const lease = await ctx.call(HostMethod.PreviewAcquire, { label, target: request.target }).catch(() => null);
+    const lease = await ctx
+      .call(HostMethod.PreviewAcquire, { label, target: request.target, stacks })
+      .catch(() => null);
     if (lease?.handle) return lease.handle;
     if (attempt >= retries.length || ctx.cancelled) return null;
     await sleep(retries[attempt]);
@@ -635,7 +744,7 @@ async function readyRow(gate: GateRun): Promise<boolean> {
       ...(request.root ? { root: request.root } : {}),
       ...h,
     });
-    const ready = await ctx.call(HostMethod.PreviewReady, { ...h });
+    const ready = await ctx.call(HostMethod.PreviewReady, { ...h, ...readyWaitOf(request.run) });
     if (ready?.ready !== true) {
       gate.rows.push(
         failed(
@@ -784,7 +893,11 @@ function verdictLook(shots: Shot[], viewpoints: readonly string[], entry: string
 /** The seeded replay (two native runs) and the fixed-horizon agreement with the web build. */
 async function replayAndCrossRows(gate: GateRun): Promise<boolean> {
   const { ctx, handle, request } = gate;
-  const first = await drive(ctx, request, { handle, target: request.target }).catch((error: unknown) => error as Error);
+  // Both replay runs start from a reload: the captures before this drew frames, and a renderer's
+  // pixels carry earlier frames (TAA jitter and history), so a run that skipped it never matched.
+  const first = await freshRun(ctx, handle)
+    .then(() => drive(ctx, request, { handle, target: request.target }))
+    .catch((error: unknown) => error as Error);
   if (first instanceof Error) {
     gate.rows.push(failed(ParityRow.Replay, messageOf(first), refusalOf(first)));
     return false;
@@ -794,13 +907,18 @@ async function replayAndCrossRows(gate: GateRun): Promise<boolean> {
   return true;
 }
 
+/** Reload the native run and wait until it is ready again; refused `notReady` when it does not come back. */
+async function freshRun(ctx: HarnessCtx, handle: string): Promise<void> {
+  await ctx.call(HostMethod.PreviewReload, { handle });
+  const ready = await ctx.call(HostMethod.PreviewReady, { handle });
+  if (ready?.ready !== true) throw new Error(MESSAGE.notReady(String(ready?.reason ?? "unknown")));
+}
+
 /** The second native run from the same seed and input: the same `state()` and the same pixels. */
 async function replayRow(gate: GateRun, first: Drive): Promise<ParityRowResult> {
   const { ctx, handle, request } = gate;
   try {
-    await ctx.call(HostMethod.PreviewReload, { handle });
-    const ready = await ctx.call(HostMethod.PreviewReady, { handle });
-    if (ready?.ready !== true) return failed(ParityRow.Replay, MESSAGE.notReady(String(ready?.reason ?? "unknown")));
+    await freshRun(ctx, handle);
     const second = await drive(ctx, request, { handle, target: request.target });
     const same = compareStates(first.state, second.state, { tolerance: 0, volatile: REPLAY_VOLATILE });
     if (!same.agree) return failed(ParityRow.Replay, MESSAGE.replayState(quote(same)));
@@ -857,6 +975,12 @@ async function drive(
   lease: { handle?: string; target: BuildTarget },
 ): Promise<Drive> {
   const h = lease.handle ? { handle: lease.handle } : {};
+  const native = lease.target !== BuildTarget.Web;
+  // A native run is stepped on the default camera from the start: the captures before the first
+  // drive leave it on their last camera, and a frame keeps what it was stepped under (temporal
+  // history, cells streamed around the camera), so a replay that switched only for the picture
+  // never matched the second run, which starts on the default.
+  if (native) await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: DEFAULT_CAMERA, ...h });
   await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Seed, arg: request.seed, ...h });
   await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Pause, ...h });
   for (let tick = 0; tick < CROSS_TARGET_TICKS; tick++) {
@@ -865,8 +989,7 @@ async function drive(
     await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: TICK_MS, ...h });
   }
   const state = await ctx.call(HostMethod.PreviewState, { ...h });
-  if (lease.target === BuildTarget.Web) return { state, digest: null };
-  await ctx.call(HostMethod.PreviewCall, { method: PageMethod.DebugCamera, arg: DEFAULT_CAMERA, ...h });
+  if (!native) return { state, digest: null };
   const shot = await ctx.call(HostMethod.PreviewScreenshot, {
     runId: request.run.runId,
     label: `parity/${lease.target}/replay`,
@@ -911,6 +1034,12 @@ export interface ParityLook {
   judged: boolean;
   tolerances?: ToleranceStore;
   retriesMs?: readonly number[];
+  /**
+   * Build the Windows and Linux destinations this host builds but does not run (the default).
+   * False on a Loop worker's copy: a cross build is many gigabytes per folder, so it is made once,
+   * where the run integrates, and the worker's look leaves those rows unmeasured.
+   */
+  crossBuilds?: boolean;
 }
 
 /**
@@ -954,6 +1083,8 @@ async function targetGate(ctx: HarnessCtx, look: ParityLook, target: BuildTarget
   if (!host) return unrunnableParity(target, TargetRefusal.NotRunnableHere, MESSAGE.noHost);
   const refusal = runRefusal(host, target, { gameBox: look.capacity.native?.gameBox === true });
   const builtNotRun = refusal === TargetRefusal.NotRunnableHere && CROSS_TARGETS.includes(target);
+  if (builtNotRun && look.crossBuilds === false)
+    return unrunnableParity(target, TargetRefusal.NotRunnableHere, MESSAGE.builtWhereIntegrated(target));
   if (builtNotRun) return crossGate(ctx, look, target, MESSAGE.builtNotRun(HOST_NAME[host]));
   if (refusal) return unrunnableParity(target, refusal);
   if (!look.judged) return unrunnableParity(target, null, MESSAGE.webUnjudged);
@@ -1115,9 +1246,11 @@ export async function withParity(
     cameras,
     viewpoints: evidence.viewpoints ?? cameras,
     judged: !evidence.loadError && cameras.length > 0,
+    crossBuilds: options.crossBuilds !== false,
   });
   if (!parity) return evidence;
   evidence.parity = parity;
+  evidence.warnings.push(...parity.targets.flatMap((entry) => entry.warnings ?? []));
   if (parity.pass === false) {
     evidence.ok = false;
     evidence.problems.push(parity.reason);
@@ -1223,10 +1356,20 @@ export async function nativeEvidence(ctx: HarnessCtx, options: GatherOptions, pa
   if (!up) return reportNative(look);
   try {
     for (const phase of NATIVE_PHASES) await phase(look);
+    await memoryNative(look);
   } finally {
     await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Start, ...look.h }).catch(() => {});
   }
   return reportNative(look);
+}
+
+/** The run's memory: over the budget a warning when the game also ships to the web or a phone; killed past the cap, a problem. */
+async function memoryNative(look: NativeLook): Promise<void> {
+  const leased = leasedJudging(look.options.handle);
+  const target = leased?.target ?? BuildTarget.Mac;
+  const reading = await readMemory(look.ctx, look.options.run.project, look.options.handle);
+  look.warnings.push(...memoryWarnings(reading.memory, target, leased?.destinations));
+  if (reading.killedPastCap && reading.memory) look.problems.push(memoryCapReason(target, reading.memory));
 }
 
 /** The pass on a ready run, in order. */
@@ -1274,7 +1417,7 @@ async function loadNative(look: NativeLook): Promise<boolean> {
       ...(options.root ? { root: options.root } : {}),
       ...h,
     });
-    look.ready = await ctx.call(HostMethod.PreviewReady, { ...h });
+    look.ready = await ctx.call(HostMethod.PreviewReady, { ...h, ...readyWaitOf(options.run) });
   } catch (error) {
     problems.push(MESSAGE.notReady(messageOf(error)));
     return false;
@@ -1329,6 +1472,7 @@ async function driveNative(look: NativeLook): Promise<void> {
   try {
     await step();
     look.stateEarly = await ctx.call(HostMethod.PreviewState, { ...h });
+    await startNative(look);
     const script = playScriptFor(options.run?.game);
     const played = await applyPlayScript(ctx, script, { clock: "step", runId: options.run.runId, ...h }).catch(
       (error: unknown) => {
@@ -1347,6 +1491,32 @@ async function driveNative(look: NativeLook): Promise<void> {
   }
   if (isRecord(look.state?.error)) look.problems.push(`runtime error: ${look.state.error.message}`);
   await listenNative(look);
+}
+
+/**
+ * The declared start keys, pressed on a game that is not in play yet, and the clock stepped until
+ * its `flow` says play began (one step when it reports none), so the opening sample and the
+ * scripted controls are in play (evidence.ts `reachPlay`). A native run has no `begin()`; a game
+ * that declared no keys, is in play already, or is judged on its front-end is driven as before.
+ */
+async function startNative(look: NativeLook): Promise<void> {
+  const { ctx, h, options } = look;
+  const keys = startKeysFor(options.run?.game);
+  const setup = options.setup === undefined ? options.run.setup : options.setup;
+  const playing = (state: unknown) => {
+    const flow = isRecord(state) ? state.flow : null;
+    return isRecord(flow) ? flow.playing === true : null;
+  };
+  if (!keys.length || setup?.begin === false || playing(look.stateEarly) === true) return;
+  await applyPlayScript(ctx, [{ type: "tap", keys }], { clock: "step", runId: options.run.runId, ...h });
+  let ms = 0;
+  do {
+    await ctx.call(HostMethod.PreviewCall, { method: PageMethod.Step, arg: START_STEP_MS, ...h });
+    ms += START_STEP_MS;
+    look.stateEarly = await ctx.call(HostMethod.PreviewState, { ...h });
+  } while (playing(look.stateEarly) === false && ms < START_WAIT_MAX_MS);
+  if (playing(look.stateEarly) === null) look.warnings.push(MESSAGE.unreadPlay(keys));
+  if (playing(look.stateEarly) === false) look.warnings.push(MESSAGE.outsidePlay(keys));
 }
 
 /** The drive steps a motion strip of `count` frames is taken at, spread over the drive. */

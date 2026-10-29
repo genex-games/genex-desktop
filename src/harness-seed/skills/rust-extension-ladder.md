@@ -37,9 +37,9 @@ loosens the sandbox.
   `frame.point_light` and `frame.spot_light`, `Material::emissive`, `frame.environment` and the
   preset's shadows all reach a v2 material as they reach a built-in surface, and a custom pass
   that redraws one of them costs every device the effect twice.
-- Before calling a visual change done, capture it under `renderSettings`
-  `{set: {deviceClass: "mobile-mid"}}` and at `low`: a level-2 source or level-3 pass must hold up
-  there, and `state().volatile.render.degraded` says (by typed reason, never refusal) what a device
+- Author a visual change for `ultra` on desktop and judge it there first; before calling it done,
+  also capture it under `renderSettings` `{set: {deviceClass: "mobile-mid"}}` and at `low`: a
+  level-2 source or level-3 pass must stay readable there, and `state().volatile.render.degraded` says (by typed reason, never refusal) what a device
   gave up. Write level-2 sources and level-3 passes at v2 (`api = 2`): they draw linear,
   pre-exposed colour into the HDR scene before the look's tonemapper and read the frame's depth,
   normals, motion, environment and HDR scene by declared input (`RenderInputs`). A level-3 stage
@@ -59,6 +59,11 @@ loosens the sandbox.
   never write a save format of your own with `ctx.save`. Prove a save works: save a slot, load
   it, then read `state().volatile.saves.lastLoad.checksumMatch`. False means some state a probe
   reads is in no save section.
+- A switched-off system is never a reason to climb. Physics, sound, navigation, streaming and
+  animation each have a `genex.toml` table with `enabled`; while it is false the system's calls
+  are refused (`audio-disabled`, `nav-disabled`, `streaming-disabled`, `animation-disabled`) or,
+  for Rapier, do not compile. Set `enabled = true` when the brief needs the system, and write none
+  of your own.
 - A recurring need (the same crate, the same eject reason across games) is a missing genex
   feature: say so in your summary.
 

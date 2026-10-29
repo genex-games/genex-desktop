@@ -33,7 +33,7 @@ export function resolveStageView(
 /**
  * Which surface the stage shows, and why the running game is or is not on it. Live shows one view,
  * picked by the folder's facts (`live-views.ts`): only the web preview loads, empties or waits for
- * a page; the Unreal card and the latest pictures hold none. A game with no kind yet (`pending`)
+ * a page; the Unreal card, a plugin's card and the latest pictures hold none. A game with no kind yet (`pending`)
  * has no page: Live shows the first-idea state and waits for nothing.
  */
 export function stageFlags({
@@ -76,6 +76,8 @@ export function stageFlags({
     previewOnStage,
     /** Live shows the Unreal card: the game plays in the Unreal editor. */
     cardOnStage: onLive && liveView === ObserverLive.UnrealCard,
+    /** Live shows a plugin's card: the game plays in the plugin's engine, where the plugin says it stands. */
+    pluginCardOnStage: onLive && liveView === ObserverLive.Card,
     /** Live shows the latest pictures of a folder no observer draws. */
     stillsOnStage: onLive && liveView === ObserverLive.Stills,
     /** The person stopped the game: its view holds no page until Play. */

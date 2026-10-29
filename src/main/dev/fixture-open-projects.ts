@@ -6,7 +6,8 @@
  * the profile's data, on, with one tool the person always allowed; a folder that is both a web game
  * and an Unreal project (Live's two tabs); and the web game's chat, where a session offered the
  * Unreal plugin, which is off; and a web game ported to Unreal, whose chat holds the port's turn
- * and the line that asks for the access `app_look` needs. Once the app has started ({@link seedOpenLoops}):
+ * and the line that asks for the access `app_look` needs; and a Unity game whose chat says once that
+ * an agent used Unity while the person played. Once the app has started ({@link seedOpenLoops}):
  * the Godot game's Loop going in place, its worker's question waiting in the chat, and the plugin
  * project's Loop, which the reviewer sent back once and which waits for the person to finish in
  * Unreal ({@link openLoopWaitNotice}).
@@ -15,11 +16,11 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { CustomEvent, customRecord } from "../../shared/custom-events.ts";
+import { CustomEvent, customEvent, customEventData, customRecord } from "../../shared/custom-events.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { type EventData, EventKind } from "../../shared/event-log.ts";
 import { FinishCheckStep } from "../../shared/finish-check.ts";
-import { UNREAL_PLUGIN_ID } from "../../shared/observers.ts";
+import { UNITY_PLUGIN_ID, UNREAL_PLUGIN_ID } from "../../shared/observers.ts";
 import { AppLookAccessKind } from "../../shared/jobs.ts";
 import { GrantKind, RuleScope, ToolPermissionState } from "../../shared/permissions.ts";
 import { PluginSourceKind } from "../../shared/plugins.ts";
@@ -38,6 +39,7 @@ export const OPEN_PROJECTS = {
   plugin: "fixture-level-tools",
   webAndUnreal: "fixture-lantern-racer",
   ported: "fixture-paper-plane",
+  unity: "fixture-cable-hall",
   allowedTool: "bake",
   askingWorker: "Export for the web",
 } as const;
@@ -48,6 +50,7 @@ const PLUGIN_GAME = { name: OPEN_PROJECTS.plugin, title: "Level tools" } as cons
 const PLUGIN_BUILD_COMMAND = "./build-plugin.sh";
 const BOTH_GAME = { name: OPEN_PROJECTS.webAndUnreal, title: "Lantern racer" } as const;
 const PORTED_GAME = { name: OPEN_PROJECTS.ported, title: "Paper plane" } as const;
+const UNITY_GAME = { name: OPEN_PROJECTS.unity, title: "Cable hall" } as const;
 
 /** The records that say each chat is seeded: one run id per chat, and the web game's card. */
 const GODOT_CLOSED_RUN = "fixture-open-godot-earlier";
@@ -86,6 +89,15 @@ const PORTED_FILES: Readonly<Record<string, string>> = {
     '<!doctype html><html><body style="margin:0;background:#bfe3f5"><canvas width="800" height="500"></canvas></body></html>\n',
   "unreal/PaperPlane.uproject": `${JSON.stringify({ FileVersion: 3, EngineAssociation: "5.8" }, null, 2)}\n`,
 };
+
+/** A Unity project as Unity leaves one: the version it was saved with, and one scene. */
+const UNITY_FILES: Readonly<Record<string, string>> = {
+  "unity/ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.3.10f1\n",
+  "unity/Assets/Scenes/Main.unity": "%YAML 1.1\n",
+};
+const UNITY_ASK = "Make the canyon darker and add more smoke.";
+const UNITY_REPLY =
+  "Re-grading the canyon now: darker walls, thicker smoke over the abyss. I'll check it in Play mode and save a checkpoint.";
 
 /** The port's turn: the ask, the Unreal plugin's New game, and the lead's reply. */
 const PORTED_ASK = "Port this game to Unreal. Keep how the plane glides.";
@@ -199,6 +211,7 @@ export async function seedOpenProjects(core: StudioCore, project: string, thread
   await writeFiles(both.dir, BOTH_FILES);
   await core.threadForGame(BOTH_GAME.name);
   await seedPortedGame(core);
+  await seedUnityGame(core);
   await installLocalPlugin(core, godot);
   if (!(await seeded(core, threadId, SUGGESTION_ASK))) await core.append(unrealSuggestion(project), threadId);
   const godotThread = await core.threadForGame(GODOT_GAME.name);
@@ -217,6 +230,20 @@ async function seedPortedGame(core: StudioCore): Promise<void> {
   await core.games.recordPort(PORTED_GAME.name, replaced);
   const thread = await core.threadForGame(PORTED_GAME.name);
   if (!(await seeded(core, thread, PORT_TURN))) await core.append(portTurn(PORTED_GAME.name), thread);
+}
+
+/** The Unity game: its project, and a turn in its chat after which the chat says an agent went ahead of the person. */
+async function seedUnityGame(core: StudioCore): Promise<void> {
+  const unity = await core.games.makeEmpty(UNITY_GAME.name, { title: UNITY_GAME.title });
+  await writeFiles(unity.dir, UNITY_FILES);
+  const thread = await core.threadForGame(UNITY_GAME.name);
+  const told = (await core.store.listEvents(thread)).some((e) => customEvent(e, CustomEvent.AgentWentAhead));
+  if (told) return;
+  const wentAhead = { project: UNITY_GAME.name, pluginId: UNITY_PLUGIN_ID, label: "Unity" };
+  await core.append(
+    [said("user", UNITY_ASK), said("assistant", UNITY_REPLY), customEventData(CustomEvent.AgentWentAhead, wentAhead)],
+    thread,
+  );
 }
 
 /** The port's turn, then the line asking for the access `app_look` needs to look at the editor. */
@@ -335,7 +362,7 @@ function earlierGodotLoop(project: string): EventData[] {
   const run = fixtureRun({ runId: GODOT_CLOSED_RUN, project });
   const label = "Walls and door";
   const summary = "the walls stand and the door opens";
-  const notChecked = "Not checked by a reviewer: the time ran out before a claim.";
+  const notChecked = "The time ran out before a final look at your game.";
   return [
     ...openStart(run, GODOT_EARLIER_ASK, { budgets: { wallClockMs: EARLIER_LOOP_MS } }),
     ...savePoint(run, project, 1, label, summary),

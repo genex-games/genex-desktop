@@ -116,12 +116,16 @@ impl Avoidance {
         let dodgy_bodies: Vec<Agent> = bodies.iter().map(body_to_dodgy).collect();
         let options = AvoidanceOptions { obstacle_margin: 0.0, time_horizon: settings.time_horizon, obstacle_time_horizon: settings.obstacle_time_horizon };
         out.clear();
+        // One neighbour and one wall list for every agent, refilled (R-19: no allocation per agent).
+        let mut neighbours: Vec<Cow<'_, Agent>> = Vec::new();
+        let mut walls: Vec<Cow<'_, Obstacle>> = Vec::new();
         for (index, agent) in agents.iter().enumerate() {
             self.gather(index, agents, bodies, settings, reach);
-            let mut neighbours: Vec<Cow<'_, Agent>> = Vec::with_capacity(self.near_agents.len() + self.near_bodies.len());
+            neighbours.clear();
             neighbours.extend(self.near_agents.iter().map(|near| Cow::Borrowed(&dodgy_agents[near.index])));
             neighbours.extend(self.near_bodies.iter().map(|near| Cow::Borrowed(&dodgy_bodies[near.index])));
-            let walls: Vec<Cow<'_, Obstacle>> = obstacles.get(index).map_or_else(Vec::new, |list| list.iter().map(Cow::Borrowed).collect());
+            walls.clear();
+            walls.extend(obstacles.get(index).into_iter().flatten().map(Cow::Borrowed));
             let velocity = dodgy_agents[index].compute_avoiding_velocity(&neighbours, &walls, to_plane(agent.desired_velocity), agent.max_speed.max(0.0), time_step, &options);
             out.push(from_plane(velocity));
         }

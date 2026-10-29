@@ -235,7 +235,7 @@ fn part_chain(input: &PartInput, candidates: Vec<(Vec<u32>, f32)>, count: usize)
         }
         levels.push(last.clone());
     }
-    LodChain { levels }
+    LodChain { levels, casters: 0 }
 }
 
 /// A chain the renderer takes (the importer's `validateLodSet`): at most [`LOD_MAX_LEVELS`]

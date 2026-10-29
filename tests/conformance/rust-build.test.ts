@@ -17,14 +17,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { coreGameBuilds } from "../../src/main/core/internals.ts";
-import type { GameBuildGame } from "../../src/main/game-build.ts";
+import { BuildPriority, buildFailureNote, type GameBuildGame } from "../../src/main/game-build.ts";
 import {
   RUST_CRATE_ALLOWLIST,
   RUST_TARGET_BUILDERS,
@@ -37,6 +37,9 @@ import {
   rustBuildSandboxes,
 } from "../../src/main/rust-build.ts";
 import { RustBuildRefusal, RustDiagnosticTool } from "../../src/main/rust-build-diagnostics.ts";
+import { RustTargetSeed, RustTargetSharing } from "../../src/main/rust-build-cache.ts";
+import { PlayStage, type PlayTimingSink } from "../../src/shared/play-timing.ts";
+import { cloneTreeByFile, type TreeCloner } from "../../src/substrate/clone-tree.ts";
 import { RustNetFeature } from "../../src/main/rust-manifest.ts";
 import { BuildProblemCode, CppBuildPurpose } from "../../src/shared/build-problem.ts";
 import {
@@ -49,6 +52,7 @@ import {
 import type { ToolchainLock } from "../../src/shared/toolchain.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
 import type { XcodeExec } from "../../src/substrate/toolchain-store/locate.ts";
+import { RUST_DEV_PROFILE_SETTINGS } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { admitRustOutput } from "../../src/substrate/native-cross-admission.ts";
 import { NativeRefusal, RustAdmissionProblem } from "../../src/shared/native-contract.ts";
 import { macBinary } from "../fixtures/rust-bundles/binaries.ts";
@@ -184,6 +188,59 @@ case "$sub" in
 esac
 exit 0
 `;
+}
+
+/** One clippy lint a stub game's code trips: its name, its group and clippy's default level (`W` warn, `D` deny). */
+interface LintHit {
+  lint: string;
+  group: string;
+  level: "W" | "D";
+  /** A rustc lint (`dead_code`, group `unused`), named without clippy's prefix. */
+  rustc?: boolean;
+}
+
+/**
+ * The stub clippy's run over a game that trips `hits`: each lint's level resolved from the lint
+ * flags after `--` as rustc resolves them (in order, the last flag naming the lint, its group or,
+ * for a clippy lint, `clippy::all` wins; a lint left at warn is an error while `warnings` is denied), and an error
+ * message for each one that ends denied, failing the run when any does.
+ */
+function clippyLevels(hits: readonly LintHit[]): string {
+  const levelOf = [
+    "flags=''; after=0",
+    'for a in "$@"; do if [ "$after" = 1 ]; then flags="$flags $a"; fi; if [ "$a" = -- ]; then after=1; fi; done',
+    "level_of() {",
+    "  level=$3; prefix=$4; flag=''",
+    "  for a in $flags; do",
+    "    case $a in -D|-W|-A|-F) flag=$a; continue ;; esac",
+    '    case $a in "$prefix$1"|"$prefix$2") if [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi ;; esac',
+    '    if [ "$a" = clippy::all ] && [ -n "$prefix" ] && [ -n "$flag" ]; then level=$(echo "$flag" | cut -c2); fi',
+    '    if [ "$a" = warnings ] && [ -n "$flag" ]; then warnings=$(echo "$flag" | cut -c2); fi',
+    "    flag=''",
+    "  done",
+    '  if [ "$level" = W ] && { [ "$warnings" = D ] || [ "$warnings" = F ]; }; then level=D; fi',
+    '  if [ "$level" = F ]; then level=D; fi',
+    '  echo "$level"',
+    "}",
+    "failed=0",
+  ];
+  const each = hits.map((hit) => {
+    const prefix = hit.rustc ? "" : "clippy::";
+    const message = {
+      reason: "compiler-message",
+      message: {
+        message: `lint ${hit.lint}`,
+        code: { code: `${prefix}${hit.lint}` },
+        level: "error",
+        spans: [{ file_name: "src/main.rs", line_start: 1, column_start: 1, is_primary: true }],
+        children: [],
+        rendered: `error: lint ${hit.lint}`,
+      },
+    };
+    const denied = `warnings=''; if [ "$(level_of ${hit.lint} ${hit.group} ${hit.level} '${prefix}')" = D ]; then`;
+    return `${denied} printf '%s\\n' '${JSON.stringify(message)}'; failed=1; fi`;
+  });
+  return [...levelOf, ...each, 'if [ "$failed" = 1 ]; then exit 101; fi'].join("\n");
 }
 
 /** A stub cargo and rustc in `bin`. */
@@ -422,13 +479,68 @@ describe("the Rust lane's typed refusals run nothing", { skip: SKIP_ON_WINDOWS }
   });
 });
 
+/** A sandbox whose every command holds until its signal aborts, then answers killed: every request recorded. */
+function holdingSandboxes() {
+  const requests: RunRequest[] = [];
+  const sandbox = async (): Promise<RustBuildSandbox> => ({
+    run: (request) => {
+      requests.push(request);
+      return new Promise((resolve) => {
+        const killed = (): void =>
+          resolve({
+            code: null,
+            signal: "SIGKILL",
+            stdout: "",
+            stderr: "",
+            durationMs: 0,
+            timedOut: false,
+            truncated: false,
+            sandboxed: false,
+            command: request.command,
+            cwd: request.cwd,
+          });
+        if (request.signal?.aborted) killed();
+        else request.signal?.addEventListener("abort", killed, { once: true });
+      });
+    },
+    dispose: async () => {},
+  });
+  return { sandbox, requests };
+}
+
+describe("Composer Stop in the Rust lane", { skip: SKIP_ON_WINDOWS }, () => {
+  it("cancelGame cancels one game's builds, its copies' too, and leaves another game's running", async () => {
+    const parent = await realpath(await tmpDir("rust-cancel-game-"));
+    const holding = holdingSandboxes();
+    const { builds } = await lane(parent, holding.sandbox, { cores: 16 });
+    const lake = { ...gameOf(await rustGame(parent, "lake")), project: "lake" };
+    const other = builds.ensure(lake, BuildTarget.Mac, CppBuildPurpose.Live);
+    for (let i = 0; i < 400 && holding.requests.length < 1; i++) await sleep(5);
+    const pond = { ...gameOf(await rustGame(parent, "pond")), project: "pond" };
+    const copy = { ...gameOf(await rustGame(parent, "pond-copy")), project: "pond" };
+    const own = [pond, copy].map((game) => builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live));
+    for (let i = 0; i < 400 && holding.requests.length < 3; i++) await sleep(5);
+    assert.equal(holding.requests.length, 3, "all three build");
+    builds.cancelGame("pond");
+    for (const outcome of await Promise.all(own)) assert.equal(outcome.problem?.reason, BuildProblemCode.Cancelled);
+    assert.equal(holding.requests[0]?.signal?.aborted, false, "another game's build goes on");
+    builds.cancelAll();
+    assert.equal((await other).problem?.reason, BuildProblemCode.Cancelled);
+  });
+});
+
 describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () => {
   it("registers as the Rust · wgpu lane of core.gameBuilds", async () => {
     const parent = await realpath(await tmpDir("rust-seam-"));
     const open = openSandboxes();
     const { builds } = await lane(parent, open.sandbox);
     const lanes = coreGameBuilds({
-      cppBuilds: { ensure: async () => assert.fail("not the raylib lane"), cancelAll: () => {}, sweep: async () => 0 },
+      cppBuilds: {
+        ensure: async () => assert.fail("not the raylib lane"),
+        cancelAll: () => {},
+        cancelGame: () => {},
+        sweep: async () => 0,
+      },
       rustBuilds: builds,
     });
     const receipt = await lanes.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
@@ -532,7 +644,7 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       "exit 101",
     ].join("\n");
     const { builds } = await lane(parent, open.sandbox, { stub: { onClippy } });
-    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(outcome.ok, false);
     assert.equal(outcome.problem?.reason, BuildProblemCode.CommandFailed);
     const [first] = outcome.rust?.diagnostics ?? [];
@@ -554,6 +666,57 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.equal(await readFile(path.join(conf, "clippy.toml"), "utf8"), "disallowed-types = []\n");
     const args = await readFile(path.join(spec.bin, "clippy-args"), "utf8");
     for (const flag of ["--offline", "--locked", "-D warnings"]) assert.ok(args.includes(flag), `clippy ran ${flag}`);
+  });
+
+  it("never fails a build on a style or complexity lint, while the store's determinism bans stay errors (B6: bodycam's collapsible_if)", async () => {
+    // Bodycam's game tripped these four, each a hard error under `-D warnings` alone.
+    const styleHits: LintHit[] = [
+      { lint: "collapsible_if", group: "style", level: "W" },
+      { lint: "manual_is_multiple_of", group: "complexity", level: "W" },
+      { lint: "approx_constant", group: "correctness", level: "D" },
+    ];
+    const bans: LintHit[] = [{ lint: "disallowed_methods", group: "style", level: "W" }];
+    for (const [name, hits, failsOn] of [
+      ["style", styleHits, null],
+      ["bans", [...styleHits, ...bans], "clippy::disallowed_methods"],
+    ] as const) {
+      const parent = await realpath(await tmpDir(`rust-clippy-levels-${name}-`));
+      const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+      const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);
+      assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
+      if (failsOn) assert.deepEqual(codes, [failsOn]);
+    }
+  });
+
+  it("never fails a build on code the game does not use yet, while a dropped Result and the determinism bans stay errors (BC2: bodycam rerun's dead_code)", async () => {
+    // The rerun's agents lost rounds to these, each a hard error under `-D warnings`.
+    const unusedHits: LintHit[] = [
+      { lint: "dead_code", group: "unused", level: "W", rustc: true },
+      { lint: "unused_imports", group: "unused", level: "W", rustc: true },
+      { lint: "unused_variables", group: "unused", level: "W", rustc: true },
+      { lint: "unused_mut", group: "unused", level: "W", rustc: true },
+    ];
+    for (const [name, hits, failsOn] of [
+      ["unused", unusedHits, null],
+      [
+        "must-use",
+        [...unusedHits, { lint: "unused_must_use", group: "unused", level: "W", rustc: true }],
+        "unused_must_use",
+      ],
+      [
+        "bans",
+        [...unusedHits, { lint: "disallowed_methods", group: "style", level: "W" }],
+        "clippy::disallowed_methods",
+      ],
+    ] as const) {
+      const parent = await realpath(await tmpDir(`rust-unused-levels-${name}-`));
+      const { builds } = await lane(parent, openSandboxes().sandbox, { stub: { onClippy: clippyLevels(hits) } });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+      const codes = (outcome.rust?.diagnostics ?? []).map((d) => d.code);
+      assert.equal(outcome.ok, failsOn === null, `${name}: ${JSON.stringify(codes)}`);
+      if (failsOn) assert.deepEqual(codes, [failsOn]);
+    }
   });
 
   it("compiles in the native-enhanced features genex.toml declares (GENEX_NATIVE_FEATURES), and none for a core game", async () => {
@@ -690,10 +853,21 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     }
   });
 
-  it("builds Live with the engine and its dependencies optimized and the game crate not (K6); an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
-    const depsOptimized = 'profile.dev.package."*".opt-level=1';
+  it("builds Live and judging with the game crate at opt-level 1 over the engine and its dependencies at 3 (OPT) without debug assertions or overflow checks (MK), line tables only (R-7), the store prewarm's profile; an export is cargo's release profile with line tables kept in a dSYM (CRASH-7a)", async () => {
+    // Flipped from the game crate unoptimized over dependencies at opt-level 1 (K6, OPT): Live runs
+    // near release speed, and the game crate's rebuild stays incremental. Flipped again (MK): the
+    // dependencies' debug assertions and overflow checks are off, as in an export, the game's kept.
+    const liveProfile = [
+      "profile.dev.opt-level=1",
+      'profile.dev.package."*".opt-level=3',
+      'profile.dev.debug="line-tables-only"',
+      'profile.dev.package."*".debug-assertions=false',
+      'profile.dev.package."*".overflow-checks=false',
+    ];
+    assert.deepEqual(RUST_DEV_PROFILE_SETTINGS, liveProfile, "the profile the store's prewarm builds with");
     for (const [purpose, expected] of [
-      [CppBuildPurpose.Live, [depsOptimized]],
+      [CppBuildPurpose.Live, liveProfile],
+      [CppBuildPurpose.Judging, liveProfile],
       [CppBuildPurpose.Export, EXPORT_DEBUG_SETTINGS[DebugFileKind.Dsym]],
     ] as const) {
       const parent = await realpath(await tmpDir("rust-dev-profile-"));
@@ -709,6 +883,86 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       assert.deepEqual(profileSettings, expected, `${purpose}: ${args.join(" ")}`);
       assert.equal(args.includes("--release"), purpose === CppBuildPurpose.Export);
     }
+  });
+
+  it("tells the agent the first error with its place and how many more, never the command and its environment (B6)", async () => {
+    const parent = await realpath(await tmpDir("rust-first-error-"));
+    const located = (code: string, message: string, line: number, rendered: string) => ({
+      reason: "compiler-message",
+      message: {
+        message,
+        code: { code },
+        level: "error",
+        spans: [{ file_name: "STAGE/src/facets/player.rs", line_start: line, column_start: 15, is_primary: true }],
+        children: [{ message: "method defined here", level: "note", spans: [] }],
+        rendered,
+      },
+    });
+    // rustc's rendering of bodycam's first error, its gutter lines included.
+    const first = located(
+      "E0061",
+      "this method takes 3 arguments but 2 arguments were supplied",
+      243,
+      [
+        "error[E0061]: this method takes 3 arguments but 2 arguments were supplied",
+        "   --> src/facets/player.rs:243:15",
+        "    |",
+        "243 |     frame.sphere_with(Transform::IDENTITY, &mat);",
+        "    |           ^^^^^^^^^^^ ------------------- argument #2 of type `f32` is missing",
+        "    |                       |",
+        "    |                       expected `Vec3`, found `Transform`",
+        "    |",
+        "note: method defined here",
+        "   --> genex-0.1.0/src/frame.rs:830:12",
+        "    |",
+        "830 |     pub fn sphere_with(&mut self, center: Vec3, radius: f32, material: &Material) -> &mut Self {",
+        "help: provide the argument",
+        "",
+      ].join("\n"),
+    );
+    const second = located(
+      "E0599",
+      "no method named `screen_rect` found",
+      56,
+      "error[E0599]: no method named `screen_rect`\n",
+    );
+    const third = located("E0308", "mismatched types", 70, "error[E0308]: mismatched types\n");
+    const aborting = {
+      reason: "compiler-message",
+      message: { message: "aborting due to 3 previous errors", level: "error", spans: [] },
+    };
+    const printed = [first, second, third, aborting].map(
+      (message) => `printf '%s\\n' ${shellWord(JSON.stringify(message))} | sed "s#STAGE#$stage#g"`,
+    );
+    const onClippy = ['stage=$(dirname "$manifest")', ...printed, "exit 101"].join("\n");
+    const { builds } = await lane(parent, openSandboxes().sandbox, {
+      stub: { onClippy },
+      staging: stager(undefined, [], { renderToml: '[render]\npreset = "auto"\n' }),
+    });
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const problem = outcome.problem;
+    assert.ok(problem);
+    assert.match(problem.command, /clippy/, "the stage's Details keep the command");
+    const note = buildFailureNote(problem);
+    assert.ok(!note.includes(problem.command), note);
+    for (const noise of ["env -i", "CARGO_HOME", "GENEX_RENDER_TOML", "[render]"])
+      assert.ok(!note.includes(noise), noise);
+    const [head, ...lines] = note.split("\n");
+    assert.equal(head, "the game's build failed (exit 101):");
+    assert.equal(lines[0], "error[E0061]: this method takes 3 arguments but 2 arguments were supplied");
+    assert.equal(lines[1], "   --> src/facets/player.rs:243:15");
+    for (const kept of [
+      "expected `Vec3`, found `Transform`",
+      "note: method defined here",
+      "help: provide the argument",
+    ])
+      assert.ok(
+        lines.some((line) => line.includes(kept)),
+        `${kept} in ${note}`,
+      );
+    assert.ok(!lines.some((line) => line.trim() === "|"), "no empty gutter lines");
+    assert.equal(lines.at(-1), "…and 2 more errors");
+    assert.ok(!note.includes("E0599"), "only the first error is shown");
   });
 
   it("names cargo's own error, not its progress, when a step fails with no diagnostic", async () => {
@@ -742,6 +996,55 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.match(outcome.problem?.lines[0] ?? "", /SIGKILL/);
   });
 
+  it("checks a game with the gate's clippy in the build's own sandbox, and builds, admits and serves nothing (B6 fast check)", async () => {
+    const parent = await realpath(await tmpDir("rust-check-"));
+    const open = openSandboxes();
+    const error = {
+      reason: "compiler-message",
+      message: {
+        message: "mismatched types",
+        code: { code: "E0308" },
+        level: "error",
+        spans: [{ file_name: "STAGE/src/main.rs", line_start: 3, column_start: 9, is_primary: true }],
+        children: [],
+        rendered: "error[E0308]: mismatched types\n --> src/main.rs:3:9\n",
+      },
+    };
+    const onClippy = [
+      'stage=$(dirname "$manifest")',
+      'echo "$*" > "$CARGO_TARGET_DIR/../clippy-args"',
+      `if grep -q broken "$stage/src/main.rs"; then printf '%s\\n' ${shellWord(JSON.stringify(error))} | sed "s#STAGE#$stage#g"; exit 101; fi`,
+    ].join("\n");
+    const { builds } = await lane(parent, open.sandbox, { stub: { onClippy } });
+    const dir = await rustGame(parent);
+    const game = gameOf(dir);
+    const steps = () => open.requests.map((request) => request.label?.split(":").at(-1));
+    await writeFile(path.join(dir, "src", "main.rs"), "fn main() { broken }\n");
+    const failed = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live, { check: true });
+    assert.equal(failed.ok, false);
+    assert.deepEqual(
+      failed.rust?.diagnostics.map((d) => [d.code, d.file, d.line]),
+      [["E0308", "src/main.rs", 3]],
+    );
+    assert.equal(failed.problem?.lines[0], "error[E0308]: mismatched types");
+    await writeFile(path.join(dir, "src", "main.rs"), "fn main() {}\n");
+    const passed = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live, { check: true });
+    assert.equal(passed.ok, true, JSON.stringify(passed.problem));
+    assert.equal(passed.output, null, "a check makes no output to serve");
+    assert.deepEqual(
+      steps(),
+      ["identity", "lock", "clippy", "identity", "lock", "clippy"],
+      "clippy even for Live, never the build",
+    );
+    const [spec] = open.specs;
+    assert.ok(spec);
+    assert.ok((await readFile(path.join(spec.bin, "clippy-args"), "utf8")).includes("-D warnings"), "the gate's lints");
+    assert.equal(await lstat(`${spec.bin}.out`).catch(() => null), null, "nothing admitted");
+    const built = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(built.ok, true, "a build after a check builds as ever");
+    assert.ok(built.output);
+  });
+
   it("writes a receipt with each step's timing and the compiler's identity", async () => {
     const parent = await realpath(await tmpDir("rust-receipt-"));
     const open = openSandboxes();
@@ -751,7 +1054,7 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       return clock;
     };
     const { builds } = await lane(parent, open.sandbox, { now });
-    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+    const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
     const receipt = outcome.rust?.receipt;
     assert.ok(receipt);
@@ -768,6 +1071,37 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
     assert.equal(receipt.outputs.find((file) => file.path === "game")?.sha256, sha256(GAME_BYTES));
   });
 
+  it("tells a Play timing the build where its wait went: the host's own parts, the queue, the seed and each step (PW)", async () => {
+    const parent = await realpath(await tmpDir("rust-play-timing-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const marks: Array<{ stage: PlayStage; detail: string | null; ms: number }> = [];
+    const timing: PlayTimingSink = (stage, ms, detail) => marks.push({ stage, ms, detail: detail ?? null });
+    const dir = await rustGame(parent);
+    const outcome = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging, { timing });
+    assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+    assert.deepEqual(
+      marks.map((mark) => (mark.detail ? `${mark.stage}:${mark.detail}` : mark.stage)),
+      [
+        "build-step:locate",
+        "build-step:sweep",
+        "build-queue",
+        `build-seed:${RustTargetSeed.Cold}`,
+        "build-step:stage",
+        "build-step:assets",
+        "build-step:identity",
+        "build-step:lock",
+        "build-step:clippy",
+        "build-step:build",
+        "build-step:admit",
+      ],
+    );
+    assert.ok(marks.every((mark) => Number.isFinite(mark.ms) && mark.ms >= 0));
+    marks.length = 0;
+    await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.deepEqual(marks, [], "a build nobody times tells nobody");
+  });
+
   it("falls back to the last admitted output only while it is the very one admitted", async () => {
     const parent = await realpath(await tmpDir("rust-last-good-"));
     const open = openSandboxes();
@@ -775,14 +1109,14 @@ describe("the Rust lane builds behind the seam", { skip: SKIP_ON_WINDOWS }, () =
       stub: { onClippy: '[ -f "$(dirname "$manifest")/src/broken.rs" ] && exit 101' },
     });
     const dir = await rustGame(parent);
-    const first = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
+    const first = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(first.ok, true, JSON.stringify(first.problem));
     await writeFile(path.join(dir, "src", "broken.rs"), "nope\n");
-    const broken = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
+    const broken = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(broken.ok, false);
     assert.equal(broken.lastGood, first.output);
     await writeFile(path.join(first.output ?? "", "game"), "swapped");
-    const swapped = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Live);
+    const swapped = await builds.ensure(gameOf(dir), BuildTarget.Mac, CppBuildPurpose.Judging);
     assert.equal(swapped.ok, false);
     assert.equal(swapped.lastGood, null, "an output changed since admission is no output");
   });
@@ -974,5 +1308,609 @@ describe("the lane's sweep keeps the build folders of every lock a game recorded
     const { root, project } = await builtOnThreeLocks();
     assert.equal(await sweeper(root).sweep(), 2);
     assert.deepEqual(await left(project), [`macos-${CURRENT.slice(0, 12)}`]);
+  });
+});
+
+describe("the Rust lane starts a new build folder from the store's prewarm (R-7)", { skip: SKIP_ON_WINDOWS }, () => {
+  it("starts a build folder's first build from the store's prewarmed target folder, once (R-7)", async () => {
+    const parent = await realpath(await tmpDir("rust-warm-target-"));
+    const open = openSandboxes();
+    const calls: { lock: string; target: BuildTarget; to: string }[] = [];
+    const warmTarget: RustBuildsOptions["warmTarget"] = async (lock, target, to) => {
+      calls.push({ lock: lock.digest, target, to });
+      await mkdir(path.join(to, "debug"), { recursive: true });
+      await writeFile(path.join(to, "debug", "warm"), "prewarmed");
+      return true;
+    };
+    const onBuild = 'cat "$CARGO_TARGET_DIR/debug/warm" > "$CARGO_TARGET_DIR/../saw-warm" || true';
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild }, warmTarget });
+    const game = gameOf(await rustGame(parent));
+    const first = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(first.ok, true, JSON.stringify(first.problem));
+    const [spec] = open.specs;
+    assert.ok(spec);
+    assert.deepEqual(calls, [{ lock: LOCK.digest, target: BuildTarget.Mac, to: path.join(spec.bin, "target") }]);
+    assert.equal(await readFile(path.join(spec.bin, "saw-warm"), "utf8"), "prewarmed", "cargo ran over the clone");
+    await writeFile(path.join(game.dir, "src", "main.rs"), "fn main() { let _ = 1; }\n");
+    const second = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(second.ok, true, JSON.stringify(second.problem));
+    assert.equal(calls.length, 1, "a folder that has its own target keeps it");
+  });
+
+  it("builds from an empty target folder of its own when the prewarm clone fails or plants a link, touching nothing outside (R-7)", async () => {
+    const outside = await realpath(await tmpDir("rust-warm-outside-"));
+    await writeFile(path.join(outside, "keep"), "kept");
+    const hostile: [string, NonNullable<RustBuildsOptions["warmTarget"]>][] = [
+      ["refused", async () => false],
+      [
+        "throws",
+        async () => {
+          throw new Error("clone failed");
+        },
+      ],
+      [
+        "plants a link",
+        async (_lock, _target, to) => {
+          await symlink(outside, to);
+          return true;
+        },
+      ],
+      [
+        "plants a file",
+        async (_lock, _target, to) => {
+          await writeFile(to, "not a folder");
+          return true;
+        },
+      ],
+    ];
+    for (const [label, warmTarget] of hostile) {
+      const parent = await realpath(await tmpDir("rust-warm-hostile-"));
+      const open = openSandboxes();
+      const { builds } = await lane(parent, open.sandbox, { warmTarget });
+      const outcome = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+      assert.equal(outcome.ok, true, `${label}: ${JSON.stringify(outcome.problem)}`);
+      const [spec] = open.specs;
+      assert.ok(spec);
+      const target = await lstat(path.join(spec.bin, "target"));
+      assert.equal(target.isDirectory() && !target.isSymbolicLink(), true, `${label}: a real folder of its own`);
+      assert.deepEqual(await readdir(outside), ["keep"], `${label}: nothing written outside`);
+      assert.equal(await readFile(path.join(outside, "keep"), "utf8"), "kept", label);
+    }
+  });
+});
+
+describe("copies of a game reuse its compiled engine instead of rebuilding it (BC)", { skip: SKIP_ON_WINDOWS }, () => {
+  /**
+   * The stub's build as cargo meets a target folder: the engine's unit is reused when the target
+   * holds it, else compiled into it; what it did, and which target it built in, go to `$TMPDIR/saw`.
+   * A build folder holding `gate` waits for `gate.open` first, so a test can hold one build open.
+   */
+  const ENGINE_BUILD = [
+    'bin=$(dirname "$TMPDIR")',
+    'if [ -f "$bin/gate" ]; then while [ ! -f "$bin/gate.open" ]; do sleep 0.05; done; fi',
+    'if [ -n "$LOG" ]; then echo "start $bin" >> "$LOG"; fi',
+    'if [ -f "$CARGO_TARGET_DIR/debug/engine" ]; then saw=reused; else saw=compiled; mkdir -p "$CARGO_TARGET_DIR/debug"; echo engine > "$CARGO_TARGET_DIR/debug/engine"; fi',
+    'printf "%s %s" "$saw" "$CARGO_TARGET_DIR" > "$TMPDIR/saw"',
+    'if [ -n "$LOG" ]; then sleep 0.2; echo "end $bin" >> "$LOG"; fi',
+  ].join("\n");
+
+  /** Two copies of one game (a game folder and a worker's copy), and another game. */
+  async function copies(parent: string) {
+    const first = gameOf(await rustGame(path.join(parent, "games")));
+    const second = gameOf(await rustGame(path.join(parent, "worktrees", "w1")));
+    const other = { ...gameOf(await rustGame(path.join(parent, "games"), "lake")) };
+    return { first, second, other };
+  }
+
+  /** What a build saw of its target, read from its folder. */
+  async function saw(outcome: { output: string | null }): Promise<{ saw: string; target: string }> {
+    assert.ok(outcome.output);
+    const bin = outcome.output.slice(0, -".out".length);
+    const [what = "", target = ""] = (await readFile(path.join(bin, "tmp", "saw"), "utf8")).split(" ");
+    return { saw: what, target };
+  }
+
+  /** A host that clones (APFS, btrfs, XFS), file by file as copies; every file recorded, and held while `hold` is set. */
+  function cloning() {
+    const calls: { from: string; to: string }[] = [];
+    const state: { hold: Promise<void> | null; failAfter: number | null } = { hold: null, failAfter: null };
+    const cloneFile = async (from: string, to: string) => {
+      calls.push({ from, to });
+      if (state.hold) await state.hold;
+      if (state.failAfter !== null && calls.length > state.failAfter) throw new Error("the disk is full");
+      await copyFile(from, to);
+    };
+    const cloner: TreeCloner = {
+      supported: async () => true,
+      clone: (from, to) => cloneTreeByFile(from, to, cloneFile),
+    };
+    return { cloner, calls, state };
+  }
+
+  it("a copy's first build starts from a clone of the first copy's target, and only the game recompiles", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-seed-"));
+    const open = openSandboxes();
+    const { cloner, calls } = cloning();
+    const warmed: string[] = [];
+    const warmTarget: RustBuildsOptions["warmTarget"] = async (_lock, _target, to) => {
+      warmed.push(to);
+      return false;
+    };
+    const { builds, root } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner, warmTarget });
+    const { first, second } = await copies(parent);
+    const built = await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(built.ok, true, JSON.stringify(built.problem));
+    assert.equal((await saw(built)).saw, "compiled");
+    assert.deepEqual(built.rust?.receipt?.cache, { sharing: RustTargetSharing.Clone, seed: RustTargetSeed.Cold });
+    const probes = calls.length;
+    const copy = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(copy.ok, true, JSON.stringify(copy.problem));
+    assert.equal((await saw(copy)).saw, "reused", "the engine was not compiled again");
+    assert.deepEqual(copy.rust?.receipt?.cache, { sharing: RustTargetSharing.Clone, seed: RustTargetSeed.Copy });
+    const firstBin = (built.output ?? "").slice(0, -".out".length);
+    const copyBin = (copy.output ?? "").slice(0, -".out".length);
+    const clones = calls.slice(probes);
+    assert.ok(clones.length > 0);
+    for (const { from, to } of clones) {
+      assert.ok(from.startsWith(path.join(firstBin, "target") + path.sep), from);
+      assert.ok(to.startsWith(path.join(copyBin, "target") + path.sep), to);
+    }
+    assert.equal(warmed.length, 1, "the copy took no prewarm: it had a donor");
+    assert.equal(path.dirname(path.dirname(copyBin)), root);
+  });
+
+  it("never seeds a copy from another game or another lock", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-other-"));
+    const open = openSandboxes();
+    const { cloner, calls } = cloning();
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner });
+    const { first, second, other } = await copies(parent);
+    assert.equal((await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live)).ok, true);
+    const probes = calls.length;
+    const lake = await builds.ensure(other, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal((await saw(lake)).saw, "compiled");
+    const newer: ToolchainLock = { ...LOCK, digest: "fedcba9876543210".repeat(4) };
+    const relocked = await builds.ensure({ ...second, lock: newer }, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(relocked.ok, true, JSON.stringify(relocked.problem));
+    assert.equal((await saw(relocked)).saw, "compiled");
+    assert.equal(calls.length, probes, "nothing was cloned");
+  });
+
+  it("never clones a copy that is building, and a copy being cloned from builds only once the clone is done", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-busy-"));
+    const open = openSandboxes();
+    const { cloner, calls, state } = cloning();
+    const log = path.join(parent, "log");
+    const { builds } = await lane(parent, open.sandbox, {
+      stub: { onBuild: `LOG=${shellWord(log)}\n${ENGINE_BUILD}` },
+      cloner,
+    });
+    const { first, second } = await copies(parent);
+    const built = await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    const firstBin = (built.output ?? "").slice(0, -".out".length);
+    await writeFile(path.join(firstBin, "gate"), "");
+    const rebuilding = builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    const probes = calls.length;
+    const copy = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal((await saw(copy)).saw, "compiled", "the busy copy lent nothing");
+    assert.equal(calls.length, probes);
+    await writeFile(path.join(firstBin, "gate.open"), "");
+    assert.equal((await rebuilding).ok, true);
+
+    const third = gameOf(await rustGame(path.join(parent, "worktrees", "w2")));
+    let release = () => {};
+    state.hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await writeFile(log, "");
+    const cloned = builds.ensure(third, BuildTarget.Mac, CppBuildPurpose.Live);
+    for (let tries = 0; calls.length === probes && tries < 300; tries++) await sleep(10);
+    assert.notEqual(calls.length, probes, "the third copy clones the donor's target");
+    // The game folder's build was admitted last: it is the donor, and its next build waits for the clone.
+    const donorRebuild = builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    await sleep(300);
+    assert.equal(await readFile(log, "utf8"), "", "the donor's cargo did not run while its target was being cloned");
+    release();
+    state.hold = null;
+    const results = await Promise.all([cloned, donorRebuild]);
+    for (const outcome of results) assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+    assert.equal((await saw(results[0])).saw, "reused");
+  });
+
+  it("a clone that fails builds the copy from nothing, leaving no part of the clone", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-failed-"));
+    const open = openSandboxes();
+    const { cloner, calls, state } = cloning();
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner });
+    const { first, second } = await copies(parent);
+    const built = await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    await writeFile(path.join((built.output ?? "").slice(0, -".out".length), "target", "debug", "second"), "two");
+    state.failAfter = calls.length + 1;
+    const copy = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(copy.ok, true, JSON.stringify(copy.problem));
+    assert.equal((await saw(copy)).saw, "compiled");
+    assert.deepEqual(copy.rust?.receipt?.cache, { sharing: RustTargetSharing.Clone, seed: RustTargetSeed.Cold });
+    const target = path.join((copy.output ?? "").slice(0, -".out".length), "target", "debug");
+    assert.deepEqual((await readdir(target)).sort(), ["engine"], "only what the cold build wrote");
+  });
+
+  it("a donor whose target holds a link (cargo's dSYM link after a Mac export) lends nothing; the next freshest copy does (LK)", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-linked-"));
+    const open = openSandboxes();
+    const { cloner } = cloning();
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner });
+    const { first, second } = await copies(parent);
+    assert.equal((await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live)).ok, true);
+    const fresher = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(fresher.ok, true, JSON.stringify(fresher.problem));
+    const fresherTarget = path.join((fresher.output ?? "").slice(0, -".out".length), "target", "debug");
+    await symlink(path.join(fresherTarget, "engine"), path.join(fresherTarget, "game.dSYM"));
+    const third = gameOf(await rustGame(path.join(parent, "worktrees", "w2")));
+    const copy = await builds.ensure(third, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(copy.ok, true, JSON.stringify(copy.problem));
+    assert.deepEqual(copy.rust?.receipt?.cache, { sharing: RustTargetSharing.Clone, seed: RustTargetSeed.Copy });
+    assert.equal((await saw(copy)).saw, "reused", "the engine was not compiled again");
+  });
+
+  it("a new build folder first sweeps the copies whose source is gone, never the donor or the one building (LK)", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-sweep-"));
+    const open = openSandboxes();
+    const { cloner } = cloning();
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild: ENGINE_BUILD }, cloner });
+    const { first, second } = await copies(parent);
+    const kept = await builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live);
+    const removed = await builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live);
+    const removedBin = (removed.output ?? "").slice(0, -".out".length);
+    // A playtest or integration copy the run removed itself: no worktree hook told the host.
+    await rm(second.dir, { recursive: true, force: true });
+    const third = gameOf(await rustGame(path.join(parent, "worktrees", "w2")));
+    const copy = await builds.ensure(third, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(copy.ok, true, JSON.stringify(copy.problem));
+    assert.equal(await lstat(path.dirname(removedBin)).catch(() => null), null, "the gone copy's folders went");
+    assert.equal((await lstat(kept.output ?? "")).isDirectory(), true, "the live copy's output stays");
+    assert.equal(copy.rust?.receipt?.cache?.seed, RustTargetSeed.Copy, "the copy still cloned the live one");
+  });
+
+  it("the admitted executable is a clone of cargo's where the host clones, a copy where a clone fails (LK)", async () => {
+    const parent = await realpath(await tmpDir("rust-exe-clone-"));
+    const open = openSandboxes();
+    const { cloner } = cloning();
+    const cloned: { from: string; to: string }[] = [];
+    const state = { fail: false };
+    const withFile: TreeCloner = {
+      ...cloner,
+      cloneFile: async (from, to) => {
+        cloned.push({ from, to });
+        if (state.fail) throw new Error("clonefile failed");
+        await copyFile(from, to);
+      },
+    };
+    const { builds } = await lane(parent, open.sandbox, { cloner: withFile });
+    const game = gameOf(await rustGame(parent));
+    const built = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(built.ok, true, JSON.stringify(built.problem));
+    const bin = (built.output ?? "").slice(0, -".out".length);
+    assert.deepEqual(
+      cloned.map(({ to }) => to),
+      ["game", "game-headless"].map((name) => path.join(`${bin}.out.new`, name)),
+      "each of the Mac builder's names",
+    );
+    for (const { from } of cloned) assert.ok(from.startsWith(path.join(bin, "target") + path.sep), from);
+    state.fail = true;
+    await writeFile(path.join(game.dir, "src", "main.rs"), "fn main() { /* changed */ }\n");
+    const again = await builds.ensure(game, BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(again.ok, true, JSON.stringify(again.problem));
+    assert.equal(await readFile(path.join(again.output ?? "", "game"), "utf8"), "#!/bin/sh\necho game\n");
+  });
+
+  it("a host that cannot clone builds every copy of a game in one shared target, one build at a time", async () => {
+    const parent = await realpath(await tmpDir("rust-copy-shared-"));
+    const open = openSandboxes();
+    const log = path.join(parent, "log");
+    // ext4, NTFS or a Windows host: no clones.
+    const cloner: TreeCloner = {
+      supported: async () => false,
+      clone: async () => assert.fail("a host that cannot clone clones nothing"),
+    };
+    const { builds, root } = await lane(parent, open.sandbox, {
+      stub: { onBuild: `LOG=${shellWord(log)}\n${ENGINE_BUILD}` },
+      cloner,
+    });
+    const { first, second, other } = await copies(parent);
+    const [a, b, lake] = await Promise.all([
+      builds.ensure(first, BuildTarget.Mac, CppBuildPurpose.Live),
+      builds.ensure(second, BuildTarget.Mac, CppBuildPurpose.Live),
+      builds.ensure(other, BuildTarget.Mac, CppBuildPurpose.Live),
+    ]);
+    for (const outcome of [a, b, lake]) assert.equal(outcome.ok, true, JSON.stringify(outcome.problem));
+    const [sawA, sawB, sawLake] = await Promise.all([saw(a), saw(b), saw(lake)]);
+    const shared = path.join(root, "shared", "game-targets", `macos-${LOCK.digest.slice(0, 12)}`);
+    assert.equal(sawA.target, shared);
+    assert.equal(sawB.target, shared);
+    assert.equal(sawLake.target, path.join(root, "shared", "lake-targets", `macos-${LOCK.digest.slice(0, 12)}`));
+    assert.deepEqual([sawA.saw, sawB.saw].sort(), ["compiled", "reused"], "the second copy reused the first's engine");
+    assert.deepEqual(b.rust?.receipt?.cache?.sharing, RustTargetSharing.Shared);
+    const lines = (await readFile(log, "utf8")).trim().split("\n");
+    const ours = lines.filter((line) => !line.includes(path.join(parent, "rust-builds", "lake-")));
+    assert.equal(ours.length, 4);
+    assert.ok(ours[0]?.startsWith("start ") && ours[1]?.startsWith("end "), ours.join("\n"));
+    assert.equal(
+      ours[0]?.slice("start ".length),
+      ours[1]?.slice("end ".length),
+      "a copy's build ended before the next began",
+    );
+    for (const spec of open.specs.filter((s) => !s.bin.includes(`${path.sep}lake-`))) {
+      assert.ok(spec.allowWrite.includes(shared), "the build may write the shared target");
+      assert.equal(await lstat(path.join(spec.bin, "target")).catch(() => null), null, "no target of its own");
+    }
+  });
+
+  it("starts every command with RUSTC_BOOTSTRAP cleared, as the store's prewarm built it, so the prewarm's units match", async () => {
+    const parent = await realpath(await tmpDir("rust-bootstrap-"));
+    const open = openSandboxes({ RUSTC_BOOTSTRAP: "1" });
+    const onBuild =
+      'if [ "${RUSTC_BOOTSTRAP+set}" = set ] && [ -z "$RUSTC_BOOTSTRAP" ]; then echo cleared > "$TMPDIR/bootstrap"; fi';
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild } });
+    const built = await builds.ensure(gameOf(await rustGame(parent)), BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(built.ok, true, JSON.stringify(built.problem));
+    const bin = (built.output ?? "").slice(0, -".out".length);
+    assert.equal(await readFile(path.join(bin, "tmp", "bootstrap"), "utf8"), "cleared\n");
+  });
+});
+
+describe("the person's Play never queues behind agents' builds (PW incident)", { skip: SKIP_ON_WINDOWS }, () => {
+  /**
+   * A lane with one build slot (4 cores) whose stub cargo holds every build of a game named
+   * `agent-*` until `gate` exists: a run's judged builds hold the slot while the person presses Play.
+   */
+  async function heldLane(parent: string, cloner: TreeCloner | null | undefined = undefined) {
+    const gate = path.join(parent, "gate");
+    const onBuild = `case "$manifest" in *${path.sep}agent-*) while [ ! -f ${shellWord(gate)} ]; do sleep 0.05; done ;; esac`;
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox, {
+      stub: { onBuild },
+      cores: 4,
+      ...(cloner === undefined ? {} : { cloner }),
+    });
+    return { builds, open, release: () => writeFile(gate, "go") };
+  }
+
+  /** Whether `promise` has settled after the event loop has had `ms` to run. */
+  async function settledWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+    let settled = false;
+    void promise.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await sleep(ms);
+    return settled;
+  }
+
+  it("a person's Live build starts while agents' judged builds hold every slot and wait for more (the Opening… wait)", async () => {
+    const parent = await realpath(await tmpDir("rust-person-slot-"));
+    const { builds, release } = await heldLane(parent);
+    const first = builds.ensure(gameOf(await rustGame(parent, "agent-a")), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const second = builds.ensure(gameOf(await rustGame(parent, "agent-b")), BuildTarget.Mac, CppBuildPurpose.Judging);
+    const person = builds.ensure(gameOf(await rustGame(parent, "played")), BuildTarget.Mac, CppBuildPurpose.Live);
+    try {
+      assert.equal(await settledWithin(person, 3_000), true, "the person's build waited behind the agents'");
+      assert.equal((await person).ok, true, JSON.stringify((await person).problem));
+      assert.equal(await settledWithin(first, 0), false, "the agents' builds are still held");
+    } finally {
+      await release();
+    }
+    assert.equal((await first).ok, true);
+    assert.equal((await second).ok, true);
+  });
+
+  it("a background Play build runs after the agents' queued builds, at a lower CPU priority, and never in the person's slot", async () => {
+    const parent = await realpath(await tmpDir("rust-background-slot-"));
+    const { builds, open, release } = await heldLane(parent);
+    const order: string[] = [];
+    const track = (name: string, building: Promise<{ ok: boolean }>) =>
+      building.then((outcome) => {
+        order.push(name);
+        return outcome;
+      });
+    const held = track(
+      "agent-a",
+      builds.ensure(gameOf(await rustGame(parent, "agent-a")), BuildTarget.Mac, CppBuildPurpose.Judging),
+    );
+    await sleep(200);
+    const background = track(
+      "background",
+      builds.ensure(gameOf(await rustGame(parent, "prebuilt")), BuildTarget.Mac, CppBuildPurpose.Live, {
+        priority: BuildPriority.Background,
+      }),
+    );
+    const queued = track(
+      "agent-b",
+      builds.ensure(gameOf(await rustGame(parent, "agent-b")), BuildTarget.Mac, CppBuildPurpose.Judging),
+    );
+    assert.equal(
+      await settledWithin(background, 1_000),
+      false,
+      "the background build took no slot while agents hold it",
+    );
+    await release();
+    await Promise.all([held, background, queued]);
+    assert.deepEqual(order, ["agent-a", "agent-b", "background"]);
+    const niced = open.requests.filter((request) => request.label?.startsWith("rust:prebuilt:"));
+    assert.ok(niced.length > 0);
+    for (const request of niced)
+      assert.match(request.command, /^exec '\/usr\/bin\/nice' '-n' '10' '\/usr\/bin\/env' /, request.command);
+    const agents = open.requests.filter((request) => request.label?.startsWith("rust:agent-"));
+    for (const request of agents) assert.doesNotMatch(request.command, /\/usr\/bin\/nice/);
+  });
+
+  it("on a host that cannot clone, the person's build of a copy goes before the agents' copies waiting for the game's shared target", async () => {
+    const parent = await realpath(await tmpDir("rust-person-shared-"));
+    const { builds, release } = await heldLane(parent, null);
+    const order: string[] = [];
+    const copy = async (name: string, purpose: CppBuildPurpose) => {
+      const dir = await rustGame(path.join(parent, name), "agent-game");
+      const outcome = await builds.ensure(gameOf(dir), BuildTarget.Mac, purpose);
+      order.push(name);
+      return outcome;
+    };
+    const first = copy("one", CppBuildPurpose.Judging);
+    await sleep(300);
+    const second = copy("two", CppBuildPurpose.Judging);
+    await sleep(100);
+    const person = copy("played", CppBuildPurpose.Live);
+    await sleep(300);
+    await release();
+    await Promise.all([first, second, person]);
+    assert.deepEqual(order, ["one", "played", "two"], "the shared target goes to the person's build next");
+  });
+});
+
+describe("Play reuses an admitted build of the same content instead of building its copy again (PW)", {
+  skip: SKIP_ON_WINDOWS,
+}, () => {
+  const IDENTITY = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"];
+
+  /** `git` in `dir`, or a thrown error. */
+  async function gitIn(dir: string, args: string[]): Promise<string> {
+    return await new Promise((resolve, reject) => {
+      const child = spawn("git", ["-C", dir, ...IDENTITY, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      child.stdout.on("data", (chunk) => {
+        out += chunk;
+      });
+      child.on("error", reject);
+      child.on("close", (code) =>
+        code === 0 ? resolve(out.trim()) : reject(new Error(`git ${args.join(" ")}: ${code}`)),
+      );
+    });
+  }
+
+  /** A committed Rust game and a second checkout of the same commit, as Play latest's copy is. */
+  async function twoCopies(parent: string) {
+    const game = await rustGame(parent, "copies");
+    await writeFile(path.join(game, ".gitignore"), "target/\n");
+    await gitIn(game, ["init", "-q"]);
+    await gitIn(game, ["add", "-A"]);
+    await gitIn(game, ["commit", "-q", "-m", "game"]);
+    const copy = path.join(parent, "show", "copies");
+    await mkdir(path.dirname(copy), { recursive: true });
+    await gitIn(game, ["worktree", "add", "-q", "--detach", copy, "HEAD"]);
+    return { game, copy: await realpath(copy) };
+  }
+
+  /** The cargo builds the sandboxes ran for folders named `copies`, by the stage they built. */
+  const builtStages = (requests: RunRequest[]) =>
+    requests.filter((request) => / 'build' /.test(request.command)).map((request) => request.label ?? "");
+
+  it("a person's Play of a commit the judge built serves the judge's admitted output: no copy build, no clippy", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const { game, copy } = await twoCopies(parent);
+    const judged = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(judged.ok, true, JSON.stringify(judged.problem));
+    const before = open.requests.length;
+    const marks: string[] = [];
+    const played = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Live, {
+      timing: (stage) => marks.push(stage),
+    });
+    assert.equal(played.ok, true, JSON.stringify(played.problem));
+    assert.equal(played.output, judged.output, "the judge's admitted output");
+    assert.equal(played.ran, false);
+    assert.deepEqual(open.requests.slice(before), [], "nothing ran for the copy");
+    assert.ok(marks.includes(PlayStage.BuildReused));
+    assert.equal(played.rust?.receipt?.lock, LOCK.digest);
+  });
+
+  it("a person's Live build skips clippy, and a judge never reuses a build clippy did not gate", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-lint-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const { game, copy } = await twoCopies(parent);
+    const live = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(live.ok, true, JSON.stringify(live.problem));
+    assert.deepEqual(
+      live.rust?.receipt?.steps.map((step) => step.step),
+      ["identity", "lock", "build"],
+    );
+    const judged = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Judging);
+    assert.equal(judged.ran, true, "the judge built its own copy");
+    assert.notEqual(judged.output, live.output);
+    assert.ok(judged.rust?.receipt?.steps.some((step) => step.step === "clippy"));
+  });
+
+  /** A copy that is not the commit's tree, as it may be found: each builds as itself and reuses nothing. */
+  const NOT_THE_COMMIT = [
+    {
+      name: "an edited file",
+      change: (copy: string) => writeFile(path.join(copy, "src", "main.rs"), "fn main() { }\n"),
+    },
+    { name: "an untracked file", change: (copy: string) => writeFile(path.join(copy, "assets", "new.txt"), "new") },
+    {
+      name: "an ignored file in a staged folder",
+      change: async (copy: string) => {
+        await writeFile(path.join(copy, ".gitignore"), "target/\nassets/secret.txt\n");
+        await writeFile(path.join(copy, "assets", "secret.txt"), "secret");
+      },
+    },
+    {
+      name: "a file changed under the same size and time",
+      change: async (copy: string) => {
+        const file = path.join(copy, "assets", "fish.txt");
+        const { atime, mtime } = await stat(file);
+        await writeFile(file, "FISH");
+        const { utimes } = await import("node:fs/promises");
+        await utimes(file, atime, mtime);
+      },
+    },
+  ] as const;
+
+  for (const row of NOT_THE_COMMIT) {
+    it(`a copy with ${row.name} builds as itself and serves nobody else's output`, async () => {
+      const parent = await realpath(await tmpDir("rust-reuse-dirty-"));
+      const open = openSandboxes();
+      const { builds } = await lane(parent, open.sandbox);
+      const { game, copy } = await twoCopies(parent);
+      await row.change(copy);
+      const changed = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Judging);
+      assert.equal(changed.ok, true, JSON.stringify(changed.problem));
+      assert.equal(changed.ran, true);
+      const clean = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Live);
+      assert.equal(clean.ran, true, "the clean checkout never got the changed copy's build");
+      assert.notEqual(clean.output, changed.output);
+    });
+  }
+
+  it("a reused output that changed since admission is no output: the copy builds", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-tampered-"));
+    const open = openSandboxes();
+    const { builds } = await lane(parent, open.sandbox);
+    const { game, copy } = await twoCopies(parent);
+    const judged = await builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Judging);
+    await writeFile(path.join(judged.output ?? "", "game"), "swapped");
+    const played = await builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Live);
+    assert.equal(played.ran, true);
+    assert.notEqual(played.output, judged.output);
+  });
+
+  it("a Play while the judge still builds the same commit waits for that build instead of starting its own", async () => {
+    const parent = await realpath(await tmpDir("rust-reuse-join-"));
+    const gate = path.join(parent, "gate");
+    const open = openSandboxes();
+    const onBuild = `while [ ! -f ${shellWord(gate)} ]; do sleep 0.05; done`;
+    const { builds } = await lane(parent, open.sandbox, { stub: { onBuild } });
+    const { game, copy } = await twoCopies(parent);
+    const judging = builds.ensure(gameOf(game), BuildTarget.Mac, CppBuildPurpose.Judging);
+    await sleep(500);
+    const playing = builds.ensure(gameOf(copy), BuildTarget.Mac, CppBuildPurpose.Live);
+    await sleep(300);
+    await writeFile(gate, "go");
+    const [judged, played] = await Promise.all([judging, playing]);
+    assert.equal(played.output, judged.output);
+    assert.equal(builtStages(open.requests).length, 1, "one cargo build for the two copies");
   });
 });

@@ -203,6 +203,66 @@ describe("booted means booted", () => {
     assert.equal(probe({}).via, "none");
   });
 
+  it("a web shell still on its loading screen is booting, whatever the shim settled", () => {
+    // The shim settles a quiet page ready half way through its budget, and a Rust page compiling
+    // its pipelines fetches nothing: capture photographed "Preparing shaders" as the game (B5).
+    const settled = {
+      boot: () => ({ ready: true, phase: "ready", attached: true, at: 7_500, frames: 0, drawCalls: 0 }),
+    };
+    const shell = (stage: string, state = "starting") => ({
+      status: { state },
+      progress: { stage, done: stage === "pipelines" ? 3 : null, total: stage === "pipelines" ? 9 : null },
+    });
+    const compiling = probe({ __studioClock: settled, GenexShell: shell("pipelines") });
+    assert.equal(compiling.via, "shim");
+    assert.equal(compiling.ready, false, "the loading screen is not the game");
+    assert.equal(compiling.phase, "boot");
+    assert.match(compiling.reason!, /loading screen/);
+    assert.match(compiling.reason!, /pipelines 3 of 9/);
+    const drawing = probe({ __studioClock: settled, GenexShell: shell("frame", "running") });
+    assert.equal(drawing.ready, false, "the first frame is not lit until the loading screen leaves");
+    // The first lit frame is on screen: the shim's own word stands.
+    const lit = probe({ __studioClock: settled, GenexShell: shell("ready", "running") });
+    assert.equal(lit.ready, true);
+    assert.equal(lit.reason, null);
+    // A shell that failed or refused shows its card, not a loading screen: it is not held back.
+    const refused = probe({ __studioClock: settled, GenexShell: shell("device", "unsupported") });
+    assert.equal(refused.ready, true);
+    // A shell with no progress (the C++ shell) and a contract-only page are read as before.
+    assert.equal(probe({ __studioClock: settled, GenexShell: { status: { state: "running" } } }).ready, true);
+    const contract = probe({ __studio: { state: () => ({ frame: 2 }) }, GenexShell: shell("pipelines") });
+    assert.equal(contract.via, "contract");
+    assert.equal(contract.ready, false);
+  });
+
+  it("waits for the Genex web shell's first lit frame, not the shim's quiet page (bodycam dead-input)", () => {
+    // The shim settles a quiet page with no draws at half its budget (7.5 s). A Rust · wgpu page
+    // still compiling its pipelines is quiet and has drawn nothing: judged then, every seed,
+    // pause, step and key went to the shim alone, and the title card never left.
+    const quietShim = {
+      boot: () => ({ ready: true, phase: "ready", at: 7_500, since: 7_600, frames: 400, drawCalls: 0 }),
+    };
+    const shellAt = (state: string, stage: string) => ({
+      __studioClock: quietShim,
+      GenexShell: { status: { state, code: null, reason: null }, progress: { stage, done: 3, total: 40 } },
+    });
+    const compiling = probe(shellAt("starting", "pipelines"));
+    assert.equal(compiling.ready, false);
+    assert.equal(compiling.phase, "boot");
+    assert.match(String(compiling.reason), /pipelines/);
+    // Booted, but its first lit frame is not on screen yet: the loading screen still covers it.
+    assert.equal(probe(shellAt("running", "frame")).ready, false);
+    const up = probe(shellAt("running", "ready"));
+    assert.equal(up.ready, true);
+    assert.equal(up.via, "shim");
+    // A shell that failed or found no WebGPU is the shim's answer as before: its typed code is
+    // what the verbs and the cards report, and no WebGPU is the preview's limit, never the game's.
+    assert.equal(probe(shellAt("unsupported", "device")).ready, true);
+    assert.equal(probe(shellAt("failed", "pipelines")).ready, true);
+    // The C++ · raylib shell is a GenexShell with no boot status of its own: the shim answers it.
+    assert.equal(probe({ __studioClock: quietShim, GenexShell: { VERBS: [] } }).ready, true);
+  });
+
   it("polls immediately, gives up at the budget, and never throws at a page that is going away", async () => {
     // An already-up page costs nothing where it used to cost a flat 1.5 s.
     const up = scriptedPort([booting({ ready: true, phase: "ready", pageMs: 120 })]);
@@ -650,7 +710,7 @@ describe("the computer tool's host", () => {
     const project = await rig.core.games.scaffold("play-smoke", { title: "play" });
     const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
     const names: string[][] = [];
-    let readOnly: boolean[] = [];
+    const readOnly: boolean[] = [];
     fakeEngine(rig, "codex", async (request) => {
       names.push((request.liveTools ?? []).map((t) => t.name));
       readOnly.push(request.readOnly === true);
@@ -696,6 +756,52 @@ describe("the computer tool's host", () => {
   });
 });
 
+describe("a judge that plays", () => {
+  it("holds the computer alone, blind in an empty folder, steps its clock, and hands back a verified trace", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const project = await rig.core.games.scaffold("judge-smoke", { title: "judge" });
+    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
+    const seen: DelegateRequest[] = [];
+    fakeEngine(rig, "codex", async (request) => {
+      seen.push(request);
+      const moved = await request.onLiveTool!("computer", { action: "key", text: "Return" });
+      assert.ok(typeof moved !== "string" && moved.images?.length, "the judge sees the result of its move");
+      const shorthand = await request.onLiveTool!("press_keys", { keys: "w" });
+      assert.doesNotMatch(text(shorthand), /^OK/, "the playtester's shorthands are not a judge's");
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "j", summary: "{}" };
+    });
+    const result = (await api["engine.delegate"]!({
+      engine: "codex",
+      prompt: "play and judge",
+      project: project.name,
+      playtest: {
+        project: project.name,
+        root: project.dir,
+        runId: "run_j",
+        facetId: "integration",
+        iteration: 1,
+        role: "judge",
+        label: "judge",
+        maxActions: 4,
+        quest: { id: "booted", until: { path: "ready", truthy: true } },
+      },
+      readOnly: true,
+    })) as { trace?: { steps: number; path: string | null } };
+    const request = seen[0]!;
+    assert.deepEqual(
+      (request.liveTools ?? []).map((t) => t.name),
+      ["computer"],
+    );
+    assert.equal(request.blind, true);
+    assert.equal(request.readOnly, true);
+    assert.notEqual(path.resolve(request.cwd), path.resolve(project.dir), "the judge does not start in the build");
+    assert.ok(!(request.extraReads ?? []).some((dir) => path.resolve(dir) === path.resolve(project.dir)));
+    assert.equal(result.trace?.steps, 1, "the refused shorthand never reached the computer");
+    assert.ok(result.trace?.path && (await readFile(result.trace.path, "utf8")).includes('"action":"key"'));
+  });
+});
+
 describe("what a load waits for", () => {
   /** A scaffolded game whose studio.json declares how long it takes to boot. */
   async function bootGame(rig: Rig, name: string, bootMs: number): Promise<{ dir: string; name: string }> {
@@ -728,11 +834,39 @@ describe("what a load waits for", () => {
     // shape this milestone exists for would go unlooked-at.
     assert.ok(!/failed to load/.test(captured), captured);
     assert.match(captured, /c1_default\.jpg/, "the frames were taken anyway");
-    assert.match(captured, /the page has not reported itself ready after 1s — you are looking at whatever it drew/);
+    // Flipped (B5): said first and plainly, no longer a closing note after the frames.
+    assert.match(captured, /^NOT LOADED: the page had not finished loading after 1s/);
     const screens = rig.events
       .filter((e) => e.type === "preview.screen")
       .map((e) => (e.payload as { state: string }).state);
     assert.ok(screens.includes("opened"), "the worker's screen was opened all the same");
+  });
+
+  it("a capture whose page is still loading says so first, before any frame", async () => {
+    const rig = await startRig({ replies: [] });
+    rigs.push(rig);
+    const game = await bootGame(rig, "still-loading", 1_000);
+    const loading = "the game is still on its loading screen (pipelines 3 of 9)";
+    rig.preview.evaluations.push({ match: "__studioClock", value: booting({ reason: loading }) });
+    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
+    let captured = "";
+    fakeEngine(rig, "codex", async (request) => {
+      captured = text(await request.onCapture!({ cameras: "default" }));
+      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "s", summary: "done" };
+    });
+    await api["engine.delegate"]!({
+      engine: "codex",
+      prompt: "build",
+      project: game.name,
+      selfCapture: { project: game.name, root: game.dir, runId: "run_l", facetId: "build", iteration: 1 },
+    });
+    const [first, ...rest] = captured.split("\n");
+    assert.match(first!, /^NOT LOADED: /, captured);
+    assert.match(first!, /after 1s/);
+    assert.ok(first!.includes(loading), "the page's own words for where its boot is");
+    assert.match(first!, /not the game/);
+    assert.match(rest.join("\n"), /c1_default\.jpg/, "the frames are still taken, under the warning");
+    assert.equal(captured.match(/has not reported itself ready/g), null, "said once, plainly, not again as a note");
   });
 
   it("answers preview.ready and preview.gesture over the substrate RPC — host calls, not agent tools", async () => {

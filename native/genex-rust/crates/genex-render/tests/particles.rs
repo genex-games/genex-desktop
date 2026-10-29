@@ -9,6 +9,7 @@
 use genex_render::capture::Capture;
 use genex_render::device_class::{DeviceClass, FormFactor, PerformanceTier};
 use genex_render::immediate::ImmediateFrame;
+use genex_render::limits::PARTICLES_PER_EMITTER_MAX;
 use genex_render::particles::{EmitterDesc, Flipbook, ParticleAtlas, SORT_BLOCK, SortDispatch, draw_stride, particle_cap, sort_pairs_on_gpu, sort_plan};
 use genex_render::scene::{CameraDesc, Material, MeshId, scaled};
 use genex_render::settings::{QualityPreset, SceneFormat};
@@ -147,6 +148,39 @@ fn the_fountain_keeps_its_look_and_the_presets_opt_in() {
     assert_eq!(gpu.flags, [0, 1, 0, 0]);
     assert!(EmitterDesc::steam([0.0; 3], 1).sorted && EmitterDesc::steam([0.0; 3], 1).reads_depth());
     assert!(EmitterDesc::rain([0.0; 3], [1.0; 3], 1).collision.is_some());
+}
+
+/// Ticks a second: velocities are world units a tick.
+const TICKS_PER_SECOND: f32 = 60.0;
+
+#[test]
+fn snow_and_dust_are_soft_round_dots_well_within_an_emitter_s_cap() {
+    let snow = EmitterDesc::snow([0.0, 10.0, 0.0], [12.0, 0.0, 12.0], 1);
+    let dust = EmitterDesc::dust([0.0, 1.5, 0.0], [3.0, 1.5, 3.0], 1);
+    for (name, preset) in [("snow", snow), ("dust", dust)] {
+        assert!(preset.check().is_ok(), "{name} passes the emitter's limits");
+        assert!(preset.slots() <= PARTICLES_PER_EMITTER_MAX, "{name}: {} alive", preset.slots());
+        // The round dot: no streak, no atlas, nothing turned.
+        assert_eq!((preset.stretch, preset.flipbook), (0.0, None), "{name} draws the round dot");
+        assert_eq!(preset.to_gpu(30).shape[3], 0.0, "{name} is not stretched on the GPU");
+        assert!(preset.soft_distance > 0.0 && preset.near_fade > 0.0, "{name} is soft and fades in front of the lens");
+        assert!(!preset.sorted, "{name} draws in slot order");
+    }
+    assert!((8_000..=12_000).contains(&snow.slots()), "snow holds {} flakes", snow.slots());
+    assert!((200..=2_000).contains(&dust.slots()), "dust holds {} motes", dust.slots());
+
+    let fall = -snow.velocity[1] * TICKS_PER_SECOND;
+    assert!((0.9..=1.1).contains(&fall), "snow falls about 1 m/s ({fall})");
+    assert_eq!(snow.gravity, [0.0; 3], "a flake falls at its terminal speed");
+    assert!(fall * snow.lifetime_ticks as f32 / TICKS_PER_SECOND >= 10.0, "a flake lives to fall 10 m");
+    assert!(snow.collides() && snow.collision.is_some_and(|c| c.rest_ticks > 0), "flakes settle where they land");
+
+    let [vx, vy, vz] = dust.velocity;
+    let drift = ((vx * vx + vy * vy + vz * vz).sqrt() + dust.spread * 3f32.sqrt()) * TICKS_PER_SECOND;
+    assert!(drift < 0.05, "a mote drifts under 5 cm/s ({drift})");
+    assert_eq!(dust.gravity, [0.0; 3]);
+    assert!(!dust.collides(), "motes hang in the air");
+    assert_eq!(dust.extent, [3.0, 1.5, 3.0], "motes are born throughout the box");
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -144,6 +144,25 @@ pub fn frame_ssr(quality: &Quality, hdr: bool) -> bool {
     quality.ssr.enabled && inputs.history_pyramid && inputs.normal_roughness
 }
 
+/// Whether any surface of `plan` can take a screen reflection (lane FQ): an instance row whose
+/// material's perceptual roughness can fall under [`ROUGHNESS_CUTOFF`] (its factor under it, or a
+/// metallic-roughness texture, whose texels may scale it to anything; the normal map's Toksvig and
+/// specular anti-aliasing only raise it), or a binned decal that gives the surfaces it covers a
+/// roughness under it (or one through its ORM map). Without one every trace texel is zero (the
+/// trace skips a rough surface and the sky), so the frame's reflections are binding 30's zero
+/// texel: the prepass draws its batches without the surface texel (one pass), the renderer skips
+/// the Hi-Z, the trace, the blur and the resolve and keeps building the colour pyramid the next
+/// frame may reflect.
+pub fn frame_can_reflect(plan: &crate::scene::FramePlan) -> bool {
+    let smooth = |roughness: f32| roughness.is_nan() || roughness < ROUGHNESS_CUTOFF;
+    let material_can = |row: u32| plan.materials.get(row as usize).is_none_or(|material| material.textures[2] != crate::layout::NO_TEXTURE || smooth(material.params[1]));
+    if plan.instances.iter().any(|instance| material_can(instance.material)) {
+        return true;
+    }
+    let decals = plan.binned.as_ref().map_or(&[][..], |binned| binned.decals.as_slice());
+    decals.iter().any(|decal| decal.surface[2] >= 0.0 && (decal.textures[2].to_bits() != crate::layout::NO_TEXTURE || smooth(decal.surface[2])))
+}
+
 /// The trace's size: half the render size, the nearest-depth Hi-Z's finest level.
 pub const fn trace_size(render: (u32, u32)) -> (u32, u32) {
     crate::hiz::base_size(render)

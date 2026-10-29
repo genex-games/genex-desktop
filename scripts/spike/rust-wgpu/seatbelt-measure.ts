@@ -31,7 +31,7 @@ import { parseArgs } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../../../src/shared/duration.ts";
 import { NativeRunMode } from "../../../src/shared/native-contract.ts";
 import { gameSandboxProfile, prepareGameLaunch } from "../../../src/substrate/game-sandbox-profile.ts";
-import { quote } from "../../../src/substrate/plugins/native-process.ts";
+import { quote } from "../../../src/substrate/seatbelt.ts";
 
 /** Why a measurement could not be made. Wire values: the refusal line spells them. */
 export const MeasureRefusal = {

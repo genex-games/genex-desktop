@@ -21,6 +21,7 @@ use genex_render::custom_pass::{
     TABLES_V2_BINDINGS, check_texture_descriptor, render_scene, validate_pass_wgsl,
 };
 use genex_render::budget::{BudgetKind, BudgetLedger};
+use genex_render::caps::MAX_WORLD_PX;
 use genex_render::device_loss::Resilient;
 use genex_render::extension::ExtensionContext;
 use genex_render::immediate::{FrameRenderer, HUD_TAG, ImmediateFrame, WORLD_TAG};
@@ -670,8 +671,8 @@ fn pass_buffers_and_textures_are_held_to_the_gpu_caps_and_never_read_back() {
     };
     assert_eq!(check_texture_descriptor("t", &texture(64, 32, 1, 1)).expect("small"), 64 * 32 * 4);
     assert_eq!(check_texture_descriptor("t", &texture(4, 4, 1, 3)).expect("mips"), (16 + 4 + 1) * 4, "every mip level counts");
-    refused(&check_texture_descriptor("t", &texture(8192, 8, 1, 1)).expect_err("too wide"), RenderCode::TextureTooLarge, "t");
-    refused(&check_texture_descriptor("t", &texture(4096, 4096, 2, 1)).expect_err("too many bytes"), RenderCode::TextureTooLarge, "t");
+    refused(&check_texture_descriptor("t", &texture(MAX_WORLD_PX + 1, 8, 1, 1)).expect_err("too wide"), RenderCode::TextureTooLarge, "t");
+    refused(&check_texture_descriptor("t", &texture(MAX_WORLD_PX, MAX_WORLD_PX, 2, 1)).expect_err("too many bytes"), RenderCode::TextureTooLarge, "t");
     const { assert!(GPU_PASS_BYTES_MAX >= BUFFER_MAX_BYTES, "one pass may hold one buffer at the cap") };
 }
 

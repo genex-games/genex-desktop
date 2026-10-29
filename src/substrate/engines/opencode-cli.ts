@@ -7,10 +7,13 @@
  * whether OpenCode is usable: the studio never reads OpenCode's credentials.
  */
 import { CatalogError } from "./model-catalog.ts";
+import { MCP_SERVER_NAME } from "./studio-mcp-shim.ts";
+import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import type { EngineModel } from "./types.ts";
 import { ModelContextSource } from "./types.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** A model whose context the listing does not give is assumed to have this much. */
 const DEFAULT_CONTEXT_TOKENS = 32_768;
@@ -28,6 +31,7 @@ const OWN_PROVIDER = "opencode";
  * refreshes its token on auth.openai.com). A provider missing here reaches only its listed address.
  */
 const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
+  [OWN_PROVIDER]: ["opencode.ai"],
   openai: ["api.openai.com", "chatgpt.com", "auth.openai.com"],
   anthropic: ["api.anthropic.com"],
   google: ["generativelanguage.googleapis.com"],
@@ -48,8 +52,12 @@ const PROVIDER_HOSTS: Readonly<Record<string, readonly string[]>> = {
   vercel: ["ai-gateway.vercel.sh"],
 };
 
+/** What a model row and a failed listing say in Settings' picker, in the person's language. */
 const MESSAGE = {
-  Malformed: "OpenCode's model list could not be read.",
+  Malformed: () => t("OpenCode's model list could not be read."),
+  Free: (provider: string) => t("{provider} · Free", { provider }),
+  Price: (provider: string, input: string, output: string) =>
+    t("{provider} · {input} in / {output} out per M tokens", { provider, input, output }),
 } as const;
 
 /** The two command lines OpenCode has spoken: 1.18's, and 2.x's (a background service, `#variant`). */
@@ -147,8 +155,8 @@ const price = (value: unknown): number =>
 
 /** The price line a picker row shows (dollars per million tokens), or "Free". */
 function priceNote(provider: string, input: number, output: number): string {
-  if (input === 0 && output === 0) return `${provider} · Free`;
-  return `${provider} · $${input.toFixed(2)} in / $${output.toFixed(2)} out per M tokens`;
+  if (input === 0 && output === 0) return MESSAGE.Free(provider);
+  return MESSAGE.Price(provider, `$${input.toFixed(2)}`, `$${output.toFixed(2)}`);
 }
 
 /** The host of a provider's API URL, or null for a missing or non-HTTPS one. */
@@ -170,6 +178,11 @@ function runsBuilds(listed: ListedModel): boolean {
   if (listed.capabilities?.toolcall !== true || listed.status === DEPRECATED) return false;
   const output = Object.entries(listed.capabilities.output ?? {});
   return output.every(([modality, on]) => modality === "text" || on !== true);
+}
+
+/** The hosts a model's provider answers on with no listing to name its address: its built-in hosts. */
+export function builtInHosts(model: string): string[] {
+  return [...(PROVIDER_HOSTS[model.slice(0, model.indexOf("/"))] ?? [])];
 }
 
 /** The hosts a provider answers on: the address its listing names, and its built-in hosts. */
@@ -264,7 +277,7 @@ export function parseOpenCodeModels(stdout: string): OpenCodeModel[] {
     if (model) models.push(model);
     index = end;
   }
-  if (!found && stdout.trim()) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed);
+  if (!found && stdout.trim()) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed());
   return models;
 }
 
@@ -350,7 +363,7 @@ export function parseOpenCodeApiModels(stdout: string): OpenCodeModel[] {
   } catch {
     data = undefined;
   }
-  if (!Array.isArray(data)) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed);
+  if (!Array.isArray(data)) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.Malformed());
   return data.flatMap((entry) => {
     const model = openCodeApiModel(record(entry) as ApiModel);
     return model ? [model] : [];
@@ -363,10 +376,17 @@ export const OpenCodeAccess = {
   Build: "build",
   /** A read-only session (a judge, a lead while its build runs, Plan): looks, and runs only the studio bridge. */
   ReadOnly: "read-only",
+  /** A judge that plays: reads no file at all, and reaches the build only through the studio's tools. */
+  Blind: "blind",
   /** A one-shot answer (`complete`): no tool at all. */
   Answer: "answer",
 } as const;
 export type OpenCodeAccess = (typeof OpenCodeAccess)[keyof typeof OpenCodeAccess];
+
+/** How long OpenCode waits for the studio's MCP server to start and list its tools (its own default is 5 s). */
+const MCP_START_TIMEOUT_MS = 30 * SECOND_MS;
+/** How long 2.x waits for one studio tool call: a computer wait or a build may run minutes. */
+const MCP_EXECUTION_TIMEOUT_MS = 10 * MINUTE_MS;
 
 /** The studio bridge's command, as OpenCode's bash permission matches it. */
 const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
@@ -374,9 +394,16 @@ const BRIDGE_PATTERN = "node .studio/bridge/tool.mjs *";
 /** The bash rules for each access: always allow or deny, never ask — `opencode run` has nobody to ask. */
 function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<string, string> {
   if (access === OpenCodeAccess.Build) return "allow";
-  if (access === OpenCodeAccess.ReadOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
+  const looksOnly = access === OpenCodeAccess.ReadOnly || access === OpenCodeAccess.Blind;
+  if (looksOnly && bridge) return { "*": "deny", [BRIDGE_PATTERN]: "allow" };
   return "deny";
 }
+
+/** OpenCode's permission key for every tool of the studio's MCP server (`<server>_<tool>`). */
+const STUDIO_MCP_PERMISSION = `${MCP_SERVER_NAME}_*`;
+
+/** The accesses whose session may read files: a build and a read-only one, never an answer or a blind judge. */
+const READING_ACCESS: ReadonlySet<OpenCodeAccess> = new Set([OpenCodeAccess.Build, OpenCodeAccess.ReadOnly]);
 
 /**
  * The config every session runs with (`OPENCODE_CONFIG_CONTENT`), over the person's own: no
@@ -385,9 +412,8 @@ function bashRules(access: OpenCodeAccess, bridge: boolean): string | Record<str
  * runs from a scratch folder, may read the game it looks at by its full path, and changes nothing.
  * The studio's sandbox is the boundary either way; these rules keep the model from even trying.
  */
-export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string {
-  const looking = access !== OpenCodeAccess.Answer;
-  const look = looking ? "allow" : "deny";
+export function openCodeConfig(access: OpenCodeAccess, bridge: boolean, mcpCommand: string[] | null = null): string {
+  const look = READING_ACCESS.has(access) ? "allow" : "deny";
   const permission = {
     edit: access === OpenCodeAccess.Build ? "allow" : "deny",
     bash: bashRules(access, bridge),
@@ -401,8 +427,30 @@ export function openCodeConfig(access: OpenCodeAccess, bridge: boolean): string 
     doom_loop: "deny",
     // Genex's sessions load no skill: not the person's own (`~/.config/opencode/skills`), not a game's.
     skill: "deny",
+    // An MCP tool OpenCode would ask about is rejected in `run`, which has nobody to ask.
+    ...(mcpCommand ? { [STUDIO_MCP_PERMISSION]: "allow" } : {}),
   };
-  return JSON.stringify({ permission, autoupdate: false, share: "disabled" });
+  const mcp = mcpCommand
+    ? {
+        mcp: {
+          [MCP_SERVER_NAME]: { type: "local", command: mcpCommand, enabled: true, timeout: MCP_START_TIMEOUT_MS },
+        },
+      }
+    : {};
+  return JSON.stringify({ permission, autoupdate: false, share: "disabled", ...mcp });
+}
+
+/**
+ * The studio's MCP server as 2.x declares one (`mcp.servers`): its tools called directly, not
+ * through Code Mode, so a picture comes back as the tool's own content; a wait may run minutes.
+ */
+function studioServerV2(command: string[]) {
+  return {
+    type: "local",
+    command,
+    codemode: false,
+    timeout: { startup: MCP_START_TIMEOUT_MS, execution: MCP_EXECUTION_TIMEOUT_MS },
+  };
 }
 
 /** One 2.x permission rule. The last rule that matches a call decides it. */
@@ -433,8 +481,9 @@ function shellRulesV2(access: OpenCodeAccess, bridge: boolean): PermissionRule[]
  * after any the person's own config gives it, so theirs cannot widen them. No question is asked,
  * no web fetch, skill or subagent runs, nothing is shared and nothing updates itself.
  */
-export function openCodeConfigV2(access: OpenCodeAccess, bridge: boolean): string {
-  const look = access === OpenCodeAccess.Answer ? "deny" : "allow";
+export function openCodeConfigV2(access: OpenCodeAccess, bridge: boolean, mcpCommand: string[] | null = null): string {
+  // A blind judge reads no file either, as on 1.18 (`READING_ACCESS`).
+  const look = READING_ACCESS.has(access) ? "allow" : "deny";
   const permissions: PermissionRule[] = [
     rule("*", "deny"),
     rule("edit", access === OpenCodeAccess.Build ? "allow" : "deny"),
@@ -448,11 +497,14 @@ export function openCodeConfigV2(access: OpenCodeAccess, bridge: boolean): strin
     rule("skill", "deny"),
     rule("subagent", "deny"),
     rule("question", "deny"),
+    // The studio's own MCP tools, after the deny of everything (the last rule that matches decides).
+    ...(mcpCommand ? [rule(STUDIO_MCP_PERMISSION, "allow")] : []),
   ];
   return JSON.stringify({
     permissions,
     agents: { [OPENCODE_AGENT]: { permissions } },
     share: "disabled",
     update: "disable",
+    ...(mcpCommand ? { mcp: { servers: { [MCP_SERVER_NAME]: studioServerV2(mcpCommand) } } } : {}),
   });
 }

@@ -24,7 +24,9 @@ when its behavior is in scope.
 ### Focused commands and prerequisites
 
 Use installed Node 24 (`nvm use`); `node scripts/check-node.mjs` checks it without installation.
-Restoring missing or mismatched locked dependencies with `npm ci` is included in authorized
+Use native `arm64` Node on Apple Silicon (`node -p process.arch`); record architecture in
+benchmarks and compare matched runtimes, separately from any Rosetta-to-native gain.
+Restoring missing or mismatched locked dependencies with `npm run deps` is included in authorized
 build/run/test work. Do not repeat it without need. Dependency upgrades and global installations
 are separate decisions; do not change machine-wide runtimes incidentally.
 
@@ -35,6 +37,12 @@ node scripts/affected-tests.mjs --files src/shared/chat-activity.ts --run
 node scripts/affected-tests.mjs --area <area-id> --tier L3 --run
 npm run review:context -- --files <paths>
 ```
+
+Named files/globs avoid the affected graph and run serially by default. Flags need explicit
+files or `--group fast|rig`; a name filter alone does not imply full discovery. Full `npm test`
+runs the fast group with two file workers, then rigs serially, and still runs rigs after fast
+failures. `--group rig` cannot override serial execution. The child-process leak check remains
+enabled; runtime isolation overrides are deliberate caller choices.
 
 The selector combines import edges and `tests/test-map.json`. By default it reads changes
 against the merge base with `origin/dev`, including untracked files; `--staged`, `--base REF`,
@@ -83,10 +91,17 @@ execute from temporary copies.
 
 ## CI and platform checks
 
-Every PR and dev/main push runs Linux static, baseline and affected L1 checks, plus the harness gate
-when a change reaches it, with the Linux sandbox tools installed, so a test that opens a sandbox
-must release it ([tests](../../tests/AGENTS.md#runner)). Its macOS fast
-group, plus package, Windows and terminal workflows, run on PRs into
+Every PR and dev/main push runs independent Linux static checks and a test plan. The plan unions
+mandatory baseline files with affected L1 files and removes duplicates. Regular files use up to
+six jobs; mandatory seed-upgrade cases use three separate jobs. Selected harness coverage uses
+up to six jobs: ordinary root groups stay whole, and the large incident group is divided into
+complete direct test subtrees. Every assigned group/case runs exactly once. Jobs retain the Linux
+sandbox and child-process cleanup checks ([tests](../../tests/AGENTS.md#runner)). `gate` requires
+successful planning, static checks, unit and seed jobs; only an explicitly unselected harness may skip.
+Changes to the exact shared runner/toolchain inputs listed in `ci-test-plan.mjs` select the
+entire fast inventory and harness, including deletion/rename of those inputs.
+The macOS fast group also uses up to six jobs behind its `fast` aggregate. Its existing events,
+plus the package, Windows and terminal workflows, remain PRs into
 `main`, pushes to `main`, and dispatches. The owner opens dev-to-main PRs by hand.
 Linux packaging extracts the `.deb` for `run-cpp-packaged-ui.mjs`: Home, the C++ chooser and real
 creation IPC use offline fixtures; compilation is checked separately. Extracted RPM acceptance
@@ -126,6 +141,19 @@ crates from `node scripts/toolchains/rust-release.ts tree --out .studio-dev/rust
 budget; the raylib comparison needs `GENEX_RAYLIB_BENCH_RECORD`, and
 `GENEX_REQUIRE_RAYLIB_BASELINE=1` fails without it). Run cargo only through `node scripts/toolchains/rust-env.ts -- cargo …` with
 one shared `CARGO_TARGET_DIR`: a cold workspace build takes several GB, so check free disk first.
+`rust-examples-web` holds each example game's genex.toml switches to the genex features its
+Cargo.toml names; with `GENEX_EXAMPLES_WEB=1` it also builds every web example alone (one cargo
+run each, so no feature unification) in the export flavour and fails one over 4 MiB gzip.
+The system switches: `rust-manifest-switches` and `genex-toml` hold a genex.toml's `[nav]`,
+`[streaming]` and `[animation]` `enabled = false` to a facade line without default features that
+names every kept default; the facade's `tests/switches.rs` refuses each switched-off system
+(`nav-disabled`, `streaming-disabled`, `animation-disabled`) and runs in every feature set
+(`cargo test -p genex --test switches`, then again with `--no-default-features --features
+physics,audio`). Live's asset swap: `asset-watch` plans the swap against the copy the game reads,
+with a fake clock and folder, and the hostile-path table of `present_files.rs`
+(`cargo test -p genex present_files`) refuses a link, `..`, an absolute path or an oversized file
+before any read; its sandboxed row reads a Mac game's bundled `assets/` under the game Seatbelt
+profile. `native-words-locale` holds the Rust and native Studio words to the translation catalog.
 `GENEX_REQUIRE_METAL=1` makes the skipped Metal renderer goldens fail.
 
 Rust Windows and Linux: `rust-windows-lane`, `rust-linux-lane`, `rust-cross-lane`,

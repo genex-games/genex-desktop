@@ -7,6 +7,7 @@ import { DialogSurface } from "../ui/dialog.tsx";
  */
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { PluginReviewRequest } from "../plugin-actions.ts";
 import { Button } from "../ui/Button.tsx";
 
@@ -19,7 +20,7 @@ export function PluginApproval({ review, onClose }: { review: PluginReviewReques
   const ready = review.images.every((i) => loaded.includes(i.label));
   return (
     <DialogSurface
-      title="Plugin approval"
+      title={t("Plugin approval")}
       description={review.message}
       size="xl"
       onDismiss={() => {
@@ -39,7 +40,7 @@ export function PluginApproval({ review, onClose }: { review: PluginReviewReques
           onClose();
         }}
       >
-        Cancel
+        {t("Cancel")}
       </Button>
       <Button
         variant="default"
@@ -49,7 +50,7 @@ export function PluginApproval({ review, onClose }: { review: PluginReviewReques
           onClose();
         }}
       >
-        Continue to confirmation
+        {t("Continue to confirmation")}
       </Button>
     </DialogSurface>
   );

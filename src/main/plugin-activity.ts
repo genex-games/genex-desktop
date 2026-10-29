@@ -12,6 +12,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { CallMaking } from "../shared/asset-making.ts";
+import { GenexBlocked } from "../shared/genex.ts";
 import type { PluginToolFinishedPayload, PluginToolRole, PluginToolStartedPayload } from "../shared/game-assets.ts";
 import { isJsonObject } from "../substrate/fsx.ts";
 
@@ -183,6 +184,7 @@ export function finishedPayload(
   const record = failed ? null : (outcome as { result: unknown }).result;
   const { files, jobId, generationId } = jobIds(record);
   const error = failed ? String((outcome as { error: unknown }).error ?? "") : null;
+  const blocked = blockedBy(record);
   return {
     ...started,
     ok: !failed,
@@ -192,9 +194,16 @@ export function finishedPayload(
     ...(files?.length ? { files } : {}),
     ...(jobId ? { jobId } : {}),
     ...(generationId !== null ? { generationId } : {}),
+    ...(blocked ? { blocked } : {}),
     durationMs: positiveOrZero(durationMs, Math.round),
     ...(outcome.version ? { version: outcome.version } : {}),
   };
+}
+
+/** What a job-shaped result says the job is waiting on the person for, when it names a known reason. */
+function blockedBy(record: unknown): GenexBlocked | null {
+  if (!isJsonObject(record)) return null;
+  return Object.values(GenexBlocked).find((reason) => reason === record.blocked) ?? null;
 }
 
 /** A count or a duration as a whole number, and 0 for anything that is not a positive number. */

@@ -11,6 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
 import { describe, it, mock } from "node:test";
 import { BuildProblemCode } from "../../src/shared/build-problem.ts";
+import { LivePrepare } from "../../src/shared/live-behind.ts";
 import { PreviewIdentityState } from "../../src/main/core/internals.ts";
 import {
   BuildTarget,
@@ -167,7 +168,11 @@ async function stage({ failing = false }: { failing?: boolean } = {}): Promise<S
 }
 
 /** A raylib game in the games folder, listed with `destinations` (the library's own detection is `project-shape.ts`'s). */
-async function raylibGame(lite: CoreLite, destinations: GameDestinations): Promise<string> {
+async function raylibGame(
+  lite: CoreLite,
+  destinations: GameDestinations,
+  declared: Pick<GameProject, "mouseLook"> = {},
+): Promise<string> {
   const dir = path.join(lite.gamesRoot, "pong");
   await mkdir(path.join(dir, "src"), { recursive: true });
   await writeFile(path.join(dir, "CMakeLists.txt"), `include("\${GENEX_CMAKE}")\ngenex_add_game(SOURCES src/*.cpp)\n`);
@@ -194,6 +199,7 @@ async function raylibGame(lite: CoreLite, destinations: GameDestinations): Promi
     },
     built: false,
     destinations,
+    ...declared,
   };
   mock.method(lite.core.games, "list", async () => [game]);
   return dir;
@@ -269,6 +275,27 @@ describe("a C++ game in Live", () => {
   });
 });
 
+describe("a compiled game played with mouse look (studio.json game.mouseLook)", () => {
+  it("opens Live's page and a played snapshot asking for mouse look, and a judged page without it", async () => {
+    const { lite, live, standIn } = await stage();
+    await raylibGame(lite, BROWSER_AND_MAC, { mouseLook: true });
+    await lite.core.loadPreview({ project: "pong" });
+    assert.equal(live.loads.at(-1)?.entry, "index.html?mouseLook", "Live's page takes the pointer lock on a click");
+    const v1 = await lite.core.snapshot("game", "v1", "pong");
+    await lite.core.playGameSnapshot(v1.snapshot_id, "pong");
+    assert.equal(live.loads.at(-1)?.entry, "index.html?mouseLook", "a played snapshot is Live's too");
+    await lite.api()["preview.load"]({ project: "pong" });
+    assert.equal(standIn[0]?.loads.at(-1)?.entry, "index.html", "the judges drive look through the input verb");
+  });
+
+  it("opens Live's page of a game without mouse look as it always did: drag to look, the cursor free", async () => {
+    const { lite, live } = await stage();
+    await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    assert.equal(live.loads.at(-1)?.entry, "index.html");
+  });
+});
+
 describe("Play of a C++ game's snapshot", () => {
   it("builds the snapshot's worktree with the lane and serves its out/, never recording the lock", async () => {
     const { lite, live, ensured } = await stage();
@@ -295,6 +322,61 @@ describe("Play of a C++ game's snapshot", () => {
     await assert.rejects(lite.core.playGameSnapshot(v1.snapshot_id, "pong"), /not made for the browser/);
     assert.deepEqual(live.loads, []);
     assert.deepEqual(ensured, []);
+  });
+});
+
+describe("Live's background build after the game folder changed", () => {
+  it("builds the folder for the web view through Live's own lane and purpose, and leaves Live as it is", async () => {
+    const { lite, live, ensured } = await stage();
+    const dir = await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    const loads = live.loads.length;
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Web), LivePrepare.Built);
+    const asked = ensured.at(-1);
+    assert.equal(asked?.target, BuildTarget.Web);
+    assert.equal(asked?.purpose, CppBuildPurpose.Live);
+    assert.equal(asked?.dir, dir, "the game folder itself, as Reload builds it");
+    assert.equal(live.loads.length, loads, "nothing reaches Live: the person's Update does");
+  });
+
+  it("builds the Mac version for the Native view the way its embedded run does", async () => {
+    const { lite, live, ensured } = await stage();
+    const dir = await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    const loads = live.loads.length;
+    await lite.core.prepareLiveBuild("pong", BuildTarget.Mac);
+    const asked = ensured.at(-1);
+    assert.equal(asked?.target, BuildTarget.Mac);
+    assert.equal(asked?.purpose, CppBuildPurpose.Live);
+    assert.equal(asked?.dir, dir);
+    assert.equal(asked?.recordLock, true);
+    assert.equal(live.loads.length, loads);
+  });
+
+  it("says a failed build, so the stage keeps the earlier version and offers Try again", async () => {
+    const { lite } = await stage();
+    await raylibGame(lite, BROWSER_AND_MAC);
+    await lite.core.loadPreview({ project: "pong" });
+    const problem = { code: BuildProblemCode.CommandFailed, target: BuildTarget.Web, lines: [], at: "" };
+    mock.method(lite.core.cppBuilds, "ensure", async () => ({
+      ok: false,
+      output: null,
+      lastGood: null,
+      problem,
+      ran: true,
+    }));
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Web), LivePrepare.Failed);
+  });
+
+  it("builds nothing for a game Live does not show, a destination it lacks, or a Three.js game", async () => {
+    const { lite, ensured } = await stage();
+    await raylibGame(lite, MAC_ONLY);
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Mac), LivePrepare.Skipped, "Live holds nothing");
+    await lite.core.loadPreview({ project: "pong" });
+    const before = ensured.length;
+    assert.equal(await lite.core.prepareLiveBuild("pong", BuildTarget.Web), LivePrepare.Skipped, "not a destination");
+    assert.equal(await lite.core.prepareLiveBuild("tetris", BuildTarget.Web), LivePrepare.Skipped, "another game");
+    assert.equal(ensured.length, before);
   });
 });
 

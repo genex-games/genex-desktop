@@ -306,15 +306,16 @@ test("plugin:submit writes a community record and index entry the catalog's own 
   const catalog = emptyCatalog(dir);
   const base = snapshot(catalog, path.join(dir, "base"));
   const uploads = path.join(dir, "uploads");
-  assert.equal(run(scaffold, ["submitted", "--out", dir], dir).status, 0);
-  const target = path.join(dir, "submitted");
+  assert.equal(run(scaffold, ["acme-submitted", "--out", dir], dir).status, 0);
+  const target = path.join(dir, "acme-submitted");
   const scaffolded = JSON.parse(fs.readFileSync(path.join(target, "plugin.json"), "utf8"));
-  fs.writeFileSync(path.join(target, "plugin.json"), JSON.stringify({ ...scaffolded, publisher: "Acme" }));
+  const setup = ["Install it.", "Paste your key on its page."];
+  fs.writeFileSync(path.join(target, "plugin.json"), JSON.stringify({ ...scaffolded, publisher: "Acme", setup }));
   const docs = ["--docs-url", "https://example.com/submitted"];
   const result = run(submit, [target, "--catalog", catalog, ...SOURCE, ...docs], dir);
   assert.equal(result.status, 0, result.stderr + result.stdout);
 
-  const record = JSON.parse(fs.readFileSync(path.join(catalog, "records/submitted/0.1.0.json"), "utf8"));
+  const record = JSON.parse(fs.readFileSync(path.join(catalog, "records/acme-submitted/0.1.0.json"), "utf8"));
   const index = JSON.parse(fs.readFileSync(path.join(catalog, "index.json"), "utf8"));
   assert.deepEqual(index.plugins, [record], "the index lists exactly the new record");
   assert.notEqual(index.updatedAt, "2026-09-18T00:00:00.000Z");
@@ -322,13 +323,14 @@ test("plugin:submit writes a community record and index entry the catalog's own 
   assert.equal(record.publisher, "Acme");
   assert.equal(record.repo, "acme/submitted");
   assert.equal(record.docsUrl, "https://example.com/submitted");
-  const artifact = path.join(dir, "submitted-0.1.0.json");
+  assert.deepEqual(record.setup, setup, "the page's setup steps travel with the record");
+  const artifact = path.join(dir, "acme-submitted-0.1.0.json");
   assert.ok(result.stdout.includes(artifact), "it says which file to attach to the release");
   const bytes = fs.readFileSync(artifact);
   assert.ok(!Object.keys(JSON.parse(bytes.toString())).includes("AGENTS.md"), "authoring files stay out");
   const sha256 = upload(uploads, artifact, record);
   assert.deepEqual(record.artifact, {
-    url: `https://plugins.genex.games/releases/submitted/0.1.0/${sha256}.json`,
+    url: `https://plugins.genex.games/releases/acme-submitted/0.1.0/${sha256}.json`,
     sha256,
   });
 
@@ -338,7 +340,7 @@ test("plugin:submit writes a community record and index entry the catalog's own 
   assert.equal(report.entries, 1);
   assert.deepEqual(
     report.artifactsVerified.map((a: { id: string; version: string; bytes: number }) => [a.id, a.version, a.bytes]),
-    [["submitted", "0.1.0", bytes.length]],
+    [["acme-submitted", "0.1.0", bytes.length]],
     "the artifact the author attaches is the one the record pins",
   );
 
@@ -346,7 +348,10 @@ test("plugin:submit writes a community record and index entry the catalog's own 
   const again = run(submit, [target, "--catalog", catalog, ...SOURCE], dir);
   assert.equal(again.status, 1, "a released version is never rewritten");
   assert.match(again.stderr, /already/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(catalog, "records/submitted/0.1.0.json"), "utf8")), record);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(catalog, "records/acme-submitted/0.1.0.json"), "utf8")),
+    record,
+  );
 
   const manifest = JSON.parse(fs.readFileSync(path.join(target, "plugin.json"), "utf8"));
   fs.writeFileSync(path.join(target, "plugin.json"), JSON.stringify({ ...manifest, version: "0.2.0" }));
@@ -358,8 +363,8 @@ test("plugin:submit writes a community record and index entry the catalog's own 
     ["0.2.0"],
     "the entry moves to the new version",
   );
-  assert.ok(fs.existsSync(path.join(catalog, "records/submitted/0.1.0.json")), "history is kept");
-  upload(uploads, path.join(dir, "submitted-0.2.0.json"), updated.plugins[0]);
+  assert.ok(fs.existsSync(path.join(catalog, "records/acme-submitted/0.1.0.json")), "history is kept");
+  upload(uploads, path.join(dir, "acme-submitted-0.2.0.json"), updated.plugins[0]);
   const next = catalogCheck(catalog, released, uploads);
   assert.equal(next.status, 0, next.stderr);
   assert.equal(JSON.parse(next.stdout).records, 2, "the update is checked against the released history");
@@ -372,12 +377,18 @@ test("plugin:submit refuses an official id, a placeholder publisher, a bad sourc
   const manifest = JSON.parse(fs.readFileSync(path.join(official, "plugin.json"), "utf8"));
   fs.writeFileSync(path.join(official, "plugin.json"), JSON.stringify({ ...manifest, id: "genex" }));
   const plain = copyExample(dir, "plain");
+  const plainManifest = JSON.parse(fs.readFileSync(path.join(plain, "plugin.json"), "utf8"));
+  fs.writeFileSync(path.join(plain, "plugin.json"), JSON.stringify({ ...plainManifest, id: "acme-plain" }));
+  // A community id is its publisher's own, so a vendor's bare name stays the vendor's.
+  const borrowed = copyExample(dir, "borrowed");
+  fs.writeFileSync(path.join(borrowed, "plugin.json"), JSON.stringify({ ...plainManifest, id: "elevenlabs" }));
   // A record's publisher is its owner for every later release, so the scaffold's placeholder never becomes one.
   assert.equal(run(scaffold, ["unnamed", "--out", dir], dir).status, 0);
   const unnamed = path.join(dir, "unnamed");
   const cases: Array<[string, string[], RegExp]> = [
     ["official id", [official, "--catalog", catalog, ...SOURCE], /official/i],
     ["placeholder publisher", [unnamed, "--catalog", catalog, ...SOURCE], /publisher/],
+    ["id not the publisher's", [borrowed, "--catalog", catalog, ...SOURCE], /"acme-elevenlabs"/],
     ["short sha", [plain, "--catalog", catalog, ...SOURCE.slice(0, 2), "--sha", "abc", "--category", "tools"], /sha/],
     ["bad repo", [plain, "--catalog", catalog, "--repo", "acme", ...SOURCE.slice(2)], /repo/],
     ["bad category", [plain, "--catalog", catalog, ...SOURCE.slice(0, 4), "--category", "games"], /category/],

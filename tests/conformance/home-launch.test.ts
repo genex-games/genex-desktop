@@ -22,6 +22,7 @@ import { createStudio } from "../../src/renderer/state/studio.ts";
 import { Room, roomOf } from "../../src/renderer/state/threads.ts";
 import type { KeyValueStorage } from "../../src/renderer/storage.ts";
 import type { Bootstrap, ConversationRecord, GameProject } from "../../src/shared/studio-api.ts";
+import { UiEvent } from "../../src/shared/ui-events.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -39,6 +40,7 @@ function memoryStorage(seed: Record<string, string> = {}): KeyValueStorage & { d
 
 const game = (name: string, title: string): GameProject =>
   ({ name, title, dir: `/g/${name}`, pathLabel: `~/AI Games/${name}`, createdAt: "" }) as GameProject;
+const listing = (...names: string[]) => names.map((name) => ({ name }));
 const chat = (id: string, project: string): ConversationRecord => ({
   id,
   agent_id: "a",
@@ -49,7 +51,7 @@ const chat = (id: string, project: string): ConversationRecord => ({
 });
 
 describe("the launch's own steps", () => {
-  const started = launchStarted(initialLaunch(), { id: "l1", text: REQUEST, extras: undefined, at: 5 });
+  const started = launchStarted(initialLaunch(), { id: "l1", text: REQUEST, extras: undefined, at: 5, known: [] });
 
   it("goes naming → opening → opened → handed, each step only for its own launch", () => {
     assert.equal(started.launch?.phase, LaunchPhase.Naming);
@@ -73,7 +75,7 @@ describe("the launch's own steps", () => {
 
   it("the sidebar holds one row for it: a placeholder until its game is listed, then the game's own", () => {
     const named = launchNamed(started, "l1", "Tiny Island Fishing");
-    const nothing = () => false;
+    const nothing = listing();
     assert.deepEqual(launchInSidebar(null, nothing), { placeholder: false, title: null, project: null });
     assert.deepEqual(launchInSidebar(named.launch, nothing), {
       placeholder: true,
@@ -84,9 +86,38 @@ describe("the launch's own steps", () => {
     assert.equal(made.launch?.phase, LaunchPhase.Opening, "made, its chat still opening");
     assert.equal(launchMade(named, "other", "x"), named, "a stale launch's step changes nothing");
     assert.equal(launchInSidebar(made.launch, nothing).placeholder, true, "never no row at all");
-    assert.deepEqual(
-      launchInSidebar(made.launch, (name) => name === "tiny-island-fishing"),
-      { placeholder: false, title: "Tiny Island Fishing", project: "tiny-island-fishing" },
+    assert.deepEqual(launchInSidebar(made.launch, listing("tiny-island-fishing")), {
+      placeholder: false,
+      title: "Tiny Island Fishing",
+      project: "tiny-island-fishing",
+    });
+  });
+
+  it("while its game is being made, the one game listed since the launch started is its row", () => {
+    const before = launchStarted(initialLaunch(), {
+      id: "l1",
+      text: REQUEST,
+      extras: undefined,
+      at: 5,
+      known: ["pond"],
+    });
+    const naming = before.launch;
+    assert.equal(
+      launchInSidebar(naming, listing("pond", "other")).placeholder,
+      true,
+      "nothing is made before it is named",
+    );
+    const named = launchNamed(before, "l1", "Tiny Island Fishing").launch;
+    assert.deepEqual(launchInSidebar(named, listing("pond", "tiny-island-fishing")), {
+      placeholder: false,
+      title: "Tiny Island Fishing",
+      project: "tiny-island-fishing",
+    });
+    assert.equal(launchInSidebar(named, listing("pond")).placeholder, true, "not listed yet: the placeholder");
+    assert.equal(
+      launchInSidebar(named, listing("pond", "a", "b")).placeholder,
+      true,
+      "two new games: neither is taken for it",
     );
   });
 
@@ -166,16 +197,50 @@ describe("launching a game from home", () => {
     await tick();
     const going = app.launchGame({ text: REQUEST, modelKey: null, effort: null });
     await tick();
-    const listed = (name: string) => app.library.getState().games.some((g) => g.name === name);
-    assert.ok(listed("tiny-island-fishing"), "the library lists the new game");
+    const listed = app.library.getState().games.map((g) => g.name);
+    assert.ok(listed.includes("tiny-island-fishing"), "the library lists the new game");
     assert.deepEqual(
-      launchInSidebar(app.launch.getState().launch, listed),
+      launchInSidebar(app.launch.getState().launch, app.library.getState().games),
       { placeholder: false, title: "Tiny Island Fishing", project: "tiny-island-fishing" },
       "one row, the game's own, never the game and its placeholder",
     );
     openChat(chat("t-fish", "tiny-island-fishing"));
     await going;
     assert.equal(app.launch.getState().launch?.phase, LaunchPhase.Opened);
+  });
+
+  it("a game the library lists before it is handed back still has one row, never beside its placeholder", async () => {
+    // Main announces a new game and lists its folder while it is still making it (its repository
+    // and chat), so a library refresh can list the game before `createGame` answers with it.
+    let finishMaking: () => void = () => {};
+    const made: GameProject[] = [game("pond", "Pond")];
+    const { app, fake } = launched({
+      games: async () => made,
+      createGame: async (title) => {
+        const fish = game("tiny-island-fishing", title);
+        made.push(fish);
+        fake.emit({ type: UiEvent.GameChanged, payload: { project: fish.name } });
+        await new Promise<void>((resolve) => {
+          finishMaking = resolve;
+        });
+        return fish;
+      },
+    });
+    await tick();
+    await app.library.refreshGames();
+    const going = app.launchGame({ text: REQUEST, modelKey: null, effort: null });
+    await tick();
+    await tick();
+    const listed = app.library.getState().games.map((g) => g.name);
+    assert.deepEqual(listed, ["pond", "tiny-island-fishing"], "the refresh lists the game being made");
+    assert.deepEqual(
+      launchInSidebar(app.launch.getState().launch, app.library.getState().games),
+      { placeholder: false, title: "Tiny Island Fishing", project: "tiny-island-fishing" },
+      "one row, the game's own, never the game and its placeholder",
+    );
+    finishMaking();
+    await going;
+    assert.equal(app.launch.getState().launch?.project, "tiny-island-fishing");
   });
 
   it("makes the game in the folder chosen at home", async () => {
@@ -202,6 +267,23 @@ describe("launching a game from home", () => {
     await tick();
     await app.launchGame({ text: "Hello", modelKey: null, effort: null });
     assert.deepEqual(fake.callsOf("createGame"), [["Untitled game", { provisional: true }]]);
+  });
+
+  it("a picked model that is out of usage makes no game: home keeps the words and says why", async () => {
+    const weekly = "You've hit your weekly limit · resets 6pm";
+    const { app, fake } = launched({
+      nameGame: async () => ({ title: "A cozy fishing game", provisional: true, limited: weekly }),
+    });
+    await tick();
+    await app.launchGame({ text: REQUEST, modelKey: "claude-code::opus", effort: "high" });
+    assert.deepEqual(fake.callsOf("createGame"), [], "no game waits empty for a turn that cannot run");
+    assert.equal(roomOf(app.threads.getState()), Room.Home);
+    assert.equal(app.launch.getState().launch, null);
+    assert.equal(app.launch.getState().returned?.text, REQUEST, "the words go back to home");
+    const [toast] = app.toasts.getState().items;
+    assert.equal(toast?.tone, "err");
+    assert.match(toast?.text ?? "", /weekly limit/);
+    assert.deepEqual(fake.callsOf("send"), []);
   });
 
   it("a refused game leaves home as it was, says why, and gives the words back", async () => {

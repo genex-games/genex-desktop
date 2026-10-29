@@ -53,7 +53,8 @@ import { CrateCheckEngine, CrateNotice, CrateRefusal, CrateRequestState } from "
 import { BuildTarget, GameStack, ProjectKind } from "../../src/shared/game-project.ts";
 import type { RunRequest, RunResult } from "../../src/substrate/spawn.ts";
 import { readCurrentLock } from "../../src/substrate/toolchain-store/lock.ts";
-import { locateRust, RUST_TRIPLE, RustMissing } from "../../src/substrate/toolchain-store/rust-locate.ts";
+import { ToolchainId } from "../../src/shared/toolchain.ts";
+import { locateRust, RUST_TRIPLE } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { coreLite } from "../helpers/core-lite.ts";
 import { DEV_RUST_TOOL, devToolchains } from "../helpers/dev-toolchains.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -225,8 +226,13 @@ describe("the Rust fixtures' stub store, through the store's own locate", { skip
       const found = await locateRust(store, lock, target, { rustflags: ["-F", "unsafe_code"] });
       assert.ok(found.ok, `${target}: ${JSON.stringify(found)}`);
     }
-    for (const target of [BuildTarget.Ios, BuildTarget.Android])
-      assert.deepEqual(await locateRust(store, lock, target), { ok: false, missing: [RustMissing.Base] }, target);
+    // Flipped (phone rows pinned): a phone names its standard libraries, which this lock lacks; it was the base before.
+    const phones = [
+      [BuildTarget.Ios, [ToolchainId.RustStdIos, ToolchainId.RustStdIosSim]],
+      [BuildTarget.Android, [ToolchainId.RustStdAndroid]],
+    ] as const;
+    for (const [target, missing] of phones)
+      assert.deepEqual(await locateRust(store, lock, target), { ok: false, missing: [...missing] }, target);
   });
 
   it("rust-mobile-game adds ferris-pocket for the browser and the phones and prewarms both phones", async () => {

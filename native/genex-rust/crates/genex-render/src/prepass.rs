@@ -142,6 +142,9 @@ pub struct ExtensionDemand {
     pub after_prepass: bool,
     /// What the Level-2 v2 sources in use bind.
     pub extension_inputs: RenderInputs,
+    /// Whether any Level-3 pass runs this frame: it may read the sun's maps anywhere, so each
+    /// cascade keeps its whole cull view ([`crate::shadow::cull_to_receivers`] stands down).
+    pub level3: bool,
 }
 
 /// Whether `inputs` read the prepass's targets (its motion included, RQ5.6: the motion prepass is

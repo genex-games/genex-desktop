@@ -32,12 +32,14 @@ const POINTER_MOVE_MIN_PX: f32 = 0.5;
 const PERCENT: f32 = 100.0;
 
 /// The text keys the shell itself draws.
-pub const SHELL_KEYS: [&str; 5] = ["settings-preset", "settings-custom", "settings-reset", "settings-on", "settings-off"];
+pub const SHELL_KEYS: [&str; 6] =
+    ["settings-preset", "settings-custom", "settings-default", "settings-reset", "settings-on", "settings-off"];
 
 /// The shell's English words by text key, the fallback when the game's catalog has none.
 const ENGLISH: &[(&str, &str)] = &[
     ("settings-preset", "Preset"),
     ("settings-custom", "Custom"),
+    ("settings-default", "Default"),
     ("settings-reset", "Reset"),
     ("settings-on", "On"),
     ("settings-off", "Off"),
@@ -82,7 +84,17 @@ type CustomBody<'a> = Box<dyn FnMut(&mut egui::Ui) -> bool + 'a>;
 /// panel(ui)).schema_tab(SettingsTab::Audio).show(ui, &mut store, &tr)`.
 pub struct SettingsMenu<'a> {
     key: &'a str,
-    tabs: Vec<(SettingsTab, Option<CustomBody<'a>>)>,
+    tabs: Vec<(SettingsTab, Body<'a>)>,
+}
+
+/// What a tab draws.
+enum Body<'a> {
+    /// The store's schema: presets, options, Reset.
+    Schema,
+    /// The caller's closure.
+    Custom(CustomBody<'a>),
+    /// The schema's option rows and their Reset, then the caller's closure.
+    Both(CustomBody<'a>),
 }
 
 impl<'a> SettingsMenu<'a> {
@@ -94,14 +106,22 @@ impl<'a> SettingsMenu<'a> {
     /// A tab drawn from the store's schema: presets, options, Reset.
     #[must_use]
     pub fn schema_tab(mut self, tab: SettingsTab) -> SettingsMenu<'a> {
-        self.tabs.push((tab, None));
+        self.tabs.push((tab, Body::Schema));
         self
     }
 
     /// A tab the caller draws.
     #[must_use]
     pub fn custom_tab(mut self, tab: SettingsTab, body: impl FnMut(&mut egui::Ui) -> bool + 'a) -> SettingsMenu<'a> {
-        self.tabs.push((tab, Some(Box::new(body))));
+        self.tabs.push((tab, Body::Custom(Box::new(body))));
+        self
+    }
+
+    /// A tab that draws the schema's rows for `tab` (presets, options and Reset, when the schema
+    /// has any), then the caller's closure: the Graphics tab's display rows over the render panel.
+    #[must_use]
+    pub fn schema_and_custom_tab(mut self, tab: SettingsTab, body: impl FnMut(&mut egui::Ui) -> bool + 'a) -> SettingsMenu<'a> {
+        self.tabs.push((tab, Body::Both(Box::new(body))));
         self
     }
 
@@ -130,8 +150,17 @@ impl<'a> SettingsMenu<'a> {
         let key = self.key;
         let (tab, body) = &mut self.tabs[open];
         let changed = match body {
-            Some(custom) => custom(ui),
-            None => schema_body(ui, key, *tab, store, tr),
+            Body::Custom(custom) => custom(ui),
+            Body::Schema => schema_body(ui, key, *tab, store, tr),
+            Body::Both(custom) => {
+                let has_rows = store.schema().tab_options(*tab).next().is_some();
+                let rows = has_rows && schema_body(ui, key, *tab, store, tr);
+                if has_rows {
+                    ui.separator();
+                }
+                // Both run on every pass: `|` keeps the closure from being skipped.
+                rows | custom(ui)
+            }
         };
         MenuAnswer { tab: *tab, changed, back }
     }
@@ -178,7 +207,8 @@ fn schema_body(ui: &mut egui::Ui, menu: &str, tab: SettingsTab, store: &mut Sett
     changed
 }
 
-/// The preset row: the chosen preset's name (or Custom); left and right cycle the tab's presets.
+/// The preset row: the chosen preset's name, Default while no preset is chosen and every option
+/// is at its default, else Custom; left and right cycle the tab's presets.
 fn preset_row(
     ui: &mut egui::Ui,
     menu: &str,
@@ -192,7 +222,11 @@ fn preset_row(
         return false;
     }
     let chosen = store.preset(tab).and_then(|name| names.iter().position(|own| own == name));
-    let shown = chosen.map_or_else(|| tr("settings-custom"), |at| tr(&names[at]));
+    let shown = match chosen {
+        Some(at) => tr(&names[at]),
+        None if at_defaults(store, tab) => tr("settings-default"),
+        None => tr("settings-custom"),
+    };
     let response = row(ui, format!("{}: {shown}", tr("settings-preset")), &format!("{menu}.{}.preset", tab.wire()));
     scope.item(&response);
     let direction = row_direction(ui, &response, false);
@@ -205,6 +239,11 @@ fn preset_row(
         None => names.len() - 1,
     };
     store.choose_preset(tab, &names[next]).is_ok()
+}
+
+/// Whether every option on `tab` is at its default (a tab no preset describes then reads Default).
+fn at_defaults(store: &SettingsStore, tab: SettingsTab) -> bool {
+    store.schema().tab_options(tab).all(|def| store.value(def.key()).is_none_or(|value| value == def.default_value()))
 }
 
 /// One row: a keyed button at least [`SETTINGS_ROW_MIN`] large. Its egui id comes from its key,

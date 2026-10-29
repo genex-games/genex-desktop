@@ -12,14 +12,15 @@ use genex_render::budget::{
 use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, TargetOs, WebHints};
 use genex_render::presets::{
     ANDROID_REFERENCE, ClassOverride, DESKTOP_REFERENCE, LodOverride, IPHONE_REFERENCE, LAPTOP_REFERENCE, MOBILE_MAX_RADIANCE_PX, MOBILE_RCAS_SHARPNESS, OFF_RENDER_PASSES, RenderOverrides,
-    SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
+    SHADOW_MAP_MAX_PX, SHADOW_MAP_MIN_PX, ShadowOverride, WEB_REFERENCE, class_budget_bytes, class_defaults, MOBILE_HIGH_SHADOW_DISTANCE_M, MOBILE_MAX_SHADOW_DISTANCE_M, default_preset, drs_step_sizes, hdri_map_width, preset_quality, profile, reference_resolution,
+    budget_scale, effect_budgeted, native_output_cap_px, render_pixel_budget, screen_effect_budget_px, step_size, upscales_to_native,
     on_ldr_scene, render_pass_budget, resolve, scene_format, with_world_samples, work_limits, STREAM_POOL_DESKTOP_BYTES, STREAM_POOL_PHONE_BYTES,
     STREAM_POOL_PRESSURE_PERCENT, stream_pool_bytes,
 };
 use genex_gpu_memory::{MemoryFacts, TRIM_MEMORY_RUNNING_CRITICAL, TRIM_MEMORY_RUNNING_LOW, TRIM_MEMORY_RUNNING_MODERATE};
 use genex_render::graph::{feature_landed, not_landed};
 use genex_render::settings::{
-    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, KnobKind, LOD_FADE_BAND_SWITCHED_ON, LodQuality, PresetChoice, Quality, QualityKnob, QualityPreset,
+    AntiAliasing, AoResolution, DEFAULT_RCAS_SHARPNESS, RENDER_SCALE_MIN, KnobKind, LOD_FADE_BAND_SWITCHED_ON, LodQuality, PresetChoice, Quality, QualityKnob, QualityPreset,
     RenderFeature, RenderSettings, SceneFormat, ShadowFilter, ShadowFormat, Upscaler,
 };
 use wgpu::{Backend, DeviceType, Features};
@@ -81,6 +82,82 @@ fn every_class_has_at_most_six_scale_steps_spanning_its_range_through_the_nomina
     assert_eq!(drs_step_sizes(class("mobile-mid"), (1179, 2556))[2], (789, 1712), "0.67 of an iPhone 15 panel");
 }
 
+/// Lane UP: a native desktop drawing TAA upscaling renders at most its class's reference pixels
+/// (`render_pixel_budget`) whatever the window, and upscales them to the window's own: a frame at
+/// a larger output steps its scale down to the budget (the Mac's 3456x2169 full screen at 0.6875
+/// of each side for desktop-ultra's 2560x1440), never below the class floor, and an output within
+/// the budget keeps scale 1.
+#[test]
+fn a_temporally_upscaled_frame_renders_at_most_its_class_budget_of_pixels() {
+    for class in DeviceClass::ALL {
+        let (w, h) = reference_resolution(class);
+        assert_eq!(render_pixel_budget(class), u64::from(w) * u64::from(h), "{}: the budget is the reference's pixels", class.wire());
+    }
+    let ultra = class("desktop-ultra");
+    let budget = render_pixel_budget(ultra);
+    let mac = (3456, 2169);
+    let scale = budget_scale(mac, budget);
+    assert_eq!(scale, 0.6875, "the Mac's full screen renders 0.6875 of each side");
+    let (rw, rh) = step_size(mac, scale);
+    assert!(u64::from(rw) * u64::from(rh) <= budget, "{rw}x{rh} within the budget");
+    assert_eq!(budget_scale((1920, 1080), budget), 1.0, "a 1080p window renders natively");
+    assert_eq!(budget_scale((2560, 1440), budget), 1.0, "the reference itself renders natively");
+    assert_eq!(budget_scale((7680, 4320), budget), RENDER_SCALE_MIN, "never below the class floor");
+    let cap = native_output_cap_px(ultra);
+    assert_eq!(cap, 4 * budget, "an output renders at the floor scale at most");
+    assert_eq!(budget_scale((5120, 2880), budget), RENDER_SCALE_MIN, "5K is the cap: half of each side");
+}
+
+/// Lane UP: only a native desktop drawing TAA upscaling (TAAU, on the HDR scene) draws Live at the
+/// window's own pixels; the web, phones and presets without TAAU keep the reference cap and the
+/// window present's upscale (their frames are unchanged).
+#[test]
+fn only_a_native_desktop_drawing_taa_upscaling_renders_for_the_window_s_own_pixels() {
+    let ultra = preset_quality(QualityPreset::Ultra, class("desktop-ultra"));
+    for os in [TargetOs::MacOs, TargetOs::Windows, TargetOs::Linux] {
+        assert!(upscales_to_native(&ultra, class("desktop-ultra"), os), "{os:?}: ultra upscales to the window");
+        let high = preset_quality(QualityPreset::High, class("desktop-high"));
+        assert!(upscales_to_native(&high, class("desktop-high"), os), "{os:?}: high does too");
+        let medium = preset_quality(QualityPreset::Medium, class("desktop-mid"));
+        assert!(!upscales_to_native(&medium, class("desktop-mid"), os), "{os:?}: medium has no TAAU");
+    }
+    assert!(!upscales_to_native(&ultra, class("desktop-ultra"), TargetOs::Web), "the web keeps its cap");
+    for class in mobile_classes() {
+        let high = preset_quality(QualityPreset::High, class);
+        for os in [TargetOs::Ios, TargetOs::Android] {
+            assert!(!upscales_to_native(&high, class, os), "{} on {os:?} keeps its cap", class.wire());
+        }
+    }
+    let mut msaa = ultra;
+    msaa.anti_aliasing = AntiAliasing::Msaa4;
+    assert!(!upscales_to_native(&msaa, class("desktop-ultra"), TargetOs::MacOs), "no TAA, no temporal upscale");
+}
+
+/// Lane UP: AO computes at most `screen_effect_budget_px` pixels at full resolution (desktop
+/// ultra's 1.5 ms AO budget was set at 1080p): past it the frame's AO runs at half resolution with
+/// the joint-bilateral upsample, so its cost stops growing with the screen. Within it, and on every
+/// preset that already runs half-resolution AO, nothing changes.
+#[test]
+fn ao_runs_at_half_resolution_past_its_pixel_budget() {
+    let ultra_class = class("desktop-ultra");
+    let ultra = preset_quality(QualityPreset::Ultra, ultra_class);
+    assert_eq!(ultra.ao.resolution, AoResolution::Full, "the premise: ultra's AO is full resolution");
+    let (w, h) = LAPTOP_REFERENCE;
+    assert_eq!(screen_effect_budget_px(ultra_class), u64::from(w) * u64::from(h));
+    assert_eq!(effect_budgeted(&ultra, ultra_class, (1920, 1080)), ultra, "1080p of render pixels: as asked");
+    let budgeted = effect_budgeted(&ultra, ultra_class, (2376, 1491));
+    assert_eq!(budgeted.ao.resolution, AoResolution::Half, "the Mac's budgeted render size: half-resolution AO");
+    let mut halved = ultra;
+    halved.ao.resolution = AoResolution::Half;
+    assert_eq!(budgeted, halved, "and nothing else changes");
+    for class in DeviceClass::ALL {
+        for preset in [QualityPreset::Low, QualityPreset::Medium, QualityPreset::High] {
+            let quality = preset_quality(preset, class);
+            assert_eq!(effect_budgeted(&quality, class, (3840, 2160)), quality, "{} {preset:?}: no full-resolution AO to halve", class.wire());
+        }
+    }
+}
+
 #[test]
 fn the_reference_resolutions_carry_the_dpr_cap() {
     assert_eq!(DESKTOP_REFERENCE, (2560, 1440));
@@ -102,13 +179,15 @@ fn the_preset_table_rows() {
     let high = preset_quality(QualityPreset::High, desktop);
     let ultra = preset_quality(QualityPreset::Ultra, desktop);
     let aa: Vec<AntiAliasing> = [low, medium, high, ultra].iter().map(|q| q.anti_aliasing).collect();
-    assert_eq!(aa, [AntiAliasing::Msaa4, AntiAliasing::Msaa4, AntiAliasing::Taa, AntiAliasing::TaaSharpen]);
+    // Release R-13 (D9/D12) flips ultra's to plain TAA (was TaaSharpen; named in the PR).
+    assert_eq!(aa, [AntiAliasing::Msaa4, AntiAliasing::Msaa4, AntiAliasing::Taa, AntiAliasing::Taa]);
     let shadows: Vec<(u8, u32, ShadowFilter)> =
         [low, medium, high, ultra].iter().map(|q| (q.shadows.cascades, q.shadows.map_size, q.shadows.filter)).collect();
     // Pass-1 gate findings 01 and 02 flip low's row (named in the log): two 1024 px cascades (was one).
+    // Release R-13 (D22) flips low's and medium's filter to 5x5 PCF (was 3x3; named in the PR).
     assert_eq!(
         shadows,
-        [(2, 1024, ShadowFilter::Pcf3x3), (2, 1536, ShadowFilter::Pcf3x3), (3, 2048, ShadowFilter::PcssLite), (4, 4096, ShadowFilter::Pcss)]
+        [(2, 1024, ShadowFilter::Pcf5x5), (2, 1536, ShadowFilter::Pcf5x5), (3, 2048, ShadowFilter::PcssLite), (4, 4096, ShadowFilter::Pcss)]
     );
     // RQ3 review: each preset reaches its own distance with its split, blend band and end fade.
     let reach: Vec<(u16, u8, u8, u8)> = [low, medium, high, ultra]
@@ -131,7 +210,8 @@ fn the_preset_table_rows() {
     let ao: Vec<(AoResolution, u8, bool)> = [low, medium, high, ultra].iter().map(|q| (q.ao.resolution, q.ao.slices, q.ao.temporal)).collect();
     assert_eq!(ao, [(AoResolution::Off, 0, false), (AoResolution::Half, 1, false), (AoResolution::Half, 2, true), (AoResolution::Full, 3, true)]);
     let lights: Vec<(u32, u32, u8)> = [low, medium, high, ultra].iter().map(|q| (q.lights.cap, q.lights.tile_px, q.lights.shadowed_spots)).collect();
-    assert_eq!(lights, [(64, 32, 0), (256, 32, 0), (1024, 16, 2), (1024, 16, 4)]);
+    // AAA review WP-15 flipped high's shadowed spots from 2 to 4 (the atlas is one layer either way).
+    assert_eq!(lights, [(64, 32, 0), (256, 32, 0), (1024, 16, 4), (1024, 16, 4)]);
     assert_eq!([low, medium, high, ultra].map(|q| q.exposure_input_divisor), [16, 8, 4, 4]);
     assert_eq!([low, medium, high, ultra].map(|q| q.contact_shadows), [false, false, true, true]);
     // R2 review: meshlets and Hi-Z occlusion measured slower on typical scenes, so no preset
@@ -227,22 +307,22 @@ type ShadowRow = (u8, u32, ShadowFilter, ShadowFormat, u8);
 /// the low tier draw Depth16 cascades and redraw far cascades every 2nd frame; mobile has no PCSS,
 /// at most 2 cascades of 1536 px; mobile-low's are 512 px. `low` draws two cascades, 768 px on a
 /// phone (pass-1 gate findings 01 and 02; it drew one of 1024, mobile-low one of 768, named in
-/// the log). Desktop `low` filters 3x3 (RQ3 review),
+/// the log). Desktop `low` and `medium`, and phones above `low`, filter 5x5 (release R-13, D22: was 3x3),
 /// phones' `low` keeps one hardware tap.
 fn expected_shadows(class: DeviceClass, preset: QualityPreset) -> ShadowRow {
-    use ShadowFilter::{Hardware2x2, Pcf3x3, Pcss, PcssLite};
+    use ShadowFilter::{Hardware2x2, Pcf5x5, Pcss, PcssLite};
     use ShadowFormat::{Depth16, Depth32};
     let low_tier = class.tier == PerformanceTier::Low;
     match (class.form, preset) {
         (FormFactor::Mobile, QualityPreset::Low) if low_tier => (2, 512, Hardware2x2, Depth16, 2),
-        (FormFactor::Mobile, _) if low_tier => (2, 512, Pcf3x3, Depth16, 2),
+        (FormFactor::Mobile, _) if low_tier => (2, 512, Pcf5x5, Depth16, 2),
         (FormFactor::Mobile, QualityPreset::Low) => (2, 768, Hardware2x2, Depth16, 2),
-        (_, QualityPreset::Low) if low_tier => (2, 1024, Pcf3x3, Depth16, 2),
-        (_, QualityPreset::Low) => (2, 1024, Pcf3x3, Depth16, 1),
-        (FormFactor::Mobile, _) => (2, 1536, Pcf3x3, Depth16, 2),
-        (_, QualityPreset::Medium) if low_tier => (2, 1536, Pcf3x3, Depth16, 2),
+        (_, QualityPreset::Low) if low_tier => (2, 1024, Pcf5x5, Depth16, 2),
+        (_, QualityPreset::Low) => (2, 1024, Pcf5x5, Depth16, 1),
+        (FormFactor::Mobile, _) => (2, 1536, Pcf5x5, Depth16, 2),
+        (_, QualityPreset::Medium) if low_tier => (2, 1536, Pcf5x5, Depth16, 2),
         (_, QualityPreset::High) if low_tier => (3, 2048, PcssLite, Depth16, 2),
-        (_, QualityPreset::Medium) => (2, 1536, Pcf3x3, Depth32, 1),
+        (_, QualityPreset::Medium) => (2, 1536, Pcf5x5, Depth32, 1),
         (_, QualityPreset::High) => (3, 2048, PcssLite, Depth32, 1),
         _ if low_tier => (4, 4096, Pcss, Depth16, 2),
         _ => (4, 4096, Pcss, Depth32, 1),
@@ -450,11 +530,11 @@ fn shadow_choices_cannot_pass_the_mobile_or_low_tier_caps() {
     let game = RenderOverrides { preset: Some(QualityPreset::Ultra), shadows: vec![(QualityPreset::Ultra, greedy)], ..RenderOverrides::default() };
     for phone in ["mobile-high", "mobile-mid"] {
         let row = shadows_of(&mac(), class(phone), &game, None);
-        assert_eq!(row, (2, 1536, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "{phone}: 2 x 1536, no PCSS, Depth16, far cadence 2");
+        assert_eq!(row, (2, 1536, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "{phone}: 2 x 1536, 5x5 PCF for PCSS, Depth16, far cadence 2");
     }
     let low = shadows_of(&mac(), class("mobile-low"), &game, None);
     // Pass-1 gate finding 02 flips the weakest phone's cap (named in the log): two 512 px cascades (was one of 768).
-    assert_eq!(low, (2, 512, ShadowFilter::Pcf3x3, ShadowFormat::Depth16, 2), "mobile-low: two 512 px cascades, far cadence 2");
+    assert_eq!(low, (2, 512, ShadowFilter::Pcf5x5, ShadowFormat::Depth16, 2), "mobile-low: two 512 px cascades, far cadence 2");
     let laptop = shadows_of(&mac(), class("desktop-low"), &game, None);
     assert_eq!((laptop.3, laptop.4), (ShadowFormat::Depth16, 2), "an old laptop keeps Depth16 and the far cadence at any request");
     assert_eq!(laptop.0, 4, "a laptop may ask for cascades; the budget ladder trims them last");
@@ -543,16 +623,25 @@ fn the_class_budget_on_the_web_is_capped_by_device_memory() {
         }
     };
     let eight = WebHints { device_memory_gb: Some(8.0), ..WebHints::default() };
-    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(eight))), 256 * MIB, "the web caps at 256 MB");
-    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(WebHints::default()))), 128 * MIB, "a missing deviceMemory reads as 4");
-    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(None)), 128 * MIB);
+    // Bodycam B1 flipped the desktop rows (256 -> 512, 128 -> 256, 128 -> 256): a desktop browser
+    // takes 64 MB a GB up to 1 GB whatever its class; a phone's keeps 32 MB a GB up to 256 MB.
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(eight))), 512 * MIB, "Chrome's 8 GB reading");
+    let electron = WebHints { device_memory_gb: Some(32.0), ..WebHints::default() };
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(electron))), 1024 * MIB, "a desktop browser caps at 1 GB");
+    assert_eq!(class_budget_bytes(class("desktop-high"), &web(Some(electron))), 1024 * MIB, "past the class's own, as a native desktop");
+    assert_eq!(class_budget_bytes(class("desktop-mid"), &web(Some(eight))), 512 * MIB);
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(Some(WebHints::default()))), 256 * MIB, "a missing deviceMemory reads as 4");
+    assert_eq!(class_budget_bytes(class("desktop-ultra"), &web(None)), 256 * MIB);
+    assert_eq!(class_budget_bytes(class("mobile-high"), &web(Some(electron))), 160 * MIB, "a phone's browser keeps its class");
+    assert_eq!(class_budget_bytes(class("mobile-high"), &web(Some(WebHints::default()))), 128 * MIB, "and 32 MB a GB");
     let two = WebHints { device_memory_gb: Some(2.0), ..WebHints::default() };
     assert_eq!(class_budget_bytes(class("mobile-mid"), &web(Some(two))), 64 * MIB);
     assert_eq!(class_budget_bytes(class("mobile-low"), &web(Some(eight))), 48 * MIB, "never above the class");
 }
 
-/// Owner decision 2026-10-12 (2): on a native desktop the budget is max(class default, min(GPU-visible
-/// memory / 8, 2 GiB)); unknown memory keeps the class default; phones and the web keep theirs.
+/// Owner decision 2026-10-12 (2), WP-9 flipped: on a native desktop the budget is max(class
+/// default, min(GPU-visible memory / 3, 12 GiB)) (was / 8 up to 2 GiB); unknown memory keeps the
+/// class default; phones and the web keep theirs.
 #[test]
 fn a_native_desktop_budget_scales_with_the_gpu_visible_memory_the_platform_reports() {
     const GIB: u64 = 1024 * MIB;
@@ -562,19 +651,20 @@ fn a_native_desktop_budget_scales_with_the_gpu_visible_memory_the_platform_repor
     let pc = |os: TargetOs, backend: Backend, device_type: DeviceType, bytes: Option<u64>| {
         DeviceFacts::new(os, backend, device_type).with_gpu_visible_memory(bytes)
     };
-    // A 36 GB M-series Mac: Metal recommends about 27 GB, an eighth is past the 2 GiB ceiling.
+    // A 36 GB M-series Mac: Metal recommends about 27 GB, a third is 9 GiB.
     let large_mac = mac(Some(27 * GIB));
-    // An 8 GB MacBook Air: Metal recommends two thirds of it, an eighth of that is about 683 MiB.
+    // An 8 GB MacBook Air: Metal recommends two thirds of it, a third of that is about 1.8 GiB.
     let small_mac = mac(Some(8 * GIB / 3 * 2));
     let rows = [
-        ("36 GB Mac", "desktop-high", large_mac.clone(), 2 * GIB),
-        ("36 GB Mac", "desktop-ultra", large_mac.clone(), 2 * GIB),
-        ("36 GB Mac", "desktop-low", large_mac, 2 * GIB),
-        ("8 GB MacBook Air", "desktop-high", small_mac.clone(), 8 * GIB / 3 * 2 / 8),
-        ("8 GB MacBook Air", "desktop-ultra", small_mac, 1024 * MIB),
+        ("36 GB Mac", "desktop-high", large_mac.clone(), 9 * GIB),
+        ("36 GB Mac", "desktop-ultra", large_mac.clone(), 9 * GIB),
+        ("36 GB Mac", "desktop-low", large_mac, 9 * GIB),
+        ("128 GB Mac", "desktop-ultra", mac(Some(96 * GIB)), 12 * GIB),
+        ("8 GB MacBook Air", "desktop-high", small_mac.clone(), 8 * GIB / 3 * 2 / 3),
+        ("8 GB MacBook Air", "desktop-ultra", small_mac, 8 * GIB / 3 * 2 / 3),
         ("unknown Mac", "desktop-high", mac(None), 512 * MIB),
-        ("8 GB discrete PC", "desktop-mid", pc(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu, Some(8 * GIB)), GIB),
-        ("8 GB discrete Linux box", "desktop-mid", pc(TargetOs::Linux, Backend::Vulkan, DeviceType::DiscreteGpu, Some(8 * GIB)), GIB),
+        ("8 GB discrete PC", "desktop-mid", pc(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu, Some(8 * GIB)), 8 * GIB / 3),
+        ("8 GB discrete Linux box", "desktop-mid", pc(TargetOs::Linux, Backend::Vulkan, DeviceType::DiscreteGpu, Some(8 * GIB)), 8 * GIB / 3),
         ("2 GB discrete PC", "desktop-ultra", pc(TargetOs::Windows, Backend::Dx12, DeviceType::DiscreteGpu, Some(2 * GIB)), 1024 * MIB),
         ("128 MB integrated PC", "desktop-mid", pc(TargetOs::Windows, Backend::Dx12, DeviceType::IntegratedGpu, Some(128 * MIB)), 256 * MIB),
         ("unknown PC", "desktop-mid", pc(TargetOs::Windows, Backend::Vulkan, DeviceType::DiscreteGpu, None), 256 * MIB),
@@ -582,7 +672,9 @@ fn a_native_desktop_budget_scales_with_the_gpu_visible_memory_the_platform_repor
         // reads deviceMemory.
         ("iPhone", "mobile-high", pc(TargetOs::Ios, Backend::Metal, DeviceType::IntegratedGpu, Some(6 * GIB)), 160 * MIB),
         ("Android", "mobile-mid", pc(TargetOs::Android, Backend::Vulkan, DeviceType::IntegratedGpu, Some(12 * GIB)), 96 * MIB),
-        ("browser", "desktop-ultra", pc(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other, Some(27 * GIB)), 128 * MIB),
+        // Bodycam B1 flipped 128 -> 256 MB: a desktop browser's 64 MB a GB of its (unknown, so 4)
+        // deviceMemory.
+        ("browser", "desktop-ultra", pc(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other, Some(27 * GIB)), 256 * MIB),
     ];
     for (device, wire, facts, bytes) in rows {
         assert_eq!(class_budget_bytes(class(wire), &facts), bytes, "{device} as {wire}");
@@ -699,9 +791,11 @@ fn the_ledger_gives_fixed_byte_totals_at_the_reference_resolutions() {
         // The look pass's SSGI (B.4, `AoMethod::BitmaskGi` at desktop ultra) flips the ultra row
         // (named in the log): AO's targets hold the gathered light beside visibility
         // (`ao::target_bytes_shaped`, as the pool allocates them): +14_745_600 (was 747_261_812).
+        // Release R-13 flips the ultra row (named in the PR): plain TAA at scale 1 draws no RCAS,
+        // so its output-size target goes, -14_745_600 (was 762_007_412).
         ("desktop-high", QualityPreset::High, (2560, 1440), false, 401_053_684),
         ("desktop-mid", QualityPreset::Medium, (1920, 1080), false, 175_005_928),
-        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 762_007_412),
+        ("desktop-ultra", QualityPreset::Ultra, (2560, 1440), false, 747_261_812),
         ("desktop-low", QualityPreset::Low, (1920, 1080), false, 67_260_876),
         ("desktop-high", QualityPreset::High, (1920, 1080), false, 251_555_164),
         ("mobile-high", QualityPreset::Medium, (786, 1704), true, 31_889_452),
@@ -942,7 +1036,9 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // -> 270 rows).
     // Pass 2 A.5 flipped (was 249_808_244; named in the log): +262_144, the aerial volume's
     // transmittance half (SI-04); the froxel fog's volumes are given up.
-    assert_eq!(boot.total_bytes, 250_070_388, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
+    // Release R-13 flipped (was 250_070_388; named in the PR): -14_745_600, ultra's plain TAA draws
+    // no RCAS target at scale 1.
+    assert_eq!(boot.total_bytes, 235_324_788, "ultra's 512 px HDR map cube, two sets (RQ2 review)");
     assert!(boot.quality.anti_aliasing.temporal(), "ultra keeps TAA");
     // At runtime the shadow format and TAA rungs are closed: the resource rungs step after the
     // boot ladder's. RQ5.6 flipped (named in the log): TAA draws one sample, not MSAA 4x, so the
@@ -970,7 +1066,8 @@ fn the_ladder_order_is_fixed_and_a_runtime_degrade_skips_the_pipeline_rungs() {
     // P2-0.13 flipped (was 237_294_868 after three bloom-mips steps; named in the log): one bloom
     // resolution step on the output-sized chain.
     // Pass 2 A.5 flipped (was 233_031_028; named in the log): +262_144, as the boot total.
-    assert_eq!((runtime.total_bytes, runtime.fits), (233_293_172, true));
+    // Release R-13 flipped (was 233_293_172; named in the PR): -14_745_600, as the boot total.
+    assert_eq!((runtime.total_bytes, runtime.fits), (218_547_572, true));
     // A game that uses shadowed spots reserves the atlas, and its own rung gives the spots up
     // before the sun's cascades are halved for their memory.
     let spotted = at.clone().with_spot_atlas(true);
@@ -1135,7 +1232,7 @@ fn knob_differs(knob: QualityKnob, a: &Quality, b: &Quality) -> bool {
         QualityKnob::LightCap => a.lights.cap != b.lights.cap,
         QualityKnob::Clustered => a.lights.clustered != b.lights.clustered,
         QualityKnob::LightTile => a.lights.tile_px != b.lights.tile_px,
-        QualityKnob::ShadowedSpots => a.lights.shadowed_spots != b.lights.shadowed_spots,
+        QualityKnob::ShadowedSpots => a.lights.shadowed_spots != b.lights.shadowed_spots || a.lights.shadowed_points != b.lights.shadowed_points,
         QualityKnob::Prepass => a.prepass != b.prepass,
         QualityKnob::Meshlets => a.meshlets != b.meshlets,
         QualityKnob::Occlusion => a.occlusion != b.occlusion,
@@ -1418,8 +1515,10 @@ fn desktop_high_in_a_browser_hiding_device_memory_keeps_taa_at_the_web_reference
     let desktop = class("desktop-high");
     let facts = DeviceFacts::new(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other);
     let quality = preset_quality(default_preset(desktop, TargetOs::Web), desktop);
-    let budget = class_budget_bytes(desktop, &facts);
-    assert_eq!(budget, 128 * MIB);
+    // Bodycam B1 flipped 128 -> 256 MB (a desktop browser's 64 MB a GB of the 4 a hidden
+    // deviceMemory reads as); the tighter 128 MB is still the floor TAA must survive.
+    assert_eq!(class_budget_bytes(desktop, &facts), 256 * MIB);
+    let budget = 128 * MIB;
     let fitted = fit(&quality, &input(&quality, desktop, WEB_REFERENCE, false), budget, DegradeMode::Boot);
     assert!(fitted.fits, "{:?}", fitted.steps);
     assert!(fitted.quality.anti_aliasing.temporal(), "TAA kept: {:?}", fitted.steps);
@@ -1720,7 +1819,7 @@ fn the_lod_threshold_and_far_density_reach_the_plan() {
     let mesh = MeshData::sphere();
     let triangles = mesh.indices.len() / 3;
     let level = |share: usize, error: f32| LodLevel { indices: mesh.indices[..triangles / share * 3].to_vec(), error };
-    let lods = LodChain { levels: vec![level(2, 0.02), level(4, 0.08)] };
+    let lods = LodChain { casters: 0, levels: vec![level(2, 0.02), level(4, 0.08)] };
     let mut library = MeshLibrary::new();
     let sphere = library.add_part(ModelPart { mesh, meshlets: None, lods: Some(lods) }).expect("part");
     let mut camera = CameraDesc::look_at([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
@@ -1760,4 +1859,62 @@ fn the_lod_threshold_and_far_density_reach_the_plan() {
     assert_eq!(thinned.far_rules, untouched, "a density of 1 keeps the scene's rules");
     thinned.thin_far_rules(LodQuality::MEDIUM.far_density);
     assert_eq!(thinned.far_rules[0].keep, 0.8 * 0.75, "medium keeps three quarters of what each rule kept");
+}
+
+/// Release R-13 (GE's captures): a high or ultra tier phone draws each preset's own shadow reach
+/// up to desktop `high`'s 80 units, so its default `medium` reaches 50 and `high` and `ultra` 80, and
+/// a game may ask for 80. At the phones' old 40-unit cap an elevated game camera (frontier's field,
+/// stream-valley's valley) saw its near houses and trees past the reach or inside the end fade on
+/// mobile-high. Mid and low phones keep 40 units (their off-chip ceilings).
+#[test]
+fn a_high_tier_phone_draws_each_preset_s_shadow_reach_up_to_desktop_high_s() {
+    for phone in mobile_classes().filter(|phone| phone.tier >= PerformanceTier::High) {
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let reach = preset_quality(preset, phone).shadows.distance;
+            let desktop = preset_quality(preset, class("desktop-high")).shadows.distance;
+            assert_eq!(reach, desktop, "{} at {}: the sun's shadows reach {reach} units, the preset's {desktop}", phone.wire(), preset.wire());
+        }
+        let asked = RenderOverrides { preset: Some(QualityPreset::Medium), shadows: vec![(QualityPreset::Medium, ShadowOverride::new().distance(400))], ..RenderOverrides::default() };
+        let row = profile(&mac(), phone, &asked, None);
+        assert_eq!(row.quality.shadows.distance, MOBILE_HIGH_SHADOW_DISTANCE_M, "{}: a game's 400 units are held to 80", phone.wire());
+    }
+    for phone in mobile_classes().filter(|phone| phone.tier < PerformanceTier::High) {
+        for preset in [QualityPreset::Medium, QualityPreset::High, QualityPreset::Ultra] {
+            let reach = preset_quality(preset, phone).shadows.distance;
+            assert_eq!(reach, MOBILE_MAX_SHADOW_DISTANCE_M, "{} at {}: {reach} units", phone.wire(), preset.wire());
+        }
+    }
+}
+
+
+/// Bodycam B1: Studio's Live page on an M-series Mac classified desktop-mid and dropped AO, the
+/// froxel fog and the TAA history from `ultra` to fit the web's 256 MB. Studio's Electron page
+/// (which reports the machine's memory) keeps AO, the froxel fog and TAA at `high` and `ultra`,
+/// material arrays and all, at its class's reference resolution, where Live draws on the web;
+/// Chrome (which reports at most 8 GB) keeps them at `high` there and at `ultra` at 1080p.
+#[test]
+fn a_roomy_desktop_browser_keeps_ao_froxel_fog_and_taa_at_high_and_ultra() {
+    let rows = [
+        ("Studio's Electron", 32.0, QualityPreset::High, None),
+        ("Studio's Electron", 32.0, QualityPreset::Ultra, None),
+        ("Chrome", 8.0, QualityPreset::High, None),
+        ("Chrome", 8.0, QualityPreset::Ultra, Some(LAPTOP_REFERENCE)),
+    ];
+    for (browser, memory_gb, preset, output) in rows {
+        let hints = WebHints { device_memory_gb: Some(memory_gb), hardware_concurrency: Some(12), ua_mobile: Some(false), short_side_css_px: 982, ..WebHints::default() };
+        let facts = DeviceFacts::new(TargetOs::Web, Backend::BrowserWebGpu, DeviceType::Other).with_web(hints);
+        let classified = genex_render::device_class::classify(&facts);
+        assert_eq!(classified, class("desktop-high"), "{browser}");
+        let budget = class_budget_bytes(classified, &facts);
+        let quality = preset_quality(preset, classified);
+        let materials = genex_render::texture::material_arrays(classified, quality.textures);
+        let at = input(&quality, classified, output.unwrap_or(reference_resolution(classified)), false).with_materials(materials);
+        let fitted = fit(&quality, &at, budget, DegradeMode::Boot);
+        let dropped: Vec<DegradeRung> = fitted.steps.iter().map(|step| step.rung).collect();
+        let name = format!("{browser} ({} MB) {} at {:?}", budget / MIB, preset.wire(), at.output);
+        assert!(fitted.fits, "{name}: {dropped:?}");
+        for kept in [DegradeRung::Ao, DegradeRung::FroxelFog, DegradeRung::TaaHistory] {
+            assert!(!dropped.contains(&kept), "{name} gave up {kept:?}: {dropped:?}");
+        }
+    }
 }

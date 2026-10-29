@@ -24,6 +24,9 @@ type Api = Record<string, (input: unknown) => Promise<unknown>>;
 /** The id of the test's own plugin: a backend tool that waits, and a connector that loses its app. */
 const PLUGIN = "cutdemo";
 const NOTICE = /^Studio notice: these calls were cut off before they answered/;
+/** Why a call made after its session's turn ended went unanswered, as the next session reads it. */
+const TURN_ENDED_WORDS =
+  "made after the session's turn had ended, so its answer could not reach you: it may have run anyway, so look at what it would have changed before calling it again; a \"user doesn't want to take this action\" answer to it meant only that, and the person declined nothing";
 /** What the test's engine notes for a compaction, which reads no prompt. */
 const COMPACTED = "(compacted)";
 
@@ -145,6 +148,8 @@ describe("a harness crash and the plugins", () => {
   let firstCall: [string, Record<string, unknown>] | null = null;
   /** Whether the next delegated session fails (its engine answers `ok: false`). */
   let failNext = false;
+  /** The calls the next delegated session makes after its turn ended, that no answer could reach. */
+  let calledAfterTurn: Array<{ tool: string; args: string }> = [];
 
   before(async () => {
     lite = await coreLite();
@@ -179,7 +184,17 @@ describe("a harness crash and the plugins", () => {
         if (call) await request.onLiveTool?.(...call).catch(() => null);
         const ok = !failNext;
         failNext = false;
-        return { ok, engine: "claude-code", summary: "fixture", turns: 1, usage: {}, sessionId: "s1" };
+        const cutAfterTurn = calledAfterTurn;
+        calledAfterTurn = [];
+        return {
+          ok,
+          engine: "claude-code",
+          summary: "fixture",
+          turns: 1,
+          usage: {},
+          sessionId: "s1",
+          ...(cutAfterTurn.length ? { cutAfterTurn } : {}),
+        };
       },
     } as never);
   });
@@ -329,6 +344,20 @@ describe("a harness crash and the plugins", () => {
     } finally {
       lite.core.plugins.hostTool = hostTool;
     }
+  });
+
+  it("a call a session made after its turn ended is named to the next session as Genex's, never the person's refusal", async () => {
+    prompts.length = 0;
+    calledAfterTurn = [{ tool: "unity-editor__run_command", args: '{"command":"editor_status"}' }];
+    await delegate();
+    await delegate();
+    assert.match(prompts[1] ?? "", NOTICE);
+    assert.ok(
+      prompts[1]?.includes(`unity-editor__run_command {"command":"editor_status"} (${TURN_ENDED_WORDS})`),
+      prompts[1],
+    );
+    await delegate();
+    assert.ok(!prompts[2]?.includes("were cut off"), "told once");
   });
 
   it("a session that failed, or one without host tools, never uses up the notice", async () => {
@@ -496,6 +525,7 @@ it("the cut-off notice words each reason, and says nothing for no calls", () => 
     [CallCutOff.HarnessEnded, "the studio's loop ended while it ran"],
     [CallCutOff.PluginEnded, "its plugin stopped while it ran"],
     [CallCutOff.AppLost, "the app it drives went away while it ran"],
+    [CallCutOff.TurnEnded, TURN_ENDED_WORDS],
   ];
   for (const [reason, words] of why) {
     const notice = cutOffNotice([{ tool: "p__t", args: '{"a":1}', reason }]);

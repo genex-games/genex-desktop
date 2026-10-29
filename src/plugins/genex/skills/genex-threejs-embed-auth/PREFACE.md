@@ -37,7 +37,8 @@ connect module's `<script>` that `genex__package` added.
 
 In a game with its own `package.json`, Studio never runs `genex init`, so the game starts without `src/genex.config.ts` or `.env`, and
 "re-run `genex init`" is not available. After the first draft, `genex__publish-status` reports the
-game's `slug`. Write the config yourself, then publish a new draft:
+game's `slug`. Write the config yourself, then publish a new draft (a template game:
+`src/genex.config.js`, the same object without `as const`, imported as `./genex.config.js`):
 
 ```ts
 // src/genex.config.ts

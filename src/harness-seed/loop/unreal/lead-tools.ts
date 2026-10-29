@@ -8,10 +8,12 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
+import { stopRuleWords } from "../finish-check-prompts.ts";
 import { hasText } from "../text.ts";
 import { minutes } from "../time.ts";
 import { agentStatus } from "./agents.ts";
 import { askCritic } from "./critic.ts";
+import { askJudge, JUDGE_PLAY_SPEC } from "../judge-play.ts";
 import { requiredText } from "./critic-prompts.ts";
 import {
   AGENT_PART_PREFIX,
@@ -156,6 +158,7 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
       required: ["shots"],
     },
   },
+  JUDGE_PLAY_SPEC,
   {
     name: LeadTool.RebuildUnreal,
     description:
@@ -164,8 +167,7 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   },
   {
     name: LeadTool.Finish,
-    description:
-      "Claim the game meets the request. A reviewer who did none of the work checks your proof: a yes closes the run, a no comes back with reasons, and three in a row stop the Loop.",
+    description: `Claim the game meets the request. A reviewer who did none of the work checks your proof: a yes closes the run, a no comes back with reasons, and ${stopRuleWords(null)}`,
     parameters: {
       type: "object",
       properties: {
@@ -280,6 +282,8 @@ function tools(lead: FinishingLead): Record<LeadTool, (args: AnyRecord) => Promi
     [LeadTool.WorkerStop]: workers[LeadTool.WorkerStop],
     [LeadTool.WorkerMark]: workers[LeadTool.WorkerMark],
     [LeadTool.Critic]: (args) => askCritic(lead, args),
+    [LeadTool.JudgePlay]: (args) =>
+      askJudge({ ctx: lead.ctx, run: lead.run, root: lead.game.dir, now: () => lead.clock.now() }, args),
     [LeadTool.RebuildUnreal]: (args) => askRebuild(lead, args),
     [LeadTool.Note]: (args) => leaveNote(lead, args),
     [LeadTool.Finish]: (args) => leadFinish(lead, args),

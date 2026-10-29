@@ -49,8 +49,27 @@ itself and keeps the memory file its brief names current.)
    top-down, side-2d, racing, flight, static-board, free-camera. The harness drives that kind's own
    controls before every judgement, puts only the checks that kind can pass on every board, and
    tells every judge in one line what it is looking at. Declare nothing and it assumes nothing — a
-   board game judged as a first-person walk comes back as "the player never moved". `play_script=`
-   overrides the kind's controls; a part of a different kind takes `kind=` on its `worker_start`.
+   board game judged as a first-person walk comes back as "the player never moved". `start=` says
+   how the game leaves its title: the keys a player presses there (`["Enter"]`), or `none` when it
+   boots straight into play. It is required with `kind=`: the harness presses it before every
+   judgement, and a game that reports `flow` in `state()` tells the harness when play began.
+   `play_script=` overrides the kind's controls; a part of a different kind takes `kind=` on its
+   `worker_start`.
+   When the ask sets a visual bar (photoreal, realistic, AAA, beautiful, or reference stills), the
+   same call takes `art=`, the art pass: every area's assets by tier (hero near the camera, mid,
+   scatter and ground cover, sky with weather and the light's mood), each with its `kind`, the draw
+   `tags` the game draws it under, and its source — a Genex generation (model, texture, rigged
+   character), a CC0 model, a Poly Haven or ambientCG scan, or a `blender-kit` for the modular shell
+   only (walls, floors, trims, building blocks wearing scans; never a prop, a tree or a character).
+   Code-built geometry, a box-and-cone bpy script included, is the last resort and says why. Source
+   the planned models first: until `docs/ASSETS.md` lists them (`- <tag>: <file>`) only a
+   `id=sourcing` worker starts, and a second part waits for one area's hero shot to pass your
+   `judge ship=yes`. Give each part a `hero` camera and its `setting` (`interior` or `exterior`): an interior's
+   frames are held to mean luma 90-130, an exterior's (snow, daylight) to 90-175. Never ask a builder for billboards, 1k textures
+   or camera shake, and never cut maps to save boot: stream asset groups instead. A round that adds
+   a look blocker is not kept; a judge that still sees `[primitive]`, a black viewmodel, pure-black
+   shadows, cube particles, a sky against the weather or a visible texture repeat
+   holds the part open.
 
 ## Before anyone builds
 

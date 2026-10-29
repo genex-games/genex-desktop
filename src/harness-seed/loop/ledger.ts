@@ -26,6 +26,7 @@ import path from "node:path";
 import { EventKind, RunEvent, RunMode } from "./run-events.ts";
 import { roundRule, VerdictPass, VerdictRule, VerdictSource, verdictRecord } from "./verdict.ts";
 import { Side } from "./judge.ts";
+import { BLOCKER_RULES } from "./look-bar-rules.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 import type { Catalogue } from "./spec.ts";
 
@@ -604,6 +605,21 @@ function unlandedLesson(closes: readonly LedgerRecord[]): string | null {
 }
 
 /** The same things the judges keep naming, as a lesson. */
+/** How many look rules one game's lessons carry at most. */
+const LOOK_RULES_NAMED = 3;
+
+/**
+ * The art, sourcing and comfort rules for the look blockers this game's judges keep naming
+ * (look-bar-rules.ts `BLOCKER_RULES`): gen3's ledger said "primitive ×12" and never what to do.
+ */
+function lookRuleLessons(rounds: readonly LedgerRecord[]): string[] {
+  const rules = BLOCKER_RULES as Record<string, string>;
+  return repeatedDefects(rounds)
+    .filter(([name]) => rules[name])
+    .slice(0, LOOK_RULES_NAMED)
+    .map(([name, n]) => `[${name}] came back in ${count(n, "round")} here: ${rules[name]}.`);
+}
+
 function defectsLesson(rounds: readonly LedgerRecord[]): string | null {
   const defects = repeatedDefects(rounds);
   if (!defects.length) return null;
@@ -653,6 +669,7 @@ export function deriveLessons(records: readonly LedgerRecord[], { limit = 12 }: 
   const refusals = records.filter((r) => r.decision === LedgerDecision.Refused);
   const closes = records.filter((r) => !isRound(r) && r.decision !== LedgerDecision.Refused);
   const lessons = [
+    ...lookRuleLessons(rounds),
     ...undoneLessons(
       rounds.filter((r) => r.decision === LedgerDecision.Undone),
       rounds.length,

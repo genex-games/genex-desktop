@@ -16,15 +16,16 @@ import { seedLeadGraph } from "./fixture-lead-graph.ts";
 import { seedBuildGraph } from "./fixture-build-graph.ts";
 import { seedCppGame } from "./fixture-toolchains.ts";
 import { RustFixtureKind, seedRustFixture } from "./fixture-rust.ts";
-import { seedCrossGame } from "./fixture-native.ts";
+import { seedCrossGame } from "./fixture-native-runs.ts";
 import { seedChatWorkers, seedChatWorkersLoop } from "./fixture-chat-workers.ts";
-import { seedFinishCheck } from "./fixture-finish-check.ts";
+import { seedFinishCheck, seedLoopEnds } from "./fixture-finish-check.ts";
 import { seedPausedBuild } from "./fixture-paused-build.ts";
 import { seedBuildingCard } from "./fixture-building-card.ts";
 import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistory } from "./fixture-chat.ts";
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
   appendSuggestion,
+  FIXTURE_GAME,
   FIXTURE_MODEL,
   FIXTURE_VERSION,
   FixtureName,
@@ -35,6 +36,9 @@ import {
 import { NOTIFICATIONS_START_MS, notificationArrivals, seedNotificationGames } from "./fixture-notifications.ts";
 import { announceOpenLoopWait, seedOpenLoops, seedOpenProjects } from "./fixture-open-projects.ts";
 import { seedStillsGame } from "./fixture-stills.ts";
+import { seedAssetLibrary } from "./fixture-assets-tab.ts";
+import { seedRobloxGame } from "./fixture-roblox.ts";
+import { seedGenexTerms } from "./fixture-genex-terms.ts";
 import { seedUnrealGame } from "./fixture-unreal.ts";
 import { seedUnrealChat } from "./fixture-unreal-chat.ts";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -49,7 +53,10 @@ export { FIRST_LAUNCH_STATUS, fixtureEngines } from "./fixture-engines.ts";
 export { installOlderPlugins } from "./fixture-plugin-updates.ts";
 export {
   DevProviders,
+  FIXTURE_GAME,
+  FIXTURE_AGENTS_FAILURE,
   FIXTURE_NAMES,
+  FIXTURE_DATA_FOLDER,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FIXTURE_VERSION,
@@ -100,8 +107,8 @@ export async function prepareFixture(core: StudioCore, id: string): Promise<Prep
   if (id === FixtureName.FirstLaunch)
     return { project: "", threadId: core.mainThread, fixture: id, version: FIXTURE_VERSION };
   // Reuse never resets a project's files or append-only history.
-  const found = (await core.games.list()).find((p) => p.name === "fixture-game");
-  const project = found ?? (await core.games.scaffold("fixture-game", { title: "Fixture Game" }));
+  const found = (await core.games.list()).find((p) => p.name === FIXTURE_GAME);
+  const project = found ?? (await core.games.scaffold(FIXTURE_GAME, { title: "Fixture Game" }));
   const game: FixtureGame = {
     core,
     id,
@@ -147,7 +154,12 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
   const native = seedNativeFixture(core, id);
   if (native) return native;
   // The rest seed a fresh profile only; a reused one keeps what it has.
-  if (existing) return;
+  if (!existing) return seedFreshFixture(game);
+}
+
+/** The seed of a fixture that seeds only a fresh profile. */
+async function seedFreshFixture(game: FixtureGame): Promise<void> {
+  const { core, id, threadId } = game;
   if (id === FixtureName.StudioActivity) return seedStudioActivity(core, threadId);
   if (id === FixtureName.Notifications) return seedNotificationGames(core);
   if (isChatFixture(id)) return seedChatHistory(core, game.project, threadId);
@@ -156,6 +168,9 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
   if (id === FixtureName.StillsGame) return seedStillsGame(core);
   if (id === FixtureName.OpenProjects) return seedOpenProjects(core, game.project.name, threadId);
   if (id === FixtureName.UnrealChat) return seedUnrealChat(core, game.project, threadId);
+  if (id === FixtureName.RobloxGame) return seedRobloxGame(core, game.project, threadId);
+  if (id === FixtureName.GenexTerms) return seedGenexTerms(core, game.project.name, threadId);
+  if (id === FixtureName.AssetLibrary) return seedAssetLibrary(game.project.dir);
 }
 
 /**
@@ -163,9 +178,9 @@ async function seedForFixture(game: FixtureGame): Promise<void> {
  * this launch's environment, so it is seeded (or linked) on every launch, a reused profile too.
  */
 function seedNativeFixture(core: StudioCore, id: FixtureName): Promise<void> | undefined {
-  // The native-game fixture holds the same games; its scripted registry (`fixture-native.ts`) runs pong-mac.
+  // The native-game fixture holds the same games; its scripted registry (`fixture-native-runs.ts`) runs pong-mac.
   if (id === FixtureName.CppGame || id === FixtureName.NativeGame) return seedCppGame(core);
-  // The cross-game fixture adds a game whose Windows and Linux builds were checked (`fixture-native.ts`).
+  // The cross-game fixture adds a game whose Windows and Linux builds were checked (`fixture-native-runs.ts`).
   if (id === FixtureName.CrossGame) return seedCrossGame(core);
   // The Rust fixtures write their Rust · wgpu games and the stub Rust store, on every launch as the C++ one.
   if (id === FixtureName.RustGame) return seedRustFixture(core, RustFixtureKind.Game);
@@ -336,6 +351,7 @@ export async function activateChatFixture(
   }
   if (fixture.fixture === FixtureName.FinishCheck) {
     await seedFinishCheck(core, fixture.project, fixture.threadId);
+    await seedLoopEnds(core);
     return;
   }
   if (fixture.fixture === FixtureName.PausedBuild) {

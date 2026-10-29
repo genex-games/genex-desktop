@@ -50,7 +50,7 @@ async function contentFiles(root: string): Promise<string[]> {
       ...TOOLING_DIRS.map((name) => `--exclude=**/${name}/`),
       "-z",
     ],
-    { timeout: LIST_TIMEOUT_MS, maxBuffer: LIST_MAX_BUFFER_BYTES },
+    { timeout: LIST_TIMEOUT_MS, maxBuffer: LIST_MAX_BUFFER_BYTES, windowsHide: true },
   );
   return [...new Set(stdout.split("\0").filter(Boolean))]
     .filter((file) => !file.split("/").some((part) => NOT_CONTENT.includes(part)))

@@ -230,7 +230,6 @@ struct GxMaterial {
 /// are reserved.
 pub const TABLES_V2_WGSL: &str = concat!(
     include_str!("../shaders/common.wgsl"),
-    include_str!("../shaders/wind.wgsl"),
     "
 // genex custom-pass tables, API v2: the v1 rows under their v1 names.
 alias GxInstance = Instance;
@@ -1843,6 +1842,7 @@ impl CustomPasses {
             custom_inputs: self.render_inputs(),
             after_prepass: self.running().any(|entry| entry.stage == PassStage::AfterPrepass),
             extension_inputs,
+            level3: self.running().next().is_some(),
         }
     }
 

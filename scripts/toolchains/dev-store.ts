@@ -29,16 +29,23 @@
  * where wall time, `du -sh`, step logs and the lock digest go (default
  * `.studio-dev/evidence/dev-store/`).
  *
- * `--stack rust-wgpu` builds the Rust stack's dev store instead, in the same store: the pinned Rust
- * archives from `$GENEX_RUST_TOOLCHAIN_DIR/downloads/` (default `.studio-dev/spike-toolchain`,
- * which `scripts/spike/rust-wgpu/setup-toolchain.sh` fills) through `installComponents`; a dev
+ * `--stack rust-wgpu` builds the Rust stack's dev store instead, in the same store: the pinned
+ * archives every Rust destination needs on this host (the sysroot, each destination's standard
+ * library, wasm-bindgen, binaryen, llvm-mingw, zig and cargo-zigbuild) from
+ * `$GENEX_RUST_TOOLCHAIN_DIR/downloads/` (default `.studio-dev/spike-toolchain`, which
+ * `scripts/spike/rust-wgpu/setup-toolchain.sh` fills) through `installComponents`; the Linux
+ * headers (the repository's pinned archive) and the software Vulkan (split from the toolchains
+ * folder's Linux ANGLE build) through `installLocalArtifact`; a dev
  * vendored set, the pinned vendored tree plus this checkout's genex crates packaged with
  * `cargo package` (offline, through the env helper), through `installRustVendor`, so a game's
  * `genex = "=0.1.0"` resolves from local sources until M2.18 publishes the release; the base and
- * the Mac and web prewarms of a game's host-written manifest under the real `ProcessSandbox`. Its
+ * the Mac and web prewarms of a game's host-written manifest under the real `ProcessSandbox` (the
+ * cross and phone destinations build from a cold target folder; the base holds their standard
+ * libraries). Its
  * lock goes to `--lock-file`, else `GENEX_DEV_STORE_RUST_LOCK`, else
  * `<repo>/.studio-dev/dev-store-rust-lock.json` (`devStoreRustLockFile`), never the store's own;
- * `--check --stack rust-wgpu` locates both destinations and holds the receipts to the pins. The
+ * `--check --stack rust-wgpu` locates the two prewarmed destinations, then every destination for the
+ * lane without a prewarm, and holds the receipts to the pins. The
  * Rust store's folder is created when missing, under the project's `.studio-dev`. With
  * `--release <dir>` the vendored set is a locally cut genex release's (`rust-release.ts cut --out
  * <dir>`, its record and archive checked by `readCutVendor`) instead of this checkout's crates.
@@ -58,7 +65,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { GAME_PREWARM_RUSTFLAGS, rustWarmProject } from "../../src/main/core/rust-dev-seed.ts";
-import { BuildTarget, GameStack, isBuildTarget } from "../../src/shared/game-project.ts";
+import { ALL_BUILD_TARGETS, BuildTarget, GameStack, isBuildTarget } from "../../src/shared/game-project.ts";
 import {
   ArchiveFormat,
   type ToolchainEntry,
@@ -71,6 +78,8 @@ import {
 import { atomicWriteJson } from "../../src/substrate/fsx.ts";
 import { ProcessSandbox, type RunRequest, type RunResult } from "../../src/substrate/spawn.ts";
 import { listArchive, planExtraction, treeDigest } from "../../src/substrate/toolchain-store/archive.ts";
+import { readPinnedManifest } from "../../src/substrate/toolchain-store/artifact.ts";
+import { AngleTarget, BUNDLE_LOCK, commit12 } from "../../src/substrate/toolchain-store/bundled.ts";
 import { headlessPlatformSha256, readRecipe, recipeSha12 } from "../../src/substrate/toolchain-store/genex-cmake.ts";
 import {
   installComponents,
@@ -95,6 +104,7 @@ import {
   lockOf,
   readCurrentLock,
 } from "../../src/substrate/toolchain-store/lock.ts";
+import { LINUX_SYSROOT_BUNDLE_PIN } from "../../src/substrate/toolchain-store/linux-sysroot-bundle.ts";
 import { installRustBase, installRustVendor } from "../../src/substrate/toolchain-store/rust-install.ts";
 import { locateRust } from "../../src/substrate/toolchain-store/rust-locate.ts";
 import { prewarmRust, recordRustSizes } from "../../src/substrate/toolchain-store/rust-prewarm.ts";
@@ -102,7 +112,6 @@ import {
   entryDigest,
   entrySha12,
   manifestEntry,
-  RUST_MANIFEST,
   TOOLCHAIN_MANIFEST,
 } from "../../src/substrate/toolchain-store/manifest.ts";
 import {
@@ -113,6 +122,8 @@ import {
   prewarmSandboxOptions,
 } from "../../src/substrate/toolchain-store/prewarm.ts";
 import { devStoreLockFile, devStoreRustLockFile } from "../../tests/helpers/dev-toolchains.ts";
+import { splitSwiftShader } from "../../src/substrate/toolchain-store/swiftshader-bundle.ts";
+import { pinnedDownloadNames, rustToolchainLayout } from "./rust-env.ts";
 import { readCutVendor } from "./rust-release.ts";
 
 const execFileAsync = promisify(execFile);
@@ -593,15 +604,32 @@ async function chosenLockFile(store: string, flag: string | undefined): Promise<
 
 // ---------- the Rust stack (`--stack rust-wgpu`) ----------
 
-/** The Rust components installed from pinned downloads: the sysroot, the browser's std, wasm-bindgen and binaryen. */
-const RUST_ARCHIVE_IDS: ReadonlySet<ToolchainId> = new Set<ToolchainId>([
-  ToolchainId.Rust,
-  ToolchainId.RustStdWasm,
-  ToolchainId.WasmBindgen,
-  ToolchainId.Binaryen,
-]);
-/** The Rust destinations the dev store prewarms: this Mac's and the browser (the store's eager pair). */
+/**
+ * What a Rust game's every destination needs on this host (`STACK_REQUIRED_COMPONENTS`), the
+ * vendored set apart: the sysroot, each destination's standard library, the browser's tools, and
+ * the cross builds' llvm-mingw, zig and cargo-zigbuild (pinned downloads), with the Linux headers
+ * and the software Vulkan (pinned local artifacts).
+ */
+function rustWanted(): { archives: ToolchainEntry[]; locals: ToolchainEntry[] } {
+  const host = thisHost();
+  const ids = requiredFor(ALL_BUILD_TARGETS, GameStack.RustWgpu).filter((id) => id !== ToolchainId.RustVendor);
+  const entries = ids.map((id) => {
+    const entry = manifestEntry(id, host);
+    if (!entry) throw new Error(MESSAGE.NoEntry(id));
+    return entry;
+  });
+  return { archives: entries.filter((entry) => !entry.local), locals: entries.filter((entry) => entry.local) };
+}
+/** The Rust components installed from pinned downloads. */
+const RUST_ARCHIVE_IDS: ReadonlySet<ToolchainId> = new Set(rustWanted().archives.map((entry) => entry.id));
+/**
+ * The Rust destinations the dev store prewarms: this Mac's and the browser (the store's eager
+ * pair). The cross and phone destinations are lazy (`rustPrewarmPlan`): the base holds their
+ * standard libraries, and the lane builds them from a cold target folder.
+ */
 const RUST_DEV_TARGETS: readonly BuildTarget[] = [BuildTarget.Mac, BuildTarget.Web];
+/** Every Rust destination this Mac builds: each must locate (its components and base) without a prewarm. */
+const RUST_LANE_TARGETS: readonly BuildTarget[] = ALL_BUILD_TARGETS;
 /** The genex release the workspace's crates are packaged as, the one a game's manifest pins. */
 const GENEX_RELEASE = "0.1.0";
 /** The dev vendored set's version: the release's, marked as built from this checkout. */
@@ -625,6 +653,7 @@ const RUST_MESSAGE = {
   NoCrates: "cargo package wrote no .crate for the genex workspace.",
   NoLock: (file: string) =>
     `${file} holds no Rust lock: build it with node scripts/toolchains/dev-store.ts --stack rust-wgpu.`,
+  SysrootPin: (file: string) => `${file} is not the archive native/linux-sysroot/bundle-lock.json pins.`,
   StoreLock: (digest: string) =>
     `The Rust lock ${digest.slice(0, 12)} is the store's current Rust lock, whose folder another worktree builds with: refusing to prewarm it.`,
 } as const;
@@ -636,17 +665,57 @@ function rustToolchainDir(): string {
 
 /** The Rust entries this host installs from downloads, each served from `<rust>/downloads/<archive name>`. */
 function rustArchives(rust: string): { entries: ToolchainEntry[]; served: Map<string, string> } {
-  const host = thisHost();
-  const entries = RUST_MANIFEST.filter(
-    (entry) => RUST_ARCHIVE_IDS.has(entry.id) && (entry.host === host || entry.host === null),
-  );
+  const entries = rustWanted().archives;
+  // setup-toolchain.sh saves an archive under the pins table's name (cargo-zigbuild's carries its version).
+  const names = pinnedDownloadNames({ ...rustToolchainLayout(), dir: rust });
   const served = new Map<string, string>();
   for (const archive of entries.flatMap((entry) => entry.archives)) {
-    const file = path.join(rust, "downloads", path.basename(new URL(archive.url).pathname));
+    const name = names.get(archive.url) ?? path.basename(new URL(archive.url).pathname);
+    const file = path.join(rust, "downloads", name);
     if (!existsSync(file)) throw new Error(RUST_MESSAGE.NoDownload(file));
     served.set(archive.url, file);
   }
   return { entries, served };
+}
+
+/**
+ * Where each Rust local artifact comes from, made in `scratch`: the Linux headers from the
+ * archive the repository checks in (`native/linux-sysroot`, its bytes held to the bundle pin), the
+ * software Vulkan split from the toolchains folder's Linux ANGLE build (`swiftshader-bundle.ts`).
+ * `installLocalArtifact` then verifies every file against the entry's pinned manifest.
+ */
+const RUST_LOCAL_SOURCES: Partial<Record<ToolchainId, (root: string, scratch: string) => Promise<string>>> = {
+  [ToolchainId.LinuxSysroot]: async (_root, scratch) => {
+    const pin = LINUX_SYSROOT_BUNDLE_PIN.archive;
+    const archive = path.join(REPO, "native", "linux-sysroot", pin.file);
+    const bytes = await readFile(archive);
+    if (bytes.length !== pin.bytes || sha256Of(bytes) !== pin.sha256) throw new Error(RUST_MESSAGE.SysrootPin(archive));
+    const folder = path.join(scratch, "linux-sysroot");
+    await mkdir(folder, { recursive: true });
+    await execFileAsync("tar", ["-xzf", archive, "-C", folder]);
+    return folder;
+  },
+  [ToolchainId.SwiftShaderLinux]: async (root, scratch) => {
+    const pin = BUNDLE_LOCK.swiftshader;
+    if (!pin) throw new Error(MESSAGE.NoFolder(ToolchainId.SwiftShaderLinux));
+    const angle = path.join(root, `angle-${AngleTarget.LinuxX64Vulkan}`, commit12());
+    const manifest = await readPinnedManifest(angle, BUNDLE_LOCK.targets[AngleTarget.LinuxX64Vulkan]);
+    const folder = path.join(scratch, "swiftshader");
+    await splitSwiftShader(angle, manifest, folder, pin, BUNDLE_LOCK.commit);
+    return folder;
+  },
+};
+
+/** Installs the Rust local artifacts through the dev-only seam, each from its {@link RUST_LOCAL_SOURCES} folder. */
+async function installRustLocals(root: string, store: string, scratch: string, log: string[]) {
+  const { locals } = rustWanted();
+  for (const entry of locals) {
+    const source = RUST_LOCAL_SOURCES[entry.id];
+    if (!source) throw new Error(MESSAGE.NoFolder(entry.id));
+    const at = await installLocalArtifact(store, entry, await source(root, scratch));
+    log.push(`${entry.id} ${entry.version} (local-artifact, manifest ${entry.local?.manifestSha256}): ${at}`);
+  }
+  return locals;
 }
 
 /** A fetch that answers the given URLs from files, and nothing else. */
@@ -782,26 +851,26 @@ async function chosenVendor(rust: string, scratch: string, release: string | und
   return vendor;
 }
 
-/** Installs the Rust archives and the vendored set; answers the lock naming exactly them. */
+/** Installs the Rust archives, local artifacts and the vendored set; answers the lock naming exactly them. */
 async function installRust(
-  rust: string,
-  store: string,
-  scratch: string,
+  paths: { rust: string; root: string; store: string; scratch: string },
   sandbox: ProcessSandbox,
   log: string[],
   release?: string,
 ) {
+  const { rust, root, store, scratch } = paths;
   const { entries, served } = rustArchives(rust);
   const job = await installComponents(store, entries, rustInstallDeps(sandbox, served, log));
   if (job.phase !== ToolchainInstallPhase.Installed)
     throw new Error(MESSAGE.InstallFailed(job.phase, job.problem ?? "no problem code"));
+  const locals = await installRustLocals(root, store, scratch, log);
   const vendor = await chosenVendor(rust, scratch, release, log);
   const urls = new Map(vendor.entry.archives.map((archive) => [archive.url, vendor.archive]));
   const vendorJob = await installRustVendor(store, vendor.entry, vendor.pin, rustInstallDeps(sandbox, urls, log));
   if (vendorJob.phase !== ToolchainInstallPhase.Installed)
     throw new Error(MESSAGE.InstallFailed(vendorJob.phase, vendorJob.problem ?? "no problem code"));
   log.push(`vendored tree ${JSON.stringify(vendor.pin)}`);
-  return devLock([...entries, vendor.entry]);
+  return devLock([...entries, ...locals, vendor.entry]);
 }
 
 /** Refuses a lock file that is any stack's lock in the store, and a lock that is the store's current Rust lock. */
@@ -824,7 +893,7 @@ async function buildRust(options: Options): Promise<void> {
   const { sandbox, scratch } = await devSandbox();
   const started = performance.now();
   try {
-    const lock = await installRust(rust, store, scratch, sandbox, log, options.release);
+    const lock = await installRust({ rust, root: options.root, store, scratch }, sandbox, log, options.release);
     await assertOwnRustLock(store, lockFile, lock);
     const run = (request: RunRequest) => sandbox.run(request);
     const denyWrite = [scratch, REPO];
@@ -861,17 +930,22 @@ async function checkRust(options: Options): Promise<boolean> {
     const located = await locateRust(options.store, lock, target, { rustflags: RUST_GAME_FLAGS });
     if (!located.ok) problems.push(`locate ${target}: ${JSON.stringify(located.missing)}`);
   }
+  for (const target of RUST_LANE_TARGETS) {
+    const located = await locateRust(options.store, lock, target, { prewarm: false });
+    if (!located.ok) problems.push(`locate ${target} for the lane: ${JSON.stringify(located.missing)}`);
+  }
   const host = toolchainHostOf(process.platform, process.arch);
   const named = (receipt: ToolchainReceipt) => lock.entries[receipt.id]?.sha12 === receipt.sha12;
+  const rustLocals = new Set(rustWanted().locals.map((entry) => entry.id));
   for (const receipt of (await readReceipts(options.store)).filter(named)) {
-    if (!RUST_ARCHIVE_IDS.has(receipt.id)) continue;
+    if (!RUST_ARCHIVE_IDS.has(receipt.id) && !rustLocals.has(receipt.id)) continue;
     const problem = receiptProblem(receipt, host);
     if (problem) problems.push(problem);
   }
   console.log(
     problems.length
       ? `problems:\n- ${problems.join("\n- ")}`
-      : `rust dev store OK: lock ${lock.digest} (${lock.digest.slice(0, 12)}), prewarmed [${RUST_DEV_TARGETS.join(", ")}]`,
+      : `rust dev store OK: lock ${lock.digest} (${lock.digest.slice(0, 12)}), prewarmed [${RUST_DEV_TARGETS.join(", ")}], lane [${RUST_LANE_TARGETS.join(", ")}]`,
   );
   return problems.length === 0;
 }

@@ -39,6 +39,21 @@ const FRAMES = [
   { data: Buffer.from("frame-two").toString("base64"), mimeType: "image/png", label: "dusk 2" },
 ];
 
+/**
+ * The art pass a scripted lead gives (look-bar.ts `readArtPass`): the runs here carry reference
+ * pictures, which set a visual bar, and a plan on one lists every tier's assets. Scans and
+ * surfaces only, so no sourcing hold waits for a model.
+ */
+const art = (ids: string[]) =>
+  JSON.stringify(
+    ids.flatMap((id) => [
+      { area: id, tier: "hero", kind: "surface", asset: `${id} paving`, source: "scan", tags: [id] },
+      { area: id, tier: "mid", kind: "structure", asset: `${id} walls`, source: "scan", tags: [`${id}-walls`] },
+      { area: id, tier: "scatter", kind: "surface", asset: `${id} leaves`, source: "scan", tags: [`${id}-leaves`] },
+      { area: id, tier: "sky", kind: "atmosphere", asset: "dusk sky", source: "scan", tags: ["sky"] },
+    ]),
+  );
+
 /** The plan every scripted lead writes before its first worker, as a real one must. */
 const plan = (ids: string[]) => ({
   summary: "This run: a dusk sky over the plaza.",
@@ -47,6 +62,7 @@ const plan = (ids: string[]) => ({
   ),
   base: "the integration branch as it stands",
   risks: "one window at a time on this machine",
+  art: art(ids),
 });
 const single = (id: string, owns: string) => ({
   id,
@@ -788,10 +804,11 @@ describe("the same agent after the build", () => {
       assert.equal(turn.request.resume, chatSession, "every answer is the chat's own session");
       assert.notEqual(turn.request.readOnly, true);
     }
-    // Loop off: nothing to record after a finished build — no reopen, no launch, no question.
+    // Loop off after a finished build: no reopen and no question. Named flip: the start of a new
+    // Loop, for one asked in words, is always held (it used to be no launch at all).
     assert.deepEqual(
       afters.map((turn) => offeredTools(turn.request)),
-      afters.map(() => []),
+      afters.map(() => ["start_autopilot"]),
     );
     assert.deepEqual(
       requests.filter((r) => r.kind === Kind.Coordinator || r.kind === Kind.FollowUp).map((r) => r.kind),
@@ -855,7 +872,8 @@ describe("the same agent after the build", () => {
     // A question alone never restarts the build.
     await answered(rig, threadId, "is the moon red yet?", engine, 2);
     assert.equal(results.status.run.state, "paused", JSON.stringify(results.status.run));
-    assert.deepEqual(results.offered, ["resume_run"], "a paused run can be resumed from the chat");
+    // Named flip: a new Loop's start, for one asked in words, sits beside the resume.
+    assert.deepEqual(results.offered, ["start_autopilot", "resume_run"], "a paused run can be resumed from the chat");
     let log = await rig.core.store.listEvents(threadId);
     assert.equal(customEvents(log, "run_registered").length, 1, "the question resumed nothing");
     assert.equal(leadPrompts.length, 1);
@@ -1118,7 +1136,7 @@ describe("the same agent after the build: the resume it asks for, and the sessio
     assert.equal(requests.filter((r) => r.kind === Kind.Lead).length, 1, "no lead turn after the Stop");
   });
 
-  it("S7b. 'continue with…' sent with Loop on after a paused run resumes it with the time it had left: the resume alone is offered, never a reopen or a launch", {
+  it("S7b. 'continue with…' sent with Loop on after a paused run resumes it with the time it had left: the resume is offered, never a reopen, and a new Loop's start only beside it", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
     const engine = "claude-code";
@@ -1145,7 +1163,12 @@ describe("the same agent after the build: the resume it asks for, and the sessio
         workingTime: registered.map(workingTime),
       },
       // The launch names no hours, so it is an ∞ build with its 24 h ceiling (origin/dev's launch).
-      { offered: [["resume_run"]], runs: 1, resumed: [false, true], workingTime: [86_400_000, 86_400_000] },
+      {
+        offered: [["start_autopilot", "resume_run"]],
+        runs: 1,
+        resumed: [false, true],
+        workingTime: [86_400_000, 86_400_000],
+      },
       "the same run resumed on its own budget: the Loop's three hours are not a new one",
     );
     assert.match(leadPrompts[1] ?? "", /THE USER SAYS[\s\S]*continue with a red moon/);

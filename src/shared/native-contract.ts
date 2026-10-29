@@ -563,15 +563,28 @@ function rangeError(value: unknown, range: readonly [number, number], outside: R
   return value >= range[0] && value <= range[1] ? null : outside;
 }
 
+/** A `look`: absent or null, else an object (the game checks its keys). */
+function lookError(value: unknown): RenderSettingsArgError | null {
+  return value === undefined || value === null || isRecord(value) ? null : NativeOpError.BadArgument;
+}
+
+/** `value` is null or passes `guard`: a `set` member that clears or sets its setting. */
+function isNullOr<T>(value: unknown, guard: (value: unknown) => value is T): value is T | null {
+  return value === null || guard(value);
+}
+
+const isNumber = (value: unknown): value is number => typeof value === "number";
+
 /** The members of a checked `set` a game reads (it ignores any other). */
 function settingsChangeOf(set: Record<string, unknown>): RenderSettingsChange {
   const change: RenderSettingsChange = {};
-  const { preset, deviceClass, features, renderScaleLock, frameBudgetMs } = set;
-  if (preset === null || isQualityPreset(preset)) change.preset = preset;
-  if (deviceClass === null || isDeviceClass(deviceClass)) change.deviceClass = deviceClass;
-  if (features === null || isFeatureSwitches(features)) change.features = features === null ? null : { ...features };
-  if (renderScaleLock === null || typeof renderScaleLock === "number") change.renderScaleLock = renderScaleLock;
-  if (frameBudgetMs === null || typeof frameBudgetMs === "number") change.frameBudgetMs = frameBudgetMs;
+  const { preset, deviceClass, features, renderScaleLock, frameBudgetMs, look } = set;
+  if (isNullOr(look, isRecord)) change.look = look === null ? null : { ...look };
+  if (isNullOr(preset, isQualityPreset)) change.preset = preset;
+  if (isNullOr(deviceClass, isDeviceClass)) change.deviceClass = deviceClass;
+  if (isNullOr(features, isFeatureSwitches)) change.features = features === null ? null : { ...features };
+  if (isNullOr(renderScaleLock, isNumber)) change.renderScaleLock = renderScaleLock;
+  if (isNullOr(frameBudgetMs, isNumber)) change.frameBudgetMs = frameBudgetMs;
   return change;
 }
 
@@ -590,7 +603,12 @@ export function checkRenderSettingsArg(arg: unknown): RenderSettingsArgCheck {
     wordError(set.deviceClass, isDeviceClass, RenderSettingsRefusal.UnknownDeviceClass) ??
     featuresError(set.features) ??
     rangeError(set.renderScaleLock, [RENDER_SCALE_MIN, RENDER_SCALE_MAX], RenderSettingsRefusal.InvalidScale) ??
-    rangeError(set.frameBudgetMs, [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX], RenderSettingsRefusal.InvalidFrameBudget);
+    rangeError(
+      set.frameBudgetMs,
+      [FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX],
+      RenderSettingsRefusal.InvalidFrameBudget,
+    ) ??
+    lookError(set.look);
   return error ? { ok: false, error } : { ok: true, arg: { set: settingsChangeOf(set) } };
 }
 
@@ -622,8 +640,8 @@ export type GameBoxProblem = (typeof GameBoxProblem)[keyof typeof GameBoxProblem
 
 /** Pixel layout of a capture file in `state/captures/<seq>.bgra`, rows top-down: what `computePixelStats` reads. */
 export const NATIVE_CAPTURE_FORMAT = "bgra8";
-/** The longest side a capture may have; a reply declaring more is refused before any read. */
-export const NATIVE_CAPTURE_MAX_PX = 4096;
+/** The longest side a capture (and a native `ready.size`) may have, an 8K frame (genex-core's `NATIVE_MAX_WORLD_PX`); a reply declaring more is refused before any read. */
+export const NATIVE_CAPTURE_MAX_PX = 8192;
 /** The shortest side a capture may be asked to draw at: the world target's smallest (`MIN_WORLD_PX`). */
 export const NATIVE_CAPTURE_MIN_PX = 64;
 /** The most bytes `readRegularFile` will take for one capture. */
@@ -650,8 +668,34 @@ export const NATIVE_HEARTBEAT_MS = 5 * SECOND_MS;
 export const NATIVE_STDERR_LINE_MAX_CHARS = 2048;
 /** The most stderr lines one `native.log` event carries. */
 export const NATIVE_LOG_BATCH_MAX = 200;
-/** A game past this `phys_footprint` is killed (PX8 sets this). */
-export const NATIVE_GAME_MEMORY_MAX_BYTES = 4 * 1024 ** 3;
+/** Bytes in a GiB, for the memory budget and cap. */
+const GIB_BYTES = 1024 ** 3;
+/**
+ * The memory a game should fit in to run on phones and the web. A desktop run past it keeps
+ * running: its status says so (`NativeRunMemory.overBudget`), and the harness warns a game whose
+ * destinations include the web or a phone. Normal for a desktop game.
+ */
+export const NATIVE_GAME_MEMORY_BUDGET_BYTES = 4 * GIB_BYTES;
+/** The memory cap's floor, and the cap of a host whose memory reads as no size (`nativeGameMemoryCapBytes`). */
+export const NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES = 8 * GIB_BYTES;
+/** The cap is this share of the host's memory when that is above the floor… */
+const CAP_SHARE_OF_RAM = 1 / 4;
+/** …and never more than this share, however small the host. */
+const CAP_CEILING_SHARE_OF_RAM = 1 / 2;
+
+/**
+ * The footprint past which the host kills a game (`memory-cap`), from the host's physical memory
+ * (`os.totalmem()`, read once at the host's edge): `max(8 GiB, RAM / 4)`, never more than
+ * `RAM / 2`. 36 GiB → 9 GiB, 16 GiB → 8 GiB, 8 GiB → 4 GiB. A memory that is not a positive,
+ * safe number of bytes (0, negative, NaN, Infinity) reads as unknown and gets the floor, 8 GiB;
+ * a fractional one is rounded down. Never throws; the answer is whole bytes.
+ */
+export function nativeGameMemoryCapBytes(ramBytes: number): number {
+  const known = Number.isFinite(ramBytes) && ramBytes > 0 && ramBytes <= Number.MAX_SAFE_INTEGER;
+  if (!known) return NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES;
+  const share = Math.max(NATIVE_GAME_MEMORY_CAP_FLOOR_BYTES, ramBytes * CAP_SHARE_OF_RAM);
+  return Math.floor(Math.min(share, ramBytes * CAP_CEILING_SHARE_OF_RAM));
+}
 /** Embedded runs: the shared-image ring size. */
 export const NATIVE_FRAME_SLOTS = 3;
 /** Embedded runs: frames per second past which the frames receiver refuses the game. */
@@ -791,7 +835,7 @@ export const NativeGpuBound = {
   WgslTooLarge: "wgsl-too-large",
   /** An empty buffer, or one above the WebGPU-core storage binding size. */
   BufferTooLarge: "buffer-too-large",
-  /** A texture above 4096 × 4096 × 4 bytes. */
+  /** A texture above the destination's cap: 8192 × 8192 × 4 bytes natively, 4096 × 4096 × 4 on the web. */
   TextureTooLarge: "texture-too-large",
   /** One frame's uploads above the per-frame budget. */
   UploadBudget: "upload-budget",
@@ -1357,7 +1401,7 @@ export interface NativeCaptureSize {
   height: number;
 }
 
-/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..4096. */
+/** Whether `value` is a size a capture may be asked to draw at: whole pixels, each side 64..8192. */
 export function isNativeCaptureSize(value: unknown): value is NativeCaptureSize {
   const side = (n: unknown) =>
     Number.isSafeInteger(n) && Number(n) >= NATIVE_CAPTURE_MIN_PX && Number(n) <= NATIVE_CAPTURE_MAX_PX;
@@ -1499,8 +1543,24 @@ export interface NativeRunStatus {
   progress?: NativeBootProgress | null;
   /** The crash record the host kept for this run (`game.crashes` names it); absent or null when none. */
   crash?: { crashId: string; kind: CrashKind } | null;
+  /** What the host measured of the game's memory; absent or null before its first sample. */
+  memory?: NativeRunMemory | null;
   startedAt: string;
   endedAt: string | null;
+}
+
+/**
+ * A run's memory as the host samples it (a Mac's `phys_footprint`, GPU memory included on Apple
+ * Silicon; a Linux box's process tree): the highest footprint so far (it only rises), the budget
+ * a game should fit in for phones and the web, and this host's kill cap. `overBudget` is set once
+ * the peak passed the budget: the run keeps going. A run killed past the cap ends `memory-cap`
+ * with `peakBytes` the footprint that killed it.
+ */
+export interface NativeRunMemory {
+  peakBytes: number;
+  budgetBytes: number;
+  capBytes: number;
+  overBudget: boolean;
 }
 
 /** One `native.log` batch: stderr lines, each cut at `NATIVE_STDERR_LINE_MAX_CHARS`, at most `NATIVE_LOG_BATCH_MAX`. */

@@ -7,6 +7,7 @@
  */
 import type { AnyRecord, HarnessCtx, Run } from "../../../types/harness.d.ts";
 import { DEFAULT_WALL_CLOCK_MS, MAX_RUN_HOURS } from "../../config.ts";
+import { editorPlayOf, type LoopGame } from "../../engine-judges.ts";
 import { type FactRef, factsOfGame, type FolderHolds } from "../../folder-facts.ts";
 import { HostMethod } from "../../host-methods.ts";
 import { modelOn, RoleKey, roleEffort, roleEngine } from "../../model-roles.ts";
@@ -15,6 +16,7 @@ import { UNTIL_DONE_CAP_MS } from "../../time-cap.ts";
 import { folderLabelOf } from "../../workers/identity.ts";
 import { RUN_POOL_WORDS } from "../../workers/prompts.ts";
 import { type RunPoolSeat, runPool } from "../../workers/run-pool.ts";
+import { tellIfRefused } from "../../workers/sandbox-refusal.ts";
 import type { LoopRun } from "../loop-run.ts";
 import { NoteKind } from "../wake-schedule.ts";
 import { closeUnderWay } from "../close-latch.ts";
@@ -28,8 +30,11 @@ import {
   type OpenLoop,
 } from "./contract.ts";
 
-/** The game as an open Loop starts on it: its folder, what it holds, and the moments its plugins hook. */
-export interface OpenedGame {
+/**
+ * The game as an open Loop starts on it: its folder, what it holds, the moments its plugins hook, and
+ * whether the studio plays it in its engine's editor, with the judges that play it there.
+ */
+export interface OpenedGame extends Pick<LoopGame, "editorPlay" | "judges"> {
   projectDir: string;
   facts: FactRef[];
   holds: FolderHolds | null;
@@ -47,6 +52,7 @@ export async function openGame(ctx: HarnessCtx, run: Run): Promise<OpenedGame> {
     facts: factsOfGame(game),
     holds: typeof game?.holds === "string" ? (game.holds as FolderHolds) : null,
     hookEvents: Array.isArray(game?.hookEvents) ? game.hookEvents.map(String) : [],
+    ...editorPlayOf(game),
   };
 }
 
@@ -182,8 +188,10 @@ function poolSeat(loopRun: LoopRun, open: OpenLoop): RunPoolSeat {
     // A merge whose turn comes once the Loop closes, stops or pauses lands nothing after its close kept the folder.
     mergeRefused: () => mergeRefusedNow(loopRun),
     // A worker's end is the lead's news: it wakes a resting lead with the rest.
-    onEnded: (record) =>
-      loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state), NoteKind.WorkerEnded),
+    onEnded: (record) => {
+      loopRun.note(RUN_POOL_WORDS.ended(record.id, record.title, record.state), NoteKind.WorkerEnded);
+      tellIfRefused(loopRun, engine, record.stopCode);
+    },
   };
 }
 

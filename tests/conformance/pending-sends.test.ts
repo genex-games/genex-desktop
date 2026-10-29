@@ -5,7 +5,9 @@ import {
   newClientId,
   reconcilePendingSends,
   sendPlacement,
+  leadTakesSend,
   type PendingSend,
+  waitsBehindWork,
 } from "../../src/renderer/chat/pending-sends.ts";
 import { messageQueueState } from "../../src/shared/message-queue.ts";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
@@ -109,6 +111,23 @@ test("an acknowledged send that became a plan, or never arrived, stops showing",
   );
 });
 
+test("pictures sent with no words keep their bubble until their own row arrives", () => {
+  const frames = [{ label: "sketch", mimeType: "image/png", data: "AAAA" }];
+  const pictures = send("c1", "", { frames });
+  // Another chat's plan, or a plan with words, is not this send's: it keeps showing.
+  const plan = custom(3, "plan_review", { id: "p", state: "generating", text: "Plan a racing game" });
+  assert.deepEqual(
+    reconcile([pictures], [plan]).shown.map((s) => s.clientId),
+    ["c1"],
+  );
+  // Only an empty row is its own when no queue recorded it; a row with words is someone else's.
+  assert.deepEqual(
+    reconcile([pictures], [user(3, "Add a boss")]).shown.map((s) => s.clientId),
+    ["c1"],
+  );
+  assert.deepEqual([...reconcile([pictures], [user(3, "Add a boss"), user(4, "")]).adopted], [["c1", "000004-0:user"]]);
+});
+
 test("a message waits below current work, and joins the conversation in an idle chat", () => {
   const idle = messageQueueState([]);
   assert.equal(sendPlacement(false, idle), "transcript");
@@ -119,6 +138,30 @@ test("a message waits below current work, and joins the conversation in an idle 
   ]);
   assert.equal(sendPlacement(false, queued), "waiting");
   assert.equal(sendPlacement(false, messageQueueState([custom(1, "coordinator_queue_paused", {})])), "waiting");
+});
+
+test("a message to a running build's listening lead joins the conversation; one the build keeps waits below", () => {
+  const placed = (work: Parameters<typeof waitsBehindWork>[0]) =>
+    sendPlacement(waitsBehindWork(work), messageQueueState([]));
+  assert.equal(placed({ chatWorking: false, runId: "run_a", leadTakes: true }), "transcript");
+  assert.equal(placed({ chatWorking: false, runId: "run_a", leadTakes: false }), "waiting");
+  assert.equal(placed({ chatWorking: true, runId: "run_a", leadTakes: true }), "waiting");
+  assert.equal(placed({ chatWorking: false, runId: null, leadTakes: false }), "transcript");
+});
+
+test("a running build's lead takes words at once, never a slash command or a send after Finish", () => {
+  const lead = { listens: true, finishing: false };
+  assert.equal(leadTakesSend("Make the fog thicker", lead), true);
+  assert.equal(leadTakesSend("", lead), true, "pictures alone: the chat saved them for the lead");
+  assert.equal(leadTakesSend("/compact", lead), false);
+  assert.equal(leadTakesSend("  /model opus", lead), false);
+  assert.equal(
+    leadTakesSend("Make the fog thicker", { ...lead, listens: false }),
+    false,
+    "a lead that does not take the chat",
+  );
+  // Its line shuts as the build lands, with no record the chat could read: such a send waits below from the start.
+  assert.equal(leadTakesSend("Make the fog thicker", { ...lead, finishing: true }), false, "after Finish");
 });
 
 test("client ids are ones the queue accepts", () => {

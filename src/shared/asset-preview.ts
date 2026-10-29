@@ -13,6 +13,27 @@ export const ASSET_PREVIEW_MIME: Readonly<Record<string, string>> = Object.freez
 export function assetPreviewMode(file: string): AssetPreviewMode {
   return assetFormat(file)?.preview ?? "unsupported";
 }
+
+/** Why the model viewer could not draw its file. Codes, never shown. */
+export const PreviewFailure = {
+  /** The file itself: not the format it claims, malformed, or a part of it that will not decode. Drawing it again fails again. */
+  File: "file",
+  /** Something around the file that may pass: the graphics context was lost, a decoder failed, decoding ran out of time. */
+  Interrupted: "interrupted",
+} as const;
+export type PreviewFailure = (typeof PreviewFailure)[keyof typeof PreviewFailure];
+
+/** What the viewer refuses in a file itself: not the format it claims, too many or too large parts, a part outside its folder. */
+export class PreviewFileError extends Error {}
+
+/**
+ * Why a model failed to load: the file itself when the viewer refused it or its JSON is malformed;
+ * anything else (out of memory, a decoder's own failure, a loader's error) may pass, since a loader's
+ * errors carry no type or code that tells a malformed file from the rest.
+ */
+export const loadFailure = (error: unknown): PreviewFailure =>
+  error instanceof PreviewFileError || error instanceof SyntaxError ? PreviewFailure.File : PreviewFailure.Interrupted;
+
 /**
  * The folder a model's resources must stay inside: its Genex ref, `public/assets`, or the top
  * folder the model is in (`assets`, Unity's `Assets`, a plugin's folder), or the game's root for a
@@ -30,10 +51,10 @@ function decodedResource(uri: string): string {
   try {
     decoded = decodeURIComponent(uri);
   } catch {
-    throw new Error("Invalid model resource path.");
+    throw new PreviewFileError("Invalid model resource path.");
   }
   if (!decoded || /[\\\x00-\x1f?#]/.test(decoded) || /^(?:[a-z][a-z0-9+.-]*:|\/)/i.test(decoded))
-    throw new Error("Models may only load local asset resources.");
+    throw new PreviewFileError("Models may only load local asset resources.");
   return decoded;
 }
 
@@ -45,13 +66,14 @@ export function assetCompanion(base: string, uri: string): string {
   for (const part of decoded.split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
-      if (result.length <= root.length) throw new Error("Model resource leaves its asset folder.");
+      if (result.length <= root.length) throw new PreviewFileError("Model resource leaves its asset folder.");
       result.pop();
       continue;
     }
-    if (part.startsWith(".")) throw new Error("Hidden model resources are not allowed.");
+    if (part.startsWith(".")) throw new PreviewFileError("Hidden model resources are not allowed.");
     result.push(part);
   }
-  if (!root.every((part, i) => result[i] === part)) throw new Error("Model resource leaves its asset folder.");
+  if (!root.every((part, i) => result[i] === part))
+    throw new PreviewFileError("Model resource leaves its asset folder.");
   return result.join("/");
 }

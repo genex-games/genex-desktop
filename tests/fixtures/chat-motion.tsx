@@ -9,12 +9,13 @@ import type { ChatPanelProps } from "../../src/renderer/chat/chat-panel-props.ts
 import { ChatPanel } from "../../src/renderer/panels/ChatPanel.tsx";
 import { ChatActivityPhase, SessionActivityRole } from "../../src/shared/chat-activity.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
+import { SteerDelivery } from "../../src/shared/message-queue.ts";
 import type { EngineDescriptor } from "../../src/shared/engine-descriptor.ts";
 import { type EventData, type EventEnvelope, EventKind, ThreadKind } from "../../src/shared/event-log.ts";
 import { ToolPermissionState } from "../../src/shared/permissions.ts";
 import { UiEvent, type UiEventMap } from "../../src/shared/ui-events.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
-import { type MotionReport, motionReport, recordFrames } from "./motion-recorder.ts";
+import { type Held, heldStill, type MotionReport, motionReport, recordFrames } from "./motion-recorder.ts";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) throw new Error("Missing fixture root");
@@ -42,6 +43,9 @@ const LONG_PIECE_CHARS = 12;
 const LONG_PIECE_MS = 8;
 /** How long the clock scene's work has already run as it opens: its clock reaches 10s within the scene. */
 const CLOCK_STARTED_MS = 9_300;
+/** How long the host takes to save a message sent to a build's lead, and then to answer the send. */
+const SAVE_MS = 60;
+const ACK_MS = 60;
 
 const noop = () => {};
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -77,6 +81,11 @@ window.studio = fake.api;
 let events: EventEnvelope[] = [];
 let status = IDLE;
 let sent: string[] = [];
+/** What the host does with a send before answering it, when a scene says; the newest send's id. */
+let host: ((text: string, clientId: string | undefined) => Promise<void>) | null = null;
+let lastClientId: string | undefined;
+/** When the scene's build card must hold still from (`performance.now()`), when it has one. */
+let steadyFrom: number | null = null;
 const props: ChatPanelProps = {
   events: [],
   stateEvents: [],
@@ -100,8 +109,10 @@ const props: ChatPanelProps = {
   onEnginesRefresh: noop,
   onRename: noop,
   onNotice: noop,
-  onSend: async (text) => {
+  onSend: async (text, options) => {
     sent = [...sent, text];
+    lastClientId = options.clientId;
+    await host?.(text, options.clientId);
   },
 };
 function render(): void {
@@ -132,6 +143,8 @@ const delta = (payload: UiEventMap[typeof UiEvent.ChatDelta]) => fake.emit({ typ
 function seed(long: boolean): void {
   sequence = 0;
   sent = [];
+  host = null;
+  steadyFrom = null;
   status = IDLE;
   startedAt.clear();
   const count = long ? HISTORY_MESSAGES : 2;
@@ -144,15 +157,31 @@ function seed(long: boolean): void {
   render();
 }
 
-/** Type in the real composer and press Enter, as a person does. */
-async function sendFromComposer(text: string): Promise<void> {
+/** The real composer's text box. */
+function composerBox(): HTMLTextAreaElement {
   const box = document.querySelector<HTMLTextAreaElement>('[data-promptbar] textarea[aria-label="Prompt"]');
   if (!box) throw new Error("Missing composer");
+  return box;
+}
+
+/** Type in the real composer, as a person does. */
+async function typeInComposer(text: string): Promise<void> {
+  const box = composerBox();
   box.focus();
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(box, text);
   box.dispatchEvent(new Event("input", { bubbles: true }));
   await sleep(50);
-  box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+}
+
+/** Press Enter in the real composer. */
+function pressEnter(): void {
+  composerBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true }));
+}
+
+/** Type in the real composer and press Enter, as a person does. */
+async function sendFromComposer(text: string): Promise<void> {
+  await typeInComposer(text);
+  pressEnter();
 }
 
 const activity = (phase: string) =>
@@ -267,7 +296,39 @@ async function build(): Promise<void> {
   await sleep(900);
 }
 
-const SCENES = { turn, question, clock, build, longStream } as const;
+/** The host saves a message to a build whose lead takes the chat; the send is answered a moment later. */
+async function saveForTheLead(text: string, clientId: string | undefined): Promise<void> {
+  await sleep(SAVE_MS);
+  const row = said("user", text);
+  append(row, custom(CustomEvent.CoordinatorMessageQueued, { messageId: clientId, eventId: row.id, action: { text } }));
+  await sleep(ACK_MS);
+}
+
+/**
+ * A message to a running build's lead: sent from the composer, saved, handed to the lead, and the
+ * lead's answer. The build's card holds still on the composer from the moment Enter is pressed.
+ */
+async function steer(): Promise<void> {
+  status = `run ${RUN}`;
+  // Started now, so the card's clock reads seconds.
+  const startedNow = (event: EventEnvelope): EventEnvelope => ({ ...event, created_at: new Date().toISOString() });
+  append(
+    startedNow(custom(CustomEvent.RunStarted, { goal: "A foggy coast", budgets: { wallClockMs: 18_000_000 } })),
+    startedNow(custom(CustomEvent.AutopilotStarted, { director: true, liveChat: true })),
+  );
+  await sleep(1200);
+  host = saveForTheLead;
+  await typeInComposer("Make the fog thicker near the water");
+  steadyFrom = performance.now();
+  pressEnter();
+  await sleep(500);
+  append(custom(CustomEvent.CoordinatorMessageDelivered, { messageId: lastClientId, into: RUN, how: SteerDelivery.Lead }));
+  await sleep(700);
+  append(said("assistant", "The fog thickens over the water now; the lead gave it to the coast's part."));
+  await sleep(900);
+}
+
+const SCENES = { turn, question, clock, build, longStream, steer } as const;
 type Scene = keyof typeof SCENES;
 
 /** How many frames in a row nothing may move before the seeded chat counts as settled. */
@@ -292,7 +353,11 @@ async function settled(): Promise<void> {
 }
 
 /** Play one scene in a short or long chat and report what moved; `record: false` only plays it (to time the app alone). */
-async function runMotionScene(scene: Scene, long = true, record = true): Promise<MotionReport & { scene: Scene }> {
+async function runMotionScene(
+  scene: Scene,
+  long = true,
+  record = true,
+): Promise<MotionReport & { scene: Scene; held?: Held }> {
   seed(long);
   await sleep(400);
   await settled();
@@ -301,12 +366,15 @@ async function runMotionScene(scene: Scene, long = true, record = true): Promise
     await SCENES[scene]();
     return { scene, ...motionReport({ frames: [], longTasks: [] }, history) };
   }
+  const start = performance.now();
   const stop = recordFrames();
   await SCENES[scene]();
   const recording = stop();
   // Kept for a closer look at a failure (`window.lastMotionFrames`).
   Object.assign(window, { lastMotionFrames: recording.frames });
-  return { scene, ...motionReport(recording, history) };
+  const from = steadyFrom === null ? null : steadyFrom - start;
+  const held = from === null ? {} : { held: heldStill(recording.frames.filter((frame) => frame.at >= from), "build", "composer") };
+  return { scene, ...motionReport(recording, history), ...held };
 }
 
 Object.assign(window, { runMotionScene });

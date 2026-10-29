@@ -1,5 +1,6 @@
 import { CustomEvent, customPayload, customRecord, type CustomEventData } from "./custom-events.ts";
 import { EventKind } from "./event-log.ts";
+import { t } from "./i18n.ts";
 /** Reporting only. Explicit activity events win; normal model EOS "stop" is not cancellation. */
 export const ChatActivityPhase = {
   Idle: "idle",
@@ -33,6 +34,8 @@ export type SessionActivityRole = (typeof SessionActivityRole)[keyof typeof Sess
 export interface ChatActivity {
   phase: ChatActivityPhase;
   label: string;
+  /** The label names the work (the record's own words, or the build's status), not only the phase. */
+  named?: true;
   sessionId?: string;
   engine?: string;
   /** The delegation whose report this is, when a delegated session made it. */
@@ -74,21 +77,22 @@ export function delegationActivityScope(input: DelegatedSession) {
     facetId: input.selfCapture?.facetId ?? input.playtest?.facetId,
   };
 }
-const labels: Record<ChatActivityPhase, string> = {
-  idle: "Idle",
-  working: "Working",
-  connecting: "Connecting tools",
-  thinking: "Thinking",
-  responding: "Writing a reply",
-  tool: "Running a tool",
-  waiting: "Waiting for your answer",
-  compacting: "Compacting context",
-  "loading-model": "Loading local model",
-  queued: "Waiting for local inference",
-  stopping: "Stopping",
-  completed: "Response completed",
-  failed: "Response failed",
-  interrupted: "Response interrupted",
+/** Each phase's words; functions, as main loads this module before it sets its language. */
+const labels: Record<ChatActivityPhase, () => string> = {
+  idle: () => t("Idle"),
+  working: () => t("Working"),
+  connecting: () => t("Connecting tools"),
+  thinking: () => t("Thinking"),
+  responding: () => t("Writing a reply"),
+  tool: () => t("Running a tool"),
+  waiting: () => t("Waiting for your answer"),
+  compacting: () => t("Compacting context"),
+  "loading-model": () => t("Loading local model"),
+  queued: () => t("Waiting for local inference"),
+  stopping: () => t("Stopping"),
+  completed: () => t("Response completed"),
+  failed: () => t("Response failed"),
+  interrupted: () => t("Response interrupted"),
 };
 /** The records that close a run's session. */
 const RUN_CLOSES: ReadonlySet<string> = new Set<string>([CustomEvent.RunFinished, CustomEvent.AutopilotPaused]);
@@ -100,7 +104,9 @@ const SETTLED_PHASES: ReadonlySet<ChatActivityPhase> = new Set<ChatActivityPhase
 ]);
 
 const idleOrWorking = (active: boolean): ChatActivity =>
-  active ? { phase: ChatActivityPhase.Working, label: "Working" } : { phase: ChatActivityPhase.Idle, label: "Idle" };
+  active
+    ? { phase: ChatActivityPhase.Working, label: labels.working() }
+    : { phase: ChatActivityPhase.Idle, label: labels.idle() };
 
 /**
  * A settled phase from another delegation than the one being shown: a lead's turn ending while
@@ -113,9 +119,9 @@ function endsAnotherDelegation(current: ChatActivity, phase: ChatActivityPhase, 
 
 /** The activity after one more record of the conversation. */
 function activityAfter(current: ChatActivity, data: CustomEventData, active: boolean): ChatActivity {
-  if (data.type === EventKind.TurnStarted) return { phase: ChatActivityPhase.Thinking, label: "Thinking" };
+  if (data.type === EventKind.TurnStarted) return { phase: ChatActivityPhase.Thinking, label: labels.thinking() };
   if (data.type === EventKind.TurnEnded)
-    return active ? { phase: ChatActivityPhase.Working, label: "Working" } : current;
+    return active ? { phase: ChatActivityPhase.Working, label: labels.working() } : current;
   // The run's end resets the line. Each director turn ends on a host-written settled phase, but
   // an idle chat would keep showing the lead's last "Response completed" after the run, and a
   // turn that never got one (the app quit mid-turn, or a log older than those records) would
@@ -128,7 +134,8 @@ function activityAfter(current: ChatActivity, data: CustomEventData, active: boo
   if (endsAnotherDelegation(current, p.phase, p.delegationId)) return current;
   return {
     phase: p.phase,
-    label: p.label || labels[p.phase],
+    label: p.label || labels[p.phase](),
+    ...(p.label ? { named: true } : {}),
     sessionId: p.sessionId,
     engine: p.engine,
     ...(p.delegationId ? { delegationId: p.delegationId } : {}),
@@ -139,10 +146,13 @@ function activityAfter(current: ChatActivity, data: CustomEventData, active: boo
 export function chatActivity(events: readonly ActivityEvent[], active: boolean, fallback = ""): ChatActivity {
   let result = idleOrWorking(active);
   for (const event of events) result = activityAfter(result, event.data, active);
-  if (!active && !SETTLED_PHASES.has(result.phase)) return { phase: ChatActivityPhase.Idle, label: "Idle" };
+  if (!active && !SETTLED_PHASES.has(result.phase)) return { phase: ChatActivityPhase.Idle, label: labels.idle() };
   const finishedReply = result.phase === ChatActivityPhase.Idle || SETTLED_PHASES.has(result.phase);
-  if (active && finishedReply) return { phase: ChatActivityPhase.Working, label: fallback || "Working" };
+  if (active && finishedReply)
+    return fallback
+      ? { phase: ChatActivityPhase.Working, label: fallback, named: true }
+      : { phase: ChatActivityPhase.Working, label: labels.working() };
   if (result.phase === ChatActivityPhase.Working && fallback && !/^building$/i.test(fallback))
-    return { ...result, label: fallback };
+    return { ...result, label: fallback, named: true };
   return result;
 }

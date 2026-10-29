@@ -1,7 +1,8 @@
 import type { ComponentProps, JSX, ReactNode } from "react";
+import { t } from "../../shared/i18n.ts";
 import { Icon } from "../ui/icons.tsx";
 
-const MESSAGE = { open: "Open in Builds" } as const;
+const MESSAGE = { open: t("Open in Builds") } as const;
 
 /** What opening the card does: its click, and the run it opens when it names one. */
 export interface BuildCardOpen {

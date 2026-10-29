@@ -365,6 +365,151 @@ export async function loadRecipes(workspace: string): Promise<Recipe[]> {
   return recipes.sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
+/**
+ * Names a Rust sketch may call that are not the facade's to pin: the methods of Rust's own types
+ * (`Option`, `Result`, `Vec`, `VecDeque`, maps, iterators, numbers), of glam's vectors and of its
+ * quaternion's axis turns (`Quat::from_rotation_y`), of serde_json's `Value` and of egui's `Ui` and `Response`, which a game reaches through the facade's
+ * re-exports.
+ */
+export const RUST_OWN_CALLS: ReadonlySet<string> = new Set([
+  "abs",
+  "add_enabled",
+  "and",
+  "and_then",
+  "any",
+  "as_bool",
+  "as_f64",
+  "as_i64",
+  "as_mut",
+  "as_ref",
+  "as_str",
+  "clamp",
+  "clicked",
+  "clone",
+  "cloned",
+  "collect",
+  "contains",
+  "contains_key",
+  "copied",
+  "cos",
+  "count",
+  "default",
+  "distance",
+  "entry",
+  "enumerate",
+  "expect",
+  "extend",
+  "filter",
+  "filter_map",
+  "find",
+  "first",
+  "flat_map",
+  "floor",
+  "fold",
+  "from",
+  "from_rotation_x",
+  "from_rotation_y",
+  "from_rotation_z",
+  "get",
+  "get_mut",
+  "insert",
+  "into",
+  "into_iter",
+  "is_empty",
+  "is_err",
+  "is_none",
+  "is_none_or",
+  "is_ok",
+  "is_some",
+  "is_some_and",
+  "iter",
+  "iter_mut",
+  "label",
+  "last",
+  "len",
+  "length",
+  "lerp",
+  "map",
+  "map_or",
+  "max",
+  "min",
+  "normalize_or_zero",
+  "ok",
+  "ok_or",
+  "or_default",
+  "or_insert",
+  "pop",
+  "pop_front",
+  "position",
+  "push",
+  "push_back",
+  "remove",
+  "retain",
+  "rev",
+  "round",
+  "saturating_sub",
+  "sin",
+  "sort",
+  "sqrt",
+  "sum",
+  "take",
+  "to_owned",
+  "to_string",
+  "to_vec",
+  "unwrap_or",
+  "unwrap_or_default",
+  "values",
+  "wrapping_add",
+  "zip",
+]);
+
+/** Rust's own types, whose associated functions (`Vec::new`, `String::with_capacity`) a sketch may call. */
+const RUST_OWN_TYPES: ReadonlySet<string> = new Set([
+  "BTreeMap",
+  "BTreeSet",
+  "Option",
+  "String",
+  "Vec",
+  "VecDeque",
+  "f32",
+  "f64",
+  "i32",
+  "u32",
+  "u64",
+  "usize",
+]);
+
+/** A method or path call in Rust: `.name(`, `::name(` or `::name::<T>(`, with the word before it (its receiver, when there is one). */
+const RUST_CALL = /(\w*)\s*(?:\.|::)([a-z_][a-z0-9_]*)\s*(?:::<[^>()]*>\s*)?\(/g;
+
+/** A function the sketch defines itself (`fn plan(`), whose calls are the game's own. */
+const RUST_FN_DEFINITION = /\bfn\s+([a-z_][a-z0-9_]*)/g;
+
+/** The receiver whose methods are the game's own: its `World`, reached as `world.x(..)` or `sim.world.x(..)`. */
+const GAME_WORLD_RECEIVER = "world";
+
+/** Is this call Rust's or the game's own, never the facade's: a method of Rust's types, a function of one, or one of the game's `World`? */
+function rustOrGameCall(receiver: string, name: string): boolean {
+  return RUST_OWN_CALLS.has(name) || RUST_OWN_TYPES.has(receiver) || receiver === GAME_WORLD_RECEIVER;
+}
+
+/**
+ * The names a Rust recipe's sketch calls that the facade does not pin (`pinned`: call spellings
+ * such as `nav.move_to`, `.sim_radius` or `gfx.assets().compound`, each of whose words counts)
+ * and that are not Rust's or the game's own (`rustOrGameCall`, or a function the sketch defines).
+ * Comments count, since an agent copies them. Sorted and each once; none for another stack.
+ */
+export function unpinnedSketchCalls(recipe: Pick<Recipe, "sketch" | "runtime">, pinned: Iterable<string>): string[] {
+  if (recipe.runtime !== GameStack.RustWgpu) return [];
+  const sketch = String(recipe.sketch ?? "");
+  const known = new Set([...pinned].flatMap((call) => call.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []));
+  for (const [, name = ""] of sketch.matchAll(RUST_FN_DEFINITION)) known.add(name);
+  const unpinned = new Set<string>();
+  for (const [, receiver = "", name = ""] of sketch.matchAll(RUST_CALL))
+    if (!known.has(name) && !rustOrGameCall(receiver, name)) unpinned.add(name);
+  return [...unpinned].sort();
+}
+
 export async function saveRecipe(workspace: string, recipe: Recipe): Promise<string> {
   // A recipe the builder cannot read is only a tag cloud: the `intent` (the how) is mandatory.
   if (!String(recipe?.intent ?? "").trim())
@@ -830,6 +975,8 @@ export interface BriefOptions {
   comparison?: { flips?: string[]; regressions?: string[] } | null;
   attempts?: AnyRecord[];
   recipes?: RecipeHit[];
+  /** The game's craft (loop/game-craft.ts): one line per recipe chosen for its kind and brief, and where they are whole. */
+  craft?: string | null;
   spike?: string | null;
   steering?: string[];
   review?: { violations?: AnyRecord[] } | null;
@@ -891,6 +1038,7 @@ function renderBriefSections(
     comparison,
     attempts = [],
     recipes = [],
+    craft = null,
     spike = null,
     steering = [],
     review = null,
@@ -952,6 +1100,7 @@ function renderBriefSections(
     ...(spike ? [`## Spike result`, spike, ``] : []),
     ...attemptsSection(attempts, !cuts.has(BriefCut.DiffStats), carried.length > 0),
     ...recipesSection(recipes, recipeShape),
+    ...craftSection(craft, cuts.has(BriefCut.RecipeBodies)),
     ...briefRules(run, spec, { screen, template, resumed, facet, entryMain }),
     ...(cuts.has(BriefCut.Lessons) ? [] : lessonsSections(gameLessons, lessons)),
   ];
@@ -1264,6 +1413,12 @@ function recipeLines({ recipe, checkIds }: RecipeHit, shape: RecipeShape): strin
     keptHere ? "" : pointer,
     ``,
   ];
+}
+
+/** The game's craft block; past the budget only its heading, which names the file that holds it whole. */
+function craftSection(craft: string | null, cut: boolean): string[] {
+  if (!craft) return [];
+  return [cut ? (craft.split("\n")[0] ?? "") : craft, ``];
 }
 
 /** The facet lines each stack's brief rules read: a compiled stack's own, none for three.js (`threeBriefRules`). */

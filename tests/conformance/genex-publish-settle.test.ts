@@ -264,12 +264,32 @@ describe("settling a Genex publish whose outcome is unknown", () => {
     assert.equal((await saved()).job?.state, "failed", "the settlement is durable");
   });
 
-  it("the Publish panel's 'allow a new upload' is a confirmed plugin action that settles it", async () => {
+  it("a draft whose check keeps failing stays settled once the user allows a new upload", async () => {
+    const { server } = await hosted({ revision: "r2" });
+    const { genex, saved } = await tools(server.url, {
+      ...interruptedUpload(),
+      state: "unresolved",
+      phase: "unresolved",
+      uploadedAt: "2026-09-23T09:01:00.000Z",
+      expectedStagingRevision: "r-this-upload",
+      stagingUrl: "https://preview--fixture-game.genex.technology/",
+      deployment: { id: "job-before-quit", digest: "d2", files: [] },
+      nextCheckAt: "2026-09-23T09:02:00.000Z",
+    });
+    await genex.publishAllowNewUpload(PROJECT, "job-before-quit");
+    // The next due check, as the panel's poll or Check again would run it.
+    const later = await genex.publishStatus(PROJECT, true);
+    assert.equal(later.job?.state, "failed", "the background check does not reopen a settled upload");
+    assert.equal((await saved()).job?.state, "failed");
+  });
+
+  it("the Publish dialog's Publish again is a plugin action that settles it in one press", async () => {
     const manifest = validateManifest(
       JSON.parse(await readFile(path.join(process.cwd(), "src/plugins/genex/plugin.json"), "utf8")),
     );
     const declared = manifest.actions.find((a) => a.name === "publish-allow-upload");
-    assert.ok(declared?.confirmation, "the host asks before a new upload is allowed");
+    assert.ok(declared, "the dialog's Publish again runs it");
+    assert.equal(declared.confirmation, undefined, "a newer build is all it puts online: nothing asks again");
 
     const { server } = await hosted({ answer: "down" });
     const { genex, saved } = await tools(server.url, {

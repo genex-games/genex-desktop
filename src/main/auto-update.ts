@@ -7,7 +7,9 @@
  * do. Copies built before the switch was turned on never check (docs/release-operations.md).
  *
  * Linux has no in-place installer: a released Linux build asks GitHub for the newest published
- * release instead (`./release-check.ts`) and offers its download page.
+ * release instead (`./release-check.ts`) and offers its download page. A deb or rpm installed
+ * since the Genex package repository (packages.genex.games) is updated by the system's own
+ * updates (apt, dnf, Software Updater), so it neither asks nor offers anything.
  *
  * A downloaded update is announced in the studio window, whose sidebar offers the restart
  * (`UiEvent.UpdateReady`); before the studio is up (the sandbox setup screen) it is one
@@ -21,6 +23,7 @@
  * check already running, and the periodic checks stop once a version is downloaded.
  */
 import { SECOND_MS } from "../shared/duration.ts";
+import { t } from "../shared/i18n.ts";
 import { type ReadyUpdate, UpdateAction, type UpdateCheckResult, UpdateCheckStatus } from "../shared/app-update.ts";
 import type { PublishedRelease, ReleaseCheck } from "./release-check.ts";
 import { ReleaseCheckKind } from "./release-check.ts";
@@ -34,10 +37,20 @@ export const AUTO_UPDATE_ENABLED = true;
 export const UPDATE_REPO = "genex-games/genex-desktop";
 /** How often an installed copy asks for a newer release (the `ms` syntax the library parses). */
 const UPDATE_CHECK_INTERVAL = "1 hour";
+/**
+ * How long a fresh install's first launch waits before its first check: Squirrel.Windows holds
+ * its lock on the install for a moment after `--squirrel-firstrun`, and a check then fails.
+ */
+export const FIRST_RUN_CHECK_DELAY_MS = 10 * SECOND_MS;
+/** The argument Squirrel.Windows starts a fresh install's first launch with. */
+const SQUIRREL_FIRST_RUN = "--squirrel-firstrun";
 /** The platforms update.electronjs.org serves. */
 const UPDATE_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set(["darwin", "win32"]);
 /** The platforms told about a release they download themselves. */
 const NOTIFY_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set(["linux"]);
+/** The packaged executable the deb and rpm install, and the repository files their scripts write. */
+const SYSTEM_PACKAGE_EXEC = "/usr/lib/genex/genex";
+const GENEX_REPOSITORY_FILES = ["/etc/apt/sources.list.d/genex.list", "/etc/yum.repos.d/genex.repo"] as const;
 /** How long Check for Updates waits on the installer's answer. */
 const INSTALL_CHECK_TIMEOUT_MS = 30 * SECOND_MS;
 /** A semantic version inside a release name: "Genex 0.2.0", "v0.2.0", "0.3.0-rc.2". */
@@ -78,6 +91,8 @@ export interface UpdateLaunch {
   testLaunch: boolean;
   /** Renamed forks must configure their own feed before enabling updates. */
   productName: string;
+  /** Linux: this copy is the deb or rpm install with the Genex repository configured (`installedFromGenexRepository`). */
+  systemPackages: boolean;
 }
 
 /** How a released build updates. */
@@ -86,30 +101,38 @@ export const UpdateMode = {
   Install: "install",
   /** Linux: tell the person about a newer release to download. */
   Notify: "notify",
+  /** Linux from the Genex package repository: the system's own updates install it. */
+  System: "system",
 } as const;
 export type UpdateMode = (typeof UpdateMode)[keyof typeof UpdateMode];
 
 export type UpdateDecision = { start: true; mode: UpdateMode } | { start: false; reason: UpdateSkip };
 
+/** What the updater's notifications and the menu's Check for Updates say, in main's language. */
 const MESSAGE = {
-  title: "Update ready — restart",
+  title: () => t("Update ready — restart"),
   namedBody: (version: string) =>
-    `Genex ${version} is downloaded. Click to restart now, or it installs the next time you quit.`,
-  unnamedBody: "A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit.",
-  availableTitle: (version: string) => `Genex ${version} is available`,
-  availableBody: "Click to open its download page.",
-  current: (version: string) => `Genex ${version} is the latest version.`,
-  downloading: "A new version of Genex is downloading.",
-  downloadingDetail: "It installs when you relaunch; Genex tells you when it's ready.",
-  readyToRestart: (version: string) => `Genex ${version} is ready to install.`,
-  readyDetail: "Relaunch now, or it installs the next time you quit.",
-  available: (version: string) => `Genex ${version} is available.`,
-  availableDetail: "Download it from the release page and install it over this version.",
-  off: "This build of Genex doesn't check for updates.",
-  offDetail: "Development builds and builds packaged under another name update from source.",
-  failed: "Genex couldn't check for updates.",
-  failedDetail: "Check your connection and try again.",
-  newVersion: "the new version",
+    t("Genex {version} is downloaded. Click to restart now, or it installs the next time you quit.", { version }),
+  unnamedBody: () =>
+    t("A new version of Genex is downloaded. Click to restart now, or it installs the next time you quit."),
+  availableTitle: (version: string) => t("Genex {version} is available", { version }),
+  availableBody: () => t("Click to open its download page."),
+  current: (version: string) => t("Genex {version} is the latest version.", { version }),
+  downloading: () => t("A new version of Genex is downloading."),
+  downloadingDetail: () => t("It installs when you relaunch; Genex tells you when it's ready."),
+  readyToRestart: (version: string | null | undefined) =>
+    version ? t("Genex {version} is ready to install.", { version }) : t("Genex the new version is ready to install."),
+  readyDetail: () => t("Relaunch now, or it installs the next time you quit."),
+  available: (version: string | null | undefined) =>
+    version ? t("Genex {version} is available.", { version }) : t("Genex the new version is available."),
+  availableDetail: () => t("Download it from the release page and install it over this version."),
+  off: () => t("This build of Genex doesn't check for updates."),
+  offDetail: () => t("Development builds and builds packaged under another name update from source."),
+  system: () => t("Genex updates with your system."),
+  systemDetail: () =>
+    t("New versions arrive with your system's updates: Software Updater, sudo apt upgrade or sudo dnf upgrade."),
+  failed: () => t("Genex couldn't check for updates."),
+  failedDetail: () => t("Check your connection and try again."),
 } as const;
 
 /** Whether this launch checks for updates, and the first reason it does not. */
@@ -121,7 +144,21 @@ export function autoUpdateDecision(launch: UpdateLaunch): UpdateDecision {
   if (launch.developerLaunch) return { start: false, reason: UpdateSkip.DeveloperLaunch };
   if (launch.testLaunch) return { start: false, reason: UpdateSkip.TestLaunch };
   if (launch.productName !== "Genex") return { start: false, reason: UpdateSkip.Identity };
-  return { start: true, mode: UPDATE_PLATFORMS.has(launch.platform) ? UpdateMode.Install : UpdateMode.Notify };
+  if (UPDATE_PLATFORMS.has(launch.platform)) return { start: true, mode: UpdateMode.Install };
+  return { start: true, mode: launch.systemPackages ? UpdateMode.System : UpdateMode.Notify };
+}
+
+/** How long this launch waits before its first update check (`FIRST_RUN_CHECK_DELAY_MS`). */
+export function firstCheckDelay(argv: readonly string[]): number {
+  return argv.includes(SQUIRREL_FIRST_RUN) ? FIRST_RUN_CHECK_DELAY_MS : 0;
+}
+
+/**
+ * Whether this Linux copy is the deb or rpm install whose maintainer scripts configured the Genex
+ * package repository. A zip copy elsewhere on the same machine is not: nothing updates it.
+ */
+export function installedFromGenexRepository(execPath: string, exists: (path: string) => boolean): boolean {
+  return execPath === SYSTEM_PACKAGE_EXEC && GENEX_REPOSITORY_FILES.some((path) => exists(path));
 }
 
 /**
@@ -134,7 +171,7 @@ export function releaseVersion(releaseName: string): string | null {
 
 /** The notification for a downloaded update, naming its version when the release gave one. */
 function updateReadyNote(version: string | null): { title: string; body: string } {
-  return { title: MESSAGE.title, body: version ? MESSAGE.namedBody(version) : MESSAGE.unnamedBody };
+  return { title: MESSAGE.title(), body: version ? MESSAGE.namedBody(version) : MESSAGE.unnamedBody() };
 }
 
 /** What announcing and installing a downloaded update needs from main. */
@@ -203,7 +240,7 @@ export function createUpdateAnnouncer(deps: UpdateAnnouncerDeps): UpdateAnnounce
       ready = update;
       releaseUrl = release.url;
       if (deps.studioUp()) deps.announce(update);
-      else deps.notify({ title: MESSAGE.availableTitle(release.version), body: MESSAGE.availableBody }, download);
+      else deps.notify({ title: MESSAGE.availableTitle(release.version), body: MESSAGE.availableBody() }, download);
     },
     restart,
     download,
@@ -360,6 +397,7 @@ export function createUpdateChecker(deps: UpdateCheckerDeps): { check(): Promise
   const ask = async (): Promise<UpdateCheckResult> => {
     if (updates.ready()?.action === UpdateAction.Restart) return result(UpdateCheckStatus.Waiting);
     if (!decision.start) return result(UpdateCheckStatus.Off);
+    if (decision.mode === UpdateMode.System) return result(UpdateCheckStatus.System);
     if (decision.mode === UpdateMode.Install) return result(INSTALL_STATUS[await deps.askInstaller()]);
     const found = await deps.latestRelease();
     if (found.kind === ReleaseCheckKind.Failed) return result(UpdateCheckStatus.Failed);
@@ -382,17 +420,20 @@ export function updateCheckNote(result: UpdateCheckResult): {
   detail: string;
   act: UpdateAction | null;
 } {
-  const version = result.update?.version ?? MESSAGE.newVersion;
+  const version = result.update?.version;
   if (result.status === UpdateCheckStatus.Current)
     return { message: MESSAGE.current(result.current), detail: "", act: null };
   if (result.status === UpdateCheckStatus.Downloading)
-    return { message: MESSAGE.downloading, detail: MESSAGE.downloadingDetail, act: null };
-  if (result.status === UpdateCheckStatus.Off) return { message: MESSAGE.off, detail: MESSAGE.offDetail, act: null };
+    return { message: MESSAGE.downloading(), detail: MESSAGE.downloadingDetail(), act: null };
+  if (result.status === UpdateCheckStatus.Off)
+    return { message: MESSAGE.off(), detail: MESSAGE.offDetail(), act: null };
+  if (result.status === UpdateCheckStatus.System)
+    return { message: MESSAGE.system(), detail: MESSAGE.systemDetail(), act: null };
   if (result.status === UpdateCheckStatus.Failed)
-    return { message: MESSAGE.failed, detail: MESSAGE.failedDetail, act: null };
+    return { message: MESSAGE.failed(), detail: MESSAGE.failedDetail(), act: null };
   if (result.update?.action === UpdateAction.Download)
-    return { message: MESSAGE.available(version), detail: MESSAGE.availableDetail, act: UpdateAction.Download };
-  return { message: MESSAGE.readyToRestart(version), detail: MESSAGE.readyDetail, act: UpdateAction.Restart };
+    return { message: MESSAGE.available(version), detail: MESSAGE.availableDetail(), act: UpdateAction.Download };
+  return { message: MESSAGE.readyToRestart(version), detail: MESSAGE.readyDetail(), act: UpdateAction.Restart };
 }
 
 /** What starting the updater needs from main: the log, and where a finished download goes. */

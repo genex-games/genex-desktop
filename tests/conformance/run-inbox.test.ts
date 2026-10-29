@@ -95,6 +95,26 @@ describe("a run's inbox, read from the log", () => {
     assert.deepEqual(log.deliveredSince(resumedAt), [], "the first session already handed A over");
   });
 
+  it("a message a lead in its wrap-up was only told is the chat's once it answers it: a resumed run never tells it again", async () => {
+    const told = custom("run_steering", {
+      runId: RUN,
+      text: "add a boss",
+      sourceMessageId: "m1",
+      how: "lead",
+      kept: true,
+    });
+    const log = fakeLog([custom("run_registered", { runId: RUN }), told]);
+    // The run closed before its lead heard it; the chat answers it as a turn of its own, which resumes the run.
+    log.append(
+      custom("autopilot_paused", { runId: RUN }),
+      custom("coordinator_message_processing", { messageId: "m1" }),
+      custom("run_registered", { runId: RUN, resumed: true }),
+      steer("add a boss, from the chat"),
+    );
+    const resumed = createRunInbox(log.ctx as never, { threadId: THREAD, runId: RUN });
+    assert.deepEqual(await resumed.steering(undefined, true, { onlyNew: true }), ["add a boss, from the chat"]);
+  });
+
   it("the lead's wait says USER SAYS once per steer", async () => {
     const log = fakeLog([custom("run_registered", { runId: RUN }), steer("make the sky red")]);
     const lead = waitingLead(log);

@@ -90,6 +90,7 @@ mod posed;
 #[cfg(not(target_arch = "wasm32"))]
 mod warm;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -115,9 +116,10 @@ use genex_render::mesh::{CUBE_TRIANGLES, GlbMaterial, GlbModel, GlbSidecars, Mes
 use genex_render::mesh_lod_runtime::{RUNTIME_LOD_MAX_TRIANGLES, RuntimeLodOutcome, add_runtime_chains};
 use genex_render::meshlet::MeshletSet;
 use genex_render::motion::DrawId;
-use genex_render::letterbox::{letterbox, output_for_window};
+use genex_render::letterbox::{Fit, letterbox, output_for};
 use genex_render::overlay::OverlayPainter;
 use genex_render::lights::SpotLight;
+use crate::look_facts::{LookFacts, LookRaster, MeshIndex, MeshStats};
 use genex_render::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, PointLight, Scene, scaled};
 use genex_render::lod_rows::DrawLod;
 use genex_render::texture::{CompressedTexture, TextureData, TextureFamily, TextureId, TextureKind, family_file, linear_to_srgb, read_ktx2, srgb_to_linear};
@@ -324,6 +326,12 @@ pub struct LoadedModel {
     /// The model-space sphere around every part's mesh (centre xyz, radius; 0 when unknown): a
     /// compound's parts measure their levels from its members' spheres together (LOD-07).
     pub sphere: [f32; 4],
+    /// The model's height above its origin and its reach from its vertical axis (metres, model
+    /// space; 0 when unknown): what a swaying copy's weights are measured over (model wind).
+    pub extent: [f32; 2],
+    /// Each part's geometry as the look facts read it (`__render.look`, AAA review WP-2), in
+    /// `parts` order; empty when it was not measured (a shell that loads meshes itself).
+    pub stats: Vec<Arc<MeshStats>>,
 }
 
 /// One GLB image a [`LoadedModel`] uploaded (C-11, C-14).
@@ -471,8 +479,8 @@ impl Uploads for Resilient {
     }
 
     fn compressed_min_side(&self) -> u32 {
-        // Class 0 is always RGBA8 (`ClassArrays::family`): a family starts at the next class.
-        genex_render::layout::TEXTURE_SIZE_CLASSES[1]
+        // Class 0 is always RGBA8 (`ClassArrays::family`): a family starts at the next slot's class.
+        self.renderer().renderer().compressed_min_side()
     }
 
     fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
@@ -548,6 +556,39 @@ pub struct AssetCache {
     impostors: impostors::Impostors,
     /// The node-posed models' rigid skins (AN-27).
     posed: posed::Posed,
+    /// GLB textures by content (WP-9): one upload per image however many models hold it.
+    pub(crate) shared_textures: SharedTextures,
+    /// The textures built meshes uploaded, by their texels' digest and kind (`gfx.plant`'s seed
+    /// variants embed the same maps): a built mesh's image with the texels of one already on the
+    /// device takes its id instead of a second copy. Textures are never removed, so a shared id
+    /// stays valid.
+    built_textures: Vec<(u64, TextureKind, TextureId)>,
+}
+
+/// Textures a GLB uploaded, by content (WP-9): the same image embedded in several GLBs, or their
+/// identical sidecars, uploads once, so a kit of pieces sharing 2k and 4k scans costs one upload
+/// and one layer a scan, not one a piece. Keyed by an FNV-1a 64 digest of the bytes uploaded (a
+/// sidecar file's, or a decoded image's texels and size) and the slot's kind. The presenter never
+/// removes a model's texture, so a held id stays good as long as the cache.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SharedTextures(BTreeMap<u64, Vec<(TextureKind, TextureId)>>);
+
+impl SharedTextures {
+    /// The texture uploaded from content `digest` as `kind`, if any.
+    fn get(&self, digest: u64, kind: TextureKind) -> Option<TextureId> {
+        self.0.get(&digest)?.iter().find(|(held, _)| *held == kind).map(|(_, id)| *id)
+    }
+
+    /// Remember `id` as the upload of content `digest` as `kind`.
+    fn put(&mut self, digest: u64, kind: TextureKind, id: TextureId) {
+        self.0.entry(digest).or_default().push((kind, id));
+    }
+}
+
+/// The content digest of a decoded image: its size, then its texels.
+fn texels_digest(data: &TextureData) -> u64 {
+    let size = [data.width().to_le_bytes(), data.height().to_le_bytes()].concat();
+    genex_core::digest::fnv1a64_from(data.rgba(), genex_core::digest::fnv1a64(&size))
 }
 
 /// A model loaded with authored levels (LOD-07): its cache key, the GLBs it read and the load's
@@ -635,15 +676,19 @@ fn load_compressed(path: &str, kind: TextureKind, source: &dyn ModelSource, uplo
     if family == TextureFamily::Rgba8 || !is_safe_asset_path(path) {
         return Ok(Compressed::Absent);
     }
-    load_family_file(&family_file(path, family), path, kind, source, uploads, log)
+    load_family_file(&family_file(path, family), path, kind, (source, uploads), None, log)
 }
 
 /// The family file `file` uploaded as `kind` in place of `path` (a loose image, or a GLB's
 /// `<model>#<image>`): absent when the game ships no such file or it is under the family's
 /// smallest size class (the image is held there by design), refused (logged) when it is
 /// unreadable or the renderer refuses it. A lost device is passed on.
-fn load_family_file(file: &str, path: &str, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
+fn load_family_file(file: &str, path: &str, kind: TextureKind, (source, uploads): (&dyn ModelSource, &mut dyn Uploads), shared: Option<&mut SharedTextures>, log: &mut dyn FnMut(&str)) -> Result<Compressed, RenderError> {
     let Some(bytes) = source.model_bytes(file) else { return Ok(Compressed::Absent) };
+    let digest = genex_core::digest::fnv1a64(&bytes);
+    if let Some(id) = shared.as_ref().and_then(|shared| shared.get(digest, kind)) {
+        return Ok(Compressed::Loaded(id));
+    }
     let texture = match read_ktx2(&bytes) {
         Ok(texture) => texture,
         Err(error) => {
@@ -657,7 +702,12 @@ fn load_family_file(file: &str, path: &str, kind: TextureKind, source: &dyn Mode
     }
     let again = source.static_bytes(file).map(|bytes| -> CompressedSource { Arc::new(move || read_ktx2(bytes)) });
     match uploads.add_compressed_texture(&texture, kind, again) {
-        Ok(id) => Ok(Compressed::Loaded(id)),
+        Ok(id) => {
+            if let Some(shared) = shared {
+                shared.put(digest, kind, id);
+            }
+            Ok(Compressed::Loaded(id))
+        }
         Err(error) if error.code() == RenderCode::DeviceLost => Err(error),
         Err(error) => {
             log(&format!("texture {file:?} refused: {error}; loading {path:?}"));
@@ -670,6 +720,18 @@ impl AssetCache {
     /// The model loaded for `path`; `None` when it was refused or never tried.
     pub fn model(&self, path: &str) -> Option<&LoadedModel> {
         self.models.iter().find(|(known, _)| known == path).and_then(|(_, loaded)| loaded.as_ref())
+    }
+
+    /// The geometry of every mesh a frame can draw from this cache: the built-in cube and sphere
+    /// and each loaded model's measured parts (`__render.look`).
+    pub fn mesh_index(&self) -> MeshIndex {
+        let mut index = MeshIndex::with_builtins();
+        for loaded in self.models.iter().filter_map(|(_, loaded)| loaded.as_ref()) {
+            for (part, stats) in loaded.parts.iter().zip(&loaded.stats) {
+                index.insert(part.mesh, Arc::clone(stats));
+            }
+        }
+        index
     }
 
     /// Whether `path` was tried (loaded or refused).
@@ -686,7 +748,7 @@ impl AssetCache {
     /// tried already: for a shell that loads meshes itself, and for tests.
     pub fn insert_model(&mut self, path: &str, mesh: Option<MeshId>) {
         if !self.tried(path) {
-            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4] });
+            let loaded = mesh.map(|mesh| LoadedModel { parts: vec![ModelPart { mesh, material: None }], triangles: 0, textures: Vec::new(), runtime_tangents: false, sphere: [0.0; 4], extent: [0.0; 2], stats: Vec::new() });
             self.models.push((path.to_owned(), loaded));
         }
     }
@@ -790,7 +852,7 @@ impl AssetCache {
             Ok(levels) => (levels, None),
             Err(code) => (Vec::new(), Some(code)),
         };
-        let (loaded, refused) = load_model_levels(path, source, uploads, log, (levels, refused))?;
+        let (loaded, refused) = load_model_levels(path, (source, uploads, &mut self.shared_textures), log, (levels, refused))?;
         if let Some(code) = refused {
             log(&format!("model {path:?}: its levels were refused ({}); drawing it whole", code.wire()));
         }
@@ -802,6 +864,8 @@ impl AssetCache {
     /// `source`, handed to `uploads`; each refusal is told to `log` once. A lost device stops
     /// the load (`device-lost`) and leaves what was not loaded to be tried again.
     pub fn load(&mut self, frame: &Frame, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<(), RenderError> {
+        let built = WithBuiltMeshes { frame, inner: source };
+        let source: &dyn ModelSource = &built;
         if !self.family_chosen {
             let models = self.untried_sidecars(frame, source);
             let textured = texture_paths(frame).next().is_some() || models.iter().any(|model| model.samples_images);
@@ -810,17 +874,29 @@ impl AssetCache {
                 self.family_chosen = true;
             }
         }
+        let mut built_textures = std::mem::take(&mut self.built_textures);
         for (key, model) in model_keys(frame) {
             if self.tried(key) {
                 continue;
             }
             let chained = model.and_then(|model| Some((model.path()?, model.lod_options().filter(|lod| lod.chained())?)));
+            let built = model.and_then(Model::path).is_some_and(crate::mesh::is_mesh_path);
+            let mut sharing = BuiltMeshUploads { inner: &mut *uploads, known: &mut built_textures };
+            let uploads: &mut dyn Uploads = if built { &mut sharing } else { &mut *sharing.inner };
             let loaded = match chained {
-                Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log)?,
-                None => load_model(key, source, uploads, log)?,
+                Some((path, lod)) => self.load_leveled(key, path, lod, source, uploads, log),
+                None => load_model(key, (source, uploads), &mut self.shared_textures, log),
+            };
+            let loaded = match loaded {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    self.built_textures = built_textures;
+                    return Err(error);
+                }
             };
             self.models.push((key.to_owned(), loaded));
         }
+        self.built_textures = built_textures;
         self.characters.load(frame, source, uploads, log)?;
         // AN-27: node-posed models as rigid skins.
         self.posed.load(frame, source, uploads, log)?;
@@ -870,6 +946,133 @@ impl AssetCache {
             self.environments.push((hdri.path.clone(), map));
         }
         Ok(())
+    }
+}
+
+/// `inner` uploading a built mesh's textures (`gfx.mesh`, `gfx.plant`) once per texels and kind:
+/// an image whose texels match one in `known` takes that one's id. Every other upload is
+/// `inner`'s.
+struct BuiltMeshUploads<'a> {
+    inner: &'a mut dyn Uploads,
+    known: &'a mut Vec<(u64, TextureKind, TextureId)>,
+}
+
+impl BuiltMeshUploads<'_> {
+    /// The digest of `data`'s size and texels.
+    fn digest(data: &TextureData) -> u64 {
+        let mut bytes = Vec::with_capacity(8 + data.rgba().len());
+        bytes.extend(data.width().to_le_bytes());
+        bytes.extend(data.height().to_le_bytes());
+        bytes.extend_from_slice(data.rgba());
+        genex_core::digest::fnv1a64(&bytes)
+    }
+
+    /// The known id of `data` as `kind`, else the one `add` uploads it as (remembered).
+    fn shared(&mut self, data: &TextureData, kind: TextureKind, add: impl FnOnce(&mut dyn Uploads) -> Result<TextureId, RenderError>) -> Result<TextureId, RenderError> {
+        let digest = BuiltMeshUploads::digest(data);
+        if let Some((_, _, id)) = self.known.iter().find(|(known, known_kind, _)| *known == digest && *known_kind == kind) {
+            return Ok(*id);
+        }
+        let id = add(&mut *self.inner)?;
+        self.known.push((digest, kind, id));
+        Ok(id)
+    }
+}
+
+impl Uploads for BuiltMeshUploads<'_> {
+    fn add_mesh(&mut self, mesh: MeshData) -> Result<MeshId, RenderError> {
+        self.inner.add_mesh(mesh)
+    }
+
+    fn add_meshes(&mut self, meshes: Vec<MeshData>) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_meshes(meshes)
+    }
+
+    fn add_meshes_with_meshlets(&mut self, parts: Vec<(MeshData, Option<MeshletSet>)>) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_meshes_with_meshlets(parts)
+    }
+
+    fn add_model_parts(&mut self, parts: ModelParts) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_model_parts(parts)
+    }
+
+    fn add_texture(&mut self, data: &TextureData, kind: TextureKind) -> Result<TextureId, RenderError> {
+        self.shared(data, kind, |inner| inner.add_texture(data, kind))
+    }
+
+    fn add_skinned_model(&mut self, model: &genex_render::skin::SkinnedModel) -> Result<genex_render::skin::SkinId, RenderError> {
+        self.inner.add_skinned_model(model)
+    }
+
+    fn remove_mesh(&mut self, id: MeshId) -> Result<(), RenderError> {
+        self.inner.remove_mesh(id)
+    }
+
+    fn add_meshes_from(&mut self, parts: ModelParts, source: PartsSource) -> Result<Vec<MeshId>, RenderError> {
+        self.inner.add_meshes_from(parts, source)
+    }
+
+    fn add_texture_from(&mut self, data: &TextureData, kind: TextureKind, source: TextureSource) -> Result<TextureId, RenderError> {
+        self.shared(data, kind, |inner| inner.add_texture_from(data, kind, source))
+    }
+
+    fn environment_map_width(&self) -> u32 {
+        self.inner.environment_map_width()
+    }
+
+    fn compressed_families(&self) -> Vec<TextureFamily> {
+        self.inner.compressed_families()
+    }
+
+    fn texture_family(&self) -> TextureFamily {
+        self.inner.texture_family()
+    }
+
+    fn compressed_min_side(&self) -> u32 {
+        self.inner.compressed_min_side()
+    }
+
+    fn set_texture_family(&mut self, family: TextureFamily) -> Result<(), RenderError> {
+        self.inner.set_texture_family(family)
+    }
+
+    fn add_compressed_texture(&mut self, texture: &CompressedTexture, kind: TextureKind, source: Option<CompressedSource>) -> Result<TextureId, RenderError> {
+        self.inner.add_compressed_texture(texture, kind, source)
+    }
+}
+
+/// `inner` with the meshes a game built (`gfx.mesh`, Bodycam B2c) that `frame` draws served first:
+/// their GLBs ride on the handles, so every loader reads them as files. Only a built mesh's path
+/// ([`crate::mesh::MESH_PATH_PREFIX`]) is looked up in the frame.
+struct WithBuiltMeshes<'a> {
+    frame: &'a Frame,
+    inner: &'a dyn ModelSource,
+}
+
+impl WithBuiltMeshes<'_> {
+    fn built(&self, path: &str) -> Option<&[u8]> {
+        if !crate::mesh::is_mesh_path(path) {
+            return None;
+        }
+        let reached = drawn_models(self.frame).flat_map(Model::reached);
+        reached.filter(|model| model.path() == Some(path)).find_map(Model::inline_glb)
+    }
+}
+
+impl ModelSource for WithBuiltMeshes<'_> {
+    fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        self.built(path).map(<[u8]>::to_vec).or_else(|| self.inner.model_bytes(path))
+    }
+
+    fn has_asset(&self, path: &str) -> bool {
+        self.built(path).is_some() || self.inner.has_asset(path)
+    }
+
+    fn static_bytes(&self, path: &str) -> Option<&'static [u8]> {
+        if self.built(path).is_some() {
+            return None;
+        }
+        self.inner.static_bytes(path)
     }
 }
 
@@ -986,9 +1189,15 @@ fn texture_paths(frame: &Frame) -> impl Iterator<Item = (&str, TextureKind)> {
             (material.base_texture(), TextureKind::Color),
             (material.normal_texture(), TextureKind::Normal),
             (material.metal_rough_texture(), TextureKind::Data),
+            (material.occlusion_texture().map(|(path, _)| path), TextureKind::Data),
             (material.emissive_texture(), TextureKind::Color),
         ];
-        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind)))
+        // The layering's maps (AAA materials): detail, second layer and height.
+        let layered = material.layering().textures().into_iter().map(|(path, color, normal)| {
+            let kind = if color { TextureKind::Color } else if normal { TextureKind::Normal } else { TextureKind::Data };
+            (path, kind)
+        });
+        slots.into_iter().filter_map(|(path, kind)| Some((path?, kind))).chain(layered)
     });
     // The terrain's layers (renderer pass 2 A.7): base colour and height, then the data texture.
     let terrain = frame.drawn_terrain().into_iter().flat_map(|terrain| terrain.layers().iter()).flat_map(|layer| {
@@ -1148,10 +1357,26 @@ fn upload_texture(uploads: &mut dyn Uploads, texture: TextureUpload<'_>, what: &
     }
 }
 
+/// [`upload_texture`] of a GLB's decoded image, or the texture an identical image already took
+/// ([`SharedTextures`]).
+fn shared_upload(uploads: &mut dyn Uploads, shared: &mut SharedTextures, texture: TextureUpload<'_>, what: &str, log: &mut dyn FnMut(&str)) -> Result<Option<TextureId>, RenderError> {
+    let (data, kind, _) = &texture;
+    let digest = texels_digest(data);
+    if let Some(id) = shared.get(digest, *kind) {
+        return Ok(Some(id));
+    }
+    let kind = *kind;
+    let id = upload_texture(uploads, texture, what, log)?;
+    if let Some(id) = id {
+        shared.put(digest, kind, id);
+    }
+    Ok(id)
+}
+
 /// Load one model: every part's mesh and the textures its materials sample. A missing or
 /// malformed file, or a refused mesh, refuses the model (logged); a refused texture only its slot.
-pub(crate) fn load_model(path: &str, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
-    Ok(load_model_levels(path, source, uploads, log, (Vec::new(), None))?.0)
+pub(crate) fn load_model(path: &str, (source, uploads): (&dyn ModelSource, &mut dyn Uploads), shared: &mut SharedTextures, log: &mut dyn FnMut(&str)) -> Result<Option<LoadedModel>, RenderError> {
+    Ok(load_model_levels(path, (source, uploads, shared), log, (Vec::new(), None))?.0)
 }
 
 /// Each authored level's parts with its switch distance (LOD-07), read from the game's assets:
@@ -1222,6 +1447,16 @@ fn union_sphere(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [a[0] + offset[0] * t, a[1] + offset[1] * t, a[2] + offset[2] * t, radius]
 }
 
+/// The height above the origin and the reach from the vertical axis of every part's mesh (model
+/// wind's extent): the highest vertex's y and the farthest vertex's distance from the y axis.
+fn parts_extent(parts: &ModelParts) -> [f32; 2] {
+    let vertices = parts.iter().flat_map(|part| part.mesh.vertices.iter());
+    vertices.fold([0.0_f32; 2], |[height, reach], vertex| {
+        let [x, y, z] = vertex.position;
+        [height.max(y), reach.max((x * x + z * z).sqrt())]
+    })
+}
+
 /// The sphere around every part's mesh.
 fn parts_sphere(parts: &ModelParts) -> [f32; 4] {
     parts.iter().fold([0.0; 4], |sphere, part| {
@@ -1236,8 +1471,7 @@ fn parts_sphere(parts: &ModelParts) -> [f32; 4] {
 /// refusal.
 fn load_model_levels(
     path: &str,
-    source: &dyn ModelSource,
-    uploads: &mut dyn Uploads,
+    (source, uploads, shared): (&dyn ModelSource, &mut dyn Uploads, &mut SharedTextures),
     log: &mut dyn FnMut(&str),
     (levels, refused): (Vec<(ModelParts, f32)>, Option<LodRefusalCode>),
 ) -> Result<(Option<LoadedModel>, Option<LodRefusalCode>), RenderError> {
@@ -1264,6 +1498,7 @@ fn load_model_levels(
     // Its levels of detail (`genex_lods`, A6.9) come along: far instances draw a coarser level.
     let mut model_parts: ModelParts = glb.model_parts();
     let sphere = parts_sphere(&model_parts);
+    let extent = parts_extent(&model_parts);
     let mismatch = levels.iter().any(|(level, _)| level.len() != model_parts.len());
     let refused = refused.or(mismatch.then_some(LodRefusalCode::LevelsMismatch));
     let authored = refused.is_none() && !levels.is_empty();
@@ -1297,14 +1532,15 @@ fn load_model_levels(
         }
         triangles = triangles.saturating_add(triangles_of(&part.mesh));
         let material = match part.material {
-            Some(material) => Some(glb_textures(GlbSource { path, bytes: &bytes, still, glb: &glb }, &material, &mut images, (source, uploads), log)?),
+            Some(material) => Some(glb_textures(GlbSource { path, bytes: &bytes, still, glb: &glb }, &material, &mut images, (source, uploads, &mut *shared), log)?),
             None => None,
         };
         parts.push(ModelPart { mesh, material });
     }
     let textures = images.iter().filter(|(_, id)| id.is_some()).map(|(texture, _)| *texture).collect();
     let runtime_tangents = glb.parts().iter().any(|part| part.runtime_tangents);
-    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere }), refused))
+    let stats = glb.parts().iter().map(|part| Arc::new(MeshStats::of(&part.mesh))).collect();
+    Ok((Some(LoadedModel { parts, triangles, textures, runtime_tangents, sphere, extent, stats }), refused))
 }
 
 /// A model's GLB as [`glb_textures`] reads its images: its path, its bytes (an image without a
@@ -1335,11 +1571,11 @@ enum Sidecar {
 /// Image `image` of `model` uploaded as `kind` from its sidecar in the renderer's family (C-14);
 /// `None` when the GLB names no sidecar for it, the renderer stores RGBA8 or the family file is
 /// not shipped, so the embedded image loads. A lost device is passed on.
-fn upload_sidecar(model: &GlbSource<'_>, image: u32, kind: TextureKind, source: &dyn ModelSource, uploads: &mut dyn Uploads, log: &mut dyn FnMut(&str)) -> Result<Option<Sidecar>, RenderError> {
+fn upload_sidecar(model: &GlbSource<'_>, (image, kind): (u32, TextureKind), (source, uploads, shared): (&dyn ModelSource, &mut dyn Uploads, &mut SharedTextures), log: &mut dyn FnMut(&str)) -> Result<Option<Sidecar>, RenderError> {
     let family = uploads.texture_family();
     let file = model.glb.sidecars().stem(image, kind).filter(|_| family != TextureFamily::Rgba8).and_then(|stem| sidecar_file(model.path, stem, family));
     let Some(file) = file else { return Ok(None) };
-    match load_family_file(&file, &format!("{}#{image}", model.path), kind, source, uploads, log)? {
+    match load_family_file(&file, &format!("{}#{image}", model.path), kind, (source, uploads), Some(shared), log)? {
         Compressed::Loaded(id) => Ok(Some(Sidecar::Loaded(id, family))),
         Compressed::Absent => Ok(None),
         Compressed::Refused => Ok(Some(Sidecar::Refused)),
@@ -1354,14 +1590,14 @@ fn glb_textures(
     model: GlbSource<'_>,
     material: &GlbMaterial,
     images: &mut Vec<(ModelTexture, Option<TextureId>)>,
-    (source, uploads): (&dyn ModelSource, &mut dyn Uploads),
+    (source, uploads, shared): (&dyn ModelSource, &mut dyn Uploads, &mut SharedTextures),
     log: &mut dyn FnMut(&str),
 ) -> Result<GlbMaterial<TextureId>, RenderError> {
     for (image, kind) in material.textures() {
         if images.iter().any(|(done, _)| done.image == image && done.kind == kind) {
             continue;
         }
-        let refused = match upload_sidecar(&model, image, kind, source, uploads, log)? {
+        let refused = match upload_sidecar(&model, (image, kind), (source, uploads, &mut *shared), log)? {
             Some(Sidecar::Loaded(id, family)) => {
                 images.push((ModelTexture { image, kind, origin: TextureOrigin::Family(family), issue: None }, Some(id)));
                 continue;
@@ -1372,7 +1608,7 @@ fn glb_textures(
         let what = format!("model {:?} image {image}", model.path);
         let again = model.still.map(|bytes| -> TextureSource { Arc::new(move || GlbModel::image_from_glb(bytes, image)) });
         let id = match GlbModel::image_from_glb(model.bytes, image) {
-            Ok(data) => upload_texture(uploads, (&data, kind, again), &what, log)?,
+            Ok(data) => shared_upload(uploads, shared, (&data, kind, again), &what, log)?,
             Err(error) => {
                 log(&format!("{what} refused: {error}"));
                 None
@@ -1380,6 +1616,8 @@ fn glb_textures(
         };
         let issue = match id {
             None => None,
+            // A mesh the game built (`gfx.mesh`, `gfx.plant`) has no import step to compress it.
+            Some(_) if crate::mesh::is_mesh_path(model.path) => None,
             Some(_) if refused => Some(AssetIssueCode::TextureFamilyRefused),
             Some(_) if !ships_any_sidecar(&model, image, kind, source) => Some(AssetIssueCode::TextureUncompressed),
             Some(_) => None,
@@ -1420,6 +1658,11 @@ pub type PassStatus = (String, PassStage, Option<RenderCode>);
 pub struct Presenter {
     /// The renderer on its device, re-created after a device loss.
     pub resilient: Resilient,
+    /// The last look facts measured (`__render.look`): Live measures every
+    /// [`LOOK_FACTS_LIVE_EVERY`] frames, a capture every time.
+    look: LookCache,
+    /// The Live exposure's last seconds (`__render.exposureTrace`).
+    exposure_trace: crate::look_facts::ExposureTrace,
     /// The game's custom GPU passes (M2.19), registered at install.
     pub passes: CustomPasses,
     hud: HudPainter,
@@ -1440,6 +1683,13 @@ pub struct Presenter {
     /// The window the presents go to, in pixels, once a shell said or presented
     /// ([`Presenter::set_window_size`]): Live frames draw at its letterbox's pixels.
     window: Option<(u32, u32)>,
+    /// How the last drawn game fills the window ([`crate::Game::fit`]): under expand Live draws at
+    /// the window's whole pixels and the present fills it.
+    fit: Fit,
+    /// Whether Live's output is capped at the class's reference resolution (the default); a dev
+    /// build's measured window run ([`crate::desktop`]'s `GENEX_BENCH`) may draw the window's own
+    /// pixels ([`Presenter::set_output_capped`]).
+    output_capped: bool,
     /// The size captures draw at when one was asked for ([`Presenter::set_capture_size`]).
     capture_size: Option<(u32, u32)>,
     /// What the next settled captures ask of the look's lens ([`Presenter::set_capture_lens`]).
@@ -1583,6 +1833,15 @@ impl OverlayPainter for HudOverlay<'_> {
     }
 }
 
+/// Move `paint` onto `place` (the world's rectangle in the target's pixels, under expand);
+/// answers the shift in HUD points.
+fn translate_hud(paint: &mut HudPaint, place: genex_render::letterbox::Viewport) -> genex_hud::egui::Vec2 {
+    let per_point = paint.pixels_per_point.max(f32::MIN_POSITIVE);
+    let shift = genex_hud::egui::vec2(place.x as f32, place.y as f32) / per_point;
+    paint.translate(shift);
+    shift
+}
+
 /// Whether `paint` has anything to draw or upload.
 fn paints(paint: &HudPaint) -> bool {
     let textures = &paint.textures_delta;
@@ -1616,9 +1875,13 @@ impl Presenter {
             profile_overlay: genex_hud::ProfileOverlay::default(),
             window_pixels_per_point: WORLD_PIXELS_PER_POINT,
             window: None,
+            fit: Fit::Letterbox,
+            output_capped: true,
             capture_size: None,
             capture_lens: crate::render::CaptureLens::default(),
             last_output: None,
+            look: LookCache::default(),
+            exposure_trace: crate::look_facts::ExposureTrace::default(),
             source,
             assets: AssetCache::default(),
             reloading: Vec::new(),
@@ -1718,12 +1981,28 @@ impl Presenter {
         1 + spare + warming
     }
 
+    /// Whether a warm-up thread is running, so it may submit GPU work at any moment (the boot's or a
+    /// settings change's). A shell configures no window surface meanwhile: wgpu's
+    /// `Surface::configure` waits for the queue to go idle and refuses, as an uncaptured validation
+    /// error, when another thread submits during that wait ("Failed to wait for GPU to come idle
+    /// before reconfiguring the Surface"). Never on the web, which warms nothing off its one thread.
+    pub fn warm_in_flight(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.warming.as_ref().is_some_and(|warming| !warming.is_finished());
+        #[cfg(target_arch = "wasm32")]
+        false
+    }
+
     /// Whether the boot's warm-up ([`Presenter::warm_boot`]) is still compiling the first Live
-    /// frame's pipelines: a shell shows its loading screen meanwhile instead of waiting on that
-    /// frame (owner decision D11). Never on the web, which warms nothing off its one thread.
+    /// frame's pipelines, or a pipeline it handed over is still compiling: a shell shows its
+    /// loading screen meanwhile instead of waiting on that frame (owner decision D11). The warm
+    /// frame also hands over the variants its content can take later without waiting for them (a
+    /// far character's vertex skinning, TAAU's dynamic-resolution step), so the window shows once
+    /// those are made too and play never waits for a compile (game systems R-20, EP-X1). Never
+    /// on the web, which warms nothing off its one thread.
     pub fn boot_warming(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
-        return self.held.is_none() && self.warming.as_ref().is_some_and(|warming| !warming.is_finished());
+        return self.held.is_none() && self.warming.as_ref().is_some_and(|warming| !warming.is_finished() || genex_render::compile::compile_tally().pending());
         #[cfg(target_arch = "wasm32")]
         false
     }
@@ -2010,6 +2289,18 @@ impl Presenter {
         }
     }
 
+    /// Cap Live's output at the class's reference resolution (`true`, the default) or draw the
+    /// window's own letterbox pixels (`false`: a dev build's measured window run at a display's
+    /// native resolution). Captures keep their own size either way.
+    pub(crate) fn set_output_capped(&mut self, capped: bool) {
+        self.output_capped = capped;
+    }
+
+    /// The output size the last draw drew at (Live's window pixels or a capture's size), if any.
+    pub(crate) fn last_output(&self) -> Option<(u32, u32)> {
+        self.last_output
+    }
+
     /// Draw the next settled captures with what `lens` asks of the look's depth of field and
     /// motion blur (`capture`'s `lens`; renderer pass 2 A.9). Neither by default: a capture is a
     /// still of the held frame.
@@ -2024,14 +2315,16 @@ impl Presenter {
     }
 
     /// The size Live frames draw at now (renderer pass 2, P2-0.9 step B; findings F1/RC-03): the
-    /// window's letterbox in its own pixels, capped at the Live class's reference resolution's
-    /// pixels (`presets::reference_resolution`), or the world size before a window is known. The
-    /// window present copies it texel for texel, or upscales it past the cap.
+    /// window's letterbox in its own pixels, capped at `RenderControl::live_output_cap_px` (four
+    /// times the class's render budget where Live upscales temporally to the window, lane UP; the
+    /// class's reference resolution's pixels elsewhere), or the world size before a window is
+    /// known. The window present copies it texel for texel, or upscales it past the cap.
     fn live_output(&self, handle: &RenderHandle) -> (u32, u32) {
         let world = self.resilient.renderer().renderer().logical_size();
         let Some(window) = self.window else { return world };
-        let (cap_w, cap_h) = genex_render::presets::reference_resolution(handle.borrow().live_class());
-        output_for_window(world, window, u64::from(cap_w) * u64::from(cap_h))
+        // A cap of 0 is none: the window's own letterbox pixels.
+        let cap = if self.output_capped { handle.borrow().live_output_cap_px() } else { 0 };
+        output_for(world, window, cap, self.fit)
     }
 
     /// Hand the settings this draw's output size (Live's window pixels, or the capture's size)
@@ -2043,7 +2336,11 @@ impl Presenter {
         }
         let output = self.live_output(handle);
         let world = self.resilient.renderer().renderer().logical_size();
-        let window = self.window.map(|window| letterbox(window, world)).map(|view| (view.width, view.height));
+        // The present fills the whole window under expand, the world's letterbox otherwise.
+        let filled = |window: (u32, u32)| genex_render::letterbox::present::present_view(window, output, self.fit == Fit::Expand);
+        let letterboxed = |window: (u32, u32)| letterbox(window, world);
+        let place = |window| if self.fit == Fit::Expand { filled(window) } else { letterboxed(window) };
+        let window = self.window.map(place).map(|view| (view.width, view.height));
         handle.borrow_mut().set_live_output(output, window);
         output
     }
@@ -2052,6 +2349,7 @@ impl Presenter {
     /// size the renderer had and is logged.
     fn set_output(&mut self, output: (u32, u32)) {
         let renderer = self.resilient.renderer_mut().renderer_mut();
+        renderer.set_fit(self.fit);
         if let Err(error) = renderer.set_output_size(output) {
             (self.log)(&format!("output size {}x{} refused: {error}", output.0, output.1));
         }
@@ -2081,9 +2379,16 @@ impl Presenter {
         paint.textures_delta = std::mem::take(&mut self.hud_unsent);
         paint.pixels_per_point = self.window_pixels_per_point;
         let painted = paints(&paint);
+        // Under expand the present fills the window and the HUD keeps to the world's rectangle.
+        let world = self.resilient.renderer().renderer().logical_size();
+        let place = (self.fit == Fit::Expand).then(|| letterbox(window, world));
+        let shift = place.map(|place| translate_hud(&mut paint, place));
         let mut overlay = HudOverlay { painter: &mut self.hud, paint: &mut paint };
         let overlay: Option<&mut dyn OverlayPainter> = if painted { Some(&mut overlay) } else { None };
         self.resilient.present_with(target, format, window, overlay);
+        if let Some(shift) = shift {
+            paint.translate(-shift);
+        }
         // What the painter did not take (a lost device paints nothing) waits for the next one.
         self.hud_unsent = std::mem::take(&mut paint.textures_delta);
         self.live_hud = Some(paint);
@@ -2114,17 +2419,25 @@ impl Presenter {
     pub fn draw_view<W: Default + 'static>(&mut self, runtime: &mut Runtime<W>, view: View<'_>) -> Option<Result<Drawn, RenderError>> {
         let camera = runtime.camera(view)?;
         let mut frame = runtime.frame(view)?;
+        self.fit = runtime.fit();
         let handle = self.attach(runtime);
         if let Err(error) = self.stream_frame(runtime, &handle, &camera, &mut frame) {
             return Some(Err(error));
         }
         let output = self.frame_output(&handle);
         let world = self.resilient.renderer().renderer().logical_size();
+        // Under expand an output taller than the world widens the view to keep the world's width.
+        let camera = camera.for_output([world.0, world.1], output, self.fit);
         // A capture paints its HUD into the world target at the capture's own pixels per point (1 at
-        // the world size); Live paints it over the window after the upscale.
-        let capture_ppp = output.0 as f32 / world.0.max(1) as f32;
+        // the world size); Live paints it over the window after the upscale. Under expand the
+        // world, and so the HUD, sits on the output's letterbox rectangle.
+        let expand_place = (self.fit == Fit::Expand).then(|| letterbox(output, world));
+        let capture_ppp = expand_place.map_or(output.0 as f32, |place| place.width as f32) / world.0.max(1) as f32;
         let pixels_per_point = if self.capturing { capture_ppp } else { self.window_pixels_per_point };
         let mut hud = runtime.hud_paint(pixels_per_point);
+        if let Some(place) = expand_place.filter(|_| self.capturing) {
+            translate_hud(&mut hud, place);
+        }
         let live = !self.capturing;
         if live {
             // PROF-8: the dev flavour's Ctrl+Shift+P, and the numbers a shown overlay reads.
@@ -2158,11 +2471,14 @@ impl Presenter {
         let timing = live.then(|| self.begin_live());
         // Characters' poses (AN-17), over their skins (loaded first): Live's rate bands read the
         // game camera, whatever the view.
-        if let Err(error) = self.load(&frame) {
+        if let Err(error) = self.load_characters(runtime).and_then(|()| self.load(&frame)) {
             return Some(Err(error));
         }
         let game_camera = runtime.camera(View::Game).unwrap_or(camera);
-        self.assets.pose_characters(&frame, &game_camera, runtime.tick(), live);
+        {
+            let _pose = crate::profile::engine_scope(genex_profile::EngineScope::Pose);
+            self.assets.pose_characters(&frame, &game_camera, runtime.tick(), live);
+        }
         let drawn = crate::gpu::host::with_passes(runtime, |passes, tick| self.draw(&frame, &camera, passes, tick, &mut hud));
         if let Some(timing) = timing {
             self.end_live(&handle, timing);
@@ -2177,6 +2493,7 @@ impl Presenter {
         handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
+        handle.borrow_mut().note_point_atlas(self.resilient.renderer().renderer().uses_shadowed_points());
         // The impostors baked on the renderer in use (LOD-16, `volatile.render.lod`).
         handle.borrow_mut().note_impostors(self.assets.impostors.stats());
         // What the frame's characters did and how the renderer skinned them (AN-23).
@@ -2186,6 +2503,13 @@ impl Presenter {
             runtime.note_missing_models(&drawn.missing_models);
             runtime.note_lod_refused(&drawn.lod_refused);
             runtime.note_texture_facts(&drawn.textures, &drawn.asset_issues);
+            runtime.note_look_facts(self.look.measure(&frame, &camera, &self.assets, output, live).cloned());
+            let exposure = self.resilient.renderer().exposure_telemetry();
+            if live {
+                self.exposure_trace.note(runtime.tick() as f64 * FIXED_STEP_MS / 1000.0, &exposure);
+            }
+            runtime.note_exposure(exposure);
+            runtime.note_exposure_trace(&self.exposure_trace);
         }
         Some(drawn)
     }
@@ -2396,6 +2720,14 @@ impl Presenter {
     /// Load every model and material texture `frame` draws that was never tried; a refusal is
     /// logged once. A lost device stops the frame (`device-lost`) and leaves the rest to be tried
     /// again.
+    /// Skin every character the game made (`gfx.character`) that no frame drew yet: the renderer
+    /// then compiles the skinned variants (a far character's vertex skinning) on the frame that has
+    /// them, the boot's warm frame, never on the frame a character first walks far (R-20, EP-X1).
+    fn load_characters<W: Default + 'static>(&mut self, runtime: &Runtime<W>) -> Result<(), RenderError> {
+        let log = self.log;
+        self.assets.characters.load_paths(&runtime.character_paths(), &*self.source, &mut self.resilient, &mut |line| log(line))
+    }
+
     fn load(&mut self, frame: &Frame) -> Result<(), RenderError> {
         let log = self.log;
         self.assets.load(frame, &*self.source, &mut self.resilient, &mut |line| log(line))?;
@@ -2885,6 +3217,12 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     let mut surface = Material::color(rgba(tinted(base_color, tint))).with_pbr(metallic, roughness);
     surface.base_texture = base_texture;
     surface.metal_rough_texture = texture(material.metal_rough_texture(), TextureKind::Data);
+    // An ORM file names one texture in both slots, so its red is read from the metal-rough fetch.
+    if let Some((occlusion, strength)) = material.occlusion_texture().and_then(|(path, strength)| Some((texture(Some(path), TextureKind::Data)?, strength))) {
+        surface = surface.with_occlusion_texture(occlusion, strength);
+    }
+    surface.uv = material.uv_mapping();
+    surface.variation = material.uv_variation();
     if let Some(normal) = texture(material.normal_texture(), TextureKind::Normal) {
         let scale = if material.normal_scale.is_finite() { material.normal_scale } else { 1.0 };
         surface = surface.with_normal_map(normal, scale);
@@ -2892,8 +3230,48 @@ fn surface(material: &crate::Material, tint: Color, assets: &AssetCache) -> Mate
     surface = surface.with_emissive(rgb(material.emissive), intensity(material.emissive_strength));
     surface.emissive_texture = texture(material.emissive_texture(), TextureKind::Color);
     surface.subsurface = material.subsurface();
+    surface.layers = layers_of(material.layering(), assets);
     surface
 }
+
+/// The renderer's layers for a facade material's layering (AAA materials), its maps as `assets`
+/// loaded them: a map not loaded is left out (a detail or layer without any map keeps its tint,
+/// parallax without its height map is off).
+fn layers_of(layering: &crate::layers::Layering, assets: &AssetCache) -> genex_render::layers::MaterialLayers {
+    use genex_render::layers::{Detail, MaterialLayer, MaterialLayers, Parallax};
+    let texture = |path: Option<&str>, kind: TextureKind| path.and_then(|path| assets.texture(path, kind));
+    let detail = layering.detail.as_ref().map(|d| Detail {
+        albedo: texture(d.albedo.as_deref(), TextureKind::Color),
+        normal: texture(d.normal.as_deref(), TextureKind::Normal),
+        tiles: d.tiles,
+        albedo_strength: d.albedo_strength,
+        normal_strength: d.normal_strength,
+        fade_metres: d.fade_metres,
+    });
+    let layer = layering.layer.as_ref().map(|l| {
+        let linear = |c: u8| genex_render::texture::srgb_to_linear(c);
+        MaterialLayer {
+            base: texture(l.base.as_deref(), TextureKind::Color),
+            normal: texture(l.normal.as_deref(), TextureKind::Normal),
+            orm: texture(l.orm.as_deref(), TextureKind::Data),
+            height: texture(l.height.as_deref(), TextureKind::Data),
+            tint: [linear(l.tint.r), linear(l.tint.g), linear(l.tint.b)],
+            roughness: l.roughness,
+            tiles: l.tiles,
+            mask: l.mask,
+            mask_metres: l.mask_metres,
+            blend_depth: l.blend_depth,
+        }
+    });
+    let parallax = layering.parallax.as_ref().and_then(|(path, depth)| {
+        let height = texture(Some(&**path), TextureKind::Data)?;
+        Some(Parallax { height, depth: *depth, steps: PARALLAX_STEPS })
+    });
+    MaterialLayers { cover: layering.cover.map(|c| c.render()), detail, layer, parallax, lobes: layering.lobes }
+}
+
+/// The most steps a facade material's parallax search takes at a grazing view.
+const PARALLAX_STEPS: u32 = 32;
 
 /// The renderer's decal for a facade decal (renderer pass 2 A.10), its maps as `assets` loaded
 /// them: `None` while a base-colour texture it names is not loaded (missing, refused or still
@@ -2976,6 +3354,10 @@ fn lighting(lights: &Lights) -> Lighting {
         .filter(|light| usable_light(light.position, light.range))
         .map(|light| PointLight { position: light.position.to_array(), range: light.range, color: rgb(light.color), intensity: intensity(light.intensity) })
         .collect();
+    // The point lights asking for a cube shadow map, by their index among the kept ones (AAA review
+    // WP-15).
+    lighting.shadowed_points =
+        lights.points.iter().filter(|light| usable_light(light.position, light.range)).enumerate().filter(|(_, light)| light.shadow).map(|(index, _)| index).collect();
     lighting.spots = lights.spots.iter().filter(|light| usable_light(light.position, light.range)).map(spot_light).collect();
     // The renderer holds or drops a hostile probe (`probes::ReflectionProbe::held`).
     lighting.reflection_probes = lights
@@ -2999,6 +3381,8 @@ fn lighting(lights: &Lights) -> Lighting {
             cells: volume.cells,
             blend: volume.blend,
             intensity: volume.intensity,
+            // The bounces after the first, at a lived-in room's albedo (AAA push P3).
+            bounce: genex_render::irradiance::DEFAULT_BOUNCE,
         })
         .collect();
     lighting
@@ -3105,18 +3489,200 @@ impl WorldSink for ImmediateFrame {
 fn write_world(sink: &mut impl WorldSink, frame: &Frame, assets: &AssetCache, drawn: &mut Drawn) {
     *sink.lighting() = lighting(frame.lights());
     sink.lighting().decals = frame.decals().iter().filter_map(|decal| decal_of(decal, assets)).collect();
+    let cover = frame.world_cover().map(|cover| cover.render());
     for draw in frame.draws() {
         sink.tag(&draw.tag);
         sink.id(draw.id);
-        let triangles = push_shape(sink, assets, &mut drawn.missing_models, &draw.shape);
+        let triangles = match cover {
+            _ if draw.view_model => push_shape(&mut MaterialSink::new(&mut *sink, view_model_material, true), assets, &mut drawn.missing_models, &draw.shape),
+            Some(cover) => push_shape(&mut MaterialSink::new(&mut *sink, |m| world_covered(m, cover), false), assets, &mut drawn.missing_models, &draw.shape),
+            None => push_shape(sink, assets, &mut drawn.missing_models, &draw.shape),
+        };
         note_triangles(drawn, &draw.tag, triangles);
+    }
+}
+
+/// A sink handing every material it draws through `map`, everything else passed through: the
+/// first-person view model ([`Frame::view_model`], `Material::view_model`) and the world's cover
+/// ([`Frame::cover_world`]). Skinned draws take `map` only when `skinned` says so.
+struct MaterialSink<'a, S: WorldSink, F: Fn(Material) -> Material> {
+    sink: &'a mut S,
+    map: F,
+    skinned: bool,
+}
+
+impl<'a, S: WorldSink, F: Fn(Material) -> Material> MaterialSink<'a, S, F> {
+    fn new(sink: &'a mut S, map: F, skinned: bool) -> Self {
+        MaterialSink { sink, map, skinned }
+    }
+}
+
+/// `material` as the view model draws it.
+fn view_model_material(material: Material) -> Material {
+    Material { view_model: true, ..material }
+}
+
+/// `material` under the world's `cover` when it carries none of its own (AAA materials).
+fn world_covered(mut material: Material, cover: genex_render::layers::Cover) -> Material {
+    material.layers.cover.get_or_insert(cover);
+    material
+}
+
+impl<S: WorldSink, F: Fn(Material) -> Material> characters::SkinSink for MaterialSink<'_, S, F> {
+    fn skinned(&mut self, skin: genex_render::skin::SkinId, model: [f32; 16], joints: Vec<[f32; 16]>, materials: Vec<Material>) {
+        let materials = if self.skinned { materials.into_iter().map(&self.map).collect() } else { materials };
+        self.sink.skinned(skin, model, joints, materials);
+    }
+}
+
+impl<S: WorldSink, F: Fn(Material) -> Material> WorldSink for MaterialSink<'_, S, F> {
+    fn tag(&mut self, name: &str) {
+        self.sink.tag(name);
+    }
+
+    fn id(&mut self, id: Option<DrawId>) {
+        self.sink.id(id);
+    }
+
+    fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
+        self.sink.mesh(mesh, model, (self.map)(material));
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        self.sink.group(group, (self.map)(material));
+    }
+
+    fn line(&mut self, from: [f32; 3], to: [f32; 3], color: [u8; 4]) {
+        self.sink.line(from, to, color);
+    }
+
+    fn lines(&mut self, vertices: &[LineVertex]) {
+        self.sink.lines(vertices);
+    }
+
+    fn lighting(&mut self) -> &mut Lighting {
+        self.sink.lighting()
+    }
+
+    fn lod(&mut self, lod: DrawLod) {
+        self.sink.lod(lod);
+    }
+
+    fn far_rule(&mut self, rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        self.sink.far_rule(rule)
+    }
+}
+
+/// Live frames between two look-fact measurements (a capture measures every time): the raster is a
+/// few hundred thousand triangles at most, too much to pay every frame for a display figure.
+pub const LOOK_FACTS_LIVE_EVERY: u32 = 15;
+
+/// The presenter's last look facts and the Live frames since they were measured.
+#[derive(Debug, Default)]
+struct LookCache {
+    facts: Option<LookFacts>,
+    age: Option<u32>,
+}
+
+impl LookCache {
+    /// The look facts of `frame` from `camera` at `output`: measured on a capture, on the first
+    /// Live frame and every [`LOOK_FACTS_LIVE_EVERY`] after it, otherwise the last ones.
+    fn measure(&mut self, frame: &Frame, camera: &Camera, assets: &AssetCache, output: (u32, u32), live: bool) -> Option<&LookFacts> {
+        let due = !live || self.age.is_none_or(|age| age + 1 >= LOOK_FACTS_LIVE_EVERY);
+        if due {
+            self.facts = look_facts(frame, camera, assets, output);
+            self.age = Some(0);
+        } else {
+            self.age = self.age.map(|age| age + 1);
+        }
+        self.facts.as_ref()
+    }
+}
+
+/// The look facts of `frame`'s world drawn from `camera` at `output` (`__render.look`): the same
+/// writer as the renderer's frame, into a coverage raster instead.
+pub fn look_facts(frame: &Frame, camera: &Camera, assets: &AssetCache, output: (u32, u32)) -> Option<LookFacts> {
+    let index = assets.mesh_index();
+    let mut sink = LookSink { raster: LookRaster::new(camera, output), index: &index, lighting: Lighting::default() };
+    write_world(&mut sink, frame, assets, &mut Drawn::default());
+    let mut facts = sink.raster.facts()?;
+    for draw in frame.draws() {
+        for path in shape_models(&draw.shape) {
+            facts.note_shape(&draw.tag, path);
+        }
+    }
+    Some(facts)
+}
+
+/// What `shape` draws for the look facts' provenance: `None` for a primitive (a cube, a sphere, a
+/// group of them), else each model's path (`Some(None)`: a model with no path); nothing for lines.
+fn shape_models(shape: &Shape) -> Vec<Option<Option<&str>>> {
+    match shape {
+        Shape::Cube { .. } | Shape::Sphere { .. } => vec![None],
+        Shape::Line { .. } | Shape::Lines { .. } => Vec::new(),
+        Shape::Model { model, .. } | Shape::Posed { model, .. } => drawn_model_paths(model),
+        Shape::Group { group } => match group.shape() {
+            crate::GroupShape::Model(model) => drawn_model_paths(model),
+            _ => vec![None],
+        },
+        Shape::Character { .. } => vec![Some(None)],
+    }
+}
+
+/// Each drawn member's path of `model`, as [`shape_models`] lists it.
+fn drawn_model_paths(model: &Model) -> Vec<Option<Option<&str>>> {
+    model.drawn_members().iter().map(|member| Some(member.path())).collect()
+}
+
+/// A sink that feeds every world mesh to a [`LookRaster`] and keeps nothing else.
+struct LookSink<'a> {
+    raster: LookRaster,
+    index: &'a MeshIndex,
+    lighting: Lighting,
+}
+
+impl characters::SkinSink for LookSink<'_> {
+    // Skinned characters are not rasterised (their pose is the GPU's).
+    fn skinned(&mut self, _skin: genex_render::skin::SkinId, _model: [f32; 16], _joints: Vec<[f32; 16]>, _materials: Vec<Material>) {}
+}
+
+impl WorldSink for LookSink<'_> {
+    fn tag(&mut self, name: &str) {
+        self.raster.tag(name);
+    }
+
+    fn id(&mut self, _id: Option<DrawId>) {}
+
+    fn mesh(&mut self, mesh: MeshId, model: [f32; 16], material: Material) {
+        self.raster.mesh(self.index.get(mesh), &model, &material);
+    }
+
+    fn group(&mut self, group: &genex_render::retained::InstanceGroup, material: Material) {
+        let stats = self.index.get(group.mesh());
+        for model in group.models() {
+            self.raster.mesh(stats, model, &material);
+        }
+    }
+
+    fn line(&mut self, _from: [f32; 3], _to: [f32; 3], _color: [u8; 4]) {}
+
+    fn lines(&mut self, _vertices: &[LineVertex]) {}
+
+    fn lighting(&mut self) -> &mut Lighting {
+        &mut self.lighting
+    }
+
+    fn lod(&mut self, _lod: DrawLod) {}
+
+    fn far_rule(&mut self, _rule: genex_render::lod_rows::GpuFarRule) -> u32 {
+        genex_render::lod_rows::FAR_RULE_NONE
     }
 }
 
 /// Add one shape to `sink`; answers its triangles.
 fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<String>, shape: &Shape) -> u32 {
     match shape {
-        Shape::Model { model, transform, tint, material } => {
+        Shape::Model { model, transform, tint, material, cover } => {
             let matrix = transform.to_cols_array();
             // LOD-07: a bias, and a compound's one sphere every part measures from.
             let lod = draw_lod(model, assets);
@@ -3124,6 +3690,7 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                 sink.lod(lod);
             }
             let mut triangles = 0u32;
+            let extent = drawn_extent(model, assets);
             for member in model.drawn_members() {
                 let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
                     sink.mesh(MeshId::CUBE, matrix, Material::missing());
@@ -3131,13 +3698,17 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
                     triangles = triangles.saturating_add(CUBE_TRIANGLES);
                     continue;
                 };
+                let wind = model.wind().or(member.wind());
                 for part in &loaded.parts {
-                    let drawn_with = match (material, &part.material) {
+                    let mut drawn_with = match (material, &part.material) {
                         (Some(material), _) => surface(material, *tint, assets),
                         (None, Some(glb)) => glb.to_material(rgba(*tint)),
                         (None, None) => surface(&crate::Material::color(*tint), Color::WHITE, assets),
                     };
-                    sink.mesh(part.mesh, matrix, drawn_with);
+                    if let Some(cover) = cover {
+                        drawn_with.layers.cover = Some(cover.render());
+                    }
+                    sink.mesh(part.mesh, matrix, in_wind(drawn_with, wind, extent, material.is_none()));
                 }
                 triangles = triangles.saturating_add(loaded.triangles);
             }
@@ -3175,6 +3746,22 @@ fn push_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mut Vec<
             let posed = posed::PosedShape { model, nodes, palette, transform: *transform, tint: *tint };
             posed::push(sink, assets, missing, posed)
         }
+    }
+}
+
+/// The extent a swaying `model` is measured over (model wind): its loaded members' together, so
+/// a compound's wood and leaves bend as one plant.
+fn drawn_extent(model: &Model, assets: &AssetCache) -> [f32; 2] {
+    let loaded = model.drawn_members().iter().filter_map(|member| assets.model(member.key()?));
+    loaded.fold([0.0_f32; 2], |[height, reach], loaded| [height.max(loaded.extent[0]), reach.max(loaded.extent[1])])
+}
+
+/// `material` swaying by `wind` over `extent` (model wind; the foliage defaults when it is the
+/// part's own GLB material, `own`), or as it is for a model that stands still.
+fn in_wind(material: Material, wind: Option<crate::foliage::WindResponse>, extent: [f32; 2], own: bool) -> Material {
+    match wind {
+        Some(wind) => crate::foliage::swaying(material, wind, extent, own),
+        None => material,
     }
 }
 
@@ -3235,6 +3822,7 @@ fn push_group_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mu
         }
         crate::GroupShape::Model(model) => {
             let mut triangles = 0u32;
+            let extent = drawn_extent(model, assets);
             for member in model.drawn_members() {
                 let Some(loaded) = member.key().and_then(|key| assets.model(key)) else {
                     sink.group(&group.render_group(MeshId::CUBE), Material::missing());
@@ -3242,12 +3830,13 @@ fn push_group_shape(sink: &mut impl WorldSink, assets: &AssetCache, missing: &mu
                     triangles = triangles.saturating_add(CUBE_TRIANGLES.saturating_mul(count));
                     continue;
                 };
+                let wind = model.wind().or(member.wind());
                 for part in &loaded.parts {
                     let drawn_with = match (group.material(), &part.material) {
                         (None, Some(glb)) => glb.to_material(rgba(Color::WHITE)),
                         _ => own(),
                     };
-                    sink.group(&group.render_group(part.mesh), drawn_with);
+                    sink.group(&group.render_group(part.mesh), in_wind(drawn_with, wind, extent, group.material().is_none()));
                 }
                 triangles = triangles.saturating_add(loaded.triangles.saturating_mul(count));
             }
@@ -3415,6 +4004,41 @@ mod tests {
         let table: AssetTable = &[("pond.glb", b"glb bytes")];
         assert_eq!(table.model_bytes("pond.glb").as_deref(), Some(&b"glb bytes"[..]));
         assert_eq!(table.model_bytes("other.glb"), None);
+    }
+
+    /// R-20: the window shows once every pipeline the boot handed over is made, not only those the
+    /// warm frame waited for (red at the R2 head: the boot ended with a compile still pending).
+    #[test]
+    #[ignore = "needs the host GPU: run with --ignored metal"]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn metal_the_boot_keeps_warming_while_a_pipeline_it_handed_over_compiles() {
+        let mut presenter = match Presenter::open([96, 64], &[]) {
+            Ok(presenter) => presenter,
+            Err(error) if std::env::var("GENEX_REQUIRE_METAL").is_ok_and(|v| v == "1") => panic!("no WebGPU-core adapter: {error}"),
+            Err(error) => return eprintln!("skipped: no WebGPU-core adapter ({error})"),
+        };
+        presenter.set_off_thread_changes(true);
+        let mut game = crate::Game::new(0_u32).world_size(96, 64);
+        game.camera(|_| Camera::look_at(Vec3::new(0.0, 1.0, 4.0), Vec3::ZERO));
+        game.on_draw(|_, frame, _| {
+            frame.cube(crate::Transform::IDENTITY, Color::RED);
+        });
+        let mut runtime = Runtime::new(game).expect("installs");
+        presenter.warm_boot(&mut runtime);
+        assert!(presenter.boot_warming(), "the warm-up is compiling");
+        while presenter.boot_warming() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // A variant the warm frame handed over and did not wait for, still compiling.
+        let held = genex_render::compile::hold();
+        let variant = genex_render::compile::Compiled::spawn(|| 7_u8);
+        assert!(presenter.boot_warming(), "the boot waits for the variant's compile");
+        drop(held);
+        assert_eq!(*variant, 7);
+        while genex_render::compile::compile_tally().pending() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!presenter.boot_warming(), "every compile made: the window shows");
     }
 
     #[test]

@@ -60,6 +60,7 @@ import {
   RUST_PREWARM_FILE,
   RUST_SIZES_FILE,
   RUST_TRIPLE,
+  RustMissing,
   readRustBase,
   readRustPrewarm,
   rustCargoHome,
@@ -102,6 +103,14 @@ const WEB_PINS = {
   [ToolchainId.WasmBindgen]: { version: "0.2.129", sha12: "d".repeat(12) },
   [ToolchainId.Binaryen]: { version: "133", sha12: "e".repeat(12) },
 };
+
+/** The cross and phone standard libraries a lock may name, with the destination each builds. */
+const CROSS_STDS = [
+  [ToolchainId.RustStdWindows, BuildTarget.Windows],
+  [ToolchainId.RustStdLinux, BuildTarget.Linux],
+  [ToolchainId.RustStdIos, BuildTarget.Ios],
+  [ToolchainId.RustStdAndroid, BuildTarget.Android],
+] as const;
 
 /** A lock naming the Rust components at made-up pins. */
 function rustLock(withWasm = true): ToolchainLock {
@@ -198,8 +207,8 @@ function probeRun(calls: RunRequest[], override?: (request: RunRequest) => RunRe
     const sysroot = path.join(request.cwd, "sysroot");
     const command = plain(request.command);
     if (command.includes("--print sysroot")) return ok(`${sysroot}\n`);
-    if (command.includes("--print target-libdir"))
-      return ok(`${path.join(sysroot, "lib", "rustlib", "wasm32-unknown-unknown", "lib")}\n`);
+    const libdir = / --print target-libdir --target (\S+)/.exec(command)?.[1];
+    if (libdir) return ok(`${path.join(sysroot, "lib", "rustlib", libdir, "lib")}\n`);
     if (command.includes("bin/cargo --version")) return ok(`cargo ${VERSION} (fake 2026-10-01)\n`);
     return ok(`rustc ${VERSION} (fake 2026-10-01)\n`);
   };
@@ -211,6 +220,15 @@ async function withBase(): Promise<{ root: string; store: string; lock: Toolchai
   await installRustBase(fake.store, fake.lock, { run: probeRun([]), denyWrite: [path.join(fake.root, "games")] });
   return fake;
 }
+
+/** The cargo profile every Live and judging build passes (K6, R-7, OPT, MK), which a prewarm must match. */
+const LIVE_PROFILE = [
+  "profile.dev.opt-level=1",
+  'profile.dev.package."*".opt-level=3',
+  'profile.dev.debug="line-tables-only"',
+  'profile.dev.package."*".debug-assertions=false',
+  'profile.dev.package."*".overflow-checks=false',
+];
 
 const WARM: RustWarmProject = {
   manifest: '[package]\nname = "genex-warm"\nversion = "0.0.0"\nedition = "2024"\n\n[dependencies]\nglam = "=0.33.0"\n',
@@ -569,6 +587,34 @@ describe("rust store: the sysroot", () => {
     assert.equal(existsSync(path.join(store, ".staging")), false);
   });
 
+  it("merges every cross and phone standard library the lock names into the sysroot, each probed", async () => {
+    const { root, store, lock } = await fakeRustStore();
+    const entries = { ...lock.entries };
+    for (const [id, target] of CROSS_STDS) {
+      const pin = { version: VERSION, sha12: createHash("sha256").update(id).digest("hex").slice(0, 12) };
+      const folder = componentFolder(store, id, pin);
+      await writeTree(folder, { [`lib/rustlib/${RUST_TRIPLE[target]}/lib/libstd.rlib`]: id, "manifest.in": "x\n" });
+      await writeReceipt(folder, id, pin.version, pin.sha12);
+      entries[id] = pin;
+    }
+    const iosSim = { version: VERSION, sha12: "f".repeat(12) };
+    const sim = componentFolder(store, ToolchainId.RustStdIosSim, iosSim);
+    await writeTree(sim, { "lib/rustlib/aarch64-apple-ios-sim/lib/libstd.rlib": "sim", "manifest.in": "x\n" });
+    await writeReceipt(sim, ToolchainId.RustStdIosSim, VERSION, iosSim.sha12);
+    const all = lockOf({ ...entries, [ToolchainId.RustStdIosSim]: iosSim });
+    const calls: RunRequest[] = [];
+    const record = await installRustBase(store, all, { run: probeRun(calls), denyWrite: [path.join(root, "games")] });
+    const sysroot = rustSysroot(store, all);
+    const triples = [...CROSS_STDS.map(([, target]) => RUST_TRIPLE[target]), "aarch64-apple-ios-sim"];
+    for (const triple of triples)
+      assert.ok(existsSync(path.join(sysroot, "lib", "rustlib", triple, "lib", "libstd.rlib")), triple);
+    assert.deepEqual([...record.triples].sort(), [HOST_TRIPLE, RUST_TRIPLE[BuildTarget.Web], ...triples].sort());
+    assert.equal(record.triples[0], HOST_TRIPLE, "the host's first");
+    assert.deepEqual(await readRustBase(store, all), record, "the record reads back: every triple it names is known");
+    const probed = calls.map((call) => / --target (\S+)/.exec(plain(call.command))?.[1]).filter(Boolean);
+    assert.deepEqual(probed.sort(), [RUST_TRIPLE[BuildTarget.Web], ...triples].sort());
+  });
+
   it("a probe that finds another sysroot refuses the base and swaps nothing in", async () => {
     const { root, store, lock } = await fakeRustStore();
     const run = probeRun([], (request) =>
@@ -657,8 +703,9 @@ describe("rust store: prewarm per (lock, destination)", () => {
       assert.match(plain(call.command), /--locked/);
       assert.match(plain(call.command), /--target wasm32-unknown-unknown/);
       assert.match(plain(call.command), /--message-format=json/);
-      // The lane's dev profile (K6), or a game's build cloning this folder rebuilds every dependency.
-      for (const setting of RUST_DEV_PROFILE_SETTINGS) assert.ok(plain(call.command).includes(`--config ${setting}`));
+      // The lane's dev profile (K6, OPT), exactly, or a game's build cloning this folder rebuilds every dependency.
+      const profile = [...plain(call.command).matchAll(/--config (profile\.\S+)/g)].map((match) => match[1]);
+      assert.deepEqual(profile, LIVE_PROFILE, call.label);
       assert.equal(call.timeoutMs, RUST_PREWARM_STEP_TIMEOUT_MS);
       assert.deepEqual(call.policy?.allowedDomains, []);
       assert.deepEqual(call.policy?.allowWrite, [staging]);
@@ -682,12 +729,29 @@ describe("rust store: prewarm per (lock, destination)", () => {
     assert.ok(record.outputs.includes("debug/deps/libserde_derive-2.dylib"));
     assert.ok(record.outputs.includes("wasm32-unknown-unknown/debug/build/wgpu-3/out"));
     assert.equal(record.units, 3);
+    assert.deepEqual(record.profile, LIVE_PROFILE);
     const located = await locateRust(store, lock, BuildTarget.Web, { rustflags: ["-Dwarnings"] });
     assert.ok(located.ok, JSON.stringify(located));
     assert.equal(located.located.targetDir, rustPrewarmedTargetDir(store, lock, BuildTarget.Web));
     assert.equal(existsSync(path.join(store, ".staging")), false);
     const stale = await locateRust(store, lock, BuildTarget.Web, { rustflags: ["-Dclippy::all"] });
     assert.equal(stale.ok, false, "other flags are another dependency build");
+  });
+
+  it("a prewarm built with another cargo profile (the dependencies at opt-level 1, before OPT; with their debug assertions, before MK) is stale: it is prewarmed again", async () => {
+    const { root, store, lock } = await withBase();
+    const record = await prewarmRust(store, lock, BuildTarget.Web, WARM, prewarmDeps(root, cargoRun([])));
+    assert.ok((await locateRust(store, lock, BuildTarget.Web)).ok, "the record as written locates");
+    const file = path.join(rustTargetFolder(store, lock, BuildTarget.Web), RUST_PREWARM_FILE);
+    const older = ['profile.dev.package."*".opt-level=1', 'profile.dev.debug="line-tables-only"'];
+    const checked = LIVE_PROFILE.filter(
+      (setting) => !setting.includes("-assertions=") && !setting.includes("-checks="),
+    );
+    for (const profile of [older, checked, [...LIVE_PROFILE].reverse(), [...LIVE_PROFILE, "profile.dev.lto=true"]]) {
+      await writeFile(file, JSON.stringify({ ...record, profile }));
+      const located = await locateRust(store, lock, BuildTarget.Web);
+      assert.deepEqual(located.ok ? [] : located.missing, [RustMissing.Prewarm], JSON.stringify(profile));
+    }
   });
 
   it("a cold step that runs past 10 minutes fails the receipt, even when cargo finished; nothing is swapped in", async () => {
@@ -912,6 +976,8 @@ describe("Rust store records", () => {
       { triple: "x86_64-unknown-linux-gnu" },
       { steps: [{ label: "a", ms: "1" }] },
       { rustflags: [1] },
+      { profile: [1] },
+      { profile: undefined },
       { units: -1 },
       { bytes: "big" },
     ];

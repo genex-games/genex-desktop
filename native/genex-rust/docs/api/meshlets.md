@@ -1,5 +1,16 @@
 # Big meshes (meshlets)
 
+The `genex.toml` keys are `meshlets` and `occlusion` in a `[render.class.<class>]` table. In
+code, every type and call in one line:
+
+```rust
+use genex::render::{ClassOverride, DeviceClass, FormFactor, Meshlets, PerformanceTier, RenderConfig, RenderFeature};
+let desktop_high = DeviceClass::new(FormFactor::Desktop, PerformanceTier::High);
+game.render_settings(RenderConfig::new().class(desktop_high, ClassOverride { switches: vec![(RenderFeature::Meshlets, true)], ..ClassOverride::default() }));
+// RenderFeature::Occlusion is the second switch; RenderConfig::meshlets narrows what runs:
+RenderConfig::new().meshlets(Meshlets::DEFAULT.with_enabled(true).with_occlusion(false).with_min_triangles(4096));
+```
+
 Big meshes can draw as meshlets (R2): a mesh of at least 2048 triangles is split once into
 clusters of at most 124 triangles, the GPU culls each cluster on its own (outside the view, facing
 away), and with occlusion a second pass against a depth pyramid of what was just drawn (two-pass

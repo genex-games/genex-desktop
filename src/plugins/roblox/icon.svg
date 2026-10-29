@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Roblox Studio">
+  <title>Roblox Studio</title>
+  <defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1A1A1D"/><stop offset="1" stop-color="#050506"/></linearGradient></defs>
+  <rect width="256" height="256" fill="url(#t)"/>
+  <path transform="rotate(15 128 128)" fill="#F4F5F7" fill-rule="evenodd" d="M56 56h144v144H56zM108 108v40h40v-40z"/>
+</svg>

@@ -139,10 +139,40 @@ fn a_crate_the_person_approved_and_a_crate_request_parse_as_the_host_reads_them(
     assert_eq!(row.reason.as_deref(), Some("an entity store"));
 }
 
+/// Lane EF: `[game] fit` is letterbox unless the game says expand; any other value, a wrong case or
+/// type among them, is refused `invalid-fit` (the host's reader holds the same rows).
+#[test]
+fn the_fit_is_letterbox_unless_the_game_says_expand() {
+    let fit = |text: &str| manifest::parse(&format!("[game]\ntitle = \"T\"\n{text}")).map(|parsed| parsed.game.fit());
+    assert_eq!(fit("").ok(), Some(genex::Fit::Letterbox), "absent: letterbox");
+    assert_eq!(fit("fit = \"letterbox\"\n").ok(), Some(genex::Fit::Letterbox));
+    assert_eq!(fit("fit = \"expand\"\n").ok(), Some(genex::Fit::Expand));
+    for hostile in ["\"Expand\"", "\"\"", "\"stretch\"", "\"expand \"", "\"letterbox\\u0000\"", "\"../expand\""] {
+        let code = fit(&format!("fit = {hostile}\n")).err().map(|error| error.code());
+        assert_eq!(code, Some(ManifestErrorCode::InvalidFit), "{hostile}");
+    }
+    for wrong_type in ["1", "true", "[\"expand\"]"] {
+        let code = fit(&format!("fit = {wrong_type}\n")).err().map(|error| error.code());
+        assert_eq!(code, Some(ManifestErrorCode::Syntax), "{wrong_type}");
+    }
+    assert_eq!(ManifestErrorCode::InvalidFit.as_str(), "invalid-fit");
+}
+
 #[test]
 fn the_crate_codes_keep_the_hosts_wire_spellings() {
     assert_eq!(ManifestErrorCode::InvalidCrateVersion.as_str(), "invalid-crate-version");
     assert_eq!(ManifestErrorCode::InvalidCrateRequest.as_str(), "invalid-crate-request");
+}
+
+/// The crates a game names without approval, the one table the host holds too (release R-2).
+#[test]
+fn the_crate_allowlist_is_the_fixtures() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../tests/fixtures/game-crate-allowlist.json");
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the fixture")).expect("the fixture is JSON");
+    let crates: Vec<&str> =
+        fixture["crates"].as_array().expect("crates").iter().map(|c| c.as_str().expect("a name")).collect();
+    assert_eq!(crates, manifest::GAME_CRATE_ALLOWLIST.to_vec());
 }
 
 fn request(prefix: &str, name: &str, version: &str, reason: Option<&str>) -> String {
@@ -285,6 +315,8 @@ fn the_render_vocabulary_is_the_wires() {
     assert_eq!(wire["fogDistanceLimit"].as_f64(), Some(manifest::FOG_DISTANCE_LIMIT));
     assert_eq!(wire["fogColorMax"].as_f64(), Some(manifest::FOG_COLOR_MAX));
     assert_eq!(wire["contactShadowLengthMax"].as_f64(), Some(manifest::CONTACT_SHADOW_LENGTH_MAX));
+    assert_eq!(wire["localExposureContrastMin"].as_f64(), Some(manifest::LOCAL_EXPOSURE_CONTRAST_MIN));
+    assert_eq!(manifest::LOCAL_EXPOSURE_CONTRAST_MIN as f32, genex_render::post::local_exposure::CONTRAST_MIN, "the file's floor is the renderer's");
 }
 
 /// The RQ4 look of the host's `genex-toml.test.ts` row, as both parsers read it.
@@ -313,6 +345,17 @@ fn the_rq4_look_reads_from_the_table_and_applies_to_the_renderer_look() {
 }
 
 #[test]
+fn local_exposure_reads_from_the_table_and_one_turns_a_side_off() {
+    let text = "[game]\ntitle = \"T\"\n[render.look]\nlocal_exposure_highlights = 0.5\nlocal_exposure_shadows = 1\n";
+    let look = manifest::parse(text).expect("valid").render.look;
+    assert_eq!((look.local_exposure_highlights, look.local_exposure_shadows), (Some(0.5), Some(1.0)));
+    let applied = look.apply_effects(genex_render::Look::default());
+    assert_eq!((applied.local_exposure.highlights, applied.local_exposure.shadows), (0.5, 1.0));
+    let config = genex::render::RenderConfig::new().local_exposure(1.0, 1.0);
+    assert!(!config.look.local_exposure.is_on(), "both contrasts at 1: off");
+}
+
+#[test]
 fn an_rq4_look_value_outside_its_range_is_refused_invalid_render_look() {
     let rows = [
         "bloom_threshold = -1",
@@ -334,6 +377,9 @@ fn an_rq4_look_value_outside_its_range_is_refused_invalid_render_look() {
         "contact_shadow_length = 0",
         "contact_shadow_length = 3",
         "ao_radius = nan",
+        "local_exposure_highlights = 0.1",
+        "local_exposure_shadows = 1.5",
+        "local_exposure_shadows = nan",
     ];
     for row in rows {
         let error = manifest::parse(&format!("[game]\ntitle = \"T\"\n[render.look]\n{row}\n")).expect_err(row);

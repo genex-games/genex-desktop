@@ -27,4 +27,4 @@ WIRING` block (one import, one init line — the harness union-merges it, anythi
 before re-tuning lighting or fog, capture what the base already draws; and a check that cannot pass
 as written is not yours to force — write a `HARNESS:` line naming the id and why in
 `docs/notes/NOTES.<facet-id>.md` (`NOTES.md` in a chat build, read back next time). A facet's
-`## Fixed by looking` bullets become lessons Studio adds to later briefs or lists in Activity.
+`## Fixed by looking` bullets become lessons Studio adds to later briefs or lists in Activity. Render a video's frames into `$TMPDIR`, never the game folder, and keep only the finished video.

@@ -10,6 +10,8 @@ import {
   type PluginSource,
   PluginSourceKind,
 } from "../shared/plugins.ts";
+import { UserCancelledError } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 import type { PluginMarketplace } from "../substrate/plugins/marketplace.ts";
 import { assertNativeActionAllowed } from "./dev/native-policy.ts";
 import { asksBeforeInstall, reviewPluginInstall } from "./plugin-local-install.ts";
@@ -25,13 +27,12 @@ export type ConfirmPluginInstall = (
   note?: string,
 ) => Promise<boolean>;
 
-/** The dialog's fixed words; its question, body and confirming button are built from the package. */
+/** The dialog's fixed words, in main's language; its question, body and confirming button are built from the package. */
 const MESSAGE = {
-  installTitle: "Install plugin",
-  replaceTitle: "Replace plugin",
-  cancel: "Cancel",
-  notInCatalog: "Plugin is not in the curated catalog",
-  cancelled: "Cancelled by user",
+  installTitle: () => t("Install plugin"),
+  replaceTitle: () => t("Replace plugin"),
+  cancel: () => t("Cancel"),
+  notInCatalog: () => t("Plugin is not in the curated catalog"),
 } as const;
 
 /**
@@ -56,10 +57,10 @@ export function confirmPluginInstall(
     const prompt = installPrompt({ manifest, origin, scan, before, previousScan, replaces, note, staysOn });
     const choice = await dialog.showMessageBox({
       type: "warning",
-      title: replaces ? MESSAGE.replaceTitle : MESSAGE.installTitle,
+      title: replaces ? MESSAGE.replaceTitle() : MESSAGE.installTitle(),
       message: prompt.message,
       detail: prompt.detail,
-      buttons: [MESSAGE.cancel, prompt.confirm],
+      buttons: [MESSAGE.cancel(), prompt.confirm],
       defaultId: 0,
       cancelId: 0,
     });
@@ -85,8 +86,8 @@ export async function reacquirePlugin(
   if (origin?.kind === PluginSourceKind.Catalog) {
     // The curated artifact is verified against the catalog's own manifest on the staged copy.
     const entry = (await studio.plugins.catalog()).find((p) => p.manifest.id === info.manifest.id);
-    if (!entry) throw new Error(MESSAGE.notInCatalog);
-    if (!(await confirmInstall(entry.manifest, origin, undefined, info.manifest))) throw new Error(MESSAGE.cancelled);
+    if (!entry) throw new Error(MESSAGE.notInCatalog());
+    if (!(await confirmInstall(entry.manifest, origin, undefined, info.manifest))) throw new UserCancelledError();
     await studio.plugins.installCatalog(info.manifest.id, entry.manifest.capabilities);
     return;
   }

@@ -348,7 +348,7 @@ struct RowIndex<'a> {
 /// kind or skinned flag, then the ordinal. The row index sorts and searches these instead of the
 /// keys themselves (GE fix r2: sorting the frontier's rows by `MotionKey`, through their indices,
 /// was a fifth of a frame's CPU draw), and a sorted search finds the same row either way.
-fn packed(key: &MotionKey) -> u128 {
+pub(crate) fn packed(key: &MotionKey) -> u128 {
     let (variant, id, flag) = match key.scope {
         MotionScope::Id { id, skinned } => (0u128, u128::from(id.0), u128::from(skinned)),
         MotionScope::Mesh { mesh, kind } => (1u128, u128::from(mesh.packed()), kind.column() as u128),
@@ -443,7 +443,9 @@ fn prev_row(prev: Option<&PrevRow>, row: &GpuInstance, motion: &MotionRow, prev_
     let same_vertices = prev_vertices && prev.mesh == motion.mesh && motion.skinned_base.is_some();
     let prev_base = prev.skinned_base.filter(|_| same_vertices).unwrap_or(NO_PREV_VERTICES);
     let matched = if by_id { MOTION_FLAG_MATCHED_BY_ID } else { 0 };
-    let still = if prev.model == row.model && prev_base == NO_PREV_VERTICES { MOTION_FLAG_STILL } else { 0 };
+    // A swaying row (model wind) moves every frame though its matrix stands still.
+    let stands = prev.model == row.model && prev_base == NO_PREV_VERTICES && row.wind == [0; 3];
+    let still = if stands { MOTION_FLAG_STILL } else { 0 };
     GpuPrevModel { model: prev.model, flags: [matched | still, prev_base, current_base, 0] }
 }
 
@@ -641,6 +643,37 @@ impl MotionNode {
         })
     }
 
+    /// The prepass's surface twin's pipeline (lane FR, `shaders::PREPASS_SURFACE`): `vertex` and
+    /// `fragment` of `module` over `groups` and this node's group 2, into the three prepass
+    /// targets ([`TARGET_FORMATS`]) and A.6's normal and roughness at location 3, culled and
+    /// depth-tested as [`MotionNode::pipeline`]'s, the module's overrides set to `constants`.
+    #[allow(clippy::too_many_arguments, reason = "a pipeline's module, entries, buffers, groups, depth and constants")]
+    pub fn surface_pipeline(
+        &self,
+        device: &Device,
+        module: &ShaderModule,
+        (vertex, fragment): (&str, &str),
+        buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+        groups: [&BindGroupLayout; 2],
+        reversed: bool,
+        constants: &[(&str, f64)],
+    ) -> Compiled<RenderPipeline> {
+        let layout = pipeline_layout(device, vertex, &[groups[0], groups[1], &self.layout]);
+        let targets = surface_targets();
+        let options = wgpu::PipelineCompilationOptions { constants, ..Default::default() };
+        crate::compile::render_pipeline(device, &wgpu::RenderPipelineDescriptor {
+            label: Some(vertex),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module, entry_point: Some(vertex), compilation_options: options.clone(), buffers },
+            primitive: wgpu::PrimitiveState { cull_mode: Some(wgpu::Face::Back), ..Default::default() },
+            depth_stencil: Some(depth_state(reversed)),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState { module, entry_point: Some(fragment), compilation_options: options, targets: &targets }),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
     /// The background-motion pipeline (T-03) for a motion prepass of `reversed` depth: group 0 is
     /// this node's group (its frame row), the three prepass targets with the motion alone written,
     /// the depth tested `Equal` against the far plane and never written.
@@ -691,6 +724,13 @@ pub fn background_targets() -> [Option<wgpu::ColorTargetState>; 3] {
         location += 1;
         Some(wgpu::ColorTargetState { format, blend: None, write_mask })
     })
+}
+
+/// The prepass's targets on a frame that writes the reflections' surface texel (lane FR): the
+/// three of [`TARGET_FORMATS`] and A.6's normal and roughness, every channel written.
+pub fn surface_targets() -> [Option<wgpu::ColorTargetState>; 4] {
+    let [normals, motion, reactive] = TARGET_FORMATS;
+    [normals, motion, reactive, crate::screen_inputs::NORMAL_ROUGHNESS_FORMAT].map(|format| Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }))
 }
 
 /// The prepass's depth test: written, `Less` (standard Z) or `Greater` (reverse-Z).
@@ -1088,6 +1128,19 @@ mod tests {
         assert_eq!((desc.format, desc.size, desc.samples), (TextureFormat::Rg16Float, (640, 360), 1));
         assert_eq!(target((0, 0)).size, (1, 1));
         assert_eq!(bytes((640, 360)), 640 * 360 * 4);
+    }
+
+    #[test]
+    fn a_swaying_row_is_never_a_still_motion_row() {
+        let model = crate::scene::translation(3.0, 0.0, -2.0);
+        let row = crate::instance::instance_row(&model, [0.0; 3], 1.0, 0);
+        let motion = MotionRow { key: MotionKey { scope: MotionScope::Id { id: DrawId::from(7u32), skinned: false }, ordinal: 0 }, mesh: MeshId::CUBE, skinned_base: None };
+        let prev = PrevRow { model, bounds: row.bounds, mesh: MeshId::CUBE, skinned_base: None };
+        assert_ne!(prev_row(Some(&prev), &row, &motion, true).flags[0] & MOTION_FLAG_STILL, 0, "a row that stood still is still");
+        let sway = crate::wind::Sway { height: 1.0, reach: 1.0, trunk: 0.1, branch: 0.0, flutter: 0.0, flutter_hz: 0.0 };
+        let swaying = crate::instance::swaying(row, Some(sway));
+        let prev = PrevRow { bounds: swaying.bounds, ..prev };
+        assert_eq!(prev_row(Some(&prev), &swaying, &motion, true).flags[0] & MOTION_FLAG_STILL, 0, "a swaying row moves though its matrix stands");
     }
 
     #[test]

@@ -14,6 +14,7 @@
 //! `renderSettings` and draws captures on the game's pinned capture profile (RQ0.7).
 
 use crate::assets::WebAssets;
+use crate::web_stream::{Delivered, STATE_WEB_STREAM};
 use crate::draw::{AssetSource as _, AssetTable};
 use crate::handle::GameHandle;
 use genex::present::{ModelSource, Presenter};
@@ -39,12 +40,13 @@ pub struct WebSource {
     compiled: AssetTable,
     fetched: Arc<WebAssets>,
     groups: AssetGroups,
+    delivered: Delivered,
 }
 
 impl WebSource {
     /// The compiled table, then the fetched files.
     pub fn new(compiled: AssetTable, fetched: WebAssets) -> WebSource {
-        WebSource { compiled, fetched: Arc::new(fetched), groups: AssetGroups::default() }
+        WebSource { compiled, fetched: Arc::new(fetched), groups: AssetGroups::default(), delivered: Delivered::default() }
     }
 
     /// These assets with the groups the build recorded for them.
@@ -53,22 +55,38 @@ impl WebSource {
         self
     }
 
+    /// These assets, then the streamed and named files the shell delivers while playing
+    /// (`crate::web_stream`), shared with it.
+    pub fn with_delivered(mut self, delivered: Delivered) -> WebSource {
+        self.delivered = delivered;
+        self
+    }
+
     /// The bytes of `path`: the compiled table first, then the fetched files (as
     /// [`crate::assets::Layered`] serves them).
     fn bytes(&self, path: &str) -> Option<&[u8]> {
         self.compiled.asset(path).or_else(|| self.fetched.get(path))
     }
+
+    /// The bytes of `path` from any layer, the delivered files last; `missing` when none has it.
+    fn shared(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
+        if let Some(bytes) = self.bytes(path) {
+            return Ok(Arc::from(bytes));
+        }
+        self.delivered.get(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, format!("{path} was not fetched")))
+    }
 }
 
 impl AssetSource for WebSource {
     fn read(&self, path: &str) -> Result<Arc<[u8]>, AssetError> {
-        let bytes = self.bytes(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, format!("{path} was not fetched")))?;
-        Ok(Arc::from(bytes))
+        self.shared(path)
     }
 
     fn size(&self, path: &str) -> Result<u64, AssetError> {
-        let bytes = self.bytes(path).ok_or_else(|| AssetError::new(AssetErrorCode::Missing, format!("{path} was not fetched")))?;
-        Ok(bytes.len() as u64)
+        if let Some(bytes) = self.bytes(path) {
+            return Ok(bytes.len() as u64);
+        }
+        self.shared(path).map(|bytes| bytes.len() as u64)
     }
 
     fn group(&self, path: &str) -> AssetGroup {
@@ -78,7 +96,7 @@ impl AssetSource for WebSource {
 
 impl ModelSource for WebSource {
     fn model_bytes(&self, path: &str) -> Option<Vec<u8>> {
-        self.bytes(path).map(<[u8]>::to_vec)
+        self.shared(path).ok().map(|bytes| bytes.to_vec())
     }
 
     /// The compiled table's bytes (they come first): a fetched file is not the program's for its
@@ -237,11 +255,13 @@ fn status_value(status: &RenderStatus) -> Option<Value> {
 
 /// The verb's change in the facade's types; a spelling the facade lacks is refused typed.
 fn facade_change(change: &RenderSettingsChange) -> Result<RenderChange, RenderSettingsRefusal> {
-    let SpelledChange { preset, device_class, features, reset_features, render_scale_lock, frame_budget_ms } = spell_change(change);
+    let SpelledChange { preset, device_class, features, reset_features, render_scale_lock, frame_budget_ms, look } = spell_change(change);
     let frame_budget_ms = frame_budget_ms.map(|budget| budget.map(|ms| ms as f32));
+    let refused = |refusal: genex::render::RenderRefusal| RenderSettingsRefusal::from_wire(refusal.wire()).unwrap_or(RenderSettingsRefusal::Unavailable);
+    let look = look.map(|keys| keys.map(|json| RenderChange::look_from_json(&json)).transpose()).transpose().map_err(refused)?;
     RenderChange::from_spellings(preset, device_class, &features, render_scale_lock)
-        .map(|change| RenderChange { reset_features, frame_budget_ms, ..change })
-        .map_err(|refusal| RenderSettingsRefusal::from_wire(refusal.wire()).unwrap_or(RenderSettingsRefusal::Unavailable))
+        .map(|change| RenderChange { reset_features, frame_budget_ms, look, ..change })
+        .map_err(refused)
 }
 
 /// The web shell's painter: genex's shared presenter with the game's passes, the passes refused at
@@ -254,12 +274,14 @@ pub struct Screen {
     /// The meter's clock: the shown frames' intervals summed (the page hands each one over).
     clock_ms: f64,
     gpu: Option<GpuCounters>,
+    /// The files the shell delivered while playing, reported as `volatile.webStream`.
+    pub delivered: Option<Delivered>,
 }
 
 impl Screen {
     /// A screen drawing through `presenter`.
     pub fn new(presenter: Presenter) -> Screen {
-        Screen { presenter, install_refused: Vec::new(), fps: FpsMeter::default(), clock_ms: 0.0, gpu: None }
+        Screen { presenter, install_refused: Vec::new(), fps: FpsMeter::default(), clock_ms: 0.0, gpu: None, delivered: None }
     }
 
     /// Register `game`'s custom GPU passes on the presenter (the web's `studio_boot`): a refused
@@ -343,6 +365,9 @@ impl Painter for Screen {
         }
         if let Some(gpu) = self.gpu {
             extra.push((wire::STATE_GPU, gpu_value(gpu)));
+        }
+        if let Some(delivered) = &self.delivered {
+            extra.push((STATE_WEB_STREAM, core_value(&delivered.receipt())));
         }
         if let Some(render) = self.presenter.render_settings().and_then(|handle| status_value(&handle.borrow().status())) {
             extra.push((wire::STATE_RENDER, render));

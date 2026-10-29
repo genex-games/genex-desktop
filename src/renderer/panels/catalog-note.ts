@@ -3,6 +3,7 @@
  * while the list is fine, since it refreshes by itself; a quiet line while the first list loads;
  * and, after a refresh fails, which models it shows with a Try again beside it.
  */
+import { t } from "../../shared/i18n.ts";
 import { ModelCatalogState, type ModelCatalogStatus } from "../../shared/model-catalog.ts";
 
 /** Why the row speaks about its model list. */
@@ -21,9 +22,9 @@ export interface CatalogNote {
 }
 
 const MESSAGE = {
-  loading: "Loading models…",
-  saved: "Showing saved models. The list didn't refresh.",
-  unavailable: "Couldn't load the model list.",
+  loading: t("Loading models…"),
+  saved: t("Showing saved models. The list didn't refresh."),
+  unavailable: t("Couldn't load the model list."),
 } as const;
 
 /** The row's model-list line, or null when there is nothing worth saying. */

@@ -1,0 +1,55 @@
+{
+  "id": "rust.arena-no-haze-planes",
+  "runtime": "rust-wgpu",
+  "title": "Rust ground mist is the look's fog, never a translucent plane above the floor",
+  "tags": [
+    "haze",
+    "fog",
+    "mist",
+    "plane",
+    "translucent",
+    "additive",
+    "ground",
+    "water",
+    "flooded",
+    "crate",
+    "intersect",
+    "arena",
+    "volumetric",
+    "shafts"
+  ],
+  "checkClass": "arena",
+  "kind": "craft",
+  "kinds": ["first-person", "third-person", "top-down"],
+  "pack": "arena",
+  "note": "Mist and shafts are [render.look] fog (density, height falloff); a translucent plane at knee height reads as a flood line.",
+  "intent": "A translucent horizontal quad half a metre up cuts every crate and character at one height, which the eye reads as water. In genex the air is the look's fog: fog_density and the height falloff in genex.toml [render.look], or RenderConfig::from_build().fog(Fog::default().with_density(..).with_height(..)) in code. Shape a floor-hugging mist with the height falloff rather than more density, keep interiors thin (0.004-0.01: 0.02 washes a room blue), and let high and ultra light it as a volume with sun shafts through windows. Never stack transparent planes, cubes or cards for haze; if a judge names a haze or water line, look for one in the level code first.",
+  "sketch": "use genex::prelude::*;\nuse genex::render::Fog;\n\n// Air is the look's fog, set once: genex.toml [render.look] fog_density / fog_height_falloff, or in code.\n// A floor-hugging mist is the height falloff, not a translucent plane at knee height.\nfn wire_air(game: &mut Game<super::World>) {\n    game.render_settings(RenderConfig::from_build().fog(Fog::default().with_density(0.008).with_height(0.6, 0.0)));\n}\n",
+  "check": {
+    "id": "no-haze-planes",
+    "kind": "vision",
+    "camera": "eye:spawn",
+    "ask": "Is there a flat translucent layer cutting through objects at one height, like a water line or a sheet of haze?",
+    "expect": "no",
+    "weight": "identity",
+    "note": "No haze plane: ground fog is the look's fog with a height falloff, never a translucent plane above the floor."
+  },
+  "port": "Only the facet that owns the look sets fog; no other facet draws a translucent horizontal plane above the floor.",
+  "evidence": [
+    {
+      "source": "src/game-template-rust/docs/api/lighting.md",
+      "note": "The air is the look's fog; high and ultra light it as a volume; never fake haze with stacked transparent planes."
+    },
+    {
+      "source": "library/recipes/arena.no-haze-planes.json",
+      "note": "The three.js recipe arena.no-haze-planes, ported to the genex facade (bodycam B4)."
+    }
+  ],
+  "stats": {
+    "applied": 0,
+    "wins": 0,
+    "losses": 0
+  },
+  "status": "candidate",
+  "origin": "seed"
+}

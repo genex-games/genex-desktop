@@ -1,8 +1,10 @@
 /**
- * The Genex editor helper's eyes (genex_build's capture_shot, capture_play and motion_strip) answer
- * at once with the files Unreal writes a frame or more later. The bridge waits for those files and
- * hands the agent the picture itself, with the tone numbers it can't judge by eye: a still or a play
- * shot as its PNG, a motion strip as one contact sheet with each frame's pose and how far it moved.
+ * The Genex editor helper's eyes (genex_build's capture_shot, capture_play and motion_strip, and
+ * character_check's picture sheet) answer at once with the files Unreal writes a frame or more
+ * later. The bridge waits for those files and hands the agent the picture itself, with the tone
+ * numbers it can't judge by eye: a still or a play shot as its PNG, a motion strip as one contact
+ * sheet with each frame's pose and how far it moved, a character sheet as one contact sheet with
+ * each shot's view.
  *
  * A file is read only when its real path is a regular file inside the project's own
  * Saved/Genex/captures folder: an answer naming anything else (another folder, a link out, a path
@@ -29,7 +31,12 @@ import {
 /** The helper's build toolset, by its wire name. */
 export const BUILD_TOOLSET = "genex_build.tools.GenexBuildTools";
 /** The build tools that answer with files to wait for, by their wire names. */
-export const CaptureTool = { Shot: "capture_shot", Play: "capture_play", Strip: "motion_strip" } as const;
+export const CaptureTool = {
+  Shot: "capture_shot",
+  Play: "capture_play",
+  Strip: "motion_strip",
+  Character: "character_check",
+} as const;
 export type CaptureTool = (typeof CaptureTool)[keyof typeof CaptureTool];
 
 /** Where a project's captures land, below its folder. */
@@ -67,6 +74,10 @@ const MESSAGE = {
   StripHeader: (count: number, interval: unknown) =>
     `[motion strip: ${count} frames, ${interval} game s apart, attached as one sheet, left to right then down]`,
   StripError: (why: string) => `The strip stopped early: ${why}.`,
+  SheetHeader: (count: number) =>
+    `[character sheet: ${count} shots of a copy of the character, attached as one sheet, left to right then down]`,
+  SheetLine: (index: number, label: string) => `shot ${index}: ${label}`,
+  SheetError: (why: string) => `The sheet stopped early: ${why}.`,
   Fps: (fps: number) => ` at ${fps} fps`,
 } as const;
 
@@ -283,11 +294,20 @@ function stripRecord(text: string): StripRecord {
   };
 }
 
-/** The strip's frames that could be read, and one line per frame. */
-async function stripFrames(record: StripRecord, projectFile: string, clock: CaptureClock, signal: AbortSignal) {
+/** A frame's line from its index, its record entry and how much it differs from the frame before. */
+type FrameLine = (index: number, entry: Pose, difference: number | undefined) => string;
+
+/** The record's frames that could be read, and one line per frame. */
+async function recordFrames(
+  record: StripRecord,
+  projectFile: string,
+  clock: CaptureClock,
+  signal: AbortSignal,
+  line: FrameLine,
+) {
   const frames: RgbImage[] = [];
   const lines: string[] = [];
-  for (const [index, pose] of record.poses.entries()) {
+  for (const [index, entry] of record.poses.entries()) {
     const landed = await awaitFile(projectFile, record.files[index], clock, SHOT_WAIT_MS, signal);
     const read = "file" in landed ? await readFrame(landed.file, clock, SHOT_WAIT_MS, signal) : landed;
     if ("why" in read) {
@@ -295,11 +315,34 @@ async function stripFrames(record: StripRecord, projectFile: string, clock: Capt
       continue;
     }
     const previous = frames.at(-1);
-    const difference = previous ? frameDifference(previous, read.image) : undefined;
-    lines.push(frameLine(index, pose, record.poses[index - 1], difference));
+    lines.push(line(index, entry, previous ? frameDifference(previous, read.image) : undefined));
     frames.push(read.image);
   }
   return { frames, lines };
+}
+
+/** The record a strip or a sheet names, once it lands, or why it never will be read. */
+async function landedRecord(
+  file: unknown,
+  waitS: unknown,
+  projectFile: string,
+  clock: CaptureClock,
+  signal: AbortSignal,
+): Promise<{ record: StripRecord } | { why: string }> {
+  const waitMs = Math.min(STRIP_WAIT_MAX_MS, Number(waitS ?? 0) * SECOND_MS || STRIP_WAIT_MAX_MS);
+  const landed = await awaitFile(projectFile, file, clock, waitMs, signal);
+  if ("why" in landed) return landed;
+  return { record: stripRecord(await readFile(landed.file, "utf8").catch(() => "")) };
+}
+
+/** One contact sheet of the frames and the text beside it. */
+function sheetParts(frames: RgbImage[], text: string[]): Lifted {
+  if (frames.length === 0) return [{ type: "text", text: text.join("\n") }];
+  const sheet = encodePng(contactSheet(frames, SHEET_COLUMNS, SHEET_CELL_WIDTH)).toString("base64");
+  return [
+    { type: "image", mimeType: "image/png", data: sheet },
+    { type: "text", text: text.join("\n") },
+  ];
 }
 
 /** A strip's frames and poses, read once its record lands: one contact sheet and its lines. */
@@ -309,26 +352,45 @@ async function liftStrip(
   clock: CaptureClock,
   signal: AbortSignal,
 ): Promise<Lifted> {
-  const waitMs = Math.min(STRIP_WAIT_MAX_MS, Number(answer.waitS ?? 0) * SECOND_MS || STRIP_WAIT_MAX_MS);
-  const landed = await awaitFile(projectFile, answer.poses, clock, waitMs, signal);
+  const landed = await landedRecord(answer.poses, answer.waitS, projectFile, clock, signal);
   if ("why" in landed) return notRead(answer.poses, landed.why);
-  const record = stripRecord(await readFile(landed.file, "utf8").catch(() => ""));
-  const { frames, lines } = await stripFrames(record, projectFile, clock, signal);
+  const { record } = landed;
+  const { frames, lines } = await recordFrames(record, projectFile, clock, signal, (index, pose, difference) =>
+    frameLine(index, pose, record.poses[index - 1], difference),
+  );
   const [first] = frames;
   const text = [MESSAGE.StripHeader(frames.length, record.intervalS ?? answer.intervalS), ...lines];
   if (record.error) text.push(MESSAGE.StripError(record.error));
-  if (!first) return [{ type: "text", text: text.join("\n") }];
-  text.push(`first frame ${toneLine(toneOf(first))}`);
-  const sheet = encodePng(contactSheet(frames, SHEET_COLUMNS, SHEET_CELL_WIDTH)).toString("base64");
-  return [
-    { type: "image", mimeType: "image/png", data: sheet },
-    { type: "text", text: text.join("\n") },
-  ];
+  if (first) text.push(`first frame ${toneLine(toneOf(first))}`);
+  return sheetParts(frames, text);
+}
+
+/** A character sheet's shots, read once its record lands: one contact sheet and each shot's view. */
+async function liftSheet(
+  pictures: Record<string, unknown>,
+  projectFile: string,
+  clock: CaptureClock,
+  signal: AbortSignal,
+): Promise<Lifted> {
+  const landed = await landedRecord(pictures.record, pictures.waitS, projectFile, clock, signal);
+  if ("why" in landed) return notRead(pictures.record, landed.why);
+  const { record } = landed;
+  const label = (entry: unknown, index: number) => {
+    const named = isRecord(entry) ? entry.label : undefined;
+    return typeof named === "string" ? named : `shot ${index}`;
+  };
+  const { frames, lines } = await recordFrames(record, projectFile, clock, signal, (index, entry) =>
+    MESSAGE.SheetLine(index, label(entry, index)),
+  );
+  const text = [MESSAGE.SheetHeader(frames.length), ...lines];
+  if (record.error) text.push(MESSAGE.SheetError(record.error));
+  return sheetParts(frames, text);
 }
 
 /**
  * The pictures a capture tool's answer promised, as MCP parts to add to the answer: the image (one
- * contact sheet for a strip) and the lines that go with it, or words saying why there is none.
+ * contact sheet for a strip or a character sheet) and the lines that go with it, or words saying why
+ * there is none.
  * Nothing for an answer that queued nothing (a refusal).
  */
 export async function liftCapture(
@@ -341,5 +403,7 @@ export async function liftCapture(
   if (!answer || answer.error !== undefined) return [];
   if (tool === CaptureTool.Strip)
     return answer.poses === undefined ? [] : liftStrip(answer, projectFile, clock, signal);
+  if (tool === CaptureTool.Character)
+    return isRecord(answer.pictures) ? liftSheet(answer.pictures, projectFile, clock, signal) : [];
   return answer.queued === true ? liftShot(tool, answer, projectFile, clock, signal) : [];
 }

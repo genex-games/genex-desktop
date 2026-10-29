@@ -715,6 +715,7 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
           delegateModels.push(request.model);
           const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
           // The plan the user reads, before any builder starts (M3.8).
+          // The interview's frames set a visual bar, so the plan lists every tier's assets (look-bar.ts).
           await call("plan", {
             summary: "This run: a grey courtyard you can wander in.",
             workers: JSON.stringify([
@@ -725,6 +726,40 @@ describe("autopilot: a 2-facet run on the fake engine", () => {
                 owns: "src/",
                 done: ["there is daylight in the courtyard"],
                 minutes: 3,
+              },
+            ]),
+            art: JSON.stringify([
+              {
+                area: "courtyard",
+                tier: "hero",
+                kind: "surface",
+                asset: "wet paving",
+                source: "scan",
+                tags: ["paving"],
+              },
+              {
+                area: "courtyard",
+                tier: "mid",
+                kind: "structure",
+                asset: "grey walls",
+                source: "scan",
+                tags: ["walls"],
+              },
+              {
+                area: "courtyard",
+                tier: "scatter",
+                kind: "surface",
+                asset: "leaf litter",
+                source: "scan",
+                tags: ["leaves"],
+              },
+              {
+                area: "courtyard",
+                tier: "sky",
+                kind: "atmosphere",
+                asset: "overcast sky",
+                source: "scan",
+                tags: ["sky"],
               },
             ]),
           });

@@ -55,6 +55,17 @@ pub const LOD_FADE_TAG: u32 = 1 << 30;
 /// of a compound then switches to it together), and a shadow view casts the last mesh level in
 /// its place ([`lod_row_keep_view`] with `caster`).
 pub const LOD_IMPOSTOR_TAG: u32 = 1 << 29;
+/// The bit of a batch's LOD tag marking a chain whose levels the CPU planned for the draw (a
+/// skinned character's band, AN-24): only those levels are skinned, so a sun cascade casts the
+/// camera's band and never a coarser level ([`caster_level`], lane FQ).
+pub const LOD_PLANNED_TAG: u32 = 1 << 28;
+/// The bit of a batch's LOD tag marking a chain whose first level is its shadow casters' alone
+/// (lane FR, the importer's `casters: 1`): a finer level measured on positions only, which a sun
+/// cascade may cast ([`caster_level`]) while the camera's selection skips it, choosing among the
+/// mesh and the levels after it exactly as the chain without it would ([`camera_skips`]).
+pub const LOD_CASTERS_TAG: u32 = 1 << 27;
+/// The most leading levels a chain may keep for its shadow casters alone (lane FR).
+pub const LOD_MAX_CASTER_LEVELS: u32 = 1;
 /// The mesh levels past the mesh itself a chain keeps when an impostor ends it (game systems
 /// LOD-15): [`LOD_MAX_LEVELS`] is three mesh levels plus the impostor.
 pub const LOD_IMPOSTOR_MESH_LEVELS: usize = 3;
@@ -79,11 +90,13 @@ pub enum LodExtrasKey {
     Indices,
     /// The levels, coarser and coarser ([`LodLevelKey`] each).
     Levels,
+    /// How many of the first levels only shadow casters draw (lane FR; absent: none).
+    Casters,
 }
 
 impl LodExtrasKey {
     /// Every key, in the schema's order.
-    pub const ALL: [LodExtrasKey; 3] = [LodExtrasKey::Version, LodExtrasKey::Indices, LodExtrasKey::Levels];
+    pub const ALL: [LodExtrasKey; 4] = [LodExtrasKey::Version, LodExtrasKey::Indices, LodExtrasKey::Levels, LodExtrasKey::Casters];
 
     /// The wire spelling.
     pub const fn wire(self) -> &'static str {
@@ -91,6 +104,7 @@ impl LodExtrasKey {
             LodExtrasKey::Version => "version",
             LodExtrasKey::Indices => "indices",
             LodExtrasKey::Levels => "levels",
+            LodExtrasKey::Casters => "casters",
         }
     }
 }
@@ -125,7 +139,8 @@ impl LodLevelKey {
 pub enum LodFault {
     /// Another schema version, or extras that are not an object.
     UnknownVersion,
-    /// More than [`LOD_MAX_LEVELS`] levels.
+    /// More than [`LOD_MAX_LEVELS`] levels, or more caster levels than [`LOD_MAX_CASTER_LEVELS`]
+    /// or than leave the camera a level of its own.
     OverLimit,
     /// A view that is missing, outside the buffer or not whole words, or a level past its view.
     RangeOutOfBounds,
@@ -176,6 +191,8 @@ pub struct LodLevel {
 pub struct LodChain {
     /// The levels.
     pub levels: Vec<LodLevel>,
+    /// How many of the first levels only shadow casters draw (lane FR, [`LOD_CASTERS_TAG`]): 0 or 1.
+    pub casters: u32,
 }
 
 impl LodChain {
@@ -285,6 +302,39 @@ fn band_steps(fade: f32, width: f32) -> f32 {
     steps
 }
 
+/// `lod` (a batch's LOD row) of a chain whose first `casters` levels are its shadow casters'
+/// alone (lane FR): tagged [`LOD_CASTERS_TAG`] when there is one.
+pub fn casters_lod(lod: [u32; 3], casters: u32) -> [u32; 3] {
+    if casters == 0 || lod[0] & LOD_TAG == 0 {
+        return lod;
+    }
+    [lod[0] | LOD_CASTERS_TAG, lod[1], lod[2]]
+}
+
+/// Whether the camera's selection skips the first of a chain's `levels` levels (lane FR): the
+/// chain is tagged [`LOD_CASTERS_TAG`] and keeps a level after it.
+pub fn camera_skips(lod: [u32; 3], levels: usize) -> bool {
+    lod[0] & LOD_CASTERS_TAG != 0 && levels >= 2
+}
+
+/// The camera's band over a chain's `errors` ([`lod_band`] with every argument), the first level
+/// skipped when `skips` ([`camera_skips`]): the band of the chain without it, its levels counted
+/// in the whole chain's numbers (0 the mesh, then 2, 3 and on).
+fn camera_band(errors: &[f32], skips: bool, distance: f32, pixels_per_unit: f32, (bias, beta): (f32, f32)) -> LodBand {
+    if !skips {
+        return lod_band(errors, distance, pixels_per_unit, 1.0, bias, beta);
+    }
+    let band = lod_band(&errors[1..], distance, pixels_per_unit, 1.0, bias, beta);
+    let level = if band.level == 0 { 0 } else { band.level + 1 };
+    LodBand { level, share: band.share }
+}
+
+/// The level a band at `level` (at least 1) fades from: the next finer one the camera draws, the
+/// mesh itself below a skipped first level (lane FR).
+fn finer_level(skips: bool, level: u32) -> u32 {
+    if skips && level == 2 { 0 } else { level - 1 }
+}
+
 /// The LOD row of the fade twin of level `level`'s batch: [`batch_lod`] with [`LOD_FADE_TAG`].
 pub fn fade_batch_lod(level: u32, errors: &[f32], radius: f32) -> [u32; 3] {
     let [tag, low, high] = batch_lod(level, errors, radius);
@@ -326,7 +376,7 @@ pub fn impostor_batch_lod(level: u32, mesh_errors: &[f32], radius: f32, impostor
 /// [`LOD_IMPOSTOR_TAG`], game systems LOD-15) is scaled by the origin's radius instead, so the
 /// parts of a compound, which share the origin, switch to it at the same distance.
 fn instance_chain(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4]) -> ([f32; 4], usize, f32) {
-    let levels = ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize;
+    let levels = chain_levels(lod);
     let halves = [lod[1] & 0xFFFF, lod[1] >> 16, lod[2] & 0xFFFF, lod[2] >> 16];
     let mut errors = halves.map(|bits| f16_value(bits as u16) * bounds[3]);
     if lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0 {
@@ -340,18 +390,43 @@ fn instance_chain(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32;
 /// An instance's band from the camera; levels off (`view.w` not positive) or a radius that is
 /// not positive draw the mesh itself whole. In a shadow view (`caster`, game systems LOD-15
 /// option A) a band at an impostor level reads as the last mesh level whole: the casters keep
-/// the mesh's shape where the camera draws the impostor or crossfades to it.
-fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: bool) -> LodBand {
+/// the mesh's shape where the camera draws the impostor or crossfades to it. A sun cascade
+/// (`caster_error` positive, lane FQ) casts the coarsest mesh level within that world error whole
+/// where it is coarser than that band ([`caster_level`]); a chain's casters' level (lane FR) is
+/// never the camera's ([`camera_band`]).
+fn instance_band(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), (caster, caster_error): (bool, f32)) -> LodBand {
     if !positive(view[3]) || !positive(bounds[3]) {
         return LodBand::MESH;
     }
     let (errors, levels, distance) = instance_chain(lod, bounds, origin, view);
-    let band = lod_band(&errors[..levels], distance, view[3], 1.0, bias, beta);
-    let casts_mesh = caster && lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0 && band.level as usize >= levels;
-    if casts_mesh {
-        return LodBand { level: levels as u32 - 1, share: WHOLE };
+    let band = camera_band(&errors[..levels], camera_skips(lod, levels), distance, view[3], (bias, beta));
+    let impostor = lod[0] & LOD_IMPOSTOR_TAG != 0 && levels > 0;
+    let band = if caster && impostor && band.level as usize >= levels { LodBand { level: levels as u32 - 1, share: WHOLE } } else { band };
+    let mesh_levels = if impostor { levels - 1 } else { levels };
+    let planned = lod[0] & LOD_PLANNED_TAG != 0;
+    let floor = if planned { 0 } else { caster_level(&errors, mesh_levels, caster_error) };
+    if floor > band.level {
+        return LodBand { level: floor, share: WHOLE };
     }
     band
+}
+
+/// The coarsest of the first `mesh_levels` levels whose world error (`errors`) is within
+/// `allowed`, 0 (the mesh itself) when none is or nothing is allowed: what a sun cascade may cast
+/// (lane FQ, [`crate::shadow::caster_error_texels`]). `gx_cull_caster_level` in
+/// `shaders/cull.wgsl` is its twin.
+pub fn caster_level(errors: &[f32; 4], mesh_levels: usize, allowed: f32) -> u32 {
+    // A NaN allows nothing, as 0 does.
+    if allowed.is_nan() || allowed <= 0.0 {
+        return 0;
+    }
+    let mut level = 0;
+    for (k, error) in errors.iter().enumerate().take(mesh_levels.min(LOD_MAX_LEVELS as usize)) {
+        if *error <= allowed {
+            level = k as u32 + 1;
+        }
+    }
+    level
 }
 
 /// [`lod_keeps`] under a fade band of `beta` with the row's `bias`: whether the cull keeps an
@@ -371,12 +446,12 @@ pub fn lod_band_keep(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4], bias: f32,
 /// scaled by its own `bounds`' radius. The cull's keep rule (`gx_cull_lod_fade` in
 /// `shaders/cull.wgsl`, expression for expression; game systems LOD-03).
 pub fn lod_row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], bias: f32, beta: f32) -> Option<f32> {
-    row_keep(lod, bounds, origin, view, (bias, beta), false)
+    row_keep(lod, bounds, origin, view, (bias, beta), (false, 0.0))
 }
 
 /// [`lod_row_keep`] in a camera view, or in a shadow view (`caster`): there a band at an
 /// impostor level reads as the last mesh level whole (game systems LOD-15 option A).
-fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: bool) -> Option<f32> {
+fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), caster: (bool, f32)) -> Option<f32> {
     if lod[0] & LOD_TAG == 0 {
         return Some(WHOLE);
     }
@@ -392,7 +467,12 @@ fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (
     if level == band.level {
         return Some(-band.share);
     }
-    (level + 1 == band.level).then_some(WHOLE - band.share)
+    (level == finer_level(camera_skips(lod, chain_levels(lod)), band.level)).then_some(WHOLE - band.share)
+}
+
+/// The chain length a LOD row's tag names (at most [`LOD_MAX_LEVELS`]).
+fn chain_levels(lod: [u32; 3]) -> usize {
+    ((lod[0] >> LOD_LEVELS_SHIFT) & LOD_LEVEL_MASK).min(LOD_MAX_LEVELS) as usize
 }
 
 /// [`lod_row_keep`] with the instance's far field (game systems LOD-18): whether the cull keeps
@@ -402,15 +482,17 @@ fn row_keep(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (
 /// fade, or its two crossfading levels with their fades times the far share; a share of 0 drops
 /// it everywhere. The cull's twin is `gx_cull_lod_fade` in `shaders/cull.wgsl`.
 pub fn lod_row_keep_far(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], band: (f32, f32), far: crate::lod_rows::FarField) -> Option<[f32; 2]> {
-    lod_row_keep_view(lod, bounds, origin, view, band, far, false)
+    lod_row_keep_view(lod, bounds, origin, view, band, far, (false, 0.0))
 }
 
 /// [`lod_row_keep_far`] in the camera view (`caster` false) or a shadow view (game systems
 /// LOD-15 option A): in a shadow view a chain ended by an impostor ([`LOD_IMPOSTOR_TAG`]) never
 /// keeps its impostor level, and an instance the camera draws as the impostor, or crossfades to
-/// it, casts its last mesh level whole. The cull's twin is `gx_cull_lod_fade` in
-/// `shaders/cull.wgsl` (its `caster` argument: every view but the camera).
-pub fn lod_row_keep_view(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField, caster: bool) -> Option<[f32; 2]> {
+/// it, casts its last mesh level whole. `caster` is that flag and the world error the view's
+/// casters may show (a sun cascade's, lane FQ; 0 the camera's level). The cull's twin is
+/// `gx_cull_lod_fade` in `shaders/cull.wgsl` (its `caster` argument: every view but the camera;
+/// its `caster_error`: `gx_cull_caster_error`).
+pub fn lod_row_keep_view(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view: [f32; 4], (bias, beta): (f32, f32), far: crate::lod_rows::FarField, caster: (bool, f32)) -> Option<[f32; 2]> {
     if !far.thinned {
         return row_keep(lod, bounds, origin, view, (bias, beta), caster).map(|fade| [fade, WHOLE]);
     }
@@ -425,7 +507,7 @@ pub fn lod_row_keep_view(lod: [u32; 3], bounds: [f32; 4], origin: [f32; 4], view
     } else if level == band.level {
         Some(-band.share * far.share)
     } else {
-        (level + 1 == band.level).then_some((WHOLE - band.share) * far.share)
+        (level == finer_level(camera_skips(lod, chain_levels(lod)), band.level)).then_some((WHOLE - band.share) * far.share)
     };
     fade.map(|fade| [fade, far.grow])
 }
@@ -465,6 +547,10 @@ pub fn lod_keeps(lod: [u32; 3], bounds: [f32; 4], view: [f32; 4]) -> bool {
         return level == 0;
     }
     let (errors, levels, distance) = instance_chain(lod, bounds, bounds, view);
+    if camera_skips(lod, levels) {
+        let picked = select_lod(&errors[1..levels], distance, view[3], 1.0);
+        return if picked == 0 { level == 0 } else { picked + 1 == level };
+    }
     select_lod(&errors[..levels], distance, view[3], 1.0) == level
 }
 
@@ -513,8 +599,8 @@ fn f16_value(bits: u16) -> f32 {
 pub(crate) enum PrimitiveLods {
     /// No such member.
     Absent,
-    /// Levels that passed validation, over the primitive's own vertices.
-    Valid(Vec<LodLevel>),
+    /// Levels that passed validation, over the primitive's own vertices, and its caster levels.
+    Valid(Vec<LodLevel>, u32),
     /// Levels refused.
     Refused(LodFault),
 }
@@ -553,8 +639,19 @@ fn check_level(level: &LodLevel, previous: Option<&LodLevel>, vertex_count: u32)
     Ok(())
 }
 
-/// The levels an extras member names, every number checked.
-fn decode(gltf: &gltf::Gltf, blob: Option<&[u8]>, extras: &gltf::json::Value, vertex_count: u32) -> Result<Vec<LodLevel>, LodFault> {
+/// The caster levels `extras` name for a chain of `levels` (absent: none), checked.
+fn caster_levels(extras: &gltf::json::Value, levels: usize) -> Result<u32, LodFault> {
+    let Some(value) = extras.get(LodExtrasKey::Casters.wire()) else { return Ok(0) };
+    let casters = value.as_u64().filter(|casters| *casters <= u64::from(LOD_MAX_CASTER_LEVELS)).ok_or(LodFault::OverLimit)? as u32;
+    // A caster level leaves the camera at least one level of its own.
+    if casters > 0 && casters as usize >= levels {
+        return Err(LodFault::OverLimit);
+    }
+    Ok(casters)
+}
+
+/// The levels an extras member names and its caster levels, every number checked.
+fn decode(gltf: &gltf::Gltf, blob: Option<&[u8]>, extras: &gltf::json::Value, vertex_count: u32) -> Result<(Vec<LodLevel>, u32), LodFault> {
     let version = extras.get(LodExtrasKey::Version.wire()).and_then(gltf::json::Value::as_u64);
     if !extras.is_object() || version != Some(u64::from(LOD_SCHEMA_VERSION)) {
         return Err(LodFault::UnknownVersion);
@@ -572,7 +669,8 @@ fn decode(gltf: &gltf::Gltf, blob: Option<&[u8]>, extras: &gltf::json::Value, ve
         check_level(&level, levels.last(), vertex_count)?;
         levels.push(level);
     }
-    Ok(levels)
+    let casters = caster_levels(extras, levels.len())?;
+    Ok((levels, casters))
 }
 
 /// Read and validate a primitive's `genex_lods` against its `vertex_count` vertices. Extras that
@@ -582,7 +680,7 @@ pub(crate) fn read_lod_extras(gltf: &gltf::Gltf, primitive: &gltf::Primitive<'_>
     let Ok(value) = gltf::json::deserialize::from_str::<gltf::json::Value>(raw.get()) else { return PrimitiveLods::Absent };
     let Some(extras) = value.get(LODS_EXTRAS_KEY) else { return PrimitiveLods::Absent };
     match decode(gltf, blob, extras, vertex_count) {
-        Ok(levels) => PrimitiveLods::Valid(levels),
+        Ok((levels, casters)) => PrimitiveLods::Valid(levels, casters),
         Err(fault) => PrimitiveLods::Refused(fault),
     }
 }
@@ -597,6 +695,8 @@ fn largest_scale(world: Mat4) -> f32 {
 #[derive(Default)]
 pub(crate) struct LodMerge {
     levels: Vec<LodLevel>,
+    /// The caster levels of the first primitive with levels; every other must name the same.
+    casters: Option<u32>,
     /// Every primitive visited so far had valid levels.
     complete: bool,
     started: bool,
@@ -617,7 +717,13 @@ impl LodMerge {
                 log::warn!("glb lods: primitive {} refused ({}); the mesh draws whole", self.visited, fault.wire());
                 self.warnings.push(LodWarning { primitive: self.visited, fault });
             }
-            PrimitiveLods::Valid(levels) => self.append(levels, largest_scale(world), base),
+            PrimitiveLods::Valid(levels, casters) => {
+                // Primitives whose casters differ make no one chain: the part draws whole.
+                if *self.casters.get_or_insert(casters) != casters {
+                    self.complete = false;
+                }
+                self.append(levels, largest_scale(world), base);
+            }
         }
         self.visited += 1;
     }
@@ -646,7 +752,10 @@ impl LodMerge {
     /// The part's chain when every primitive had levels, with the warnings of those refused.
     pub(crate) fn finish(self) -> (Option<LodChain>, Vec<LodWarning>) {
         let usable = self.complete && !self.levels.is_empty();
-        (usable.then_some(LodChain { levels: self.levels }), self.warnings)
+        let casters = self.casters.unwrap_or(0);
+        // A chain cut shorter than its caster levels leaves the camera none of its own.
+        let usable = usable && (casters == 0 || self.levels.len() > casters as usize);
+        (usable.then_some(LodChain { levels: self.levels, casters }), self.warnings)
     }
 }
 

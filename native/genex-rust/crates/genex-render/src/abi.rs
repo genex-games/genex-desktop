@@ -531,8 +531,43 @@ pub struct GxMaterialExt {
     /// thickness (`0..=1`; 1 scatters nothing).
     pub subsurface: [f32; 4],
     /// x: the forward-scatter power, y: the diffuse transmission share, z: the scattering depth in
-    /// world units, w: reserved (renderer pass 2 B.1).
+    /// world units (renderer pass 2 B.1), w: the share of light let straight through
+    /// (`KHR_materials_transmission`, `layers::Lobes::transmission`).
     pub transmission: [f32; 4],
+    /// The UV mapping (Bodycam B2b, `pbr::uv_rows`): xy the scale (0 reads as 1, so a zeroed row
+    /// samples the mesh's UVs as authored; tiles per metre for a world projection), zw the offset
+    /// in tiles.
+    pub uv: [f32; 4],
+    /// The tiling (Bodycam B2b): x the flag bits (`pbr::UV_FLAG_WORLD`, `UV_FLAG_STOCHASTIC`), y
+    /// the rotation in radians, z the macro variation's strength, w its patch size in metres.
+    pub tiling: [f32; 4],
+    /// The cover (AAA materials, `layers::Cover`): rgb its colour (linear), a its amount.
+    pub cover: [f32; 4],
+    /// The cover's shape: x the cosine of its steepest slope, y its edge's width in cosine units,
+    /// z its roughness, w how much it flattens the normal map.
+    pub cover_shape: [f32; 4],
+    /// The cover's look: x its noise strength, y the noise's patch in metres, z how much it
+    /// darkens the base colour, w how much its colour replaces it.
+    pub cover_look: [f32; 4],
+    /// The detail maps (`layers::Detail`): x the albedo's texture (`class * 65536 + layer`, -1
+    /// none), y the normal map's, z repeats per base tile, w the albedo overlay's strength.
+    pub detail: [f32; 4],
+    /// x the detail normal's strength, y the distance it has faded out by (0: never), zw 0.
+    pub detail_look: [f32; 4],
+    /// The second layer's textures (`layers::MaterialLayer`): base colour, normal, ORM, height.
+    pub layer: [f32; 4],
+    /// x the layer's mask (0 noise, 1 up, 2 + channel the vertex colour), y the height blend's
+    /// depth, z the noise mask's patch in metres, w the layer's repeats per base tile.
+    pub layer_shape: [f32; 4],
+    /// The layer's tint (rgb, linear) and roughness factor (a).
+    pub layer_tint: [f32; 4],
+    /// Parallax occlusion mapping (`layers::Parallax`): x the height map's texture, y the depth in
+    /// tiles, z the most steps, w 0.
+    pub parallax: [f32; 4],
+    /// The lobes (`layers::Lobes`): x clearcoat, y its roughness, z anisotropy, w its rotation.
+    pub lobes: [f32; 4],
+    /// The sheen: rgb its colour (linear), a its roughness.
+    pub sheen: [f32; 4],
 }
 
 /// A v2 struct's Rust layout and the WGSL struct it mirrors, member for member.
@@ -596,7 +631,7 @@ pub const V2_STRUCTS: &[V2Struct] = &[
         shader: "material-v2-sample",
         rust_size: size_of::<GxMaterialExt>(),
         rust_align: align_of::<GxMaterialExt>(),
-        fields: fields!(GxMaterialExt: emissive, params, subsurface, transmission),
+        fields: fields!(GxMaterialExt: emissive, params, subsurface, transmission, uv, tiling, cover, cover_shape, cover_look, detail, detail_look, layer, layer_shape, layer_tint, parallax, lobes, sheen),
     },
 ];
 

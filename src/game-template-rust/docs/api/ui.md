@@ -16,25 +16,54 @@ panel with `genex::render::settings_button(ui, "Settings")`, a drawn gear beside
 The whole settings menu (graphics, audio, controls, language and accessibility, the game's own
 options) is `genex::settings::menu(ui)` (`docs/api/settings.md`).
 
+The HUD is egui 0.36 (pinned `=0.36.2`, re-exported as `genex::egui`; never add egui to
+`[crates]`). Inside a hook `ui.max_rect()` is the hook's area (its centre is the screen's, for a
+crosshair); the whole window is `ui.ctx().content_rect()`. This egui has no `screen_rect`. Every
+type and call in one line:
+
+```rust
+use genex::prelude::*;                                         // UiConfig, UiScale, TextArgs, egui
+use genex::ui::{Bar, Dialog, GridAnswer, ItemGrid, ItemList, Locale, Menu, ToastKind, Toasts};
+game.on_ui(|sim, ui, ctx| {});                                 // ui: &mut egui::Ui, once per tick
+game.ui(UiConfig::new().locales(&["en", "fr"]).scale(UiScale::Fixed(1.25))); // -> &mut Game
+ui.ctx().content_rect(); ui.max_rect();                        // -> egui::Rect: the screen, the hook's area
+genex::ui::tr("title-new"); genex::ui::tr_args("hud-coins", &TextArgs::new().num("coins", 3)); // -> String
+genex::ui::locale(); genex::ui::reduced_motion(); genex::ui::safe_area(ui); // -> Option<Locale>, bool, egui::Margin
+Menu::new("pause").item("resume", &resume).back("resume").show(ui); // -> Option<&str>, the picked key
+Dialog::new("quit").body(&sure).button("yes", &yes).cancel("no").show(ui); // -> Option<&str>; .title too
+ItemGrid::new("bag", 6).cell(64.0).show(ui, count, |ui, i, rect| label_of(i)); // -> GridAnswer
+ItemList::new("quests").show(ui, count, |ui, i, rect| label_of(i)); // GridAnswer { activated, moved, focused }
+Bar::new("hp", 0.5).label("Health").show(ui);                  // -> egui::Response
+Toasts::push(ui.ctx(), ToastKind::Info, &saved); Toasts::show(ui);
+genex::render::settings_button(ui, "Settings");                // -> egui::Response
+```
+
+A label is a `&str` the widget borrows: keep a `tr(..)` in a `let` before the builder when you
+keep the answer.
+
 ## The kit (`game.ui`)
 
 Register the gameplay UI once with `game.ui(UiConfig::new().locales(&["en", "fr"]))`; its text,
 locales, fonts and `xx-pseudo` are `docs/api/text.md`. `.scale(UiScale::Fixed(1.25))` fixes the UI
 scale (by default `UiScale::Auto`: 1.5 on a phone in an export, 1 elsewhere). Install refuses a
 second registration (`duplicate-ui`) and a locale that is not BCP-47 or a font for a locale the
-list does not name (`ui-locale-invalid`). `genex::ui::locale()`, `genex::ui::reduced_motion()` and
-`genex::ui::safe_area(ui)` (what of the drawn world a phone's notch, island or home indicator
-covers, as an egui margin; zero while the world is presented inside the safe area) read the same
-layers; lay menus out inside the world's rect less that margin. A Genex run has no safe area. In
-a Studio run the `uiSettings` verb sets a session layer (locale, scale, safe area, text size) from
-the next tick. `textSize` is recorded and answered back; gameplay UI does not read it yet.
+list does not name (`ui-locale-invalid`). The `on_ui` hooks draw inside the safe area plus a
+16 pt margin, at the person's text size; touch controls, `egui::Area`s and `ui.put` keep the whole
+world. `genex::ui::locale()`, `genex::ui::reduced_motion()` and `genex::ui::safe_area(ui)` (what of
+`ui`'s rect a phone's notch, island or home indicator still covers, as an egui margin; zero inside
+the hook's own rect) read the same layers; lay menus out inside `ui`'s rect less that margin. A
+Genex run has no safe area. In a Studio run the `uiSettings` verb sets a session layer (locale,
+scale, safe area, text size) from the next tick. `textSize` is answered back; the hooks read the
+settings menu's text size. Reduced motion, screen shake and head bob also reach the camera:
+`FirstPersonRig` obeys them in the camera hook (`docs/api/camera.md`), and an animated widget of
+your own checks `genex::ui::reduced_motion()`.
 
 The kit draws in one pass and moves by pad or keys: `Menu::new("pause").item("resume", &tr("resume")).back("resume").show(ui)`
 answers the picked item's key (its `back` key on B or Escape), and `Dialog::new("quit")`,
 `ItemGrid::new("bag", 6)`, `ItemList::new("quests")` and `Bar::new("hp", 0.5)` follow the same
 pattern; `Toasts::push(ui.ctx(), ToastKind::Info, &tr("saved"))` queues a notice and
-`Toasts::show(ui)` draws the queue at the top right of `ui`'s rect: the whole frame for a root
-ui, clear of a notch inside the safe area. A menu focuses its first item when it opens and
+`Toasts::show(ui)` draws the queue at the top right of `ui`'s rect: inside the safe area and the
+16 pt margin for a hook's ui. A menu focuses its first item when it opens and
 remembers its focused item, so a menu opened again lands where the player left it. A `Bar`'s
 label is what checks and screen readers read, not drawn: draw the words beside it. The d-pad or left
 stick moves focus, A accepts, B cancels and the bumpers walk in drawing order; a held direction
@@ -48,7 +77,6 @@ repeated key records `ui-key-invalid` or `ui-key-duplicate`. `state().volatile.u
 `{locale, scale, safeArea, issues}`, and a text file's issues also appear in
 `state().__render.assetIssues`. None of it enters the checksum.
 
-`native/genex-rust/examples/menus-saves` is a complete menu game: title, pause, settings with a
-Game tab, an inventory grid, save and load slot lists over an autosave ring, a quit dialog and
-toasts, all by pad or keys. A screen there ignores answers on the tick it opened, so the press
+`docs/examples/menus-saves/` is a complete menu game: title, pause, the settings menu, save and
+load slot lists over an autosave ring, a quit dialog and toasts, all by pad or keys. A screen there ignores answers on the tick it opened, so the press
 that opened it (Escape opening a pause menu whose back key is also Escape) never picks in it.

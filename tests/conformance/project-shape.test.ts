@@ -32,13 +32,7 @@ import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { servedKey } from "../../src/main/core/page-report.ts";
 import { ensureRepo, git } from "../../src/substrate/snapshots.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
-import {
-  ENGINE_EXPORT_REFUSAL,
-  kindChip,
-  openOptions,
-  openedWords,
-  suggestedOption,
-} from "../../src/shared/shape-words.ts";
+import { engineExportRefusal, openOptions, openedWords, suggestedOption } from "../../src/shared/shape-words.ts";
 import { loopRunRefusal } from "../../src/harness-seed/loop/main.ts";
 import { servedAfterBuild } from "../../src/main/game-build.ts";
 import { allowedFile as hookAllowedFile } from "../../src/substrate/ownership.ts";
@@ -59,6 +53,15 @@ import { validateGameDir, validateNativeDir } from "../../src/substrate/game-val
 
 const exec = promisify(execFile);
 const repo = path.resolve(import.meta.dirname, "../..");
+
+/** How many builds a game's build command counted in `file` of its own temp folder (its shadow's `tmp/`). */
+async function buildsRan(userData: string, project: string, file: string): Promise<number> {
+  const builds = path.join(userData, "scratch", "builds");
+  const shadow = (await readdir(builds).catch(() => [])).find((name) => name.startsWith(`${project}-`));
+  if (!shadow) return 0;
+  const counted = await readFile(path.join(builds, shadow, "tmp", file), "utf8").catch(() => "");
+  return counted.split("\n").filter(Boolean).length;
+}
 
 async function viteFolder(dir: string, options: { build?: boolean; outDir?: string } = {}): Promise<void> {
   await mkdir(path.join(dir, "src"), { recursive: true });
@@ -1022,10 +1025,10 @@ describe("a project's own shape", () => {
     rigs.push(rig);
     const dir = path.join(await tmpDir("studio-built-"), "skate");
     await viteFolder(dir);
-    // The build counts itself somewhere the studio owns, so "how many builds ran" is a fact and
-    // not an inference; it writes its output the way any bundler does, into dist/.
-    const counter = path.join(rig.userData, "scratch", "builds-ran");
-    const build = `mkdir -p dist && cp index.html dist/index.html && echo x >> ${JSON.stringify(counter)}`;
+    // The build counts itself in its own temp folder (a build writes nothing else outside its
+    // game), so "how many builds ran" is a fact and not an inference; it writes its output the
+    // way any bundler does, into dist/.
+    const build = `mkdir -p dist && cp index.html dist/index.html && echo x >> "$TMPDIR/builds-ran"`;
     const studioJson = (command: string): string =>
       JSON.stringify({
         name: "skate",
@@ -1048,8 +1051,7 @@ describe("a project's own shape", () => {
     const project = await rig.core.adoptProject(dir);
     assert.equal(project.built, true);
     const api = rig.core.api();
-    const ran = async (): Promise<number> =>
-      (await readFile(counter, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+    const ran = () => buildsRan(rig.userData, project.name, "builds-ran");
 
     await api["preview.load"]!({ project: project.name } as never);
     assert.equal(await ran(), 1, "the build ran once");
@@ -1172,11 +1174,10 @@ describe("a project's own shape", () => {
     rigs.push(rig);
     const dir = path.join(await tmpDir("studio-recovered-"), "skate");
     await viteFolder(dir);
-    const counter = path.join(rig.userData, "scratch", "recovered-builds");
     const gate = path.join(rig.userData, "packages-installed");
     // The build works only once something *outside the tree* is there — packages installed, or
     // node found on the PATH. Neither is a file git can see, which is the whole difficulty.
-    const build = `echo x >> ${JSON.stringify(counter)}; test -f ${JSON.stringify(gate)} && mkdir -p dist && cp index.html dist/index.html`;
+    const build = `echo x >> "$TMPDIR/recovered-builds"; test -f ${JSON.stringify(gate)} && mkdir -p dist && cp index.html dist/index.html`;
     await writeFile(
       path.join(dir, "studio.json"),
       JSON.stringify({
@@ -1194,8 +1195,7 @@ describe("a project's own shape", () => {
     );
     const project = await rig.core.adoptProject(dir);
     const api = rig.core.api();
-    const ran = async (): Promise<number> =>
-      (await readFile(counter, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+    const ran = () => buildsRan(rig.userData, project.name, "recovered-builds");
 
     await api["preview.load"]!({ project: project.name } as never);
     assert.equal(rig.preview.loads.length, 0, "no build ever worked, so the stage was never given a page");
@@ -1702,7 +1702,7 @@ describe("the Open Game sheet", () => {
     const exported = openOptions(await games.inspect(godot));
     assert.equal(exported[0]!.engineExport, true, "the sheet says a compiled export cannot be built on");
     assert.equal(exported[0]!.button, "Open this game", "it still opens, to play and to photograph");
-    assert.match(ENGINE_EXPORT_REFUSAL, /play it and take screenshots/);
+    assert.match(engineExportRefusal(), /play it and take screenshots/);
   });
 
   it("never starts a run on a compiled export, whoever asked for it", async () => {
@@ -1786,7 +1786,7 @@ describe("the Open Game sheet", () => {
     assert.ok(!/window\.studio/.test(sheet), "the sheet asks the question; App is what answers it");
     assert.match(
       sheet,
-      /chosen\.engineExport \?\s*\(\s*<div[^>]*data-testid="engine-export-card"[^>]*>\s*\{ENGINE_EXPORT_REFUSAL\}\s*<\/div>/,
+      /chosen\.engineExport \?\s*\(\s*<div[^>]*data-testid="engine-export-card"[^>]*>\s*\{engineExportRefusal\(\)\}\s*<\/div>/,
       "the refusal a run would give is shown before the run",
     );
   });
@@ -1804,7 +1804,6 @@ describe("the Open Game sheet", () => {
     assert.match(refusal!, /exported from a game engine/);
     assert.match(refusal!, /play it and take screenshots/);
     assert.match(refusal!, /scenes and scripts/);
-    assert.equal(kindChip(project.shape.kind), "engine export", "the stage header says the same thing");
 
     // A page that cannot load still refuses, naming what is missing (by the typed list
     // `game.validate` answers); a missing contract does not — installing it is the base builder's

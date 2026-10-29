@@ -44,7 +44,7 @@ use glam::{Mat4, Vec4};
 use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 
 use crate::error::RenderError;
-use crate::layout::{GpuBatch, GpuInstance, INSTANCE_FADE_WHOLE, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS};
+use crate::layout::{GpuBatch, GpuInstance, INSTANCE_FADE_WHOLE, MAX_CASCADES, MAX_SHADOW_SLOTS, MAX_VIEWS};
 use crate::lod_rows::{FarField, GpuFarRule, GpuLodRow, LOD_BIAS_DEFAULT, far_field};
 
 /// Opaque rows per cull block: one workgroup's invocations (`GX_CULL_BLOCK` in cull.wgsl).
@@ -68,11 +68,12 @@ pub const fn scratch_bytes(rows: u32, views: u32) -> u64 {
     scratch_words_per_view(rows) * views as u64 * 4
 }
 
-/// The active cull views of a frame drawing `cascades` sun cascades and `spots` shadowed spot
-/// lights (each clamped to its reserve): the camera, then the cascades, then the spots.
+/// The active cull views of a frame drawing `cascades` sun cascades and shadow slots up to `spots`
+/// (the highest slot drawn plus one; each clamped to its reserve): the camera, then the cascades,
+/// then the slots.
 pub const fn active_views(cascades: usize, spots: usize) -> u32 {
     let cascades = if cascades < MAX_CASCADES { cascades } else { MAX_CASCADES };
-    let spots = if spots < MAX_SHADOWED_SPOTS { spots } else { MAX_SHADOWED_SPOTS };
+    let spots = if spots < MAX_SHADOW_SLOTS { spots } else { MAX_SHADOW_SLOTS };
     (1 + cascades + spots) as u32
 }
 
@@ -86,7 +87,7 @@ pub const fn spot_view(cascades: usize, spot: usize) -> u32 {
     (1 + cascades + spot) as u32
 }
 
-const _: () = assert!(active_views(MAX_CASCADES, MAX_SHADOWED_SPOTS) as usize == MAX_VIEWS);
+const _: () = assert!(active_views(MAX_CASCADES, MAX_SHADOW_SLOTS) as usize == MAX_VIEWS);
 
 /// The cull group's binding of the per-slot fade table (`fades` in `shaders/cull.wgsl`, game
 /// systems LOD-03).
@@ -181,13 +182,14 @@ pub fn in_frustum(planes: &[[f32; 4]; 6], bounds: [f32; 4]) -> bool {
 /// it, with their fades ([`crate::mesh::lod_row_keep`]; renderer pass 2 A6.9, game systems LOD-03).
 /// The camera's cull: [`cpu_cull_view`] with `caster` false.
 pub fn cpu_cull(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize) -> CpuCull {
-    cpu_cull_view(planes, lod, batches, instances, slots, false)
+    cpu_cull_view(planes, lod, batches, instances, slots, (false, 0.0))
 }
 
 /// [`cpu_cull`] of the camera (`caster` false) or of a shadow view (game systems LOD-15 option A:
 /// a chain ended by an impostor casts its last mesh level where the camera draws the impostor,
-/// [`crate::mesh::lod_row_keep_view`]); the compute pass's `caster` is every view but the camera.
-pub fn cpu_cull_view(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize, caster: bool) -> CpuCull {
+/// [`crate::mesh::lod_row_keep_view`]); the compute pass's `caster` is every view but the camera,
+/// with the world error a sun cascade's casters may show (lane FQ, `GpuCullViews::shadow_lod`).
+pub fn cpu_cull_view(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBatch], instances: &[GpuInstance], slots: usize, caster: (bool, f32)) -> CpuCull {
     let mut visible = vec![0; slots];
     let mut fades = vec![[INSTANCE_FADE_WHOLE; 2]; slots];
     let mut counts = Vec::with_capacity(batches.len());
@@ -211,12 +213,34 @@ pub fn cpu_cull_view(planes: &[[f32; 4]; 6], lod: &CullLod<'_>, batches: &[GpuBa
     CpuCull { visible, counts, fades }
 }
 
-/// The cull's three pipelines and their bind group layout.
+/// The cull's three pipelines and their bind group layout, with the stand-ins its occlusion
+/// bindings take while a dispatch reads no Hi-Z or history.
 pub(crate) struct CullPass {
     layout: BindGroupLayout,
     mark: Compiled<ComputePipeline>,
     scan: Compiled<ComputePipeline>,
     scatter: Compiled<ComputePipeline>,
+    no_hiz: wgpu::TextureView,
+    no_history: Buffer,
+}
+
+/// The cull group's bindings of the occlusion row (dynamic offset), the Hi-Z and the history
+/// (`shaders/cull.wgsl` `occ`, `occ_hiz`, `occ_history`; [`crate::occlusion`]).
+pub const CULL_OCCLUSION_BINDING: u32 = 9;
+/// See [`CULL_OCCLUSION_BINDING`].
+pub const CULL_HIZ_BINDING: u32 = 10;
+/// See [`CULL_OCCLUSION_BINDING`].
+pub const CULL_HISTORY_BINDING: u32 = 11;
+
+/// What one cull dispatch occludes with ([`crate::occlusion`]): its uniform row, the Hi-Z and the
+/// history it reads (stand-ins when absent), and its views: `first` and how many.
+#[derive(Clone, Copy)]
+pub(crate) struct CullOcclusion<'a> {
+    pub uniform: &'a Buffer,
+    pub row: u32,
+    pub hiz: Option<&'a wgpu::TextureView>,
+    pub history: Option<&'a Buffer>,
+    pub views: u32,
 }
 
 /// What one cull dispatch reads and writes.
@@ -253,6 +277,14 @@ impl CullPass {
                 compute_storage(crate::lod_rows::CULL_LOD_ROWS_BINDING, true),
                 compute_storage(CULL_FADES_BINDING, false),
                 compute_uniform(crate::lod_rows::CULL_FAR_RULES_BINDING),
+                crate::tables::uniform(CULL_OCCLUSION_BINDING, true, wgpu::ShaderStages::COMPUTE),
+                wgpu::BindGroupLayoutEntry {
+                    binding: CULL_HIZ_BINDING,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                compute_storage(CULL_HISTORY_BINDING, false),
             ],
         });
         let module = crate::shaders::module(device, "cull", crate::shaders::CULL)?;
@@ -268,20 +300,34 @@ impl CullPass {
                 cache: None,
             })
         };
-        Ok(CullPass { mark: pipeline(CULL_MARK_ENTRY), scan: pipeline(CULL_SCAN_ENTRY), scatter: pipeline(CULL_SCATTER_ENTRY), layout })
+        let no_hiz = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("cull no hi-z"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: crate::hiz::HIZ_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let no_history = crate::tables::buffer(device, "cull no history", 16, wgpu::BufferUsages::STORAGE)?;
+        Ok(CullPass { mark: pipeline(CULL_MARK_ENTRY), scan: pipeline(CULL_SCAN_ENTRY), scatter: pipeline(CULL_SCATTER_ENTRY), layout, no_hiz, no_history })
     }
 
-    /// The three dispatches over `rows` opaque rows and `views` active views, in one pass;
-    /// `timestamps` around it (a cost row).
+    /// The three dispatches over `rows` opaque rows and `occlusion.views` views from the row's
+    /// first, in one pass; `timestamps` around it (a cost row).
     pub(crate) fn encode(
         &self,
         device: &Device,
         encoder: &mut wgpu::CommandEncoder,
         buffers: &CullBuffers<'_>,
         rows: u32,
-        views: u32,
+        occlusion: CullOcclusion<'_>,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) {
+        let row = wgpu::BufferBinding { buffer: occlusion.uniform, offset: 0, size: std::num::NonZeroU64::new(size_of::<crate::occlusion::GpuOcclusionCull>() as u64) };
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cull"),
             layout: &self.layout,
@@ -295,11 +341,16 @@ impl CullPass {
                 crate::tables::entry(crate::lod_rows::CULL_LOD_ROWS_BINDING, buffers.lod_rows),
                 crate::tables::entry(CULL_FADES_BINDING, buffers.fades),
                 crate::tables::entry(crate::lod_rows::CULL_FAR_RULES_BINDING, buffers.far_rules),
+                wgpu::BindGroupEntry { binding: CULL_OCCLUSION_BINDING, resource: wgpu::BindingResource::Buffer(row) },
+                wgpu::BindGroupEntry { binding: CULL_HIZ_BINDING, resource: wgpu::BindingResource::TextureView(occlusion.hiz.unwrap_or(&self.no_hiz)) },
+                crate::tables::entry(CULL_HISTORY_BINDING, occlusion.history.unwrap_or(&self.no_history)),
             ],
         });
+        let views = occlusion.views;
+        let offset = (u64::from(occlusion.row) * crate::occlusion::OCCLUSION_ROW_STRIDE) as u32;
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("cull"), timestamp_writes: timestamps });
         let blocks = cull_blocks(rows).max(1);
-        pass.set_bind_group(0, &group, &[]);
+        pass.set_bind_group(0, &group, &[offset]);
         // Each dispatch is its own usage scope: the scan reads what the mark wrote, the scatter
         // what the scan wrote.
         pass.set_pipeline(&self.mark);

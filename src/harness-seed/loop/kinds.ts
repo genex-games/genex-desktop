@@ -89,7 +89,10 @@ export interface GameTraits {
   mouseLook: boolean;
   keyboardMove: boolean;
   playScript: PlayAction[] | null;
-  /** The keys that take a game with no `__studio.begin()` from its title into play; absent when none were declared. */
+  /**
+   * The keys that take a game from its title into play when it has no `__studio.begin()`; an
+   * empty list declares that it boots straight into play. Absent when nothing was declared.
+   */
   start?: { keys: string[] };
 }
 
@@ -260,11 +263,14 @@ export function normalizeGameTraits(raw: AnyRecord | null | undefined): GameTrai
   };
 }
 
-/** Declared start keys (`{ keys: ["Enter"] }`), or null when there are none. */
+/**
+ * Declared start keys (`{ keys: ["Enter"] }`), or null when there are none. An explicit empty
+ * list (`{ keys: [] }`, a plan's `start=none`) is a declaration too: the game boots into play.
+ */
 function startOf(raw: unknown): { keys: string[] } | null {
   if (!isPlainRecord(raw)) return null;
   const keys = asKeys(raw.keys ?? raw.key);
-  return keys.length ? { keys } : null;
+  return keys.length || Array.isArray(raw.keys) ? { keys } : null;
 }
 
 /**
@@ -510,7 +516,9 @@ export function gameLine(game: AnyRecord | null | undefined, { kept = false }: {
   const drove = describePlayScript(script);
   const cruise = cruiseFor(traits);
   const held = cruise.length ? `, then holds ${keyList(cruise)} through the rest of the drive` : "";
-  const drives = drove ? ` Before every judgement the harness drives the same controls: ${drove}${held}.` : "";
+  const start = startKeysFor(traits);
+  const leaves = start.length ? `presses ${keyList(start)} to leave the title, then ` : "";
+  const drives = drove ? ` Before every judgement the harness ${leaves}drives the same controls: ${drove}${held}.` : "";
   if (!kind) {
     if (!traits.playScript) return "";
     return `GAME: nothing declared what kind of game this is.${drives}`;

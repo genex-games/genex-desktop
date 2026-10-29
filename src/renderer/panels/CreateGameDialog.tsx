@@ -8,7 +8,7 @@
 import { type JSX, type RefObject, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { folderNameFromTitle, slugFromName } from "../../shared/game-folder-name.ts";
 import {
-  BUILD_TARGETS,
+  ALL_BUILD_TARGETS,
   type BuildTarget,
   type CompiledStack,
   type CreatableStack,
@@ -39,21 +39,22 @@ import { Button } from "../ui/Button.tsx";
 import { DialogSurface } from "../ui/dialog.tsx";
 import type { GameLocation, GameProject } from "../types.ts";
 import { DESTINATION_WORDS, problemWords } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 import { ToolchainSheet } from "./ToolchainSheet.tsx";
 
 /** The dialog's words. */
 const MESSAGE = {
-  title: "New game",
-  rustTitle: "New Rust game",
-  name: "Game name",
-  untitled: "Untitled game",
-  savedTo: "Saved to",
-  change: "Change…",
-  choosing: "Choosing…",
-  cancel: "Cancel",
-  create: "Create game",
-  creating: "Creating…",
-  noDestination: "Choose at least one place to play.",
+  title: t("New game"),
+  rustTitle: t("New Rust game"),
+  name: t("Game name"),
+  untitled: t("Untitled game"),
+  savedTo: t("Saved to"),
+  change: t("Change…"),
+  choosing: t("Choosing…"),
+  cancel: t("Cancel"),
+  create: t("Create game"),
+  creating: t("Creating…"),
+  noDestination: t("Choose at least one place to play."),
 } as const;
 
 /** The operation the dialog is waiting for. */
@@ -147,7 +148,7 @@ function DestinationNotes({
   checked: readonly BuildTarget[];
   noteId: (target: BuildTarget) => string;
 }): JSX.Element | null {
-  const lines = BUILD_TARGETS.flatMap((target) => {
+  const lines = ALL_BUILD_TARGETS.flatMap((target) => {
     const refusal = choice.disabled[target] ?? (checked.includes(target) ? choice.notes[target] : null);
     return refusal ? [{ target, refusal }] : [];
   });
@@ -221,8 +222,8 @@ function Destinations({
   return (
     <fieldset data-create-game-platforms className="m-0 mt-3 flex min-w-0 flex-col gap-2 border-0 p-0">
       <legend className="mb-2 p-0 text-xs text-ink-2">{DESTINATION_WORDS.question}</legend>
-      <div className="grid grid-cols-4 gap-2">
-        {BUILD_TARGETS.map((target) => (
+      <div className="grid grid-cols-3 gap-2">
+        {ALL_BUILD_TARGETS.map((target) => (
           <DestinationBox
             key={target}
             target={target}

@@ -17,7 +17,7 @@ use crate::shadow_cache::{LayerUse, copy_layer};
 use crate::tables::{ARGS_STRIDE, PASS_VIEW_STRIDE, variant_pass_entry};
 
 /// A depth-only pass over `view`, cleared or loaded.
-fn depth_pass<'e>(encoder: &'e mut CommandEncoder, label: &'static str, view: &TextureView, load: LoadOp<f32>) -> RenderPass<'e> {
+pub(super) fn depth_pass<'e>(encoder: &'e mut CommandEncoder, label: &'static str, view: &TextureView, load: LoadOp<f32>) -> RenderPass<'e> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[],
@@ -141,7 +141,8 @@ impl Renderer {
         pass.set_bind_group(0, &pipelines.bind_group(&self.device, &inputs), &[]);
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
         let cascades = plan.cascades_drawn() as u32;
-        for spot in &plan.spot_shadows {
+        // The spot atlas layer's spots only: point lights' faces draw uncached in their own layer.
+        for spot in plan.spot_shadows.iter().filter(|spot| !crate::spot_shadow::is_point_slot(spot.slot)) {
             let (x, y, side) = crate::spot_shadow::tile_rect(spot.slot, self.shadow_desc.side);
             pass.set_viewport(x as f32, y as f32, side as f32, side as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, side, side);

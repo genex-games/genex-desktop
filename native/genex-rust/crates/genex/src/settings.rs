@@ -1,17 +1,19 @@
 //! The settings menu (`genex::settings`, G6 UIS-11, D19): one tabbed menu a game shows from its
 //! `on_ui` hook with [`menu`], over genex-ui's settings schema and store.
 //!
-//! - **Tabs.** Graphics is [`crate::render::settings_panel`], unchanged. Audio holds a master
+//! - **Tabs.** Graphics holds the field of view offset, brightness and motion blur
+//!   (`graphics.*`) over [`crate::render::settings_panel`]. Audio holds a master
 //!   volume and the five buses (`audio.*`). Controls is INPUT's [`crate::actions::controls_panel`]
 //!   (only with `game.input`). Language & Accessibility holds `ui.*`: language (with `game.ui`
-//!   locales), UI scale, text size, subtitles, reduced motion and screen shake. Game holds the
+//!   locales), UI scale, text size, subtitles, reduced motion, screen shake and head bob. Game holds the
 //!   game's own options (`game.settings`). Every tab has presets plus per-option control: the
 //!   schema tabs a preset row, Graphics its quality preset, Controls INPUT's reset.
 //! - **Routing.** A change applies after the tick's UI hooks, outside the simulation: `audio.*` to
 //!   the mixer's person volumes, `ui.*` to the UI scope from the next tick (a Studio `uiSettings`
-//!   session layer stays on top). The update and UI hooks read any value with [`value`],
-//!   [`number`] and [`flag`]. Nothing here enters the checksum; anything that changes play
-//!   belongs in the world and its save, not in settings.
+//!   session layer stays on top), brightness and motion blur to the renderer's live frames, and
+//!   a copy to the read hooks (camera, draw, probe). Every hook reads any value with [`value`],
+//!   [`number`], [`flag`] and [`comfort`]. Nothing here enters the checksum; anything that changes
+//!   play belongs in the world and its save, not in settings.
 //! - **Persistence.** The person's settings are `genex-settings.json` in the game's saves (a
 //!   preset per tab plus only what the person moved), written after a change. Graphics stays in
 //!   `genex-render.json` and bindings in INPUT's file. A hostile file is refused with
@@ -47,12 +49,22 @@ const MENU_KEY: &str = "settings";
 const VOLUME_STEP: f32 = 0.05;
 /// The screen-shake slider's step.
 const SHAKE_STEP: f32 = 0.1;
+/// The field of view offset's range and step, degrees of vertical field of view.
+const FOV_OFFSET_RANGE: (f32, f32) = (-10.0, 20.0);
+const FOV_OFFSET_STEP: f32 = 1.0;
+/// The brightness slider's range and step, stops of exposure (EV) added to the game's look.
+const BRIGHTNESS_RANGE: (f32, f32) = (-1.5, 1.5);
+const BRIGHTNESS_STEP: f32 = 0.25;
 /// The built-in tabs' preset that sets nothing (every option at its default).
 const DEFAULT_PRESET: &str = "default";
 /// The language choice that follows the device (the OS locale in an export).
 const LANGUAGE_AUTO: &str = "auto";
-/// The text size choices, by index (recorded for the game; the HUD does not scale text yet).
+/// The text size choices, by index: the UI hooks' text styles scale by [`TEXT_SIZES`] (R-25).
 const TEXT_SIZE_KEYS: [&str; 4] = ["text-size-100", "text-size-125", "text-size-150", "text-size-200"];
+/// The text size factor of each [`TEXT_SIZE_KEYS`] choice.
+const TEXT_SIZES: [f32; 4] = [1.0, 1.25, 1.5, 2.0];
+/// The prefix a game's settings text key usually carries, left out of its English stand-in.
+const GAME_KEY_PREFIX: &str = "settings-";
 
 /// The built-in option keys.
 mod key {
@@ -63,6 +75,10 @@ mod key {
     pub(super) const SUBTITLES: &str = "ui.subtitles";
     pub(super) const REDUCED_MOTION: &str = "ui.reduced_motion";
     pub(super) const SCREEN_SHAKE: &str = "ui.screen_shake";
+    pub(super) const HEAD_BOB: &str = "ui.head_bob";
+    pub(super) const FOV_OFFSET: &str = "graphics.fov_offset";
+    pub(super) const BRIGHTNESS: &str = "graphics.brightness";
+    pub(super) const MOTION_BLUR: &str = "graphics.motion_blur";
 }
 
 /// The buses' option keys, with the bus each one drives.
@@ -84,6 +100,10 @@ const ENGLISH: &[(&str, &str)] = &[
     ("settings-subtitles", "Subtitles"),
     ("settings-reduced-motion", "Reduced motion"),
     ("settings-screen-shake", "Screen shake"),
+    ("settings-head-bob", "Head bob"),
+    ("settings-fov-offset", "Field of view"),
+    ("settings-brightness", "Brightness"),
+    ("settings-motion-blur", "Motion blur"),
     ("default", "Default"),
     ("quiet", "Quiet"),
     ("dialogue", "Dialogue"),
@@ -165,7 +185,7 @@ pub(crate) fn check(setup: &G6Setup) -> Result<(), (InstallErrorCode, String)> {
 /// The whole menu's schema: the runtime's options (the Language choice from `game.ui`'s locales),
 /// then the game's options and presets.
 fn schema(setup: &G6Setup) -> SettingsSchema {
-    let schema = audio_options(SettingsSchema::new());
+    let schema = audio_options(graphics_options(SettingsSchema::new()));
     let schema = accessibility_options(schema, &crate::ui::offered_tags(&setup.ui));
     let Some(config) = setup.settings.config() else { return schema };
     let mut schema = schema;
@@ -177,6 +197,18 @@ fn schema(setup: &G6Setup) -> SettingsSchema {
         schema = schema.preset(preset.tab(), preset.name(), &values);
     }
     schema
+}
+
+/// The Graphics tab's rows above the render panel: the field of view offset a camera rig adds,
+/// brightness (stops over the game's exposure) and motion blur (off drops the look's blur). No
+/// presets: the render panel's quality preset is the tab's.
+fn graphics_options(schema: SettingsSchema) -> SettingsSchema {
+    let (fov_min, fov_max) = FOV_OFFSET_RANGE;
+    let (dim, bright) = BRIGHTNESS_RANGE;
+    schema
+        .option(SettingsTab::Graphics, SettingDef::slider(key::FOV_OFFSET, "settings-fov-offset", fov_min, fov_max, FOV_OFFSET_STEP, 0.0))
+        .option(SettingsTab::Graphics, SettingDef::slider(key::BRIGHTNESS, "settings-brightness", dim, bright, BRIGHTNESS_STEP, 0.0))
+        .option(SettingsTab::Graphics, SettingDef::toggle(key::MOTION_BLUR, "settings-motion-blur", true))
 }
 
 /// The Audio tab: a master volume and the five buses, presets `default`, `quiet`, `dialogue`.
@@ -194,7 +226,8 @@ fn audio_options(schema: SettingsSchema) -> SettingsSchema {
 }
 
 /// The Language & Accessibility tab: the language among `locales` (when the game offers any), UI
-/// scale, text size, subtitles, reduced motion and screen shake, presets `default` and `comfort`.
+/// scale, text size, subtitles, reduced motion, screen shake and head bob, presets `default` and
+/// `comfort`.
 fn accessibility_options(schema: SettingsSchema, locales: &[String]) -> SettingsSchema {
     let mut languages = vec![LANGUAGE_AUTO.to_owned()];
     languages.extend(locales.iter().map(|tag| tag.to_ascii_lowercase()));
@@ -203,13 +236,19 @@ fn accessibility_options(schema: SettingsSchema, locales: &[String]) -> Settings
     if languages.len() > 1 {
         schema = schema.option(SettingsTab::Accessibility, SettingDef::choice(key::LANGUAGE, "settings-language", &languages, 0));
     }
-    let comfort = [(key::TEXT_SIZE, SettingValue::Choice(1)), (key::REDUCED_MOTION, SettingValue::Bool(true)), (key::SCREEN_SHAKE, SettingValue::Number(0.0))];
+    let comfort = [
+        (key::TEXT_SIZE, SettingValue::Choice(1)),
+        (key::REDUCED_MOTION, SettingValue::Bool(true)),
+        (key::SCREEN_SHAKE, SettingValue::Number(0.0)),
+        (key::HEAD_BOB, SettingValue::Bool(false)),
+    ];
     schema
         .option(SettingsTab::Accessibility, SettingDef::choice(key::SCALE, "settings-ui-scale", &UI_SCALE_CHOICE_KEYS, 0))
         .option(SettingsTab::Accessibility, SettingDef::choice(key::TEXT_SIZE, "settings-text-size", &TEXT_SIZE_KEYS, 0))
         .option(SettingsTab::Accessibility, SettingDef::toggle(key::SUBTITLES, "settings-subtitles", true))
         .option(SettingsTab::Accessibility, SettingDef::toggle(key::REDUCED_MOTION, "settings-reduced-motion", false))
         .option(SettingsTab::Accessibility, SettingDef::slider(key::SCREEN_SHAKE, "settings-screen-shake", 0.0, 1.0, SHAKE_STEP, 1.0))
+        .option(SettingsTab::Accessibility, SettingDef::toggle(key::HEAD_BOB, "settings-head-bob", true))
         .preset(SettingsTab::Accessibility, DEFAULT_PRESET, &[])
         .preset(SettingsTab::Accessibility, "comfort", &comfort)
 }
@@ -309,6 +348,7 @@ impl G6 {
         if ui {
             self.ui.set_person(&setup.ui, person_layer(store));
         }
+        READ.with_borrow_mut(|slot| *slot = Some(store.clone()));
     }
 }
 
@@ -342,15 +382,26 @@ fn person_layer(store: &SettingsStore) -> crate::ui::PersonLayer {
         Some(SettingValue::Choice(index)) => UiScale::from_choice(index),
         _ => UiScale::Auto,
     };
-    crate::ui::PersonLayer { locale, scale: (scale != UiScale::Auto).then_some(scale), reduced_motion: store.flag(key::REDUCED_MOTION) }
+    let text_size = match store.value(key::TEXT_SIZE) {
+        Some(SettingValue::Choice(index)) => TEXT_SIZES.get(usize::from(index)).copied(),
+        _ => None,
+    };
+    crate::ui::PersonLayer {
+        locale,
+        scale: (scale != UiScale::Auto).then_some(scale),
+        reduced_motion: store.flag(key::REDUCED_MOTION),
+        text_size,
+    }
 }
 
-/// The tabs the menu shows, in menu order: Controls only with `game.input`, Game only with the
-/// game's options or presets there.
+/// The tabs the menu shows, in menu order: Audio only in a build with sound (`[audio] enabled =
+/// false` has no mixer to set, R-25), Controls only with `game.input`, Game only with the game's
+/// options or presets there.
 fn tabs(setup: &G6Setup, store: &SettingsStore) -> Vec<SettingsTab> {
     let schema = store.schema();
     let game_tab = schema.tab_options(SettingsTab::Game).next().is_some() || schema.presets(SettingsTab::Game).next().is_some();
     let shown = |tab: &SettingsTab| match tab {
+        SettingsTab::Audio => cfg!(feature = "audio"),
         SettingsTab::Controls => setup.input.map().is_some(),
         SettingsTab::Game => game_tab,
         _ => true,
@@ -366,6 +417,9 @@ struct Shared {
 
 thread_local! {
     static SCOPE: RefCell<Option<Shared>> = const { RefCell::new(None) };
+    /// The person's settings as last routed, for the read hooks (a camera hook, a draw hook):
+    /// display only, never the simulation's.
+    static READ: RefCell<Option<SettingsStore>> = const { RefCell::new(None) };
 }
 
 /// The settings scope of one tick (`State::enter` / `G6::settings_leave`).
@@ -374,14 +428,30 @@ pub(crate) struct SettingsScope {
 }
 
 /// A text key in the game's catalog. The runtime's own words fall back to their English with no
-/// issue (the facade's table, then the shell's); a game's key it lacks records `text-missing`.
+/// issue (the facade's table, then the shell's); a game's key it lacks records `text-missing` and
+/// reads as its words (`settings-hints` as "Hints", R-25), never as the raw key.
 fn words(key: &str) -> String {
     let built_in = ENGLISH.iter().find(|(own, _)| *own == key).map(|(_, word)| (*word).to_owned());
     let shell = english(key);
     match built_in {
         Some(word) => crate::ui::tr_or(key, |_| word),
         None if shell != key => crate::ui::tr_or(key, |_| shell),
-        None => crate::ui::tr(key),
+        None => {
+            let text = crate::ui::tr(key);
+            if text == key { key_words(key) } else { text }
+        }
+    }
+}
+
+/// A game's text key as words: `settings-hint_level` reads "Hint level" (the prefix left out,
+/// dashes, underscores and dots as spaces, the first letter capital).
+fn key_words(key: &str) -> String {
+    let bare = key.strip_prefix(GAME_KEY_PREFIX).filter(|rest| !rest.is_empty()).unwrap_or(key);
+    let spaced: String = bare.chars().map(|c| if matches!(c, '-' | '_' | '.') { ' ' } else { c }).collect();
+    let mut chars = spaced.trim().chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => key.to_owned(),
     }
 }
 
@@ -411,7 +481,7 @@ pub fn menu_answer(ui: &mut egui::Ui) -> MenuAnswer {
         let mut menu = SettingsMenu::new(MENU_KEY);
         for tab in &shared.tabs {
             menu = match tab {
-                SettingsTab::Graphics => menu.custom_tab(SettingsTab::Graphics, crate::render::settings_panel),
+                SettingsTab::Graphics => menu.schema_and_custom_tab(SettingsTab::Graphics, crate::render::settings_panel),
                 SettingsTab::Controls => menu.custom_tab(SettingsTab::Controls, |ui| {
                     crate::actions::controls_panel(ui);
                     // INPUT applies and saves its own changes after the UI hooks.
@@ -425,13 +495,54 @@ pub fn menu_answer(ui: &mut egui::Ui) -> MenuAnswer {
     shown.unwrap_or(MenuAnswer { tab: SettingsTab::Game, changed: false, back: false })
 }
 
-/// The option `key`'s value in the update and UI hooks: the person's change, else the tab's
-/// preset, else the default. None outside the hooks and for an unknown key.
+/// The option `key`'s value in any hook: the person's change, else the tab's preset, else the
+/// default. The update and UI hooks see a change made in this tick's menu; the read hooks (camera,
+/// draw, probe) see the settings as routed after the last tick's UI hooks. None before the game
+/// runs and for an unknown key. Display only: copying a value into the world makes the
+/// simulation depend on the person, so a value that changes play belongs in the world's save.
 pub fn value(key: &str) -> Option<SettingValue> {
-    SCOPE.with_borrow(|slot| slot.as_ref().and_then(|shared| shared.store.value(key)))
+    // While the menu is being drawn it holds the scope mutably, and a read from inside it (the
+    // renderer asking for the picture settings) takes the routed copy instead of panicking.
+    SCOPE
+        .with(|slot| slot.try_borrow().ok().and_then(|slot| slot.as_ref().map(|shared| shared.store.value(key))))
+        .unwrap_or_else(|| READ.with_borrow(|slot| slot.as_ref().and_then(|store| store.value(key))))
 }
 
-/// A slider's value in the hooks (0 for anything else, and outside the hooks).
+/// The comfort settings a camera rig obeys (`ui.head_bob`, `ui.screen_shake`,
+/// `ui.reduced_motion`, `graphics.fov_offset`), readable in any hook; [`Comfort::FULL`] before
+/// the game runs.
+///
+/// [`Comfort::FULL`]: crate::camera::Comfort::FULL
+pub fn comfort() -> crate::camera::Comfort {
+    let full = crate::camera::Comfort::FULL;
+    let number = |key: &str, default: f32| match value(key) {
+        Some(SettingValue::Number(number)) => number,
+        _ => default,
+    };
+    let toggle = |key: &str, default: bool| match value(key) {
+        Some(SettingValue::Bool(on)) => on,
+        _ => default,
+    };
+    crate::camera::Comfort {
+        head_bob: if toggle(key::HEAD_BOB, true) { 1.0 } else { 0.0 },
+        screen_shake: number(key::SCREEN_SHAKE, full.screen_shake),
+        reduced_motion: toggle(key::REDUCED_MOTION, full.reduced_motion),
+        fov_offset: number(key::FOV_OFFSET, full.fov_offset),
+    }
+}
+
+/// The person's picture settings the renderer applies to the game's look on live frames
+/// (captures keep the look as the game made it): stops of brightness, and whether motion blur
+/// may show.
+pub(crate) fn picture() -> (f32, bool) {
+    let brightness = match value(key::BRIGHTNESS) {
+        Some(SettingValue::Number(stops)) => stops,
+        _ => 0.0,
+    };
+    (brightness, !matches!(value(key::MOTION_BLUR), Some(SettingValue::Bool(false))))
+}
+
+/// A slider's value in any hook (0 for anything else, and before the game runs).
 pub fn number(key: &str) -> f32 {
     match value(key) {
         Some(SettingValue::Number(number)) => number,
@@ -439,7 +550,7 @@ pub fn number(key: &str) -> f32 {
     }
 }
 
-/// A toggle's value in the hooks (false for anything else, and outside the hooks).
+/// A toggle's value in any hook (false for anything else, and before the game runs).
 pub fn flag(key: &str) -> bool {
     matches!(value(key), Some(SettingValue::Bool(true)))
 }
@@ -459,5 +570,33 @@ mod tests {
         let with_locales = accessibility_options(SettingsSchema::new(), &["en".to_owned(), "fr-CA".to_owned()]);
         let Some(SettingKind::Choice { options }) = with_locales.def(key::LANGUAGE).map(SettingDef::kind) else { panic!("a language choice") };
         assert_eq!(options, &["auto", "en", "fr-ca"], "locale tags become legal option keys");
+    }
+
+    /// R-25: a game's option whose text the catalog lacks read as its raw key (`settings-hints: 1`).
+    #[test]
+    fn a_game_key_without_text_reads_as_words_never_as_the_raw_key() {
+        let rows = [("settings-hints", "Hints"), ("settings-hint_level", "Hint level"), ("veteran", "Veteran"), ("settings-", "Settings")];
+        for (key, shown) in rows {
+            assert_eq!(words(key), shown, "{key}");
+        }
+    }
+
+    /// R-25: the text size was recorded but never applied; each choice reaches the person layer.
+    #[test]
+    fn every_text_size_choice_reaches_the_person_layer() {
+        let mut store = SettingsStore::new(schema(&G6Setup::default())).expect("the runtime schema");
+        assert_eq!(person_layer(&store).text_size, Some(1.0), "the default choice is 100%");
+        for (index, size) in TEXT_SIZES.iter().enumerate() {
+            store.set(key::TEXT_SIZE, SettingValue::Choice(u16::try_from(index).expect("a choice index"))).expect("a legal choice");
+            assert_eq!(person_layer(&store).text_size, Some(*size), "choice {index}");
+        }
+    }
+
+    /// R-25: a build with `[audio] enabled = false` has no mixer, so no Audio tab.
+    #[test]
+    fn the_audio_tab_shows_only_in_a_build_with_sound() {
+        let setup = G6Setup::default();
+        let store = SettingsStore::new(schema(&setup)).expect("the runtime schema");
+        assert_eq!(tabs(&setup, &store).contains(&SettingsTab::Audio), cfg!(feature = "audio"));
     }
 }

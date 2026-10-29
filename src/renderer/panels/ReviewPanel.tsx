@@ -24,10 +24,11 @@ import { EmptyState } from "../ui/EmptyState.tsx";
 import { DisclosureBody, ExactEdit, SuggestionReview, TurningChevron } from "../ui/ProposalsTable.tsx";
 import { patchDiff } from "../edit-diff.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
-import { plural } from "../../shared/skill-words.ts";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { ACTIVITY_WORDS, problemWords } from "../words.ts";
 import { Pending } from "../ui/Pending.tsx";
+import { SkeletonControl, SkeletonRows } from "../ui/Skeleton.tsx";
 
 /** How many runs the list shows at first, and how many more each "Show earlier runs" adds. */
 const RUNS_PAGE = 20;
@@ -53,30 +54,34 @@ interface Props {
 
 const OUTCOME: Record<RunOutcomeKind, { label: string; tone: string; sentence: string }> = {
   running: {
-    label: "Running",
+    label: t("Running"),
     tone: "bg-accent-tint text-accent-ink",
-    sentence: "Harness is still building. The game chat shows its progress.",
+    sentence: t("Harness is still building. The game chat shows its progress."),
   },
-  delivered: { label: "New build", tone: "bg-green-tint text-green", sentence: "A new build is ready to play." },
+  delivered: { label: t("New build"), tone: "bg-green-tint text-green", sentence: t("A new build is ready to play.") },
   none: {
-    label: "No build",
+    label: t("No build"),
     tone: "bg-orange-tint text-orange",
-    sentence: "No new build was delivered. Your game is as you left it.",
+    sentence: t("No new build was delivered. Your game is as you left it."),
   },
   failed: {
-    label: "Failed",
+    label: t("Failed"),
     tone: "bg-red-tint text-red",
-    sentence: "The run stopped because of an error. Your game is as you left it.",
+    sentence: t("The run stopped because of an error. Your game is as you left it."),
   },
   stopped: {
-    label: "Stopped",
+    label: t("Stopped"),
     tone: "bg-orange-tint text-orange",
-    sentence: "The run was stopped before it finished.",
+    sentence: t("The run was stopped before it finished."),
   },
-  unknown: { label: "Unknown", tone: "bg-inset text-ink-3", sentence: "Harness could not read how this run ended." },
+  unknown: {
+    label: t("Unknown"),
+    tone: "bg-inset text-ink-3",
+    sentence: t("Harness could not read how this run ended."),
+  },
 };
 const when = (at: string) =>
-  new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  new Date(at).toLocaleString(intlLocale(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /** One row of a list card: the whole header is the toggle, and the body opens beneath it. */
 function ExpandRow({
@@ -147,11 +152,11 @@ const LookState = {
 } as const;
 type LookState = (typeof LookState)[keyof typeof LookState];
 const LOOK: Array<{ state: LookState; label: string; icon?: "spinner" | "check" }> = [
-  { state: LookState.Idle, label: "Look for improvements" },
-  { state: LookState.Looking, label: "Looking…", icon: "spinner" },
-  { state: LookState.Found, label: "Found", icon: "check" },
-  { state: LookState.Added, label: "Added", icon: "check" },
-  { state: LookState.None, label: "Nothing new" },
+  { state: LookState.Idle, label: t("Look for improvements") },
+  { state: LookState.Looking, label: t("Looking…"), icon: "spinner" },
+  { state: LookState.Found, label: t("Found"), icon: "check" },
+  { state: LookState.Added, label: t("Added"), icon: "check" },
+  { state: LookState.None, label: t("Nothing new") },
 ];
 
 /** One button that shows its own progress and result. Labels cross-fade in one cell while the
@@ -175,7 +180,7 @@ function LookButton({ state, onClick }: { state: LookState; onClick: () => void 
       variant="secondary"
       data-look-state={state}
       disabled={state === LookState.Looking}
-      aria-label="Look for improvements in recent builds"
+      aria-label={t("Look for improvements in recent builds")}
       onClick={onClick}
       className="shrink-0"
     >
@@ -287,9 +292,18 @@ function checkResult(before: Tally, after: Tally): { state: LookState; note: str
   const found = after.staged - before.staged;
   const applied = after.learned - before.learned;
   if (found > 0)
-    return { state: LookState.Found, note: `Found ${plural(found, "new suggestion")} at the top of Activity.` };
-  if (applied > 0) return { state: LookState.Added, note: `Applied ${plural(applied, "improvement")}.` };
-  return { state: LookState.None, note: "Nothing new to suggest." };
+    return {
+      state: LookState.Found,
+      note: t("Found {count, plural, one {# new suggestion} other {# new suggestions}} at the top of Activity.", {
+        count: found,
+      }),
+    };
+  if (applied > 0)
+    return {
+      state: LookState.Added,
+      note: t("Applied {count, plural, one {# improvement} other {# improvements}}.", { count: applied }),
+    };
+  return { state: LookState.None, note: t("Nothing new to suggest.") };
 }
 
 /** Looking for improvements on demand: the button's state, and what it found once the look finishes. */
@@ -321,7 +335,7 @@ function useImprovementCheck(activity: ReturnType<typeof useActivity>) {
         if (event.type === UiEvent.SkilloptFailed) {
           setCheck(LookState.Idle);
           beforeCheck.current = null;
-          setError(problemWords(event.payload?.error ?? "Could not look for improvements. Try again."));
+          setError(problemWords(event.payload?.error ?? t("Could not look for improvements. Try again.")));
           return;
         }
         const done = event.type === UiEvent.SkilloptFinished;
@@ -358,7 +372,7 @@ function useImprovementCheck(activity: ReturnType<typeof useActivity>) {
 /** A self-update that failed and was not followed by a restore: the one recovery the user must act on. */
 function unrecoveredFailure(items: StudioActivityItem[]): StudioActivityItem | null {
   const recoveries = items.filter((item) => item.kind === "recovery");
-  const failed = recoveries.find((item) => item.title === "Studio restart failed");
+  const failed = recoveries.find((item) => item.restartFailed);
   if (!failed) return null;
   const restored = recoveries.some((item) => Boolean(item.snapshotId) && item.at >= failed.at);
   return restored ? null : failed;
@@ -402,6 +416,9 @@ function RunRow({
   const game = games.find((candidate) => candidate.name === item.project);
   const outcome = OUTCOME[item.outcome ?? "unknown"];
   const running = item.outcome === "running";
+  const where = game?.title ?? item.project ?? "";
+  const at = when(item.at);
+  const meta = running ? t("{game} · started {time}", { game: where, time: at }) : `${where} · ${at}`;
   return (
     <ExpandRow
       data-activity-kind="run"
@@ -409,10 +426,7 @@ function RunRow({
       header={
         <>
           <GameAvatar cover={game?.cover} />
-          <RowText
-            title={item.title}
-            meta={`${game?.title ?? item.project} · ${running ? "started " : ""}${when(item.at)}`}
-          />
+          <RowText title={item.title} meta={meta} />
         </>
       }
       trailing={
@@ -451,7 +465,7 @@ function RecentRuns({
   return (
     <section aria-labelledby="activity-runs" data-studio-feed className="flex flex-col gap-3">
       <h2 id="activity-runs" className="font-medium text-ink">
-        Recent runs
+        {t("Recent runs")}
       </h2>
       <ListCard>
         {runs.slice(0, limit).map((item) => (
@@ -460,7 +474,7 @@ function RecentRuns({
       </ListCard>
       {runs.length > limit && (
         <button type="button" className="chat-disclosure cursor-pointer" onClick={onMore}>
-          Show earlier runs
+          {t("Show earlier runs")}
         </button>
       )}
     </section>
@@ -469,8 +483,8 @@ function RecentRuns({
 
 /** Who let a learned change land. */
 const APPROVED_BY: Record<NonNullable<StudioActivityItem["approvedBy"]>, string> = {
-  auto: "Applied automatically",
-  human: "You approved",
+  auto: t("Applied automatically"),
+  human: t("You approved"),
 };
 
 /** What a learned change says about itself: its summary lines, or why it is undone. */
@@ -486,8 +500,9 @@ function LearnedStory({ item }: { item: StudioActivityItem }): JSX.Element | nul
   if (!item.undone) return null;
   return (
     <p className="text-ink-2">
-      {item.status === "Undone" ? "You undid this change." : "A later restore took this change back."} Harness works the
-      way it did before.
+      {item.undoneByUser
+        ? t("You undid this change. Harness works the way it did before.")
+        : t("A later restore took this change back. Harness works the way it did before.")}
     </p>
   );
 }
@@ -503,7 +518,7 @@ function LearnedRow({
   busy: boolean;
   onUndo: (from: string) => void;
 }): JSX.Element {
-  const how = item.approvedBy ? APPROVED_BY[item.approvedBy] : "Applied";
+  const how = item.approvedBy ? APPROVED_BY[item.approvedBy] : t("Applied");
   const plain = !item.summary?.length && !item.undone;
   const plainDetail = !change && plain ? item.detail : undefined;
   return (
@@ -511,9 +526,13 @@ function LearnedRow({
       data-activity-kind="improvement"
       label={item.title}
       header={
-        <RowText title={item.title} muted={item.undone} meta={`${item.undone ? "Undone" : how} · ${when(item.at)}`} />
+        <RowText
+          title={item.title}
+          muted={item.undone}
+          meta={`${item.undone ? t("Undone") : how} · ${when(item.at)}`}
+        />
       }
-      trailing={item.undone ? <Pill tone="bg-orange-tint text-orange">Undone</Pill> : undefined}
+      trailing={item.undone ? <Pill tone="bg-orange-tint text-orange">{t("Undone")}</Pill> : undefined}
     >
       <div className="flex flex-col items-start gap-3 px-3.5 pt-0.5 pb-4">
         <LearnedStory item={item} />
@@ -528,7 +547,7 @@ function LearnedRow({
         {plainDetail && <p className="text-ink-2 [overflow-wrap:anywhere]">{plainDetail}</p>}
         {change && !item.undone && (
           <Button variant="secondary" disabled={busy} onClick={() => onUndo(change.from)}>
-            Undo this change
+            {t("Undo this change")}
           </Button>
         )}
       </div>
@@ -559,15 +578,15 @@ function LearnedSection({
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 max-w-[480px] flex-col gap-0.5">
           <h2 id="activity-learned" className="font-medium text-ink">
-            What Harness has learned
+            {t("What Harness has learned")}
           </h2>
           <p className="text-chat-sub text-ink-3">
             {learning === false
-              ? "Self-improvement is off. Harness isn’t learning from new builds."
-              : "Harness looks at your finished builds for better ways to build."}
+              ? t("Self-improvement is off. Harness isn’t learning from new builds.")
+              : t("Harness looks at your finished builds for better ways to build.")}
           </p>
           <span role="status" className="sr-only">
-            {check === LookState.Looking ? "Looking for improvements" : checkNote}
+            {check === LookState.Looking ? t("Looking for improvements") : checkNote}
           </span>
         </div>
         {/* Improvements are mined from runs, so there is nothing to look at before one. */}
@@ -627,16 +646,22 @@ function ActivityNotices({
         <div role="alert" className="flex flex-wrap items-center gap-2 text-red">
           {activity.error}
           <Button variant="ghost" onClick={() => void activity.load()}>
-            Retry
+            {t("Retry")}
           </Button>
         </div>
       )}
-      {activity.loading && <Pending label="Loading activity…" />}
+      {activity.loading && (
+        <Pending label={t("Loading activity…")}>
+          <SkeletonRows icon control={SkeletonControl.None} />
+        </Pending>
+      )}
       {problem && (
         <div role="alert" data-studio-problem className="flex flex-col gap-1 rounded-card bg-red-tint px-4 py-3">
-          <p className="font-medium text-ink">Harness couldn’t restore itself after a failed update</p>
+          <p className="font-medium text-ink">{t("Harness couldn’t restore itself after a failed update")}</p>
           <p className="text-chat-sub text-ink-2">
-            Quit and reopen the app so it can repair itself.{problem.detail ? ` ${problem.detail}` : ""}
+            {problem.detail
+              ? t("Quit and reopen the app so it can repair itself. {detail}", { detail: problem.detail })
+              : t("Quit and reopen the app so it can repair itself.")}
           </p>
         </div>
       )}
@@ -656,11 +681,11 @@ function ActivityEmpty({
 }): JSX.Element {
   const action = hasGames ? (
     <Button variant="default" onClick={onStartBuilding}>
-      Start building
+      {t("Start building")}
     </Button>
   ) : (
     <Button variant="default" onClick={onNewGame}>
-      New game
+      {t("New game")}
     </Button>
   );
   return (
@@ -668,8 +693,8 @@ function ActivityEmpty({
       <EmptyState
         data-activity-empty=""
         art="harness"
-        title="A self-improving harness"
-        subtitle="Runs and improvements will show up here."
+        title={t("A self-improving harness")}
+        subtitle={t("Runs and improvements will show up here.")}
         action={action}
       />
     </div>
@@ -771,13 +796,13 @@ function RunDetails({
           {before && (
             <figure className="flex flex-col gap-1.5">
               <RunStill path={before} />
-              <figcaption className="text-chat-sub text-ink-3">Before</figcaption>
+              <figcaption className="text-chat-sub text-ink-3">{t("Before")}</figcaption>
             </figure>
           )}
           {after && (
             <figure className="flex flex-col gap-1.5">
               <RunStill path={after} accent />
-              <figcaption className="text-chat-sub text-ink-3">After</figcaption>
+              <figcaption className="text-chat-sub text-ink-3">{t("After")}</figcaption>
             </figure>
           )}
         </div>
@@ -786,12 +811,16 @@ function RunDetails({
         {head && project && (
           <Button variant="secondary" onClick={() => onPlayCommit(project, head)}>
             <Icon name="play" size={13} />
-            Play build
+            {t("Play build")}
           </Button>
         )}
         {game && project && (
-          <Button variant="ghost" aria-label={`Open game chat for ${game.title}`} onClick={() => onOpenGame(project)}>
-            Open game chat
+          <Button
+            variant="ghost"
+            aria-label={t("Open game chat for {game}", { game: game.title })}
+            onClick={() => onOpenGame(project)}
+          >
+            {t("Open game chat")}
           </Button>
         )}
       </div>

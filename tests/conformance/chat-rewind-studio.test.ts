@@ -15,6 +15,7 @@ import type { JobSpawn } from "../../src/substrate/jobs.ts";
 import { JobRole, JobScopeKind } from "../../src/shared/jobs.ts";
 import { PermissionMode } from "../../src/shared/permissions.ts";
 import type { EventEnvelope } from "../../src/substrate/types.ts";
+import { isRewindId } from "../../src/shared/chat-rewind.ts";
 
 const rigs: Rig[] = [];
 after(async () => {
@@ -114,14 +115,20 @@ it("rewinds a game chat: the message and its answer leave, files come back, and 
     stopsBuild: false,
   });
   const result = await rig.core.rewindChat(thread, boss.eventId, boss.messageId, { files: true });
-  assert.deepEqual(result, {
-    text: "Add a boss",
-    messageId: boss.messageId,
-    imageCount: 0,
-    pickedImages: 0,
-    files: 2,
-    held: [],
-  });
+  // The files came back, so the folder as it was before is kept for Bring back newer version.
+  assert.ok(isRewindId(result.undo?.rewindId), "the rewind can be brought back");
+  assert.deepEqual(
+    { ...result, undo: undefined },
+    {
+      text: "Add a boss",
+      messageId: boss.messageId,
+      imageCount: 0,
+      pickedImages: 0,
+      files: 2,
+      held: [],
+      undo: undefined,
+    },
+  );
   assert.equal(await exists(path.join(dir, "step-2.js")), false, "the answer’s file went");
   assert.equal(await exists(path.join(dir, "outside.txt")), false, "asked for, the outside change went too");
   assert.equal(await readFile(path.join(dir, "step-1.js"), "utf8"), "step 1\n", "the earlier answer’s file stayed");
@@ -246,9 +253,10 @@ it("follow-ups on hold leave with the message, its pictures come back, and the r
     1,
     "the picture was saved as a reference",
   );
-  // A follow-up sent meanwhile is put on hold, so it still waits when the answer ends. It asks
-  // another model, so it waits for a turn of its own instead of being steered into this one.
-  await rig.core.sendUserMessage("And add rain", { thread, engine: "claude-code", model: "another-model" });
+  // A follow-up sent meanwhile is put on hold, so it still waits when the answer ends. It asks for
+  // a model that keeps no session, which this turn cannot go on with, so it waits for a turn of its
+  // own instead of joining this one.
+  await rig.core.sendUserMessage("And add rain", { thread, engine: "ollama" });
   let events = await rig.core.store.listEvents(thread);
   await rig.core.changeQueuedMessage(thread, bubble(events, "And add rain").messageId, "hold");
   release.resolve();

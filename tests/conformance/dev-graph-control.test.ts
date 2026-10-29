@@ -119,3 +119,63 @@ it("the fixture's worker frames start a run with a try in hand and show its buil
     assert.ok(frame.act, "every frame says what the builder did");
   }
 });
+
+it("a file drag drags only the control's own samples, never a path the request names", () => {
+  for (const stage of ["over", "drop", "leave"])
+    assert.equal(
+      operationSchema.safeParse({ method: "file.drag", params: { selector: "[data-promptbar]", stage } }).success,
+      true,
+    );
+  for (const params of [
+    { selector: "[data-promptbar]", stage: "drop", file: "/etc/passwd" },
+    { selector: "[data-promptbar]", stage: "drop", file: "../picture" },
+    { selector: "[data-promptbar]", stage: "drop", path: "/Users/someone/secret.png" },
+    { selector: "[data-promptbar]", stage: "drop", files: ["/tmp/a.png"] },
+    { selector: "[data-promptbar]", stage: "hover" },
+    { stage: "drop" },
+  ])
+    assert.equal(operationSchema.safeParse({ method: "file.drag", params }).success, false, JSON.stringify(params));
+});
+
+it("a file drag hovers, lets go or cancels at the target", async () => {
+  const { fileDragEvents } = await import("../../src/main/dev/file-drag.ts");
+  const at = { x: 10, y: 20 };
+  const types = (stage: "over" | "drop" | "leave") =>
+    fileDragEvents(stage, at, "/profile/dev-drag/sample-picture.png").map((event) => event.type);
+  assert.deepEqual(types("over"), ["dragEnter", "dragOver"]);
+  assert.deepEqual(types("drop"), ["dragEnter", "dragOver", "drop"]);
+  assert.deepEqual(types("leave"), ["dragOver", "dragCancel"]);
+  assert.deepEqual(
+    fileDragEvents("leave", at, "/f.png").map(({ x, y }) => [x, y]),
+    [
+      [0, 0],
+      [0, 0],
+    ],
+    "Leave moves off the target before it cancels",
+  );
+  const [enter] = fileDragEvents("drop", at, "/profile/dev-drag/sample-picture.png");
+  assert.deepEqual(enter, {
+    type: "dragEnter",
+    x: 10,
+    y: 20,
+    data: { items: [], files: ["/profile/dev-drag/sample-picture.png"], dragOperationsMask: 1 },
+  });
+});
+
+it("the drag samples are written inside the control's folder: a picture the composer takes, and a text file", async () => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { writeDragSample } = await import("../../src/main/dev/file-drag.ts");
+  const dir = await mkdtemp(path.join(os.tmpdir(), "dev-drag-"));
+  try {
+    const picture = await writeDragSample(path.join(dir, "dev-drag"), "picture");
+    assert.equal(path.dirname(picture.file), path.join(dir, "dev-drag"));
+    assert.equal(picture.mimeType, "image/png");
+    assert.deepEqual([...(await readFile(picture.file)).subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
+    const text = await writeDragSample(path.join(dir, "dev-drag"), "text");
+    assert.equal(text.mimeType, "text/plain");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

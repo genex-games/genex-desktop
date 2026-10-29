@@ -197,7 +197,8 @@ struct TestMaterials {
 impl TestMaterials {
     fn new(device: &wgpu::Device, rows: &[GpuMaterial]) -> TestMaterials {
         let storage = |label, contents: &[u8]| device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage: wgpu::BufferUsages::STORAGE });
-        let ext = vec![0f32; 16 * rows.len()];
+        // One empty extension row per material, sized by the row type (it grows with the ABI).
+        let ext = vec![genex_render::layout::MATERIAL_EXT_NONE; rows.len()];
         let arrays = (0..8)
             .map(|_| {
                 device
@@ -733,7 +734,7 @@ mod chain_level {
     fn chained(mesh: MeshData, levels: usize) -> ModelPart {
         let triangles = mesh.indices.len() / 3;
         let level = |k: usize| LodLevel { indices: mesh.indices[..(triangles >> (k + 1)).max(1) * 3].to_vec(), error: MESH_ERRORS[k] };
-        let lods = LodChain { levels: (0..levels).map(level).collect() };
+        let lods = LodChain { casters: 0, levels: (0..levels).map(level).collect() };
         ModelPart { mesh, meshlets: None, lods: Some(lods) }
     }
 
@@ -924,6 +925,8 @@ mod chain_level {
     fn metal_the_gpu_cull_keeps_the_cpus_impostor_levels_in_every_view() {
         let Some(gpu) = gpu() else { return };
         let mut renderer = Renderer::new(&gpu, WIDTH, HEIGHT).expect("renderer");
+        // The CPU reference culls the frustum and the levels only (horde 10k: no occlusion).
+        renderer.set_instance_occlusion(genex_render::occlusion::InstanceOcclusion::Off);
         let meshes = renderer.add_model_parts(&gpu, vec![chained(MeshData::sphere(), 4), chained(MeshData::cube(), 4)]).expect("added");
         let parts = [meshes[0], meshes[1]];
         renderer.set_impostor(parts[0], Some(MeshImpostor::lead(0, IMPOSTOR_ERROR))).expect("lead");

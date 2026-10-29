@@ -143,7 +143,8 @@ fn plan_with(shadows: Option<ShadowSettings>) -> FramePlan {
 
 #[test]
 fn the_cull_views_reserve_nine_views_and_a_plan_activates_one_per_drawn_cascade() {
-    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 9));
+    // AAA review WP-15 flipped MAX_VIEWS 9 -> 21 (sixteen shadow slots: four spots, two points' faces).
+    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 21));
     let plan = plan_with(Some(shadows_asking(SHADOW_CASCADES as u8)));
     let drawn = plan.cascades_drawn();
     assert!((1..=MAX_CASCADES).contains(&drawn), "{drawn} cascades");
@@ -218,7 +219,11 @@ fn the_planned_options_equal_the_legacy_builders() {
 fn a_four_cascade_plan_activates_five_of_the_nine_views_and_culls_each() {
     let plan = plan_with(Some(shadows_asking(4)));
     assert_eq!((plan.cascades_drawn(), plan.views), (4, 5));
-    for view in 1..5 {
+    // Lane FQ: the first cascade's receivers lie within a few metres of the camera, and the sun
+    // casts every shape away from them, so its cull view (held to the receivers' light-space
+    // polygon, no longer their box) keeps none; the farther cascades keep the shapes.
+    assert_eq!(plan.cpu_cull_view(1).counts.iter().sum::<u32>(), 0, "nothing can shadow the first cascade's receivers");
+    for view in 2..5 {
         assert!(plan.cpu_cull_view(view).counts.iter().sum::<u32>() > 0, "cascade view {view} culls");
     }
 }
@@ -339,7 +344,7 @@ mod lod {
         }
         let triangles = mesh.indices.len() / 3;
         let level = |share: usize, error: f32| LodLevel { indices: mesh.indices[..triangles / share * 3].to_vec(), error };
-        let lods = LodChain { levels: vec![level(2, 0.02), level(4, 0.08)] };
+        let lods = LodChain { casters: 0, levels: vec![level(2, 0.02), level(4, 0.08)] };
         ModelPart { mesh, meshlets: None, lods: Some(lods) }
     }
 

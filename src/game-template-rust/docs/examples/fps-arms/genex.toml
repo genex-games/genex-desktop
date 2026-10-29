@@ -1,0 +1,31 @@
+# The FPS arms example's manifest (copy it over the game's own genex.toml, keeping your title). Its
+# studio.json declares the game's traits so Live locks the pointer and the checks drive it:
+# "game": { "kind": "first-person", "hud": true, "mouseLook": true, "keyboardMove": true }.
+[game]
+title = "FPS arms"
+fit = "expand"
+
+[render]
+form_factors = ["desktop", "mobile"]
+preset = "auto"
+
+[render.look]
+tonemapper = "agx-punchy"
+exposure = "auto"
+ev_compensation = 0.5
+
+# The player and the hitscan are Rapier's; the arms kit is a rigged GLB.
+[physics]
+enabled = true
+
+[animation]
+enabled = true
+
+[audio]
+enabled = false
+
+[nav]
+enabled = false
+
+[streaming]
+enabled = false

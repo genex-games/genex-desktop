@@ -16,6 +16,7 @@ import { closeUnderWay } from "./close-latch.ts";
 import { waitDigest } from "./digests.ts";
 import { leadsOpenLoop } from "./open/active-work.ts";
 import { WRAP_UP_WORDS } from "./wrap-up-prompts.ts";
+import { nextLoopFrom } from "../next-loop-record.ts";
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LoopRun, Worker } from "./loop-run.ts";
 
@@ -74,16 +75,24 @@ export async function wrapUp(loopRun: LoopRun, args: AnyRecord): Promise<string>
   const now = runNow(loopRun);
   if (await finishAsked(loopRun)) return `${WRAP_UP_WORDS.already} ${askedAnswer(loopRun, now)}`;
   if (!(await userQuoted(inbox, args.user_asked))) return WRAP_UP_WORDS.notQuoted;
+  // A new Loop asked for with it rides on the same record: the studio starts it once this run closes (next-loop.ts).
+  const next = nextLoopFrom(args);
   await ctx.call(HostMethod.EventsAppend, {
     threadId,
     batch: [
       {
         type: EventKind.Custom,
         event_type: RunEvent.RunControl,
-        payload: { runId: run.runId, action: RunControlAction.Finish, at: new Date(now).toISOString() },
+        payload: {
+          runId: run.runId,
+          action: RunControlAction.Finish,
+          at: new Date(now).toISOString(),
+          ...(next ? { next } : {}),
+        },
       },
     ],
   });
   state.finishAsk = { at: now, words: String(args.user_asked).trim() };
-  return askedAnswer(loopRun, now);
+  const answer = askedAnswer(loopRun, now);
+  return next ? `${answer} ${WRAP_UP_WORDS.nextLoop}` : answer;
 }
