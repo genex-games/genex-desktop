@@ -88,6 +88,20 @@ fn ambient_and_point_lights_reach_the_scene_in_call_order_and_are_not_draws() {
     assert_eq!(frame.lights().points.len(), 2);
 }
 
+/// AAA review WP-15: a point light asking for a cube shadow map reaches the scene's
+/// `shadowed_points` by its index among the kept point lights (a dropped one shifts none).
+#[test]
+fn a_shadow_asking_point_light_is_listed_by_its_kept_index() {
+    let mut frame = Frame::default();
+    frame.point_light(Vec3::ZERO, 3.0, Color::WHITE, 1.0);
+    frame.point_light(Vec3::new(f32::NAN, 0.0, 0.0), 3.0, Color::WHITE, 1.0);
+    frame.point_light_with(&genex::render::PointLight::new(Vec3::Y, 4.0, Color::WHITE, 2.0).with_shadow(true));
+    let lighting = scene_of(&frame).lighting;
+    assert_eq!(lighting.points.len(), 2, "the NaN one is dropped");
+    assert_eq!(lighting.shadowed_points, [1]);
+    assert_eq!(scene_of(&Frame::default()).lighting.shadowed_points, Vec::<usize>::new());
+}
+
 /// Values no light can have: the sun keeps its default direction, a negative or non-finite
 /// intensity is dark, and a point light without a finite position or a positive range is dropped.
 #[test]

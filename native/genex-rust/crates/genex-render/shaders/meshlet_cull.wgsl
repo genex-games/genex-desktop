@@ -38,8 +38,9 @@
 @group(0) @binding(13) var<storage, read_write> indices: array<u32>;
 @group(0) @binding(14) var hiz: texture_2d<f32>;
 // Each view's region (`meshlet_cull::GpuViewRegion`): x its first index, y its first drawn slot,
-// z and w their capacities (sized on the CPU for the instances its frustum may hold).
-@group(0) @binding(15) var<uniform> regions: array<vec4<u32>, 9>;
+// z and w their capacities (sized on the CPU for the instances its frustum may hold). One per
+// `layout::MAX_VIEWS`.
+@group(0) @binding(15) var<uniform> regions: array<vec4<u32>, 21>;
 
 // Items one workgroup of the scan covers (`meshlet_cull::SCAN_BLOCK`).
 const GX_SCAN_BLOCK: u32 = 256u;

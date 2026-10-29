@@ -968,6 +968,9 @@ pub struct Renderer {
     /// review): the shadow array then keeps its spot atlas layer whether or not a frame grants a
     /// slot, so a spot toggling or crossing the cap never reallocates the cascades.
     spot_atlas: bool,
+    /// Whether the game has asked for a shadowed point light under a quality that draws them
+    /// (sticky, AAA review WP-15): the shadow array then keeps the point layer after the spot atlas.
+    point_atlas: bool,
     /// Scene pipeline sets made so far (the HDR and legacy scenes' and the prepass's): a frame that
     /// makes one compiles shaders on the frame thread.
     scene_pipeline_builds: std::cell::Cell<u32>,
@@ -2353,12 +2356,19 @@ impl<'a> WorldNodes<'a> {
                     // An occluded cascade's second draws, after the Hi-Z of its first.
                     drawn += renderer.encode_cascade_second(frame.encoder(), self.prep, cascade, &mut self.stats);
                 }
-                // Every shadowed spot's tile of the atlas layer, in one pass.
+                // Every shadowed spot's tile of the atlas layer, in one pass; every shadowed point
+                // light's faces in the point layer after it, in another (AAA review WP-15).
                 if !plan.spot_shadows.is_empty() {
                     let cascades = plan.cascades_drawn() as u32;
                     let counts: Vec<Option<&[u32]>> =
                         plan.spot_shadows.iter().map(|spot| self.counts(crate::spot_shadow::spot_view(cascades, spot.slot) as usize)).collect();
-                    drawn += renderer.encode_spot_layer(frame.encoder(), self.prep, &counts, &mut self.stats);
+                    if plan.spot_shadows.iter().any(|spot| !crate::spot_shadow::is_point_slot(spot.slot)) {
+                        drawn += renderer.encode_spot_layer(frame.encoder(), self.prep, &counts, &mut self.stats);
+                    }
+                    if plan.spot_shadows.iter().any(|spot| crate::spot_shadow::is_point_slot(spot.slot)) {
+                        renderer.encode_slot_layer(frame.encoder(), self.prep, &counts, &mut self.stats, true);
+                        drawn += 1;
+                    }
                 }
                 self.count_render(frame, drawn);
             }
@@ -2868,6 +2878,7 @@ impl Renderer {
             meshlet_node: None,
             light_bins: std::cell::RefCell::new(None),
             spot_atlas: false,
+            point_atlas: false,
             scene_pipeline_builds: std::cell::Cell::new(0),
             meshlet_pipelines: None,
             hiz: std::cell::RefCell::new(None),
@@ -3906,6 +3917,8 @@ impl Renderer {
             plan.frame.counts[0] = plan.lights.len() as u32;
         }
         self.spot_atlas |= self.draws_spot_maps() && scene.lighting.spots.iter().any(|spot| spot.shadow);
+        // The point layer stays once a point light asked for its cube (AAA review WP-15).
+        self.point_atlas |= self.draws_spot_maps() && self.quality.lights.shadowed_points > 0 && !scene.lighting.shadowed_points.is_empty();
         self.plan_spot_shadows(&mut plan)?;
         self.fit_shadow_maps(&mut plan);
         // The cascades this frame holds (their cadence) are not culled.
@@ -5643,7 +5656,11 @@ impl Renderer {
         let tile = crate::spot_shadow::tile_side(self.quality.shadows.map_size.max(1));
         let slots = usize::from(self.quality.lights.shadowed_spots);
         let tile = self.draws_spot_maps().then_some(tile);
-        let spots = self.spot_slots.grant(binned, tile, slots, eye, self.frame_index, self.environment_settle);
+        let mut spots = self.spot_slots.grant(binned, tile, slots, eye, self.frame_index, self.environment_settle);
+        // Shadowed point lights' faces after the spots' slots (AAA review WP-15); always called, so
+        // a point light's request mark never reaches the forward pass as a slot.
+        let side = self.draws_spot_maps().then_some(self.quality.shadows.map_size.max(1));
+        spots.extend(crate::spot_shadow::grant_points(binned, side, usize::from(self.quality.lights.shadowed_points), eye));
         if spots.is_empty() {
             return Ok(());
         }
@@ -5660,7 +5677,8 @@ impl Renderer {
     /// draws none), shadows on and slots granted by the preset.
     fn draws_spot_maps(&self) -> bool {
         let lights = &self.quality.lights;
-        crate::spot_shadow::LANDED && lights.clustered && lights.shadowed_spots > 0 && self.quality.shadows.enabled
+        let slots = lights.shadowed_spots > 0 || lights.shadowed_points > 0;
+        crate::spot_shadow::LANDED && lights.clustered && slots && self.quality.shadows.enabled
     }
 
     /// Whether the game asked for a shadowed spot under a quality that draws them (sticky): the
@@ -5669,16 +5687,29 @@ impl Renderer {
         self.spot_atlas
     }
 
+    /// Whether the game asked for a shadowed point light under a quality that draws them (sticky,
+    /// AAA review WP-15): the shadow array then holds the point layer, and the budget counts it.
+    pub fn uses_shadowed_points(&self) -> bool {
+        self.point_atlas
+    }
+
     /// Draw every shadowed spot's casters into its tile of the atlas layer (after the drawn
     /// cascades), in one pass, each through its cull view's arguments (`counts`: the CPU cull's,
     /// by spot, on the reference path).
     fn encode_spot_shadows(&self, encoder: &mut wgpu::CommandEncoder, prep: &FramePrep, counts: &[Option<&[u32]>], stats: &mut FrameStats) {
+        self.encode_slot_layer(encoder, prep, counts, stats, false);
+    }
+
+    /// Draw the spots' (`points` false) or the point lights' faces' (`points` true) casters into
+    /// their tiles of their layer ([`crate::spot_shadow::slot_layer`]), in one pass.
+    pub(super) fn encode_slot_layer(&self, encoder: &mut wgpu::CommandEncoder, prep: &FramePrep, counts: &[Option<&[u32]>], stats: &mut FrameStats, points: bool) {
         let (plan, groups) = (&prep.plan, &prep.groups);
         let Some(pipelines) = self.spot_shadow.as_ref() else { return };
         let cascades = plan.cascades_drawn() as u32;
-        let Some(layer) = self.shadow_maps.layers.get(crate::spot_shadow::spot_layer(cascades) as usize) else { return };
+        let first = if points { crate::spot_shadow::point_base_slot(0) } else { 0 };
+        let Some(layer) = self.shadow_maps.layers.get(crate::spot_shadow::slot_layer(cascades, first) as usize) else { return };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("spot shadows"),
+            label: Some(if points { "point light shadows" } else { "spot shadows" }),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: layer,
@@ -5702,7 +5733,7 @@ impl Renderer {
         };
         pass.set_bind_group(0, &pipelines.bind_group(&self.device, &inputs), &[]);
         pass.set_index_buffer(self.meshes.indices.slice(..), wgpu::IndexFormat::Uint32);
-        for (spot, counts) in plan.spot_shadows.iter().zip(counts) {
+        for (spot, counts) in plan.spot_shadows.iter().zip(counts).filter(|(spot, _)| crate::spot_shadow::is_point_slot(spot.slot) == points) {
             // Each spot starts on the plain casters (the previous spot ended on the faded ones).
             pass.set_pipeline(pipelines.pipeline(self.shadow_desc.format));
             let (x, y, side) = crate::spot_shadow::tile_rect(spot.slot, self.shadow_desc.side);
@@ -5731,8 +5762,10 @@ impl Renderer {
         // The atlas layer stays while the game uses shadowed spots and the quality draws them, so
         // a frame granting none (a spot switched off, behind the camera, past the cap) keeps the
         // array and the cascades' history.
-        let atlas = plan.spot_shadows.len().max(usize::from(self.spot_atlas && self.draws_spot_maps()));
-        let desc = crate::spot_shadow::map_desc(cascades, &settings, atlas);
+        let draws = self.draws_spot_maps();
+        let held = if self.point_atlas && draws { 2 } else { u32::from(self.spot_atlas && draws) };
+        let atlas = crate::spot_shadow::atlas_layers(&plan.spot_shadows).max(held);
+        let desc = crate::spot_shadow::map_desc_layers(cascades, &settings, atlas);
         if desc != self.shadow_desc {
             self.shadow_maps = ShadowMaps::with_desc(&self.device, desc);
             self.shadow_desc = desc;

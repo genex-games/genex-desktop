@@ -44,7 +44,7 @@ use glam::{Mat4, Vec4};
 use wgpu::{BindGroupLayout, Buffer, ComputePipeline, Device};
 
 use crate::error::RenderError;
-use crate::layout::{GpuBatch, GpuInstance, INSTANCE_FADE_WHOLE, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS};
+use crate::layout::{GpuBatch, GpuInstance, INSTANCE_FADE_WHOLE, MAX_CASCADES, MAX_SHADOW_SLOTS, MAX_VIEWS};
 use crate::lod_rows::{FarField, GpuFarRule, GpuLodRow, LOD_BIAS_DEFAULT, far_field};
 
 /// Opaque rows per cull block: one workgroup's invocations (`GX_CULL_BLOCK` in cull.wgsl).
@@ -68,11 +68,12 @@ pub const fn scratch_bytes(rows: u32, views: u32) -> u64 {
     scratch_words_per_view(rows) * views as u64 * 4
 }
 
-/// The active cull views of a frame drawing `cascades` sun cascades and `spots` shadowed spot
-/// lights (each clamped to its reserve): the camera, then the cascades, then the spots.
+/// The active cull views of a frame drawing `cascades` sun cascades and shadow slots up to `spots`
+/// (the highest slot drawn plus one; each clamped to its reserve): the camera, then the cascades,
+/// then the slots.
 pub const fn active_views(cascades: usize, spots: usize) -> u32 {
     let cascades = if cascades < MAX_CASCADES { cascades } else { MAX_CASCADES };
-    let spots = if spots < MAX_SHADOWED_SPOTS { spots } else { MAX_SHADOWED_SPOTS };
+    let spots = if spots < MAX_SHADOW_SLOTS { spots } else { MAX_SHADOW_SLOTS };
     (1 + cascades + spots) as u32
 }
 
@@ -86,7 +87,7 @@ pub const fn spot_view(cascades: usize, spot: usize) -> u32 {
     (1 + cascades + spot) as u32
 }
 
-const _: () = assert!(active_views(MAX_CASCADES, MAX_SHADOWED_SPOTS) as usize == MAX_VIEWS);
+const _: () = assert!(active_views(MAX_CASCADES, MAX_SHADOW_SLOTS) as usize == MAX_VIEWS);
 
 /// The cull group's binding of the per-slot fade table (`fades` in `shaders/cull.wgsl`, game
 /// systems LOD-03).

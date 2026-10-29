@@ -206,9 +206,9 @@ struct PassView {
 }
 
 struct CullViews {
-    // MAX_VIEWS (layout.rs): the camera, four cascades, four shadowed spots; the active views
-    // lead and the rest are 0.
-    planes: array<array<vec4<f32>, 6>, 9>,
+    // MAX_VIEWS (layout.rs): the camera, four cascades, sixteen shadow slots (four spots, two
+    // point lights' six faces); the active views lead and the rest are 0.
+    planes: array<array<vec4<f32>, 6>, 21>,
     // x: visible-list slots per view, y: batches, z: active views, w: the views the frame holds
     // (bit v: a far cascade off its cadence keeps last frame's map, so its cull is skipped).
     params: vec4<u32>,

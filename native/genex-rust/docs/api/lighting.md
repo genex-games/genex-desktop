@@ -6,7 +6,7 @@ value):
 ```rust
 use genex::prelude::*;                                      // Material, Color, Frame
 use genex::Subsurface;                                      // ::WAX, ::SKIN, ::LEAF, ::new(color, thickness)
-use genex::render::{Decal, IrradianceVolume, ReflectionProbe, SpotLight};
+use genex::render::{Decal, IrradianceVolume, PointLight, ReflectionProbe, SpotLight};
 use genex::render::{Clouds, Environment, Fog, HdriEnvironment, HdriSun, Moon, SkyMedium, SkyParams};
 use genex::render::{QualityPreset, RenderConfig, ShadowConfig, ShadowFilter};
 use genex::render::units;                                   // physical units: lux, candela, lumens, nits, EV100
@@ -16,6 +16,7 @@ units::lux(lux); units::candela(cd); units::lumens(lm); units::spot_lumens(lm, o
 units::ambient_lux(lux); units::ev_from_ev100(ev100); units::kelvin(2700.0); // -> [u8; 3], Color::rgb(r, g, b)
 frame.point_light(position, range, color, intensity); frame.spot_light(position, direction, range, color, intensity);
 frame.spot_light_with(&SpotLight::new(position, direction, range, color, intensity).with_cone_degrees(25.0, 40.0).with_shadow(true));
+frame.point_light_with(&PointLight::new(position, range, color, intensity).with_shadow(true)); // a cube shadow map
 Material::color(color).with_metallic(m).with_roughness(r);  // and Material::emissive(color, strength)
 // .with_base_texture(path) .with_normal_texture(path, strength) .with_metal_rough_texture(path) .with_orm_texture(path)
 // .with_occlusion_texture(path, strength) .with_emissive(color, strength) .with_emissive_texture(path) .with_untextured_color(color)
@@ -44,7 +45,11 @@ shadow map, `frame.spot_light_with(&SpotLight::new(position, direction, range, c
 .with_cone_degrees(25.0, 40.0).with_shadow(true))` (`use genex::render::SpotLight;`); the
 device's quality decides how many spots get a shadow map (none on `low` and `medium`, four on
 `high` and `ultra`, at most one on a phone), given to the asking spots on screen nearest the
-camera, and the rest light unshadowed. A spot keeps its map until another stays clearly nearer
+camera, and the rest light unshadowed. A point light casts shadows all round with
+`frame.point_light_with(&PointLight::new(position, range, color, intensity).with_shadow(true))`
+(`use genex::render::PointLight;`): a cube of six maps, so the device gives one to the nearest
+asking point light on screen on `high`, two on `ultra`, none on `low`, `medium` and phones; give
+it to the bulb or lantern that lights a room, not to every candle. A spot keeps its map until another stays clearly nearer
 for a quarter of a second; the two shadows then cross-fade over a quarter of a second, so none pops
 as the camera moves (a capture gives the maps to the nearest spots). Point and spot lights fade smoothly to nothing
 at their range, so give each the range it needs, not more: a lantern 3 to 4 units, a street lamp
@@ -257,8 +262,8 @@ replaces the clear colour; elsewhere the flat ambient light and the clear colour
 both sensible. An environment's light is brighter than a flat ambient: retune
 `ev_compensation` (or the map's `with_intensity`) against a capture after adding one.
 
-On desktop `high` and `ultra` screen-space GI adds the light nearby surfaces bounce (a red box
-tints the floor in front of it), beside the volumes' room-scale bounce; phones and `medium` keep
+On desktop `ultra` screen-space GI adds the light nearby surfaces bounce (a red box tints the
+floor in front of it), beside the volumes' room-scale bounce; the other presets and phones keep
 the volumes alone.
 
 One exposure cannot hold a sunlit window and the dark room around it. On `high` and `ultra` local

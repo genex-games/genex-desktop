@@ -168,6 +168,10 @@ pub struct BudgetInput {
     /// Whether the game uses shadowed spots (`Renderer::uses_shadowed_spots`): only then is the
     /// spot atlas layer reserved and its pass counted, for a quality that grants spot slots.
     pub spot_atlas: bool,
+    /// Whether the game uses shadowed point lights (`Renderer::uses_shadowed_points`, AAA review
+    /// WP-15): only then is the point layer after the spot atlas reserved, for a quality that grants
+    /// point lights' cubes.
+    pub point_atlas: bool,
     /// Level-3 passes' declared bytes, by pass name.
     pub passes: Vec<(String, u64)>,
     /// The widest HDR environment map the device keeps (`presets::hdri_map_width`; 0: none
@@ -223,6 +227,7 @@ impl BudgetInput {
             materials: Vec::new(),
             materials_fixed: false,
             spot_atlas: false,
+            point_atlas: false,
             passes: Vec::new(),
             environment_map_width: 0,
             window: None,
@@ -294,6 +299,13 @@ impl BudgetInput {
         self
     }
 
+    /// The input for a game that uses shadowed point lights (`uses`) or not: the point layer is
+    /// reserved only for one that does.
+    pub fn with_point_atlas(mut self, uses: bool) -> BudgetInput {
+        self.point_atlas = uses;
+        self
+    }
+
     /// The input with a Level-3 pass declaring `bytes`.
     pub fn with_pass(mut self, name: &str, bytes: u64) -> BudgetInput {
         self.passes.push((name.to_owned(), bytes));
@@ -345,6 +357,8 @@ struct Shape {
     /// Whether the spot atlas layer is held and drawn: the game uses shadowed spots and the
     /// quality grants them slots.
     spot_atlas: bool,
+    /// Whether the point layer is held and drawn after it (AAA review WP-15).
+    point_atlas: bool,
 }
 
 impl Shape {
@@ -370,6 +384,7 @@ impl Shape {
             taau,
             msaa_read: quality.hdr && input.msaa_read,
             spot_atlas: spot_atlas_held(quality, input.spot_atlas),
+            point_atlas: point_atlas_held(quality, input.point_atlas),
         }
     }
 
@@ -428,15 +443,23 @@ fn spot_atlas_held(quality: &Quality, used: bool) -> bool {
     used && quality.shadows.enabled && quality.lights.clustered && quality.lights.shadowed_spots > 0
 }
 
-fn shadow_bytes(quality: &Quality, spot_atlas: bool) -> (u64, u64) {
+/// Whether the point layer is held under `quality` for a game that does (`used`) or does not use
+/// shadowed point lights, as the renderer holds it (AAA review WP-15).
+fn point_atlas_held(quality: &Quality, used: bool) -> bool {
+    used && quality.shadows.enabled && quality.lights.clustered && quality.lights.shadowed_points > 0
+}
+
+fn shadow_bytes(quality: &Quality, shape: &Shape) -> (u64, u64) {
     if !quality.shadows.enabled {
         return (0, 0);
     }
     let texel = shadow_texel(quality);
     let side = u64::from(quality.shadows.map_size);
     let cascades = u64::from(quality.shadows.cascades) * side * side * texel;
-    // Every shadowed spot is a tile of one atlas layer at the cascades' side (`spot_shadow::map_desc`).
-    let spots = if spot_atlas { side * side * texel } else { 0 };
+    // Every shadowed spot is a tile of one atlas layer at the cascades' side (`spot_shadow::map_desc`);
+    // a game using shadowed point lights holds the point layer after it too (AAA review WP-15).
+    let layers = if shape.point_atlas { 2 } else { u64::from(shape.spot_atlas) };
+    let spots = layers * side * side * texel;
     (cascades, spots)
 }
 
@@ -701,7 +724,7 @@ fn register_lighting(ledger: &mut BudgetLedger, quality: &Quality, shape: &Shape
     if quality.lights.clustered {
         ledger.register(BudgetKind::Target, "light-bins", shape.light_bin_bytes(quality));
     }
-    let (cascades, spots) = shadow_bytes(quality, shape.spot_atlas);
+    let (cascades, spots) = shadow_bytes(quality, &shape);
     if quality.shadows.enabled {
         ledger.register(BudgetKind::Shadows, "cascades", cascades);
     }
@@ -933,11 +956,12 @@ fn step_froxel_fog(quality: &mut Quality) -> Option<(u32, u32)> {
 }
 
 fn step_spot_shadows(quality: &mut Quality) -> Option<(u32, u32)> {
-    let spots = quality.lights.shadowed_spots;
+    let spots = quality.lights.shadowed_spots.saturating_add(quality.lights.shadowed_points);
     if spots == 0 {
         return None;
     }
     quality.lights.shadowed_spots = 0;
+    quality.lights.shadowed_points = 0;
     Some((u32::from(spots), 0))
 }
 
@@ -1075,7 +1099,7 @@ pub fn work_model(quality: &Quality, input: &BudgetInput, tile: bool) -> WorkMod
 
 fn offchip_bytes(quality: &Quality, shape: &Shape, tile: bool) -> u64 {
     let (r, o, texel) = (shape.render_px(), shape.output_px(), shape.texel);
-    let (cascades, spots) = shadow_bytes(quality, shape.spot_atlas);
+    let (cascades, spots) = shadow_bytes(quality, shape);
     // A shadow map is stored once and read about once by the lit pass.
     let mut bytes = 2 * (cascades + spots);
     bytes += world_pass_bytes(shape, tile);
@@ -1212,6 +1236,9 @@ fn taps_per_pixel(quality: &Quality, shape: &Shape) -> f32 {
     if shape.spot_atlas {
         taps += SPOT_PCF_TAPS * f32::from(quality.lights.shadowed_spots);
     }
+    if shape.point_atlas {
+        taps += SPOT_PCF_TAPS * f32::from(quality.lights.shadowed_points);
+    }
     if ibl_bytes(quality).is_some() {
         taps += 3.0;
     }
@@ -1255,7 +1282,7 @@ fn post_taps(quality: &Quality, shape: &Shape) -> f32 {
 /// TAA), the tonemap, EASU and RCAS.
 fn render_passes(quality: &Quality, shape: &Shape) -> u32 {
     let shadows = if quality.shadows.enabled { u32::from(quality.shadows.cascades) } else { 0 };
-    let spots = u32::from(shape.spot_atlas);
+    let spots = u32::from(shape.spot_atlas) + u32::from(shape.point_atlas);
     let screen_compute = quality.ao.resolution != AoResolution::Off || quality.occlusion || quality.contact_shadows;
     let post_compute = quality.hdr && (quality.exposure || quality.bloom.enabled || shape.taa);
     let sharpen = shape.upscale || quality.anti_aliasing == AntiAliasing::TaaSharpen;

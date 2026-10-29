@@ -2493,6 +2493,7 @@ impl Presenter {
         handle.borrow_mut().note_buffers(self.resilient.renderer().renderer().buffer_ledger());
         // The spot atlas the renderer now holds (a shadowed spot asked for), in the budget from now on.
         handle.borrow_mut().note_spot_atlas(self.resilient.renderer().renderer().uses_shadowed_spots());
+        handle.borrow_mut().note_point_atlas(self.resilient.renderer().renderer().uses_shadowed_points());
         // The impostors baked on the renderer in use (LOD-16, `volatile.render.lod`).
         handle.borrow_mut().note_impostors(self.assets.impostors.stats());
         // What the frame's characters did and how the renderer skinned them (AN-23).
@@ -3353,6 +3354,10 @@ fn lighting(lights: &Lights) -> Lighting {
         .filter(|light| usable_light(light.position, light.range))
         .map(|light| PointLight { position: light.position.to_array(), range: light.range, color: rgb(light.color), intensity: intensity(light.intensity) })
         .collect();
+    // The point lights asking for a cube shadow map, by their index among the kept ones (AAA review
+    // WP-15).
+    lighting.shadowed_points =
+        lights.points.iter().filter(|light| usable_light(light.position, light.range)).enumerate().filter(|(_, light)| light.shadow).map(|(index, _)| index).collect();
     lighting.spots = lights.spots.iter().filter(|light| usable_light(light.position, light.range)).map(spot_light).collect();
     // The renderer holds or drops a hostile probe (`probes::ReflectionProbe::held`).
     lighting.reflection_probes = lights

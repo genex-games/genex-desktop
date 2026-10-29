@@ -135,7 +135,7 @@ pub use genex_render::settings::Fog;
 /// cone [`crate::Frame::spot_light`] gives one by default; a reflection probe
 /// ([`crate::Frame::reflection_probe`], A.3) and an irradiance volume
 /// ([`crate::Frame::irradiance_volume`], A.4).
-pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, ReflectionProbe, SpotLight};
+pub use crate::frame::{DEFAULT_SPOT_INNER_DEGREES, DEFAULT_SPOT_OUTER_DEGREES, IrradianceVolume, PointLight, ReflectionProbe, SpotLight};
 /// Physical light units: lux, candela, lumens, nits and EV100 in the renderer's scene units
 /// (`genex::render::units::lumens(800.0)`; docs/api/lighting.md, "Physical units").
 #[path = "light_units.rs"]
@@ -1237,6 +1237,8 @@ pub struct RenderControl {
     /// Whether the renderer holds the spot atlas layer (the game asked for a shadowed spot under a
     /// quality that draws them, `Renderer::uses_shadowed_spots`): the budget counts it from then on.
     spot_atlas: bool,
+    /// Whether the renderer holds the point layer (`Renderer::uses_shadowed_points`, AAA review WP-15).
+    point_atlas: bool,
     /// The GPU buffers the renderer held after its last Live frame (`Renderer::buffer_ledger`,
     /// renderer pass 2 A.0 LG-13): the device's own budget counts them at its next fit.
     buffers: genex_render::budget::BudgetLedger,
@@ -1431,6 +1433,7 @@ impl RenderControl {
             pipeline_deferred: false,
             ldr_reason: None,
             spot_atlas: false,
+            point_atlas: false,
             buffers: genex_render::budget::BudgetLedger::new(),
             textures: (class, TextureQuality::OFF),
             generation: 0,
@@ -1694,7 +1697,7 @@ impl RenderControl {
         // Captures never count the spot atlas: it appears with the first frame that asks for a
         // shadowed spot, and a capture's settings must not depend on what was drawn before it.
         let held = if own { self.buffers.clone() } else { genex_render::budget::BudgetLedger::new() };
-        let input = budget_input(surface.output, scale * surface.upscale_scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_window(surface.window).with_buffers(&held);
+        let input = budget_input(surface.output, scale * surface.upscale_scale, facts, profile).with_spot_atlas(own && self.spot_atlas).with_point_atlas(own && self.point_atlas).with_window(surface.window).with_buffers(&held);
         let (class, textures) = self.textures;
         if own && profile.class == class {
             return (input.with_fixed_materials(texture_arrays(class, textures)), Vec::new());
@@ -1746,6 +1749,15 @@ impl RenderControl {
     pub fn note_spot_atlas(&mut self, held: bool) {
         if held && !self.spot_atlas {
             self.spot_atlas = true;
+            self.resolve();
+        }
+    }
+
+    /// Whether the renderer holds the point layer (`Renderer::uses_shadowed_points`, sticky): the
+    /// first frame that does fits the budget again with the layer counted.
+    pub fn note_point_atlas(&mut self, held: bool) {
+        if held && !self.point_atlas {
+            self.point_atlas = true;
             self.resolve();
         }
     }

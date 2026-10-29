@@ -1553,7 +1553,6 @@ impl FrameRenderer {
         }
     }
 
-    /// The settle re-render the next frame draws (None: a Live frame).
     /// What the exposure metered and drew for the last frame read back (`state().__render.exposure`,
     /// AAA review WP-5): Live's a few frames late, a settled capture's own once it is drawn.
     pub fn exposure_telemetry(&self) -> crate::post::exposure::ExposureTelemetry {
@@ -1584,7 +1583,7 @@ impl FrameRenderer {
         Ok(())
     }
 
-    /// The settle frame a capture is converging on, if one is in progress.
+    /// The settle re-render the next frame draws (None: a Live frame).
     pub fn settling(&self) -> Option<SettleFrame> {
         self.settle
     }

@@ -71,7 +71,8 @@ fn the_lights_bin_decals_after_the_lights_and_write_their_rows_in_binned_order()
     }
     let order: Vec<u32> = binned.bins.decals.clone();
     assert_eq!(order, [1, 2, 0], "sorted by view depth");
-    assert_eq!(rows_base(2), 2 * 2 + 4 * 4, "after the lights' rows and every spot matrix slot");
+    // AAA review WP-15 flipped 4 * 4 -> 4 * 16: every shadow slot's matrix (spots, then point faces).
+    assert_eq!(rows_base(2), 2 * 2 + 4 * 16, "after the lights' rows and every shadow slot's matrix");
 }
 
 #[test]

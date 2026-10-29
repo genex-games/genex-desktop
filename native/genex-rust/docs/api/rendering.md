@@ -31,7 +31,7 @@ typed reason (`budget`, naming the rung or switch dropped; `format-unrenderable`
 | --- | --- | --- | --- | --- | --- | --- |
 | `low` | MSAA 4x | 2 | off | off | off | 64 (0) |
 | `medium` | MSAA 4x | 2 | on | half size | off | 256 (0) |
-| `high` | TAA | 3 | on | half size, history, GI | on | 1024 (4) |
+| `high` | TAA | 3 | on | half size, history | on | 1024 (4) |
 | `ultra` | TAA | 4 | on | full size, GI | on | 1024 (4) |
 
 Every preset draws HDR, image-based lighting, the sky and fog; below scale 1 it upscales (TAA at

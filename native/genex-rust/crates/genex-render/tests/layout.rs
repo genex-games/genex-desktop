@@ -94,7 +94,8 @@ const GOLDEN: [(&str, usize); 35] = [
     ("PassView", 16),
     // Pass 2 A6.9 flipped 880 -> 912: the levels of detail's view (`GpuCullViews::lod`, `lod_params`);
     // lane FQ flipped 912 -> 928: each sun cascade's caster error (`GpuCullViews::shadow_lod`).
-    ("CullViews", 928),
+    // AAA review WP-15 flipped 928 -> 2080: twelve more cull views (two point lights' faces).
+    ("CullViews", 2080),
     ("DrawIndexedArgs", 20),
     ("MeshVertex", 48),
     ("SkinVertex", 32),
@@ -1271,7 +1272,8 @@ fn the_r2_nodes_have_landed_and_asking_for_occlusion_schedules_its_node() {
 fn the_frame_grows_past_the_frozen_v1_prefix_with_every_cascade() {
     use genex_render::layout::{GpuFrame, MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS, SHADOW_CASCADES};
     use std::mem::offset_of;
-    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 1 + 4 + 4));
+    // AAA review WP-15 flipped MAX_VIEWS 1 + 4 + 4 -> 1 + 4 + 16: two shadowed point lights' faces.
+    assert_eq!((MAX_CASCADES, MAX_SHADOWED_SPOTS, MAX_VIEWS), (4, 4, 1 + 4 + 16));
     assert_eq!(size_of::<GxFrameV1>() as u64, GX_FRAME_V1_BYTES, "the v1 frame is frozen");
     assert!(size_of::<GpuFrame>() as u64 > GX_FRAME_V1_BYTES, "the renderer's frame grows");
     assert_eq!(SHADOW_CASCADES, 2, "the v1 prefix carries two cascades");
