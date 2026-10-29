@@ -41,6 +41,8 @@ def export(name, out):
         export_normals=True,
         export_materials="EXPORT",
         export_image_format="AUTO",
+        # The pieces' `_WEAR` edge-wear attribute (custom attributes start with an underscore).
+        export_attributes=True,
     )
 
 
