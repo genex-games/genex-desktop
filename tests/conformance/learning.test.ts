@@ -687,6 +687,8 @@ describe("two runs on one game, through the real core and harness", () => {
       { previewPoolMax: 3, createHeadlessPreview: async () => makeFakePreview() },
     );
     rigs.push(rig);
+    // Carrying one run's outcomes into the next is learning, which is off unless switched on.
+    await rig.core.updateSettings({ learning: true });
     const project = await rig.core.games.scaffold("learning-run", { title: "Learning run" });
     const workspace = rig.core.layout.harnessWs;
 

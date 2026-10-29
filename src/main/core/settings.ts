@@ -29,10 +29,12 @@ export const LEGACY_DEFAULT_BUILDERS = 2;
 
 export interface StudioSettings {
   /**
-   * Self-improvement, the switch in Studio's header (default ON). Off, Studio learns nothing:
-   * no learning pass after a run or on request, no lessons, recipe or catalogue statistics
-   * (the harness asks `learning.enabled` before each), no automatic apply, no architect. What
-   * it already learned stays in use and can still be undone; the log keeps recording.
+   * Self-improvement, the switch in Studio's header (default off: self-improvement is stopped, and
+   * an install saved before the stop is switched off once). Off, Studio learns nothing: no
+   * learning pass after a run or on request, no lessons, recipe or catalogue statistics (the
+   * harness asks `learning.enabled` before each), no automatic apply, no architect, and no change
+   * to the harness's own code, prompts or skills (`guardian.write_self` refuses). What it already
+   * learned stays in use and can still be undone; the log keeps recording.
    */
   learning: boolean;
   /**

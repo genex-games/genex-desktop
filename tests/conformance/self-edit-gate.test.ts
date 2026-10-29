@@ -15,6 +15,16 @@ import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 import { makeResources } from "../helpers/resources.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 
+/**
+ * A core with learning switched on: the gate only takes self-changes while self-improvement is on
+ * (off, `guardian.write_self` refuses them all; self-improvement-off.test.ts).
+ */
+async function coreWithLearning(options?: Parameters<typeof coreLite>[0]): Promise<CoreLite> {
+  const lite = await coreLite(options);
+  await lite.core.updateSettings({ learning: true });
+  return lite;
+}
+
 type Outcome = string | { ok?: boolean; content?: string };
 type Tool = { name: string; execute(args: Record<string, unknown>, ctx: unknown): Promise<Outcome> };
 
@@ -52,7 +62,7 @@ const BROKEN = "export const helper = (n: number): number => `${n}`;\n";
 
 describe("the self-edit gate", () => {
   it("a validation fork cannot write a live game or abort live provider work", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     await lite.core.games.scaffold("pong");
     const api = lite.core.api.bind(lite.core);
     let aborts = 0;
@@ -85,7 +95,7 @@ describe("the self-edit gate", () => {
     await assert.rejects(readFile(path.join(lite.core.games.dirFor("pong"), "intrusion.txt")), { code: "ENOENT" });
   });
   it("refuses a type-broken code edit with the compiler's diagnostics and leaves the workspace as it was", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const before = await harnessEvents(lite);
     const result = await run(lite, "write_own_file", { file: HELPER, contents: BROKEN, reason: "a helper" });
 
@@ -106,7 +116,7 @@ describe("the self-edit gate", () => {
   });
 
   it("accepts a code edit that type-checks and boots, and snapshots it healthy at once", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const result = await run(lite, "write_own_file", { file: HELPER, contents: VALID, reason: "a helper" });
 
     assert.equal(result.ok, true, result.content);
@@ -126,7 +136,7 @@ describe("the self-edit gate", () => {
   });
 
   it("does not hold an edit to errors the self already had elsewhere, only to the ones it adds", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const ws = lite.core.layout.harnessWs;
     // A migrated file of the agent's that never type-checked: it must not freeze every later edit.
     await writeFile(path.join(ws, "loop", "old-mine.ts"), "export const old: number = 'still a string';\n");
@@ -150,7 +160,7 @@ describe("the self-edit gate", () => {
   });
 
   it("checks against the app's own tsconfig, so loosening the workspace's does not turn the check off", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const config = path.join(lite.core.layout.harnessWs, "tsconfig.json");
     const shipped = JSON.parse(await readFile(config, "utf8")) as { compilerOptions: Record<string, unknown> };
     // The config is not code: nothing gates an edit to it, by accident or on purpose.
@@ -168,7 +178,7 @@ describe("the self-edit gate", () => {
   });
 
   it("refuses a code edit whose copy does not start, even when it adds no type error", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     // An error the self already had: the check compares with the self before the change, and the
     // copy that boots must still be the one with the change in it.
     await writeFile(
@@ -188,7 +198,7 @@ describe("the self-edit gate", () => {
   });
 
   it("gates install_tool the same way", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const result = await run(lite, "install_tool", {
       filename: "count-tools.ts",
       reason: "count",
@@ -202,7 +212,7 @@ describe("the self-edit gate", () => {
   });
 
   it("a type check that runs out of time refuses the edit rather than passing it", async () => {
-    const lite = await coreLite({ typeGate: { timeoutMs: 1 } });
+    const lite = await coreWithLearning({ typeGate: { timeoutMs: 1 } });
     const result = await run(lite, "write_own_file", { file: HELPER, contents: VALID, reason: "a helper" });
     assert.equal(result.ok, false);
     assert.match(result.content, /did not finish within/);
@@ -210,7 +220,7 @@ describe("the self-edit gate", () => {
   });
 
   it("fails closed when the build has no compiler, and still lets non-code edits through", async () => {
-    const lite = await coreLite({ resources: await makeResources({ tsc: false }) });
+    const lite = await coreWithLearning({ resources: await makeResources({ tsc: false }) });
     const code = await run(lite, "write_own_file", { file: HELPER, contents: VALID, reason: "a helper" });
     assert.equal(code.ok, false, "no silent accept");
     assert.match(code.content, /type checker is missing from this build/);
@@ -225,7 +235,7 @@ describe("the self-edit gate", () => {
   });
 
   it("refuses paths that are not the harness's own before making any copy", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const api = lite.api() as unknown as Record<string, (params: unknown) => Promise<{ ok: boolean; stage?: string }>>;
     for (const file of [
       "../escape.ts",
@@ -255,7 +265,7 @@ async function selfChanges(lite: CoreLite, type: string): Promise<Array<Record<s
 
 describe("the agent changes its own files only through the host (B7)", () => {
   it("prompts and skills are write-denied to every agent process, like the judge", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const ws = lite.core.layout.harnessWs;
     for (const dir of ["judge", "prompts", "skills"]) {
       assert.ok(lite.core.sandbox.policy.denyWrite.includes(path.join(ws, dir)), `denyWrite holds ${dir}/`);
@@ -263,7 +273,7 @@ describe("the agent changes its own files only through the host (B7)", () => {
   });
 
   it("write_skill lands through the host: tried first, recorded by the host, and undone from Review", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const file = path.join(lite.core.layout.harnessWs, "skills", "camera-rules.md");
     const result = await run(lite, "write_skill", { slug: "camera-rules", contents: SKILL, reason: "learned" });
     assert.equal(result.ok, true, result.content);
@@ -280,7 +290,7 @@ describe("the agent changes its own files only through the host (B7)", () => {
   });
 
   it("a self-change keeps the plain title and summary the agent wrote for the person, bounded", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const result = await run(lite, "write_skill", {
       slug: "camera-rules",
       contents: SKILL,
@@ -299,7 +309,7 @@ describe("the agent changes its own files only through the host (B7)", () => {
   });
 
   it("write_own_file on a prompt is recorded by the host with the file it wrote", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const result = await run(lite, "write_own_file", {
       file: "prompts/operating-rules.md",
       contents: "Follow the brief.\n",
@@ -311,7 +321,7 @@ describe("the agent changes its own files only through the host (B7)", () => {
   });
 
   it("the harness cannot write the record of a self-change itself", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const api = lite.api() as unknown as Record<string, (params: unknown) => Promise<unknown>>;
     for (const event_type of ["self_edit", "skill_edited", "tool_installed"]) {
       const batch = [{ type: "custom", event_type, payload: { file: "prompts/x.md", snapshot_id: "forged" } }];
@@ -320,7 +330,7 @@ describe("the agent changes its own files only through the host (B7)", () => {
   });
 
   it("guardian.write_self refuses a path that is not the harness's own and changes nothing", async () => {
-    const lite = await coreLite();
+    const lite = await coreWithLearning();
     const ws = lite.core.layout.harnessWs;
     const outside = await mkdtemp(path.join(os.tmpdir(), "self-write-outside-"));
     const target = path.join(outside, "target.md");

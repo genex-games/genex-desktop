@@ -75,6 +75,7 @@ const MESSAGE = {
   notTried: (err: unknown) => `The change could not be tried: ${errorMessage(err)}`,
   didNotStart: (why: string) => `A copy of Studio with this change did not start: ${why}`,
   newTypeErrors: (count: number) => `${count} new type error${count === 1 ? "" : "s"}.`,
+  learningOff: "Self-improvement is off: your own code, prompts and skills stay as they are.",
 } as const;
 
 /** The longest reason a self-change keeps in its snapshot and record. */
@@ -313,6 +314,8 @@ export class SelfEditGateService {
   }
 
   async #writeSelf({ file, contents, reason, title, summary }: SelfWriteParams): Promise<SelfWriteResult> {
+    // Self-improvement is stopped unless the person turned learning on: the harness stays as shipped.
+    if (!this.#core.settings.learning) return { ok: false, stage: "refused", message: MESSAGE.learningOff };
     const ws = this.#core.layout.harnessWs;
     const rel = checkedRel(file);
     const notYours: SelfWriteResult = { ok: false, stage: "refused", message: MESSAGE.notYours(file) };

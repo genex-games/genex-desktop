@@ -303,7 +303,14 @@ type SavedSettings = Partial<StudioSettings> & {
   autoApplyImprovements?: boolean;
   /** The `DEFAULT_BUILDERS` in force when the file was written; older builds wrote none. */
   buildersDefault?: number;
+  /** Written since self-improvement was stopped; a file without it was saved while learning started on. */
+  learningStopped?: boolean;
 };
+
+/** Migration: self-improvement is stopped, so a file saved before the stop turns learning off once. */
+function savedLearning(saved: SavedSettings): boolean {
+  return saved.learningStopped === true && saved.learning === true;
+}
 
 /** Migration: installs that had the old auto-apply switch off chose caution — keep it. */
 function savedSelfImproving(saved: SavedSettings): boolean {
@@ -573,7 +580,7 @@ export class StudioCore {
   #mcpSecrets: SecretPort | null = null;
   #started = false;
   #settings: StudioSettings = {
-    learning: true,
+    learning: false,
     selfImproving: false,
     architect: false,
     buildersMax: DEFAULT_BUILDERS,
@@ -2031,7 +2038,7 @@ export class StudioCore {
     if (computerOff) await this.options.desktop?.stopAll();
     // Atomic (CQ-3): a torn write would read back as defaults at the next start. The default goes
     // beside the settings so the next start can tell a worker count someone chose from one never touched.
-    const saved: SavedSettings = { ...this.#settings, buildersDefault: DEFAULT_BUILDERS };
+    const saved: SavedSettings = { ...this.#settings, buildersDefault: DEFAULT_BUILDERS, learningStopped: true };
     await atomicWriteJson(this.#settingsFile(), saved);
     // The pool follows the setting at once; a run already going sizes its next round to it.
     if (this.#x.previewPool && this.options.previewPoolMax === undefined)
@@ -2056,7 +2063,7 @@ export class StudioCore {
       const parsed = JSON.parse(await readFile(this.#settingsFile(), "utf8")) as SavedSettings;
       const buildersMax = savedBuildersMax(parsed);
       this.#settings = {
-        learning: parsed.learning !== false,
+        learning: savedLearning(parsed),
         selfImproving: savedSelfImproving(parsed),
         architect: parsed.architect === true,
         buildersMax,
