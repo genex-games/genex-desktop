@@ -1239,9 +1239,10 @@ describe("the move belongs to the director", () => {
           move: { what: "mud builds up on the panels", mandatory },
         } as never),
       );
+    // Flipped (Loop phase 2): a build without a mandatory move is kept, and the move stays owed.
     assert.match(
       brief(true),
-      /## THE MOVE this iteration \(mandatory — a build that only tunes what already exists is a loss\)/,
+      /## THE MOVE this iteration \(mandatory — build it first; it stays owed until a build delivers it\)/,
     );
     assert.match(
       brief(false),
@@ -1259,9 +1260,10 @@ describe("the move belongs to the director", () => {
           move: { what: "mud builds up on the panels", mandatory },
         } as never),
       );
-    assert.match(prompt(true), /THE MOVE THIS ITERATION \(mandatory\).*LOSES/s);
+    assert.match(prompt(true), /THE MOVE THIS ITERATION \(mandatory\).*stays owed/s);
     assert.match(prompt(false), /THE MOVE THIS ITERATION \(asked for\)/);
-    assert.doesNotMatch(prompt(false), /LOSES/);
+    assert.doesNotMatch(prompt(false), /stays owed/);
+    assert.doesNotMatch(prompt(true), /LOSES/);
   });
 });
 
