@@ -814,7 +814,9 @@ async function landWhatRuns(
   if (judgePassedChecks(before, head) && !judgePassedChecks(state.lastJudge, head)) state.lastJudge = before;
   // The judge's look may carry the landing, but what the landing claims is the close's own look.
   state.healthByHead.set(head, health.ok === true);
-  // The head that lands always gets the art director's look against the references: reported, never a veto.
+  // The head that lands always gets the art director's look against the references, reported and never
+  // a veto: the close's judge carries it (tools.ts `judgeTheLanding`); when another judge already held
+  // its word on this head, the art director looks on its own.
   if (typeof loopRun.closeShipReview === "function") await loopRun.closeShipReview(head, bound.judgeBy);
   const judged = judgePassedChecks(state.lastJudge, head);
   if (health.ok === true || judged) return landIntegration(true);

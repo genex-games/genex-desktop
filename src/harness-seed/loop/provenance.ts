@@ -13,7 +13,8 @@
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { AnyRecord } from "../types/harness.d.ts";
-import { ArtKind, ArtSource, LookBlocker, runArtPass, type ArtAsset } from "./look-bar.ts";
+import { ArtSource, LookBlocker, runArtPass, type ArtAsset } from "./look-bar.ts";
+import { ArtKind } from "./art-kinds.ts";
 import { lookFactsOf } from "./look-facts.ts";
 
 /** The lock the host writes beside `genex.toml` (shared/asset-db.ts `ASSET_LOCK_FILE`). */

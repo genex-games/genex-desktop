@@ -6,7 +6,6 @@
  * A new module: a kept older sibling can never shadow these names.
  */
 import {
-  ArtKind,
   ArtRefusal,
   ArtSource,
   ArtTier,
@@ -16,6 +15,7 @@ import {
   type ArtAsset,
   type ArtProblem,
 } from "./look-bar.ts";
+import { ArtKind } from "./art-kinds.ts";
 import { BUDGETS_NEVER_CUT_MAPS, bootBudgetLine } from "./destination-budgets.ts";
 
 /** How the art pass is written: the plan's `art` argument. */
@@ -83,16 +83,6 @@ export function shippedLookLine(genre: string | null, stills: boolean, subject =
   const against = stills ? "next to the REFERENCE stills" : "by the bar the ask sets";
   const game = genre ? `a shipped ${genre} game` : "a shipped game of this genre";
   return `SHIPPED LOOK: for each scene camera of ${subject}, answer in "shipped": would this frame, ${against}, pass as a screenshot from ${game}? [{"camera":"<its label>","passes":true|false,"why":"the one thing that gives it away"}]. Be strict: a frame a player would know as unfinished does not pass.`;
-}
-
-/**
- * The art-bar question a taste judge answers on a run with a visual bar: which look blockers the
- * build the checks accepted shows that the other does not, and the rule that a build below the
- * bar has regressed even where the other build lacks the thing. Gen3 kept a bench of twelve boxes
- * because a new ugly bench was never a regression against no bench.
- */
-export function artBarLine(accepted: string): string {
-  return `ART BAR: in "added", list each look blocker (tagged, what, where, camera) that build ${accepted} shows and the other build does not — a new box bench, stick tree or slab of snow where the other build had nothing is added. A round that adds one is not kept, whatever checks flipped. "Worse against the art bar" is a regression: when build ${accepted} adds something below the bar, pick the other build and name it in "regression", even though the other build lacks the thing.`;
 }
 
 /**

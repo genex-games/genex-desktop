@@ -1074,7 +1074,8 @@ describe("the ship verdict on the record (director/integrate.ts)", () => {
     assert.equal(live.shipReview.ship, false);
     assert.equal(live.shipReview.defectsLeft, 3);
     assert.equal(live.shipReview.blockers, 1);
-    assert.equal((await reported(FORK)).shipReview, undefined, "a review of another head says nothing of this one");
+    // Flipped (gen3 G3-1e): a review of another head says nothing of this one, and the report says no art verdict stands on it.
+    assert.equal((await reported(FORK)).shipReview?.judged, false, "a review of another head says nothing of this one");
   });
 
   it("AD-8. a goal build's finish with no ship review on its head is reviewed once and refused once on a no; the next finish closes and says how many defects are left", async () => {
@@ -1582,6 +1583,8 @@ describe("Bodycam gen3: the final head nobody judged for its look (run_mvs67gsby
   it("G3-1e. the final integration head got only 'it starts' and judge_5 made no model call: the close always gets the art director's look at the head it lands, once, and a close with none reports no art verdict", async () => {
     const host = fakeHost();
     const { loopRun } = fakeLoopRun(host, { answers: { [HostMethod.EngineComplete]: shipAndQuestion() } });
+    assert.equal(loopRun.closeOwesShipReview(HEAD), false, "a run with no visual bar is not held to one");
+    loopRun.run.goal = "a photorealistic night race around the plaza";
     assert.equal(loopRun.closeOwesShipReview(HEAD), true, "a head that loads, beyond the start, with no review");
     await loopRun.closeShipReview(HEAD);
     assert.equal(shipCalls(host).length, 1, "the art director looked at the landing head");

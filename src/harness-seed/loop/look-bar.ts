@@ -15,6 +15,7 @@
  * A new module: a kept older sibling can never shadow these names.
  */
 import type { AnyRecord, Run } from "../types/harness.d.ts";
+import { ArtKind } from "./art-kinds.ts";
 
 /**
  * The artefact classes a finished look may not show. A judge tags a defect with its class
@@ -152,23 +153,6 @@ export type ArtSource = (typeof ArtSource)[keyof typeof ArtSource];
 
 /** The old single Blender source: a plan that still writes it is read as a modular kit. */
 const LEGACY_BLENDER = "blender";
-
-/** What an art-pass asset is, which decides the sources it may come from. */
-export const ArtKind = {
-  /** A movable object seen up close: furniture, a bench, a bin, a vehicle, a weapon. */
-  Prop: "prop",
-  /** Trees, bushes, grass, anything grown. */
-  Organic: "organic",
-  /** The modular shell: walls, floors, ceilings, trims, building blocks. */
-  Structure: "structure",
-  /** A surface: a PBR texture set or a decal. */
-  Surface: "surface",
-  /** A person or creature. */
-  Character: "character",
-  /** Sky, weather and the light's mood. */
-  Atmosphere: "atmosphere",
-} as const;
-export type ArtKind = (typeof ArtKind)[keyof typeof ArtKind];
 
 /** The kinds a modular Blender kit may never make on a run with a visual bar. */
 const NOT_A_KIT: ReadonlySet<string> = new Set([ArtKind.Prop, ArtKind.Organic, ArtKind.Character]);
@@ -362,22 +346,6 @@ function kitRefusal(assets: readonly ArtAsset[]): ArtProblem | null {
   if (heroKits.length) return { code: ArtRefusal.KitNotForHero, names: heroKits };
   const bareKits = kits.filter((asset) => !asset.why).map((asset) => asset.asset);
   return bareKits.length ? { code: ArtRefusal.KitWithoutWhy, names: bareKits } : null;
-}
-
-/**
- * The parts a re-plan adds that the art pass it keeps plans nothing for: on a run with a visual
- * bar, a plan that adds a part and omits `art` must give the pass again with the new area in it.
- * Gen3's 16:45 re-plan added the yard, and its assets were planned by nobody.
- */
-export function unplannedParts(previousWorkers: readonly string[], workers: readonly string[]): string[] {
-  const before = new Set(previousWorkers);
-  return workers.filter((id) => !before.has(id));
-}
-
-/** The draw tags the art pass plans as grown things (`kind: organic`): the engine cannot tell a tree from a post. */
-export function organicTags(run: { readonly [field: string]: unknown } | null | undefined): Set<string> {
-  const assets = runArtPass(run)?.assets ?? [];
-  return new Set(assets.filter((asset) => asset.kind === ArtKind.Organic).flatMap((asset) => asset.tags ?? []));
 }
 
 /** The art pass a run carries, when its plan gave one. */

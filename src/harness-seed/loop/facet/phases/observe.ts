@@ -1,4 +1,6 @@
 /** Evidence for the round, with patience for a blind camera, and whether the build it saw can be judged at all. */
+import { asksForLook } from "../../look-bar.ts";
+import { SHIP_VIEW as JUDGE_VIEW } from "../../ship-review.ts";
 import { gatherEvidence, observationOnlyFailure, withObservationPatience } from "../../evidence.ts";
 import { demosNamedByChecks } from "../../spec.ts";
 import { racesThrottleBot } from "../../throttle-bot.ts";
@@ -75,6 +77,8 @@ async function gatherOnce(loop: FacetLoop, round: FacetRound): Promise<AnyRecord
       keepPaths: statePathsNamedByChecks(spec.checks),
       ...(role === FacetRole.Integration ? { maxDemos: Infinity } : {}),
       camerasOwned: ownsCameraWiring(loop),
+      // A look bar is judged at the art director's size: gen3's judges saw 960×540 and could not see texels or bevels.
+      ...(handle && asksForLook(run) ? { viewport: JUDGE_VIEW } : {}),
       crossBuilds: buildsCrossDestinations(loop),
       setup: facetSetup,
       // An error the incumbent (or the base, before any incumbent) already logs is the

@@ -7,8 +7,9 @@
  * - the luminance band: every playable camera's settled frame (look-facts.ts `lumaBandDefect`);
  * - `demo:doorway`: the per-tick exposure trace the engine keeps (`__render.exposure_trace`), held
  *   to a smooth transition with no overshoot;
- * - `demo:sprint-run`: the per-tick camera pose (`__camera.trace`), held to the comfort caps the
- *   engine's first-person rig enforces (the aaa-motion lane owns those numbers; keep these equal).
+ * - `demo:sprint-run`: the per-tick camera pose the demo returns (`{ ok, trace }`, the rig's probe
+ *   row `state().volatile.camera` collected each tick, or the eye's height and roll for a camera
+ *   of the game's own), held to the comfort caps the engine's first-person rig enforces.
  *
  * Each finding is a tagged blocking defect; a round that adds one is not kept (facet/phases/taste.ts).
  *
@@ -17,15 +18,22 @@
 import type { AnyRecord } from "../types/harness.d.ts";
 import { LookBlocker, runArtPass, ArtTier } from "./look-bar.ts";
 import { lumaBandDefect } from "./look-facts.ts";
+import { DEFAULT_CAMERA } from "./cameras.ts";
 
 /** The demo that walks the player through a doorway from a lit room into a dark one, or back. */
 export const DOORWAY_DEMO = "doorway";
 /** The demo that sprints the player straight ahead for a few seconds. */
 export const SPRINT_DEMO = "sprint-run";
-/** The window an exposure change is measured over, in seconds. */
-const EXPOSURE_WINDOW_S = 0.5;
-/** The most EV the exposure may move inside that window (review WP-5, proposed). */
-export const MAX_EV_PER_WINDOW = 1;
+/**
+ * How long after the crossing the exposure must be near where it settles, in seconds. The engine
+ * adapts at 3-4 EV/s and eight times that for half a second at a doorway (what fixed gen3's dark
+ * rooms), so the gate is how soon it gets there, not how fast it moves.
+ */
+export const SETTLE_AFTER_S = 1;
+/** How far from its settled EV the exposure may still be `SETTLE_AFTER_S` after the crossing. */
+export const MAX_UNSETTLED_EV = 1;
+/** How far the exposure must move from where it started for the crossing to have begun. */
+const CROSSING_EV = 0.25;
 /** The most EV the exposure may pass its settled value by on the way there. */
 export const MAX_OVERSHOOT_EV = 0.25;
 /** The share of a trace's end that counts as settled. */
@@ -57,9 +65,12 @@ export const HIGH_HZ = 6;
 /** Frequencies below this are drift, not a bob. */
 const MIN_BOB_HZ = 0.3;
 
+/** The harness's own eye cameras (`eye:spawn`, `eye:here`, …). */
+const EYE_PREFIX = "eye:";
+
 /** The cameras a player plays through: the default and the harness's eyes. Demos, crops and the page are not. */
 const isPlayable = (camera: unknown): boolean =>
-  camera === "default" || (typeof camera === "string" && camera.startsWith("eye:"));
+  camera === DEFAULT_CAMERA || (typeof camera === "string" && camera.startsWith(EYE_PREFIX));
 
 /** A field under its snake_case or camelCase name. */
 function field(raw: AnyRecord, camel: string): unknown {
@@ -98,36 +109,42 @@ function evOf(entry: unknown): AnyRecord | null {
   return { t: raw.t, ev: num(raw.appliedEv) ?? num(raw.meteredEv) ?? num(raw.ev) };
 }
 
-/** The fastest EV move inside any `EXPOSURE_WINDOW_S`, and how far the trace passed its settled EV. */
-export function exposureMotion(trace: unknown): { maxStep: number; overshoot: number; span: number } | null {
+/** A doorway's exposure: how far from settled it still is a second after the crossing, and how far it passed settled. */
+export interface ExposureMotion {
+  unsettled: number;
+  overshoot: number;
+  span: number;
+}
+
+/** The exposure trace's settling and overshoot, or null when it is too short or never crosses. */
+export function exposureMotion(trace: unknown): ExposureMotion | null {
   const samples = samplesOf(Array.isArray(trace) ? trace.map(evOf) : null, ["ev"]);
   const span = spanOf(samples);
   if (span < MIN_TRACE_S) return null;
-  let maxStep = 0;
-  for (const [i, from] of samples.entries()) {
-    for (const to of samples.slice(i + 1)) {
-      if ((to.t ?? 0) - (from.t ?? 0) > EXPOSURE_WINDOW_S) break;
-      maxStep = Math.max(maxStep, Math.abs((to.ev ?? 0) - (from.ev ?? 0)));
-    }
-  }
   const tail = samples.slice(Math.floor(samples.length * (1 - SETTLED_TAIL)));
   const settled = tail.reduce((sum, sample) => sum + (sample.ev ?? 0), 0) / Math.max(1, tail.length);
   const start = samples[0]?.ev ?? settled;
+  const crossing = samples.find((sample) => Math.abs((sample.ev ?? 0) - start) > CROSSING_EV);
+  if (!crossing) return { unsettled: 0, overshoot: 0, span };
+  const due = (crossing.t ?? 0) + SETTLE_AFTER_S;
+  const then = samples.find((sample) => (sample.t ?? 0) >= due) ?? samples.at(-1);
   const rising = settled >= start;
   const passed = samples.map((sample) => ((sample.ev ?? 0) - settled) * (rising ? 1 : -1));
-  return { maxStep, overshoot: Math.max(0, ...passed), span };
+  return { unsettled: Math.abs((then?.ev ?? settled) - settled), overshoot: Math.max(0, ...passed), span };
 }
 
-/** `demo:doorway`'s exposure trace as a blocking defect, or null when it is smooth (or there is none). */
+/** `demo:doorway`'s exposure trace as a blocking defect, or null when it settles cleanly (or there is none). */
 export function doorwayDefect(state: AnyRecord | null | undefined): string | null {
   const render = state?.__render as AnyRecord | undefined;
   const motion = exposureMotion(render ? field(render, "exposureTrace") : null);
   if (!motion) return null;
-  const jumps = motion.maxStep > MAX_EV_PER_WINDOW;
+  const slow = motion.unsettled > MAX_UNSETTLED_EV;
   const overshoots = motion.overshoot > MAX_OVERSHOOT_EV;
-  if (!jumps && !overshoots) return null;
+  if (!slow && !overshoots) return null;
   const what = [
-    jumps ? `EV moves ${fixed(motion.maxStep)} inside ${EXPOSURE_WINDOW_S} s (at most ${MAX_EV_PER_WINDOW})` : "",
+    slow
+      ? `is still ${fixed(motion.unsettled)} EV from where it settles ${SETTLE_AFTER_S} s after the crossing (at most ${MAX_UNSETTLED_EV})`
+      : "",
     overshoots ? `passes its settled EV by ${fixed(motion.overshoot, 2)} (at most ${MAX_OVERSHOOT_EV})` : "",
   ]
     .filter(Boolean)
@@ -184,9 +201,34 @@ function detrended(times: readonly number[], values: readonly number[]): number[
   return values.map((value, i) => value - meanV - slope * ((times[i] ?? 0) - meanT));
 }
 
+/**
+ * One pose sample: the eye's height (`y`), or the engine rig's own bob offset (`bobM`, its probe row
+ * `state().volatile.camera`), with its roll.
+ */
+function poseOf(entry: unknown): AnyRecord | null {
+  if (!entry || typeof entry !== "object") return null;
+  const raw = entry as AnyRecord;
+  return { t: raw.t, y: num(raw.y) ?? num(raw.bobM) ?? num(raw.bob_m), rollDeg: num(field(raw, "rollDeg")) };
+}
+
+/**
+ * Where a sprint's pose trace is: the demo's own result (`{ ok, trace }`: the demo steps the game and
+ * collects the rig's probe row each tick), else the end state's `__camera.trace`.
+ */
+function sprintTrace(state: AnyRecord | null | undefined, result: AnyRecord | null | undefined): unknown {
+  if (Array.isArray(result?.trace)) return result.trace;
+  return fieldOf(state?.__camera, "trace");
+}
+
+/** The rig's own cadence at the demo's end (`state().volatile.camera.cadenceHz`), when the game probes it. */
+function rigCadence(state: AnyRecord | null | undefined): number | null {
+  const camera = (state?.volatile as AnyRecord | undefined)?.camera as AnyRecord | undefined;
+  return camera ? num(field(camera, "cadenceHz")) : null;
+}
+
 /** The comfort reading of a per-tick camera pose trace, or null when it is too short to read. */
 export function comfortReading(trace: unknown): ComfortReading | null {
-  const samples = samplesOf(trace, ["y", "rollDeg"]);
+  const samples = samplesOf(Array.isArray(trace) ? trace.map(poseOf) : null, ["y", "rollDeg"]);
   const span = spanOf(samples);
   if (span < MIN_TRACE_S || samples.length < 8) return null;
   const dt = span / (samples.length - 1);
@@ -209,13 +251,12 @@ export function comfortReading(trace: unknown): ComfortReading | null {
   };
 }
 
-/** `demo:sprint-run`'s pose log against the comfort caps, as a blocking defect, or null. */
-export function comfortDefect(state: AnyRecord | null | undefined): string | null {
-  const camera = state?.__camera as AnyRecord | undefined;
-  const reading = comfortReading(camera ? field(camera, "trace") : null);
-  if (!reading) return null;
+/** What a sprint reading passes its caps by, in words; empty when it is inside every cap. */
+function overCaps(reading: ComfortReading | null, cadence: number | null): string[] {
   const past = (value: number, cap: number) => value > cap * MEASURE_SLACK;
-  const over = [
+  const cadenceOver = cadence !== null && past(cadence, COMFORT_CAPS.bobHz);
+  if (!reading) return cadenceOver ? [`steps at ${fixed(cadence ?? 0)} Hz (cap ${COMFORT_CAPS.bobHz} Hz)`] : [];
+  return [
     past(reading.rollDeg, COMFORT_CAPS.rollDeg)
       ? `roll ±${fixed(reading.rollDeg)}° (cap ${COMFORT_CAPS.rollDeg}°)`
       : "",
@@ -230,6 +271,14 @@ export function comfortDefect(state: AnyRecord | null | undefined): string | nul
       ? `${Math.round(reading.highShare * 100)}% of the motion above ${HIGH_HZ} Hz (cap ${COMFORT_CAPS.highShare * 100}%)`
       : "",
   ].filter(Boolean);
+}
+
+/**
+ * `demo:sprint-run` against the comfort caps, as a blocking defect, or null: its pose trace (the
+ * demo's result, else the end state's), or with no trace the rig's own cadence.
+ */
+export function comfortDefect(state: AnyRecord | null | undefined, result: AnyRecord | null = null): string | null {
+  const over = overCaps(comfortReading(sprintTrace(state, result)), rigCadence(state));
   if (!over.length) return null;
   return `[${LookBlocker.UncomfortableCamera}] demo:${SPRINT_DEMO}: the sprint camera ${over.join(", ")} — demo:${SPRINT_DEMO}`;
 }
@@ -294,13 +343,14 @@ export function measuredBlockers(
 ): Measured[] {
   const states = (evidence?.demoStates ?? {}) as Record<string, AnyRecord>;
   const doorway = exposureMotion(fieldOf(states[DOORWAY_DEMO]?.__render, "exposureTrace"));
-  const sprint = comfortReading(fieldOf(states[SPRINT_DEMO]?.__camera, "trace"));
+  const results = (evidence?.demos ?? {}) as Record<string, AnyRecord>;
+  const sprint = comfortReading(sprintTrace(states[SPRINT_DEMO], results[SPRINT_DEMO]));
   const doorwayText = doorwayDefect(states[DOORWAY_DEMO]);
-  const sprintText = comfortDefect(states[SPRINT_DEMO]);
+  const sprintText = comfortDefect(states[SPRINT_DEMO], results[SPRINT_DEMO] ?? null);
   return [
     ...(lookBar ? lumaBandDefects(evidence, declaresNight(run)) : []),
-    ...(doorwayText && doorway ? [{ ...flat(doorwayText), severity: doorway.maxStep + doorway.overshoot }] : []),
-    ...(sprintText && sprint ? [{ ...flat(sprintText), severity: comfortSeverity(sprint) }] : []),
+    ...(doorwayText && doorway ? [{ ...flat(doorwayText), severity: doorway.unsettled + doorway.overshoot }] : []),
+    ...(sprintText ? [{ ...flat(sprintText), severity: sprint ? comfortSeverity(sprint) : 1 }] : []),
   ];
 }
 

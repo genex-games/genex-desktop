@@ -1,6 +1,7 @@
 /** Verify: diffs, checks, vision, play → the scoreboard, a same-session follow-up on a regression, then the acceptance rule and the taste judge. */
 import { withObservationPatience } from "../../evidence.ts";
-import { facetCompare, framesOfBuild, Side } from "../../judge.ts";
+import { facetCompare, Side } from "../../judge.ts";
+import { framesOfBuild } from "../../judge-frames.ts";
 import { compareScoreboards, isInvisibleDiff } from "../../checks.ts";
 import { isTransientProviderError, outageDelays } from "../../outage.ts";
 import { RunEvent } from "../../run-events.ts";
@@ -14,7 +15,8 @@ import { VerdictSource } from "../../verdict.ts";
 import { diffAgainstIncumbent, scoreEvidence } from "../scoring.ts";
 import { noisyRegressions, remeasurable } from "../round-judgement.ts";
 import { OutagePhase, recordDecision, roundFields } from "../record.ts";
-import { tasteCamerasOf, tasteVerdict } from "./taste.ts";
+import { tasteVerdict } from "./taste.ts";
+import { tasteCamerasOf } from "../taste-cameras.ts";
 import { lostProviderOf, waitForProvider } from "../provider.ts";
 import { clockRoom, sleepOnPausedClock } from "../paused-clock.ts";
 import { registryRefusal } from "../../registry.ts";

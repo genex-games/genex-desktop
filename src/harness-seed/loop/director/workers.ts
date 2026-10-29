@@ -1,3 +1,6 @@
+import { qualityRefusal } from "../quality-lint.ts";
+import { sharedOwnershipNote } from "./ownership.ts";
+import { sourcingRefusal, spreadRefusal } from "./sourcing.ts";
 import { requireMultiplayer } from "./prerequisites.ts";
 import { reviseGoals, createGoals, goalAttemptRefusal, goalDecision, GoalStatus, startGoalAttempt } from "./goals.ts";
 import { goalCommission } from "./commission.ts";
@@ -27,7 +30,8 @@ import { isRunning, setWorkerState, WorkerMode, WorkerState } from "../outcomes.
 import { runRef } from "../repo.ts";
 import { RunEvent } from "../run-events.ts";
 import { normalizeScoutSetup } from "../scout.ts";
-import { ArtRefusal, asksForLook, readArtPass, unplannedParts, type ArtPass } from "../look-bar.ts";
+import { ArtRefusal, asksForLook, readArtPass, type ArtPass } from "../look-bar.ts";
+import { unplannedParts } from "../art-kinds.ts";
 import { artRefusalWords } from "../look-bar-prompts.ts";
 import { FacetStage, isFinishing, stageArg } from "../facet/stage.ts";
 import { FINISH_SINGLE_REFUSAL, FINISH_START_MOVES } from "../facet/stage-prompts.ts";
@@ -614,6 +618,8 @@ function artPassOf(
 /** The art pass set on the plan and the run: every builder's brief reads `run.art`, and a Resume brings it back. */
 function keepArtPass(loopRun: LoopRun, plan: AnyRecord, art: ArtPass | null): void {
   if (!art) return;
+  // The sourcing stage's clock starts when the run first plans its assets (sourcing.ts).
+  (loopRun.state as AnyRecord).artPlannedAt ??= Date.now();
   plan.art = art;
   loopRun.run.art = art;
   loopRun.journal.run = { ...loopRun.journal.run, art };
@@ -651,7 +657,8 @@ export async function setPlan(loopRun: LoopRun, args: AnyRecord) {
   const answer = await planAnswer(loopRun, plan, { first, acceptanceKept, args });
   // The kind the plan declared brings its own recipes (director/craft.ts): only those not handed yet.
   const craft = await planCraft(loopRun, plan).catch(() => "");
-  const said = contracted ? `${answer} ${contracted}` : answer;
+  const owners = sharedOwnershipNote(plan.workers);
+  const said = [answer, contracted, owners].filter(Boolean).join(" ");
   return craft ? `${said}\n\n${craft}` : said;
 }
 
@@ -930,6 +937,8 @@ function ladderArg(args: AnyRecord): { value: AnyRecord[]; error?: undefined } |
     return {
       error: `milestones: every rung is {"what":"one structural step — what the game IS after it","check":{…}} and "check" is optional; the last may be {"open":true}`,
     };
+  const worse = qualityRefusal("milestones", ladder);
+  if (worse) return { error: worse };
   return { value: ladder };
 }
 
@@ -1532,12 +1541,29 @@ function workerBudget(
   return wholeRoundsBudget(asked, loopRun.medianRoundMs(), remaining);
 }
 
+/** A started worker as the assets-first holds read it: the sourcing worker, or the part whose start begins look-dev. */
+function markAssetsStage(loopRun: LoopRun, worker: Worker, sourcing: boolean): void {
+  if (sourcing) (worker as AnyRecord).sourcing = true;
+  else (loopRun.state as AnyRecord).lookDevSince ??= Date.now();
+}
+
+/** Why `worker_start` waits for assets first (sourcing.ts), or null. */
+async function assetsFirstRefusal(loopRun: LoopRun, id: string, args: AnyRecord, sourcing: boolean) {
+  const now = Date.now();
+  const held = await sourcingRefusal(loopRun, args, now);
+  return held ?? (sourcing ? null : spreadRefusal(loopRun, id, now));
+}
+
 export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const { ctx, integrationWorktree, medianRoundMs, note, run, runningWorkers, startRefusal, state } = loopRun;
   const id = slug(args.id) || defaultWorkerId(loopRun);
   const goal = String(args.goal ?? id);
   const precondition = await startPreconditions(loopRun, id, args);
   if (precondition) return precondition;
+  // Assets first on a look bar (sourcing.ts): the sourcing stage, then one area's look-dev hero shot.
+  const sourcing = yes(args.sourcing, false);
+  const assetsFirst = await assetsFirstRefusal(loopRun, id, args, sourcing);
+  if (assetsFirst) return assetsFirst;
   const missingPrerequisite = await requireMultiplayer(loopRun, goal);
   if (missingPrerequisite) return missingPrerequisite;
   const allowed = await startRefusal(id, args);
@@ -1582,6 +1608,7 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   const worker = await openThread(loopRun, opened);
   if (typeof worker === "string") return startRefused(loopRun, starting, worker);
   worker.goal = goal;
+  markAssetsStage(loopRun, worker, sourcing);
   compileContract(loopRun, worker, parsed, args);
   // A part the art director found defects in while nobody ran it: they are this worker's questions now.
   loopRun.takeShelvedShipDefects?.(worker);

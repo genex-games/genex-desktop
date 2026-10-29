@@ -18813,27 +18813,28 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     );
   });
 
-  it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's per-tick exposure trace is held to at most 1 EV per half second and no overshoot past where it settles", async () => {
+  it("G3-4b. nobody measured the doorway into the dark classroom: demo:doorway's exposure trace must be within 1 EV of where it settles a second after the crossing, and never pass it by more than 0.25 EV", async () => {
     const { doorwayDefect } = await import("../../src/harness-seed/loop/temporal-checks.ts");
     const trace = (ev: (t: number) => number) => ({
       __render: {
         exposureTrace: Array.from({ length: 121 }, (_, i) => ({
-          t: i / 60,
-          appliedEv: ev(i / 60),
-          meteredEv: ev(i / 60),
+          t: i / 30,
+          appliedEv: ev(i / 30),
+          meteredEv: ev(i / 30),
         })),
       },
     });
-    // A cut from EV 2 to EV -1 the frame the player crosses, and a smooth 1.5 s ramp.
+    // The engine's own doorway: 3 EV down in about a third of a second, from the crossing at 0.5 s.
+    assert.equal(doorwayDefect(trace((t) => (t < 0.5 ? 2 : Math.max(-1, 2 - 9 * (t - 0.5))))), null);
+    // A slow drift: still well over one EV bright a second after the crossing.
     assert.match(
-      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : -1)))),
-      /^\[exposure-pump\] demo:doorway: .*EV moves 3\.0 inside 0\.5 s/,
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : Math.max(-1, 2 - 0.8 * (t - 0.5)))))),
+      /^\[exposure-pump\] demo:doorway: .*is still \d\.\d EV from where it settles 1 s after the crossing/,
     );
-    assert.equal(doorwayDefect(trace((t) => 2 - 1.5 * Math.min(1, t / 1.5))), null);
     // Over-darkening and coming back: it passes the settled EV.
     assert.match(
-      String(doorwayDefect(trace((t) => (t < 1 ? 2 - 1.6 * t : -0.4 + 0.4 * (t - 1))))),
-      /passes its settled EV by/,
+      String(doorwayDefect(trace((t) => (t < 0.5 ? 2 : t < 1 ? 2 - 7 * (t - 0.5) : -1.5 + 0.5 * Math.min(1, t - 1))))),
+      /passes its settled EV by 0\.\d\d/,
     );
     assert.equal(doorwayDefect({ __render: {} }), null, "a game with no trace is not judged on one");
   });
@@ -18867,6 +18868,14 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
     const defect = String(comfortDefect(gen3));
     assert.match(defect, /^\[uncomfortable-camera\] demo:sprint-run: the sprint camera roll ±5\.8°/);
     assert.match(defect, /bob \d\.\d cm peak to peak.*bob at 7\.5 Hz.*above 6 Hz/);
+    // The demo's own result carries the rig's probe rows (bobM, rollDeg) tick by tick; with no trace, the rig's cadence.
+    const rows = gen3.__camera.trace.map(({ t, y, roll_deg }) => ({ t, bobM: y - 1.7, rollDeg: roll_deg }));
+    assert.match(String(comfortDefect({}, { ok: true, trace: rows })), /roll ±5\.8°/);
+    assert.match(
+      String(comfortDefect({ volatile: { camera: { cadenceHz: 7.5, bobM: 0.01, rollDeg: 0.4 } } })),
+      /steps at 7\.5 Hz/,
+    );
+    assert.equal(comfortDefect({ volatile: { camera: { cadenceHz: 2.2 } } }), null);
     // A rig inside the caps: 1° roll and a 2.4 cm bob at 2.2 Hz, the slope of a ramp removed.
     assert.equal(comfortDefect(pose(1, 1.1, 0.024, 2.2)), null);
     assert.ok(
@@ -18932,5 +18941,194 @@ describe("Bodycam gen3: a loop that kept mid-quality work (run_mvs67gsbys67)", (
       measuredBlockers({ goal: "a chess board" }, sprinting, false).map((finding) => finding.key),
       ["[uncomfortable-camera] demo:sprint-run"],
     );
+  });
+  it("G3-5a. milestones asked for 'a sprint that tilts and shakes the view' and 'birch and pine billboards', and the scaffold was told frame.cube: a mandate that asks for less is refused, two parts owning one file are named, and a look brief starts from sourced models", async () => {
+    const { qualityRefusal } = await import("../../src/harness-seed/loop/quality-lint.ts");
+    const { sharedOwnership } = await import("../../src/harness-seed/loop/director/ownership.ts");
+    const { rustBaseBrief } = await import("../../src/harness-seed/loop/rust-briefs.ts");
+    assert.match(
+      String(qualityRefusal("milestones", [{ what: "a sprint that tilts and shakes the view" }])),
+      /^milestones: rung 1 asks for shake/,
+    );
+    assert.match(String(qualityRefusal("move", ["birch and pine billboards along the fence"])), /asks for billboard/);
+    assert.match(
+      String(qualityRefusal("milestones", [{ what: "scans at 1k to keep boot short" }])),
+      /asks for low-resolution/,
+    );
+    assert.equal(qualityRefusal("milestones", [{ what: "the yard reads as a snowy courtyard at dusk" }]), null);
+    const part = (id: string, owns: string[]) => ({ id, title: id, seam: "", owns, done: [], minutes: null });
+    assert.deepEqual(
+      sharedOwnership([part("light", ["src/light.rs", "src/glass/"]), part("yard", ["src/glass/window.rs"])]),
+      { a: "light", b: "yard", path: "src/glass/window.rs" },
+    );
+    assert.equal(sharedOwnership([part("light", ["src/light.rs"]), part("yard", ["src/yard.rs"])]), null);
+    const brief = (run: Run) => rustBaseBrief({ run, plan: { facets: [] }, projectLabel: "body-cam" } as never);
+    assert.match(brief(yard), /This ask sets a visual bar: show the requested subject with models from assets\//);
+    assert.doesNotMatch(brief(yard), /or procedural shapes/);
+    assert.match(
+      brief({ ...yard, goal: "a chess board", reference: { name: "", shots: [] } } as Run),
+      /frame\.cube, frame\.sphere/,
+    );
+  });
+  it("G3-5b. no stage sourced a model before builders started and the yard spread over four parts before one frame was finished: on a look bar, worker_start waits for the planned models in docs/ASSETS.md, then for one area's hero shot to pass the art director, each timeboxed", async () => {
+    const { sourcingRefusal, spreadRefusal, heroCameras, SOURCING_MS, LOOK_DEV_MS } = await import(
+      "../../src/harness-seed/loop/director/sourcing.ts"
+    );
+    const integration = await tmpDir("g3-sourcing-");
+    const art = {
+      generations: 2,
+      assets: [
+        { area: "the yard", tier: "hero", kind: "prop", asset: "bench", source: "genex-model", tags: ["bench"] },
+        { area: "the yard", tier: "mid", kind: "organic", asset: "birches", source: "genex-model", tags: ["birch"] },
+        {
+          area: "the yard",
+          tier: "mid",
+          kind: "structure",
+          asset: "blocks",
+          source: "blender-kit",
+          why: "scans",
+          tags: ["block"],
+        },
+      ],
+    };
+    const t0 = Date.UTC(2026, 9, 29, 1, 0, 0);
+    const loopRun = {
+      integrationWorktree: integration,
+      run: { ...yard, art },
+      state: { artPlannedAt: t0, workers: new Map(), lastShip: null } as Record<string, any>,
+    };
+    const held = String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000));
+    assert.match(
+      held,
+      /^worker_start waits for the sourcing stage \(up to 29 more min\): docs\/ASSETS\.md in the integration names no file for bench, birch\./,
+    );
+    assert.equal(
+      await sourcingRefusal(loopRun as never, { sourcing: "yes" }, t0 + 60_000),
+      null,
+      "the sourcing worker starts",
+    );
+    await mkdir(path.join(integration, "docs"), { recursive: true });
+    await writeFile(path.join(integration, "docs", "ASSETS.md"), "# Assets\n- bench: assets/genex/b1/bench.glb\n");
+    assert.match(String(await sourcingRefusal(loopRun as never, {}, t0 + 60_000)), /names no file for birch\./);
+    await writeFile(
+      path.join(integration, "docs", "ASSETS.md"),
+      "- bench: assets/genex/b1/bench.glb\n- `birch`: assets/cc0/c2/birch.glb\n",
+    );
+    assert.equal(await sourcingRefusal(loopRun as never, {}, t0 + 60_000), null, "every planned model is sourced");
+    assert.equal(
+      await sourcingRefusal({ ...loopRun, integrationWorktree: "/nowhere" } as never, {}, t0 + SOURCING_MS),
+      null,
+      "the stage is timeboxed",
+    );
+    // Look-dev: one part builds; a second waits for a review of its hero shot with no blocker.
+    loopRun.state.workers.set("yard", { id: "yard" });
+    loopRun.state.lookDevSince = t0;
+    assert.match(
+      String(spreadRefusal(loopRun as never, "school", t0 + 60_000)),
+      /waits for the look-dev hero shot .*When yard's hero camera shows it/,
+    );
+    assert.equal(
+      spreadRefusal(loopRun as never, "yard", t0 + 60_000),
+      null,
+      "the part already building restarts freely",
+    );
+    loopRun.state.lastShip = { head: "h", defects: [{ what: "[primitive] bench", severity: "blocker" }] };
+    assert.ok(spreadRefusal(loopRun as never, "school", t0 + 60_000), "a review with a blocker holds breadth");
+    loopRun.state.lastShip = { head: "h", defects: [{ what: "a seam", severity: "visible" }] };
+    assert.equal(spreadRefusal(loopRun as never, "school", t0 + 60_000), null);
+    loopRun.state.lastShip = null;
+    assert.equal(spreadRefusal(loopRun as never, "school", t0 + LOOK_DEV_MS), null, "and timeboxed");
+    assert.equal(spreadRefusal({ ...loopRun, run: yard } as never, "school", t0), null, "no art pass, no hold");
+    assert.deepEqual(heroCameras({ workers: [{ id: "yard", hero: "hero:yard" }, { id: "school" }] }), ["hero:yard"]);
+  });
+  it("G3-6a. one model family judged its own builders and praised the yard: judge/pin.json may name a second taste judge, and on a look bar its blockers and its 'not satisfied' hold too", async () => {
+    const workspace = await tmpDir("g3-second-judge-");
+    await mkdir(path.join(workspace, "judge"), { recursive: true });
+    await writeFile(path.join(workspace, "judge", "pin.json"), JSON.stringify({ second: { engine: "codex" } }));
+    const birch = "[stick-tree] the birches are white cones with no twigs — eye:spawn";
+    const recorder = ctxRecorder({
+      handlers: {
+        "engine.complete": (params: Record<string, unknown>) => ({
+          message: {
+            content: JSON.stringify(
+              params.engine === "codex"
+                ? preferChallenger({ satisfied: false, added: [birch] })
+                : preferChallenger({ satisfied: true }),
+            ),
+          },
+        }),
+      },
+    });
+    const ctx = { ...recorder.ctx, workspace };
+    const run = { ...yard, engine: "claude" } as Run;
+    const taste = await tasteVeto(ctx as never, {
+      run,
+      facet,
+      challenger: { state: {} },
+      incumbentEvidence: { state: {} },
+      random: () => 0.1,
+    });
+    assert.deepEqual(
+      recorder.paramsOf("engine.complete").map((params) => params.engine),
+      ["claude", "codex"],
+    );
+    assert.deepEqual([taste.satisfied, taste.addedBlockers], [false, [birch]]);
+    assert.equal(taste.secondJudge?.engine, "codex");
+    // With no second judge named, one call, as before.
+    const single = ctxRecorder({
+      handlers: { "engine.complete": () => ({ message: { content: JSON.stringify(preferChallenger()) } }) },
+    });
+    await tasteVeto(single.ctx, {
+      run,
+      facet,
+      challenger: { state: {} },
+      incumbentEvidence: { state: {} },
+      random: () => 0.1,
+    });
+    assert.equal(single.paramsOf("engine.complete").length, 1);
+  });
+
+  it("G3-7a. builders ran one uncompacted session to 830k tokens and about two hundred images: a builder's session is rotated every few rounds and the next round is briefed whole", async () => {
+    const { noteSessionRound, rotateSession, SESSION_ROUNDS } = await import(
+      "../../src/harness-seed/loop/facet/session-rotation.ts"
+    );
+    const appended: Array<[string, Record<string, unknown>]> = [];
+    const loop: Record<string, any> = {
+      sessionId: "ses_1",
+      sessionRounds: 0,
+      runThreadId: "t",
+      facet: { id: "yard" },
+      run: { runId: "r" },
+      appendRun: async (type: string, payload: Record<string, unknown>) => appended.push([type, payload]),
+    };
+    for (let i = 1; i < SESSION_ROUNDS; i++) {
+      noteSessionRound(loop as never);
+      assert.equal(await rotateSession(loop as never, i), false);
+    }
+    noteSessionRound(loop as never);
+    assert.equal(await rotateSession(loop as never, SESSION_ROUNDS), true);
+    assert.deepEqual([loop.sessionId, loop.sessionRounds], [null, 0]);
+    assert.equal(appended[0]?.[0], "facet_session_reset");
+    assert.match(String(appended[0]?.[1].reason), /^rotated after 3 rounds/);
+  });
+  it("G3-7b. the ledger recorded 'primitive ×12' and no rule: a look blocker the judges keep naming becomes the game's lesson with what sources and fixes it", async () => {
+    const { deriveLessons } = await import("../../src/harness-seed/loop/ledger.ts");
+    const round = (n: number, gap: string) => ({ round: n, decision: "kept", gap, unmeasuredChecks: [] }) as never;
+    const lessons = deriveLessons([
+      round(1, "[primitive] the bench is twelve boxes"),
+      round(2, "[primitive] the bins are boxes"),
+      round(3, "[stick-tree] the birches are cones"),
+      round(4, "[stick-tree] still cones"),
+      round(5, "[haze-plane] a milky band"),
+    ]);
+    assert.match(
+      lessons[0] ?? "",
+      /^\[primitive\] came back in 2 rounds here: source props, vehicles and characters as genex-model, cc0-model or genex-character/,
+    );
+    assert.match(
+      lessons[1] ?? "",
+      /^\[stick-tree\] came back in 2 rounds here: source trees as models with leaf or twig cards/,
+    );
+    assert.ok(!lessons.some((lesson) => lesson.startsWith("[haze-plane]")), "only look blockers carry a rule");
   });
 });

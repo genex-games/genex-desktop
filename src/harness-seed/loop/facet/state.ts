@@ -200,6 +200,8 @@ export interface ResumableState {
   surfacedBeyond: string[];
   /** What the harness measured blocking on the accepted build (provenance.ts, temporal-checks.ts), by key: a round is held to adding none. */
   incumbentMeasured: Record<string, number>;
+  /** How many rounds the builder's current session has carried (facet/session-rotation.ts). */
+  sessionRounds: number;
   /** The judge's polish notes on the accepted build: optional, never a round's whole work. */
   polishList: string[];
   /** The judge's biggest gap and how many judged builds in a row it has stood: { text, count, checkId, losses }. */
@@ -322,6 +324,7 @@ export const RESUMABLE_FIELDS = {
   lastBigMove: Carry.Value,
   surfacedBeyond: Carry.List,
   incumbentMeasured: Carry.Record,
+  sessionRounds: Carry.Value,
   polishList: Carry.Value,
   gapStreak: Carry.Value,
   emaBuildMs: Carry.Value,
@@ -379,6 +382,7 @@ function freshResumable(facet: AnyRecord, initialDefects: unknown): ResumableSta
     lastBigMove: null,
     surfacedBeyond: [],
     incumbentMeasured: {},
+    sessionRounds: 0,
     polishList: [],
     gapStreak: null,
     emaBuildMs: null,
