@@ -37,6 +37,8 @@ const CLAUDE = "claude-code";
 const ASK = "make a castle exploration game";
 const NAME = "keep";
 const START_WEB_GAME = toolCall(CLAUDE, "start_web_game");
+/** How a brief sends a new web game straight into its folder, as plain Claude Code would write it. */
+const WEB_IN_FOLDER = "write it straight into this folder";
 const PLUGINS_FIND = toolCall(CLAUDE, "plugins_find");
 const PLUGINS_SUGGEST = toolCall(CLAUDE, "plugins_suggest");
 /** The words every brief opens with: where it runs, and what a plugin is there. */
@@ -109,9 +111,10 @@ async function firstMessage(
 }
 
 describe("the first message on a project with no kind", () => {
-  it("a project with no kind and no engine plugin on is told to start web with start_web_game, or find a plugin; no card", async () => {
+  // Flipped: web once started on the harness starter (start_web_game); it is written straight in.
+  it("a project with no kind and no engine plugin on is told to write web straight into the folder, or find a plugin; no card", async () => {
     const { prompt, bridged, capture } = await firstMessage(game([]), NONE_ON);
-    assert.ok(prompt.includes(START_WEB_GAME), "web starts with start_web_game");
+    assert.ok(prompt.includes(WEB_IN_FOLDER) && !prompt.includes(START_WEB_GAME), "web is written straight in");
     assert.ok(prompt.includes(PLUGINS_FIND), "anything else goes through plugins_find");
     assert.doesNotMatch(prompt, /Unreal/);
     assert.deepEqual(bridged, [AUTO_LOOP], "no question card");
@@ -119,11 +122,14 @@ describe("the first message on a project with no kind", () => {
     assert.match(prompt, /folder is empty: there is nothing to inspect yet/);
   });
 
-  it("with an engine plugin on, the first message on a project with no kind asks with the card, and web still starts with start_web_game", async () => {
+  it("with an engine plugin on, the first message on a project with no kind asks with the card, and web is written straight in", async () => {
     const { lines, prompt, bridged } = await firstMessage(game([]), UNREAL_ON);
     assert.ok(lines.includes(engineChoiceRule(CLAUDE, null, [UNREAL_KIND])), "the engine question, as its own line");
     assert.deepEqual(bridged, [AUTO_LOOP, "ask_user"]);
-    assert.ok(prompt.includes(START_WEB_GAME), "the web answer starts the web starter");
+    assert.ok(
+      prompt.includes(WEB_IN_FOLDER) && !prompt.includes(START_WEB_GAME),
+      "the web answer is written straight in",
+    );
     const both = await firstMessage(game([]), { tools: [NEW_GAME_TOOL], kinds: [UNREAL_KIND, TOY_KIND] });
     assert.ok(both.prompt.includes('"Toy Engine"'), "every engine plugin on is an option");
     assert.ok(both.prompt.includes(toolCall(CLAUDE, TOY_KIND.tool)), "with its own kind tool");
@@ -155,15 +161,15 @@ describe("the first message on a project with no kind", () => {
 
     // Without the card (no question to bridge), each kind on offer is named by its tool.
     const plain = buildContractorBrief({ ask: ASK, engine: CLAUDE, facts: [], kinds: [UNREAL_KIND, TOY_KIND] });
-    assert.ok(plain.includes(START_WEB_GAME), "web is still the default");
+    assert.ok(plain.includes(WEB_IN_FOLDER), "web is still the default");
     assert.ok(plain.includes(`When the request names Unreal Engine, call ${toolCall(CLAUDE, UNREAL_NEW_GAME_TOOL)}`));
     assert.ok(plain.includes(`When the request names Toy Engine, call ${toolCall(CLAUDE, TOY_KIND.tool)}`));
     assert.doesNotMatch(plain, /FIRST, THE ENGINE/, "no question without the card");
   });
 
-  it("a folder of notes is new but not empty: the notes are read first, and web still starts with start_web_game", async () => {
+  it("a folder of notes is new but not empty: the notes are read first, and web is written straight in", async () => {
     const { prompt } = await firstMessage(game([], { holds: "notes" }), NONE_ON);
-    assert.ok(prompt.includes(START_WEB_GAME), "no kind yet: web is the default");
+    assert.ok(prompt.includes(WEB_IN_FOLDER), "no kind yet: web is the default");
     assert.doesNotMatch(prompt, /empty/, "a folder of notes is never called empty");
     assert.match(prompt, /holds notes but no game yet/);
     assert.match(prompt, /read the notes/);

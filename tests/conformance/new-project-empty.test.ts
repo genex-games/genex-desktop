@@ -283,7 +283,9 @@ describe("new projects start empty", () => {
     await assert.rejects(lite.core.games.kindOf(gone.name));
   });
 
-  it("start_web_game is the chat's own, only while the game has no kind, and waits in Plan", async (t) => {
+  // Flipped: the chat's own session was handed start_web_game while its game had no kind, and the
+  // harness starter it wrote pulled the agent into studying it; a web game is written straight in.
+  it("start_web_game is handed to no session: the chat writes a new web game straight into its folder", async (t) => {
     const sessions: Array<{ cwd: string | undefined; tools: string[]; answer: unknown }> = [];
     lite.core.engines.register({
       id: ENGINE,
@@ -314,20 +316,17 @@ describe("new projects start empty", () => {
     await delegate(pending.name, pendingThread, { cwd: worktree });
     assert.equal(sessions.at(-1)?.tools.includes(ProjectTool.StartWebGame), false, "a builder");
 
-    // In Plan mode the chat's own session is handed it, and the call waits for the plan.
-    await lite.core.setPermissionMode(pendingThread, PermissionMode.Plan);
-    await delegate(pending.name, pendingThread);
-    const planned = sessions.at(-1);
-    assert.equal(planned?.tools.includes(ProjectTool.StartWebGame), true, "the chat's own session");
-    assert.match(String(planned?.answer), new RegExp(PluginCallBlocker.PlanMode));
-    await assertEmptyGame(pending.name, "Plan writes nothing");
-
-    // Out of Plan, the call writes the starter; the next turn has a web game and no start tool.
-    await lite.core.setPermissionMode(pendingThread, PermissionMode.Auto);
-    await delegate(pending.name, pendingThread);
-    assert.equal(await has(pending.dir, "index.html"), true, "the starter is written");
-    await delegate(pending.name, pendingThread);
-    assert.equal(sessions.at(-1)?.tools.includes(ProjectTool.StartWebGame), false, "a web game's chat");
+    // Neither in Plan nor out of it is the chat's own session handed it.
+    for (const mode of [PermissionMode.Plan, PermissionMode.Auto]) {
+      await lite.core.setPermissionMode(pendingThread, mode);
+      await delegate(pending.name, pendingThread);
+      assert.equal(
+        sessions.at(-1)?.tools.includes(ProjectTool.StartWebGame),
+        false,
+        `the chat's own session in ${mode}`,
+      );
+    }
+    await assertEmptyGame(pending.name, "nothing is written for it");
 
     // A folder of somebody's own files of a kind no rule knows is never offered it.
     const pygame = await placeDir();

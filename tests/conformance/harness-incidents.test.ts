@@ -9047,7 +9047,12 @@ describe("the chat's agent briefed like plain Claude Code (lean chat)", () => {
   // blind comparison. A new web game is written straight into its folder.
   it("has a new web game written straight into its folder, never onto the harness starter", async () => {
     const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
-    const brief = buildContractorBrief({ ask: "Make a 2D platformer where a cat collects fish.", engine: "claude-code", facts: [], fresh: true });
+    const brief = buildContractorBrief({
+      ask: "Make a 2D platformer where a cat collects fish.",
+      engine: "claude-code",
+      facts: [],
+      fresh: true,
+    });
     assert.doesNotMatch(brief, /start_web_game|starter/, brief);
     assert.match(brief, /index\.html at its root/, brief);
   });

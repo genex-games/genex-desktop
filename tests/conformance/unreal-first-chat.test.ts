@@ -338,8 +338,8 @@ describe("the engine question, told how each kind stands", () => {
     assert.doesNotMatch(ready.prompt, /finish its setup/);
     assert.match(
       ready.prompt,
-      /When it is the web, call [^ ]*start_web_game first/,
-      "the web answer starts the web starter",
+      /When it is the web, write it straight into this folder/,
+      "the web answer is written straight in (flipped: it once started the harness starter)",
     );
     assert.deepEqual(ready.plugin, [], "the harness asks no plugin itself");
 

@@ -18,7 +18,6 @@ import { EventKind } from "../../src/shared/event-log.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { PluginSourceKind } from "../../src/shared/plugins.ts";
 import { ProjectStarter } from "../../src/shared/project-facts.ts";
-import { ProjectTool } from "../../src/shared/project-tools.ts";
 import { UiEvent } from "../../src/shared/ui-events.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
@@ -263,7 +262,9 @@ describe("a tool that makes a kind of project", () => {
     }
   });
 
-  it("a port, start_web_game and game.start each tell the app once that the game changed", async (t) => {
+  // Flipped: the chat is no longer handed start_web_game; it writes a web game straight into the
+  // folder, which the session-end part below covers.
+  it("a port and game.start each tell the app once that the game changed", async (t) => {
     const { lite, invoke, changed } = await porterCore();
     t.after(async () => {
       await lite.core.mcp.close().catch(() => {});
@@ -279,28 +280,6 @@ describe("a tool that makes a kind of project", () => {
     const api = lite.api() as unknown as Record<string, (input: unknown) => Promise<unknown>>;
     await api[HostMethod.GameStart]!({ project: started.name, starter: ProjectStarter.Web });
     assert.deepEqual(changed, [started.name], "game.start");
-
-    lite.core.engines.register({
-      id: "claude-code",
-      label: "fixture",
-      kind: "delegated",
-      status: async () => ({ code: "ready", detail: "fixture" }),
-      models: async () => [],
-      delegate: async (request: DelegateRequest) => {
-        await request.onLiveTool?.(ProjectTool.StartWebGame, {});
-        return { ok: true, engine: "claude-code", summary: "fixture", turns: 1, usage: {} };
-      },
-    } as never);
-    const live = await lite.core.createGame("Started Live");
-    const threadId = await lite.core.threadForGame(live.name);
-    changed.length = 0;
-    await api["engine.delegate"]!({ engine: "claude-code", project: live.name, threadId, prompt: "a kite game" });
-    assert.deepEqual(
-      changed.filter((project) => project === live.name),
-      [live.name],
-      "start_web_game",
-    );
-    assert.deepEqual(await listedFacts(lite, live.name), [WEB_AT_ROOT], "the starter was written");
 
     // A session that gives a game with no kind its kind by writing files itself: its end tells the app.
     lite.core.engines.register({

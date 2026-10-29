@@ -1001,7 +1001,9 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
     assert.deepEqual(await ownEntries(lite.core.games.dirFor(game.name)), [], "only Genex's bookkeeping");
   });
 
-  it("once the first message picks web, the starter is written and the folder's facts are web-game", async (t) => {
+  // Flipped: the first turn was offered start_web_game and built on the harness starter; it now
+  // writes the page itself, as plain Claude Code would, and the folder is a web game all the same.
+  it("once the first message picks web, the page it writes makes the folder's facts web-game", async (t) => {
     const game = await lite.core.createGame("Kite Start");
     const threadId = await lite.core.threadForGame(game.name);
     const sessions: string[][] = [];
@@ -1014,7 +1016,7 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
       delegate: async (request: DelegateRequest) => {
         const live = namesOf(request.liveTools);
         sessions.push(live);
-        if (live.includes(START_WEB_GAME)) await request.onLiveTool?.(START_WEB_GAME, {});
+        await writeFile(path.join(request.cwd, "index.html"), "<!doctype html><canvas></canvas>\n");
         return { ok: true, engine: CLAUDE, summary: "fixture", turns: 1, usage: {} };
       },
     } as never);
@@ -1025,13 +1027,15 @@ describe("a new web game: the first message picks web, and a Loop ends on the fi
     const ask = { engine: CLAUDE, project: game.name, threadId, prompt: "make a kite game" };
     await delegate["engine.delegate"]?.(ask);
     const dir = lite.core.games.dirFor(game.name);
-    assert.ok(await exists(dir, "index.html"), "the starter's page");
-    assert.ok(await exists(dir, "src/main.js"), "the starter's code");
+    assert.ok(await exists(dir, "index.html"), "the page it wrote");
+    assert.equal(await exists(dir, "src/studio.js"), false, "no harness starter beside it");
     assert.deepEqual(factsAt(await listed(game.name), "web-game"), ["."]);
     assert.deepEqual(factIds(await listed(game.name)), ["web-game"]);
     await delegate["engine.delegate"]?.(ask);
-    assert.equal(sessions[0]?.includes(START_WEB_GAME), true, "the first turn is offered the starter");
-    assert.equal(sessions[1]?.includes(START_WEB_GAME), false, "a web game's next turn is not");
+    assert.ok(
+      sessions.every((tools) => !tools.includes(START_WEB_GAME)),
+      "no turn is offered the starter",
+    );
   });
   it("a Loop on it ends only after a reviewer accepts the lead's finish, and three rejections in a row stop it with what isn't done", async () => {
     const game = await lite.core.createGame("Kite Finish");
