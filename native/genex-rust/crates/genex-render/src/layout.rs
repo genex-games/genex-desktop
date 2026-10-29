@@ -31,10 +31,17 @@ pub const MAX_VIEWS: usize = 1 + MAX_CASCADES + MAX_SHADOWED_SPOTS;
 pub const SHADOW_BLOCKER_SAMPLER: (u32, &str) = (18, "point_sampler");
 /// The texture index that names no texture (`NO_TEXTURE` in the shaders).
 pub const NO_TEXTURE: u32 = u32::MAX;
-/// The material texture size classes, by class index (RQ6.0): each class is its own pair of
-/// texture arrays (sRGB colour, data) of this side. Class 0 is today's 256-texel array pair.
-pub const TEXTURE_SIZE_CLASSES: [u32; 4] = [256, 512, 1024, 2048];
-/// Where a material texture reference keeps its size class: the class in the bits from here up,
+/// The material texture size class slots by slot index (RQ6.0) on the web's ladder: each slot is
+/// its own pair of texture arrays (sRGB colour, data) of this side. Slot 0 is today's 256-texel
+/// array pair. A native desktop's 4096 and 8192 classes take the top slots instead (WP-9,
+/// `texture::class_ladder`); the shaders bind the slots, never a side.
+pub const TEXTURE_SIZE_CLASSES: [u32; TEXTURE_CLASS_SLOTS] = [256, 512, 1024, 2048];
+/// The class slots the forward, prepass, shadow, alpha-mask and impostor shaders bind (four colour
+/// and data array pairs, within WebGPU core's 16 sampled textures a stage).
+pub const TEXTURE_CLASS_SLOTS: usize = 4;
+/// Every material texture size class's side, by class index (`settings::TextureClass::index`).
+pub const TEXTURE_CLASS_SIDES: [u32; 6] = [256, 512, 1024, 2048, 4096, 8192];
+/// Where a material texture reference keeps its size class slot: the slot in the bits from here up,
 /// the layer below. Class 0 references are the bare layer, so tables written before size classes
 /// keep their bytes; [`NO_TEXTURE`] has every bit set and is never a class-15 reference.
 pub const TEXTURE_CLASS_SHIFT: u32 = 28;

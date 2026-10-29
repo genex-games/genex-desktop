@@ -290,6 +290,8 @@ export const RenderSettingsRefusal = {
   InvalidScale: "invalid-render-scale",
   /** A frame budget outside `FRAME_BUDGET_MS_MIN..=FRAME_BUDGET_MS_MAX`. */
   InvalidFrameBudget: "invalid-frame-budget",
+  /** A `look` the game cannot read as `[render.look]` keys (an unknown key, a wrong value). */
+  InvalidLook: "invalid-look",
 } as const;
 export type RenderSettingsRefusal = (typeof RenderSettingsRefusal)[keyof typeof RenderSettingsRefusal];
 
@@ -523,6 +525,8 @@ export interface RenderSettingsChange {
   renderScaleLock?: number | null;
   /** The frame time, in ms, dynamic resolution holds instead of the class's; null gives the class's back. */
   frameBudgetMs?: number | null;
+  /** `[render.look]` keys the game overlays on its look, no rebuild (the game checks them); null gives its look back. */
+  look?: Record<string, unknown> | null;
 }
 
 /** What `renderSettings` answers: the settings in force after the call. */

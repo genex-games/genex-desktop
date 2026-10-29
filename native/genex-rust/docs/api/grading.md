@@ -3,13 +3,14 @@
 Every type and call in one line (each a `RenderConfig` or `Grading` builder):
 
 ```rust
-use genex::render::{DepthOfField, Grading, GradingLut, GradingSection, MotionBlur, RenderConfig};
+use genex::render::{CameraLens, DepthOfField, Grading, GradingLut, GradingSection, MotionBlur, RenderConfig};
 game.render_settings(RenderConfig::from_build().grading(grade)); // from_build keeps genex.toml's [render]
 Grading::NEUTRAL.with_contrast(1.1).with_saturation(0.95).with_vibrance(1.1); // each 0..=2, 1 is none
 Grading { shadows: GradingSection { lift: -0.01, ..GradingSection::NEUTRAL }, ..Grading::NEUTRAL }; // midtones, highlights
 grade.with_lut(GradingLut::parse_cube(text)?.intern()?, 0.8);  // -> Result<_, GradingLutError>
 config.temperature(0.3, 0.0).white_balance([1.0, 0.85, 0.65]).exposure_curve(&[(-8.0, -6.0), (0.0, 0.0)]);
 config.depth_of_field(DepthOfField::focused(3.0, 2.0)).motion_blur(MotionBlur::shutter(0.5));
+game.gpu_pass("camera-lens", PassStage::Post, CameraLens::bodycam().grain(0.5, 1.5)); // found_footage(), cinematic()
 ```
 
 Grade last. Build a scene's look in this order and check a capture after each step: the
@@ -17,6 +18,11 @@ environment and the sun's elevation, the local lights, a reflection probe and an
 for each room or courtyard, the fog, the exposure (auto, with its curve), and only then the grade.
 A grade never fixes light: a dark room wants a light, a probe or a volume, not lift; a grey
 meadow wants less fog, not saturation.
+
+Tune `[render.look]` live, no rebuild: the `renderSettings` verb's `{set: {look: {ev_compensation:
+0.7, bloom_intensity: 0.03, exposure: "auto"}}}` lays those keys over the running game's look (an
+unknown key or value answers `invalid-look`). Capture, adjust, then copy the values into
+`genex.toml` `[render.look]`; `{set: {look: null}}` gives the game's look back.
 
 The grade is code only (`use genex::render::{Grading, GradingLut, RenderConfig};`). A config
 set in code replaces `genex.toml`'s `[render]`, so start from the one the build compiled in and
@@ -45,3 +51,13 @@ on frames with the depth prepass, `medium` and up (a ring gather on desktop and 
 (a reconstruction on `high` and `ultra`, one pass on phones, none on the low phones). Leave both
 off for play the person steers: they hide detail and some people find them uncomfortable. A
 capture leaves them out unless its `lens` asks.
+
+A camera body is the engine's `CameraLens`, never a hand-written lens shader:
+`game.gpu_pass("camera-lens", PassStage::Post, CameraLens::bodycam())` (or `found_footage()`,
+`cinematic()`, `new()` and the builders `.vignette(a)`, `.grain(a, size)`, `.chromatic_aberration(a)`,
+`.distortion(a)`, `.roundness(r)`, each `0..=1`). It draws on the finished frame: a vignette, grain
+strongest in the mid-tones, a fringe growing towards the corners and none at the centre, and a barrel
+zoomed to keep the corners filled (widen the camera's `fovy` tangent by `lens.fov_scale()` to keep
+the view). On `high` and `ultra` the bend resamples with Catmull-Rom so edges stay sharp; elsewhere
+with one bilinear tap. Grain cells and fringes are sized for 1080 rows and scale with the output.
+Captures stay clean unless `.in_captures(true)`: checks and judges see the frame without it.

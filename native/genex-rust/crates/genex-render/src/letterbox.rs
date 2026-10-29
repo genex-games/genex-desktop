@@ -180,7 +180,8 @@ mod tests {
         assert_eq!(output_for_window(TEMPLATE, (80, 45), DESKTOP_CAP), TEMPLATE, "below the smallest target: the world");
         let (w, h) = output_for_window(TEMPLATE, (16_000, 9_000), u64::MAX);
         assert!(w <= MAX_WORLD_PX && h <= MAX_WORLD_PX && w >= MIN_WORLD_PX && h >= MIN_WORLD_PX, "{w}x{h}");
-        assert_eq!((w, h), (4096, 2304), "the largest target keeps the aspect");
+        // WP-9 flipped 4096x2304 -> 8192x4608: a native target reaches 8192 a side (4096 on the web).
+        assert_eq!((w, h), (MAX_WORLD_PX, MAX_WORLD_PX * 9 / 16), "the largest target keeps the aspect");
         assert_eq!(output_for_window(TEMPLATE, (1920, 1080), 0), (1920, 1080), "a cap of 0 is no cap");
     }
 

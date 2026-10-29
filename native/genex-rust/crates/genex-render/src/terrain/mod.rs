@@ -612,7 +612,7 @@ impl TerrainQuality {
     /// class (desktop `high` and `ultra`, `texture::preset_textures`), a longer finest level there
     /// too; elsewhere the least crack-free ranges.
     pub fn of(quality: &Quality) -> TerrainQuality {
-        let top = quality.textures.max_class == TextureClass::S2048;
+        let top = quality.textures.max_class >= TextureClass::S2048;
         TerrainQuality { detail: if top { 1.25 } else { 1.0 }, detile: top }
     }
 }

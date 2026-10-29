@@ -65,7 +65,7 @@ use crate::particles::{EmitterDesc, EmitterId, GpuEmitter, GpuParticle, GpuParti
 use crate::post::exposure::{ExposureHistory, ExposureInput, ExposurePass, ExposureSource, exposure_source};
 use crate::prepass::ExtensionDemand;
 use crate::renderer::{FRAME_PRE_EXPOSURE_OFFSET, RenderOptions, Renderer, ScenePath, StagePrepass, WORLD_FORMAT, WorldNodes, WorldPass, WorldStage, shader};
-use crate::settings::{LdrReason, Look, Quality, TextureClass};
+use crate::settings::{LdrReason, Look, Quality};
 use crate::settle::{ExposureHistories, FrameHistory, HistoryKey, HistoryReset, HistorySet, LiveFrame, LiveHistory, SettleFrame, SettleHooks};
 use crate::scene::{CameraDesc, Lighting, LineVertex, Material, MeshId, Scene, scaled};
 use crate::skin::{SkinId, SkinnedMeshData, SkinnedModel};
@@ -612,9 +612,9 @@ impl QuadPass {
                 entry(0, &self.uniforms),
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(renderer.color_texture_view()) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(renderer.texture_sampler()) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(renderer.color_class_view(TextureClass::S512)) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(renderer.color_class_view(TextureClass::S1024)) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(renderer.color_class_view(TextureClass::S2048)) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(renderer.color_slot_view(1)) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(renderer.color_slot_view(2)) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(renderer.color_slot_view(3)) },
             ],
         });
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

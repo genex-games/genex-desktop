@@ -122,7 +122,7 @@
 //! it for this game is the host build's check, never this file's (the crate request flow, M3.15).
 
 use crate::map::Map;
-use genex_core::protocol::{MAX_WORLD_PX, MIN_WORLD_PX};
+use genex_core::protocol::{MIN_WORLD_PX, WEB_MAX_WORLD_PX};
 use genex_render::EXTENSION_APIS;
 use serde::Deserialize;
 use std::fmt;
@@ -1186,7 +1186,7 @@ pub enum ManifestErrorCode {
     Syntax,
     /// An empty or overlong title.
     InvalidTitle,
-    /// A world size side outside 64..=4096 (genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`).
+    /// A world size side outside 64..=4096 (genex-core's `MIN_WORLD_PX..=WEB_MAX_WORLD_PX`).
     InvalidWorldSize,
     /// A save name with characters outside letters, digits, space, `_`, `-`, `.`.
     InvalidSaveName,
@@ -1459,7 +1459,7 @@ fn check_game(game: &GameSection) -> Result<(), ManifestError> {
     if title.is_empty() || title.chars().count() > MAX_TITLE_CHARS {
         return Err(ManifestError::new(ManifestErrorCode::InvalidTitle, format!("{:?}", game.title)));
     }
-    if !game.world_size.iter().all(|side| (MIN_WORLD_PX..=MAX_WORLD_PX).contains(side)) {
+    if !game.world_size.iter().all(|side| (MIN_WORLD_PX..=WEB_MAX_WORLD_PX).contains(side)) {
         let [w, h] = game.world_size;
         return Err(ManifestError::new(ManifestErrorCode::InvalidWorldSize, format!("{w}x{h}")));
     }

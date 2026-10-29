@@ -56,7 +56,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::game::Game;
-use crate::manifest::{self, ManifestError, RenderSection};
+use crate::manifest::{self, LookSection, ManifestError, RenderSection};
 use genex_core::saves::Saves;
 use genex_render::budget::{DegradeMode, DegradeRung, MaterialClass, fit};
 use genex_render::texture::{fitted_textures, material_arrays};
@@ -74,7 +74,10 @@ use serde_json::{Map as JsonMap, Value, json};
 
 pub use genex_render::budget::BudgetInput;
 pub use genex_render::device_class::{DeviceClass, DeviceFacts, FormFactor, PerformanceTier, ScoreLevel, TargetOs, WebHints};
-pub use genex_render::presets::{ClassDefaults, ClassOverride, RenderOverrides, RenderProfile, preset_quality};
+pub use genex_render::presets::{ClassDefaults, ClassOverride, RenderOverrides, RenderProfile, ResolutionPreset, preset_quality};
+/// The engine camera lens (WP-9): vignette, grain, chromatic aberration and barrel distortion as
+/// one `PassStage::Post` pass, `game.gpu_pass("camera-lens", PassStage::Post, CameraLens::bodycam())`.
+pub use crate::camera_lens::CameraLens;
 /// An upscaling mode (lane UQ): Native, Quality, Balanced or Performance, the share of the window a
 /// frame renders ([`RenderConfig::upscale`], [`lock_upscale`]).
 pub use genex_render::upscale::UpscaleMode;
@@ -89,7 +92,7 @@ pub use genex_render::settings::LodQuality;
 pub use genex_render::settings::{
     AntiAliasing, AoQuality, AoResolution, BloomQuality, EnvironmentQuality, ExposureMode, LdrReason, LightQuality, Look, Meshlets, Metering,
     PresetChoice, Quality, QualityPreset, RenderFeature, RenderSettings, SceneFormat, ShadowFilter, ShadowFormat, ShadowQuality,
-    Tonemapper, Upscaler,
+    TextureClass, Tonemapper, Upscaler,
 };
 /// TAA's resource knobs in a [`Quality`] (`quality.taa`: the jitter cycle, the accumulation floor
 /// and the texture LOD bias; RQ5). Whether TAA runs is [`AntiAliasing`] and the `taa` switch.
@@ -714,6 +717,27 @@ impl RenderConfig {
         self
     }
 
+    /// The config at an explicit resolution tier (WP-9) on every desktop class: `ultra`, every
+    /// output pixel rendered (Native upscaling, no dynamic resolution) and the tier's texture class
+    /// ([`ResolutionPreset::Native4k`] 4096, [`ResolutionPreset::Cinematic8k`] 8192). A browser and
+    /// a phone hold it to their caps. The person's panel may still change the preset and the mode.
+    pub fn resolution(mut self, tier: ResolutionPreset) -> RenderConfig {
+        let table = tier.class_override();
+        self.quality.preset = table.preset;
+        self.upscale = UpscaleConfig { mode: table.upscale, locked: false };
+        for class in DeviceClass::ALL.into_iter().filter(|class| class.form == FormFactor::Desktop) {
+            match self.quality.classes.iter_mut().find(|(named, _)| *named == class) {
+                Some((_, held)) => {
+                    held.max_texture_class = table.max_texture_class;
+                    held.dynamic_resolution = table.dynamic_resolution;
+                    held.fps = table.fps;
+                }
+                None => self.quality.classes.push((class, table.clone())),
+            }
+        }
+        self
+    }
+
     /// The config with `quality` on `class` (replacing that class's table).
     pub fn class(mut self, class: DeviceClass, quality: ClassOverride) -> RenderConfig {
         self.quality.classes.retain(|(named, _)| *named != class);
@@ -732,42 +756,49 @@ impl RenderConfig {
 
     /// The config a checked `[render]` section describes.
     pub fn from_section(section: &RenderSection) -> RenderConfig {
-        let mut look = Look::default();
-        let wire = &section.look;
-        if let Some(tonemapper) = wire.tonemapper().and_then(|t| Tonemapper::from_wire(t.as_str())) {
-            look.tonemapper = tonemapper;
-        }
-        if let Some(exposure) = wire.exposure().and_then(|e| ExposureMode::from_wire(e.as_str())) {
-            look.exposure = exposure;
-        }
-        if let Some(metering) = wire.metering().and_then(|m| Metering::from_wire(m.as_str())) {
-            look.metering = metering;
-        }
-        if let Some(ev) = wire.ev_compensation {
-            look.ev_compensation = ev as f32;
-        }
-        if let Some(bloom) = wire.bloom_intensity {
-            look.bloom_intensity = bloom as f32;
-        }
-        let keys = [
-            (wire.ev_min, &mut look.ev_min),
-            (wire.ev_max, &mut look.ev_max),
-            (wire.adaptation_speed_up, &mut look.adaptation_up),
-            (wire.adaptation_speed_down, &mut look.adaptation_down),
-        ];
-        for (value, key) in keys {
-            if let Some(value) = value {
-                *key = value as f32;
-            }
-        }
-        // Bloom's threshold and spread, GTAO, the fog and the contact shadows (RQ4).
-        let look = wire.apply_effects(look);
+        let look = look_over(Look::default(), &section.look);
         let preset = section.preset().and_then(|p| QualityPreset::from_wire(p.as_str()));
         let classes = section.classes().into_iter().filter_map(|(class, table)| class_table(class.as_str(), table)).collect();
         let shadows = shadow_rows(&section.shadows);
         RenderConfig { look, quality: RenderOverrides { preset, classes, shadows }, meshlets: Meshlets::DEFAULT, upscale: UpscaleConfig::default() }
     }
+}
 
+/// `look` with every key `wire` sets taken from it and the rest kept: a whole `[render.look]` over
+/// the default, or the `renderSettings` verb's keys over the game's look.
+fn look_over(look: Look, wire: &LookSection) -> Look {
+    let mut look = look;
+    if let Some(tonemapper) = wire.tonemapper().and_then(|t| Tonemapper::from_wire(t.as_str())) {
+        look.tonemapper = tonemapper;
+    }
+    if let Some(exposure) = wire.exposure().and_then(|e| ExposureMode::from_wire(e.as_str())) {
+        look.exposure = exposure;
+    }
+    if let Some(metering) = wire.metering().and_then(|m| Metering::from_wire(m.as_str())) {
+        look.metering = metering;
+    }
+    if let Some(ev) = wire.ev_compensation {
+        look.ev_compensation = ev as f32;
+    }
+    if let Some(bloom) = wire.bloom_intensity {
+        look.bloom_intensity = bloom as f32;
+    }
+    let keys = [
+        (wire.ev_min, &mut look.ev_min),
+        (wire.ev_max, &mut look.ev_max),
+        (wire.adaptation_speed_up, &mut look.adaptation_up),
+        (wire.adaptation_speed_down, &mut look.adaptation_down),
+    ];
+    for (value, key) in keys {
+        if let Some(value) = value {
+            *key = value as f32;
+        }
+    }
+    // Bloom's threshold and spread, GTAO, the fog and the contact shadows (RQ4).
+    wire.apply_effects(look)
+}
+
+impl RenderConfig {
     /// The `[render]` tables the build lane compiled in (`GENEX_RENDER_TOML`, on every
     /// destination), else none (a build outside the lane, or a game without `[render]`).
     ///
@@ -856,6 +887,10 @@ pub struct RenderChange {
     /// time (a fast GPU then shows how the scale steps, as a weaker device would); `Some(None)`
     /// gives the class's back.
     pub frame_budget_ms: Option<Option<f32>>,
+    /// `Some(Some(keys))` overlays these `[render.look]` keys on the game's look, the rest kept
+    /// (WP-9: a look tuned live, no rebuild; [`RenderChange::look_from_json`]); `Some(None)` gives
+    /// the game's look back.
+    pub look: Option<Option<LookSection>>,
 }
 
 /// Why a `renderSettings` change was refused (`RenderSettingsRefusal` on the wire).
@@ -868,12 +903,16 @@ pub enum RenderRefusal {
     UnknownDeviceClass,
     /// A switch outside [`RenderFeature`].
     UnknownFeature,
+    /// A `look` that is not a `[render.look]` table: an unknown key, a value of the wrong type or
+    /// outside its range, or no JSON object at all.
+    InvalidLook,
 }
 
 impl RenderRefusal {
     /// The wire spelling.
     pub const fn wire(self) -> &'static str {
         match self {
+            RenderRefusal::InvalidLook => "invalid-look",
             RenderRefusal::UnknownPreset => "unknown-preset",
             RenderRefusal::UnknownDeviceClass => "unknown-device-class",
             RenderRefusal::UnknownFeature => "unknown-render-feature",
@@ -907,7 +946,22 @@ impl RenderChange {
             .map(|(name, on)| RenderFeature::from_wire(name).map(|feature| (feature, *on)).ok_or(RenderRefusal::UnknownFeature))
             .collect::<Result<Vec<_>, _>>()?;
         let render_scale_lock = render_scale_lock.map(|lock| lock.map(|scale| scale as f32));
-        Ok(RenderChange { preset, device_class, features, reset_features: false, render_scale_lock, frame_budget_ms: None })
+        Ok(RenderChange { preset, device_class, features, reset_features: false, render_scale_lock, frame_budget_ms: None, look: None })
+    }
+
+    /// The `[render.look]` keys a `renderSettings` `look` object (JSON text) names, checked as
+    /// `genex.toml` checks them; refused [`RenderRefusal::InvalidLook`] for anything else.
+    pub fn look_from_json(json: &str) -> Result<LookSection, RenderRefusal> {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|_| RenderRefusal::InvalidLook)?;
+        let serde_json::Value::Object(keys) = value else { return Err(RenderRefusal::InvalidLook) };
+        let table = toml::Value::try_from(serde_json::Value::Object(keys)).map_err(|_| RenderRefusal::InvalidLook)?;
+        let mut render = toml::Table::new();
+        render.insert("look".to_owned(), table);
+        let mut root = toml::Table::new();
+        root.insert("render".to_owned(), toml::Value::Table(render));
+        let fragment = toml::to_string(&root).map_err(|_| RenderRefusal::InvalidLook)?;
+        let manifest = manifest::parse(&format!("{FRAGMENT_GAME}{fragment}")).map_err(|_| RenderRefusal::InvalidLook)?;
+        Ok(manifest.render.look)
     }
 }
 
@@ -1096,6 +1150,8 @@ struct VerbLayer {
     switches: Vec<(RenderFeature, bool)>,
     scale_lock: Option<f32>,
     frame_budget_ms: Option<f32>,
+    /// `[render.look]` keys over the game's look (WP-9 look hot reload).
+    look: Option<LookSection>,
 }
 
 impl VerbLayer {
@@ -1378,7 +1434,10 @@ impl RenderControl {
 
     /// The game's look: what every frame, Live or captured, tonemaps and exposes with.
     pub fn look(&self) -> Look {
-        self.config.look
+        match &self.verb.look {
+            Some(keys) => look_over(self.config.look, keys),
+            None => self.config.look,
+        }
     }
 
     /// Take the device's `facts` (and the cached or measured calibration hint), then resolve.
@@ -1502,7 +1561,8 @@ impl RenderControl {
     /// render scale, else all of the mode's share (the mode replaces the class's nominal scale).
     fn nominal_within_mode(&self, class: DeviceClass) -> f32 {
         let game = self.config.quality.class(class).and_then(|table| table.render_scale);
-        self.person.render_scale.or(game).map_or(1.0, |scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0))
+        let most = genex_render::presets::render_scale_max(class, self.facts.os);
+        self.person.render_scale.or(game).map_or(1.0, |scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, most))
     }
 
     /// Whether dynamic resolution moves Live's scale: the person's switch, else the game's class
@@ -1700,7 +1760,8 @@ impl RenderControl {
         if thermal {
             self.drs.set_thermal(true, Duration::ZERO);
         }
-        self.scale = self.verb.scale_lock.map_or_else(|| self.drs.scale(), quantized);
+        let most = genex_render::presets::render_scale_max(class, self.facts.os);
+        self.scale = self.verb.scale_lock.map_or_else(|| self.drs.scale(), |lock| quantized(lock.min(most)));
         self.live = live;
     }
 
@@ -1743,7 +1804,7 @@ impl RenderControl {
         // dynamic-resolution step never switches an effect's resolution.
         let nominal = self.drs.steps().steps()[self.drs.nominal_step()];
         let quality = effect_budgeted(&demoted, class, step_size(self.output, nominal));
-        FrameChoice { quality, scale: self.scale, scene_format: self.live.profile.scene_format, look: self.config.look, meshlets: self.config.meshlets }
+        FrameChoice { quality, scale: self.scale, scene_format: self.live.profile.scene_format, look: self.look(), meshlets: self.config.meshlets }
     }
 
     /// Explicit settings changes so far (the probe, a saved choice loaded, the person's panel, the
@@ -1776,7 +1837,7 @@ impl RenderControl {
             history_reset: true,
         };
         let scene_format = resolved.profile.scene_format;
-        (FrameChoice { quality: resolved.quality, scale, scene_format, look: self.config.look, meshlets: self.config.meshlets }, provenance)
+        (FrameChoice { quality: resolved.quality, scale, scene_format, look: self.look(), meshlets: self.config.meshlets }, provenance)
     }
 
     /// Apply the verb's `change` (this session only) and answer the settings now in force.
@@ -1794,10 +1855,14 @@ impl RenderControl {
             push_switch(&mut self.verb.switches, *switch);
         }
         if let Some(lock) = change.render_scale_lock {
-            self.verb.scale_lock = lock.map(|scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0));
+            // Supersampled locks (WP-9) are held to the class's own most when the frame resolves.
+            self.verb.scale_lock = lock.map(|scale| scale.clamp(genex_render::settings::RENDER_SCALE_MIN, genex_render::settings::RENDER_SCALE_SUPERSAMPLE_MAX));
         }
         if let Some(budget) = change.frame_budget_ms {
             self.verb.frame_budget_ms = budget.map(|ms| ms.clamp(FRAME_BUDGET_MS_MIN, FRAME_BUDGET_MS_MAX));
+        }
+        if let Some(look) = &change.look {
+            self.verb.look.clone_from(look);
         }
         self.generation += 1;
         self.resolve();
@@ -1948,7 +2013,7 @@ impl RenderControl {
             self.last_gpu_ms = Some(*ms);
         }
         if let Some(lock) = self.verb.scale_lock {
-            self.scale = quantized(lock);
+            self.scale = quantized(lock.min(genex_render::presets::render_scale_max(self.live_class(), self.facts.os)));
             return;
         }
         let target = self.drs.gpu_target_ms();
@@ -2145,7 +2210,7 @@ fn person_from(entry: &Value) -> ClassOverride {
         .unwrap_or_default();
     ClassOverride {
         preset: entry["preset"].as_str().and_then(QualityPreset::from_wire),
-        render_scale: entry["renderScale"].as_f64().map(|scale| (scale as f32).clamp(genex_render::settings::RENDER_SCALE_MIN, 1.0)),
+        render_scale: entry["renderScale"].as_f64().map(|scale| (scale as f32).clamp(genex_render::settings::RENDER_SCALE_MIN, genex_render::settings::RENDER_SCALE_SUPERSAMPLE_MAX)),
         fps: entry[PERSON_FPS_KEY].as_u64().and_then(|fps| u32::try_from(fps).ok()).filter(|fps| FRAME_RATE_TARGETS.contains(fps)),
         switches,
         lod: person_lod(entry),
@@ -2718,7 +2783,8 @@ mod tests {
         }
         mac.set_person(ClassOverride::default());
         assert_eq!(mac.panel_offered(), QualityPreset::ALL.to_vec());
-        assert_eq!(mac.live.profile.budget_bytes, 2 * GIB, "an eighth of 27 GB, at most 2 GiB");
+        // WP-9 flipped 2 GiB -> 9 GiB: a third of the GPU-visible memory, at most 12 GiB.
+        assert_eq!(mac.live.profile.budget_bytes, LARGE_MAC_MEMORY / 3, "a third of 27 GB");
     }
 
     /// Renderer pass 2, P2-0.9 step B (F1/RC-03): Live is fitted at the output it draws (the
@@ -3043,6 +3109,24 @@ mod tests {
         let mut phone = controlled(RenderConfig::new().upscale(UpscaleMode::Quality), "mobile-high", QualityPreset::Medium);
         phone.set_live_output((786, 1704), Some((1179, 2556)));
         assert_eq!(phone.upscale(), Some((UpscaleMode::Quality, UpscaleSource::Game)), "the game's default applies on phones too");
+    }
+
+    /// WP-9: a game at an explicit resolution tier draws a 4K window natively at `ultra` with 4096
+    /// textures (8192 at the cinematic tier), no dynamic resolution, whatever the class it probed.
+    #[test]
+    fn a_resolution_tier_renders_every_pixel_at_ultra_with_its_texture_class() {
+        for tier in ResolutionPreset::ALL {
+            let mut control = controlled(RenderConfig::new().resolution(tier), "desktop-high", QualityPreset::High);
+            control.apply(&RenderChange { preset: Some(None), ..RenderChange::default() });
+            control.set_live_output(tier.output(), Some(tier.output()));
+            let profile = control.live_profile();
+            assert_eq!(profile.preset, QualityPreset::Ultra, "{}", tier.wire());
+            assert_eq!(profile.quality.textures.max_class, tier.texture_class(), "{}", tier.wire());
+            assert_eq!(profile.target_fps, tier.target_fps());
+            assert_eq!(control.upscale(), Some((UpscaleMode::Native, UpscaleSource::Game)), "{}", tier.wire());
+            assert_eq!(control.live_asked().scale, 1.0, "{}: every output pixel rendered", tier.wire());
+            assert_eq!(ResolutionPreset::from_wire(tier.wire()), Some(tier));
+        }
     }
 
     /// Lane UQ: the panel's Max is ultra drawn natively; leaving it for another preset leaves native

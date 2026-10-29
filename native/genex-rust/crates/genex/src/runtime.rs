@@ -30,7 +30,7 @@ use crate::sim::{FacetState, Sim};
 use genex_core::clock::FrameClock;
 use genex_core::json::Value as CoreValue;
 use genex_core::paths::{self, ANDROID_DATA_KEY, Destination, GameIdentity};
-use genex_core::protocol::{MAX_WORLD_PX, MIN_WORLD_PX};
+use genex_core::protocol::{MIN_WORLD_PX, WEB_MAX_WORLD_PX};
 use genex_core::saves::Saves;
 use genex_core::session::{self, SessionView, StateExtras};
 use genex_hud::{Hud, HudInput, HudPaint};
@@ -135,7 +135,7 @@ pub enum InstallErrorCode {
     InvalidName,
     /// `facet_state::<T>()` registered twice for one `T`.
     DuplicateFacetState,
-    /// A world size side outside `64..=4096` (genex-core's `MIN_WORLD_PX..=MAX_WORLD_PX`).
+    /// A world size side outside `64..=4096` (genex-core's `MIN_WORLD_PX..=WEB_MAX_WORLD_PX`).
     InvalidWorldSize,
     /// A second `game.streaming`.
     DuplicateStreaming,
@@ -1682,10 +1682,10 @@ fn check_switches<W>(game: &Game<W>) -> Result<(), InstallError> {
 }
 
 fn check_world_size(size: [u32; 2]) -> Result<(), InstallError> {
-    if size.iter().all(|side| (MIN_WORLD_PX..=MAX_WORLD_PX).contains(side)) {
+    if size.iter().all(|side| (MIN_WORLD_PX..=WEB_MAX_WORLD_PX).contains(side)) {
         return Ok(());
     }
-    let detail = format!("{}x{} ({MIN_WORLD_PX}..={MAX_WORLD_PX})", size[0], size[1]);
+    let detail = format!("{}x{} ({MIN_WORLD_PX}..={WEB_MAX_WORLD_PX})", size[0], size[1]);
     Err(InstallError::new(InstallErrorCode::InvalidWorldSize, detail))
 }
 

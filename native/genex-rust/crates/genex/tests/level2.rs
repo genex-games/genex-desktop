@@ -465,3 +465,22 @@ fn metal_a_v2_material_samples_a_game_texture_and_a_missing_one_binds_neutral() 
     assert_eq!(presenter.failure(), None);
     assert_eq!(neutral, lit, "a missing texture binds the neutral white texel, as the white texture does");
 }
+
+// WP-9 iteration speed: with a game folder (a dev build, Live) the folder's copy of a `[[wgsl]]`
+// source wins over the one compiled in, so an edited shader takes effect at the next reset
+// (`seed`), no rebuild; the compiled copy stands in where the folder has none.
+#[test]
+fn a_dev_build_reads_an_edited_shader_from_its_folder_at_the_next_reset() {
+    let folder = Folder::new("live-edit", &[("shaders/live.wgsl", "material", 1)]);
+    folder.write("shaders/live.wgsl", MATERIAL_WGSL);
+    let mut game = game(&folder.root, Some("shaders/live.wgsl"), None);
+    game.wgsl("shaders/live.wgsl", "this is not wgsl");
+    let mut live = runtime(game);
+    assert_eq!(live.sim().world.material.refusal(), None, "the folder's valid copy wins over the stale compiled one");
+    folder.write("shaders/live.wgsl", "fn broken( {");
+    live.seed(7);
+    assert!(live.sim().world.material.refusal().is_some(), "the edited source is read again at the reset");
+    folder.write("shaders/live.wgsl", MATERIAL_WGSL);
+    live.seed(7);
+    assert_eq!(live.sim().world.material.refusal(), None, "and fixed again without a rebuild");
+}

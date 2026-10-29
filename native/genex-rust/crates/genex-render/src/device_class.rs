@@ -13,7 +13,8 @@
 //! - [`classify_calibrated`] refines it with a **calibration hint**: two fixed kernels (ALU and
 //!   blended fill on a 256x256 target, at most [`CALIBRATION_GPU_BUDGET_MS`] of GPU time, timed by
 //!   timestamp queries) give a score, quantized into a [`ScoreLevel`] with hysteresis. The hint
-//!   moves the class at most one tier from the default and is skipped without timestamp queries
+//!   moves a native desktop to the score's tier and anything else at most one tier from the
+//!   default (WP-9), and is skipped without timestamp queries
 //!   (Safari; static facts only). Live caches it per adapter ([`CalibrationKey`]) in game saves.
 //!
 //! Apple silicon reports integrated GPUs, so the score decides the tier, not the device type.
@@ -404,15 +405,18 @@ pub fn classify(facts: &DeviceFacts) -> DeviceClass {
     DeviceClass::new(facts.form_factor(), facts.default_tier())
 }
 
-/// The class with the calibration hint `level` applied: at most one tier from [`classify`]'s,
-/// toward the score's tier, never past the form factor's top tier. `None` (no timestamps, or not
-/// yet calibrated) is the default.
+/// The class with the calibration hint `level` applied: on a native desktop (macOS, Windows,
+/// Linux) the score's tier (WP-9: a strong Windows or Linux GPU, desktop-mid by default, reaches
+/// ultra); elsewhere at most one tier from [`classify`]'s, toward the score's tier; never past the
+/// form factor's top tier. `None` (no timestamps, or not yet calibrated) is the default.
 pub fn classify_calibrated(facts: &DeviceFacts, level: Option<ScoreLevel>) -> DeviceClass {
     let start = classify(facts);
     let Some(level) = level else { return start };
     let from = start.tier.index();
     let toward = score_tier(start.form, level).index();
+    let native_desktop = matches!(facts.os, TargetOs::MacOs | TargetOs::Windows | TargetOs::Linux) && start.form == FormFactor::Desktop;
     let moved = match toward.cmp(&from) {
+        _ if native_desktop => toward,
         std::cmp::Ordering::Greater => from + 1,
         std::cmp::Ordering::Less => from - 1,
         std::cmp::Ordering::Equal => from,

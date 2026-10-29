@@ -176,7 +176,7 @@ const name = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$/)
   .refine((s) => !s.includes(".."));
-/** A native capture's `--size WxH` (the 4K/1440p capture plan): whole pixels, each side 64..4096. */
+/** A native capture's `--size WxH` (the 4K/1440p capture plan): whole pixels, each side 64..8192. */
 const captureSide = z.number().int().min(NATIVE_CAPTURE_MIN_PX).max(NATIVE_CAPTURE_MAX_PX);
 const captureSize = z.object({ width: captureSide, height: captureSide }).strict();
 const target = { selector, scope: selector.optional() };

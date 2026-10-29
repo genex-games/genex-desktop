@@ -38,6 +38,10 @@ use crate::shadow::SHADOW_MAP_PX;
 pub const MAX_CASCADES: u8 = crate::layout::MAX_CASCADES as u8;
 /// The smallest render scale a device class steps down to.
 pub const RENDER_SCALE_MIN: f32 = 0.5;
+/// The largest render scale anything draws at (WP-9: supersampling, native desktop-ultra only,
+/// `presets::render_scale_max`): the scene at twice the output a side, resolved by the tonemap's
+/// luminance-weighted bilinear filter (a weighted 2x2 box at exactly 2).
+pub const RENDER_SCALE_SUPERSAMPLE_MAX: f32 = 2.0;
 /// Samples per pixel with MSAA on (where the formats take it).
 pub const MSAA_SAMPLE_COUNT: u32 = MSAA_SAMPLES;
 
@@ -1267,6 +1271,13 @@ pub fn frame_texture_lod_bias(taa: &TaaQuality, temporal: bool, easu: bool, rend
     libm::log2f(held_render_scale(render_scale)).max(TAA_LOD_BIAS_MIN)
 }
 
+/// The longest side a scene drawn for an output side of `px` may have: the output's own below
+/// scale 1, twice it supersampled ([`RENDER_SCALE_SUPERSAMPLE_MAX`]), never past the target cap.
+pub(crate) fn supersampled_side_max(px: u32) -> u32 {
+    let px = px.max(1);
+    px.saturating_mul(2).min(crate::caps::MAX_WORLD_PX).max(px)
+}
+
 /// `render_scale` held to `RENDER_SCALE_MIN..=1` (NaN: 1), as the mip biases read it.
 fn held_render_scale(render_scale: f32) -> f32 {
     if render_scale.is_nan() { 1.0 } else { render_scale.clamp(RENDER_SCALE_MIN, 1.0) }
@@ -1745,8 +1756,11 @@ pub struct LightQuality {
 }
 
 /// A material texture size class (RQ6): the side of the texture arrays a texture is stored in.
-/// Each class is its own pair of arrays (`layout::TEXTURE_SIZE_CLASSES`); a texture goes in the
-/// smallest class that holds its source size, capped at [`TextureQuality::max_class`].
+/// A texture goes in the smallest class that holds its source size, capped at
+/// [`TextureQuality::max_class`]. The shaders bind four class slots
+/// (`layout::TEXTURE_CLASS_SLOTS`); which class each slot holds is the max class's ladder
+/// (`texture::class_ladder`): the web's 256/512/1024/2048, and on a native desktop the 4096 and
+/// 8192 classes in the top slots (WP-9).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TextureClass {
@@ -1758,25 +1772,34 @@ pub enum TextureClass {
     S1024,
     /// 2048 texels.
     S2048,
+    /// 4096 texels: native desktops only (WP-9).
+    S4096,
+    /// 8192 texels: native desktops only, on an explicit choice (WP-9's cinematic tier).
+    S8192,
 }
 
 impl TextureClass {
     /// Every class, smallest first.
-    pub const ALL: [TextureClass; 4] = [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048];
+    pub const ALL: [TextureClass; 6] =
+        [TextureClass::S256, TextureClass::S512, TextureClass::S1024, TextureClass::S2048, TextureClass::S4096, TextureClass::S8192];
 
-    /// The class index a material texture reference carries (`layout::texture_ref`).
+    /// The class's index, smallest first (`layout::TEXTURE_CLASS_SIDES`). A material texture
+    /// reference carries the class's slot instead (`texture::class_ladder`), which is this index
+    /// on the web's ladder.
     pub const fn index(self) -> u32 {
         match self {
             TextureClass::S256 => 0,
             TextureClass::S512 => 1,
             TextureClass::S1024 => 2,
             TextureClass::S2048 => 3,
+            TextureClass::S4096 => 4,
+            TextureClass::S8192 => 5,
         }
     }
 
     /// The arrays' side in texels.
     pub const fn side(self) -> u32 {
-        crate::layout::TEXTURE_SIZE_CLASSES[self.index() as usize]
+        crate::layout::TEXTURE_CLASS_SIDES[self.index() as usize]
     }
 }
 
@@ -1790,11 +1813,15 @@ pub struct TextureQuality {
     /// Whether normal-map mips are renormalized with the lost length folded into roughness
     /// (Toksvig); off keeps today's mips.
     pub toksvig: bool,
+    /// The MiB the material arrays may take (WP-9: a native desktop's share of its memory budget,
+    /// `texture::native_textures`), which scales each class's layer cap; 0 keeps the device
+    /// class's fixed rows (the web, phones and captures pinned before WP-9).
+    pub layer_budget_mib: u32,
 }
 
 impl TextureQuality {
     /// Today's textures: one 256 class, today's mips.
-    pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false };
+    pub const OFF: TextureQuality = TextureQuality { max_class: TextureClass::S256, toksvig: false, layer_budget_mib: 0 };
 }
 
 /// The finest LOD error threshold anything may ask for, in output pixels (game systems LOD-06).
@@ -1903,7 +1930,7 @@ const fn textures_switched(textures: TextureQuality, on: bool) -> TextureQuality
     if textures.toksvig || !matches!(textures.max_class, TextureClass::S256) {
         return textures;
     }
-    TextureQuality { max_class: TextureClass::S1024, toksvig: true }
+    TextureQuality { max_class: TextureClass::S1024, toksvig: true, layer_budget_mib: 0 }
 }
 
 /// `spots` shadowed spots with the spot-shadows switch `on`.
@@ -2571,8 +2598,8 @@ impl RenderSettings {
     /// frame index temporal effects are keyed to and whether their history was reset. The jitter
     /// is TAA's position for `frame_index` when this build draws TAA, else zero.
     pub fn frame_config(&self, output: (u32, u32), scale: f32, frame_index: u64, history_reset: bool) -> FrameConfig {
-        let scale = scale.clamp(RENDER_SCALE_MIN, 1.0);
-        let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, px.max(1));
+        let scale = if scale.is_nan() { 1.0 } else { scale.clamp(RENDER_SCALE_MIN, RENDER_SCALE_SUPERSAMPLE_MAX) };
+        let side = |px: u32| ((px as f32 * scale) as u32).clamp(1, supersampled_side_max(px));
         let taa = crate::graph::feature_drawn(&self.quality, RenderFeature::Taa);
         let jitter = if taa { crate::jitter::offset_px(frame_index, self.quality.taa.jitter_cycle) } else { crate::jitter::NO_JITTER };
         FrameConfig {
@@ -2664,9 +2691,10 @@ mod tests {
     #[test]
     fn texture_classes_are_the_layout_sizes_smallest_first() {
         let sides: Vec<u32> = TextureClass::ALL.iter().map(|class| class.side()).collect();
-        assert_eq!(sides, crate::layout::TEXTURE_SIZE_CLASSES);
+        // WP-9 flipped: six classes, 4096 and 8192 past the web's four.
+        assert_eq!(sides, crate::layout::TEXTURE_CLASS_SIDES);
         assert!(TextureClass::ALL.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(TextureClass::ALL.map(TextureClass::index), [0, 1, 2, 3]);
+        assert_eq!(TextureClass::ALL.map(TextureClass::index), [0, 1, 2, 3, 4, 5]);
     }
 
     #[test]

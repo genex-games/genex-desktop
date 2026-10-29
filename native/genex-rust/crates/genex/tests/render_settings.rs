@@ -1571,3 +1571,32 @@ fn fs(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         assert_eq!(full, 1.0, "and the full scale");
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Look hot reload (WP-9 iteration speed): `renderSettings {set: {look: {..}}}` overlays
+// `[render.look]` keys on the running game's look, no rebuild; `look: null` gives it back.
+
+#[test]
+fn a_verb_look_overlays_its_keys_on_the_game_s_look_until_cleared() {
+    let game = RenderConfig::from_toml("[render.look]\ntonemapper = \"agx\"\nev_compensation = 0.5\nbloom_intensity = 0.02\n").expect("a look");
+    let mut control = control(game.clone());
+    let base = control.look();
+    let overlay = RenderChange::look_from_json(r#"{"ev_compensation": 1.5, "exposure": "auto"}"#).expect("known look keys");
+    control.apply(&RenderChange { look: Some(Some(overlay)), ..RenderChange::default() });
+    let live = control.live_frame().look;
+    assert_eq!(live.ev_compensation, 1.5, "the verb's key wins");
+    assert_eq!(live.exposure, genex::render::ExposureMode::Auto);
+    assert_eq!((live.tonemapper, live.bloom_intensity), (base.tonemapper, base.bloom_intensity), "keys it leaves out stay the game's");
+    assert_eq!(control.capture_frame().0.look, live, "captures draw the overlaid look too");
+    control.apply(&RenderChange { look: Some(None), ..RenderChange::default() });
+    assert_eq!(control.live_frame().look, base, "look: null gives the game's look back");
+}
+
+#[test]
+fn a_verb_look_with_an_unknown_key_or_a_bad_value_is_refused_invalid_look() {
+    for json in [r#"{"exposure_bias": 1}"#, r#"{"tonemapper": 3}"#, r#"[1, 2]"#, "not json"] {
+        assert_eq!(RenderChange::look_from_json(json), Err(RenderRefusal::InvalidLook), "{json}");
+    }
+    assert_eq!(RenderRefusal::InvalidLook.wire(), "invalid-look");
+    assert!(RenderChange::look_from_json("{}").is_ok(), "an empty overlay changes nothing");
+}
