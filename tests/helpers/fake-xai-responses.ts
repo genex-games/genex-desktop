@@ -31,6 +31,8 @@ export interface FakeXai {
   nextPicture: () => void;
   /** The pictures (data URLs) Grok sent the model with a call's output. */
   picturesSent: () => string[];
+  /** The headers of every model request Grok sent, as JSON: whose sign-in each went out on. */
+  modelRequestHeaders: () => string[];
   close: () => Promise<void>;
 }
 
@@ -88,6 +90,7 @@ const message = (text: string) => ({
 /** A fake whose scripted turn runs `command` in Grok's shell. */
 export async function startFakeXai(first: string): Promise<FakeXai> {
   const requests: unknown[] = [];
+  const headers: string[] = [];
   let output: string | null = null;
   let command: string | null = first;
   const reply = (body: ResponsesBody): Array<Record<string, unknown>> => {
@@ -113,7 +116,10 @@ export async function startFakeXai(first: string): Promise<FakeXai> {
     for await (const chunk of req) raw += chunk;
     const body = raw ? (JSON.parse(raw) as ResponsesBody) : {};
     requests.push(body);
-    if (req.method === "POST" && req.url?.endsWith("/responses")) return stream(res, body.model ?? "grok", reply(body));
+    if (req.method === "POST" && req.url?.endsWith("/responses")) {
+      headers.push(JSON.stringify(req.headers));
+      return stream(res, body.model ?? "grok", reply(body));
+    }
     // Anything else Grok asks on the way (models, settings, the account): an empty answer.
     res.writeHead(404, { "content-type": "application/json" });
     res.end("{}");
@@ -133,6 +139,7 @@ export async function startFakeXai(first: string): Promise<FakeXai> {
       command = null;
     },
     picturesSent: () => picturesIn(requests as ResponsesBody[]),
+    modelRequestHeaders: () => [...headers],
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }

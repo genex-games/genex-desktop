@@ -13,13 +13,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as sleep } from "node:timers/promises";
 import { picturesNote } from "./grok-prompts.ts";
 import { CatalogError } from "./model-catalog.ts";
 import { ModelContextSource, type EngineModel } from "./types.ts";
 import { spawnCommand } from "../command-launch.ts";
 import { stopChild } from "../process-tree.ts";
 import type { SandboxOptions } from "../spawn.ts";
-import { SECOND_MS } from "../../shared/duration.ts";
+import { HOUR_MS, SECOND_MS } from "../../shared/duration.ts";
 import { ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { t } from "../../shared/i18n.ts";
@@ -40,6 +41,25 @@ export const GROK_OUTDATED_STATUS = 426;
 const AUTH_FILE = "auth.json";
 /** What an account's entry renews its access token with. Grok's own spelling: never rename it. */
 const REFRESH_TOKEN = "refresh_token";
+/** When an account's access token stops working (RFC 3339). Grok's own spelling. */
+const EXPIRES_AT = "expires_at";
+/**
+ * How many seconds before its expiry Grok counts a sign-in due for renewal. Grok's own variable, meant
+ * for its tests; its default is `GROK_EARLY_RENEWAL_SECONDS`.
+ */
+const EARLY_RENEWAL_VARIABLE = "GROK_AUTH_EARLY_INVALIDATION_SECS";
+/** Grok's own lead: it renews a sign-in five minutes before it expires. */
+const GROK_EARLY_RENEWAL_SECONDS = 300;
+/** How far past the token's expiry the lead reaches, so Grok counts it due however late it starts. */
+const RENEWAL_LEAD_MARGIN_SECONDS = 60;
+/** How long a session's copy of the sign-in must still work: it renews nothing, and a build runs long. */
+export const SESSION_SIGN_IN_HOLD_MS = 2 * HOUR_MS;
+/** How long the person's own Grok may take to renew its sign-in before a session gets what is there. */
+const RENEWAL_TIMEOUT_MS = 20 * SECOND_MS;
+/** How often the sign-in is looked at while Grok renews it. */
+const RENEWAL_POLL_MS = 250;
+/** How long Grok gets to exit on its own once its input closes, so it never stops mid-write. */
+const RENEWAL_EXIT_GRACE_MS = 3 * SECOND_MS;
 
 /** The probe's JSON-RPC requests, by id: `initialize` first, then the two questions. */
 const ProbeRequest = {
@@ -433,12 +453,80 @@ export function sessionSignIn(text: string): string | null {
  * `GROK_AUTH_PATH`. Null, and nothing written, when there is no sign-in to copy.
  */
 export async function copySessionSignIn(home: string, folder: string): Promise<string | null> {
-  const text = await readFile(path.join(home, AUTH_FILE), "utf8").catch(() => null);
+  const text = await readSignIn(home);
   const store = text === null ? null : sessionSignIn(text);
   if (store === null) return null;
   const copy = path.join(folder, AUTH_FILE);
   await writeFile(copy, store, { encoding: "utf8", flag: "wx" });
   return copy;
+}
+
+/**
+ * How early, in seconds, Grok must count its sign-in due for the person's own Grok to renew it at
+ * once, when an account's would stop working within `SESSION_SIGN_IN_HOLD_MS` of `now`: the account
+ * with a refresh token that expires first counts. Null when every such account holds that long, or
+ * when nothing in the file can be renewed.
+ */
+export function signInRenewalLead(text: string, now: number): number | null {
+  let store: unknown;
+  try {
+    store = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(store)) return null;
+  const remaining = Object.values(store)
+    .filter(isRecord)
+    .filter((entry) => typeof entry[REFRESH_TOKEN] === "string")
+    .map((entry) => Date.parse(String(entry[EXPIRES_AT])) - now)
+    .filter((left) => !Number.isNaN(left));
+  if (!remaining.length) return null;
+  const left = Math.min(...remaining);
+  if (left >= SESSION_SIGN_IN_HOLD_MS) return null;
+  return Math.max(GROK_EARLY_RENEWAL_SECONDS, Math.ceil(left / SECOND_MS) + RENEWAL_LEAD_MARGIN_SECONDS);
+}
+
+/** Grok's sign-in in `home` as text, or null when there is none to read. */
+export async function readSignIn(home: string): Promise<string | null> {
+  return readFile(path.join(home, AUTH_FILE), "utf8").catch(() => null);
+}
+
+/**
+ * Has the person's own Grok renew its sign-in in `home`, run on the host as the person's terminal
+ * would: `grok agent stdio` renews a due sign-in within a second of starting, writing Grok's own file
+ * as Grok always does, and `leadSeconds` (`signInRenewalLead`) makes the one about to expire due.
+ * No session opens and no model is called. Resolves once the file changed, or at the deadline with it
+ * as it is; Grok's input then closes, and it is stopped only if it does not exit on its own.
+ */
+export async function renewGrokSignIn(
+  binary: string,
+  options: { env: Record<string, string>; cwd: string; home: string; leadSeconds: number; timeoutMs?: number },
+): Promise<void> {
+  const before = await readSignIn(options.home);
+  const child = spawnCommand(binary, ["agent", "stdio"], {
+    cwd: options.cwd,
+    env: { ...options.env, [EARLY_RENEWAL_VARIABLE]: String(options.leadSeconds) },
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  let exited = false;
+  const closed = new Promise<void>((resolve) => {
+    child.once("error", () => resolve());
+    child.once("close", () => resolve());
+  }).then(() => {
+    exited = true;
+  });
+  const deadline = Date.now() + (options.timeoutMs ?? RENEWAL_TIMEOUT_MS);
+  try {
+    while (!exited && Date.now() < deadline) {
+      await sleep(RENEWAL_POLL_MS);
+      const now = await readSignIn(options.home);
+      if (now !== null && now !== before && sessionSignIn(now) !== null) return;
+    }
+  } finally {
+    child.stdin?.end();
+    await Promise.race([closed, sleep(RENEWAL_EXIT_GRACE_MS)]);
+    await stopChild(child, { signal: "SIGTERM" }).catch(() => {});
+  }
 }
 
 /** The sandbox a session runs in: the folder it works in, Grok's own home, and nothing it must not read. */

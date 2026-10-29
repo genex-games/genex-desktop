@@ -53,12 +53,23 @@ function providerCommand(token: string): string {
   return `${process.execPath} ${token}`;
 }
 
-/** `grok login` into the test's own home, with a made-up token from a script of the test's own. */
-async function signIn(binary: string, root: string): Promise<void> {
-  const token = path.join(root, "token.mjs");
-  await writeFile(token, 'console.log(JSON.stringify({ access_token: "fake-session-token", expires_in: 3600 }));\n');
+/**
+ * A script printing made-up tokens, each a new name: the first expires in ten minutes, every one it
+ * renews to in a week. It counts what it minted in `minted`.
+ */
+const renewingToken = (minted: string) => `import { existsSync, readFileSync, writeFileSync } from "node:fs";
+const file = ${JSON.stringify(minted)};
+const count = existsSync(file) ? Number(readFileSync(file, "utf8")) + 1 : 1;
+writeFileSync(file, String(count));
+const expires_in = count === 1 ? 600 : 7 * 24 * 3600;
+console.log(JSON.stringify({ access_token: \`renewed-\${count}\`, refresh_token: \`refresh-\${count}\`, expires_in }));
+`;
+
+/** `grok login` into `home`, with the made-up token the script at `token` prints. */
+async function signIn(binary: string, home: string, token: string): Promise<void> {
   const env = {
     ...process.env,
+    GROK_HOME: home,
     GROK_AUTH_PROVIDER_COMMAND: providerCommand(token),
     GROK_DISABLE_AUTOUPDATER: "1",
   };
@@ -85,7 +96,9 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     process.env.GROK_CLI_CHAT_PROXY_BASE_URL = fake.proxyUrl;
     process.env.GROK_XAI_API_BASE_URL = fake.proxyUrl.replace("/proxy/v1", "/v1");
     await mkdir(process.env.GROK_HOME, { recursive: true });
-    await signIn(binary, root);
+    const token = path.join(root, "token.mjs");
+    await writeFile(token, 'console.log(JSON.stringify({ access_token: "fake-session-token", expires_in: 3600 }));\n');
+    await signIn(binary, process.env.GROK_HOME, token);
   });
 
   after(async () => {
@@ -97,7 +110,7 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
   });
 
   /** The engine on the real CLI, its turns in Genex's real sandbox, reaching only the fake. */
-  const engine = () => {
+  const engine = (home = process.env.GROK_HOME) => {
     const execFn: GrokExec = async function* (invocation) {
       const sandbox = await ProcessSandbox.create(invocation.sandbox);
       try {
@@ -110,7 +123,7 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
     return new GrokEngine({
       scratchRoot: path.join(root, "scratch"),
       protectedPaths: [path.join(root, "secrets")],
-      home: process.env.GROK_HOME,
+      home,
       resolveCli: async () => ({ ready: true, path: binary, version: "live", detail: "" }),
       execFn,
     });
@@ -149,6 +162,39 @@ describe("Grok Build with the real CLI", { skip: !LIVE && "set STUDIO_GROK_CLI_T
       [],
       "no copy of the sign-in outlives the turn (Windows hands each turn one)",
     );
+  });
+
+  it("renews a sign-in about to expire as the person, before a build reads its copy (#531)", {
+    timeout: TURN_TIMEOUT_MS,
+    skip: process.platform !== "win32" && "only a Windows session reads a copy",
+  }, async () => {
+    const folder = path.join(root, "renewing");
+    const home = path.join(folder, ".grok");
+    await mkdir(home, { recursive: true });
+    const token = path.join(folder, "token.mjs");
+    await writeFile(token, renewingToken(path.join(folder, "minted.txt")));
+    await signIn(binary, home, token);
+    const keys = async () =>
+      Object.values(JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"))).map((entry) => {
+        return (entry as { key?: unknown }).key;
+      });
+    assert.deepEqual(await keys(), ["renewed-1"], "signed in, ten minutes left");
+    const dir = await game("renewing-build");
+    const sentBefore = fake.modelRequestHeaders().length;
+    // The person's own Grok renews through the provider command it signed in with.
+    const saved = process.env.GROK_AUTH_PROVIDER_COMMAND;
+    process.env.GROK_AUTH_PROVIDER_COMMAND = providerCommand(token);
+    try {
+      const result = await engine(home).delegate({ cwd: dir, prompt: "Run the probe." });
+      assert.equal(result.ok, true, result.errorText);
+    } finally {
+      if (saved === undefined) delete process.env.GROK_AUTH_PROVIDER_COMMAND;
+      else process.env.GROK_AUTH_PROVIDER_COMMAND = saved;
+    }
+    assert.equal(await readFile(path.join(dir, PROOF.file), "utf8"), PROOF.text);
+    assert.deepEqual(await keys(), ["renewed-2"], "the person's own sign-in, renewed");
+    const sent = fake.modelRequestHeaders().slice(sentBefore);
+    assert.ok(sent.length > 0 && sent.every((headers) => headers.includes("renewed-2")), "the build ran on it");
   });
 
   it("a judge's picture reaches the model: Grok opens the file its prompt names, in the real sandbox", {

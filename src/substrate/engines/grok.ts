@@ -4,7 +4,7 @@
  *
  * Grok Build runs its own agent loop on the person's own Grok sign-in (`grok login`, in the
  * browser) and keeps that sign-in in its home, which the studio only copies for a Windows session
- * (`copySessionSignIn`); an xAI key the person's shell exports never reaches it (`childEnv`), so
+ * (`copySessionSignIn`), having Grok renew it first when it would expire soon; an xAI key the person's shell exports never reaches it (`childEnv`), so
  * the studio never turns it into a per-token bill. Whether it is signed in and which models it
  * runs, the CLI says itself (`probeGrok`). Like OpenCode it brings no sandbox the studio can rely
  * on, so every session runs inside the studio's `ProcessSandbox`: the workspace (or, read-only, a
@@ -20,7 +20,7 @@
  */
 import { execFile } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -44,6 +44,9 @@ import {
   grokSandbox,
   grokTurnArgv,
   probeGrok,
+  readSignIn,
+  renewGrokSignIn,
+  signInRenewalLead,
 } from "./grok-cli.ts";
 import { grokStderrStatus, grokStream, parseGrokLine, type Translated } from "./grok-events.ts";
 import {
@@ -88,6 +91,8 @@ const KILL_GRACE_MS = 3 * SECOND_MS;
 const STDERR_TAIL_CHARS = 4_000;
 /** The file a turn's prompt is written to, in a folder of its own. */
 const PROMPT_FILE = "prompt.json";
+/** How a run's own folder in the sandbox's temporary folder is named. */
+const RUN_FOLDER_PREFIX = "prompt-";
 /** The sandbox's temporary folder under the engine's scratch root. */
 const TEMPORARY_DIR = "tmp";
 /** The usage counts each model response reports, added up over a run cut short before its end. */
@@ -177,6 +182,8 @@ export interface GrokEngineOptions {
   probe?: () => Promise<GrokProbe>;
   /** Test seam: where the CLI is and whether it works. */
   resolveCli?: () => Promise<ResolvedCli>;
+  /** Test seam: the person's own Grok renewing its sign-in (`renewGrokSignIn`), with this lead. */
+  renewSignIn?: (leadSeconds: number) => Promise<void>;
 }
 
 /** What a session has done so far. */
@@ -192,6 +199,15 @@ interface GrokRun {
   /** The CLI's error log, last part. */
   stderr: string;
   deadlineHit: boolean;
+}
+
+/** Removes the run folders in the sandbox's temporary folder; anything else there stays. */
+async function clearRunFolders(temporary: string): Promise<void> {
+  const names = await readdir(temporary).catch(() => []);
+  const left = names.filter((name) => name.startsWith(RUN_FOLDER_PREFIX));
+  await Promise.all(
+    left.map((name) => rm(path.join(temporary, name), { recursive: true, force: true }).catch(() => {})),
+  );
 }
 
 /** How a session's turn is set up. */
@@ -222,6 +238,13 @@ export class GrokEngine implements Engine {
   readonly #lockRecovery: string | undefined;
   readonly #home: string;
   readonly #platform: NodeJS.Platform;
+  readonly #renewSignIn: ((leadSeconds: number) => Promise<void>) | undefined;
+  /** The renewal of the person's sign-in under way, which every run starting meanwhile waits on. */
+  #renewal: Promise<void> | null = null;
+  /** The sign-in a renewal left as it was: not tried again until Grok's file changes. */
+  #unrenewed: string | null = null;
+  /** Clearing the run folders a run that never finished left, which every run waits on first. */
+  #cleared: Promise<void> | null = null;
   /** Whose sign-in the probe the picker shows found; none before the first one. */
   #account: GrokAccount | null = null;
   /** The CLI (its path and version line) xAI refused as outdated; another CLI is asked afresh. */
@@ -238,6 +261,7 @@ export class GrokEngine implements Engine {
     this.#lockRecovery = options.lockRecovery;
     this.#home = options.home ?? grokHome();
     this.#platform = options.platform ?? process.platform;
+    this.#renewSignIn = options.renewSignIn;
   }
 
   async status(): Promise<EngineStatus> {
@@ -268,7 +292,7 @@ export class GrokEngine implements Engine {
     };
   }
 
-  /** Whose sign-in Grok Build runs on: its own (`system`) once it says one, else none. Genex never reads it. */
+  /** Whose sign-in Grok Build runs on: its own (`system`) once it says one, else none. */
   async account(): Promise<EngineAccount> {
     const cli = await this.#resolveCli();
     if (cli.ready) await this.refreshModels().catch(() => {});
@@ -476,12 +500,15 @@ export class GrokEngine implements Engine {
 
   /**
    * A folder of the run's own in the sandbox's temporary folder, readable to the session wherever
-   * it runs: its prompt and pictures, and on Windows its copy of Grok's sign-in. Removed after.
+   * it runs: its prompt and pictures, and on Windows its copy of Grok's sign-in. Removed after, and
+   * the folders a run that never finished left are cleared before the engine's first run.
    */
   async #inRunFolder(use: (folder: string) => Promise<void>): Promise<void> {
     const temporary = path.join(this.#scratchRoot, TEMPORARY_DIR);
     await mkdir(temporary, { recursive: true });
-    const folder = await mkdtemp(path.join(temporary, "prompt-"));
+    this.#cleared ??= clearRunFolders(temporary);
+    await this.#cleared;
+    const folder = await mkdtemp(path.join(temporary, RUN_FOLDER_PREFIX));
     try {
       await use(folder);
     } finally {
@@ -530,8 +557,36 @@ export class GrokEngine implements Engine {
    */
   async #signIn(folder: string): Promise<Record<string, string>> {
     if (this.#platform !== StudioPlatform.Windows) return {};
+    await this.#renewDue().catch(() => {});
     const copy = await copySessionSignIn(this.#home, folder).catch(() => null);
     return copy ? { GROK_AUTH_PATH: copy } : {};
+  }
+
+  /**
+   * Has the person's own Grok renew its sign-in when an account's would not outlast a session
+   * (`signInRenewalLead`): a session's copy can never renew itself. Runs starting meanwhile wait on
+   * the same renewal; a sign-in a renewal could not change is left to the person's own Grok.
+   */
+  async #renewDue(): Promise<void> {
+    const text = await readSignIn(this.#home);
+    const lead = text === null ? null : signInRenewalLead(text, Date.now());
+    if (lead === null || text === this.#unrenewed) return;
+    this.#renewal ??= this.#renew(lead).finally(async () => {
+      const after = await readSignIn(this.#home);
+      this.#unrenewed = after === text ? text : null;
+      this.#renewal = null;
+    });
+    await this.#renewal;
+  }
+
+  /** The person's own Grok, on the host with the probe's environment, renewing its sign-in. */
+  async #renew(leadSeconds: number): Promise<void> {
+    if (this.#renewSignIn) return this.#renewSignIn(leadSeconds);
+    const cli = await this.#resolveCli();
+    if (!cli.path) return;
+    await mkdir(this.#scratchRoot, { recursive: true });
+    const env = childEnv(process.env, { base: "contractor", vendor: "grok", set: grokEnv(this.#home) });
+    await renewGrokSignIn(cli.path, { env, cwd: this.#scratchRoot, home: this.#home, leadSeconds });
   }
 
   /** A new folder of its own under the engine's scratch root. */

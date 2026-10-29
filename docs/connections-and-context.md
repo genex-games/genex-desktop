@@ -262,9 +262,13 @@ denies writing a game's own `.grok`, and reaches only xAI's hosts (`api.x.ai`,
 `cli-chat-proxy.grok.com`, `auth.x.ai`, `accounts.x.ai`, `grok.com`). On Windows the sandbox runs
 Grok as its own user, and Grok gives `auth.json` to the Windows user who signed in alone, on every
 read and write (#531): each run reads a copy in its own folder instead (`GROK_AUTH_PATH`,
-`copySessionSignIn`), every account's entry without its refresh token, removed after the run. A
-run never renews the sign-in: xAI takes each refresh token once, and a renewal kept in the copy
-would leave the person's own file holding a spent one. Status codes decide failures
+`copySessionSignIn`), every account's entry without its refresh token, removed after the run (and,
+after a crash, before the next one). A run never renews the sign-in: xAI takes each refresh token
+once, and a renewal kept in the copy would leave the person's own file holding a spent one. So when
+an account's token would expire within two hours, the person's own Grok renews it on the host
+first (`renewGrokSignIn`: `grok agent stdio`, with Grok's early-renewal lead
+`GROK_AUTH_EARLY_INVALIDATION_SECS` reaching that expiry), and the run copies the renewed file; a
+sign-in that renewal leaves unchanged is not retried until the file changes. Status codes decide failures
 (401/403 sign-in, 429 rate limit, 400/404 the picked model refused); a failure with none is a
 sign-in failure only when the probe then finds Grok signed out. xAI refuses a CLI older than 1.0.13
 with 426: discovery calls it outdated, and so does a 426 mid-session until the CLI changes, and the
@@ -273,14 +277,16 @@ Recorded streams and probes: `tests/fixtures/transcripts/grok-live-*` (Grok Buil
 account), `grok-standin-*` (xAI's error answers from a scripted stand-in);
 `STUDIO_GROK_CLI_TESTS=1` runs the real CLI in the real sandbox (`grok-cli-live.test.ts`).
 On Windows the real CLI runs in the real sandbox on the Windows runner with a made-up sign-in
-(`windows.yml` dispatched with `grok`). Unproven: a real plan's usage limit (Genex does not read plan
-limits yet), a real Grok account on Windows, and how a Windows run that outlives its access token
-ends (Grok's own sign-in renews it on the person's side).
+(`windows.yml` dispatched with `grok`), including a renewal through a provider-command sign-in.
+Unproven: a real plan's usage limit (Genex does not read plan limits yet), a real Grok account on
+Windows, a renewal of xAI's own sign-in (its OIDC refresher; the provider-command one is proven),
+and a Windows run that outlives the two hours its copy is sure to hold.
 
 Residual risk, as for OpenCode: Grok Build must read its own `auth.json` and its shell shares its
 sandbox, so a Grok session can read Grok's sign-in; every other sandbox denies `~/.grok`. On
 Windows a run holds only access tokens, never a refresh token, but one Windows user runs every
-sandboxed command, so any of them can read the copy while the run lasts.
+sandboxed command, so any of them can read the copy while the run lasts, or after a crash until the
+engine's next run clears it.
 
 ## Cursor
 
