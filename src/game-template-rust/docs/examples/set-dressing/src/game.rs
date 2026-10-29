@@ -48,8 +48,17 @@ const SUN_INTENSITY: f32 = 3.0;
 /// Where the cameras stand and look.
 const ROOM_EYE: Vec3 = vec3(-3.4, 1.6, -2.5);
 const ROOM_LOOK: Vec3 = vec3(1.6, 0.7, 2.2);
-const STREET_EYE: Vec3 = vec3(-9.0, 1.7, 5.2);
-const STREET_LOOK: Vec3 = vec3(6.0, 0.9, 10.5);
+/// The street camera stands on the near pavement and looks down the street with the sun behind
+/// it, so the road is lit from the side and shows its wear instead of glaring.
+const STREET_EYE: Vec3 = vec3(12.0, 1.65, 5.4);
+const STREET_LOOK: Vec3 = vec3(-6.0, 1.15, 10.3);
+/// The street fronts: a bay's width on the grid, the window opening in it, and each storey's sill and head.
+const BAY: f32 = 3.6;
+const OPENING: f32 = 2.2;
+const STOREYS: [(f32, f32); 3] = [(1.0, 2.5), (3.7, 5.2), (6.4, 7.9)];
+/// The paving slabs: their size along the street and across it, and the grid's reach each way.
+const SLAB: f32 = 1.2;
+const PAVED: f32 = 30.0;
 
 /// A built mesh and the material it is drawn in.
 struct Piece {
@@ -87,6 +96,10 @@ struct Paints {
     asphalt: Material,
     stone: Material,
     brick: Material,
+    joint: Material,
+    interior: Material,
+    marking: Material,
+    cone: Material,
 }
 
 impl Paints {
@@ -95,16 +108,20 @@ impl Paints {
         Paints {
             plaster: matte(Color::rgb(214, 208, 196), 0.95),
             dado: matte(Color::rgb(78, 112, 128), 0.55),
-            floor: matte(Color::rgb(120, 96, 80), 0.6),
+            floor: matte(Color::rgb(120, 96, 80), 0.8),
             wood: matte(Color::rgb(122, 86, 56), 0.7),
             steel: Material::color(Color::rgb(72, 76, 80)).with_metallic(1.0).with_roughness(0.45),
             iron: Material::color(Color::rgb(58, 52, 48)).with_metallic(0.6).with_roughness(0.7),
             concrete: matte(Color::rgb(150, 147, 140), 0.92),
             rubble: matte(Color::rgb(160, 154, 146), 0.95),
             paper: matte(Color::rgb(226, 222, 210), 0.85),
-            asphalt: matte(Color::rgb(58, 58, 60), 0.88),
-            stone: matte(Color::rgb(168, 164, 156), 0.8),
+            asphalt: matte(Color::rgb(46, 46, 48), 0.9).with_macro_variation(0.3, 3.0),
+            stone: matte(Color::rgb(150, 146, 138), 0.85),
             brick: matte(Color::rgb(132, 74, 58), 0.9),
+            joint: matte(Color::rgb(62, 60, 58), 0.95),
+            interior: matte(Color::rgb(26, 24, 24), 0.9),
+            marking: matte(Color::rgb(196, 192, 176), 0.75),
+            cone: matte(Color::rgb(226, 104, 28), 0.55),
         }
     }
 }
@@ -161,9 +178,17 @@ fn build(gfx: &Gfx) -> Set {
     let street = Spline::new(&STREET);
     let (road, pavements, kerbs) = street_shell(&street);
     piece("street", &road, &paints.asphalt, Transform::IDENTITY);
-    piece("street", &pavements, &paints.stone, Transform::IDENTITY);
+    piece("street", &pavements, &paints.joint, Transform::IDENTITY);
+    piece("street", &paving(), &paints.stone, Transform::IDENTITY);
     piece("street", &kerbs, &paints.concrete, Transform::IDENTITY);
-    piece("street", &facades(), &paints.brick, Transform::IDENTITY);
+    let (walls, trims, frames, backing) = street_fronts();
+    piece("street", &walls, &paints.brick, Transform::IDENTITY);
+    piece("street", &trims, &paints.concrete, Transform::IDENTITY);
+    piece("street", &frames, &paints.steel, Transform::IDENTITY);
+    piece("street", &backing, &paints.interior, Transform::IDENTITY);
+    let (lines, covers) = road_furniture(&street);
+    piece("street", &lines, &paints.marking, Transform::IDENTITY);
+    piece("street", &covers, &paints.iron, Transform::IDENTITY);
     let dressed = dressing(&street).run();
     let groups = groups(gfx, &dressed, &paints);
     let decals = decals(&dressed);
@@ -315,11 +340,12 @@ fn street_shell(street: &Spline) -> (MeshData, MeshData, MeshData) {
     let mut road = MeshData::new();
     let (near, far) = (edge(-ROAD_HALF - 0.3), edge(ROAD_HALF + 0.3));
     for k in 0..near.len() - 1 {
-        road.quad([near[k], near[k + 1], far[k + 1], far[k]], 1.0);
+        // Counter-clockwise from above, so the sheet faces up.
+        road.quad([near[k], far[k], far[k + 1], near[k + 1]], 1.0);
     }
     let mut pavements = MeshData::new();
-    pavements.rounded_cuboid(vec3(-40.0, -0.2, ROOM_MAX.z + WALL), vec3(40.0, KERB, 6.0), 0.01, 2, 1.0);
-    pavements.rounded_cuboid(vec3(-40.0, -0.2, 13.6), vec3(40.0, KERB, FACADE_Z), 0.01, 2, 1.0);
+    pavements.rounded_cuboid(vec3(-40.0, -0.2, ROOM_MAX.z + WALL), vec3(40.0, KERB - 0.015, 6.0), 0.01, 2, 1.0);
+    pavements.rounded_cuboid(vec3(-40.0, -0.2, 13.6), vec3(40.0, KERB - 0.015, FACADE_Z), 0.01, 2, 1.0);
     let section = Profile::rounded_rect(0.3, KERB + 0.1, 0.025, 3);
     let mut kerbs = MeshData::new();
     for side in [-ROAD_HALF, ROAD_HALF] {
@@ -329,13 +355,112 @@ fn street_shell(street: &Spline) -> (MeshData, MeshData, MeshData) {
     (road, pavements, kerbs)
 }
 
-/// The facade across the street and the outside of the room's own street wall above the yard.
-fn facades() -> MeshData {
-    let mut walls = MeshData::new();
-    walls.rounded_cuboid(vec3(-40.0, 0.0, FACADE_Z), vec3(40.0, FACADE_HEIGHT, FACADE_Z + 0.5), 0.02, 2, 1.0);
-    walls.rounded_cuboid(vec3(-40.0, 0.0, ROOM_MAX.z), vec3(ROOM_MIN.x - WALL, FACADE_HEIGHT, ROOM_MAX.z + WALL), 0.02, 2, 1.0);
-    walls.rounded_cuboid(vec3(ROOM_MAX.x + WALL, 0.0, ROOM_MAX.z), vec3(40.0, FACADE_HEIGHT, ROOM_MAX.z + WALL), 0.02, 2, 1.0);
-    walls
+/// The paving: stone slabs with rounded edges laid over the pavements' dark base, so the joints are
+/// real gaps and every slab edge catches the light. Each slab sits a hair off its neighbours' height.
+fn paving() -> MeshData {
+    let mut slabs = MeshData::new();
+    let columns = (2.0 * PAVED / SLAB) as usize;
+    for (z0, z1) in [(ROOM_MAX.z + WALL, 6.0), (13.6, FACADE_Z)] {
+        let rows = ((z1 - z0) / 0.9).round().max(1.0) as usize;
+        let depth = (z1 - z0) / rows as f32;
+        for row in 0..rows {
+            for column in 0..columns {
+                let lift = ((row * 7 + column * 13) % 5) as f32 * 0.0007;
+                let (x, z) = (-PAVED + column as f32 * SLAB, z0 + row as f32 * depth);
+                slabs.rounded_cuboid(vec3(x + 0.006, KERB - 0.05, z + 0.006), vec3(x + SLAB - 0.006, KERB + lift, z + depth - 0.006), 0.008, 2, 1.0);
+            }
+        }
+    }
+    slabs
+}
+
+/// The street's fronts: the facade across it and the neighbours' fronts either side of the room,
+/// each with storeys of windows, plinth, sills and a cornice. Returns the walls, the trims, the
+/// window frames and the dark backing seen through the openings.
+fn street_fronts() -> (MeshData, MeshData, MeshData, MeshData) {
+    let mut fronts = (MeshData::new(), MeshData::new(), MeshData::new(), MeshData::new());
+    front(&mut fronts, -40.0, 40.0, FACADE_Z, 1.0);
+    front(&mut fronts, -40.0, ROOM_MIN.x - WALL, ROOM_MAX.z + WALL, -1.0);
+    front(&mut fronts, ROOM_MAX.x + WALL, 40.0, ROOM_MAX.z + WALL, -1.0);
+    fronts
+}
+
+/// One front from `x0` to `x1` whose street face is the plane `z = face`; `away` is +1 when the
+/// building lies at larger z. Windows sit on one grid for every front, so neighbours line up.
+fn front((walls, trims, frames, backing): &mut (MeshData, MeshData, MeshData, MeshData), x0: f32, x1: f32, face: f32, away: f32) {
+    let span = |near: f32, far: f32| {
+        let (a, b) = (face + away * near, face + away * far);
+        (a.min(b), a.max(b))
+    };
+    let (wz0, wz1) = span(0.0, 0.5);
+    let first = (-40.0_f32 / BAY).floor() as i32;
+    let openings: Vec<(f32, f32)> = (first..=(40.0 / BAY) as i32)
+        .map(|bay| (bay as f32 + 0.5) * BAY)
+        .map(|centre| (centre - OPENING / 2.0, centre + OPENING / 2.0))
+        .filter(|(a, b)| *a >= x0 && *b <= x1)
+        .collect();
+    let mut bands = vec![(0.0, STOREYS[0].0)];
+    bands.extend(STOREYS.windows(2).map(|pair| (pair[0].1, pair[1].0)));
+    bands.push((STOREYS[2].1, FACADE_HEIGHT));
+    for (y0, y1) in bands {
+        walls.rounded_cuboid(vec3(x0, y0, wz0), vec3(x1, y1, wz1), 0.02, 2, 1.0);
+    }
+    for (sill, head) in STOREYS {
+        let mut cursor = x0;
+        for &(a, b) in &openings {
+            walls.rounded_cuboid(vec3(cursor, sill, wz0), vec3(a, head, wz1), 0.02, 2, 1.0);
+            cursor = b;
+            let (tz0, tz1) = span(-0.1, 0.05);
+            trims.rounded_cuboid(vec3(a - 0.08, sill - 0.07, tz0), vec3(b + 0.08, sill + 0.01, tz1), 0.012, 2, 1.0);
+            casement(frames, (a, b), (sill, head), span(0.06, 0.13));
+        }
+        walls.rounded_cuboid(vec3(cursor, sill, wz0), vec3(x1, head, wz1), 0.02, 2, 1.0);
+    }
+    let (cz0, cz1) = span(-0.28, 0.3);
+    trims.rounded_cuboid(vec3(x0, FACADE_HEIGHT - 0.1, cz0), vec3(x1, FACADE_HEIGHT + 0.25, cz1), 0.03, 3, 1.0);
+    let (pz0, pz1) = span(-0.06, 0.3);
+    trims.rounded_cuboid(vec3(x0, 0.0, pz0), vec3(x1, 0.3, pz1), 0.015, 2, 1.0);
+    let (bz0, bz1) = span(0.5, 0.7);
+    backing.rounded_cuboid(vec3(x0, 0.0, bz0), vec3(x1, FACADE_HEIGHT, bz1), 0.01, 2, 1.0);
+}
+
+/// A casement window: a frame round the opening, a mullion and a transom, all rounded.
+fn casement(frames: &mut MeshData, (a, b): (f32, f32), (sill, head): (f32, f32), (z0, z1): (f32, f32)) {
+    let bar = 0.06;
+    let (mid_x, mid_y) = ((a + b) / 2.0, (sill + head) / 2.0);
+    for (lo, hi) in [
+        (vec3(a, sill, z0), vec3(a + bar, head, z1)),
+        (vec3(b - bar, sill, z0), vec3(b, head, z1)),
+        (vec3(a, sill, z0), vec3(b, sill + bar, z1)),
+        (vec3(a, head - bar, z0), vec3(b, head, z1)),
+        (vec3(mid_x - bar / 2.0, sill, z0), vec3(mid_x + bar / 2.0, head, z1)),
+        (vec3(a, mid_y - bar / 2.0, z0), vec3(b, mid_y + bar / 2.0, z1)),
+    ] {
+        frames.rounded_cuboid(lo, hi, 0.01, 2, 1.0);
+    }
+}
+
+/// The road's furniture: a dashed centre line swept along the street and manhole covers.
+fn road_furniture(street: &Spline) -> (MeshData, MeshData) {
+    let dash = Profile::rect(0.14, 0.008);
+    let mut lines = MeshData::new();
+    let (length, pitch, mark) = (street.length(), 6.0, 2.4);
+    let mut start = 2.0;
+    while start + mark < length {
+        let path: Vec<Vec3> = (0..=4).map(|step| street.at(start + mark * step as f32 / 4.0).0 + Vec3::Y * 0.004).collect();
+        lines.sweep(&dash, &path, 1.0);
+        start += pitch;
+    }
+    let cover = Profile::polyline(vec![vec2(0.0, 0.0), vec2(0.36, 0.0), vec2(0.36, 0.022), vec2(0.0, 0.022)]).bevel(0.004, 2);
+    let mut disc = MeshData::new();
+    disc.lathe(&cover, 28, 1.0);
+    let mut covers = MeshData::new();
+    for (distance, side) in [(18.0, 1.3), (41.0, -1.4), (66.0, 1.2)] {
+        let (p, along) = street.at(distance);
+        let at = p + along.cross(Vec3::Y).normalize_or(Vec3::Z) * side;
+        covers.append(&disc, Transform::from_xyz(at.x, 0.0, at.z));
+    }
+    (lines, covers)
 }
 
 /// The room's floor, its four inner wall faces (facing in) and its ceiling.
@@ -370,7 +495,9 @@ fn dressing(street: &Spline) -> Dressing {
     let facade = Surface::wall(vec3(-30.0, 0.0, FACADE_Z), vec3(30.0, 0.0, FACADE_Z), FACADE_HEIGHT, Vec3::NEG_Z)
         .and(&Surface::wall(vec3(-30.0, 0.0, ROOM_MAX.z + WALL), vec3(30.0, 0.0, ROOM_MAX.z + WALL), FACADE_HEIGHT, Vec3::Z));
     let gutter = Zone::along(street, ROAD_HALF + 0.05);
+    let gutter_lane = Zone::along(street, ROAD_HALF * 0.35);
     let room_facade = Zone::cuboid(vec3(-30.0, 0.0, ROOM_MAX.z + WALL), vec3(30.0, 1.0, ROOM_MAX.z + WALL));
+    let far_facade = Zone::cuboid(vec3(-30.0, 0.0, FACADE_Z), vec3(30.0, 1.0, FACADE_Z));
     let mut dressing = Dressing::new(DRESSING_SEED);
     dressing
         // The room: rubble along the walls, plaster slabs round it, papers in drifts.
@@ -383,17 +510,23 @@ fn dressing(street: &Spline) -> Dressing {
         .layer("posters", Layer::on(&walls).density(0.6).slope(85.0, 95.0).height(1.45, 1.75).spacing(1.8).yaw(-3.0, 3.0).variants(4).cap(4).avoid(Zone::cuboid(vec3(lo.x, 0.0, -1.5), vec3(lo.x, 3.0, 1.5)), 0.0))
         .layer("stains", Layer::on(&floor).density(0.5).spacing(1.2).scale(0.8, 1.6).cap(5))
         .layer("ceiling-stains", Layer::on(&ceiling).density(0.3).slope(170.0, 180.0).spacing(2.0).scale(1.0, 2.0).cap(3))
-        // The street: lamps and bollards along the kerbs, bins by the facades, litter in the gutters.
+        // The street: lamps and bollards along the kerbs, bins and crates by the facades, cones
+        // in a run, litter in patches along the gutters, rubble heaped against the far facade.
         .layer("lamps", Layer::along(street, ROAD_HALF + 0.6, ROAD_HALF + 0.6).density(0.12).spacing(12.0).yaw(0.0, 0.0))
         .layer("bollards", Layer::along(street, ROAD_HALF + 0.45, ROAD_HALF + 0.45).density(0.6).spacing(2.2).avoid_layer("lamps", 1.2).yaw(0.0, 0.0))
-        .layer("bins", Layer::on(&pavements).density(0.05).spacing(7.0).near(room_facade, 0.9).yaw(-15.0, 15.0))
-        .layer("litter", Layer::on(&road.and(&pavements)).density(1.5).near(gutter, 0.9).spacing(0.15).tilt(10.0).variants(2).tint(0.8, 1.0))
-        .layer("street-rubble", Layer::on(&pavements).density(1.2).clustered(3.0, 0.35).spacing(0.25).scale(0.06, 0.18).tilt(30.0).variants(3).tint(0.75, 1.0))
-        // The street's wear: puddles in patches on the road, cracks, posters and grime on the facades.
-        .layer("puddles", Layer::on(&road).density(0.12).clustered(5.0, 0.4).spacing(2.5).scale(0.8, 2.2).cap(10))
+        .layer("bins", Layer::on(&pavements).density(0.2).spacing(5.0).near(room_facade, 0.9).avoid_layer("lamps", 1.0).yaw(-15.0, 15.0))
+        .layer("crates", Layer::on(&pavements).density(0.3).near(far_facade.clone(), 1.2).spacing(2.2).scale(0.8, 1.3).yaw(0.0, 360.0).cap(10))
+        .layer("cones", Layer::along(street, ROAD_HALF - 0.9, ROAD_HALF - 0.4).density(0.4).clustered(7.0, 0.3).spacing(1.3).yaw(0.0, 360.0).cap(14))
+        .layer("litter", Layer::on(&road.and(&pavements)).density(3.0).near(gutter, 0.9).clustered(3.0, 0.5).spacing(0.15).tilt(10.0).variants(2).tint(0.8, 1.0))
+        .layer("street-rubble", Layer::on(&pavements).density(1.6).clustered(3.0, 0.4).near(far_facade, 1.8).spacing(0.3).scale(0.14, 0.4).tilt(30.0).sink(-0.04, 0.0).variants(3).tint(0.75, 1.0))
+        // The street's wear: puddles in patches on the road, cracks, patched asphalt and oil,
+        // posters between the windows and grime along the plinth.
+        .layer("puddles", Layer::on(&road).density(0.12).clustered(5.0, 0.4).spacing(2.5).scale(0.8, 2.2).cap(8))
         .layer("cracks", Layer::on(&road.and(&pavements)).density(0.05).spacing(3.0).scale(1.0, 2.0).cap(6))
-        .layer("street-posters", Layer::on(&facade).density(0.08).slope(85.0, 95.0).height(1.5, 2.2).spacing(2.5).yaw(-4.0, 4.0).variants(4).cap(8))
-        .layer("street-grime", Layer::on(&facade).density(0.2).slope(85.0, 95.0).height(0.3, 0.5).spacing(3.0).scale(1.5, 2.5).yaw(0.0, 0.0).cap(8));
+        .layer("patches", Layer::on(&road).density(0.04).spacing(5.0).scale(1.2, 2.4).yaw(0.0, 360.0).cap(5))
+        .layer("oil", Layer::on(&road).density(0.04).near(gutter_lane, 1.8).spacing(4.0).scale(1.0, 2.0).yaw(0.0, 360.0).cap(4))
+        .layer("street-posters", Layer::on(&facade).density(0.08).slope(85.0, 95.0).height(3.0, 3.2).spacing(2.5).yaw(-4.0, 4.0).variants(4).cap(4))
+        .layer("street-grime", Layer::on(&facade).density(0.2).slope(85.0, 95.0).height(0.3, 0.5).spacing(3.0).scale(1.5, 2.5).yaw(0.0, 0.0).cap(5));
     dressing
 }
 
@@ -431,14 +564,20 @@ fn groups(gfx: &Gfx, dressed: &Dressed, paints: &Paints) -> Vec<(&'static str, I
     street_bin.extrude(&Profile::rounded_rect(0.5, 0.45, 0.08, 4), 0.95, 0.02, 1.0);
     let mut stood_bin = MeshData::new();
     stood_bin.append(&street_bin, Transform::IDENTITY.with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)));
+    let mut cone = MeshData::new();
+    cone.lathe(&Profile::polyline(vec![vec2(0.0, 0.0), vec2(0.19, 0.0), vec2(0.19, 0.03), vec2(0.075, 0.62), vec2(0.04, 0.7), vec2(0.0, 0.7)]).bevel(0.008, 2), 20, 1.0);
+    let mut crate_box = MeshData::new();
+    crate_box.rounded_cuboid(vec3(-0.3, 0.0, -0.22), vec3(0.3, 0.42, 0.22), 0.015, 2, 1.0);
     let near = Far::thin(12.0, 35.0);
-    let layers: [Drawn<'_>; 8] = [
+    let layers: [Drawn<'_>; 10] = [
         ("rubble", "rubble", rocks.clone(), &paints.rubble, None),
         ("plaster", "rubble", vec![mesh(&slab)], &paints.plaster, None),
         ("papers", "rubble", vec![mesh(&sheet)], &paints.paper, None),
         ("lamps", "street", vec![mesh(&post)], &paints.iron, None),
         ("bollards", "street", vec![mesh(&bollard)], &paints.iron, None),
         ("bins", "street", vec![mesh(&stood_bin)], &paints.steel, None),
+        ("crates", "street", vec![mesh(&crate_box)], &paints.wood, None),
+        ("cones", "street", vec![mesh(&cone)], &paints.cone, None),
         ("litter", "litter", vec![mesh(&sheet), mesh(&can_down)], &paints.paper, Some(near)),
         ("street-rubble", "litter", rocks, &paints.concrete, Some(near)),
     ];
@@ -476,6 +615,12 @@ fn decals(dressed: &Dressed) -> Vec<genex::Decal> {
         let puddle = p.decal(1.6, 1.1).with_base_texture("kit/decals/peel_patch.png").with_color(Color::rgb(30, 30, 32));
         out.push(puddle.with_albedo_mix(0.35).with_roughness(0.06).with_flatten(1.0));
     }
+    for p in dressed.get("patches") {
+        out.push(p.decal(2.2, 1.6).with_base_texture("kit/decals/peel_patch.png").with_color(Color::rgb(34, 34, 36)).with_opacity(0.85).with_roughness(0.85));
+    }
+    for p in dressed.get("oil") {
+        out.push(p.decal(1.5, 1.1).with_base_texture("kit/decals/grime_base.png").with_color(Color::rgb(20, 20, 22)).with_opacity(0.7).with_roughness(0.4));
+    }
     for p in dressed.get("cracks") {
         out.push(p.decal(1.0, 1.0).with_base_texture("kit/decals/crack.png").with_opacity(0.8));
     }
@@ -483,7 +628,7 @@ fn decals(dressed: &Dressed) -> Vec<genex::Decal> {
 }
 
 fn draw(set: &Set, frame: &mut Frame) {
-    frame.clear(Color::rgb(150, 170, 195)).ambient(Color::rgb(170, 185, 210), 0.12).sun(SUN_TOWARDS, Color::WHITE, SUN_INTENSITY);
+    frame.clear(Color::rgb(150, 170, 195)).ambient(Color::rgb(190, 192, 205), 0.17).sun(SUN_TOWARDS, Color::WHITE, SUN_INTENSITY);
     frame.environment(Environment::sky());
     for (tag, piece) in &set.pieces {
         frame.tag(tag);
