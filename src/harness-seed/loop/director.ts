@@ -238,6 +238,7 @@ async function webBrief(loopRun: LoopRun, start: StartOfRun): Promise<() => stri
         facts: loopRun.gameFacts ?? null,
         resume,
         skills,
+        ...(loopRun.pool ? { workersAtOnce: loopRun.pool.state.allowed } : {}),
       }),
       notes,
     ]

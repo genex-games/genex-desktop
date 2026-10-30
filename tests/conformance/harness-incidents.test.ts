@@ -3514,6 +3514,11 @@ describe("a Loop message after a finished build the run's coordinator answers fo
     assert.equal(runs[1]?.resumed, false);
     assert.equal(runs[1]?.goal, dirtBike.goal, "the ask is its goal");
     assert.equal(runs[1]?.budgets?.wallClockMs, HOUR_MS, "with the Loop's hours");
+    // The Loop's lead rests (no idle stop ends it): the person's Stop closes it, and the close names its profile.
+    (chat.studio as unknown as Studio).cancels.add(String(message.threadId));
+    stopRunsOf(chat.studio as never, String(message.threadId));
+    for (let i = 0; i < 100 && !chat.notified.some((note) => note.event === "run.finished"); i++)
+      await new Promise((resolve) => setTimeout(resolve, 100));
     const finished = chat.notified.find((note) => note.event === "run.finished")?.payload;
     assert.equal(finished?.profile, "open", "conducted by the one Loop, in place");
   });
@@ -4597,7 +4602,7 @@ describe("the Unreal lead's saves, crashes, owner words and end", () => {
     assert.deepEqual(host.rec.paramsOf("snapshot.restore"), [], "nothing restored");
     const said = host.steered().find((text) => /crashed/.test(text)) ?? "";
     assert.match(said, /Unreal crashed at \d\d:\d\d and was reopened/);
-    assert.match(said, /since save point 'Turn 1' may be lost: check the level and continue/);
+    assert.match(said, /since save point 'Turn 1' may be lost\./);
   });
 
   it("UL12. a long script kept the editor's game thread busy, the crash watch missed its answers, and Unreal was ended mid-turn with its work unsaved: an editor whose process runs is busy, never crashed", async () => {
