@@ -535,6 +535,12 @@ export default {
   "Build updated": "ビルドを更新しました",
   "Build with the Cursor plan you already have.": "すでに契約しているCursorのプランでつくります。",
   "Build with the Grok account you already have.": "すでに持っているGrokアカウントでつくります。",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Harnessが自分の指示に加えた変更です。どれでも元に戻せます。",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "自己改善はオフです。Harnessは自分の指示をそのままにします。",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "オフにすると、Harnessは自分の指示を変えません。すでに加えた変更は、元に戻すまで残ります。",
   "Workers pitch in": "ワーカーが手伝う",
   Building: "制作中",
   "Building the game": "ゲームをビルド中",
@@ -1705,8 +1711,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harnessは、エージェントがゲームをつくるときに従う指示のセットです。ビルドのたびに学び、よりよい進め方を提案します。何を変えるかはあなたが決めます。",
   "Harness learned to {skill}.": "Harnessが新しく覚えました：{skill}。",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harnessは完了したビルドを見て、もっと良いつくり方を探します。",
   "Harness looks back.": "Harnessが振り返る。",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "Harnessにはこの変更より前のバージョンが残っていないため、元に戻せません。",
@@ -3290,8 +3294,6 @@ export default {
   "Selected public path is missing or unreadable: {path}": "選んだ公開パスが見つからないか、読み取れません：{path}",
   "Selected step": "選択中のステップ",
   "Self-improvement": "自己改善",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "自己改善はオフです。Harnessは新しいビルドから学習していません。",
   Send: "送信",
   "Send a report": "レポートを送信",
   "Send feedback": "フィードバックを送信",
@@ -4559,8 +4561,6 @@ export default {
   "What's missing: {task}": "足りないもの：{task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "セッションの上限がリセットされたとき、モデルプロバイダーの障害からしばらくたったとき、またはStudioのループが再起動したときに、一時停止中のビルドが中断したところから再開します（1つのビルドにつき最大2回）。自分で止めたビルドは止まったままで、サインイン待ちで止まったビルドはあなたを待ちます。",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "オフにすると、Harnessはビルドから学ばなくなります。すでに学んだ内容は、元に戻すまで残ります。",
   "Where Genex keeps its files": "Genexがファイルを保存する場所",
   "Where the server runs": "サーバーの実行場所",
   "Where this game is saved": "このゲームの保存場所",

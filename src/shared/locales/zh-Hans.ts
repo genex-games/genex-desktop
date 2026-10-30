@@ -507,6 +507,12 @@ export default {
   "Build updated": "构建已更新",
   "Build with the Cursor plan you already have.": "用你已有的 Cursor 套餐来制作。",
   "Build with the Grok account you already have.": "用你已有的 Grok 账号来制作。",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Harness 对自己指令所做的修改。任何一项都可以撤销。",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "自我改进已关闭。Harness 会保持自己的指令不变。",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "关闭后，Harness 不会修改自己的指令。已做的修改会保留，直到你撤销。",
   "Workers pitch in": "助手一起帮忙",
   Building: "制作中",
   "Building the game": "正在构建游戏",
@@ -1598,8 +1604,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness 是智能体制作你的游戏时遵循的一套指令。它会从每次构建中学习，并提出更好的工作方式。改什么由你决定。",
   "Harness learned to {skill}.": "Harness 学会了新技能：{skill}。",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness 会查看你已完成的构建，寻找更好的制作方式。",
   "Harness looks back.": "Harness 进行回顾。",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "Harness 已没有这项更改之前的版本，所以无法撤销。",
@@ -3107,7 +3111,6 @@ export default {
   "Selected public path is missing or unreadable: {path}": "所选公开路径不存在或无法读取：{path}",
   "Selected step": "选中的步骤",
   "Self-improvement": "自我改进",
-  "Self-improvement is off. Harness isn’t learning from new builds.": "自我改进已关闭。Harness 不会从新构建中学习。",
   Send: "发送",
   "Send a report": "发送报告",
   "Send feedback": "发送反馈",
@@ -4278,8 +4281,6 @@ export default {
   "What's missing: {task}": "还缺什么：{task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "当会话额度重置、模型提供方故障一段时间后，或 Studio 循环重启时，暂停的构建会从中断处继续，每个构建最多两次。你手动停止的构建会保持停止，因登录而暂停的构建会等你处理。",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "关闭后，Harness 将不再从你的构建中学习。已学到的内容会保留，直到你撤销。",
   "Where Genex keeps its files": "Genex 的文件存放位置",
   "Where the server runs": "服务器运行位置",
   "Where this game is saved": "这个游戏的保存位置",

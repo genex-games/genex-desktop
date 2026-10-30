@@ -529,6 +529,12 @@ export default {
   "Build updated": "빌드가 업데이트됐어요",
   "Build with the Cursor plan you already have.": "이미 있는 Cursor 요금제로 만들어요.",
   "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Harness가 자기 지침에 한 변경이에요. 어떤 것이든 되돌릴 수 있어요.",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "자기 개선이 꺼져 있어요. Harness가 자기 지침을 그대로 둬요.",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "끄면 Harness가 자기 지침을 바꾸지 않아요. 이미 한 변경은 되돌리기 전까지 남아요.",
   "Workers pitch in": "작업자가 거들어요",
   Building: "만드는 중",
   "Building the game": "게임 빌드 중",
@@ -1665,8 +1671,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness는 에이전트가 게임을 만들 때 따르는 지침 모음이에요. 빌드할 때마다 배우고 더 나은 작업 방식을 제안해요. 무엇을 바꿀지는 직접 결정해요.",
   "Harness learned to {skill}.": "Harness가 새로 배웠어요: {skill}.",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness가 완료된 빌드를 보고 더 나은 제작 방법을 찾아요.",
   "Harness looks back.": "Harness가 돌아봐요.",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "Harness에 이 변경 전 버전이 더 이상 없어서 되돌릴 수 없어요.",
@@ -3213,8 +3217,6 @@ export default {
   "Selected public path is missing or unreadable: {path}": "선택한 공개 경로가 없거나 읽을 수 없어요: {path}",
   "Selected step": "선택한 단계",
   "Self-improvement": "자기 개선",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "자기 개선이 꺼져 있어요. Harness가 새 빌드에서 배우지 않아요.",
   Send: "보내기",
   "Send a report": "보고서 보내기",
   "Send feedback": "피드백 보내기",
@@ -4443,8 +4445,6 @@ export default {
   "What's missing: {task}": "빠진 것: {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "세션 한도가 초기화되거나, 모델 제공자 장애 후 잠시 지나거나, Studio 루프가 다시 시작되면 일시 정지된 빌드가 멈춘 곳부터 다시 이어가요(빌드당 최대 두 번). 직접 멈춘 빌드는 그대로 멈춰 있고, 로그인 때문에 멈춘 빌드는 내가 로그인할 때까지 기다려요.",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "끄면 Harness가 빌드에서 더 이상 배우지 않아요. 이미 배운 내용은 되돌리기 전까지 남아요.",
   "Where Genex keeps its files": "Genex가 파일을 보관하는 곳",
   "Where the server runs": "서버 실행 위치",
   "Where this game is saved": "이 게임이 저장된 곳",

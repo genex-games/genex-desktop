@@ -437,8 +437,8 @@ function LearnedSection({
           </h2>
           <p className="text-chat-sub text-ink-3">
             {learning === false
-              ? t("Self-improvement is off. Harness isn’t learning from new builds.")
-              : t("Harness looks at your finished builds for better ways to build.")}
+              ? t("Self-improvement is off. Harness keeps its own instructions as they are.")
+              : t("Changes Harness made to its own instructions. Undo any of them.")}
           </p>
         </div>
       </div>

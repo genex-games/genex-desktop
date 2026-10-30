@@ -556,6 +556,12 @@ export default {
   "Build updated": "Сборка обновлена",
   "Build with the Cursor plan you already have.": "Собирай на тарифе Cursor, который у тебя уже есть.",
   "Build with the Grok account you already have.": "Собирай на аккаунте Grok, который у тебя уже есть.",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Изменения, которые Harness внёс в свои инструкции. Любое можно отменить.",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "Самоулучшение выключено. Harness не меняет свои инструкции.",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "Когда выключено, Harness не меняет свои инструкции. Уже сделанные изменения остаются, пока ты их не отменишь.",
   "Workers pitch in": "Помощники подключаются",
   Building: "Собирает",
   "Building the game": "Собираем игру",
@@ -1715,8 +1721,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness — это набор инструкций, по которым агенты собирают твои игры. Он учится на каждой сборке и предлагает, как работать лучше. Что менять — решаешь ты.",
   "Harness learned to {skill}.": "Harness научился новому: {skill}.",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness изучает твои готовые сборки и ищет, как собирать лучше.",
   "Harness looks back.": "Harness разбирает итоги.",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "У Harness больше нет версии до этого изменения, поэтому его не отменить.",
@@ -3278,8 +3282,6 @@ export default {
   "Selected public path is missing or unreadable: {path}": "Выбранный публичный путь не найден или не читается: {path}",
   "Selected step": "Выбранный шаг",
   "Self-improvement": "Самоулучшение",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "Самоулучшение выключено. Harness не учится на новых сборках.",
   Send: "Отправить",
   "Send a report": "Отправить отчёт",
   "Send feedback": "Отправить отзыв",
@@ -4525,8 +4527,6 @@ export default {
   "What's missing: {task}": "Чего не хватает: {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "Когда сбрасывается лимит сессии, через какое-то время после сбоя провайдера моделей или когда перезапускается цикл Studio, приостановленная сборка продолжается с того же места — до двух раз за сборку. Остановленная тобой сборка так и останется остановленной, а сборка, которой нужен вход, дождётся тебя.",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "Когда выключено, Harness перестаёт учиться на твоих сборках. Уже выученное остаётся, пока ты его не отменишь.",
   "Where Genex keeps its files": "Где Genex хранит свои файлы",
   "Where the server runs": "Где работает сервер",
   "Where this game is saved": "Где хранится эта игра",

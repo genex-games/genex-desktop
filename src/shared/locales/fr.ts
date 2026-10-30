@@ -587,6 +587,12 @@ export default {
   "Build updated": "Build mis à jour",
   "Build with the Cursor plan you already have.": "Crée avec le forfait Cursor que tu as déjà.",
   "Build with the Grok account you already have.": "Crée avec le compte Grok que tu as déjà.",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Les changements que Harness a faits dans ses propres instructions. Tu peux annuler n’importe lequel.",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "L’auto-amélioration est désactivée. Harness garde ses instructions telles quelles.",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "Si elle est désactivée, Harness ne modifie pas ses propres instructions. Les changements déjà faits restent jusqu’à ce que tu les annules.",
   "Workers pitch in": "Des assistants s'y mettent",
   Building: "Création",
   "Building the game": "Création du jeu",
@@ -1767,8 +1773,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness est l’ensemble des instructions que suivent les agents quand ils créent tes jeux. Il apprend de chaque build et suggère de meilleures façons de travailler. C’est toi qui décides ce qui change.",
   "Harness learned to {skill}.": "Harness a appris quelque chose : {skill}.",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness étudie tes builds terminés pour trouver de meilleures façons de créer.",
   "Harness looks back.": "Harness fait le bilan.",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "Harness n’a plus la version d’avant ce changement, il ne peut donc pas l’annuler.",
@@ -3351,8 +3355,6 @@ export default {
   "Selected public path is missing or unreadable: {path}": "Le chemin public choisi est manquant ou illisible : {path}",
   "Selected step": "Étape sélectionnée",
   "Self-improvement": "Auto-amélioration",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "L’auto-amélioration est désactivée. Harness n’apprend pas des nouveaux builds.",
   Send: "Envoyer",
   "Send a report": "Envoyer un rapport",
   "Send feedback": "Envoyer un avis",
@@ -4620,8 +4622,6 @@ export default {
   "What's missing: {task}": "Ce qui manque : {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "Quand une limite de session se réinitialise, un peu après une panne d’un fournisseur de modèles, ou quand la boucle de Studio redémarre, un build en pause reprend là où il s’était arrêté, jusqu’à deux fois par build. Un build que tu arrêtes reste arrêté, et un build en pause pour une connexion t’attend.",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "Si elle est désactivée, Harness arrête d’apprendre de tes builds. Ce qu’il a déjà appris reste jusqu’à ce que tu l’annules.",
   "Where Genex keeps its files": "Où Genex garde ses fichiers",
   "Where the server runs": "Où tourne le serveur",
   "Where this game is saved": "Où ce jeu est enregistré",

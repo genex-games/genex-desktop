@@ -588,6 +588,12 @@ export default {
   "Build updated": "Build actualizado",
   "Build with the Cursor plan you already have.": "Crea con el plan de Cursor que ya tienes.",
   "Build with the Grok account you already have.": "Crea con la cuenta de Grok que ya tienes.",
+  "Changes Harness made to its own instructions. Undo any of them.":
+    "Cambios que Harness hizo en sus propias instrucciones. Puedes deshacer cualquiera.",
+  "Self-improvement is off. Harness keeps its own instructions as they are.":
+    "La automejora está desactivada. Harness deja sus instrucciones como están.",
+  "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.":
+    "Si está desactivada, Harness no cambia sus propias instrucciones. Los cambios que ya hizo se quedan hasta que los deshagas.",
   "Workers pitch in": "Los ayudantes echan una mano",
   Building: "Creando",
   "Building the game": "Creando el juego",
@@ -1759,8 +1765,6 @@ export default {
   "Harness is the set of instructions the agents follow when they build your games. It learns from every build and suggests better ways to work. You decide what changes.":
     "Harness es el conjunto de instrucciones que siguen los agentes al crear tus juegos. Aprende de cada build y sugiere mejores formas de trabajar. Tú decides qué cambia.",
   "Harness learned to {skill}.": "Harness aprendió algo nuevo: {skill}.",
-  "Harness looks at your finished builds for better ways to build.":
-    "Harness revisa tus builds terminados para encontrar mejores formas de crear.",
   "Harness looks back.": "Harness mira atrás.",
   "Harness no longer has the version from before this change, so it can’t undo it.":
     "Harness ya no tiene la versión de antes de este cambio, así que no puede deshacerlo.",
@@ -3343,8 +3347,6 @@ export default {
     "La ruta pública elegida no existe o no se puede leer: {path}",
   "Selected step": "Paso seleccionado",
   "Self-improvement": "Automejora",
-  "Self-improvement is off. Harness isn’t learning from new builds.":
-    "La automejora está desactivada. Harness no aprende de los builds nuevos.",
   Send: "Enviar",
   "Send a report": "Enviar un informe",
   "Send feedback": "Enviar comentarios",
@@ -4612,8 +4614,6 @@ export default {
   "What's missing: {task}": "Qué falta: {task}",
   "When a session limit resets, a while after a model provider’s outage, or when Studio’s loop restarts, a paused build picks up where it left off, up to twice per build. A build you stop stays stopped, and one paused on a sign-in waits for you.":
     "Cuando se reinicia un límite de sesión, un rato después de una caída del proveedor de modelos o cuando se reinicia el bucle de Studio, un build en pausa sigue donde se quedó, hasta dos veces por build. Un build que detienes sigue detenido, y uno en pausa por un inicio de sesión te espera.",
-  "When off, Harness stops learning from your builds. What it already learned stays until you undo it.":
-    "Si está desactivada, Harness deja de aprender de tus builds. Lo que ya aprendió se queda hasta que lo deshagas.",
   "Where Genex keeps its files": "Dónde guarda Genex sus archivos",
   "Where the server runs": "Dónde se ejecuta el servidor",
   "Where this game is saved": "Dónde se guarda este juego",

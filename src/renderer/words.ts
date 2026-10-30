@@ -2881,7 +2881,7 @@ export const ACTIVITY_WORDS = {
   title: t("Activity"),
   learning: t("Self-improvement"),
   learningHint: t(
-    "When off, Harness stops learning from your builds. What it already learned stays until you undo it.",
+    "When off, Harness doesn’t change its own instructions. Changes it already made stay until you undo them.",
   ),
 } as const;
 
