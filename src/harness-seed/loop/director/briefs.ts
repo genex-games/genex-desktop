@@ -16,6 +16,12 @@ import type { Run } from "../../types/harness.d.ts";
 /** This part serves a lead that is its chat's own session (lead-session.ts `servesLead`). */
 export const SERVES_LEAD = true;
 
+/** The integration head's last health check, as the wrap-up says it (none before one). */
+const HEALTH_WORDS: Readonly<Record<string, string>> = {
+  true: ", it passed its last health check",
+  false: ", it failed its last health check",
+};
+
 /** What the web lead's brief is made of. */
 export interface DirectorBriefFacts {
   run: Run;
@@ -34,7 +40,10 @@ export interface DirectorBriefFacts {
 }
 
 /** The time paragraph: the hours are a cap, and finish ends the Loop whenever the goal is reached. */
-function timeWords({ softDeadline, finalDeadline }: Pick<DirectorBriefFacts, "softDeadline" | "finalDeadline">): string {
+function timeWords({
+  softDeadline,
+  finalDeadline,
+}: Pick<DirectorBriefFacts, "softDeadline" | "finalDeadline">): string {
   const left = Math.max(0, minutes(softDeadline - Date.now()));
   const all = Math.max(0, minutes(finalDeadline - Date.now()));
   return `TIME: about ${left} working minutes (${all} in all). The time is a cap, not a quota: call finish when the goal is reached.`;
@@ -75,11 +84,12 @@ export function wrapUpPrompt({
   userAsked?: boolean;
 }): string {
   const head = integrationHead ? shortSha(integrationHead) : "none";
-  const health =
-    integrationHealthy === null ? "" : integrationHealthy ? ", it passed its last health check" : ", it failed its last health check";
+  const health = HEALTH_WORDS[String(integrationHealthy)] ?? "";
   return [
     `Run ${run.runId}: ${userAsked ? "the user asked to finish" : "the working time is over"}; ${minutes(finalDeadline - Date.now())} minutes remain. Start no worker.`,
-    running.length ? `Workers still running: ${running.join(", ")} — finish stops them; merge what you want to keep first.` : "",
+    running.length
+      ? `Workers still running: ${running.join(", ")} — finish stops them; merge what you want to keep first.`
+      : "",
     `Integration branch: ${head}${health}.`,
     "Call finish now with a summary of what was built and what remains (land=no to keep it unlanded).",
   ]
@@ -98,7 +108,9 @@ export function resumeNote({
   aheadOfBase: number;
 }): string {
   const commits = `commit${aheadOfBase === 1 ? "" : "s"}`;
-  const ahead = aheadOfBase ? ` — ${aheadOfBase} ${commits} beyond the starting point ${shortSha(baseCommit ?? "")}` : "";
+  const ahead = aheadOfBase
+    ? ` — ${aheadOfBase} ${commits} beyond the starting point ${shortSha(baseCommit ?? "")}`
+    : "";
   return `THE RUN RESUMES: the integration branch stands at ${shortSha(forkCommit ?? "")}${ahead}. Workers from before the pause no longer run; run_status lists the run.`;
 }
 

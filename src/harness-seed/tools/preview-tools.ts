@@ -96,7 +96,11 @@ export const tools: HarnessTool[] = [
     parameters: {
       type: "object",
       properties: {
-        keys: { type: "array", items: { type: "string" }, description: 'keys to press, e.g. ["w"] or ["shift","space"]' },
+        keys: {
+          type: "array",
+          items: { type: "string" },
+          description: 'keys to press, e.g. ["w"] or ["shift","space"]',
+        },
         key: str("single key, if not using keys[]"),
         holdMs: { type: "number", description: "how long to hold, default 400" },
       },
@@ -104,14 +108,17 @@ export const tools: HarnessTool[] = [
     async execute(args, ctx) {
       const keys = keysToPress(args);
       if (!keys.length) return { ok: false, content: 'press_keys needs keys: ["w"] (or key: "w").' };
-      await ctx.call(HostMethod.PreviewInput, { actions: [{ type: "hold", keys, ms: args.holdMs ?? HOLD_DEFAULT_MS }] });
+      await ctx.call(HostMethod.PreviewInput, {
+        actions: [{ type: "hold", keys, ms: args.holdMs ?? HOLD_DEFAULT_MS }],
+      });
       return shotAfter(ctx, "after keys", `Pressed ${keys.join("+")}.`);
     },
   },
 
   {
     name: "click",
-    description: "Click in the game preview. Omit x,y to click the centre. Values between 0 and 1 are a fraction of the view.",
+    description:
+      "Click in the game preview. Omit x,y to click the centre. Values between 0 and 1 are a fraction of the view.",
     parameters: {
       type: "object",
       properties: {
@@ -121,7 +128,9 @@ export const tools: HarnessTool[] = [
       },
     },
     async execute(args, ctx) {
-      await ctx.call(HostMethod.PreviewInput, { actions: [{ type: "click", x: args.x, y: args.y, button: args.button }] });
+      await ctx.call(HostMethod.PreviewInput, {
+        actions: [{ type: "click", x: args.x, y: args.y, button: args.button }],
+      });
       return shotAfter(ctx, "after click", "Clicked.");
     },
   },

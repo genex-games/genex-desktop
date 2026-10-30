@@ -83,7 +83,11 @@ function referenceImages(run: Run): DelegateImage[] {
   return (run.reference?.frames ?? [])
     .filter((f: ReferenceFrame | null) => f?.data)
     .slice(0, MAX_REFERENCE_IMAGES)
-    .map((f: ReferenceFrame) => ({ label: `REFERENCE ${f.label}`, mimeType: f.mimeType ?? "image/jpeg", data: f.data }));
+    .map((f: ReferenceFrame) => ({
+      label: `REFERENCE ${f.label}`,
+      mimeType: f.mimeType ?? "image/jpeg",
+      data: f.data,
+    }));
 }
 
 /**
@@ -156,7 +160,12 @@ export function directorTalk(loopRun: LoopRun, images: DelegateImage[], tools: L
         noteProviderLoss(run.runId, run.engine, err);
         const words = pauseDecision(err.kind, String(err.message ?? err).slice(0, LIMIT_MESSAGE_CHARS));
         await loopRun.decision(words.line, words.plain);
-        return { ok: false, stopReason: err.kind, errorText: String(err.message ?? err), ...(sid ? { sessionId: sid } : {}) };
+        return {
+          ok: false,
+          stopReason: err.kind,
+          errorText: String(err.message ?? err),
+          ...(sid ? { sessionId: sid } : {}),
+        };
       }
     },
     keep: async (result) => {
@@ -215,7 +224,9 @@ async function skillNames(loopRun: LoopRun): Promise<string[]> {
 async function webBrief(loopRun: LoopRun, start: StartOfRun): Promise<() => string> {
   const resume = await resumeWords(loopRun);
   const skills = await skillNames(loopRun);
-  const notes = start.notes.length ? `WHAT THE GAME'S PLUGINS SAID:\n${start.notes.map((n) => `- ${n}`).join("\n")}` : "";
+  const notes = start.notes.length
+    ? `WHAT THE GAME'S PLUGINS SAID:\n${start.notes.map((n) => `- ${n}`).join("\n")}`
+    : "";
   return () =>
     [
       directorBrief({
@@ -236,19 +247,30 @@ async function webBrief(loopRun: LoopRun, start: StartOfRun): Promise<() => stri
 }
 
 /** Why the session ended, in the sentence the report keeps. */
-function sessionEndWords(loopRun: LoopRun, result: Partial<DelegateResult>, at: number, wrapCause: WrapCause | null): string {
+function sessionEndWords(
+  loopRun: LoopRun,
+  result: Partial<DelegateResult>,
+  at: number,
+  wrapCause: WrapCause | null,
+): string {
   const { ctx, softDeadline, state } = loopRun;
   if (ctx.cancelled) return "stopped by the user";
   if (state.limit) return pauseEnding(state.limit.kind, String(state.limit.message).slice(0, CLIP_QUOTE));
   const held = heldTurnEnding(result);
   if (held) return held;
   if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish) return WAKE_ENDING[wrapCause];
-  if (wrapCause !== WrapCause.Failed && at >= softDeadline - OUT_OF_TIME_MS) return "the lead ran out of time without calling finish";
+  if (wrapCause !== WrapCause.Failed && at >= softDeadline - OUT_OF_TIME_MS)
+    return "the lead ran out of time without calling finish";
   return `the lead's session ended (${result?.stopReason ?? (result?.ok ? "on its own" : "failed")}) before it called finish`;
 }
 
 /** Whether a web run's session ended on its clock: no Stop, limit, held turn, idle lead, finish or failed turn ended it first. */
-function endedOnTheClock(loopRun: LoopRun, result: Partial<DelegateResult>, at: number, wrapCause: WrapCause | null): boolean {
+function endedOnTheClock(
+  loopRun: LoopRun,
+  result: Partial<DelegateResult>,
+  at: number,
+  wrapCause: WrapCause | null,
+): boolean {
   const { ctx, softDeadline, state } = loopRun;
   if (ctx.cancelled || state.limit || heldTurnEnding(result)) return false;
   if (wrapCause === WrapCause.Idle || wrapCause === WrapCause.Finish || wrapCause === WrapCause.Failed) return false;
@@ -324,7 +346,8 @@ async function closeAfterCrash(loopRun: LoopRun, err: any): Promise<void> {
 async function bringTheWindowHome(loopRun: LoopRun): Promise<void> {
   const { ctx, integrationWorktree, run } = loopRun;
   const showing = await ctx.call(HostMethod.PreviewShowing, {}).catch(() => null);
-  const inside = showing?.root === integrationWorktree || String(showing?.root).startsWith(`${integrationWorktree}${path.sep}`);
+  const inside =
+    showing?.root === integrationWorktree || String(showing?.root).startsWith(`${integrationWorktree}${path.sep}`);
   if (showing?.root && inside) await ctx.call(HostMethod.PreviewLoad, { project: run.project }).catch(() => {});
 }
 
@@ -352,7 +375,13 @@ function leadLine(loopRun: LoopRun): LeadLine {
 }
 
 /** The wake loop's run, and the close of whatever its lead left open. */
-async function wakeLoopRun(loopRun: LoopRun, talk: DirectorTalk, brief: () => string, line: LeadLine, clock: WakeClock) {
+async function wakeLoopRun(
+  loopRun: LoopRun,
+  talk: DirectorTalk,
+  brief: () => string,
+  line: LeadLine,
+  clock: WakeClock,
+) {
   const outcome = await runWakeLoop(loopRun, talk, brief, clock, line);
   await line.release();
   if (loopRun.state.finished) return;

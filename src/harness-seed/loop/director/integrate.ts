@@ -55,7 +55,8 @@ const FINISH_WORDS = {
     `the game folder still has uncommitted changes the landing left as they were — ${named(paths)}; they are not part of this build`,
   conflict: (error: string) => `merge into the live folder conflicted with changes of your own: ${unbracketed(error)}`,
   finalCommit: (error: string) => `the lead's last edits could not be committed: ${error}`,
-  doesNotRun: (check: HealthCheck) => `the integrated build failed its health check at the close (${check.problems.join("; ")})`,
+  doesNotRun: (check: HealthCheck) =>
+    `the integrated build failed its health check at the close (${check.problems.join("; ")})`,
 } as const;
 
 /** What a close that landed nothing says, and the code the verdict reads it by. */
@@ -345,7 +346,11 @@ export function endedAs(loopRun: LoopRun, landed: AnyRecord): void {
 async function announceClose(loopRun: LoopRun): Promise<void> {
   const { ctx, journal, report, run, threadId } = loopRun;
   const paused = journal.phase === JournalPhase.Paused;
-  const pause = { type: EventKind.Custom, event_type: RunEvent.AutopilotPaused, payload: { runId: run.runId, project: run.project } };
+  const pause = {
+    type: EventKind.Custom,
+    event_type: RunEvent.AutopilotPaused,
+    payload: { runId: run.runId, project: run.project },
+  };
   await appendClose(ctx, threadId, [
     { type: EventKind.Custom, event_type: RunEvent.RunFinished, payload: report },
     ...(paused ? [pause] : []),

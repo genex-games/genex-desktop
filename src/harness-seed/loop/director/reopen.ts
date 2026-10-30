@@ -22,12 +22,7 @@ export interface ReopenMark {
  * names, and the mark. Everything else — the log, the notes — goes on.
  */
 export function reopenedJournal(journal: AnyRecord, run: AnyRecord, mark: ReopenMark): AnyRecord {
-  const {
-    clock: _spent,
-    wake: _asked,
-    integrationHealthy: _lastCheck,
-    ...director
-  } = journal.director ?? {};
+  const { clock: _spent, wake: _asked, integrationHealthy: _lastCheck, ...director } = journal.director ?? {};
   const integrationHead = mark.finishedHead ?? director.integrationHead ?? null;
   const finishTally = freshTally(director.finishTally);
   const counted = finishTally ? { finishTally } : {};
@@ -73,4 +68,3 @@ export async function reopenCommits(
   const inFolder = await isAncestor(ctx, { project }, finishedHead, { label: `director:${runId}:reopen` });
   return { baseCommit: liveHead, forkCommit: inFolder ? liveHead : finishedHead };
 }
-

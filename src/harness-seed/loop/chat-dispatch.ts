@@ -990,7 +990,10 @@ async function needsSessionRefusal(host: Host, game: AnyRecord | null, spec: Any
   const described = (Array.isArray(listed) ? listed : []).find((e) => e.id === engine);
   return leadsInPlace(described)
     ? null
-    : OPEN_LOOP_REFUSAL.needsSession(described?.label ?? engine, game && loopProfileOf(game) === LoopProfile.Open ? openLoopBecause(game) : undefined);
+    : OPEN_LOOP_REFUSAL.needsSession(
+        described?.label ?? engine,
+        game && loopProfileOf(game) === LoopProfile.Open ? openLoopBecause(game) : undefined,
+      );
 }
 
 /**
@@ -1029,7 +1032,6 @@ export function intakeBudgets(spec: AnyRecord): RunSpec["budgets"] {
   };
 }
 
-
 /** The goal a launch runs: the chat's goal, and what it sells in the Genex store when it sells anything. */
 function intakeGoal(spec: AnyRecord, store: readonly StoreItem[]): string {
   const goal = String(spec.goal ?? "").trim();
@@ -1038,7 +1040,12 @@ function intakeGoal(spec: AnyRecord, store: readonly StoreItem[]): string {
 }
 
 /** The run an interview commissioned, as `run_start` takes it. */
-function intakeRun(spec: AnyRecord, action: QueueAction, project: string, store: readonly StoreItem[] = []): RunSpec & AnyRecord {
+function intakeRun(
+  spec: AnyRecord,
+  action: QueueAction,
+  project: string,
+  store: readonly StoreItem[] = [],
+): RunSpec & AnyRecord {
   return {
     runId: `run_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     goal: intakeGoal(spec, store),

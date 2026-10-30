@@ -3,17 +3,14 @@
  * work decides. Genex captures the game (its observers and its web preview), reads the proof the
  * lead names and the run's job results, and asks a reviewer (the Reviewers role, a read-only
  * session in a home of its own that reads the lead's folder and may look at app windows) for yes or
- * no with reasons and what isn't done. A yes ends the Loop; a no goes back to the lead;
- * `MAX_FINISH_REJECTIONS` no's in a row stop the Loop, unless a timed Loop has more than
- * `FINISH_TIME_LEFT_MS` of its working time left: then its lead keeps working, and its next claim
- * needs new work since the last no (a save point or a head that moved, and proof made since). A check
- * that gets no answer neither counts nor breaks the row.
+ * no with reasons and what isn't done. It is a second opinion the lead asked for: a yes closes the
+ * Loop as reviewed, a no goes back to the lead with its reasons and decides nothing.
  *
  * The verdict is Genex's: the harness gathers, fits the brief and picks the seat, then asks the host
  * (`finish.review`), which records the round, runs the reviewer in the seat it gives reviewers, reads
  * its yes or no and holds it. The harness settles the round (`finish.settle`) and acts on the host's
  * answer: it may turn a held answer into no answer (a yes that lapsed, a turn that ended), never into
- * a yes, and the host counts the no's in a row and says when they stop the Loop. The harness writes
+ * a yes. The harness writes
  * no `finish_check` record itself: Genex refuses one.
  *
  * Everything happens inside the lead's one `finish` call (`LEAD_CALL_MS`): a claim with too little
@@ -36,19 +33,11 @@ import {
   FinishCheckStep,
   LEAD_CALL_MS,
   MAX_FINISH_REASONS,
-  MAX_FINISH_REJECTIONS,
   ObserverSource,
   PROOF_OBSERVER,
   StopWhy,
 } from "./finish-contract.ts";
-import {
-  freshProofIn,
-  jobLines,
-  type Proof,
-  pictureType,
-  proofNamesOf,
-  readProof,
-} from "./finish-proof.ts";
+import { jobLines, type Proof, pictureType, proofNamesOf, readProof } from "./finish-proof.ts";
 import { factsOfGame } from "./folder-facts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { isPlainRecord } from "./json.ts";
@@ -714,23 +703,6 @@ async function workMarkOf(scope: Pick<FinishScope, "workMark">): Promise<string 
 }
 
 /**
- * Whether a claim must wait for new work: the row of no's has reached the cap and the Loop went on
- * (it had time left), and since the last no the lead's work mark has not moved (`mark`; null when the
- * caller can't say) or no proof file it names was written. A claim on the same work would only be
- * turned down again, at a reviewer's cost. Callers ask before Genex's finish moment runs.
- */
-export async function staleClaim(
-  tally: FinishTally,
-  folder: string,
-  proof: readonly unknown[],
-  mark: string | null,
-): Promise<boolean> {
-  if (tally.rejections < MAX_FINISH_REJECTIONS || tally.noAt === undefined) return false;
-  const moved = mark === null || tally.noMark === undefined || mark !== tally.noMark;
-  return !(moved && (await freshProofIn(folder, proof, tally.noAt)));
-}
-
-/**
  * Check the lead's claim (see the module's header): a check already under way answers that it is;
  * a claim on a run already closing, or from a turn already over, opens no round; a claim with less
  * than `FINISH_REVIEW_MIN_MS` of the call (or the turn) left for a review after the observers is
@@ -744,8 +716,6 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
   const noTime = noTimeFor(scope);
   if (noTime) return noTime;
   const mark = await workMarkOf(scope);
-  if (await staleClaim(tally, scope.leadFolder, claim.proof, mark))
-    return { ...unanswered(MESSAGE.staleProof), staleProof: true };
   tally.round += 1;
   tally.checking = true;
   try {
@@ -764,11 +734,6 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
 export function finishAnswer(outcome: FinishOutcome): string {
   if ("noTime" in outcome) return outcome.turnEnds ? MESSAGE.noTimeInTurn : MESSAGE.noTime;
   if (outcome.step === FinishCheckStep.Accepted) return FINISH_ANSWER.accepted(outcome.reasons);
-  if (outcome.step === FinishCheckStep.Unanswered && outcome.staleProof)
-    return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   if (outcome.step === FinishCheckStep.Unanswered) return FINISH_ANSWER.unanswered(outcome.why);
-  const { reasons, notDone } = outcome;
-  if (outcome.stop) return FINISH_ANSWER.stopped(outcome.rejections, reasons, notDone);
-  if (outcome.timeLeft) return FINISH_ANSWER.goesOn(outcome.rejections, reasons, notDone);
-  return FINISH_ANSWER.rejected(outcome.rejections, MAX_FINISH_REJECTIONS, reasons, notDone);
+  return FINISH_ANSWER.goesOn(outcome.rejections, outcome.reasons, outcome.notDone);
 }

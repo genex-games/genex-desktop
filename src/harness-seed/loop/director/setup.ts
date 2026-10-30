@@ -65,7 +65,12 @@ export interface LoopStart {
 }
 
 /** The journal a resumed run reads, or null (a journal the host cannot read throws: the run stops on it). */
-async function readPriorJournal(ctx: HarnessCtx, threadId: string, run: Run, resume: boolean): Promise<AnyRecord | null> {
+async function readPriorJournal(
+  ctx: HarnessCtx,
+  threadId: string,
+  run: Run,
+  resume: boolean,
+): Promise<AnyRecord | null> {
   if (!resume) return null;
   return (await ctx.call(HostMethod.ArtifactRead, { threadId, artifactId: `autopilot_${run.runId}` })) ?? null;
 }

@@ -131,10 +131,7 @@ export async function createStudio(host: Host) {
   return {
     status: () => status.summarize(),
     // A build whose jobs cross to or from a local engine only when every part it needs serves it.
-    capabilities: [
-      ...CAPABILITIES,
-      ...(servesLocalRoles() ? [LOCAL_ROLES_CAPABILITY] : []),
-    ],
+    capabilities: [...CAPABILITIES, ...(servesLocalRoles() ? [LOCAL_ROLES_CAPABILITY] : [])],
 
     async healthcheck() {
       // Prove the loaded self can talk to the substrate and read its own state.

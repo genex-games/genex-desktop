@@ -60,7 +60,16 @@ import {
 } from "./wake-prompts.ts";
 import * as liveChat from "../live-chat.ts";
 import * as messageQueue from "../message-queue.ts";
-import { afterTurn, nextWake, NoteKind, TurnEnd, WAKE_WINDOW_MS, WakeCause, WRAP_UP_MARGIN_MS, WrapCause } from "./wake-schedule.ts";
+import {
+  afterTurn,
+  nextWake,
+  NoteKind,
+  TurnEnd,
+  WAKE_WINDOW_MS,
+  WakeCause,
+  WRAP_UP_MARGIN_MS,
+  WrapCause,
+} from "./wake-schedule.ts";
 import { cutShortWake, midTurnUserSays } from "./live-prompts.ts";
 import { turnEndAtCap, keepRunClock, withCapWatch, withCapWords } from "./cap-lines.ts";
 import type { AnyRecord, HarnessCtx } from "../../types/harness.d.ts";
@@ -299,9 +308,12 @@ async function firstPrompt(loopRun: LoopRun, wake: WakeState, brief: () => strin
 function resumedDigest(loopRun: LoopRun, wake: WakeState, userSays: string[], now: number): string {
   const happened = readUnread(loopRun);
   const closing = closingFor(loopRun, wake, [], now);
-  if (leadsOpenLoop(loopRun)) return openDigestOf(loopRun, { now, reasons: [], userSays, happened, closing, resumed: true });
+  if (leadsOpenLoop(loopRun))
+    return openDigestOf(loopRun, { now, reasons: [], userSays, happened, closing, resumed: true });
   const heading = "THE RUN PICKS UP where it paused.";
-  return wakeDigest(digestFacts(loopRun, wake, { now, reasons: [], userSays, finishNew: false, happened, closing, heading }));
+  return wakeDigest(
+    digestFacts(loopRun, wake, { now, reasons: [], userSays, finishNew: false, happened, closing, heading }),
+  );
 }
 
 /** Everything `afterTurn` decides on, read from the run as the turn ends. */
@@ -348,7 +360,13 @@ function startWrapUp(loopRun: LoopRun, wake: WakeState, cause: WrapCause, now: n
 }
 
 /** Act on the end of a turn: owe the lead the idle question, or start the wrap-up. */
-function settleTurn(loopRun: LoopRun, wake: WakeState, verdict: TurnVerdict, result: Partial<DelegateResult>, now: number) {
+function settleTurn(
+  loopRun: LoopRun,
+  wake: WakeState,
+  verdict: TurnVerdict,
+  result: Partial<DelegateResult>,
+  now: number,
+) {
   wake.idleAsked = verdict.idleAsked;
   if (verdict.next === TurnEnd.AskIdle) wake.idleDue = true;
   if (verdict.next !== TurnEnd.WrapUp) return;
@@ -509,10 +527,14 @@ async function wakePrompt(loopRun: LoopRun, wake: WakeState, due: Wake, clock: W
   const happened = readUnread(loopRun);
   const finishNew = wake.finishNew;
   markSaid(wake, due.reasons, now);
-  await loopRun.appendRun(RunEvent.DirectorContinued, { minutesLeft: minutes(loopRun.softDeadline - now), reasons: due.reasons });
+  await loopRun.appendRun(RunEvent.DirectorContinued, {
+    minutesLeft: minutes(loopRun.softDeadline - now),
+    reasons: due.reasons,
+  });
   const closing = closingFor(loopRun, wake, due.reasons, now);
   let prompt: string;
-  if (leadsOpenLoop(loopRun)) prompt = openDigestOf(loopRun, { now, reasons: due.reasons, userSays, happened, closing });
+  if (leadsOpenLoop(loopRun))
+    prompt = openDigestOf(loopRun, { now, reasons: due.reasons, userSays, happened, closing });
   else {
     const told = digestFacts(loopRun, wake, { now, reasons: due.reasons, userSays, finishNew, happened, closing });
     const render = (lines: readonly string[]) => wakeDigest({ ...told, happened: lines, userSays: [] });
@@ -628,16 +650,17 @@ function freshContext(loopRun: LoopRun): { notes: string[]; recent: string[] } {
  * A new session for a later turn. It knows nothing of the run, so it is told the brief, the
  * rules, the lead's notes, the run so far and this turn's message — never the message alone.
  */
-function openFresh(
-  loopRun: LoopRun,
-  kit: TurnKit,
-  turn: TurnAsk,
-  why: string,
-): Promise<Partial<DelegateResult>> {
+function openFresh(loopRun: LoopRun, kit: TurnKit, turn: TurnAsk, why: string): Promise<Partial<DelegateResult>> {
   // An open Loop Genex paused (its app couldn't be brought back), or one the person stopped, opens no new session.
   const refused = openSessionRefused(loopRun);
   if (refused) return Promise.resolve(refused);
-  const text = freshStart({ why, brief: kit.brief(), rules: rulesFor(loopRun), ...freshContext(loopRun), digest: turn.prompt });
+  const text = freshStart({
+    why,
+    brief: kit.brief(),
+    rules: rulesFor(loopRun),
+    ...freshContext(loopRun),
+    digest: turn.prompt,
+  });
   return kit.talk.session(text, null, turn.deadline - kit.clock.now());
 }
 
@@ -803,8 +826,7 @@ async function sessionOrFresh(
     if (wake.turns === 1 && !folderBusy(err)) throw err;
     return failedTurn(err);
   };
-  if (!talk.sessionId && wake.turns > 1)
-    return openFresh(loopRun, kit, turn, SESSION_LOST_WHY.noSession).catch(failed);
+  if (!talk.sessionId && wake.turns > 1) return openFresh(loopRun, kit, turn, SESSION_LOST_WHY.noSession).catch(failed);
   let result: Partial<DelegateResult>;
   try {
     result = await patientSession(loopRun, wake, kit, turn);

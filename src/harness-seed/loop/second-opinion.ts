@@ -25,7 +25,11 @@ const MAX_QUESTION_CHARS = 1_000;
 /** The longest answer the lead is handed. */
 const MAX_ANSWER_CHARS = 4_000;
 /** The picture files a judge can read, by extension. */
-const PICTURE_TYPES: Readonly<Record<string, string>> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg" };
+const PICTURE_TYPES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+};
 
 /** What the judge is told about its part. Model-facing. */
 const SYSTEM_PROMPT =
@@ -66,8 +70,16 @@ export function secondOpinionSpec({ picturesOptional = false }: { picturesOption
 }
 
 /** The pictures a lead names, comma-separated, read from inside `root`; or why one cannot be read. */
-export async function picturesIn(root: string, named: unknown): Promise<{ images: MessageImage[] } | { refused: string }> {
-  const list = hasText(named) ? named.split(",").map((item) => item.trim()).filter(Boolean) : [];
+export async function picturesIn(
+  root: string,
+  named: unknown,
+): Promise<{ images: MessageImage[] } | { refused: string }> {
+  const list = hasText(named)
+    ? named
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
   const images: MessageImage[] = [];
   const top = await realpath(root).catch(() => path.resolve(root));
   for (const rel of list.slice(0, MAX_PICTURES)) {
@@ -122,7 +134,9 @@ export async function askSecondOpinion(ctx: HarnessCtx, ask: SecondOpinionAsk): 
       messages: [{ role: "user", content: question, images: [...ask.images] }],
     });
     const text = String(response?.message?.content ?? "").trim();
-    return text ? SECOND_OPINION_WORDS.answer(clip(text, MAX_ANSWER_CHARS)) : SECOND_OPINION_WORDS.failed("an empty answer");
+    return text
+      ? SECOND_OPINION_WORDS.answer(clip(text, MAX_ANSWER_CHARS))
+      : SECOND_OPINION_WORDS.failed("an empty answer");
   } catch (err) {
     const kind = (err as { kind?: unknown })?.kind;
     if (run.runId && isProviderLoss(kind)) noteProviderLoss(run.runId, engine, err);

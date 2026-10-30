@@ -22,18 +22,16 @@ import {
   type FinishOutcome,
   type FinishTally,
   finishAnswer,
-  staleClaim,
   tallyOf,
 } from "../../finish-check.ts";
-import { FINISH_ANSWER } from "../../finish-check-prompts.ts";
-import { FinishCheckStep, LEAD_CALL_MS, MAX_FINISH_REJECTIONS } from "../../finish-contract.ts";
+import { FinishCheckStep, LEAD_CALL_MS } from "../../finish-contract.ts";
 import { readFinishLog } from "../../finish-log.ts";
-import { GAPS_FIRST_MIN_MS, remainingOf } from "../../finish-remaining.ts";
+import { remainingOf } from "../../finish-remaining.ts";
 import { fireHooks, HookEvent, runScope } from "../../hooks.ts";
 import { HOOK_PROMPTS } from "../../hooks-prompts.ts";
 import { CLIP_REASON, clipMarked, hasText } from "../../text.ts";
 import { timeLeftOf } from "../../time-cap.ts";
-import { minutes, SECOND_MS, sleep } from "../../time.ts";
+import { SECOND_MS, sleep } from "../../time.ts";
 import { yes } from "../args.ts";
 import { closeUnderWay, holdFinish, releaseFinish } from "../close-latch.ts";
 import { CLAIM_WORDS, secondOpinionNo } from "../second-opinion-prompts.ts";
@@ -43,7 +41,6 @@ import { WrapCause } from "../wake-schedule.ts";
 import { type TurnEnds, turnEndsOf } from "../turn-ends.ts";
 import { closeInPlace, type OpenEnd } from "./close.ts";
 import { asksPending, OPEN_CLOSE_MS, type OpenClock } from "./contract.ts";
-import { gapsFirstWords } from "./evidence-prompts.ts";
 import { OPEN_WORDS } from "./prompts.ts";
 import { writersInPlace } from "./writers.ts";
 
@@ -145,16 +142,6 @@ async function check(loopRun: LoopRun, claim: FinishClaim, started: number): Pro
 }
 
 /**
- * A claim turned back before any review: the lead names what remains and more than
- * `GAPS_FIRST_MIN_MS` of working time is left, so it works on that first; null when it may be checked.
- */
-function gapsFirst(loopRun: LoopRun, remaining: readonly string[]): string | null {
-  if (!remaining.length) return null;
-  const left = loopRun.softDeadline - clockOf(loopRun).now();
-  return left > GAPS_FIRST_MIN_MS ? gapsFirstWords(remaining, minutes(left), minutes(GAPS_FIRST_MIN_MS)) : null;
-}
-
-/**
  * What a review the lead asked for came to: a yes closes the Loop as reviewed; anything else — a no,
  * no answer, no time, no reviewer to seat — goes back to the lead, who decides (null).
  */
@@ -192,9 +179,7 @@ async function closeWithinCall(loopRun: LoopRun, end: OpenEnd, started: number):
 /**
  * Why a claim is turned back before anything looks, or null: no summary, a recovery or an ask of the
  * lead's still under way, a worker that writes in the folder in place (the reviewer would read a
- * folder that keeps changing), or what remains named while the Loop has time for it (`gapsFirst`).
- * Otherwise a claim is never refused for time: before the cap its reviewer decides, and a yes ends
- * the Loop (time-cap.ts).
+ * folder that keeps changing). A finish is never refused for time, nor for what the lead says remains.
  */
 function claimRefusal(loopRun: LoopRun, args: AnyRecord): string | null {
   if (!hasText(args.summary)) return OPEN_WORDS.needsSummary;
@@ -202,8 +187,7 @@ function claimRefusal(loopRun: LoopRun, args: AnyRecord): string | null {
   // The folder the reviewer would read is not the one the lead asked for yet.
   if (loopRun.open && asksPending(loopRun.open.journal)) return OPEN_WORDS.askFirst;
   const writers = loopRun.open ? writersInPlace(loopRun.open).map((record) => record.id) : [];
-  if (writers.length) return OPEN_WORDS.writerAtWork(writers);
-  return gapsFirst(loopRun, remainingOf(args.remaining));
+  return writers.length ? OPEN_WORDS.writerAtWork(writers) : null;
 }
 
 /** The reviewer's check, the chat's status saying so while it reads. */
@@ -226,10 +210,6 @@ async function claimFinish(loopRun: LoopRun, args: AnyRecord, started: number): 
   const refused = claimRefusal(loopRun, args);
   if (refused) return refused;
   const review = yes(args.review, false);
-  // Nothing new since the row of no's: the reviewer is not asked about the same work again.
-  const stale =
-    review && (await staleClaim(tallyFor(loopRun, 0), loopRun.projectDir, proofOf(args), workMarkOf(loopRun)));
-  if (stale) return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   const held = await fireHooks(loopRun.ctx, loopRun.game, HookEvent.Finish, runScope(loopRun));
   if (held.blocked) return HOOK_PROMPTS.finishHeld(held.blocked.reason);
   if (!review) {

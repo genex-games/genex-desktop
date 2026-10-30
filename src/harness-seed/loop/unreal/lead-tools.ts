@@ -8,7 +8,6 @@
  */
 import type { AnyRecord } from "../../types/harness.d.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
-import { stopRuleWords } from "../finish-check-prompts.ts";
 import { hasText } from "../text.ts";
 import { minutes } from "../time.ts";
 import { agentStatus } from "./agents.ts";
@@ -165,11 +164,13 @@ export const LEAD_TOOLS: LiveToolSpec[] = [
   },
   {
     name: LeadTool.Finish,
-    description: `Claim the game meets the request. A reviewer who did none of the work checks your proof: a yes closes the run, a no comes back with reasons, and ${stopRuleWords(null)}`,
+    description:
+      "Close the run with your summary: your word closes it. With review=yes a reviewer who did none of the work reads your proof first: its yes closes the run, its no comes back with its reasons and decides nothing.",
     parameters: {
       type: "object",
       properties: {
-        summary: text("What the game holds now and what you verified, for the person."),
+        summary: text("What the game holds now, for the person."),
+        review: text("yes asks a reviewer for a second opinion before the run closes (default no)."),
         proof: text(
           "Comma-separated paths that prove it, relative to the game folder or full paths inside it: pictures, logs, test reports.",
         ),

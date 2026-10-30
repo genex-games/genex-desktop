@@ -292,4 +292,3 @@ export async function jobLines(ctx: HarnessCtx, run: Run): Promise<string[]> {
   ended.sort((a, b) => endSeqOf(a) - endSeqOf(b));
   return ended.slice(-MAX_JOB_LINES).map(jobLine);
 }
-

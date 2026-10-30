@@ -53,7 +53,14 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
   [
     "turn end: busy rests, idle is asked once, then wraps up",
     () => {
-      const base = { ok: true, closed: false, running: 0, idleAsked: false, workingTimeLeft: true, finishRequested: false };
+      const base = {
+        ok: true,
+        closed: false,
+        running: 0,
+        idleAsked: false,
+        workingTimeLeft: true,
+        finishRequested: false,
+      };
       check("busy sleeps", afterTurn({ ...base, running: 2 }).next === TurnEnd.Sleep);
       check("idle asks", afterTurn(base).next === TurnEnd.AskIdle);
       const twice = afterTurn({ ...base, idleAsked: true });

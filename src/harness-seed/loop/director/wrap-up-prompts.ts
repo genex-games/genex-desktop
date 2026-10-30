@@ -21,4 +21,5 @@ export const WRAP_UP_WORDS = {
 } as const;
 
 /** Why `worker_start` refuses once the user asked to finish. */
-export const FINISH_ASKED_NO_WORKERS = "the user asked to finish: no new workers. The wrap-up starts when this turn ends.";
+export const FINISH_ASKED_NO_WORKERS =
+  "the user asked to finish: no new workers. The wrap-up starts when this turn ends.";

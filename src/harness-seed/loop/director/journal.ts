@@ -85,7 +85,11 @@ function logRecord(log: readonly LoopRunLogEntry[]): LoopRunLogEntry[] {
 /** The run's own clock: the one prepareLoopRun kept on it, else the one it runs on. */
 function clockOf(loopRun: LoopRun): LoopRunClock {
   return (
-    loopRun.clock ?? { started: loopRun.started, softDeadline: loopRun.softDeadline, finalDeadline: loopRun.finalDeadline }
+    loopRun.clock ?? {
+      started: loopRun.started,
+      softDeadline: loopRun.softDeadline,
+      finalDeadline: loopRun.finalDeadline,
+    }
   );
 }
 

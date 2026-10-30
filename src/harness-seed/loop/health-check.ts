@@ -71,7 +71,9 @@ export function pageErrors(entries: readonly PreviewConsoleEntry[] | unknown): s
   if (!Array.isArray(entries)) return [];
   return entries
     .filter((entry): entry is PreviewConsoleEntry => isRecord(entry) && entry.level === ERROR_LEVEL)
-    .filter((entry) => entry.source !== PreviewConsoleSource.WindowGone && entry.source !== PreviewConsoleSource.Observation)
+    .filter(
+      (entry) => entry.source !== PreviewConsoleSource.WindowGone && entry.source !== PreviewConsoleSource.Observation,
+    )
     .map((entry) => clip(String(entry.message ?? ""), CLIP_DETAIL));
 }
 

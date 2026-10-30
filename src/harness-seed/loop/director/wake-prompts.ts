@@ -123,7 +123,8 @@ function standsSection(facts: DigestFacts): string {
 
 /** A web game's lead's wake message: why it was woken, the person's words, the news, where the run stands, the closing. */
 export function wakeDigest(facts: DigestFacts): string {
-  const header = facts.heading ?? `WOKEN AT ${utc(facts.now)} — ${facts.reasons.map((r) => REASON_WORDS[r] ?? r).join("; ")}`;
+  const header =
+    facts.heading ?? `WOKEN AT ${utc(facts.now)} — ${facts.reasons.map((r) => REASON_WORDS[r] ?? r).join("; ")}`;
   const said = [facts.userSays.length ? userSaysBlock(facts.userSays) : "", facts.finishNew ? FINISH_ASKED : ""]
     .filter(Boolean)
     .join("\n");
@@ -133,7 +134,13 @@ export function wakeDigest(facts: DigestFacts): string {
 }
 
 /** What was said and what happened while the lead waited out its engine's limit, or nothing. */
-export function sinceThen({ userSays, happened }: { userSays: readonly string[]; happened: readonly string[] }): string {
+export function sinceThen({
+  userSays,
+  happened,
+}: {
+  userSays: readonly string[];
+  happened: readonly string[];
+}): string {
   if (!userSays.length && !happened.length) return "";
   return [
     "SINCE THEN:",

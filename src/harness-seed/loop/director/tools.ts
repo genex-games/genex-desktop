@@ -114,7 +114,10 @@ async function noteTool(loopRun: LoopRun, args: AnyRecord): Promise<string> {
  * The pictures a second opinion looks at: the ones the lead names in the integration worktree, or —
  * none named — a screenshot of the integration build, taken with its health check.
  */
-async function judgePictures(loopRun: LoopRun, args: AnyRecord): Promise<{ images: MessageImage[]; said: string } | { refused: string }> {
+async function judgePictures(
+  loopRun: LoopRun,
+  args: AnyRecord,
+): Promise<{ images: MessageImage[]; said: string } | { refused: string }> {
   const named = await picturesIn(loopRun.integrationWorktree, args.pictures);
   if ("refused" in named) return named;
   if (named.images.length) return { images: named.images, said: "" };
