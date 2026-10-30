@@ -20,6 +20,7 @@ import { RUN_POOL_WORDS } from "../../workers/prompts.ts";
 import { waitingWorkers } from "../../workers/questions.ts";
 import type { LoopRun, LoopRunLogEntry } from "../loop-run.ts";
 import { NoteKind } from "../wake-schedule.ts";
+import { heardInTurn } from "../turn-news.ts";
 import { type OpenClock, type OpenLoop, SAVE_REMINDER_MS } from "./contract.ts";
 import { abortLead, healthWatch } from "./health.ts";
 import { OPEN_NEWS } from "./prompts.ts";
@@ -53,9 +54,12 @@ export function wentBackUnheard(loopRun: Pick<LoopRun, "open" | "waitSeq">): str
   return heard ? null : open.wentBack;
 }
 
-/** Whether a turn under way already took this line of the run's log: no digest tells it again. */
+/**
+ * Whether a turn under way already took this line of the run's log: no digest tells it again. A web
+ * Loop's lead hears its news from a watch of its own (turn-news.ts).
+ */
 export function heardMidTurn(loopRun: Pick<LoopRun, "open">, seq: number): boolean {
-  return loopRun.open?.heard.has(seq) === true;
+  return loopRun.open?.heard.has(seq) === true || heardInTurn(loopRun, seq);
 }
 
 /**

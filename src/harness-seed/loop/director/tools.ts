@@ -1148,8 +1148,35 @@ export async function show(loopRun: LoopRun, args: AnyRecord) {
 const wakes = (only: string | null, text: string): boolean =>
   !only || text.includes(`worker ${only}`) || text.startsWith("USER");
 
+/**
+ * One look while the lead waits, answering whether the user spoke to a waking lead. A long turn's
+ * director hears the user's words here, once each, as USER SAYS lines; a waking lead hears them from
+ * its turn and its digest (wake.ts), so its wait only ends for them and takes none off the inbox.
+ */
+async function lookWhileWaiting(loopRun: LoopRun, finishing0: boolean): Promise<boolean> {
+  const { inbox, note, routeUserSteers } = loopRun;
+  const finishing = await inbox.finishing().catch(() => false);
+  const askedToFinish = finishing && !finishing0;
+  if (loopRun.waking) {
+    const untold = await inbox.steering(undefined, false, { onlyNew: true }).catch(() => []);
+    return askedToFinish || untold.length > 0;
+  }
+  // Only the steers no wait this run has passed on yet: the director hears each one once. A
+  // resumed run says them all once more, since its director may be a fresh session.
+  const fresh = await inbox.steering(undefined, true, { onlyNew: true }).catch(() => []);
+  for (const text of fresh) note(`USER SAYS: ${text}`);
+  await routeUserSteers().catch(() => {});
+  if (askedToFinish) note("USER ASKS TO FINISH: wrap up the current work, integrate what is ready, and call finish");
+  return false;
+}
+
+/**
+ * `worker_wait`: the lead's explicit wait, until the worker named (or any) ends, lands a round or
+ * waits on the person, the user speaks, or the seconds pass; answers what happened and where the
+ * run stands. A waking lead may call it too, or end its turn and be woken.
+ */
 export async function wait(loopRun: LoopRun, args: AnyRecord) {
-  const { ctx, finalDeadline, inbox, ledgerLines, note, notesSince, routeUserSteers, softDeadline, state } = loopRun;
+  const { ctx, finalDeadline, inbox, ledgerLines, notesSince, softDeadline, state } = loopRun;
   const seconds = Math.min(MAX_WAIT_S, Math.max(1, num(args.seconds, WAIT_DEFAULT_S)));
   const asked = args.worker ?? args.id;
   const only = asked ? slug(asked) : null;
@@ -1157,14 +1184,7 @@ export async function wait(loopRun: LoopRun, args: AnyRecord) {
   const until = Date.now() + seconds * SECOND_MS;
   const finishing0 = await inbox.finishing().catch(() => false);
   while (Date.now() < until && !ctx.cancelled) {
-    // Only the steers no wait this run has passed on yet: the director hears each one once. A
-    // resumed run says them all once more, since its director may be a fresh session.
-    const fresh = await inbox.steering(undefined, true, { onlyNew: true }).catch(() => []);
-    for (const text of fresh) note(`USER SAYS: ${text}`);
-    await routeUserSteers().catch(() => {});
-    const finishing = await inbox.finishing().catch(() => false);
-    if (finishing && !finishing0)
-      note("USER ASKS TO FINISH: wrap up the current work, integrate what is ready, and call finish");
+    if (await lookWhileWaiting(loopRun, finishing0)) break;
     // A builder that newly waits on the person is told in the log, which wakes this wait.
     await waitingBuilders(loopRun).catch(() => null);
     const news = notesSince(from).filter((entry: { text: string }) => !rejectedNews(loopRun, entry.text));

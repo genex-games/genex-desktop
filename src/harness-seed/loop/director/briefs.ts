@@ -113,7 +113,7 @@ export interface DirectorBriefFacts {
   startObserved?: boolean;
   gameLessons?: string[];
   contract?: AnyRecord | null;
-  /** How the session is driven: a waking lead is told it ends its turn and has no `worker_wait` (default: the long turn's words). */
+  /** How the session is driven: a waking lead is told its workers run in the background while it goes on (default: the long turn's words). */
   loop?: DirectorLoop;
   /**
    * A lead that is its chat's own session (one session): where it sits. It reads the lines written

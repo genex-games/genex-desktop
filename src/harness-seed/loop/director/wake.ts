@@ -69,6 +69,7 @@ import { OPEN_TURN_MS } from "./open/contract.ts";
 import { openClosingOf, openDigestOf } from "./open/digest.ts";
 import { healthWatch } from "./open/health.ts";
 import { heardMidTurn, noteWorkerQuestions, watchOpenTurn } from "./open/news.ts";
+import { watchTurnNews } from "./turn-news.ts";
 import { openTurnBegins } from "./open/between.ts";
 import { openWakeRules } from "./open/prompts.ts";
 import {
@@ -1636,8 +1637,33 @@ function watchTurn(loopRun: LoopRun, wake: WakeState, kit: TurnKit, line: LeadLi
 }
 
 /**
- * One session call, watched while it runs: for the user's words (live chat) and, an open Loop, for the
- * news a resting lead would be woken by (open/news.ts).
+ * A web lead's session call: its cap's lines from a watch of its own, and the news a resting lead
+ * would be woken by — a worker's or a job's end — said into its turn as it comes (turn-news.ts).
+ */
+async function webWatchedSession(
+  loopRun: LoopRun,
+  wake: WakeState,
+  kit: TurnKit,
+  turn: TurnAsk,
+): Promise<Partial<DelegateResult>> {
+  const news = watchTurnNews(loopRun, { clock: kit.clock, turn: wake.turns });
+  let result: Partial<DelegateResult> | undefined;
+  try {
+    result = await withCapWatch(
+      loopRun,
+      () => kit.clock.now(),
+      () => lineWatchedSession(loopRun, wake, kit, turn),
+    );
+    return result;
+  } finally {
+    await news.stop();
+    news.settle(result);
+  }
+}
+
+/**
+ * One session call, watched while it runs: for the user's words (live chat) and for the news a
+ * resting lead would be woken by (open/news.ts, turn-news.ts).
  */
 async function watchedSession(
   loopRun: LoopRun,
@@ -1645,13 +1671,7 @@ async function watchedSession(
   kit: TurnKit,
   turn: TurnAsk,
 ): Promise<Partial<DelegateResult>> {
-  // A web lead's turn hears its cap's lines from a watch of its own; an open Loop's from its news.
-  if (!leadsOpenLoop(loopRun))
-    return withCapWatch(
-      loopRun,
-      () => kit.clock.now(),
-      () => lineWatchedSession(loopRun, wake, kit, turn),
-    );
+  if (!leadsOpenLoop(loopRun)) return webWatchedSession(loopRun, wake, kit, turn);
   const pollJobs = () => watchJobs(loopRun, wake, kit.clock.now());
   const news = watchOpenTurn(loopRun, { clock: kit.clock, turn: wake.turns, pollJobs });
   let result: Partial<DelegateResult> | undefined;

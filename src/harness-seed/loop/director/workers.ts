@@ -82,7 +82,7 @@ import { stoppableRoomClock, withWorkerRoom } from "../workers/room.ts";
 import { briefOf, recordBuilderEnded, recordBuilderStarted } from "../workers/director-pool.ts";
 import { finishAsked } from "./wrap-up.ts";
 import { wholeRoundsBudget } from "./whole-rounds.ts";
-import { refundProviderAttempt } from "./attempt-refund.ts";
+import { refundGoalAttempt, refundProviderAttempt } from "./attempt-refund.ts";
 import {
   noteSandboxRefusal,
   sandboxRefusalOn,
@@ -106,6 +106,10 @@ export const SERVES_LEAD = true;
 /** What `worker_start` tells a director with its own hands whose integration worktree has uncommitted edits. */
 const START_DIRTY =
   "your integration worktree has uncommitted edits; this worker forked from HEAD without them — commit first if workers should see them";
+
+/** What `worker_start` says of a fork point nobody has seen run yet: looked at in the background (`gatedRun`). */
+const FORK_CHECK = (commit: string) =>
+  `its fork point ${shortSha(commit)} is looked at before it builds, while you go on: if that build does not run, the worker ends at once and you hear why`;
 
 /** What `worker_start` tells the lead of a goal commission whose plan set no required outcomes yet. */
 const MESSAGE_OUTCOMES_FIRST =
@@ -1304,14 +1308,45 @@ async function announceWorker(loopRun: LoopRun, worker: Worker, { budgetMs, repl
   note(`worker ${id} started (${mode})`);
 }
 
-/** Set the worker going in the background; the monitor looks into it from here on. */
-function launchWorker(loopRun: LoopRun, worker: Worker): void {
-  const { runWorker, startMonitor } = loopRun;
-  startMonitor();
-  worker.promise = runWorker(worker).catch((err: any) => {
+/** Set the worker going in the background, its fork point looked at first; the monitor looks into it from here on. */
+function launchWorker(loopRun: LoopRun, worker: Worker, from: string): void {
+  loopRun.startMonitor();
+  worker.promise = gatedRun(loopRun, worker, from).catch((err: any) => {
     worker.error = String(err?.message ?? err);
     setWorkerState(worker, WorkerState.Failed);
   });
+}
+
+/**
+ * A started worker's session, once the commit it forked from is seen to run (`forkGate`) — in the
+ * background, so `worker_start` never waits on that look. A fork that does not run (or that could
+ * not be looked at) ends the worker before its session starts: its goal attempt given back, its end
+ * on the run's log with why, which wakes the lead as any worker's end does.
+ */
+async function gatedRun(loopRun: LoopRun, worker: Worker, from: string): Promise<void> {
+  const refused = await forkGate(loopRun, worker, from).catch(
+    (err: any) => `its fork point could not be looked at: ${err?.message ?? err}`,
+  );
+  if (!refused) return loopRun.runWorker(worker);
+  // The gate gave its window back (`releaseWorkspace`).
+  worker.handle = null;
+  worker.error = gateRefusalWords(refused);
+  setWorkerState(worker, WorkerState.Failed);
+  const ledger = loopRun.state.goals;
+  if (ledger && refundGoalAttempt(ledger, String(worker.goal ?? worker.id))) await loopRun.saveJournal();
+  worker.resolveSettle();
+  await closeOutWorker(loopRun, worker);
+}
+
+/** A fork gate's refusal (its JSON, or a sentence) as the one line a worker's end says. */
+function gateRefusalWords(refused: string): string {
+  try {
+    const parsed = JSON.parse(refused) as AnyRecord;
+    const problems: string[] = Array.isArray(parsed.problems) ? parsed.problems.map(String) : [];
+    return [String(parsed.reason ?? "refused before it built"), ...problems].join(" — ");
+  } catch {
+    return refused;
+  }
 }
 
 /**
@@ -1364,17 +1399,19 @@ function loopStartFields(worker: Worker): AnyRecord {
 /**
  * What `worker_start` answers once the worker is running; `waking` for a lead that ends its turn
  * instead of waiting, `lead` for one seated in its game folder (one session), whose uncommitted
- * changes the studio committed before the fork (`dirty` only when it could not).
+ * changes the studio committed before the fork (`dirty` only when it could not); `forkCheck` when
+ * its fork point is still being looked at in the background.
  */
 function startAnswer(
   worker: Worker,
-  { budgetMs, rounds, roundWarning, policySpec, dirty, waking, lead }: AnyRecord,
+  { budgetMs, rounds, roundWarning, policySpec, dirty, waking, lead, forkCheck }: AnyRecord,
 ): string {
   return JSON.stringify({
     started: worker.id,
     mode: worker.mode,
     worktree: worker.worktree,
     forkedFrom: shortSha(worker.from ?? ""),
+    ...(forkCheck ? { forkCheck } : {}),
     minutes: minutes(budgetMs),
     // Its minutes, fitted to whole rounds of this game (whole-rounds.ts `wholeRoundsBudget`).
     ...(typeof rounds === "number" ? { rounds } : {}),
@@ -1508,8 +1545,6 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   if (held) return HOOK_PROMPTS.workerHeld(held);
   const opened = await openWorkspace(loopRun, starting, pooled);
   if (typeof opened === "string") return startRefused(loopRun, starting, opened);
-  const refused = await forkGate(loopRun, opened, from);
-  if (refused) return startRefused(loopRun, starting, refused);
   const worker = await openThread(loopRun, opened);
   if (typeof worker === "string") return startRefused(loopRun, starting, worker);
   worker.goal = goal;
@@ -1519,8 +1554,11 @@ export async function startWorker(loopRun: LoopRun, args: AnyRecord) {
   for (const warning of policySpec.warnings) note(`worker ${id}: policy ${warning}`);
   await announceWorker(loopRun, worker, { budgetMs, replaces, roundWarning });
   await chargeGoalAttempt(loopRun, goal);
-  launchWorker(loopRun, worker);
+  // Its fork point is looked at in the background, before its session: the lead never waits on it.
+  const looked = !commit || state.healthByHead.get(commit) === true;
+  launchWorker(loopRun, worker, from);
   return startAnswer(worker, {
+    ...(looked ? {} : { forkCheck: FORK_CHECK(commit) }),
     budgetMs,
     rounds,
     roundWarning,

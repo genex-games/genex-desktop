@@ -609,16 +609,16 @@ describe("what the message that wakes the lead says (wake-prompts.ts)", () => {
     assert.ok(fresh.indexOf(card) < fresh.indexOf("WOKEN AT 14:00 UTC"), "before the news it frames");
   });
 
-  it("P4. a waking lead's tools have no wait and tell it to end its turn", () => {
+  it("P4. a waking lead's tools keep the explicit wait and say it may go on, wait, or end its turn", () => {
     const tools = wakeTools(DIRECTOR_TOOLS, { lead: true });
-    // Flipped (one worker model): the wait a waking lead is not offered is `worker_wait` now.
+    // Flipped (Loop phase 3): a waking lead is offered `worker_wait` too, an explicit wait of its own.
     assert.deepEqual(
       tools.map((t) => t.name),
-      DIRECTOR_TOOLS.map((t) => t.name).filter((name) => name !== "worker_wait"),
+      DIRECTOR_TOOLS.map((t) => t.name),
     );
     const start = tools.find((t) => t.name === "worker_start")!;
-    assert.match(start.description, /end your turn/);
-    assert.doesNotMatch(start.description, /use worker_wait/);
+    assert.match(start.description, /go on; worker_wait to wait, or end your turn/);
+    assert.doesNotMatch(start.description, /use worker_wait and worker_status/);
     // A waking lead writes nothing (one session): a conflict `integrate` meets goes to a worker.
     const integrate = tools.find((t) => t.name === "integrate")!;
     assert.match(integrate.description, /A conflict elsewhere goes to a worker/);
@@ -637,7 +637,6 @@ describe("what the message that wakes the lead says (wake-prompts.ts)", () => {
       for (const req of tool.parameters.required ?? []) assert.ok(req in tool.parameters.properties);
       assert.ok(tool.description.length > 40, `${tool.name} is described`);
     }
-    assert.ok(JSON.stringify(tools).length <= JSON.stringify(DIRECTOR_TOOLS).length, "no bigger than the old set");
     // The set the long turn is offered is left as it was, its wait (`worker_wait` now) and all.
     assert.ok(DIRECTOR_TOOLS.some((t) => t.name === "worker_wait"));
     assert.match(DIRECTOR_TOOLS.find((t) => t.name === "worker_start")!.description, /use worker_wait/);
@@ -791,9 +790,11 @@ describe("what the message that wakes the lead says (wake-prompts.ts)", () => {
   it("P6. the wake rules are bounded and name the heartbeat", () => {
     const rules = wakeRules({ heartbeatMinutes: 20 });
     assert.ok(rules.length <= 800, `${rules.length} characters`);
-    assert.match(rules, /^HOW THIS RUN WORKS — ONE DECISION PER TURN:/);
+    // Flipped (Loop phase 3): workers run in the background; the lead goes on, waits, or ends its turn.
+    assert.match(rules, /^HOW THIS RUN WORKS — WORKERS IN THE BACKGROUND:/);
+    assert.match(rules, /worker_start answers at once/);
     assert.match(rules, /every 20 minutes while workers run/);
-    assert.match(rules, /end your turn/i);
+    assert.match(rules, /call worker_wait or end your turn/i);
   });
 });
 
@@ -1005,7 +1006,9 @@ describe("one session: whose session the lead is (lead-session.ts)", () => {
     // Flipped (the lead builds with its own hands): it edits and commits in the integration
     // worktree it leads, does foundations and small repairs itself, and hands parallel work out.
     assert.match(lead, /You build there with your own hands/);
-    assert.match(lead, /commit them there/);
+    // Flipped (Loop phase 3): what it leaves uncommitted is committed as its work, never set aside.
+    assert.match(lead, /whatever you leave uncommitted is committed as your work/);
+    assert.doesNotMatch(lead, /set aside/);
     assert.match(lead, /do the foundations yourself/);
     assert.match(lead, /wire it yourself in the integration worktree/);
     assert.match(lead, /vendor what the run builds on .*yourself in the integration worktree/);

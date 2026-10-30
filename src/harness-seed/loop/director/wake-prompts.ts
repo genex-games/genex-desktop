@@ -2,7 +2,7 @@
  * What the wake loop (wake.ts) says to the lead, as the model reads it: the digest at the top of
  * every message that wakes it, the question it is asked when nothing runs, why a wrap-up started,
  * the fresh start after a lost session and why it was lost, the rules of the loop, and the tool
- * set without `worker_wait` — and the rules of the long turn it replaced, which the playbook no longer
+ * set with `worker_wait` as an explicit wait — and the rules of the long turn it replaced, which the playbook no longer
  * names. Plain facts in, text out. It never imports briefs.ts, which reads from here.
  */
 import { shortSha } from "../git.ts";
@@ -12,7 +12,6 @@ import { minutes } from "../time.ts";
 import { FacetStage } from "../facet/stage.ts";
 import { SHIP_DEFECTS_NOT_POLISH } from "./art-direction-prompts.ts";
 import { LEAD_CARD_RULE, LEAD_FRESH_START, LEAD_INTEGRATE_SWAP } from "./lead-session-prompts.ts";
-import { WorkerTool } from "../workers/contract.ts";
 import { DirectorTool } from "./tool-specs.ts";
 import { HEARTBEAT_MS, NoteKind, WakeCause, WrapCause } from "./wake-schedule.ts";
 import type { LiveToolSpec } from "../../types/host-api.d.ts";
@@ -206,7 +205,8 @@ const CARD_RULES_AFTER = [
 const HANDS_CARD_RULE = "- Keep .studio/DIRECTOR.md current: it is the memory that survives compaction and a resume.";
 
 /** What `worker_start` answers a waking lead to do next. */
-export const WAKE_START_NEXT = "end your turn, or start another worker; worker_status for detail";
+export const WAKE_START_NEXT =
+  "go on with your own work or start another worker; worker_wait to wait for it, or end your turn and be woken; worker_status for detail";
 
 /** A clock time as the digest says it. */
 const utc = (ms: number): string => `${new Date(ms).toISOString().slice(11, 16)} UTC`;
@@ -564,8 +564,8 @@ export function freshStart({
 /** How the run works, said once in the first message (and again in a fresh one). */
 export function wakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }): string {
   return [
-    "HOW THIS RUN WORKS — ONE DECISION PER TURN:",
-    "- Act, then end your turn: there is no worker_wait tool. Between your turns nothing of yours runs; the workers keep building.",
+    "HOW THIS RUN WORKS — WORKERS IN THE BACKGROUND:",
+    "- worker_start answers at once; workers build in the background while you go on. To wait for them, call worker_wait or end your turn; between your turns nothing of yours runs.",
     `- The studio wakes you in this same session when something happens — the user speaks or asks to finish, a worker lands a round or ends, a look into a worktree finds a violation, the plan window closes, the wrap-up starts — and every ${heartbeatMinutes} minutes while workers run.`,
     "- Each wake opens with a digest: the user's words, what happened, where the run stands, and your build card.",
     "- End a turn with nothing running and the studio asks once what next; end the next one idle too and it starts the wrap-up.",
@@ -591,7 +591,7 @@ export const WAKE_BRIEF = {
   planReview:
     ' THE USER ASKED TO READ IT FIRST: your first worker waits for their word (they may simply say "go") and builds the plan as it stands if they say nothing — end your turn after plan; you are woken when they answer or the window closes.',
   userSays:
-    "- The user speaks in this game's chat: their words open your next wake (THE USER SAYS) or reach you mid-turn. They outrank your plan; reply briefly there and act on them.",
+    "- The user speaks in this chat: their words open your next wake (THE USER SAYS) or reach you mid-turn. They outrank your plan; reply briefly and act on them.",
 } as const;
 
 /** What `worker_start` answers a waking lead while the builders wait for the user's word. */
@@ -610,7 +610,7 @@ const WAKE_TOOL_SWAPS = new Map<string, readonly [string, string]>([
     DirectorTool.WorkerStart,
     [
       "— use worker_wait and worker_status.",
-      "— end your turn; the studio wakes you when it lands a round or ends (worker_status for detail).",
+      "— go on; worker_wait to wait, or end your turn: you are woken when it lands a round or ends.",
     ],
   ],
 ]);
@@ -619,15 +619,14 @@ const WAKE_TOOL_SWAPS = new Map<string, readonly [string, string]>([
 const LEAD_TOOL_SWAPS = new Map<string, readonly [string, string]>([[DirectorTool.Integrate, LEAD_INTEGRATE_SWAP]]);
 
 /**
- * The run tools a waking lead is offered: no `worker_wait`, and descriptions that say to end the turn —
- * and, for a lead (`lead`), that a conflict goes to a worker. A director whose cwd is the
- * integration worktree on the wake loop (a kept director.ts from before one session) resolves it itself.
+ * The run tools a waking lead is offered: every one, `worker_wait` included (an explicit wait, or it
+ * ends its turn and is woken), with descriptions that say so — and, for a lead (`lead`), that a
+ * conflict goes to a worker. A director whose cwd is the integration worktree on the wake loop (a
+ * kept director.ts from before one session) resolves it itself.
  */
 export function wakeTools(tools: readonly LiveToolSpec[], { lead = false }: { lead?: boolean } = {}): LiveToolSpec[] {
-  return tools
-    .filter((tool) => tool.name !== WorkerTool.Wait)
-    .map((tool) => {
-      const swap = WAKE_TOOL_SWAPS.get(tool.name) ?? (lead ? LEAD_TOOL_SWAPS.get(tool.name) : undefined);
-      return swap ? { ...tool, description: tool.description.replace(swap[0], swap[1]) } : tool;
-    });
+  return tools.map((tool) => {
+    const swap = WAKE_TOOL_SWAPS.get(tool.name) ?? (lead ? LEAD_TOOL_SWAPS.get(tool.name) : undefined);
+    return swap ? { ...tool, description: tool.description.replace(swap[0], swap[1]) } : tool;
+  });
 }

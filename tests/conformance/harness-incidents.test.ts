@@ -16729,8 +16729,8 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     const blender = { pluginId: "blender", id: "blender_model", description: "Models one prop.", tools: ["blender__"] };
     const start = workerTools([{ ...blender, isolation: "copy" }] as never).find((tool) => tool.name === "worker_start");
     assert.match(String(start?.description), /with every plugin tool and connector you have/);
-    const type = (start?.parameters as { properties: { type: { description: string } } }).properties.type;
-    assert.doesNotMatch(type.description, /brings that kind's tools/);
+    const type = start?.parameters.properties.type;
+    assert.doesNotMatch(String(type?.description), /brings that kind's tools/);
     const onUnreal = workerBrief({
       identity: { folderLabel: "AI Games/keep", facts: [{ id: CoreFact.UnrealProject, path: "." }] as never },
       task: "restart the editor and play the gate",
@@ -16741,5 +16741,81 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     });
     assert.doesNotMatch(onUnreal, /none of its tools|lead's alone/, "the editor's tools are a worker's too");
     assert.match(onUnreal, /use the editor's tools for what only it can do \(start or restart it/);
+  });
+
+  it("FL3. worker_start held the lead through a health pass of the commit it forked from: it answers at once, the look runs in the background, and a fork that does not run comes back as the worker's end", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const host = fakeHost();
+    const now = Date.now();
+    const clock = { started: now, softDeadline: now + 60 * 60_000, finalDeadline: now + 2 * 60 * 60_000 };
+    const loopRun = fakeLoopRun(
+      host,
+      { ...clock, clock },
+      {
+        [HostMethod.PreviewCapacity]: { headless: true, max: 12, free: 12, inUse: 0 },
+        [HostMethod.PreviewAcquire]: { handle: "h" },
+        [HostMethod.SnapshotWorktree]: (params: Record<string, unknown>) => ({ path: `/runs/run_j/${params.name}` }),
+        [HostMethod.ThreadCreate]: "t-new",
+        [HostMethod.EngineDelegate]: { ok: true, summary: "built", sessionId: "s" },
+      },
+    );
+    loopRun.state.plan = { summary: "This run: a dusk plaza.", workers: [{ id: "sky" }] };
+    loopRun.state.monitor = Promise.resolve();
+    loopRun.state.softDeadline = clock.softDeadline;
+    loopRun.state.finalDeadline = clock.finalDeadline;
+    // The fork point's look takes as long as the test says: the start must not wait for it.
+    let look: (evidence: Record<string, unknown>) => void = () => {};
+    loopRun.patientEvidence = () =>
+      new Promise((resolve) => {
+        look = resolve;
+      });
+    const answer = JSON.parse(String(await loopRun.startWorker({ id: "sky", mode: "single", brief: "a sky" })));
+    assert.equal(answer.started, "sky", "answered while its fork point is still being looked at");
+    assert.match(String(answer.forkCheck), /looked at before it builds/);
+    const sky = loopRun.state.workers.get("sky");
+    assert.equal(sky.state, "running", "counted as work under way");
+    look({ ok: false, problems: ["the page renders effectively black"], consoleErrors: [], frames: [] });
+    await sky.promise;
+    assert.equal(sky.state, "failed", "a fork that does not run ends the worker before its session");
+    assert.match(String(sky.error), /does not run/);
+    assert.ok(
+      !host.calls.some((call) => call.method === HostMethod.EngineDelegate),
+      "no session was started on a build that does not run",
+    );
+    const ended = loopRun.notesSince(0).find((entry: { kind?: string }) => entry.kind === "worker_ended");
+    assert.match(String(ended?.text), /worker sky failed — .*does not run/, "its end wakes the lead with why");
+  });
+
+  it("FL4. a web lead busy in its own turn heard a worker's end only once it rested: the end is said into the turn under way, and what the turn read is not told again", async () => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { watchTurnNews } = await import("../../src/harness-seed/loop/director/turn-news.ts");
+    const { heardMidTurn } = await import("../../src/harness-seed/loop/director/open/news.ts");
+    const host = fakeHost();
+    const steered: string[] = [];
+    const loopRun = fakeLoopRun(host, {}, {
+      [HostMethod.EngineSteer]: (params: { messages: Array<{ id: string; text: string }> }) => {
+        steered.push(...params.messages.map((m) => m.text));
+        return { accepted: params.messages.map((m) => m.id), how: "native" };
+      },
+    });
+    // The watch's clock never moves: each turn's first look is the one that hears.
+    const clock = { sleep: () => new Promise<void>(() => {}) };
+    loopRun.note("worker sky done — built the sky", "worker_ended");
+    loopRun.note("worker lamps round 2 kept", "worker_round");
+    const watch = watchTurnNews(loopRun, { clock, turn: 1 });
+    for (let i = 0; i < 5; i++) await nextTurn();
+    await watch.stop();
+    assert.deepEqual(steered, ["worker sky done — built the sky"], "its end, at once; a round waits for the digest");
+    const [endLine] = loopRun.notesSince(0);
+    watch.settle({ steered: [`run_j:1:turn-news-${endLine.seq}`] });
+    assert.equal(heardMidTurn(loopRun, endLine.seq), true, "read in the turn: no digest or wake tells it again");
+    // A line the turn took in but never read rides the next digest.
+    loopRun.note("worker lamps failed — the lamp broke", "worker_ended");
+    const second = watchTurnNews(loopRun, { clock, turn: 2 });
+    for (let i = 0; i < 5; i++) await nextTurn();
+    await second.stop();
+    second.settle({ steered: [] });
+    const lamps = loopRun.notesSince(0).at(-1);
+    assert.equal(heardMidTurn(loopRun, lamps.seq), false);
   });
 });
