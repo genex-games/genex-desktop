@@ -216,7 +216,11 @@ function toyLead(answers: Record<string, string>): Script[] {
     async (_request, call) => {
       answers.waited = await call("worker_wait", { seconds: "60" });
       answers.marked = await call("worker_mark", { id: "w1", verdict: "used" });
-      answers.finish = await call("finish", { summary: "The garden has a pond.", proof: "scenes/pond.toyscene" });
+      answers.finish = await call("finish", {
+        summary: "The garden has a pond.",
+        proof: "scenes/pond.toyscene",
+        review: "yes",
+      });
     },
   ];
 }
@@ -337,7 +341,11 @@ describe("a Loop on a project with no plugin, through the real studio", () => {
         },
         async (_request, call) => {
           answers.waited = await call("worker_wait", { seconds: "60" });
-          answers.finish = await call("finish", { summary: "The door is in.", proof: "scenes/door.tscn" });
+          answers.finish = await call("finish", {
+            summary: "The door is in.",
+            proof: "scenes/door.tscn",
+            review: "yes",
+          });
         },
       ],
       worker: async () => {},

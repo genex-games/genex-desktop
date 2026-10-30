@@ -1174,10 +1174,8 @@ it("G3. current integrated acceptance permits early completion and keeps a recov
     assert.ok(request.director, "no builder is needed after current acceptance passes");
     assert.ok(request.onLiveTool);
     await request.onLiveTool("plan", plan);
-    assert.match(
-      text(await request.onLiveTool("finish", { summary: "unverified", land: "no", victory: "yes", review: "yes" })),
-      /cannot claim victory/,
-    );
+    // Flipped (Loop phase 4): a claim before the goal was played was refused ("cannot claim
+    // victory"); the lead's word closes the build, so this row plays first and claims after.
     const played = json(await request.onLiveTool("playtest", { target: "integration", goal: "sky" }));
     assert.equal(played.answer, "yes");
     verified = true;

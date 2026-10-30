@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { customEvents, startLearningRig, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
-import { countImages, flattenMessageContent, newestFixtureBuild, type FakeReply } from "../helpers/fake-ollama.ts";
+import { flattenMessageContent, newestFixtureBuild, type FakeReply } from "../helpers/fake-ollama.ts";
 import { EngineError, type Engine } from "../../src/substrate/engines/types.ts";
 import { combineFacetVerdict, normalizeDefects } from "../../src/harness-seed/loop/judge.ts";
 import { buildBrief } from "../../src/harness-seed/loop/gauntlet.ts";
@@ -221,32 +221,19 @@ describe("gauntlet: the incumbent rule", () => {
     assert.ok(accepted.length >= 1, "an accepted challenger is snapshotted as healthy");
   });
 
-  it("keeps the incumbent and rolls the work back on a TIE", async () => {
-    const { events, rig } = await runOnce({ compare: "tie" });
+  it("keeps a build that runs whatever a judge would pick: no judge is asked, and nothing rolls back", async () => {
+    // Flipped (Loop phase 4): a judge's tie (or its pick of the incumbent) kept the incumbent and
+    // rolled the work back; the build that runs is kept, and the judge is never asked.
+    const { events, rig, counts } = await runOnce({ compare: "tie" });
     const iterations = customEvents(events, "run_iteration");
-    assert.equal(iterations[0]!.winner, "incumbent", "a tie must not advance the incumbent");
-
-    // The challenger's file is gone — the workspace went back to the last accepted build.
-    await assert.rejects(
-      () => readFile(path.join(rig.core.layout.gamesRoot, "pong", "src", "feature.js"), "utf8"),
-      /ENOENT/,
-      "a tie must restore the incumbent's workspace",
-    );
-    const restores = events.filter((e) => e.data.type === "workspace_restored");
-    assert.ok(restores.length >= 1, "the rollback is recorded in the log");
-    // Losing a round is a verdict about the game, not the coder: the rollback must not drag
-    // the harness back with it (one bad run of ties would erase every unjudged self-edit).
-    for (const restore of restores) {
-      assert.equal((restore.data as { scope?: string }).scope, "game");
-    }
-  });
-
-  it("keeps the incumbent when the challenger regresses", async () => {
-    const { events, rig } = await runOnce({ compare: "incumbent" });
-    assert.equal(customEvents(events, "run_iteration")[0]!.winner, "incumbent");
-    await assert.rejects(
-      () => readFile(path.join(rig.core.layout.gamesRoot, "pong", "src", "feature.js"), "utf8"),
-      /ENOENT/,
+    assert.equal(iterations[0]!.winner, "challenger");
+    assert.equal(counts.compare, 0, "no blind comparison was asked");
+    const feature = await readFile(path.join(rig.core.layout.gamesRoot, "pong", "src", "feature.js"), "utf8");
+    assert.match(feature, /challenger attempt/);
+    assert.deepEqual(
+      events.filter((e) => e.data.type === "workspace_restored"),
+      [],
+      "nothing was rolled back",
     );
   });
 
@@ -321,131 +308,14 @@ describe("gauntlet: the incumbent rule", () => {
     assert.equal(counts.compare, 0, "a vision judge would politely describe the black JPEGs — never ask it");
   });
 
-  it("stops on a blind panel win rather than a round count", async () => {
+  it("stops on the first kept build rather than a round count, with no panel asked", async () => {
+    // Flipped (Loop phase 4): a blind panel's win against the reference ended the run as a victory;
+    // the first build that runs is kept and ends it, and no panel or judge is asked.
     const { events, report, counts } = await runOnce({ compare: "challenger", panel: "build" }, { maxIterations: 6 });
-    assert.equal(report.victory, true);
-    assert.match(String(report.stoppedBecause), /blind panel picked our build/);
-    assert.equal(customEvents(events, "run_iteration").length, 1, "victory ends the run immediately");
-    assert.equal(counts.panel, 3, "the panel is a majority of three independent votes");
-  });
-
-  it("keeps going when the panel still prefers the reference", async () => {
-    const { events, report } = await runOnce({ compare: "challenger", panel: "reference" }, { maxIterations: 3 });
-    assert.equal(report.victory, false);
-    assert.equal(
-      customEvents(events, "run_iteration").length,
-      3,
-      JSON.stringify({ report, terminal: customEvents(events, "run_finished") }),
-    );
-    assert.match(String(report.stoppedBecause), /iteration budget/);
-  });
-});
-
-describe("gauntlet: judge outages", () => {
-  it("a judge that fails twice and then answers still produces a verdict", async () => {
-    // One transient hiccup must not end an 8-hour run: the verdict gets retried, and the
-    // run continues as if nothing happened.
-    const { events, report, counts } = await runOnce({
-      compare: "challenger",
-      failCompares: 2,
-      failStatus: 500,
-    });
-    const iterations = customEvents(events, "run_iteration");
-    assert.equal(iterations.length, 1, "the hiccup cost retries, not the iteration");
-    assert.equal(iterations[0]!.winner, "challenger");
-    assert.equal(counts.compare, 3, "two failed attempts plus the answer that landed");
-    assert.ok(!String(report.stoppedBecause).includes("judge unavailable"), "a recovered judge is not an outage");
-  });
-
-  it("one exhausted outage costs an iteration as an auto-tie, and the run continues", async () => {
-    // An outage buys exactly one invented verdict: a tie, which the incumbent rule turns into
-    // a rollback. The cost is visible — an iteration spent, the incident in its reason string —
-    // and the run keeps going.
-    const { events, report, counts } = await runOnce(
-      { compare: "tie", failCompareAt: [1, 2, 3] },
-      { maxIterations: 2 },
-    );
-    const iterations = customEvents(events, "run_iteration");
-    assert.equal(
-      iterations.length,
-      2,
-      `the outage cost one iteration, not the run; stoppedBecause=${report.stoppedBecause}; error=${report.error ?? "none"}`,
-    );
-    assert.equal(iterations[0]!.winner, "incumbent", "an auto-tie must not advance the challenger");
-    assert.match(
-      String(iterations[0]!.reason),
-      /judge unavailable — auto-tie \(1 of 2\)/,
-      "the morning review can read the incident off the iteration record",
-    );
-    assert.equal(iterations[1]!.winner, "incumbent", "iteration 2 was judged for real");
-    assert.ok(!String(iterations[1]!.reason).includes("judge unavailable"), "a recovered judge answers for itself");
-    assert.equal(counts.compare, 4, "three dead attempts, then the answer that landed");
-    assert.match(String(report.stoppedBecause), /iteration budget/);
-  });
-
-  it("a verdict between outages resets the allowance — only CONSECUTIVE outages end the run", async () => {
-    // Iterations 1 and 3 each lose their judge; iteration 2's verdict lands. Two outages with
-    // a real answer between them are weather twice over, not a pattern.
-    const { events, report } = await runOnce(
-      { compare: "tie", failCompareAt: [1, 2, 3, 5, 6, 7] },
-      { maxIterations: 3 },
-    );
-    const iterations = customEvents(events, "run_iteration");
-    assert.equal(iterations.length, 3);
-    assert.match(String(iterations[0]!.reason), /auto-tie \(1 of 2\)/);
-    assert.match(String(iterations[2]!.reason), /auto-tie \(1 of 2\)/, "the reset re-arms the allowance");
-    assert.match(String(report.stoppedBecause), /iteration budget/);
-  });
-
-  it("a judge that stays down ends the run honestly on the second consecutive outage", async () => {
-    // The first outage is spent as an auto-tie; a second in a row is a pattern no verdict may
-    // be invented from. The run ends, and everything a morning needs is still on disk.
-    const { events, report, rig, runId, counts } = await runOnce(
-      { compare: "challenger", failCompares: Number.POSITIVE_INFINITY },
-      { maxIterations: 3 },
-    );
-    assert.equal(report.victory, false);
-    assert.match(
-      String(report.stoppedBecause),
-      /judge unavailable on iterations 1 and 2/,
-      "the honest ending names both dead iterations",
-    );
-    const iterations = customEvents(events, "run_iteration");
-    assert.equal(iterations.length, 1, "the auto-tie is recorded; the second unjudged attempt is not anyone's win");
-    assert.equal(iterations[0]!.winner, "incumbent");
-    assert.match(String(iterations[0]!.reason), /auto-tie \(1 of 2\)/);
-    assert.equal(counts.compare, 6, "both iterations spent their retries before the run gave up");
-    assert.equal(customEvents(events, "run_finished").length, 1, "the run closes, it does not crash");
-    const written = JSON.parse(await readFile(path.join(rig.core.layout.runs, runId, "report.json"), "utf8"));
-    assert.match(String(written.stoppedBecause), /judge unavailable/);
-    assert.ok(report.finalSnapshot, "the incumbent snapshot is still named for the morning");
-    // Both unjudged challengers are rolled back — same rule as a tie: never end below the start.
-    await assert.rejects(
-      () => readFile(path.join(rig.core.layout.gamesRoot, "pong", "src", "feature.js"), "utf8"),
-      /ENOENT/,
-    );
-  });
-
-  it("a dead reference panel spends the same allowance: the win stands and the run continues", async () => {
-    // The blind win is already the new incumbent; only the exit question went unanswered. One
-    // dead panel must not end the run — the incident lands on the report for the morning.
-    const { events, report, rig, counts } = await runOnce(
-      { compare: "challenger", failPanels: 3 },
-      { maxIterations: 2 },
-    );
-    const iterations = customEvents(events, "run_iteration");
-    assert.equal(iterations.length, 2, "the dead panel did not end the run");
-    assert.equal(iterations[0]!.winner, "challenger", "the blind win is never rolled back by a panel outage");
-    assert.match(String(report.stoppedBecause), /iteration budget/);
-    assert.match(
-      String((report.iterations as Array<{ judgeOutage?: string }>)[0]!.judgeOutage),
-      /reference panel unavailable/,
-      "the report carries the incident beside the iteration it hit",
-    );
-    assert.equal(counts.panel, 6, "three dead attempts on iteration 1, three live votes on iteration 2");
-    // The winner's work survives to the end of the run.
-    const feature = await readFile(path.join(rig.core.layout.gamesRoot, "pong", "src", "feature.js"), "utf8");
-    assert.match(feature, /challenger attempt/);
+    assert.equal(report.victory, false, "nobody judged it a victory");
+    assert.match(String(report.stoppedBecause), /the build runs and is kept/);
+    assert.equal(customEvents(events, "run_iteration").length, 1, "the kept build ends the run");
+    assert.deepEqual([counts.panel, counts.compare], [0, 0]);
   });
 });
 
@@ -638,29 +508,11 @@ describe("gauntlet: evidence and artefacts", () => {
 });
 
 describe("gauntlet: the judge sees both sides", () => {
-  it("gives the judge evidence for the incumbent, never a bare snapshot id", async () => {
-    // The first live run's judge saw one side described as "snapshot: <id>" and nothing else —
-    // and rejected two real improvements against a build it knew nothing about.
-    const { rig, runId } = await runOnce({ compare: "challenger" });
-    const compares = rig.server.requests
-      .map((r) => r.body as { messages?: Array<{ role: string; content: unknown }> } | null)
-      .filter((b) => b?.messages?.some((m) => flattenMessageContent(m.content).includes("BUILD A")));
-    assert.ok(compares.length >= 1, "a blind comparison was requested");
-    const text = compares[0]!.messages!.map((m) => flattenMessageContent(m.content)).join("\n");
-    assert.match(
-      text,
-      /BUILD [AB]\nstate ~1s in, before the scripted controls/,
-      "both sides carry probe evidence without revealing their origin",
-    );
-    assert.doesNotMatch(text, /previously accepted|incumbent|challenger/i);
-    assert.ok(!text.includes("→ /"), "no screenshot file paths are fed to a judge that cannot open files");
-    assert.match(
-      text,
-      /state after the scripted controls and ~30s of deterministic play/,
-      "the probe plays long enough for something to happen",
-    );
-    assert.equal(countImages(compares[0]!.messages), 2, "one default-camera still per build is attached");
-    assert.match(text, /IMAGES ATTACHED/, "the prompt tells the judge the pictures are the comparison");
+  it("logs both sides' evidence, never pixels, and asks no judge to compare them", async () => {
+    // Flipped (Loop phase 4): both sides' probe evidence and stills went to a blind judge; no judge
+    // compares them now, and the log still keeps both sides as paths, never pixels.
+    const { rig, runId, counts } = await runOnce({ compare: "challenger" });
+    assert.equal(counts.compare, 0, "no blind comparison was requested");
 
     const log = await rig.core.store.listEvents(await rig.core.threadForGame("pong"));
     const started = customEvents(log, "run_started")[0] as { reference?: { frames?: unknown; frameCount?: number } };
@@ -684,7 +536,7 @@ describe("gauntlet: the judge sees both sides", () => {
     assert.equal(typeof iteration?.attemptSnapshot, "string");
   });
 
-  it("attaches the user's reference stills to the judge, and reports GPU errors without auto-losing", async () => {
+  it("logs the user's reference stills by count, and keeps a build with GPU errors", async () => {
     const still = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
     const { rig, report, events } = await runOnce(
       { compare: "challenger" },
@@ -704,22 +556,12 @@ describe("gauntlet: the judge sees both sides", () => {
         },
       },
     );
+    // Flipped (Loop phase 4): the stills and the GPU errors reached a blind judge as evidence; no
+    // judge is asked, and the build with GPU errors is still kept.
     const compares = rig.server.requests
       .map((r) => r.body as { messages?: Array<{ role: string; content: unknown }> } | null)
       .filter((b) => b?.messages?.some((m) => flattenMessageContent(m.content).includes("BUILD A")));
-    assert.ok(
-      compares.length,
-      JSON.stringify({
-        report,
-        events: events
-          .map((e) => e.data)
-          .filter((d) => d.type === "custom" && /error|failed|finished/.test(d.event_type)),
-      }),
-    );
-    const text = compares[0]!.messages!.map((m) => flattenMessageContent(m.content)).join("\n");
-    assert.match(text, /REFERENCE \/ title/, "the bar's stills are labelled in the prompt");
-    assert.match(text, /WebGL errors \(GPU process\): GL_INVALID_OPERATION/, "GPU errors reach the judge as evidence");
-    assert.equal(countImages(compares[0]!.messages), 4, "two default-camera build stills and two reference stills");
+    assert.deepEqual(compares, [], JSON.stringify({ report, finished: customEvents(events, "run_finished") }));
     const log = await rig.core.store.listEvents(await rig.core.threadForGame("pong"));
     const started = customEvents(log, "run_started")[0] as { reference?: { frameCount?: number } };
     assert.equal(started?.reference?.frameCount, 2, "the log records how many stills were given, not the pixels");
@@ -728,25 +570,27 @@ describe("gauntlet: the judge sees both sides", () => {
     assert.equal(iteration?.winner, "challenger", "a GPU error is evidence, not an automatic loss");
   });
 
-  it("refuses a beat-a-real-game run that has a name but no stills", async () => {
+  it("builds a beat-a-real-game run that has a name but no stills: no panel needs them", async () => {
+    // Flipped (Loop phase 4): the run was refused for want of stills its reference panel needed; no
+    // panel judges a run now, so it builds.
     const { report, counts } = await runOnce(
       { compare: "challenger" },
       { reference: { name: "Vampire Survivors", shots: [], kind: "reference" } },
     );
-    assert.equal(report.victory, false);
-    assert.match(String(report.stoppedBecause), /no reference screenshots/);
-    assert.equal(counts.compare, 0, "no judge call is spent on a bar the critic cannot see");
-    assert.equal(counts.build, 0, "the builder is not started either");
+    assert.doesNotMatch(String(report.stoppedBecause), /no reference screenshots/);
+    assert.ok(counts.build >= 1, "the builder is started");
+    assert.equal(counts.compare, 0, "and no judge call is spent");
   });
 
-  it("a direction run spends its whole budget iterating — no reference panel against a vibe", async () => {
+  it("a direction run is briefed with the direction, with no reference panel against a vibe", async () => {
     const { report, counts, rig } = await runOnce(
       { compare: "challenger", panel: "build" },
       { maxIterations: 2, reference: { name: "more to touch, kick and hear", shots: [], kind: "direction" } },
     );
     assert.equal(counts.panel, 0, "no exit panel is convened when there is no reference game to beat");
     assert.equal(report.victory, false);
-    assert.match(String(report.stoppedBecause), /iteration budget/);
+    // Flipped (Loop phase 4): the run spent its whole iteration budget; its first kept build ends it.
+    assert.match(String(report.stoppedBecause), /the build runs and is kept/);
     const briefs = rig.server.requests
       .map((r) => r.body as { messages?: Array<{ role: string; content: unknown }> } | null)
       .filter((b) =>
@@ -828,14 +672,6 @@ describe("gauntlet: faceted critic", () => {
     // Nothing reported is an empty ledger, not a phantom defect.
     assert.deepEqual(normalizeDefects({ biggest_gap: "" }), []);
     assert.deepEqual(normalizeDefects({}), []);
-  });
-
-  it("a prettier build that feels worse keeps the incumbent", async () => {
-    const { events } = await runOnce({
-      compare: "challenger",
-      facets: { works: "tie", visuals: "challenger", feel: "incumbent", play: "challenger" },
-    });
-    assert.equal(customEvents(events, "run_iteration")[0]!.winner, "incumbent");
   });
 
   it("visuals can advance the challenger when feel does not veto", async () => {

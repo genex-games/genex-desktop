@@ -58,6 +58,21 @@ const PLAN = {
       checks: [
         { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" },
         { id: "dark-sky", kind: "pixel", camera: "default", expr: "top < 0.1", weight: "identity" },
+        // Two picture questions about one camera: they travel in one call (M3.10).
+        {
+          id: "water-clear",
+          kind: "vision",
+          camera: "default",
+          ask: "Is the water clear, not milky?",
+          weight: "normal",
+        },
+        {
+          id: "reeds-standing",
+          kind: "vision",
+          camera: "default",
+          ask: "Do reeds stand in the water?",
+          weight: "normal",
+        },
       ],
     },
     {
@@ -78,6 +93,9 @@ const PLAN = {
           weight: "normal",
         },
       ],
+      // A ladder keeps the sky building past its first kept round (Loop phase 4: no judge's
+      // "not satisfied" does).
+      milestones: [{ what: "the sun sets" }, { what: "clouds catch the light" }, { what: "the first stars" }],
     },
   ],
   // Every trait is off unless the plan declares one (M4.4): a plan that says nothing gets no
@@ -130,29 +148,15 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
           const aIsIncumbent = newestFixtureBuild(request) === "B";
           const challenger = aIsIncumbent ? "B" : "A";
           const incumbent = aIsIncumbent ? "A" : "B";
-          if (facet === "Water" && tasteCalls.Water === 2) {
-            // Iteration 2: the checks did not move, the pixels did; the taste judge vetoes with a
-            // named regression that becomes a new vision check.
-            reply = JSON.stringify({
-              pick: incumbent,
-              satisfied: false,
-              // Judge text reaches the attempt's commit message through a shell (HQ-1).
-              regression: { camera: "default", what: "the water went milky `echo judged` $(echo twice)" },
-              newCheck: { id: "water-not-milky", camera: "default", ask: "Is the water clear, not milky?" },
-              defects: ["milky water — default"],
-              reason: "veto",
-            });
-          } else {
-            const done = facet === "Water" ? tasteCalls.Water >= 3 : facet === "Sky" ? tasteCalls.Sky >= 2 : true;
-            reply = JSON.stringify({
-              pick: challenger,
-              satisfied: done,
-              regression: null,
-              newCheck: null,
-              defects: done ? [] : ["needs more"],
-              reason: "scripted",
-            });
-          }
+          // Since Loop phase 4 no round asks a taste judge: had one been asked, it would veto.
+          reply = JSON.stringify({
+            pick: incumbent,
+            satisfied: false,
+            regression: { camera: "default", what: "the water went milky" },
+            newCheck: { id: "water-not-milky", camera: "default", ask: "Is the water clear, not milky?" },
+            defects: ["milky water — default"],
+            reason: `veto of ${challenger}`,
+          });
         } else if (text.includes("BUILD A") && text.includes("BUILD B")) {
           const aIsIncumbent = newestFixtureBuild(request) === "B";
           reply = JSON.stringify({ pick: aIsIncumbent ? "B" : "A", biggest_gap: "", reason: "scripted global" });
@@ -208,7 +212,7 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
         if (/YOUR FACET: Water|facet "Water"/.test(request.prompt)) {
           builds.water++;
           await mkdir(path.join(request.cwd, "src"), { recursive: true });
-          // Iteration 1 adds objects nobody tagged — the reviewer must catch it before evidence.
+          // Iteration 1 adds objects nobody tagged: since Loop phase 4 that is the game's own business.
           const body =
             builds.water === 1
               ? `// water\n${"scene.add(new THREE.Mesh(g, m));\n".repeat(3)}export const water = 1;\n`
@@ -298,25 +302,15 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
           .sort(),
       );
     }
-    assert.equal(water[1]!.winner, "incumbent");
-    assert.equal(water[1]!.verdictSource, "taste-veto");
-    assert.equal(water[1]!.attemptBranch, `refs/studio/runs/${runId}/attempts/water/2`);
-    const grownAll = customEvents(events, "facet_check_added");
-    const added = grownAll.filter((e) => e.origin !== "judge");
-    assert.equal(added.length, 1);
-    assert.equal((added[0]!.check as { id: string; kind: string }).id, "water-not-milky");
-    assert.equal((added[0]!.check as { id: string; kind: string }).kind, "vision");
-    // Every defect the judge names becomes a vision check on the board, seeded as failing on
-    // the build it was named on — so "all checks pass" can never coexist with a defect list.
-    const fromDefects = grownAll.filter((e) => e.origin === "judge");
+    // Flipped (Loop phase 4): a taste judge vetoed water's second round, and its named regression and
+    // defects grew checks on the board. No judge looks at a round: each is kept unless a check that
+    // passed regresses, and nothing grows.
     assert.ok(
-      fromDefects.some((e) => (e.check as { defect?: string }).defect === "milky water — default"),
-      "the judge's defect became a check",
+      water.every((i) => i.winner === "challenger"),
+      JSON.stringify(water.map((i) => [i.iteration, i.winner, i.verdictSource])),
     );
-    assert.ok(
-      water.some((i) => board(i).results.some((r) => r.id.startsWith("defect-milky-water"))),
-      "the judge-origin check rides on the scoreboard",
-    );
+    assert.deepEqual(customEvents(events, "facet_check_added"), [], "no judge grew a check");
+    assert.deepEqual(tasteCalls, { Water: 0, Sky: 0, Integration: 0 }, "no taste judge was asked");
     const spikes = customEvents(events, "facet_spike");
     assert.ok(
       spikes.some((s) => s.phase === "opened" && s.checkId === "dark-sky"),
@@ -327,14 +321,10 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     assert.equal(closed.recipe, "spike.water.dark-sky");
     const last = water.at(-1)!;
     assert.equal(last.winner, "challenger");
-    assert.equal(last.satisfied, true, "identity checks pass and the taste judge is satisfied");
+    // Flipped (Loop phase 4): water ended once a taste judge was satisfied; its own checks end it.
     assert.ok(
       board(last).results.some((r) => r.id === "dark-sky" && r.pass),
       "the spiked check passes after the port",
-    );
-    assert.ok(
-      board(last).results.some((r) => r.id === "water-not-milky" && r.pass),
-      "the judge-added vision check is now part of the contract",
     );
 
     // The recipe landed in the technique library, with the spike as evidence.
@@ -363,47 +353,27 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
       "the prompt points at the brief instead of carrying the spike result twice",
     );
 
-    // The lost attempt is a real, reachable commit in the game's repo — on a ref of the
-    // studio's own, so the user's `git branch` is still only their own (M2.7) — and its diff
-    // summary reached the brief.
+    // Flipped (Loop phase 4): the vetoed round was a lost attempt on a ref of the studio's own, named
+    // in the next brief; no round of water is lost now, so none is kept aside, and the user's
+    // `git branch` is still only their own (M2.7).
     const gameDir = path.join(rig.core.layout.gamesRoot, "marshworld");
-    const attempt = `refs/studio/runs/${runId}/attempts/water/2`;
     const { stdout: branches } = await gitFile(["-C", gameDir, "branch", "--list"]);
     assert.doesNotMatch(branches, /attempt\//, branches);
     const { stdout: refs } = await gitFile(["-C", gameDir, "for-each-ref", "--format=%(refname)", "refs/studio/"]);
-    assert.match(refs, new RegExp(attempt));
-    // The builder's own notes are committed with the round — under docs/notes/, not as an
-    // eighth NOTES file in the root of somebody's game (M2.7).
-    const { stdout: keptFiles } = await gitFile(["-C", gameDir, "ls-tree", "-r", "--name-only", attempt]);
-    assert.match(keptFiles, /^docs\/notes\/NOTES\.water\.md$/m, keptFiles);
-    assert.doesNotMatch(keptFiles, /^NOTES\.water\.md$/m, keptFiles);
-    // The judge's words are the message, as written: nothing in them ran (HQ-1).
-    const { stdout: attemptMessage } = await gitFile(["-C", gameDir, "log", "-1", "--format=%s", attempt]);
-    assert.equal(
-      attemptMessage.trim(),
-      "facet water iteration 2: attempt (taste-veto) — taste veto: the water went milky `echo judged` $(echo twice)",
-    );
-    const briefAfterLoss = delegations.find(
-      (d) => /YOUR FACET: Water|facet "Water"/.test(d.prompt) && d.prompt.includes(attempt),
-    );
-    assert.ok(briefAfterLoss, "the retained attempt is named in the next brief");
+    assert.doesNotMatch(refs, /attempts\/water/, refs);
 
     // Persistent session: iteration 2+ resumed the contractor with its session id.
     const resumed = delegations.filter((d) => d.resume === "ses_water");
     assert.ok(resumed.length >= 2, `water resumed its session ${resumed.length} times`);
     assert.ok(resumed.some((d) => /You are resuming your own session/.test(d.prompt)));
 
-    // The code reviewer caught the untagged objects and the fix happened in the same session, before evidence.
+    // Flipped (Loop phase 4): the code reviewer caught the untagged objects and sent the build back to
+    // fix them; the scene's tags are the game's, so nothing is found and nothing goes back.
     const reviews = customEvents(events, "facet_review");
     assert.ok(
-      reviews.some(
-        (r) =>
-          r.facetId === "water" && (r.violations as Array<{ what: string }>).some((v) => /none tagged/.test(v.what)),
-      ),
+      !reviews.some((r) => ((r.violations ?? []) as Array<{ what: string }>).some((v) => /none tagged/.test(v.what))),
     );
-    assert.ok(
-      delegations.some((d) => /CODE REVIEW before your build is judged/.test(d.prompt) && d.resume === "ses_water"),
-    );
+    assert.ok(!delegations.some((d) => /CODE REVIEW before your build is judged/.test(d.prompt)));
     assert.ok(reviewDiffs.length >= 1, "the model reviewer saw the diff");
 
     // ── sky: a vision check with a crop, and an invisible diff kept without a judge ──
@@ -418,7 +388,7 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     // call (M3.10): a board of six used to be six Claude sessions.
     const batched = visionAsks.filter((t) => /^QUESTIONS \(\d+\)/m.test(t));
     assert.ok(
-      batched.some((t) => /water-not-milky/.test(t) && /defect-milky-water/.test(t)),
+      batched.some((t) => /water-clear/.test(t) && /reeds-standing/.test(t)),
       `two questions about one camera, one call: ${batched.length} batched asks`,
     );
     assert.ok(!visionAsks.some((t) => /QUESTIONS \(1\)/.test(t)), "a lone question keeps the single-question prompt");
@@ -426,8 +396,8 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     // Flipped (Loop phase 2): a round no camera saw change is kept — nothing regressed.
     assert.equal(sky[1]!.winner, "challenger");
     assert.equal(sky[1]!.verdictSource, "no-regression");
-    assert.equal(tasteCalls.Sky, 2, "the invisible iteration spent no judge call");
-    assert.equal(sky.at(-1)!.satisfied, true);
+    // Flipped (Loop phase 4): sky ended once a taste judge was satisfied; it ends when its ladder is climbed.
+    assert.equal(sky.at(-1)!.winner, "challenger");
 
     // The run closed with an integration facet and a verdict.
     const finished = customEvents(events, "run_finished")[0]!;
@@ -441,8 +411,8 @@ describe("facet loop v2: scoreboard, veto, memory, spikes, review", () => {
     };
     assert.equal(journal.facets.water!.sessionId, "ses_water");
     assert.ok(
-      journal.facets.water!.spec!.checks.some((c) => c.id === "water-not-milky"),
-      "the grown spec is journaled",
+      journal.facets.water!.spec!.checks.some((c) => c.id === "water-clear"),
+      "the spec is journaled",
     );
     // Worktrees are gone; recipes and branches remain.
     const scratch = await readdir(path.join(rig.core.layout.scratch, "autopilot", runId)).catch(() => []);

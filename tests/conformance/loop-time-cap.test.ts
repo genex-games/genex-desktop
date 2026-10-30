@@ -62,7 +62,7 @@ async function godotHost(run: Record<string, unknown>, turns: LoopTurn[]): Promi
 
 /** A turn that claims the goal is reached, naming a file of the folder as proof. */
 const finishes: LoopTurn = async ({ tool }) => {
-  await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+  await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot", review: "yes" });
   return undefined;
 };
 
@@ -128,7 +128,7 @@ describe("a Loop's clock under its cap", () => {
     assert.doesNotMatch(brief, /save, and call finish\./, "the web brief");
   });
 
-  it("the web lead hears when no's stop its build, by its kind, and that pictures outrank files", () => {
+  it("the web lead hears of no rule that its reviewer's no's stop its build, and that pictures outrank files", () => {
     const briefOf = (budgets: Record<string, unknown>) =>
       directorBrief({
         run: { runId: "run_o", project: "level", goal: "a level", engine: "codex", budgets },
@@ -138,13 +138,11 @@ describe("a Loop's clock under its cap", () => {
         baseCommit: "abcdef1234567890",
       } as never);
     const timed = briefOf({ wallClockMs: HOUR_MS, completionPolicy: "duration" });
-    assert.ok(
-      timed.includes(stopRuleWords(false, "new commits")),
-      "a timed build goes on past its no's with time left",
-    );
+    // Flipped (Loop phase 4): the brief and finish's description said when the no's stop the build; none does.
+    assert.ok(!timed.includes(stopRuleWords(false, "new commits")), "no rule of no's in the brief");
     assert.match(timed, /pictures outrank files/);
     const finish = DIRECTOR_TOOLS.find((tool) => tool.name === DirectorTool.Finish);
-    assert.ok(JSON.stringify(finish).includes(stopRuleWords(null)), "finish's own description says it for every build");
+    assert.ok(!JSON.stringify(finish).includes(stopRuleWords(null)), "nor in finish's own description");
   });
 });
 
@@ -304,7 +302,11 @@ describe("the open Loop past its grace with a claim", () => {
     const left = "The door doesn't open from the far side.";
     const host = await godotHost(HALF_HOUR, [
       async ({ host, tool }) => {
-        await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+        await tool("finish", {
+          summary: "The level is built and the door opens.",
+          proof: "project.godot",
+          review: "yes",
+        });
         host.pass(31 * MINUTE_MS);
         return undefined;
       },
@@ -326,7 +328,11 @@ describe("the open Loop past its grace with a claim", () => {
         return undefined;
       },
       async ({ host, tool }) => {
-        await tool("finish", { summary: "The level is built and the door opens.", proof: "project.godot" });
+        await tool("finish", {
+          summary: "The level is built and the door opens.",
+          proof: "project.godot",
+          review: "yes",
+        });
         host.pass(GRACE_MS);
         return undefined;
       },
@@ -419,7 +425,8 @@ describe("the web director under its cap", () => {
       ["the build card in its finish stage", card(true)],
     ] as const) {
       assert.match(words, /victory=yes (as soon as|once) the goal is reached/, label);
-      assert.match(words, /a reviewer's yes ends the build/, label);
+      // Flipped (Loop phase 4): a reviewer's yes ended the build; the lead's word does.
+      assert.match(words, /your word ends the build/, label);
       assert.match(words, /a finish that claims nothing waits for the wrap-up, unless the user asks/i, label);
       assert.doesNotMatch(words, /finish in (the )?wrap-up/, label);
     }

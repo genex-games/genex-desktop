@@ -532,7 +532,7 @@ describe("every pass of a real run writes one", () => {
     await Promise.all(rigs.map((rig) => rig.stop().catch(() => {})));
   });
 
-  it("emits a gate, a health pass, a judge, the close's own judge and a close — same shape, plain sentences", async () => {
+  it("emits a gate, a health pass, a judge and a close — same shape, plain sentences, and the close asks no judge", async () => {
     const rig = await startRig(
       { replies: [] },
       { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
@@ -622,12 +622,12 @@ describe("every pass of a real run writes one", () => {
     );
 
     const verdicts = customEvents(events, "director_verdict").filter((e) => e.runId === runId);
-    // Flipped (the close's judge): the lead's judge only looked (against=none), so the close judges
-    // the head it makes live against the start before it lands — a fifth pass.
+    // Flipped (Loop phase 4): the close judged the head it made live against the start, a fifth pass;
+    // a judge is the lead's second opinion, and the close asks none.
     assert.deepEqual(
       verdicts.map((verdict) => verdict.pass),
-      ["gate", "health", "judge", "judge", "close"],
-      `the five passes, in the order they looked: ${JSON.stringify(verdicts.map((v) => [v.pass, (v as { decision: { rule: string } }).decision?.rule]))}; tool trace: ${JSON.stringify(trace)}; decisions: ${JSON.stringify(customEvents(events, "autopilot_decision"))}`,
+      ["gate", "health", "judge", "close"],
+      `the four passes, in the order they looked: ${JSON.stringify(verdicts.map((v) => [v.pass, (v as { decision: { rule: string } }).decision?.rule]))}; tool trace: ${JSON.stringify(trace)}; decisions: ${JSON.stringify(customEvents(events, "autopilot_decision"))}`,
     );
     for (const verdict of verdicts) assertShape(verdict as Record<string, any>, `${verdict.pass} of the run`);
     const byPass = Object.fromEntries(
@@ -637,17 +637,14 @@ describe("every pass of a real run writes one", () => {
     assert.equal(byPass.gate.build.worker, "plaza");
     assert.equal(byPass.health.decision.kept, true, JSON.stringify(byPass.health.observed.problems));
     assert.ok(byPass.health.observed.cameras.length >= 1, "the health pass photographed it");
-    const [leadJudge, closeJudge] = verdicts.filter((verdict) => verdict.pass === "judge") as Array<
-      Record<string, any>
-    >;
-    assert.ok(leadJudge && closeJudge, "the lead's judge and the close's");
-    assert.equal(leadJudge.decision.rule, "starts", "against=none: it was looked at, not preferred");
-    assert.equal(leadJudge.decision.kept, null, "a pass that only looked decides nothing");
+    const judged = verdicts.filter((verdict) => verdict.pass === "judge") as Array<Record<string, any>>;
+    assert.equal(judged.length, 1, "only the lead's own judge");
+    const [leadJudge] = judged;
+    assert.equal(leadJudge?.decision.rule, "starts", "against=none: it was looked at, not preferred");
+    assert.equal(leadJudge?.decision.kept, null, "a pass that only looked decides nothing");
     const landedHead = (
       customEvents(events, "run_finished").find((e) => e.runId === runId) as { integrationHead: string }
     ).integrationHead;
-    assert.equal(closeJudge.build.head, landedHead, "the close judged the head it made live");
-    assert.equal(closeJudge.seen.judgeCalls, 1, "blind, against the game the user had");
     assert.equal(byPass.close.decision.rule, "landed");
     assert.equal(byPass.close.build.head, landedHead);
 
@@ -663,7 +660,7 @@ describe("every pass of a real run writes one", () => {
           log.filter((e) => e.data.type === "custom" && (e.data.payload as { runId?: string })?.runId === runId),
         ),
     )!;
-    assert.equal(graph.verdicts.length, 5);
+    assert.equal(graph.verdicts.length, 4);
     assert.equal(headVerdict(graph)!.pass, "close", "the last word on the build that landed");
     assertPlain(buildVerdictLine(graph)!, "the build box of a finished run");
   });
