@@ -30,7 +30,8 @@ export const CLOCK = { started: T0, softDeadline: T0 + HOUR_MS - wrapReserveMs(H
 export function appended(host: FakeHost): Array<{ type: string; payload: Record<string, any> }> {
   return host.calls
     .filter((call) => call.method === HostMethod.EventsAppend)
-    .map((call) => ({ type: String(call.params.event_type), payload: call.params.payload ?? {} }));
+    .flatMap((call) => (call.params.batch ?? []) as Array<{ event_type?: string; payload?: Record<string, any> }>)
+    .map((event) => ({ type: String(event.event_type), payload: event.payload ?? {} }));
 }
 
 /**

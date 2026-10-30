@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   CHANGE_HEADING,
   HEADINGS,
+  RETIRED_ROLE_LITERALS,
   ROLE_LITERALS,
   STUDIO_SCRATCH_PREFIXES,
   classifyBrief,
@@ -65,7 +66,11 @@ describe("the transcript census", () => {
         `${role}: "${literal}" is no longer a sentence the harness writes — reword the census with the brief, or drop the role`,
       );
     }
-    assert.equal(new Set(ROLE_LITERALS.map(([role]) => role)).size, ROLE_LITERALS.length);
+    // A retired role's brief is one the seed no longer writes: past transcripts alone carry it.
+    for (const [role, literal] of RETIRED_ROLE_LITERALS)
+      assert.ok(!seed.some((text) => text.includes(literal)), `${role}: the seed still writes "${literal}"`);
+    const roles = [...ROLE_LITERALS, ...RETIRED_ROLE_LITERALS].map(([role]) => role);
+    assert.equal(new Set(roles).size, roles.length);
   });
 
   it("keys on the opening sentence and calls everything else other", () => {

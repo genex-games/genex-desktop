@@ -4,12 +4,13 @@
  * lead's finish and the harness's clock — which lands the branch in the game folder when it passes
  * its health check, and writes the report.
  */
-import { commitAll, GIT, gitAt, headOf, mergeNoFf, shortSha } from "../git.ts";
+import { commitAll, GIT, gitAt, gitlinks, headOf, mergeNoFf, shortSha, unversionedNested } from "../git.ts";
 import { checkHealth, type HealthCheck, healthLine } from "../health-check.ts";
 import { HostMethod } from "../host-methods.ts";
 import { EventKind, ExecutionStatus, JournalPhase, RunEvent, writeRunArtifact } from "../run-events.ts";
 import { isCommit } from "../shell.ts";
 import { CLIP_DETAIL, CLIP_REASON } from "../text.ts";
+import { GIT_TIMEOUT_MS } from "../config.ts";
 import { SECOND_MS, sleep } from "../time.ts";
 import { NotLandedReason, VerdictPass, VerdictRule } from "../verdict.ts";
 import { closeRunPool } from "../workers/run-pool.ts";
@@ -54,6 +55,10 @@ const FINISH_WORDS = {
   leftInGame: (paths: readonly string[]) =>
     `the game folder still has uncommitted changes the landing left as they were — ${named(paths)}; they are not part of this build`,
   conflict: (error: string) => `merge into the live folder conflicted with changes of your own: ${unbracketed(error)}`,
+  nestedLost: (paths: readonly string[]) =>
+    `${paths.map((rel) => `${rel}/`).join(", ")} is the user's own repository and this build carries nothing from inside it — no edit there can be integrated or made live; vendor its sources into the game (without .git), committed`,
+  nestedCarried: (paths: readonly string[]) =>
+    `${paths.map((rel) => `${rel}/`).join(", ")} is the user's own repository inside the game folder and this build holds it as ordinary files — the studio may not add it to the game's own history from here; the user can make this build live from the outcome card`,
   finalCommit: (error: string) => `the lead's last edits could not be committed: ${error}`,
   doesNotRun: (check: HealthCheck) =>
     `the integrated build failed its health check at the close (${check.problems.join("; ")})`,
@@ -119,7 +124,7 @@ export async function checkIntegration(loopRun: LoopRun, label: string): Promise
   const { ctx, integrationWorktree, run, state } = loopRun;
   await commitLeadWork(loopRun);
   const head = await loopRun.syncHead();
-  const check = await checkHealth(
+  const looked = await checkHealth(
     ctx,
     {
       project: run.project,
@@ -129,6 +134,7 @@ export async function checkIntegration(loopRun: LoopRun, label: string): Promise
     },
     { sleep: loopRun.sleep },
   );
+  const check = withNestedLoss(looked, await nestedLost(loopRun, label));
   state.healthByHead.set(head, check);
   state.integrationHealthy = check.ok;
   await loopRun.appendRun(RunEvent.IntegrationHealth, {
@@ -144,6 +150,23 @@ export async function checkIntegration(loopRun: LoopRun, label: string): Promise
   });
   await loopRun.saveJournal();
   return check;
+}
+
+/**
+ * The user's own repositories inside the game folder that this head still holds as pointers: every
+ * edit inside one is invisible to the merge, the landing and the user. git does not walk into a
+ * gitlink path, so only this says so.
+ */
+async function nestedLost(loopRun: LoopRun, label: string): Promise<string[]> {
+  const nested = loopRun.nestedRepos ?? [];
+  if (!nested.length) return [];
+  return unversionedNested((command) => loopRun.nestedGit(command, `director:${label}:nested`), nested);
+}
+
+/** A health check with the nested repositories the build carries nothing from added as a problem. */
+function withNestedLoss(check: HealthCheck, lost: readonly string[]): HealthCheck {
+  if (!lost.length) return check;
+  return { ...check, ok: false, problems: [...check.problems, FINISH_WORDS.nestedLost(lost)] };
 }
 
 /** What the lead hears once a worker's copy is merged into the integration worktree: the merged build's health check. */
@@ -302,6 +325,8 @@ export async function landIntegration(loopRun: LoopRun, land: boolean): Promise<
   await loopRun.syncHead();
   if (!isCommit(state.integrationHead) || state.integrationHead === baseCommit)
     return notLanded(NOTHING_BEYOND_THE_START, NotLandedReason.NothingNew);
+  const nested = await nestedRefusal(loopRun);
+  if (nested) return nested;
   const changed = await gameFolderChanges(loopRun);
   if (changed.held)
     return notLanded(FINISH_WORDS.uncommitted(changed.paths, integrationRef), NotLandedReason.UncommittedChanges);
@@ -325,6 +350,21 @@ export async function landIntegration(loopRun: LoopRun, land: boolean): Promise<
     ...landingClaim(loopRun, state.integrationHead),
     ...(changed.paths.length ? { leftInGame: changed.paths } : {}),
   };
+}
+
+/**
+ * A repository of the user's own inside the game folder, which the build holds as files while the
+ * folder itself still holds it as a pointer. Landing that would touch somebody else's version
+ * history, so it is the user's own button (the outcome card), never the run's.
+ */
+async function nestedRefusal(loopRun: LoopRun): Promise<AnyRecord | null> {
+  const { ctx, projectDir } = loopRun;
+  const pointers = await gitlinks(ctx, projectDir, "HEAD", { timeoutMs: GIT_TIMEOUT_MS.slow }).catch(() => []);
+  if (!pointers.length) return null;
+  const stillPointers = await unversionedNested((command) => loopRun.nestedGit(command), pointers);
+  const carried = pointers.filter((rel) => !stillPointers.includes(rel));
+  if (!carried.length) return null;
+  return notLanded(FINISH_WORDS.nestedCarried(carried), NotLandedReason.NestedNotVersioned);
 }
 
 /** One line the result card can read: what happened to the build. */

@@ -7,7 +7,7 @@
  * asked of the game: the lead decides how to start.
  */
 import { DEFAULT_WALL_CLOCK_MS } from "../config.ts";
-import { commitAll, gitAt, GIT, headOf } from "../git.ts";
+import { commitAll, gitAt, GIT, gitlinks, headOf } from "../git.ts";
 import { HostMethod } from "../host-methods.ts";
 import { factsOfGame, LoopProfile, ProjectStarter } from "../folder-facts.ts";
 import { modelOn, RoleKey, roleEffort, roleEngine } from "../model-roles.ts";
@@ -109,15 +109,9 @@ export function loopRunReport(run: Run, earlier: AnyRecord | null = null): AnyRe
   return { ...report, notes: listOf(earlier.notes), verdicts: listOf(earlier.verdicts) };
 }
 
-/** The run's first cards on its thread: the run started, as a Loop's. */
-async function announceRunStart(
-  ctx: HarnessCtx,
-  threadId: string,
-  run: Run,
-  start: { resume: boolean; liveChat: boolean; profile?: LoopProfile },
-) {
-  const { resume, liveChat, profile } = start;
-  const started = {
+/** A Loop's `run_started` payload: the run, its engines and models (the judge's included, which run activity names), its budgets. */
+export function runStartedPayload(run: Run, resume: boolean): AnyRecord {
+  return {
     runId: run.runId,
     goal: run.goal,
     project: run.project,
@@ -137,6 +131,17 @@ async function announceRunStart(
     },
     budgets: run.budgets,
   };
+}
+
+/** The run's first cards on its thread: the run started, as a Loop's. */
+async function announceRunStart(
+  ctx: HarnessCtx,
+  threadId: string,
+  run: Run,
+  start: { resume: boolean; liveChat: boolean; profile?: LoopProfile },
+) {
+  const { resume, liveChat, profile } = start;
+  const started = runStartedPayload(run, resume);
   const pool = {
     runId: run.runId,
     project: run.project,
@@ -282,6 +287,8 @@ export async function prepareLoopRun(
   const projectDir = await readyTheGame(loopRun);
   const { baseCommit, forkCommit } = await startingCommits(ctx, run, priorJournal);
   const integrationWorktree = await openIntegration(loopRun, forkCommit);
+  // The user's own repositories inside the game: a head that still holds one as a pointer carries nothing from it.
+  const nestedRepos = forkCommit ? await gitlinks(ctx, { project: run.project }, forkCommit).catch(() => []) : [];
   const known = {
     inbox,
     started: clock.started,
@@ -294,6 +301,7 @@ export async function prepareLoopRun(
     baseCommit,
     forkCommit,
     integrationWorktree,
+    nestedRepos,
     state: loopRunState({
       run,
       threadId,

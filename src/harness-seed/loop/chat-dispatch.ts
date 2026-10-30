@@ -942,8 +942,8 @@ export async function launchFromIntake(
   // before anything is promised, when the run's engine is none the host seats there.
   const needsSession = await needsSessionRefusal(host, listed, spec);
   if (needsSession) throw new Error(needsSession);
-  // What the user sells for Nex rides the run's scope, so no plan can cut it; the build lists each
-  // item once it has drawn its picture, since the store takes none without one.
+  // What the user sells in the Genex store rides the run's goal; the build lists each item once it
+  // has drawn its picture, since the store takes none without one.
   const store = storeItemsOf(spec.storeItems);
   const run = intakeRun(spec, action, project, store);
   const launched = openLoop ? openLaunchPromise(run.budgets, Date.now()) : launchPromise(run.budgets, Date.now());
@@ -963,7 +963,7 @@ export async function launchFromIntake(
     })
     .catch(() => {});
   // Same thread: the run is this chat's story. handleRunStart holds keep-awake via notify.
-  // The commission is handled at launch, so restart cannot replay it. Synchronous run
+  // The launch is handled here, so a restart cannot replay it. Synchronous run
   // reservation keeps later queued messages behind the build until it saves and settles.
   // A Stop since this message is for this build: the start keeps it (`keepStop`).
   void handleRunStart(studio, { type: "run_start", threadId: action.threadId, run }, { keepStop: true }).catch(

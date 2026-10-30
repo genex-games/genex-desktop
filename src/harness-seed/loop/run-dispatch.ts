@@ -539,7 +539,7 @@ async function conductRun(
     webElsewhere: route.webElsewhere,
     ...(route.classicResume ? { classicResume: route.classicResume } : {}),
   };
-  const chosen = route.refusal ? refusing(route.refusal, reopen) : await runnerFor(host, run, ask);
+  const chosen = route.refusal ? refusing(route.refusal, { reopen }) : await runnerFor(host, run, ask);
   const report = await chosen.runner(ctx, { threadId, run, resume, profile, described });
   closed();
   host.notify("run.finished", report);
@@ -661,11 +661,20 @@ const closingOlderBuild = (): ChosenRunner => ({
   refuses: true,
 });
 
-/** A runner that only refuses the run with `words` (paused for a Resume when it resumes one, finished when it reopens one). */
-const refusing = (words: string, reopen = false): ChosenRunner => ({
-  runner: (ctx, options) => refusedRun(ctx, options, words, { reopen }),
+/**
+ * A runner that only refuses the run with `words` (paused for a Resume when it resumes one, finished
+ * when it reopens one), and its typed reason when it has one.
+ */
+const refusing = (words: string, { reopen = false, refusal = null }: RefusingHow = {}): ChosenRunner => ({
+  runner: (ctx, options) => refusedRun(ctx, options, words, { reopen, refusal }),
   refuses: true,
 });
+
+/** How `refusing` refuses: whether it reopens a finished build, and the refusal's typed reason. */
+interface RefusingHow {
+  reopen?: boolean;
+  refusal?: LoopRefusal | null;
+}
 
 /**
  * Which runner conducts the run: by its mode, its engine and its game's profile, and for an open
@@ -677,7 +686,7 @@ async function runnerFor(host: Host, run: Run, ask: RunnerAsk): Promise<ChosenRu
   const { threadId, described, games, resume, profile } = ask;
   const byKind = (kind: RunnerKind): ChosenRunner => ({ runner: RUNNERS[kind], refuses: REFUSING_RUNNERS.has(kind) });
   if (ask.webElsewhere)
-    return refusing(ask.reopen ? OPEN_LOOP_REFUSAL.webBuildElsewhere : ask.webElsewhere, ask.reopen);
+    return refusing(ask.reopen ? OPEN_LOOP_REFUSAL.webBuildElsewhere : ask.webElsewhere, { reopen: ask.reopen });
   if (profile !== LoopProfile.Open) {
     const kind = chooseRunner(run, described, profile);
     // The director can't pick up a classic build: it would start it again from its goal, on a fresh clock.
@@ -692,7 +701,9 @@ async function runnerFor(host: Host, run: Run, ask: RunnerAsk): Promise<ChosenRu
   const kind = chooseRunner(run, described, profile, { unrealRunner });
   // The refusal names what Genex found that makes this project's Loop work in place.
   if (kind === RunnerKind.NeedsSession && game)
-    return refusing(OPEN_LOOP_REFUSAL.needsSession(engineName(run, described), openLoopBecause(game)));
+    return refusing(OPEN_LOOP_REFUSAL.needsSession(engineName(run, described), openLoopBecause(game)), {
+      refusal: LoopRefusal.NeedsSession,
+    });
   return byKind(kind);
 }
 

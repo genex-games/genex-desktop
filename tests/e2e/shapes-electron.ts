@@ -57,10 +57,6 @@ interface Manifest {
   game: Record<string, unknown>;
   setup: Record<string, unknown> | null;
   cameras: string[];
-  /** Warnings this game must produce. Anything else it produces has to be in `allowWarnings`. */
-  expectWarnings: string[];
-  /** Warnings this game may produce and need not. */
-  allowWarnings: string[];
   delta: Array<{ path: string; min: number }>;
   deterministic: boolean;
   readyBudgetMs: number;

@@ -38,6 +38,7 @@ import { resolveRoles, roleName } from "../../src/shared/model-roles.ts";
 import { runStartWords } from "../../src/renderer/words.ts";
 import { openingRoles, readStoredRoles, storeRoles } from "../../src/renderer/role-store.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
+import { runStartedPayload } from "../../src/harness-seed/loop/director/setup.ts";
 import {
   ClaudeLoginController,
   MISSING_CLAUDE_CLI,
@@ -663,10 +664,13 @@ describe("which model judges the run", () => {
     // Both runs say who judged: the lead's own run_started carries it too, and on which engine.
     // director-cross-engine.test.ts proves it on a real run (a rig, L3); this keeps an L1 gate
     // until the payload has a pure builder, which is a seed change of its own.
-    // The run's run_started is written where the run is prepared (director/setup.ts).
-    const director = await read("src/harness-seed/loop/director/setup.ts");
-    assert.match(director, /event_type: RunEvent\.RunStarted[\s\S]{0,400}judgeModel/);
-    assert.match(director, /event_type: RunEvent\.RunStarted[\s\S]{0,600}judgeEngine: run\.judgeEngine/);
+    // The run's run_started payload is built where the run is prepared (director/setup.ts).
+    const payload = runStartedPayload(
+      { runId: "r", project: "p", goal: "g", judgeModel: "opus", judgeEngine: "claude-code" } as never,
+      false,
+    );
+    assert.equal(payload.judgeModel, "opus");
+    assert.equal(payload.judgeEngine, "claude-code");
     const started = (payload: Record<string, unknown>): string => {
       const entries = toEntries([
         {

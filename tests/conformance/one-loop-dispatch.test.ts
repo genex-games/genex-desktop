@@ -46,6 +46,7 @@ const TEST_TIMEOUT = { timeout: 60_000 };
 
 const GODOT = [{ id: "godot-project", path: "." }];
 const UNREAL = [{ id: "unreal-project", path: "." }];
+const WEB = [{ id: "web-game", path: "." }];
 
 /** An engine that keeps no session, as `engine.describe` lists it. */
 const DIRECT = { id: "ollama", label: "Ollama", kind: "direct" };
@@ -151,6 +152,25 @@ describe("which Loop a run gets", () => {
     assert.equal(closed?.stoppedBecause, NEEDS_SESSION);
     assert.equal(closed?.landed, false);
     assert.equal(host.rec.paramsOf("engine.delegate").length, 0, "no session ran");
+  });
+
+  it("a Loop on an engine without sessions closes with the typed reason, on any project", TEST_TIMEOUT, async () => {
+    assert.equal(
+      chooseRunner({ runId: "r", project: "p", goal: "g", engine: "ollama" } as never, [DIRECT as never]),
+      RunnerKind.NeedsSession,
+    );
+    for (const [project, facts] of [
+      [Project.GodotGame, GODOT],
+      [Project.WebFolder, WEB],
+    ] as const) {
+      const host = await hostOn(project, { facts, run: { engine: "ollama" } });
+      host.rec.handle("engine.describe", () => [DIRECT]);
+      await host.dispatch();
+      const [closed] = host.appended("run_finished");
+      assert.equal(closed?.refusal, runDispatchParts.LoopRefusal.NeedsSession, `${project}: the reason is typed`);
+      assert.equal(closed?.landed, false);
+      assert.equal(host.rec.paramsOf("engine.delegate").length, 0, `${project}: no session ran`);
+    }
   });
 
   it(

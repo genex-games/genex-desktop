@@ -7,6 +7,7 @@
  * the run it was handed.
  */
 import { headOf, shortSha, updateRef } from "../git.ts";
+import { GIT_TIMEOUT_MS } from "../config.ts";
 import { HostMethod } from "../host-methods.ts";
 import { appendRun as appendRunEvent, RunEvent, saveJournal as saveRunJournal } from "../run-events.ts";
 import type { FactRef, LoopProfile } from "../folder-facts.ts";
@@ -107,6 +108,8 @@ export interface LoopRunData {
   forkCommit: string | null;
   integrationWorktree: string;
   integrationRef: string;
+  /** The paths the game's history holds as repositories of their own (gitlinks at the fork point). */
+  nestedRepos?: string[];
   state: LoopRunState;
   journal: AnyRecord;
   logSeq: number;
@@ -266,6 +269,20 @@ export async function recordVerdict(loopRun: LoopRun, fields: Parameters<typeof 
   if (report.verdicts.length > MAX_REPORT_VERDICTS) report.verdicts.shift();
   await loopRun.appendRun(RunEvent.DirectorVerdict, record);
   return record;
+}
+
+/** git in the integration worktree for a question an empty answer settles (`unversionedNested`). */
+export function nestedGit(loopRun: LoopRun, command: string, label?: string | null): Promise<string> {
+  const { ctx, integrationWorktree } = loopRun;
+  return ctx
+    .call(HostMethod.RunExec, {
+      command,
+      cwd: integrationWorktree,
+      timeoutMs: GIT_TIMEOUT_MS.quick,
+      ...(label ? { label } : {}),
+    })
+    .then((result: { stdout?: string }) => String(result?.stdout ?? ""))
+    .catch(() => "");
 }
 
 /** Load the live folder in the user's own window again, once something there changed. */

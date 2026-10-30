@@ -10,7 +10,7 @@ import { minutes } from "../time.ts";
 import { folderLabelOf } from "../workers/identity.ts";
 import { WorkerTool } from "../workers/contract.ts";
 import { DirectorTool } from "./tool-specs.ts";
-import type { FactRef } from "../folder-facts.ts";
+import { type FactRef, ProjectTool } from "../folder-facts.ts";
 import type { Run } from "../../types/harness.d.ts";
 
 /** This part serves a lead that is its chat's own session (lead-session.ts `servesLead`). */
@@ -36,8 +36,11 @@ export interface DirectorBriefFacts {
   /** A resumed run's words about where it stands, or null. */
   resume: string | null;
   /** The workspace's skills whose facts reach this project, by name: read on demand. */
-  skills: readonly string[];
+  skills?: readonly string[];
 }
+
+/** What a lead is told of Genex's plugin search, by the tools' own names. */
+const PLUGIN_SEARCH_LINE = `PLUGINS: Genex's plugin search: ${ProjectTool.PluginsFind}; ${ProjectTool.PluginsSuggest} shows the person its card.`;
 
 /** The time paragraph: the hours are a cap, and finish ends the Loop whenever the goal is reached. */
 function timeWords({
@@ -51,7 +54,7 @@ function timeWords({
 
 /** The lead's brief, Genex's identity first (a fresh session reads this brief alone). */
 export function directorBrief(facts: DirectorBriefFacts): string {
-  const { run, integrationWorktree, baseCommit, gameFolder } = facts;
+  const { run, integrationWorktree, baseCommit, gameFolder, skills = [] } = facts;
   return [
     appIdentity({ folderLabel: folderLabelOf(gameFolder, run.project), facts: facts.facts ?? [] }),
     `YOU LEAD THIS LOOP. You are this chat's own session, leading a Loop on the game "${run.project}". Your cwd is the game folder the user sees (${gameFolder}). You build in the run's integration worktree (${integrationWorktree}), a git worktree of the game at ${shortSha(baseCommit ?? "")}, by its full path; commit there. Leave the game folder as the user left it: finish lands the integration branch there.`,
@@ -59,9 +62,10 @@ export function directorBrief(facts: DirectorBriefFacts): string {
     timeWords(facts),
     `WORKERS (optional): ${WorkerTool.Start} hands one task to a worker in the background, with the tools you have. A writer works in its own copy of the integration branch (isolation copy); ${WorkerTool.Mark} used merges its work into the integration worktree, and Genex runs one health check of the merged build (the page loads, no uncaught errors, the screenshot is not blank). A reader (isolation read) looks and writes nothing. ${WorkerTool.Wait}, ${WorkerTool.Status}, ${WorkerTool.Steer} and ${WorkerTool.Stop} reach them.`,
     `SECOND OPINION (optional): ${DirectorTool.Judge} hands pictures you name (or a screenshot of the integration build) and your question to a model that did none of the work. It decides nothing.`,
+    PLUGIN_SEARCH_LINE,
     `FINISH: ${DirectorTool.Finish} with a summary. Genex runs the health check on the integration branch first and lands it in the game folder when it passes; when it fails you hear why and go on (or finish with land=no). ${DirectorTool.Show} offers a build to the user's Live view; ${DirectorTool.Note} leaves a card in the run's feed.`,
-    ...(facts.skills.length
-      ? [`SKILLS: ${facts.skills.join(", ")} — read one when it helps (they are in the harness's skills folder).`]
+    ...(skills.length
+      ? [`SKILLS: ${skills.join(", ")} — read one when it helps (they are in the harness's skills folder).`]
       : []),
     ...(facts.resume ? [facts.resume] : []),
   ].join("\n\n");

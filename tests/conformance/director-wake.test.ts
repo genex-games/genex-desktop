@@ -1,4 +1,3 @@
-
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -23,14 +22,11 @@ import { CHAT_SO_FAR_MESSAGES, chatSoFar } from "../../src/harness-seed/loop/dir
 const T0 = Date.UTC(2026, 8, 25, 14, 0, 0);
 
 describe("when the lead is woken (wake-schedule.ts)", () => {
-
-  it("W7. asks once what next when nothing runs, then wraps up; a running builder, an open plan window or a pending workers' limit is not idle", () => {
+  it("W7. asks once what next when nothing runs, then wraps up; a running worker or job is not idle", () => {
     const idle = {
       ok: true,
       closed: false,
       running: 0,
-      planWindowOpen: false,
-      workersLimitPending: false,
       idleAsked: false,
       workingTimeLeft: true,
       finishRequested: false,
@@ -41,7 +37,7 @@ describe("when the lead is woken (wake-schedule.ts)", () => {
       idleAsked: true,
       wrapCause: WrapCause.Idle,
     });
-    for (const busy of [{ running: 1 }, { planWindowOpen: true }, { workersLimitPending: true }])
+    for (const busy of [{ running: 1 }, { running: 2 }])
       assert.deepEqual(
         afterTurn({ ...idle, idleAsked: true, ...busy }),
         { next: TurnEnd.Sleep, idleAsked: false },
@@ -160,7 +156,6 @@ describe("when the lead is woken (wake-schedule.ts)", () => {
 });
 
 describe("what the message that wakes the lead says (wake-prompts.ts)", () => {
-
   it("P7. what the user says is bounded: the newest messages, each clipped, and how many earlier ones are left out", () => {
     const { USER_SAYS_CHARS, USER_SAYS_MAX } = wakePrompts as unknown as Record<string, number>;
     assert.equal(typeof USER_SAYS_MAX, "number", "the block has a bound");

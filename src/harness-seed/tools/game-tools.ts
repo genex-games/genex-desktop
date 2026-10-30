@@ -179,7 +179,7 @@ export const tools: HarnessTool[] = [
       });
       if ("blocker" in started) return started.message;
       await ctx.call(HostMethod.PreviewLoad, { project });
-      return "Genex wrote the game's page: index.html and src/main.js, yours to change or replace. Its import map serves three.js (`three`, `three/addons/`, `three/webgpu`) from Genex's own copy at /vendor/, not from this folder.";
+      return "Genex wrote the game's page: index.html, which loads src/main.js; both are yours to change. Its import map names three.js r185 (`three`, `three/addons/`, `three/webgpu`, `three/tsl`), which Genex serves from its own copy at /vendor/ for a game that wants it.";
     },
   },
 

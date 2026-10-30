@@ -15,11 +15,9 @@ import { describe, it } from "node:test";
 import { GameWorkspaces, detectProjectShape } from "../../src/substrate/game-workspace.ts";
 import { MAX_INPUT_ACTIONS, capActions } from "../../src/substrate/preview-input.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { MACHINE_WARNINGS, missingWarnings, undeclaredWarnings } from "../../tests/e2e/warning-policy.ts";
 
 const repo = path.resolve(import.meta.dirname, "../..");
 const gamesDir = path.join(repo, "tests/fixtures/games");
-const seedDir = path.join(repo, "src/harness-seed");
 
 /** The six entries `ls tests/fixtures/games` must print — five games and the page of rules. */
 const FIXTURE_IDS = ["bundled-ts", "esm-addons", "inline-raf", "menu-levels", "webgpu-field"] as const;
@@ -44,8 +42,6 @@ interface FixtureManifest {
   game: Record<string, unknown>;
   setup: { gesture?: boolean; actions?: unknown[]; settleMs?: number; verify?: { path: string } } | null;
   cameras: string[];
-  expectWarnings: string[];
-  allowWarnings: string[];
   delta: Array<{ path: string; min: number }>;
   deterministic: boolean;
   readyBudgetMs: number;
@@ -93,19 +89,6 @@ async function claimedEdits(): Promise<Array<{ id: string; edits: FixtureManifes
 /** The guard's own predicate, so the falsification case can run it on a forged tree. */
 const editedFixtures = (rows: Array<{ id: string; edits: FixtureManifest["edits"] }>): string[] =>
   rows.filter((row) => row.edits === "two-line-install").map((row) => row.id);
-
-async function seedText(): Promise<string> {
-  const parts: string[] = [];
-  const walk = async (dir: string): Promise<void> => {
-    for (const entry of await readdir(dir, { withFileTypes: true })) {
-      const target = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(target);
-      else parts.push(await readFile(target, "utf8").catch(() => ""));
-    }
-  };
-  await walk(seedDir);
-  return parts.join("\n");
-}
 
 function workspaces(base: string): GameWorkspaces {
   return new GameWorkspaces({
@@ -252,82 +235,6 @@ describe("the five shapes", () => {
       assert.equal(capActions(actions).length, actions.length, `${id}: an action the preview would drop`);
       assert.ok(manifest.setup.verify?.path, `${id}: a setup with nothing to verify proves nothing landed`);
     }
-  });
-
-  it("names warnings the harness seed still says", async () => {
-    const seed = await seedText();
-    let asserted = 0;
-    for (const id of FIXTURE_IDS) {
-      const manifest = await manifestOf(id);
-      for (const warning of [...manifest.expectWarnings, ...manifest.allowWarnings]) {
-        assert.ok(seed.includes(warning), `${id}: no sentence in the harness seed contains "${warning}"`);
-        asserted += 1;
-      }
-    }
-    for (const warning of MACHINE_WARNINGS)
-      assert.ok(seed.includes(warning), `the tolerated "${warning}" is no longer a sentence the harness writes`);
-    assert.ok(asserted > 0, "no fixture expects a warning — the guard would never fail");
-    assert.ok(
-      !seed.includes("the page shows UI the compositor does not"),
-      "the guard is a substring match, not a grep for anything",
-    );
-  });
-
-  /**
-   * `expectWarnings` was a positive list and nothing bounded the other side: four of the five
-   * manifests said `[]`, which reads as "this game warns about nothing" and asserted nothing at
-   * all. The e2e now fails on any warning no list names, and these are the rules that guard the
-   * policy itself — every fixture declares both lists, and a warning that appears out of nowhere
-   * is undeclared for a fixture whose lists are empty.
-   */
-  it("bounds warnings from above: every fixture declares both lists and an unnamed warning is undeclared", async () => {
-    for (const id of FIXTURE_IDS) {
-      const manifest = await manifestOf(id);
-      assert.ok(Array.isArray(manifest.expectWarnings), `${id}: expectWarnings must be a list`);
-      assert.ok(Array.isArray(manifest.allowWarnings), `${id}: allowWarnings must be a list, even an empty one`);
-      const invented = "this game paints its HUD in the margins of the page";
-      assert.deepEqual(
-        undeclaredWarnings([invented], manifest),
-        [invented],
-        `${id}: a warning no list names has to be undeclared`,
-      );
-      assert.deepEqual(undeclaredWarnings([], manifest), []);
-      assert.deepEqual(
-        missingWarnings(manifest.expectWarnings, manifest),
-        [],
-        `${id}: its own expected warnings satisfy it`,
-      );
-      assert.deepEqual(
-        missingWarnings([], manifest),
-        manifest.expectWarnings,
-        `${id}: a run that warned about nothing is missing everything the fixture expects`,
-      );
-    }
-  });
-
-  it("tolerates the slow-boot warning and nothing else a fixture did not name", async () => {
-    const menu = await manifestOf("menu-levels");
-    const slow = "the page took 7.4 s to report itself ready — every pass of the run pays that boot";
-    assert.deepEqual(undeclaredWarnings([slow], menu), [], "a slow machine is not a failing game");
-    assert.deepEqual(
-      undeclaredWarnings(
-        ["this game paints UI outside the canvas (div#hud) — user:view shows it, the canvas frames do not"],
-        menu,
-      ),
-      [],
-      "the warning it names, with the numbers a real run carries",
-    );
-    const strict = { expectWarnings: [], allowWarnings: [] };
-    assert.deepEqual(undeclaredWarnings([slow], strict), []);
-    assert.equal(undeclaredWarnings(["a full-screen overlay covers the game (div#menu)"], strict).length, 1);
-    // What a permissive list buys, and only that.
-    assert.deepEqual(
-      undeclaredWarnings(["a full-screen overlay covers the game (div#menu)"], {
-        expectWarnings: [],
-        allowWarnings: ["a full-screen overlay covers the game"],
-      }),
-      [],
-    );
   });
 
   it("keeps the two-line install to one fixture — the milestone's own claim", async () => {

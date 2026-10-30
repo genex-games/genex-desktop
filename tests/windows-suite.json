@@ -155,6 +155,7 @@
   "tests/conformance/live-tool-results.test.ts",
   "tests/conformance/loop-build-turn.test.ts",
   "tests/conformance/loop-duration.test.ts",
+  "tests/conformance/loop-health.test.ts",
   "tests/conformance/loop-outcomes.test.ts",
   "tests/conformance/loop-repo-commands.test.ts",
   "tests/conformance/loop-sequences.test.ts",

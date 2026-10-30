@@ -351,7 +351,7 @@ describe("a finished build the run's coordinator answers for", () => {
         reopen,
       });
     assert.match(prompt({ hours: 2 }), /Loop is on[\s\S]*continue_build reopens it[\s\S]*up to 2 h/);
-    assert.match(prompt({ hours: null }), /until what was asked is verified and the art director names no blocker/);
+    assert.match(prompt({ hours: null }), /until its lead calls finish/);
     assert.doesNotMatch(prompt(null), /Loop is on/, "no Loop, no reopen: continue_build hands the work to a builder");
 
     assert.equal(coordinatorReopens(), true);

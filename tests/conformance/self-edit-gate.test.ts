@@ -6,7 +6,7 @@
  * and what lands on disk.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -76,7 +76,6 @@ describe("the self-edit gate", () => {
     const contents = [
       'import type { Host } from "../types/harness.d.ts";',
       'import { HostMethod } from "./host-methods.ts";',
-      'export { judgeableFirst } from "./chat-dispatch.ts";',
       'export { loopRunRefusal } from "./run-dispatch.ts";',
       "export async function createStudio(host: Host) {",
       "  await host.call(HostMethod.EngineAbort, {}).catch(() => {});",
@@ -336,6 +335,8 @@ describe("the agent changes its own files only through the host (B7)", () => {
     const target = path.join(outside, "target.md");
     await writeFile(target, "untouched\n");
     await symlink(target, path.join(ws, "prompts", "planted.md"));
+    // The seed ships no skills: the folder is the agent's own, there once it writes one.
+    await mkdir(path.join(ws, "skills"), { recursive: true });
     await symlink(outside, path.join(ws, "skills", "planted-dir"));
     const api = lite.api() as unknown as Record<string, (params: unknown) => Promise<{ ok: boolean }>>;
     const before = (await lite.core.listAllEvents()).length;
