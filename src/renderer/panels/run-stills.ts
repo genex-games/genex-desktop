@@ -232,7 +232,8 @@ function workerStillSource(
 ): StillSource | null {
   if (picture?.source === PictureSource.File)
     return project ? { project, asset: picture.file, maxPx: NODE_PICTURE_PX } : null;
-  if (picture?.source === PictureSource.Render) return { run: picture.path, maxPx: NODE_PICTURE_PX };
+  // A render, a kept copy and the merged build are files under the run's folder.
+  if (picture && "path" in picture) return { run: picture.path, maxPx: NODE_PICTURE_PX };
   return reviewed ? { run: reviewed.path, maxPx: NODE_PICTURE_PX } : null;
 }
 

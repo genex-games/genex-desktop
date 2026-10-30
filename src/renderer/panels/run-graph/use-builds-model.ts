@@ -9,6 +9,7 @@ import {
   type FinishCheckNode,
   joinBuildsView,
   GraphNodeKind,
+  healthPicture,
   type IntegrationNode,
   type IterationNode,
   type RunGraph as RunGraphModel,
@@ -164,32 +165,56 @@ function newestMergedPart(graph: RunGraphModel): string | null {
 }
 
 /**
- * The run's two stills: where it started, and its build now — the final capture, else the last
- * merged try's, else (a lead's merge names no round) the picture of the part it merged last. A
- * build still being tried shows that borrowed picture softened, never as the build's own.
+ * The newest health check's screenshot of the build (`healthPicture`), unless the build already has
+ * a picture of its own (`skip`): `found` while a check kept one, `borrowed` when it shows an earlier head.
+ */
+function useHealthStill(graph: RunGraphModel, outcome: BuildsOutcome, skip: boolean) {
+  const head = outcome?.head ?? graph.mergedHead?.head ?? null;
+  const checked = useMemo(() => healthPicture(graph, head), [graph, head]);
+  const path = skip ? null : (checked?.path ?? null);
+  const src = useStill(path ? { run: path, maxPx: 640 } : null);
+  return { found: checked !== null, path, src, borrowed: src !== null && checked?.borrowed === true };
+}
+
+/**
+ * The build's picture in a run whose health checks named none: the last merged try's, else (a lead's
+ * merge names no round) the picture of the part it merged last; nothing is read while `skip`.
+ */
+function useMergedStill(model: ReturnType<typeof useBuildsModel>, skip: boolean) {
+  const { graph, roundById } = model;
+  const merged = graph.lastMerged;
+  const lastMergedRound = merged ? (roundById.get(`iter:${merged.facetId}:${merged.iteration}`) ?? null) : null;
+  const shot = lastMergedRound ? roundShot(lastMergedRound) : null;
+  const shotPath = skip ? null : (shot?.path ?? null);
+  const shotSrc = useStill(shotPath ? { run: shotPath, maxPx: 640 } : null);
+  const newestPart = useMemo(() => newestMergedPart(graph), [graph]);
+  // No part named: nothing to ask for while the build has a picture of its own.
+  const partSrc = useRoundStill(graph, skip || shot ? "" : (newestPart ?? ""), 1, null, false);
+  return { src: shotSrc ?? partSrc, path: shot?.path ?? null };
+}
+
+/**
+ * The run's two stills: where it started, and its build now — the final capture, else the newest
+ * health check's screenshot of it, else the last merged try's, else (a lead's merge names no round)
+ * the picture of the part it merged last. A build still being tried, or a health check's picture of
+ * an earlier head, shows that borrowed picture softened, never as the build's own.
  */
 export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
-  const { graph, outcome, base, roundById } = model;
+  const { graph, outcome, base } = model;
   const baseStillPath = baseStillOf(graph, outcome);
   const baseSrc = useStill(
     baseStillPath ? { run: baseStillPath, maxPx: 640, retry: `${graph.runDir}:${baseStillPath}:${base?.done}` } : null,
   );
-  const merged = graph.lastMerged;
-  const lastMergedRound = merged ? (roundById.get(`iter:${merged.facetId}:${merged.iteration}`) ?? null) : null;
   const finalStillPath = finalStillOf(graph, outcome);
   const finalSrc = useStill(
     finalStillPath ? { run: finalStillPath, maxPx: 640, retry: `${graph.runId}:${outcome?.head}` } : null,
   );
-  const mergedShot = lastMergedRound ? roundShot(lastMergedRound) : null;
-  const mergedPath = finalSrc ? null : (mergedShot?.path ?? null);
-  const mergedSrc = useStill(mergedPath ? { run: mergedPath, maxPx: 640 } : null);
-  const newestPart = useMemo(() => newestMergedPart(graph), [graph]);
-  // No part named: nothing to ask for while the build has a picture of its own.
-  const partSrc = useRoundStill(graph, finalSrc || mergedShot ? "" : (newestPart ?? ""), 1, null, false);
+  const checked = useHealthStill(graph, outcome, finalSrc !== null);
+  const older = useMergedStill(model, finalSrc !== null || checked.found);
   const result = useMemo(() => resultStatus(graph, outcome), [graph, outcome]);
-  const resultSrc = finalSrc ?? mergedSrc ?? partSrc;
-  const resultPath = finalSrc ? finalStillPath : (mergedShot?.path ?? null);
-  const borrowed = result.state === StepState.Judging && !finalSrc;
+  const resultSrc = finalSrc ?? checked.src ?? older.src;
+  const resultPath = finalSrc ? finalStillPath : (checked.path ?? older.path);
+  const borrowed = (result.state === StepState.Judging && !finalSrc) || checked.borrowed;
   return useMemo(
     () => ({
       baseSrc,

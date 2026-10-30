@@ -2,7 +2,8 @@
  * Workers, jobs and the finish check in the Builds graph's model. Every worker a lead starts is one
  * session node on its own row, folded with what the director already wrote about it; a graph that
  * holds a worker's or a job's records is a tree whose lead carries the jobs, and a run's tree ends
- * in the finish check once its lead asked for one. A chat turn that started workers is a graph of its
+ * in the finish check once its lead asked for one. A worker shows what it made, else the build
+ * right after its merge. A chat turn that started workers is a graph of its
  * own, keyed by the turn. Logs without these records fold to exactly the nodes they always did.
  */
 import assert from "node:assert/strict";
@@ -15,11 +16,12 @@ import {
   type FacetNode,
   FinishCheckState,
   GraphNodeKind,
+  healthPicture,
   type LeadNode,
   lastGraphKey,
   type RunGraph,
 } from "../../src/renderer/run-graph.ts";
-import { partRows, StepState, statusLine } from "../../src/renderer/run-steps.ts";
+import { PictureSource, partRows, StepState, statusLine } from "../../src/renderer/run-steps.ts";
 import { LeadFace, leadFace } from "../../src/renderer/run-tree.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventData, type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
@@ -921,3 +923,111 @@ it("a job's state and who stopped it are read only from their own words", () => 
 function log2(): EventEnvelope[] {
   return [...runOpened(), started(turnScope, poolWorkerId("w1"), "Check the physics")];
 }
+
+describe("pictures of a Loop without rounds", () => {
+  /** The integration heads the run's health checks looked at. */
+  const H1 = "1".repeat(40);
+  const H2 = "2".repeat(40);
+  /** The copies Genex kept, and the health checks' screenshots, under the run's folder. */
+  const KEPT_CAR = "/runs/run-r/deliveries/job-car.png";
+  const KEPT_SIGN = "/runs/run-r/deliveries/job-sign.png";
+  const AFTER_SOUNDS = "/runs/run-r/director/merge_w2_2222222222.jpg";
+  const AT_FINISH = "/runs/run-r/director/finish_2222222222.jpg";
+  const carFiles = ["assets/blender/job-car/model.glb", "assets/blender/job-car/render-front.png"];
+
+  /** A plugin call of a worker named by its bare id, as plugin calls name it. */
+  const call = (callId: string, worker: string, pluginId: string, tool: string) =>
+    inRun(CustomEvent.PluginToolStarted, { callId, pluginId, pluginName: pluginId, tool, facetId: worker });
+  /** The host's record of files that landed in a build workspace. */
+  const delivered = (jobId: string, worker: string, files: string[], extra: Record<string, unknown> = {}) =>
+    inRun(CustomEvent.AssetDelivered, {
+      project: "game",
+      source: extra.source ?? "genex",
+      jobId,
+      files: files.map((file) => ({ file, bytes: 1, kind: file.endsWith(".glb") ? "model" : "image" })),
+      at: "2026-01-01T09:00:30.000Z",
+      workspace: "build",
+      facetId: worker,
+      ...extra,
+    });
+  /** A call coming back with its files, as Blender's does: no job id on the record. */
+  const returned = (callId: string, worker: string, files: string[]) =>
+    inRun(CustomEvent.PluginTool, { callId, facetId: worker, ok: true, files });
+  const health = (head: string, extra: Record<string, unknown> = {}) =>
+    inRun(CustomEvent.IntegrationHealth, { head, ok: true, problems: [], ...extra });
+
+  const loop = (): EventEnvelope[] => {
+    seq = 0;
+    const copy = { isolation: WorkerIsolation.Copy };
+    return [
+      inRun(CustomEvent.RunStarted, { goal: "A racing game", project: "game" }),
+      inRun(CustomEvent.AutopilotStarted, { director: true, facets: [], workerRecords: true }),
+      started(runScope, poolWorkerId("w1"), "Blender rival GT car", copy),
+      started(runScope, poolWorkerId("w2"), "Synth engine & race sounds", copy),
+      started(runScope, poolWorkerId("w3"), "Paint the shop sign", copy),
+      call("c1", "w1", "blender", "model"),
+      delivered("job-car", "w1", carFiles, { source: "blender", pluginId: "blender", picture: KEPT_CAR }),
+      returned("c1", "w1", carFiles),
+      call("c3", "w3", "genex", "image"),
+      delivered("job-sign", "w3", ["assets/genex/sign.png"], { picture: KEPT_SIGN }),
+      returned("c3", "w3", ["assets/genex/sign.png"]),
+      finished(runScope, poolWorkerId("w2"), "Synth engine & race sounds", { state: WorkerEnd.Done, delivered: true }),
+      health(H1, { picture: "/runs/run-r/director/merge_w1_1111111111.jpg", worker: poolWorkerId("w1") }),
+      health(H2, { ok: false, problems: ["blank"], picture: AFTER_SOUNDS, worker: "w2" }),
+      finished(runScope, poolWorkerId("w2"), "Synth engine & race sounds", {
+        verdict: WorkerVerdict.Used,
+        merged: true,
+      }),
+    ];
+  };
+  const pictureOf = (events: EventEnvelope[], worker: string) => {
+    const graph = buildRunGraph(events);
+    assert.ok(graph);
+    return partRows(graph)
+      .flatMap((row) => row.steps)
+      .find((step) => step.facetId === poolWorkerId(worker))?.picture;
+  };
+
+  it("a worker shows the copy Genex kept of the picture it delivered, Blender's render too, while the files are only in its copy", () => {
+    assert.deepEqual(pictureOf(loop(), "w1"), { source: PictureSource.Kept, path: KEPT_CAR }, "Blender's render");
+    assert.deepEqual(pictureOf(loop(), "w3"), { source: PictureSource.Kept, path: KEPT_SIGN }, "a plugin's image");
+  });
+
+  it("a worker whose work was merged and who delivered no picture shows the health check's screenshot of the build right after its merge", () => {
+    assert.deepEqual(pictureOf(loop(), "w2"), { source: PictureSource.Build, path: AFTER_SOUNDS });
+    const unmerged = loop().slice(0, -3);
+    assert.equal(pictureOf(unmerged, "w2"), undefined, "nothing of it was checked in the build yet");
+  });
+
+  it("records written before the pictures were named draw as they did", () => {
+    const old = loop().map((event) => {
+      const data = event.data as { payload?: Record<string, unknown> };
+      if (!data.payload) return event;
+      const { picture: _picture, worker: _worker, ...payload } = data.payload;
+      return { ...event, data: { ...event.data, payload } } as EventEnvelope;
+    });
+    assert.deepEqual(pictureOf(old, "w1"), { source: PictureSource.File, file: carFiles[1] });
+    assert.equal(pictureOf(old, "w2"), undefined);
+    const graph = buildRunGraph(old);
+    assert.ok(graph);
+    assert.equal(healthPicture(graph, H2), null, "no check named a picture");
+  });
+
+  it("the latest build shows the newest health check's screenshot of the integration head", () => {
+    const graph = buildRunGraph([...loop(), health(H2, { picture: AT_FINISH })]);
+    assert.ok(graph);
+    assert.deepEqual(healthPicture(graph, H2), { path: AT_FINISH, borrowed: false }, "the newest of its head");
+    assert.deepEqual(healthPicture(graph, null), { path: AT_FINISH, borrowed: false }, "no head known: the newest");
+    assert.deepEqual(
+      healthPicture(graph, "3".repeat(40)),
+      { path: AT_FINISH, borrowed: true },
+      "the lead committed since: an earlier build's picture, borrowed",
+    );
+    const firstOnly = buildRunGraph(loop().slice(0, -2));
+    assert.ok(firstOnly);
+    assert.deepEqual(healthPicture(firstOnly, H1), {
+      path: "/runs/run-r/director/merge_w1_1111111111.jpg",
+      borrowed: false,
+    });
+  });
+});

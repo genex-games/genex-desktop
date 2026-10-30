@@ -509,6 +509,11 @@ export interface AssetInfo {
   bytes: number;
   /** absolute path of the render PNG under the run folder, readable via `readRunStill` */
   render: string | null;
+  /**
+   * The copy the host kept of a picture it delivered, under the run folder (`readRunStill`): there
+   * while its files are only in a build workspace. Absent on records written before it.
+   */
+  picture?: string;
   /** the second view (front), beside the first; null for events written before it existed */
   renderFront: string | null;
   facetId: string | null;
@@ -608,6 +613,16 @@ export interface GraphEdge {
   count: number;
 }
 
+/** One health check of the run's build (`integration_health`): its head, whether it ran, and its picture. */
+export interface HealthLook {
+  head: string | null;
+  ok: boolean;
+  /** the screenshot the check kept, under the run folder; null on records written before it */
+  picture: string | null;
+  /** the part whose worker's merge it checked; null for any other check */
+  worker: string | null;
+}
+
 export interface RunGraph {
   summary?: RunSummary;
   runId: string;
@@ -638,6 +653,8 @@ export interface RunGraph {
   tree: boolean;
   /** The pictures the run's observers kept (`observer_capture`), oldest first: what Live shows of a run. */
   captures: CaptureInfo[];
+  /** Every health check of the run's build, oldest first: the pictures of its build as it grew. */
+  health: HealthLook[];
   /** The chat turn (its message id) this graph is, when it is a turn's and no run's. */
   turn?: string;
 }
@@ -715,6 +732,7 @@ interface GraphDraft {
   runDir: string | null;
   lastMerged: RunGraph["lastMerged"];
   mergedHead: RunGraph["mergedHead"];
+  health: HealthLook[];
   /** Running, paused or finished: the one execution rule, fed this run's lifecycle records. */
   execution: RunExecution | null;
   /** the moment of the record being read — a round first seen in it started then */
@@ -910,6 +928,7 @@ function newGraphDraft(runId: string, turn: string | null): GraphDraft {
     runDir: null,
     lastMerged: null,
     mergedHead: null,
+    health: [],
     execution: null,
     eventAt: null,
     seq: 0,
@@ -1572,11 +1591,21 @@ function onAdvice(graph: GraphDraft, entry: RunEntry): void {
   if (round) round.advice = advice;
 }
 
-/** Did the merged build run? Only a head that did is worth offering the user mid-run. */
+/**
+ * Did the merged build run? Only a head that did is worth offering the user mid-run. Each check
+ * is kept with its picture and the worker whose merge it checked, named as the graph names its part.
+ */
 function onHealth(graph: GraphDraft, payload: Payload): void {
   const head = strOrNull(payload.head);
   const { mergedHead } = graph;
   if (head && mergedHead?.head === head) mergedHead.healthy = payload.ok === true;
+  const worker = strOrNull(payload.worker);
+  graph.health.push({
+    head,
+    ok: payload.ok === true,
+    picture: strOrNull(payload.picture),
+    worker: worker ? partOfAsset(graph, restartOf(graph, worker).id) : null,
+  });
 }
 
 function onLedger(integration: IntegrationNode, payload: Payload): void {
@@ -1687,6 +1716,7 @@ function assembleGraph(graph: GraphDraft): RunGraph {
     verdicts: graph.verdicts,
     tree,
     captures: graph.captures,
+    health: graph.health,
     ...(graph.turn ? { turn: graph.turn } : {}),
   };
 }
@@ -1922,6 +1952,19 @@ export function headVerdict(graph: RunGraph): VerdictRecord | null {
   const head = graph.mergedHead?.head ?? null;
   const forHead = head ? graph.verdicts.filter((verdict) => verdict.build.head === head) : [];
   return forHead.at(-1) ?? graph.verdicts.at(-1) ?? null;
+}
+
+/**
+ * The newest health check's screenshot of the build the run stands on: the newest of `head` when a
+ * check looked at it, else the newest any check kept, `borrowed` when it shows an earlier head
+ * than `head` (the lead committed since). Null while no check kept a picture.
+ */
+export function healthPicture(graph: RunGraph, head: string | null): { path: string; borrowed: boolean } | null {
+  const pictured = graph.health.filter((look): look is HealthLook & { picture: string } => look.picture !== null);
+  const ofHead = head ? pictured.findLast((look) => look.head === head) : undefined;
+  if (ofHead) return { path: ofHead.picture, borrowed: false };
+  const newest = pictured.at(-1);
+  return newest ? { path: newest.picture, borrowed: head !== null } : null;
 }
 
 /** `…/runs/run_x/facet_a/iter_001/screenshots/cam.jpg` → `…/runs/run_x`. */
