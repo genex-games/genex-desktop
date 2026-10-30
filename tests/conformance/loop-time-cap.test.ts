@@ -25,7 +25,7 @@ import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/
 import { T0 } from "../helpers/director-run.ts";
 import { gameRepo, type LoopHost, type LoopTurn, loopHost } from "../helpers/loop-host.ts";
 import { copyProject, Project } from "../helpers/project-fixtures.ts";
-import { reviewerAnswer, seatedReviewer } from "../helpers/reviewer.ts";
+import { reviewerAnswer } from "../helpers/reviewer.ts";
 import { customEvents, makeFakePreview, type Rig, startRig, waitForLog } from "../helpers/studio-rig.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -234,7 +234,7 @@ describe("the open Loop under its cap", () => {
 });
 
 describe("a web Loop's close and its result card (director/integrate.ts)", () => {
-  it("a Stop that refused a closing finish's landing pauses the build; one after it landed ends nothing more; a close its time ended lists what is left", async () => {
+  it("a Stop that refused a closing finish's landing pauses the build; one after it landed ends nothing more", async () => {
     const { endedAs } = await import("../../src/harness-seed/loop/director/integrate.ts");
     const STOPPED = { ok: false, why: "stopped", reason: "stopped by the user" };
     const LANDED = { ok: true, how: "judge-pick", line: "made live" };
@@ -255,16 +255,14 @@ describe("a web Loop's close and its result card (director/integrate.ts)", () =>
     assert.equal(stopped.report.stillToFix, undefined, "a pause keeps its own words, with no list");
     const late = closing({ cancelled: true, state: { finish } }, LANDED);
     assert.equal(late.report.executionStatus, "completed", "a Stop after the landing: the build is done, no Resume");
-    const tally = { round: 1, rejections: 1, checking: false, reasons: [], notDone: ["No door"] };
+    // Flipped (Loop phase 5): no reviewer reads a web Loop's finish, so a close its time ended keeps
+    // no reviewer's list of what is left (`stillToFix`); it is completed all the same.
     const timedOut = closing(
-      {
-        cancelled: false,
-        state: { finish: { ...finish, victory: false }, endedWhy: StopWhy.Time, finishTally: tally },
-      },
+      { cancelled: false, state: { finish: { ...finish, victory: false }, endedWhy: StopWhy.Time } },
       LANDED,
     );
     assert.equal(timedOut.report.executionStatus, "completed");
-    assert.deepEqual(timedOut.report.stillToFix, { done: [], notDone: ["No door"], why: StopWhy.Time, hours: 2 });
+    assert.equal(timedOut.report.stillToFix, undefined);
   });
 });
 
@@ -338,39 +336,26 @@ describe("the web director under its cap", () => {
     assert.equal(closing(noClaim, { held: true }), false, "a held turn");
   });
 
-  it("a web Loop's early claim is checked, and a yes ends it", RIG_TIMEOUT, async () => {
-    const answers: string[] = [];
-    const { turns, reviews, events, runId } = await webLoop(async (call, turn) => {
-      if (turn > 1) return turnResult("Nothing more");
-      answers.push(
-        text(
-          await call("finish", { summary: "The dusk scene is playable", land: "yes", victory: "yes", review: "yes" }),
-        ),
-      );
-      return turnResult("First playable");
-    });
-    assert.doesNotMatch(String(answers[0]), /finish refused/);
-    assert.equal(reviews(), 1, "a reviewer checked the early claim");
-    assert.equal(turns(), 1, "the yes ended the Loop");
-    // Closed by the claim's yes: the lead's finish, not its time.
-    const finished = customEvents(events, "run_finished").find((event) => event.runId === runId);
-    assert.equal(finished?.stoppedBecause, "the director finished the run", JSON.stringify(finished?.stoppedBecause));
-  });
-
-  it("a finish that claims nothing before the cap is still refused", RIG_TIMEOUT, async () => {
-    const answers: string[] = [];
-    await webLoop(async (call, turn, finishAsked) => {
-      if (turn === 1) {
-        answers.push(text(await call("finish", { summary: "The starting point is playable", land: "yes" })));
+  it(
+    "a web Loop's early finish ends it at once: the lead's word, with no reviewer and no refusal before the cap",
+    RIG_TIMEOUT,
+    async () => {
+      // Flipped (Loop phase 5): a web Loop's claim is checked by no reviewer, and a finish before the
+      // cap is no longer refused: the hours are a cap, not a quota.
+      const answers: string[] = [];
+      const { turns, events, runId } = await webLoop(async (call, turn) => {
+        if (turn > 1) return turnResult("Nothing more");
+        answers.push(
+          text(await call("finish", { summary: "The dusk scene is playable", land: "yes", victory: "yes" })),
+        );
         return turnResult("First playable");
-      }
-      await finishAsked();
-      answers.push(text(await call("finish", { summary: "Stopped early at the user's request", land: "no" })));
-      return turnResult("Finished as requested");
-    });
-    assert.match(String(answers[0]), /^finish refused: \d+ working minutes remain in this timed build/);
-    assert.match(String(answers[1]), /run is closed/);
-  });
+      });
+      assert.match(String(answers[0]), /^The Loop is closed/, answers[0]);
+      assert.equal(turns(), 1, "the finish ended the Loop");
+      const finished = customEvents(events, "run_finished").find((event) => event.runId === runId);
+      assert.equal(finished?.stoppedBecause, "the lead finished the run", JSON.stringify(finished?.stoppedBecause));
+    },
+  );
 });
 
 /** A tool's answer as text. */
@@ -388,13 +373,12 @@ const turnResult = (summary: string): DelegateResult => ({
 
 /**
  * A timed web Loop of an hour on the rig, its lead's turns scripted (`script` gets the turn's tool
- * call, its number and the person's Finish), its reviewer saying yes. Resolves once the run is over.
+ * call and its number). Resolves once the run is over.
  */
 async function webLoop(
   script: (
     call: (name: string, args: Record<string, unknown>) => Promise<LiveToolResult>,
     turn: number,
-    finishAsked: () => Promise<void>,
   ) => Promise<DelegateResult>,
 ) {
   const rig = await startRig(
@@ -405,13 +389,6 @@ async function webLoop(
   const project = await rig.core.games.scaffold("timed-cap", { title: "Timed cap" });
   const runId = rig.core.newRunId();
   let leadTurns = 0;
-  let reviewers = 0;
-  const finishAsked = async () => {
-    await rig.core.append(
-      [{ type: "custom", event_type: "run_control", payload: { runId, action: "finish" } }],
-      await rig.core.threadForGame(project.name),
-    );
-  };
   rig.core.engines.register({
     id: "codex",
     label: "codex",
@@ -419,13 +396,9 @@ async function webLoop(
     status: async () => ({ code: "ready", detail: "" }),
     models: async () => [],
     delegate: async (request: DelegateRequest) => {
-      if (seatedReviewer(request)) {
-        reviewers += 1;
-        return reviewerAnswer("yes") as never;
-      }
       if (!request.director) return turnResult("worker");
       leadTurns += 1;
-      return script((name, args) => request.onLiveTool!(name, args), leadTurns, finishAsked);
+      return script((name, args) => request.onLiveTool!(name, args), leadTurns);
     },
   } as never);
   await rig.core.dispatchRun({
@@ -443,5 +416,5 @@ async function webLoop(
     120_000,
     "timed web Loop",
   );
-  return { turns: () => leadTurns, reviews: () => reviewers, events, runId };
+  return { turns: () => leadTurns, events, runId };
 }

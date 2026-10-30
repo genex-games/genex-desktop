@@ -7,7 +7,7 @@ import { InferenceQueue } from "../../src/substrate/engines/bonsai.ts";
 import type { CompleteRequest, CompleteResponse } from "../../src/substrate/engines/types.ts";
 import { startRig, makeFakePreview, waitForLog, customEvents } from "../helpers/studio-rig.ts";
 const model = "bonsai-2:27b-pq2_0";
-it("a local director uses real persisted local workers, integrates their work and finishes through the harness", {
+it("a local lead starts real persisted local workers in copies, merges their work and finishes through the harness", {
   timeout: 120000,
 }, async () => {
   const rig = await startRig(
@@ -36,9 +36,6 @@ it("a local director uses real persisted local workers, integrates their work an
           stopReason: "stop",
           message: { role: "assistant", content },
         });
-        // Flipped: the director's claim is checked by a reviewer first (a local session here), which says yes.
-        if (JSON.stringify(r.messages).includes("You are the reviewer of a Loop"))
-          return done('```json\n{"verdict":"yes","reasons":["Both parts are in."],"notDone":[]}\n```');
         if (!r.tools?.length) return done('{"answer":"yes","pass":true}');
         const last = r.messages.at(-1);
         const prior = r.messages
@@ -47,55 +44,27 @@ it("a local director uses real persisted local workers, integrates their work an
           .map((c) => c.name);
         if (r.tools.some((t) => t.name === "worker_start")) {
           if (last?.role === "tool") results.push(last.content);
-          if (!prior.includes("plan"))
-            return call("plan", {
-              summary: "Two local parts",
-              workers: JSON.stringify(
-                ["plaza", "sign"].map((id) => ({
-                  id,
-                  title: id,
-                  seam: `the ${id}`,
-                  owns: `src/${id}.js`,
-                  done: [`${id} exists`],
-                  minutes: 5,
-                })),
-              ),
-              base: "current integration",
-              risks: "sequential model inference",
-            });
-          const starts = r.messages.filter((m) => m.role === "tool" && m.content.startsWith('{"started":')).length;
-          // A waking lead has no wait: it ends its turn, and the studio wakes it when a builder ends.
-          if (last?.role === "tool" && last.content.includes("no worker window free"))
-            return done("Waiting for the builders");
+          // Flipped (Loop phase 5): the lead plans nothing and asks no reviewer; its workers are the
+          // pool's, each in its own copy, merged with worker_mark used, and finish lands what passes
+          // its health check.
+          const starts = prior.filter((c) => c === "worker_start").length;
           if (starts < 2) {
             const id = starts ? "sign" : "plaza";
             return call("worker_start", {
-              id,
               title: id,
-              brief: `Write src/${id}.js exporting ${id}`,
-              owns: `src/${id}.js`,
-              mode: "single",
-              minutes: "5",
+              task: `Write src/${id}.js exporting ${id}`,
+              isolation: "copy",
             });
           }
-          if (
-            last?.role === "tool" &&
-            (last.content.startsWith('{"started":') || last.content.includes('"state":"running"'))
-          )
-            return done("Waiting for the builders");
-          // Woken with a digest: look at the builders before deciding.
-          if (last?.role === "user") return call("worker_status", {});
-          const merges = prior.filter((c) => c === "integrate").length;
-          if (merges < 2) return call("integrate", { worker: merges ? "sign" : "plaza" });
-          if (!prior.includes("judge"))
-            return call("judge", { target: "integration", against: "none", question: "Does it work?" });
+          // A waking lead ends its turn, and the studio wakes it when a worker ends: it reads the run first.
+          if (last?.role === "tool" && last.content.startsWith("Started ")) return done("Waiting for the workers");
+          if (last?.role === "user") return call("run_status", {});
+          if (last?.role === "tool" && last.content.includes('"state":"running"'))
+            return done("Waiting for the workers");
+          const marks = prior.filter((c) => c === "worker_mark").length;
+          if (marks < 2) return call("worker_mark", { id: marks ? "w2" : "w1", verdict: "used" });
           if (!prior.includes("finish"))
-            return call("finish", {
-              summary: "Both local parts integrated",
-              land: "yes",
-              victory: "yes",
-              review: "yes",
-            });
+            return call("finish", { summary: "Both local parts integrated", land: "yes", victory: "yes" });
           return done("Finished");
         }
         if (!prior.includes("write_file")) {

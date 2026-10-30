@@ -1,23 +1,18 @@
 /**
  * The wake loop through the real core and harness (loop/director/wake.ts): a scripted lead ends
  * its turn after each decision, and the studio wakes the same session when its worker ends, when
- * the user speaks, when the user answers a plan they asked to read — and never after Stop. The
- * long turn it replaced stays one field away (`directorLoop: "turn"`).
+ * the user speaks, when a job ends — and never after Stop.
  */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
-import { reviewerAnswer, seatedReviewer } from "../helpers/reviewer.ts";
-import {
-  customEvents,
-  type FakePreview,
-  makeFakePreview,
-  startRig,
-  waitForLog,
-  type Rig,
-} from "../helpers/studio-rig.ts";
+import { STAGE_PLUGIN, stagePackage } from "../helpers/hook-plugin.ts";
+import { tmpDir } from "../helpers/tmp.ts";
+import { PluginSourceKind } from "../../src/shared/plugins.ts";
+import { customEvents, makeFakePreview, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { messageQueueState } from "../../src/shared/message-queue.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import { buildRunGraph, GraphNodeKind } from "../../src/renderer/run-graph.ts";
@@ -35,7 +30,6 @@ afterEach(async () => {
 });
 
 const text = (result: LiveToolResult): string => (typeof result === "string" ? result : result.text);
-const json = (result: LiveToolResult): Record<string, any> => JSON.parse(text(result));
 
 /** Poll until it holds, or say what was still false when the clock ran out. */
 async function until(condition: () => boolean, label: string, timeoutMs = 60_000): Promise<void> {
@@ -46,23 +40,8 @@ async function until(condition: () => boolean, label: string, timeoutMs = 60_000
   }
 }
 
-/** The plan every scripted lead writes before its first worker, as a real one must. */
-const plan = {
-  summary: "This run: a dusk sky over the plaza.",
-  workers: JSON.stringify([
-    { id: "sky", title: "Dusk sky", seam: "the sky", owns: "src/sky.js", done: ["the sky reads as dusk"], minutes: 20 },
-  ]),
-  base: "the integration branch as it stands",
-  risks: "one window at a time on this machine",
-};
-const startSky = {
-  id: "sky",
-  title: "Dusk sky",
-  brief: "Build a dusk sky",
-  mode: "single",
-  minutes: "5",
-  owns: "src/sky.js",
-};
+/** The one worker the scripted leads start: a writer in its own copy of the integration branch. */
+const startSky = { title: "Dusk sky", task: "Build a dusk sky", isolation: "copy" };
 
 /** A delegated engine the rig's harness talks to: the lead's turns and the workers' sessions. */
 function fakeEngine(rig: Rig, delegate: (request: DelegateRequest) => Promise<DelegateResult>): void {
@@ -150,12 +129,11 @@ describe("the lead is woken, not kept in one long turn", () => {
         lead.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         if (lead.length === 1) {
-          await call("plan", plan);
-          results.started = json(await call("worker_start", startSky));
+          results.started = text(await call("worker_start", startSky));
           turnOneReturned();
           return turnResult("lead-1", "the sky is building");
         }
-        results.integrated = json(await call("integrate", { worker: "sky" }));
+        results.integrated = text(await call("worker_mark", { id: "w1", verdict: "used" }));
         results.finished = text(await call("finish", { summary: "a dusk sky", land: "yes" }));
         return turnResult("lead-1", "done");
       }
@@ -172,26 +150,26 @@ describe("the lead is woken, not kept in one long turn", () => {
     assert.equal(lead[1]!.resume, "lead-1", "the same session is woken");
     const woken = lead[1]!.prompt;
     assert.match(woken, /WHAT HAPPENED/);
-    assert.match(woken, /worker sky done/);
-    const at = ["WHAT HAPPENED", "WHERE THE RUN STANDS", "BUILD CARD"].map((mark) => woken.indexOf(mark));
-    assert.ok(at[0]! >= 0 && at[0]! < at[1]! && at[1]! < at[2]!, `in order: ${JSON.stringify(at)}\n${woken}`);
+    // Flipped (Loop phase 5): the worker is named by its pool id and title, and the digest has no build card.
+    assert.match(woken, /worker w1: Dusk sky done/);
+    const at = ["WHAT HAPPENED", "WHERE THE RUN STANDS"].map((mark) => woken.indexOf(mark));
+    assert.ok(at[0]! >= 0 && at[0]! < at[1]!, `in order: ${JSON.stringify(at)}\n${woken}`);
     assert.ok(!woken.includes(path.join("autopilot", runId)), "no worktree path in the digest");
-    for (const turn of lead)
-      assert.ok(!(turn.liveTools ?? []).some((t) => t.name === "wait"), "a waking lead is offered no wait");
+    // Flipped (Loop phase 5): a lead's tools are the one worker model's, worker_wait among them.
     assert.ok(
       (lead[0]!.liveTools ?? []).some((t) => t.name === "worker_start"),
-      "and still has the rest of its run tools",
+      "it has its run tools",
     );
     const continued = customEvents(events, "director_continued").filter((e) => e.runId === runId);
     assert.equal(continued.length, 1, JSON.stringify(continued));
     assert.ok((continued[0]!.reasons as string[]).includes("worker_ended"), JSON.stringify(continued[0]));
     const finishedEvent = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
-    assert.equal(finishedEvent.stoppedBecause, "the director finished the run");
-    assert.equal(results.integrated.merged, true, JSON.stringify(results.integrated));
+    // Flipped (Loop phase 5): the close names the lead.
+    assert.equal(finishedEvent.stoppedBecause, "the lead finished the run");
+    assert.match(results.integrated, /^Merged w1's work into your folder/, results.integrated);
 
     const threadId = await rig.core.threadForGame(project.name);
     const journal = (await rig.core.store.readArtifact(threadId, `autopilot_${runId}`)) as Record<string, any>;
-    assert.equal(journal.director.workers.sky.brief, "Build a dusk sky");
     // The run's own clock is the run's record, not the wake loop's (journal.ts; it moved from `wake.clock`).
     assert.match(String(journal.director.clock.finalDeadline), /^\d{4}-\d\d-\d\dT/);
   });
@@ -208,13 +186,10 @@ describe("the lead is woken, not kept in one long turn", () => {
       lead.push({ request, at: Date.now() });
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (lead.length === 1) {
-        await call("plan", plan);
         await call("worker_start", startSky);
         rested = true;
         return turnResult("lead-1", "the sky is building");
       }
-      // A kept playbook may still call wait by name: the steer it was woken with is not said again.
-      results.waited = json(await call("wait", { seconds: "1" }));
       await call("finish", { summary: "the user wants a red sky; stopping here", land: "no" });
       return turnResult("lead-1", "done");
     });
@@ -235,53 +210,10 @@ describe("the lead is woken, not kept in one long turn", () => {
     const woken = lead[1]!.request.prompt;
     const says = woken.indexOf("THE USER SAYS");
     const words = woken.indexOf("make the sky red");
-    assert.ok(says >= 0 && says < words && words < woken.indexOf("WHAT HAPPENED"), woken);
+    // Flipped (Loop phase 5): a wake with nothing else to tell has no WHAT HAPPENED section; the
+    // person's words come before where the run stands.
+    assert.ok(says >= 0 && says < words && words < woken.indexOf("WHERE THE RUN STANDS"), woken);
     assert.equal(lead[1]!.request.resume, "lead-1");
-    assert.ok(
-      !(results.waited.happened as string[]).some((line) => line.includes("make the sky red")),
-      JSON.stringify(results.waited.happened),
-    );
-  });
-
-  it("R3. the plan window is a timer: worker_start answers at once and the lead is woken when the user answers", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
-    const { rig, project, runId, dispatch, finished } = await loopRun("wake-plan-window", { reviewPlan: true });
-    const lead: DelegateRequest[] = [];
-    const results: Record<string, any> = {};
-    let rested = false;
-    fakeEngine(rig, async (request) => {
-      if (!request.director) return hangUntilStopped(request, () => {});
-      lead.push(request);
-      const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-      if (lead.length === 1) {
-        results.planned = text(await call("plan", plan));
-        const at = Date.now();
-        results.held = text(await call("worker_start", startSky));
-        results.heldMs = Date.now() - at;
-        rested = true;
-        return turnResult("lead-1", "waiting for the user's word");
-      }
-      results.started = json(await call("worker_start", startSky));
-      await call("finish", { summary: "started on the user's go", land: "no" });
-      return turnResult("lead-1", "done");
-    });
-    const running = dispatch();
-    await until(() => rested, "the lead's first turn to end");
-    await rig.core.runFeedback({ threadId: await rig.core.threadForGame(project.name), runId, text: "go ahead" });
-    const events = await finished();
-    await running;
-
-    assert.match(results.planned, /waits for their word — up to \d+ min/, results.planned);
-    assert.ok(results.heldMs < 10_000, `worker_start answered in ${results.heldMs} ms`);
-    assert.match(results.held, /End your turn/, results.held);
-    assert.equal(lead.length, 2);
-    assert.match(lead[1]!.prompt, /THE USER SAYS[\s\S]*go ahead/);
-    assert.equal(results.started.started, "sky", JSON.stringify(results.started));
-    const decisions = customEvents(events, "autopilot_decision")
-      .filter((e) => e.runId === runId)
-      .map((e) => String(e.decision));
-    assert.equal(decisions.filter((d) => /plan review: the user said go/.test(d)).length, 1, decisions.join(" | "));
   });
 
   it("R4. Stop reaches a sleeping lead: the run closes as stopped and no turn follows", {
@@ -296,7 +228,6 @@ describe("the lead is woken, not kept in one long turn", () => {
       lead.push(request);
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (lead.length === 1) {
-        await call("plan", plan);
         await call("worker_start", startSky);
         rested = true;
       }
@@ -324,7 +255,6 @@ describe("the lead is woken, not kept in one long turn", () => {
       lead.push(request);
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (lead.length === 1) {
-        await call("plan", plan);
         await call("worker_start", startSky);
         rested = true;
         return turnResult("lead-1", "the sky is building");
@@ -359,151 +289,8 @@ describe("the lead is woken, not kept in one long turn", () => {
     const continued = customEvents(events, "director_continued").filter((e) => e.runId === runId);
     assert.ok(((continued[0]?.reasons ?? []) as string[]).includes("job_ended"), JSON.stringify(continued));
   });
-
-  it("R7. a Stop while the run prepares opens no lead session: the run closes as stopped", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
-    /** The empty scaffold as a window sees it, so the run builds a starting point first. */
-    const asEmptyScaffold = (preview: FakePreview): FakePreview => {
-      preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
-      preview.evaluations.push({ match: "isScene", value: true }, { match: "matrixWorld", value: "[1,0,0,1]" });
-      return preview;
-    };
-    const rig = await startRig(
-      { replies: [] },
-      { previewPoolMax: 3, createHeadlessPreview: async () => asEmptyScaffold(makeFakePreview()) },
-    );
-    rigs.push(rig);
-    asEmptyScaffold(rig.preview);
-    const project = await rig.core.games.scaffold("wake-stop-early", { title: "wake-stop-early" });
-    const runId = rig.core.newRunId();
-    const lead: DelegateRequest[] = [];
-    let baseStarted = false;
-    fakeEngine(rig, async (request) => {
-      if (request.director) {
-        lead.push(request);
-        return turnResult("lead-1", "planned");
-      }
-      baseStarted = true;
-      return hangUntilStopped(request, () => {});
-    });
-    const running = rig.core
-      .dispatchRun({
-        runId,
-        goal: "a dusk plaza",
-        project: project.name,
-        mode: "autopilot",
-        engine: "codex",
-        reference: { name: "Dusk", shots: [] },
-        budgets: { wallClockMs: 15 * 60_000 },
-      } as never)
-      .catch(() => {});
-    await until(() => baseStarted, "the starting point to be building");
-    await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
-    const events = await waitForLog(
-      rig.core,
-      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
-      150_000,
-      "the stopped run to close",
-    );
-    await running;
-    assert.equal(lead.length, 0, "no lead session opens after the Stop");
-    const closed = customEvents(events, "run_finished").find((e) => e.runId === runId);
-    assert.equal(closed?.stoppedBecause, "stopped by the user");
-  });
 });
 
-describe("the long turn, one field away", () => {
-  it("R6. a shipped build's way back: STUDIO_DIRECTOR_LOOP=turn in the studio's environment runs the long turn", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
-    // Set before the rig starts: the studio hands it to the harness it spawns.
-    const before = process.env.STUDIO_DIRECTOR_LOOP;
-    process.env.STUDIO_DIRECTOR_LOOP = "turn";
-    try {
-      const { rig, dispatch, finished } = await loopRun("env-turn");
-      const lead: DelegateRequest[] = [];
-      const results: Record<string, string> = {};
-      fakeEngine(rig, async (request) => {
-        if (!request.director) return turnResult("worker", "nothing");
-        lead.push(request);
-        results.finished = text(await request.onLiveTool!("finish", { summary: "nothing to do", land: "no" }));
-        return turnResult("env-session", "done");
-      });
-      const running = dispatch();
-      await finished();
-      await running;
-
-      assert.equal(lead.length, 1);
-      assert.ok(
-        (lead[0]!.liveTools ?? []).some((t) => t.name === "worker_wait"),
-        "the long turn's wait",
-      );
-      assert.match(lead[0]!.prompt, /`worker_wait` is your loop/);
-      assert.match(results.finished, /run is closed/, results.finished);
-    } finally {
-      if (before === undefined) delete process.env.STUDIO_DIRECTOR_LOOP;
-      else process.env.STUDIO_DIRECTOR_LOOP = before;
-    }
-  });
-
-  it("R5. the old loop stays behind directorLoop: turn", { timeout: RIG_TIMEOUT_MS }, async () => {
-    const { rig, project, runId, dispatch, finished } = await loopRun("turn-loop", {
-      directorLoop: "turn",
-      reference: { name: "Dusk", kind: "direction", shots: [] },
-      budgets: { wallClockMs: 3_600_000 },
-    });
-    const lead: DelegateRequest[] = [];
-    const results: Record<string, any> = {};
-    fakeEngine(rig, async (request) => {
-      if (!request.director) {
-        await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'dusk';\n");
-        return turnResult("worker", "Dusk sky");
-      }
-      lead.push(request);
-      const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-      if (lead.length === 1) {
-        assert.match(text(await call("finish", { summary: "too early", land: "yes" })), /finish refused/);
-        return turnResult("timed-session", "First playable");
-      }
-      // The user's Finish, where the run's inbox reads it: the game's own thread.
-      await rig.core.append(
-        [{ type: "custom", event_type: "run_control", payload: { runId, action: "finish" } }],
-        await rig.core.threadForGame(project.name),
-      );
-      results.finished = text(await call("finish", { summary: "Stopped early at the user’s request", land: "no" }));
-      return turnResult("timed-session", "Finished as requested");
-    });
-    const running = dispatch();
-    const events = await finished();
-    await running;
-
-    assert.equal(lead.length, 2);
-    assert.match(results.finished, /run is closed/, results.finished);
-    // The long turn is told its own loop — `worker_wait`, the one worker model's name for its old
-    // `wait` — and nothing of the wake loop's, playbook included.
-    assert.match(lead[0]!.prompt, /`worker_wait` is your loop/);
-    assert.doesNotMatch(lead[0]!.prompt, /end your turn/i);
-    assert.doesNotMatch(lead[0]!.prompt, /asked once what next/i);
-    assert.ok(lead[1]!.prompt.startsWith("The timed build still has"), lead[1]!.prompt.slice(0, 120));
-    assert.ok(
-      (lead[0]!.liveTools ?? []).some((t) => t.name === "worker_wait"),
-      "the long turn still has its wait",
-    );
-    const continued = customEvents(events, "director_continued").filter((e) => e.runId === runId);
-    assert.equal(continued.length, 1);
-    assert.equal(continued[0]!.reasons, undefined, "the long turn's continuation carries no wake reasons");
-  });
-});
-
-/**
- * Live chat during a build: a message sent to the game's chat while a run's lead works is
- * handed to that lead at once — delivered, never Queued under the build — and the lead answers in
- * the chat. A lead in the middle of a turn hears it in that turn: read at its next step by an
- * engine that takes input mid-turn, or interrupted and resumed in the same session with the
- * user's words in front. Stop still hands over to what waits; the long turn keeps its queue. After
- * the close the chat's own session answers what waited — the one the lead was — never a coordinator.
- */
 describe("live chat during a build", () => {
   /** The session answering the chat once the run is over: a coordinator, or the chat's own with the run's controls. */
   const answersChat = (request: DelegateRequest): boolean =>
@@ -553,7 +340,6 @@ describe("live chat during a build", () => {
       lead.push({ request, at: Date.now() });
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (lead.length === 1) {
-        await call("plan", plan);
         await call("worker_start", startSky);
         rested = true;
         return turnResult("lead-1", "the sky is building");
@@ -625,7 +411,6 @@ describe("live chat during a build", () => {
       lead.push(request);
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (lead.length === 1) {
-        await call("plan", plan);
         await call("worker_start", startSky);
         rested = true;
         return turnResult("lead-1", "the sky is building");
@@ -739,7 +524,6 @@ describe("live chat during a build", () => {
         lead.push(request);
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         if (lead.length === 1) {
-          await call("plan", plan);
           await call("worker_start", startSky);
           rested = true;
           return turnResult("lead-1", "the sky is building");
@@ -792,7 +576,6 @@ describe("live chat during a build", () => {
       if (!request.director) return hangUntilStopped(request, () => {});
       lead.push(request);
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-      await call("plan", plan);
       await call("worker_start", startSky);
       rested = true;
       return turnResult("lead-1", "the sky is building");
@@ -881,30 +664,38 @@ describe("live chat during a build", () => {
   it("L9. a run stopped while it prepares gives back what its lead never heard before it closes, and the chat answers it", {
     timeout: RIG_TIMEOUT_MS,
   }, async () => {
-    /** The empty scaffold as a window sees it, so the run builds a starting point first. */
-    const asEmptyScaffold = (preview: FakePreview): FakePreview => {
-      preview.pixelStatsNext = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
-      preview.evaluations.push({ match: "isScene", value: true }, { match: "matrixWorld", value: "[1,0,0,1]" });
-      return preview;
-    };
+    // Flipped (Loop phase 5): no starting point is built before the lead any more; the run's start
+    // is held here by a plugin's start step (run.prepare) that waits until the test lets it go.
+    let skew = 0;
     const rig = await startRig(
       { replies: [] },
-      { previewPoolMax: 3, createHeadlessPreview: async () => asEmptyScaffold(makeFakePreview()) },
+      {
+        previewPoolMax: 3,
+        createHeadlessPreview: async () => makeFakePreview(),
+        locks: {
+          now: () => Date.now() + skew,
+          sleep: async (ms: number) => {
+            skew += ms;
+            await nextTurn();
+          },
+        },
+      },
     );
     rigs.push(rig);
-    asEmptyScaffold(rig.preview);
+    const stage = await stagePackage();
+    await rig.core.plugins.installLocal(stage.dir, PluginSourceKind.Local, []);
+    await rig.core.plugins.setEnabled(STAGE_PLUGIN, true);
+    const gate = path.join(await tmpDir("live-stop-gate-"), "go");
+    await stage.script({ "run.prepare:gate": { until: gate } });
     const project = await rig.core.games.scaffold("live-stop-early", { title: "live-stop-early" });
     const runId = rig.core.newRunId();
     const chats: DelegateRequest[] = [];
-    let baseStarted = false;
     fakeEngine(rig, async (request) => {
       if (answersChat(request)) {
         chats.push(request);
         return turnResult(request.resume ?? "chat", "Stopped before it started; nothing was built.");
       }
-      if (request.director) return turnResult("lead-1", "planned");
-      baseStarted = true;
-      return hangUntilStopped(request, () => {});
+      return turnResult("lead-1", "planned");
     });
     const running = rig.core
       .dispatchRun({
@@ -917,7 +708,8 @@ describe("live chat during a build", () => {
         budgets: { wallClockMs: 15 * 60_000 },
       } as never)
       .catch(() => {});
-    await until(() => baseStarted, "the starting point to be building");
+    for (let tries = 0; tries < 600 && !(await stage.trail()).includes("run.prepare:gate"); tries++)
+      await new Promise((resolve) => setTimeout(resolve, 50));
     const { thread, messageId } = await say(rig, project.name, "use the red palette");
     assert.equal((await stateOf(rig, thread, messageId))?.state, "delivered", "the lead's line took it");
     await rig.core.host.dispatch({ type: "run_stop", runId }, 30_000);
@@ -927,6 +719,7 @@ describe("live chat during a build", () => {
       150_000,
       "the stopped run to close",
     );
+    await writeFile(gate, "");
     await running;
     await waitForLog(
       rig.core,
@@ -948,178 +741,4 @@ describe("live chat during a build", () => {
     assert.ok(back < closedAt, `given back (${back}) before the run closed (${closedAt})`);
     assert.equal(chats.length, 1, "the chat answered it");
   });
-
-  it("L5. the long turn keeps the old way: a message waits for the run, and the chat answers it after", {
-    timeout: RIG_TIMEOUT_MS,
-  }, async () => {
-    const { rig, project, runId, dispatch, finished } = await loopRun("live-old-loop", { directorLoop: "turn" });
-    const lead: DelegateRequest[] = [];
-    const coordinators: DelegateRequest[] = [];
-    let started = false;
-    let release = () => {};
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    fakeEngine(rig, async (request) => {
-      if (request.coordinator) {
-        coordinators.push(request);
-        return turnResult("coordinator", "It finished: a dusk sky.");
-      }
-      if (!request.director) return hangUntilStopped(request, () => {});
-      lead.push(request);
-      const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-      await call("plan", plan);
-      await call("worker_start", startSky);
-      started = true;
-      await released;
-      await call("finish", { summary: "a dusk sky", land: "no" });
-      return turnResult("timed-session", "done");
-    });
-    const running = dispatch();
-    await until(() => started, "the long turn to start its worker");
-    const { thread, messageId } = await say(rig, project.name, "is it done?");
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    assert.equal((await stateOf(rig, thread, messageId))?.state, "queued", "the long turn's run keeps its queue");
-    assert.equal(coordinators.length, 0);
-    release();
-    await finished();
-    await running;
-    await waitForLog(
-      rig.core,
-      (log) => customEvents(log, "coordinator_message_handled").some((e) => e.messageId === messageId),
-      60_000,
-      "the message to be answered after the run",
-    );
-    assert.equal(coordinators.length, 1, "the long turn's chat is still answered by the coordinator");
-    assert.equal(coordinators[0]!.readOnly, true);
-    assert.equal(lead.length, 1);
-    const log = await rig.core.store.listEvents(thread);
-    assert.equal(customEvents(log, "run_steering").length, 0, "nothing was handed to the long turn");
-    const start = customEvents(log, "autopilot_started").find((e) => e.runId === runId);
-    assert.equal(
-      start?.liveChat,
-      undefined,
-      "the long turn opens no line: its composer keeps saying the message waits",
-    );
-    assert.ok(customEvents(log, "run_finished").some((e) => e.runId === runId));
-  });
-});
-
-it("G2. an until-satisfied build pauses on a required prerequisite instead of starting cosmetics", {
-  timeout: RIG_TIMEOUT_MS,
-}, async () => {
-  const { rig, runId, dispatch, finished, project } = await loopRun("goal-blocker", {
-    reference: { kind: "direction", name: "Dusk", shots: [] },
-    budgets: { wallClockMs: 24 * 60 * 60_000, untilSatisfied: true },
-  });
-  let workers = 0;
-  let turns = 0;
-  fakeEngine(rig, async (request) => {
-    if (!request.director) {
-      workers += 1;
-      return turnResult("worker", "unexpected");
-    }
-    turns += 1;
-    assert.ok(request.onLiveTool);
-    await request.onLiveTool("plan", plan);
-    await request.onLiveTool("goal_update", { goal: "sky", blocker: "hosted_verification_unavailable" });
-    return turnResult("lead", "Required hosted verification is unavailable");
-  });
-  const running = dispatch();
-  const events = await finished();
-  await running;
-  assert.equal(turns, 1);
-  assert.equal(workers, 0);
-  const report = customEvents(events, "run_finished").find((event) => event.runId === runId);
-  assert.equal(report?.executionStatus, "paused");
-  assert.equal(report?.victory, false);
-  const threadId = await rig.core.threadForGame(project.name);
-  const journal = await rig.core.store.readArtifact(threadId, `autopilot_${runId}`);
-  assert.ok(journal && typeof journal === "object" && "director" in journal);
-  assert.equal(JSON.stringify(journal).includes("hosted_verification_unavailable"), true);
-});
-
-it("G3. current integrated acceptance permits early completion and keeps a recoverable checkpoint", {
-  timeout: RIG_TIMEOUT_MS,
-}, async () => {
-  const { rig, runId, dispatch, finished, project } = await loopRun("goal-complete", {
-    reference: { kind: "direction", name: "Dusk", shots: [] },
-    budgets: { wallClockMs: 24 * 60 * 60_000, untilSatisfied: true },
-  });
-  let verified = false;
-  fakeEngine(rig, async (request) => {
-    if (request.playtest)
-      return turnResult(
-        "playtester",
-        JSON.stringify({
-          answers: { "director-play": { answer: "yes", note: "Reached the dusk scene through interaction" } },
-        }),
-      );
-    // Flipped: the lead's claim is checked by a reviewer first, which says yes here.
-    if (seatedReviewer(request)) return reviewerAnswer("yes") as never;
-    assert.ok(request.director, "no builder is needed after current acceptance passes");
-    assert.ok(request.onLiveTool);
-    await request.onLiveTool("plan", plan);
-    // Flipped (Loop phase 4): a claim before the goal was played was refused ("cannot claim
-    // victory"); the lead's word closes the build, so this row plays first and claims after.
-    const played = json(await request.onLiveTool("playtest", { target: "integration", goal: "sky" }));
-    assert.equal(played.answer, "yes");
-    verified = true;
-    assert.match(
-      text(await request.onLiveTool("worker_start", { ...startSky, goal: "sky" })),
-      /verified|complete|finish/,
-    );
-    assert.match(
-      text(await request.onLiveTool("finish", { summary: "Dusk verified", land: "no", victory: "yes", review: "yes" })),
-      /closed/,
-    );
-    return turnResult("lead", "Dusk verified");
-  });
-  const running = dispatch();
-  const events = await finished();
-  await running;
-  assert.equal(verified, true);
-  const report = customEvents(events, "run_finished").find((event) => event.runId === runId);
-  assert.equal(report?.executionStatus, "completed");
-  const threadId = await rig.core.threadForGame(project.name);
-  const journal = await rig.core.store.readArtifact(threadId, `autopilot_${runId}`);
-  assert.ok(journal && typeof journal === "object" && "director" in journal);
-  assert.match(JSON.stringify(journal), /firstVerifiedCheckpoint/);
-  const saved = JSON.parse(JSON.stringify(journal));
-  const { gitFile } = await import("../helpers/git.ts");
-  const head = saved.director.firstVerifiedCheckpoint.head;
-  const kept = await gitFile(["rev-parse", `refs/studio/runs/${runId}/checkpoints/${head}`], { cwd: project.dir });
-  assert.equal(String(kept.stdout).trim(), head, "checkpoint remains reachable after worktree cleanup");
-});
-
-it("G4. multiplayer prerequisites are host-checked before any worker is delegated", {
-  timeout: RIG_TIMEOUT_MS,
-}, async () => {
-  const { rig, runId, dispatch, finished } = await loopRun("goal-prerequisites", {
-    reference: { kind: "direction", name: "Chess", shots: [] },
-    budgets: { wallClockMs: 24 * 60 * 60_000, untilSatisfied: true },
-  });
-  let workers = 0;
-  let refusal = "";
-  fakeEngine(rig, async (request) => {
-    if (!request.director) {
-      workers += 1;
-      return turnResult("worker", "must not start");
-    }
-    assert.ok(request.onLiveTool);
-    await request.onLiveTool("plan", {
-      ...plan,
-      workers: JSON.stringify([{ id: "sky", done: ["Two players exchange legal moves"], multiplayer: true }]),
-    });
-    refusal = text(await request.onLiveTool("worker_start", startSky));
-    await request.onLiveTool("finish", { summary: "Prerequisite unavailable", land: "no", victory: "no" });
-    return turnResult("lead", refusal);
-  });
-  const running = dispatch();
-  const events = await finished();
-  await running;
-  assert.equal(workers, 0);
-  assert.match(refusal, /Genex|package\.json/);
-  const report = customEvents(events, "run_finished").find((event) => event.runId === runId);
-  assert.equal(report?.executionStatus, "paused");
 });
