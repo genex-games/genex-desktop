@@ -638,10 +638,13 @@ describe("seed upgrade into the archive epoch, over every older vintage", () => 
     };
     delete body.archiveEpoch;
     const edits = new Map<string, string>();
+    // The copy the shipped seed laid down in that workspace, or null where it ships none.
+    const laid = new Map<string, string | null>();
     for (const [rel, names] of parts) {
       body.files[rel] = OLDER_SEED_HASH;
       const text = `${names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`).join("\n")}\n// the agent's own change\n`;
       edits.set(rel, text);
+      laid.set(rel, await readFile(path.join(ws, rel), "utf8").catch(() => null));
       await mkdir(path.dirname(path.join(ws, rel)), { recursive: true });
       await writeFile(path.join(ws, rel), text);
     }
@@ -668,9 +671,9 @@ describe("seed upgrade into the archive epoch, over every older vintage", () => 
         renameInSource(rel, text),
         `${rel}: the agent's copy`,
       );
-      const seedCopy = path.join(shipped, rel);
-      if (await pathExists(seedCopy))
-        assert.equal(await readFile(path.join(ws, rel), "utf8"), await readFile(seedCopy, "utf8"), `${rel}: shipped`);
+      const shippedCopy = laid.get(rel) ?? null;
+      if (shippedCopy !== null)
+        assert.equal(await readFile(path.join(ws, rel), "utf8"), shippedCopy, `${rel}: shipped`);
       else assert.equal(await pathExists(path.join(ws, rel)), false, `${rel}: the seed no longer ships it`);
     }
     assert.deepEqual(report.kept, [], "nothing older is kept beside the shipped harness");
@@ -691,13 +694,19 @@ describe("seed upgrade into the archive epoch, over every older vintage", () => 
     }
   });
 
-  it("every call change names a file the seed ships and a marker its copy has", async () => {
-    const stale: string[] = [];
-    for (const change of SEED_CALL_CHANGES) {
-      const text = await readFile(path.join(shipped, change.file), "utf8").catch(() => null);
-      if (text === null || !text.includes(change.marker)) stale.push(`${change.file}: ${change.marker}`);
-    }
-    assert.deepEqual(stale, [], "a kept copy is reported only for a call the shipped copy makes");
+  it("a kept copy of every file a call change names, edited without touching its calls, is never reported", async () => {
+    const root = await tmpDir("seed-call-changes-");
+    const { ws, manifest } = await cloneSeededWorkspace(shipped, root);
+    const files = [...new Set(SEED_CALL_CHANGES.map((change) => change.file))];
+    for (const file of files) await appendFile(path.join(ws, file), "\n// the agent's own change\n");
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    assert.deepEqual([...report.kept].sort(), [...files].sort(), "every one is the agent's");
+    assert.deepEqual(report.outdatedCalls ?? [], [], "a call change names only a file and a call the seed ships");
   });
 });
 

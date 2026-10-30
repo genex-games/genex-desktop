@@ -24,9 +24,8 @@ Off, Harness learns nothing new and cannot edit its own code, prompts or skills;
 stays undoable, waiting suggestions actionable, runs recorded. An archive-epoch update
 moves what it learned and edited to `archive/<date>/`.
 
-Harness learns from run evidence and proposes reusable instruction changes; proposed, applied,
-checked and game-quality results are distinct. A game chat shows one plain line about what
-Harness learned from that build, with **Review in Harness**.
+No learning pass follows a run: the harness proposes nothing from run evidence and injects no
+lessons.
 
 Each proposal carries a plain title and summary; checked suggestions are applied or discarded
 together; the file, the proposer's notes and the diff stay behind **See the exact edit**, or show directly

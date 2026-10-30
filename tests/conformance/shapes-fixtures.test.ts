@@ -81,7 +81,6 @@ function importMapKeys(html: string): string[] {
   return Object.keys((JSON.parse(block) as { imports?: Record<string, unknown> }).imports ?? {});
 }
 
-
 function workspaces(base: string): GameWorkspaces {
   return new GameWorkspaces({
     root: path.join(base, "library"),
