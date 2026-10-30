@@ -16882,4 +16882,41 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
       assert.equal(hasSessionRoles(engine), true, engine);
     assert.equal(hasSessionRoles("ollama"), false);
   });
+
+  it("FL7. a waking lead had no way to wait for its workers but to end its turn: worker_wait waits, ends when a worker ends or the user speaks, and takes none of the user's words off the inbox", async (t) => {
+    const { fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: Date.now() });
+    const said: string[] = [];
+    const consumed: boolean[] = [];
+    const inbox = {
+      steering: async (_facet: unknown, consume = true) => {
+        consumed.push(consume);
+        return [];
+      },
+      sentSteering: async () => said.map((text) => ({ text, at: null })),
+      finishing: async () => false,
+      addressed: async () => [],
+      backlog: async () => [],
+    };
+    const loopRun = fakeLoopRun(fakeHost(), { waking: true, inbox });
+    const waitFor = async (seconds: string, during: () => void) => {
+      const waiting = loopRun.wait({ seconds });
+      for (let i = 0; i < 3; i++) {
+        await nextTurn();
+        t.mock.timers.tick(1_000);
+      }
+      during();
+      for (let i = 0; i < 5; i++) {
+        await nextTurn();
+        t.mock.timers.tick(1_000);
+      }
+      return JSON.parse(String(await waiting));
+    };
+    const ended = await waitFor("200", () => loopRun.note("worker sky done — built the sky", "worker_ended"));
+    assert.ok(ended.waitedSeconds < 200, "it ended when the worker did");
+    assert.match(JSON.stringify(ended.happened), /worker sky done/);
+    const spoke = await waitFor("200", () => said.push("make it night"));
+    assert.ok(spoke.waitedSeconds < 200, "it ended when the user spoke");
+    assert.deepEqual(consumed, [], "the user's words are left for the lead's turn and digest");
+  });
 });

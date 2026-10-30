@@ -1151,19 +1151,26 @@ export async function show(loopRun: LoopRun, args: AnyRecord) {
 const wakes = (only: string | null, text: string): boolean =>
   !only || text.includes(`worker ${only}`) || text.startsWith("USER");
 
+/** How many of the user's words to the run there are, said or not: a waking lead's wait ends when it grows. */
+async function userSaid(loopRun: LoopRun): Promise<number> {
+  try {
+    return (await loopRun.inbox.sentSteering()).length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * One look while the lead waits, answering whether the user spoke to a waking lead. A long turn's
  * director hears the user's words here, once each, as USER SAYS lines; a waking lead hears them from
- * its turn and its digest (wake.ts), so its wait only ends for them and takes none off the inbox.
+ * its turn and its digest (wake.ts), so its wait only ends when they come (`said0`, what had been
+ * said when it began) and takes none off the inbox.
  */
-async function lookWhileWaiting(loopRun: LoopRun, finishing0: boolean): Promise<boolean> {
+async function lookWhileWaiting(loopRun: LoopRun, finishing0: boolean, said0: number): Promise<boolean> {
   const { inbox, note, routeUserSteers } = loopRun;
   const finishing = await inbox.finishing().catch(() => false);
   const askedToFinish = finishing && !finishing0;
-  if (loopRun.waking) {
-    const untold = await inbox.steering(undefined, false, { onlyNew: true }).catch(() => []);
-    return askedToFinish || untold.length > 0;
-  }
+  if (loopRun.waking) return askedToFinish || (await userSaid(loopRun)) > said0;
   // Only the steers no wait this run has passed on yet: the director hears each one once. A
   // resumed run says them all once more, since its director may be a fresh session.
   const fresh = await inbox.steering(undefined, true, { onlyNew: true }).catch(() => []);
@@ -1186,8 +1193,9 @@ export async function wait(loopRun: LoopRun, args: AnyRecord) {
   const from = loopRun.waitSeq;
   const until = Date.now() + seconds * SECOND_MS;
   const finishing0 = await inbox.finishing().catch(() => false);
+  const said0 = loopRun.waking ? await userSaid(loopRun) : 0;
   while (Date.now() < until && !ctx.cancelled) {
-    if (await lookWhileWaiting(loopRun, finishing0)) break;
+    if (await lookWhileWaiting(loopRun, finishing0, said0)) break;
     // A builder that newly waits on the person is told in the log, which wakes this wait.
     await waitingBuilders(loopRun).catch(() => null);
     const news = notesSince(from).filter((entry: { text: string }) => !rejectedNews(loopRun, entry.text));
