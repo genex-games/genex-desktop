@@ -262,3 +262,48 @@ export async function runShutdown(
   }
   return failed;
 }
+
+/** What a developer launch's stop does, in this order (`main/dev/runtime.ts`). */
+export interface DevStopParts {
+  /** Saves the profiles or trace still recording, if their surfaces answer. */
+  diagnostics(): Promise<unknown>;
+  /** The quit steps (`runShutdown`); throws when one did not finish. */
+  shutdown(): Promise<void>;
+  /** Writes the launch's records and closes its channel; `failure` says why the stop was unclean, or null. */
+  close(failure: string | null): Promise<void>;
+  exit(): void;
+}
+
+/**
+ * A developer launch's stop, which every quit hands its work to while the channel is open (a
+ * SIGTERM's included). It always ends in `exit`: a quit step that did not finish, a diagnostic
+ * whose page never answers (the debugger's stop of a page that never yields), or a close that
+ * hangs or throws is passed over, never left to keep the app running with nothing to stop it.
+ */
+export async function stopThenExit(
+  parts: DevStopParts,
+  { diagnosticsMs, closeMs, timers = realTimers }: { diagnosticsMs: number; closeMs: number; timers?: ShutdownTimers },
+): Promise<void> {
+  let failure: string | null = null;
+  try {
+    await settleWithin(
+      Promise.resolve().then(() => parts.diagnostics()),
+      diagnosticsMs,
+      undefined,
+      timers,
+    );
+    await parts.shutdown();
+  } catch (error) {
+    failure = errorMessage(error);
+  }
+  try {
+    await settleWithin(
+      Promise.resolve().then(() => parts.close(failure)),
+      closeMs,
+      undefined,
+      timers,
+    );
+  } finally {
+    parts.exit();
+  }
+}
