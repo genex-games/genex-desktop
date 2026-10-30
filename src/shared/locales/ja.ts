@@ -3210,7 +3210,6 @@ export default {
   "Running {script}": "{script}を実行しています",
   "Running…": "実行中…",
   "Runs and improvements will show up here.": "ビルドと改善がここに表示されます。",
-  "Runs at the end": "最後に実行",
   "Runs outside its sandbox": "サンドボックスの外で動作",
   "Runs without asking: {tools}.": "確認なしで実行：{tools}。",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":

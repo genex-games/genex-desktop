@@ -3260,7 +3260,6 @@ export default {
   "Running {script}": "Ejecutando {script}",
   "Running…": "Ejecutando…",
   "Runs and improvements will show up here.": "Aquí aparecerán los builds y las mejoras.",
-  "Runs at the end": "Se ejecuta al final",
   "Runs outside its sandbox": "Se ejecuta fuera de su sandbox",
   "Runs without asking: {tools}.": "Sin preguntar: {tools}.",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":

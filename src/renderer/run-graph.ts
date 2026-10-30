@@ -575,8 +575,8 @@ export interface LeadNode {
 
 /**
  * The reviewer's check of the lead's claim that the run is done, by a reviewer that did none of the
- * work: where its newest round stands, and every round (`run-graph-finish.ts`). Before any claim it
- * is `not_yet` with no round, the place the check waits in.
+ * work, when the lead asked for one: where its newest round stands, and every round
+ * (`run-graph-finish.ts`).
  */
 export interface FinishCheckNode extends FinishCheckFields {
   kind: "finish_check";
@@ -1701,15 +1701,17 @@ const isTree = (graph: GraphDraft): boolean =>
   graph.leadsWorkers || graph.workers.placed || graph.jobs.size > 0 || graph.finish.size > 0;
 
 /**
- * A run draws its finish check while it waits for one, and once its lead made a claim for the ask it
- * is on, finished or not: a reopened run that finished again without a claim of its own draws none.
+ * A run draws its finish check once its lead asked a reviewer about a claim for the ask it is on,
+ * finished or not. A Loop asks one only when its lead does (`review=yes`), so nothing waits to run
+ * at the end: a run whose lead asked none, a reopened one's new ask included, draws none.
  */
 const drawsFinishCheck = (graph: GraphDraft): boolean =>
-  awaitsFinishCheck(graph) || [...graph.finish.keys()].some((round) => round >= graph.finishFrom);
+  [...graph.finish.keys()].some((round) => round >= graph.finishFrom);
 
 /**
- * A run's tree waits for its finish check until the run finishes; a chat turn's never has one. A
- * paused run is not over, though the director closes a pause with a `run_finished` that says so.
+ * A run's tree may still get a round of its finish check until the run finishes; a chat turn's never
+ * has one. A paused run is not over, though the director closes a pause with a `run_finished` that
+ * says so.
  */
 function awaitsFinishCheck(graph: GraphDraft): boolean {
   if (graph.turn) return false;

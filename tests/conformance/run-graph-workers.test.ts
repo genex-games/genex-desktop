@@ -2,7 +2,7 @@
  * Workers, jobs and the finish check in the Builds graph's model. Every worker a lead starts is one
  * session node on its own row, folded with what the director already wrote about it; a graph that
  * holds a worker's or a job's records is a tree whose lead carries the jobs, and a run's tree ends
- * in the finish check until the run finishes. A chat turn that started workers is a graph of its
+ * in the finish check once its lead asked for one. A chat turn that started workers is a graph of its
  * own, keyed by the turn. Logs without these records fold to exactly the nodes they always did.
  */
 import assert from "node:assert/strict";
@@ -23,6 +23,7 @@ import { partRows, StepState, statusLine } from "../../src/renderer/run-steps.ts
 import { LeadFace, leadFace } from "../../src/renderer/run-tree.ts";
 import { CustomEvent } from "../../src/shared/custom-events.ts";
 import { type EventData, type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
+import { FinishCheckStep } from "../../src/shared/finish-check.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
 import { isJobState, isJobStopper, JobRole, JobState, JobStopper } from "../../src/shared/jobs.ts";
 import { turnGraphKey } from "../../src/shared/run-graph-events.ts";
@@ -545,26 +546,45 @@ describe("the lead and its background work", () => {
     assert.deepEqual(leadOf(withWorkers)?.jobs, []);
   });
 
-  it("a run's tree ends in the finish check until the run finishes; a chat turn's never does", () => {
+  it("a run's tree ends in the finish check once its lead asked for one, paused or over; a chat turn's never does", () => {
     const working = [...runOpened(), started(runScope, poolWorkerId("w1"), "Port the car")];
     const running = buildRunGraph(working);
-    const check = running?.nodes.at(-1);
+    // Flipped: a Loop asks a reviewer only when its lead does (`review=yes`), so no check waits at
+    // the end of every run: the graph draws none until the lead asks.
+    assert.equal(kinds(running)?.includes(GraphNodeKind.FinishCheck), false, "nobody asked for a final look");
+    const asked = [
+      ...working,
+      inRun(CustomEvent.FinishCheck, { round: 1, step: FinishCheckStep.Checking, claim: "Done." }),
+    ];
+    const check = buildRunGraph(asked)?.nodes.at(-1);
     assert.equal(check?.kind, GraphNodeKind.FinishCheck);
     assert.deepEqual(check, {
       kind: GraphNodeKind.FinishCheck,
       id: GraphNodeKind.FinishCheck,
-      state: FinishCheckState.NotYet,
+      state: FinishCheckState.Checking,
       reasons: [],
-      round: null,
-      // Flipped: the node also carries the no's in a row, why a round had no answer, its rounds,
-      // and whether the run still waits for its check.
+      round: 1,
       rejections: 0,
       why: null,
-      rounds: [],
+      rounds: [
+        {
+          round: 1,
+          step: FinishCheckStep.Checking,
+          reasons: [],
+          notDone: [],
+          done: [],
+          why: null,
+          claim: "Done.",
+          stopped: false,
+          timeLeft: false,
+        },
+      ],
       over: false,
     });
     assert.ok(
-      running?.edges.some((edge) => edge.from === GraphNodeKind.Final && edge.to === GraphNodeKind.FinishCheck),
+      buildRunGraph(asked)?.edges.some(
+        (edge) => edge.from === GraphNodeKind.Final && edge.to === GraphNodeKind.FinishCheck,
+      ),
     );
 
     const pauses: Array<[string, EventEnvelope[]]> = [
@@ -578,8 +598,9 @@ describe("the lead and its background work", () => {
       ],
     ];
     for (const [name, pause] of pauses) {
-      const paused = buildRunGraph([...working, ...pause]);
-      assert.equal(paused?.nodes.at(-1)?.kind, GraphNodeKind.FinishCheck, `a paused run is not over: ${name}`);
+      const paused = buildRunGraph([...asked, ...pause]);
+      assert.equal(paused?.nodes.at(-1)?.kind, GraphNodeKind.FinishCheck, `a paused run keeps its check: ${name}`);
+      assert.equal(kinds(buildRunGraph([...working, ...pause]))?.includes(GraphNodeKind.FinishCheck), false, name);
     }
 
     const over = buildRunGraph([...working, inRun(CustomEvent.RunFinished, { victory: true })]);
@@ -598,12 +619,13 @@ describe("the lead and its background work", () => {
     ];
     const alone = buildRunGraph(opened);
     assert.equal(alone?.tree, true);
-    assert.deepEqual(kinds(alone), ["run", "base", "lead", "integration", "final", "finish_check"]);
+    // Flipped: no finish check waits at the end until the lead asks for one.
+    assert.deepEqual(kinds(alone), ["run", "base", "lead", "integration", "final"]);
     const withWorker = buildRunGraph([...opened, started(runScope, poolWorkerId("w1"), "Port the car")]);
     assert.deepEqual(
       kinds(withWorker)?.filter((kind) => kind !== GraphNodeKind.Facet),
       kinds(alone),
-      "the first worker adds its row; the lead and the finish check stay where they were",
+      "the first worker adds its row; the lead and the result stay where they were",
     );
     assert.equal(buildRunGraph(runOpened())?.tree, false, "a start that does not say so keeps today's layout");
   });

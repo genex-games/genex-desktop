@@ -34,8 +34,7 @@ hangs below. Tries a pause cut off show Paused until added. An eye marks (and op
 notes. A new build is “Checking it starts…” until it runs. A working node shows its agent's
 screen and action; a selected one opens as a card. **Follow up in chat** notes the next message to its build.
 Tabs (one per build; past three, one picker, newest first) and chat cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs
-below), then a finish check the lead asked for, tinted Checking, Not yet (reasons), Done or Stopped, a
-chat line each round. In place, save points form one line showing each change; workers hang off
+below), then, once the lead asks for one, a finish check: Checking, Not yet (reasons), Done or Stopped. In place, save points form one line showing each change; workers hang off
 it, solid under the save point taking their work, else ghosts.
 
 Agents test hidden (Godot too), never Live; a judge gives a second opinion when the lead asks. A finished worker, integration and Live's

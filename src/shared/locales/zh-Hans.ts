@@ -3028,7 +3028,6 @@ export default {
   "Running {script}": "正在运行 {script}",
   "Running…": "正在运行…",
   "Runs and improvements will show up here.": "构建和改进会显示在这里。",
-  "Runs at the end": "在最后运行",
   "Runs outside its sandbox": "在沙盒之外运行",
   "Runs without asking: {tools}.": "无需询问即可运行：{tools}。",
   "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.":

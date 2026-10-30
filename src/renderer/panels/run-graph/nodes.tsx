@@ -851,17 +851,16 @@ export function JobsTile({
 
 /**
  * How the finish check's frame looks in each of its looks (`finishCheckLook` gives the colours):
- * a ghost until it runs, at work while it checks, settled on the plain surface once it answered.
+ * at work while it checks, settled on the plain surface once it answered.
  */
 const FINISH_FRAME: Record<FinishLook, { variant: Variant; fill: Fill; glyph: StepState | null }> = {
-  [FinishLook.Placeholder]: { variant: Variant.Ghost, fill: Fill.Hatch, glyph: null },
   [FinishLook.NotYet]: { variant: Variant.Normal, fill: Fill.Surface, glyph: null },
   [FinishLook.Checking]: { variant: Variant.Working, fill: Fill.Shimmer, glyph: StepState.Judging },
   [FinishLook.Done]: { variant: Variant.Normal, fill: Fill.Surface, glyph: StepState.InBuild },
   [FinishLook.Stopped]: { variant: Variant.Normal, fill: Fill.Surface, glyph: StepState.Undone },
 };
 
-/** The finish check, the last node of a run's tree: the reviewer's check that the run is done. */
+/** The finish check, the last node of a run's tree once the lead asked a reviewer whether the run is done. */
 export function FinishCheckNode({
   node,
   rect,

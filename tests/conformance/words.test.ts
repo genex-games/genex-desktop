@@ -201,7 +201,6 @@ describe("the finish check's words", () => {
     const words = [
       FINISH_CHECK_WORDS.name,
       ...Object.values(FINISH_CHECK_WORDS.state),
-      FINISH_CHECK_WORDS.placeholder,
       FINISH_CHECK_WORDS.about,
       FINISH_CHECK_WORDS.checking,
       FINISH_CHECK_WORDS.doneWord,

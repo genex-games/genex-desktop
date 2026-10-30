@@ -2465,7 +2465,6 @@ export const FINISH_CHECK_WORDS = {
     done: t("Done"),
     stopped: t("Not finished"),
   } satisfies Record<FinishCheckState, string>,
-  placeholder: t("Runs at the end"),
   about: t("Before the Loop calls it done, a second AI looks at your game."),
   /** The node's line and the card while the second AI looks. */
   checking: t("Looking at your game"),
