@@ -129,10 +129,13 @@ describe("a local session's writes: its own folder, and the build a lead leads",
     ];
     const seen: Array<[string, boolean]> = [];
     for (const [label, target] of table)
-      seen.push([label, await resolve(target, true).then(
-        () => true,
-        () => false,
-      )]);
+      seen.push([
+        label,
+        await resolve(target, true).then(
+          () => true,
+          () => false,
+        ),
+      ]);
     assert.deepEqual(
       seen,
       table.map(([label, , writes]) => [label, writes]),

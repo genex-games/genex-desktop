@@ -1290,12 +1290,8 @@ export class PluginToolService {
         ...(attributed ? { attribution: attributed } : {}),
       }),
     });
-    if (asked || ctx.lead || ctx.outlivesTurn)
-      this.#x.pluginCallAttribution.set(binding, {
-        ...asked,
-        ...(ctx.lead ? { lead: true } : {}),
-        ...(ctx.outlivesTurn ? { outlivesTurn: true } : {}),
-      });
+    const attribution = callAttribution(asked, ctx);
+    if (attribution) this.#x.pluginCallAttribution.set(binding, attribution);
     // Bookkeeping never fails a tool call: a log that cannot be written loses the record, not the work.
     await this.#core
       .append([customEventData(CustomEvent.PluginToolStarted, { ...payload })], binding.threadId)
@@ -1459,6 +1455,23 @@ function callRun(ctx: PluginCallContext): CallRun | null {
   const attributed = ctx.attribution ? { runId: ctx.attribution.runId, facetId: ctx.attribution.agentId } : null;
   const sources = [attributed, ctx.selfCapture, ctx.director].filter((s): s is CallRun => !!s);
   return sources.find((s) => typeof s.runId === "string" && s.runId) ?? null;
+}
+
+/**
+ * Who asked a plugin call, as its consent reads it (`pluginCallAttribution`): its run, and whether
+ * it is a lead's (asked as the chat's own session) or a run's own call whose card outlives the
+ * chat's turns. Null when none of these holds.
+ */
+function callAttribution(
+  asked: CallRun | null,
+  ctx: Pick<PluginCallContext, "lead" | "outlivesTurn">,
+): (CallRun & { lead?: boolean; outlivesTurn?: boolean }) | null {
+  if (!asked && !ctx.lead && !ctx.outlivesTurn) return null;
+  return {
+    ...asked,
+    ...(ctx.lead ? { lead: true } : {}),
+    ...(ctx.outlivesTurn ? { outlivesTurn: true } : {}),
+  };
 }
 
 /**

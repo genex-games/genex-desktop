@@ -6182,7 +6182,11 @@ describe("one session, reviewed", () => {
     const head = await git("rev-parse", "HEAD");
     assert.equal(committed.commit, head, "on the integration branch");
     assert.equal(await git("rev-parse", "HEAD^"), left, "over the integration head it had");
-    assert.equal(await git("show", "HEAD:src/sign.js"), "export const sign = 'rebuilt';", "the lead's edit is in the build");
+    assert.equal(
+      await git("show", "HEAD:src/sign.js"),
+      "export const sign = 'rebuilt';",
+      "the lead's edit is in the build",
+    );
     assert.equal(await git("show", "HEAD:built.txt"), "made by a build");
     assert.equal(await git("status", "--porcelain"), "", "nothing is left to hold a merge off");
     assert.equal(loopRun.state.integrationHead, head, "the run follows its new head");
@@ -16727,7 +16731,9 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     const { workerTools } = await import("../../src/harness-seed/loop/workers/specs.ts");
     const { CoreFact } = await import("../../src/harness-seed/loop/folder-facts.ts");
     const blender = { pluginId: "blender", id: "blender_model", description: "Models one prop.", tools: ["blender__"] };
-    const start = workerTools([{ ...blender, isolation: "copy" }] as never).find((tool) => tool.name === "worker_start");
+    const start = workerTools([{ ...blender, isolation: "copy" }] as never).find(
+      (tool) => tool.name === "worker_start",
+    );
     assert.match(String(start?.description), /with every plugin tool and connector you have/);
     const type = start?.parameters.properties.type;
     assert.doesNotMatch(String(type?.description), /brings that kind's tools/);
@@ -16792,12 +16798,16 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     const { heardMidTurn } = await import("../../src/harness-seed/loop/director/open/news.ts");
     const host = fakeHost();
     const steered: string[] = [];
-    const loopRun = fakeLoopRun(host, {}, {
-      [HostMethod.EngineSteer]: (params: { messages: Array<{ id: string; text: string }> }) => {
-        steered.push(...params.messages.map((m) => m.text));
-        return { accepted: params.messages.map((m) => m.id), how: "native" };
+    const loopRun = fakeLoopRun(
+      host,
+      {},
+      {
+        [HostMethod.EngineSteer]: (params: { messages: Array<{ id: string; text: string }> }) => {
+          steered.push(...params.messages.map((m) => m.text));
+          return { accepted: params.messages.map((m) => m.id), how: "native" };
+        },
       },
-    });
+    );
     // The watch's clock never moves: each turn's first look is the one that hears.
     const clock = { sleep: () => new Promise<void>(() => {}) };
     loopRun.note("worker sky done — built the sky", "worker_ended");
@@ -16858,7 +16868,11 @@ describe("the lead and its workers are free agents (Loop phase 3)", () => {
     const rows: Array<[string, Record<string, unknown>, boolean]> = [
       ["a delegated agent", { kind: "delegated", supportsSessions: true }, true],
       ["a delegated agent that says nothing", { kind: "delegated" }, true],
-      ["a local model's session (Bonsai, OpenRouter, a local server)", { kind: "direct", supportsSessions: true }, true],
+      [
+        "a local model's session (Bonsai, OpenRouter, a local server)",
+        { kind: "direct", supportsSessions: true },
+        true,
+      ],
       ["a tool loop with no session (Ollama)", { kind: "direct" }, false],
       ["an agent that keeps no session", { kind: "delegated", supportsSessions: false }, false],
     ];

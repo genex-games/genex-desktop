@@ -240,7 +240,11 @@ describe("the host's worker seat", () => {
     await core.append([{ type: "turn_ended", status: "ok" }] as never, threadId);
     assert.equal(core.resolveConsent(card, true), true, "the card still waits for the person");
     await turn;
-    assert.equal(JSON.stringify(heard).includes("delivered"), true, `the worker's call went on: ${JSON.stringify(heard)}`);
+    assert.equal(
+      JSON.stringify(heard).includes("delivered"),
+      true,
+      `the worker's call went on: ${JSON.stringify(heard)}`,
+    );
   });
 
   it("a worker on a local model's session engine is seated as on any engine that keeps sessions, with the same tools", {

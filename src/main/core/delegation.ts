@@ -2906,9 +2906,7 @@ export class DelegationService {
     const directory = session.leads ?? target.cwd;
     const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
     const lead = session.leads !== null;
-    // A run's own call, its lead's or a worker's: a card it asks with waits out the chat's other
-    // turns, so a lead's turn ending never withdraws a worker's question.
-    const outlivesTurn = lead || Boolean(session.worker?.runId);
+    const outlivesTurn = runsOwnCall(session);
     // A connector call waits on a service, not on the person: it ends with the lead's own session.
     const connectorSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
@@ -3333,6 +3331,15 @@ function blindJudgeWindow(p: DelegateParams, cwd: string): string | null {
   const judge = p.readOnly === true && grant?.role === ScreenRole.Judge && path.resolve(grant.root) === cwd;
   if (!judge) return null;
   return grant.handle ?? `${grant.facetId ?? "judge"}:${grant.iteration ?? 0}`;
+}
+
+/**
+ * Whether a session's plugin and connector calls are a run's own, its lead's or a worker's: a card
+ * one asks with waits out the chat's other turns, so a lead's turn ending never withdraws a worker's
+ * question.
+ */
+function runsOwnCall(session: Pick<DelegationSession, "leads" | "worker">): boolean {
+  return session.leads !== null || Boolean(session.worker?.runId);
 }
 
 /**
