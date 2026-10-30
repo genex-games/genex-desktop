@@ -2257,19 +2257,6 @@ export interface RunSpec {
   /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
   mode?: "autopilot";
   /**
-   * The programmed pipeline on purpose: planner → base → facet loops → merge. A
-   * delegated engine's Autopilot is otherwise the director's — one session that decides the run.
-   */
-  classic?: boolean;
-  /**
-   * How a director's session is driven. "wake" (absent): the lead ends its turn after each
-   * decision and the harness wakes the same session with a digest when something happens.
-   * "turn": the long turn before the wake loop, with `wait` and continuation prompts — kept for
-   * one release, set by rigs and dev dispatches; a run that names none follows
-   * `DIRECTOR_LOOP_ENV` in the studio's environment.
-   */
-  directorLoop?: "wake" | "turn";
-  /**
    * gauntlet reference bar — Named / Fetchable / Comparable. `kind` widens it:
    * "reference" is a real game to beat (the blind panel is the exit condition); "direction" is
    * free text to push toward — no reference panel. Completion is controlled by budgets.
@@ -2389,23 +2376,5 @@ export type DispatchAction =
    * message id), forwarded to the harness's worker pool for that turn. Answers with the tool's result.
    */
   | { type: "worker_tool"; threadId: string; turn: string; name: string; args: Record<string, unknown> }
-  /**
-   * A judge that plays (`judge_play`), asked for by the chat's own session after a change: one blind
-   * judge plays the game in `root` (the game folder, as the host resolved it) on a hidden window and
-   * answers `ask`, held to `goalState` when given. Answers with the judge's outcome, never throws.
-   */
-  | {
-      type: "chat_judge";
-      threadId: string;
-      project: string;
-      root: string;
-      engine: string;
-      model?: string;
-      effort?: string;
-      ask: string;
-      goalState?: string;
-      /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
-      judge?: string;
-    }
   | { type: "boot_notice"; notice: BootNotice };
 // ↑ src/shared/protocol.ts

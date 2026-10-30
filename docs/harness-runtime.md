@@ -626,8 +626,8 @@ no reviewer asked. The chat's launch words and its launch promise describe the l
 copies and a reviewer checking its finish (`loop/open-loop-prompts.ts`). A run the Unreal runner paused (`kind:
 "unreal-lead"`) resumes in the one Loop: `director/open/older-journal.ts` turns its run, worked time,
 save points, reviewer's no's and carried lines into a director journal, and closes the run at once
-with words when it can't read them. For developers only, `STUDIO_UNREAL_RUNNER=lead` (handed on like
-`STUDIO_DIRECTOR_LOOP`; never a run record field) still sends a new Loop on an Unreal project, and the
+with words when it can't read them. For developers only, `STUDIO_UNREAL_RUNNER=lead` (handed on by name;
+never a run record field) still sends a new Loop on an Unreal project, and the
 resume of a run that runner wrote, to the Unreal runner (`loop/loop-switch.ts`) until a live Unreal
 Loop passes on the one Loop. Through the real studio (`one-loop-projects.test.ts`), a Loop on the toy
 plugin's project, and on a copy of that plugin with every tool renamed, runs the plugin's steps at its

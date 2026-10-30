@@ -12,7 +12,6 @@ import type { SessionPort } from "../../src/main/core/session-port.ts";
 import { ClockLevel, TargetRuntime } from "../../src/shared/computer-target.ts";
 import { ENGINE_PLAY_TOOLS, EnginePlayTool, MAX_PLAY_PLAYERS } from "../../src/shared/engine-play.ts";
 import { type PluginManifest, PluginSourceKind, PluginToolAudience } from "../../src/shared/plugins.ts";
-import { HarnessCapability } from "../../src/shared/protocol.ts";
 import { COMPUTER_TOOL_NAME } from "../../src/substrate/computer-tool.ts";
 import type { DelegateRequest, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import { TOY_PLUGIN, TOY_PLUGIN_ID } from "../helpers/project-fixtures.ts";
@@ -221,15 +220,13 @@ describe("the Roblox plugin's play tools", () => {
 });
 
 describe("the computer on a Unity game's editor play", () => {
-  it("offers the chat's computer and judge_play only while Unity is enabled and the game holds its project", {
+  it("offers the chat's computer only while Unity is enabled and the game holds its project", {
     timeout: CASE_TIMEOUT_MS,
   }, async () => {
     const { core, project, seen, delegate, personSays, whileRunning } = await workerChat();
-    core.host.hasCapability = (capability) => capability === HarnessCapability.ChatJudge;
     await core.plugins.setEnabled(UNITY_PLUGIN, true);
     await delegate({ chatTurn: { messageId: await personSays() } });
     assert.equal(offered(seen.at(-1)), false, "no Unity project: no editor computer");
-    assert.equal(offered(seen.at(-1), "judge_play"), false);
 
     const root = await unityProject(project.dir);
     let looked: LiveToolResult | null = null;
@@ -240,20 +237,19 @@ describe("the computer on a Unity game's editor play", () => {
     });
     await delegate({ chatTurn: { messageId: await personSays() } });
     assert.equal(offered(seen.at(-1)), true, "the project's facts select Unity's editor play");
-    assert.equal(offered(seen.at(-1), "judge_play"), true, "the editor computer enables the chat's judge");
+    // Flipped (Loop phase 5): the chat has no judge_play: the seed answers no chat_judge.
+    assert.equal(offered(seen.at(-1), "judge_play"), false);
     assert.match(text(looked), /Unity.*not open/i, "the real Unity backend explains why it cannot play");
 
     whileRunning(async () => {});
     await core.plugins.setEnabled(UNITY_PLUGIN, false);
     await delegate({ chatTurn: { messageId: await personSays() } });
     assert.equal(offered(seen.at(-1)), false, "a disabled plugin offers no computer");
-    assert.equal(offered(seen.at(-1), "judge_play"), false);
 
     await core.plugins.setEnabled(UNITY_PLUGIN, true);
     await rename(path.join(root, "ProjectSettings", "ProjectVersion.txt"), path.join(root, "version.txt"));
     await delegate({ chatTurn: { messageId: await personSays() } });
     assert.equal(offered(seen.at(-1)), false, "a removed Unity project no longer offers the computer");
-    assert.equal(offered(seen.at(-1), "judge_play"), false);
     await core.plugins.setEnabled(UNITY_PLUGIN, false);
   });
 

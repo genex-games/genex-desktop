@@ -518,10 +518,9 @@ read `logs`. A run paused by an engine limit or a loop crash continues from
 owner is using it; leave the profile running at the end.
 
 Run overrides reach the harness from the studio's environment only by name (`harnessRunEnv`):
-`STUDIO_DIRECTOR_LOOP=turn` picks the long turn for a run that names no loop, and
 `STUDIO_UNREAL_RUNNER=lead` sends a new Loop on an Unreal project, and the resume of a run that
-runner wrote, to the Unreal runner from before the one Loop. Neither is a run record field or shown
-in the UI; set it on start and restart.
+runner wrote, to the Unreal runner from before the one Loop. It is no run record field and not
+shown in the UI; set it on start and restart.
 
 Transport descriptors are private local capabilities under the owned profile; never copy them
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket

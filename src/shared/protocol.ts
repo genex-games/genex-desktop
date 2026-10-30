@@ -189,24 +189,6 @@ export type DispatchAction =
    * message id), forwarded to the harness's worker pool for that turn. Answers with the tool's result.
    */
   | { type: "worker_tool"; threadId: string; turn: string; name: string; args: Record<string, unknown> }
-  /**
-   * A judge that plays (`judge_play`), asked for by the chat's own session after a change: one blind
-   * judge plays the game in `root` (the game folder, as the host resolved it) on a hidden window and
-   * answers `ask`, held to `goalState` when given. Answers with the judge's outcome, never throws.
-   */
-  | {
-      type: "chat_judge";
-      threadId: string;
-      project: string;
-      root: string;
-      engine: string;
-      model?: string;
-      effort?: string;
-      ask: string;
-      goalState?: string;
-      /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
-      judge?: string;
-    }
   | { type: "boot_notice"; notice: BootNotice };
 
 /** The `type` of a dispatch action: the work the host hands the harness. Wire names: never rename one. */
@@ -224,7 +206,6 @@ export const DispatchActionType = {
   AutopilotResume: "autopilot_resume",
   DirectorTool: "director_tool",
   WorkerTool: "worker_tool",
-  ChatJudge: "chat_judge",
   BootNotice: "boot_notice",
 } as const satisfies Record<string, DispatchAction["type"]>;
 export type DispatchActionType = DispatchAction["type"];
@@ -256,8 +237,6 @@ export const HarnessCapability = {
   Workers: "workers",
   /** A build whose jobs cross to or from a completion-only local engine (`crossesCompletionEngine`). */
   LocalRoles: "local-roles",
-  /** The chat's own session may ask a blind judge to play its game: the harness answers `chat_judge`. */
-  ChatJudge: "chat-judge",
 } as const;
 export type HarnessCapability = (typeof HarnessCapability)[keyof typeof HarnessCapability];
 
@@ -318,13 +297,6 @@ export interface RunReference {
 }
 
 /**
- * The studio's environment variable that picks the director's loop for a run that names none
- * (`RunSpec.directorLoop`): a shipped build's way back to the long turn, for one release.
- * The seed's copy is loop/director/wake-schedule.ts `DIRECTOR_LOOP_ENV`.
- */
-export const DIRECTOR_LOOP_ENV = "STUDIO_DIRECTOR_LOOP";
-
-/**
  * The studio's environment variable that sends a Loop on an Unreal game to the Unreal runner it had
  * before the one Loop, for developers until a live Unreal Loop passes on the one Loop. Never a run
  * record field, never shown. The seed's copy is loop/loop-switch.ts.
@@ -336,7 +308,7 @@ export const UnrealRunnerChoice = { Lead: "lead" } as const;
 export type UnrealRunnerChoice = (typeof UnrealRunnerChoice)[keyof typeof UnrealRunnerChoice];
 
 /** The studio's own variables a run's harness reads; nothing else of its environment is handed on. */
-const HARNESS_RUN_ENV = [DIRECTOR_LOOP_ENV, UNREAL_RUNNER_ENV] as const;
+const HARNESS_RUN_ENV = [UNREAL_RUNNER_ENV] as const;
 
 /**
  * What of the studio's own environment the harness it spawns is handed: the run overrides it
@@ -358,19 +330,6 @@ export interface RunSpec {
   project: string;
   /** "autopilot" decomposes into facet loops; absent = the plain gauntlet. */
   mode?: "autopilot";
-  /**
-   * The programmed pipeline on purpose: planner → base → facet loops → merge. A
-   * delegated engine's Autopilot is otherwise the director's — one session that decides the run.
-   */
-  classic?: boolean;
-  /**
-   * How a director's session is driven. "wake" (absent): the lead ends its turn after each
-   * decision and the harness wakes the same session with a digest when something happens.
-   * "turn": the long turn before the wake loop, with `wait` and continuation prompts — kept for
-   * one release, set by rigs and dev dispatches; a run that names none follows
-   * `DIRECTOR_LOOP_ENV` in the studio's environment.
-   */
-  directorLoop?: "wake" | "turn";
   /**
    * gauntlet reference bar — Named / Fetchable / Comparable. `kind` widens it:
    * "reference" is a real game to beat (the blind panel is the exit condition); "direction" is

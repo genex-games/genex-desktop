@@ -7,14 +7,7 @@ import { ScreenRole } from "../../shared/agent-screen.ts";
 import type { DesktopTools } from "./desktop-tools.ts";
 import { assistGrants } from "./desktop-assist.ts";
 import { desktopSessionTools } from "./desktop-session.ts";
-import {
-  editorPlayComputer,
-  editorPlayTools,
-  gameJudge,
-  gameJudgeRefs,
-  judgeBriefText,
-} from "./editor-play-session.ts";
-import { type JudgePlayCaller, judgePlayFor, runJudgePlay, studioJudgeHost } from "./judge-play-tool.ts";
+import { editorPlayComputer, editorPlayTools, gameJudge, judgeBriefText } from "./editor-play-session.ts";
 import { uuidv7 } from "../../substrate/ids.ts";
 import { replaceableCover } from "../../shared/game-library.ts";
 import { COVER_TOOL } from "../../shared/cover-recipe.ts";
@@ -437,10 +430,6 @@ interface SessionTools {
   director: DirectorTools | null;
   /** The person's computer, behind their consent: only the chat's own session holds it. */
   desktop: DesktopTools | null;
-  /** `judge_play` (`judge-play-tool.ts`): the chat's own session's, on a game the studio plays in a window. */
-  judge: LiveToolSpec[];
-  /** Whom a judge's play answers to; null for a session without `judge_play`. */
-  judgeCaller: JudgePlayCaller | null;
   /** An engine judge's brief, beside its rubric: only a judge's session that plays as one. */
   judgeBrief: string;
 }
@@ -2368,8 +2357,8 @@ export class DelegationService {
   }
 
   /**
-   * The chat's own session's screen tools: the person's computer, behind consent, a judge that plays,
-   * and on a game played in its engine's editor (an Unreal game) the computer on that editor's play.
+   * The chat's own session's screen tools: the person's computer, behind consent, and on a game
+   * played in its engine's editor (an Unreal game) the computer on that editor's play.
    */
   async #offerChatScreens(
     p: DelegateParams,
@@ -2388,7 +2377,6 @@ export class DelegationService {
       };
       tools.builder = await editorPlayTools(this.#core, this.#x, { ...place, signal: session.abort.signal });
     }
-    await this.#offerJudge(p, target, grants, session, tools);
   }
 
   /** The person's computer for the chat's own session (`desktop-session.ts`), behind their consent. */
@@ -2400,38 +2388,6 @@ export class DelegationService {
       ...(session.chatTurn ? { turn: session.chatTurn } : {}),
       signal: session.abort.signal,
     });
-  }
-
-  /**
-   * `judge_play` for the chat's own session, on a game the studio plays: in a window of its own (a
-   * web game: `selfCapture`), or in its engine's editor (the session's computer is the editor's),
-   * the judge playing the game folder; where the harness serves it. A game its engine plugin
-   * declares judges for offers them by id. A plugin tool of the same name is refused.
-   */
-  async #offerJudge(
-    p: DelegateParams,
-    target: DelegationTarget,
-    grants: DelegationGrants,
-    session: DelegationSession,
-    tools: SessionTools,
-  ): Promise<void> {
-    const editor = tools.builder?.runtime === TargetRuntime.Editor ? { root: target.cwd } : undefined;
-    const window = grants.selfCapture ?? editor;
-    const capable = this.#core.host.hasCapability(HarnessCapability.ChatJudge);
-    const judges = editor && capable ? await gameJudgeRefs(this.#core, p.project) : [];
-    const offered = judgePlayFor(Boolean(window), capable, judges).filter((tool) => offers(session, tool.name));
-    if (!window || !offered.length) return;
-    const taken = tools.plugins.find((plugin) => offered.some((tool) => tool.name === plugin.name));
-    if (taken) throw new Error(MESSAGE.toolCollision(taken.name));
-    tools.judge = offered;
-    tools.judgeCaller = {
-      project: p.project,
-      root: path.resolve(window.root),
-      threadId: session.threadId,
-      engine: target.engineId,
-      model: p.model,
-      effort: p.effort,
-    };
   }
 
   /**
@@ -2778,7 +2734,7 @@ export class DelegationService {
   ): Partial<DelegateRequest> {
     const windowTools = tools.director ?? tools.builder;
     const controls = session.runControls ? runControlsFor(session.runControls) : [];
-    const desktop = [...(tools.desktop?.liveTools ?? []), ...tools.judge];
+    const desktop = tools.desktop?.liveTools ?? [];
     return {
       liveTools: [
         ...(windowTools?.liveTools ?? []),
@@ -2891,9 +2847,6 @@ export class DelegationService {
     tools: SessionTools,
   ): Promise<LiveToolResult> | null {
     if (tools.desktop && name === DESKTOP_TOOL_NAME) return tools.desktop.onLiveTool(name, args);
-    const judge = tools.judgeCaller;
-    if (judge && tools.judge.some((tool) => tool.name === name))
-      return runJudgePlay(studioJudgeHost(this.#core), args, judge);
     if (tools.workers.some((tool) => tool.name === name)) return this.#forwardWorkerTool(session, name, args);
     const looker = tools.lookCaller;
     if (looker && tools.look.some((tool) => tool.name === name)) return runAppLook(this.#core, args, looker);
@@ -3102,8 +3055,6 @@ function sessionTools(
     playtest: null,
     director: null,
     desktop: null,
-    judge: [],
-    judgeCaller: null,
     judgeBrief: "",
   };
 }

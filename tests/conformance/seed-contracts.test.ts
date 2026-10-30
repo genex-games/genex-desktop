@@ -95,7 +95,7 @@ import {
   recordedRunLoop,
 } from "../../src/shared/run-state.ts";
 import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
-import { DIRECTOR_LOOP_ENV, harnessRunEnv, UNREAL_RUNNER_ENV, UnrealRunnerChoice } from "../../src/shared/protocol.ts";
+import { harnessRunEnv, UNREAL_RUNNER_ENV, UnrealRunnerChoice } from "../../src/shared/protocol.ts";
 import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
 import * as seedLoopSwitch from "../../src/harness-seed/loop/loop-switch.ts";
 import { EngineKind, EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -576,15 +576,11 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
   it("hands the harness only the run overrides of the studio's environment, each only when it is set", () => {
     const cases: Array<[env: Record<string, string | undefined>, handed: Record<string, string>]> = [
       [{}, {}],
-      [{ [DIRECTOR_LOOP_ENV]: "turn" }, { [DIRECTOR_LOOP_ENV]: "turn" }],
-      [{ [DIRECTOR_LOOP_ENV]: " turn " }, { [DIRECTOR_LOOP_ENV]: "turn" }],
-      [{ [DIRECTOR_LOOP_ENV]: "  " }, {}],
       [{ [UNREAL_RUNNER_ENV]: "lead" }, { [UNREAL_RUNNER_ENV]: "lead" }],
-      [
-        { [UNREAL_RUNNER_ENV]: " lead ", [DIRECTOR_LOOP_ENV]: "turn" },
-        { [UNREAL_RUNNER_ENV]: "lead", [DIRECTOR_LOOP_ENV]: "turn" },
-      ],
+      [{ [UNREAL_RUNNER_ENV]: " lead " }, { [UNREAL_RUNNER_ENV]: "lead" }],
       [{ [UNREAL_RUNNER_ENV]: "" }, {}],
+      // Flipped (Loop phase 5): the long turn's switch is gone with the long turn: never handed on.
+      [{ STUDIO_DIRECTOR_LOOP: "turn" }, {}],
       // The workers' handover switch of 2026-10-03 is gone with the handover: never handed on.
       [{ STUDIO_WORKER_HANDOVER: "1" }, {}],
       [{ HOME: "/Users/someone", ANTHROPIC_API_KEY: "sk-ant-x", PATH: "/usr/bin", STUDIO_OTHER: "1" }, {}],

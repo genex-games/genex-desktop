@@ -102,8 +102,7 @@ Steering that reaches a classic build after its last round stays with that build
 and handed over only if it goes on, never written into the game's NOTES.md, which every later chat
 reads. The chat removes the "Steering backlog" section older builds left there before it answers
 (`loop/steering-backlog.ts`), and prompts built from NOTES.md leave it out.
-Its director's first message (its first `worker_wait` on the long turn, `directorLoop: "turn"`) still says
-every earlier steer once, since the run may have opened a fresh session that never heard them —
+Its lead's first message still says every earlier steer once, since the run may have opened a fresh session that never heard them —
 all but the chat's messages a run's lead heard or gave back ([live chat](#live-chat-during-a-build));
 on the wake loop they open that message's digest, read from the journal (THE USER SAYS: the newest
 20, each cut at 2,000 characters, with a count of those left out).
@@ -291,9 +290,8 @@ queue takes no switches, and a switch then waits for a turn of its own as before
 ## Live chat during a build
 
 While a director run is going on the wake loop, its lead is the chat: a message sent meanwhile is
-handed to it at once, and it answers in the chat. The long turn (`directorLoop: "turn"`,
-`STUDIO_DIRECTOR_LOOP=turn`), the classic pipeline and a kept `director.ts` from before live chat
-open no line, and their messages wait for the run to close as before. While a waking run prepares
+handed to it at once, and it answers in the chat. A kept `director.ts` from before live chat
+opens no line, and its messages wait for the run to close as before. While a waking run prepares
 its start — its first look at the game, before its lead's line opens (`director/lead-line.ts`
 `expectLeadLine`) — the run's coordinator answers what is sent at once instead (`live-chat.ts`
 `chatWaitsFor`): a question gets an answer, and a stop reaches the run. A waking run's start
@@ -563,12 +561,10 @@ message on another engine is another session's; it and anything else are
 ## The coordinator, a fallback
 
 The coordinator (`loop/coordinator.ts`, words in `coordinator-prompts.ts`) answers a message about
-a run no lead of the chat's own led, once that run has closed: the long turn
-(`directorLoop: "turn"`), the classic pipeline, a kept older seed whose run seats no lead, a lead
+a run no lead of the chat's own led, once that run has closed: a kept older seed whose run seats no lead, a lead
 that was a session of its own (the chat's bookmark on another engine or model), a message to a model
 without sessions, a message on another engine than the lead's, and a kept runner, chat turn or brief
-that does not serve the same session. The long turn's removal does not take it
-([harness runtime](harness-runtime.md)).
+that does not serve the same session ([harness runtime](harness-runtime.md)).
 
 Codex and Claude coordinators use a stable scratch directory and a separate persisted native
 session per chat/provider (`coordinator_<engine>`). They read project context and call every
