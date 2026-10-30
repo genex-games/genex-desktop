@@ -73,15 +73,13 @@ export default {
   "A connector url must be https, or http on localhost": "La url de un conector debe ser https, o http en localhost",
   "A connector working directory must be an absolute path":
     "La carpeta de trabajo de un conector debe ser una ruta absoluta",
-  "A cooking game in a food truck that serves ghosts at midnight":
-    "Un juego de cocina en un food truck que atiende a fantasmas a medianoche",
-  "A cozy café where you make latte art for forest animals":
-    "Una cafetería acogedora donde haces latte art para los animales del bosque",
-  "A cozy fishing game on a tiny island where you sell your catch at the dock":
-    "Un juego de pesca acogedor en una islita donde vendes lo que pescas en el muelle",
-  "A cozy library where you match lost books to their readers":
-    "Una biblioteca acogedora donde devuelves libros perdidos a sus lectores",
-  "A cozy puzzle about packing a suitcase for a trip": "Un puzle acogedor sobre hacer la maleta para un viaje",
+  "A cooking game in a food truck that serves ghosts": "Un juego de cocina en un food truck que sirve a fantasmas",
+  "A café where you make latte art for forest animals": "Un café donde haces arte latte para animales del bosque",
+  "A fishing game on a tiny island where you sell your catch at the dock":
+    "Un juego de pesca en una isla diminuta donde vendes lo que pescas en el muelle",
+  "A library where you match lost books to their readers":
+    "Una biblioteca donde devuelves libros perdidos a sus lectores",
+  "A puzzle about packing a suitcase for a trip": "Un puzle sobre hacer la maleta para un viaje",
   "A dead terminal's cursor leaving trails": "El cursor de una terminal muerta dejando estelas",
   "A desert caravan trading spices across shifting dunes":
     "Una caravana del desierto que comercia con especias entre dunas cambiantes",
@@ -97,9 +95,10 @@ export default {
     "Una descarga era más grande que la versión que espera Genex, así que Genex se detuvo. No se guardó nada.",
   "A download wasn't over a secure link, so Genex stopped. Nothing was kept.":
     "Una descarga no usaba un enlace seguro, así que Genex se detuvo. No se guardó nada.",
-  "A dragon who hoards cozy blankets instead of gold": "Un dragón que acumula mantas calentitas en vez de oro",
+  "A dragon who hoards blankets instead of gold": "Un dragón que acumula mantas en vez de oro",
   "A dream world where doors lead to memories": "Un mundo de sueños donde las puertas llevan a recuerdos",
-  "A drift racer on frozen mountain roads at night": "Un juego de derrapes por carreteras de montaña heladas de noche",
+  "A sandbox where you build working machines from blocks and wheels":
+    "Un sandbox donde construyes máquinas que funcionan con bloques y ruedas",
   "A dungeon where you play the monster defending its treasure from heroes":
     "Una mazmorra donde eres el monstruo que defiende su tesoro de los héroes",
   "A farming sim on a floating island that drifts between seasons":
@@ -109,39 +108,37 @@ export default {
     "Un archivo estaba en uso o el disco lo rechazó. Cierra otras apps y vuelve a intentarlo.",
   "A file was in use. Close other programs and try again.":
     "Un archivo estaba en uso. Cierra otros programas y vuelve a intentarlo.",
-  "A firefly-catching game in a summer meadow at dusk":
-    "Un juego de atrapar luciérnagas en una pradera de verano al atardecer",
+  "A turn-based strategy game on a hex map with three rival factions":
+    "Un juego de estrategia por turnos en un mapa hexagonal con tres facciones rivales",
   "A frog hopping across lily pads that sink when you stay too long":
     "Una rana que salta entre nenúfares que se hunden si te quedas demasiado",
   "A full path, such as /Users/you/server.": "Una ruta completa, como /Users/you/server.",
   "A garden defense game where vegetables guard against snails":
     "Un juego de defensa del huerto donde las verduras se protegen de los caracoles",
-  "A garden gnome sneaking through backyards at night":
-    "Un gnomo de jardín que se cuela de noche por los patios traseros",
+  "A visual novel where your choices decide who wins the school election":
+    "Una novela visual donde tus decisiones eligen quién gana las elecciones del instituto",
   "A gardening game where plants grow into puzzles you have to solve":
     "Un juego de jardinería donde las plantas crecen hasta convertirse en puzles que debes resolver",
   "A ghost ship sailing through a sea of clouds": "Un barco fantasma que navega por un mar de nubes",
   "A gravity golf game between tiny planets": "Un juego de golf con gravedad entre planetas diminutos",
   "A greenhouse where every plant has a strange personality":
     "Un invernadero donde cada planta tiene una personalidad rara",
-  "A haunted house you redecorate to scare away noisy guests":
-    "Una casa embrujada que redecoras para asustar a los huéspedes ruidosos",
+  "A house you redecorate to scare away noisy guests": "Una casa que redecoras para espantar a los huéspedes ruidosos",
   "A hot air balloon game where you ride the winds between islands":
     "Un juego de globo aerostático donde aprovechas los vientos para ir de isla en isla",
   "A judge is playing the game": "Un juez está jugando el juego",
   "A juggling game where the balls are on fire": "Un juego de malabares con pelotas en llamas",
   "A jungle temple escape with rolling boulders and traps":
     "Una huida de un templo en la jungla con rocas rodantes y trampas",
-  "A kite flying game through a festival of lanterns": "Un juego de volar cometas en un festival de farolillos",
+  "A kite flying game through a festival": "Un juego de volar cometas sobre un festival",
   "A lane-switching runner through a candy factory": "Un runner de carriles por una fábrica de golosinas",
-  "A lantern-lit night market where you run a noodle stand":
-    "Un mercado nocturno iluminado con farolillos donde llevas un puesto de fideos",
+  "A market where you run a noodle stand": "Un mercado donde llevas un puesto de fideos",
   "A later change edited the same part of Harness’s instructions. Undo that change first.":
     "Un cambio posterior editó la misma parte de las instrucciones de Harness. Deshaz ese cambio primero.",
   "A later restore took this change back. Harness works the way it did before.":
     "Una restauración posterior revirtió este cambio. Harness funciona como antes.",
-  "A lighthouse keeper guiding ships through a storm by turning the beam":
-    "Un farero que guía barcos en plena tormenta girando el haz de luz",
+  "A lighthouse keeper guiding ships past rocks by turning the beam":
+    "Un farero que guía barcos entre las rocas girando el haz de luz",
   "A mail sorting game in a busy post office before closing time":
     "Un juego de clasificar cartas en una oficina de correos llena de gente antes del cierre",
   "A match-three puzzle where matches grow a forest":
@@ -152,15 +149,14 @@ export default {
   "A meteor shower dodge game with a small dinosaur": "Un pequeño dinosaurio esquivando una lluvia de meteoritos",
   "A mini golf course on the surface of the moon with low gravity":
     "Un minigolf en la superficie de la Luna con poca gravedad",
-  "A minimalist tower stacking game where the wind gets stronger":
-    "Un juego minimalista de apilar una torre mientras el viento sopla cada vez más fuerte",
+  "A tower stacking game where the wind gets stronger":
+    "Un juego de apilar torres donde el viento sopla cada vez más fuerte",
   "A model is downloading. Delete this one when the download finishes.":
     "Se está descargando un modelo. Borra este cuando termine la descarga.",
   "A mountain rescue game with a dog and a sled": "Un juego de rescate en la montaña con un perro y un trineo",
-  "A museum night guard game where the exhibits come alive":
-    "Un juego de vigilante nocturno en un museo donde las piezas cobran vida",
-  "A neon arcade shooter where your bullets bounce off the walls":
-    "Un shooter arcade de neón donde tus balas rebotan en las paredes",
+  "A museum guard game where the exhibits come alive": "Un juego de guardia de museo donde las piezas cobran vida",
+  "An arcade shooter where your bullets bounce off the walls":
+    "Un shooter arcade donde tus balas rebotan en las paredes",
   "A new build is ready to play.": "Hay un build nuevo listo para jugar.",
   "A new build is ready — reload to play it": "Hay un build nuevo: recarga para jugarlo",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
@@ -185,7 +181,8 @@ export default {
   "A pinball table where the ball is a tiny knight fighting monsters":
     "Una mesa de pinball donde la bola es un pequeño caballero que lucha contra monstruos",
   "A pirate ship battle with cannons that shoot fruit": "Una batalla de barcos piratas con cañones que disparan fruta",
-  "A pixel-art fishing game under a frozen lake": "Un juego de pesca en pixel art bajo un lago congelado",
+  "An ice fishing game where you drill holes across a lake":
+    "Un juego de pesca en hielo donde perforas agujeros por todo el lago",
   "A plan is ready for your review.": "Hay un plan listo para que lo revises.",
   "A platformer where gravity flips every time you jump":
     "Un juego de plataformas donde la gravedad se invierte cada vez que saltas",
@@ -213,8 +210,7 @@ export default {
   "A self-improving harness": "Un Harness que se mejora solo",
   "A shop keeping game in a fantasy town that sells only potions":
     "Un juego de tienda en un pueblo de fantasía que solo vende pociones",
-  "A side-scrolling skateboarding game through a neon city":
-    "Un juego de skate de desplazamiento lateral por una ciudad de neón",
+  "A side-scrolling skateboarding game through a city": "Un juego de skate de desplazamiento lateral por una ciudad",
   "A sky courier delivering letters between floating towns on a glider":
     "Un mensajero aéreo que reparte cartas en planeador entre ciudades flotantes",
   "A slow train journey where you trade goods between stations":
@@ -230,12 +226,11 @@ export default {
     "Un shooter espacial donde cada enemigo que destruyes pasa a formar parte de tu nave",
   "A space station repair game with a robot and a timer":
     "Un juego de reparar una estación espacial con un robot y un temporizador",
-  "A spooky graveyard where you help lost ghosts find home":
-    "Un cementerio espeluznante donde ayudas a fantasmas perdidos a volver a casa",
+  "A graveyard where you help lost ghosts find home": "Un cementerio donde ayudas a fantasmas perdidos a volver a casa",
   "A sports car and an off-road buggy with gears and a speedometer.":
     "Un deportivo y un buggy todoterreno con marchas y velocímetro.",
-  "A starlit camping trip where you build the perfect campfire":
-    "Una acampada bajo las estrellas donde preparas la fogata perfecta",
+  "A two-player online card game with a deck you build between matches":
+    "Un juego de cartas online para dos con un mazo que armas entre partidas",
   "A starship captain choosing which planet to visit next":
     "Un capitán de nave estelar que elige qué planeta visitar después",
   "A stdio connector has no url": "Un conector stdio no lleva url",
@@ -255,8 +250,7 @@ export default {
   "A tiny racing game on a kitchen table with toy cars":
     "Un pequeño juego de carreras en una mesa de cocina con coches de juguete",
   "A tiny space shooter in a field of asteroids": "Un pequeño shooter espacial en un campo de asteroides",
-  "A tiny submarine exploring a glowing deep-sea cave":
-    "Un submarino diminuto que explora una cueva luminosa en las profundidades del mar",
+  "A tiny submarine exploring a deep-sea cave": "Un submarino diminuto que explora una cueva de las profundidades",
   "A tiny wizard school where you mix colors into spells":
     "Una pequeña escuela de magos donde mezclas colores para crear hechizos",
   "A top-down racer with drifting and a boost that charges in corners":
@@ -283,8 +277,8 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "Un ayudante está trabajando en la carpeta de tu juego. Vuelve a intentarlo cuando termine.",
   "A worker wants to run {job} in the background": "Un ayudante quiere ejecutar {job} en segundo plano",
-  "A zen sand garden where you rake patterns around stones":
-    "Un jardín zen de arena donde rastrillas dibujos alrededor de las piedras",
+  "A sand garden where you rake patterns around stones":
+    "Un jardín de arena donde rastrillas patrones alrededor de las piedras",
   "API key": "Clave de API",
   "API key (optional)": "Clave de API (opcional)",
   About: "Acerca de",
@@ -595,7 +589,7 @@ export default {
   "Build updated": "Build actualizado",
   "Build with the Cursor plan you already have.": "Crea con el plan de Cursor que ya tienes.",
   "Build with the Grok account you already have.": "Crea con la cuenta de Grok que ya tienes.",
-  "Build with workers": "Crea con ayudantes",
+  "Workers pitch in": "Los ayudantes echan una mano",
   Building: "Creando",
   "Building the game": "Creando el juego",
   "Building the starting point": "Creando el punto de partida",
@@ -2854,7 +2848,7 @@ export default {
   "Plan ready": "Plan listo",
   "Plan ready for review": "Plan listo para revisar",
   "Plan usage isn’t available right now.": "El uso del plan no está disponible ahora mismo.",
-  "Plan your game": "Planea tu juego",
+  "Your agent leads": "Tu agente dirige",
   Planning: "Planificando",
   "Planning the build": "Planificando el build",
   "Planning the next step": "Planeando el siguiente paso",
@@ -3194,7 +3188,7 @@ export default {
   "Reviewers preferred the game you had": "Los revisores prefirieron el juego que tenías",
   "Reviewers test every result and decide when the game is done.":
     "Los revisores prueban cada resultado y deciden cuándo está terminado el juego.",
-  "Reviewers test it": "Los revisores lo prueban",
+  "A second opinion": "Una segunda opinión",
   "Reviewers undid it": "Los revisores lo deshicieron",
   "Reviewers undid {count, plural, other {# tries}}":
     "Los revisores deshicieron {count, plural, one {# intento} other {# intentos}}",
@@ -4901,7 +4895,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "ya puedes jugar un build anterior · reanuda desde el chat",
   "an empty folder": "una carpeta vacía",
   "an input": "un control",
-  "and approve each build": "y aprueban cada build",
+  "when the lead asks for one": "cuando el agente principal la pide",
   "and {count} more": "y {count} más",
   "another project or no recorded preview": "otro proyecto o sin vista previa registrada",
   "app update left every harness file as it was":
@@ -5012,7 +5006,7 @@ export default {
   eighth: "octavo",
   ended: "finalizado",
   "every object has a reason to be there": "cada objeto tiene una razón para estar ahí",
-  "every piece at once": "todas las piezas a la vez",
+  "on parts at the same time": "en varias partes a la vez",
   "every step landed": "todos los pasos llegaron al juego",
   "exit {code}": "salida {code}",
   "export games": "exportar juegos",
@@ -5287,7 +5281,6 @@ export default {
     "las comprobaciones asignadas ya pasan y ningún revisor se opuso",
   "the checks it was given pass and the reviewer agrees":
     "las comprobaciones asignadas pasan y el revisor está de acuerdo",
-  "the contract reviewers read": "el contrato que leen los revisores",
   "the engine hit its limit — the build can pick up again when it resets":
     "el motor llegó a su límite: el build podrá seguir cuando se restablezca",
   "the engine's session ended early": "la sesión del motor terminó antes de tiempo",
@@ -5296,7 +5289,7 @@ export default {
     "el juego aún no había terminado de cargar cuando se revisó",
   "the game inside it stays exactly where it is": "el juego que contiene se queda justo donde está",
   "the game's app": "la app del juego",
-  "the idea becomes tasks": "la idea se convierte en tareas",
+  "and plans when it helps": "y planea cuando ayuda",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "el {file} conservado aún tiene sus propios {names}, pero {callers} ahora usan {target}",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":

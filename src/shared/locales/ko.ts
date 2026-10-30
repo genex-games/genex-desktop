@@ -57,12 +57,12 @@ export default {
   "A connector needs a name": "커넥터에는 이름이 필요해요",
   "A connector url must be https, or http on localhost": "커넥터 URL은 https이거나 localhost의 http여야 해요",
   "A connector working directory must be an absolute path": "커넥터 작업 디렉터리는 절대 경로여야 해요",
-  "A cooking game in a food truck that serves ghosts at midnight": "한밤중에 유령에게 음식을 파는 푸드트럭 요리 게임",
-  "A cozy café where you make latte art for forest animals": "숲속 동물들에게 라테 아트를 만들어 주는 아늑한 카페",
-  "A cozy fishing game on a tiny island where you sell your catch at the dock":
-    "작은 섬에서 잡은 물고기를 부두에서 파는 아늑한 낚시 게임",
-  "A cozy library where you match lost books to their readers": "잃어버린 책을 주인에게 찾아 주는 아늑한 도서관",
-  "A cozy puzzle about packing a suitcase for a trip": "여행 가방을 싸는 아늑한 퍼즐",
+  "A cooking game in a food truck that serves ghosts": "유령에게 음식을 파는 푸드트럭 요리 게임",
+  "A café where you make latte art for forest animals": "숲속 동물들에게 라테 아트를 만들어 주는 카페",
+  "A fishing game on a tiny island where you sell your catch at the dock":
+    "작은 섬에서 잡은 물고기를 부두에서 파는 낚시 게임",
+  "A library where you match lost books to their readers": "잃어버린 책을 주인에게 찾아 주는 도서관",
+  "A puzzle about packing a suitcase for a trip": "여행 가방을 싸는 퍼즐",
   "A dead terminal's cursor leaving trails": "꺼진 터미널의 커서가 남기는 잔상",
   "A desert caravan trading spices across shifting dunes": "움직이는 모래 언덕을 건너며 향신료를 파는 사막 대상",
   "A detective game where you question houseplants about a missing cookie":
@@ -77,9 +77,9 @@ export default {
     "다운로드가 Genex가 예상한 릴리스보다 커서 Genex가 중지했어요. 아무것도 보관하지 않았어요.",
   "A download wasn't over a secure link, so Genex stopped. Nothing was kept.":
     "다운로드가 안전한 링크를 거치지 않아서 Genex가 중지했어요. 아무것도 보관하지 않았어요.",
-  "A dragon who hoards cozy blankets instead of gold": "금 대신 포근한 담요를 모으는 드래곤",
+  "A dragon who hoards blankets instead of gold": "금 대신 담요를 모으는 드래곤",
   "A dream world where doors lead to memories": "문이 추억으로 이어지는 꿈의 세계",
-  "A drift racer on frozen mountain roads at night": "밤의 얼어붙은 산길을 달리는 드리프트 레이싱",
+  "A sandbox where you build working machines from blocks and wheels": "블록과 바퀴로 움직이는 기계를 만드는 샌드박스",
   "A dungeon where you play the monster defending its treasure from heroes":
     "몬스터가 되어 영웅들로부터 보물을 지키는 던전",
   "A farming sim on a floating island that drifts between seasons": "계절 사이를 떠다니는 공중 섬의 농장 시뮬레이션",
@@ -88,31 +88,31 @@ export default {
     "파일이 사용 중이었거나 드라이브가 거부했어요. 다른 앱을 닫은 다음 다시 시도하세요.",
   "A file was in use. Close other programs and try again.":
     "파일이 사용 중이었어요. 다른 프로그램을 닫고 다시 시도하세요.",
-  "A firefly-catching game in a summer meadow at dusk": "해 질 녘 여름 들판에서 반딧불이를 잡는 게임",
+  "A turn-based strategy game on a hex map with three rival factions": "세 세력이 맞서는 육각형 맵의 턴제 전략 게임",
   "A frog hopping across lily pads that sink when you stay too long":
     "오래 머물면 가라앉는 연잎 위를 뛰어다니는 개구리",
   "A full path, such as /Users/you/server.": "/Users/you/server 같은 전체 경로예요.",
   "A garden defense game where vegetables guard against snails": "채소들이 달팽이로부터 텃밭을 지키는 디펜스 게임",
-  "A garden gnome sneaking through backyards at night": "밤마다 뒷마당을 몰래 누비는 정원 노움",
+  "A visual novel where your choices decide who wins the school election":
+    "선택에 따라 학생회 선거의 승자가 정해지는 비주얼 노벨",
   "A gardening game where plants grow into puzzles you have to solve":
     "식물이 자라 풀어야 할 퍼즐이 되는 정원 가꾸기 게임",
   "A ghost ship sailing through a sea of clouds": "구름 바다를 항해하는 유령선",
   "A gravity golf game between tiny planets": "작은 행성들 사이에서 치는 중력 골프",
   "A greenhouse where every plant has a strange personality": "모든 식물이 별난 성격을 가진 온실",
-  "A haunted house you redecorate to scare away noisy guests": "시끄러운 손님을 쫓아내려고 새로 꾸미는 유령의 집",
+  "A house you redecorate to scare away noisy guests": "시끄러운 손님을 쫓아내려고 꾸미는 집",
   "A hot air balloon game where you ride the winds between islands": "바람을 타고 섬과 섬 사이를 오가는 열기구 게임",
   "A judge is playing the game": "심사위원이 게임을 플레이하는 중",
   "A juggling game where the balls are on fire": "불붙은 공으로 저글링하는 게임",
   "A jungle temple escape with rolling boulders and traps": "굴러오는 바위와 함정을 피해 정글 신전을 탈출하는 게임",
-  "A kite flying game through a festival of lanterns": "등불 축제 사이로 연을 날리는 게임",
+  "A kite flying game through a festival": "축제 위로 연을 날리는 게임",
   "A lane-switching runner through a candy factory": "레인을 바꾸며 사탕 공장을 달리는 러너 게임",
-  "A lantern-lit night market where you run a noodle stand": "등불이 밝힌 야시장에서 국수 가게를 운영하는 게임",
+  "A market where you run a noodle stand": "시장에서 국수 가게를 운영하는 게임",
   "A later change edited the same part of Harness’s instructions. Undo that change first.":
     "그 뒤에 한 변경이 Harness 지침의 같은 부분을 고쳤어요. 그 변경을 먼저 되돌려 주세요.",
   "A later restore took this change back. Harness works the way it did before.":
     "이후 복원으로 이 변경이 되돌려졌어요. Harness는 이전처럼 동작해요.",
-  "A lighthouse keeper guiding ships through a storm by turning the beam":
-    "등대 불빛을 돌려 폭풍 속 배들을 안내하는 등대지기",
+  "A lighthouse keeper guiding ships past rocks by turning the beam": "불빛을 돌려 배를 바위 사이로 안내하는 등대지기",
   "A mail sorting game in a busy post office before closing time":
     "문 닫기 전 붐비는 우체국에서 우편물을 분류하는 게임",
   "A match-three puzzle where matches grow a forest": "맞출 때마다 숲이 자라는 3매치 퍼즐",
@@ -121,12 +121,12 @@ export default {
     "되감기 후에 메시지를 보내서 이제 새 버전을 되돌릴 수 없어요.",
   "A meteor shower dodge game with a small dinosaur": "작은 공룡이 유성우를 피하는 게임",
   "A mini golf course on the surface of the moon with low gravity": "중력이 약한 달 표면의 미니 골프 코스",
-  "A minimalist tower stacking game where the wind gets stronger": "바람이 점점 세지는 미니멀 탑 쌓기 게임",
+  "A tower stacking game where the wind gets stronger": "바람이 점점 거세지는 탑 쌓기 게임",
   "A model is downloading. Delete this one when the download finishes.":
     "모델을 다운로드하는 중이에요. 다운로드가 끝나면 이 모델을 삭제해 주세요.",
   "A mountain rescue game with a dog and a sled": "개와 썰매로 산에서 구조하는 게임",
-  "A museum night guard game where the exhibits come alive": "전시품이 살아 움직이는 박물관 야간 경비 게임",
-  "A neon arcade shooter where your bullets bounce off the walls": "총알이 벽에 튕기는 네온 아케이드 슈팅",
+  "A museum guard game where the exhibits come alive": "전시품이 살아 움직이는 박물관 경비원 게임",
+  "An arcade shooter where your bullets bounce off the walls": "총알이 벽에 튕기는 아케이드 슈팅 게임",
   "A new build is ready to play.": "새 빌드를 플레이할 수 있어요.",
   "A new build is ready — reload to play it": "새 빌드가 준비됐어요 — 새로 고침해서 플레이하세요",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
@@ -148,7 +148,7 @@ export default {
     "일시 정지된 빌드가 {time}에 자동으로 재개돼요. 다시 시작해 업데이트하고 자동 재개를 취소할까요?",
   "A pinball table where the ball is a tiny knight fighting monsters": "공 대신 작은 기사가 몬스터와 싸우는 핀볼",
   "A pirate ship battle with cannons that shoot fruit": "과일을 쏘는 대포로 싸우는 해적선 전투",
-  "A pixel-art fishing game under a frozen lake": "얼어붙은 호수 아래에서 하는 픽셀 아트 낚시 게임",
+  "An ice fishing game where you drill holes across a lake": "호수 곳곳에 구멍을 뚫는 얼음낚시 게임",
   "A plan is ready for your review.": "계획이 준비됐어요. 검토해 주세요.",
   "A platformer where gravity flips every time you jump": "점프할 때마다 중력이 뒤집히는 플랫포머",
   "A plugin": "플러그인",
@@ -169,7 +169,7 @@ export default {
   "A second AI is looking at your game": "두 번째 AI가 게임을 살펴보고 있어요",
   "A self-improving harness": "스스로 발전하는 Harness",
   "A shop keeping game in a fantasy town that sells only potions": "물약만 파는 판타지 마을의 가게 운영 게임",
-  "A side-scrolling skateboarding game through a neon city": "네온 도시를 달리는 횡스크롤 스케이트보드 게임",
+  "A side-scrolling skateboarding game through a city": "도시를 달리는 횡스크롤 스케이트보드 게임",
   "A sky courier delivering letters between floating towns on a glider":
     "글라이더를 타고 떠다니는 마을 사이로 편지를 배달하는 하늘 집배원",
   "A slow train journey where you trade goods between stations": "역과 역 사이에서 물건을 사고파는 느긋한 기차 여행",
@@ -181,9 +181,9 @@ export default {
   "A space shooter where every enemy you destroy becomes part of your ship":
     "파괴한 적이 모두 내 우주선의 일부가 되는 우주 슈팅 게임",
   "A space station repair game with a robot and a timer": "로봇과 타이머로 우주 정거장을 고치는 게임",
-  "A spooky graveyard where you help lost ghosts find home": "길 잃은 유령들이 집을 찾도록 돕는 으스스한 묘지",
+  "A graveyard where you help lost ghosts find home": "길 잃은 유령이 집을 찾도록 돕는 묘지",
   "A sports car and an off-road buggy with gears and a speedometer.": "기어와 속도계가 있는 스포츠카와 오프로드 버기.",
-  "A starlit camping trip where you build the perfect campfire": "별빛 아래에서 완벽한 모닥불을 피우는 캠핑",
+  "A two-player online card game with a deck you build between matches": "경기 사이에 덱을 짜는 2인용 온라인 카드 게임",
   "A starship captain choosing which planet to visit next": "다음에 어느 행성으로 갈지 고르는 우주선 선장",
   "A stdio connector has no url": "stdio 커넥터에는 URL이 없어요",
   "A stdio connector needs a command": "stdio 커넥터에는 명령이 필요해요",
@@ -199,7 +199,7 @@ export default {
     "걸어 다니며 나무를 심어 초록빛으로 물들이는 작은 행성",
   "A tiny racing game on a kitchen table with toy cars": "장난감 자동차로 부엌 식탁 위를 달리는 작은 레이싱 게임",
   "A tiny space shooter in a field of asteroids": "소행성 지대에서 펼쳐지는 작은 우주 슈팅 게임",
-  "A tiny submarine exploring a glowing deep-sea cave": "빛나는 심해 동굴을 탐험하는 작은 잠수함",
+  "A tiny submarine exploring a deep-sea cave": "심해 동굴을 탐험하는 작은 잠수함",
   "A tiny wizard school where you mix colors into spells": "색을 섞어 주문을 만드는 작은 마법 학교",
   "A top-down racer with drifting and a boost that charges in corners":
     "드리프트와 코너에서 충전되는 부스트가 있는 탑다운 레이싱 게임",
@@ -220,7 +220,7 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "지금 작업자가 게임 폴더에서 작업 중이에요 — 끝나면 다시 시도하세요.",
   "A worker wants to run {job} in the background": "작업자가 백그라운드에서 {job} 실행을 요청해요",
-  "A zen sand garden where you rake patterns around stones": "돌 주변 모래에 갈퀴로 무늬를 그리는 젠 정원",
+  "A sand garden where you rake patterns around stones": "돌 주위 모래에 갈퀴로 무늬를 그리는 모래 정원",
   "API key": "API 키",
   "API key (optional)": "API 키(선택)",
   About: "정보",
@@ -530,7 +530,7 @@ export default {
   "Build updated": "빌드가 업데이트됐어요",
   "Build with the Cursor plan you already have.": "이미 있는 Cursor 요금제로 만들어요.",
   "Build with the Grok account you already have.": "이미 있는 Grok 계정으로 만들어요.",
-  "Build with workers": "작업자와 함께 만들기",
+  "Workers pitch in": "작업자가 거들어요",
   Building: "만드는 중",
   "Building the game": "게임 빌드 중",
   "Building the starting point": "시작점을 만드는 중",
@@ -2728,7 +2728,7 @@ export default {
   "Plan ready": "계획 준비됨",
   "Plan ready for review": "검토할 계획이 준비됐어요",
   "Plan usage isn’t available right now.": "지금은 요금제 사용량을 확인할 수 없어요.",
-  "Plan your game": "게임 계획",
+  "Your agent leads": "에이전트가 이끌어요",
   Planning: "계획 중",
   "Planning the build": "빌드 계획 중",
   "Planning the next step": "다음 단계를 계획하는 중",
@@ -3065,7 +3065,7 @@ export default {
   "Reviewers preferred the game you had": "리뷰어가 이전 게임을 골랐어요",
   "Reviewers test every result and decide when the game is done.":
     "리뷰어는 모든 결과를 테스트하고 게임이 완성됐는지 판단해요.",
-  "Reviewers test it": "리뷰어가 테스트하고",
+  "A second opinion": "다른 시선",
   "Reviewers undid it": "리뷰어가 되돌렸어요",
   "Reviewers undid {count, plural, other {# tries}}": "리뷰어가 시도 {count, plural, other {#개}}를 되돌렸어요",
   "Reviewers · try {number}": "리뷰어 · 시도 {number}",
@@ -4723,7 +4723,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "이전 빌드를 플레이할 수 있어요 · 채팅에서 이어 가기",
   "an empty folder": "빈 폴더",
   "an input": "입력",
-  "and approve each build": "빌드마다 승인해요",
+  "when the lead asks for one": "메인 에이전트가 요청할 때",
   "and {count} more": "외 {count}개",
   "another project or no recorded preview": "다른 프로젝트이거나 기록된 미리보기 없음",
   "app update left every harness file as it was": "앱 업데이트에서 Harness 파일은 그대로 유지됐어요",
@@ -4832,7 +4832,7 @@ export default {
   eighth: "여덟 번째",
   ended: "종료됨",
   "every object has a reason to be there": "모든 물건에 있을 이유가 있는지",
-  "every piece at once": "모든 부분을 동시에",
+  "on parts at the same time": "여러 부분을 동시에",
   "every step landed": "모든 단계가 반영됐어요",
   "exit {code}": "종료 코드 {code}",
   "export games": "게임 내보내기",
@@ -5102,7 +5102,6 @@ export default {
   "the build was broken": "빌드가 깨져 있었어요",
   "the checks it was given now pass, and no reviewer objected": "주어진 검사를 이제 통과했고, 반대한 리뷰어가 없어요",
   "the checks it was given pass and the reviewer agrees": "주어진 검사를 통과했고 리뷰어도 동의해요",
-  "the contract reviewers read": "리뷰어가 읽는 계약",
   "the engine hit its limit — the build can pick up again when it resets":
     "엔진이 한도에 도달했어요 — 한도가 초기화되면 빌드를 이어서 할 수 있어요",
   "the engine's session ended early": "엔진 세션이 일찍 끝났어요",
@@ -5110,7 +5109,7 @@ export default {
   "the game had not finished loading when it was looked at": "확인할 때 게임이 아직 다 로드되지 않았어요",
   "the game inside it stays exactly where it is": "안에 있는 게임은 지금 위치 그대로 있어요",
   "the game's app": "게임 앱",
-  "the idea becomes tasks": "아이디어가 작업이 돼요",
+  "and plans when it helps": "필요하면 계획도 세워요",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "유지된 {file} 파일에는 자체 {names} 코드가 남아 있지만, 이제 {callers}에서는 {target} 파일을 써요",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":

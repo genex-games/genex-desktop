@@ -115,9 +115,9 @@ type Hardware = Awaited<ReturnType<typeof window.studio.hardware>>;
 const COMPOSER = { left: 120, top: 130, width: 520 } as const;
 const SEND = { x: COMPOSER.left + COMPOSER.width - 26, y: COMPOSER.top + 62 } as const;
 const ROLES = [
-  { name: t("Plan your game"), does: t("the idea becomes tasks"), left: 7, at: ROLE_AT.planner },
-  { name: t("Build with workers"), does: t("every piece at once"), left: 260, at: ROLE_AT.workers },
-  { name: t("Reviewers test it"), does: t("and approve each build"), left: 513, at: ROLE_AT.reviewers },
+  { name: t("Your agent leads"), does: t("and plans when it helps"), left: 7, at: ROLE_AT.planner },
+  { name: t("Workers pitch in"), does: t("on parts at the same time"), left: 260, at: ROLE_AT.workers },
+  { name: t("A second opinion"), does: t("when the lead asks for one"), left: 513, at: ROLE_AT.reviewers },
 ] as const;
 /** The welcome's typing: a calm start while the caret blinks, then each letter. */
 const TYPE_START_MS = 1400;

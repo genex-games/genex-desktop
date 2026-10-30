@@ -63,14 +63,13 @@ export default {
   "A connector needs a name": "Коннектору нужно имя",
   "A connector url must be https, or http on localhost": "url коннектора должен быть https или http на localhost",
   "A connector working directory must be an absolute path": "Рабочая папка коннектора должна быть абсолютным путём",
-  "A cooking game in a food truck that serves ghosts at midnight":
-    "Готовка в фудтраке, который в полночь кормит призраков",
-  "A cozy café where you make latte art for forest animals": "Уютное кафе, где ты рисуешь латте-арт для лесных зверей",
-  "A cozy fishing game on a tiny island where you sell your catch at the dock":
-    "Уютная рыбалка на крошечном острове, где улов продаёшь на причале",
-  "A cozy library where you match lost books to their readers":
-    "Уютная библиотека, где ты возвращаешь потерянные книги читателям",
-  "A cozy puzzle about packing a suitcase for a trip": "Уютная головоломка про то, как собрать чемодан в поездку",
+  "A cooking game in a food truck that serves ghosts": "Готовка в фудтраке, который кормит призраков",
+  "A café where you make latte art for forest animals": "Кафе, где ты рисуешь латте-арт для лесных зверей",
+  "A fishing game on a tiny island where you sell your catch at the dock":
+    "Рыбалка на крошечном острове, где улов продаёшь на причале",
+  "A library where you match lost books to their readers":
+    "Библиотека, где ты возвращаешь потерянные книги их читателям",
+  "A puzzle about packing a suitcase for a trip": "Головоломка о том, как собрать чемодан в поездку",
   "A dead terminal's cursor leaving trails": "Курсор мёртвого терминала оставляет следы",
   "A desert caravan trading spices across shifting dunes": "Караван в пустыне торгует специями среди движущихся дюн",
   "A detective game where you question houseplants about a missing cookie":
@@ -85,9 +84,10 @@ export default {
     "Загрузка оказалась больше релиза, который ждёт Genex, поэтому Genex остановился. Ничего не сохранено.",
   "A download wasn't over a secure link, so Genex stopped. Nothing was kept.":
     "Загрузка шла не по защищённой ссылке, поэтому Genex остановился. Ничего не сохранено.",
-  "A dragon who hoards cozy blankets instead of gold": "Дракон, который копит уютные пледы вместо золота",
+  "A dragon who hoards blankets instead of gold": "Дракон, который копит одеяла вместо золота",
   "A dream world where doors lead to memories": "Мир снов, где двери ведут в воспоминания",
-  "A drift racer on frozen mountain roads at night": "Дрифт-гонки ночью по обледенелым горным дорогам",
+  "A sandbox where you build working machines from blocks and wheels":
+    "Песочница, где ты собираешь работающие машины из блоков и колёс",
   "A dungeon where you play the monster defending its treasure from heroes":
     "Подземелье, где ты монстр и защищаешь сокровища от героев",
   "A farming sim on a floating island that drifts between seasons":
@@ -96,34 +96,35 @@ export default {
   "A file was in use, or the drive refused it. Close other apps, then try again.":
     "Файл был занят, или диск его не принял. Закрой другие приложения и попробуй снова.",
   "A file was in use. Close other programs and try again.": "Файл был занят. Закрой другие программы и попробуй снова.",
-  "A firefly-catching game in a summer meadow at dusk": "Ловля светлячков на летнем лугу в сумерках",
+  "A turn-based strategy game on a hex map with three rival factions":
+    "Пошаговая стратегия на гексагональной карте с тремя соперничающими фракциями",
   "A frog hopping across lily pads that sink when you stay too long":
     "Лягушка прыгает по кувшинкам, которые тонут, если задержаться",
   "A full path, such as /Users/you/server.": "Полный путь, например /Users/you/server.",
   "A garden defense game where vegetables guard against snails": "Оборона огорода: овощи защищаются от улиток",
-  "A garden gnome sneaking through backyards at night": "Садовый гном ночью крадётся по задним дворам",
+  "A visual novel where your choices decide who wins the school election":
+    "Визуальная новелла, где твой выбор решает, кто выиграет школьные выборы",
   "A gardening game where plants grow into puzzles you have to solve":
     "Садоводство, где растения вырастают в головоломки, которые надо решить",
   "A ghost ship sailing through a sea of clouds": "Корабль-призрак плывёт по морю облаков",
   "A gravity golf game between tiny planets": "Гравитационный гольф между крошечными планетами",
   "A greenhouse where every plant has a strange personality": "Оранжерея, где у каждого растения странный характер",
-  "A haunted house you redecorate to scare away noisy guests":
-    "Дом с привидениями, который ты обставляешь, чтобы распугать шумных гостей",
+  "A house you redecorate to scare away noisy guests": "Дом, который ты переделываешь, чтобы распугать шумных гостей",
   "A hot air balloon game where you ride the winds between islands":
     "Воздушный шар: лови ветра и перелетай между островами",
   "A judge is playing the game": "Судья играет в игру",
   "A juggling game where the balls are on fire": "Жонглирование горящими мячами",
   "A jungle temple escape with rolling boulders and traps":
     "Побег из храма в джунглях с катящимися валунами и ловушками",
-  "A kite flying game through a festival of lanterns": "Полёт воздушного змея сквозь фестиваль фонариков",
+  "A kite flying game through a festival": "Запускай воздушного змея над праздником",
   "A lane-switching runner through a candy factory": "Раннер по конфетной фабрике с переключением дорожек",
-  "A lantern-lit night market where you run a noodle stand": "Ночной рынок при фонарях, где ты держишь лапшичную",
+  "A market where you run a noodle stand": "Рынок, где ты держишь лапшичную",
   "A later change edited the same part of Harness’s instructions. Undo that change first.":
     "Более позднее изменение правит ту же часть инструкций Harness. Сначала отмени его.",
   "A later restore took this change back. Harness works the way it did before.":
     "Более позднее восстановление откатило это изменение. Harness работает как раньше.",
-  "A lighthouse keeper guiding ships through a storm by turning the beam":
-    "Смотритель маяка проводит корабли сквозь шторм, поворачивая луч",
+  "A lighthouse keeper guiding ships past rocks by turning the beam":
+    "Смотритель маяка проводит корабли мимо скал, поворачивая луч",
   "A mail sorting game in a busy post office before closing time": "Сортировка писем на шумной почте перед закрытием",
   "A match-three puzzle where matches grow a forest": "«Три в ряд», где из каждого совпадения вырастает лес",
   "A maze that rearranges itself every ten seconds": "Лабиринт, который перестраивается каждые десять секунд",
@@ -131,14 +132,12 @@ export default {
     "После отката уже отправлено сообщение, поэтому новую версию теперь не вернуть.",
   "A meteor shower dodge game with a small dinosaur": "Маленький динозавр уворачивается от метеоритного дождя",
   "A mini golf course on the surface of the moon with low gravity": "Мини-гольф на Луне с низкой гравитацией",
-  "A minimalist tower stacking game where the wind gets stronger":
-    "Минималистичная башня из блоков, а ветер всё сильнее",
+  "A tower stacking game where the wind gets stronger": "Строй башню, пока ветер становится всё сильнее",
   "A model is downloading. Delete this one when the download finishes.":
     "Сейчас скачивается модель. Удали эту, когда загрузка закончится.",
   "A mountain rescue game with a dog and a sled": "Спасение в горах с собакой и санями",
-  "A museum night guard game where the exhibits come alive": "Ночной охранник в музее, где экспонаты оживают",
-  "A neon arcade shooter where your bullets bounce off the walls":
-    "Неоновый аркадный шутер, где пули отскакивают от стен",
+  "A museum guard game where the exhibits come alive": "Игра про охранника музея, где оживают экспонаты",
+  "An arcade shooter where your bullets bounce off the walls": "Аркадный шутер, где пули отскакивают от стен",
   "A new build is ready to play.": "Новая сборка готова — можно играть.",
   "A new build is ready — reload to play it": "Новая сборка готова — перезагрузи, чтобы поиграть",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
@@ -162,7 +161,7 @@ export default {
   "A pinball table where the ball is a tiny knight fighting monsters":
     "Пинбол, где шарик — крошечный рыцарь, сражающийся с монстрами",
   "A pirate ship battle with cannons that shoot fruit": "Морской бой пиратов, где пушки стреляют фруктами",
-  "A pixel-art fishing game under a frozen lake": "Пиксельная рыбалка подо льдом замёрзшего озера",
+  "An ice fishing game where you drill holes across a lake": "Подлёдная рыбалка, где ты сверлишь лунки по всему озеру",
   "A plan is ready for your review.": "План готов к проверке.",
   "A platformer where gravity flips every time you jump":
     "Платформер, где гравитация переворачивается при каждом прыжке",
@@ -187,7 +186,7 @@ export default {
   "A self-improving harness": "Harness, который улучшает себя сам",
   "A shop keeping game in a fantasy town that sells only potions":
     "Лавка в фэнтезийном городе, где продают только зелья",
-  "A side-scrolling skateboarding game through a neon city": "Сайд-скроллер на скейте по неоновому городу",
+  "A side-scrolling skateboarding game through a city": "Сайд-скроллер про скейтборд по городу",
   "A sky courier delivering letters between floating towns on a glider":
     "Небесный курьер на планере развозит письма между летающими городами",
   "A slow train journey where you trade goods between stations":
@@ -201,12 +200,11 @@ export default {
   "A space shooter where every enemy you destroy becomes part of your ship":
     "Космический шутер, где каждый сбитый враг становится частью твоего корабля",
   "A space station repair game with a robot and a timer": "Ремонт космической станции с роботом и таймером",
-  "A spooky graveyard where you help lost ghosts find home":
-    "Жуткое кладбище, где ты помогаешь потерянным призракам найти дом",
+  "A graveyard where you help lost ghosts find home": "Кладбище, где ты помогаешь заблудшим призракам найти дом",
   "A sports car and an off-road buggy with gears and a speedometer.":
     "Спорткар и багги-внедорожник с коробкой передач и спидометром.",
-  "A starlit camping trip where you build the perfect campfire":
-    "Поход под звёздами, где ты разводишь идеальный костёр",
+  "A two-player online card game with a deck you build between matches":
+    "Онлайн-карточная игра на двоих, где колоду собираешь между матчами",
   "A starship captain choosing which planet to visit next":
     "Капитан звездолёта выбирает, какую планету посетить дальше",
   "A stdio connector has no url": "У коннектора stdio не бывает url",
@@ -224,7 +222,7 @@ export default {
     "Крошечная планета: ходи по ней и сажай деревья, пока она не позеленеет",
   "A tiny racing game on a kitchen table with toy cars": "Мини-гонки на игрушечных машинках по кухонному столу",
   "A tiny space shooter in a field of asteroids": "Маленький космический шутер среди астероидов",
-  "A tiny submarine exploring a glowing deep-sea cave": "Крошечная подлодка исследует светящуюся глубоководную пещеру",
+  "A tiny submarine exploring a deep-sea cave": "Крошечная подлодка исследует глубоководную пещеру",
   "A tiny wizard school where you mix colors into spells":
     "Крошечная школа волшебников, где из цветов смешивают заклинания",
   "A top-down racer with drifting and a boost that charges in corners":
@@ -249,8 +247,7 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "Сейчас в папке игры работает помощник — попробуй снова, когда он закончит.",
   "A worker wants to run {job} in the background": "Помощник хочет запустить {job} в фоне",
-  "A zen sand garden where you rake patterns around stones":
-    "Дзен-сад, где ты граблями рисуешь узоры на песке вокруг камней",
+  "A sand garden where you rake patterns around stones": "Сад камней, где ты граблями рисуешь узоры на песке",
   "API key": "API-ключ",
   "API key (optional)": "API-ключ (необязательно)",
   About: "О программе",
@@ -560,7 +557,7 @@ export default {
   "Build updated": "Сборка обновлена",
   "Build with the Cursor plan you already have.": "Собирай на тарифе Cursor, который у тебя уже есть.",
   "Build with the Grok account you already have.": "Собирай на аккаунте Grok, который у тебя уже есть.",
-  "Build with workers": "Собирай с помощниками",
+  "Workers pitch in": "Помощники подключаются",
   Building: "Собирает",
   "Building the game": "Собираем игру",
   "Building the starting point": "Собирает основу",
@@ -2789,7 +2786,7 @@ export default {
   "Plan ready": "План готов",
   "Plan ready for review": "План готов к проверке",
   "Plan usage isn’t available right now.": "Лимиты тарифа сейчас недоступны.",
-  "Plan your game": "Спланируй игру",
+  "Your agent leads": "Ведёт твой агент",
   Planning: "Планирует",
   "Planning the build": "Планирует сборку",
   "Planning the next step": "Планирует следующий шаг",
@@ -3129,7 +3126,7 @@ export default {
   "Reviewers preferred the game you had": "Проверяющие предпочли прежнюю игру",
   "Reviewers test every result and decide when the game is done.":
     "Проверяющие тестируют каждый результат и решают, когда игра готова.",
-  "Reviewers test it": "Проверяющие тестируют",
+  "A second opinion": "Второе мнение",
   "Reviewers undid it": "Проверяющие отменили",
   "Reviewers undid {count, plural, other {# tries}}":
     "Проверяющие отменили {count, plural, one {# попытку} few {# попытки} many {# попыток} other {# попытки}}",
@@ -4812,7 +4809,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "можно играть в прежнюю сборку · продолжи из чата",
   "an empty folder": "пустая папка",
   "an input": "элемент управления",
-  "and approve each build": "и одобряют каждую сборку",
+  "when the lead asks for one": "когда главный агент попросит",
   "and {count} more": "и ещё {count}",
   "another project or no recorded preview": "другой проект или превью не записано",
   "app update left every harness file as it was": "обновление приложения не тронуло файлы Harness",
@@ -4923,7 +4920,7 @@ export default {
   eighth: "восьмую",
   ended: "завершено",
   "every object has a reason to be there": "у каждого предмета есть причина быть здесь",
-  "every piece at once": "все части сразу",
+  "on parts at the same time": "над частями одновременно",
   "every step landed": "все шаги попали в игру",
   "exit {code}": "код {code}",
   "export games": "экспортировать игры",
@@ -5196,7 +5193,6 @@ export default {
   "the checks it was given now pass, and no reviewer objected":
     "заданные проверки теперь проходят, и ни один проверяющий не возразил",
   "the checks it was given pass and the reviewer agrees": "заданные проверки проходят, и проверяющий согласен",
-  "the contract reviewers read": "контракт, который читают проверяющие",
   "the engine hit its limit — the build can pick up again when it resets":
     "движок упёрся в лимит — сборку можно будет продолжить, когда лимит сбросится",
   "the engine's session ended early": "сессия движка закончилась раньше времени",
@@ -5204,7 +5200,7 @@ export default {
   "the game had not finished loading when it was looked at": "игра ещё не загрузилась, когда её проверяли",
   "the game inside it stays exactly where it is": "игра внутри остаётся на своём месте",
   "the game's app": "приложение игры",
-  "the idea becomes tasks": "идея превращается в задачи",
+  "and plans when it helps": "и планирует, когда это помогает",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "в сохранённом файле {file} остались свои {names}, но вызовы из {callers} теперь идут в {target}",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":

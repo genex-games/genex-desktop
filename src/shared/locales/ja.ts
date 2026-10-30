@@ -58,12 +58,11 @@ export default {
   "A connector url must be https, or http on localhost":
     "コネクタのURLはhttps、またはlocalhostのhttpにする必要があります",
   "A connector working directory must be an absolute path": "コネクタの作業ディレクトリは絶対パスにする必要があります",
-  "A cooking game in a food truck that serves ghosts at midnight": "真夜中に幽霊にごはんを出すキッチンカーの料理ゲーム",
-  "A cozy café where you make latte art for forest animals": "森の動物たちにラテアートをつくる、のんびりカフェ",
-  "A cozy fishing game on a tiny island where you sell your catch at the dock":
-    "小さな島で釣った魚を桟橋で売る、のんびり釣りゲーム",
-  "A cozy library where you match lost books to their readers": "迷子の本を読み手のもとへ返す、居心地のいい図書館",
-  "A cozy puzzle about packing a suitcase for a trip": "旅行のスーツケースを詰める、のんびりパズル",
+  "A cooking game in a food truck that serves ghosts": "幽霊にごはんを出すキッチンカーの料理ゲーム",
+  "A café where you make latte art for forest animals": "森の動物たちにラテアートを作るカフェ",
+  "A fishing game on a tiny island where you sell your catch at the dock": "小さな島で釣った魚を桟橋で売る釣りゲーム",
+  "A library where you match lost books to their readers": "なくした本を持ち主に届ける図書館",
+  "A puzzle about packing a suitcase for a trip": "旅行のスーツケースを詰めるパズル",
   "A dead terminal's cursor leaving trails": "止まった端末のカーソルが残す軌跡",
   "A desert caravan trading spices across shifting dunes": "動く砂丘を越えてスパイスを売り歩く砂漠のキャラバン",
   "A detective game where you question houseplants about a missing cookie":
@@ -78,9 +77,9 @@ export default {
     "ダウンロードがGenexの想定するリリースより大きかったため、Genexは停止しました。何も保存されていません。",
   "A download wasn't over a secure link, so Genex stopped. Nothing was kept.":
     "ダウンロードが安全なリンク経由ではなかったため、Genexは停止しました。何も保存されていません。",
-  "A dragon who hoards cozy blankets instead of gold": "金の代わりにふかふかの毛布を集めるドラゴン",
+  "A dragon who hoards blankets instead of gold": "金貨の代わりに毛布をためこむドラゴン",
   "A dream world where doors lead to memories": "扉が思い出につながる夢の世界",
-  "A drift racer on frozen mountain roads at night": "夜の凍った山道を走るドリフトレース",
+  "A sandbox where you build working machines from blocks and wheels": "ブロックと車輪で動く機械をつくるサンドボックス",
   "A dungeon where you play the monster defending its treasure from heroes":
     "モンスターになって勇者たちから宝を守るダンジョン",
   "A farming sim on a floating island that drifts between seasons": "季節の間を漂う浮島での農業シミュレーション",
@@ -89,29 +88,31 @@ export default {
     "ファイルが使用中だったか、ドライブに拒否されました。ほかのアプリを閉じてから、もう一度試してください。",
   "A file was in use. Close other programs and try again.":
     "ファイルが使用中でした。ほかのプログラムを閉じて、もう一度試してください。",
-  "A firefly-catching game in a summer meadow at dusk": "夏の夕暮れの草原でホタルを捕まえるゲーム",
+  "A turn-based strategy game on a hex map with three rival factions":
+    "3つの勢力が争うヘックスマップのターン制ストラテジー",
   "A frog hopping across lily pads that sink when you stay too long": "長く乗っていると沈むハスの葉を跳んでいくカエル",
   "A full path, such as /Users/you/server.": "/Users/you/serverのようなフルパスです。",
   "A garden defense game where vegetables guard against snails": "野菜たちがカタツムリから畑を守るディフェンスゲーム",
-  "A garden gnome sneaking through backyards at night": "夜の裏庭をこっそり進む庭のノーム",
+  "A visual novel where your choices decide who wins the school election":
+    "選択で生徒会選挙の勝者が決まるビジュアルノベル",
   "A gardening game where plants grow into puzzles you have to solve":
     "植物が育つと解くべきパズルになるガーデニングゲーム",
   "A ghost ship sailing through a sea of clouds": "雲の海をわたる幽霊船",
   "A gravity golf game between tiny planets": "小さな惑星の間で打つ重力ゴルフ",
   "A greenhouse where every plant has a strange personality": "どの植物も変わった性格をもつ温室",
-  "A haunted house you redecorate to scare away noisy guests": "うるさい客を追い出すために模様替えするお化け屋敷",
+  "A house you redecorate to scare away noisy guests": "うるさい客を追い払うために模様替えする家",
   "A hot air balloon game where you ride the winds between islands": "風に乗って島から島へ渡る熱気球ゲーム",
   "A judge is playing the game": "審査員がゲームをプレイ中",
   "A juggling game where the balls are on fire": "燃えるボールでジャグリングするゲーム",
   "A jungle temple escape with rolling boulders and traps": "転がる岩と罠だらけのジャングル神殿からの脱出",
-  "A kite flying game through a festival of lanterns": "ランタン祭りの中を飛ばす凧あげゲーム",
+  "A kite flying game through a festival": "お祭りの上を飛ぶ凧あげゲーム",
   "A lane-switching runner through a candy factory": "レーンを切り替えながらお菓子工場を走るランゲーム",
-  "A lantern-lit night market where you run a noodle stand": "提灯が灯る夜市で麺の屋台を切り盛りする",
+  "A market where you run a noodle stand": "市場で麺の屋台を切り盛りするゲーム",
   "A later change edited the same part of Harness’s instructions. Undo that change first.":
     "後の変更がHarnessの指示の同じ部分を編集しています。先にそちらの変更を元に戻してください。",
   "A later restore took this change back. Harness works the way it did before.":
     "後の復元でこの変更は取り消されました。Harnessは以前と同じように動きます。",
-  "A lighthouse keeper guiding ships through a storm by turning the beam": "光の向きを変えて嵐の中の船を導く灯台守",
+  "A lighthouse keeper guiding ships past rocks by turning the beam": "光の向きを変えて船を岩から守る灯台守",
   "A mail sorting game in a busy post office before closing time": "閉店前の忙しい郵便局で手紙を仕分けるゲーム",
   "A match-three puzzle where matches grow a forest": "マッチするたびに森が育つマッチ3パズル",
   "A maze that rearranges itself every ten seconds": "10秒ごとに形が変わる迷路",
@@ -119,12 +120,12 @@ export default {
     "巻き戻しのあとにメッセージが送信されたため、新しいバージョンはもう戻せません。",
   "A meteor shower dodge game with a small dinosaur": "小さな恐竜が流星群をよけるゲーム",
   "A mini golf course on the surface of the moon with low gravity": "重力の弱い月面のミニゴルフコース",
-  "A minimalist tower stacking game where the wind gets stronger": "風がだんだん強くなるミニマルなタワー積みゲーム",
+  "A tower stacking game where the wind gets stronger": "風がだんだん強くなるタワー積みゲーム",
   "A model is downloading. Delete this one when the download finishes.":
     "モデルをダウンロード中です。ダウンロードが終わってから、このモデルを削除してください。",
   "A mountain rescue game with a dog and a sled": "犬とそりで山の救助をするゲーム",
-  "A museum night guard game where the exhibits come alive": "展示品が動き出す博物館の夜警ゲーム",
-  "A neon arcade shooter where your bullets bounce off the walls": "弾が壁で跳ね返るネオンのアーケードシューティング",
+  "A museum guard game where the exhibits come alive": "展示品が動き出す博物館の警備員ゲーム",
+  "An arcade shooter where your bullets bounce off the walls": "弾が壁で跳ね返るアーケードシューティング",
   "A new build is ready to play.": "新しいビルドをプレイできます。",
   "A new build is ready — reload to play it": "新しいビルドができました。再読み込みでプレイできます",
   "A new version is downloading. Genex offers the relaunch when it's ready.":
@@ -148,7 +149,7 @@ export default {
   "A pinball table where the ball is a tiny knight fighting monsters":
     "ボールがモンスターと戦う小さな騎士になっているピンボール",
   "A pirate ship battle with cannons that shoot fruit": "フルーツを撃つ大砲で戦う海賊船バトル",
-  "A pixel-art fishing game under a frozen lake": "凍った湖の下で釣りをするピクセルアートのゲーム",
+  "An ice fishing game where you drill holes across a lake": "湖のあちこちに穴を開ける氷上釣りゲーム",
   "A plan is ready for your review.": "プランの準備ができました。確認してください。",
   "A platformer where gravity flips every time you jump": "ジャンプするたびに重力が反転するプラットフォーマー",
   "A plugin": "プラグイン",
@@ -170,7 +171,7 @@ export default {
   "A second AI is looking at your game": "別のAIがゲームをチェックしています",
   "A self-improving harness": "自分で進化するHarness",
   "A shop keeping game in a fantasy town that sells only potions": "ポーションだけを売るファンタジーの町のお店ゲーム",
-  "A side-scrolling skateboarding game through a neon city": "ネオンの街を走る横スクロールのスケボーゲーム",
+  "A side-scrolling skateboarding game through a city": "街を駆け抜ける横スクロールのスケボーゲーム",
   "A sky courier delivering letters between floating towns on a glider":
     "グライダーで浮かぶ町から町へ手紙を届ける空の配達人",
   "A slow train journey where you trade goods between stations": "駅から駅へ品物を売り買いする、ゆっくりした列車の旅",
@@ -182,10 +183,11 @@ export default {
   "A space shooter where every enemy you destroy becomes part of your ship":
     "倒した敵がすべて自分の宇宙船の一部になるシューティング",
   "A space station repair game with a robot and a timer": "ロボットとタイマーで宇宙ステーションを修理するゲーム",
-  "A spooky graveyard where you help lost ghosts find home": "迷子の幽霊が家に帰るのを手伝う、ちょっと不気味な墓地",
+  "A graveyard where you help lost ghosts find home": "迷子の幽霊を家に帰す墓地のゲーム",
   "A sports car and an off-road buggy with gears and a speedometer.":
     "ギアとスピードメーター付きのスポーツカーとオフロードバギー。",
-  "A starlit camping trip where you build the perfect campfire": "星空の下で最高のキャンプファイヤーをつくるキャンプ",
+  "A two-player online card game with a deck you build between matches":
+    "対戦の合間にデッキを組む2人用オンラインカードゲーム",
   "A starship captain choosing which planet to visit next": "次にどの惑星へ行くかを選ぶ宇宙船の船長",
   "A stdio connector has no url": "stdioコネクタにはURLを指定できません",
   "A stdio connector needs a command": "stdioコネクタにはコマンドが必要です",
@@ -201,7 +203,7 @@ export default {
     "歩き回って木を植え、緑でいっぱいにする小さな惑星",
   "A tiny racing game on a kitchen table with toy cars": "キッチンテーブルの上でミニカーを走らせる小さなレースゲーム",
   "A tiny space shooter in a field of asteroids": "小惑星帯で戦う小さなスペースシューティング",
-  "A tiny submarine exploring a glowing deep-sea cave": "光る深海の洞窟を探検する小さな潜水艦",
+  "A tiny submarine exploring a deep-sea cave": "深海の洞窟を探検する小さな潜水艦",
   "A tiny wizard school where you mix colors into spells": "色を混ぜて呪文をつくる小さな魔法学校",
   "A top-down racer with drifting and a boost that charges in corners":
     "ドリフトとコーナーでたまるブーストがある見下ろし型レースゲーム",
@@ -222,7 +224,7 @@ export default {
   "A worker is busy in your game folder right now — try again once it has finished.":
     "今ワーカーがゲームフォルダーで作業中です。終わってからもう一度試してください。",
   "A worker wants to run {job} in the background": "ワーカーが{job}をバックグラウンドで実行しようとしています",
-  "A zen sand garden where you rake patterns around stones": "石のまわりの砂に熊手で模様を描く禅の庭",
+  "A sand garden where you rake patterns around stones": "石のまわりに砂紋を描く砂の庭",
   "API key": "APIキー",
   "API key (optional)": "APIキー（任意）",
   About: "概要",
@@ -534,7 +536,7 @@ export default {
   "Build updated": "ビルドを更新しました",
   "Build with the Cursor plan you already have.": "すでに契約しているCursorのプランでつくります。",
   "Build with the Grok account you already have.": "すでに持っているGrokアカウントでつくります。",
-  "Build with workers": "ワーカーとつくる",
+  "Workers pitch in": "ワーカーが手伝う",
   Building: "制作中",
   "Building the game": "ゲームをビルド中",
   "Building the starting point": "土台をつくっています",
@@ -2797,7 +2799,7 @@ export default {
   "Plan ready": "プラン完成",
   "Plan ready for review": "プランの確認待ち",
   "Plan usage isn’t available right now.": "プランの使用状況は今は確認できません。",
-  "Plan your game": "ゲームを計画",
+  "Your agent leads": "エージェントが主導",
   Planning: "計画中",
   "Planning the build": "ビルドを計画中",
   "Planning the next step": "次のステップを計画中",
@@ -3138,7 +3140,7 @@ export default {
   "Reviewers preferred the game you had": "レビュアーは前のゲームを選びました",
   "Reviewers test every result and decide when the game is done.":
     "レビュアーはすべての結果をテストし、ゲームが完成したかを判断します。",
-  "Reviewers test it": "レビュアーがテスト",
+  "A second opinion": "セカンドオピニオン",
   "Reviewers undid it": "レビュアーが取り消し",
   "Reviewers undid {count, plural, other {# tries}}": "レビュアーが{count, plural, other {#回}}取り消し",
   "Reviewers · try {number}": "レビュアー · {number}回目",
@@ -4840,7 +4842,7 @@ export default {
   "an earlier build is ready to play · resume from chat": "前のビルドをプレイできます · チャットから再開",
   "an empty folder": "空のフォルダー",
   "an input": "入力",
-  "and approve each build": "ビルドごとに承認",
+  "when the lead asks for one": "メインエージェントが求めたときに",
   "and {count} more": "ほか{count}件",
   "another project or no recorded preview": "別のプロジェクト、またはプレビューの記録なし",
   "app update left every harness file as it was": "アプリのアップデートでHarnessファイルは変更されませんでした",
@@ -4949,7 +4951,7 @@ export default {
   eighth: "8回目",
   ended: "終了",
   "every object has a reason to be there": "どの物にも置かれた理由があること",
-  "every piece at once": "すべてを同時に",
+  "on parts at the same time": "いくつもの部分を同時に",
   "every step landed": "すべてのステップが反映されました",
   "exit {code}": "終了コード{code}",
   "export games": "ゲームを書き出す",
@@ -5222,7 +5224,6 @@ export default {
   "the checks it was given now pass, and no reviewer objected":
     "指定のチェックに合格するようになり、反対したレビュアーはいませんでした",
   "the checks it was given pass and the reviewer agrees": "指定のチェックに合格し、レビュアーも同意しています",
-  "the contract reviewers read": "レビュアーが読む仕様",
   "the engine hit its limit — the build can pick up again when it resets":
     "エンジンが上限に達しました。リセットされたらビルドを続けられます",
   "the engine's session ended early": "エンジンのセッションが早めに終了しました",
@@ -5230,7 +5231,7 @@ export default {
   "the game had not finished loading when it was looked at": "確認したとき、ゲームの読み込みが終わっていませんでした",
   "the game inside it stays exactly where it is": "中のゲームはそのままの場所に残ります",
   "the game's app": "ゲームのアプリ",
-  "the idea becomes tasks": "アイデアをタスクに",
+  "and plans when it helps": "必要なら計画も立てる",
   "the kept {file} still has its own {names}, but {callers} now use {target}":
     "保持された{file}には独自の{names}が残っていますが、{callers}は現在{target}を使っています",
   "the lead ended it before it was finished, so nobody reviewed it and the work it had done is kept":
