@@ -3368,17 +3368,20 @@ Genex:
   kept shot and no send running, the owner chose no cover on genex.games (`kept_owner`, which the
   plugin records whenever Genex reports the owner's pick, at a send or a status check, a shot kept
   or not; `outranked`) and no publish runs, the dialog asks the plugin to take one (`needsCover` in
-  `genex-publish-view.ts`, action `cover-auto`): the `genex-cover` demo, or a plain frame of the game
-  as it loads (`origin: "studio"`), never over a demo's frame; the strip asks the same once a game's
-  turns settle (`use-cover-after-turns.ts`), and it records the `genex-clip` demo's clip when there is
-  one. The banner flips between the record's `candidates` (the last four frames; `cover-pick` makes
-  one the kept shot, pinned, which a publish sends without shooting again), shows a kept clip behind
+  `genex-publish-view.ts`, action `cover-auto`): a plain frame of the game as it loads
+  (`origin: "studio"`, the host's `observe` still of its `default` view), never over the picture the
+  agent kept; the strip asks the same once a game's turns settle (`use-cover-after-turns.ts`). The
+  agent's own picture and clip come from `genex__cover {image, clip?}`: files in the game folder,
+  read by their bytes (`cover-image.ts`, `clip-file.ts`), refused through a link out or at the wrong
+  size or type, and copied into `covers/<project>/`. The banner flips between the record's
+  `candidates` (the last four pictures; `cover-pick` makes one the kept shot, pinned, which a publish
+  sends as it is; a publish never takes a picture), shows a kept clip behind
   a Picture / Clip switch, and Another cover (`[data-genex-another-cover]`) opens a field whose Ask
   agent sends "Make another Genex cover for this game: …" through the chat's own send
   (`renderer/compose-in-chat.ts`) and closes the dialog there. Once the chat really sent it, the ask
   is kept per game on this Mac (`genex/cover-asks.ts`), so the banner opened again says one is being
   made until the agent's own frame arrives: the record's `agentTook` (`covers/<project>/agent.json`,
-  set only by `genex__cover` shoot and clip, never by Studio's takes or a publish's shot). Roughly how
+  set only by `genex__cover`, never by Studio's own frames). Roughly how
   long is left shows once that game's last ask was timed (ask to `agentTook`; no number before one,
   none once it runs over). A
   Genex plugin older than covers answers no record, and none of this shows. Genex-specific core UI, accepted
@@ -3391,13 +3394,14 @@ Genex:
   30 fps, 960x540), or one `clip.mp4`/`clip.webm`. A plugin's `observe` with a `still` or a `clip`
   of such a game takes it of its cover reel (`throughCoverReel`, through `ViewStillOptions.open`):
   the media copied, by `lstat` and never through a link, sniffed and capped, into a folder of the
-  host's scratch (`cover-reels/`) beside a page whose `__studio` answers the `genex-cover` demo with
-  the picture and `genex-clip` with the frames played from `start()`, removed when the take ends.
-  So `cover-auto`, the banner and a publish work on it as on a web game. With no media, or for a
-  web game, the game is served as before.
+  host's scratch (`cover-reels/`) beside a page that plays them, removed when the take ends. The
+  Genex plugin itself no longer asks for a demo: an engine game's agent hands `genex__cover` its
+  picture and clip as a web game's does. With no media, or for a web game, the game is served as
+  before.
 - The chat shows the game's kept Genex cover as one card (`chat/GenexCoverCard.tsx`) for the
   thread's latest `genex__cover` call from plugin `genex` whose operation is `shoot` and whose
-  answer carried a picture (`chat-entries.ts`, the tool read with or without `genex__` and
+  answer carried a picture (a call of the newer `{image, clip?}` shape names no operation and is
+  not read there yet) (`chat-entries.ts`, the tool read with or without `genex__` and
   `mcp__studio__`). Like a build's result card it goes up once that work has ended, after the turn's
   reply (or a build's result card when the build's builder shot it), never mid-turn, and a newer
   kept shot takes it down at once; earlier shots stay rows of the work. Its picture is the kept shot
@@ -3408,11 +3412,9 @@ Genex:
   dialog; that dialog's press is the consent, and for a live game it offers Publish update. Publish
   is left out while Genex puts no Publish on the strip (off or removed), while publish-status
   reports an attempt running, and once Genex has answered for the kept frame itself (`applied`,
-  `unchanged`, `outranked` or `kept_owner` for its hash: a publish re-shoots and sends it, so the
-  cover's next step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount,
-  on Genex's plugin events and on the dialog's cadence by `use-genex-publishing.ts`). The cover
-  guidance (inline `cover` skill, `genex-cover` preface) tells the builder to shoot the winner last
-  and then say one line, never how to publish. Genex-specific on purpose and with no manifest field:
+  `unchanged`, `outranked` or `kept_owner` for its hash: a publish sends it, so the cover's next
+  step is done; `failed` and `not_hosted` keep it) (`coverCardPublish`, read on mount, on Genex's
+  plugin events and on the dialog's cadence by `use-genex-publishing.ts`). Genex-specific on purpose and with no manifest field:
   when plugin pictures get a general home in the chat, the card moves onto it and keeps only
   Publish.
 - `~/.genex` is on the protected and secret path lists every sandboxed engine and native job is
@@ -3478,16 +3480,21 @@ Genex:
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
   its description says which (the `model` lanes are Tripo; `character` and `creature` are Meshy;
-  `character.import` is Uthana), with Local Blender first for hard-surface models when it is on; a
-  chat's coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
-- Genex's guide, nine platform cards and five lane cards (model, character, texture, audio,
+  `character.import` is Uthana); it names no order between Genex and Local Blender, and a chat's
+  coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
+- Genex's guide, eight platform cards and five lane cards (model, character, texture, audio,
   image) are vendored behind Studio-written prefaces in
   `src/plugins/genex/skills` (`vendor.json` pins each source and hash; `npm run genex:skills`
-  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills. Genex's
-  currency is Nex (the cards call it coin), and the prefaces make store items the default for it:
-  a thing priced in Nex, or sold for real money with no currency named, is a store item the agent
-  lists with `shop add` and its picture without asking, at any time, so its card shows; coins, gold or gems are the game's own
-  currency unless the person says they are for real money, when it asks once. Dynamic payments
+  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills. The
+  `genex` plugin keeps Genex's product requirements and API facts: Studio's cuts (`cuts.json`, a
+  section, a run of lines, a replaced sentence or a dropped reference, each matching the pinned text
+  exactly once) take Genex's design and process advice out of the vendored text, and the prefaces
+  carry the API facts those passages held. That advice, reworded as optional, is the bundled
+  `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
+  design), which every new profile installs off (`seedEnabled`). Genex's currency is Nex (the cards
+  call it coin): a thing priced in Nex, or sold for real money with no currency named, is a store
+  item listed with `shop add` and its picture; coins, gold or gems are the game's own currency
+  unless the person says they are for real money. Dynamic payments
   stay for amounts decided while playing. A card a
   CLI release not yet on npm changed is vendored ahead of the pin (`--ahead-from <apps/cli> --ahead
   <cards> --ahead-source <label>`): its files record that `version` and a `pending` note, plain
@@ -3832,14 +3839,16 @@ assets remain ordinary files. A fixture `assets.deliver` must leave an `asset_de
 the project's log and a card on the Assets tab; no paid generation is needed for either. Use
 fixture accounts and existing assets, with no additional paid generation.
 
-`genex-cover.test.ts` pins the Genex cover the same way, with a fake `observe` and the cover routes
-on the fixture API: `genex__cover` shoots only the `genex-cover` demo into the plugin's storage
-(the game folder locked, never read) and answers its preview; a publish sends the frame only after
-its upload is recorded (a draft's page check may still be running), sends nothing for unchanged
-bytes or over the owner's own cover (recorded as such with no shot kept, by a publish and by a
-status check), stays done with a warning when the commit is refused, limited,
-failed or silent or the shot cannot be kept, skips the shot without enough of its invocation left,
-never sends from a listed game's draft (listed from the dashboard too), sends the bytes it records
+`genex-cover-files.test.ts` pins what `genex__cover` keeps: the agent's PNG or JPEG (its light
+read from the pixels, a JPEG's from its blocks) and WebM or MP4 copied into the plugin's storage with
+no frame asked of the host, and a hostile table (outside the folder, through a link out, a folder,
+a missing file, the wrong type, too small, too large, damaged, a clip too short) that keeps nothing
+and touches nothing. `genex-cover.test.ts` pins the Genex cover's sends, with the cover routes on
+the fixture API: a publish sends the kept picture only after its upload is recorded (a draft's page
+check may still be running) and takes none of its own, sends nothing for unchanged bytes or over the
+owner's own cover (recorded as such with no picture kept, by a publish and by a status check), stays
+done with a warning when the commit is refused, limited, failed or silent, never sends from a listed
+game's draft (listed from the dashboard too), sends the bytes it records
 however shots interleave, and is stopped by the next publish; `genex__cover-set` waits for consent,
 sends nothing without a hosted project and never sends the clip; a bad project name reaches no host and writes nothing.
 The chat's cover card: `chat-transcript.test.ts` pins which shoot gets it (the latest that kept a

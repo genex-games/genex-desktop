@@ -743,35 +743,28 @@ preview stays single-player. Fixture profiles refuse the CLI and package tools.
 
 ### The game's Genex cover
 
-Genex 1.6.0 adds the game's Genex cover: the one real 16:9 frame genex.games shows on its gallery
-card, its page and every shared link, unrelated to Studio's own sidebar cover. The game stages it as
-a demo named `genex-cover`. Once a run lands its build in a web game while Genex is on, Studio asks the
-chat's agent for it as a step of its own, in a hidden message sent with the person's engine and model
-but not their Loop (`core/cover-step.ts`). The plugin's `cover` skill, read on demand, says when and by whom (once the game
-looks like itself; before every publish, the first or an update, it checks `genex__cover` status
-and shoots first while no shot is kept; after a big visual change; by the session that owns the
-build; after a publish whose own outcome sent no frame it offers once to make one, never again
-once declined; none of this for a game whose owner keeps its code untouched), and the vendored
-`genex-cover` card, behind a Studio preface, says how. `genex__cover` photographs that demo at
-1920×1080 in a hidden preview window of its own (the host's `observe` still) into the plugin's
-storage and answers its preview and exposure numbers, or reports the kept shot, the last send and
-the cover Genex holds with who chose it. A publish, and a draft until the game is first public,
-shoots the demo again after exporting and sends the frame once the upload is recorded, through the
-pinned CLI's `genex cover --json` in Studio's publish copy, with the kept clip behind it;
-`genex__cover-set` sends the picture alone now after a consent card (the clip goes only with a
-publish). Bytes Genex already answered for, and a cover the owner picked on genex.games, are
-never uploaded again; the owner's pick is recorded (`kept_owner`) whenever Genex reports it, at a
-send or a status check, a shot kept or not; a refused, rate-limited, failed or silent send leaves the publish done with a
-warning in `genex__publish-status`. Nothing is read from or written to the game folder for it.
-Once the turns on the open game settle, and as the Publish dialog opens with no shot, Studio asks
-the plugin for the cover itself (`cover-auto`): the `genex-cover` demo, or for a game with none a
-plain frame of it as it loads, and the `genex-clip` demo's clip (5.5 s: Genex keeps five seconds after
-trimming up to 300 ms of the start, so an exact five is refused as too short); never over the
-person's pick or the owner's cover. The dialog's banner flips between the last four frames
-(`cover-pick` pins one, and a publish then sends it as it is) and its Another cover sends a request
-to the game's chat ([plugins](plugins.md#first-party-privileges)). The thread's latest kept shot shows in the chat as
-a Genex cover card whose Publish opens that dialog; since Genex 1.6.3 the guidance tells the builder
-to shoot the winner last and then say one line, never how to publish.
+The game's Genex cover is the 16:9 picture genex.games shows on its gallery card, its page and
+every shared link, unrelated to Studio's own sidebar cover; a clip of play can run over it on the
+cards. Once a run lands its build in a web game while Genex is on, Studio asks the chat's agent for
+it as a step of its own, in a hidden message sent with the person's engine and model but not their
+Loop (`core/cover-step.ts`). The plugin's `cover` skill states the requirement and the API: the
+agent makes a picture of the real game by any means, saves it in the game folder and hands its path
+to `genex__cover {"image": …, "clip"?: …}` (a PNG or JPEG of at least 1280×720 within 8 MB; a WebM
+or MP4 of at least 5.3 s, since Genex keeps five seconds after trimming up to 300 ms). The plugin
+reads each by its bytes, through no link out of the folder, measures the picture's light as Genex's
+gate does, copies both into its own storage and answers what it kept, the last send and the cover
+Genex holds with who chose it; a refused file keeps nothing. A publish, and a draft until the game is
+first public, sends the kept picture once the upload is recorded, through the pinned CLI's `genex
+cover --json` in Studio's publish copy, with the kept clip behind it, and takes no picture of its
+own; `genex__cover-set` sends the picture alone now after a consent card. Bytes Genex already
+answered for, and a cover the owner picked on genex.games, are never uploaded again; the owner's pick
+is recorded (`kept_owner`) whenever Genex reports it; a refused, rate-limited, failed or silent send
+leaves the publish done with a warning in `genex__publish-status`. Until the agent hands a picture,
+Studio keeps a plain frame of the game as it loads (`cover-auto`, once the turns on the open game
+settle and as the Publish dialog opens), never over the agent's picture, the person's pick or the
+owner's cover. The dialog's banner flips between the last four pictures (`cover-pick` pins one) and
+its Another cover sends a request to the game's chat ([plugins](plugins.md#first-party-privileges)).
+How to compose a cover is optional advice in the `genex-recommendations` plugin, off by default.
 
 ## Credentials
 

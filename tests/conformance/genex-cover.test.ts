@@ -872,11 +872,7 @@ describe("a shot taken while a send runs", () => {
       assert.deepEqual(fx.seen.puts.at(-1), png("third"));
       const left = await filesUnder(path.join(fx.host, "covers", PROJECT));
       const beside = left.filter((name) => !name.startsWith("candidates"));
-      assert.deepEqual(
-        beside,
-        ["sent.json", "shot.json", "shot.png"],
-        "no copy of a sent frame is left behind",
-      );
+      assert.deepEqual(beside, ["sent.json", "shot.json", "shot.png"], "no copy of a sent frame is left behind");
     } finally {
       await fx.close();
     }
