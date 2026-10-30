@@ -97,7 +97,7 @@ const MESSAGE = {
   },
   Hidden: {
     [StudioToolClass.PlayLane]: (name: string) =>
-      `${name} isn't offered here: play-testing goes through the computer tool and judge_play.`,
+      `${name} isn't offered here: play-testing goes through the computer tool.`,
     [StudioToolClass.CodeIsFiles]: (name: string) =>
       `${name} isn't offered here: scripts are the game's .luau files under src/, which Genex keeps in step with Studio.`,
     [StudioToolClass.Network]: (name: string) =>
