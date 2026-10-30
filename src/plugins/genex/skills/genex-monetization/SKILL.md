@@ -35,7 +35,7 @@ this preface wins.
 - Other commands map onto Studio tools as the `genex` skill describes
   (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.17 sha256 67a1932cb52bf4274691f2583d14eb6a045247f7f448d825f646d072ea6c77d5 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-monetization/SKILL.md v1.36.17 sha256 fd5ba66ffd1918069f239f46dcf0defe5d2a417f4539341c440472a5db8f9cb0 -->
 ---
 name: genex-monetization
 description: Sell things in a Genex game for Nex, the currency players buy with real money — fixed-price Genex store items (`genex shop add`) by default, dynamic payment requests only for amounts decided while playing. Use when the player asks to sell things, add a shop, monetize, or make the game earn. Carries the hard rules: no paid randomness, no gambling, no donation mechanics, and a real-money price beside every Nex price.
@@ -111,17 +111,8 @@ odds table, an age gate, or a per-country check.
 
 ### When a request crosses a line
 
-Answer in exactly three parts, then build:
-
-1. **Name it.** "A loot crate is paid randomness — the player pays before
-   knowing what they get."
-2. **Why.** One sentence. "Genex doesn't sell chance; it's a purchase the player
-   can't price, and it's what regulators fine studios over."
-3. **Offer the alternative,** concretely enough to start on, and build that.
-
-Never build the banned version "as an option", never build a partial one, and
-never ask the user to confirm they want it. If they insist, restate the rule
-once and build the compliant version. There is no escalation path.
+Name the rule it crosses and build a compliant version. Never build the banned
+version "as an option" or a partial one. There is no escalation path.
 
 
 ## Store items (the default)
@@ -149,8 +140,7 @@ tell the person so.
 `getShop()` reads store items even for guests and preview builds;
 `buy({ skuId })` requests their platform confirmation. Prices follow the grid
 printed by `genex shop list`. Render `name`, `iconUrl`, `priceCoins` (the price
-in Nex) and `priceDisplayUsdCents`; use an image of the actual item for its
-icon. `genex shop set` edits a listing and `genex shop remove` retires it
+in Nex) and `priceDisplayUsdCents`. `genex shop set` edits a listing and `genex shop remove` retires it
 without removing a buyer's ownership.
 
 Re-list `getEntitlements({ excludeConsumed: true })` on boot. Branch on
@@ -235,8 +225,8 @@ and `pending`. A timeout or uncertain response is `pending`: it is not proof of
 failure and not permission to apply the action or charge again. `canceled` is
 ordinary player choice; do not show an error for it.
 
-**Your game cannot read the player's Nex balance, and no HUD should show one.**
-The wallet spans the platform; let Genex show the balance and handle consent.
+**Your game cannot read the player's Nex balance.**
+The wallet spans the platform; Genex shows the balance and handles consent.
 Only fulfil a payment whose authoritative receipt says `succeeded`.
 
 The surface depends on the shell (`$genex-threejs-embed-auth`,
@@ -244,8 +234,8 @@ The surface depends on the shell (`$genex-threejs-embed-auth`,
 
 - **On the game's Genex page the sheet is drawn above the game.** To show it,
   the page leaves fullscreen first, and the SDK lets go of the
-  pointer lock before it asks. Treat payment like a pause; re-enter fullscreen
-  and pointer lock from the player's next Resume click.
+  pointer lock before it asks. Fullscreen and pointer lock come back only from
+  a later click or key press.
 - **The Genex app has no purchase surface yet.** `requestPayment()` fails
   without opening a sheet, and `buy()` resolves
   `failed` without opening anything too. When `getShell()` from `@genex-ai/embed-sdk` is `"app"`,
@@ -294,7 +284,7 @@ Do not make a real-money purchase automatically to test the feature.
 
 ## Checklist
 
-- [ ] Every fixed Nex price is a store item: built first, listed with
+- [ ] Every fixed Nex price is a store item, listed with
       `genex shop add … --json` at a grid price, left for the person to put on sale
 - [ ] A dynamic payment carries only an amount decided in play; its saved order
       binds one stable id, exact terms and promised action
@@ -337,5 +327,4 @@ surface. Do not split it into smaller hidden charges to bypass the limit.
 prints it (so does `genex shop list`); pick a price from it, or 0 for Free.
 Dynamic payments accept whole amounts subject to their own caps.
 
-**Everything Nex-related 404s** — Nex commerce is off on this stand. Build
-the rest and report the unavailable lane.
+**Everything Nex-related 404s** — Nex commerce is off on this stand.

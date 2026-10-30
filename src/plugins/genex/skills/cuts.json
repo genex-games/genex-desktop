@@ -543,6 +543,30 @@
     {
       "replace": "List the item once it works in the game, without asking. When the Genex",
       "with": "When the Genex"
+    },
+    {
+      "replace": "Answer in exactly three parts, then build:\n\n1. **Name it.** \"A loot crate is paid randomness — the player pays before\n   knowing what they get.\"\n2. **Why.** One sentence. \"Genex doesn't sell chance; it's a purchase the player\n   can't price, and it's what regulators fine studios over.\"\n3. **Offer the alternative,** concretely enough to start on, and build that.\n\nNever build the banned version \"as an option\", never build a partial one, and\nnever ask the user to confirm they want it. If they insist, restate the rule\nonce and build the compliant version. There is no escalation path.",
+      "with": "Name the rule it crosses and build a compliant version. Never build the banned\nversion \"as an option\" or a partial one. There is no escalation path."
+    },
+    {
+      "replace": "; use an image of the actual item for its\nicon.",
+      "with": "."
+    },
+    {
+      "replace": "**Your game cannot read the player's Nex balance, and no HUD should show one.**\nThe wallet spans the platform; let Genex show the balance and handle consent.",
+      "with": "**Your game cannot read the player's Nex balance.**\nThe wallet spans the platform; Genex shows the balance and handles consent."
+    },
+    {
+      "replace": " Treat payment like a pause; re-enter fullscreen\n  and pointer lock from the player's next Resume click.",
+      "with": " Fullscreen and pointer lock come back only from\n  a later click or key press."
+    },
+    {
+      "replace": "- [ ] Every fixed Nex price is a store item: built first, listed with",
+      "with": "- [ ] Every fixed Nex price is a store item, listed with"
+    },
+    {
+      "replace": "Nex commerce is off on this stand. Build\nthe rest and report the unavailable lane.",
+      "with": "Nex commerce is off on this stand."
     }
   ],
   "genex-items/SKILL.md": [
@@ -569,6 +593,22 @@
     {
       "from": "- [ ] The item works in the game before it is listed",
       "to": "- [ ] The item works in the game before it is listed"
+    },
+    {
+      "replace": "Build the item into the game first, list it as a draft with",
+      "with": "List an item as a draft with"
+    },
+    {
+      "replace": " Capture the item's own in-game model on a\n   transparent background to a PNG under `.genex/scratch/` (never elsewhere in\n   the game folder: a deploy ships everything else). Square, at least 512 px,\n   the item alone.",
+      "with": " A square PNG under `.genex/scratch/` (never\n   elsewhere in the game folder: a deploy ships everything else), at the size\n   the preface gives."
+    },
+    {
+      "replace": "npx genex shop add \"Frost Axe\" --price 1200 --type durable \\\n  --description \"Ice-blue head. Freezes an enemy for a second on hit.\" \\\n  --tag axe --tag ice \\\n  --image .genex/scratch/frost-axe.png --model assets/frost-axe.glb \\",
+      "with": "npx genex shop add \"Axe\" --price 1200 --type durable \\\n  --description \"A two-handed axe.\" \\\n  --tag axe --tag weapon \\\n  --image .genex/scratch/axe.png --model assets/axe.glb \\"
+    },
+    {
+      "replace": "- [ ] Its picture is the item itself, on a transparent background",
+      "with": "- [ ] Its picture is a square PNG under `.genex/scratch/`"
     }
   ],
   "genex-tool-audio/SKILL.md": [

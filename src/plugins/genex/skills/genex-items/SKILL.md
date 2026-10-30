@@ -23,7 +23,7 @@ preface wins.
   `genex__cli {"command":"shop add","args":"<name>","options":{…}}` with the flags by name:
   `price` (0 is Free), `type`, `description`, `tag` (a list), `shared` (true or false), and
   `image`, `model` and `package`, each a path inside this game, such as
-  `".genex/scratch/frost-axe.png"`. Studio copies those files in itself and adds `--json`. It asks
+  `".genex/scratch/axe.png"`. Studio copies those files in itself and adds `--json`. It asks
   the person nothing, because a draft spends nothing and sells nothing until the game is
   published. `genex shop set <id>` takes the same options plus `rename`: on a local draft (`local_…`)
   through `genex__cli`, asking nobody, and on an item in the store through `genex__cli-paid`,
@@ -51,10 +51,10 @@ preface wins.
   there, then try buying on the published draft (`genex__publish {"operation":"draft"}`). An added
   item reaches this game's store with its next publish (`genex__publish {"operation":"gallery"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-items/SKILL.md v1.36.17 sha256 8649ea4817c357685a4f8407e4730fc50b0c7533d79b815cfc00bcb84e576d52 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-items/SKILL.md v1.36.17 sha256 ea0cb40fbcdc8f534fe561e5421138b26edfce15949f653feb66cdda5434a005 -->
 ---
 name: genex-items
-description: Make game items for the Genex store, priced in Nex, and add other creators' shared items to this game. Build the item into the game first, list it as a draft with `genex shop add … --json` (before the game is published it waits as a local draft), apply owned items from getEntitlements() at boot, and integrate a shared item with `genex items add`. Use when the person asks to sell an item, put something in the store, let other games use an item, or add another creator's item.
+description: Make game items for the Genex store, priced in Nex, and add other creators' shared items to this game. List an item as a draft with `genex shop add … --json` (before the game is published it waits as a local draft), apply owned items from getEntitlements() at boot, and integrate a shared item with `genex items add`. Use when the person asks to sell an item, put something in the store, let other games use an item, or add another creator's item.
 ---
 
 # Genex Items
@@ -109,19 +109,18 @@ the Genex store. It is a name, written "1,200 Nex", never "Nexes".
 
 ## Making an item for sale
 
-1. **Its picture.** Capture the item's own in-game model on a
-   transparent background to a PNG under `.genex/scratch/` (never elsewhere in
-   the game folder: a deploy ships everything else). Square, at least 512 px,
-   the item alone. A GLB of the same model is optional and gives the purchase
+1. **Its picture.** A square PNG under `.genex/scratch/` (never
+   elsewhere in the game folder: a deploy ships everything else), at the size
+   the preface gives. A GLB of the same model is optional and gives the purchase
    sheet "Drag to turn".
 2. **Shared or not:** only a durable item can be shared with other games.
 3. **List it as a draft:**
 
 ```bash
-npx genex shop add "Frost Axe" --price 1200 --type durable \
-  --description "Ice-blue head. Freezes an enemy for a second on hit." \
-  --tag axe --tag ice \
-  --image .genex/scratch/frost-axe.png --model assets/frost-axe.glb \
+npx genex shop add "Axe" --price 1200 --type durable \
+  --description "A two-handed axe." \
+  --tag axe --tag weapon \
+  --image .genex/scratch/axe.png --model assets/axe.glb \
   --shared --json
 ```
 
@@ -239,7 +238,7 @@ own it keep it.
 
 ## Checklist
 
-- [ ] Its picture is the item itself, on a transparent background
+- [ ] Its picture is a square PNG under `.genex/scratch/`
 - [ ] It was listed with `genex shop add … --json` and left as a draft (a
       local draft before the game is published)
 - [ ] Owned items are applied from `getEntitlements()` at every boot
