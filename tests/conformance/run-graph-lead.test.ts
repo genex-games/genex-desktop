@@ -223,8 +223,6 @@ async function leadRun() {
       { defect: "The far walls are as dark as the near ones", fix: "Lift the fog's far colour" },
       { defect: "Nothing moves in the air", fix: "Add slow spray in the lighthouse beam" },
     ],
-    boldMove: "Drop the camera to the rocks below the lighthouse",
-    gates: ["Light: yes — one key light from above"],
   };
   journal.critiques.push(advice);
   await criticAdvice(lead, advice);
@@ -400,7 +398,7 @@ describe("the Unreal lead's run on the Builds graph", () => {
       round?.advice?.defects.map((item) => item.fix),
       ["Lift the fog's far colour", "Add slow spray in the lighthouse beam"],
     );
-    assert.equal(round?.advice?.boldMove, "Drop the camera to the rocks below the lighthouse");
+    assert.equal(round?.advice?.boldMove, "", "the critic names no bold move now");
     assert.deepEqual(graph.verdicts, [], "no verdict was recorded");
     assert.equal(round?.verdict, null);
     assert.equal(round?.status, "accepted", "the round stays the lead's save");

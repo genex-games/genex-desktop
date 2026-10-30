@@ -1935,7 +1935,9 @@ describe("the one Loop's idle rule", () => {
         ],
       });
       const report = await host.start();
-      assert.ok(host.prompts().length <= 2, `${host.prompts().length} turns`);
+      // The change itself is the first turn's work, so one carry-on follows; the turn after it is quiet and the lead rests.
+      assert.equal(host.prompts().length, 3, `${host.prompts().length} turns`);
+      assert.match(String(host.prompts()[2]), /YOUR WORKING TIME IS OVER/);
       assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
     },
   );
@@ -1946,6 +1948,7 @@ describe("the one Loop's idle rule", () => {
     async () => {
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
+        run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
         turns: [
           async ({ host }) => {
             await writeFile(path.join(host.dir, "room.txt"), "a room\n");
@@ -1957,7 +1960,9 @@ describe("the one Loop's idle rule", () => {
       });
       const report = await host.start();
       assert.doesNotMatch(host.prompts().join("\n"), /Nothing of yours is at work/);
-      assert.ok(host.prompts().length <= 2, `${host.prompts().length} turns`);
+      // The change itself is the first turn's work, so one carry-on follows; the turn after it is quiet and the lead rests.
+      assert.equal(host.prompts().length, 3, `${host.prompts().length} turns`);
+      assert.match(String(host.prompts()[2]), /YOUR WORKING TIME IS OVER/);
       assert.equal(report.stoppedBecause, OPEN_END.timeUpNoClaim);
     },
   );
@@ -2795,13 +2800,14 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
     async () => {
       const host = await hostOn(Project.GodotGame, {
         facts: GODOT,
-        run: { budgets: { wallClockMs: 10 * MINUTE, completionPolicy: "goal" } },
+        run: { budgets: { wallClockMs: 30 * MINUTE, completionPolicy: "goal" } },
         turns: [writerWithinTurn(1), writerWithinTurn(2), writerWithinTurn(3)],
       });
       await host.start();
       assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
       assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
-      assert.match(String(host.prompts()[3]), /YOUR WORKING TIME IS OVER/);
+      assert.doesNotMatch(String(host.prompts()[3]), /^Your turn ended\./, "the third such turn is no carry-on");
+      assert.match(String(host.prompts()[3]), /a worker ended/, "the news is what wakes the lead");
     },
   );
 
@@ -2926,8 +2932,12 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
       assert.ok(host.rec.paramsOf("snapshot.restore").length > 0, "the folder went back");
       const turn = host.prompts().findIndex((prompt) => prompt.includes("Is the door done?"));
       assert.ok(turn > 0, "the person's words woke the lead");
-      assert.doesNotMatch(String(host.prompts()[turn + 1]), /Act on it, and end your turn when you are done/);
-      assert.match(String(host.prompts()[turn + 1]), /YOUR WORKING TIME IS OVER/, "a quiet turn rests the lead");
+      // Flipped (phase 5 audit): this turn used to be answered with "what next"; being no work, it is no carry-on.
+      assert.doesNotMatch(
+        String(host.prompts()[turn + 1]),
+        /^Your turn ended\./,
+        "the way back is not the lead's work",
+      );
     },
   );
 });
@@ -3131,11 +3141,12 @@ describe("the one Loop's lead that edits without save points of its own", () => 
       await host.start();
       assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
       assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
-      assert.match(
+      assert.doesNotMatch(
         String(host.prompts()[3]),
-        /YOUR WORKING TIME IS OVER/,
-        "the third turn beside others is not the lead's: the lead rests",
+        /^Your turn ended\./,
+        "the third turn beside others is not the lead's: no carry-on, the job's end is what wakes it",
       );
+      assert.match(String(host.prompts()[3]), /a job of the run ended/);
     },
   );
 
@@ -3168,10 +3179,9 @@ describe("the one Loop's lead that edits without save points of its own", () => 
         ],
       });
       await host.start();
-      const rested = host.prompts().findIndex((prompt, n) => n >= 4 && /YOUR WORKING TIME IS OVER/.test(prompt));
-      assert.equal(
-        rested,
-        4,
+      assert.doesNotMatch(
+        String(host.prompts()[4]),
+        /^Your turn ended\./,
         host
           .prompts()
           .map((prompt) => prompt.slice(0, 60))
@@ -3218,12 +3228,8 @@ describe("the one Loop's writers that end while Genex reads the folder", () => {
         return answer;
       }) as never;
       await host.start();
-      assert.match(String(host.prompts()[3]), /YOUR WORKING TIME IS OVER/);
-      assert.doesNotMatch(
-        String(host.prompts()[4]),
-        /Act on it, and end your turn when you are done/,
-        "the writer's edit was not the lead's work",
-      );
+      assert.doesNotMatch(String(host.prompts()[3]), /^Your turn ended\./, "no carry-on: the writer's end is the news");
+      assert.doesNotMatch(String(host.prompts()[4]), /^Your turn ended\./, "the writer's edit was not the lead's work");
     },
   );
 });

@@ -1820,10 +1820,7 @@ describe("an unlimited Loop on any of these: the lead, the facts' hooks and obse
         { budgets: unlimited },
       );
       const report = await idle.start();
-      assert.equal(
-        report.stoppedBecause,
-        "the Loop's time ran out before a reviewer accepted the goal; here is where it stands",
-      );
+      assert.equal(report.stoppedBecause, "the Loop's time ran out; here is where it stands");
       assert.equal(idle.reviewed().length, 0, "no reviewer was asked");
     },
   );

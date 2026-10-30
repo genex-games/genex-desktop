@@ -444,7 +444,7 @@ async function noFactRules(ctx: HarnessCtx, project: string, game: GameProject |
 /**
  * Who the model is: engine-neutral, plus where it runs and what the turn's game holds
  * (`appIdentity`) and, for a game with no facts, how its kind is picked (`noFactRules`), plus what
- * a web game adds (three.js, the preview window) when the game is one (`holdsWebGame`). With no game
+ * a web game adds (the preview window) when the game is one (`holdsWebGame`). With no game
  * there is nothing to add.
  */
 async function readIdentity(

@@ -15,8 +15,7 @@ const UNREAL_CONNECTOR = "the Unreal editor connector's tools, as the Unreal plu
 
 /**
  * The Unreal plugin's tool that makes a game's Unreal project inside its folder, as the host serves
- * it (`<plugin>__<tool>`). Kept for an older copy of a module that imports it: no current module
- * offers Unreal by this name, since every kind on offer comes from the host's `kinds`.
+ * it (`<plugin>__<tool>`). A name only: every kind on offer comes from the host's `kinds`.
  */
 export const UNREAL_NEW_GAME_TOOL = "unreal__new-game";
 
