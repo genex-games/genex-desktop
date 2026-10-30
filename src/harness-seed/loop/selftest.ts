@@ -1,10 +1,12 @@
 /**
  * The loop's self-test: the pure logic of the Loop against fixed inputs — when its lead is woken,
- * what the end of a turn means, the health check's reading of a page, which runner a run goes to, and
- * the plain sentence a card falls back on. No engine, no preview, no network: seconds, deterministic.
+ * what the end of a turn means, the health check's line, which runner a run goes to, the run's clock, the
+ * plain sentence a card falls back on, what a landing claims, the wrap-up's reserve and a reviewer's no. No engine, no preview, no network: seconds, deterministic.
  */
 import { afterTurn, nextWake, TurnEnd, WakeCause, WrapCause } from "./director/wake-schedule.ts";
-import { plainly } from "./director/rules.ts";
+import { landingWords, plainly } from "./director/rules.ts";
+import { wrapReserveMs } from "./director/journal.ts";
+import { secondOpinionNo } from "./director/second-opinion-prompts.ts";
 import { healthLine } from "./health-check.ts";
 import { chooseRunner } from "./run-dispatch.ts";
 import { RunnerKind } from "./studio-state.ts";
@@ -102,6 +104,31 @@ const SELFTEST_STEPS: readonly SelftestStep[] = [
     () => {
       const plain = plainly("merged w1 at 0123456789abcdef into /Users/me/game");
       check("no sha or path", !plain.includes("0123456789") && !plain.includes("/Users"));
+    },
+  ],
+  [
+    "landing: a build is said to load only when it passed its health check",
+    () => {
+      check("passed says so", landingWords({ healthPassed: true }).line.includes("it loads"));
+      check("unchecked says so", !landingWords({ healthPassed: false }).line.includes("it loads"));
+      check("never a verdict", !landingWords({ healthPassed: true }).verified);
+    },
+  ],
+  [
+    "wrap-up: its reserve is a share of the run, bounded on both sides",
+    () => {
+      const hour = wrapReserveMs(HOUR_MS);
+      check("inside the run", hour > 0 && hour < HOUR_MS);
+      check("grows with the run, within its bounds", wrapReserveMs(24 * HOUR_MS) >= hour);
+      check("never above a short run", wrapReserveMs(10 * MINUTE_MS) <= wrapReserveMs(HOUR_MS));
+    },
+  ],
+  [
+    "second opinion: a reviewer's no decides nothing, and the lead hears what it named",
+    () => {
+      const no = secondOpinionNo(["the timer never shows"], ["the third lap"]);
+      check("decides nothing", no.includes("decides nothing"));
+      check("names its reasons", no.includes("the timer never shows") && no.includes("the third lap"));
     },
   ],
 ];

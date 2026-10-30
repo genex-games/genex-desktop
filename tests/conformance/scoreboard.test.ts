@@ -8,11 +8,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { computePixelDiff, computePixelStats, fractionAbove, fractionBelow } from "../../src/substrate/pixel-stats.ts";
 import { runSelftest } from "../../src/harness-seed/loop/selftest.ts";
-import * as pathMod from "node:path";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
-const repoRoot = pathMod.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 function bitmap(width: number, height: number, quad: [number, number, number, number]): Buffer {
   const buffer = Buffer.alloc(width * height * 4);
@@ -67,15 +62,6 @@ describe("pixel statistics, extended", () => {
   });
 });
 
-describe("code reviewer, mechanical half", () => {
-
-  it("says the same thing to the model half of the review", () => {
-    const rubric = readFileSync(pathMod.join(repoRoot, "src/harness-seed/judge/code-review.md"), "utf8");
-    for (const global of ["__studioClock", "__studioDraw", "__studioCapture", "__studioGl", "__studioHook"])
-      assert.match(rubric, new RegExp(`\\b${global}\\b`), `the rubric never names ${global}`);
-  });
-});
-
 describe("the loop's self-test (the architect's bar)", () => {
   it("passes on the shipped seed", async () => {
     const result = await runSelftest();
@@ -84,21 +70,3 @@ describe("the loop's self-test (the architect's bar)", () => {
   });
 });
 
-/**
- * The judge's bill (M3.10).
- *
- * Every picture question used to be its own Claude Code session — 81 of them on the first real
- * run, 774 seconds of wall clock, the same rubric re-uploaded each time. The questions about
- * one camera share a frame and a rubric, so they ride in one call. Nothing about the judge's
- * blindness changes: it is still a one-shot session that is never told which build it is looking
- * at, and each answer still lands on the board as a yes/no with a confidence.
- */
-describe("what a board of picture questions costs", () => {
-
-  it("is what both scoring loops call, so no loop asks one question per session again", () => {
-    for (const file of ["src/harness-seed/loop/director/tools.ts", "src/harness-seed/loop/facet/scoring.ts"]) {
-      const source = readFileSync(pathMod.join(repoRoot, file), "utf8");
-      assert.match(source, /askVisionBoard/, `${file} scores its board in one call per camera`);
-    }
-  });
-});

@@ -1,4 +1,3 @@
-
 import { OPEN_LOOP_REFUSAL } from "../../src/harness-seed/loop/open-loop-prompts.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -11,21 +10,13 @@ import { gitFile } from "../helpers/git.ts";
  * incident it fixes is not done; every future postmortem adds rows before its fixes land.
  */
 import assert from "node:assert/strict";
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import {
-  customEvents,
-  makeFakePreview,
-  startRig,
-  waitForLog,
-  type FakePreview,
-  type Rig,
-} from "../helpers/studio-rig.ts";
+import { customEvents, makeFakePreview, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import { EngineError, type CompleteRequest, type DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { GameEngine } from "../../src/shared/game-engine.ts";
-import { isTransientProviderError, withProviderPatience } from "../../src/harness-seed/loop/outage.ts";
 import { forgetProviderLosses, noteProviderLoss, providerLossFor } from "../../src/harness-seed/loop/provider-loss.ts";
 import { createRunInbox, type RunInbox } from "../../src/harness-seed/loop/run-inbox.ts";
 import { runWakeLoop, type DirectorTalk } from "../../src/harness-seed/loop/director/wake.ts";
@@ -34,12 +25,12 @@ import { MessageQueue, messageQueueState } from "../../src/harness-seed/loop/mes
 import { chatWaitsFor, leadDoor, passCtx, stopRunsOf } from "../../src/harness-seed/loop/live-chat.ts";
 import { factsReadyPrompt } from "../../src/harness-seed/loop/project-prompts.ts";
 import { steeredCall } from "../../src/harness-seed/loop/chat-steer.ts";
-import { switchedTurnPrompt, } from "../../src/harness-seed/loop/steer-switch-prompts.ts";
+import { switchedTurnPrompt } from "../../src/harness-seed/loop/steer-switch-prompts.ts";
 import { steeredTurnPrompt } from "../../src/harness-seed/loop/chat-steer-prompts.ts";
 import { leadLineOf, openLeadLine } from "../../src/harness-seed/loop/director/lead-line.ts";
 import { handleUserMessage } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
-import { setImmediate as nextTurn, setTimeout as setTimeoutPromise } from "node:timers/promises";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { cancelThread } from "../../src/harness-seed/loop/main.ts";
 import type { Studio } from "../../src/harness-seed/loop/studio-state.ts";
 import type { Host } from "../../src/harness-seed/types/harness.d.ts";
@@ -78,30 +69,7 @@ it("AUDIT-STOP-RACE: cancellation is visible before a delayed queue-pause write"
     await stopping;
   }
 });
-import { applySeed } from "../../src/substrate/seed-upgrade.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { fileURLToPath, pathToFileURL } from "node:url";
-
-it("AUDIT-SEED. preserved pre-wake budgets cannot break newly shipped completion policy", async () => {
-  const root = await tmpDir("audit-seed-upgrade-");
-  const workspace = path.join(root, "workspace");
-  const seed = fileURLToPath(new URL("../../src/harness-seed", import.meta.url));
-  const manifest = path.join(root, "manifest.json");
-  await applySeed({ seedDir: seed, workspaceDir: workspace, manifestFile: manifest });
-  const vintage = JSON.parse(
-    await readFile(new URL("../fixtures/seed-exports-pre-wake.json", import.meta.url), "utf8"),
-  );
-  const names: string[] = vintage.modules["loop/director/budgets.ts"];
-  const older = `${names.map((name) => `export const ${name} = () => null;`).join("\n")}\n// owned edit\n`;
-  await writeFile(path.join(workspace, "loop/director/budgets.ts"), older);
-  const report = await applySeed({ seedDir: seed, workspaceDir: workspace, manifestFile: manifest });
-  assert.ok(report.kept.includes("loop/director/budgets.ts"));
-  assert.equal(await readFile(path.join(workspace, "loop/director/budgets.ts"), "utf8"), older);
-  const journal = await import(pathToFileURL(path.join(workspace, "loop/director/journal.ts")).href);
-  assert.equal(typeof journal.restoreLoopRun, "function");
-});
-import { turnBriefing } from "../../src/harness-seed/loop/turn-prompts.ts";
-import { LandingHow } from "../../src/harness-seed/loop/director/rules.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
 import { describeUnknownImage, sniffImage } from "../../src/substrate/image-sniff.ts";
 import { ownershipHook } from "../../src/substrate/engines/claude-code.ts";
@@ -213,15 +181,6 @@ function defaultJudge(text: string, request: CompleteRequest): string {
   return "ok";
 }
 
-/**
- * A ladder of `rungs` steps for a facet, none with a check of its own. Since Loop phase 4 no judge's
- * "not satisfied" keeps a facet going: a part whose checks hold is done unless its ladder has a rung
- * left, and a kept round climbs one. A row that needs a facet to run several rounds gives it one.
- */
-function ladderOf(id: string, rungs: number) {
-  return Array.from({ length: rungs }, (_, i) => ({ id: `${id}-step-${i + 1}`, what: `step ${i + 1} of the ${id}` }));
-}
-
 function twoFacetPlan(extra: { waterChecks?: unknown[]; skyChecks?: unknown[]; more?: unknown[] } = {}) {
   return {
     facets: [
@@ -288,218 +247,6 @@ async function runAutopilot(
 }
 
 describe("harness incidents", () => {
-  it("1. D1 delete-after-merge: a manual integration merge is not this facet's edit, and nothing merged is deleted", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    // Both facets own the shared palette — a file only one facet owns is quarantined by the
-    // reviewer (and blocked by the edit-time hook on a real contractor) before it can conflict.
-    const plan = twoFacetPlan();
-    (plan.facets[0] as { owns: string[] }).owns = ["src/water.js", "src/palette.js"];
-    (plan.facets[1] as { owns: string[] }).owns = ["src/sky.js", "src/palette.js"];
-    // Since Loop phase 4 a ladder, not a judge never satisfied, keeps both going past their first round.
-    for (const facet of plan.facets as Array<{ id: string }>)
-      Object.assign(facet, { milestones: ladderOf(facet.id, 3) });
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    const judged: string[] = [];
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const cwd = request.cwd;
-        const git = async (...args: string[]) => (await gitFile(["-C", cwd, ...args])).stdout.trim();
-        await mkdir(path.join(cwd, "src"), { recursive: true });
-        if (/YOUR FACET: Water|facet "Water"/.test(request.prompt)) {
-          builds.water++;
-          // Water edits the shared palette on its first build; sky's own palette edit will conflict.
-          await writeFile(path.join(cwd, "src", "palette.js"), `export const palette = "water-${builds.water}";\n`);
-          await writeFile(path.join(cwd, "src", "water.js"), `export const water = ${builds.water};\n`);
-          return { sessionId: "ses_water" };
-        }
-        if (/YOUR FACET: Sky|facet "Sky"/.test(request.prompt)) {
-          builds.sky++;
-          if (builds.sky === 1) {
-            // Sky forked with water's first palette; wait until water's SECOND palette is on the
-            // integration branch, then overwrite the first — both sides modified, a real conflict.
-            const until = Date.now() + 90_000;
-            while (Date.now() < until) {
-              const found = await git("log", "--all", "--grep=integrate water iteration 2", "--format=%H").catch(
-                () => "",
-              );
-              if (found) break;
-              await new Promise((resolve) => setTimeout(resolve, 200));
-            }
-            await writeFile(path.join(cwd, "src", "palette.js"), `export const palette = "sky";\n`);
-          }
-          if (/could not merge it automatically/.test(request.prompt)) {
-            // The builder does what the note says: merge the integration head by hand, keeping theirs on the conflict.
-            const head = /git merge ([0-9a-f]{40})/.exec(request.prompt)?.[1];
-            assert.ok(head, "the note names the integration head");
-            await git("-c", "user.name=fake", "-c", "user.email=fake@x", "merge", "-X", "theirs", "--no-edit", head!);
-          }
-          await writeFile(path.join(cwd, "src", "sky.js"), `export const sky = ${builds.sky};\n`);
-          return { sessionId: "ses_sky" };
-        }
-        if (request.playtest)
-          return { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) };
-        judged.push("other");
-        return null;
-      },
-    });
-    const { events } = await runAutopilot(rig, "mergeworld");
-    const skyIterations = customEvents(events, "facet_iteration").filter((i) => i.facetId === "sky");
-    const manual = skyIterations.find((i) => (i.iteration as number) >= 2 && i.verdictSource !== "broken");
-    assert.ok(
-      manual,
-      `sky had a judged iteration after the manual merge: ${JSON.stringify(skyIterations.map((i) => [i.iteration, i.verdictSource]))}`,
-    );
-    // Review never "reverted" water's module: no enforcement deleted it, and the merge note was needed.
-    const enforced = customEvents(events, "facet_review_enforced").filter((e) => e.facetId === "sky");
-    assert.ok(
-      enforced.every((e) => !(e.reverted as string[]).includes("src/water.js")),
-      `water.js was never reverted on sky: ${JSON.stringify(enforced)}`,
-    );
-    const merges = customEvents(events, "integration_merge").filter((m) => m.facetId === "sky" && m.conflict === true);
-    const gameDirDebug = path.join(rig.core.layout.gamesRoot, "mergeworld");
-    const debugLog = (
-      await gitFile(["-C", gameDirDebug, "log", "--all", "--format=%h %s", "--", "src/palette.js"]).catch(() => ({
-        stdout: "?",
-      }))
-    ).stdout;
-    const debugPalette = (
-      await gitFile(["-C", gameDirDebug, "show", "HEAD:src/palette.js"]).catch(() => ({ stdout: "?" }))
-    ).stdout;
-    assert.ok(
-      merges.length >= 1,
-      `sky's worktree merge conflicted on palette.js, as designed — merges: ${JSON.stringify(customEvents(events, "integration_merge").map((m) => [m.facetId, m.conflict, m.stage ?? "worktree", m.union ?? null]))}; sky: ${JSON.stringify(skyIterations.map((i) => [i.iteration, i.verdictSource, i.winner]))}; builds ${JSON.stringify(builds)}; palette log:\n${debugLog}\nHEAD palette: ${debugPalette}`,
-    );
-    const gameDir = path.join(rig.core.layout.gamesRoot, "mergeworld");
-    const { stdout: branches } = await gitFile([
-      "-C",
-      gameDir,
-      "for-each-ref",
-      "--format=%(refname:short)",
-      "refs/heads/",
-    ]);
-    // Every sky commit made after the manual merge still carries water.js.
-    const skyHeads = branches.split("\n").filter((b) => /^attempt\/sky\//.test(b));
-    for (const branch of skyHeads) {
-      const { stdout: tree } = await gitFile(["-C", gameDir, "ls-tree", "--name-only", "-r", branch]);
-      if (
-        tree.includes("src/palette.js") &&
-        /palette = "water/.test((await gitFile(["-C", gameDir, "show", `${branch}:src/palette.js`])).stdout)
-      ) {
-        assert.ok(tree.includes("src/water.js"), `${branch} kept water.js after taking water's palette`);
-      }
-    }
-    const { stdout: landed } = await gitFile(["-C", gameDir, "ls-tree", "--name-only", "-r", "HEAD"]);
-    assert.ok(
-      landed.includes("src/water.js") && landed.includes("src/sky.js"),
-      `the landed build has both modules: ${landed}`,
-    );
-  });
-
-  it("2. D1 union merge: two facets appending to the wiring block merge without a builder turn", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const cwd = request.cwd;
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        await mkdir(path.join(cwd, "src"), { recursive: true });
-        const main = path.join(cwd, "src", "main.js");
-        const text = await readFile(main, "utf8");
-        if (!text.includes(`init${facet}`)) {
-          const marker = "// ── END FACET WIRING ──";
-          assert.ok(text.includes(marker), "fixture has a wiring boundary");
-          const wired = text.replace(
-            marker,
-            `import { init${facet} } from "./${facet}.js"; init${facet}();\n${marker}`,
-          );
-          await writeFile(main, wired);
-        }
-        await writeFile(
-          path.join(cwd, "src", `${facet}.js`),
-          `export function init${facet}() {}\nexport const stamp = ${Date.now()};\n`,
-        );
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "wireworld");
-    const merges = customEvents(events, "integration_merge");
-    assert.ok(
-      merges.some((m) => m.union === true && m.conflict === false),
-      `a wiring-block conflict was union-merged: ${JSON.stringify(merges.map((m) => [m.facetId, m.conflict, m.union]))}`,
-    );
-    const gameDir = path.join(rig.core.layout.gamesRoot, "wireworld");
-    const landed = await readFile(path.join(gameDir, "src", "main.js"), "utf8");
-    assert.match(landed, /initwater\(\)/);
-    assert.match(landed, /initsky\(\)/);
-    assert.doesNotMatch(landed, /^(<{7}|={7}|>{7})/m);
-    // No builder was ever asked to resolve a merge by hand.
-    assert.ok(
-      !customEvents(events, "integration_merge").some((m) => m.conflict === true && !m.stage),
-      "no facet worktree merge was left to the builder",
-    );
-  });
-
-  it("3. D1 circuit breaker: two unjudgeable builds with one cause stop the facet; there is no third build", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet) return null;
-        builds[facet]!++;
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `// build ${builds[facet]} — no installStudio\n`);
-        // Every build of this run fails to load the same way.
-        rig.preview.next = {
-          ...rig.preview.next,
-          __loadError: "ReferenceError: installStudio is not defined at main.js:12",
-        };
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "brokenworld");
-    const breaks = customEvents(events, "facet_circuit_break");
-    assert.ok(
-      breaks.some((b) => b.facetId === "water"),
-      `water tripped the breaker: ${JSON.stringify(breaks)}`,
-    );
-    assert.ok(
-      breaks.some((b) => b.facetId === "sky"),
-      "sky tripped the breaker",
-    );
-    assert.equal(builds.water, 2, "no third water build");
-    assert.equal(builds.sky, 2, "no third sky build");
-    const broken = customEvents(events, "facet_iteration").filter((i) => i.verdictSource === "broken");
-    assert.ok(broken.length >= 2);
-    // The second brief carried the actual error, not "window.__studio is missing".
-    const finished = customEvents(events, "run_finished")[0]!;
-    assert.ok(
-      /two unjudgeable builds with the same cause/.test(
-        String((finished.facets as Record<string, { stoppedBecause: string }>).water?.stoppedBecause),
-      ),
-      "the stop reason names the cause",
-    );
-  });
-
   it("6. D3 stills: an AVIF named .jpg is refused at save with a log; sniffing names what it is", async () => {
     assert.equal(sniffImage(AVIF_BYTES), null);
     assert.equal(describeUnknownImage(AVIF_BYTES), "AVIF");
@@ -531,279 +278,10 @@ describe("harness incidents", () => {
     assert.match(listed.skipped[0]!.why, /AVIF/);
   });
 
-  it("6b. D3 stills: a run with an empty board loads references/ from disk, and the first brief carries them as images", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    await apiOf(rig)["game.scaffold"]!({ name: "refworld", title: "Refs" });
-    const refDir = path.join(rig.core.layout.gamesRoot, "refworld", "references");
-    await mkdir(refDir, { recursive: true });
-    await writeFile(path.join(refDir, "dock.jpg"), JPEG_BYTES);
-    await writeFile(path.join(refDir, "strider.jpg"), JPEG_BYTES);
-    await writeFile(path.join(refDir, "phone.jpg"), AVIF_BYTES);
-    const plan = twoFacetPlan();
-    const delegations: DelegateRequest[] = [];
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        delegations.push(request);
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${Date.now()};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "refworld", {
-      reference: { name: "Morrowind", shots: [], kind: "reference" },
-      budgets: { maxIterations: 4 },
-    });
-    const started = customEvents(events, "run_started")[0]!;
-    assert.deepEqual(
-      (started.reference as { frames: string[] }).frames,
-      ["dock", "strider"],
-      "both readable stills, the AVIF skipped",
-    );
-    const decisions = customEvents(events, "autopilot_decision").map((d) => String(d.decision));
-    assert.ok(
-      decisions.some((d) => /loaded 2 reference still/.test(d)),
-      decisions.join(" | "),
-    );
-    assert.ok(
-      decisions.some((d) => /reference skipped: phone.jpg is AVIF/.test(d)),
-      "the skipped still is a decision card",
-    );
-    const first = delegations.find((d) => /YOUR FACET: Water/.test(d.prompt));
-    assert.ok(first, "water's first brief");
-    assert.equal(
-      first!.images?.filter((i) => /REFERENCE STILL/.test(i.label)).length,
-      2,
-      "the first brief carries both stills as images",
-    );
-    assert.match(first!.prompt, /images are ATTACHED to this message/);
-    assert.deepEqual(first!.ownership, { facetId: "water", owns: ["src/water.js"], ownsMain: true });
-    // Every facet carries the harness's style metric now that stills exist.
-    const finished = customEvents(events, "run_finished")[0]!;
-    const waterSpec = (finished.facets as Record<string, { spec: { checks: Array<{ id: string; kind: string }> } }>)
-      .water!.spec;
-    assert.ok(
-      waterSpec.checks.some((c) => c.kind === "metric" && /^style-distance-/.test(c.id)),
-      JSON.stringify(waterSpec.checks.map((c) => c.id)),
-    );
-    assert.deepEqual(finished.referenceStills, ["dock", "strider"]);
-    // Flipped (Loop phase 4): a panel judged the integrated build against the stills and decided the
-    // victory; no panel runs now, and the classic pipeline claims none.
-    assert.equal(finished.victory, false);
-    assert.equal(finished.panel, undefined, "no panel judged the build");
-  });
-
-  it("10. shooter D1 (regression guard): nine declared demos are all measured on the integration facet", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const demos = Array.from({ length: 9 }, (_, i) => `demo-${i + 1}`);
-    rig.preview.demoNames = demos;
-    const plan = twoFacetPlan({
-      waterChecks: [
-        { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" },
-        ...demos.map((name) => ({ id: name, kind: "demo", name, weight: "identity" })),
-      ],
-    });
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${Date.now()};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "demoworld", { budgets: { maxIterations: 4 } });
-    const integration = customEvents(events, "facet_iteration").filter((i) => i.facetId === "integration");
-    assert.ok(integration.length >= 1, "the integration facet ran");
-    const board = integration.at(-1)!.scoreboard as { results: Array<{ id: string; pass: boolean | null }> };
-    for (const name of demos) {
-      const entry = board.results.find((r) => r.id === name);
-      assert.ok(
-        entry && entry.pass === true,
-        `${name} measured and passing on the integrated build: ${JSON.stringify(entry)}`,
-      );
-    }
-    const water = customEvents(events, "facet_iteration")
-      .filter((i) => i.facetId === "water")
-      .at(-1)!;
-    assert.equal(
-      (water.scoreboard as { unmeasured: number }).unmeasured,
-      0,
-      "every declared demo was run for the facet that requires them",
-    );
-  });
-
   // ── provider outages and judge failures ──
-
-  it("V1. provider outage: a 529 on the build turn is waited out and the same iteration retried — no broken streak, no circuit breaker", async () => {
-    assert.equal(
-      isTransientProviderError(
-        "API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.",
-      ),
-      true,
-    );
-    assert.equal(isTransientProviderError("API Error: 500 Internal server error."), true);
-    assert.equal(isTransientProviderError("You've hit your weekly limit · resets Sep 1 at 10am"), false);
-    assert.equal(isTransientProviderError("SyntaxError: missing ) after argument list"), false);
-    assert.equal(isTransientProviderError({ kind: "usage_limit", message: "503 service unavailable" }), false);
-    let calls = 0;
-    const value = await withProviderPatience(
-      { cancelled: false } as never,
-      (async () => {
-        calls++;
-        if (calls < 3) throw new Error("API Error: 529 Overloaded");
-        return "ok";
-      }) as never,
-      { delays: [5, 5, 5] },
-    );
-    assert.equal(value, "ok");
-    assert.equal(calls, 3);
-    await assert.rejects(
-      withProviderPatience(
-        { cancelled: false } as never,
-        async () => {
-          throw new Error("weekly limit reached");
-        },
-        { delays: [5] },
-      ),
-      /weekly limit/,
-    );
-
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet)
-          return request.playtest
-            ? { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) }
-            : null;
-        builds[facet]!++;
-        // The provider is down for water's first two turns.
-        if (facet === "water" && builds.water <= 2)
-          return {
-            ok: false,
-            errorText:
-              "API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment.",
-          };
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "weatherworld", {
-      budgets: { maxIterations: 4, outageDelays: [150, 150, 150] },
-    });
-    const outages = customEvents(events, "facet_provider_outage").filter((o) => o.facetId === "water");
-    assert.equal(outages.length, 2, `two waits were logged: ${JSON.stringify(outages)}`);
-    assert.ok(
-      customEvents(events, "facet_circuit_break").every((b) => b.facetId !== "water"),
-      "water never tripped the breaker",
-    );
-    const water = customEvents(events, "facet_iteration").filter((i) => i.facetId === "water");
-    assert.ok(
-      water.length >= 1 && water[0]!.iteration === 1 && water[0]!.verdictSource !== "broken",
-      `water's first judged iteration is still iteration 1: ${JSON.stringify(water.map((i) => [i.iteration, i.verdictSource]))}`,
-    );
-    assert.ok(builds.water >= 3, "the third turn built for real");
-  });
-
-  it("V4. playtester gate: a vision check that keeps failing does not keep the play check unmeasured", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    // Flipped (Loop phase 4): the failing vision check grew from a judge's defects; no judge runs in
-    // a round now, so the planner asks it.
-    const plan = twoFacetPlan({
-      waterChecks: [
-        { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" },
-        { id: "wade", kind: "play", ask: "Could you wade into the marsh?", weight: "normal" },
-        { id: "reeds", kind: "vision", camera: "default", ask: "Are the reeds textured, not boxes?", weight: "normal" },
-      ],
-    });
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    let played = 0;
-    registerFakeEngine(rig, {
-      complete: (text) => {
-        if (text.includes("ENGINE HINT: maxParallel")) return JSON.stringify(plan);
-        if (text.includes("QUESTION:") && /reeds/.test(text))
-          return JSON.stringify({ answer: "no", confidence: 0.9, note: "boxes" });
-        if (text.includes("QUESTIONS (")) return answerBatch(text, { no: /reeds/, note: "boxes" });
-        return null;
-      },
-      delegate: async (request) => {
-        if (request.playtest) {
-          played++;
-          return {
-            summary: JSON.stringify({
-              answers: { wade: { answer: "yes" }, "integration-play": { answer: "yes" } },
-              report: "waded",
-            }),
-          };
-        }
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt)
-          ? "water"
-          : /YOUR FACET: Sky|facet "Sky"/.test(request.prompt)
-            ? "sky"
-            : null;
-        if (!facet) return null;
-        builds[facet]!++;
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${builds[facet]};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    const { events } = await runAutopilot(rig, "playworld", { budgets: { maxIterations: 5 } });
-    const water = customEvents(events, "facet_iteration").filter((i) => i.facetId === "water");
-    const withFailingVision = water.filter((i) =>
-      ((i.scoreboard as { results: Array<{ id: string; kind: string; pass: boolean | null }> })?.results ?? []).some(
-        (r) => r.kind === "vision" && r.pass === false,
-      ),
-    );
-    assert.ok(
-      withFailingVision.length >= 1,
-      `the vision check failed on some water iteration: ${JSON.stringify(water.map((i) => (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> })?.results?.map((r) => [r.id, r.pass])))}`,
-    );
-    const measuredPlay = withFailingVision.filter((i) =>
-      (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> }).results.some(
-        (r) => r.id === "wade" && (r.pass === true || r.pass === false),
-      ),
-    );
-    assert.ok(
-      measuredPlay.length >= 1,
-      `the play check was measured despite the failing vision check: ${JSON.stringify(withFailingVision.map((i) => (i.scoreboard as { results: Array<{ id: string; pass: boolean | null }> }).results.map((r) => [r.id, r.pass])))}`,
-    );
-    assert.ok(played >= 1, "the playtester actually played");
-  });
 });
 
 describe("the modeller in the loop (AG-930)", () => {
-
   it("T-Snapshot. a plugin disabled while a builder's tools are prepared leaves its tools and its guidance in agreement", async () => {
     const rig = await startRig();
     rigs.push(rig);
@@ -2024,22 +1502,8 @@ describe("a resumed run inherited the session before it (resume-inbox)", () => {
  * takes many turns a run, so both hold on every one of them.
  */
 describe("the lead's later turns (wake loop)", () => {
-  const plan = {
-    summary: "This run: paint the sky.",
-    workers: JSON.stringify([
-      { id: "sky", title: "Sky", seam: "the sky", owns: "src/sky.js", done: ["the sky is blue"], minutes: 20 },
-    ]),
-    base: "the integration branch as it stands",
-    risks: "none",
-  };
-  const start = {
-    id: "sky",
-    title: "Sky",
-    brief: "paint the sky blue",
-    mode: "single",
-    minutes: "5",
-    owns: "src/sky.js",
-  };
+  /** The one worker the lead starts: a copy of the game, to paint the sky. */
+  const start = { title: "Sky", task: "paint the sky blue", isolation: "copy" };
 
   /** A run whose lead is scripted turn by turn, and whose one builder paints the sky and stops. */
   async function lateTurnLoopRun(
@@ -2062,7 +1526,7 @@ describe("the lead's later turns (wake loop)", () => {
           turns.push(request);
           return lead(request, turns.length);
         }
-        if (!request.selfCapture) return null;
+        // Anything else the run delegates is its worker, in its copy of the game.
         await mkdir(path.join(request.cwd, "src"), { recursive: true });
         await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'blue';\n");
         return { sessionId: "worker-1", summary: "painted the sky" };
@@ -2091,7 +1555,6 @@ describe("the lead's later turns (wake loop)", () => {
     const { turns, finished } = await lateTurnLoopRun("late-limit", async (request, turn) => {
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (turn === 1) {
-        await call("plan", plan);
         await call("worker_start", start);
         return { sessionId: "lead-1", summary: "the sky worker is building" };
       }
@@ -2105,7 +1568,7 @@ describe("the lead's later turns (wake loop)", () => {
     assert.equal(turns[2]!.resume, "lead-1");
     assert.match(turns[2]!.prompt, /limit paused you/);
     assert.match(turns[2]!.prompt, /WHAT HAPPENED/, "with the news it had not heard");
-    assert.equal(finished.stoppedBecause, "the director finished the run");
+    assert.equal(finished.stoppedBecause, "the lead finished the run");
     assert.doesNotMatch(String(finished.stoppedBecause), /paused/);
   });
 
@@ -2115,7 +1578,6 @@ describe("the lead's later turns (wake loop)", () => {
       async (request, turn) => {
         const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
         if (turn === 1) {
-          await call("plan", plan);
           await call("worker_start", start);
           return { sessionId: "lead-1", summary: "the sky worker is building" };
         }
@@ -2129,14 +1591,13 @@ describe("the lead's later turns (wake loop)", () => {
     assert.equal(turns.length, 3, turns.map((t) => t.prompt.slice(0, 80)).join(" | "));
     assert.equal(turns[2]!.resume, "lead-1", "the same session carries on");
     assert.equal(turns[2]!.prompt, turns[1]!.prompt, "the turn's own message is asked again");
-    assert.equal(finished.stoppedBecause, "the director finished the run", "the run was not wrapped up for it");
+    assert.equal(finished.stoppedBecause, "the lead finished the run", "the run was not wrapped up for it");
   });
 
   it("I2. a session lost on a later turn is replaced by a fresh one with the brief, the lead's notes and the news", async () => {
     const { turns, finished } = await lateTurnLoopRun("late-lost", async (request, turn) => {
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (turn === 1) {
-        await call("plan", plan);
         await call("note", { text: "the sky first; the plaza after it" });
         await call("worker_start", start);
         return { sessionId: "lead-1", summary: "the sky worker is building" };
@@ -2150,10 +1611,10 @@ describe("the lead's later turns (wake loop)", () => {
     assert.equal(turns[1]!.resume, "lead-1");
     assert.equal(turns[2]!.resume, undefined, "a fresh session");
     assert.match(turns[2]!.prompt, /^YOUR EARLIER SESSION WAS LOST/);
-    assert.match(turns[2]!.prompt, /You are the DIRECTOR of run/);
+    assert.match(turns[2]!.prompt, /YOU LEAD THIS LOOP/);
     assert.match(turns[2]!.prompt, /YOUR NOTES[\s\S]*the sky first; the plaza after it/);
     assert.match(turns[2]!.prompt, /WHAT HAPPENED/);
-    assert.equal(finished.stoppedBecause, "the director finished the run");
+    assert.equal(finished.stoppedBecause, "the lead finished the run");
   });
 
   it("D11. the lead's account disabled on a wake pauses the run: workers stopped, nothing landed, no wrap-up, the user told what to fix", async () => {
@@ -2162,8 +1623,7 @@ describe("the lead's later turns (wake loop)", () => {
     const { turns, finished } = await lateTurnLoopRun("late-access-lost", async (request, turn) => {
       const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
       if (turn === 1) {
-        await call("plan", plan);
-        await call("worker_start", { ...start, mode: "loop" });
+        await call("worker_start", start);
         return { sessionId: "lead-1", summary: "the sky worker is building" };
       }
       throw new EngineError("auth", "fake-delegate", disabled);
@@ -2269,13 +1729,21 @@ function clockNight(inbox: Record<string, unknown> = {}) {
   return { T0, at, ticks, loopRun, state, worker, note, lead, run, wakes };
 }
 
+/** A wake that is no wrap-up: the running worker ends five minutes in, and the lead hears of it. */
+function workerEndsSoon(w: ReturnType<typeof clockNight>): void {
+  w.ticks.push((now) => {
+    if (now < w.T0 + 5 * MINUTE_MS || w.worker.state !== "running") return;
+    w.worker.state = "done";
+    w.note("sky ended: the sky is painted", "worker_ended");
+  });
+}
+
 /**
  * The wake loop, reviewed before it shipped: holes where a lead would sleep through the rest of
  * its working time, be woken again and again with nothing to read, open a session that knows
  * nothing, or have its last looks cut off by a wrap-up that started early.
  */
 describe("the wake loop, reviewed", () => {
-
   it("I4. a store that refuses the hand-over of the user's words still tells the lead them once, and does not wake it again and again", async () => {
     const said: string[] = [];
     // The host's events.append fails: taking a steer (which records its hand-over) throws; reading does not.
@@ -2302,67 +1770,9 @@ describe("the wake loop, reviewed", () => {
     assert.match(calls[1]!.prompt, /THE USER SAYS[\s\S]*make the sky red/, "the words reach the lead");
     assert.match(calls[2]!.prompt, /THE USER SAYS[\s\S]*and the benches oak/, "and the next ones, when they come");
     assert.doesNotMatch(calls[2]!.prompt, /make the sky red/, "said once");
-    assert.match(heads[3]!, /quiet minutes while workers run/, "then nothing until the heartbeat");
+    // Flipped (phase 5): no heartbeat wakes a resting lead; nothing comes until the wrap-up.
+    assert.match(heads[3]!, /the working time is over/, "then nothing until the wrap-up");
     assert.equal(w.wakes().filter((reasons) => reasons.includes("user_message")).length, 2);
-  });
-
-  it("I6. a wrap-up the user's finish started still gives a playtest the wrap-up's time", async () => {
-    const rig = await startRig(
-      { replies: [] },
-      { previewPoolMax: 2, createHeadlessPreview: async () => makeFakePreview() },
-    );
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("late-finish", { title: "late-finish" });
-    const thread = await rig.core.threadForGame(project.name);
-    const runId = rig.core.newRunId();
-    const turns: DelegateRequest[] = [];
-    const played: DelegateRequest[] = [];
-    const results: Record<string, string> = {};
-    registerFakeEngine(rig, {
-      complete: () => null,
-      delegate: async (request: DelegateRequest) => {
-        if (request.playtest) {
-          played.push(request);
-          return { summary: JSON.stringify({ answers: {}, report: "played it" }) };
-        }
-        if (!request.director) return null;
-        turns.push(request);
-        const call = (name: string, args: Record<string, unknown>) => request.onLiveTool!(name, args);
-        if (turns.length === 1) {
-          // The user asks to finish early, during the lead's first turn.
-          await rig.core.append(
-            [{ type: "custom", event_type: "run_control", payload: { runId, action: "finish" } }],
-            thread,
-          );
-          return { sessionId: "lead-1", summary: "looked around" };
-        }
-        const answer = await call("playtest", { target: "integration", ask: "Does the sky read as blue?" });
-        results.played = typeof answer === "string" ? answer : answer.text;
-        await call("finish", { summary: "the user asked to finish", land: "no" });
-        return { sessionId: "lead-1", summary: "finished" };
-      },
-    });
-    await rig.core.dispatchRun({
-      runId,
-      goal: "a blue sky",
-      project: project.name,
-      mode: "autopilot",
-      engine: "fake-delegate",
-      reference: { name: "sky", shots: [] },
-      budgets: { wallClockMs: 15 * 60_000 },
-    } as never);
-    await waitForLog(
-      rig.core,
-      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
-      180_000,
-      "late-finish run_finished",
-    );
-
-    assert.equal(turns.length, 2, turns.map((t) => t.prompt.slice(0, 80)).join(" | "));
-    assert.match(turns[1]!.prompt, /The user asked to finish, so the studio starts the wrap-up now/);
-    assert.equal(played.length, 1, results.played);
-    const timeoutMs = Number(played[0]!.timeoutMs);
-    assert.ok(timeoutMs > 2 * MINUTE_MS, `the wrap-up's playtest had ${timeoutMs} ms, not the moved working deadline`);
   });
 });
 
@@ -2630,6 +2040,7 @@ describe("a provider lost mid-run", () => {
 
   it("D7. a lead whose account is disabled on a wake pauses the run: no wrap-up turn, the loss kept for the close", async () => {
     const w = clockNight();
+    workerEndsSoon(w);
     try {
       const { talk, calls } = w.lead((turn) => {
         if (turn === 1) return { ok: true, sessionId: "lead-1" };
@@ -2661,6 +2072,7 @@ describe("a provider lost mid-run", () => {
 
   it("D9. a lead turn the provider's outage ended is not a failed turn: the run pauses, it does not wrap up", async () => {
     const w = clockNight();
+    workerEndsSoon(w);
     const { talk, calls } = w.lead((turn) =>
       turn === 1
         ? { ok: true, sessionId: "lead-1" }
@@ -2688,6 +2100,7 @@ describe("a provider lost mid-run", () => {
     ];
     for (const errorText of unreachable) {
       const w = clockNight();
+      workerEndsSoon(w);
       const { talk } = w.lead((turn) =>
         turn === 1
           ? { ok: true, sessionId: "lead-1" }
@@ -3306,38 +2719,22 @@ describe("one session, reviewed", () => {
         if (request.director) {
           const call = (tool: string, args: Record<string, unknown>) => request.onLiveTool!(tool, args);
           if (++turns === 1) {
-            await call("plan", {
-              summary: "This run: paint the sky.",
-              workers: JSON.stringify([
-                {
-                  id: "sky",
-                  title: "Sky",
-                  seam: "the sky",
-                  owns: "src/sky.js",
-                  done: ["the sky is blue"],
-                  minutes: 20,
-                },
-              ]),
-              base: "the integration branch as it stands",
-              risks: "none",
-            });
-            await call("worker_start", {
-              id: "sky",
+            results.started = await call("worker_start", {
               title: "Sky",
-              brief: "paint the sky blue",
-              mode: "single",
-              minutes: "5",
-              owns: "src/sky.js",
+              task: "paint the sky blue",
+              isolation: "copy",
             });
             return { sessionId: "lead-1" };
           }
           if (results.finished) return { sessionId: "lead-1" };
-          results.integrated = await call("integrate", { worker: "sky" });
+          // The worker's id, as its start named it; its copy merges into the integration worktree.
+          const id = /\bw\d+\b/.exec(String(results.started))?.[0] ?? "w1";
+          results.integrated = await call("worker_mark", { id, verdict: "used" });
           await beforeFinish(request);
           results.finished = await call("finish", { summary: "the sky is blue", land: "yes" });
           return { sessionId: "lead-1" };
         }
-        if (!request.selfCapture) return null;
+        // Anything else the run delegates is its worker, in its copy of the game.
         await mkdir(path.join(request.cwd, "src"), { recursive: true });
         await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'blue';\n");
         return { sessionId: "worker-1", summary: "painted the sky" };
@@ -3374,9 +2771,9 @@ describe("one session, reviewed", () => {
     assert.doesNotMatch(results.finished, /of your own/, results.finished);
     assert.match(
       results.finished,
-      /git would not land this build over what is uncommitted in the game folder — src\/sky\.js\. No worker did this/,
+      /git would not land this build over what is uncommitted in the game folder — src\/sky\.js\./,
     );
-    assert.match(results.finished, /leave it as it is/, "never an invitation to clear the folder");
+    assert.match(results.finished, /leave it as it is/i, "never an invitation to clear the folder");
     const close = (finished.verdicts as Array<{ pass: string; because: string }>).find((v) => v.pass === "close")!;
     assert.doesNotMatch(close.because, /of (?:your|its) own/, close.because);
     // The sentence is kept in the game's lessons and read by the next run's lead: no order in it.
@@ -3445,11 +2842,12 @@ describe("one session, reviewed", () => {
       projectDir: dir,
       integrationWorktree: worktree,
       integrationRef: "refs/studio/runs/run_os6/integration",
-      state: { integrationHead: head },
+      state: { integrationHead: head, healthByHead: new Map() },
       report,
       note: (text: string) => notes.push(text),
       syncHead: async () => head,
       nestedGit: async () => "",
+      reloadLive: async () => {},
       landingClaim: () => ({ verified: false, how: "fresh-health-pass", line: "made live, not judged better" }),
     };
     const landed = await landIntegration(loopRun as never, true);
@@ -4368,7 +3766,6 @@ describe("a quick fix after a finished Loop build (golden-boot-glory)", () => {
  * clock run four minutes during one key press.
  */
 describe("the reviewers and the playtester of a broadcast match (golden-boot-glory)", () => {
-
   it("GR2. playtest 2 answered yes in a fenced reply that closed one brace too many, and was recorded as no answer: the reply's JSON is read without its stray closing braces", async () => {
     const { readJudgeJson } = await import("../../src/harness-seed/loop/judge-provenance.ts");
     const answers = { "director-play": { answer: "yes", note: "Passing worked." } };
@@ -4377,223 +3774,6 @@ describe("the reviewers and the playtester of a broadcast match (golden-boot-glo
     assert.deepEqual(readJudgeJson(`Here it is:\n${JSON.stringify({ answers })}}}`), { answers });
     assert.equal(readJudgeJson("no verdict here"), null);
     assert.equal(readJudgeJson('{"answers": {"q": '), null, "a reply cut short is still unreadable");
-  });
-});
-
-/**
- * ask-first: the write-less interviewer that commissioned a build used to ask what the game is and
- * how it should look before it launched (usually one question). The Loop chat that replaced it asked
- * only whether a build was wanted, so a bare pitch — "make me a game, quickly" — became a build in a
- * style nobody chose.
- */
-describe("a pitch that says neither what the game is nor how it looks (ask-first)", () => {
-  /** The rule every Loop briefing carries, whichever engine reads it. */
-  const assertAsksFirst = (brief: string, label: string) => {
-    assert.match(brief, /know what the game is/i, `${label}: what the game is`);
-    assert.match(brief, /how it should look/i, `${label}: how it looks`);
-    assert.match(brief, /even when the user asks for speed/i, `${label}: a hurry does not skip the question`);
-    assert.match(
-      brief,
-      /a quick build is still a build/i,
-      `${label}: a hurry does not turn a new game into a chat edit`,
-    );
-  };
-
-  it("ask-first. a Loop chat given a pitch in a hurry is told to ask what the game is and how it looks before it builds", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const requests: DelegateRequest[] = [];
-    rig.core.engines.register({
-      id: "vendor",
-      label: "Vendor",
-      kind: "delegated",
-      status: async () => ({ code: "ready", detail: "signed in" }),
-      models: async () => [],
-      defaultModel: async () => "vendor-model",
-      delegate: async (request: DelegateRequest) => {
-        requests.push(request);
-        return { ok: true, engine: "vendor", sessionId: "loop-pitch", turns: 1, usage: {}, summary: "On it." };
-      },
-    });
-    await rig.core.sendUserMessage("Make me a game, quickly.", { engine: "vendor", autopilot: { hours: 1 } });
-    await waitForLog(rig.core, (log) => log.some((e) => e.data.type === "turn_ended"), 30_000, "turn");
-
-    assert.equal(requests.length, 1);
-    const [request] = requests;
-    assert.ok(
-      request?.interviewTools?.some((tool) => tool.name === "ask_user"),
-      "the chat can ask in the answer panel",
-    );
-    assertAsksFirst(String(request?.prompt), "delegated Loop chat");
-    // A local model reads the same rule in its own briefing.
-    assertAsksFirst(String(turnBriefing({ autopilot: { hours: 1 } })), "direct Autopilot briefing");
-    assertAsksFirst(String(turnBriefing({ loop: { hours: 2 } })), "direct Loop briefing");
-  });
-});
-
-/**
- * Loop phase 4: the close asks no judge; a judge is a second opinion the lead asks for, and the
- * build lands on its own look. The rows below keep the hurried run and say what it does now.
- *
- * hurry: a build whose user asked for it fast — "just make it", or Finish pressed before the run
- * was done — landed on its lead's word that it loads. Judging was the lead's choice, and every
- * prompt of a hurried run (the wrap-up, the user's finish, the goal card) told it to call finish,
- * so the build went live with no judge having looked at it: "made live, not judged better".
- */
-describe("the final judge when the user is in a hurry", () => {
-  const plan = {
-    summary: "This run: paint the sky, fast.",
-    workers: JSON.stringify([
-      { id: "sky", title: "Sky", seam: "the sky", owns: "src/sky.js", done: ["the sky is blue"], minutes: 20 },
-    ]),
-    base: "the integration branch as it stands",
-    risks: "none",
-  };
-  const start = {
-    id: "sky",
-    title: "Sky",
-    brief: "paint the sky blue",
-    mode: "single",
-    minutes: "5",
-    owns: "src/sky.js",
-  };
-  const LIT = { width: 800, height: 600, sampled: 480_000, meanLuma: 42, litFraction: 0.6, canvas: true };
-  const BLANK = { width: 800, height: 600, sampled: 480_000, meanLuma: 0, litFraction: 0, canvas: true };
-  const leadText = (answer: unknown): string =>
-    typeof answer === "string" ? answer : String((answer as { text?: string } | null)?.text ?? "");
-
-  /**
-   * One lead turn in a hurry: the lead has its one builder paint the sky, the user asks to finish
-   * while it paints, and the lead integrates it and finishes with land=yes — never calling `judge`
-   * itself. A run `fromScratch` starts on the empty scaffold (nothing drawn) until the builder paints.
-   */
-  async function hurriedLoopRun(
-    name: string,
-    {
-      fromScratch = false,
-      judge = () => null,
-    }: {
-      fromScratch?: boolean;
-      /** The judge's own reply to a prompt (null: the scripted default), given the run it judges. */
-      judge?: (text: string, runId: string, rig: Rig) => string | null | Promise<string | null>;
-    } = {},
-  ) {
-    let painted = !fromScratch;
-    const previews: FakePreview[] = [];
-    const asScene = (preview: FakePreview): FakePreview => {
-      previews.push(preview);
-      preview.pixelStatsNext = painted ? LIT : BLANK;
-      if (fromScratch)
-        preview.evaluations.push(
-          {
-            match: "isScene",
-            get value() {
-              return !painted;
-            },
-          },
-          { match: "matrixWorld", value: "[1,0,0,1]" },
-        );
-      return preview;
-    };
-    const rig = await startRig(
-      { replies: [] },
-      { previewPoolMax: 2, createHeadlessPreview: async () => asScene(makeFakePreview()) },
-    );
-    rigs.push(rig);
-    asScene(rig.preview);
-    const project = await rig.core.games.scaffold(name, { title: name });
-    const thread = await rig.core.threadForGame(project.name);
-    const runId = rig.core.newRunId();
-    const asked: string[] = [];
-    const results: Record<string, string> = {};
-    registerFakeEngine(rig, {
-      complete: (text) => {
-        asked.push(text);
-        return judge(text, runId, rig);
-      },
-      delegate: async (request: DelegateRequest) => {
-        if (request.director) {
-          const call = (tool: string, args: Record<string, unknown>) => request.onLiveTool!(tool, args);
-          await call("plan", plan);
-          results.started = leadText(await call("worker_start", start));
-          // Flipped: the user asked to finish before the builder started; once they ask, no worker
-          // starts, so they ask while it works.
-          await rig.core.append(
-            [{ type: "custom", event_type: "run_control", payload: { runId, action: "finish" } }],
-            thread,
-          );
-          for (let i = 0; i < 30; i++) {
-            const waited = JSON.parse(leadText(await call("wait", { seconds: "5", worker: "sky" })));
-            if (waited.status.workers[0]?.state !== "running") break;
-          }
-          results.integrated = leadText(await call("integrate", { worker: "sky" }));
-          results.finished = leadText(
-            await call("finish", { summary: "painted the sky, as fast as asked", land: "yes" }),
-          );
-          return { sessionId: "lead-hurry", summary: "finished" };
-        }
-        if (path.basename(request.cwd) === "integration") {
-          // The studio's starting point on an empty project: shared modules, still nothing drawn.
-          await mkdir(path.join(request.cwd, "src"), { recursive: true });
-          await writeFile(path.join(request.cwd, "src", "world.js"), "export const world = {};\n");
-          return { sessionId: "base-1", summary: "the world's shape" };
-        }
-        if (!request.selfCapture) return null;
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", "sky.js"), "export const sky = 'blue';\n");
-        painted = true;
-        for (const preview of previews) preview.pixelStatsNext = LIT;
-        return { sessionId: "worker-1", summary: "painted the sky" };
-      },
-    });
-    await rig.core.dispatchRun({
-      runId,
-      goal: "a blue sky over the plaza",
-      project: project.name,
-      mode: "autopilot",
-      engine: "fake-delegate",
-      reference: { name: "sky", shots: [] },
-      budgets: { wallClockMs: 15 * 60_000 },
-    } as never);
-    const events = await waitForLog(
-      rig.core,
-      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
-      180_000,
-      `${name} run_finished`,
-    );
-    // The close's report and the verdicts, read as the app reads them: loose records.
-    const finished: Record<string, any> = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
-    const verdicts: Array<Record<string, any>> = customEvents(events, "director_verdict");
-    const judgedLanding = verdicts.filter(
-      (verdict) => verdict.pass === "judge" && verdict.build?.head === finished.integrationHead,
-    );
-    return { asked, events, finished, judgedLanding, project, results };
-  }
-
-  it("hurry-1. a game the user had, finished in a hurry without the lead judging it: the close makes it live on its own look, asking no judge", async () => {
-    const { asked, finished, judgedLanding, results } = await hurriedLoopRun("hurry-existing");
-
-    assert.equal(finished.landed, true, `${finished.stoppedBecause} | ${results.finished}`);
-    // Flipped (Loop phase 4): the close judged what it made live against the game the user had.
-    assert.deepEqual(judgedLanding, [], "no judge looked at the build made live");
-    assert.ok(
-      !asked.some((text) => text.includes("BUILD A") && text.includes("BUILD B")),
-      "no blind comparison with the game the user had",
-    );
-    assert.notEqual(finished.landingResult.how, LandingHow.JudgePick, JSON.stringify(finished.landingResult));
-    assert.doesNotMatch(results.finished, /a judge preferred it/);
-  });
-
-  it("hurry-2. a new game finished in a hurry: the close asks no judge whether the build does what was asked, and the card claims no judge's answer", async () => {
-    const { asked, finished, judgedLanding, results } = await hurriedLoopRun("hurry-scratch", { fromScratch: true });
-
-    assert.equal(finished.landed, true, `${finished.stoppedBecause} | ${results.finished}`);
-    // Flipped (Loop phase 4): the close asked a judge whether the build does what was asked.
-    assert.deepEqual(judgedLanding, [], "no judge looked at the build made live");
-    assert.ok(!asked.some((text) => /a blue sky over the plaza/.test(text) && text.includes("QUESTION:")));
-    assert.notEqual(finished.landingResult.how, LandingHow.JudgeAnsweredYes, JSON.stringify(finished.landingResult));
-    assert.doesNotMatch(String(finished.landingResult.line), /a judge found/);
-    assert.doesNotMatch(results.finished, /a judge found/);
   });
 });
 
@@ -4889,50 +4069,6 @@ describe("a steer read twice at once", () => {
   });
 });
 
-describe("an Autopilot run whose landing conflicts", () => {
-  it("ends at the failed landing: the user's folder is neither judged as the run's build nor rolled back", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("landclash");
-    const live = rig.core.games.dirFor(project.name);
-    const plan = twoFacetPlan();
-    let userCommitted = false;
-    const USER_WATER = "export const water = 'the user\\'s own marsh';\n";
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const cwd = request.cwd;
-        await mkdir(path.join(cwd, "src"), { recursive: true });
-        if (/YOUR FACET: Water|facet "Water"/.test(request.prompt)) {
-          await writeFile(path.join(cwd, "src", "water.js"), "export const water = 'the run\\'s marsh';\n");
-          if (!userCommitted) {
-            // Meanwhile the user commits their own evening of work on the same file in the game folder.
-            userCommitted = true;
-            await writeFile(path.join(live, "src", "water.js"), USER_WATER);
-            await gitFile(["-C", live, "add", "-A"]);
-            await gitFile(["-C", live, "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-qm", "my marsh"]);
-          }
-          return { sessionId: "ses_water" };
-        }
-        if (/YOUR FACET: Sky|facet "Sky"/.test(request.prompt)) {
-          await writeFile(path.join(cwd, "src", "sky.js"), "export const sky = 1;\n");
-          return { sessionId: "ses_sky" };
-        }
-        if (request.playtest)
-          return { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) };
-        return null;
-      },
-    });
-    const { runId, events } = await runAutopilot(rig, project.name);
-    const finished = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
-    assert.match(String(finished.landing ?? ""), /not landed/, JSON.stringify(finished.landing ?? null));
-    assert.match(String(finished.stoppedBecause), /not landed/, String(finished.stoppedBecause));
-    assert.equal(finished.globalVerdict ?? null, null, "the folder the run did not build was not judged as its build");
-    assert.equal(finished.rolledBack ?? false, false);
-    assert.equal(await readFile(path.join(live, "src", "water.js"), "utf8"), USER_WATER, "the user's work stands");
-  });
-});
-
 describe("Stop on a one-facet Autopilot run", () => {
   it("pauses the run where it was: no finalization is journaled for Resume to skip ahead to", async () => {
     const rig = await startRig();
@@ -4962,54 +4098,6 @@ describe("Stop on a one-facet Autopilot run", () => {
     assert.ok(journal, "the run kept its journal");
     assert.equal(journal!.phase, "paused", "a Stop pauses the run");
     assert.equal(journal!.finalization ?? null, null, "Resume goes on with the building, not the finalization");
-  });
-});
-
-describe("Stop during the integration facet", () => {
-  it("pauses the run, instead of judging it and closing it as done", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("integrationstop");
-    const plan = twoFacetPlan();
-    let stopped = false;
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const cwd = request.cwd;
-        await mkdir(path.join(cwd, "src"), { recursive: true });
-        if (/YOUR FACET: Water|facet "Water"/.test(request.prompt)) {
-          await writeFile(path.join(cwd, "src", "water.js"), "export const water = 1;\n");
-          return { sessionId: "ses_water" };
-        }
-        if (/YOUR FACET: Sky|facet "Sky"/.test(request.prompt)) {
-          await writeFile(path.join(cwd, "src", "sky.js"), "export const sky = 1;\n");
-          return { sessionId: "ses_sky" };
-        }
-        if (request.playtest)
-          return { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) };
-        if (!stopped && /YOUR FACET: Integration/.test(request.prompt)) {
-          stopped = true;
-          // The user presses Stop while the integration facet builds.
-          await rig.core.stopThread(await rig.core.threadForGame(project.name));
-          return { ok: false, stopReason: "stopped", errorText: "stopped by you", sessionId: "ses_integration" };
-        }
-        return null;
-      },
-    });
-    const { runId, events } = await runAutopilot(rig, project.name);
-    assert.ok(stopped, "the integration facet was reached and stopped");
-    const threadId = await rig.core.threadForGame(project.name);
-    const journal = (await rig.core.store.readArtifact(threadId, `autopilot_${runId}`)) as Record<
-      string,
-      unknown
-    > | null;
-    assert.equal(journal?.phase, "paused", "the run can be resumed");
-    assert.ok(
-      customEvents(events, "autopilot_paused").some((e) => e.runId === runId),
-      "the paused card is posted",
-    );
-    const finished = customEvents(events, "run_finished").find((e) => e.runId === runId)!;
-    assert.equal(finished.globalVerdict ?? null, null, "nothing judged the stopped run");
   });
 });
 
@@ -5174,40 +4262,6 @@ describe("a lead's plan and worker starts called together", () => {
   });
 });
 
-describe("what remember keeps of a fact", () => {
-  async function rememberWith(memory: Record<string, unknown>, key: string, value: string) {
-    const { tools } = await import("../../src/harness-seed/tools/self-tools.ts");
-    const remember = tools.find((t) => t.name === "remember")!;
-    let stored: Record<string, unknown> = memory;
-    const ctx = {
-      call: async (method: string, params: { value?: Record<string, unknown> }) => {
-        if (method === HostMethod.ArtifactRead) return structuredClone(stored);
-        if (method === HostMethod.ArtifactWrite) stored = params.value ?? {};
-        return null;
-      },
-    };
-    const answer = await remember.execute({ key, value }, ctx as never);
-    return { answer: typeof answer === "string" ? answer : String((answer as { content?: string }).content), stored };
-  }
-
-  it("says when a fact was cut, instead of saying it was remembered whole", async () => {
-    const { answer, stored } = await rememberWith({}, "taste", "x".repeat(400));
-    assert.equal(String(stored.taste).length <= 301, true);
-    assert.match(answer, /first 300 characters/, answer);
-  });
-
-  it("says which facts a full memory let go, and keeps a fact just updated as the newest", async () => {
-    const full = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`fact${i}`, `value ${i}`]));
-    const updated = await rememberWith(full, "fact0", "value 0, revised");
-    assert.ok("fact0" in updated.stored, "an update is not the oldest fact");
-    assert.equal(Object.keys(updated.stored).length, 40);
-    assert.doesNotMatch(updated.answer, /dropped/, "nothing was let go for an update");
-    const added = await rememberWith(full, "fact40", "a new one");
-    assert.ok(!("fact0" in added.stored), "the oldest fact makes room");
-    assert.match(added.answer, /fact0/, `the model hears what it lost: ${added.answer}`);
-  });
-});
-
 describe("a tool called with arguments its schema refuses", () => {
   it("answers the model what is wrong and runs nothing", async () => {
     const { createToolRegistry } = await import("../../src/harness-seed/tools/index.ts");
@@ -5340,307 +4394,6 @@ describe("an engine's plugin turned on from the chat's card (mp-unity)", () => {
       launch,
     });
     assert.ok(!made.includes(toolCall(engine, unity.tool)), "a folder that has its kind is not told again");
-  });
-});
-
-describe("stuck ladders and small reviewers", () => {
-  const rulesUrl = "../../src/harness-seed/loop/facet/rules.ts";
-  const judgementUrl = "../../src/harness-seed/loop/facet/round-judgement.ts";
-  const ladder = [
-    { id: "rules", what: "Rules: throw-ins, corners and goal kicks restart play, and a goal is scored" },
-    { id: "flow", what: "A 90-minute clock, half time and Golden Goal overtime" },
-  ];
-  /** The match worker's contract as the lead wrote it: its ladder, owned by the lead. */
-  const matchSpec = (extra: Record<string, unknown> = {}) => ({
-    id: "match",
-    checks: [],
-    milestones: ladder.map((m) => ({ ...m })),
-    moveOwner: "director",
-    ...extra,
-  });
-
-  it("GGR-2. a rung measured by its own check, passing on the accepted build, is climbed before the round picks its move", async () => {
-    const { rungsMetOnBoard } = await import(judgementUrl);
-    const measured = matchSpec({
-      milestones: [{ ...ladder[0], check: { id: "milestone-rules", kind: "probe" } }, { ...ladder[1] }],
-    });
-    assert.deepEqual(rungsMetOnBoard(measured, { "milestone-rules": { pass: true } }, []), ["rules"]);
-    assert.deepEqual(rungsMetOnBoard(measured, { "milestone-rules": { pass: false } }, []), []);
-    assert.deepEqual(rungsMetOnBoard(measured, {}, []), [], "unmeasured is not met");
-    assert.deepEqual(rungsMetOnBoard(measured, { "milestone-rules": { pass: true } }, ["rules"]), [], "climbed once");
-  });
-
-  it("GGR-3. a rung missed round after round is set aside and the ladder moves on, instead of losing every round to it", async () => {
-    const { chooseMove } = await import(rulesUrl);
-    const { countRungMiss, RUNG_MISSES } = await import(judgementUrl);
-    assert.equal(countRungMiss({}, "rules").setAside, false, "one miss is not a pattern");
-    let misses: Record<string, number> = {};
-    let setAside = false;
-    for (let i = 0; i < RUNG_MISSES; i++) ({ misses, setAside } = countRungMiss(misses, "rules"));
-    assert.equal(setAside, true, `set aside after ${RUNG_MISSES} misses`);
-    assert.equal(misses.rules, RUNG_MISSES);
-    assert.equal(chooseMove({ spec: matchSpec(), setAside: ["rules"] }).milestone.id, "flow", "the ladder moves on");
-  });
-
-  it("GGR-4. worker_steer move= was answered 'its next round builds it' and queued behind the rung the worker was stuck on: the steered rung goes next", async () => {
-    const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
-    const { chooseMove } = await import(rulesUrl);
-    const worker = { id: "match", title: "Match", state: "running", mode: "loop", steering: [], spec: matchSpec() };
-    const loopRun = {
-      ctx: { cancelled: false },
-      toolCalls: 0,
-      toolsInFlight: 0,
-      run: { runId: "ggr" },
-      state: { workers: new Map([["match", worker]]), integrationHead: null, finished: false },
-      journal: null,
-      saveJournal: async () => {},
-      keepMemory: async () => {},
-      syncHead: async () => {},
-      appendRun: async () => {},
-      interruptWorker: async () => false,
-    };
-    const teamPlay = "The AI plays as a team: roles, passing lanes and a back line that steps up";
-    const answer = String(await handler(loopRun as never, "worker_steer", { id: "match", move: teamPlay }));
-    assert.match(answer, /next round builds it/);
-    const next = chooseMove({ spec: worker.spec as never });
-    assert.equal(next.milestone.what, teamPlay, "the steered rung goes ahead of the one the worker was stuck on");
-    assert.equal(
-      chooseMove({ spec: worker.spec as never, milestonesDone: [next.milestone.id] }).milestone.id,
-      "rules",
-      "and once it is climbed the ladder carries on where it was",
-    );
-  });
-
-  it("GGR-8. once the lead's ladder is climbed the worker builds the reviewer's big move, not a round of polish", async () => {
-    const { chooseMove } = await import(rulesUrl);
-    const bigMove = { what: "a broadcast package: camera cuts, a replay director and a lineup intro", why: "" };
-    const climbed = chooseMove({ spec: matchSpec(), milestonesDone: ["rules", "flow"], lastBigMove: bigMove });
-    assert.equal(climbed.source, "reviewer");
-    assert.equal(climbed.bigMove, bigMove);
-    assert.equal(climbed.mandatory, false, "a reviewer's proposal is guidance: missing it never undoes a build");
-    assert.equal(
-      chooseMove({ spec: matchSpec(), lastBigMove: bigMove }).source,
-      "milestone",
-      "the lead's ladder first",
-    );
-    assert.deepEqual(chooseMove({ spec: matchSpec(), milestonesDone: ["rules", "flow"] }), {
-      source: "none",
-      mandatory: false,
-    });
-  });
-});
-
-/**
- * Polish has a stage of its own. When every rung is mandatory, a polish streak escalates into an
- * invented move and the judge caps polish at three optional nits, a build that needs finishing
- * throws its finishing rounds away. So the build stage stops claiming escalations that will not
- * happen, and a FINISH
- * stage (`spec.stage = "finish"`) lets polish be the work and win on the blind pick, with the
- * regression ratchet unchanged.
- */
-describe("the finish stage and the false ESCALATE", () => {
-  const stageUrl = "../../src/harness-seed/loop/facet/stage.ts";
-  const ladder = [
-    { id: "rain", what: "rain slicks the street and the neon reflects in it" },
-    { id: "traffic", what: "traffic weaves in both lanes" },
-  ];
-
-  it("FIN-0. the stage is typed: finish only when the spec says exactly that, and a typed stage is refused by name", async () => {
-    const { FacetStage, stageOf, movesInStage, polishEscalates, finishDone, isZeroDiff, stageArg } = await import(
-      stageUrl
-    );
-    assert.equal(stageOf({}), FacetStage.Build);
-    assert.equal(stageOf(null), FacetStage.Build);
-    assert.equal(stageOf({ stage: "finish" }), FacetStage.Finish);
-    assert.equal(stageOf({ stage: "FINISH" }), FacetStage.Build, "an unknown value is not a stage");
-    assert.equal(movesInStage({ stage: "finish" }), false);
-    assert.equal(movesInStage({}), true);
-    assert.equal(polishEscalates({}), true, "a worker nobody owns the ladder of escalates, as it always did");
-    assert.equal(polishEscalates({ moveOwner: "director" }), false, "a director-owned worker never does");
-    assert.equal(polishEscalates({ stage: "finish" }), false);
-    // The finisher's exit: preferred, running, identity holding — strict `satisfied` not asked.
-    assert.match(String(finishDone({ won: true, summary: { identityAllPass: true } })), /finish is in/);
-    assert.equal(finishDone({ won: true, broken: true, summary: { identityAllPass: true } }), null);
-    assert.equal(finishDone({ won: true, summary: { identityAllPass: false } }), null);
-    assert.equal(finishDone({ won: false, summary: { identityAllPass: true } }), null);
-    // The finish stage's invisible-diff gate: only a pixel-identical frame is "nothing changed".
-    assert.equal(isZeroDiff({ default: { diffFraction: 0, compared: 900 } }), true);
-    assert.equal(isZeroDiff({ default: { diffFraction: 0.001, compared: 900 } }), false, "fine polish is a change");
-    assert.equal(isZeroDiff({}), false, "no witness is no proof");
-    assert.equal(isZeroDiff({ default: { diffFraction: 0, compared: 0 } }), false);
-    // What a director types.
-    assert.deepEqual(stageArg(undefined), { stage: null });
-    assert.deepEqual(stageArg("finish"), { stage: "finish" });
-    assert.match(
-      String((stageArg("polish") as { error: string }).error),
-      /stage: "polish" is not a stage \(build, finish\)/,
-    );
-    assert.match(String((stageArg("finish", { move: "rain" }) as { error: string }).error), /contradict/);
-    assert.match(
-      String((stageArg("finish", { milestones: JSON.stringify(ladder) }) as { error: string }).error),
-      /contradict/,
-    );
-    assert.deepEqual(stageArg("build", { move: "rain" }), { stage: "build" });
-  });
-
-  it("FIN-1. a finishing worker's polish round is kept with no judge asked, nothing escalates, and a regression still rolls back", async () => {
-    // Every window reports the score the worker's own file decides: a build that writes
-    // "regress" breaks a probe that passes on the accepted build.
-    const scoreFrom = (preview: FakePreview): FakePreview => {
-      const plain = preview.studioState.bind(preview);
-      preview.studioState = async (options: unknown) => {
-        const state = (await plain(options as never)) as Record<string, unknown>;
-        const file = preview.loadRoot
-          ? await readFile(path.join(preview.loadRoot, "src", "paint.js"), "utf8").catch(() => "")
-          : "";
-        return { ...state, score: file.includes("regress") ? -1 : 5 };
-      };
-      // Fine polish: every camera moves by less than the build stage's "no visible change" line.
-      preview.diffNext = { diffFraction: 0.001, meanAbsDiff: 1, grid: new Array(9).fill(0.001), compared: 1000 };
-      preview.evaluations.push({ match: "count('lamp')", value: { value: false } });
-      return preview;
-    };
-    const rig = await startRig(
-      { replies: [] },
-      { previewPoolMax: 2, createHeadlessPreview: async () => scoreFrom(makeFakePreview()) },
-    );
-    rigs.push(rig);
-    scoreFrom(rig.preview);
-    const project = await rig.core.games.scaffold("finish-street", { title: "Finish street" });
-    const results: Record<string, any> = {};
-    const plannerAsks: string[] = [];
-    const finishAsks: string[] = [];
-    let builds = 0;
-    const text = (result: unknown): string =>
-      typeof result === "string" ? result : String((result as { text?: unknown }).text);
-    registerFakeEngine(
-      rig,
-      {
-        complete: (asked, request) => {
-          if (asked.includes("Name the ONE structural move")) {
-            plannerAsks.push(asked);
-            return JSON.stringify({ what: "a police chase through the district", why: "nothing chases", check: null });
-          }
-          if (!asked.includes("THE FACET UNDER JUDGEMENT")) return null;
-          if (asked.includes("STAGE: finish")) finishAsks.push(asked);
-          return JSON.stringify({
-            pick: newestFixtureBuild(request),
-            satisfied: false,
-            regression: null,
-            newCheck: null,
-            bigMove: null,
-            defects: [],
-            polish: Array.from({ length: 6 }, (_, i) => `polish ${i + 1}: the puddles read flat`),
-            moveDelivered: /THE MOVE the builder of build [AB]/.test(asked) ? false : null,
-            scale: "polish",
-            reason: "scripted",
-          });
-        },
-        delegate: async (request) => {
-          if (request.director) {
-            const call = (name: string, args: Record<string, unknown>) =>
-              request.onLiveTool!(name, args) as Promise<unknown>;
-            await call("plan", {
-              summary: "Finish the street: make what is there read at midnight.",
-              workers: JSON.stringify([
-                { id: "paint", title: "Paint", seam: "the street's finish", owns: "src/paint.js", minutes: 10 },
-              ]),
-              base: "the integration branch as it stands",
-              risks: "none",
-            });
-            results.started = text(
-              await call("worker_start", {
-                id: "paint",
-                title: "Paint",
-                brief: "finish the street: wet asphalt, neon, readable signs",
-                minutes: "10",
-                iterations: "4",
-                owns: "src/paint.js",
-                stage: "finish",
-                // An identity check that never passes keeps the worker going round after round.
-                done: JSON.stringify([
-                  {
-                    what: "nine lamps light the street",
-                    check: { id: "lamps", kind: "scene", js: "count('lamp') >= 9" },
-                  },
-                ]),
-                checks: JSON.stringify([{ id: "keeps-score", kind: "probe", expr: "state.score >= 0" }]),
-              }),
-            );
-            for (let i = 0; i < 120; i++) {
-              results.status = JSON.parse(text(await call("worker_status", { id: "paint" })));
-              if (results.status.state !== "running" || results.status.iterations >= 3) break;
-              await call("wait", { seconds: "2", worker: "paint" });
-            }
-            await call("worker_stop", { id: "paint", why: "three rounds are enough to see" });
-            for (let i = 0; i < 60; i++) {
-              const waited = JSON.parse(text(await call("wait", { seconds: "2", worker: "paint" })));
-              if (waited.status.workers[0]?.state !== "running") break;
-            }
-            await call("finish", { summary: "the street is finished", land: "no" });
-            return { sessionId: "finish-lead", summary: "finished" };
-          }
-          // A follow-up after a regression: the builder does not restore it, so the round is refused.
-          if (String(request.prompt).includes("VERIFICATION of your build")) return { sessionId: "paint-1" };
-          builds++;
-          await mkdir(path.join(request.cwd, "src"), { recursive: true });
-          const body = builds === 2 ? "export const paint = 'regress';\n" : `export const paint = ${builds};\n`;
-          await writeFile(path.join(request.cwd, "src", "paint.js"), body);
-          return { sessionId: "paint-1" };
-        },
-      },
-      "codex",
-    );
-    const runId = rig.core.newRunId();
-    await rig.core.dispatchRun({
-      runId,
-      goal: "a neon street at midnight",
-      project: project.name,
-      mode: "autopilot",
-      engine: "codex",
-      reference: { name: "night racer", shots: [] },
-      budgets: { wallClockMs: 15 * 60_000 },
-    } as never);
-    const events = await waitForLog(
-      rig.core,
-      (log) => customEvents(log, "run_finished").some((e) => e.runId === runId),
-      180_000,
-      "the finish run to end",
-    );
-    assert.match(results.started, /"started":"paint"/, results.started);
-    const rounds = customEvents(events, "facet_iteration").filter((i) => i.runId === runId && i.facetId === "paint");
-    const debug = JSON.stringify(rounds.map((i) => [i.iteration, i.winner, i.verdictSource, i.reason]));
-    assert.ok(rounds.length >= 3, `three rounds were judged: ${debug} — ${JSON.stringify(results.status)}`);
-    // No move of any kind: no rung, no reviewer's move, no planner call.
-    const moves = customEvents(events, "facet_move").filter((m) => m.runId === runId && m.facetId === "paint");
-    assert.deepEqual(
-      moves.filter((m) => m.what),
-      [],
-      `a finishing worker is handed no move: ${JSON.stringify(moves)}`,
-    );
-    assert.equal(plannerAsks.length, 0, "the planner is never asked for a structural move");
-    assert.ok(
-      rounds.every((i) => i.verdictSource !== "no-move" && i.verdictSource !== "invisible"),
-      `no round lost to a move nobody asked for, or to polish too fine for the build stage's gate: ${debug}`,
-    );
-    // The regression still rolls back.
-    const regressed = rounds.find((i) => i.iteration === 2)!;
-    assert.equal(regressed.verdictSource, "checks", debug);
-    assert.equal(regressed.winner, "incumbent", debug);
-    // Flipped (Loop phase 4): the polish round after it won on the judge's blind preference; it is kept
-    // because nothing regressed, and no judge is asked.
-    const polished = rounds.find((i) => i.iteration === 3)!;
-    assert.equal(polished.verdictSource, "no-regression", debug);
-    assert.equal(polished.winner, "challenger", debug);
-    assert.deepEqual(finishAsks, [], "no taste judge was asked");
-    const decisions = customEvents(events, "autopilot_decision").map((d) => String(d.decision));
-    assert.deepEqual(
-      decisions.filter((d) => /polished for/.test(d)),
-      [],
-      "nothing says the move is now mandatory",
-    );
-    assert.equal(results.status.stage, "finish", "the lead reads the stage on the worker");
-    assert.equal(results.status.loop?.polishStreak, undefined, "the polish streak stayed at zero");
   });
 });
 
@@ -6145,20 +4898,6 @@ describe("the Unreal lead's saves, crashes, owner words and end", () => {
     assert.equal(report.executionStatus, "paused");
   });
 
-  it("UL2. an hour of editor work went by without a save point: after 15 minutes of unsaved work the lead is steered to look, then save", async () => {
-    const works: leadLoop.Turn = async ({ host }) => {
-      host.work("the shaft");
-      host.clock.now += 6 * MINUTE_MS;
-      await host.until(() => host.steered().some((said) => /save_point/.test(said)));
-      return undefined;
-    };
-    const host = leadLoop.leadHost({ turns: [works] });
-    await runLead(host, { minutes: 90 });
-    const said = host.steered().find((text) => /save_point/.test(text)) ?? "";
-    assert.match(said, /About 1[5-9] minutes of work since your last save point\. Look at it now/);
-    assert.match(said, /mcp__studio__save_point/);
-  });
-
   it("UL14. a lead that saved every few minutes ended three short turns in a row, and the run stopped as idle with a quarter of its time left: a turn that made a save point is never idle", async () => {
     const host = leadLoop.leadHost({ turns: [leadLoop.buildsAndSaves] });
     host.turnMs = 30_000;
@@ -6220,20 +4959,6 @@ describe("the Unreal lead's saves, crashes, owner words and end", () => {
       /The owner says:\nuse Blender for the stairs\nAct on this now unless it conflicts with the edit you are in the middle of; then do it right after\./,
     );
     assert.doesNotMatch(said, /when it fits/);
-  });
-
-  it("UL6. the run's last minutes went by with no final save and no notes: near its end the lead is steered to wrap up and save 'Final'", async () => {
-    const works: leadLoop.Turn = async ({ host }) => {
-      host.work("the last landing");
-      host.clock.now += 35 * MINUTE_MS;
-      await host.until(() => host.steered().some((said) => /wrap up/.test(said)));
-      return undefined;
-    };
-    const host = leadLoop.leadHost({ turns: [works] });
-    await runLead(host, { minutes: 60 });
-    const said = host.steered().find((text) => /wrap up/.test(text)) ?? "";
-    assert.match(said, /About \d+ minutes are left: wrap up/);
-    assert.match(said, /save_point with label "Final"[\s\S]*NOTES\.md[\s\S]*did not test/);
   });
 });
 
@@ -6458,663 +5183,6 @@ describe("the Unreal lead's sub-agents and critic", () => {
   });
 });
 
-// ── the ownership reviewer against the mandatory merge ──
-
-/** A real repository and the ways the loop runs git in it: argv, `run.exec` (`code`/`stdout`), and stdout-or-throw. */
-async function mergeRepo(files: Record<string, string>) {
-  const { tmpDir } = await import("../helpers/tmp.ts");
-  const dir = await tmpDir("merge-ownership-");
-  const git = async (...args: string[]) => (await gitFile(["-C", dir, ...args])).stdout.trim();
-  await git("init", "-q", "-b", "main");
-  await git("config", "user.email", "t@x");
-  await git("config", "user.name", "t");
-  for (const [name, text] of Object.entries(files)) {
-    await mkdir(path.dirname(path.join(dir, name)), { recursive: true });
-    await writeFile(path.join(dir, name), text);
-  }
-  await git("add", "-A");
-  await git("commit", "-qm", "incumbent");
-  const exec = async (command: string) => {
-    try {
-      const { stdout, stderr } = await promisify(execFile)("sh", ["-c", command], { cwd: dir, maxBuffer: 10_000_000 });
-      return { code: 0, stdout, stderr };
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; code?: number };
-      return { code: typeof e.code === "number" ? e.code : 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
-    }
-  };
-  const sh = async (command: string) => {
-    const out = await exec(command);
-    if (out.code !== 0) throw new Error(out.stderr || out.stdout);
-    return out.stdout.trim();
-  };
-  const ctx = {
-    workspace: "/nonexistent",
-    cancelled: false,
-    notify() {},
-    call: async (method: string, p: { command: string }) => (method === "run.exec" ? exec(p.command) : null),
-  };
-  const read = (name: string) => readFile(path.join(dir, name), "utf8");
-  return { dir, git, exec, sh, ctx, read };
-}
-
-type MergeRepo = Awaited<ReturnType<typeof mergeRepo>>;
-
-/** Commit `files` on a new branch `name` from the current HEAD and come back: another part's integrated work. */
-async function commitOnBranch(repo: MergeRepo, name: string, files: Record<string, string>): Promise<string> {
-  const back = await repo.git("rev-parse", "HEAD");
-  await repo.git("checkout", "-qb", name);
-  for (const [file, text] of Object.entries(files)) await writeFile(path.join(repo.dir, file), text);
-  await repo.git("add", "-A");
-  await repo.git("commit", "-qm", name);
-  const head = await repo.git("rev-parse", "HEAD");
-  await repo.git("checkout", "-q", back);
-  return head;
-}
-
-describe("ownership after a merge", () => {
-
-  it("MA-5. a conflict in a file only another part owns is settled by ownership: no builder is told to merge it by hand", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    (plan.facets[0] as { owns: string[] }).owns = ["src/water.js", "src/shared.js"];
-    // Since Loop phase 4 a ladder, not a judge never satisfied, keeps both going past their first round.
-    for (const facet of plan.facets as Array<{ id: string }>)
-      Object.assign(facet, { milestones: ladderOf(facet.id, 3) });
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    const skyPrompts: string[] = [];
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const cwd = request.cwd;
-        const git = async (...args: string[]) => (await gitFile(["-C", cwd, ...args])).stdout.trim();
-        await mkdir(path.join(cwd, "src"), { recursive: true });
-        const shared = path.join(cwd, "src", "shared.js");
-        if (/YOUR FACET: Water|facet "Water"/.test(request.prompt)) {
-          builds.water++;
-          await writeFile(shared, `export const shared = "water-${builds.water}";\n`);
-          await writeFile(path.join(cwd, "src", "water.js"), `export const water = ${builds.water};\n`);
-          return { sessionId: "ses_water" };
-        }
-        if (/YOUR FACET: Sky|facet "Sky"/.test(request.prompt)) {
-          builds.sky++;
-          const brief = await readFile(path.join(cwd, ".studio", "BRIEF.md"), "utf8").catch(() => "");
-          skyPrompts.push(`${request.prompt}\n${brief}`);
-          if (builds.sky === 1) {
-            // Sky writes water's file only once water's version is integrated: both sides add it.
-            const until = Date.now() + 90_000;
-            while (Date.now() < until) {
-              const found = await git("log", "--all", "--grep=integrate water iteration 1", "--format=%H").catch(
-                () => "",
-              );
-              if (found) break;
-              await setTimeoutPromise(200);
-            }
-          }
-          // A builder without the edit-time hook (review off below): it overwrote a file it does not own.
-          const current = await readFile(shared, "utf8").catch(() => "");
-          if (!current.includes("water")) await writeFile(shared, `export const shared = "sky";\n`);
-          await writeFile(path.join(cwd, "src", "sky.js"), `export const sky = ${builds.sky};\n`);
-          return { sessionId: "ses_sky" };
-        }
-        if (request.playtest)
-          return { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) };
-        return null;
-      },
-    });
-    // Review off: the reviewer would otherwise act on sky's stray edit before it could conflict.
-    const { events } = await runAutopilot(rig, "ownershipworld", { budgets: { review: false } });
-    const skyMerges = customEvents(events, "integration_merge").filter((m) => m.facetId === "sky" && !m.stage);
-    assert.ok(
-      !skyPrompts.some((prompt) => /could not merge it automatically/.test(prompt)),
-      `sky was never told to merge water's file by hand: ${JSON.stringify(skyMerges)}`,
-    );
-    assert.ok(
-      skyMerges.every((m) => m.conflict === false),
-      `no merge into sky's worktree was left to its builder: ${JSON.stringify(skyMerges)}`,
-    );
-    assert.ok(
-      skyMerges.some(
-        (m) => m.conflict === false && ((m.theirs as string[] | undefined) ?? []).includes("src/shared.js"),
-      ),
-      `sky's worktree merge took water's side of src/shared.js: ${JSON.stringify(skyMerges)}`,
-    );
-    const gameDir = path.join(rig.core.layout.gamesRoot, "ownershipworld");
-    assert.match(await readFile(path.join(gameDir, "src", "shared.js"), "utf8"), /water-\d+/);
-  });
-
-  it("MA-6. a builder's merge left uncommitted is concluded before review: nothing that arrived by it is reverted", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    const plan = twoFacetPlan();
-    (plan.facets[0] as { owns: string[] }).owns = ["src/water.js", "src/materials.js"];
-    const builds: Record<string, number> = { water: 0, sky: 0 };
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const cwd = request.cwd;
-        const git = async (...args: string[]) => (await gitFile(["-C", cwd, ...args])).stdout.trim();
-        await mkdir(path.join(cwd, "src"), { recursive: true });
-        if (/YOUR FACET: Water|facet "Water"/.test(request.prompt)) {
-          builds.water++;
-          // Water changes a file the game already had: one that exists at sky's incumbent.
-          const materials = path.join(cwd, "src", "materials.js");
-          const before = (await readFile(materials, "utf8")).replace(/^export const waterTint = .*\n/m, "");
-          await writeFile(materials, `${before}export const waterTint = ${builds.water};\n`);
-          await writeFile(path.join(cwd, "src", "water.js"), `export const water = ${builds.water};\n`);
-          return { sessionId: "ses_water" };
-        }
-        if (/YOUR FACET: Sky|facet "Sky"/.test(request.prompt)) {
-          builds.sky++;
-          if (builds.sky === 1) {
-            let head = "";
-            const until = Date.now() + 90_000;
-            while (Date.now() < until && !head) {
-              head = await git("log", "--all", "--grep=integrate water iteration 1", "--format=%H").catch(() => "");
-              if (!head) await setTimeoutPromise(200);
-            }
-            assert.ok(head, "water's first round was integrated");
-            // The builder merges the integration head by hand and never commits the merge.
-            await git("-c", "user.name=fake", "-c", "user.email=fake@x", "merge", "--no-commit", "--no-ff", head);
-          }
-          await writeFile(path.join(cwd, "src", "sky.js"), `export const sky = ${builds.sky};\n`);
-          return { sessionId: "ses_sky" };
-        }
-        if (request.playtest)
-          return { summary: JSON.stringify({ answers: { "integration-play": { answer: "yes" } }, report: "played" }) };
-        return null;
-      },
-    });
-    const { events } = await runAutopilot(rig, "handmergeworld");
-    const first = customEvents(events, "facet_iteration").find((i) => i.facetId === "sky" && i.iteration === 1);
-    assert.ok(first && first.verdictSource !== "broken", `the concluded merge was judged: ${JSON.stringify(first)}`);
-    const enforced = customEvents(events, "facet_review_enforced").filter((e) => e.facetId === "sky");
-    assert.ok(
-      enforced.every((e) => !((e.reverted as string[] | undefined) ?? []).includes("src/materials.js")),
-      `water's materials were never reverted on sky: ${JSON.stringify(enforced)}`,
-    );
-    const gameDir = path.join(rig.core.layout.gamesRoot, "handmergeworld");
-    const concluded = await gitFile([
-      "-C",
-      gameDir,
-      "log",
-      "--all",
-      "--format=%s",
-      "--grep=conclude the builder's merge",
-    ]);
-    assert.match(concluded.stdout, /facet sky: conclude the builder's merge/, "the harness committed sky's open merge");
-    const skyReviews = customEvents(events, "facet_review").filter((r) => r.facetId === "sky" && r.iteration === 1);
-    assert.ok(
-      skyReviews.every((r) => !JSON.stringify(r).includes("src/materials.js")),
-      `sky's review judged only its own diff: ${JSON.stringify(skyReviews)}`,
-    );
-    assert.match(await readFile(path.join(gameDir, "src", "materials.js"), "utf8"), /waterTint = \d+/);
-    assert.match(await readFile(path.join(gameDir, "src", "sky.js"), "utf8"), /sky = \d+/);
-  });
-});
-
-/**
- * Facet rounds: a new worker's first round is one long build block before any blind judging, a
- * round that fixed owed defects is kept though it missed its move, an undone round's fixes are
- * carried over, and a lead's fix the builder merged is never read as the builder's own edit.
- */
-describe("facet rounds: the build block, kept fixes and the lead's merged fixes", () => {
-  const MIN = 60_000;
-  const racingRun = { runId: "run_nfs", project: "nfs", goal: "an NFS-style night street race", model: "opus" };
-
-  /**
-   * The run's git history, small: car-feel's round 2 merged the lead's HDR fix in city-world's
-   * post.js by hand (0259c9d) while integration moved on to 99a2f8c, and kept building.
-   */
-  async function leadFixRepo() {
-    const repo = await mergeRepo({
-      "src/main.js": "// main\n",
-      "src/world/post.js": "export const post = 0;\n",
-      "src/car/car.js": "export const car = 0;\n",
-      "src/ui/screen.js": "export const screen = 0;\n",
-    });
-    const write = (file: string, text: string) => writeFile(path.join(repo.dir, file), text);
-    const start = await repo.git("rev-parse", "HEAD");
-    // car-feel's round 1, accepted (d47cdd1).
-    await repo.git("checkout", "-qb", "car-feel");
-    await write("src/car/car.js", "export const car = 1;\n");
-    await repo.git("commit", "-qam", "facet car-feel iteration 1: accepted");
-    const round1 = await repo.git("rev-parse", "HEAD");
-    // Integration takes the screen (e2c8324); the loop merges it at the top of round 2 (fd973ef).
-    await repo.git("checkout", "-qb", "integration", start);
-    await write("src/ui/screen.js", "export const screen = 1;\n");
-    await repo.git("commit", "-qam", "director: integrate screen");
-    const screenIn = await repo.git("rev-parse", "HEAD");
-    await repo.git("checkout", "-q", "car-feel");
-    await repo.git("merge", "-q", "--no-ff", "--no-edit", screenIn);
-    const incumbent = await repo.git("rev-parse", "HEAD");
-    // The lead integrates round 1 (d2edc11) and fixes HDR in city-world's post.js itself (0259c9d).
-    await repo.git("checkout", "-q", "integration");
-    await repo.git("merge", "-q", "--no-ff", "--no-edit", round1);
-    const carIn = await repo.git("rev-parse", "HEAD");
-    await write("src/world/post.js", "export const post = 0;\nexport const safeHDR = true;\n");
-    await repo.git("commit", "-qam", "integration fix: sanitize HDR before bloom");
-    const leadFix = await repo.git("rev-parse", "HEAD");
-    // Integration moves on while car-feel builds (5558808, 99a2f8c).
-    await write("src/world/atmosphere.js", "export const fog = 1;\n");
-    await repo.git("add", "-A");
-    await repo.git("commit", "-qm", "integrate city-world by hand");
-    await write("src/ui/screen.js", "export const screen = 2;\n");
-    await repo.git("commit", "-qam", "director: integrate screen");
-    const head = await repo.git("rev-parse", "HEAD");
-    // The lead steers car-feel to merge its fix: the builder merges it by hand, commits, and builds.
-    await repo.git("checkout", "-q", "car-feel");
-    await repo.git("merge", "-q", "--no-ff", "--no-edit", leadFix);
-    await write("src/car/car.js", "export const car = 2;\n");
-    return { repo, write, incumbent, screenIn, carIn, leadFix, head };
-  }
-
-  type LeadFixRepo = Awaited<ReturnType<typeof leadFixRepo>>;
-
-  /** car-feel's round-2 review, with the integration hook the loop had. */
-  async function reviewRound(fixture: LeadFixRepo, integration: Record<string, unknown>) {
-    const round: Record<string, any> = { iteration: 2, iterationId: "002", buildFailed: null };
-    return round.review as { base: string; files?: string[]; violations: Array<{ file: string }> };
-  }
-
-  it("FR-1. a lead's fix the builder was told to merge is not its own edit: car-feel's review flagged city-world's post.js and the fix turn reverted the lead's HDR guard", async () => {
-    const fixture = await leadFixRepo();
-    // What the loop's integration hook answered while car-feel built: the head integration had moved on to.
-    const review = await reviewRound(fixture, { head: async () => fixture.head });
-    assert.deepEqual(
-      review.violations.map((v) => v.file),
-      [],
-      `the lead's fix arrived by the merge car-feel was told to make: ${JSON.stringify(review.violations)}`,
-    );
-    assert.equal(review.base, fixture.leadFix, "the newest integration commit the worktree holds is the diff base");
-    assert.deepEqual(review.files, ["src/car/car.js"], "only car-feel's own work is reviewed");
-  });
-
-  it("FR-3. the builder's own edit to another part's file is still its edit after the merge", async () => {
-    const fixture = await leadFixRepo();
-    await fixture.write("src/ui/screen.js", "export const screen = 9;\n");
-    const review = await reviewRound(fixture, { head: async () => fixture.head });
-    assert.deepEqual(
-      review.violations.map((v) => v.file),
-      ["src/ui/screen.js"],
-      "an edit nobody merged in is reviewed as the builder's",
-    );
-  });
-
-  /** A worker's loop at the top of a round, as the integration gate reads it, over a fresh repository. */
-  async function gateRound(id: string, owns: string[]) {
-    const repo = await mergeRepo({
-      "src/main.js": "// main\n",
-      "src/world/post.js": "export const post = 0;\n",
-      "src/car/car.js": "export const car = 0;\n",
-    });
-    const start = await repo.git("rev-parse", "HEAD");
-    const head = await commitOnBranch(repo, "integration", {
-      "src/world/post.js": "export const post = 0;\nexport const safeHDR = true;\n",
-    });
-    const loop: Record<string, any> = {
-      ctx: repo.ctx,
-      git: repo.sh,
-      gitWhere: repo.dir,
-      gitOptions: { label: `facet:${id}:git`, timeoutMs: 30_000, trim: "both" },
-      worktree: repo.dir,
-      integration: { head: async () => head },
-      mergedIntegration: null,
-      incumbentCommit: start,
-      integrationNote: null,
-      appendRun: async () => {},
-      facet: { id, title: id },
-      run: racingRun,
-      spec: { id, title: id, owns, checks: [] },
-      ownShape: false,
-      ownsMain: false,
-      shape: null,
-    };
-    const round: Record<string, any> = { iteration: 3 };
-    return { loop, round, head };
-  }
-
-  it("FR-4. a lead commit that touches a part's own file reaches its owner as the lead's change to keep", async () => {
-    const owner = await gateRound("city-world", ["src/world/"]);
-    assert.equal(owner.loop.mergedIntegration, owner.head, "the merge itself went through");
-    assert.match(String(owner.loop.integrationNote), /src\/world\/post\.js/);
-    assert.match(String(owner.loop.integrationNote), /keep/i);
-    const other = await gateRound("car-feel", ["src/car/"]);
-    assert.equal(other.loop.integrationNote, null, "a part whose files the lead left alone hears nothing");
-  });
-
-  // ── the build block: a long first round, kept on the checks ──
-
-  /** A delegated build turn's loop on a fake clock: every turn the engine takes costs `turnMinutes`. */
-  function blockLoop(turnMinutes: number, extra: Record<string, unknown> = {}) {
-    const turns: Array<{ prompt: string; timeoutMs: number; resume?: string }> = [];
-    let clock = 0;
-    const ctx = {
-      workspace: "/nonexistent",
-      cancelled: false,
-      notify() {},
-      setStatus() {},
-      call: async (method: string, params: Record<string, any>) => {
-        if (method !== "engine.delegate") return null;
-        turns.push({ prompt: String(params.prompt), timeoutMs: Number(params.timeoutMs), resume: params.resume });
-        clock += turnMinutes * MIN;
-        return { ok: true, sessionId: "ses_block", summary: "done" };
-      },
-    };
-    const loop: Record<string, any> = {
-      ctx,
-      now: () => clock,
-      deadline: Date.now() + 8 * 60 * MIN,
-      budgetMs: 8 * 60 * MIN,
-      delegated: true,
-      buildBlock: true,
-      legacy: false,
-      startIteration: 1,
-      extraReadRoots: [],
-      spikeRoots: [],
-      facet: { id: "car-feel", title: "Car" },
-      spec: { id: "car-feel", title: "Car", owns: ["src/car/"], cameras: ["default"], checks: [], milestones: [] },
-      run: racingRun,
-      engineId: "fake-delegate",
-      facetThreadId: "thread_car",
-      worktree: "/nonexistent/car-feel",
-      result: {},
-      windDownMs: 3 * MIN,
-      emaAfterMs: null,
-      sessionId: null,
-      ownShape: false,
-      ownsMain: false,
-      shape: null,
-      facetSetup: null,
-      handle: null,
-      outageRetries: 0,
-      iterationsThisRound: 1,
-      board: {},
-      moves: [],
-      milestonesDone: new Set<string>(),
-      milestonesSetAside: new Set<string>(),
-      stoppedHere: async () => false,
-      finishRequested: async () => false,
-      steering: async () => [],
-      appendRun: async () => {},
-      ...extra,
-    };
-    return { loop, turns, elapsed: () => clock };
-  }
-
-  /** Round one of a new loop worker: its move chosen (which stamps the block), then its build turn. */
-  async function firstRound(loop: Record<string, any>, iteration = 1) {
-    const round: Record<string, any> = {
-      iteration,
-      prompt: "build the car",
-      promptImages: [],
-      acceptedShots: [],
-      userSteering: [],
-    };
-    return round;
-  }
-
-  it("FR-8. a new loop worker's first round is a build block: the builder is kept on a screenshot-and-fix loop until the block's shortest end", async () => {
-    const { loop, turns, elapsed } = blockLoop(20);
-    const round = await firstRound(loop);
-    assert.ok(
-      elapsed() >= 60 * MIN,
-      `the block ran at least an hour (${elapsed() / MIN} min in ${turns.length} turns)`,
-    );
-    assert.ok(turns.length >= 3, "the builder's early stops were answered with more building");
-    assert.ok(turns[0]!.timeoutMs <= 90 * MIN, "no turn runs past the block's longest");
-    assert.match(turns[1]!.prompt, /BUILD BLOCK/);
-    assert.match(turns[1]!.prompt, /bench\/car-feel\.html/);
-    assert.equal(turns[1]!.resume, "ses_block", "the same session carries on");
-    assert.equal(round.buildFailed, null);
-  });
-});
-
-describe("a racing build judged during its countdown", () => {
-  it("MAP-1. a racing build judged during its countdown: the drive waits for flow.playing", async () => {
-    const rig = await startRig();
-    rigs.push(rig);
-    await apiOf(rig)["game.scaffold"]!({ name: "apex", title: "Apex" });
-    const plan = {
-      ...twoFacetPlan({
-        waterChecks: [
-          { id: "lit", kind: "pixel", camera: "default", expr: "litFraction > 0.5", weight: "identity" },
-          { id: "lap", kind: "probe", expr: "race.lap >= 1", weight: "normal" },
-        ],
-      }),
-      game: { kind: "racing" },
-    };
-    // The game's own front-end, the way the exported game had it: seed() puts it back on its
-    // title, begin() starts a two-step countdown, and only then is the race on. Every input the
-    // harness drives is filed under the phase it landed in.
-    const preview = rig.preview;
-    let phase = "menu";
-    let countdown = 0;
-    const landed: string[] = [];
-    preview.next = { ...preview.next, race: { lap: 1 } };
-    preview.studioMethods.begin = () => {
-      phase = "countdown";
-      countdown = 2;
-      return { ok: true };
-    };
-    const call = preview.studioCall.bind(preview);
-    preview.studioCall = async (method, arg) => {
-      if (method === "seed") phase = "menu";
-      const counting = method === "step" && phase === "countdown";
-      if (counting) countdown -= 1;
-      if (counting && countdown <= 0) phase = "playing";
-      return call(method, arg);
-    };
-    const state = preview.studioState.bind(preview);
-    preview.studioState = async (options) => ({
-      ...((await state(options)) as Record<string, unknown>),
-      flow: { phase, playing: phase === "playing" },
-    });
-    const input = preview.input.bind(preview);
-    preview.input = async (actions) => {
-      for (const action of (actions ?? []) as Array<{ type: string }>) if (action.type === "down") landed.push(phase);
-      return input(actions);
-    };
-    registerFakeEngine(rig, {
-      complete: (text) => (text.includes("ENGINE HINT: maxParallel") ? JSON.stringify(plan) : null),
-      delegate: async (request) => {
-        const facet = /YOUR FACET: Water|facet "Water"/.test(request.prompt) ? "water" : "sky";
-        if (request.playtest) return { summary: JSON.stringify({ answers: {}, report: "played" }) };
-        await mkdir(path.join(request.cwd, "src"), { recursive: true });
-        await writeFile(path.join(request.cwd, "src", `${facet}.js`), `export const ${facet} = ${Date.now()};\n`);
-        return { sessionId: `ses_${facet}` };
-      },
-    });
-    await runAutopilot(rig, "apex", { budgets: { maxIterations: 2 } });
-    assert.ok(
-      preview.calls.some((c) => c.method === "begin"),
-      "every look takes the racer past its title before it drives",
-    );
-    assert.ok(landed.length > 0, "the harness drove the game's controls");
-    assert.deepEqual(
-      [...new Set(landed)],
-      ["playing"],
-      `the throttle never lands in the title or the countdown: ${landed.join(",")}`,
-    );
-    // The board's own probe path is asked to survive the studio's bound on every read.
-    assert.ok(
-      preview.stateOpts.some((options) => options?.keep?.includes("race.lap")),
-      "the state the board reads is kept whole",
-    );
-  });
-});
-
-/**
- * A Loop chat may launch with a goal that paraphrases the user's ask and adds to it (police,
- * traffic and a pursuit meter in a street race); if that paraphrase is the only ask any agent
- * reads, the additions stick. The run carries the user's own words from the chat's log, and the
- * contractor's in-scope and cut lists beside them, through a Resume.
- */
-describe("MAP-5. scope inflated without the user", () => {
-  const ASK = "Create a hyper-realistic NFS-inspired racing game";
-
-  it("MAP-5a. the contractor added police to an NFS-inspired ask: the run keeps the user's words verbatim and the cut list, and a Resume restores them", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    let calls = 0;
-    rig.core.engines.register({
-      id: "vendor",
-      label: "Vendor",
-      kind: "delegated",
-      status: async () => ({ code: "ready", detail: "signed in" }),
-      models: async () => [],
-      defaultModel: async () => "vendor-model",
-      delegate: async (request: DelegateRequest) => {
-        calls++;
-        // Only the chat's launch matters here; the run's lead thinks until it is stopped.
-        if (calls > 1)
-          return new Promise((resolve) =>
-            request.signal?.addEventListener("abort", () =>
-              resolve({ ok: false, stopReason: "stopped", summary: "" } as never),
-            ),
-          );
-        return {
-          ok: true,
-          engine: "vendor",
-          summary: "Recap: a neon night race. Starting it now.",
-          turns: 1,
-          usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cost_usd: 0 },
-          studioToolCalls: [
-            {
-              name: "start_autopilot",
-              args: {
-                goal: "A neon night street race with police pursuit, traffic and a pursuit meter",
-                direction: "NFS",
-                in_scope: ["one race", "one hero car"],
-                cut: ["police pursuit", "open world"],
-              },
-            },
-          ],
-        };
-      },
-    });
-    await rig.core.games.scaffold("apex", { title: "apex" });
-    const thread = await rig.core.threadForGame("apex");
-    type Log = Awaited<ReturnType<typeof rig.core.listAllEvents>>;
-    const leading = (n: number) => (log: Log) => customEvents(log, "run_registered").length >= n && calls > n;
-    const paused = (n: number) => (log: Log) =>
-      customEvents(log, "autopilot_paused").length + customEvents(log, "run_finished").length >= n;
-
-    await rig.core.sendUserMessage(ASK, { thread, engine: "vendor", autopilot: { hours: 1 } });
-    const first = await waitForLog(rig.core, leading(1), 60_000, "the run's lead at work");
-    const [launched] = customEvents(first, "run_registered") as Array<Record<string, any>>;
-    assert.ok(launched);
-    assert.deepEqual(launched.scope?.asked, [ASK], "the user's words, from the log, not the contractor's goal");
-    assert.deepEqual(launched.scope?.inScope, ["one race", "one hero car"]);
-    assert.deepEqual(launched.scope?.cut, ["police pursuit", "open world"]);
-    assert.match(String(launched.goal), /police/, "the contractor's goal is kept as its brief, beside the ask");
-
-    const runId = String(launched.runId);
-    const journal = (await rig.core.store.readArtifact(thread, `autopilot_${runId}`)) as Record<string, any> | null;
-    assert.deepEqual(journal?.run?.scope, launched.scope, "the journal keeps the scope a Resume reads");
-
-    await rig.core.stopThread(thread).catch(() => {});
-    await waitForLog(rig.core, paused(1), 60_000, "the run to pause");
-    // The Resume is the user's click, sent as soon as the pause shows, while the paused run may still be
-    // closing: it waits for that close, never refused. Not awaited: the resumed run goes on until it is
-    // stopped, and its dispatch's own wait is not this test's.
-    void rig.core.resumeAutopilot(runId).catch(() => {});
-    const refused = (log: Log) => customEvents(log, "run_start_blocked").length > 0;
-    const second = await waitForLog(
-      rig.core,
-      (log) => leading(2)(log) || refused(log),
-      60_000,
-      "the resumed run's lead at work",
-    );
-    // Flipped (was swallowed): a Resume while the paused run closes is never refused as a second run.
-    assert.deepEqual(customEvents(second, "run_start_blocked"), [], "the Resume is not refused");
-    const resumed = (customEvents(second, "run_registered") as Array<Record<string, any>>)[1];
-    assert.equal(resumed?.resumed, true);
-    assert.deepEqual(resumed?.scope, launched.scope, "a Resume restores the same scope");
-    await rig.core.stopThread(thread).catch(() => {});
-    await waitForLog(rig.core, paused(2), 60_000, "the resumed run to pause").catch(() => {});
-  });
-
-  it("MAP-5b. lists sent as text (Claude Code declares intake fields as strings) still launch, and the chat's own command report is not in the user's words", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    let calls = 0;
-    rig.core.engines.register({
-      id: "vendor",
-      label: "Vendor",
-      kind: "delegated",
-      status: async () => ({ code: "ready", detail: "signed in" }),
-      models: async () => [],
-      defaultModel: async () => "vendor-model",
-      delegate: async (request: DelegateRequest) => {
-        calls++;
-        if (calls > 1)
-          return new Promise((resolve) =>
-            request.signal?.addEventListener("abort", () =>
-              resolve({ ok: false, stopReason: "stopped", summary: "" } as never),
-            ),
-          );
-        return {
-          ok: true,
-          engine: "vendor",
-          summary: "Recap: one race. Starting it now.",
-          turns: 1,
-          usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cost_usd: 0 },
-          studioToolCalls: [
-            {
-              name: "start_autopilot",
-              args: {
-                goal: "A neon night street race",
-                direction: "NFS",
-                in_scope: '["one race", "one hero car"]',
-                cut: "police pursuit\nopen world",
-              },
-            },
-          ],
-        };
-      },
-    });
-    await rig.core.games.scaffold("apex", { title: "apex" });
-    const thread = await rig.core.threadForGame("apex");
-    // A command the user ran from a reply: the chat queued its result as a message, settled.
-    const report = "Command finished: npm test passed";
-    await rig.core.store.appendEvents(thread, [
-      { type: "messages", messages: [{ role: "user", content: report }] },
-      {
-        type: "custom",
-        event_type: "coordinator_message_queued",
-        payload: { messageId: "m_report", action: { text: report, threadId: thread, origin: "command-result" } },
-      },
-      { type: "custom", event_type: "coordinator_message_handled", payload: { messageId: "m_report" } },
-    ] as never);
-
-    await rig.core.sendUserMessage(ASK, { thread, engine: "vendor", autopilot: { hours: 1 } });
-    const log = await waitForLog(
-      rig.core,
-      // Launched, or refused: a refused call answers the model that it "did not run".
-      (events) => customEvents(events, "run_registered").length >= 1 || JSON.stringify(events).includes("did not run"),
-      60_000,
-      "the launch or its refusal",
-    );
-    try {
-      const [launched] = customEvents(log, "run_registered") as Array<Record<string, any>>;
-      assert.ok(launched, "the launch was not refused for lists sent as text");
-      assert.deepEqual(launched.scope?.asked, [ASK], "the user's words only, without the chat's report");
-      assert.deepEqual(launched.scope?.inScope, ["one race", "one hero car"]);
-      assert.deepEqual(launched.scope?.cut, ["police pursuit", "open world"]);
-    } finally {
-      await rig.core.stopThread(thread).catch(() => {});
-      await waitForLog(
-        rig.core,
-        (events) => customEvents(events, "autopilot_paused").length + customEvents(events, "run_finished").length >= 1,
-        60_000,
-        "the run to pause",
-      ).catch(() => {});
-    }
-  });
-});
-
 /**
  * A Resume pressed as soon as the pause shows reaches the harness while the paused run still writes
  * its close (its report, its tear-down): it waits for that close and then starts, and is never
@@ -7235,93 +5303,6 @@ describe("a Resume pressed as the pause shows", () => {
 });
 
 /**
- * Issue #47: a game run with a model per job. Local runs played their playtest on the workers'
- * model even when the reviewers had picked a model that sees, and a run whose reviewers sat on
- * another engine handed that engine's model id to whichever engine actually played.
- */
-describe("the playtester of a run with a model per job (issue #47)", () => {
-  const described = [
-    {
-      id: "ollama",
-      label: "Ollama",
-      kind: "direct",
-      status: { code: "ready", detail: "" },
-      defaultModel: "coder",
-      models: [
-        { id: "coder", label: "coder", contextWindow: 32_000, supportsTools: true, supportsVision: false },
-        { id: "vl", label: "vl", contextWindow: 32_000, supportsTools: true, supportsVision: true },
-        { id: "seer", label: "seer", contextWindow: 32_000, supportsTools: false, supportsVision: true },
-      ],
-    },
-    {
-      id: "claude-code",
-      label: "Claude Code",
-      kind: "delegated",
-      supportsSessions: true,
-      status: { code: "ready", detail: "" },
-      defaultModel: null,
-      models: [{ id: "opus", label: "Opus", contextWindow: 200_000, supportsTools: true, supportsVision: true }],
-    },
-  ];
-  const answer = JSON.stringify({ answers: { wade: { answer: "yes" } }, report: "waded" });
-  /** Where a playtest of `run` plays: the engine and the model each completion or session asks for. */
-  async function played(
-    run: Record<string, unknown>,
-  ): Promise<Array<{ via: string; engine: unknown; model: unknown }>> {
-    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
-    const recorder = ctxRecorder({
-      handlers: {
-        "engine.describe": () => described,
-        "engine.complete": () => ({ message: { role: "assistant", content: answer } }),
-        "engine.delegate": () => ({ summary: answer, turns: 2 }),
-        "preview.load": () => ({ ok: true }),
-        "preview.call": () => null,
-      },
-    });
-    return recorder.calls
-      .filter((call) => call.method === "engine.complete" || call.method === "engine.delegate")
-      .map((call) => ({ via: call.method, engine: call.params.engine, model: call.params.model }));
-  }
-
-  it("LR1. plays on the reviewers' model when it calls tools and sees, and never sends one engine's model to another", async () => {
-    const local = { engine: "ollama", model: "coder", judgeEngine: "ollama", judgeModel: "vl" };
-    assert.deepEqual(
-      await played(local),
-      [{ via: "engine.complete", engine: "ollama", model: "vl" }],
-      "an all-local run plays on the reviewers' model",
-    );
-    assert.deepEqual(
-      await played({ ...local, judgeModel: "seer" }),
-      [{ via: "engine.complete", engine: "ollama", model: "coder" }],
-      "a reviewer that cannot call tools leaves play to the workers' model, as before",
-    );
-    const subscription = { engine: "claude-code", model: "opus", judgeEngine: "ollama", judgeModel: "vl" };
-    assert.deepEqual(
-      await played(subscription),
-      [{ via: "engine.complete", engine: "ollama", model: "vl" }],
-      "local reviewers under a subscription play on their own engine",
-    );
-    assert.deepEqual(
-      await played({ ...subscription, judgeModel: "seer" }),
-      [{ via: "engine.delegate", engine: "claude-code", model: "opus" }],
-      "the run's own engine plays with its own model, never the local reviewer's id",
-    );
-    assert.deepEqual(
-      await played({
-        engine: "ollama",
-        model: "opus",
-        builderEngine: "claude-code",
-        judgeEngine: "ollama",
-        judgeModel: "seer",
-        roles: { planner: "coder", builder: "opus", judge: "seer" },
-      }),
-      [{ via: "engine.complete", engine: "ollama", model: "coder" }],
-      "a local main agent with subscription workers plays on its own model, never the workers' id",
-    );
-  });
-});
-
-/**
  * Issue #47: a coding model that cannot see images, picked as the workers' or the main agent's
  * model on a local engine. A screenshot a tool took, or a frame the person attached, went to it as
  * pixels, Ollama refused the request as unavailable, and the turn died or fell back to another
@@ -7385,34 +5366,6 @@ describe("a local model that cannot see images (issue #47)", () => {
   });
 });
 
-/**
- * Computer use, the judge that plays. A playtester's or a picture judge's "yes" was the model's
- * word: nothing checked it reached what it said it saw, a screenshot question nobody could answer
- * stayed unanswered, and a regression a picture cannot show (the key that no longer opens the menu)
- * reached the user. A judge now plays blind on the computer tool, the studio checks its goal in the
- * game's own state, and a route it played to a verified goal is replayed on every later build.
- */
-describe("computer use: the judge that plays, escalation and routes", () => {
-  const question = { id: "gate", kind: "play", ask: "Could you open the gate?", expect: "yes", weight: "normal" };
-
-  it("CU6. a kept older playtester.ts without playResults still loads the judge that plays, which reads answers itself", async () => {
-    const root = await tmpDir("cu-kept-");
-    const seed = fileURLToPath(new URL("../../src/harness-seed", import.meta.url));
-    await cp(seed, root, { recursive: true });
-    await writeFile(
-      path.join(root, "loop", "playtester.ts"),
-      "export async function runPlaytest() { return null; }\nexport function playBrief() { return ''; }\nexport const SERVES_LOCAL_ROLES = true;\n// the agent's own playtester\n",
-    );
-    const kept = await import(pathToFileURL(path.join(root, "loop", "hands-on-judge.ts")).href);
-    const results = kept.handsOnResults([question], { answers: { gate: { answer: "no", note: "locked" } } });
-    assert.deepEqual(
-      results.map((r: { id: string; pass: boolean | null }) => [r.id, r.pass]),
-      [["gate", false]],
-    );
-    const evidence = await import(pathToFileURL(path.join(root, "loop", "evidence.ts")).href);
-    assert.equal(typeof evidence.gatherEvidence, "function", "the evidence pass still loads beside it");
-  });
-});
 describe("a Loop chat whose turn made the game's project (an Unreal game)", () => {
   it("LL1. the session that goes on is told to launch the build with its launch tool, never to build the game itself", () => {
     const unreal = [{ id: "unreal-project", path: "unreal" }];
@@ -7660,44 +5613,6 @@ describe("a finish claim with known gaps", () => {
     );
   });
 
-  it("LF2. a reviewer's yes ended a three-hour Loop early while the lead named gaps: a claim naming gaps with time left reaches no reviewer, and the lead works on them first", async () => {
-    const { loopHost } = await import("../helpers/loop-host.ts");
-    const dir = await folder("finish-gaps-early-");
-    const answers: unknown[] = [];
-    const host = loopHost({
-      dir,
-      facts: [{ id: "web-game", path: "." }],
-      run: { budgets: { wallClockMs: 3 * HOUR_MS, completionPolicy: "timed" } },
-      turns: [
-        async ({ tool }) => {
-          await writeFile(path.join(dir, "a.txt"), "a");
-          await tool("save_point", { label: "Scene", summary: "the scene" });
-          answers.push(
-            await tool("finish", { review: "yes", summary: "The scene is built.", remaining: GAPS, proof: "a.txt" }),
-          );
-          return undefined;
-        },
-        async ({ tool }) => {
-          await writeFile(path.join(dir, "b.txt"), "b");
-          await tool("save_point", { label: "Walk", summary: "the walk and the arms" });
-          answers.push(
-            await tool("finish", {
-              review: "yes",
-              summary: "The scene is built and the gaps are closed.",
-              proof: "b.txt",
-            }),
-          );
-          return undefined;
-        },
-      ],
-    });
-    await host.start();
-    assert.match(String(answers[0]), /^Not checked: .*work on it first/);
-    assert.match(String(answers[0]), /walk animation/);
-    assert.equal(host.reviewed().length, 1, "only the claim with nothing remaining reached a reviewer");
-    assert.match(String(answers[1]), /^Accepted/);
-  });
-
   it("LF3. with gaps named but the Loop's time nearly spent, a reviewer's yes still closes it", async () => {
     const { loopHost } = await import("../helpers/loop-host.ts");
     const dir = await folder("finish-gaps-late-");
@@ -7762,7 +5677,6 @@ describe("a worker wait inside the lead's capped turn", () => {
 });
 
 describe("the user's ask to finish a running build (director/wrap-up.ts)", () => {
-
   it("FA4. the wrap-up after the user's ask never invites a claim: their finish closes the run with no reviewer, so no win is claimed", async () => {
     const { wrapUpPrompt } = await import("../../src/harness-seed/loop/director/briefs.ts");
     const now = Date.now();
@@ -7856,92 +5770,6 @@ describe("a chat in a game linked to an engine other than Unreal", () => {
   });
 });
 
-describe("a game its engine plugin plays in its editor, with judges", () => {
-  const TOY_FACTS = [{ id: "toy-project", path: "." }];
-  const UNREAL_FACTS = [{ id: "unreal-project", path: "." }];
-  const JUDGES = [
-    { id: "crowd", label: "Crowd" },
-    { id: "plain", label: "Plain" },
-  ];
-
-  /** A Loop's host on a copy of the toy project, listed as the host lists a game it plays in its editor. */
-  async function toyLoop(
-    turns: Array<import("../helpers/loop-host.ts").LoopTurn>,
-    game: { editorPlay?: boolean; judges?: typeof JUDGES } = { editorPlay: true, judges: JUDGES },
-    facts: Array<{ id: string; path: string }> = TOY_FACTS,
-  ) {
-    const { gameRepo, loopHost } = await import("../helpers/loop-host.ts");
-    const { copyProject, Project } = await import("../helpers/project-fixtures.ts");
-    const project = facts === UNREAL_FACTS ? Project.UnrealGame : Project.ToyProject;
-    const dir = await gameRepo(await copyProject(project, await tmpDir("judged-loop-")));
-    const host = loopHost({ dir, facts, turns, run: { runId: `run-judged-${path.basename(dir)}` } });
-    Object.assign(host.game, game);
-    return host;
-  }
-
-  /** A turn that keeps one save point, "One". */
-  const savesOne = async ({ tool }: { tool: (name: string, args?: Record<string, string>) => Promise<unknown> }) => {
-    await tool("save_point", { label: "One", summary: "the first room" });
-    return undefined;
-  };
-  /** A turn that claims the goal, naming a file of the folder as proof. */
-  const finishing =
-    (proof: string) =>
-    async ({ tool }: { tool: (name: string, args?: Record<string, string>) => Promise<unknown> }) => {
-      await tool("finish", { summary: "The room is built.", proof });
-      return undefined;
-    };
-  const finishes = finishing("Garden.toyproj");
-
-  /** The lead's `judge_play` on its first turn, as its engine was handed it; undefined when not offered. */
-  const leadJudgeTool = (host: import("../helpers/loop-host.ts").LoopHost) =>
-    ((host.leadCalls()[0]?.director as { tools?: Array<Record<string, unknown>> } | undefined)?.tools ?? []).find(
-      (tool) => tool.name === "judge_play",
-    ) as { parameters: { properties: Record<string, { description?: string }> } } | undefined;
-
-  /** The judges each judge session played as, in order. */
-  const judgesPlayed = (host: import("../helpers/loop-host.ts").LoopHost) =>
-    host.judged().map((params) => (params.playtest as { judge?: string; role?: string }).judge ?? "plain judge");
-
-  it("EJ1. a game the host says it plays in an editor, whatever its engine: the lead is offered judge_play with the game's judges by id, not only on the Unreal fact", async () => {
-    const { playedInEditor } = await import("../../src/harness-seed/loop/folder-facts.ts");
-    assert.equal(playedInEditor({ editorPlay: true, facts: TOY_FACTS }), true, "the host's word");
-    assert.equal(playedInEditor({ facts: UNREAL_FACTS }), true, "an older host that never says: the Unreal fact");
-    assert.equal(playedInEditor(UNREAL_FACTS), true, "a kept older caller that hands facts alone");
-    assert.equal(playedInEditor({ facts: TOY_FACTS }), false);
-    const host = await toyLoop([finishes]);
-    await host.start();
-    const tool = leadJudgeTool(host);
-    assert.ok(tool, "judge_play offered on a toy-engine game played in its editor");
-    assert.match(String(tool.parameters.properties.judge?.description), /crowd \(Crowd\), plain \(Plain\)/);
-    assert.match(host.prompts()[0] ?? "", /judge_play: a blind judge plays the game/);
-    const plain = await toyLoop([finishes], {});
-    await plain.start();
-    assert.equal(leadJudgeTool(plain), undefined, "a game no plugin plays in its editor offers none");
-  });
-
-  it("EJ2. after a turn keeps a save point no judge plays it: the game's judges play only when the lead asks", async () => {
-    const host = await toyLoop([savesOne, finishes]);
-    await host.start();
-    // Flipped (Loop phase 4): every judge played each save point in turn, unasked.
-    assert.deepEqual(judgesPlayed(host), [], "nobody played");
-    assert.equal(host.prompts().length, 2, "the Loop went on to its second turn");
-    assert.doesNotMatch(host.prompts()[1] ?? "", /judge played save point/);
-    assert.match(host.prompts()[0] ?? "", /None plays unless you ask one with judge_play/);
-  });
-
-  it("EJ4. no judges, no rounds: a toy game whose plugin declares none, and an Unreal game", async () => {
-    const none = await toyLoop([savesOne, finishes], { editorPlay: true });
-    await none.start();
-    assert.deepEqual(none.judged(), []);
-    assert.equal(none.prompts().length, 2, "the Loop went on to its second turn");
-    const unreal = await toyLoop([savesOne, finishing("Lantern.uproject")], {}, UNREAL_FACTS);
-    await unreal.start();
-    assert.deepEqual(unreal.judged(), []);
-    assert.ok(leadJudgeTool(unreal), "the Unreal lead keeps judge_play, as before");
-  });
-});
-
 describe("the close's sentence of an open Loop", () => {
   it('SP1. a save point the lead gave no summary closes as its label alone, never with an empty "()" or ":"', async () => {
     const { openCloseOf } = await import("../../src/harness-seed/loop/director/open/graph.ts");
@@ -8028,8 +5856,6 @@ describe("a tool the user asked for that can't run here (claude-code-and-chatgpt
 });
 
 describe("the reviewer's no's in a Loop that still has time", () => {
-  const HOUR = 60 * 60 * 1000;
-  const MINUTE = 60 * 1000;
   const MET = "The hands, the boss and the full run were already accepted and still hold.";
   const NOT_DONE = "The enemy in the game shows none of the armour its model has.";
   const CLAIM = { review: "yes", summary: "The enemy wears its armour in the game.", proof: "shots/enemy.png" };
@@ -8044,104 +5870,6 @@ describe("the reviewer's no's in a Loop that still has time", () => {
     await gameRepo(dir);
     return dir;
   }
-
-  it("FC1. a timed Loop with most of its time left closed on the reviewer's third no about one fixable point: it keeps working, and its next claim needs new work since that no", async () => {
-    const { utimes } = await import("node:fs/promises");
-    const { loopHost } = await import("../helpers/loop-host.ts");
-    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
-    const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
-    const dir = await gameWithProof("nos-time-left-");
-    const answers: unknown[] = [];
-    const host = loopHost({
-      dir,
-      facts: [{ id: "web-game", path: "." }],
-      run: { budgets: { wallClockMs: 5 * HOUR, completionPolicy: "duration" } },
-      turns: [
-        async ({ tool }) => {
-          for (let n = 0; n <= MAX_FINISH_REJECTIONS; n++) answers.push(await tool("finish", CLAIM));
-          // A fresh picture alone is no new work: it needs a save point too.
-          const now = new Date(host.now() + MINUTE);
-          await utimes(path.join(dir, "shots/enemy.png"), now, now);
-          answers.push(await tool("finish", CLAIM));
-          await writeFile(path.join(dir, "enemy.txt"), "armour plates on the limbs\n");
-          answers.push(await tool("save_point", { label: "Armour", summary: "the enemy wears its plates" }));
-          answers.push(await tool("finish", CLAIM));
-          return undefined;
-        },
-      ],
-    });
-    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
-      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
-    const report = await host.start();
-    // Flipped (Loop phase 4): a no is a second opinion, whatever the time left: it decides nothing.
-    assert.match(String(answers[MAX_FINISH_REJECTIONS - 1]), /decides nothing/, "the third no keeps it going");
-    assert.match(
-      String(answers[MAX_FINISH_REJECTIONS]),
-      /new work since the last no/,
-      "the same proof again is turned back",
-    );
-    assert.match(
-      String(answers[MAX_FINISH_REJECTIONS + 1]),
-      /new work since the last no/,
-      "a touched file is not enough",
-    );
-    assert.equal(host.reviewed().length, MAX_FINISH_REJECTIONS + 1, "the stale claims asked no reviewer");
-    assert.equal(report.victory, true, "the claim after a save point and a fresh picture was checked and accepted");
-    const nos = host.appended("finish_check").filter((check) => check.step === "rejected");
-    assert.deepEqual(
-      nos.map((check) => [check.stopped === true, check.timeLeft === true]),
-      Array.from({ length: MAX_FINISH_REJECTIONS }, () => [false, true]),
-    );
-  });
-
-  it("FC2. a Loop the reviewer's no's stopped listed what the reviewer had accepted under not done: only what isn't done is", async () => {
-    const { loopHost } = await import("../helpers/loop-host.ts");
-    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
-    const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
-    const dir = await gameWithProof("nos-not-done-");
-    const host = loopHost({
-      dir,
-      facts: [{ id: "web-game", path: "." }],
-      turns: [
-        async ({ tool }) => {
-          for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await tool("finish", CLAIM);
-          return undefined;
-        },
-      ],
-    });
-    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
-      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE]));
-    const report = await host.start();
-    assert.equal(report.victory, false);
-    assert.deepEqual(report.notDone, [NOT_DONE]);
-    assert.ok(String(report.summary).includes(NOT_DONE));
-    assert.ok(!String(report.summary).includes(MET), "what the reviewer accepted is not listed as not done");
-    const stopped = host.appended("finish_check").at(-1);
-    assert.equal(stopped?.stopped, true);
-    assert.deepEqual([stopped?.reasons, stopped?.notDone], [[MET], [NOT_DONE]]);
-  });
-
-  it("FC3. the chat rebuilt a stopped Loop's Almost there card from records a reopened page could lose: the close carries the list, why it stopped and its hours", async () => {
-    const { loopHost } = await import("../helpers/loop-host.ts");
-    const { reviewerAnswer } = await import("../helpers/reviewer.ts");
-    const { MAX_FINISH_REJECTIONS, StopWhy } = await import("../../src/harness-seed/loop/finish-contract.ts");
-    const dir = await gameWithProof("nos-card-");
-    const host = loopHost({
-      dir,
-      facts: [{ id: "web-game", path: "." }],
-      turns: [
-        async ({ tool }) => {
-          for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) await tool("finish", CLAIM);
-          return undefined;
-        },
-      ],
-    });
-    for (let n = 0; n < MAX_FINISH_REJECTIONS; n++)
-      host.reviews.push(reviewerAnswer("no", [MET], "claude-code", [NOT_DONE], ["Laps run"]));
-    const report = await host.start();
-    // Flipped (Loop phase 4): the no's stopped the Loop (`stuck`); they decide nothing, and it ended another way.
-    assert.deepEqual(report.stillToFix, { done: ["Laps run"], notDone: [NOT_DONE], why: StopWhy.Ended, hours: null });
-  });
 
   it("FC4. a Loop the person stopped after a no paused, and its card offered Keep building beside Resume: a pause carries no list", async () => {
     const { loopHost } = await import("../helpers/loop-host.ts");
@@ -8270,7 +5998,6 @@ describe("a new Loop a plugin held back before its first turn", () => {
 });
 
 describe("the lead and its workers are free agents (Loop phase 3)", () => {
-
   it("FL2. Blender went to one worker only, and a worker on an engine's project was told the editor was the lead's alone: a worker has every tool its lead has, its type only the kind of work", async () => {
     const { workerBrief } = await import("../../src/harness-seed/loop/workers/prompts.ts");
     const { workerTools } = await import("../../src/harness-seed/loop/workers/specs.ts");

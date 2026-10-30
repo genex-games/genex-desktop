@@ -33,6 +33,8 @@ const STOPPED_BY_USER = "stopped by the user";
 /** Tries at writing a run's close, and the wait between them: without it the run reads as running. */
 const CLOSE_APPEND_ATTEMPTS = 3;
 const CLOSE_APPEND_RETRY_MS = SECOND_MS;
+/** The item a merge under way in the game folder is named by among its uncommitted paths. */
+const MERGE_UNDER_WAY = "a merge under way";
 /** At most this many paths are named in a sentence about them. */
 const PATHS_NAMED = 8;
 /** Why a run a lost provider paused lands nothing. */
@@ -46,8 +48,8 @@ const FINISH_WORDS = {
   underWay: "finish is already under way",
   unhealthy: (check: HealthCheck) =>
     `Not finished: the build fails its health check, so it would not be made live. ${healthLine(check)} Fix it and call finish again — or call finish land=no to close without landing.`,
-  closed: (head: string | null, line: string) =>
-    `The Loop is closed — the integrated build ${shortSha(head ?? "")} is live in the game folder (${line}). End your turn with a one-paragraph summary for the user.`,
+  closed: (head: string | null, line: string, leftInGame: readonly string[] = []) =>
+    `The Loop is closed — the integrated build ${shortSha(head ?? "")} is live in the game folder (${line})${leftInGame.length ? ` — ${FINISH_WORDS.leftInGame(leftInGame)} — tell the user, and leave them as they are` : ""}. End your turn with a one-paragraph summary for the user.`,
   closedUnlanded: (reason: string | null) =>
     `The Loop is closed${reason ? ` — not landed: ${reason}` : ""}. End your turn with a one-paragraph summary for the user.`,
   uncommitted: (paths: readonly string[], ref: string) =>
@@ -216,7 +218,7 @@ async function finishHeld(loopRun: LoopRun, args: AnyRecord): Promise<string> {
     ...(pastItsCap(loopRun) ? { ended: StopWhy.Time } : {}),
   });
   return landed.ok
-    ? FINISH_WORDS.closed(state.integrationHead, String(landed.line ?? ""))
+    ? FINISH_WORDS.closed(state.integrationHead, String(landed.line ?? ""), leftOf(landed))
     : FINISH_WORDS.closedUnlanded(landed.reason ?? null);
 }
 
@@ -304,10 +306,17 @@ async function gameFolderChanges(loopRun: LoopRun): Promise<{ paths: string[]; h
   try {
     merging = (await gitAt(ctx, at, GIT.catFileExists("MERGE_HEAD", ""), { label })).trim() === "yes";
   } catch {}
+  const paths = lines.map(changedPath);
   return {
-    paths: lines.map(changedPath),
+    // A merge of the folder's own under way is named even with nothing for git status to show.
+    paths: merging ? [MERGE_UNDER_WAY, ...paths] : paths,
     held: merging || lines.some((line) => line[0] !== " " && line[0] !== "?"),
   };
+}
+
+/** The paths a landing left in the game folder as they were, as its answer carries them. */
+function leftOf(landed: AnyRecord): string[] {
+  return Array.isArray(landed.leftInGame) ? landed.leftInGame.map(String) : [];
 }
 
 /** What this run can honestly claim about the head it landed: that it passed its health check. */
