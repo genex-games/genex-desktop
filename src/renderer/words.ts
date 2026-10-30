@@ -32,7 +32,7 @@ import { DataFolderProblem } from "../shared/data-folder.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
 import { PlayCardAction, PlayCoverRefusal, PlayMobileSupport } from "../shared/play-manage.ts";
-import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared/custom-events.ts";
+import { AutoResumeCause, type CustomEvent, type CustomPayload, LoopRefusal } from "../shared/custom-events.ts";
 import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
 import { computerSettingQuestion, type GithubLookupProblem } from "../shared/plugins.ts";
@@ -814,7 +814,10 @@ export function loopRunWords(loopRun: {
   landing?: string | null;
   /** How the Loop worked on its project (`run_finished.profile`): `open` kept its work in the project's own folder. */
   profile?: string | null;
+  /** Why the Loop did not run at all (`run_finished.refusal`), when it didn't. */
+  refusal?: LoopRefusal | null;
 }): LoopRunWords {
+  if (loopRun.refusal === LoopRefusal.NeedsSession) return NEEDS_SESSION_WORDS;
   const rounds = Math.max(0, Math.trunc(loopRun.rounds || 0));
   const hasBuild = loopRun.hasBuild ?? true;
   const landing = reviewerWords(withoutIds((loopRun.landing ?? "").trim()));
@@ -862,6 +865,14 @@ export function loopRunWords(loopRun: {
     because: fullStop(capitalise(why)),
   };
 }
+
+/** A Loop refused on an engine that keeps no session (`LoopRefusal.NeedsSession`): its chat stays plain chat. */
+const NEEDS_SESSION_WORDS: LoopRunWords = {
+  headline: t("Loop not started"),
+  because: t(
+    "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.",
+  ),
+};
 
 /** Text that ends a sentence: a full stop added only when it has no end of its own (a close's reason may). */
 function fullStop(text: string): string {

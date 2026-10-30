@@ -56,6 +56,7 @@ import {
   CUSTOM_EVENT_TYPES,
   CompletionRole,
   CustomEvent,
+  LoopRefusal,
   RunStartRefusal,
   StopCode,
   customPayload,
@@ -465,6 +466,10 @@ describe("vocabularies (src/shared ↔ the seed's copies)", () => {
 
   it("names why a run's start was refused as the app reads it", () => {
     assert.deepEqual(seedRunDispatch.RunStartRefusal, RunStartRefusal);
+  });
+
+  it("names why a Loop did not run at all as the app reads it", () => {
+    assert.deepEqual(seedRunDispatch.LoopRefusal, LoopRefusal);
   });
 
   it("names the same game engines as the app's engine record", () => {

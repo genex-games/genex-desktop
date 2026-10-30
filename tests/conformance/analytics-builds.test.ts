@@ -53,7 +53,13 @@ import {
 import type { StepsCard } from "../../src/renderer/chat/engine-steps.ts";
 import { GraphSelection } from "../../src/renderer/panels/inspector/selection.ts";
 import { MakingKind, MakingPhase } from "../../src/shared/asset-making.ts";
-import { AutoResumeCause, CustomEvent, customEventData, StopCode } from "../../src/shared/custom-events.ts";
+import {
+  AutoResumeCause,
+  CustomEvent,
+  customEventData,
+  LoopRefusal,
+  StopCode,
+} from "../../src/shared/custom-events.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/shared/duration.ts";
 import { EngineFailureKind, StopReason } from "../../src/shared/engine-requests.ts";
 import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
@@ -218,6 +224,7 @@ describe("runs from the log", () => {
       rounds_accepted: 2,
       rounds_rejected: 1,
       profile: LoopProfile.Web,
+      loop_refusal: null,
       game_ref: REF,
     });
 
@@ -230,6 +237,25 @@ describe("runs from the log", () => {
     assert.equal(next.event, BuildsEvent.RunStarted);
     assert.equal(next.properties.previous_run_state, ExecutionStatus.Completed);
     assert.equal(next.properties.ms_since_previous_end, 5 * MINUTE_MS);
+  });
+
+  it("a Loop refused on an engine that keeps no session says so by its code", () => {
+    const refused = only(
+      read(memoryWith(), [
+        record(
+          CustomEvent.RunFinished,
+          { runId: "r-ollama", project: "pong", landed: false, refusal: LoopRefusal.NeedsSession },
+          0,
+        ),
+      ]),
+    );
+    assert.ok(refused.event === BuildsEvent.RunFinished, refused.event);
+    assert.equal(refused.properties.loop_refusal, LoopRefusal.NeedsSession);
+    const unknown = only(
+      read(memoryWith(), [record(CustomEvent.RunFinished, { runId: "r-odd", refusal: "something_new" }, 0)]),
+    );
+    assert.ok(unknown.event === BuildsEvent.RunFinished, unknown.event);
+    assert.equal(unknown.properties.loop_refusal, null, "a code the app does not know is no code");
   });
 
   it("a close of a run that started before this launch has no worked time", () => {

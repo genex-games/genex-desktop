@@ -12,6 +12,8 @@ import {
   AutoResumeCause,
   CustomEvent,
   customRecord,
+  type LoopRefusal,
+  loopRefusalOf,
   RunStartRefusal,
   StopCode,
 } from "../../../shared/custom-events.ts";
@@ -294,6 +296,8 @@ export type RunFinishedProperties = {
   rounds_accepted: number;
   rounds_rejected: number;
   profile: LoopProfile | null;
+  /** Why the Loop did not run at all (`LoopRefusal`); null when it ran. */
+  loop_refusal: LoopRefusal | null;
   game_ref: string | null;
 };
 
@@ -899,6 +903,7 @@ const runFinished: Reader = (payload, at, memory) => {
       rounds_accepted: rounds.accepted,
       rounds_rejected: rounds.rejected,
       profile: oneOf(LoopProfile, payload.profile),
+      loop_refusal: loopRefusalOf(payload.refusal),
       game_ref: memory.gameRef(textOf(payload.project)),
     },
   };

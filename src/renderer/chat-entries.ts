@@ -28,6 +28,8 @@ import {
   customRecord,
   DELEGATED_PREFIX,
   delegatedPayload,
+  type LoopRefusal,
+  loopRefusalOf,
 } from "../shared/custom-events.ts";
 import { isHandoffNarration } from "../shared/chat-presentation.ts";
 import { isCoordinatorTool } from "../shared/coordinator.ts";
@@ -290,6 +292,8 @@ export type Entry =
       landed: boolean | null;
       /** how the Loop worked on its project (`run_finished.profile`): an `open` Loop kept its work in place */
       profile: LoopProfile | null;
+      /** why the Loop did not run at all (`run_finished.refusal`), when it didn't */
+      refusal: LoopRefusal | null;
       project: string | null;
       commit: string | null;
       /** the first and last frames the run recorded, as saved-run stills */
@@ -2151,6 +2155,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     undone: rounds.undone,
     landed: finished.landed ?? null,
     profile: profileOf(finished),
+    refusal: loopRefusalOf(finished.refusal),
     project: finished.project ?? null,
     commit: unlandedHead && finished.project ? unlandedHead : null,
     before: rounds.firstShot,

@@ -63,6 +63,7 @@ import {
   withoutIds,
 } from "../../src/renderer/words.ts";
 import { morningWords } from "../../src/renderer/morning-words.ts";
+import { LoopRefusal } from "../../src/shared/custom-events.ts";
 import { LeadFace, leadAbout } from "../../src/renderer/run-tree.ts";
 import { endedWords } from "../../src/renderer/round-status.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
@@ -511,6 +512,21 @@ describe("the morning card", () => {
       summary: null,
       ...over,
     });
+
+  it("says a Loop was not started on an engine that keeps no session, in the app's words", () => {
+    const words = loopRun({
+      rounds: 0,
+      kept: 0,
+      undone: 0,
+      hasBuild: false,
+      refusal: LoopRefusal.NeedsSession,
+      stoppedBecause: "A Loop needs an engine that keeps a session of its own; Ollama doesn't.",
+    });
+    assert.equal(words.headline, "Loop not started");
+    assert.match(words.because, /needs an engine that keeps a session of its own/);
+    assert.match(words.because, /The chat still answers here/);
+    assert.deepEqual(words.actions, []);
+  });
 
   it("offers Play it, and says the run's own report, when the build is live", () => {
     const words = loopRun({

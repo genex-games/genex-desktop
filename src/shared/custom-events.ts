@@ -332,8 +332,29 @@ export interface RunLimit {
   at?: number;
 }
 
+/**
+ * Why a Loop did not run at all (`refusal` on its `run_finished`), beside the words its close
+ * carries. The seed's copy is `LoopRefusal` in `loop/run-dispatch.ts`
+ * (tests/conformance/seed-contracts.test.ts holds the two together); an older seed writes none.
+ * Persisted: never rename a value.
+ */
+export const LoopRefusal = {
+  /** The engine keeps no session of its own (Ollama's tool loop): its chat is plain chat, and a Loop needs a lead's session. */
+  NeedsSession: "needs_session",
+} as const;
+export type LoopRefusal = (typeof LoopRefusal)[keyof typeof LoopRefusal];
+
+const LOOP_REFUSALS: ReadonlySet<unknown> = new Set<LoopRefusal>(Object.values(LoopRefusal));
+
+/** A recorded close's Loop refusal, or null for none or a code this app does not know. */
+export function loopRefusalOf(value: unknown): LoopRefusal | null {
+  return LOOP_REFUSALS.has(value) ? (value as LoopRefusal) : null;
+}
+
 export interface RunFinishedPayload extends RunScope {
   victory?: boolean;
+  /** Why the Loop did not run at all, when it didn't (`LoopRefusal`). */
+  refusal?: LoopRefusal;
   /** Why the run stopped, as a code (autopilot closes carry one; older closes and other modes may not). */
   stopCode?: StopCode;
   reference?: string;
