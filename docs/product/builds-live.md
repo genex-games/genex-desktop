@@ -15,8 +15,8 @@ An active run opens Builds once; a build shown from chat, or empty Builds, opens
 
 ## The two views
 
-**Live** plays the browser game natively; previews pause unwatched or hidden. A page loads
-hidden behind “Loading game” at Live's own size, never at none. The strip
+**Live** plays the browser game natively; previews pause unwatched or hidden. Pages load
+hidden at Live's size, never at none. The strip
 holds Live/Builds/Assets, Reload, Play/Stop and Sound (⌥⌘M; heard when shown) once the
 game has content, Full screen (hold Esc), plugin actions, Multiplayer, Publish. Stop halts it until
 Play/Reload. An empty scaffold shows “Ready for your first idea”, or
@@ -25,7 +25,7 @@ Opening a game starts nothing: Live keeps its game. Otherwise only the user chan
 Reload, Make live, a chat request while hidden) or a finished Unity/Godot `web/` build. A newer
 healthy build, a changed game folder, a chat's show or landing, or a broken shown build lights Reload; hidden and not stopped, all but a new build go
 in at once. The
-preview reaches only public library CDNs; Open Game names other hosts. Other folders' views:
+preview's network is open, as a web page's. Other folders' views:
 [projects](projects-engines.md#lives-views).
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
