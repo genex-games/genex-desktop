@@ -406,6 +406,34 @@
     {
       "replace": "## On a yes",
       "with": "## Building it"
+    },
+    {
+      "replace": " Read this the moment a request implies a model at play time, before building anything.",
+      "with": ""
+    },
+    {
+      "replace": " — tell the user so plainly, build the graceful fallback, and\n   do not convert a folder for a feature the stand does not serve.",
+      "with": "."
+    },
+    {
+      "replace": "`--all` lists the whole catalog, and you run that only\n   when the user asks for more. Whatever they pick,",
+      "with": "`--all` lists the whole catalog. Whatever model is picked,"
+    },
+    {
+      "replace": "## On a no\n\nThen build nothing that calls a model at play time. Not a key in `.env`, not a\nlocal proxy, not the author's own account behind a fetch.",
+      "with": "## No author key\n\nA shipped game never calls a model on its author's credential: not a key in `.env`, not a\nlocal proxy, not the author's own account behind a fetch."
+    },
+    {
+      "replace": " Say that in one plain sentence, then build the authored\nversion instead: a written dialogue tree, a table of lines, a rule-based\ndirector. Those are not consolation prizes; they are what most good games use.",
+      "with": ""
+    },
+    {
+      "replace": "  thing on this platform. Say so plainly instead of half-building it.",
+      "with": "  thing on this platform."
+    },
+    {
+      "from": "- The shape that does work is **JSON parameters, then render**: the model",
+      "to": "  impossible version."
     }
   ],
   "genex-llm-in-games/SKILL.md": [
@@ -432,6 +460,58 @@
     {
       "replace": "right for the guest and wrong on a draft, so write the in-fiction line per\ncause rather than showing it for both.",
       "with": "right for the guest and wrong on a draft."
+    },
+    {
+      "replace": "\n  there are. Build the feature.",
+      "with": "\n  there are."
+    },
+    {
+      "replace": "- **off on this stand** — the routes answer 404. Build the feature behind a\n  graceful `unavailable` state (the NPC uses its authored lines, the quest falls\n  back to the written one) and **say so plainly in the handoff**. Never promise\n  the player something that 404s.",
+      "with": "- **off on this stand** — the routes answer 404."
+    },
+    {
+      "replace": "- **misconfigured** — say that too; it is an operator fix, not a game bug.",
+      "with": "- **misconfigured** — an operator fix, not a game bug."
+    },
+    {
+      "replace": "**Offer the featured set. Run `npx genex llm models --all`\nonly when the user asks for more**, and put the full list in front of them\nrather than picking an obscure row for them.",
+      "with": "`npx genex llm models --all` lists every\nrow."
+    },
+    {
+      "replace": " When\n`getShell()` from `@genex-ai/embed-sdk` is `\"app\"`, leave the feature's entry\npoint out and play the authored fallback; never show it as an error.",
+      "with": " `getShell()`\nfrom `@genex-ai/embed-sdk` names the shell."
+    },
+    {
+      "replace": "\n\n**Then keep the burn low, because you wrote the loop:** batch those five NPCs\ninto ONE call returning five decisions, cache a decision until the situation\nthat caused it changes, pick the cheapest model that passes your own check, and\nnever fire on a timer the player cannot see.",
+      "with": ""
+    },
+    {
+      "replace": "| code | what happened | what the game does |\n| --- | --- | --- |\n| `grant_limit_reached` | the approved limit is spent | authored behaviour returns; a button offers to re-request |\n| `grant_stopped` | the player pressed Stop | accept silently, keep playing |\n| `grant_expired` | 24h passed, or the session ended | as stopped; re-request on the next deliberate click |\n| `waiting_for_plan` | their own plan is rate-limited | wait out the stated time — not a failure, and there is no paid fallback |\n| `grant_insufficient_funds` | the wallet cannot fund the next call | pause the thinking NPCs, say it once, stay playable |",
+      "with": "| code | what happened |\n| --- | --- |\n| `grant_limit_reached` | the approved limit is spent |\n| `grant_stopped` | the player pressed Stop |\n| `grant_expired` | 24h passed, or the session ended |\n| `waiting_for_plan` | their own plan is rate-limited for the stated time: not a failure, and there is no paid fallback |\n| `grant_insufficient_funds` | the wallet cannot fund the next call |"
+    },
+    {
+      "replace": "`guest: true` — guests play but hold no wallet, so show the feature\nas sign-in-to-use rather than hiding it (`$genex-threejs-embed-auth`). Signed\nin and still refused — this is a `genex preview` draft, which never spends:\ncheck the layout there, and the call itself only after `genex promote`.",
+      "with": "`guest: true` — guests play but hold no wallet. Signed\nin and still refused — this is a `genex preview` draft, which never spends."
+    },
+    {
+      "replace": "- [ ] `npx genex llm models` was run and its verdict is in the handoff",
+      "with": "- [ ] `npx genex llm models` says the lane is live"
+    },
+    {
+      "from": "- [ ] Calls are batched and cached; nothing fires on an invisible timer",
+      "to": "- [ ] Calls are batched and cached; nothing fires on an invisible timer"
+    },
+    {
+      "from": "- [ ] In the Genex app (`getShell() === \"app\"`) the feature's entry point is left out and the authored fallback plays",
+      "to": "- [ ] In the Genex app (`getShell() === \"app\"`) the feature's entry point is left out and the authored fallback plays"
+    },
+    {
+      "replace": "Nothing to fix in the game: ship the fallback and say so.",
+      "with": "Nothing to fix in the game."
+    },
+    {
+      "replace": " Batch and cache; do not raise the limits to hide it.",
+      "with": ""
     }
   ],
   "genex-llm-in-games/references/pricing.md": [
