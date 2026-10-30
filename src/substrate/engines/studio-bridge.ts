@@ -12,7 +12,7 @@
  * sandbox lets it write) and blocks until the studio — a different process, outside the sandbox
  * — drops the answer beside it. From the model's side it reads exactly like a tool call:
  *
- *     node .studio/bridge/tool.mjs capture --cameras=hero
+ *     node .studio/bridge/tool.mjs capture
  *     → saved 2 frames: run/.../hero.png, run/.../wide.png
  *
  * The whole directory is created for one delegation and deleted after it, so a workspace never
@@ -562,7 +562,6 @@ export function bridgeTools(request: DelegateRequest): BridgeTool[] {
       parameters: {
         type: "object",
         properties: {
-          cameras: { type: "string", description: CODEX_CAPTURE_TOOL.cameras },
           page: { type: "string", description: CODEX_CAPTURE_TOOL.page },
         },
       },

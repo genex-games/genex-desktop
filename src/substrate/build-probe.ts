@@ -1,78 +1,73 @@
 /**
- * One structured look at a loaded build: does the simulation move, and is anything drawn?
- *
- * The two checks cover each other's blind spots. `__studio.state()` can report a healthy
- * frame counter over a screen that renders nothing, and a game without the studio contract
- * can still be visibly alive. So a missing `__studio` alone never fails the probe, headless
- * runs (no pixel capability) never earn a black verdict, and a black canvas fails
- * regardless of what the contract claims.
+ * The build health check: one look at a loaded build from outside. The page loaded, it threw no
+ * error it did not catch, and its frame is not blank. The game is never stepped or asked about
+ * itself: the load comes from the preview's status, the errors from the shim's own record of the
+ * page's `error` and `unhandledrejection` events, and the frame from a page screenshot.
  */
-import type { PreviewPort } from "./preview-port.ts";
-import { isEffectivelyBlack, LUMA_THRESHOLD } from "./pixel-stats.ts";
+import { CaptureSurface } from "../shared/preview-contract.ts";
 import type { BuildObservation } from "../shared/preview-contract.ts";
+import { isBlankFrame } from "./pixel-stats.ts";
+import type { PreviewPort } from "./preview-port.ts";
 
 export type { BuildObservation };
 
-/** Frames each of the probe's two steps advances the simulation. */
-const STEP_FRAMES = 32;
-/** JPEG quality of the probe's screenshot: only its pixel statistics are read. */
+/** JPEG quality of the check's screenshot: only its pixel statistics are read. */
 const PROBE_SCREENSHOT_QUALITY = 60;
+/** How many of the page's uncaught errors a reason quotes. */
+const QUOTED_UNCAUGHT = 3;
+/** The shim's verb for its record of the page's uncaught errors (`src/page/shim.ts`). */
+const UNCAUGHT_VERB = "errors";
 
 const MESSAGE = {
-  BlackCanvas: (litFraction: number, meanLuma: number) =>
-    `black canvas: ${(litFraction * 100).toFixed(2)}% of pixels above luma ${LUMA_THRESHOLD} (mean ${meanLuma.toFixed(1)})`,
-  StuckFrame: (frame: number) => `frame does not advance (stuck at ${frame})`,
+  NotLoaded: (why: string) => `the page did not load: ${why}`,
+  Crashed: "the page's renderer crashed",
+  Uncaught: (count: number, messages: readonly string[]) =>
+    `${count} uncaught error${count === 1 ? "" : "s"}: ${messages.slice(0, QUOTED_UNCAUGHT).join(" | ")}`,
+  Blank: "the page's frame is blank: one flat colour, nothing drawn",
 } as const;
 
-function frameOf(state: unknown): number | null {
-  const frame = (state as { frame?: unknown } | null | undefined)?.frame;
-  return typeof frame === "number" && Number.isFinite(frame) ? frame : null;
+/** The page's uncaught errors as the shim recorded them; none from a page the shim never reached. */
+async function uncaughtErrors(preview: PreviewPort): Promise<{ count: number; messages: string[] }> {
+  const answer = (await preview.studioCall(UNCAUGHT_VERB).catch(() => null)) as {
+    count?: unknown;
+    messages?: unknown;
+  } | null;
+  const count = typeof answer?.count === "number" && Number.isFinite(answer.count) ? answer.count : 0;
+  const messages = Array.isArray(answer?.messages) ? answer.messages.map(String) : [];
+  return { count, messages };
 }
 
+/** The shim's own frame report, for the record: whether its clock runs and at what rate. */
+async function clockReport(preview: PreviewPort): Promise<{ running: boolean | null; fps: number | null }> {
+  const state = (await preview.studioCall("state").catch(() => null)) as { running?: unknown; fps?: unknown } | null;
+  const running = typeof state?.running === "boolean" ? state.running : null;
+  const fps = typeof state?.fps === "number" && Number.isFinite(state.fps) ? state.fps : null;
+  return { running, fps };
+}
+
+/** The health check: page loads, no uncaught errors, not blank. */
 export async function observeBuild(preview: PreviewPort): Promise<BuildObservation> {
-  const state0 = await preview.studioState();
-  const studioMissing = Boolean((state0 as { __missing?: unknown } | null | undefined)?.__missing);
-  const frameBefore = frameOf(state0);
-
-  let state1 = state0;
-  if (!studioMissing) {
-    // Two steps, not one: the first can be swallowed by a reset-on-seed or a lazy first
-    // render, and a genuinely stuck loop is stuck either way.
-    await preview.studioCall("step", STEP_FRAMES);
-    await preview.studioCall("step", STEP_FRAMES);
-    state1 = await preview.studioState();
-  }
-  const frameAfter = frameOf(state1);
-  const frameAdvanced = frameBefore !== null && frameAfter !== null && frameAfter > frameBefore;
-
-  // Captured after stepping — step() renders even while paused, so a working build has had
-  // its chance to put pixels on screen before being judged for blackness.
-  const pixels = preview.screenshotWithStats
-    ? (await preview.screenshotWithStats(PROBE_SCREENSHOT_QUALITY)).stats
-    : null;
-
   const reasons: string[] = [];
-  if (pixels?.canvas && isEffectivelyBlack(pixels)) {
-    reasons.push(MESSAGE.BlackCanvas(pixels.litFraction, pixels.meanLuma));
-  }
-  // A headless run (no pixels) still judges the counter; a page with no canvas does not.
-  const judgesCanvas = pixels?.canvas ?? true;
-  const bothFramesRead = frameBefore !== null && frameAfter !== null;
-  if (!studioMissing && bothFramesRead && !frameAdvanced && judgesCanvas) {
-    reasons.push(MESSAGE.StuckFrame(frameAfter));
-  }
-
-  const running = (state1 as { running?: unknown } | null | undefined)?.running;
-  const fps = (state1 as { fps?: unknown } | null | undefined)?.fps;
+  const status = preview.status();
+  if (status.loadError) reasons.push(MESSAGE.NotLoaded(status.loadError));
+  if (status.crashed) reasons.push(MESSAGE.Crashed);
+  const uncaught = await uncaughtErrors(preview);
+  if (uncaught.count > 0) reasons.push(MESSAGE.Uncaught(uncaught.count, uncaught.messages));
+  const pixels = preview.screenshotWithStats
+    ? (await preview.screenshotWithStats(PROBE_SCREENSHOT_QUALITY, { surface: CaptureSurface.Page })).stats
+    : null;
+  if (pixels && isBlankFrame(pixels)) reasons.push(MESSAGE.Blank);
+  const clock = await clockReport(preview);
   return {
     ok: reasons.length === 0,
     reasons,
     pixels,
-    studioMissing,
-    frameBefore,
-    frameAfter,
-    frameAdvanced,
-    running: typeof running === "boolean" ? running : null,
-    fps: typeof fps === "number" && Number.isFinite(fps) ? fps : null,
+    // The game is never asked: there is no contract to miss, and no frame of its own to count.
+    studioMissing: true,
+    frameBefore: null,
+    frameAfter: null,
+    frameAdvanced: false,
+    running: clock.running,
+    fps: clock.fps,
   };
 }

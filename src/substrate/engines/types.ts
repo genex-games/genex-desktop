@@ -269,7 +269,7 @@ export interface DelegateRequest {
    * matching `onCapture` closure itself — a function never travels over RPC.
    */
   selfCapture?: DelegateCaptureGrant;
-  /** `page`: a bench page (a .html file in the workspace) to capture in place of the game. */
+  /** `page`: a .html file in the workspace to capture in place of the game. `cameras` is accepted from older callers and ignored: a capture photographs the page. */
   onCapture?: (args: { cameras?: string; page?: string }) => Promise<string>;
   /**
    * The computer: with a `selfCapture` grant the builder also gets `computer` — hands

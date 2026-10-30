@@ -26,6 +26,7 @@ import {
   DESKTOP_CAPABILITIES,
   ClockLevel,
   PointerLevel,
+  StateLevel,
   TargetRuntime,
 } from "../../src/shared/computer-target.ts";
 import { clickModifiers, parseCombo, pointInView, capActions } from "../../src/substrate/preview-input.ts";
@@ -65,7 +66,8 @@ describe("computer tool — parsing either transport", () => {
     for (const action of COMPUTER_ACTIONS)
       assert.ok(
         described.includes(action) ||
-          ["cursor_position", "left_mouse_down", "left_mouse_up", "middle_click"].includes(action),
+          // `camera` is offered only by a target with named cameras, and none has them now.
+          ["cursor_position", "left_mouse_down", "left_mouse_up", "middle_click", "camera"].includes(action),
         `${action} is described`,
       );
   });
@@ -294,6 +296,7 @@ describe("computer tool — a playtester's clock (golden-boot-glory)", () => {
 describe("computer tool — built from what the target can do", () => {
   const bridge = {
     ...BROWSER_CAPABILITIES,
+    state: StateLevel.Game,
     runtime: TargetRuntime.Bridge,
     pointer: PointerLevel.Relative,
     cameras: false,
@@ -306,13 +309,22 @@ describe("computer tool — built from what the target can do", () => {
   /** The verbs only a desktop offers: an app brought forward, a page opened in the person's browser. */
   const DESKTOP_ONLY: ReadonlySet<string> = new Set(["bring_to_front", "open_page"]);
 
-  it("offers a browser game every verb but named game actions, which only a Play Protocol game declares", () => {
+  it("offers a browser game real input, screenshots and its console, and asks the game nothing", () => {
+    // Flipped (phase 5): `camera` and `state` read window.__studio, which no game carries now.
+    const asksTheGame: ReadonlySet<string> = new Set(["camera", "state"]);
     assert.deepEqual(
       computerActionsFor(BROWSER_CAPABILITIES),
       // Flipped on purpose (web pages, then bringing an app forward, then opening a page): the web
       // verbs, bring_to_front and open_page are the desktop's, never a game window's.
-      COMPUTER_ACTIONS.filter((action) => action !== "act" && !action.startsWith("web_") && !DESKTOP_ONLY.has(action)),
+      COMPUTER_ACTIONS.filter(
+        (action) =>
+          action !== "act" && !action.startsWith("web_") && !DESKTOP_ONLY.has(action) && !asksTheGame.has(action),
+      ),
     );
+    for (const kept of ["screenshot", "zoom", "left_click", "key", "look", "console", "reload"])
+      assert.ok(computerActionsFor(BROWSER_CAPABILITIES).includes(kept as never), `${kept} is offered`);
+    const words = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES }).description;
+    assert.doesNotMatch(words, /camera|state: the game's own numbers/);
     const browser = computerToolDefinition({ role: "builder", capabilities: BROWSER_CAPABILITIES });
     assert.deepEqual(browser, computerToolDefinition({ role: "builder" }));
     assert.ok("surface" in browser.parameters.properties);

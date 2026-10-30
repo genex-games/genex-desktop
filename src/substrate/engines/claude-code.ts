@@ -2773,10 +2773,9 @@ function captureTool(kit: McpKit, onCapture: NonNullable<DelegateRequest["onCapt
     StudioTool.Capture,
     CLAUDE_CAPTURE_TOOL.description,
     {
-      cameras: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.cameras),
       page: z.string().optional().describe(CLAUDE_CAPTURE_TOOL.page),
     },
-    async (args: { cameras?: string; page?: string }) => {
+    async (args: { page?: string }) => {
       try {
         const text = await onCapture(captureArgs(args));
         return { content: [{ type: "text" as const, text }] };

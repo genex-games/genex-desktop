@@ -11,7 +11,6 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import type { DelegateRequest, DelegateResult, LiveToolResult } from "../../src/substrate/engines/types.ts";
 import type { PreviewPort } from "../../src/substrate/preview-port.ts";
-import type { PreviewSetup } from "../../src/shared/preview-contract.ts";
 import { PreviewService } from "../../src/main/core/previews.ts";
 import { unservedPreviews, type CoreInternals } from "../../src/main/core/internals.ts";
 import type { StudioCore } from "../../src/main/studio-core.ts";
@@ -341,7 +340,8 @@ describe("the computer tool's host", () => {
     assert.match(shot.text, /s1_screen\.jpg/);
     assert.equal(shot.images?.[0]?.mimeType, "image/jpeg", "a screenshot comes back as a picture");
     assert.ok(await stat(shot.text.split(" — ")[0]!), "and is saved beside the facet's captures");
-    assert.match(text(answers.state!), /"activeId":"street"/);
+    // Flipped (phase 5): the browser window reads no state off the game.
+    assert.match(text(answers.state!), /state is not available/);
     assert.match(text(answers.key!), /OK — key i/);
     assert.match(text(answers.click!), /left click at 480,300/);
     assert.match(text(answers.bad!), /no action "fly"/);
@@ -389,16 +389,15 @@ describe("the computer tool's host", () => {
     assert.equal(rig.core.agentScreens().length, 0, "nothing is left on screen after the session");
   });
 
-  it("replays the requested-state setup before the first look and says when it did not land", async () => {
+  it("replays the requested setup's input before the first look", async () => {
     const rig = await startRig({ replies: [] });
     rigs.push(rig);
     const project = await rig.core.games.scaffold("setup-smoke", { title: "setup" });
     const dir = project.dir;
-    rig.preview.next = { version: 1, frame: 0, phase: "playing", maps: { activeId: "street" } };
     const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
     let first: LiveToolResult = "";
     fakeEngine(rig, "codex", async (request) => {
-      first = await request.onLiveTool!("computer", { action: "state" });
+      first = await request.onLiveTool!("computer", { action: "screenshot" });
       return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "s2", summary: "done" };
     });
     const setup = {
@@ -421,51 +420,8 @@ describe("the computer tool's host", () => {
       ["tap", "click"],
       "the setup ran before the agent's first action",
     );
-    assert.match(text(first), /REQUESTED STATE NOT REACHED: maps\.activeId is not "macba"/);
-    // A game that lands on the state gets no note.
-    rig.preview.next = { version: 1, frame: 0, phase: "playing", maps: { activeId: "macba" } };
-    rig.preview.inputs.length = 0;
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "build",
-      project: project.name,
-      selfCapture: { project: project.name, root: dir, runId: "run_s", facetId: "build", iteration: 2, setup },
-    });
-    assert.ok(!/NOT REACHED/.test(text(first)), text(first));
-  });
-
-  it("a capture says which cameras it proved, and which camera a dead debugCamera left on screen", async () => {
-    const rig = await startRig({ replies: [] });
-    rigs.push(rig);
-    const project = await rig.core.games.scaffold("camera-smoke", { title: "camera" });
-    rig.preview.cameraNames = ["default", "top"];
-    // The page never switches: whatever debugCamera is asked, state().camera stays "default".
-    rig.preview.next = { version: 1, frame: 0, phase: "playing", camera: "default" };
-    const api = rig.core.api() as unknown as Record<string, (p: unknown) => Promise<unknown>>;
-    let answer = "";
-    fakeEngine(rig, "codex", async (request) => {
-      answer = text(await request.onCapture!({ cameras: "default, top,,unlisted" }));
-      return { ok: true, engine: "codex", turns: 1, usage: {}, sessionId: "s-cam", summary: "done" };
-    });
-    await api["engine.delegate"]!({
-      engine: "codex",
-      prompt: "build",
-      project: project.name,
-      selfCapture: { project: project.name, root: project.dir, runId: "run_cam", facetId: "build", iteration: 4 },
-    });
-    const lines = answer.split("\n");
-    assert.equal(lines[0], `Captured your CURRENT build (workspace ${path.basename(project.dir)}):`);
-    assert.match(lines[1]!, /^- default → .*iter_004[/\\]c1_default\.jpg.* \[camera verified\]$/);
-    assert.match(
-      lines[2]!,
-      /^- top → .*c1_top\.jpg.* — WARNING: the build rendered camera "default" instead; your debugCamera\("top"\) does not switch$/,
-    );
-    assert.doesNotMatch(lines[3]!, /camera verified|WARNING/, "an unlisted camera is shot as it is, never placed");
-    assert.match(lines[3]!, /^- unlisted → .*c1_unlisted\.jpg/);
-    assert.equal(lines[4], "console errors since load: none");
-    assert.match(lines.at(-1)!, /^Read the image files above to actually look at them\./);
-    const placed = rig.preview.calls.filter((call) => call.method === "debugCamera").map((call) => call.arg);
-    assert.deepEqual(placed, ["default", "top", "top", "top"], "a camera that does not switch is retried three times");
+    // Flipped from a REQUESTED STATE NOT REACHED note: the game's state is never read.
+    assert.doesNotMatch(text(first), /NOT REACHED/);
   });
 
   it("photographs the surface the worker asked for, and names it in the answer (M4.5)", async () => {
@@ -530,8 +486,8 @@ describe("the computer tool's host", () => {
       /^surface "true" is not screen or canvas — the studio picked the surface itself\n/,
     );
     assert.ok(typeof answers.odd !== "string" && answers.odd!.images?.length, "and the picture still comes back");
-    // The capture tool asks for `auto`: a builder must see the DOM menu it just built.
-    assert.equal(rig.preview.captureOpts.at(-1)?.surface, "auto");
+    // The capture tool photographs the page as the player sees it, DOM included.
+    assert.equal(rig.preview.captureOpts.at(-1)?.surface, "page");
     assert.match(text(answers.capture!), /c1_default\.jpg/);
   });
 
@@ -910,128 +866,38 @@ describe("what a load waits for", () => {
   });
 });
 
-describe("a game with a front-end, as builders and the computer tool first see it", () => {
-  /**
-   * A page with a title → race front-end, the calls it was asked, the waits it cost and the paths
-   * each state read asked to keep. An input that lands in play picks the map (`picked`); one that
-   * lands on the menu does nothing, as the scout's recorded clicks would.
-   */
-  function frontEndPort(
-    options: { flow?: boolean; playing?: boolean; begin?: boolean; reaches?: boolean; state?: () => unknown } = {},
-  ) {
-    const { flow = true, begin = true, reaches = true } = options;
-    let playing = options.playing ?? false;
-    let picked = false;
+describe("a setup, as builders and the computer tool first see it", () => {
+  it("replays the setup's input and asks the game nothing: no begin, no state", async () => {
     const calls: string[] = [];
-    const slept: number[] = [];
-    const kept: unknown[] = [];
     const port = {
-      async studioState(read?: { keep?: readonly string[] }) {
-        kept.push(read?.keep ?? null);
-        if (options.state) return options.state();
-        return flow
-          ? { version: 2, flow: { phase: playing ? "playing" : "menu", playing }, picked }
-          : { version: 2, picked };
+      async studioState() {
+        calls.push("state");
+        return {};
       },
       async studioCall(method: string) {
         calls.push(method);
-        if (method !== "begin") return { ok: true };
-        if (!begin) return { ok: false, reason: "this page declares no begin()" };
-        if (reaches) playing = true;
         return { ok: true };
       },
       async input() {
         calls.push("input");
-        if (playing || !flow) picked = true;
-        return { ok: true, applied: 0, width: 960, height: 600 };
+        return { ok: true, applied: 1, width: 960, height: 600 };
       },
-      pointer: () => ({ x: 480, y: 300 }),
-      viewSize: () => ({ width: 960, height: 600 }),
       consoleEntries: () => [],
     } as unknown as PreviewPort;
     const service = new PreviewService(
       { emit: () => {} } as unknown as StudioCore,
       unservedPreviews() as CoreInternals,
     );
-    const apply = (setup: PreviewSetup | null) =>
-      service.applySetup(port, setup, {
-        sleep: async (ms: number) => {
-          slept.push(ms);
-        },
-      });
-    return { apply, calls, slept, kept, port, service };
-  }
-
-  it("begins a game that reports it is not in play, even with no setup at all, and keeps it running", async () => {
-    const page = frontEndPort();
-    assert.equal(await page.apply(null), null);
-    assert.deepEqual(page.calls, ["start", "begin", "start"], "begin() leaves the game paused; the window runs it");
-    assert.deepEqual(page.slept, [], "play came at once: nothing waited");
-  });
-
-  it("never begins for the worker that owns the front-end, a game already in play, or one with no flow", async () => {
-    const cases: Array<[string, ReturnType<typeof frontEndPort>, PreviewSetup | null]> = [
-      ["begin:false", frontEndPort(), { begin: false }],
-      ["in play", frontEndPort({ playing: true }), null],
-      ["no flow", frontEndPort({ flow: false }), null],
-    ];
-    for (const [label, page, setup] of cases) {
-      await page.apply(setup);
-      assert.ok(!page.calls.includes("begin"), `${label}: ${page.calls.join(",")}`);
-      assert.deepEqual(page.slept, [], `${label}: a begin-only setup replays nothing to settle after`);
-    }
-  });
-
-  it("says so when begin() does not reach play, and when the game has no begin() to call", async () => {
-    const stuck = frontEndPort({ reaches: false });
-    assert.match(String(await stuck.apply(null)), /did not reach play/);
-    assert.ok(stuck.slept.length > 0, "the countdown was given its time, on the injected clock");
-    const none = frontEndPort({ begin: false });
-    assert.match(String(await none.apply(null)), /no __studio\.begin\(\)/);
-  });
-
-  it("replays a setup in play, from where begin() left the game, the way the scout recorded it", async () => {
-    const page = frontEndPort();
-    const setup: PreviewSetup = { actions: [{ type: "tap", keys: ["m"] }], verify: { path: "picked", truthy: true } };
-    assert.equal(await page.apply(setup), null, "the map the scout picked in play is picked again");
-    assert.deepEqual(page.calls, ["start", "begin", "start", "input"]);
-  });
-
-  it("never begins for the playtester, whose grant says nothing of begin: it meets the real menu", async () => {
-    const { computerTools } = await import("../../src/main/core/computer-tools.ts");
-    for (const [role, begins] of [
-      ["playtester", false],
-      ["builder", true],
-    ] as const) {
-      const page = frontEndPort();
-      const previews = {
-        loadServed: async () => ({ problem: null, note: null }),
-        applySetup: (port: PreviewPort, setup: PreviewSetup | null, options: Record<string, unknown> = {}) =>
-          page.service.applySetup(port, setup, { ...options, sleep: async () => {} }),
-        openScreen: () => {},
-        frame: async () => {},
-      };
-      const sessionPort = { get: async () => page.port, handle: () => null, loaded: null };
-      const tools = computerTools(
-        previews as never,
-        { project: "apex", role } as never,
-        "/nonexistent/build",
-        await tmpDir("front-end-role-"),
-        sessionPort as never,
-      );
-      await tools.onLiveTool("computer", { action: "key", text: "d" });
-      assert.equal(page.calls.includes("begin"), begins, `${role}: ${page.calls.join(",")}`);
-    }
-  });
-
-  it("keeps the verified path when it reads the state, and calls a cut one unmeasured, not unreached", async () => {
-    const cut = () => ({
-      maps: { __elided: "object", length: 900, chars: 60_000 },
-      __cut: { chars: 90_000, paths: ["maps"] },
-    });
-    const page = frontEndPort({ state: cut });
-    const note = await page.apply({ verify: { path: "maps.activeId", equals: "macba" } });
-    assert.equal(note, null, String(note));
-    assert.deepEqual(page.kept.at(-1), ["maps.activeId"]);
+    const sleep = async () => {};
+    assert.equal(await service.applySetup(port, null, { sleep }), null);
+    assert.deepEqual(calls, ["start"], "only the studio's own clock is started");
+    calls.length = 0;
+    const note = await service.applySetup(
+      port,
+      { actions: [{ type: "tap", keys: ["i"] }], verify: { path: "flow.playing", equals: true } },
+      { sleep },
+    );
+    assert.equal(note, null);
+    assert.deepEqual(calls, ["start", "input"]);
   });
 });

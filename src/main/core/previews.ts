@@ -49,7 +49,7 @@ import { capActions } from "../../substrate/preview-input.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import { LIVE_HANDLE, PreviewPool, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture, type ReadyResult } from "../../substrate/preview-ready.ts";
-import { COMPUTER_VIEW, setupReached, type PreviewSetup } from "../../substrate/computer-tool.ts";
+import { COMPUTER_VIEW, type PreviewSetup } from "../../substrate/computer-tool.ts";
 import {
   type AgentScreen,
   type AgentScreenEvent,
@@ -58,10 +58,10 @@ import {
   ScreenDeed,
 } from "../../shared/agent-screen.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
-import { CAMERA_SETTLE_MS, DEFAULT_SHOT_QUALITY, DEFAULT_STILL_QUALITY, captureSurface, tookPage } from "./capture.ts";
+import { DEFAULT_SHOT_QUALITY, DEFAULT_STILL_QUALITY, captureSurface, tookPage } from "./capture.ts";
 import { delegationsIn, PreviewIdentityState, type ServedRoot } from "./internals.ts";
 import { readItemPicture } from "./item-pictures.ts";
-import { iterationDir, safePathSegment } from "./run-shots.ts";
+import { iterationDir } from "./run-shots.ts";
 import { readyNote, servedKey, strayPage } from "./page-report.ts";
 import type { SessionPort } from "./session-port.ts";
 import { serial } from "./serial.ts";
@@ -71,18 +71,15 @@ import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ReadyPhase, CaptureSurface, GameClock, GameFront, LiveLoadFailure } from "../../shared/preview-contract.ts";
-import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
+import { ReadyPhase, CaptureSurface, GameClock, LiveLoadFailure } from "../../shared/preview-contract.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { buildFinished, LiveGate, type LiveOffer, readBuild } from "./live-gate.ts";
 import { type LiveBehindEvent, WebBuildLoad } from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
 import { liveAudible, type LiveSound } from "../game-sound.ts";
 import { liveMaxFps } from "../live-pace.ts";
-/** The most cameras one capture photographs. */
-const MAX_CAPTURE_CAMERAS = 8;
-/** How many times a capture asks a registered camera to switch before it says the switch is dead. */
-const CAMERA_SWITCH_ATTEMPTS = 3;
+/** What a capture names its one frame of the page (`c<n>_default.jpg`). */
+const CAPTURE_FRAME_NAME = "default";
 /** How many of the page's console errors a capture answer quotes. */
 const CONSOLE_ERRORS_QUOTED = 3;
 /** JPEG quality of a fresh frame for an agent's screen card. */
@@ -107,11 +104,6 @@ const CARD_QUALITY = 62;
 /** How long a setup script may let the page settle, and how long it waits when it does not say. */
 const SETUP_SETTLE_MAX_MS = 10_000;
 const SETUP_SETTLE_DEFAULT_MS = 400;
-/** After `__studio.begin()`, how often the window is asked whether the game is in play, and for how long (wall time: it runs). */
-const PLAY_POLL_MS = 200;
-const PLAY_WAIT_MS = 5 * SECOND_MS;
-/** How much of the page's state a setup note quotes. */
-const SETUP_STATE_EXCERPT_CHARS = 240;
 /** The most reference stills one call returns, their long side, and the largest file read. */
 const REFERENCE_MAX_STILLS = 12;
 const REFERENCE_MAX_PX = 1024;
@@ -158,8 +150,7 @@ const MESSAGE = {
   benchBuilt:
     "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
   benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
-  benchAfter:
-    "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
+  benchAfter: "The window shows the bench page now: the computer tool loads your game again on its next action.",
   profilingNeedsStage: "profiling requires a stage preview",
   previewChanged: () =>
     t("The selected preview changed while this build was preparing. Open the build again when ready."),
@@ -187,19 +178,14 @@ const MESSAGE = {
   noPackages: () => t("this game has no package.json, so there is nothing to install"),
   stillUnreadable: "unreadable",
   stillTooLarge: `larger than ${REFERENCE_MAX_MB} MB`,
-  stillNotJudgeable: (what: string) => `${what} — the reviewers cannot read it; re-save as JPEG or PNG`,
+  stillNotJudgeable: (what: string) => `${what} — the preview cannot read it; re-save as JPEG or PNG`,
+  loadFailed: (problem: string) => `your build failed to load: ${problem}`,
 } as const;
 
 /** A reference file that could not become a still, and why. */
 interface SkippedStill {
   file: string;
   why: string;
-}
-
-/** The page's own report of the camera it rendered, or null when it says nothing. */
-function renderedCamera(state: unknown): string | null {
-  const camera = (state as { camera?: unknown } | null)?.camera;
-  return typeof camera === "string" ? camera : null;
 }
 
 /** The only kind of page a bench capture loads. */
@@ -243,25 +229,6 @@ function captureScreen(
   };
 }
 
-/**
- * The cameras one capture shoots. Unasked, a worker's capture shoots its own part's cameras (the
- * grant's), not every one the game registers; a bench page shoots its default view.
- */
-function camerasForShot(
-  sc: NonNullable<DelegateRequest["selfCapture"]>,
-  bench: { entry: string } | null,
-  asked: string | undefined,
-  known: readonly string[],
-): string[] {
-  if (bench) return camerasToCapture(asked, []);
-  // The grant comes from the agent-editable seed: anything but a list of names is no grant.
-  const granted: unknown = sc.cameras;
-  const own = Array.isArray(granted)
-    ? granted.filter((camera): camera is string => typeof camera === "string" && camera !== "").join(",")
-    : "";
-  return camerasToCapture(asked ?? (own || undefined), known);
-}
-
 /** The capture tool's answer: what was shot, the console's errors, the load's note and what the window shows now. */
 function captureAnswer({
   bench,
@@ -282,21 +249,8 @@ function captureAnswer({
     ...lines,
     consoleErrorsLine(errors),
     ...(setupNote ? [`note: ${setupNote}`] : []),
-    bench
-      ? MESSAGE.benchAfter
-      : "Read the image files above to actually look at them. The window keeps running this build — the computer tool continues from here.",
+    ...(bench ? [MESSAGE.benchAfter] : []),
   ].join("\n");
-}
-
-/** The cameras a capture photographs: the ones asked for, else the page's own, else `default`. */
-function camerasToCapture(asked: string | undefined, known: readonly string[]): string[] {
-  const named = (asked ?? "")
-    .split(",")
-    .map((camera) => camera.trim())
-    .filter(Boolean);
-  if (named.length) return named.slice(0, MAX_CAPTURE_CAMERAS);
-  if (known.length) return known.slice(0, MAX_CAPTURE_CAMERAS);
-  return ["default"];
 }
 
 /** The highest capture number already on disk in a facet's iteration folder. */
@@ -309,19 +263,9 @@ async function lastCaptureNumber(outDir: string): Promise<number> {
   return highest;
 }
 
-/** A capture answer's line for one camera's frame. */
-function capturedLine(
-  camera: string,
-  file: string,
-  shot: Awaited<ReturnType<typeof captureSurface>>,
-  verified: boolean,
-  warning: string,
-): string {
-  const { stats } = shot;
-  const measured = stats
-    ? ` (litFraction ${stats.litFraction.toFixed(2)}, meanLuma ${Math.round(stats.meanLuma)})`
-    : "";
-  return `- ${camera} → ${file}${measured}${tookPage(shot) ? " [page]" : ""}${verified ? " [camera verified]" : ""}${warning}`;
+/** A capture answer's line for its frame. */
+function capturedLine(name: string, file: string, shot: Awaited<ReturnType<typeof captureSurface>>): string {
+  return `- ${name} → ${file}${tookPage(shot) ? " [page]" : ""}`;
 }
 
 /** The capture answer's console line: the last few errors since the load, or none. */
@@ -332,29 +276,6 @@ function consoleErrorsLine(errors: ReadonlyArray<{ message: string }>): string {
     .map((entry) => entry.message)
     .join(" | ");
   return `console errors since load (${errors.length}): ${quoted}`;
-}
-
-/** What a setup's `verify` expected, as its note names it. */
-function expectedValue(verify: NonNullable<PreviewSetup["verify"]>): string {
-  return "equals" in verify ? JSON.stringify(verify.equals) : "set";
-}
-
-/**
- * Point the page at a camera and read back the one it rendered. The capture proves which camera
- * it rendered: `state().camera` after the switch, retried up to three times — a frame from the
- * previous camera under this camera's name cost a builder its iteration.
- */
-async function placeCamera(port: PreviewPort, camera: string, placeable: boolean): Promise<string | null> {
-  let actual: string | null = null;
-  const attempts = placeable ? CAMERA_SWITCH_ATTEMPTS : 1;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (placeable) await port.studioCall("debugCamera", camera).catch(() => null);
-    await sleep(CAMERA_SETTLE_MS);
-    actual = renderedCamera(await port.studioState().catch(() => null));
-    const nothingToRetry = !placeable || actual === null || actual === camera;
-    if (nothingToRetry) break;
-  }
-  return actual;
 }
 
 /**
@@ -371,55 +292,13 @@ function unservedUrl(p: { project: string; entry?: string | undefined }): string
   return `game://${p.project}/${p.entry ?? "index.html"}`;
 }
 
-/** A setup's demo, run; the note when the page refused it. */
-async function runSetupDemo(port: PreviewPort, demo: string | undefined): Promise<string | null> {
-  if (!demo) return null;
-  const result = (await port
-    .studioCall("demo", demo)
-    .catch((err) => ({ ok: false, reason: String(errorMessage(err)) }))) as {
-    ok?: boolean;
-    reason?: string;
-  } | null;
-  const refused = result !== null && typeof result === "object" && result.ok === false;
-  if (!refused) return null;
-  return `setup demo "${demo}" did not run: ${result.reason ?? "unknown"}`;
-}
-
-/** Whether the state bounder left an elision stub on `path` or one of its parents: the value was not read. */
-function elidedAlong(state: unknown, path: string): boolean {
-  let current: unknown = state;
-  for (const key of path.split(".")) {
-    if (current === null || typeof current !== "object") return false;
-    current = (current as Record<string, unknown>)[key];
-    const stub = current !== null && typeof current === "object" && !Array.isArray(current);
-    if (stub && typeof (current as Record<string, unknown>)[StateShape.Elided] === "string") return true;
-  }
-  return false;
-}
-
-/**
- * The note for a setup whose `verify` the page's state does not meet, or null. The verified path
- * is kept whole when the state is over budget; one the bounder still cut is unmeasured, not missed.
- */
-async function setupVerifyNote(port: PreviewPort, setup: PreviewSetup): Promise<string | null> {
-  if (!setup.verify) return null;
-  const keep = keepPathsOf([setup.verify.path]);
-  const state = await port.studioState(keep.length ? { keep } : undefined).catch(() => null);
-  if (elidedAlong(state, setup.verify.path)) return null;
-  if (setupReached(setup.verify, state) !== false) return null;
-  const value = JSON.stringify(state).slice(0, SETUP_STATE_EXCERPT_CHARS);
-  return `REQUESTED STATE NOT REACHED: ${setup.verify.path} is not ${expectedValue(setup.verify)} after the setup script (${setup.note ?? "no note"}); state: ${value}`;
-}
-
-/** A setup's demo and input actions, then the settle it asked for; what went wrong goes on `notes`. */
+/** A setup's input actions, then the settle it asked for; what went wrong goes on `notes`. */
 async function replaySetup(
   port: PreviewPort,
   setup: PreviewSetup,
   notes: string[],
   wait: (ms: number) => Promise<unknown>,
 ): Promise<void> {
-  const demoNote = await runSetupDemo(port, setup.demo);
-  if (demoNote) notes.push(demoNote);
   if (Array.isArray(setup.actions) && setup.actions.length) {
     await port
       .input(capActions(setup.actions))
@@ -428,42 +307,9 @@ async function replaySetup(
   await wait(Math.min(SETUP_SETTLE_MAX_MS, setup.settleMs ?? SETUP_SETTLE_DEFAULT_MS));
 }
 
-/** `state().flow.playing`: true or false for a game that reports a front-end, null for one that does not. */
-function flowPlaying(state: unknown): boolean | null {
-  const flow = state !== null && typeof state === "object" ? (state as { flow?: unknown }).flow : null;
-  const playing = flow !== null && typeof flow === "object" ? (flow as { playing?: unknown }).playing : null;
-  return typeof playing === "boolean" ? playing : null;
-}
-
-/** Whether a setup replays anything a page must settle after: `{ begin: false }` alone replays nothing. */
+/** Whether a setup replays input a page must settle after. */
 function replaysSomething(setup: PreviewSetup): boolean {
-  const acts = Array.isArray(setup.actions) && setup.actions.length > 0;
-  return Boolean(setup.gesture || setup.demo || setup.verify || acts);
-}
-
-/**
- * Past the game's own title, menu and countdown into play, the way every judge sees it: only for a
- * game that says it is not in play (`state().flow.playing === false`), never when the setup keeps
- * the front-end (`begin: false`, the worker that builds it and the playtester). `begin()` leaves the
- * game paused, so the window is started again, before any setup is replayed. The note when play
- * was not reached, or null.
- */
-async function beginPlay(
-  port: PreviewPort,
-  setup: PreviewSetup | null | undefined,
-  wait: (ms: number) => Promise<unknown>,
-): Promise<string | null> {
-  if (setup?.begin === false) return null;
-  if (flowPlaying(await port.studioState().catch(() => null)) !== false) return null;
-  const began = (await port.studioCall(GameFront.Begin).catch(() => null)) as { ok?: unknown } | null;
-  if (began?.ok !== true)
-    return "this game shows a title, menu or countdown and has no __studio.begin(), so the frames show its front-end — give config.begin";
-  await port.studioCall(GameClock.Start).catch(() => null);
-  for (let waited = 0; waited < PLAY_WAIT_MS; waited += PLAY_POLL_MS) {
-    if (flowPlaying(await port.studioState().catch(() => null)) === true) return null;
-    await wait(PLAY_POLL_MS);
-  }
-  return `the game did not reach play within ${PLAY_WAIT_MS / SECOND_MS} s of __studio.begin() (state().flow.playing is still false)`;
+  return Array.isArray(setup.actions) && setup.actions.length > 0;
 }
 
 /** A still resized to `maxPx` on its long side as JPEG, or null when the preview cannot. */
@@ -872,7 +718,7 @@ export class PreviewService {
   ): NonNullable<DelegateRequest["onCapture"]> {
     let sequence = 0;
     let sequenceSeeded = false;
-    return async ({ cameras, page } = {}) => {
+    return async ({ page } = {}) => {
       // A bench page is checked before anything is touched: a refused one loads nothing.
       const bench = page === undefined ? null : await this.#benchFor(sc.project, currentRoot(), String(page));
       if (bench && "refusal" in bench) return bench.refusal;
@@ -887,15 +733,10 @@ export class PreviewService {
       const call = ++sequence;
       const port = await session.get();
       const loaded = await this.#loadForCapture(port, sc, session, { target: currentRoot(), bench });
-      if ("problem" in loaded)
-        return `your build failed to load: ${loaded.problem} — fix that before polishing anything.`;
+      if ("problem" in loaded) return MESSAGE.loadFailed(loaded.problem);
       const screen = captureScreen(sc, session, role);
       this.openScreen(screen);
-      const registered = await port.studioCall("cameras").catch(() => null);
-      const known = Array.isArray(registered) ? registered.map(String) : [];
-      const lines: string[] = [];
-      for (const camera of camerasForShot(sc, bench, cameras, known))
-        lines.push(await this.#captureCamera(port, screen, { outDir, call, camera, known }));
+      const lines = [await this.#captureShot(port, screen, { outDir, call })];
       const errors = port.consoleEntries(0).filter((entry) => entry.level === "error");
       return captureAnswer({ bench, root, lines, errors, setupNote: loaded.setupNote });
     };
@@ -926,29 +767,17 @@ export class PreviewService {
     return { setupNote: [loaded.note, applied].filter(Boolean).join("; ") || null };
   }
 
-  /** One camera's frame of a capture, saved beside the facet's others; its line of the answer. */
-  async #captureCamera(
-    port: PreviewPort,
-    screen: AgentScreen,
-    shot: { outDir: string; call: number; camera: string; known: readonly string[] },
-  ): Promise<string> {
-    const { outDir, call, camera, known } = shot;
+  /** The page's frame for a capture, saved beside the session's others; its line of the answer. */
+  async #captureShot(port: PreviewPort, screen: AgentScreen, shot: { outDir: string; call: number }): Promise<string> {
+    const { outDir, call } = shot;
     try {
-      const placeable = known.includes(camera) || camera.startsWith("eye:");
-      const actual = await placeCamera(port, camera, placeable);
-      const switchIsDead = placeable && actual !== null && actual !== camera;
-      const warning = switchIsDead
-        ? ` — WARNING: the build rendered camera "${actual}" instead; your debugCamera("${camera}") does not switch`
-        : "";
-      // `auto`: a game whose menu, car-select or HUD lives in the DOM is invisible to a
-      // canvas-only eye, and the builder is the one who has to see what it built.
-      const frame = await captureSurface(port, DEFAULT_SHOT_QUALITY, CaptureSurface.Auto);
-      const file = path.join(outDir, `c${call}_${safePathSegment(camera)}.jpg`);
+      const frame = await captureSurface(port, DEFAULT_SHOT_QUALITY, CaptureSurface.Page);
+      const file = path.join(outDir, `c${call}_${CAPTURE_FRAME_NAME}.jpg`);
       await writeFile(file, frame.jpeg);
-      await this.frame(port, screen, frame.jpeg, `capture ${camera}`, { deed: ScreenDeed.Look });
-      return capturedLine(camera, file, frame, actual === camera, warning);
+      await this.frame(port, screen, frame.jpeg, "capture", { deed: ScreenDeed.Look });
+      return capturedLine(CAPTURE_FRAME_NAME, file, frame);
     } catch (err) {
-      return `- ${camera} → capture failed: ${errorMessage(err)}`;
+      return `- ${CAPTURE_FRAME_NAME} → capture failed: ${errorMessage(err)}`;
     }
   }
 
@@ -1121,14 +950,11 @@ export class PreviewService {
   }
 
   /**
-   * Play, then the requested state, reached the way a player reaches it — before anyone looks.
-   * A game with a title, menu or countdown is put past it the way every judge sees it
-   * (`beginPlay`), with no setup at all as much as with one, unless the setup keeps the front-end
-   * (`begin: false`) or the window is the playtester's (`keepFrontEnd`: it meets the real menu
-   * whatever an older seed sends). The run's setup script is replayed after that, from the state
-   * the scout recorded it in: its window was begun too. Returns a note when it did not land, never
-   * throws: a wrong state is something to tell the worker, not a reason to stop looking.
-   * `options.sleep` is the wall clock's wait, injectable for a test.
+   * The requested state, reached the way a player reaches it — before anyone looks: the knock a
+   * page waiting for a gesture needs, then the setup's input actions. The game is never asked
+   * anything. Returns a note when an input failed, never throws. `options.sleep` is the wall
+   * clock's wait, injectable for a test; `keepFrontEnd` is accepted for older callers and changes
+   * nothing now that no game is taken past its front-end.
    */
   async applySetup(
     port: PreviewPort,
@@ -1137,18 +963,14 @@ export class PreviewService {
   ): Promise<string | null> {
     const wait = options.sleep ?? ((ms: number) => sleep(ms));
     // The knock comes first, before the clock is even started: a trusted click is what grants
-    // user activation, and a title screen waiting for one is not "started" until it has it.
+    // user activation, and a page waiting for one is not "started" until it has it.
     if (setup?.gesture) {
       const at = setup.gesture === true ? null : setup.gesture;
       await unlockGesture(port, at, at?.keys).catch(() => null);
     }
     await port.studioCall(GameClock.Start).catch(() => null);
     const notes: string[] = [];
-    const playNote = options.keepFrontEnd === true ? null : await beginPlay(port, setup, wait);
-    if (playNote) notes.push(playNote);
     if (setup && replaysSomething(setup)) await replaySetup(port, setup, notes, wait);
-    const verifyNote = setup ? await setupVerifyNote(port, setup) : null;
-    if (verifyNote) notes.push(verifyNote);
     return notes.length ? notes.join("; ") : null;
   }
 

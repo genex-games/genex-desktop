@@ -1,13 +1,13 @@
 /**
  * The studio's own browser window as a computer target: the hidden pooled preview every agent
  * already plays on, wrapped so the `computer` session reaches it only through the
- * {@link ComputerTarget} interface. Its clock, seed and cameras are the page's `window.__studio`
- * verbs (`src/page/shim.ts`, `src/game-template/src/studio.js`), called here and nowhere else.
+ * {@link ComputerTarget} interface. Its clock is the page shim's own (`src/page/shim.ts`); the
+ * game is never asked about itself, so the target has no state, seed or cameras.
  */
 import { BROWSER_CAPABILITIES, InputRoute } from "../../shared/computer-target.ts";
-import { type CaptureSurface, GameClock, GameView } from "../../shared/preview-contract.ts";
+import { type CaptureSurface, GameClock } from "../../shared/preview-contract.ts";
 import { COMPUTER_VIEW } from "../../substrate/computer-tool.ts";
-import type { ComputerTarget, TargetCameraAnswer } from "../../substrate/computer-target.ts";
+import type { ComputerTarget } from "../../substrate/computer-target.ts";
 import type { PreviewPort } from "../../substrate/preview-port.ts";
 import { captureSurface } from "./capture.ts";
 
@@ -20,18 +20,6 @@ export interface BrowserPreviewTarget extends ComputerTarget {
 interface PageStep {
   ok?: boolean;
   truncated?: boolean;
-}
-
-/** The page's answer to a camera switch, read field by field: a page may answer anything. */
-function cameraAnswer(placed: unknown): TargetCameraAnswer {
-  if (typeof placed !== "object" || placed === null) return { ok: true };
-  const answer = placed as { ok?: unknown; reason?: unknown; available?: unknown };
-  if (answer.ok !== false) return { ok: true };
-  return {
-    ok: false,
-    ...(typeof answer.reason === "string" ? { reason: answer.reason } : {}),
-    ...(Array.isArray(answer.available) ? { available: answer.available.map(String) } : {}),
-  };
 }
 
 /** The simulated milliseconds of a page step: what was asked, unless the page cut it short or never stepped. */
@@ -60,7 +48,6 @@ export function browserPreviewTarget(port: PreviewPort): BrowserPreviewTarget {
             zoomer.call(port, region, undefined, { surface }),
         }
       : {}),
-    state: () => port.studioState(),
     clock: {
       pause: async () => {
         await port.studioCall(GameClock.Pause).catch(() => null);
@@ -70,10 +57,6 @@ export function browserPreviewTarget(port: PreviewPort): BrowserPreviewTarget {
       },
       step: async (ms) => steppedMs(await port.studioCall(GameClock.Step, ms).catch(() => null), ms),
     },
-    seed: async (seed) => {
-      await port.studioCall(GameClock.Seed, seed).catch(() => null);
-    },
-    camera: async (name) => cameraAnswer(await port.studioCall(GameView.DebugCamera, name).catch(() => null)),
     console: (sinceMs) => port.consoleEntries(sinceMs),
   };
 }

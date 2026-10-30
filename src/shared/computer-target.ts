@@ -59,7 +59,7 @@ export const StateLevel = {
   None: "none",
   /** The accessibility tree an app exposes: buttons and fields, not game numbers. */
   A11y: "a11y",
-  /** The game's own state (`__studio.state()`, the protocol's `state`). */
+  /** The game's own state, as a Play Protocol game reports it (the protocol's `state`). */
   Game: "game",
 } as const;
 export type StateLevel = (typeof StateLevel)[keyof typeof StateLevel];
@@ -136,15 +136,18 @@ export interface TargetCapabilities {
   players?: number;
 }
 
-/** The studio's own browser window: everything, step-locked, seeded through the page shim. */
+/**
+ * The studio's own browser window: real input, screenshots and the console, step-locked through
+ * the page shim's clock. The game is never asked about itself: no state, seed or cameras.
+ */
 export const BROWSER_CAPABILITIES: TargetCapabilities = {
   runtime: TargetRuntime.Browser,
   pointer: PointerLevel.Absolute,
   clock: ClockLevel.StepLocked,
-  state: StateLevel.Game,
-  seed: true,
+  state: StateLevel.None,
+  seed: false,
   reload: true,
-  cameras: true,
+  cameras: false,
   console: true,
   zoom: true,
   surfaces: true,

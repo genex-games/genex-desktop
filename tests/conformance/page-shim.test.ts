@@ -283,6 +283,9 @@ async function installedShim(): Promise<Record<string, unknown>> {
     class Document {}
     Object.defineProperty(Document.prototype, "pointerLockElement", { configurable: true, get: () => null });
     Object.assign(globalThis, { Element, Document });
+    const listeners = {};
+    globalThis.addEventListener = (type, fn) => (listeners[type] ??= []).push(fn);
+    const fire = (type, event) => { for (const fn of listeners[type] ?? []) fn(event); };
     const random = Math.random;
     const request = Element.prototype.requestPointerLock;
     const lockDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "pointerLockElement");
@@ -291,7 +294,13 @@ async function installedShim(): Promise<Record<string, unknown>> {
     const game = { mine: true };
     globalThis.__studio = game;
     const state = globalThis.__studioClock.state();
+    const noErrors = globalThis.__studioClock.errors();
+    fire("error", { target: globalThis, message: "Uncaught TypeError: player is undefined", error: new TypeError("player is undefined") });
+    fire("error", { target: { tagName: "IMG" }, message: "" });
+    fire("unhandledrejection", { reason: new Error("level failed to load") });
     console.log(JSON.stringify({
+      noErrors,
+      errors: globalThis.__studioClock.errors(),
       nativeRandom: Math.random === random,
       gameKeepsItsOwn: globalThis.__studio === game,
       nativeLockRequest: Element.prototype.requestPointerLock === request,
@@ -310,6 +319,15 @@ describe("what the shim leaves to the page", () => {
     assert.equal(page.gameKeepsItsOwn, true, "a page's own window.__studio is a plain value of its own");
     assert.equal(page.nativeLockRequest, true, "requestPointerLock is the browser's own");
     assert.equal(page.nativeLockElement, true, "pointerLockElement is the browser's own");
+  });
+
+  it("records the errors the page did not catch, and not a resource that failed to load", async () => {
+    const page = await installedShim();
+    assert.deepEqual(page.noErrors, { count: 0, messages: [] });
+    assert.deepEqual(page.errors, {
+      count: 2,
+      messages: ["TypeError: player is undefined", "Error: level failed to load"],
+    });
   });
 
   it("reports what the page is doing from the studio's own clock", async () => {

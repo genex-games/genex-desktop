@@ -23,6 +23,10 @@ export const CLOCK_VERSION = 1;
 
 /** A `step()` never runs more frames than this, whatever it was asked for. */
 export const MAX_STEP_FRAMES = 4096;
+/** The most uncaught errors whose words the shim keeps; the count goes on past it. */
+const MAX_UNCAUGHT_KEPT = 8;
+/** The longest uncaught error message the shim keeps. */
+const MAX_UNCAUGHT_CHARS = 300;
 /** The longest span a single `step()` may simulate. */
 export const MAX_STEP_MS = 60_000;
 /** One repeating timer fires at most this many times in one simulated frame, so it cannot spin. */
@@ -856,6 +860,50 @@ function watchLoaders(win: Foreign, natives: Natives): Loaders {
   return loaders;
 }
 
+/** A thrown value in words: `Name: message` for an error, its text for anything else. */
+function describeThrown(value: Foreign): string {
+  if (value && typeof value === "object" && typeof value.message === "string") {
+    return `${typeof value.name === "string" && value.name ? value.name : "Error"}: ${value.message}`;
+  }
+  return String(value);
+}
+
+/**
+ * The words of an error the page did not catch, from a window `error` or `unhandledrejection`
+ * event, or null for an event that is no such error: a script, image or stylesheet that failed
+ * to load raises `error` on its own element, not on the window.
+ */
+export function uncaughtMessage(type: string, event: Foreign, win: Foreign): string | null {
+  if (type === "unhandledrejection") return describeThrown(event?.reason);
+  if (event?.target && event.target !== win) return null;
+  if (event?.error !== undefined && event?.error !== null) return describeThrown(event.error);
+  return String(event?.message ?? "");
+}
+
+/** The page's uncaught errors since this load: how many, and the words of the first few. */
+interface UncaughtRecord {
+  count: number;
+  messages: string[];
+}
+
+// ── uncaught errors, watched ──
+function watchUncaught(win: Foreign): UncaughtRecord {
+  const record: UncaughtRecord = { count: 0, messages: [] };
+  const note = (type: string) => (event: Foreign) => {
+    const message = uncaughtMessage(type, event, win);
+    if (message === null) return;
+    record.count++;
+    if (record.messages.length < MAX_UNCAUGHT_KEPT) record.messages.push(message.slice(0, MAX_UNCAUGHT_CHARS));
+  };
+  try {
+    win.addEventListener("error", note("error"), true);
+    win.addEventListener("unhandledrejection", note("unhandledrejection"), true);
+  } catch {
+    /* a page with no window events reports none */
+  }
+  return record;
+}
+
 /** Reports an error to the console, if there is one to report to. */
 const reportError = (err: Foreign) => {
   try {
@@ -1223,6 +1271,7 @@ interface ClockParts {
   watch: CanvasWatch;
   loaders: Loaders;
   lock: LockWatch;
+  uncaught: UncaughtRecord;
   readiness: Readiness;
   ready: (why: Foreign) => Foreign;
 }
@@ -1261,6 +1310,7 @@ function installClockGlobal(parts: ClockParts) {
       start: clock.start,
       step: clock.step,
       state: () => pageState(watch, clock),
+      errors: () => ({ count: parts.uncaught.count, messages: [...parts.uncaught.messages] }),
       boot: () => bootReport(readiness, natives, clock, lock),
       ready: parts.ready,
       rafReal: (cb: Foreign) => realFrame(natives, cb),
@@ -1296,6 +1346,7 @@ export function installStudioShim(rawOptions: Foreign) {
   if (win.__studioClock && win.__studioClock.version === CLOCK_VERSION) return win.__studioClock;
   const options = normalizeShimOptions(rawOptions);
   const natives = nativesOf(win);
+  const uncaught = watchUncaught(win);
   if (natives.raf && natives.cancelRaf) {
     const gate = animationGate({ request: natives.raf, cancel: natives.cancelRaf });
     natives.raf = gate.request;
@@ -1334,6 +1385,6 @@ export function installStudioShim(rawOptions: Foreign) {
   watchTrustedInput(win, readiness);
   startPump({ natives, clock, loaders, options }, watch, readiness);
   installCaptureGlobal(win, watch, clock, natives);
-  installClockGlobal({ win, natives, options, clock, watch, loaders, lock, readiness, ready });
+  installClockGlobal({ win, natives, options, clock, watch, loaders, lock, uncaught, readiness, ready });
   return win.__studioClock;
 }

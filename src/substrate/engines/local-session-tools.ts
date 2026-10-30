@@ -119,7 +119,6 @@ function withRequestTools(request: DelegateRequest, definitions: ToolDefinition[
   if (request.onCapture)
     definitions.push(
       tool(LocalTool.Capture, LOCAL_TOOL_DESCRIPTION.capture, {
-        cameras: str,
         page: { ...str, description: LOCAL_TOOL_DESCRIPTION.capturePage },
       }),
     );

@@ -63,9 +63,8 @@ export const LOCAL_TOOL_DESCRIPTION = {
   writeFile: "Write a UTF-8 file. Read existing files before replacing them.",
   runCommand:
     "Run a command in this workspace sandbox. No network. Respect worker ownership; never change permissions to bypass it.",
-  capture: "Capture this build. Read the returned image paths to inspect it.",
-  capturePage:
-    "A bench page to capture instead of the game: a .html file in this workspace that mounts just your module (for example bench/<part>.html). Omit it to capture the game, and capture the game before you finish.",
+  capture: "Capture this build: a screenshot of the page, saved to a file whose path comes back.",
+  capturePage: "Optional: a .html file in this workspace to capture instead of the game.",
 } as const;
 
 /** What the studio tells the model, and records, when a round needs a word from outside. */
