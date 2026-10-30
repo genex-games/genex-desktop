@@ -1643,18 +1643,30 @@ function makingIds(payload: { callId?: string; jobId?: string; generationId?: st
 }
 
 /**
- * A finished `genex__cover` shoot that kept a new shot: Genex's own tool asked to shoot, and its
- * answer carried the shot's preview (a shot the host could not take answers none, and the last
- * shot stays kept). The tool is read however the record names it (`cover`, `genex__cover`,
- * `mcp__studio__genex__cover`).
+ * A finished `genex__cover` call that kept a new cover: the agent handed over its picture as a file
+ * (`{ image, clip? }`, the call the tool takes now; the caller passes only one that succeeded), or
+ * an older record's shoot whose answer carried the shot's preview (a shot the host could not take
+ * answers none, and the last shot stays kept). The tool is read however the record names it
+ * (`cover`, `genex__cover`, `mcp__studio__genex__cover`).
  */
 function keptGenexCover(payload: PluginCallPayload): boolean {
   const named = pluginToolKey(String(payload.tool ?? payload.toolName ?? ""));
   const tool = named.startsWith(`${GENEX_PLUGIN_ID}__`) ? named.slice(GENEX_PLUGIN_ID.length + 2) : named;
-  const genexCover = payload.pluginId === GENEX_PLUGIN_ID && tool === GENEX_COVER_TOOL;
-  const shoot = digestOperation(payload.args) === GenexCoverOperation.Shoot;
-  return genexCover && shoot && Number(payload.images ?? 0) > 0;
+  if (payload.pluginId !== GENEX_PLUGIN_ID || tool !== GENEX_COVER_TOOL) return false;
+  const operation = digestOperation(payload.args);
+  if (operation === null) return handsOverImage(payload.args);
+  return operation === GenexCoverOperation.Shoot && Number(payload.images ?? 0) > 0;
 }
+
+/** Whether a call's arguments digest names the image file it hands over (`image=<path>`). */
+function handsOverImage(args: string | undefined): boolean {
+  return (args ?? "")
+    .split(" ")
+    .some((part) => part.startsWith(COVER_IMAGE_ARG) && part.length > COVER_IMAGE_ARG.length);
+}
+
+/** How the host's arguments digest names the cover picture a `genex__cover` call hands over. */
+const COVER_IMAGE_ARG = "image=";
 
 /**
  * This shoot's shot is the one Genex's storage holds now, so the card is its: an earlier card comes
