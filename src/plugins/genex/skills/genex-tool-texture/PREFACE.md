@@ -10,5 +10,4 @@ this preface wins.
 - Studio submits every create without waiting and delivers every map into the game: never pass
   `out-dir`, `no-wait` or `no-download`. Pick a set up with operation `wait` and its
   generationId.
-- Operation `status` names the lanes that are live. When this lane fails, say so once and use an
-  `image` (base colour only) or a material made in the engine instead.
+- Operation `status` names the lanes that are live.

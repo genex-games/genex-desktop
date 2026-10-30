@@ -165,6 +165,24 @@
     {
       "replace": " Say what something will cost before you spend a lot of it.",
       "with": ""
+    },
+    {
+      "replace": "\n\nTalk to the user in plain language, short. Say what you made and what it's for, not how the pipeline works. Give a status line while you work rather than a silent screen.",
+      "with": ""
+    },
+    {
+      "section": "## Where to run this"
+    },
+    {
+      "section": "## Setup"
+    },
+    {
+      "replace": "# sign-in, credit balance, which lanes are live - run it first, and after any failure",
+      "with": "# sign-in, credit balance, which lanes are live"
+    },
+    {
+      "replace": "- Each lane has a skill card (`genex-tool-...`) in your workspace - load the one for the lane you are using before you run it.",
+      "with": "- Each lane has a skill card (`genex-tool-...`)."
     }
   ],
   "genex-threejs-embed-auth/SKILL.md": [
@@ -345,6 +363,14 @@
     {
       "replace": "- **Out of credits** — the error prints your balance, the price, and when credits refill. Say that plainly to the user; don't retry.",
       "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "assets/hand-painted-wooden-tavern-sign-a1b2c3d4.png",
+      "with": "assets/wooden-sign-with-iron-brackets-a1b2c3d4.png"
+    },
+    {
+      "replace": "(\"vintage travel poster, screen-printed, three flat colours\")",
+      "with": "(\"a wooden crate, studio photo, three-quarter view\")"
     }
   ],
   "genex-tool-model/SKILL.md": [
@@ -363,6 +389,22 @@
     {
       "replace": "- **Out of credits** — the error prints the balance, the price and the refill date. Relay it; don't retry.",
       "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "(Tripo H3.1, each priced in the quote — pick per asset, say it in one line)",
+      "with": "(Tripo H3.1, each priced in the quote)"
+    },
+    {
+      "replace": "`--geometry detailed` (+20, hero pieces only)",
+      "with": "`--geometry detailed` (+20)"
+    },
+    {
+      "replace": " It is refunded. Ship it static, or animate it in code.",
+      "with": " It is refunded."
+    },
+    {
+      "replace": " That pattern is the lane, not your prompt: build the piece in code or move on, and tell the user in one plain line.",
+      "with": " That pattern is the lane, not your prompt."
     }
   ],
   "genex-tool-character/SKILL.md": [
@@ -381,6 +423,42 @@
     {
       "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
       "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "npx genex creature \"hulking bone seraph, upright stance\"",
+      "with": "npx genex creature \"guard, upright stance\""
+    },
+    {
+      "replace": "every knob is priced in the quote.\nPick per role and say so in one line:",
+      "with": "every knob is priced in the quote:"
+    },
+    {
+      "replace": "the rigging copy's face budget, 10000-100000 — 10000 for crowds and\n  distance, 20000-30000 for a third-person player body, 50000+ only for a\n  close-up hero. Moves no cost.",
+      "with": "the rigging copy's face budget, 10000-100000. Moves no cost."
+    },
+    {
+      "replace": "8k is +5 credits, for close-ups.",
+      "with": "8k is +5 credits."
+    },
+    {
+      "replace": "less surface detail — stand-ins\n  and crowd enemies.",
+      "with": "less surface detail."
+    },
+    {
+      "replace": "When nobody is choosing — a background NPC, a quick test:",
+      "with": "When nobody is choosing:"
+    },
+    {
+      "replace": " The knobs\nabove apply: a crowd enemy is `--polycount 10000 --no-ultra --texture 2k`.",
+      "with": " The knobs\nabove apply."
+    },
+    {
+      "replace": "`--action <id>`. Always\nlook here first — a library clip costs nothing to generate.",
+      "with": "`--action <id>`. A\nlibrary clip costs nothing to generate."
+    },
+    {
+      "replace": " (see `$genex-tool-model`), or ship it static and animate in code.",
+      "with": " (see `$genex-tool-model`)."
     }
   ],
   "genex-tool-publish/SKILL.md": [
@@ -411,6 +489,22 @@
     {
       "replace": "- **Out of credits** — the error prints balance, price and refill date. Relay it; don't retry.",
       "with": "- **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry."
+    },
+    {
+      "replace": "npx genex texture \"mossy cracked cobblestone\"",
+      "with": "npx genex texture \"stone floor tiles\""
+    },
+    {
+      "replace": "npx genex texture \"dry cracked riverbed clay\" --terrain",
+      "with": "npx genex texture \"dirt ground\" --terrain"
+    },
+    {
+      "replace": "  assets/mossy-cracked-cobblestone-a1b2c3d4-basecolor.png  (2.1 MB)\n  assets/mossy-cracked-cobblestone-a1b2c3d4-normal.png     (1.8 MB)\n  assets/mossy-cracked-cobblestone-a1b2c3d4-roughness.png  (900 KB)",
+      "with": "  assets/stone-floor-tiles-a1b2c3d4-basecolor.png  (2.1 MB)\n  assets/stone-floor-tiles-a1b2c3d4-normal.png     (1.8 MB)\n  assets/stone-floor-tiles-a1b2c3d4-roughness.png  (900 KB)"
+    },
+    {
+      "replace": " A repeating grid across a floor is the single most visible \"asset flip\" tell there is, so treat that warning as work.",
+      "with": ""
     }
   ],
   "genex-updates/SKILL.md": [

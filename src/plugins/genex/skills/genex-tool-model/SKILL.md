@@ -17,10 +17,9 @@ this preface wins.
 - This lane is Tripo, and Studio has no provider option. A rigged character or creature is the
   character card's lane (Meshy).
 - Pass `auto-size` whenever the model's real size matters: without it the model is not to scale.
-  Its meshes are dense (150000 faces by default): use `low-poly` or `face-limit` for props seen in
-  numbers.
+  Its meshes are dense (150000 faces by default); `low-poly` and `face-limit` lower the count.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 5944f2be3b133b2ab1dd93365a865e3409f547f862f64d4ca3089ffa2eeab591 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-model/SKILL.md v1.36.17 sha256 849485e095d91b019e09dda27123c33297889cf732b219772eb075b5373f4771 -->
 ---
 name: genex-tool-model
 description: Generate a 3D model (GLB) from a text prompt or a reference image with `npx genex model` — props, vehicles, weapons, furniture, environment pieces, anything the scene needs as geometry. Also splits a model into named parts, rigs any mesh across 7 body plans, and retargets ready-made animation clips onto that rig. Files download to ./assets.
@@ -72,7 +71,7 @@ npx genex model animate <rig-id> --preset walk,run
 ## Options
 
 - `--image <path|url>` — build the model from a reference image (local file ≤ 4 MB, or a previous generation's URL). The prompt becomes optional.
-- **Quality knobs** (Tripo H3.1, each priced in the quote — pick per asset, say it in one line): `--texture standard|detailed|none` (detailed default, +10 over standard; none = geometry only), `--geometry detailed` (+20, hero pieces only), `--quad` (+5, for meshes you will edit; face limit ≤150000), `--low-poly` (+10, game-ready topology for props in numbers — it holds `--face-limit` to 1000-20000, 500-10000 with `--quad`; omit the flag to take 20000; it runs a post-process after the mesh, so allow up to 30 minutes), `--parts` (+20, named parts at generation), `--face-limit <n>` (1000-2000000, default 150000; see `--low-poly` for its band), `--auto-size` (real-world metres).
+- **Quality knobs** (Tripo H3.1, each priced in the quote): `--texture standard|detailed|none` (detailed default, +10 over standard; none = geometry only), `--geometry detailed` (+20), `--quad` (+5, for meshes you will edit; face limit ≤150000), `--low-poly` (+10, game-ready topology for props in numbers — it holds `--face-limit` to 1000-20000, 500-10000 with `--quad`; omit the flag to take 20000; it runs a post-process after the mesh, so allow up to 30 minutes), `--parts` (+20, named parts at generation), `--face-limit <n>` (1000-2000000, default 150000; see `--low-poly` for its band), `--auto-size` (real-world metres).
 - `--out-dir <dir>` — where the file lands (default `./assets`).
 - `--no-download` — print the URL only.
 - `--no-wait` — enqueue and return; pick it up with `npx genex wait <id>`.
@@ -114,6 +113,6 @@ in the prompt too (`"…front toward +Z"`) — it helps, it does not guarantee.
 ## Troubleshooting
 
 - **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
-- **The rig was refused** — that mesh has no usable skeleton for any body plan. It is refunded. Ship it static, or animate it in code.
-- **Repeated failures in this folder** — the CLI says so after the second one. That pattern is the lane, not your prompt: build the piece in code or move on, and tell the user in one plain line.
+- **The rig was refused** — that mesh has no usable skeleton for any body plan. It is refunded.
+- **Repeated failures in this folder** — the CLI says so after the second one. That pattern is the lane, not your prompt.
 - **Anything else** — `npx genex doctor`.

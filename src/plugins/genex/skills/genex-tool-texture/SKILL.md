@@ -10,10 +10,9 @@ this preface wins.
 - Studio submits every create without waiting and delivers every map into the game: never pass
   `out-dir`, `no-wait` or `no-download`. Pick a set up with operation `wait` and its
   generationId.
-- Operation `status` names the lanes that are live. When this lane fails, say so once and use an
-  `image` (base colour only) or a material made in the engine instead.
+- Operation `status` names the lanes that are live.
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.36.17 sha256 558d150439bff6f2536cf5b56166f8a84b41258e96155aba910e478ae2b61086 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-texture/SKILL.md v1.36.17 sha256 d89a284d5b05fe24f69aecee1f860f18e2aeed607be27983168f1a9eaa402829 -->
 ---
 name: genex-tool-texture
 description: Generate a tiling PBR texture set with `npx genex texture` — ground, floors, walls, rock, bark, metal, fabric, any repeating surface. Produces several maps (base colour, normal, roughness and friends) as separate files in ./assets, and `--terrain` makes the result seamless for large ground planes.
@@ -30,17 +29,17 @@ instead. That is one image; this is a tiling material.
 ## Run
 
 ```bash
-npx genex texture "mossy cracked cobblestone"
-npx genex texture "dry cracked riverbed clay" --terrain    # seamless, for ground planes
+npx genex texture "stone floor tiles"
+npx genex texture "dirt ground" --terrain    # seamless, for ground planes
 ```
 
 Saves EVERY map into `./assets` as its own file, one line each, labelled by role:
 
 ```
 ✓ Done — 3 files saved to your project:
-  assets/mossy-cracked-cobblestone-a1b2c3d4-basecolor.png  (2.1 MB)
-  assets/mossy-cracked-cobblestone-a1b2c3d4-normal.png     (1.8 MB)
-  assets/mossy-cracked-cobblestone-a1b2c3d4-roughness.png  (900 KB)
+  assets/stone-floor-tiles-a1b2c3d4-basecolor.png  (2.1 MB)
+  assets/stone-floor-tiles-a1b2c3d4-normal.png     (1.8 MB)
+  assets/stone-floor-tiles-a1b2c3d4-roughness.png  (900 KB)
 ```
 
 Load each map into the matching material slot and set the wrapping mode to
@@ -65,6 +64,6 @@ your balance: `npx genex doctor`.
 
 ## Troubleshooting
 
-- **The surface shows a visible repeating grid** — the CLI measures the seam automatically and warns when it is bad. Re-generate with `--terrain`, or scale the repeat down so the tile is smaller on screen. A repeating grid across a floor is the single most visible "asset flip" tell there is, so treat that warning as work.
+- **The surface shows a visible repeating grid** — the CLI measures the seam automatically and warns when it is bad. Re-generate with `--terrain`, or scale the repeat down so the tile is smaller on screen.
 - **Out of credits** — Studio keeps the generation's card, which says so and offers Get credits. Never relay the balance, price or refill date, and don't retry.
 - **Anything else** — `npx genex doctor`.

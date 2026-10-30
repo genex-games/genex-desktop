@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex-recommendations",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Genex recommendations",
   "publisher": "Genex",
   "description": "Genex's own optional advice for making games: multiplayer patterns, cover craft, where assets can come from and shop design. Skills an agent reads on demand; none of it is required.",
