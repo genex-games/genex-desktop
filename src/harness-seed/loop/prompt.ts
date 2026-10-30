@@ -196,7 +196,7 @@ async function readProjectInventory(
         : `These files live in the folder the user opened.`,
       extra.length
         ? `The user named stills outside this folder. Look at them with \`read_file\` using those absolute paths. Do not copy them into this project.\n${extraLines.join("\n")}`
-        : `Stills may be in \`references/\`, \`ref/\`, or a path the user named. Look at them with \`read_file\`. Do not load them as textures.`,
+        : `Stills may be in \`references/\`, \`ref/\`, or a path the user named. Look at them with \`read_file\`.`,
       lines.length ? lines.join("\n") + more : "- (empty folder)",
     ].join("\n");
   } catch {
@@ -461,8 +461,8 @@ async function readIdentity(
 }
 
 /**
- * How the model works: the rules for every turn, plus the web page's (the preview, its controls,
- * `window.__studio`) only when the turn's game is a web game. A kept copy of the
+ * How the model works: the rules for every turn, plus the web page's (the preview and its controls)
+ * only when the turn's game is a web game. A kept copy of the
  * rules from before they were split still carries the web rules for every turn.
  */
 async function readRules(

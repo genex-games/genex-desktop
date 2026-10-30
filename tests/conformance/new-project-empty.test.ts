@@ -619,7 +619,7 @@ function studioOf(ctx: ReturnType<typeof ctxRecorder>["ctx"]) {
   return {
     host: { ...ctx.host, heartbeat: () => {} },
     cancels: new Set<string>(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),

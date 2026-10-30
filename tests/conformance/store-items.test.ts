@@ -146,7 +146,7 @@ describe("a Loop launch with store items", () => {
     const studio = {
       host,
       cancels: new Set<string>(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Reservations(),
       orphanRuns: new Map(),

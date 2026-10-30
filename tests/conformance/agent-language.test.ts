@@ -24,7 +24,6 @@ function coordinatorWith(language: typeof RUSSIAN | null) {
     run: { runId: "r1" },
     text: "continue",
     journal: null,
-    savedPlan: null,
     history: "",
     appLanguage: language,
   });

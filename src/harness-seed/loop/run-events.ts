@@ -1,8 +1,7 @@
 /**
  * A run's record: the custom events on its thread and the journal a resume replays.
  *
- * Every mode wrote these for itself — the director, the classic pipeline, a facet, the gauntlet —
- * and every copy ended in `.catch(() => {})`. A feed card or a journal write is never worth a
+ * Every part wrote these for itself and every copy ended in `.catch(() => {})`. A feed card or a journal write is never worth a
  * run, so a failure still must not throw; but one that nobody hears about is how a run ends
  * with no journal to resume from and nothing in any log to say why. A failure is now written to
  * the harness's stderr (the host keeps it in its log), at most once a minute per kind, with how
@@ -174,22 +173,12 @@ export type SteeringSource = (typeof SteeringSource)[keyof typeof SteeringSource
 
 /** How a run is run (`mode` on its report, its journal and its ledger records): never rename a value. */
 export const RunMode = {
-  /** The classic pipeline: planned parts, run by rule. */
+  /** The wire value the app and older runs name a Loop run by (`mode` on the run start); the one Loop is the lead's. */
   Autopilot: "autopilot",
   /** One agent's decisions: the director and its workers. */
   Director: "director",
 } as const;
 export type RunMode = (typeof RunMode)[keyof typeof RunMode];
-
-/** What a run's bar is (`reference.kind`): stills of a real game, or a described feeling. Never rename a value. */
-export const ReferenceKind = {
-  Reference: "reference",
-  Direction: "direction",
-} as const;
-export type ReferenceKind = (typeof ReferenceKind)[keyof typeof ReferenceKind];
-
-/** Stills that make the bar a picture (`ReferenceKind.Reference`) rather than a described direction. */
-export const REFERENCE_MIN_STILLS = 2;
 
 /**
  * How a run's close describes it (`report.executionStatus` on `run_finished`). The app reads it

@@ -39,7 +39,7 @@ const SYSTEM_PROMPT =
 export const SECOND_OPINION_WORDS = {
   description:
     "Ask a second opinion: a model that did none of the work looks at the pictures you name and answers your question. It decides nothing; you read its answer and decide.",
-  question: "Your question, e.g. 'Is the score readable over the background?'.",
+  question: "Your question, e.g. 'Does the menu react to a click?'.",
   pictures: "Comma-separated PNG or JPEG files in the project's folder (screenshots you took).",
   noQuestion: "judge needs a question.",
   noPictures: "judge needs at least one picture: name PNG or JPEG files in the project's folder.",

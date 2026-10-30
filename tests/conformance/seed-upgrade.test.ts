@@ -1461,7 +1461,7 @@ describe("seed upgrade across one Loop for every project", () => {
         host: ctx,
         cancels: new Set<string>(),
         stoppedMessages: new Set<string>(),
-        moodBoards: new Map(),
+        attachedPictures: new Map(),
         activeRuns: new Map(),
         startingRuns: new Map(),
         orphanRuns: new Map(),

@@ -601,7 +601,7 @@ export function buildContractorBrief({
       .join("\n");
 
   // The rules a build follows depend on whose game this is — every run brief already carries
-  // the shape (autopilot.ts, director.ts, facet-loop.ts); a chat build used to carry none.
+  // the shape (director/briefs.ts); a chat build used to carry none.
   // A folder with no kind yet hears of the kinds on offer on every message; the card only when bridged.
   const choice = { offered: kinds, asked: engineChoice };
   const rules = [

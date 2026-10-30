@@ -9,11 +9,7 @@
  * Only the health check speaks for a build now: no judge decides a landing.
  */
 export const LandingHow = {
-  JudgePick: "judge-pick",
-  JudgeAnsweredYes: "judge-answered-yes",
-  JudgeAnsweredNo: "judge-answered-no",
   FreshHealthPass: "fresh-health-pass",
-  JudgeSawLoad: "judge-saw-load",
   NoFreshLook: "no-fresh-look",
   /** Nothing was made live, so there is nothing to claim. */
   NotLanded: "not-landed",

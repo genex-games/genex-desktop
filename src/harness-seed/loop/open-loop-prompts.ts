@@ -17,9 +17,6 @@ export function openBuildWords(hours: number | null | undefined): string {
   return `the Loop: you lead it in this folder, with optional workers in copies of it, and finish it when the goal is reached (${openBudgetWords(hours)})`;
 }
 
-/** A hurry changes how long an open Loop runs, never whether a new project is one. */
-export const OPEN_QUICK_IS_A_BUILD = "also when they want it fast: a quick build is still a build";
-
 /** The stills a commission carries, as an open Loop's chat is told: its lead reads them. */
 export function openStillsWords(frames: number): string {
   return `The user attached ${frames} still(s); the build's lead receives them automatically.`;

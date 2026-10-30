@@ -284,7 +284,7 @@ export async function reopenAfterReply(
     // The reopened run hears from its ask on — the one recorded now, or the one a turn replayed after
     // a restart finds recorded since the close — and nothing before it, an ask a Stop left behind included.
     const after = await askTheBuild(host, threadId, { events, closeAt }, loopRun, { text, at });
-    studio.moodBoards.delete(threadId);
+    studio.attachedPictures.delete(threadId);
     await tell(host, threadId, {
       type: EventKind.Messages,
       messages: [{ role: "assistant", content: reopenPromise(run.budgets, now()) }],

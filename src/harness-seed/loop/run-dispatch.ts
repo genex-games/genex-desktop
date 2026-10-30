@@ -64,7 +64,7 @@ const MESSAGE = {
   alreadyBuilding: (project: string) =>
     `A build is already running for **${project}** — nothing new was started. Ask here about the one that is running, or stop it first.`,
   engineExport: (name: string | undefined) =>
-    `${name} was exported from a game engine, so the studio cannot edit or judge it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
+    `${name} was exported from a game engine, so the studio cannot edit it — it can only open it, play it and take screenshots. Open the folder with the project's own scenes and scripts, and start the build there.`,
   stoppedBeforeStart: "Stopped before the build started — nothing was built.",
   olderBuild:
     "This build was paused by an earlier version of Genex and can't go on in this one, so it is closed as it stood: what it built is kept. Ask here for what you want next.",
@@ -760,7 +760,7 @@ export async function resumeRun(studio: Studio, threadId: string, runId: string)
  * Two refusals, and both are about the folder rather than the model. An engine export is already
  * compiled — there is no source to edit and no contract to read, so the run would photograph a page
  * nobody can change (Godot/Unity exports); the studio still opens it, plays it and screenshots it.
- * And a web page that cannot load has nothing for six builders to work on: Genex's own `web.ready`
+ * And a web page that cannot load has nothing for a Loop to work on: Genex's own `web.ready`
  * gate (builtin-hooks.ts) says what is missing now, from `game.validate`'s typed `missing`, and only
  * where a web game is served. `problems` are sentences and decide nothing; a caller that hands no
  * `missing` (an older copy of the launch) meets no missing-file refusal, and its run's base builder

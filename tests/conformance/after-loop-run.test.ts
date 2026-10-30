@@ -49,7 +49,7 @@ function studioWith(host: { call: (method: string, params: any) => Promise<any> 
   return {
     host: { ...host, notify: () => {}, workspace: "/nonexistent" },
     cancels: new Set(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),

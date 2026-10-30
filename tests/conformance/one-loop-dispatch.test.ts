@@ -133,7 +133,7 @@ describe("which Loop a run gets", () => {
   it("on an engine without sessions it says it needs one, before any promise in the chat", TEST_TIMEOUT, async () => {
     const host = await hostOn(Project.GodotGame, { facts: GODOT, run: { engine: "ollama" } });
     host.rec.handle("engine.describe", () => [DIRECT]);
-    const studio = { host: host.rec.ctx, moodBoards: new Map(), activeRuns: new Map(), startingRuns: new Map() };
+    const studio = { host: host.rec.ctx, attachedPictures: new Map(), activeRuns: new Map(), startingRuns: new Map() };
     await assert.rejects(
       launchFromIntake(studio as never, host.rec.ctx as never, { threadId: "t1", project: host.game.name } as never, {
         goal: "A level the player walks through.",
@@ -374,7 +374,7 @@ function studioOf(host: LoopHost) {
     host: ctx,
     cancels: new Set<string>(),
     stoppedMessages: new Set<string>(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),
@@ -1186,7 +1186,12 @@ describe("a run's route when its journal, its folder or the game list can't be r
       ];
       const host = await hostOn(Project.GodotGame, { facts, run: { engine: "ollama" } });
       host.rec.handle("engine.describe", () => [DIRECT]);
-      const studio = { host: host.rec.ctx, moodBoards: new Map(), activeRuns: new Map(), startingRuns: new Map() };
+      const studio = {
+        host: host.rec.ctx,
+        attachedPictures: new Map(),
+        activeRuns: new Map(),
+        startingRuns: new Map(),
+      };
       await assert.rejects(
         launchFromIntake(studio as never, host.rec.ctx as never, { threadId: "t1", project: host.game.name } as never, {
           goal: "A level the player walks through.",

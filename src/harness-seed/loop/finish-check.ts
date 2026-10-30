@@ -28,6 +28,7 @@ import type { HarnessCtx, Run } from "../types/harness.d.ts";
 import type { DelegateImage, EngineDescriptor, FinishRoundAnswer, HookImage } from "../types/host-api.d.ts";
 import type { HealthCheck } from "./health-check.ts";
 import { type CaptureLine, FINISH_ANSWER, reviewerBrief } from "./finish-check-prompts.ts";
+import { secondOpinionNo } from "./director/second-opinion-prompts.ts";
 import {
   FINISH_REASON_CHARS,
   FinishCheckStep,
@@ -145,8 +146,8 @@ export interface StillToFix {
 
 /**
  * The result card's list for a close without a yes or a pause, from the reviewer's last no
- * (`notDoneOf`). With no no that names anything, only a time-out has a card (its hours ran out
- * before a final look, Keep building on); any other end says its own words.
+ * (`notDoneOf`). With no no that names anything, only a time-out has a card (its hours ran out,
+ * Keep building on); any other end says its own words.
  */
 export function stillToFixOf(
   tally: Pick<FinishTally, "reasons" | "notDone" | "done"> | null | undefined,
@@ -726,5 +727,5 @@ export function finishAnswer(outcome: FinishOutcome): string {
   if ("noTime" in outcome) return outcome.turnEnds ? MESSAGE.noTimeInTurn : MESSAGE.noTime;
   if (outcome.step === FinishCheckStep.Accepted) return FINISH_ANSWER.accepted(outcome.reasons);
   if (outcome.step === FinishCheckStep.Unanswered) return FINISH_ANSWER.unanswered(outcome.why);
-  return FINISH_ANSWER.goesOn(outcome.rejections, outcome.reasons, outcome.notDone);
+  return secondOpinionNo(outcome.reasons, outcome.notDone);
 }

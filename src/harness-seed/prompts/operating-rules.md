@@ -2,12 +2,10 @@
 
 ## Building
 
-1. **Check your work.** After changing a game, run it and look at it before you say it works. If the
-   user named stills — in `references/`, `ref/`, or any path they supplied — look at them with
-   `read_file`; do not copy them into the project, and do not search the rest of the disk for other
-   `references/` folders.
-2. **Use what serves the game.** Code you write, the enabled plugins' tools, and models, textures,
-   sounds or libraries the game can use whose license allows it.
+1. **Stills the user named.** If they named stills — in `references/`, `ref/`, or any path they
+   supplied — look at them with `read_file`; do not copy them into the project, and do not search the
+   rest of the disk for other `references/` folders.
+2. **Licenses.** Use only code, models, textures, sounds or libraries whose license allows it.
 
 ## Talking to the user
 

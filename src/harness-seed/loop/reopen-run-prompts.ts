@@ -20,7 +20,7 @@ export const REOPEN_RUN = "reopen_run";
 export const reopenRunTool: StudioToolSpec = {
   name: REOPEN_RUN,
   description:
-    "Reopen this chat's finished build as the same build — its run, plan, workers and Builds graph — until what the user asks is checked, within the working time Loop gives it; you lead it again. Use when the user asks for more work on the game than one contained change while Loop is on; never for a contained change you can make yourself, never for a question, never to start over. Supply their request as text. The build goes on when your reply ends: call it once, last, and edit nothing in that reply.",
+    "Reopen this chat's finished build as the same build — its run, workers and Builds graph — until what the user asks is checked, within the working time Loop gives it; you lead it again. Use when the user asks for more work on the game than one contained change while Loop is on; never for a contained change you can make yourself, never for a question, never to start over. Supply their request as text. The build goes on when your reply ends: call it once, last, and edit nothing in that reply.",
   parameters: {
     type: "object",
     properties: {
@@ -91,7 +91,7 @@ export function reopenRules(engine: string | undefined, grant: ReopenGrant): str
       ? `- The user attached ${grant.frameCount} still(s) to this message: look at them, and say in your request what they show.`
       : "";
   return [
-    `- Loop is on: you may continue this build — the same run goes on, its plan, its workers, its Builds graph, from where it finished, and you lead it again (${budgetWords(grant.hours)}). It is allowed, not required. Decide from the latest message:`,
+    `- Loop is on: you may continue this build — the same run goes on, its workers, its Builds graph, from where it finished, and you lead it again (${budgetWords(grant.hours)}). It is allowed, not required. Decide from the latest message:`,
     "- A question, research or a plan is not a request for work: answer it here yourself, then offer to continue the build with it.",
     "- A contained change — a fix, a tweak, one feature: make it yourself here in the game folder and say what changed. The build stays finished.",
     `- More work than one contained change ("more", "keep going"): call ${reopen} once, last, with their request in their words as text, and edit nothing in that reply. The build goes on when your reply ends.`,
@@ -113,7 +113,7 @@ export function coordinatorReopenRules(hours: number | null, frameCount = 0): st
       ? `The user attached ${frameCount} still(s) to this message: look at them, and say in continue_build's text what they show — the build goes on from your words, not the pictures.`
       : "";
   return [
-    `Loop is on for this message, and this build has finished: you may continue it. continue_build reopens it — its run, plan, workers and Builds graph — from where it finished and with the models it was built with, once your reply ends, until what the user asks is checked (${budgetWords(hours)}). That is the one clock you may set going again: the Loop's working time on this same build, never another run.`,
+    `Loop is on for this message, and this build has finished: you may continue it. continue_build reopens it — its run, workers and Builds graph — from where it finished and with the models it was built with, once your reply ends, until what the user asks is checked (${budgetWords(hours)}). That is the one clock you may set going again: the Loop's working time on this same build, never another run.`,
     'Decide from the latest message. A contained change — a fix, a tweak, one feature, anything they want quickly — is not a build: call continue_build with their request in their words and build: false, and one builder makes it in this chat while the build stays finished. More work than one contained change — several systems, new features, "more", "keep going": call continue_build once with their request in their words, and say the build goes on. A question, research or a plan is not work: answer it, and continue nothing.',
     stills,
   ].filter(Boolean);

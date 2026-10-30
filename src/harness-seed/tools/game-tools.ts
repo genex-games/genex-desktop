@@ -9,7 +9,7 @@ import { clampRunHours, hoursNamed, MAX_RUN_HOURS } from "../loop/config.ts";
 import { HostMethod } from "../loop/host-methods.ts";
 import { EngineId } from "../loop/model-roles.ts";
 import { StopReason } from "../loop/outage.ts";
-import { REFERENCE_MIN_STILLS, ReferenceKind, RunMode } from "../loop/run-events.ts";
+import { RunMode } from "../loop/run-events.ts";
 import { MINUTE_MS } from "../loop/time.ts";
 import { TurnStop } from "../loop/turn-record.ts";
 import { isRecord } from "../loop/json.ts";
@@ -377,7 +377,6 @@ export const tools: HarnessTool[] = [
         };
       }
       const frames = attachedFrames(loop.frames);
-      const kind = referenceKind(frames);
       // This slug only ever names a chat that has no folder yet: the launch stamps the chat's
       // own folder over it (turn-loop) and a bound thread wins outright (main.ts). It used to
       // outrank the binding, and the run then built in a second, empty folder while the user
@@ -391,7 +390,6 @@ export const tools: HarnessTool[] = [
         reference: {
           name: String(args.direction ?? "").trim() || String(args.goal).trim(),
           shots: [],
-          kind,
           ...(frames.length ? { frames } : {}),
         },
         hours,
@@ -432,7 +430,6 @@ export const tools: HarnessTool[] = [
         };
       }
       const frames = attachedFrames(autopilot.frames);
-      const kind = referenceKind(frames);
       // This slug only ever names a chat that has no folder yet: the launch stamps the chat's
       // own folder over it (turn-loop) and a bound thread wins outright (main.ts). It used to
       // outrank the binding, and the run then built in a second, empty folder while the user
@@ -451,7 +448,6 @@ export const tools: HarnessTool[] = [
         reference: {
           name: String(args.direction ?? "").trim() || String(args.goal).trim(),
           shots: [],
-          kind,
           ...(frames.length ? { frames } : {}),
         },
         hours,
@@ -488,11 +484,6 @@ async function untilDoneWords(ctx: ToolCtx, project: string): Promise<string> {
 /** The reference stills the composer attached, without empty slots. */
 function attachedFrames(frames: AnyRecord[] | null | undefined): AnyRecord[] {
   return (frames ?? []).filter((frame: AnyRecord | null) => frame?.data);
-}
-
-/** Two or more stills are a picture reference; fewer, a described direction. */
-function referenceKind(frames: readonly AnyRecord[]): ReferenceKind {
-  return frames.length >= REFERENCE_MIN_STILLS ? ReferenceKind.Reference : ReferenceKind.Direction;
 }
 
 /**

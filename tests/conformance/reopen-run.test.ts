@@ -128,7 +128,7 @@ function studioWith({ log = finishedLog(), journal = finishedJournal() as Json |
   const studio = {
     host,
     cancels: new Set<string>(),
-    moodBoards: new Map<string, unknown[]>([[THREAD, [{ data: "still" }]]]),
+    attachedPictures: new Map<string, unknown[]>([[THREAD, [{ data: "still" }]]]),
     activeRuns: new Map<string, Json>(),
     startingRuns: new Map<string, Json>(),
     orphanRuns: new Map<string, string>(),
@@ -346,7 +346,6 @@ describe("a finished build the run's coordinator answers for", () => {
         run: launched,
         text: "add enemies",
         journal: null,
-        savedPlan: null,
         history: "",
         reopen,
       });
@@ -419,7 +418,7 @@ describe("reopening the finished build once the reply has ended", () => {
       assert.match(String(told[0]?.words), /^The build was not reopened: /, label);
       assert.match(String(told[0]?.words), why, label);
       assert.equal(s.log.length, before + 1, `${label}: only the word was recorded`);
-      assert.equal(s.studio.moodBoards.has(THREAD), true, `${label}: the mood board is kept`);
+      assert.equal(s.studio.attachedPictures.has(THREAD), true, `${label}: the mood board is kept`);
     }
   });
 
@@ -598,7 +597,7 @@ describe("the chat's message, from the queue to the reopened run (chat-dispatch.
     const studio: Json = {
       host,
       cancels: new Set<string>(),
-      moodBoards: new Map(),
+      attachedPictures: new Map(),
       activeRuns: new Map(),
       startingRuns: new Map(),
       orphanRuns: new Map(),

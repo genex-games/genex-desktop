@@ -1,8 +1,8 @@
 /**
- * Self-modification — hard constraint #1 (full recursion), PLAN.md §5.3.
+ * Self-modification: the harness reads and changes its own files.
  *
- * These tools let the studio read and change its own loop, tools, skills and prompts while it runs. That is the root of the experiment, and it is only survivable because of what the
- * substrate guarantees underneath: every edit is preceded by a snapshot, a restart is the only
+ * These tools let the studio read and change its own loop, tools, skills and prompts while it runs.
+ * That is only survivable because of what the substrate guarantees underneath: every edit is preceded by a snapshot, a restart is the only
  * way to load new code, and a version that cannot boot is rewound by the watchdog without a human.
  *
  * The one thing they cannot touch is the substrate itself — it lives in the app bundle, outside
@@ -194,7 +194,7 @@ export const tools: HarnessTool[] = [
       properties: {
         slug: str("file name without .md"),
         contents: str("full markdown, starting with --- name: … description: … ---"),
-        reason: str("what you learned that made you write this"),
+        reason: str("why you are writing this"),
         ...PLAIN_WORDS_PARAMS,
       },
       required: ["slug", "contents", "reason", "title", "summary"],
@@ -238,8 +238,6 @@ export const tools: HarnessTool[] = [
         RunEvent.ToolInstalled,
         RunEvent.SkillEdited,
         RunEvent.RebuildAndRestartStudio,
-        RunEvent.SkilloptAccepted,
-        RunEvent.SkilloptRejected,
       ]);
       const rows = events
         .filter((e) => e.data.type === EventKind.Custom && interesting.has(e.data.event_type))

@@ -168,11 +168,11 @@ export const tools: HarnessTool[] = [
 
   {
     name: "gpu_errors",
-    description: "WebGL errors from the GPU process — the page console never sees these.",
+    description: "Errors from the GPU process — the page console never sees these.",
     parameters: { type: "object", properties: {} },
     async execute(_args, ctx) {
       const errors = await ctx.call(HostMethod.PreviewGpuErrors, {});
-      if (!errors?.length) return "(no WebGL errors)";
+      if (!errors?.length) return "(no GPU errors)";
       return errors.map((entry) => `- ${entry}`).join("\n");
     },
   },

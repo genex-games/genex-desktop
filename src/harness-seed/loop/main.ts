@@ -24,7 +24,7 @@ import { runSelftest } from "./selftest.ts";
 import { MessageQueue } from "./message-queue.ts";
 import * as queueParts from "./message-queue.ts";
 import { HostMethod } from "./host-methods.ts";
-import { handleUserMessage, rewindMoodBoard } from "./chat-dispatch.ts";
+import { handleUserMessage, rewindAttachedPictures } from "./chat-dispatch.ts";
 import { handleRunStart, resumeRun } from "./run-dispatch.ts";
 import { handleBootNotice } from "./boot-notice.ts";
 import { buildHolds, chatWaitsFor, leadDoor, stopRun, stopRunsOf } from "./live-chat.ts";
@@ -78,7 +78,7 @@ export async function createStudio(host: Host) {
     host,
     cancels: new Set(),
     stoppedMessages: new Set(),
-    moodBoards: new Map(),
+    attachedPictures: new Map(),
     activeRuns: new Map(),
     startingRuns: new Map(),
     orphanRuns: new Map(),
@@ -90,8 +90,7 @@ export async function createStudio(host: Host) {
     (action, steer) => handleUserMessage(studio, action, steer),
     // Follow-ups wait for the current build to close — or go to its run's lead, when the lead
     // takes the chat (live-chat.ts). Stop closes it early and hands its saved journal to the next
-    // message, so new instructions cannot race cancelled builders; the self-improvement pass after
-    // a run never holds the chat. A message sent during Compact now waits for it: the session it
+    // message, so new instructions cannot race cancelled builders. A message sent during Compact now waits for it: the session it
     // would resume is the one the compaction is ending.
     async (threadId, next) => {
       await compactions.get(threadId);
@@ -169,7 +168,7 @@ async function dispatch({ studio, messages, compactions, busyThreads }: Loop, ac
     case "queue_resume":
       return messages.resume(action.threadId);
     case "rewind":
-      return rewindMoodBoard(studio.moodBoards, action);
+      return rewindAttachedPictures(studio.attachedPictures, action);
     case "run_start":
       return handleRunStart(studio, action);
     case "autopilot_resume":
@@ -318,8 +317,8 @@ async function compactOnRequest(studio: Studio, action: Extract<DispatchAction, 
 
 /**
  * The status lines. Status is per-thread: chats work in parallel and each shows only its own
- * line — a run in one game must never paint "self-improving" over every chat. A thread shows its
- * run's line when it has one, else its chat's.
+ * line — a run in one game must never paint its status over every chat. A thread shows its run's
+ * line when it has one, else its chat's.
  */
 function createStatusBoard(host: Host) {
   /** threadId → { text, since }. */

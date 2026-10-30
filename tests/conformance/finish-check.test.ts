@@ -313,8 +313,9 @@ describe("the finish check", () => {
     );
     assert.deepEqual(notDoneOf(tally), NO_REASONS.slice(1), "the report's not done is what isn't done alone");
     const answer = finishAnswer(no);
-    assert.match(answer, /\(1 in a row\)/);
-    assert.match(answer, /goes on/, "a no stops nothing");
+    assert.match(answer, /did not accept/);
+    assert.doesNotMatch(answer, /in a row/, "no row of no's is counted against the lead");
+    assert.match(answer, /decides nothing/, "a no stops nothing");
     assert.ok(answer.includes(NO_REASONS[0] as string));
     assert.ok(answer.includes(`Not done: ${NO_REASONS[1]}`), "the lead hears what isn't done as such");
     const last = checks().at(-1);

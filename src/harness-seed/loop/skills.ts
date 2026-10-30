@@ -1,5 +1,5 @@
 /**
- * Skills — PLAN.md §5.4, §8.2.
+ * Skills.
  *
  * A skill is a markdown file with YAML-ish frontmatter (`name`, `description`). The index (name +
  * description) is injected into every prompt; bodies are fetched on demand by the `read_skill`
@@ -29,9 +29,8 @@ export async function loadSkills(workspace: string): Promise<Skill[]> {
   const skills: Skill[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    // `<slug>.best.md` is SkillOpt's archive copy of the last accepted version — history, not a
-    // second live skill. Loading it doubled every optimised skill in the prompt (and would have
-    // made the next pass optimise the archive as its own skill).
+    // `<slug>.best.md` is an archive copy an earlier version kept of a skill — history, not a
+    // second live skill: loading it would double the skill in the prompt.
     if (entry.name.endsWith(".best.md")) continue;
     const file = path.join(dir, entry.name);
     const text = await readFile(file, "utf8");

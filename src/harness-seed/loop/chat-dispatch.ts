@@ -76,9 +76,8 @@ const INTERRUPTED_PHASE = "interrupted";
 /** What the chat is told. */
 const MESSAGE = {
   studioThreadBuilds:
-    "Builds happen in a game's chat — this is the Studio's own chat, which never builds. Press Start a game in the sidebar, set the hours there, and describe a feeling.",
-  noGoal:
-    "the interview produced no usable goal — the intake tool call must carry a real `goal`; ask again instead of launching",
+    "Builds happen in a game's chat — this is the Studio's own chat, which never builds. Press Start a game in the sidebar, set the hours there, and describe the game.",
+  noGoal: "no usable goal — call the launch tool again with a real `goal` instead of launching",
   alreadyBuilding: (project: string) =>
     `a build is already running for ${project} — wait for it to finish, or stop it, before starting another`,
   couldNotLaunch: (failure: string) => `the run could not launch: ${failure}`,
@@ -161,7 +160,7 @@ export async function handleUserMessage(studio: Studio, action: QueueAction, ste
   const existing = await routeMessage(studio, action);
   const loopRuns = await loopRunsFor(studio.host, action, existing);
   const { after } = loopRuns;
-  carryMoodBoard(studio.moodBoards, action);
+  carryAttachedPictures(studio.attachedPictures, action);
   const ctx = studio.scoped(action.threadId, StatusLane.Chat);
   if (steering) await expectSession(studio.host, action, existing, steering);
   if (asksStudioThreadToBuild(action)) return answerStudioThreadBuild(studio.host, ctx, action);
@@ -273,7 +272,7 @@ function ownsMessage(active: ActiveRun, action: QueueAction): boolean {
 
 /**
  * The run a message is for: the one under way on its thread or game, else the thread's last one.
- * A run that has closed is the log's (finished or paused) even while its learning pass runs. Whether
+ * A run that has closed is the log's (finished or paused). Whether
  * the message keeps its commission is decided once the run it answers after is known
  * (`keepsCommission`). A Loop message after an Unreal game's finished run is for no run: it may
  * start the next one (`startsNextOpenLoop`).
@@ -363,32 +362,32 @@ function existingRun(action: QueueAction, active: ActiveRun | undefined, previou
 }
 
 /**
- * Before a run exists, "keep going" can be the answer to its intake interview. Preserve the
- * explicitly selected mode and launch tool: the mood board a message brings is kept for the
- * thread, and a message without one gets the thread's.
+ * Before a run exists, "keep going" can answer the launch tool's question. Preserve the
+ * explicitly selected mode and launch tool: the pictures a message brings are kept for the
+ * thread, and a message without any gets the thread's.
  */
-function carryMoodBoard(moodBoards: Studio["moodBoards"], action: QueueAction): void {
+function carryAttachedPictures(attachedPictures: Studio["attachedPictures"], action: QueueAction): void {
   if (!action.autopilot) return;
   if (action.autopilot.frames?.length) {
-    moodBoards.set(action.threadId, action.autopilot.frames);
+    attachedPictures.set(action.threadId, action.autopilot.frames);
     return;
   }
-  const kept = moodBoards.get(action.threadId);
+  const kept = attachedPictures.get(action.threadId);
   if (kept?.length) action.autopilot.frames = kept;
 }
 
 /**
- * The host rewound this chat (its log reads without the withdrawn turns). A Loop interview's
- * mood board rides in memory between messages: it becomes the one the remaining messages gave,
- * when the withdrawn ones had changed it. Absent `frames` leaves the board untouched.
+ * The host rewound this chat (its log reads without the withdrawn turns). The pictures a launch
+ * will carry ride in memory between messages: they become the ones the remaining messages gave,
+ * when the withdrawn ones had changed them. Absent `frames` leaves them untouched.
  */
-export function rewindMoodBoard(
-  moodBoards: Studio["moodBoards"],
+export function rewindAttachedPictures(
+  attachedPictures: Studio["attachedPictures"],
   action: { threadId: string; frames?: unknown[] | null },
 ): void {
   if (!("frames" in action)) return;
-  if (action.frames?.length) moodBoards.set(action.threadId, action.frames);
-  else moodBoards.delete(action.threadId);
+  if (action.frames?.length) attachedPictures.set(action.threadId, action.frames);
+  else attachedPictures.delete(action.threadId);
 }
 
 function asksStudioThreadToBuild(action: QueueAction): boolean {
@@ -825,7 +824,7 @@ function reopenRequest(request: string, steer: SteerHandle | undefined): string 
   );
 }
 
-/** The follow-up the coordinator asked for on this message, with the plan the work was saved under. */
+/** The follow-up the coordinator asked for on this message, with the plan the person reviewed, when there is one. */
 async function followupFor(
   host: Host,
   action: QueueAction,
@@ -933,7 +932,7 @@ export async function launchFromIntake(
   // A promise the run cannot keep is worse than no promise: a second Loop for a game
   // that already owns a run is refused below, and the only record of that refusal is an event
   // no chat surface renders. Ask the same question here, before anything is promised — once a
-  // run that has closed there is past its learning pass, which a new run waits out.
+  // run that has closed there has settled, which a new run waits out.
   const busy = await runUnderWay(studio, action.threadId, project);
   if (busy) throw new Error(MESSAGE.alreadyBuilding(busy.run.project));
   // Stop while that pass was waited out was for this run too.
@@ -948,9 +947,9 @@ export async function launchFromIntake(
   const run = intakeRun(spec, action, project, store);
   const launched = openLoop ? openLaunchPromise(run.budgets, Date.now()) : launchPromise(run.budgets, Date.now());
   const promise = [launched, storeLaunchWords(store)].filter(Boolean).join("\n\n");
-  // The board did its job — the run spec carries the frames now; the next interview on this
+  // The pictures did their job — the run spec carries the frames now; the next launch on this
   // thread starts with a clean slate.
-  studio.moodBoards.delete(action.threadId);
+  studio.attachedPictures.delete(action.threadId);
   await host
     .call(HostMethod.EventsAppend, {
       threadId: action.threadId,

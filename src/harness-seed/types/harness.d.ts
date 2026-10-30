@@ -101,13 +101,11 @@ export interface HarnessCtx {
 
 /**
  * A run as the loop carries it: the spec the host dispatched (`run_start`), and what the loop
- * stamps on it at launch — its roles and the state its windows open on.
+ * stamps on it at launch — its roles.
  */
 export interface Run extends RunSpec {
   /** The knobs the spec names, plus the ones only tests and operations set (`outageDelays`, …). */
   budgets: RunSpec["budgets"] & AnyRecord;
-  /** The state the run's windows open on when the game does not boot into it. */
-  setup?: AnyRecord | null;
   /** The folder brought its own game (not the studio's template). */
   ownShape?: boolean;
   preferences?: ModelPreferences;

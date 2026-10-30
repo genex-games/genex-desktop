@@ -18,10 +18,6 @@ import { HostMethod } from "./host-methods.ts";
 import { isRecord } from "./json.ts";
 import { appendRun } from "./run-events.ts";
 
-/** How many of the preview pass's camera shots a capture keeps as its stills. */
-export const PREVIEW_STILLS = 3;
-/** How many motion frames a capture keeps as its play recording. */
-export const RECORDING_FRAMES = 6;
 /** The plugins' observers together, in a capture that says why none of them could be asked. */
 export const PLUGIN_OBSERVERS = "plugins";
 /** The largest picture a reviewer is handed, in bytes: a provider refuses a larger one. */
@@ -331,9 +327,4 @@ export function pickedImages(
     else count.frames += 1;
   }
   return { images, attached };
-}
-
-/** The pictures of the captures for a reviewer (`pickedImages` with no capture first). */
-export function captureImages(captures: readonly Capture[], max: number): DelegateImage[] {
-  return pickedImages(captures, max).images;
 }

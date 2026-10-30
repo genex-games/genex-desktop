@@ -30,11 +30,11 @@ export type RunnerKind = (typeof RunnerKind)[keyof typeof RunnerKind];
 export const SERVES_OPEN_LOOP = true;
 
 /**
- * A run this loop is conducting (or reserving), and the promise that settles when it is over —
- * its self-improvement pass included. `closed` settles, and `done` is set, as soon as the run
- * itself is over, before that pass: the chat is free from then on (live-chat.ts). A run-dispatch.ts
+ * A run this loop is conducting (or reserving), and the promise that settles when it is over.
+ * `closed` settles, and `done` is set, as soon as the run itself is over: the chat is free from
+ * then on (live-chat.ts). A run-dispatch.ts
  * kept from before live chat sets neither, and the chat waits for `settled` as it did. `stopped` is
- * the run's own Stop (live-chat.ts `stopRun`), which its pass keeps whatever the chat does next.
+ * the run's own Stop (live-chat.ts `stopRun`), which it keeps whatever the chat does next.
  * `closing` is set just before the run appends its own end (`run_finished`, `autopilot_paused`): a
  * new start here (a Resume of that pause) waits for the close as for a done run, never refused by it.
  * `stops` counts the Stops that reached the run (`stopRun`), so a start waiting for its close sees a
@@ -75,9 +75,9 @@ export interface Studio {
    * front): their turn keeps the Stop instead of clearing it. Absent from an older main.ts.
    */
   stoppedMessages?: Set<string>;
-  // Mood boards outlive their message: the composer clears the chips the moment they are sent,
-  // but the interview spans several messages — the board rides along until a run launches.
-  moodBoards: Map<string, unknown[]>;
+  // Attached pictures outlive their message: the composer clears the chips the moment they are sent,
+  // but a launch can come several messages later — they ride along until a run launches.
+  attachedPictures: Map<string, unknown[]>;
   /** runId → { run, threadId }, kept through the post-run self-improvement so Stop still lands. */
   activeRuns: Map<string, ActiveRun>;
   startingRuns: Map<string, ActiveRun>;

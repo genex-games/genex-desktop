@@ -18,8 +18,7 @@ import * as seedUnrealLive from "../../src/harness-seed/loop/unreal/live-contrac
 import blenderManifest from "../../src/plugins/blender/plugin.json" with { type: "json" };
 import genexManifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { PartRunState, PlayCheckShot } from "../../src/plugins/unreal/editor-queue.ts";
-import { LeadLoopToolName, LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
-import { LeadPluginTool as seedLeadPluginTool } from "../../src/harness-seed/loop/unreal/save-point.ts";
+import { LiveLoopToolName, LoopToolName } from "../../src/plugins/unreal/loop-tools.ts";
 import { PluginCallBlocker as seedPluginCallBlocker } from "../../src/harness-seed/loop/unreal/lead-steps.ts";
 import { PluginCallBlocker } from "../../src/shared/plugins.ts";
 import { HelperState } from "../../src/plugins/unreal/setup.ts";
@@ -766,22 +765,6 @@ describe("a lead's sub-agent tools (bundled plugins ↔ loop/unreal/lead-contrac
   });
 });
 
-describe("the Unreal plugin's harness tools a save asks (plugins/unreal ↔ the seed's and the app's names)", () => {
-  const harness = new Set(
-    (unrealManifest.tools as Array<{ name: string; audience?: string }>)
-      .filter((tool) => tool.audience === "harness")
-      .map((tool) => `${unrealManifest.id}__${tool.name}`),
-  );
-
-  it("names the lead's tools as the plugin does, each a harness tool of its manifest", () => {
-    const named = Object.fromEntries(
-      Object.entries(LeadLoopToolName).map(([key, tool]) => [key, `${unrealManifest.id}__${tool}`]),
-    );
-    assert.deepEqual(seedLeadPluginTool, named);
-    for (const name of Object.values(seedLeadPluginTool)) assert.ok(harness.has(name), name);
-  });
-});
-
 describe("run budgets (shared/run-state.ts ↔ loop/chat-dispatch.ts)", () => {
   it("reads the Loop back as the seed recorded it: ∞ as until satisfied, hours as hours", () => {
     assert.deepEqual(recordedRunLoop(seedChatDispatch.intakeBudgets({ hours: 24, untilSatisfied: true })), {
@@ -837,16 +820,14 @@ describe("Genex's moments (shared/plugin-hooks.ts ↔ loop/hooks.ts)", () => {
 });
 
 describe("a game's observers and a lead's claim (shared/observers.ts ↔ loop/finish-contract.ts)", () => {
-  it("names the finish check's steps, its rejection and reason caps, the capture sources, the events and the lead call's deadline as the app does", async () => {
+  it("names the finish check's steps, its reason caps, the capture sources, the events and the lead call's deadline as the app does", async () => {
     const seed = await import("../../src/harness-seed/loop/finish-contract.ts");
     const app = await import("../../src/shared/observers.ts");
     const check = await import("../../src/shared/finish-check.ts");
     const { BRIDGE_TOOL_DEADLINE_MS } = await import("../../src/substrate/engines/studio-bridge.ts");
     assert.deepEqual({ ...seed.FinishCheckStep }, { ...check.FinishCheckStep });
-    assert.equal(seed.MAX_FINISH_REJECTIONS, check.MAX_FINISH_REJECTIONS);
     assert.equal(seed.MAX_FINISH_REASONS, check.MAX_FINISH_REASONS);
     assert.equal(seed.FINISH_REASON_CHARS, check.FINISH_REASON_CHARS);
-    assert.equal(seed.FINISH_TIME_LEFT_MS, check.FINISH_TIME_LEFT_MS);
     assert.deepEqual({ ...seed.StopWhy }, { ...check.StopWhy });
     assert.equal(seed.FINISH_CHECK_EVENT, CustomEvent.FinishCheck);
     assert.deepEqual({ ...seed.ObserverSource }, { ...app.ObserverSource });
