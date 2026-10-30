@@ -1036,11 +1036,10 @@ export class ClaudeCodeEngine implements Engine {
   }
 
   /**
-   * The studio's own MCP server for the contractor. `checkpoint` lets the contractor decide which
-   * moments are worth seeing — the studio lights Live's Reload and posts the note in chat the
-   * moment it is called (Live itself changes only when the user reloads). (Designed with Simeon: not a file-watcher pushing half-broken states;
-   * the builder chooses when there is something to show.) Capture, live and interview tools join
-   * it when the delegation grants them.
+   * The studio's own MCP server for the contractor. `checkpoint` saves the game and posts its note
+   * in chat when it is called (the studio lights Live's Reload; Live itself changes only when the
+   * user reloads). It is not a file-watcher pushing half-broken states: the builder chooses when to
+   * call it. Capture, live and interview tools join it when the delegation grants them.
    */
   async #studioServer(
     request: DelegateRequest,
@@ -2706,9 +2705,9 @@ interface McpKit {
 /**
  * Loads a tool with the prompt. Claude Code (2.1.304 on) defers MCP tools behind its tool search,
  * offering their names but not their schemas, and a session that cannot see a tool its prompt
- * relies on does not reliably look for it: the checkpoint, capture, a chat's interview tools and
- * the studio's shell load from the first turn. Live and connector tools, a large and varied set,
- * stay deferred.
+ * relies on does not reliably look for it: the checkpoint where the game has checkpoint hooks,
+ * capture, a chat's interview tools and the studio's shell load from the first turn. Live and
+ * connector tools, a large and varied set, stay deferred, and so does a checkpoint with no hooks.
  */
 const LOAD_WITH_PROMPT = { alwaysLoad: true } as const;
 
@@ -2719,8 +2718,9 @@ type ToolAnswer = {
 };
 
 /**
- * `checkpoint`: the contractor says the game just became worth seeing; the chat shows the note, and
- * the studio's own checkpoint, when the delegation has one, answers what it did. A checkpoint that
+ * `checkpoint`: the session saves the game with a note; the chat shows the note, and the studio's
+ * own checkpoint, when the delegation has one (a game with checkpoint hooks), answers what it did
+ * and loads the tool with the prompt; with none the tool waits for tool search. A checkpoint that
  * failed reports as failed, never ending the build.
  */
 function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | "onCheckpoint">) {
@@ -2739,7 +2739,7 @@ function checkpointTool(kit: McpKit, request: Pick<DelegateRequest, "onEvent" | 
         return { content: [{ type: "text", text: CHECKPOINT_TOOL.failed(errorMessage(err)) }], isError: true };
       }
     },
-    LOAD_WITH_PROMPT,
+    request.onCheckpoint ? LOAD_WITH_PROMPT : undefined,
   );
 }
 

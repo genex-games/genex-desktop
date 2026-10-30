@@ -1,13 +1,13 @@
 /**
  * What `codex.ts` tells a Codex session in words, because Codex has no switch that could say it
- * at the boundary: the critic's rules, the folders a builder must not read, and where a
+ * at the boundary: the reviewer's rules, the folders a builder must not read, and where a
  * read-only session may write.
  */
 import { MCP_SERVER_NAME } from "./studio-mcp-shim.ts";
 
 /**
- * The critic's two rules, appended to every judge prompt. The Claude critic has its tools,
- * skills and settings taken away at the boundary; this one cannot, so it is told.
+ * The reviewer's two rules, appended to every reviewer prompt. A Claude reviewer has its tools,
+ * skills and settings taken away at the boundary; a Codex one cannot, so it is told.
  */
 export const JUDGE_RULES = [
   // R4: the yardstick is not the agent's to bend, and a verdict reached by going and

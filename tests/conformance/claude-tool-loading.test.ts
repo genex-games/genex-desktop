@@ -94,14 +94,15 @@ async function firstOffered(request: Record<string, unknown>): Promise<string[]>
 const LIVE_TOOLS = [spec("press_key"), spec("connector__search")];
 
 describe("a Claude session sees the studio tools it is expected to call from its first turn", () => {
-  it("a builder's checkpoint, and its capture where granted, load with the prompt", async () => {
-    const granted = await session({ onCapture: async () => "captured" });
+  it("a builder's capture where granted, and its checkpoint where the game has checkpoint hooks, load with the prompt", async () => {
+    const granted = await session({ onCapture: async () => "captured", onCheckpoint: async () => "saved" });
     for (const tool of ["checkpoint", "capture"]) {
       assert.ok(granted.tools.includes(tool), `${tool} is registered`);
       assert.equal(alwaysLoaded(granted, tool), true, `${tool} is never deferred behind tool search`);
     }
     const plain = await session({});
-    assert.equal(alwaysLoaded(plain, "checkpoint"), true, "checkpoint loads without capture too");
+    assert.ok(plain.tools.includes("checkpoint"), "the checkpoint is still there for a game with no hooks");
+    assert.equal(alwaysLoaded(plain, "checkpoint"), false, "but it waits for tool search");
     assert.equal(plain.tools.includes("capture"), false, "no capture where none was granted");
   });
 

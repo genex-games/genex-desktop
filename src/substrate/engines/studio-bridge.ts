@@ -115,9 +115,8 @@ interface Answer {
 
 /**
  * Where the bridge lives, relative to the folder the contractor runs in. Under `.studio/`,
- * which the workspace scaffolder already gitignores and file-ownership already permits — but in
- * a room of its own: `.studio/BRIEF.md` is the harness's per-iteration contract and the first
- * thing a builder is told to read, so clearing the bridge must never take the brief with it.
+ * which the workspace scaffolder already gitignores — but in a room of its own, so clearing the
+ * bridge never takes anything else under `.studio/` with it.
  */
 export const BRIDGE_DIR = ".studio/bridge";
 
