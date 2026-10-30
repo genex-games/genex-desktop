@@ -27,6 +27,7 @@ import {
 import { DesktopControl } from "./control.ts";
 import { type ControlEndpoint, controlEndpoint, listenControl, removeControlEndpoint } from "./control-endpoint.ts";
 import { listRuns } from "./runs.ts";
+import { type OperationSlot, operationSlot } from "./operation-slot.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import {
   DEV_PROTOCOL_VERSION,
@@ -60,7 +61,7 @@ const RECORD_VERSION = 1;
 const STOP_REPLY_GRACE_MS = 100;
 /** An idle client connection is dropped after this. */
 const CLIENT_IDLE_MS = 35 * SECOND_MS;
-/** An operation answers `timeout` after this; it may still finish. */
+/** An operation answers `timeout` after this and gives back the slot (`operation-slot.ts`); it may still finish. */
 const OPERATION_TIMEOUT_MS = 30 * SECOND_MS;
 /** Let pushed fixture events reach the renderer before the second counter snapshot. */
 const FIXTURE_PUBLISH_SETTLE_MS = SECOND_MS;
@@ -112,7 +113,8 @@ interface Runtime extends RuntimeParts {
   diagnostics: Diagnostics;
   sockets: Set<net.Socket>;
   server: net.Server | null;
-  busy: boolean;
+  /** The one slot an operation on the app runs in. */
+  slot: OperationSlot;
   lastFailure: unknown;
   stopping: boolean;
 }
@@ -154,7 +156,7 @@ async function openRuntime(parts: RuntimeParts): Promise<Runtime> {
     diagnostics: new Diagnostics(root, control),
     sockets: new Set(),
     server: null,
-    busy: false,
+    slot: operationSlot(OPERATION_TIMEOUT_MS),
     lastFailure: null,
     stopping: false,
   };
@@ -522,19 +524,15 @@ async function answer(rt: Runtime, client: net.Socket, line: string): Promise<vo
   const reply = (r: DevResponse) => {
     if (!client.destroyed) client.end(`${JSON.stringify(r)}\n`);
   };
-  let timer: NodeJS.Timeout | undefined;
-  let ownedBusy = false;
+  const timedOut = (): void => {
+    exchange.replied = true;
+    const error = { code: DevErrorCode.Timeout, message: "operation timed out; inspect status before retrying" };
+    reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: false, error });
+  };
   try {
     const op = admit(rt, line, exchange);
-    if (rt.busy) throw new DevError(DevErrorCode.Busy, "an operation is still executing");
-    rt.busy = true;
-    ownedBusy = true;
-    timer = setTimeout(() => {
-      exchange.replied = true;
-      const error = { code: DevErrorCode.Timeout, message: "operation timed out; inspect status before retrying" };
-      reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: false, error });
-    }, OPERATION_TIMEOUT_MS);
-    const value = await perform(rt, op);
+    // Status, runs and stop never wait for the slot; a timed-out operation gives it back (`operation-slot.ts`).
+    const value = await rt.slot.run(op.method, () => perform(rt, op), timedOut);
     if (!exchange.replied)
       reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: true, value: rt.sanitize(value) });
   } catch (e) {
@@ -546,9 +544,6 @@ async function answer(rt: Runtime, client: net.Socket, line: string): Promise<vo
     rt.lastFailure = failure;
     if (!exchange.replied)
       reply({ version: DEV_PROTOCOL_VERSION, requestId: exchange.requestId, ok: false, error: failure });
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (ownedBusy) rt.busy = false;
   }
 }
 

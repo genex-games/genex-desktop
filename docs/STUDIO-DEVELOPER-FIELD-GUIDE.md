@@ -527,7 +527,9 @@ Transport descriptors are private local capabilities under the owned profile; ne
 into task records. Unix sockets live in a short 0700 temporary directory, with owner-only socket
 permissions; on Windows the control is a named pipe with a fresh random name, which other accounts
 can open only read-only. Protocol v1 uses bounded newline-delimited JSON, request IDs and one operation at
-a time. A timeout is not success and does not authorize retrying a mutation blindly.
+a time; `status`, `runs` and `stop` answer while another runs, and an operation that times out frees
+the slot though it may still finish (`main/dev/operation-slot.ts`). A timeout is not success and does
+not authorize retrying a mutation blindly.
 
 ## Embedded terminal acceptance
 
