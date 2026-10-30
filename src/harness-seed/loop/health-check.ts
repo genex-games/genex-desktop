@@ -27,6 +27,8 @@ const MAX_ERRORS = 5;
 /** The console levels that are errors. */
 const ERROR_LEVEL = "error";
 
+type Wait = (ms: number) => Promise<void>;
+
 /** What a health check found: whether the build is healthy, and each thing that is wrong in words. */
 export interface HealthCheck {
   ok: boolean;
@@ -84,23 +86,28 @@ export function blankPicture(stats: unknown): boolean {
   return typeof stats.litFraction === "number" ? stats.litFraction < BLANK_LIT_FRACTION : true;
 }
 
+/** How a check waits: the run's own clock, so a test's clock moves its waits; the wall clock otherwise. */
+export interface HealthOptions {
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /** A leased window, or null when none came after the retries. */
-async function leaseWindow(ctx: HarnessCtx, label: string): Promise<string | null> {
+async function leaseWindow(ctx: HarnessCtx, label: string, wait: Wait): Promise<string | null> {
   for (let attempt = 0; ; attempt++) {
     const lease = await ctx.call(HostMethod.PreviewAcquire, { label }).catch(() => null);
     if (lease?.handle) return lease.handle;
     if (attempt >= WINDOW_RETRIES_MS.length || ctx.cancelled) return null;
-    await sleep(WINDOW_RETRIES_MS[attempt]);
+    await wait(WINDOW_RETRIES_MS[attempt]);
   }
 }
 
 /** The look itself, in a window of its own. */
-async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string): Promise<HealthCheck> {
+async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string, wait: Wait): Promise<HealthCheck> {
   const h = { handle };
   const where = { ...(target.root ? { root: target.root } : {}), ...(target.entry ? { entry: target.entry } : {}) };
   await ctx.call(HostMethod.PreviewLoad, { project: target.project, ...where, ...h });
   await ctx.call(HostMethod.PreviewReady, { ...h, timeoutMs: READY_TIMEOUT_MS }).catch(() => null);
-  await sleep(SETTLE_MS);
+  await wait(SETTLE_MS);
   const status = await ctx.call(HostMethod.PreviewStatus, { ...h }).catch(() => null);
   const problems: string[] = [];
   const loadError = typeof status?.loadError === "string" && status.loadError ? status.loadError : null;
@@ -139,11 +146,15 @@ function unchecked(why: string): HealthCheck {
  * Check the build in `target`: the page loads, no uncaught error, a screenshot that is not blank.
  * The window is Genex's own (never the person's Live), and it is given back whatever happened.
  */
-export async function checkHealth(ctx: HarnessCtx, target: HealthTarget): Promise<HealthCheck> {
-  const handle = await leaseWindow(ctx, target.label);
+export async function checkHealth(
+  ctx: HarnessCtx,
+  target: HealthTarget,
+  { sleep: wait = sleep }: HealthOptions = {},
+): Promise<HealthCheck> {
+  const handle = await leaseWindow(ctx, target.label, wait);
   if (!handle) return unchecked(HEALTH_WORDS.noWindow);
   try {
-    return await lookIn(ctx, target, handle);
+    return await lookIn(ctx, target, handle, wait);
   } catch (err) {
     return unchecked(HEALTH_WORDS.failed(clip(String((err as Error)?.message ?? err), CLIP_DETAIL)));
   } finally {

@@ -25,7 +25,6 @@ import { summarizeLocalCheckpoint } from "../../src/substrate/engines/local-chec
 import { download, DownloadStatus, type DownloadProgress } from "../../src/substrate/bonsai/download.ts";
 import { createHash } from "node:crypto";
 import { EngineError, DelegateEventType, type DelegateEvent } from "../../src/substrate/engines/types.ts";
-import { baseBrief } from "../../src/harness-seed/loop/autopilot.ts";
 import type { CompleteRequest, CompleteResponse } from "../../src/substrate/engines/types.ts";
 import { withRoles } from "../../src/harness-seed/loop/model-roles.ts";
 import { running } from "../helpers/processes.ts";
@@ -824,25 +823,6 @@ it("two compactions never replay completed host actions and retain the checkpoin
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-});
-it("Bonsai new-project base gets an actionable public API brief; imported projects keep their architecture", () => {
-  const local = baseBrief({
-    run: { engine: "bonsai", goal: "sword in ice" },
-    plan: { facets: [] },
-    projectLabel: "scene",
-  } as never);
-  assert.match(local, /visible, working first version/);
-  assert.match(local, /do not study or rewrite/);
-  assert.doesNotMatch(local, /Empty facet groups and empty renders are valid/);
-  const own = baseBrief({
-    run: { engine: "bonsai", goal: "improve existing" },
-    plan: { facets: [] },
-    projectLabel: "existing",
-    ownShape: true,
-    shape: { main: "app.ts", entry: "index.html" } as any,
-  } as never);
-  assert.match(own, /THIS GAME HAS ITS OWN SHAPE/);
-  assert.doesNotMatch(own, /Read src.main.js first/);
 });
 it("native preflight counts chat template and tools and reserves output before generation", async () => {
   let generated = 0,

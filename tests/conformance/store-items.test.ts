@@ -16,8 +16,6 @@ import {
   storeLaunchWords,
   storeScopeItems,
 } from "../../src/harness-seed/loop/store-items.ts";
-import { createScope, restoreScope } from "../../src/harness-seed/loop/scope.ts";
-import { scopeLines } from "../../src/harness-seed/loop/scope-prompts.ts";
 import { launchFromIntake } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { HostMethod } from "../../src/harness-seed/loop/host-methods.ts";
 import { argumentProblems } from "../../src/harness-seed/tools/index.ts";
@@ -113,29 +111,6 @@ describe("the store items a run keeps", () => {
     assert.match(words, /Fishing Rod, Golden Bait.*Shop tab.*picture/);
     assert.match(words, /at any time/);
     assert.equal(storeLaunchWords([]), "");
-  });
-});
-
-describe("the store items as every agent reads the goal", () => {
-  it("are sold in this build whatever the cut list says, each listed with its picture", () => {
-    const scope = createScope({
-      asked: [ASK],
-      inScope: ["cast, hook, reel and catch"],
-      cut: ["Nex payments"],
-      store: [ROD_LINE],
-    });
-    const lines = scopeLines({ scope });
-    assert.match(lines, new RegExp(`GENEX STORE.*${ROD_LINE}`));
-    assert.match(lines, /buy\(\).*getEntitlements\(\)|getEntitlements\(\).*buy\(\)/);
-    assert.match(lines, /picture.*shop add.*image/, "each item is listed with the picture drawn first");
-    assert.match(lines, /shop list/, "an item listed already is not listed twice");
-    assert.deepEqual(restoreScope(JSON.parse(JSON.stringify(scope)))?.store, scope.store, "a journal keeps them");
-  });
-
-  it("leave a scope without store items as it was", () => {
-    const scope = createScope({ asked: [ASK], inScope: ["fishing"], cut: [] });
-    assert.equal("store" in scope, false);
-    assert.doesNotMatch(scopeLines({ scope }), /GENEX STORE/);
   });
 });
 

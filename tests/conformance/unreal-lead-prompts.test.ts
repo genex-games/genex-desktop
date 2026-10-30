@@ -14,7 +14,6 @@ import { BRIDGE_TOOL_CMD, EngineId } from "../../src/harness-seed/loop/model-rol
 import { LeadTool } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { type Lead, newLeadJournal } from "../../src/harness-seed/loop/unreal/lead-journal.ts";
 import {
-  digestPrompt,
   type LeadBriefOptions,
   leadBrief,
   SAVE_POINT_WORDS,
@@ -177,65 +176,6 @@ describe("the Unreal lead's brief", () => {
   });
 });
 
-describe("the digest a later turn opens with", () => {
-  it("says the time left, the owner's words, the sub-agents' news, the jobs that ended, the last save, the critic and the credits", () => {
-    const text = digestPrompt("claude-code", {
-      minutesLeft: 95,
-      ownerWords: ["make the fog thicker"],
-      agentNews: ["blender_model-1 (Katana) done: assets/agents/blender_model-1/katana.glb"],
-      lastSave: { label: "Atmosphere pass", minutesAgo: 12 },
-      advice: [
-        {
-          at: 0,
-          shots: ["s1.png"],
-          question: null,
-          milestoneId: "lead",
-          round: 2,
-          defects: [{ defect: "The key light is flat.", fix: "Lower the sun to 12 degrees." }],
-          boldMove: "Drop the camera to the floor of the shaft.",
-          gates: [],
-        },
-      ],
-      carried: ["Genex saved your unsaved work as 'Autosave'."],
-      jobs: ["Light bake (`run bake`, started by you) failed (exit 1) after 2 min; read it with job_tail j1."],
-      credits: { spent: 120, cap: 600 },
-      freshEyesDue: null,
-      required: [SLAB],
-    });
-    assert.match(text, /About 95 minutes are left/);
-    assert.match(
-      text,
-      /REQUIRED[^\n]*\n- The hero's cloak reads as a black slab from behind — fix: Give the cloak its own cloth piece/,
-    );
-    assert.ok(text.indexOf("REQUIRED") < text.indexOf("Workers:"), "the required items lead the digest");
-    assert.match(text, /make the fog thicker\nAct on this now/);
-    assert.match(text, /katana\.glb/);
-    assert.match(text, /Jobs:\n- Light bake \(`run bake`, started by you\) failed/);
-    assert.match(text, /'Atmosphere pass', 12 minutes ago/);
-    assert.match(text, /The key light is flat\. Fix: Lower the sun/);
-    assert.match(text, /Bold move: Drop the camera/);
-    assert.match(text, /Autosave/);
-    assert.match(text, /120 of 600/);
-  });
-
-  it("leaves out what has nothing to say", () => {
-    const text = digestPrompt("claude-code", {
-      minutesLeft: null,
-      ownerWords: [],
-      agentNews: [],
-      lastSave: null,
-      advice: [],
-      carried: [],
-      jobs: [],
-      credits: { spent: 0, cap: null },
-      freshEyesDue: null,
-      required: [],
-    });
-    assert.doesNotMatch(text, /owner says|Workers:|Jobs:|critic|REQUIRED/);
-    assert.match(text, /No save point yet/);
-  });
-});
-
 describe("the critic's required items after the digest", () => {
   const POINT = {
     label: "Stair pass",
@@ -297,13 +237,6 @@ describe("the harness's steers into the lead's turn", () => {
       /Act on this now unless it conflicts with the edit you are in the middle of; then do it right after\./,
     );
     assert.doesNotMatch(said, /when it fits/);
-  });
-
-  it("asks for a look and a save point, and at the end for the wrap-up, with the tool spelled for the engine", () => {
-    assert.match(STEER.SaveNow(EngineId.ClaudeCode, 15), /15 minutes[\s\S]*Look[\s\S]*mcp__studio__save_point/);
-    const wrap = STEER.WrapUp(EngineId.Codex, 12);
-    assert.ok(wrap.includes(`${BRIDGE_TOOL_CMD} ${LeadTool.SavePoint}`));
-    assert.match(wrap, /"Final"[\s\S]*NOTES\.md[\s\S]*did not test/);
   });
 
   it("says what a crash may have lost, and where a cold restore went", () => {

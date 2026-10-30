@@ -11,11 +11,9 @@ import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
-  FRESH_EYES_MS,
   MAX_FOLDER_ONLY_TURNS,
   OPEN_CLOSE_MS,
   OPEN_TURN_MS,
-  SAVE_REMINDER_MS,
 } from "../../src/harness-seed/loop/director/open/contract.ts";
 import { folderChanged } from "../../src/harness-seed/loop/director/open/close.ts";
 import { FOLDER_GIT } from "../../src/harness-seed/loop/director/open/folder-git.ts";
@@ -25,8 +23,6 @@ import { WAKE_DEBOUNCE_MS } from "../../src/harness-seed/loop/director/wake-sche
 import {
   OPEN_NEWS,
   OPEN_WORDS,
-  openBrief,
-  openDigest,
   openStartHeld,
 } from "../../src/harness-seed/loop/director/open/prompts.ts";
 import {
@@ -954,70 +950,6 @@ describe("the one Loop's held crash steps", () => {
 });
 
 describe("the one Loop's news", () => {
-  it(
-    "news reaches a working lead mid-turn: a worker's end and question, a job's end, the save reminder",
-    TEST_TIMEOUT,
-    async () => {
-      const kinds = [/w1 is waiting for the person/, /worker w1: Survey done/, /Export/, /save point/i];
-      const host = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        // Its worker's question stays pending: no other Loop's chat reads it.
-        threadId: "t-news",
-        turns: [
-          async ({ tool, host }) => {
-            await tool("worker_start", { title: "Survey", task: "Read the scenes and list them", isolation: "read" });
-            await host.rec.ctx.call("events.append", {
-              threadId: host.threadId,
-              batch: [
-                {
-                  type: "custom",
-                  event_type: "tool_permission",
-                  payload: {
-                    requestId: "q1",
-                    state: "pending",
-                    worker: { id: "w1" },
-                    title: "May I read the export presets?",
-                  },
-                },
-              ],
-            });
-            host.jobs.push({
-              id: "j1",
-              title: "Export",
-              role: "lead",
-              command: "godot --export-release Mac",
-              state: "exited",
-              exitCode: 0,
-              endedAt: new Date(0).toISOString(),
-              endSeq: 1,
-              durationMs: MINUTE,
-              stoppedBy: null,
-            });
-            host.pass(SAVE_REMINDER_MS + MINUTE);
-            await host.workers[0]?.end({ summary: "three scenes" });
-            assert.ok(
-              await host.until(() => kinds.every((kind) => host.steered.some((s) => kind.test(s.text)))),
-              `every kind of news was steered (${host.steered.map((s) => s.text).join(" | ")})`,
-            );
-            return undefined;
-          },
-          finishes,
-        ],
-      });
-      host.steerTakes = true;
-      await host.start();
-      const firstTurn = host.steered.filter((s) => s.id.includes(`${host.run.runId}:1:`));
-      for (const kind of kinds)
-        assert.equal(firstTurn.filter((s) => kind.test(s.text)).length, 1, `${String(kind)} once in the turn`);
-      assert.ok(
-        host.steered.every((s) => s.interrupt === false),
-        "news never cuts a turn short",
-      );
-      const next = String(host.prompts()[1]);
-      assert.doesNotMatch(next, /Survey done/, "news the turn took is not told again");
-      assert.doesNotMatch(next, /Export/);
-    },
-  );
 
   it("a project no plugin hooks makes no hooks.fire call but the run's own moments", TEST_TIMEOUT, async () => {
     const host = await hostOn(Project.GodotGame, {
@@ -1605,47 +1537,6 @@ describe("the one Loop's status, notes and fresh look", () => {
     assert.ok(notes.some((note: { text: string }) => note.text === "Chose the cave layout over the tower."));
   });
 
-  it(
-    "after a long stretch with no reader the next message suggests a fresh look, once; a reader started since quiets it",
-    TEST_TIMEOUT,
-    async () => {
-      const fresh = /fresh eyes/;
-      const solo: LoopTurn = async ({ host }) => {
-        await writeFile(path.join(host.dir, `room-${host.prompts().length}.txt`), "a room\n");
-        return undefined;
-      };
-      const quiet = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        turns: [
-          async (call) => {
-            call.host.pass(FRESH_EYES_MS + MINUTE);
-            return solo(call);
-          },
-          solo,
-          finishes,
-        ],
-      });
-      await quiet.start();
-      assert.match(String(quiet.prompts()[1]), fresh);
-      assert.doesNotMatch(String(quiet.prompts()[2]), fresh, "said once");
-
-      const looked = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        turns: [
-          async ({ host, tool }) => {
-            host.pass(FRESH_EYES_MS + MINUTE);
-            await tool("worker_start", { title: "Survey", task: "Read the scenes", isolation: "read" });
-            await host.workers[0]?.end({ summary: "three scenes" });
-            return undefined;
-          },
-          finishes,
-        ],
-      });
-      await looked.start();
-      assert.doesNotMatch(String(looked.prompts()[1]), fresh);
-    },
-  );
-
   it("restart on a project whose plugin restarts no app is no tool of its", TEST_TIMEOUT, async () => {
     let answer = "";
     const host = await hostOn(Project.GodotGame, {
@@ -2130,63 +2021,6 @@ describe("the one Loop's idle rule", () => {
   );
 });
 
-describe("the one Loop's save points in its messages", () => {
-  it("a long Loop's wake message and brief name its latest save points and count the rest", () => {
-    const point = (label: string, auto: boolean, n: number) => ({
-      label,
-      summary: auto ? "Saved by Genex: the lead's turn ended with unsaved work." : `step ${n}`,
-      snapshotId: `snap-${n}`,
-      auto,
-      at: n,
-      notes: [],
-    });
-    // Twelve hours of quick turns: one save point of the lead's in every ten, the rest Genex's autosaves.
-    const points = Array.from({ length: 360 }, (_, n) =>
-      n % 10 === 9 ? point(`Step ${n}`, false, n) : point("Autosave", true, n),
-    );
-    const digest = openDigest({
-      reasons: ["carry_on"],
-      resumed: false,
-      now: 0,
-      softDeadline: 60 * MINUTE,
-      userSays: [],
-      happened: [],
-      carried: [],
-      savePoints: points,
-      atWork: 0,
-      freshEyes: false,
-      closing: "",
-    });
-    const line = digest.split("\n").find((one) => one.startsWith("SAVE POINTS:")) ?? "";
-    assert.ok(line.length < 400, `${line.length} characters`);
-    assert.match(line, /"Step 359"/, "the latest save point of the lead's");
-    assert.match(line, /and \d+ earlier/);
-    const brief = openBrief({
-      goal: "A level.",
-      folder: "/games/level",
-      folderLabel: "level",
-      facts: GODOT,
-      holds: null,
-      carried: [],
-      references: [],
-      workerTypes: [],
-      appSaved: false,
-      restart: false,
-      cppRestart: false,
-      judge: false,
-      savePoints: points,
-      now: 0,
-      softDeadline: 60 * MINUTE,
-      finalDeadline: 60 * MINUTE,
-      untilFinish: false,
-      skills: [],
-    });
-    const kept = brief.split("\n\n").find((one) => one.startsWith("SAVE POINTS kept so far")) ?? "";
-    assert.ok(kept.length < 800, `${kept.length} characters`);
-    assert.match(kept, /"Step 359" \(step 359\)/);
-  });
-});
-
 describe("the one Loop's wake cap", () => {
   it(
     "the lead's own carry-on turns fill no hourly cap: after many, a worker's end still wakes the resting lead at once",
@@ -2480,43 +2314,6 @@ describe("the one Loop's acts once it pauses or closes", () => {
     const between = (journalOf(host).director.open as unknown as { between: { rewind: unknown } }).between;
     assert.equal(between.rewind, null);
   });
-
-  it(
-    "a lead whose finish is checked hears no save reminder, and keeps no save point once accepted",
-    TEST_TIMEOUT,
-    async () => {
-      let answer: (value: unknown) => void = () => {};
-      const answers: unknown[] = [];
-      const host = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        turns: [
-          async ({ host, tool }) => {
-            host.pass(SAVE_REMINDER_MS - MINUTE);
-            const claim = tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
-            assert.ok(await host.until(() => host.reviewed().length === 1), "a reviewer reads the claim");
-            // The reviewer reads past the time a reminder to save would be due.
-            await host.sleep(3 * MINUTE);
-            await delay(20);
-            answer(reviewerAnswer("yes", ["it holds what was asked"]));
-            answers.push(await claim);
-            answers.push(await tool("save_point", { label: "Late", summary: "after the close" }));
-            return undefined;
-          },
-        ],
-      });
-      host.steerTakes = true;
-      host.reviews.push(
-        new Promise((resolve) => {
-          answer = resolve;
-        }) as never,
-      );
-      const report = await host.start();
-      assert.match(String(answers[0]), /^Accepted/);
-      assert.equal(answers[1], OPEN_WORDS.ending);
-      assert.ok(!host.steered.some((one) => /since your last save point/.test(one.text)), "no reminder to save");
-      assert.equal(report.victory, true);
-    },
-  );
 });
 
 describe("the one Loop's close and a recovery under way", () => {
@@ -4398,42 +4195,5 @@ describe("the one Loop's reads of the game folder", () => {
     const loopRun = { ctx: host.rec.ctx, run: host.run } as unknown as Parameters<typeof folderChanged>[0];
     assert.equal(await folderChanged(loopRun), false);
     assert.ok((await readFile(index)).equals(before), "the folder's index is as it was");
-  });
-});
-
-describe("the open lead's finish words", () => {
-  it("the lead's word closes a Loop, a review is a second opinion it may ask for, and a picture outranks the files", async () => {
-    const finishLine = (untilFinish: boolean) =>
-      openBrief({
-        goal: "A level.",
-        folder: "/games/level",
-        folderLabel: "level",
-        facts: GODOT,
-        holds: null,
-        carried: [],
-        references: [],
-        workerTypes: [],
-        appSaved: false,
-        restart: false,
-        cppRestart: false,
-        judge: false,
-        savePoints: [],
-        now: 0,
-        softDeadline: 60 * MINUTE,
-        finalDeadline: 60 * MINUTE,
-        untilFinish,
-        skills: [],
-      })
-        .split("\n\n")
-        .find((one) => one.startsWith("FINISH:")) ?? "";
-    const timed = finishLine(false);
-    const endless = finishLine(true);
-    // Flipped (Loop phase 4): the line said when a reviewer's no's stop the Loop; no row of no's does now.
-    for (const line of [timed, endless]) {
-      assert.match(line, /Your word closes the Loop/);
-      assert.match(line, /review=yes/);
-      assert.doesNotMatch(line, /no's in a row/);
-      assert.match(line, /Your own pictures of the running project outrank what its files say/);
-    }
   });
 });

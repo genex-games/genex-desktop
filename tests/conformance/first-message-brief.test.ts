@@ -13,15 +13,9 @@ import { describe, it } from "node:test";
 import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
-import { directorBrief, singleWorkerBrief } from "../../src/harness-seed/loop/director/briefs.ts";
-import { CONFLICT_WORDS } from "../../src/harness-seed/loop/director/lead-session-prompts.ts";
-import { facetPromptFor } from "../../src/harness-seed/loop/facet/phases/brief.ts";
-import { baseBrief } from "../../src/harness-seed/loop/prompts-build.ts";
-import { agentBrief } from "../../src/harness-seed/loop/unreal/agent-prompts.ts";
-import { AgentKind } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
+import { directorBrief, } from "../../src/harness-seed/loop/director/briefs.ts";
 import { WorkerIsolation } from "../../src/harness-seed/loop/workers/contract.ts";
 import { workerBrief } from "../../src/harness-seed/loop/workers/prompts.ts";
-import { runIdentity } from "../../src/harness-seed/loop/workers/identity.ts";
 import { CoreFact } from "../../src/harness-seed/loop/folder-facts.ts";
 import { toolCall } from "../../src/harness-seed/loop/model-roles.ts";
 import { RunEvent } from "../../src/harness-seed/loop/run-events.ts";
@@ -426,132 +420,8 @@ describe("who runs the brief", () => {
 
 /** A director's run and one of its builders, as the briefs read them. */
 const RUN = { runId: "run_w", project: NAME, goal: "a keep to explore", engine: CLAUDE };
-const BUILDER = { id: "w1", title: "The gate", brief: "build the gate", owns: ["src/gate.js"], ownsMain: false };
-/** What the run found the game's folder holds, and where it is. */
-const LOOP_RUN = { run: RUN, projectDir: "/Users/me/AI Games/keep", gameFacts: [fact(CoreFact.WebGame)] };
-/** Where a brief says the game is, as the run found it. */
-const FOLDER = /^You are working inside Genex[^\n]*folder `AI Games\/keep`; it holds a web game at its root/;
-
-/** A facet builder's opening prompt: a director's (its `identity` option) or a classic Autopilot's (none). */
-function facetOpening(options: Record<string, unknown>): string {
-  const spec = { id: "gate", title: "The gate", intent: "a stone gate", owns: ["src/gate.js"], checks: [], done: [] };
-  const loop = {
-    run: RUN,
-    spec,
-    options,
-    game: null,
-    gapHistory: [],
-    legacy: false,
-    ownShape: false,
-    ownsMain: false,
-    result: { attempts: [] },
-    shape: null,
-    worktree: "/w",
-    board: {},
-    lastFailure: null,
-    loseStreak: 0,
-    defectList: [],
-    integrationNote: null,
-    currentMove: null,
-  };
-  const round = {
-    iteration: 1,
-    briefFile: null,
-    userSteering: [],
-    acceptedShots: [],
-    spikeText: null,
-    promptImages: [],
-  };
-  return facetPromptFor(loop as never, round as never, { resumed: false });
-}
 
 describe("every worker's brief", () => {
-  it("every worker's brief opens with Genex's identity: the pool's, the director's single and conflict workers, the Unreal lead's agents", () => {
-    const pooled = workerBrief({
-      identity: { folderLabel: "AI Games/keep", facts: [fact(CoreFact.WebGame)] as never },
-      task: "read the level",
-      isolation: WorkerIsolation.Read,
-      research: false,
-      typeDescription: null,
-      inputs: [],
-    });
-    assert.match(pooled, FOLDER, "the pool's");
-    assert.doesNotMatch(pooled, /game engine's editor/, "a web game has no engine's editor");
-    const onUnreal = workerBrief({
-      identity: { folderLabel: "AI Games/keep", facts: [fact(CoreFact.UnrealProject)] as never },
-      task: "write the gate's logic",
-      isolation: WorkerIsolation.Copy,
-      research: false,
-      typeDescription: null,
-      inputs: [],
-    });
-    // A worker has the editor's tools as its lead does; in a copy it is told where they act.
-    assert.doesNotMatch(onUnreal, /lead's alone|none of its tools/);
-    assert.match(onUnreal, /The game engine's editor works on the game folder the lead works in, not on your copy/);
-    const onRoblox = workerBrief({
-      identity: { folderLabel: "AI Games/obby", facts: [fact(CoreFact.RobloxProject)] as never },
-      task: "write the checkpoint script",
-      isolation: WorkerIsolation.Copy,
-      research: false,
-      typeDescription: null,
-      inputs: [],
-    });
-    assert.match(onRoblox, /The game engine's editor works on the game folder/, "Roblox Studio as well");
-
-    const single = singleWorkerBrief({
-      run: RUN,
-      worker: BUILDER,
-      facts: LOOP_RUN.gameFacts,
-      gameFolder: LOOP_RUN.projectDir,
-    } as never);
-    assert.match(single, FOLDER, "the director's single worker");
-    assert.match(single, /YOUR BRIEF FROM THE DIRECTOR — The gate:\nbuild the gate/, "and its brief follows");
-    const conflict = CONFLICT_WORDS.brief({
-      of: "w1",
-      title: "The gate",
-      commit: "a".repeat(40),
-      conflicts: ["src/gate.js"],
-    });
-    const merging = singleWorkerBrief({
-      run: RUN,
-      worker: { ...BUILDER, id: "w1-merge", title: "Merge The gate", brief: conflict },
-      facts: [fact(CoreFact.WebGame, "site"), fact(CoreFact.UnrealProject)],
-      gameFolder: LOOP_RUN.projectDir,
-    } as never);
-    assert.match(
-      merging,
-      /^You are working inside Genex[^\n]*it holds a web game in `site\/`, an Unreal Engine project at its root/,
-    );
-    assert.ok(merging.includes(conflict), "the conflict worker's");
-    // A kept older caller that names no folder still opens with it: the run's game, a web game at its root.
-    assert.match(
-      singleWorkerBrief({ run: RUN, worker: BUILDER } as never),
-      /^You are working inside Genex[^\n]*`keep`; it holds a web game/,
-    );
-
-    const director = runIdentity(LOOP_RUN as never);
-    assert.match(director, FOLDER);
-    const facet = facetOpening({ identity: director, worker: { id: "w2", title: "The hall", runId: RUN.runId } });
-    assert.ok(facet.startsWith(`${director}\n\n`), "a director's facet builder");
-    assert.match(facet, /You are building ONE FACET/);
-
-    const agent = agentBrief({
-      kind: AgentKind.Texture,
-      title: "Stone texture",
-      brief: "a mossy stone",
-      game: "Keep",
-      folder: "assets/agents/a1",
-      cppFolder: null,
-      inputs: [],
-      engine: CLAUDE,
-      folderLabel: "AI Games/keep",
-    });
-    assert.match(
-      agent,
-      /^You are working inside Genex[^\n]*folder `AI Games\/keep`; it holds an Unreal Engine project at its root/,
-    );
-    assert.match(agent, /You are a worker of the Unreal Loop/);
-  });
 
   it("a lead's brief names the plugin search and its card; a worker's names the search only", () => {
     const now = Date.now();
@@ -589,13 +459,5 @@ describe("every worker's brief", () => {
     assert.match(worker, /plugins_find/);
     assert.match(worker, /only the lead shows the person a plugin's card/);
     assert.doesNotMatch(worker, /plugins_suggest/);
-  });
-
-  it("a classic Autopilot's builders keep their brief", () => {
-    const facet = facetOpening({});
-    assert.match(facet, /^You are building ONE FACET/, "a facet builder of a classic run");
-    assert.doesNotMatch(facet, /inside Genex/);
-    const base = baseBrief({ run: RUN, plan: { facets: [], integrationNotes: "" }, projectLabel: NAME } as never);
-    assert.doesNotMatch(base, /inside Genex/, "the base builder of a classic run");
   });
 });

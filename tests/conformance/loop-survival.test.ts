@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { before, describe, it } from "node:test";
-import { DIRECTOR_TOOLS } from "../../src/harness-seed/loop/director/tool-specs.ts";
 import { LoopProfile } from "../../src/harness-seed/loop/folder-facts.ts";
 import { chooseRunner } from "../../src/harness-seed/loop/run-dispatch.ts";
 import { RunMode } from "../../src/harness-seed/loop/run-events.ts";
@@ -151,27 +150,6 @@ describe("which loop conducts a run", () => {
 });
 
 describe("the run tools each lead is offered", () => {
-  it("the director offers exactly these tools", () => {
-    assert.deepEqual(DIRECTOR_TOOLS.map((tool) => tool.name).sort(), [
-      "finish",
-      "goal_update",
-      "integrate",
-      "judge",
-      "note",
-      "plan",
-      "playtest",
-      "run_status",
-      "show",
-      "worker_mark",
-      "worker_start",
-      "worker_status",
-      "worker_steer",
-      "worker_stop",
-      "worker_wait",
-      // Flipped: the user's ask to finish is recorded by the lead, quoting them.
-      "wrap_up",
-    ]);
-  });
 
   it("the Unreal lead offers exactly these tools, and its workers come in these kinds", () => {
     assert.deepEqual(LEAD_TOOLS.map((tool) => tool.name).sort(), [

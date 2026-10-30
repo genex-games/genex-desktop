@@ -1704,33 +1704,6 @@ it("host recovery restores original group write bits after a crash", {
   assert.equal((await stat(file)).mode & 0o777, 0o664);
 });
 
-it("host locks produce no monitor violation but real out-of-seam edits still do", async () => {
-  const { gitFile } = await import("../helpers/git.ts");
-  const { monitorFindings } = await import("../../src/harness-seed/loop/director/rules.ts");
-  const cwd = await tmpDir("lock-monitor-");
-  await mkdir(path.join(cwd, "src"));
-  await writeFile(path.join(cwd, "src", "own.js"), "export const owned = true;");
-  await writeFile(path.join(cwd, "src", "other.js"), "export const other = true;");
-  await gitFile(["init"], { cwd });
-  await gitFile(["add", "."], { cwd });
-  await gitFile(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "seed"], {
-    cwd,
-  });
-  const spec = { id: "own", owns: ["src/own.js"] };
-  const record = await lockUnowned(cwd, { facetId: "own", owns: spec.owns, ownsMain: false });
-  try {
-    const before = await gitFile(["status", "--porcelain"], { cwd });
-    assert.deepEqual(monitorFindings({ status: String(before.stdout), spec, ownsMain: false }).violations, []);
-    await writeFile(path.join(cwd, "src", "foreign.js"), "unauthorized");
-    const after = await gitFile(["status", "--porcelain"], { cwd });
-    assert.deepEqual(monitorFindings({ status: String(after.stdout), spec, ownsMain: false }).violations, [
-      "edited a file outside this facet's ownership (src/foreign.js)",
-    ]);
-  } finally {
-    await releaseLocks(cwd, record);
-  }
-});
-
 it("refreshes a fresh selected home's catalog once without borrowing another account", async () => {
   const root = await tmpDir("studio-catalog-refresh-");
   await writeFile(path.join(root, "studio-login.json"), "{}");

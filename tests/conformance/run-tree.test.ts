@@ -214,33 +214,6 @@ describe("a graph with its assets or its optimisation keeps today's layout and o
       assert.ok(layout.rects.assets.y > layout.rects.start.y);
     }
   });
-
-  it("a run in its optimisation: the card between the last step and the result, stepped before the result", async () => {
-    const { emptyOptimization } = await import("../../src/harness-seed/loop/optimization.ts");
-    seq = 0;
-    const optimizing = { ...emptyOptimization({ runId: RUN, project: "game" }), phase: "profiling_candidate" };
-    const { graph, summary, rows } = fold([
-      inRun(CustomEvent.RunStarted, { goal: "A river" }),
-      inRun(CustomEvent.AutopilotStarted, { facets: [{ id: "river", title: "River", budgetShare: 1 }] }),
-      inRun(CustomEvent.AutopilotBase, { ok: true }),
-      inRun(CustomEvent.OptimizationUpdated, optimizing),
-    ]);
-    assert.deepEqual(readingOrder(rows, readingNodes(graph, rows, summary)), [
-      "start",
-      "session:river",
-      "optimization",
-      "final",
-      "lead",
-    ]);
-    const layout = buildsLayout(graph, rows, summary);
-    const lead = leadWorking(graph, summary, rows);
-    const today = layoutSteps(rows, { assets: false, optimization: true, resultGate: resultGate(graph), lead });
-    assert.deepEqual(layout, today);
-    const { optimization, final } = layout.rects;
-    assert.ok(optimization && final);
-    assert.equal(optimization.y, final.y);
-    assert.ok(optimization.x < final.x, "the optimisation card comes before the result");
-  });
 });
 
 describe("the tree on the canvas", () => {

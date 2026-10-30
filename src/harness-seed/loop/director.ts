@@ -518,6 +518,7 @@ export async function runDirector(
     return loopRun.report;
   }
   tracing = loopRun;
+  loopRun.sleep = clock.sleep;
   keepTimings(loopRun, timings);
   await seatTheLead(loopRun);
   const tools = seatTools(loopRun);

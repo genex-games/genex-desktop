@@ -119,12 +119,16 @@ export async function checkIntegration(loopRun: LoopRun, label: string): Promise
   const { ctx, integrationWorktree, run, state } = loopRun;
   await commitLeadWork(loopRun);
   const head = await loopRun.syncHead();
-  const check = await checkHealth(ctx, {
-    project: run.project,
-    root: integrationWorktree,
-    runId: run.runId,
-    label: `director/${label}_${shortSha(head ?? "")}`,
-  });
+  const check = await checkHealth(
+    ctx,
+    {
+      project: run.project,
+      root: integrationWorktree,
+      runId: run.runId,
+      label: `director/${label}_${shortSha(head ?? "")}`,
+    },
+    { sleep: loopRun.sleep },
+  );
   state.healthByHead.set(head, check);
   state.integrationHealthy = check.ok;
   await loopRun.appendRun(RunEvent.IntegrationHealth, {

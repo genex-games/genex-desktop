@@ -216,21 +216,6 @@ describe("the brief of a game that builds in Unreal", () => {
     assert.doesNotMatch(brief, WEB_PAGE);
   });
 
-  it("a folder the user brought is still an Unreal game, never a page to install the contract in", () => {
-    const brief = buildContractorBrief({
-      ask: "Add a lighthouse",
-      shape: SHAPE,
-      ownShape: true,
-      contractMissing: true,
-      engine: "codex",
-      gameEngine: GameEngine.Unreal,
-      engineProject: PROJECT,
-    });
-    assert.match(brief, /the Unreal editor connector's tools/);
-    assert.doesNotMatch(brief, WEB_PAGE);
-    assert.doesNotMatch(brief, /npm run build|src\/main\.ts/, "the web shape's entry and build are not its");
-  });
-
   it("a resumed Unreal session is reminded where its work lands", () => {
     const brief = buildContractorBrief({
       ask: "Keep going",

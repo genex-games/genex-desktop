@@ -128,6 +128,8 @@ export interface LoopRunData {
   profile?: LoopProfile;
   /** A Loop in place's own record (open/contract.ts): its facts, journal, git-write queue, clock and pool. */
   open?: OpenLoop;
+  /** The run's own waits (the wake clock's sleep, when one was given); absent: the wall clock. */
+  sleep?: (ms: number) => Promise<void>;
   /** A web game's Loop's worker pool (the run's pool, its workers' copies merging into the integration worktree). */
   pool?: WorkerPool | null;
   /** What waits for the end of each of the lead's turns before the next (an open Loop's); the wake loop awaits it. */

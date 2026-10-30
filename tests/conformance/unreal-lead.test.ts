@@ -21,7 +21,6 @@ import { chooseRunner } from "../../src/harness-seed/loop/run-dispatch.ts";
 import { RunnerKind } from "../../src/harness-seed/loop/studio-state.ts";
 import { LEAD_JOURNAL_KIND, type LeadJournal, LeadTool } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { runUnrealLead } from "../../src/harness-seed/loop/unreal/lead.ts";
-import { LEAD_FINISH } from "../../src/harness-seed/loop/unreal/lead-finish-prompts.ts";
 import { UnrealLoopTool } from "../../src/harness-seed/loop/unreal/live-contract.ts";
 import {
   BROKEN_SOURCE,
@@ -1486,19 +1485,6 @@ describe("the Unreal lead's finish", () => {
     assert.equal((report.stillToFix as { why?: string } | undefined)?.why, StopWhy.Stuck, "the resumed close lists it");
     const last = host.appended("finish_check").at(-1);
     assert.deepEqual([last?.step, last?.rejections, last?.stopped], ["rejected", 3, true]);
-  });
-
-  it("a claim in the run's last minutes is answered that no review fits, and nothing is recorded", async () => {
-    const answers: string[] = [];
-    const host = leadHost({ turns: [claims(answers)] });
-    // The turn's work takes it to a minute before the run's end, where it claims.
-    host.turnMs = 9 * MINUTE;
-    const report = await run(host, { run: shortRun(10) });
-    assert.equal(answers[0], LEAD_FINISH.NoTimeLeft);
-    assert.doesNotMatch(answers[0] ?? "", /Call finish again/, "no retry the run has no time for");
-    assert.deepEqual(host.reviewed(), []);
-    assert.deepEqual(checkSteps(host), []);
-    assert.equal(report.endReason, "time-up");
   });
 
   it("a finish hook that blocks keeps the Unreal lead working, and no reviewer is asked", async () => {

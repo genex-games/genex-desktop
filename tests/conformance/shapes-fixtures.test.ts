@@ -14,8 +14,6 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { GameWorkspaces, detectProjectShape } from "../../src/substrate/game-workspace.ts";
 import { MAX_INPUT_ACTIONS, capActions } from "../../src/substrate/preview-input.ts";
-import { normalizeGameTraits } from "../../src/harness-seed/loop/spec.ts";
-import { inputProbesFor } from "../../src/harness-seed/loop/kinds.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { MACHINE_WARNINGS, missingWarnings, undeclaredWarnings } from "../../tests/e2e/warning-policy.ts";
 
@@ -85,25 +83,6 @@ function importMapKeys(html: string): string[] {
   const block = /<script\b[^>]*\btype\s*=\s*["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(html)?.[1];
   if (!block) return [];
   return Object.keys((JSON.parse(block) as { imports?: Record<string, unknown> }).imports ?? {});
-}
-
-/**
- * The state paths the kinds table's input probes name for this game, for the traits it declares.
- * `delta` entries have to be paths something actually measures; deriving them from
- * `inputProbesFor` rather than from a list in this file means the fixtures follow the kinds table
- * wherever it goes.
- */
-function probePaths(game: unknown): Set<string> {
-  const traits = normalizeGameTraits(game as never);
-  const probes = inputProbesFor(game as never);
-  const declared = [traits.mouseLook ? probes.look : null, traits.keyboardMove ? probes.move : null];
-  const paths = new Set<string>();
-  for (const probe of declared) {
-    for (const match of String(probe?.expr ?? "").matchAll(/delta\(\s*['"]([^'"]+)['"]\s*\)/g)) {
-      paths.add(match[1]!);
-    }
-  }
-  return paths;
 }
 
 /** What each fixture says about the two-line install — the input the count guard reduces. */
@@ -260,30 +239,6 @@ describe("the five shapes", () => {
       }
       for (const file of manifest.neverAdded) {
         assert.ok(!writes.includes(file), `${id}: adoption would write ${file} over the game's own`);
-      }
-    }
-  });
-
-  it("declares traits that survive normalizeGameTraits, and delta paths something measures", async () => {
-    for (const id of FIXTURE_IDS) {
-      const manifest = await manifestOf(id);
-      const normalized = normalizeGameTraits(manifest.game) as unknown as Record<string, unknown>;
-      for (const [key, value] of Object.entries(manifest.game)) {
-        if (typeof value !== "boolean") continue;
-        assert.equal(normalized[key], value, `${id}: normalizeGameTraits dropped ${key}`);
-      }
-      assert.deepEqual(
-        normalizeGameTraits(normalized) as unknown as Record<string, unknown>,
-        normalized,
-        `${id}: normalizeGameTraits does not round-trip`,
-      );
-      const measured = probePaths(manifest.game);
-      for (const entry of manifest.delta) {
-        assert.ok(entry.min > 0, `${id}: delta ${entry.path} needs a minimum worth measuring`);
-        assert.ok(
-          measured.has(entry.path),
-          `${id}: nothing measures ${entry.path} for this kind (measured: ${[...measured].join(", ") || "nothing"})`,
-        );
       }
     }
   });

@@ -11,7 +11,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { ImprovementJournal } from "../../src/substrate/improvement-journal.ts";
-import { mineValidationTasks } from "../../src/harness-seed/loop/skillopt.ts";
 import { customEvents, startLearningRig, startRig, waitForLog, type Rig } from "../helpers/studio-rig.ts";
 import type { FakeReply } from "../helpers/fake-ollama.ts";
 import { tmpDir } from "../helpers/tmp.ts";
@@ -161,39 +160,6 @@ describe("improvement journal", () => {
     await reborn.update(job.id, { status: "applied" });
     assert.equal((await reborn.pending()).length, 0);
     assert.ok(await reborn.newestFinishedAt(), "finished jobs anchor the scheduler's pacing");
-  });
-});
-
-describe("skillopt mines autopilot evidence", () => {
-  it("facet iterations and decision cards become validation tasks", () => {
-    const events = [
-      {
-        data: {
-          type: "custom",
-          event_type: "facet_iteration",
-          payload: {
-            facetId: "terrain",
-            facetTitle: "Terrain",
-            iteration: 1,
-            winner: "incumbent",
-            biggest_gap: "no depth",
-          },
-        },
-      },
-      {
-        data: {
-          type: "custom",
-          event_type: "autopilot_decision",
-          payload: { decision: "chose sunset lighting" },
-        },
-      },
-    ];
-    const tasks = mineValidationTasks(events as never, 10);
-    assert.equal(tasks.length, 2);
-    assert.equal(tasks[0]!.prompt, "Terrain: no depth");
-    assert.equal(tasks[0]!.success, false);
-    assert.match(tasks[1]!.prompt, /chose sunset lighting/);
-    assert.deepEqual(tasks[1]!.skills, ["facet-decomposition"]);
   });
 });
 

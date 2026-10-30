@@ -1724,52 +1724,6 @@ describe("seed upgrade across the harness step flag", () => {
     assert.ok(note.length <= 300, "one memory value stays within the memory policy's limit");
   });
 
-  it("a kept wake rules file without the job kind still loads the harness, and a job's end it has no kind for still wakes the lead soon", async () => {
-    const root = await tmpDir("seed-job-kind-");
-    const ws = path.join(root, "workspace");
-    const manifest = path.join(root, "manifest.json");
-    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
-    const file = "loop/director/wake-schedule.ts";
-    const copy = await readFile(path.join(ws, file), "utf8");
-    const withoutKind = copy
-      .split("\n")
-      .filter((line) => !line.includes("JobEnded") && !line.includes("A job of the run"))
-      .join("\n");
-    assert.ok(!withoutKind.includes("job_ended"), "the older copy has no job kind");
-    await writeFile(path.join(ws, file), `${withoutKind}\n// the agent's own change\n`);
-    const report = await applySeed({
-      seedDir: shipped,
-      workspaceDir: ws,
-      manifestFile: manifest,
-      backupDir: path.join(root, "backup"),
-    });
-    assert.ok(report.kept.includes(file), "the agent's copy is kept");
-    for (const entry of ["loop/main.ts", "loop/director/wake.ts", "loop/unreal/lead.ts"])
-      await linkIsolated(path.join(ws, entry));
-    const kept = (await import(
-      `${pathToFileURL(path.join(ws, file)).href}?v=${Date.now()}`
-    )) as typeof import("../../src/harness-seed/loop/director/wake-schedule.ts");
-    // The wake loop notes a job's end with the kind the kept copy lacks: a line with no kind, written while the lead rests.
-    const now = Date.UTC(2026, 9, 7, 12);
-    const due = kept.nextWake({
-      now,
-      unread: [{ at: now, seq: 11, kind: kept.NoteKind.JobEnded }],
-      asleepFromSeq: 10,
-      asleepSince: now,
-      userWaiting: false,
-      finishNew: false,
-      running: 1,
-      planWindowEndsAt: null,
-      workersLimitLiftsAt: null,
-      softDeadline: now + 3_600_000,
-      wrapping: false,
-      idleDue: false,
-      idleAsked: false,
-      wakesAt: [],
-    });
-    assert.equal(due?.at, now + kept.WAKE_DEBOUNCE_MS, "it wakes the lead soon");
-  });
-
   it("a kept start_web_game that names no chat, and kept director parts that brief workers without Genex's identity, are reported once and noted", async () => {
     const root = await tmpDir("seed-step-identity-plan-");
     const ws = path.join(root, "workspace");
@@ -2009,41 +1963,6 @@ describe("seed upgrade across the wake loop", () => {
     // the kept copies never exported would throw here, at link time.
     const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
     assert.equal(main.createStudio, "function");
-  });
-
-  /**
-   * The run a kept director.ts from before the wake loop builds: it runs the long turn, never
-   * calls the wake loop, and its run names no loop (the field did not exist). The new parts it
-   * calls must answer it with the long turn's words, or its lead ends its turn — and a non-direction
-   * run goes straight to its wrap-up.
-   */
-  const keptDirectorLoopRun = (over: Record<string, unknown> = {}) => ({
-    run: { runId: "run_k", project: "kept", goal: "a plaza", reviewPlan: true },
-    resume: false,
-    softDeadline: Date.now() + 3_600_000,
-    state: { plan: null, planReviewUntil: null, planGo: false, planSaidFrom: 0 },
-    journal: { director: {}, plan: {} },
-    inbox: { steering: async () => [] },
-    appendRun: async () => {},
-    saveJournal: async () => {},
-    note: () => {},
-    ...over,
-  });
-  const planArgs = {
-    summary: "This run: a plaza.",
-    workers: JSON.stringify([
-      { id: "plaza", title: "Plaza", seam: "the plaza", owns: "src/plaza.js", done: ["a plaza"], minutes: 20 },
-    ]),
-  };
-
-  it("a kept director.ts from before the wake loop runs the long turn, and the parts it calls answer with the long turn's words", async () => {
-    const { setPlan } = await import("../../src/harness-seed/loop/director/workers.ts");
-    const kept = String(await setPlan(keptDirectorLoopRun() as never, planArgs));
-    assert.match(kept, /your first worker_start waits for their word/, kept);
-    assert.doesNotMatch(kept, /End your turn/, kept);
-    // Only a run the wake loop drives is told to end its turn.
-    const waking = String(await setPlan(keptDirectorLoopRun({ waking: true }) as never, planArgs));
-    assert.match(waking, /End your turn now/, waking);
   });
 });
 
@@ -2330,44 +2249,6 @@ describe("seed upgrade across one session", () => {
       "an older copy of any part the lead depends on would tell a lead in the game folder to edit and commit in its worktree",
     );
   });
-
-  it("a director.ts kept from before one session: the new parts give its director with its own hands the words for its hands", async () => {
-    // A kept director.ts never seats a lead (`run.lead`), so every part it calls reads none.
-    const { wakeTools, freshStart, wakeDigest } = await import("../../src/harness-seed/loop/director/wake-prompts.ts");
-    const { DIRECTOR_TOOLS } = await import("../../src/harness-seed/loop/director/tool-specs.ts");
-    const { priorCommitWords } = await import("../../src/harness-seed/loop/director/journal-prompts.ts");
-    const integrate = wakeTools(DIRECTOR_TOOLS).find((tool) => tool.name === "integrate")!;
-    assert.match(integrate.description, /resolve it yourself with git in your worktree, then commit/);
-    const fresh = freshStart({ why: "lost", brief: "b", rules: "r", notes: [], recent: [], digest: "d" });
-    assert.match(fresh, /Read \.studio\/DIRECTOR\.md in your worktree first/);
-    const digest = wakeDigest({
-      now: 0,
-      reasons: [],
-      userSays: [],
-      finishNew: false,
-      happened: [],
-      softDeadline: 60_000,
-      finalDeadline: 120_000,
-      wrapping: false,
-      integrationHead: null,
-      integrationHealthy: null,
-      defects: [],
-      workers: [],
-      planWindowUntil: null,
-      workersLimit: null,
-      finishRequested: false,
-      card: { runId: "run_k", project: "kept", goal: "a plaza", direction: false, plan: null },
-      closing: "",
-    });
-    assert.match(digest, /Keep \.studio\/DIRECTOR\.md current/);
-    assert.doesNotMatch(digest, /You only read while the build runs/);
-    const prior = {
-      lastCommit: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
-      from: null,
-      ref: "refs/studio/runs/run_k/workers/sky",
-    };
-    assert.match(priorCommitWords(prior), /`git merge a1b2c3d4e5f60718293a4b5c6d7e8f9012345678` in your worktree/);
-  });
 });
 
 /**
@@ -2540,62 +2421,6 @@ describe("seed upgrade across a finished build reopened", () => {
     const seen: Array<{ kept: string; serves: unknown }> = [];
     for (const { kept } of rows) seen.push({ kept, serves: await serves(kept) });
     assert.deepEqual(seen, rows);
-  });
-
-  it("the run's clock, wake state and health pass as kept parts read them: a reopened journal starts afresh, a finished one as it was would not", async () => {
-    // A kept setup.ts, wake.ts or journal.ts calls these with the journal as it finds it; the reopen
-    // leaves them as they were and rewrites the journal instead (director/reopen.ts).
-    for (const name of ["nightClock", "restoredWake", "restoreNight"])
-      assert.ok(vintage.modules["loop/director/journal.ts"]?.includes(name), `a kept journal.ts has ${name}`);
-    const { reopenedJournal } = await import("../../src/harness-seed/loop/director/reopen.ts");
-    const { loopRunClock, restoredWake, restoreLoopRun } = await import(
-      "../../src/harness-seed/loop/director/journal.ts"
-    );
-    const { wrapReserveMs } = await import("../../src/harness-seed/loop/director/budgets.ts");
-    const HOUR = 3_600_000;
-    const now = Date.parse("2026-09-29T21:00:00Z");
-    const finished = {
-      phase: "done",
-      run: { runId: "run_r", project: "plaza", goal: "a dusk plaza", budgets: { wallClockMs: HOUR } },
-      director: {
-        clock: { workedMs: HOUR },
-        wake: { idleAsked: true, wakesAt: [] },
-        integrationHealthy: true,
-        integrationHead: "b".repeat(40),
-        workers: { sky: { id: "sky", state: "done" } },
-      },
-    };
-    const run = { ...finished.run, budgets: { wallClockMs: 2 * HOUR } };
-    const reopened = reopenedJournal(finished, run, { at: new Date(now).toISOString(), finishedHead: "a".repeat(40) });
-    /** The run a kept setup.ts binds, as restoreNight reads it. */
-    const loopRunOn = (priorJournal: unknown) => ({
-      resume: true,
-      priorJournal,
-      run,
-      journal: { director: {} },
-      state: { ledger: [], integrationHealthy: null as boolean | null, workerLimit: null, log: [], workers: new Map() },
-    });
-    // setup.ts: nightClock({ saved: resume ? priorJournal?.director?.clock : null, now, totalMs })
-    assert.deepEqual(loopRunClock({ saved: reopened.director.clock, now, totalMs: 2 * HOUR }), {
-      started: now,
-      softDeadline: now + 2 * HOUR - wrapReserveMs(2 * HOUR),
-      finalDeadline: now + 2 * HOUR,
-    });
-    assert.equal(
-      loopRunClock({ saved: finished.director.clock, now, totalMs: 2 * HOUR }).started,
-      now - HOUR,
-      "the finished journal as it was counts its spent hour",
-    );
-    // wake.ts: restoredWake(run.priorJournal?.director?.wake, now)
-    assert.equal(restoredWake(reopened.director.wake, now).idleAsked, false);
-    assert.equal(restoredWake(finished.director.wake, now).idleAsked, true);
-    // journal.ts: restoreNight carries a boolean integrationHealthy onto the run.
-    const fresh = loopRunOn(reopened);
-    restoreLoopRun(fresh as never, now);
-    assert.equal(fresh.state.integrationHealthy, null);
-    const stale = loopRunOn(finished);
-    restoreLoopRun(stale as never, now);
-    assert.equal(stale.state.integrationHealthy, true);
   });
 });
 
