@@ -149,9 +149,6 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
   read as an engine game (`isEngineGame`); the core names no engine of its own.
 - **Play lane**: an engine editor's one play session, driven only by Genex's six play tools
   (`EnginePlayTool`, `src/shared/engine-play.ts`) through `computer` under the plugin's lock; the editor's own play-driving tools stay hidden from agents.
-- **Judge probe**: a plugin judge's quiet harness tool (manifest `judges[].probe`) that measures
-  the play once it opens and adds its note and pictures to the judge's first answer
-  (`src/main/core/editor-play-session.ts`).
 - **Message checkpoint steps**: `checkpoint.before` hooks that opt in with `messages: true`, run
   before each chat message's two checkpoints inside their 30-second wait so Rewind brings back the
   engine's state too (`HookService.prepareMessageCheckpoint`, `src/main/core/rewind.ts`).

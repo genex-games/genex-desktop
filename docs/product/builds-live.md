@@ -38,7 +38,7 @@ below), then a finish check the lead asked for, tinted Checking, Not yet (reason
 chat line each round. In place, save points form one line showing each change; workers hang off
 it, solid under the save point taking their work, else ghosts.
 
-Agents test hidden (Godot too), never Live; blind judges play when the lead asks. A finished worker, integration and Live's
+Agents test hidden (Godot too), never Live; a judge gives a second opinion when the lead asks. A finished worker, integration and Live's
 revision are distinct facts; chat shows a delivery's capture, failures too. Before integrating or
 landing, one health check: the page loads, throws nothing uncaught, and is not blank.
 

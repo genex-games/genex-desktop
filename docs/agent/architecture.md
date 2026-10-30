@@ -723,8 +723,8 @@ swappable targets ([computer use](../computer-use.md)). Headless ports render of
 per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
 real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
 (`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
-and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). When no window is free, judge
-and playtest answer *no window free*; unskippable passes look through the stand-in, never Live. `preview.capacity` reports free windows and memory. Concurrent first `state` and
+and is freed when that harness dies (`PreviewPool.releaseOwnedBy`). When no window is free,
+unskippable passes look through the stand-in, never Live. `preview.capacity` reports free windows and memory. Concurrent first `state` and
 `console` requests share one navigation. Each action emits
 `preview.frame` and `preview.screen`.
 
@@ -802,7 +802,7 @@ at 4 KiB. Connector tool results, call errors and stderr health messages are red
 values (materialized env and headers, launch `secrets`, OAuth tokens) and then token shapes, through
 [`src/shared/redact.ts`](../../src/shared/redact.ts), the one redactor for the event log, the dev
 control and MCP. Collisions shorten a tool name's base so the suffixed name stays within 48
-characters (`uniqueToolName`). Judges, critics, playtesters, read-only sessions and the
+characters (`uniqueToolName`). Judges, critics, read-only sessions and the
 coordinator get no connectors; the Auto chat, a Loop chat and a build's lead get them.
 
 **Connector trust.** A stdio connector is trusted native code: `studio:mcp.save` computes a launch

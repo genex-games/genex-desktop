@@ -183,7 +183,6 @@ and the Plugins page — no polling is needed for a change to show.
 | `tools[].needs`, `mcpServers[].needs` | 3 | 1–4 of the manifest's lock ids a call of the tool, or of the connector's tools, holds while it runs; see [Locks](#locks-the-person-comes-first) |
 | `hooks[]` | 3 | Up to 32 `{on, tool, facts?, messages?}`: the plugin's harness tools Genex runs at its moments; see [Hooks](#hooks-genexs-moments) |
 | `observers[]` | 3 | Up to 8 `{id, facts, tool, live?, label?}`: what Genex can capture of a project with these facts, and the Live view it shows; see [Observers](#observers) |
-| `judges[]` | 3 | Beside `engine` only: up to 8 `{id, label, facts?, brief, players?, probe?}`, blind judges that play the engine's games in its editor; see [Judges](#judges) |
 | `tools[].ready` | 3 | Agent tools with `makes` only: the harness tool that answers whether the kind can be made now (`{ready, note}`) |
 | `tools[].asset` | 3 | Agent tools only: `{kind, prompt?, tool?}`, the kind of asset a call makes; see [Assets being made](#assets-being-made) |
 | `icon` | any | The plugin's picture: a `.png`, `.jpg`, `.webp` or `.svg` file in the package, at most 512 KiB, square and full-bleed (Studio rounds the corners); see [Icons](#icons) |
@@ -1648,8 +1647,8 @@ reads, Choose your place asking each Studio for its place); a mark older than 30
 The `viewport` [observer](#observers) runs `hero-shots` and shows Live's `stills`.
 
 Its skills reach a game that holds a Roblox place only (`facts: ["roblox-project"]`, never
-`engines`): the inline `roblox-studio` (scripts are files, play goes through `computer` and
-`judge_play`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
+`engines`): the inline `roblox-studio` (scripts are files, play goes through `computer`, a Loop's lead
+may ask a judge for a second opinion on its pictures with `judge`, the desktop tool never builds or play-tests in Studio, Roblox's AI tools, uploads and
 inserts ask) and the file skills `luau`, `remotes` (server-authoritative), `player-data`
 (session-locked, `UpdateAsync`, `BindToClose`), `purchases` (idempotent `ProcessReceipt`),
 `ui-scale` (`UIScale`, `ScreenInsets`, touch targets), `assets` (Roblox's mesh and texture rules)
@@ -2377,7 +2376,7 @@ The chat's own session is handed Genex's plugin tools on every game, beside `sta
 session gets is its seat's (`ProjectToolSeat`): a run's lead (a web run's director, an open Loop's lead in place)
 gets both, and its card shows in the one chat its run was started in, as the host's records say,
 never a thread the harness names; a worker the host seated gets `plugins_find` only and reports
-what it found to its lead; any other session (a classic run's builder, a judge, a scout) gets
+what it found to its lead; any other session (a reviewer, a judge) gets
 neither. Only the chat's own session gets `start_web_game`. `plugins_find {fact?, text?}` is read-only, so it runs in Plan mode: it lists
 the installed plugins that match (on, then off or removed), then the entries of Genex's curated
 catalog not installed, and never anything from another source (`main/core/plugin-finder.ts`). A
@@ -2665,44 +2664,16 @@ Unreal's card, editor and words ask for Unreal by name. Its descriptor carries `
 game folder, Mode offers no Loop and Rewind says what it can't undo, both in the engine's label
 (`renderer/engine-game.ts`); with it false the Loop runs wherever the project is.
 
-### Judges
+### Editor play in the harness
 
-An engine plugin may declare blind judges in `judges` (API 3, beside its `engine`;
-`substrate/plugins/judge-manifest.ts`, `PluginJudge` in `shared/plugins.ts`). A judge is data: it
-plays a game in the engine's editor through the play tools, never sees code, and answers from
-playing. The manifest is refused unless there are at most 8 and each has:
-
-- `id`, 2–40 lowercase letters, digits and dashes with a letter first, unique in the manifest, and
-  `label`, 1–40 characters on one line;
-- `facts`, when present, 1–8 fact ids: the games it judges (none: every game the plugin plays);
-- `brief`, a Markdown file in the package outside every dot folder. Installing reads it and refuses
-  a missing file, a folder, or more than `MAX_JUDGE_BRIEF_CHARS` (16 000) characters;
-- `players`, when present, a whole number from 1 to the engine's `play.players` (one when it
-  declares none);
-- `probe`, when present, one of the plugin's harness tools that asks nothing, runs no host program
-  and needs every lock `play-open` needs (`quietHarnessTool`).
-
-Unknown keys are dropped and the rest kept in a fixed order. The harness's `game.list` marks a game
-an engine plugin that is on plays in its editor `editorPlay`, with `judges` (`{id, label}`) that
-reach it by its facts (`withEditorPlay` in `main/core/editor-play-session.ts`); a web game, or one no
-plugin that is on plays, has neither. The chat's `judge_play` then takes `judge`, an id the host
-checks against the game's own (an unknown one is refused in plain words and nothing plays), and a
-judge's playtest grant names it. The host appends the judge's brief to the session's rubric (to its
-first answer in the harness's own loop), opens its players, and right after the play opens runs its
-probe once through the plugin's tool call, which holds the play's locks. The probe answers `{note,
-images}`: measurements and pictures, never source. They open the judge's first answer, and the
-pictures are kept in the game's captures folder and shown on the chat's judge line, only for the
-trace the host wrote (`judge-probe-pictures.ts`). A `play-open` that answers `liveData: true` adds
-the note that saved data there is the live game's and only the play's test players may be used.
-In an open Loop the lead's `judge_play` names the game's judges too, and after each turn that keeps
-a save point every one of them plays it in turn, each answer a run check carried to the lead
-([harness runtime](harness-runtime.md)). Whether a chat's session calls a judge is its own choice: a
-change that touches what a judge tests is a hint, not a rule.
-
-The Roblox Studio plugin declares `multiplayer` (3 players, probe `players-state`), `cheater`
-(1, `cheat-remotes`) and `phone` (1, `phone-check`), for `roblox-project` games. Their briefs are in
-`judges/`; the cheater and phone probes send Luau the build copies beside `backend.mjs`
-(`cheat-remotes.luau`, `phone-check.luau`), read from the package at run time
+The harness's `game.list` marks a game an engine plugin that is on plays in its editor `editorPlay`
+(`withEditorPlay` in `main/core/editor-play-session.ts`); a web game, or one no plugin that is on
+plays, is not. A `play-open` that answers `liveData: true` adds the note that saved data there is
+the live game's and only the play's test players may be used. A manifest's `judges` key is not part
+of API 3 and is dropped like any unknown key: Roblox Studio's still names three, which Genex never
+runs. Its probe tools (`players-state`, `cheat-remotes`, `phone-check`) are harness tools of its own;
+the cheater and phone probes send Luau the build copies beside `backend.mjs` (`cheat-remotes.luau`,
+`phone-check.luau`), read from the package at run time
 ([computer use](computer-use.md#game-engines-and-other-targets) says what each measures).
 
 ### The bundled Unity plugin
@@ -2798,7 +2769,7 @@ The plugin makes, sets up and opens that project itself (`backend.ts`), with no 
 
 The six harness-only `play-*` tools implement the shared editor computer contract
 ([computer use](computer-use.md#game-engines-and-other-targets)). Each requires the `editor` lock
-and the `unity-project` fact, so chat agents and judges can play this folder's Unity game without
+and the `unity-project` fact, so chat agents and workers can play this folder's Unity game without
 an engine link. Pipeline carries Play mode, Game-view captures, pause and input; keyboard and
 mouse control require an installed, active Input System package. Genex never adds that dependency
 or changes the project's input settings implicitly. Unsupported input answers with the reason.

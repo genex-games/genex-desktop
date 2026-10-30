@@ -259,7 +259,7 @@ The Genex lanes read these from the eval profile's event log (`genex-events.ts`,
   (`plan-approval.ts` `joinedResult`).
   Context readings keep their source ([native context telemetry](connections-and-context.md#native-context-telemetry)).
 - `completion_call` records every `engine.complete`: requested and served model, usage, latency,
-  failure kind and the caller's provenance (judge, playtester or SkillOpt gate).
+  failure kind and the caller's provenance (`judge`; an older record's other roles count as a judge's).
 - `build_observation` keeps a chat build's duration, turns, usage and the `preview.ready` answer
   (`ready.pageMs` is a field row's first boot); the delegated turn's reply (`messages`) carries
   the same usage, marked `usage_source: delegation`, and is the one counted;

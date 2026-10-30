@@ -849,7 +849,7 @@ the corpus that is. The default run prints where it looked and what it found for
 because this machine has no isolated Codex home and a silent zero is indistinguishable from a bug;
 `--system-codex` is opt-in and keeps only the sessions the studio itself started: the ones that ran
 in a game folder, and the ones that ran in a scratch folder the studio named under the temp root
-(`studio-playtest-`, `studio-judge-` — a playtester and every judge call run there, in nobody's
+(`studio-playtest-`, `studio-judge-` — a Codex read-only session and every judge call run there, in nobody's
 game, and filtering on the game roots alone emptied those rows silently). What the filter drops is
 said in the where-I-looked line, not swallowed. `--system-claude` does the same for `~/.claude`,
 where a chat signed in with this Mac's own Claude Code writes the studio's transcripts beside the

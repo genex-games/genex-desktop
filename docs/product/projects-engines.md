@@ -32,7 +32,7 @@ game; Unreal and Godot projects outside it get no Loop or Rewind.
 
 The lead works in the open editor through Genex's helper, one holder at a time; while you play
 the chat reads “Waiting for you to finish in Unreal”. Rewind saves, closes and reopens Unreal.
-Agents and blind judges play it. Mac games skip hardware ray tracing. Agents set up linked projects;
+Agents play it. Mac games skip hardware ray tracing. Agents set up linked projects;
 Undo reverts both. Agents package its apps. An **Unreal plugin** project
 is a host project with the plugin in `Plugins/`; its tools build, test and package it.
 

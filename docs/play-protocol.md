@@ -200,10 +200,8 @@ as it was written (`;`, `Numpad1`): a game that does not know it answers `bad-ar
 The `computer` tool's input plan (`PreviewInputAction`) becomes ops: a click is one `pointer`
 with `click`, modifiers held around it with `key`; a drag is `pointer` down, move, up; a key tap
 or chord is `key` down, a hold, `key` up (reverse order); `type`, `look` and `scroll` (`wheel`, at
-a point when given) map one to one. A hold lets game time pass: `step {ms}` when the session has
-the clock stopped, real time otherwise. A paced role (playtester, judge) pauses the game on load
-and runs it only during its moves (`play`, the move, `pause`). Pictures in PNG are kept as PNG and
-named so.
+a point when given) map one to one. A hold lets the game's own time pass while it holds. Pictures
+in PNG are kept as PNG and named so.
 
 An op the game refuses ends that action: keys and buttons it pressed are released, the action is
 not counted as applied, and the refusal is kept for the session to report (`refusals()`). A

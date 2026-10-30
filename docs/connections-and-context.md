@@ -209,8 +209,7 @@ A session with live tools (the `computer`) also gets them as a local MCP server,
 over the same bridge, and a picture comes back as MCP image content the model sees inline. Both
 dialects allow `studio_*` (1.18's `run` rejects any tool it would ask about; 2.x's rules deny
 everything first); 2.x declares it under `mcp.servers` with Code Mode off. The bridge command stays
-the fallback, and `mcpTools: false` turns the server off. A blind judge (`OpenCodeAccess.Blind`)
-reads no file on either dialect. Compact now is refused on
+the fallback, and `mcpTools: false` turns the server off. Compact now is refused on
 both: OpenCode compacts its own sessions. A provider's HTTP status in an `error` event (1.18's
 `data.statusCode`, 2.x's `status`) decides the failure kind, as for OpenRouter; a 400 or 404 for a
 picked model ends the build saying which model the provider refused and to pick another; a 403 for
@@ -250,9 +249,8 @@ and `RUST_LOG=error` makes its error log name a failed call's HTTP status (`grok
 which a 429 after Grok's own retries leaves out of the `error` event. A build and a read-only
 session approve every call (`--always-approve`): a call Grok's headless ask mode refuses ends the
 whole turn, so a read-only session's sandbox, which writes only its scratch folder, keeps the game
-as it is, and its file-editing tools are gone. A blind judge keeps the ask mode with the shell alone,
-approved for the studio bridge only (`--allow "Bash(node .studio/bridge/tool.mjs *)"`), and a
-one-shot answer approves nothing. Studio tools reach it through the file bridge, as Codex's.
+as it is, and its file-editing tools are gone. A one-shot answer keeps Grok's ask mode and approves
+nothing. Studio tools reach it through the file bridge, as Codex's.
 Each tool call is mirrored as it starts and its result as it ends, so a steer cuts the turn between
 calls; a reply streams to the chat and becomes one row per response; each response's whole prompt
 is the context reading. Compact now runs Grok's own `/compact` on the resumed session
@@ -325,8 +323,7 @@ Cursor's sandbox cannot start inside Genex's, so each turn runs in `ProcessSandb
 `--sandbox disabled`, `--trust` and `--force`: the box is the boundary, as for OpenCode. Its network
 is Cursor's hosts (`*.cursor.sh`, `*.cursorapi.com`, `cursor.com`); Cursor's agent connection reads
 the sandbox's proxy itself and `NODE_USE_ENV_PROXY=1` covers Node's own requests. It writes the
-workspace (a read-only session, Plan, a reviewer or a playtester runs from a scratch folder; a blind
-judge cannot read the game at all), Cursor's own folders and a Node compile cache, never a game's
+workspace (a read-only session, Plan or a reviewer runs from a scratch folder), Cursor's own folders and a Node compile cache, never a game's
 `.cursor` (its rules, hooks and MCP servers). Two options `--help` does not list are passed, checked
 on 2026.10.22: `--disable-auto-update` (its updater rewrites `~/.local/bin/agent`) and
 `--single-turn` (a turn ends with its reply instead of waiting on a dev server left in the

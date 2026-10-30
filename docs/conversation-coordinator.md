@@ -40,7 +40,7 @@ project, and graph: a request to wait for the remaining workers could start a se
 - The chat's bookmark is its own session: worker and coordinator sessions never overwrite it. A
   delegation that names a run, coordinator, director or build worktree `cwd` never writes metadata
   `contractor`, and the harness view always drops the session ids run sessions mirror into the
-  chat (`payload.runId`), so a follow-up never resumes a director, scout or builder that carries
+  chat (`payload.runId`), so a follow-up never resumes a director or builder that carries
   such a marker. Two run delegations carry none and are still recorded as the chat's session: the
   classic integrator without an integration worktree and a base build with no project folder. One
   run delegation is the chat's on purpose: a waking run's lead whose director grant says
@@ -209,7 +209,7 @@ chat turn; messages go to the run's lead ([live chat](#live-chat-during-a-build)
   never starts a session returns what joined to the queue.
 - **Read mid-turn.** `engine.steer {threadId, into, messages}` (`main/core/chat-steer.ts`) finds the
   delegation whose `chatTurn` is `into`, waiting up to `FIND_SESSION_MS` for it to register — never
-  a build worktree, the director, a playtester or a candidate. An engine with `steersMidTurn` takes
+  a build worktree or the director. An engine with `steersMidTurn` takes
   words: Claude Code keeps the SDK input open (an async-iterable prompt,
   `substrate/engines/claude-steer.ts`) and pushes the message with `priority: "next"`,
   `origin: {kind: "human"}` and a uuid; the LocalSessions engines (Bonsai, OpenRouter, a local
@@ -346,10 +346,10 @@ it builds…" instead of "Sends when the build finishes…" (renderer `chat/live
   the merge is aborted, the worker fails naming the files, and `integrate` refuses it
   (`unresolvedOf`). The lead builds in the integration worktree with its own hands, never
   read-only: what is uncommitted there (its edits, a game that builds in place) is committed on the
-  integration branch as its work before a merge, a playtest of integration or a worker's fork
-  (`commitLeadEdits`), and the answer says so. For a lead a single worker starts on a fork that does
-  not run (its repair; a loop worker ends at once, its fork gate run in the background), a playtest of the game folder plays a
-  worktree at its commit, and a merged build that does not run is answered in the lead's words.
+  integration branch as its work before a merge or a worker's fork (`commitLeadEdits`), and the
+  answer says so. For a lead a single worker starts on a fork that does not run (its repair; a loop
+  worker ends at once, its fork gate run in the background), and a merged build that does not run is
+  answered in the lead's words.
   After the close the chat goes on in it with its hands back
   ([after the build](#after-the-build-the-same-session)), and a Resume leads in it again.
 
@@ -458,7 +458,7 @@ message on another engine is another session's; it and anything else are
   new run. With Loop on it goes to the same run, reopened (below).
 - **The run's controls, live.** The delegation carries `runControls {runId, messageId}`; the host
   honours it only for the chat's own session (`honouredRunControls`: never a director, builder,
-  scout, playtester, coordinator, read-only session or build worktree) and adds `run_status`,
+  coordinator, read-only session or build worktree) and adds `run_status`,
   `show_build` and `land_build` (`RunControl`, `runControlTools`) to its host tools, answered by
   `conversation.runControl` as the coordinator's are, for the run named — one that is not the
   chat's latest is refused ("The run changed"). The session asking is not one of the run's workers
@@ -500,7 +500,7 @@ message on another engine is another session's; it and anything else are
   the Loop's time as a launch gives it, never the finished build's, always as a `goal` commission
   (`reopenBudgets`: the hours held to the run limits, or ∞ the day's ceiling until satisfied): it
   works until the ask is checked and the lead may finish then. The ask goes on the run as `asks`,
-  the latest first, and the lead, judges and playtester read it ahead of the commission, winning
+  the latest first, and the lead and its judges read it ahead of the commission, winning
   where they conflict (`goal-prompts.ts` `workingGoal`); `goal` stays what the Builds graph shows.
   It takes the message's picks as a launch from it takes them (`reopenedRun`): the
   finished run's stamps (`model`, `roles`, `rolesApplied`, `builderEngine`, `judgeEngine`,

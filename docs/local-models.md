@@ -104,8 +104,8 @@ that cannot see leaves reviewing to the first installed model that can (or to it
 can). A
 build turn on a model that cannot see receives a note instead of the turn's pictures
 (`unseen-pictures-prompts.ts`). A send that crosses a job to or from Ollama needs the
-`local-roles` harness capability, which `main.ts` claims only when `model-roles.ts`,
-`playtester.ts` and `scout.ts` all export `SERVES_LOCAL_ROLES` (`local-roles-served.ts`): an
+`local-roles` harness capability, which `main.ts` claims only when `model-roles.ts` exports
+`SERVES_LOCAL_ROLES` (`local-roles-served.ts`): an
 agent-edited older copy would put an Ollama model id on a subscription, so main refuses the send
 instead.
 
