@@ -145,10 +145,6 @@ const joinParts = (parts: readonly string[]): string => parts.filter(Boolean).jo
 /** A director tool answers within this (the Codex bridge shim waits ten minutes; a wait is capped at four). */
 export const DIRECTOR_TOOL_TIMEOUT_MS = 11 * MINUTE_MS;
 
-/** Told to a session that can set the game's cover. Model-facing: it reads this as written. */
-const COVER_TOOL_GUIDANCE =
-  "For a new game, call set_game_cover once to pick a sidebar cover look that suits the brief. It is a small side task; never let it delay the game.";
-
 /** How many stills a message may name for the model, and how large each may be. */
 const MAX_NAMED_STILLS = 4;
 const MAX_STILL_BYTES = 8 * 1024 * 1024;
@@ -1306,7 +1302,7 @@ export class DelegationService {
       const sniffed = sniffImage(data);
       if (!sniffed) {
         this.#core.options.onLog?.(
-          `[core] still skipped: ${file} is ${describeUnknownImage(data)} — the judges cannot read it`,
+          `[core] still skipped: ${file} is ${describeUnknownImage(data)} — the preview cannot read it`,
           "stderr",
         );
         continue;
@@ -2773,7 +2769,6 @@ export class DelegationService {
       session.hostTools ? tools.pluginGuidance : tools.capabilityFacts,
       toldWhereLeadToolsWork ? leadToolsNote() : "",
       this.#core.mcp.guidance(tools.mcp),
-      tools.cover.length ? COVER_TOOL_GUIDANCE : "",
       appCoverNote(p, session),
     ];
   }

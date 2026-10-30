@@ -10,7 +10,7 @@ import type { JudgeRef } from "../../shared/plugins.ts";
 export const JUDGE_PLAY_TOOL: LiveToolSpec = {
   name: JUDGE_PLAY_TOOL_NAME,
   description:
-    "Have an independent judge play this game and answer one yes/no question about it. Use it when the person asks for a change to be checked by someone other than you (a judge, a playtest, “make sure someone can win”). The judge is blind: it sees only the game's screen, never the code, and plays the folder as it is now in a hidden window of its own. When the question has a state the game reaches, pass goal_state: the studio checks it after every move, and a yes is verified by the studio. It takes a few minutes; play the game yourself for your own checks.",
+    "Have an independent judge play this game and answer one yes/no question about it. Use it when the person asks for a change to be checked by someone other than you (a judge, a playtest, “make sure someone can win”). The judge is blind: it sees only the game's screen, never the code, and plays the folder as it is now in a hidden window of its own. It takes a few minutes; play the game yourself for your own checks.",
   parameters: {
     type: "object",
     properties: {
@@ -20,8 +20,7 @@ export const JUDGE_PLAY_TOOL: LiveToolSpec = {
       },
       goal_state: {
         type: "string",
-        description:
-          'Optional JSON: the state the game reaches when the answer is yes, e.g. {"path":"flow.phase","equals":"won"} or {"path":"level.cleared","truthy":true}.',
+        description: "Optional JSON: a state path the game reports and the value it has when the answer is yes.",
       },
     },
     required: ["ask"],

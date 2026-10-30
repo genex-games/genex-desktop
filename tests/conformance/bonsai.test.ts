@@ -748,7 +748,7 @@ it("an output-limited checkpoint never replaces the last complete checkpoint", a
   assert.deepEqual(previous, before);
 });
 
-it("local builder detects repeated inspection, warns, and stops without modifying the workspace", async () => {
+it("local builder that keeps reading is nudged, never stopped for it: only its turns end it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-stall-"));
   const cwd = path.join(root, "game");
   await mkdir(cwd);
@@ -765,10 +765,12 @@ it("local builder detects repeated inspection, warns, and stops without modifyin
     },
   });
   try {
-    const result = await session.run({ cwd, prompt: "Implement a scene" }, model);
-    assert.equal(result.stopReason, "no_progress");
-    assert.equal(turns, 16);
+    // Flipped from a stop after 16 idle rounds (phase 5): reading is the model's call.
+    const result = await session.run({ cwd, prompt: "Implement a scene", maxTurns: 24 }, model);
+    assert.equal(result.stopReason, "max_turns");
+    assert.equal(turns, 24);
     assert.ok(seen.some((s) => s.includes("Progress check: 6")));
+    assert.doesNotMatch(seen.join("\n"), /inspect its rendered result|kept inspecting/);
     assert.ok(seen.some((s) => s.includes("unchanged section was already read")));
     assert.equal(await readFile(path.join(cwd, "main.js"), "utf8"), "// existing");
   } finally {
@@ -1362,7 +1364,7 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
     await sessions.run({ cwd, prompt: "What engine should this use?", interviewTools: [launchTool] }, model);
     const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
     assert.match(nudge, /Finish now: answer, make the change, or launch the build with start_autopilot/);
-    assert.doesNotMatch(nudge, /Implement the next concrete change/);
+    assert.doesNotMatch(nudge, /go on, or reply/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1388,7 +1390,7 @@ it("a local Auto chat that keeps reading is never nudged to start the Loop it ma
     const autoLaunch = { ...launchTool, onlyWhenAsked: true };
     await sessions.run({ cwd, prompt: "Make the sky darker", interviewTools: [autoLaunch] }, model);
     const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
-    assert.match(nudge, /Implement the next concrete change/);
+    assert.match(nudge, /go on, or reply with what you found or what you need/);
     assert.doesNotMatch(nudge, /start_autopilot/);
   } finally {
     await rm(root, { recursive: true, force: true });

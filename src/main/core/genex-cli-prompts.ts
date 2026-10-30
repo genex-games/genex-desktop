@@ -30,7 +30,7 @@ export const GENEX_CLI_PROMPT = {
   NeedsPositional: (command: string) => `\`genex ${command}\` needs its positional argument in args.`,
   NeedsOption: (command: string, name: string) => `\`genex ${command}\` needs the ${name} option.`,
   NeedsPicture:
-    "A store item is listed with its picture, never without: a square PNG of at least 768 × 768 (1024 × 1024 is best) that the item fills edge to edge, lit in the game's own scene, never on an empty black or flat background. Render it with the game's own code (or make it with genex__asset image), save it under .genex/scratch/, then call shop add again with the image option.",
+    "A store item is listed with its picture, never without: a square PNG of at least 768 × 768 (1024 × 1024 is best) that the item fills edge to edge, made by any means (genex__asset image among them), saved under .genex/scratch/; then call shop add again with the image option.",
   /** A picture that would not fill its card: its size, and what a card takes. */
   PictureShape: (given: string, width: number, height: number) =>
     `image ${JSON.stringify(given)} is ${width} × ${height}: a store item's picture is square, at least 768 × 768 (1024 × 1024 is best), and fills its card edge to edge. Render it again at that size with the item filling the frame; nothing was run.`,
@@ -45,13 +45,13 @@ export const GENEX_CLI_PROMPT = {
   UnknownPackage: (name: string, allowed: readonly string[]) =>
     `${name} is not a package genex__package adds. It adds: ${allowed.join(", ")}.`,
   NoPackageJson:
-    "This game has its own page but no package.json, and is not made from Studio's template, so there is nothing to add Genex packages to. Give it one with a build (npm init, then a bundler such as Vite), then call genex__package again.",
+    "This game has its own page but no package.json, and is not made from Studio's template, so there is nothing to add Genex packages to: genex__package needs a package.json.",
   GodotGame:
     "This is a Godot game: Genex's multiplayer goes into its Godot project with godot__multiplayer (read the godot-multiplayer skill first), and its web build is Godot's export, which takes no npm packages. Its players' sign-in on Genex is Studio's: nothing to add for it.",
   UnityGame:
     "This is a Unity game: Genex's multiplayer goes into its Unity project with unity__multiplayer (read the unity-multiplayer skill first), and its WebGL build is Unity's, which takes no npm packages. Its players' sign-in on Genex is Studio's: nothing to add for it.",
   TemplatePageUnreadable:
-    "This game's index.html has no import map Studio can read, so nothing was added. Restore the template's import map (three from /vendor/) and try again.",
+    "This game's index.html has no import map Studio can read, so nothing was added: genex__package adds its entries to the page's import map.",
   TemplateSdkMapped: [
     "index.html now maps @genex-ai/embed-sdk to Studio's copy (/vendor/genex/embed-sdk/index.js) and loads Studio's connect module (/vendor/genex/connect.js) right after its import map. Keep both.",
     'Studio connects the game: in the preview in local test mode, and on Genex to the game\'s project when it is published. Import what you need from "@genex-ai/embed-sdk" (waitForPlayer, loadPlayerState, savePlayerState, submitScore, getLeaderboard) and never call initEmbed() yourself.',

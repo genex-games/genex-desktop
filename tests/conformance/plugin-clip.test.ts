@@ -152,15 +152,7 @@ describe("a plugin's clip of a moment a demo stages", () => {
   it("leases a window, sizes it, loads the game, stages the demo, lets the clock run, records it and gives the window back", async () => {
     const host = await observeHost();
     const answer = await host.clip(CLIP);
-    assert.deepEqual(host.log, [
-      ...UNTIL_DEMO,
-      "call:demo:hero-shot",
-      "hud:off",
-      "call:start",
-      "clip",
-      "restore",
-      "release",
-    ]);
+    assert.deepEqual(host.log, [...UNTIL_DEMO, "call:demo:hero-shot", "call:start", "clip", "restore", "release"]);
     assert.deepEqual(host.made[0]?.clips, [{ seconds: 5, fps: 30, maxBytes: 8 * MIB, posterMaxPx: 1280 }]);
     assert.deepEqual(answer, { clip: { ...TAKE, view: { demo: "hero-shot" } } });
     assert.deepEqual(host.live.log, [], "Live was never touched");
@@ -278,15 +270,7 @@ describe("a plugin's clip and its budget", () => {
     page.arrive();
     await settle();
     assert.deepEqual(usedAfterRelease(host.made), []);
-    assert.deepEqual(host.log, [
-      ...UNTIL_DEMO,
-      "call:demo:hero-shot",
-      "hud:off",
-      "call:start",
-      "clip",
-      "restore",
-      "release",
-    ]);
+    assert.deepEqual(host.log, [...UNTIL_DEMO, "call:demo:hero-shot", "call:start", "clip", "restore", "release"]);
     assert.deepEqual(host.live.log, []);
   });
 

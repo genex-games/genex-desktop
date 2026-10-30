@@ -3,7 +3,7 @@
  * from the start of a moment one of its demos stages. The window, its size, the load, putting the
  * game in play and the demo are a still's (`view-still.ts`), and so is the discipline: a hidden
  * window of its own, given back however the clip ends, within one budget. The demo stages the
- * moment and returns; the host then starts the game's clock (`__studio.start()`: the template's
+ * moment and returns; the host then starts the page's clock (the shim's `start()`: the template's
  * own loop, and the studio shim's clock for a game without one) and records `seconds` of it in real
  * time. The game drives itself while it records; the host sends no input. The request reaching
  * here was checked field by field (`clipOrder` in `plugins/services.ts`).
@@ -32,9 +32,6 @@ import {
   type ViewStillOptions,
   type WindowNeed,
 } from "./view-still.ts";
-
-/** Switches the template's canvas HUD off for a recording; a page without one answers null. */
-export const CLIP_HUD_OFF = "window.__studio?.hud?.enable?.(false) ?? null";
 
 /** What a clip's budget allows beside its own seconds: the window, the load, the demo and the encoding. */
 export const CLIP_LOAD_ALLOWANCE_MS = 60 * SECOND_MS;
@@ -105,10 +102,6 @@ async function film(
   const staged = await runDemo(port, order.demo);
   abandoned.throwIfAborted();
   if (staged) return { clipProblem: staged.stillProblem };
-  // The clip is the game as a player sees it on a card: no readouts over it. A template game's HUD
-  // repaints every frame, so it is switched off for the recording rather than cleared once.
-  await port.evaluate(CLIP_HUD_OFF).catch(() => null);
-  abandoned.throwIfAborted();
   // A demo leaves the game paused on the moment it staged; the clip is that moment playing out.
   // A page without the clock verb answers `{__missing}`: it was never paused, and records as it runs.
   await port.studioCall(GameClock.Start).catch(() => null);

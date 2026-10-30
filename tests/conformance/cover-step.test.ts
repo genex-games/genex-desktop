@@ -48,6 +48,13 @@ describe("the Genex cover as a step after a landed build", () => {
     const ask = coverStepAsk(THREAD, events, "r1");
     assert.ok(ask);
     assert.match(ask.text, /genex__skill \{"name":"cover"\}/, "the agent reads the cover skill then");
+    // Flipped from staging a genex-cover demo: the agent makes a picture of its real game by any
+    // means and hands Genex the file paths.
+    assert.match(ask.text, /genex__cover/);
+    assert.match(ask.text, /\{ image: "<path>", clip\?: "<path>" \}/);
+    assert.match(ask.text, /in the game folder/);
+    assert.match(ask.text, /PNG or JPEG, at least 1280×720/);
+    assert.doesNotMatch(ask.text, /demo|stage|shoot/i);
     assert.deepEqual(ask.options, {
       engine: "claude-code",
       model: "opus",

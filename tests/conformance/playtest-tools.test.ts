@@ -92,16 +92,18 @@ describe("playtest shorthands", () => {
     assert.equal(String(long).length, "state: ".length + PLAYTEST_LIMITS.stateChars);
   });
 
-  it("saves a screenshot from the named camera and says where it is", async () => {
+  it("saves a screenshot of the current view and says where it is", async () => {
     const dir = await tmpDir("playtest-");
     const { port, calls } = fakeWindow();
     const { ctx, frames } = await context(dir);
+    // Flipped from a named camera and pixel numbers: a game has no studio cameras, and the
+    // picture is the answer.
     const answer = await runPlaytestTool(PlaytestTool.Screenshot, { camera: " eye:here " }, port, ctx);
-    const file = path.join(dir, "p1_eye:here.jpg");
-    assert.equal(answer, `saved ${file} (litFraction 0.50, meanLuma 100) — Read it to look.`);
+    const file = path.join(dir, "p1_view.jpg");
+    assert.equal(answer, `saved ${file}`);
     assert.equal(await readFile(file, "utf8"), "jpeg");
-    assert.deepEqual(calls, [["debugCamera", "eye:here"]]);
-    assert.deepEqual(frames, [{ jpeg: "jpeg", caption: "camera eye:here" }]);
+    assert.deepEqual(calls, [], "no camera is asked of the page");
+    assert.deepEqual(frames, [{ jpeg: "jpeg", caption: "screenshot" }]);
   });
 
   it("answers a name that is not a shorthand as unknown", async () => {
@@ -117,19 +119,14 @@ describe("playtest shorthands", () => {
     assert.match(byName.get(PlaytestTool.Wait) ?? "", /max 5000/);
   });
 
-  it("lets the game's racing line steer a held throttle when asked, and lets go after", async () => {
+  it("presses keys with no racing line to steer them", async () => {
     const { port, inputs, calls } = fakeWindow();
     const { ctx } = await context(await tmpDir("playtest-"));
     await runPlaytestTool(PlaytestTool.PressKeys, { keys: "w", holdMs: 3_000, autosteer: true }, port, ctx);
-    assert.deepEqual(calls, [
-      ["assist", { steer: true }],
-      ["assist", { steer: false }],
-    ]);
+    assert.deepEqual(calls, [], "nothing is asked of the game");
     assert.deepEqual(inputs, [{ type: "hold", keys: ["w"], ms: 3_000 }]);
-    await runPlaytestTool(PlaytestTool.PressKeys, { keys: "w" }, port, ctx);
-    assert.equal(calls.length, 2, "a plain press steers nothing");
     const described = JSON.stringify(PLAYTEST_TOOLS.find((tool) => tool.name === PlaytestTool.PressKeys));
-    assert.match(described, /autosteer/);
+    assert.doesNotMatch(described, /autosteer/);
   });
 });
 

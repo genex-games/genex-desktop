@@ -22,7 +22,6 @@ import {
   localBudgetNote,
   localSystemPrompt,
   modeChangedNote,
-  noProgressNote,
   progressCheckNote,
 } from "./local-session-prompts.ts";
 import { type AutoCheck, changesSomething, permitCall, seatAsks, sessionMode } from "./local-session-permissions.ts";
@@ -67,8 +66,7 @@ const LOCAL_SESSION_LIMITS = {
   /** A tool's answer as the model reads it, and as the chat previews it. */
   toolReplyChars: 40_000,
   toolPreviewChars: 2_000,
-  /** Tool rounds without a workspace change before the session stops, and the rounds that get a nudge. */
-  idleRoundLimit: 16,
+  /** The tool rounds without a workspace change that get a nudge; reading never stops a session. */
   idleNudgeRounds: [6, 10] as readonly number[],
 } as const;
 
@@ -793,16 +791,15 @@ async function callTool(run: LocalRun, call: ToolCall): Promise<{ answer: LiveTo
 }
 
 /**
- * Stop a builder that keeps inspecting without changing anything, after nudging it twice. Real
- * edits count, including shell and host-tool edits — not the model's claims of progress.
+ * Nudge a session that keeps reading without changing anything; reading is the model's call, so
+ * it is never stopped for it (its turns and time end it). Real edits count, including shell and
+ * host-tool edits — not the model's claims of progress.
  */
 async function checkProgress(run: LocalRun, calls: ToolCall[]): Promise<DelegateResult | null> {
   const nextStamp = await stampWorkspace(run.cwd);
   const inspecting = calls.every((c) => INSPECTION_TOOLS.has(c.name));
   run.idleRounds = inspecting && nextStamp === run.workspaceStamp ? run.idleRounds + 1 : 0;
   run.workspaceStamp = nextStamp;
-  if (run.idleRounds >= LOCAL_SESSION_LIMITS.idleRoundLimit)
-    return localResult(run, false, StopReason.NoProgress, noProgressNote(LOCAL_SESSION_LIMITS.idleRoundLimit));
   if (LOCAL_SESSION_LIMITS.idleNudgeRounds.includes(run.idleRounds)) {
     run.progressNote = progressCheckNote(run.idleRounds, launchToolNames(run.request));
     run.messages.push({ role: "user", content: run.progressNote });

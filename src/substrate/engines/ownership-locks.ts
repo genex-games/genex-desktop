@@ -300,7 +300,7 @@ export function ownershipBriefing(ownership: Ownership): string {
       `FILE OWNERSHIP — this game is the user's own, and your seam in it is ${seam}${ownership.ownsMain ? `, plus ${entry.main}, ${entry.studio} and index.html` : `, plus its own NOTES file. ${entry.main}, ${entry.studio} and index.html belong to whoever owns the entry`}.`,
       "Files outside it that already exist have been made read-only on purpose. That is the rule, not a mistake and not a permissions bug:",
       "do not `chmod` it away, do not `sudo`, do not copy-edit-replace. If the work genuinely needs a file outside your seam, say so in your summary and",
-      "leave it alone — the studio will re-lock anything you unlock, and an edit you sneak past it is an edit the reviewer will revert.",
+      "leave it alone — the studio will re-lock anything you unlock.",
       "Lockfiles, build output and bundler caches are left writable, so `npm install` and the game's own build still run.",
     ].join(" ");
   }
@@ -309,6 +309,6 @@ export function ownershipBriefing(ownership: Ownership): string {
     `FILE OWNERSHIP — this facet owns ${owns}${ownership.ownsMain ? `, plus ${entry.main}, ${entry.studio} and index.html` : `, plus its own NOTES file and the FACET WIRING block of ${entry.main}`}.`,
     "Every other file in this workspace has been made read-only on purpose. That is the rule, not a mistake and not a permissions bug:",
     "do not `chmod` it away, do not `sudo`, do not copy-edit-replace. If you believe you need a file you do not own, say so in your summary and",
-    "leave it alone — the studio will re-lock anything you unlock, and an edit you sneak past it is an edit the reviewer will revert.",
+    "leave it alone — the studio will re-lock anything you unlock.",
   ].join(" ");
 }

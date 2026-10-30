@@ -243,7 +243,7 @@ export function mainAgentReachNote(platform: NodeJS.Platform = process.platform)
  * answered in the wrap-up while the person watched a silent chat.
  */
 export function personSessionNote(): string {
-  return "The person in this chat may not be a programmer, and reads every word: talk about their game in plain words (code, files and performance only when they ask), and keep a finished step's message short: what they can do now and how to play it. When they write to you while you work, answer them in the chat at once, in a sentence or two, before your next step; then carry on, or change course when they asked you to.";
+  return "The person in this chat may not be a programmer. When they write to you while you work, answer them in the chat at once, then carry on, or change course when they asked you to.";
 }
 
 /**

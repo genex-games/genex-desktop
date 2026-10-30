@@ -138,7 +138,7 @@ export class AssetService {
       if (!sniffed) {
         const why = describeUnknownImage(data);
         this.#core.options.onLog?.(
-          `[core] reference skipped: ${frame.label ?? "board"} is ${why} — the judges cannot read it`,
+          `[core] reference skipped: ${frame.label ?? "board"} is ${why} — the preview cannot read it`,
           "stderr",
         );
         skipped.push(`${frame.label ?? "board"} (${why})`);

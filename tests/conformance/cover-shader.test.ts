@@ -332,7 +332,8 @@ it("the builder picks a recipe once; it stays bound to its game and never replac
           const tool = request.liveTools?.find((tool) => tool.name === COVER_TOOL.name);
           if (mode === "create") {
             assert.ok(tool);
-            assert.match(request.prompt, /set_game_cover once/);
+            // Flipped (phase 5): the tool is offered with no standing nudge to pick a look.
+            assert.doesNotMatch(request.prompt, /set_game_cover once/);
             await assert.rejects(
               request.onLiveTool!(COVER_TOOL.name, { family: "clouds", palette: "lava" }),
               /Unknown cover look/,

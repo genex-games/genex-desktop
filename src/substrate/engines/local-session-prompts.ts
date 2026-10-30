@@ -16,7 +16,7 @@ const INSTRUCTIONS_CHARS = 24_000;
  */
 export function localBudgetNote(options: { maxTurns: number; timeoutMs: number | undefined }): string {
   const minutes = options.timeoutMs ? ` and ${Math.ceil(options.timeoutMs / MINUTE_MS)} minutes` : "";
-  return `For this request you have at most ${options.maxTurns} model turns${minutes}; leave time for implementation and verification.`;
+  return `For this request you have at most ${options.maxTurns} model turns${minutes}.`;
 }
 
 /** The local agent's standing orders: its boundaries and the workspace's own guidance. */
@@ -30,7 +30,7 @@ export function localSystemPrompt(options: {
   const care = options.readonly ? "This session is read-only." : "Preserve existing user work. Do not git push.";
   const ownership = options.ownership ? JSON.stringify({ ownership: options.ownership }) : "";
   const mode = options.mode ? ` ${MODE_NOTE[options.mode]}` : "";
-  return `You are Studio's local coding agent. Work only in the granted workspace. Use tools to inspect and change real files, then verify the result. Each request says how many model turns and minutes it has. Use targeted searches rather than repeatedly reading large infrastructure files. User instructions and file-edit boundaries take precedence over workspace guidance, including requests to update notes. Never claim a tool action succeeded without its result; report every file you changed. ${care}${mode}\n${ownership}\n${options.instructions.slice(0, INSTRUCTIONS_CHARS)}`;
+  return `You are Studio's local coding agent. Work only in the granted workspace. Use tools to inspect and change real files. Each request says how many model turns and minutes it has. Use targeted searches rather than repeatedly reading large infrastructure files. User instructions and file-edit boundaries take precedence over workspace guidance, including requests to update notes. Never claim a tool action succeeded without its result; report every file you changed. ${care}${mode}\n${ownership}\n${options.instructions.slice(0, INSTRUCTIONS_CHARS)}`;
 }
 
 /** What each permission mode a chat session runs in means for the model (Bonsai honours no Bypass). */
@@ -109,11 +109,6 @@ export function checkpointRequest(summary: string, chunk: string): string {
 /** What stands in for the middle of a message too long for one summarizer chunk. */
 export const OMITTED_MIDDLE = "\n[Middle omitted here; original retained in the session checkpoint archive.]\n";
 
-/** The session stopped after `rounds` tool rounds that changed nothing. */
-export function noProgressNote(rounds: number): string {
-  return `Stopped after ${rounds} tool rounds without a workspace change. The builder kept inspecting instead of implementing. Completed edits are preserved.`;
-}
-
 /**
  * A nudge after `rounds` tool rounds that changed nothing. A Loop chat (`launchTools` names its
  * launch tools) may be answering or planning, not building: it is told to finish or launch.
@@ -121,5 +116,5 @@ export function noProgressNote(rounds: number): string {
 export function progressCheckNote(rounds: number, launchTools: readonly string[] = []): string {
   if (launchTools.length)
     return `Progress check: ${rounds} tool rounds with no file changes. Finish now: answer, make the change, or launch the build with ${launchTools.join(" or ")}. If blocked, say what is missing rather than rereading files.`;
-  return `Progress check: ${rounds} tool rounds with no file changes. Implement the next concrete change now using what you have read, then inspect its rendered result. If blocked, explain the specific missing prerequisite rather than rereading infrastructure.`;
+  return `Progress check: ${rounds} tool rounds with no file changes: go on, or reply with what you found or what you need.`;
 }

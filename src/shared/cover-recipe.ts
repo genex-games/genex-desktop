@@ -400,13 +400,10 @@ gl_FragColor=vec4(clamp(o,0.0,1.0),edge);
 }`;
 
 const TOOL_PALETTES = [...new Set(COVER_LOOKS.map(([, palette]) => palette))];
-/** Genre hints per family, as the builder reads them. Model-facing. */
-const FAMILY_HINTS =
-  "Clouds suit cozy/casual/adventure; aurora night/sci-fi/magic; bands space/arcade; marble puzzle/strategy; ember action/horror/fantasy; ocean open world/survival; orbital science/physics; bricks building/sandbox/kids; plasma sci-fi/energy; pixel retro/platformer; caustic water/fishing/beach; tempest action/weather/racing; nimbus calm/zen; terminal hacking/text/coding; voxel crafting/survival; meadow exploration/dreamlike; galaxy space/exploration; thermal stealth/horror/detective.";
 /** Enums in the schema, no shader code: about thirty tokens of output for a whole cover. */
 export const COVER_TOOL = {
   name: "set_game_cover",
-  description: `Pick this game's sidebar cover once. Families with named palettes: ${COVER_LOOKS_BY_FAMILY.map(([family, palettes]) => `${family}: ${palettes.join("|")}`).join("; ")}. Families whose colour the host picks: ${ORB_FAMILIES.join(", ")}. ${FAMILY_HINTS} Genre is only a hint; choose the family that will look best for this game. The host keeps every game's cover different, so it may use another palette or colour than the one named. The host draws it; an unknown look keeps the current cover. Uploaded or already chosen covers are kept.`,
+  description: `Pick this game's sidebar cover once. Families with named palettes: ${COVER_LOOKS_BY_FAMILY.map(([family, palettes]) => `${family}: ${palettes.join("|")}`).join("; ")}. Families whose colour the host picks: ${ORB_FAMILIES.join(", ")}. The host keeps every game's cover different, so it may use another palette or colour than the one named. The host draws it; an unknown look keeps the current cover. Uploaded or already chosen covers are kept.`,
   parameters: {
     type: "object" as const,
     properties: {
