@@ -43,8 +43,6 @@
     "note": "Start, then the Blue Room card"
   },
   "cameras": ["default"],
-  "expectWarnings": ["this game paints UI outside the canvas"],
-  "allowWarnings": [],
   "delta": [
     { "path": "player.x", "min": 0.5 },
     { "path": "player.z", "min": 0.5 }

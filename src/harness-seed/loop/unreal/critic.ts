@@ -17,25 +17,9 @@ import { modelOn, RoleKey, roleEffort, roleEngine } from "../model-roles.ts";
 import { boundedEffort } from "../effort-cap.ts";
 import { CLIP_DETAIL, CLIP_REASON, clip, hasText } from "../text.ts";
 import { MINUTE_MS } from "../time.ts";
-import {
-  ASSET_CRITIC_SYSTEM,
-  ASSET_LOOK_WORDS,
-  adviceWords,
-  assetAsk,
-  CRITIC_CHECKS,
-  CRITIC_SYSTEM,
-  CRITIC_WORDS,
-  criticAsk,
-} from "./critic-prompts.ts";
+import { adviceWords, CRITIC_CHECKS, CRITIC_SYSTEM, CRITIC_WORDS, criticAsk } from "./critic-prompts.ts";
 import { pathShapeProblem, realInside } from "./game-paths.ts";
-import {
-  type AssetLook,
-  AssetVerdict,
-  type CriticAdvice,
-  type CriticDefect,
-  MAX_CRITIC_DEFECTS,
-  WHOLE_FRAME,
-} from "./lead-contract.ts";
+import { type CriticAdvice, type CriticDefect, MAX_CRITIC_DEFECTS, WHOLE_FRAME } from "./lead-contract.ts";
 import { criticAdvice } from "./lead-graph.ts";
 import { type Lead, milestoneNow, saveLead } from "./lead-journal.ts";
 
@@ -263,12 +247,6 @@ export async function askCritic(lead: Lead, args: AnyRecord): Promise<string> {
   return adviceWords(advice, { references: references.length, art: Boolean(art), left: shots.left });
 }
 
-/** The most renders the critic looks at for one delivered model. */
-const MAX_ASSET_RENDERS = 4;
-
-/** What a delivered model is looked at for: what it is, the brief it was made from, its folder and its renders (game-folder paths). */
-export type DeliveryToLook = { title: string; brief: string; folder: string; renders: readonly string[] };
-
 /** The critic's defects in an answer, at most MAX_CRITIC_DEFECTS, each with its fix. */
 function defectsOf(answer: AnyRecord): CriticDefect[] {
   return (Array.isArray(answer.defects) ? answer.defects : [])
@@ -279,31 +257,4 @@ function defectsOf(answer: AnyRecord): CriticDefect[] {
       defect: clip(String(row.defect).trim(), CLIP_REASON),
       fix: clip(String(row.fix ?? "").trim(), CLIP_REASON),
     }));
-}
-
-/**
- * The critic's look at a delivered model before the lead hears of it: its renders, each read by
- * realpath inside the sub-agent's own folder in the game, against the brief it was made from and
- * the game's goal. Ready or not ready with what to fix; or why it couldn't look, when no render
- * could be read or its answer has no yes or no.
- */
-export async function lookAtDelivery(lead: Lead, delivery: DeliveryToLook): Promise<AssetLook> {
-  const found = await realInside(lead.game.dir, delivery.folder);
-  if ("problem" in found) return { error: ASSET_LOOK_WORDS.NoRenders };
-  const images: MessageImage[] = [];
-  for (const render of delivery.renders.slice(0, MAX_ASSET_RENDERS)) {
-    const name = render.startsWith(`${delivery.folder}/`) ? render.slice(delivery.folder.length + 1) : render;
-    const read = await readShot(lead, found.real, render, { name, outside: CRITIC_WORDS.NotInFolder(delivery.folder) });
-    if ("image" in read) images.push(read.image);
-  }
-  if (!images.length) return { error: ASSET_LOOK_WORDS.NoRenders };
-  const renders = images.map((image) => image.label ?? "");
-  const content = assetAsk({ title: delivery.title, brief: delivery.brief, goal: lead.run.goal ?? "", renders });
-  try {
-    const answer = await lookOnce(lead, { systemPrompt: ASSET_CRITIC_SYSTEM, content, images });
-    if (typeof answer?.ready !== "boolean") return { error: ASSET_LOOK_WORDS.NoVerdict };
-    return { verdict: answer.ready ? AssetVerdict.Ready : AssetVerdict.NotReady, defects: defectsOf(answer) };
-  } catch (err) {
-    return { error: ASSET_LOOK_WORDS.NoAnswer(clip(String((err as Error)?.message ?? err), CLIP_DETAIL)) };
-  }
 }

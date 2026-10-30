@@ -61,8 +61,6 @@ export const SWITCH_NOTES = {
 /** What a tool that only waits answers when the person's words ended its wait (person-wrote.ts). */
 export const WAIT_ENDED = {
   workers: `The user just wrote in the chat, so this wait ended early: read their message and answer it, then wait again (${WorkerTool.Wait}) if you still need to.`,
-  judge:
-    "The user just wrote in the chat, so the wait for the busy reviewer ended early: read their message and answer it, then ask again if you still need the verdict.",
 } as const;
 
 /** What a build's lead reads beside the person's words once its wrap-up began (live-chat.ts). */

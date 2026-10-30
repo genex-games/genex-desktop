@@ -25,15 +25,9 @@ import { templateLoadsGenexSdk, webGameSignal } from "../../src/substrate/projec
 import { withGenexSdkImport } from "../../src/shared/genex-page.ts";
 import { servedKey } from "../../src/main/core/page-report.ts";
 import { ensureRepo, git } from "../../src/substrate/snapshots.ts";
-import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { engineExportRefusal, openOptions, openedWords, suggestedOption } from "../../src/shared/shape-words.ts";
 import { loopRunRefusal } from "../../src/harness-seed/loop/main.ts";
 import { servedAfterBuild } from "../../src/main/game-build.ts";
-import { allowedFile as hookAllowedFile } from "../../src/substrate/ownership.ts";
-import { allowedFile as reviewAllowedFile } from "../../src/harness-seed/loop/review.ts";
-import { withHarnessChecks } from "../../src/harness-seed/loop/spec.ts";
-import { unionMergeMain } from "../../src/harness-seed/loop/merge.ts";
-import { facetPrompt } from "../../src/harness-seed/loop/facet-loop.ts";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
 import { adoptPickedFolder, inspectPickedFolder } from "../../src/renderer/open-folder.ts";
 import type { FolderInspection, GameProject } from "../../src/renderer/types.ts";
@@ -612,30 +606,6 @@ describe("a project's own shape", () => {
     assert.deepEqual(missing.missing, ["src/main.ts"], "the typed list a run's refusal reads");
   });
 
-  it("names the real entry in the ownership rule — both copies of it agree", () => {
-    const spec = { id: "plaza", owns: ["src/plaza.ts"], main: "src/main.ts" };
-    for (const allowed of [hookAllowedFile, reviewAllowedFile]) {
-      assert.equal(allowed("src/main.ts", spec, false), true, "wiring into the real entry");
-      assert.equal(allowed("src/plaza.ts", spec, false), true);
-      assert.equal(allowed("src/studio.js", spec, false), false);
-      assert.equal(allowed("src/studio.js", spec, true), true);
-      assert.equal(allowed("index.html", spec, true), true);
-      assert.equal(allowed("src/main.js", spec, false), false, "the dead template stub is nobody's wiring block");
-      // The brief tells the entry's owner to make `import "./studio.js"` compile; the rule that
-      // guards the diff must let it. Nobody else may touch the contract or the compiler config.
-      assert.equal(
-        allowed("src/studio.d.ts", spec, true),
-        true,
-        "the contract's types belong to whoever owns the entry",
-      );
-      assert.equal(allowed("src/studio.d.ts", spec, false), false);
-      assert.equal(allowed("tsconfig.json", spec, true), true);
-      assert.equal(allowed("tsconfig.app.json", spec, true), true, "a Vite TypeScript project splits its config");
-      assert.equal(allowed("tsconfig.json", spec, false), false);
-      assert.equal(allowed("package.json", spec, true), false, "the compiler config is not a licence for the manifest");
-    }
-  });
-
   it("writes what Genex knows about the game that is there, and nothing it must keep", async () => {
     const { games, base } = await workspaces();
     const dir = path.join(base, "wreck-rules");
@@ -685,110 +655,6 @@ describe("a project's own shape", () => {
         null,
         "a source, not a project file",
       );
-  });
-
-  it("briefs a chat build about the game's own shape, and the template's rules only for the template", () => {
-    const shape = { entry: "dist/index.html", main: "src/main.ts", build: "npm run build" };
-    const own = buildContractorBrief({
-      ask: "make the cars heavier",
-      shape,
-      ownShape: true,
-      folderLabel: "games/skate",
-    });
-    assert.match(own, /entry is src\/main\.ts/);
-    assert.match(own, /Run `npm run build` before you finish/);
-    assert.match(own, /dist\/index\.html/);
-    assert.ok(
-      !/assets come from procedural code/.test(own),
-      "the template's asset guidance is not imposed on a custom game's architecture",
-    );
-    assert.ok(
-      !/__studio\.hud/.test(own) || /no __studio\.hud overlays/.test(own),
-      "no HUD is demanded of a game with its own UI",
-    );
-    // A game of its own that runs as written has nothing to run before finishing.
-    const unbuilt = buildContractorBrief({ ask: "make it darker", shape: { ...shape, build: null }, ownShape: true });
-    assert.ok(!/before you finish/.test(unbuilt), unbuilt);
-    assert.match(unbuilt, /runs as written/);
-    // Flipped: the studio's own scaffold is the game's page to build, with no harness rules to keep.
-    const template = buildContractorBrief({ ask: "a pong game", scaffolded: true });
-    assert.match(template, /Genex serves its index\.html in the Live view/);
-    assert.doesNotMatch(template, /follow CLAUDE\.md|assets come from procedural code/);
-    // The brief names Genex, the app it runs in (its identity line); never a disabled plugin's tools.
-    assert.doesNotMatch(template, /genex__|blender__/, "disabled plugin tools are not injected by core briefs");
-    assert.ok(!/entry is/.test(template), template.slice(0, 400));
-    // Flipped: a chat build once had to wire the studio contract into the person's own game before
-    // doing what they asked. The studio attaches to every page it serves, and a Loop installs the
-    // contract as its own first step (director/setup.ts `installContract`): the chat does the ask.
-    const unjudgeable = buildContractorBrief({
-      ask: "make the cars heavier",
-      shape,
-      ownShape: true,
-      contractMissing: true,
-    });
-    assert.doesNotMatch(unjudgeable, /FIRST, BEFORE THE ASK|installStudio/);
-    assert.match(unjudgeable, /This game came with its own shape/);
-  });
-
-  it("puts no screen or input check on a game with its own UI, nor on the template's", () => {
-    // Flipped (Loop phase 2): the one-screen and input checks are no longer forced on any game;
-    // a game keys or a mouse drive carries only reaches-play on its entry owner's board.
-    const game = { hud: true, mouseLook: true, keyboardMove: true } as never;
-    const own = withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true, game, screen: false });
-    assert.deepEqual(
-      own.checks.map((c: { id: string }) => c.id),
-      ["reaches-play"],
-    );
-    const template = withHarnessChecks({ id: "f", checks: [] }, { ownsMain: true, game });
-    assert.deepEqual(
-      template.checks.map((c: { id: string }) => c.id),
-      ["reaches-play"],
-    );
-  });
-
-  it("union-merges the real entry, not src/main.js", async () => {
-    const commands: string[] = [];
-    const fake = async (command: string) => {
-      commands.push(command);
-      if (command.startsWith("git diff --name-only")) return { code: 0, stdout: "src/main.ts\n", stderr: "" };
-      return { code: 1, stdout: "", stderr: "nope" };
-    };
-    assert.match(
-      (await unionMergeMain(fake)).reason!,
-      /conflicts in src\/main\.ts/,
-      "the default still means src/main.js",
-    );
-    const result = await unionMergeMain(fake, { main: "src/main.ts" });
-    assert.equal(result.ok, false);
-    // Updated (M3) from `git show :1:src/main.ts`: the entry's name is single-quoted on the command line.
-    assert.ok(
-      commands.some((c) => c.includes("git show ':1:src/main.ts'")),
-      commands.join("\n"),
-    );
-  });
-
-  it("briefs a facet about the game's own entry, build and screen", () => {
-    const base = {
-      run: { runId: "r", goal: "a plaza" },
-      spec: { id: "plaza", title: "Plaza", intent: "paving", checks: [], owns: ["src/plaza.ts"] },
-      iteration: 1,
-      resumed: false,
-      briefFile: null,
-      worktree: "/w",
-      ownsMain: false,
-    };
-    const own = facetPrompt({
-      ...base,
-      shape: { entry: "dist/index.html", main: "src/main.ts", build: "npm run build" } as never,
-      ownShape: true,
-    });
-    assert.match(own, /src\/main\.ts/);
-    assert.match(own, /npm run build/);
-    assert.match(own, /dist\/index\.html/);
-    assert.ok(!/THE SCREEN IS THE GAME'S/.test(own), "the template's screen line is not this game's");
-    const template = facetPrompt(base);
-    assert.match(template, /THE SCREEN IS THE GAME'S/);
-    assert.match(template, /src\/main\.js/);
   });
 
   it("the studio bridge works from a folder with a space in its path", async () => {

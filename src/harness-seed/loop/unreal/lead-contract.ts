@@ -11,13 +11,12 @@
  * runner (`lead.ts` and its siblings) imports it; `seed-contracts.test.ts` holds its plugin tool
  * names to the bundled plugins'.
  */
-import { JUDGE_PLAY_TOOL } from "../judge-play-prompts.ts";
 import type { Run } from "../../types/harness.d.ts";
 import type { LeadSeat } from "../director/lead-session.ts";
-import { MAX_WAIT_S } from "../director/budgets.ts";
+import { MAX_WORKER_WAIT_S } from "../workers/contract.ts";
 import { DirectorTool } from "../director/tool-specs.ts";
 import type { FinishTally } from "../finish-check.ts";
-import type { Side } from "../judge.ts";
+import type { Side } from "../verdict.ts";
 import type { WorkerMode, WorkerState } from "../outcomes.ts";
 import type { JournalPhase } from "../run-events.ts";
 import { MINUTE_MS } from "../time.ts";
@@ -42,8 +41,6 @@ export const LeadTool = {
   WorkerStop: WorkerTool.Stop,
   WorkerMark: WorkerTool.Mark,
   Critic: "critic",
-  /** A blind judge plays the game and answers one yes/no question (`judge-play.ts`): the chat's own name for it. */
-  JudgePlay: JUDGE_PLAY_TOOL,
   RebuildUnreal: "rebuild_unreal",
   Note: DirectorTool.Note,
   /** The lead's claim that the game meets the request, which a reviewer checks: the director's own name. */
@@ -52,7 +49,7 @@ export const LeadTool = {
 export type LeadTool = (typeof LeadTool)[keyof typeof LeadTool];
 
 /** The longest `worker_wait`, in seconds: the director's own cap. */
-export const MAX_AGENT_WAIT_S = MAX_WAIT_S;
+export const MAX_AGENT_WAIT_S = MAX_WORKER_WAIT_S;
 
 // ── sub-agents ──────────────────────────────────────────────────────────────────────────────
 
@@ -250,15 +247,11 @@ export type AgentRecord = AgentRequest & {
   mark: AgentMark | null;
   mergedInto: string | null;
   credits: number;
-  /** The critic's look at a delivered model's renders against its brief; absent when it had none to look at. */
-  look?: AssetLook;
 };
 
 // ── save points, captures and the critic ───────────────────────────────────────────────────
 
-/** Hero cameras are the level's CameraActors named with this prefix; a save point captures up to {@link MAX_HERO_SHOTS}. */
-export const HERO_CAMERA_PREFIX = "GX_Shot_";
-/** The most hero cameras a save point captures. */
+/** The most of a checkpoint's pictures a save point keeps as thumbnails. */
 export const MAX_HERO_SHOTS = 6;
 
 /** A capture's tone numbers, each 0 to 1, as the Unreal plugin's bridge measures them (its `Tone`). */
@@ -280,7 +273,12 @@ export type ShotTone = {
 };
 
 /** One thumbnail of a save point: its camera, its capture file and its tone numbers when measured. */
-export type SavePointShot = { camera: string; path: string; tone: ShotTone | null };
+export type SavePointShot = {
+  camera: string;
+  path: string;
+  /** Tone numbers, kept by a save point from before they stopped being read. */
+  tone?: ShotTone | null;
+};
 
 /**
  * One save point: its label, its snapshot, when, what it holds, its thumbnails, the milestone it is
@@ -309,13 +307,6 @@ export const WHOLE_FRAME: [number, number, number, number] = [0, 0, 1, 1];
 
 /** One defect the critic saw, with its fix. */
 export type CriticDefect = { defect: string; fix: string };
-
-/** The critic's yes or no on a delivered model: ready to go into the game as it is, or not. Never rename a value. */
-export const AssetVerdict = { Ready: "ready", NotReady: "not-ready" } as const;
-export type AssetVerdict = (typeof AssetVerdict)[keyof typeof AssetVerdict];
-
-/** The critic's look at a delivered model's renders against the brief it was made from, or why it couldn't look. */
-export type AssetLook = { verdict: AssetVerdict; defects: CriticDefect[] } | { error: string };
 
 /**
  * The critic's advice: what it looked at, the round it reviewed (null before the first save

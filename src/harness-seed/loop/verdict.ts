@@ -42,6 +42,14 @@ export type VerdictPass = (typeof VerdictPass)[keyof typeof VerdictPass];
 /** The five passes, in order, for code that checks one at run time. */
 export const VERDICT_PASSES: string[] = Object.values(VerdictPass);
 
+/** Which build a kept round is (`winner` on a `facet_iteration` record the run graph draws): persisted, never rename a value. */
+export const Side = {
+  Challenger: "challenger",
+  Incumbent: "incumbent",
+  Tie: "tie",
+} as const;
+export type Side = (typeof Side)[keyof typeof Side];
+
 /**
  * What a build was judged against, besides another worker's build: the run's start, the live
  * folder, nothing, or the round before. Verdict records keep it: never rename a value.

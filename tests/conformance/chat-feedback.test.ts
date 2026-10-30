@@ -12,7 +12,6 @@ import {
   rememberChatEffort,
 } from "../../src/renderer/stored-model.ts";
 import { interviewQuestion, interviewForReply } from "../../src/harness-seed/loop/interview-question.ts";
-import { preparationBudgetMs, wrapReserveMs } from "../../src/harness-seed/loop/director.ts";
 
 const event = (id: number, data: EventData): EventEnvelope => ({
   id: String(id).padStart(6, "0"),
@@ -198,17 +197,6 @@ test("a game chat keeps its own effort; the effort saved for a model only seeds 
     null,
     "Studio keeps only its per-model effort",
   );
-});
-
-test("preparation leaves working time in a fifteen-minute run and never enlarges its deadline", () => {
-  const total = 15 * 60_000,
-    soft = total - wrapReserveMs(total),
-    base = preparationBudgetMs(soft);
-  assert.ok(base > 0 && base <= soft / 3);
-  assert.ok(soft - base >= 6 * 60_000, "the lead has working time before wrap-up");
-  assert.equal(preparationBudgetMs(2 * 60_000), 0, "short remainder goes directly to the lead");
-  assert.equal(preparationBudgetMs(-1), 0);
-  assert.equal(preparationBudgetMs(24 * 3_600_000), 30 * 60_000);
 });
 
 test("a delegated reply reconciles on its durable row before the stream acknowledgement", async () => {

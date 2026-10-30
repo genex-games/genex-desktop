@@ -12,26 +12,22 @@ import {
   commissionHours,
   finishedLoopRun,
   keepsCommission,
-  loopBudgets,
   reopenAfterReply,
-  reopenBudgets,
   reopenedRun,
   reopens,
   servesReopen,
 } from "../../src/harness-seed/loop/reopen-run.ts";
-import { coordinatorReopens, handleUserMessage, intakeBudgets } from "../../src/harness-seed/loop/chat-dispatch.ts";
+import { coordinatorReopens, handleUserMessage } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { coordinatorPrompt } from "../../src/harness-seed/loop/coordinator-prompts.ts";
 import * as coordinator from "../../src/harness-seed/loop/coordinator.ts";
 import * as coordinatorPrompts from "../../src/harness-seed/loop/coordinator-prompts.ts";
 import { steersInto } from "../../src/harness-seed/loop/message-queue.ts";
-import { tools as gameTools } from "../../src/harness-seed/tools/game-tools.ts";
 import * as afterLoopRunPrompts from "../../src/harness-seed/loop/after-loop-run-prompts.ts";
 import * as delegatedTurn from "../../src/harness-seed/loop/delegated-turn.ts";
 import * as runDispatch from "../../src/harness-seed/loop/run-dispatch.ts";
 import * as turnLoop from "../../src/harness-seed/loop/turn-loop.ts";
 import { HOUR_MS } from "../../src/harness-seed/loop/time.ts";
 import { plannerModel } from "../../src/harness-seed/loop/model-roles.ts";
-import { CompletionPolicy } from "../../src/harness-seed/loop/completion-policy.ts";
 
 const RUN = "run_reopen";
 const THREAD = "thread_reopen";
@@ -173,51 +169,6 @@ function toldOf(calls: Array<{ method: string; params: Json }>): Array<{ type: s
 /** The steers recorded on the run. */
 const steersOf = (log: readonly Entry[]) =>
   log.filter((entry) => entry.data.event_type === "run_steering").map((entry) => entry.data.payload);
-
-describe("the Loop's working time for a reopened build", () => {
-  it("R1. the Loop's hours give a reopened build the working time a launch gives, as a ceiling on its ask; the run's other knobs are kept", async () => {
-    const launch = gameTools.find((tool) => tool.name === "start_autopilot");
-    assert.ok(launch);
-    /** What a launch with this Loop would be given (start_autopilot, then chat-dispatch.ts intakeBudgets). */
-    const launchedWith = async (hours: number | null) => {
-      const autopilot = { frames: [], ...(hours === null ? {} : { hours }) };
-      const outcome = await launch.execute({ goal: "a dusk plaza", direction: "dusk" }, {
-        engine: "codex",
-        autopilot,
-      } as never);
-      return intakeBudgets((outcome as { details: { run: Record<string, unknown> } }).details.run);
-    };
-    for (const hours of [0.1, 0.5, 3, 24, 30, null, 0, -2, Number.NaN])
-      assert.deepEqual(loopBudgets(hours), await launchedWith(hours), `hours ${hours}`);
-
-    // A reopened build has an ask to finish, not hours to spend: the new Loop's hours are its
-    // ceiling, whatever policy the finished build had (golden-boot-glory).
-    const saved = {
-      wallClockMs: 24 * HOUR_MS,
-      untilSatisfied: true,
-      completionPolicy: CompletionPolicy.Goal,
-      review: false,
-      maxIterations: 9,
-    };
-    assert.deepEqual(reopenBudgets(saved, 2), {
-      review: false,
-      maxIterations: 9,
-      wallClockMs: 2 * HOUR_MS,
-      completionPolicy: CompletionPolicy.Goal,
-    });
-    const timed = { wallClockMs: HOUR_MS, completionPolicy: CompletionPolicy.Duration, review: false };
-    assert.deepEqual(reopenBudgets(timed, null), {
-      review: false,
-      wallClockMs: 24 * HOUR_MS,
-      completionPolicy: CompletionPolicy.Goal,
-      untilSatisfied: true,
-    });
-    assert.deepEqual(reopenBudgets(undefined, 1), {
-      wallClockMs: HOUR_MS,
-      completionPolicy: CompletionPolicy.Goal,
-    });
-  });
-});
 
 describe("which messages and runs a reopen is for", () => {
   it("R2. a routed message keeps its commission for no run or a finished build the chat may reopen; the reopen is offered only then", () => {
@@ -400,7 +351,7 @@ describe("a finished build the run's coordinator answers for", () => {
         reopen,
       });
     assert.match(prompt({ hours: 2 }), /Loop is on[\s\S]*continue_build reopens it[\s\S]*up to 2 h/);
-    assert.match(prompt({ hours: null }), /until what was asked is verified and the art director names no blocker/);
+    assert.match(prompt({ hours: null }), /until its lead calls finish/);
     assert.doesNotMatch(prompt(null), /Loop is on/, "no Loop, no reopen: continue_build hands the work to a builder");
 
     assert.equal(coordinatorReopens(), true);
@@ -409,136 +360,6 @@ describe("a finished build the run's coordinator answers for", () => {
 });
 
 describe("reopening the finished build once the reply has ended", () => {
-  it("R4. the journal reopened, the ask recorded on the run, the chat told, then the same run started from the ask on", async () => {
-    const { studio, ctx, calls, store, log, starts, start } = studioWith();
-    await reopenAfterReply(studio as never, ctx, loopRun as never, ask, start, clock);
-
-    assert.deepEqual(
-      calls.map((c) => c.method),
-      // The game's kind is read before anything is promised: a web Loop's build goes on only where the folder reads as one.
-      ["artifact.read", "game.list", "events.list", "artifact.write", "events.append", "events.append"],
-    );
-    const journal = store.journal as Json;
-    assert.equal(journal.phase, "done", "the run rewrites its phase when it starts");
-    assert.deepEqual(journal.run.budgets, {
-      review: false,
-      wallClockMs: 2 * HOUR_MS,
-      completionPolicy: CompletionPolicy.Goal,
-    });
-    assert.equal(journal.run.roles.planner, "gpt-5.6-sol", "planned on the model the session answers on");
-    assert.deepEqual(journal.run.asks, ["add enemies"], "its judges read the ask ahead of the commission");
-    assert.equal(journal.run.goal, "a dusk plaza", "the commission stays what the Builds graph shows");
-    assert.equal("readiness" in journal.run, false);
-    for (const dropped of ["clock", "wake", "integrationHealthy"])
-      assert.equal(dropped in journal.director, false, `${dropped} starts afresh`);
-    assert.deepEqual(journal.director.reopened, { at: new Date(NOW).toISOString(), finishedHead: H1 });
-    assert.equal(journal.director.integrationHead, H1);
-    assert.deepEqual(journal.director.workers, finishedJournal().director.workers, "its workers go on");
-
-    assert.deepEqual(steersOf(log), [
-      { runId: RUN, text: "add enemies", sourceMessageId: "m9", at: new Date(NOW).toISOString() },
-    ]);
-    const told = toldOf(calls);
-    assert.equal(told.length, 1);
-    assert.equal(told[0]?.type, "messages");
-    assert.match(
-      String(told[0]?.words),
-      /The build goes on until your request is checked, by about .+ at the latest — keep the app open and the computer awake\./,
-    );
-
-    assert.equal(starts.length, 1);
-    assert.equal(starts[0]?.run.runId, RUN);
-    assert.deepEqual(starts[0]?.run.budgets, journal.run.budgets);
-    assert.deepEqual(starts[0]?.reopen, { after: "e2" }, "the run hears from the ask on: the last record before it");
-    assert.equal(studio.moodBoards.has(THREAD), false, "the chat's mood board did its job");
-  });
-
-  it("R4b. Loop ∞: until what was asked is checked working, under the day's ceiling; no words from the session, the message's", async () => {
-    const unbounded = studioWith();
-    await reopenAfterReply(
-      unbounded.studio as never,
-      unbounded.ctx,
-      loopRun as never,
-      { hours: null, words: " more  ", models: { model: "gpt-5.6-sol" } },
-      unbounded.start,
-      clock,
-    );
-    assert.deepEqual(unbounded.starts[0]?.run.budgets, {
-      review: false,
-      wallClockMs: 24 * HOUR_MS,
-      completionPolicy: CompletionPolicy.Goal,
-      untilSatisfied: true,
-    });
-    assert.deepEqual(
-      steersOf(unbounded.log).map((steer) => steer?.text),
-      ["more"],
-    );
-    assert.match(String(toldOf(unbounded.calls)[0]?.words), /until what you asked for is checked working/);
-  });
-
-  it("R4c. the reopening message joins the user's words in the build's scope, once; a build without scope gets none, and words the log does not have change nothing", async () => {
-    const { createScope } = await import("../../src/harness-seed/loop/scope.ts");
-    const scope = createScope({ asked: ["a dusk plaza"], inScope: ["the plaza"], cut: ["a city"] });
-    const userSaid = (words: string): Entry => ({
-      id: "e3",
-      data: { type: "messages", messages: [{ role: "user", content: words }] },
-    });
-    const scoped = (): Json => ({ ...finishedJournal(), run: { ...finishedJournal().run, scope } });
-
-    const s = studioWith({ log: [...finishedLog(), userSaid(ask.words)], journal: scoped() });
-    await reopenAfterReply(s.studio as never, s.ctx, loopRun as never, ask, s.start, clock);
-    const reopened = s.starts[0]?.run.scope;
-    assert.deepEqual(reopened?.asked, ["a dusk plaza", ask.words], "the user's message, not the session's words");
-    assert.deepEqual(reopened?.inScope, ["the plaza"]);
-    assert.deepEqual(reopened?.cut, ["a city"]);
-    assert.deepEqual((s.store.journal as Json).run.scope, reopened, "the journal keeps it for the next Resume");
-
-    const replayed = studioWith({ log: [...finishedLog(), userSaid(ask.words)], journal: s.store.journal });
-    (replayed.store.journal as Json).phase = "done";
-    await reopenAfterReply(replayed.studio as never, replayed.ctx, loopRun as never, ask, replayed.start, clock);
-    assert.deepEqual(replayed.starts[0]?.run.scope, reopened, "a replayed message adds nothing twice");
-
-    const unlogged = studioWith({ journal: scoped() });
-    await reopenAfterReply(unlogged.studio as never, unlogged.ctx, loopRun as never, ask, unlogged.start, clock);
-    assert.deepEqual(unlogged.starts[0]?.run.scope, scope, "words the log does not have are not the user's");
-
-    const legacy = studioWith({ log: [...finishedLog(), userSaid(ask.words)] });
-    await reopenAfterReply(legacy.studio as never, legacy.ctx, loopRun as never, ask, legacy.start, clock);
-    assert.equal("scope" in (legacy.starts[0]?.run ?? {}), false, "a build from before scope stays without one");
-  });
-
-  it("R4d. a reopening message the user edited in the queue joins the scope as edited; a command's result never proves words the user's", async () => {
-    const { createScope } = await import("../../src/harness-seed/loop/scope.ts");
-    const scope = createScope({ asked: ["a dusk plaza"], inScope: ["the plaza"], cut: ["a city"] });
-    const scoped = (): Json => ({ ...finishedJournal(), run: { ...finishedJournal().run, scope } });
-    const queuedAs = (id: string, words: string, action: Json): Entry[] => [
-      { id, data: { type: "messages", messages: [{ role: "user", content: words }] } },
-      custom(`${id}q`, "coordinator_message_queued", { messageId: `m_${id}`, action: { text: words, ...action } }),
-    ];
-
-    const edited = studioWith({
-      log: [
-        ...finishedLog(),
-        ...queuedAs("e3", "please add some plants to the plaza", {}),
-        custom("e4", "coordinator_message_updated", { messageId: "m_e3", text: ask.words }),
-      ],
-      journal: scoped(),
-    });
-    await reopenAfterReply(edited.studio as never, edited.ctx, loopRun as never, ask, edited.start, clock);
-    assert.deepEqual(
-      edited.starts[0]?.run.scope?.asked,
-      ["a dusk plaza", ask.words],
-      "the words the user sent, edited",
-    );
-
-    const reported = studioWith({
-      log: [...finishedLog(), ...queuedAs("e3", ask.words, { origin: "command-result" })],
-      journal: scoped(),
-    });
-    await reopenAfterReply(reported.studio as never, reported.ctx, loopRun as never, ask, reported.start, clock);
-    assert.deepEqual(reported.starts[0]?.run.scope, scope, "the chat's own report is not the user's words");
-  });
-
   it("R5. refused with nothing written, recorded or started, and one word to the chat: not the latest, not finished, a build under way, no journal, Stop", async () => {
     const rows: Array<{ label: string; set: (s: ReturnType<typeof studioWith>) => void; why: RegExp }> = [
       {

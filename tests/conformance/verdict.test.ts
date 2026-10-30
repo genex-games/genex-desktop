@@ -26,7 +26,6 @@ import {
   verdictRecord,
   VERDICT_PASSES,
 } from "../../src/harness-seed/loop/verdict.ts";
-import { iterationDigest } from "../../src/harness-seed/loop/director.ts";
 import { buildRunGraph, headVerdict, plannedFlips, type IterationNode } from "../../src/renderer/run-graph.ts";
 import { buildProgress, buildVerdictLine } from "../../src/renderer/build-progress.ts";
 import { undoneBecause, verdictWords } from "../../src/renderer/words.ts";
@@ -276,42 +275,6 @@ describe("one producer, and every path that judges a build calls it", () => {
       ).length,
       1,
     );
-  });
-});
-
-describe("the report keeps how a round was judged", () => {
-  const journal = JSON.parse(
-    readFileSync(new URL("../fixtures/director-loop-run.json", import.meta.url), "utf8"),
-  ) as EventEnvelope[];
-  const rounds = journal
-    .filter((event) => event.data.type === "custom" && event.data.event_type === "facet_iteration")
-    .map((event) => (event.data as { payload: Record<string, any> }).payload);
-
-  it("keeps verdictSource and the scoreboard for all twenty-one rounds of the synthetic run", () => {
-    assert.equal(rounds.length, 21);
-    for (const round of rounds) {
-      const digest = iterationDigest(round);
-      assert.equal(digest.verdictSource, round.verdictSource, `round ${round.iteration} of ${round.facetId}`);
-      assert.ok(digest.verdictSource, "every round says how it was judged");
-      assert.ok(digest.scoreboard, "every round keeps what it measured");
-      assert.deepEqual(digest.scoreboard!.flips, round.scoreboard.flips);
-      assert.equal(digest.scoreboard!.results.length, round.scoreboard.results.length);
-    }
-    // The synthetic run has ten kept rounds and no stopped rounds.
-    assert.equal(rounds.filter((round) => iterationDigest(round).won).length, 10);
-  });
-
-  it("keeps a round's own record when it has one, and a truthful digest when it does not", () => {
-    const withRecord = iterationDigest({
-      ...rounds[0],
-      verdict: { because: "Undone: the game did not start after this build." },
-    });
-    assert.equal(withRecord.verdict!.because, "Undone: the game did not start after this build.");
-    assert.equal(iterationDigest(rounds[0]).verdict, null, "the first run wrote none");
-    const stopped = iterationDigest({ iteration: 4, verdictSource: "stopped", winner: null, scoreboard: null });
-    assert.equal(stopped.stopped, true);
-    assert.equal(stopped.won, false);
-    assert.equal(stopped.scoreboard, null);
   });
 });
 

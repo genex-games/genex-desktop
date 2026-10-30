@@ -9,8 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import {
   CHANGE_HEADING,
-  COMPLETION_ROLES,
   HEADINGS,
+  RETIRED_ROLE_LITERALS,
   ROLE_LITERALS,
   STUDIO_SCRATCH_PREFIXES,
   classifyBrief,
@@ -28,7 +28,6 @@ import {
 import { PRICE_TABLE_SCHEMA, PRICE_UNIT, validatePriceTable } from "../../scripts/evals/prices.ts";
 import { CodexEngine, type CodexExec } from "../../src/substrate/engines/codex.ts";
 import { normalizeToolName } from "../../src/shared/tool-category.ts";
-import { replanCheck } from "../../src/harness-seed/loop/replan.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -67,7 +66,11 @@ describe("the transcript census", () => {
         `${role}: "${literal}" is no longer a sentence the harness writes — reword the census with the brief, or drop the role`,
       );
     }
-    assert.equal(new Set(ROLE_LITERALS.map(([role]) => role)).size, ROLE_LITERALS.length);
+    // A retired role's brief is one the seed no longer writes: past transcripts alone carry it.
+    for (const [role, literal] of RETIRED_ROLE_LITERALS)
+      assert.ok(!seed.some((text) => text.includes(literal)), `${role}: the seed still writes "${literal}"`);
+    const roles = [...ROLE_LITERALS, ...RETIRED_ROLE_LITERALS].map(([role]) => role);
+    assert.equal(new Set(roles).size, roles.length);
   });
 
   it("keys on the opening sentence and calls everything else other", () => {
@@ -232,52 +235,6 @@ describe("the transcript census", () => {
     assert.ok(markdown.includes("1 of 3 sessions (33.3%) and 24 brief bytes"), markdown);
     assert.ok(markdown.includes("| worker:facet | 1 |"));
     assert.ok(!markdown.includes("REDACTED"), "no transcript text may reach the output");
-  });
-
-  it("prints a dash, not a zero, where Codex could never have written a session", async () => {
-    // Every critic, the planner and the skill editor are asked with `engine.complete`, which
-    // Codex runs as `codex exec --ephemeral`: those sessions write no rollout at all. A `0`
-    // there is indistinguishable from a role that simply did not run, and it is not a
-    // measurement — no file this census reads was ever written.
-    const claude = (await readClaudeSession(CLAUDE))!;
-    const critic = { ...claude, role: "judge:taste" as const };
-    const markdown = renderMarkdown(tally([claude, critic]));
-    assert.ok(markdown.includes("| judge:taste | 1 | 1 / — |"), markdown);
-    assert.ok(markdown.includes("| worker:facet | 1 | 1 / 0 |"), "a delegated role keeps its real zero");
-    assert.match(markdown, /A `—` in the codex column is not zero\./);
-    // …and the list is the roles the harness really asks with engine.complete: the replan, run
-    // against a recording ctx, is a completion whose brief the census reads as planner:replan.
-    const calls: Array<{ method: string; params: { systemPrompt?: string } }> = [];
-    const ctx = {
-      workspace: "/nonexistent",
-      cancelled: false,
-      notify() {},
-      setStatus() {},
-      call: async (method: string, params: { systemPrompt?: string }) => (
-        calls.push({ method, params }), { message: { role: "assistant", content: "{}" } }
-      ),
-    };
-    await replanCheck(
-      ctx as never,
-      {
-        run: { runId: "r", engine: "codex" },
-        spec: { id: "f", title: "F", intent: "x", checks: [] },
-        check: { id: "c", kind: "vision", camera: "default", ask: "?" },
-        reason: "why",
-      } as never,
-    );
-    assert.deepEqual(
-      calls.map(({ method }) => method),
-      ["engine.complete"],
-      "replan is a completion, so planner:replan belongs on the list",
-    );
-    assert.equal(classifyBrief(calls[0]!.params.systemPrompt ?? ""), "planner:replan");
-    assert.ok(
-      COMPLETION_ROLES.includes("planner:replan") &&
-        COMPLETION_ROLES.every((role) => ROLE_LITERALS.some(([id]) => id === role)),
-    );
-    assert.ok(!COMPLETION_ROLES.includes("playtester"), "a playtester is a delegation and does leave a rollout");
-    // That a Codex completion runs `--ephemeral` is proven against the engine itself below.
   });
 
   it("prints the change against a baseline when one is given", async () => {

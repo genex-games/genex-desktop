@@ -31,18 +31,9 @@ import { waitingWorkers } from "../workers/questions.ts";
 import { withWorkerRoom } from "../workers/room.ts";
 import type { WorkerState } from "../workers/records.ts";
 import { closeRunPool } from "../workers/run-pool.ts";
-import {
-  AGENT_WORDS,
-  agentBrief,
-  agentTitle,
-  DELIVERY_WORDS,
-  deliveredNews,
-  deliversMesh,
-  PROP_TRIANGLES,
-} from "./agent-prompts.ts";
+import { AGENT_WORDS, agentBrief, agentTitle, DELIVERY_WORDS, deliveredNews, PROP_TRIANGLES } from "./agent-prompts.ts";
 import { cppFolder } from "./cpp.ts";
 import { takePoolNews } from "./pool-news.ts";
-import { lookAtDelivery } from "./critic.ts";
 import { pathShapeProblem, realInside } from "./game-paths.ts";
 import {
   AGENT_DELIVERY_ROOT,
@@ -58,7 +49,6 @@ import {
   type AgentRecord,
   AgentState,
   AgentVerdict,
-  type AssetLook,
   type LeadCredits,
   MAX_AGENT_WAIT_S,
   MAX_RUNNING_AGENTS,
@@ -468,26 +458,14 @@ function stopCodeOf(askedStop: boolean, stopped: boolean): WorkerStopCode {
 
 /**
  * A delivery made: the agent is done, its credits counted, its C++ in the game marked for a rebuild,
- * and a model's renders looked at by the critic before the lead hears of it.
+ * and the lead told.
  */
 async function deliveredNow(lead: Lead, agent: AgentRecord): Promise<void> {
   const { journal } = lead;
   agent.credits = agent.manifest?.credits ?? 0;
   journal.credits.spent += agent.credits;
   if (agent.kind === AgentKind.Cpp && agent.landed.length) journal.between.rebuild = true;
-  const look = await lookIfModel(lead, agent);
-  if (look) agent.look = look;
   await ended(lead, agent, AgentState.Done, null, null);
-}
-
-/**
- * The critic's look at a delivered model's renders in the game folder, or null: not a model, no
- * render landed, or the run is closing (a look takes minutes the close doesn't have).
- */
-async function lookIfModel(lead: Lead, agent: AgentRecord): Promise<AssetLook | null> {
-  const renders = (agent.manifest?.renders ?? []).filter((render) => agent.landed.includes(render));
-  if (!deliversMesh(agent.kind) || !renders.length || settling.has(lead) || lead.ctx.cancelled) return null;
-  return lookAtDelivery(lead, { title: agent.title, brief: agent.brief, folder: agentFolder(agent.id), renders });
 }
 
 /** A sub-agent's end: its state and why, on its part and in the journal; its copy goes. */
@@ -812,7 +790,6 @@ function newsOf(lead: Lead, agent: AgentRecord): string {
     landed: agent.landed,
     pending: agent.pending ?? [],
     refused: refusedOf(agent),
-    ...(agent.look ? { look: agent.look } : {}),
     engine: leadEngineId(lead),
   });
 }

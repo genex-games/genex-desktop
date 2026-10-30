@@ -1,14 +1,11 @@
 /**
- * A Loop's hours are a soft cap, one rule for every kind of Loop: a reviewer's yes before the cap
- * ends it; `HEADS_UP_MS` before the cap the lead hears that little is left; at the cap it hears that
- * the time is up and no new worker starts; `GRACE_MS` after the cap Genex closes the Loop with what is
- * and isn't done. ∞ runs until the reviewer's yes, `UNTIL_DONE_CAP_MS` at most, with the same
- * wrap-up. A claim is never refused for time; a finish that claims nothing before the cap is (only
- * the person ends a timed Loop early). Plain numbers and pure functions, with no run of their own:
+ * A Loop's hours are a soft cap, one rule for every kind of Loop: the lead's finish before the cap ends
+ * it; `HEADS_UP_MS` before the cap the lead hears that little is left; at the cap it hears that the
+ * time is up and no new worker starts; `GRACE_MS` after the cap Genex closes the Loop with what is and
+ * isn't done. ∞ runs until the lead's finish, `UNTIL_DONE_CAP_MS` at most, with the same wrap-up. A
+ * finish is never refused for time. Plain numbers and pure functions, with no run of their own:
  * director/cap-lines.ts says the lines. A module no earlier harness had.
  */
-import { timedWorkRemaining } from "./director/budgets.ts";
-import { durationCommission } from "./director/commission.ts";
 import { WrapCause } from "./director/wake-schedule.ts";
 import type { FinishTally } from "./finish-check.ts";
 import { HOUR_MS, MINUTE_MS } from "./time.ts";
@@ -22,6 +19,11 @@ export const GRACE_MS = 15 * MINUTE_MS;
 export const UNTIL_DONE_CAP_MS = 24 * HOUR_MS;
 /** A close this close to the working deadline counts as the time running out (a turn ends a margin early). */
 const OUT_OF_TIME_MS = MINUTE_MS;
+
+/** Whether a Loop runs for its hours (a timed one) rather than until its lead finishes it (∞). */
+export function timedLoop(run: Pick<Run, "budgets">): boolean {
+  return run.budgets?.untilSatisfied !== true;
+}
 
 /**
  * A Loop's clock under the cap. `started` is when it would have started had it never paused (its
@@ -75,25 +77,13 @@ export function capPhase(now: number, clock: CapClock): CapPhase {
 /** A timed Loop's hours, as its result card says them (`stillToFixOf`); null for an ∞ or goal Loop. */
 export function loopHoursOf(run: Pick<Run, "reference" | "budgets">): number | null {
   const total = run.budgets?.wallClockMs;
-  const timed = durationCommission(run) && typeof total === "number" && Number.isFinite(total) && total > 0;
+  const timed = timedLoop(run) && typeof total === "number" && Number.isFinite(total) && total > 0;
   return timed ? total / HOUR_MS : null;
 }
 
 /** A Loop's hours: an ∞ Loop's are `UNTIL_DONE_CAP_MS`, a timed one's its own. */
 export function capHoursMs(run: Pick<Run, "budgets">, totalMs: number): number {
   return run.budgets?.untilSatisfied === true ? UNTIL_DONE_CAP_MS : totalMs;
-}
-
-/**
- * Whether a finish waits for the cap: one that claims nothing, in a timed Loop, before the cap, that
- * the person did not ask for. A claim is never refused for time: its reviewer decides.
- */
-export function finishWaitsForCap(
-  run: Pick<Run, "reference" | "budgets">,
-  finishing: { softDeadline: number; now: number; userEnds: boolean; claims: boolean },
-): boolean {
-  if (finishing.claims) return false;
-  return timedWorkRemaining(run, finishing.softDeadline, finishing.now, finishing.userEnds);
 }
 
 /** What a close reads of its run to tell whether its time ran out with no claim read. */
@@ -114,7 +104,7 @@ export function noClaimRead(tally: Partial<FinishTally> | null | undefined): boo
  * (its no's stop it as they always have) and for one with no working deadline.
  */
 export function timeLeftOf(run: Pick<Run, "reference" | "budgets">, softDeadline: number, now: number): number | null {
-  if (!durationCommission(run) || !Number.isFinite(softDeadline)) return null;
+  if (!timedLoop(run) || !Number.isFinite(softDeadline)) return null;
   return Math.max(0, softDeadline - now);
 }
 

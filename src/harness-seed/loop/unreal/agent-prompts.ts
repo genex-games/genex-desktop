@@ -16,8 +16,6 @@ import {
   type AgentManifestFile,
   AgentPluginTool,
   AgentVerdict,
-  type AssetLook,
-  AssetVerdict,
   LeadTool,
 } from "./lead-contract.ts";
 
@@ -131,7 +129,7 @@ const MESH_CHECKS = [
   `At most ${PROP_TRIANGLES.toLocaleString("en-US")} triangles per prop unless the brief calls it a hero piece; put the count in triangles.`,
   "At most three material slots, each named, each with its base colour set as its viewport colour so the renders show colour.",
   "UVs on every mesh.",
-  "Renders you have looked at (each Local Blender job draws a three-quarter and a front view), copied into your folder (role render) and listed in renders; a rigged character also with its arms down (posed, or at a frame of a clip), where cloth webbed to the arms shows. The critic checks them against your brief before the lead hears of it.",
+  "Renders you have looked at (each Local Blender job draws a three-quarter and a front view), copied into your folder (role render) and listed in renders; a rigged character also with its arms down (posed, or at a frame of a clip), where cloth webbed to the arms shows.",
 ] as const;
 
 /** What each kind makes and how; the tools are spelled for the agent's engine. */
@@ -141,11 +139,11 @@ const KIND_WORK = {
   [AgentKind.BlenderPrep]: (o: AgentBriefOptions) =>
     `Prepare the inputs in Local Blender with ${toolCall(o.engine, LocalBlenderTool.Model)} (its model and inputs arguments stage them read-only): weld, decimate, scale, set the pivot, join, or make LODs, as the brief asks. Keep each source as it is; write the prepared GLBs and their renders into ${o.folder}/.`,
   [AgentKind.GenexCast]: (o: AgentBriefOptions) =>
-    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its character or creature operation, rigged, with the catalog clips the brief names). Ask for clothes that fit close: a long open coat, cloak, cape or heavy armour makes Meshy's rig fail (Genex then rigs it with Uthana and says so), and its cloth webs to the arms and legs once they move; keep cloth short, and when the brief wants a cloak, say in notes that it should be its own piece. Use the rigged file Genex's answer names; Meshy's rigs hang under a 0.01 armature scale, which import_character takes out of the GLB by itself, so pass it through Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)} with the GLB as its model and rig on) to delete helper objects such as a stray Icosphere, to decimate it when over budget, or to fix its rig. Prefer a rig with finger bones (Genex's character import rigs them). Look at it posed, arms down and mid-stride, before you hand it over: hands with five fingers, arms at its sides, nothing that tears or sticks out between the legs or at the waist. Fix what is wrong in Local Blender with your own bpy script (finger bones, skin weights, the rig), and ask Genex for a new character only as a last resort, saying why in notes. Check the height in metres, then copy the GLB (role skeletal) and its renders into ${o.folder}/. Genex jobs spend the user's credits: one job per thing asked, no retries for variety.`,
+    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its character or creature operation, rigged, with the catalog clips the brief names). A long open coat, cloak, cape or heavy armour can make Meshy's rig fail (Genex then rigs it with Uthana and says so). Use the rigged file Genex's answer names; Meshy's rigs hang under a 0.01 armature scale, which import_character takes out of the GLB by itself, so pass it through Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)} with the GLB as its model and rig on) to delete helper objects such as a stray Icosphere, to decimate it when over budget, or to fix its rig. Prefer a rig with finger bones (Genex's character import rigs them). Local Blender can fix a rig, skin weights or finger bones with your own bpy script. Check the height in metres, then copy the GLB (role skeletal) and its renders into ${o.folder}/. Genex jobs spend the user's credits: one job per thing asked, no retries for variety.`,
   [AgentKind.Sound]: (o: AgentBriefOptions) =>
     `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its sfx or music operation), each sound as long as the brief asks, loops clean at their ends. Deliver WAV, 44.1 kHz, 16-bit, into ${o.folder}/ (convert an MP3 with afconvert -f WAVE -d LEI16@44100 <in> <out>). Genex jobs spend the user's credits: one job per sound asked.`,
   [AgentKind.Texture]: (o: AgentBriefOptions) =>
-    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its texture or image operation), or bake it in Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)}). Deliver PNG, at most ${TEXTURE_PX} pixels on a side unless the brief calls it a hero piece, tileable when it covers a surface, into ${o.folder}/; say which map each file is (base colour, normal, roughness) in notes. Never a photo standing in for 3D.`,
+    `Make it with ${toolCall(o.engine, AgentPluginTool.GenexAsset)} (its texture or image operation), or bake it in Local Blender (${toolCall(o.engine, LocalBlenderTool.Model)}). Deliver PNG, at most ${TEXTURE_PX} pixels on a side unless the brief calls it a hero piece, tileable when it covers a surface, into ${o.folder}/; say which map each file is (base colour, normal, roughness) in notes.`,
   [AgentKind.Cpp]: (o: AgentBriefOptions) => {
     const folder = o.cppFolder ?? o.folder;
     const part = cppPartOf(folder);
@@ -246,20 +244,9 @@ export type DeliveryNews = {
   /** Files git couldn't check out into the game folder yet. */
   pending: string[];
   refused: string[];
-  /** The critic's look at its renders, when it had renders to look at. */
-  look?: AssetLook;
   /** The lead's engine, which spells `worker_mark`. */
   engine: string;
 };
-
-/** The critic's look at a delivery's renders, as the news says it ("" when it had none to look at). */
-function lookText(look: AssetLook | undefined): string {
-  if (!look) return "";
-  if ("error" in look) return DELIVERY_WORDS.LookFailed(look.error);
-  if (look.verdict === AssetVerdict.Ready) return DELIVERY_WORDS.LooksReady;
-  const defects = look.defects.map((item) => `- ${item.defect}${item.fix ? ` — fix: ${item.fix}` : ""}`);
-  return [DELIVERY_WORDS.NotReady, ...defects, DELIVERY_WORDS.DontImport].join("\n");
-}
 
 /** A delivered worker's news, repeated until the lead marks it: its files, hero render, import calls and notes. */
 export function deliveredNews(news: DeliveryNews): string {
@@ -276,8 +263,6 @@ export function deliveredNews(news: DeliveryNews): string {
   if (manifest?.importCalls.length) lines.push(`Import: ${manifest.importCalls.join("\n  ")}`);
   if (manifest?.notes) lines.push(`Notes: ${manifest.notes}`);
   if (news.refused.length) lines.push(`Left out: ${news.refused.join("; ")}.`);
-  const look = lookText(news.look);
-  if (look) lines.push(look);
   const mark = toolCall(news.engine, LeadTool.WorkerMark);
   lines.push(`When you have imported it or decided against it, call ${mark} with id=${news.id}.`);
   return lines.join("\n");
@@ -338,12 +323,6 @@ export const AGENT_WORDS = {
 
 /** Why a delivered file stayed out, or what the lead should know about it. */
 export const DELIVERY_WORDS = {
-  LooksReady: "The critic looked at its renders: ready, it matches its brief.",
-  NotReady: "The critic looked at its renders: not ready.",
-  DontImport:
-    "Don't put it in the game as it is: start a worker again with these fixes in its brief, or mark it rejected.",
-  LookFailed: (why: string) =>
-    `The critic couldn't look at its renders (${why}): look at them yourself before you import it.`,
   NotRegular: (path: string) => `${path} is not a regular file`,
   Outside: (path: string) => `${path} is outside the worker's folder`,
   TooLarge: (path: string) => `${path} is too large`,

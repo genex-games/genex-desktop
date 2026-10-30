@@ -71,7 +71,7 @@ export function workerTools(types: readonly WorkerType[] = [], allowed: number =
     {
       name: WorkerTool.Mark,
       description:
-        "Your word on a finished worker, once you have read its report and looked at what it made (its pictures, at a size that shows the detail): used merges a copy's work into your folder (conflicts come back to you), rejected drops it.",
+        "Your word on a finished worker: used merges a copy's work into your folder (conflicts come back to you), rejected drops it.",
       parameters: {
         type: "object",
         properties: {

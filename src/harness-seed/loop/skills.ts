@@ -76,8 +76,7 @@ export function formatSkillIndex(skills: ReadonlyArray<Pick<Skill, "name" | "slu
   const lines = skills.map((skill) => `- **${skill.name}** (${skill.slug}): ${skill.description}`);
   return [
     "## Your skills",
-    "These are yours: you wrote them, you can rewrite them, and they are how you get better.",
-    "Read one with `read_skill` before doing the thing it describes.",
+    "Reference notes you may read with `read_skill` when one helps; none is required.",
     ...lines,
   ].join("\n");
 }

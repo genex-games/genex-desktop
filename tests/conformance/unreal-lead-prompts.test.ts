@@ -1,20 +1,18 @@
 /**
- * What the Unreal lead is told: a lean brief with the owner's whole goal, the look-first discipline,
- * hands and eyes, the checklist, sub-agents and saving, its run tools spelled the way its engine
- * calls them, and the facts of the template the game is actually built on, never another's; the
- * digest a later turn opens with; and the harness's steers, the owner's words to be acted on now.
- * Asserted through each function's output.
+ * What the Unreal lead is told: a lean brief with the owner's whole goal, its time, its hands and
+ * eyes, its workers and saving, its run tools spelled the way its engine calls them, and the facts of
+ * the template the game is actually built on, never another's — and no rule about how the game should
+ * look or in what order it is built; a save point's answer; and the harness's steers, the owner's
+ * words to be acted on now. Asserted through each function's output.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { stopRuleWords } from "../../src/harness-seed/loop/finish-check-prompts.ts";
 import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { launchRules } from "../../src/harness-seed/loop/launch-prompts.ts";
 import { BRIDGE_TOOL_CMD, EngineId } from "../../src/harness-seed/loop/model-roles.ts";
 import { LeadTool } from "../../src/harness-seed/loop/unreal/lead-contract.ts";
 import { type Lead, newLeadJournal } from "../../src/harness-seed/loop/unreal/lead-journal.ts";
 import {
-  digestPrompt,
   type LeadBriefOptions,
   leadBrief,
   SAVE_POINT_WORDS,
@@ -109,49 +107,50 @@ describe("the Unreal lead's brief", () => {
     assert.match(leadBrief({ ...OPTIONS, template: facts }), /THE TEMPLATE:[\s\S]*BP_ThirdPersonCharacter/);
   });
 
-  it("tells the lead when no's stop its Loop, by the Loop's kind, and that its own captures outrank the files", () => {
-    for (const untilFinish of [true, false]) {
+  // Flipped (phase 5): no's never stop a Loop, and the reviewer is a second opinion the lead asks for.
+  it("tells the lead its finish closes the run, and a review is a second opinion it may ask for", () => {
+    for (const untilFinish of [true, false, undefined]) {
       const brief = leadBrief({ ...OPTIONS, untilFinish });
-      assert.ok(brief.includes(stopRuleWords(untilFinish)), `untilFinish ${untilFinish}`);
+      assert.match(
+        brief,
+        /finish with a summary closes the run; with review=yes a reviewer[^\n]*its no decides nothing/,
+      );
+      assert.doesNotMatch(brief, /no's in a row|stop the Loop/);
     }
-    assert.ok(leadBrief(OPTIONS).includes(stopRuleWords(null)), "a brief that names no kind covers both");
-    assert.match(leadBrief({ ...OPTIONS, untilFinish: false }), /keep fixing[^\n]*a new save point and new proof/);
-    assert.match(leadBrief(OPTIONS), /judge it by your own captures, which outrank its files/);
   });
 
-  it("is the only builder, looks first, and judges by its own clean captures", () => {
+  it("names its hands and eyes, and no rule about the look, a checklist or an order of work", () => {
     const brief = leadBrief(OPTIONS);
-    assert.match(brief, /only builder/);
-    assert.match(brief, /ART\.md/);
-    assert.match(brief, /first 30 minutes[^\n]*light[^\n]*atmosphere[^\n]*GX_Shot_/);
     assert.match(brief, /run_script[^\n]*unreal\/build\//);
     assert.match(brief, /capture_shot[^\n]*capture_play[^\n]*motion_strip/);
-    assert.match(brief, /Gate 0[\s\S]*Gate 1[^\n]*0\.05[^\n]*0\.18[\s\S]*Gate 2/);
     assert.match(brief, /MCP timeout does not cancel/);
-    assert.match(brief, /Never save or say done about a change you haven't looked at/);
-    assert.match(brief, /what you did not test/);
+    // Flipped (phase 5): the look-first pipeline, ART.md, the tone gates and hero cameras are gone.
+    for (const rule of [
+      /ART\.md/,
+      /Gate 0/,
+      /first 30 minutes/,
+      /ORDER OF WORK/,
+      /REQUIRED/,
+      /only builder/,
+      /up to 6 of them/,
+    ])
+      assert.doesNotMatch(brief, rule);
   });
 
-  it("puts the look first, then the checked cast, then mechanics, and the critic's required items before anything new", () => {
-    const brief = leadBrief(OPTIONS);
-    assert.match(brief, /ORDER OF WORK[^\n]*the look[^\n]*then the cast[^\n]*front, side and back[^\n]*then mechanics/);
-    assert.match(brief, /REQUIRED[^\n]*before any new mechanic/);
+  it("names the restart for an editor that renders differently from play", () => {
+    assert.match(leadBrief(OPTIONS), /mcp__studio__rebuild_unreal[^\n]*renders differently from play/);
   });
 
-  it("names the restart for an editor that renders differently from play, and asks for hero cameras that are key art only", () => {
-    const brief = leadBrief(OPTIONS);
-    assert.match(brief, /mcp__studio__rebuild_unreal[^\n]*restart/);
-    assert.match(brief, /up to 6 of them[^\n]*a test camera gets another name/);
-  });
-
-  it("keeps building until Genex says to wrap up, and asks run_status for the time instead of guessing it", () => {
+  it("asks run_status for the time instead of guessing it, and the time is a cap", () => {
     const brief = leadBrief({ ...OPTIONS, minutes: 54 });
-    assert.match(brief, /Never wind down on your own/);
     assert.match(brief, new RegExp(`mcp__studio__${LeadTool.RunStatus}[^\n]*minutes left`));
+    assert.match(brief, /a cap rather than a quota/);
+    // Flipped (phase 5): no cadence rule tells it to keep building until Genex says to wrap up.
+    assert.doesNotMatch(brief, /Never wind down on your own/);
   });
 
-  it("names a milestone before its first save point, so the owner's graph has columns", () => {
-    assert.match(leadBrief(OPTIONS), /before your first save point/);
+  it("names what a milestone is: a column on the owner's graph", () => {
+    assert.match(leadBrief(OPTIONS), /milestone names what you work on now \(a column on the owner's Builds graph\)/);
   });
 
   it("spells its run tools the way its engine calls them", () => {
@@ -172,71 +171,12 @@ describe("the Unreal lead's brief", () => {
       handover: "THE CHAT SO FAR: make it foggy",
       notes: "# Tower\nBuilt the stair.",
     });
-    assert.ok(brief.indexOf("THE CHAT SO FAR") < brief.indexOf("only builder"));
+    assert.ok(brief.indexOf("THE CHAT SO FAR") < brief.indexOf("HANDS AND EYES"));
     assert.match(brief, /Built the stair\./);
   });
 });
 
-describe("the digest a later turn opens with", () => {
-  it("says the time left, the owner's words, the sub-agents' news, the jobs that ended, the last save, the critic and the credits", () => {
-    const text = digestPrompt("claude-code", {
-      minutesLeft: 95,
-      ownerWords: ["make the fog thicker"],
-      agentNews: ["blender_model-1 (Katana) done: assets/agents/blender_model-1/katana.glb"],
-      lastSave: { label: "Atmosphere pass", minutesAgo: 12 },
-      advice: [
-        {
-          at: 0,
-          shots: ["s1.png"],
-          question: null,
-          milestoneId: "lead",
-          round: 2,
-          defects: [{ defect: "The key light is flat.", fix: "Lower the sun to 12 degrees." }],
-          boldMove: "Drop the camera to the floor of the shaft.",
-          gates: [],
-        },
-      ],
-      carried: ["Genex saved your unsaved work as 'Autosave'."],
-      jobs: ["Light bake (`run bake`, started by you) failed (exit 1) after 2 min; read it with job_tail j1."],
-      credits: { spent: 120, cap: 600 },
-      freshEyesDue: null,
-      required: [SLAB],
-    });
-    assert.match(text, /About 95 minutes are left/);
-    assert.match(
-      text,
-      /REQUIRED[^\n]*\n- The hero's cloak reads as a black slab from behind — fix: Give the cloak its own cloth piece/,
-    );
-    assert.ok(text.indexOf("REQUIRED") < text.indexOf("Workers:"), "the required items lead the digest");
-    assert.match(text, /make the fog thicker\nAct on this now/);
-    assert.match(text, /katana\.glb/);
-    assert.match(text, /Jobs:\n- Light bake \(`run bake`, started by you\) failed/);
-    assert.match(text, /'Atmosphere pass', 12 minutes ago/);
-    assert.match(text, /The key light is flat\. Fix: Lower the sun/);
-    assert.match(text, /Bold move: Drop the camera/);
-    assert.match(text, /Autosave/);
-    assert.match(text, /120 of 600/);
-  });
-
-  it("leaves out what has nothing to say", () => {
-    const text = digestPrompt("claude-code", {
-      minutesLeft: null,
-      ownerWords: [],
-      agentNews: [],
-      lastSave: null,
-      advice: [],
-      carried: [],
-      jobs: [],
-      credits: { spent: 0, cap: null },
-      freshEyesDue: null,
-      required: [],
-    });
-    assert.doesNotMatch(text, /owner says|Workers:|Jobs:|critic|REQUIRED/);
-    assert.match(text, /No save point yet/);
-  });
-});
-
-describe("the critic's required items after the digest", () => {
+describe("a save point's answer", () => {
   const POINT = {
     label: "Stair pass",
     snapshotId: "snap-3",
@@ -249,21 +189,16 @@ describe("the critic's required items after the digest", () => {
     logErrors: [],
   };
 
-  it("call out a nearly black thumbnail as a render to doubt, with the restart named", () => {
+  // Flipped (phase 5): no tone gate calls a thumbnail too dark, and no critic's item is required.
+  it("says what was saved, Unreal's new log errors and the minutes left, and judges no picture", () => {
     const tone = { p2: 0, p98: 0.03, mean: 0.01, std: 0.01, nearStd: 0.01, farStd: 0.01, saturation: 0, clipped: 0 };
     const dark = { ...POINT, thumbnails: [{ camera: "GX_Shot_Ant", path: "/r/a.jpg", tone }] };
-    assert.match(SAVE_POINT_WORDS.Saved(dark), /GX_Shot_Ant:[^\n]*Nearly black[^\n]*rebuild_unreal/);
-    const lit = { ...POINT, thumbnails: [{ camera: "GX_Shot_Ant", path: "/r/a.jpg", tone: { ...tone, p98: 0.8 } }] };
-    assert.doesNotMatch(SAVE_POINT_WORDS.Saved(lit), /Nearly black/);
+    const answer = SAVE_POINT_WORDS.Answer(dark, 40);
+    assert.match(answer, /Saved 'Stair pass' \(snapshot snap-3\)[\s\S]*no new errors[\s\S]*About 40 minutes are left/);
+    assert.doesNotMatch(answer, /Nearly black|REQUIRED/);
   });
 
-  it("follow every save point's answer, before the minutes left", () => {
-    const answer = SAVE_POINT_WORDS.Answer(POINT, 40, [SLAB]);
-    assert.match(answer, /Saved 'Stair pass'[\s\S]*REQUIRED[\s\S]*black slab[\s\S]*About 40 minutes are left/);
-    assert.doesNotMatch(SAVE_POINT_WORDS.Answer(POINT, 40, []), /REQUIRED/);
-  });
-
-  it("are in run_status", () => {
+  it("are not in run_status as required items", () => {
     const journal = newLeadJournal({ runId: "r1", goal: "", project: "tower" } as unknown as Run, {
       folder: "/games/tower",
       chatSession: false,
@@ -284,7 +219,7 @@ describe("the critic's required items after the digest", () => {
       required: [SLAB],
     });
     const lead = { journal, clock: { now: () => 0 }, softDeadline: 60_000 } as unknown as Lead;
-    assert.match(runStatusText(lead), /REQUIRED[\s\S]*black slab/);
+    assert.doesNotMatch(runStatusText(lead), /REQUIRED|black slab/);
   });
 });
 
@@ -297,13 +232,6 @@ describe("the harness's steers into the lead's turn", () => {
       /Act on this now unless it conflicts with the edit you are in the middle of; then do it right after\./,
     );
     assert.doesNotMatch(said, /when it fits/);
-  });
-
-  it("asks for a look and a save point, and at the end for the wrap-up, with the tool spelled for the engine", () => {
-    assert.match(STEER.SaveNow(EngineId.ClaudeCode, 15), /15 minutes[\s\S]*Look[\s\S]*mcp__studio__save_point/);
-    const wrap = STEER.WrapUp(EngineId.Codex, 12);
-    assert.ok(wrap.includes(`${BRIDGE_TOOL_CMD} ${LeadTool.SavePoint}`));
-    assert.match(wrap, /"Final"[\s\S]*NOTES\.md[\s\S]*did not test/);
   });
 
   it("says what a crash may have lost, and where a cold restore went", () => {
@@ -320,20 +248,20 @@ describe("the Unreal Loop as a Loop chat describes it", () => {
   it("is one lead building the whole game in the open editor with small helpers, not parts written in parallel", () => {
     const rules = launchRules(EngineId.ClaudeCode, { toolName: "start_autopilot", hours: 3 }, GameEngine.Unreal);
     const said = rules.join("\n");
-    assert.match(said, /one lead builds the whole game[^\n]*open Unreal editor/);
-    assert.match(said, /helpers/);
+    assert.match(said, /one lead works in the open Unreal editor, with helpers in copies of the game/);
     assert.doesNotMatch(said, /in parallel|as parts|one at a time/);
     const open = launchRules(EngineId.ClaudeCode, { toolName: "start_autopilot" }, GameEngine.Unreal).join("\n");
     assert.doesNotMatch(open, /judges/, "no judge decides an Unreal run's end");
     const web = launchRules(EngineId.ClaudeCode, { toolName: "start_autopilot", hours: 3 }).join("\n");
-    assert.match(web, /builders working in parallel/, "the web Loop is unchanged");
     assert.doesNotMatch(web, /look first/);
   });
 
-  it("asks the chat for a goal with the look first, in the user's own words about it, never a list of features", () => {
+  // Flipped (phase 5): the chat is not told how to write a goal (the look first, before mechanics).
+  it("asks the chat for the goal in the user's words, with no rule about the look", () => {
     const said = launchRules(EngineId.ClaudeCode, { toolName: "start_autopilot", hours: 3 }, GameEngine.Unreal).join(
       "\n",
     );
-    assert.match(said, /look first[^\n]*user's own words[^\n]*before mechanics[^\n]*Never[^\n]*list of features/);
+    assert.match(said, /with the goal in the user's words/);
+    assert.doesNotMatch(said, /look first|before mechanics|list of features/);
   });
 });

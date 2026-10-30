@@ -33,8 +33,6 @@
   },
   "setup": null,
   "cameras": ["default"],
-  "expectWarnings": [],
-  "allowWarnings": [],
   "delta": [],
   "deterministic": false,
   "readyBudgetMs": 8000

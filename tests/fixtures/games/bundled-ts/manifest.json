@@ -32,8 +32,6 @@
   },
   "setup": null,
   "cameras": ["default"],
-  "expectWarnings": ["this game paints UI outside the canvas"],
-  "allowWarnings": [],
   "delta": [
     { "path": "player.yaw", "min": 0.02 },
     { "path": "player.z", "min": 0.5 }

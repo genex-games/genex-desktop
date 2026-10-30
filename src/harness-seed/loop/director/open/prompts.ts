@@ -8,12 +8,7 @@ import type { WorkerType } from "../../../types/host-api.d.ts";
 import { type HookHeldBy, HookHold, holdOf } from "../../hooks.ts";
 import { resumeHeldWords, runHeldWords } from "../held-words.ts";
 import { FACT_ROOT, type FactRef, type FolderHolds } from "../../folder-facts.ts";
-import { CLAIM_BEFORE_END_MINUTES } from "../../finish-check.ts";
-import { PICTURE_OUTRANKS_FILES } from "../../finish-check-prompts.ts";
-import { GAPS_FIRST_MIN_MS } from "../../finish-remaining.ts";
-import { JUDGE_PLAY_TOOL } from "../../judge-play-prompts.ts";
-import type { JudgeRef } from "../../engine-judges.ts";
-import { ENGINE_JUDGE_WORDS } from "../../engine-judges-prompts.ts";
+import { SECOND_OPINION_TOOL } from "../../second-opinion.ts";
 import { appIdentity } from "../../project-prompts.ts";
 import { MINUTE_MS, minutes } from "../../time.ts";
 import { JobTool } from "../../jobs/contract.ts";
@@ -76,17 +71,13 @@ export interface OpenBriefFacts {
   restart: boolean;
   /** Whether a restart also rebuilds the game's C++ (a project with an Unreal project in it). */
   cppRestart: boolean;
-  /** Whether the studio plays the game in its engine's editor, so the lead is offered `judge_play`. */
-  judge: boolean;
-  /** The judges the game's engine plugin declares for it, which play only when the lead asks (`judge_play`). */
-  judges?: readonly JudgeRef[];
   savePoints: readonly OpenSavePoint[];
   now: number;
   softDeadline: number;
   finalDeadline: number;
-  /** The Loop runs until a reviewer accepts its finish (within its hours), not for its hours. */
+  /** The Loop runs until its lead finishes it (within its hours), not for its hours. */
   untilFinish: boolean;
-  /** The workspace's skills that reach this project (their text without front matter). */
+  /** The names of the workspace's skills that reach this project, read on demand. */
   skills: readonly string[];
 }
 
@@ -95,16 +86,14 @@ const factLine = (fact: FactRef): string =>
   `${fact.id} ${fact.path === FACT_ROOT ? "at the folder's root" : `in ${fact.path}`}`;
 
 /**
- * The brief's time paragraph: how long the Loop runs (its hours are a soft cap: the lead's finish ends
- * it sooner, a short grace follows them), and how much working time is left.
+ * The brief's time paragraph: how long the Loop runs (its hours are a cap: the lead's finish ends it
+ * sooner, a short grace follows them), and how much working time is left.
  */
 function timeWords(facts: OpenBriefFacts): string {
   const hours = Math.max(1, Math.round((facts.softDeadline - facts.now) / (60 * MINUTE_MS)));
-  const span = facts.untilFinish
-    ? `until you finish it, at most ${hours} hours`
-    : `for up to ${hours} hours: use them to make the project better, and call finish as soon as the goal is reached`;
+  const span = facts.untilFinish ? `until you finish it, at most ${hours} hours` : `for up to ${hours} hours`;
   const left = Math.max(0, minutes(facts.softDeadline - facts.now));
-  return `TIME: this Loop runs ${span}. You have about ${left} minutes of working time left. Genex tells you shortly before the time is up and when it is: then start nothing new, bring in finished worker work, make sure the project runs, keep a save point, and call finish only if the goal is reached.`;
+  return `TIME: this Loop runs ${span}; the time is a cap, not a quota. You have about ${left} minutes of working time left. Genex tells you shortly before the time is up and when it is.`;
 }
 
 /** The project paragraph: what the folder holds, what its plugins said, its references and save points. */
@@ -130,22 +119,17 @@ function workerWords(types: readonly WorkerType[]): string {
   const kinds = types.length
     ? ` Kinds of worker the project's plugins declare: ${types.map((type) => `${type.id} (${type.description})`).join("; ")}.`
     : "";
-  return `WORKERS: ${WorkerTool.Start} hands one task to a worker in the background: a reader looks in place (isolation read), a writer works in its own copy of the folder that you merge with ${WorkerTool.Mark} (isolation copy), and one writer at a time may work in place under a lock (isolation lock). Each sees only its task; mark each finished worker used or rejected.${kinds}`;
+  return `WORKERS (optional): ${WorkerTool.Start} hands one task to a worker in the background, with the tools you have: a reader looks in place (isolation read), a writer works in its own copy of the folder that you merge with ${WorkerTool.Mark} (isolation copy), and one writer at a time may work in place under a lock (isolation lock). Each sees only its task; mark each finished worker used or rejected.${kinds}`;
 }
 
 /** The save points paragraph: `save_point`, `rewind`, and `restart` when a plugin restarts the project's app. */
-function savePointWords(facts: Pick<OpenBriefFacts, "restart" | "cppRestart" | "judge" | "judges">): string {
+function savePointWords(facts: Pick<OpenBriefFacts, "restart" | "cppRestart">): string {
   const lines = [
-    `SAVE POINTS: ${OpenTool.SavePoint} keeps the folder as it is now in Genex's checkpoint (the project's plugins save their apps first); keep one after each step that works. ${OpenTool.Rewind} with a save point's label goes back to it when your turn ends.`,
+    `SAVE POINTS: ${OpenTool.SavePoint} keeps the folder as it is now in Genex's checkpoint (the project's plugins save their apps first). ${OpenTool.Rewind} with a save point's label goes back to it when your turn ends.`,
   ];
   if (facts.restart)
     lines.push(`${OpenTool.Restart} closes and reopens the project's app when your turn ends; no file changes.`);
   if (facts.restart && facts.cppRestart) lines.push("After changing the game's C++ source, call restart: it rebuilds.");
-  if (facts.judge)
-    lines.push(
-      `${JUDGE_PLAY_TOOL}: a blind judge plays the game and answers one yes/no, when you want a second opinion on a mechanic.`,
-    );
-  if (facts.judge && facts.judges?.length) lines.push(ENGINE_JUDGE_WORDS.briefRounds(facts.judges));
   return lines.join(" ");
 }
 
@@ -157,27 +141,30 @@ function savePointWords(facts: Pick<OpenBriefFacts, "restart" | "cppRestart" | "
 export function openBrief(facts: OpenBriefFacts): string {
   return [
     appIdentity({ folderLabel: facts.folderLabel, facts: facts.facts, holds: facts.holds }),
-    `YOU LEAD THIS LOOP. You are this chat's own session, and you lead a Loop on the project in ${facts.folder}: you build it yourself, in place, in the project's own folder. Genex took a snapshot of the folder before the Loop began.`,
+    `YOU LEAD THIS LOOP. You are this chat's own session, and you lead a Loop on the project in ${facts.folder}, in the project's own folder. Genex took a snapshot of the folder before the Loop began.`,
     `THE GOAL: ${facts.goal}`,
     timeWords(facts),
     ...projectWords(facts),
     workerWords(facts.workerTypes),
     savePointWords(facts),
+    `SECOND OPINION (optional): ${SECOND_OPINION_TOOL} hands pictures you name and your question to a model that did none of the work. It decides nothing.`,
     "JOBS AND LOOKS: run a long command as a job and keep working while it runs; look at any window of the project's app with app_look, when the chat offers them.",
-    `BLOCKED: when the goal needs what only the person can do (a tool, editor or app the work needs is gone or can't run here and nothing you can call brings it back, an install, a sign-in), call ${OpenTool.Pause} with what they should do. While such a block lasts, never fill the Loop's time with work that can't reach the project. A card waiting for the person's answer is no block: only the call that asked waits, and nobody answering is not a no — go on with the rest of the work.`,
-    `FINISH: when the goal is reached, call finish with a summary, what remains (everything you know is not done or not right yet) and proof: the files in the folder that show it (a test report, a close-up picture, a log). Your word closes the Loop; when you want a second opinion first, add review=yes and a reviewer who did none of the work reads it — its no decides nothing. While something remains and more than ${minutes(GAPS_FIRST_MIN_MS)} minutes are left, you work on what remains first. ${PICTURE_OUTRANKS_FILES}`,
+    `BLOCKED: when the goal needs what only the person can do (a tool, editor or app the work needs is gone or can't run here and nothing you can call brings it back, an install, a sign-in), call ${OpenTool.Pause} with what they should do. A card waiting for the person's answer is no block: only the call that asked waits.`,
+    "FINISH: call finish with a summary and what remains; your word closes the Loop. With review=yes a reviewer who did none of the work reads the folder and the proof you name first — its no decides nothing.",
     ...(facts.appSaved ? [] : ["SAVING: Genex's save points keep the files on disk only: save inside the app first."]),
-    ...(facts.skills.length ? [["SKILLS FOR THIS PROJECT:", ...facts.skills].join("\n\n")] : []),
+    ...(facts.skills.length
+      ? [`SKILLS: ${facts.skills.join(", ")} — read one when it helps (they are in the harness's skills folder).`]
+      : []),
   ].join("\n\n");
 }
 
 /** How the open Loop works, said once in the lead's first message. */
-export function openWakeRules({ heartbeatMinutes }: { heartbeatMinutes: number }): string {
+export function openWakeRules(): string {
   return [
-    "HOW THIS LOOP WORKS — ONE DECISION PER TURN:",
-    `- Act, then end your turn; a turn lasts at most ${minutes(OPEN_TURN_MS)} minutes, and one cut there goes on at once. Between your turns nothing of yours runs; your workers and jobs keep working.`,
-    `- Genex wakes you in this same session when something happens — the person speaks or asks to finish, a worker ends or asks, a job ends, the project's app stops — and every ${heartbeatMinutes} minutes while workers run. News that comes while you work reaches you mid-turn when your session can take it in, otherwise when your turn ends: a long turn hears late.`,
-    `- The person outranks the goal: answer them in the chat, directly and briefly, and act on what they ask. An ask to stop or finish the Loop is ${DirectorTool.WrapUp} first, quoting their words (with next_goal when they also want a new Loop after it); a question alone stops no worker.`,
+    "HOW THIS LOOP WORKS:",
+    `- End your turn when you decide to; a turn lasts at most ${minutes(OPEN_TURN_MS)} minutes, and one cut there goes on at once. Between your turns nothing of yours runs; your workers and jobs keep working.`,
+    "- Genex wakes you in this same session when something happens — the person speaks or asks to finish, a worker ends or asks, a job ends, the project's app stops. News that comes while you work reaches you mid-turn when your session can take it in, otherwise when your turn ends.",
+    `- The person outranks everything else: answer them in the chat and act on what they ask. An ask to stop or finish the Loop is ${DirectorTool.WrapUp} first, quoting their words (with next_goal when they also want a new Loop after it); a question alone stops no worker.`,
     `- Each wake opens with what happened. Use ${WorkerTool.Wait} only when you need a worker's answer within this turn.`,
   ].join("\n");
 }
@@ -225,12 +212,6 @@ export const OPEN_WORDS = {
     "The Loop is closing, and Genex keeps its last work now. Change nothing more; end your turn with a one-paragraph summary for the person.",
   personFinished:
     "The person asked the Loop to finish: it is closed. End your turn with a one-paragraph summary for the person.",
-  /** A kept older finish.ts's: no reviewer could be seated, and that Loop closed without a yes. */
-  noReviewer:
-    "No engine here can hold a reviewer to check your claim, so the Loop closed without a yes. End your turn.",
-  /** A kept older finish.ts's: no time was left for a review, and that Loop closed. */
-  noTimeLeft:
-    "The Loop's time ends too soon for a reviewer to check your claim, so it is not counted and the Loop closed. End your turn with a one-paragraph summary for the person.",
   needsLabel: `${OpenTool.SavePoint} needs a label: a few words naming what works now.`,
   /** A save point or a finish while Genex brings the project's app back: nothing is kept or checked. */
   recovering:
@@ -311,9 +292,6 @@ export const OPEN_NEWS = {
       : "The project's app stopped, and Genex reopened it. Work not yet saved in it may be lost: look before you go on.",
   wentBack: (label: string) =>
     `The project's app stopped and wouldn't reopen on the folder as it was, so Genex went back to save point "${label}". Work since it is gone from the folder.`,
-  saveReminder: (minutesSince: number) =>
-    `It has been ${minutesSince} minutes since your last save point: look at what works, then keep a ${OpenTool.SavePoint}.`,
-  freshEyes: `No read-only worker has looked at the project for a while: one (${WorkerTool.Start} with isolation read) can look at it with fresh eyes.`,
 } as const;
 
 /** What one wake of the open lead says, read from the run at the moment of the wake. */
@@ -329,7 +307,6 @@ export interface OpenDigestFacts {
   savePoints: readonly OpenSavePoint[];
   /** Workers and jobs at work now. */
   atWork: number;
-  freshEyes: boolean;
   closing: string;
 }
 
@@ -352,7 +329,6 @@ function digestBody(facts: OpenDigestFacts): string[] {
   if (facts.savePoints.length)
     lines.push(`SAVE POINTS: ${namedSavePoints(facts.savePoints, (point) => `"${point.label}"`)}.`);
   if (facts.atWork) lines.push(`${facts.atWork} workers or jobs at work; run_status lists them.`);
-  if (facts.freshEyes) lines.push(OPEN_NEWS.freshEyes);
   return lines;
 }
 
@@ -383,13 +359,15 @@ const WRAP_OPENING = {
 } as const satisfies Record<WrapCause, string>;
 
 /**
- * How the wrap-up's finish goes: a claim a reviewer checks, or — once the person asked to finish —
- * a close with no check (finish.ts `claimFinish`), so no claim is invited.
+ * How the wrap-up's finish goes: `finish` says the goal is reached, so it is called only then (the
+ * Loop otherwise closes on its time, with the lead's last words) — and once the person asked to
+ * finish, it closes as it stands, with no check.
  */
 const WRAP_FINISH = {
-  claim: `Only if the goal is reached, call finish with your summary and proof, at least ${CLAIM_BEFORE_END_MINUTES} minutes before the end: a reviewer needs that long to check your claim.`,
+  claim:
+    "Only if the goal is reached, call finish with your summary; otherwise end this turn saying what you built and what remains, and the Loop closes on its time.",
   asked:
-    "Then call finish with your summary: the person asked to finish, so the Loop closes as it stands, with no reviewer's check.",
+    "Call finish with your summary: the person asked to finish, so the Loop closes as it stands, with no reviewer's check.",
 } as const;
 
 /** How an open wake message ends: the wrap-up (saying why), the question of what next, or carry on. */
@@ -402,9 +380,9 @@ export function openClosing(how: {
   if (how.wrapping) {
     const cause = how.wrapCause ?? WrapCause.Deadline;
     const finish = cause === WrapCause.Finish ? WRAP_FINISH.asked : WRAP_FINISH.claim;
-    return `${WRAP_OPENING[cause]}: this is your last turn. Keep a last ${OpenTool.SavePoint} of what works, and end with honest words: what you built, and what remains or you did not test. ${finish}`;
+    return `${WRAP_OPENING[cause]}: this is your last turn. ${finish}`;
   }
   if (how.idleAsk)
-    return `Nothing of yours is at work. Decide what next: build on yourself, start workers, or call finish when the goal is reached. About ${how.minutesLeft} minutes of working time left.`;
-  return "Carry on: act, then end your turn.";
+    return `Nothing of yours is at work and about ${how.minutesLeft} minutes of working time are left. Go on with the work, or call finish if the goal is reached.`;
+  return "Act on it, and end your turn when you are done.";
 }

@@ -100,14 +100,16 @@ const records = (rec: CtxRecorder) =>
     .flatMap((p) => p.batch as Array<{ event_type: string; payload: Record<string, unknown> }>);
 
 describe("the Unreal lead's critic", () => {
-  it("shows a fresh vision call the captures, the references and ART.md, under a rubric where light and composition are structure", async () => {
+  it("shows a fresh vision call the captures, the references and ART.md, and asks it the lead's own question as a second opinion", async () => {
     const { lead, rec } = await criticOn();
     const answer = await askCritic(lead, { shots: "vista.png", question: "Does the shaft read as huge?" });
     const [call] = rec.paramsOf("engine.complete");
     assert.ok(call);
     assert.equal(call.effort, "high");
     assert.equal(call.stream, false);
-    assert.match(String(call.systemPrompt), /Light, atmosphere, materials and composition are the STRUCTURE/);
+    // Flipped (phase 5): no rubric of the critic's own; it answers the lead's question and decides nothing.
+    assert.match(String(call.systemPrompt), /You give a second opinion/);
+    assert.doesNotMatch(String(call.systemPrompt), /STRUCTURE|Light, atmosphere/);
     const [message] = call.messages as Array<{ content: string; images: Array<{ mimeType: string; label: string }> }>;
     assert.deepEqual(
       message?.images.map((image) => [image.mimeType, image.label]),
@@ -123,8 +125,8 @@ describe("the Unreal lead's critic", () => {
       /The critic looked at vista\.png beside 1 reference still and ART\.md\. It advises; you decide\./,
     );
     assert.match(answer, /1\. The far walls are as dark as the near ones — fix: Lift the fog's far colour/);
-    assert.match(answer, /One bold move: Drop the camera to the floor of the shaft/);
-    assert.match(answer, /- Atmosphere: no — no depth by value/);
+    assert.match(answer, /First change it would make: Drop the camera to the floor of the shaft/);
+    assert.doesNotMatch(answer, /Art checks|Atmosphere: no/, "no art checks reach the lead");
   });
 
   it("records its advice on the latest save point's round as advice, never as a verdict", async () => {
@@ -166,7 +168,7 @@ describe("the Unreal lead's critic", () => {
   const RAILING = { defect: "The stair has no railing", fix: "Add a rail along the drop" };
   const SECOND = { defects: [RAILING], boldMove: "Light the stair from below", gates: [], stillOpen: [1] };
 
-  it("shows a later look its last look's open items, and makes those it still sees required", async () => {
+  it("shows a later look its last look's open items, and tells the lead those it still sees", async () => {
     const { lead, rec } = await criticOn(ANSWER, [SECOND]);
     await askCritic(lead, { shots: "vista.png" });
     const first = rec.paramsOf("engine.complete")[0]?.messages as Array<{ content: string }>;
@@ -178,10 +180,12 @@ describe("the Unreal lead's critic", () => {
       /LAST LOOK[^\n]*\n1\. The far walls are as dark as the near ones — fix: Lift the fog's far colour\n2\. Nothing in the air/,
     );
     assert.deepEqual(lead.journal.critiques[1]?.required, [FAR_WALLS]);
+    // Flipped (phase 5): a second opinion, so what it still sees is news to the lead, not a requirement.
     assert.match(
       answer,
-      /REQUIRED[^\n]*\n- The far walls are as dark as the near ones — fix: Lift the fog's far colour/,
+      /Still there since its last look:\n- The far walls are as dark as the near ones — fix: Lift the fog's far colour/,
     );
+    assert.doesNotMatch(answer, /REQUIRED/);
     assert.match(answer, /1\. The stair has no railing/);
   });
 

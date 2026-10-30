@@ -1,22 +1,7 @@
 /**
- * What a lead hears now that a judge or a reviewer is a second opinion it asks for, never a gate
- * (Loop phase 4): the finish mark's rule with nobody looking for it, a reviewer's no that decides
- * nothing, and a claim that closed on the lead's word. A new module, so a kept older sibling
- * (art-direction-prompts.ts, finish-check-prompts.ts, open/prompts.ts) never lacks these names.
+ * What a lead hears now that a reviewer is a second opinion it asks for, never a gate: a reviewer's
+ * no that decides nothing, and a claim that closed on the lead's word.
  */
-import { FINISH_MARK_RULE } from "./art-direction-prompts.ts";
-
-/** The heading of the finish mark's paragraph. */
-const FINISH_MARK_HEADING = "THE FINISH MARK — the last stretch of this build's working time";
-
-/** The rule at the finish mark, said in the lead's own words: nobody looks at the game for it there. */
-const FINISH_MARK_ASK =
-  "The art director looks only when you ask: judge ship=yes for its opinion, which decides nothing.";
-
-/** The wake's paragraph at the finish mark: the rule from here on, and that the art director's look is the lead's to ask for. */
-export function finishMarkBlock(): string {
-  return [FINISH_MARK_HEADING, FINISH_MARK_RULE, FINISH_MARK_ASK].join("\n");
-}
 
 /** A reviewer's no, as the lead reads it: its reasons and what isn't done, each once. */
 function reviewerNo(reasons: readonly string[], notDone: readonly string[]): string {

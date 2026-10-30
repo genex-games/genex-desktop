@@ -73,7 +73,7 @@ function startOverRules(engine: string | undefined, reopen: string, grant: Reope
   const project = grant.project ? ` Pass "${grant.project}" as its project argument.` : "";
   return [
     `- Only when the user explicitly asks to start over — from scratch, a brand-new game, throw this build away — call ${launch} instead, with the goal in their words: it starts a new build from this folder as you leave it. Never for a change to this game.${project}`,
-    `- If it is unclear whether a change is contained, whether they want the build to go on or to start over, or any work at all, ask with ${ask} (recommended choice first) — your estimate in each choice, the direct change first when it takes minutes ("Fix it now — a few minutes" / "Continue the build — ${budgetWords(grant.hours)}") — and end your reply. Never call ${reopen} or ${launch} in the same reply as a question, and never both.`,
+    `- When you ask the user something (${ask}), end your reply: never call ${reopen} or ${launch} in the same reply as a question, and never both.`,
   ];
 }
 
@@ -91,10 +91,10 @@ export function reopenRules(engine: string | undefined, grant: ReopenGrant): str
       ? `- The user attached ${grant.frameCount} still(s) to this message: look at them, and say in your request what they show.`
       : "";
   return [
-    `- Loop is on: you may continue this build — the same run goes on, its plan, its workers, its Builds graph, from where it finished, and you lead it again until what the user asks is checked (${budgetWords(grant.hours)}). It is allowed, not required. Decide from the latest message:`,
+    `- Loop is on: you may continue this build — the same run goes on, its plan, its workers, its Builds graph, from where it finished, and you lead it again (${budgetWords(grant.hours)}). It is allowed, not required. Decide from the latest message:`,
     "- A question, research or a plan is not a request for work: answer it here yourself, then offer to continue the build with it.",
-    "- A contained change — a fix, a tweak, one feature, anything they want quickly: make it yourself here in the game folder, look at it in your own window, and say what changed. The build stays finished.",
-    `- More work than one contained change — several systems, new features, the look of the whole game, "more", "keep going": call ${reopen} once, last, with their request in their words as text, and edit nothing in that reply. The build goes on when your reply ends.`,
+    "- A contained change — a fix, a tweak, one feature: make it yourself here in the game folder and say what changed. The build stays finished.",
+    `- More work than one contained change ("more", "keep going"): call ${reopen} once, last, with their request in their words as text, and edit nothing in that reply. The build goes on when your reply ends.`,
     ...startOverRules(engine, reopen, grant),
     stills,
   ].filter(Boolean);

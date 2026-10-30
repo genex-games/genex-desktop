@@ -5,30 +5,22 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { appendFile, copyFile, mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
-  FRESH_EYES_MS,
   MAX_FOLDER_ONLY_TURNS,
   OPEN_CLOSE_MS,
   OPEN_TURN_MS,
-  SAVE_REMINDER_MS,
 } from "../../src/harness-seed/loop/director/open/contract.ts";
 import { folderChanged } from "../../src/harness-seed/loop/director/open/close.ts";
 import { FOLDER_GIT } from "../../src/harness-seed/loop/director/open/folder-git.ts";
 import { MESSAGE as OPEN_END } from "../../src/harness-seed/loop/director/open/finish.ts";
 import { BUSY_RETRY_MS, WAKE_POLL_MS } from "../../src/harness-seed/loop/director/wake.ts";
 import { WAKE_DEBOUNCE_MS } from "../../src/harness-seed/loop/director/wake-schedule.ts";
-import {
-  OPEN_NEWS,
-  OPEN_WORDS,
-  openBrief,
-  openDigest,
-  openStartHeld,
-} from "../../src/harness-seed/loop/director/open/prompts.ts";
+import { OPEN_NEWS, OPEN_WORDS, openStartHeld } from "../../src/harness-seed/loop/director/open/prompts.ts";
 import {
   CALL_MARGIN_MS,
   FINISH_OBSERVE_MS,
@@ -87,8 +79,10 @@ const SCENE: WorkerType = {
 const UNREAL_MANIFEST = unrealManifest as unknown as LoopManifest;
 
 /** The open lead's tools, by name, on a project whose plugin restarts its app (the toy's). */
+// Flipped (phase 5): every Loop's lead may ask for a second opinion (`judge`).
 const OPEN_TOOLS = [
   "finish",
+  "judge",
   "note",
   "pause",
   "restart",
@@ -248,14 +242,14 @@ describe("the one Loop's start", () => {
     await host.start();
     const [brief] = host.prompts();
     assert.match(String(brief), /godot-project/);
-    for (const web of [/Unreal/, /three\.js/i, /index\.html/, /integration/i, /judge/i])
-      assert.doesNotMatch(String(brief), web);
+    // Flipped (phase 5): the second opinion (`judge`) is offered on every Loop, so the brief names it.
+    for (const web of [/Unreal/, /three\.js/i, /index\.html/, /integration/i]) assert.doesNotMatch(String(brief), web);
     const director = host.leadCalls()[0]?.director as
       | { tools?: Array<{ name: string; description: string }> }
       | undefined;
     const tools = director?.tools;
     assert.ok(tools?.length, "the lead was offered its tools");
-    for (const tool of tools ?? []) assert.doesNotMatch(tool.description, /integration|judge|board/i, tool.name);
+    for (const tool of tools ?? []) assert.doesNotMatch(tool.description, /integration|board/i, tool.name);
   });
 
   it("its brief, and a fresh session's, say it runs inside Genex", TEST_TIMEOUT, async () => {
@@ -290,31 +284,29 @@ describe("the one Loop's start", () => {
     },
   );
 
-  it("the web method reaches only web Loops", async () => {
+  it("a skill that serves web games reaches only web Loops", async () => {
     const workspace = await tmpDir("one-loop-skills-");
     const skills = path.join(workspace, "skills");
     await mkdir(skills);
-    const seedSkills = path.join(import.meta.dirname, "../../src/harness-seed/skills");
-    for (const file of ["director.md", "facet-decomposition.md"])
-      await copyFile(path.join(seedSkills, file), path.join(skills, file));
-    // What the director's brief has always carried: the playbook without its front matter.
-    const playbook = (await readFile(path.join(skills, "director.md"), "utf8")).replace(/^---[\s\S]*?---\n?/, "");
+    const body = "How this person likes a web game's files laid out.\n";
+    await writeFile(path.join(skills, "web.md"), `---\nname: Web\nfacts: web-game\n---\n${body}`);
     const web = { facts: [{ id: "web-game", path: "." }] };
     const reached = await loopSkills(workspace, web);
-    assert.deepEqual(reached.map((skill) => skill.slug).sort(), ["director", "facet-decomposition"]);
-    assert.equal(reached.find((skill) => skill.slug === "director")?.text, playbook);
-    assert.equal(await loopSkill(workspace, "director", web), playbook, "the web brief, byte for byte");
+    assert.deepEqual(
+      reached.map((skill) => skill.slug),
+      ["web"],
+    );
+    assert.equal(reached[0]?.text, body, "without its front matter");
+    assert.equal(await loopSkill(workspace, "web", web), body);
     const unrealWithSite = [...UNREAL, { id: "web-game", path: "site" }];
     for (const facts of [GODOT, UNREAL, TOY, unrealWithSite]) {
       assert.deepEqual(await loopSkills(workspace, { facts }), [], JSON.stringify(facts));
-      assert.equal(await loopSkill(workspace, "director", { facts }), "", JSON.stringify(facts));
+      assert.equal(await loopSkill(workspace, "web", { facts }), "", JSON.stringify(facts));
     }
     // A copy kept from before skills named their facts was the web method's, and still is.
-    const kept = (await readFile(path.join(skills, "director.md"), "utf8")).replace(/^facts:.*\n/m, "");
-    assert.doesNotMatch(kept, /^facts:/m);
-    await writeFile(path.join(skills, "director.md"), kept);
-    assert.equal(await loopSkill(workspace, "director", web), playbook);
-    assert.equal(await loopSkill(workspace, "director", { facts: GODOT }), "");
+    await writeFile(path.join(skills, "web.md"), `---\nname: Web\n---\n${body}`);
+    assert.equal(await loopSkill(workspace, "web", web), body);
+    assert.equal(await loopSkill(workspace, "web", { facts: GODOT }), "");
     // A skill that names another kind's fact reaches that kind only.
     await writeFile(
       path.join(skills, "scenes.md"),
@@ -429,42 +421,6 @@ describe("the one Loop's workers", () => {
 });
 
 describe("the one Loop's end", () => {
-  it(
-    "a claim after a row of no's that brings no new work is turned back before Genex's finish moment: no plugin step runs",
-    TEST_TIMEOUT,
-    async () => {
-      const { MAX_FINISH_REJECTIONS } = await import("../../src/harness-seed/loop/finish-contract.ts");
-      const answers: string[] = [];
-      const host = await hostOn(Project.ToyProject, {
-        facts: TOY,
-        manifest: TOY_WITH_FINISH,
-        run: { budgets: { wallClockMs: 5 * 60 * MINUTE, completionPolicy: "duration" } },
-        turns: [
-          async ({ tool, host }) => {
-            await writeFile(path.join(host.dir, "scenes", "hall.toyscene"), "a hall\n");
-            const claim = { review: "yes", summary: "The hall is built.", proof: "scenes/hall.toyscene" };
-            for (let n = 0; n <= MAX_FINISH_REJECTIONS; n++) answers.push(String(await tool("finish", claim)));
-            return undefined;
-          },
-        ],
-      });
-      for (let n = 0; n < MAX_FINISH_REJECTIONS; n++) host.reviews.push(reviewerAnswer("no", ["the hall is dark"]));
-      await host.start();
-      assert.match(
-        answers[MAX_FINISH_REJECTIONS] ?? "",
-        /new work since the last no/,
-        "the stale claim is turned back",
-      );
-      assert.equal(host.reviewed().length, MAX_FINISH_REJECTIONS, "and asks no reviewer");
-      const moments = callsOf(host, "hooks.fire", (p) => p.on === "finish");
-      assert.equal(
-        moments.length,
-        MAX_FINISH_REJECTIONS,
-        "Genex's finish moment ran once per checked claim, not for it",
-      );
-    },
-  );
-
   it(
     "finish runs the finish moment, then asks the reviewer; a yes closes the Loop in place: workers settled, the last work kept, run.end fired, the report and journal written",
     TEST_TIMEOUT,
@@ -954,71 +910,6 @@ describe("the one Loop's held crash steps", () => {
 });
 
 describe("the one Loop's news", () => {
-  it(
-    "news reaches a working lead mid-turn: a worker's end and question, a job's end, the save reminder",
-    TEST_TIMEOUT,
-    async () => {
-      const kinds = [/w1 is waiting for the person/, /worker w1: Survey done/, /Export/, /save point/i];
-      const host = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        // Its worker's question stays pending: no other Loop's chat reads it.
-        threadId: "t-news",
-        turns: [
-          async ({ tool, host }) => {
-            await tool("worker_start", { title: "Survey", task: "Read the scenes and list them", isolation: "read" });
-            await host.rec.ctx.call("events.append", {
-              threadId: host.threadId,
-              batch: [
-                {
-                  type: "custom",
-                  event_type: "tool_permission",
-                  payload: {
-                    requestId: "q1",
-                    state: "pending",
-                    worker: { id: "w1" },
-                    title: "May I read the export presets?",
-                  },
-                },
-              ],
-            });
-            host.jobs.push({
-              id: "j1",
-              title: "Export",
-              role: "lead",
-              command: "godot --export-release Mac",
-              state: "exited",
-              exitCode: 0,
-              endedAt: new Date(0).toISOString(),
-              endSeq: 1,
-              durationMs: MINUTE,
-              stoppedBy: null,
-            });
-            host.pass(SAVE_REMINDER_MS + MINUTE);
-            await host.workers[0]?.end({ summary: "three scenes" });
-            assert.ok(
-              await host.until(() => kinds.every((kind) => host.steered.some((s) => kind.test(s.text)))),
-              `every kind of news was steered (${host.steered.map((s) => s.text).join(" | ")})`,
-            );
-            return undefined;
-          },
-          finishes,
-        ],
-      });
-      host.steerTakes = true;
-      await host.start();
-      const firstTurn = host.steered.filter((s) => s.id.includes(`${host.run.runId}:1:`));
-      for (const kind of kinds)
-        assert.equal(firstTurn.filter((s) => kind.test(s.text)).length, 1, `${String(kind)} once in the turn`);
-      assert.ok(
-        host.steered.every((s) => s.interrupt === false),
-        "news never cuts a turn short",
-      );
-      const next = String(host.prompts()[1]);
-      assert.doesNotMatch(next, /Survey done/, "news the turn took is not told again");
-      assert.doesNotMatch(next, /Export/);
-    },
-  );
-
   it("a project no plugin hooks makes no hooks.fire call but the run's own moments", TEST_TIMEOUT, async () => {
     const host = await hostOn(Project.GodotGame, {
       facts: GODOT,
@@ -1605,47 +1496,6 @@ describe("the one Loop's status, notes and fresh look", () => {
     assert.ok(notes.some((note: { text: string }) => note.text === "Chose the cave layout over the tower."));
   });
 
-  it(
-    "after a long stretch with no reader the next message suggests a fresh look, once; a reader started since quiets it",
-    TEST_TIMEOUT,
-    async () => {
-      const fresh = /fresh eyes/;
-      const solo: LoopTurn = async ({ host }) => {
-        await writeFile(path.join(host.dir, `room-${host.prompts().length}.txt`), "a room\n");
-        return undefined;
-      };
-      const quiet = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        turns: [
-          async (call) => {
-            call.host.pass(FRESH_EYES_MS + MINUTE);
-            return solo(call);
-          },
-          solo,
-          finishes,
-        ],
-      });
-      await quiet.start();
-      assert.match(String(quiet.prompts()[1]), fresh);
-      assert.doesNotMatch(String(quiet.prompts()[2]), fresh, "said once");
-
-      const looked = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        turns: [
-          async ({ host, tool }) => {
-            host.pass(FRESH_EYES_MS + MINUTE);
-            await tool("worker_start", { title: "Survey", task: "Read the scenes", isolation: "read" });
-            await host.workers[0]?.end({ summary: "three scenes" });
-            return undefined;
-          },
-          finishes,
-        ],
-      });
-      await looked.start();
-      assert.doesNotMatch(String(looked.prompts()[1]), fresh);
-    },
-  );
-
   it("restart on a project whose plugin restarts no app is no tool of its", TEST_TIMEOUT, async () => {
     let answer = "";
     const host = await hostOn(Project.GodotGame, {
@@ -1667,15 +1517,12 @@ describe("the one Loop's status, notes and fresh look", () => {
 
 describe("the one Loop's skills and its record", () => {
   it(
-    "a workspace skill naming the project's kind reaches the lead's brief, and the web method does not",
+    "a workspace skill naming the project's kind is named in the lead's brief, and a web skill is not",
     TEST_TIMEOUT,
     async () => {
       const workspace = await tmpDir("one-loop-workspace-");
       await mkdir(path.join(workspace, "skills"));
-      await copyFile(
-        path.join(import.meta.dirname, "../../src/harness-seed/skills/director.md"),
-        path.join(workspace, "skills", "director.md"),
-      );
+      await writeFile(path.join(workspace, "skills", "web.md"), "---\nname: Web\nfacts: web-game\n---\nWeb files.\n");
       await writeFile(
         path.join(workspace, "skills", "scenes.md"),
         "---\nname: Scenes\nfacts: godot-project\n---\nBuild each room as its own scene, instanced from the level.\n",
@@ -1683,8 +1530,10 @@ describe("the one Loop's skills and its record", () => {
       const host = await hostOn(Project.GodotGame, { facts: GODOT, workspace, turns: [finishes] });
       await host.start();
       const [brief] = host.prompts();
-      assert.match(String(brief), /Build each room as its own scene, instanced from the level\./);
-      assert.doesNotMatch(String(brief), /The director's playbook/);
+      // Flipped (phase 5): skills are named in the brief and read on demand, not pasted into it.
+      assert.match(String(brief), /SKILLS: scenes —/);
+      assert.doesNotMatch(String(brief), /Build each room as its own scene/);
+      assert.doesNotMatch(String(brief), /\bweb\b —|Web files/);
     },
   );
 
@@ -2079,7 +1928,11 @@ describe("the one Loop's idle rule", () => {
         ],
       });
       const report = await host.start();
-      assert.equal(host.prompts().filter((prompt) => /Decide what next/.test(prompt)).length, 1, "asked once");
+      assert.equal(
+        host.prompts().filter((prompt) => /Nothing of yours is at work/.test(prompt)).length,
+        1,
+        "asked once",
+      );
       assert.ok(host.prompts().length <= 4, `${host.prompts().length} turns`);
       assert.equal(report.stoppedBecause, OPEN_END.idle);
     },
@@ -2105,8 +1958,8 @@ describe("the one Loop's idle rule", () => {
         ],
       });
       await host.start();
-      assert.doesNotMatch(String(host.prompts()[2]), /Decide what next/, "the second edit was work");
-      assert.match(String(host.prompts()[2]), /Carry on/);
+      assert.doesNotMatch(String(host.prompts()[2]), /Nothing of yours is at work/, "the second edit was work");
+      assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
     },
   );
 
@@ -2128,63 +1981,6 @@ describe("the one Loop's idle rule", () => {
       assert.equal(report.victory, true, String(report.stoppedBecause));
     },
   );
-});
-
-describe("the one Loop's save points in its messages", () => {
-  it("a long Loop's wake message and brief name its latest save points and count the rest", () => {
-    const point = (label: string, auto: boolean, n: number) => ({
-      label,
-      summary: auto ? "Saved by Genex: the lead's turn ended with unsaved work." : `step ${n}`,
-      snapshotId: `snap-${n}`,
-      auto,
-      at: n,
-      notes: [],
-    });
-    // Twelve hours of quick turns: one save point of the lead's in every ten, the rest Genex's autosaves.
-    const points = Array.from({ length: 360 }, (_, n) =>
-      n % 10 === 9 ? point(`Step ${n}`, false, n) : point("Autosave", true, n),
-    );
-    const digest = openDigest({
-      reasons: ["carry_on"],
-      resumed: false,
-      now: 0,
-      softDeadline: 60 * MINUTE,
-      userSays: [],
-      happened: [],
-      carried: [],
-      savePoints: points,
-      atWork: 0,
-      freshEyes: false,
-      closing: "",
-    });
-    const line = digest.split("\n").find((one) => one.startsWith("SAVE POINTS:")) ?? "";
-    assert.ok(line.length < 400, `${line.length} characters`);
-    assert.match(line, /"Step 359"/, "the latest save point of the lead's");
-    assert.match(line, /and \d+ earlier/);
-    const brief = openBrief({
-      goal: "A level.",
-      folder: "/games/level",
-      folderLabel: "level",
-      facts: GODOT,
-      holds: null,
-      carried: [],
-      references: [],
-      workerTypes: [],
-      appSaved: false,
-      restart: false,
-      cppRestart: false,
-      judge: false,
-      savePoints: points,
-      now: 0,
-      softDeadline: 60 * MINUTE,
-      finalDeadline: 60 * MINUTE,
-      untilFinish: false,
-      skills: [],
-    });
-    const kept = brief.split("\n\n").find((one) => one.startsWith("SAVE POINTS kept so far")) ?? "";
-    assert.ok(kept.length < 800, `${kept.length} characters`);
-    assert.match(kept, /"Step 359" \(step 359\)/);
-  });
 });
 
 describe("the one Loop's wake cap", () => {
@@ -2480,43 +2276,6 @@ describe("the one Loop's acts once it pauses or closes", () => {
     const between = (journalOf(host).director.open as unknown as { between: { rewind: unknown } }).between;
     assert.equal(between.rewind, null);
   });
-
-  it(
-    "a lead whose finish is checked hears no save reminder, and keeps no save point once accepted",
-    TEST_TIMEOUT,
-    async () => {
-      let answer: (value: unknown) => void = () => {};
-      const answers: unknown[] = [];
-      const host = await hostOn(Project.GodotGame, {
-        facts: GODOT,
-        turns: [
-          async ({ host, tool }) => {
-            host.pass(SAVE_REMINDER_MS - MINUTE);
-            const claim = tool("finish", { review: "yes", summary: "The level is built.", proof: "project.godot" });
-            assert.ok(await host.until(() => host.reviewed().length === 1), "a reviewer reads the claim");
-            // The reviewer reads past the time a reminder to save would be due.
-            await host.sleep(3 * MINUTE);
-            await delay(20);
-            answer(reviewerAnswer("yes", ["it holds what was asked"]));
-            answers.push(await claim);
-            answers.push(await tool("save_point", { label: "Late", summary: "after the close" }));
-            return undefined;
-          },
-        ],
-      });
-      host.steerTakes = true;
-      host.reviews.push(
-        new Promise((resolve) => {
-          answer = resolve;
-        }) as never,
-      );
-      const report = await host.start();
-      assert.match(String(answers[0]), /^Accepted/);
-      assert.equal(answers[1], OPEN_WORDS.ending);
-      assert.ok(!host.steered.some((one) => /since your last save point/.test(one.text)), "no reminder to save");
-      assert.equal(report.victory, true);
-    },
-  );
 });
 
 describe("the one Loop's close and a recovery under way", () => {
@@ -2777,7 +2536,7 @@ describe("the one Loop's work read from the lead's own acts", () => {
         turns: [keepsRoom(1), ...Array.from({ length: 12 }, (_, n) => savesOnly(n))],
       });
       const report = await host.start();
-      assert.match(String(host.prompts()[2]), /Decide what next/);
+      assert.match(String(host.prompts()[2]), /Nothing of yours is at work/);
       assert.ok(host.prompts().length <= 4, `${host.prompts().length} turns`);
       assert.equal(report.stoppedBecause, OPEN_END.idle);
     },
@@ -2807,8 +2566,9 @@ describe("the one Loop's work read from the lead's own acts", () => {
         });
         await host.start();
         const third = String(host.prompts()[2]);
-        if (appHeld) assert.match(third, /Carry on/, "the app's save was the lead's work");
-        else assert.match(third, /Decide what next/, "an autosave that kept nothing more is no work");
+        if (appHeld)
+          assert.match(third, /Act on it, and end your turn when you are done/, "the app's save was the lead's work");
+        else assert.match(third, /Nothing of yours is at work/, "an autosave that kept nothing more is no work");
       }
     },
   );
@@ -2876,7 +2636,8 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
       });
       const report = await host.start();
       assert.equal(host.prompts().length, 6, "six turns");
-      for (const prompt of host.prompts().slice(1)) assert.match(prompt, /Carry on/);
+      for (const prompt of host.prompts().slice(1))
+        assert.match(prompt, /Act on it, and end your turn when you are done/);
       assert.equal(report.victory, true, String(report.stoppedBecause));
     },
   );
@@ -2902,7 +2663,8 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
       });
       const report = await host.start();
       assert.equal(host.prompts().length, 5, "five turns");
-      for (const prompt of host.prompts().slice(1)) assert.match(prompt, /Carry on/);
+      for (const prompt of host.prompts().slice(1))
+        assert.match(prompt, /Act on it, and end your turn when you are done/);
       assert.equal(report.victory, true, String(report.stoppedBecause));
     },
   );
@@ -3010,9 +2772,9 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
         turns: [writerWithinTurn(1), writerWithinTurn(2), writerWithinTurn(3)],
       });
       await host.start();
-      assert.match(String(host.prompts()[1]), /Carry on/);
-      assert.match(String(host.prompts()[2]), /Carry on/);
-      assert.match(String(host.prompts()[3]), /Decide what next/);
+      assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
+      assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
+      assert.match(String(host.prompts()[3]), /Nothing of yours is at work/);
     },
   );
 
@@ -3031,7 +2793,7 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
         turns: Array.from({ length: 12 }, () => outside),
       });
       const report = await host.start();
-      const asked = host.prompts().findIndex((prompt) => /Decide what next/.test(prompt));
+      const asked = host.prompts().findIndex((prompt) => /Nothing of yours is at work/.test(prompt));
       assert.ok(asked > 0 && asked <= MAX_FOLDER_ONLY_TURNS + 1, `asked what next at prompt ${asked}`);
       assert.equal(report.stoppedBecause, OPEN_END.idle);
     },
@@ -3133,8 +2895,8 @@ describe("the one Loop's work beside its jobs and its other writers", () => {
       assert.ok(host.rec.paramsOf("snapshot.restore").length > 0, "the folder went back");
       const turn = host.prompts().findIndex((prompt) => prompt.includes("Is the door done?"));
       assert.ok(turn > 0, "the person's words woke the lead");
-      assert.doesNotMatch(String(host.prompts()[turn + 1]), /Carry on/);
-      assert.match(String(host.prompts()[turn + 1]), /Decide what next/);
+      assert.doesNotMatch(String(host.prompts()[turn + 1]), /Act on it, and end your turn when you are done/);
+      assert.match(String(host.prompts()[turn + 1]), /Nothing of yours is at work/);
     },
   );
 });
@@ -3176,8 +2938,8 @@ describe("the one Loop's lead that edits without save points of its own", () => 
         assert.ok(host.prompts().length > edits, `${host.prompts().length} turns`);
         // Every turn after one that edited goes on at once; a timed Loop's claim waits for its time.
         for (const prompt of host.prompts().slice(1, edits + 1)) {
-          assert.match(prompt, /Carry on/);
-          assert.doesNotMatch(prompt, /Decide what next|this is your last turn/i);
+          assert.match(prompt, /Act on it, and end your turn when you are done/);
+          assert.doesNotMatch(prompt, /Nothing of yours is at work|this is your last turn/i);
         }
         for (const reasons of wakeReasons(host).slice(0, edits)) {
           assert.ok(reasons.includes("carry_on"), reasons.join(", "));
@@ -3213,8 +2975,8 @@ describe("the one Loop's lead that edits without save points of its own", () => 
           ? Promise.resolve({ code: 128, stdout: "", stderr: "fatal: git-write-tree: error building trees" })
           : call(method, params);
       await host.start();
-      assert.match(String(host.prompts()[1]), /Carry on/);
-      assert.match(String(host.prompts()[2]), /Carry on/);
+      assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
+      assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
     },
   );
 
@@ -3335,9 +3097,13 @@ describe("the one Loop's lead that edits without save points of its own", () => 
         ],
       });
       await host.start();
-      assert.match(String(host.prompts()[1]), /Carry on/);
-      assert.match(String(host.prompts()[2]), /Carry on/);
-      assert.match(String(host.prompts()[3]), /Decide what next/, "the third turn beside others is not the lead's");
+      assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
+      assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
+      assert.match(
+        String(host.prompts()[3]),
+        /Nothing of yours is at work/,
+        "the third turn beside others is not the lead's",
+      );
     },
   );
 
@@ -3369,7 +3135,7 @@ describe("the one Loop's lead that edits without save points of its own", () => 
         ],
       });
       await host.start();
-      const asked = host.prompts().findIndex((prompt, n) => n >= 4 && /Decide what next/.test(prompt));
+      const asked = host.prompts().findIndex((prompt, n) => n >= 4 && /Nothing of yours is at work/.test(prompt));
       assert.equal(
         asked,
         4,
@@ -3418,8 +3184,12 @@ describe("the one Loop's writers that end while Genex reads the folder", () => {
         return answer;
       }) as never;
       await host.start();
-      assert.match(String(host.prompts()[3]), /Decide what next/);
-      assert.doesNotMatch(String(host.prompts()[4]), /Carry on/, "the writer's edit was not the lead's work");
+      assert.match(String(host.prompts()[3]), /Nothing of yours is at work/);
+      assert.doesNotMatch(
+        String(host.prompts()[4]),
+        /Act on it, and end your turn when you are done/,
+        "the writer's edit was not the lead's work",
+      );
     },
   );
 });
@@ -4327,7 +4097,11 @@ describe("the one Loop's reads of the game folder", () => {
       // An earlier read of this run's, killed by its timeout, left its index's lock behind.
       await writeFile(path.join(host.dir, ".git", `genex-turn-${host.run.runId}.index.lock`), "");
       await host.start();
-      assert.match(String(host.prompts()[1]), /Carry on/, "the edit read as work");
+      assert.match(
+        String(host.prompts()[1]),
+        /Act on it, and end your turn when you are done/,
+        "the edit read as work",
+      );
     },
   );
 
@@ -4381,8 +4155,8 @@ describe("the one Loop's reads of the game folder", () => {
     await writeFile(path.join(addon, "tool.gd"), "extends Node\n");
     await gameRepo(addon);
     const report = await host.start();
-    assert.match(String(host.prompts()[1]), /Carry on/);
-    assert.match(String(host.prompts()[2]), /Carry on/);
+    assert.match(String(host.prompts()[1]), /Act on it, and end your turn when you are done/);
+    assert.match(String(host.prompts()[2]), /Act on it, and end your turn when you are done/);
     assert.equal(report.victory, true, String(report.stoppedBecause));
   });
 
@@ -4398,42 +4172,5 @@ describe("the one Loop's reads of the game folder", () => {
     const loopRun = { ctx: host.rec.ctx, run: host.run } as unknown as Parameters<typeof folderChanged>[0];
     assert.equal(await folderChanged(loopRun), false);
     assert.ok((await readFile(index)).equals(before), "the folder's index is as it was");
-  });
-});
-
-describe("the open lead's finish words", () => {
-  it("the lead's word closes a Loop, a review is a second opinion it may ask for, and a picture outranks the files", async () => {
-    const finishLine = (untilFinish: boolean) =>
-      openBrief({
-        goal: "A level.",
-        folder: "/games/level",
-        folderLabel: "level",
-        facts: GODOT,
-        holds: null,
-        carried: [],
-        references: [],
-        workerTypes: [],
-        appSaved: false,
-        restart: false,
-        cppRestart: false,
-        judge: false,
-        savePoints: [],
-        now: 0,
-        softDeadline: 60 * MINUTE,
-        finalDeadline: 60 * MINUTE,
-        untilFinish,
-        skills: [],
-      })
-        .split("\n\n")
-        .find((one) => one.startsWith("FINISH:")) ?? "";
-    const timed = finishLine(false);
-    const endless = finishLine(true);
-    // Flipped (Loop phase 4): the line said when a reviewer's no's stop the Loop; no row of no's does now.
-    for (const line of [timed, endless]) {
-      assert.match(line, /Your word closes the Loop/);
-      assert.match(line, /review=yes/);
-      assert.doesNotMatch(line, /no's in a row/);
-      assert.match(line, /Your own pictures of the running project outrank what its files say/);
-    }
   });
 });

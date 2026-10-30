@@ -436,10 +436,9 @@ on another ready provider the job may cross to (`crossesTo`, [local models](../l
 [`src/shared/protocol.ts`](../../src/shared/protocol.ts)) and `withRoles` stamps `builderEngine`
 beside `judgeEngine` only when a slot is crossed. The loop never reads `run.engine` for a builder or
 critic: `roleEngine(run, role)` names the engine and `modelOn`/`plannerModel` a model that engine
-knows. The director, coordinator, planner, replan and scout (session engines only) stay on the
-orchestrator's engine; workers, contract wiring, the base, the integrator, spikes, the gauntlet
-builder and optimization go to the workers' engine; the judge, replan's vision and the playtester
-(while its model can play there) go to the judges' engine. A worker's `usage_limit`/`rate_limit` becomes `state.workerLimit` (never
+knows. The lead and the coordinator (session engines only) stay on the
+orchestrator's engine; workers go to the workers' engine; second opinions and reviewers go to the
+judges' engine. A worker's `usage_limit`/`rate_limit` becomes `state.workerLimit` (never
 `state.limit`, which pauses the run), reported as `workersEngineLimit`. A reopen resolves its
 message's picks with `withRoles`, planned on the session's model; the coordinator's keeps the
 build's (`reopenedRun`). An unready provider's remembered pick is kept; a Loop send with it is
@@ -471,11 +470,10 @@ checkpoints are specified in [local models](../local-models.md) and
 
 The harness is TypeScript run by type stripping, dependency-free, with `.ts` import specifiers; see
 the [harness runtime guide](../harness-runtime.md) and [src notes](../../src/AGENTS.md#harness-seed).
-Its modes (director, autopilot, facet loop, gauntlet, spike) share primitives from `loop/git.ts`,
-`evidence.ts`, `build-turn.ts`, `config.ts` and `outcomes.ts`. The two largest are folders:
-`loop/director/` (the run's parts) and `loop/facet/` (the facet loop's state, policy and
-scoring, one `phases/*.ts` file per round phase); model-facing text sits in sibling
-`*-prompts.ts` modules.
+The Loop (`loop/director.ts`, its parts in `loop/director/`, an open Loop's in
+`loop/director/open/`, the Unreal runner's in `loop/unreal/`) shares primitives from `loop/git.ts`,
+`health-check.ts`, `build-turn.ts`, `config.ts` and `outcomes.ts`, and its workers are
+`loop/workers/`; model-facing text sits in sibling `*-prompts.ts` modules.
 
 **Seed upgrades.** `applySeed` ([`src/substrate/seed-upgrade.ts`](../../src/substrate/seed-upgrade.ts),
 manifest in userData) copies the seed into the mutable workspace and keeps files the agent edited,
@@ -490,9 +488,10 @@ moved and retired:
   one pre-manifest pass retires too and writes the entry as it removes the file.
 - `SEED_MOVES` reports a kept copy of moved code as `moved`, noted in the agent's memory each boot
   (`RecoveryService.noteSeedMoves`; [harness runtime](../harness-runtime.md)).
-- Retired craft checks leave an installed `library/checks.json` only where the install's own
-  `library/recipes` holds the answering recipe; ids the seed still ships are refreshed in place with
-  counters kept (catalogue version 2). Both user-facing surfaces report all outcomes.
+- Learned data (`library/games`, `library/contract-lessons.md`, `library/checks.json`,
+  `library/recipe-stats.json`) and the agent's edits of seed files the seed removed or changed are
+  archived once to `<harness workspace>/archive/<YYYY-MM-DD>/` and never read again
+  ([harness runtime](../harness-runtime.md)). Both user-facing surfaces report all outcomes.
 
 **Layout migration.** `migrateHarnessLayout` (seed manifest `layoutVersion` 2) moves a
 pre-TypeScript workspace once, after a validation fork of it booted; until then `applySeed` defers
@@ -548,7 +547,7 @@ text or replaying all their anchored edits; a planted link refuses it), the arch
 the agent's own. Each records `post_snapshot_id`; **Undo this change** (`studio:selfchange.undo`)
 reverses its diff alone, recording `self_change_undone`. Rewinds restore `library/games`;
 `rollbackTo` refuses during a run, contractor or user turn. `StudioSettings.learning` gates
-automatic apply, the sweep, the architect and `studio:skillopt.start`; the harness asks `learning.enabled` first.
+automatic apply, the sweep, the architect and `studio:skillopt.start`.
 
 ## The run: director, workers and judging
 
@@ -564,86 +563,48 @@ request, settings, plan and versioned status in thread metadata and emits `plan_
 clock while approval is pending; Cancel/Stop invalidates it; a waiting plan survives relaunch.
 Approval dispatches the brief with the legacy `reviewPlan` flag cleared.
 
-**Scout.** Before the plan, a read-only scout (`loop/scout.ts`) plays to the requested state and
-reports a `setup` (actions or a demo, a `verify` probe), a builder count and what exists;
-`decompose` folds the plan to that ceiling (`clampFacets`). Capture and the computer tool begin a game
-whose `state().flow` is not in play (except `begin: false` and the playtester), then replay
-`run.setup`; evidence replays, seeds, begins. Typed facets carry `requested-state`. No
-scout on a completion-only engine; a failed one is a card.
-
-**Director.** On a session-capable engine Autopilot is one session's run (`loop/director.ts`,
-`loop/director/`); `run.classic` and completion-only engines take the programmed pipeline. The
-director leads the integration worktree (at the base commit, or the prior integration head on a
-resume) — the long turn's from inside it, a waking lead read-only (one session, below) — with its
-own preview window and tools: `plan`, `goal_update`, `worker_start`, `worker_status`,
-`worker_steer`, `worker_stop`, `judge`, `playtest`, `integrate`, `show`, `note`, `finish`, `look`.
-The studio forwards each tool call to the harness (`HarnessHost.dispatch`, `director_tool`). Rules:
+**The Loop.** Every run is a Loop: its lead's session and the workers it may start
+(`loop/director.ts`, `loop/director/`) — on a web game in the run's integration worktree (at the base
+commit, or the prior integration head on a resume), on any other project in place
+(`director/open/`). An engine that keeps no session of its own leads none: the run closes at once
+with `refusal: "needs_session"` (`run-dispatch.ts`). The web lead's tools: `run_status`, the pool's
+`worker_start`, `worker_status`, `worker_steer`, `worker_stop`, `worker_wait` and `worker_mark`,
+`judge` (a second opinion, `loop/second-opinion.ts`), `show`, `note`, `wrap_up` and `finish`. The
+studio forwards each call to the harness (`HarnessHost.dispatch`, `director_tool`). Rules:
 
 - Every declared tool but `resolve_root` first syncs the head (`headSynced`) to the integration
   head, kept on `refs/studio/runs/<runId>/integration`.
-- `worker_start` refuses until `plan` was called (`autopilot_plan_review`, kept on
-  `journal.director.plan`); `replaces=<id>` marks a restart. With a plan to review, the first
-  `worker_start` answers at once and the user's answer or the window's end wakes the lead
-  (`run.waking`). After a Resume a pre-pause worker's id is refused unless `from=` is that worker.
+- Workers are Genex's one worker pool (`loop/workers/`): a copy worker forks from the integration
+  head and `worker_mark used` merges its work back, then the one health check runs
+  (`director/integrate.ts` `afterMerge`, `loop/health-check.ts`: the host's `preview.observe` in a
+  window of the run's own). A lock is refused on a web Loop; past the cap, or once finish was asked,
+  no worker starts.
 - The wake loop (`loop/director/wake.ts`, rules `wake-schedule.ts`, words `wake-prompts.ts`): the
-  director ends its turn after each decision and the harness resumes the session with a digest
-  (the user's words verbatim, what happened, where the run stands). The user, finish and a
-  worker steer wake at once, worker news after 5 s; timers cover the plan window, wrap-up, the
-  workers' limit and a 20-minute heartbeat; at most 30 wakes an hour. An idle run asks once,
-  then wraps up; each wake appends `director_continued`.
+  lead ends its turn and the harness resumes the session with a digest (the user's words verbatim,
+  what happened, where the run stands) when the user speaks or asks to finish, a worker ends or
+  asks, a job ends, the app crashes, a turn reaches its cap or the wrap-up is due; no heartbeat or
+  reminder wakes it. An idle run asks once, then wraps up; each wake appends `director_continued`.
 - The full journal (`loop/director/journal.ts`): each save writes the run's record on
-  `journal.director` (clock with `workedMs`, plan, ledger, health, workers' limit, recent log,
-  workers, wake state). A Resume gets the working time left (`loopRunClock`, paused time excluded), a
-  reopen (`director/reopen.ts`) a fresh clock, and reads the rest back (`restoreLoopRun`,
-  `run.priorWorkers`, `RESUMED AT`).
-- `run.directorLoop: "turn"` (or `STUDIO_DIRECTOR_LOOP`) keeps the long turn until its removal
-  gate ([harness runtime](../harness-runtime.md)).
-- User steering reaches the director as USER SAYS once per steer and run; a steer addressed to a
-  worker goes to it (`routeUserSteers`), an immediate one through `engine.interrupt {cwd}`.
+  `journal.director` (clock with `workedMs`, health, recent log, wake state). A Resume gets the
+  working time left (`loopRunClock`, paused time excluded), a reopen (`director/reopen.ts`) a fresh
+  clock, and reads the rest back (`restoreLoopRun`).
+- User steering reaches the lead as USER SAYS once per steer and run.
 - Live chat (`loop/live-chat.ts`, `director/lead-line.ts`) and one session
-  (`director/lead-session.ts`, `conflict-worker.ts`, `after-loop-run.ts`, `reopen-run.ts`, the host's
-  `#leadRoot`): the lead is the chat's own session, which answers again after the close
+  (`director/lead-session.ts`, `after-loop-run.ts`, `reopen-run.ts`, the host's `#leadRoot`): the
+  lead is the chat's own session, which answers again after the close
   ([live chat](../conversation-coordinator.md#live-chat-during-a-build),
   [after the build](../conversation-coordinator.md#after-the-build-the-same-session)).
-- Each turn of the director's session ends with a host-written `session_activity` (`completed`,
+- Each turn of the lead's session ends with a host-written `session_activity` (`completed`,
   `interrupted` or `failed`), never a `turn_ended`, so the chat shows the build between turns.
-- A monitor (`loop/director/workers.ts`) reads each running worktree (`git status --porcelain`,
-  `git diff -U0`, the mechanical reviewer; no model, window or lock) and notes only a change;
-  `waitDigest` gives each worker the room left.
-- Defects a judge names for another worker's seam route to its live spec (`makeRouteDefect`); a
-  finished owner's go to `defectsNobodyOwns`.
-- The director owns a worker's ladder when it gives one (`move`, `milestones`,
-  `spec.moveOwner`); otherwise a named move is guidance until `polishStreakEscalate`
-  polish-only rounds escalate it (`move.escalated`). Steered rungs first; a rung climbs on its
-  check, or with none on a kept round; `RUNG_MISSES` set a checked one aside
-  (`facet/round-judgement.ts`). A worker ends when its kept build holds its checks and no rung is
-  left. `integrate` takes `lastAccepted`, or a stopped round as it is.
-- `spec.stage = "finish"` (`facet/stage.ts`, per round, `stage=`): polish is the work, no move
-  or streak; a kept, unbroken build ends it.
-- `run.scope` (`loop/scope.ts`) is the user's words; `scopeLines` sits beside every goal, and
-  an `adds` proposal is a decision card (`facet/beyond.ts`), never a move.
-  `critic=screen` marks the part that leads the screen (`loop/screen-owner.ts`), binding no other.
-- Two or more looping parts need `plan contract=`/`vision=` (`director/contract-gate.ts`),
-  committed as `docs/MODULE-CONTRACT.md`/`VISION.md` before loop workers fork; `integrate
-  worker=a,b` is a wave (one health pass, `state.waveHead`); `loop/registry.ts` refuses lost
-  registrations.
-- Only `judge ship=yes` runs the art director (`director/art-direction.ts`, `loop/ship-review.ts`):
-  blockers reach owners as normal checks; it gates nothing. The finish mark (`finishMarkMs`) only
-  tells the lead to finish.
-- `worker_start` may override `FACET_POLICY`; `loopDigest` puts each worker's phase, streaks and
-  checks in the digests.
 - The hours are a soft cap (`loop/time-cap.ts`); both closes are one function (`closeTheLoopRun`).
 
 **Refs and the user's repository.** Everything a run must find later lives on the studio's refs:
-`refs/studio/runs/<runId>/integration`, `.../workers/<facetId>` (moved to every accepted commit and
-again before teardown), `.../attempts/<facet>/<n>` (`-stopped` for a stopped round),
-`.../spikes/<facet>/<id>` and `refs/studio/snap/<id>` (`loop/repo.ts`, `snapshots.ts`). One committer
-signs studio commits (`STUDIO_AS`, `GIT_ENV`). A chat keeps the game folder from before and after
-each answered message the same way, on `refs/studio/chat/<thread>/before|after/<message>`, for
-rewinding ([conversation lifecycle](../conversation-coordinator.md#sending-and-rewinding)). Builder
-notes are `docs/notes/NOTES.<facet>.md`.
-`.studio/` is gitignored; on the long turn the studio copies `.studio/DIRECTOR.md` to run and thread
-artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Adoption writes a real `.gitignore` before
+`refs/studio/runs/<runId>/integration`, its workers' copies' refs and `refs/studio/snap/<id>`
+(`loop/repo.ts`, `snapshots.ts`). One committer signs studio commits (`STUDIO_AS`, `GIT_ENV`). A
+chat keeps the game folder from before and after each answered message the same way, on
+`refs/studio/chat/<thread>/before|after/<message>`, for rewinding
+([conversation lifecycle](../conversation-coordinator.md#sending-and-rewinding)). `.studio/` is
+gitignored. Adoption writes a real `.gitignore` before
 `git init`. `checkOutNewRepo` fast-imports the installed seed as the first harness repository; `ensureRepo` finishes an interrupted first commit. Snapshots commit to the checked-out branch, hooks off, never during a merge,
 rebase, cherry-pick or revert. `SnapshotEngine.restore` checks everything before any reset and
 refuses (`branch-changed`, `history-changed`, `operation-in-progress`, `rescue-failed`), folder
@@ -651,65 +612,24 @@ untouched; the mandatory rescue snapshot is named on
 `workspace_restored`. Every loop shell command is built in `loop/git.ts`; model text goes through
 `shellQuote` and a commit reaches a command line only when `isCommit`.
 
-**Base stage and contract.** An empty game gets a base stage first (`autopilot_base`,
-`journal.base`; a third of the time left, thirty minutes at most; none for a team,
-`foundationFirst`). A brought game whose contract is `missing` gets `installContract` in the
-integration worktree, verified by a full evidence pass, committed as `studio: install contract`,
-which becomes `state.startEvidence`;
-`journal.contract` keeps it. `worker_start` runs the health pass once per fork commit and refuses
-one that does not run; the run's own starting points (`state.baseHeads`) are exempt from
-blankness; inherited console errors are a warning, not a void. A worker starts a round only
-when the time left covers one (`tooLateToStart`, measured `minIterationMs`); a build turn at
-its mark is asked to finish cleanly in the same session (`WIND_DOWN_ASK`).
-
-**Verdicts.** Every judged build leaves one record, `verdictRecord()` in `loop/verdict.ts`:
+**Verdicts.** Every health check and close leaves one record, `verdictRecord()` in `loop/verdict.ts`:
 `{ pass, build, against, observed, measured, seen, decision, because }`, where `because` has no id,
-sha or harness word. Rounds carry it on `facet_iteration.verdict`; the lead's gate, judge, health
-pass and close append `director_verdict`. The Builds result panel shows the staged build's newest
-record (`headVerdict`); step panels, gate tooltips, the chat and the judges' sheet print its
-sentence. `run-steps.ts` decides a step's state from merges first (`mergedRounds`: a
-loop's merge takes its kept rounds; a lead's merge, by log position, takes the last kept round or,
-with none, every unjudged round started before it) and judges second. A round stands
-unless a check that passed now fails (no judge: `facet/kept-round.ts`); flips prove only as `strongFlips` (a
-scene/pixel/metric/probe/demo/play check, or a vision check the plan wrote). A self-measuring regression counts only if a second
-look reproduces it; a reviewer's "gamed" check reads unmeasured. An unmeasured vision check needs a yes at
-`VISION_FLIP_CONFIDENCE` (0.7); a resumed spec drops a judge's own questions (`withoutJudgesHold`). Counts
-separate planned from grown checks (`checkCounts` in `words.ts`). Questions about one camera ride
-in one call (`askVisionBoard`, `visionBatch`, `MAX_BATCH_QUESTIONS`); an unanswered id is never a
-pass. Health, judge and gate passes are patient (`patientEvidence`: up to three looks on a load
-race). An engine limit is waited out when it resets well before the deadline; otherwise the run
-closes paused, naming the limit.
+sha or harness word; the lead's health checks and close append `director_verdict`. The Builds result
+panel shows the staged build's newest record (`headVerdict`). An engine limit is waited out when it
+resets well before the deadline; otherwise the run closes paused, naming the limit.
 
-**Landing.** At the close the harness stops workers, syncs the head, takes a fresh health pass
-and lands when the head moved beyond the start and loaded, or a lead's judge saw that sha
-load; it asks no judge. A claim is the lead's word (`review=yes` asks a reviewer first).
-`report.landingResult` records `verified`, a `how` token and the morning card's `line`. A landing
-blocked by commits (`could-not-land`) or uncommitted changes (`uncommitted-changes`) in the game
-folder waits for **Make it live** (`landBuild`); **Play this build** is `showBuild`
-([feature map](feature-map.md)). A stopped round is committed
-to its `-stopped` ref and recorded `facet_stopped` with no verdict and no rollback.
+**Landing.** At the close the harness stops workers, syncs the head and lands when the head moved
+beyond the start and passed its health check; it asks no judge. A claim is the lead's word
+(`review=yes` asks a reviewer first, a second opinion). `report.landingResult` records `verified`, a
+`how` token and the morning card's `line`. A landing blocked by commits (`could-not-land`) or by
+uncommitted changes or a merge under way (`uncommitted-changes`) in the game folder waits for
+**Make it live** (`landBuild`); **Play this build** is `showBuild` ([feature map](feature-map.md)).
 
 **Nested repositories.** A game that arrived as its own Git repository is a gitlink. `worktreeAt`
 copies the nested tree into every worktree; with the user's consent (`AdoptOptions.versionNested`)
 it is converted in a deterministic commit. `landBuild` applies the same conversion before merging
-([feature map](feature-map.md)). `integrate` fails when a merge still holds the path as a gitlink
-(`unversionedNested`), and the run's landing stops with `nested-not-versioned`.
-
-**Game kinds and evidence.** `loop/kinds.ts` is the one table of eight kinds, with their traits
-(off until declared), probe axes, eye cameras, critic and play script;
-`gameLine(run.game)` heads every judge call. `run.game` comes from the plan, then the scout, then
-`studio.json`'s nested `game` block; the plan's declaration is written back once a
-run. `gatherEvidence` (`proveStep`, `reachPlay`, `classifyEvidenceFailure`) is in the
-[harness runtime guide](../harness-runtime.md). `library/checks.json` holds
-technical checks only; craft checks are `library/recipes` entries retrieved by failing check,
-named defect or plan. Own-shape games get own-shape briefs and review rules (`renderBrief`,
-`reviewDiff`) and a seam per worker.
-
-**Ledger and lessons.** `loop/ledger.ts` appends one record per outcome to
-`library/games/<game>.jsonl` in the harness workspace (never the user's repo); `deriveLessons` writes
-`library/games/<game>.md`, and the next run carries the top five as `LAST TIME ON THIS GAME`.
-`ledgerFromEvents` backfills from an older run's log, never fatally. The ledger always
-writes; SkillOpt keeps its own gate.
+([feature map](feature-map.md)). The health check fails a head that still holds the path as a
+gitlink (`unversionedNested`), and the run's landing stops with `nested-not-versioned`.
 
 ## Projects, builds and previews
 

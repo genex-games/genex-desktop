@@ -19,15 +19,13 @@
  * keep the separate director in its integration worktree.
  */
 import { lastContractorSession } from "../chat-session.ts";
-import { commitAll, GIT, gitAt, headOf } from "../git.ts";
 import { HostMethod } from "../host-methods.ts";
 import { plannerModel } from "../model-roles.ts";
 import { EventKind, RunEvent } from "../run-events.ts";
 import { compactedSummary } from "../compaction-log.ts";
 import { handoverSection } from "../session-compact-prompts.ts";
-import { chatSoFar, LEAD_EDITS_COMMITTED } from "./lead-session-prompts.ts";
+import { chatSoFar } from "./lead-session-prompts.ts";
 import type { AnyRecord, HarnessCtx, HarnessEvent, Run } from "../../types/harness.d.ts";
-import type { LoopRun } from "./loop-run.ts";
 
 /** The model a session was opened on when the chat named none: the engine's own default. */
 const DEFAULT_MODEL = "default";
@@ -192,39 +190,4 @@ export async function bookmarkLead(
       batch: [{ type: EventKind.Custom, event_type: RunEvent.ContractorSession, payload }],
     })
     .catch(() => {});
-}
-
-/** What the studio committed in a lead's integration worktree in its name: the commit, and its paths. */
-export interface LeadEdits {
-  commit: string;
-  files: string[];
-}
-
-/** A porcelain status line's path: the new name of a rename, quoted names as git wrote them. */
-function statusPath(line: string): string {
-  const named = line.slice(3).trim();
-  const renamed = named.indexOf(" -> ");
-  return renamed >= 0 ? named.slice(renamed + 4) : named;
-}
-
-/**
- * The lead builds in its integration worktree with its own hands, so what is uncommitted there is
- * its work — its edits, a game that builds in place, a tool's cache — and would hold every merge
- * off. Before a merge, a playtest or a worker's fork the studio commits every change on the
- * integration branch in the lead's name: nothing of it is lost or left out of the build. The head
- * moves to that commit, journalled and protected as any integration head, and the run's log says
- * so. Answers what it committed, or null when nothing was uncommitted; a git failure throws.
- */
-export async function commitLeadEdits(loopRun: LoopRun, label: string): Promise<LeadEdits | null> {
-  const { ctx, integrationWorktree: at, journal, note, protectHead, run, state } = loopRun;
-  const status = await gitAt(ctx, at, GIT.status, { label }).catch(() => "");
-  if (!status) return null;
-  const files = status.split("\n").map(statusPath).filter(Boolean);
-  await commitAll(ctx, at, `director ${run.runId}: the lead's edits`, { label });
-  const commit = await headOf(ctx, at, { label });
-  state.integrationHead = commit;
-  journal.director.integrationHead = commit;
-  await protectHead(commit);
-  note(LEAD_EDITS_COMMITTED(commit, files));
-  return { commit, files };
 }

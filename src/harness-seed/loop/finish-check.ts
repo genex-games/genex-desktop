@@ -3,17 +3,14 @@
  * work decides. Genex captures the game (its observers and its web preview), reads the proof the
  * lead names and the run's job results, and asks a reviewer (the Reviewers role, a read-only
  * session in a home of its own that reads the lead's folder and may look at app windows) for yes or
- * no with reasons and what isn't done. A yes ends the Loop; a no goes back to the lead;
- * `MAX_FINISH_REJECTIONS` no's in a row stop the Loop, unless a timed Loop has more than
- * `FINISH_TIME_LEFT_MS` of its working time left: then its lead keeps working, and its next claim
- * needs new work since the last no (a save point or a head that moved, and proof made since). A check
- * that gets no answer neither counts nor breaks the row.
+ * no with reasons and what isn't done. It is a second opinion the lead asked for: a yes closes the
+ * Loop as reviewed, a no goes back to the lead with its reasons and decides nothing.
  *
  * The verdict is Genex's: the harness gathers, fits the brief and picks the seat, then asks the host
  * (`finish.review`), which records the round, runs the reviewer in the seat it gives reviewers, reads
  * its yes or no and holds it. The harness settles the round (`finish.settle`) and acts on the host's
  * answer: it may turn a held answer into no answer (a yes that lapsed, a turn that ended), never into
- * a yes, and the host counts the no's in a row and says when they stop the Loop. The harness writes
+ * a yes. The harness writes
  * no `finish_check` record itself: Genex refuses one.
  *
  * Everything happens inside the lead's one `finish` call (`LEAD_CALL_MS`): a claim with too little
@@ -29,27 +26,18 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { HarnessCtx, Run } from "../types/harness.d.ts";
 import type { DelegateImage, EngineDescriptor, FinishRoundAnswer, HookImage } from "../types/host-api.d.ts";
-import type { Evidence } from "./evidence.ts";
+import type { HealthCheck } from "./health-check.ts";
 import { type CaptureLine, FINISH_ANSWER, reviewerBrief } from "./finish-check-prompts.ts";
 import {
   FINISH_REASON_CHARS,
   FinishCheckStep,
   LEAD_CALL_MS,
   MAX_FINISH_REASONS,
-  MAX_FINISH_REJECTIONS,
   ObserverSource,
   PROOF_OBSERVER,
   StopWhy,
 } from "./finish-contract.ts";
-import {
-  freshProofIn,
-  jobLines,
-  judgeLines,
-  type Proof,
-  pictureType,
-  proofNamesOf,
-  readProof,
-} from "./finish-proof.ts";
+import { jobLines, type Proof, pictureType, proofNamesOf, readProof } from "./finish-proof.ts";
 import { factsOfGame } from "./folder-facts.ts";
 import { HostMethod } from "./host-methods.ts";
 import { isPlainRecord } from "./json.ts";
@@ -63,7 +51,6 @@ import {
   REVIEW_PICTURE_MAX_BYTES,
   recordCaptures,
 } from "./observers.ts";
-import { scopeLines } from "./scope-prompts.ts";
 import { CLIP_REASON, clipMarked } from "./text.ts";
 import { MINUTE_MS, SECOND_MS } from "./time.ts";
 
@@ -107,7 +94,6 @@ const MESSAGE = {
   turnEnded: "the lead's turn ended before the reviewer answered",
   noTimeLeft: "the lead's call had no time left for the reviewer",
   stopped: "the Loop was stopped",
-  staleProof: "no new work since the reviewer's last no",
   refused: (why: string) => `Genex did not start the reviewer: ${why}`,
   unread: (why: string) => `whether the reviewer's answer still stands could not be read: ${why}`,
   noTime:
@@ -246,7 +232,7 @@ export interface FinishScope {
   /** The other messages to the Loop (relayed by the chat's agent, in its words), oldest first. */
   relayed?: readonly string[];
   /** The caller's own preview pass (a lease-aware one), if any. */
-  previewPass?: (path: string) => Promise<Evidence | null>;
+  previewPass?: (path: string) => Promise<HealthCheck | null>;
   /** A wait on `now`'s clock that a test may drive (the observers' deadline, the reviewer's watch); a real timer without. */
   sleep?: (ms: number) => Promise<void>;
   /** Whether the run has ended (or is closing): no round opens then, and one under way records nothing more. */
@@ -280,30 +266,24 @@ export interface FinishClaim {
 
 /** A reviewer's yes. */
 type Accepted = { step: typeof FinishCheckStep.Accepted; reasons: string[] };
-/**
- * A reviewer's no: its reasons, what isn't done, the no's in a row now, whether this one stops the
- * Loop, and whether the Loop had time left (then no row of no's stops it).
- */
+/** A reviewer's no: its reasons, what isn't done, the no's in a row now, and whether the Loop had time left. */
 type Rejected = {
   step: typeof FinishCheckStep.Rejected;
   reasons: string[];
   notDone: string[];
   done: string[];
   rejections: number;
-  stop: boolean;
   timeLeft: boolean;
 };
 /**
  * A check that got no answer, and why; `seatless` when no engine here can hold a reviewer at all,
- * `lapsed` for a yes that no longer speaks for the claim, `staleProof` for a claim turned back before
- * any check: after the row of no's a timed Loop went on past, it named no proof made since the last no.
+ * `lapsed` for a yes that no longer speaks for the claim.
  */
 type Unanswered = {
   step: typeof FinishCheckStep.Unanswered;
   why: string;
   seatless?: true;
   lapsed?: true;
-  staleProof?: true;
 };
 /** No time for a check (nothing recorded); `turnEnds` when the lead's turn, not its call, left none. */
 export type NoTime = { noTime: true; turnEnds?: true };
@@ -391,8 +371,6 @@ interface Gathered {
   proofAt: Set<number>;
   proof: Proof;
   jobs: string[];
-  /** The blind judges' latest answer to each question of the run. */
-  judges: string[];
 }
 
 /** A finish hook's picture as a reviewer may be handed it: a PNG or a JPEG by its bytes, within the cap; else nothing. */
@@ -420,7 +398,7 @@ function hookCapture(images: readonly HookImage[]): Capture[] {
 
 /**
  * Capture the game (bounded by `FINISH_OBSERVE_MS`), read the lead's proof, the run's job results
- * and its blind judges' answers, and record the captures the harness made (the preview's, and the
+ *, and record the captures the harness made (the preview's, and the
  * lead's pictures).
  */
 async function gather(scope: FinishScope, claim: FinishClaim): Promise<Gathered> {
@@ -429,7 +407,7 @@ async function gather(scope: FinishScope, claim: FinishClaim): Promise<Gathered>
   const observeScope = { run, threadId, game: scope.game, previewPass: scope.previewPass, clock };
   const observed = await observeGame(ctx, observeScope, scope.now() + observeMs(scope));
   const proof = await readProof(ctx, run, scope.leadFolder, claim.proof, MESSAGE.proofArtifacts(scope.tally.round));
-  const [jobs, judges] = await Promise.all([jobLines(ctx, run), judgeLines(ctx, run, threadId)]);
+  const jobs = await jobLines(ctx, run);
   const leads: Capture[] = proof.images.length
     ? [
         {
@@ -443,7 +421,7 @@ async function gather(scope: FinishScope, claim: FinishClaim): Promise<Gathered>
     : [];
   await recordCaptures(ctx, threadId, run.runId, [...observed, ...leads]);
   const proofAt = new Set(leads.map((_, n) => observed.length + n));
-  return { captures: [...observed, ...leads, ...hookCapture(claim.hookImages)], proofAt, proof, jobs, judges };
+  return { captures: [...observed, ...leads, ...hookCapture(claim.hookImages)], proofAt, proof, jobs };
 }
 
 /** A capture as the brief tells of it: what was taken, and how much of it the reviewer was handed. */
@@ -469,7 +447,6 @@ function briefFor(
   const hookNotes = claim.hookNotes.slice(0, HOOK_NOTES_MAX).map((note) => clipMarked(note, CLIP_REASON));
   return reviewerBrief({
     goal: String(scope.run.goal ?? ""),
-    scope: scopeLines(scope.run),
     said: quoted(scope.said),
     relayed: quoted(scope.relayed ?? []),
     claim: clipMarked(claim.summary, CLAIM_CHARS),
@@ -477,7 +454,6 @@ function briefFor(
     proof: gathered.proof,
     hookNotes,
     jobs: gathered.jobs,
-    judges: gathered.judges,
     captures: gathered.captures.map((capture, n) => captureLine(capture, told.attached[n])),
     facts: factsOfGame(scope.game),
     folder: scope.leadFolder,
@@ -670,9 +646,8 @@ function outcomeOf(
     else delete tally.done;
     if (no.mark === null) delete tally.noMark;
     else tally.noMark = no.mark;
-    const { rejections, stopped: stop } = settled;
     const timeLeft = settled.timeLeft === true;
-    return { step: FinishCheckStep.Rejected, reasons, notDone, done, rejections, stop, timeLeft };
+    return { step: FinishCheckStep.Rejected, reasons, notDone, done, rejections: settled.rejections, timeLeft };
   }
   const answer = unanswered(settled.why ?? MESSAGE.ended);
   return lapsed ? { ...answer, lapsed: true } : answer;
@@ -720,23 +695,6 @@ async function workMarkOf(scope: Pick<FinishScope, "workMark">): Promise<string 
 }
 
 /**
- * Whether a claim must wait for new work: the row of no's has reached the cap and the Loop went on
- * (it had time left), and since the last no the lead's work mark has not moved (`mark`; null when the
- * caller can't say) or no proof file it names was written. A claim on the same work would only be
- * turned down again, at a reviewer's cost. Callers ask before Genex's finish moment runs.
- */
-export async function staleClaim(
-  tally: FinishTally,
-  folder: string,
-  proof: readonly unknown[],
-  mark: string | null,
-): Promise<boolean> {
-  if (tally.rejections < MAX_FINISH_REJECTIONS || tally.noAt === undefined) return false;
-  const moved = mark === null || tally.noMark === undefined || mark !== tally.noMark;
-  return !(moved && (await freshProofIn(folder, proof, tally.noAt)));
-}
-
-/**
  * Check the lead's claim (see the module's header): a check already under way answers that it is;
  * a claim on a run already closing, or from a turn already over, opens no round; a claim with less
  * than `FINISH_REVIEW_MIN_MS` of the call (or the turn) left for a review after the observers is
@@ -750,8 +708,6 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
   const noTime = noTimeFor(scope);
   if (noTime) return noTime;
   const mark = await workMarkOf(scope);
-  if (await staleClaim(tally, scope.leadFolder, claim.proof, mark))
-    return { ...unanswered(MESSAGE.staleProof), staleProof: true };
   tally.round += 1;
   tally.checking = true;
   try {
@@ -770,11 +726,6 @@ export async function checkFinish(scope: FinishScope, claim: FinishClaim): Promi
 export function finishAnswer(outcome: FinishOutcome): string {
   if ("noTime" in outcome) return outcome.turnEnds ? MESSAGE.noTimeInTurn : MESSAGE.noTime;
   if (outcome.step === FinishCheckStep.Accepted) return FINISH_ANSWER.accepted(outcome.reasons);
-  if (outcome.step === FinishCheckStep.Unanswered && outcome.staleProof)
-    return FINISH_ANSWER.staleProof(MAX_FINISH_REJECTIONS);
   if (outcome.step === FinishCheckStep.Unanswered) return FINISH_ANSWER.unanswered(outcome.why);
-  const { reasons, notDone } = outcome;
-  if (outcome.stop) return FINISH_ANSWER.stopped(outcome.rejections, reasons, notDone);
-  if (outcome.timeLeft) return FINISH_ANSWER.goesOn(outcome.rejections, reasons, notDone);
-  return FINISH_ANSWER.rejected(outcome.rejections, MAX_FINISH_REJECTIONS, reasons, notDone);
+  return FINISH_ANSWER.goesOn(outcome.rejections, outcome.reasons, outcome.notDone);
 }
