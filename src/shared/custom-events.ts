@@ -23,7 +23,7 @@ import type { ToolPermissionEvent } from "./permissions.ts";
 import type { SteerDelivery } from "./message-queue.ts";
 import type { Usage } from "./event-log.ts";
 import type { LoopProfile } from "./project-facts.ts";
-import type { BuildObservation, ReadyResult, ReadyVia } from "./preview-contract.ts";
+import type { BuildObservation, HealthFinding, ReadyResult, ReadyVia } from "./preview-contract.ts";
 import type { EngineLinkedPayload, EngineLinkUndonePayload, EngineStepsPayload } from "./game-engine.ts";
 import type { RunSpec } from "./protocol.ts";
 import type { PluginSuggestedPayload } from "./project-tools.ts";
@@ -734,12 +734,14 @@ export interface CustomEventMap {
    * The Loop's health check of its integration head (seed `loop/director/integrate.ts`): the page
    * loads, throws no uncaught error and its frame is not blank. `picture`: the screenshot the check
    * kept, under the run's folder (`readRunStill`); `worker`: the worker whose merge it checked, as
-   * its own records name it (`pool.w2`). Records written before either existed have neither.
+   * its own records name it (`pool.w2`); `findings`: the host's code for each of its own problems
+   * (`HealthFinding`). Records written before each existed lack it.
    */
   integration_health: RunScope & {
     head?: string | null;
     ok?: boolean;
     problems?: string[];
+    findings?: HealthFinding[];
     picture?: string;
     worker?: string;
   };

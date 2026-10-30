@@ -70,7 +70,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ReadyPhase, CaptureSurface, GameClock, LiveLoadFailure } from "../../shared/preview-contract.ts";
+import { ReadyPhase, CaptureSurface, GameClock, LiveLoadFailure, SHOT_QUERY } from "../../shared/preview-contract.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { buildFinished, LiveGate, type LiveOffer, readBuild } from "./live-gate.ts";
 import { type LiveBehindEvent, WebBuildLoad } from "../../shared/live-behind.ts";
@@ -280,6 +280,11 @@ function consoleErrorsLine(errors: ReadonlyArray<{ message: string }>): string {
 function sourceEntry(game: GameProject | undefined, shape: ProjectShape): string {
   const folder = game ? webFolderOf(game) : null;
   return folder ? `${folder}/${TEMPLATE_SHAPE.entry}` : shape.entry;
+}
+
+/** The page the health check loads: the served entry with the shot parameter (`SHOT_QUERY`) on its address. */
+function shotEntry(entry: string): string {
+  return `${entry}${entry.includes("?") ? "&" : "?"}${SHOT_QUERY}=1`;
 }
 
 /** The address a load answers with when the build had nothing to serve. */
@@ -578,7 +583,8 @@ export class PreviewService {
       if (!served) return unservedUrl(p);
       // A load starts the page again, whether or not it then arrives: Live's game is no longer stopped.
       if (isLive) this.#liveStopped = false;
-      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      const entry = p.shot ? shotEntry(served.entry) : served.entry;
+      const url = await port.load(p.project, entry, served.root, { loopback: served.loopback });
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       if (isLive) this.#liveLoaded(webBuild);

@@ -13,11 +13,13 @@ The Loop. A Loop is its lead's session and the workers the lead may start. The l
 starts workers or not (`worker_start`, Genex's one worker pool: a worker gets a task and the lead's
 tools, works and ends), integrates (`worker_mark used` merges a copy worker's work) and finishes
 (`finish`, which lands the build). Before a web game's merge settles and before its build lands,
-Genex runs one health check (`loop/health-check.ts`): it serves the build in a window of its own and
+Genex runs one health check (`loop/health-check.ts`): it serves the build in a window of its own,
+loaded once with `?genex-shot=1` on its address (`preview.load` `shot`; a game may read it), and
 asks the host's own check, `preview.observe` — the page loads, it throws no uncaught error, its frame
 is not blank — keeping a page screenshot as the check's picture; nothing is asked of the game's
-code. Its record (`integration_health`) names that picture, and after a merge the worker it checked
-(`worker`, `pool.w2`): Builds shows it on that worker and on the latest build. A head that fails is not made live: the lead hears what is wrong and goes on, or finishes with
+code. Its record (`integration_health`) names that picture, the host's codes for what it found
+(`findings`: `not_loaded`, `crashed`, `uncaught`, `blank`), and after a merge the worker it checked
+(`worker`, `pool.w2`): Builds draws each checked build with its picture and outcome. A head that fails is not made live: the lead hears what is wrong and goes on, or finishes with
 `land=no`. An engine that keeps no session of its own (Ollama's tool loop) leads no Loop: its chat is
 plain chat, and a run started on it closes at once with `refusal: "needs_session"` on its
 `run_finished` report (`run-dispatch.ts` `LoopRefusal`) beside the words the chat reads.

@@ -5959,4 +5959,29 @@ describe("pictures of a Loop's builds (Loop phase 5)", () => {
     assert.equal(atFinish?.payload.picture, shot, "the finish's check names its picture");
     assert.equal(atFinish?.payload.worker, undefined, "and no worker: no merge came before it");
   });
+
+  it("GP2. a build's health check said only in words what it found and loaded the page as Live does: Builds could not tell a blank build from a broken one, and a game could not know which load is the build's picture", async () => {
+    const { appended, fakeHost, fakeLoopRun } = await import("../helpers/director-run.ts");
+    const { RunEvent } = await import("../../src/harness-seed/loop/run-events.ts");
+    const blank = "the page's frame is blank: one flat colour, nothing drawn";
+    const answers = {
+      [HostMethod.PreviewAcquire]: { handle: "pool:1" },
+      [HostMethod.PreviewLoad]: { ok: true },
+      [HostMethod.PreviewReady]: { ready: true },
+      [HostMethod.PreviewObserve]: { ok: false, reasons: [blank], findings: ["blank"] },
+      [HostMethod.PreviewScreenshot]: { path: "/runs/run_j/director/merge_w5_5555555555.jpg" },
+      [HostMethod.RunExec]: (params: Record<string, unknown>) =>
+        String(params.command ?? "").startsWith("git rev-parse HEAD")
+          ? { code: 0, stdout: `${"5".repeat(40)}\n` }
+          : { code: 0, stdout: "" },
+    };
+    const host = fakeHost();
+    await fakeLoopRun(host, {}, answers).afterMerge({ id: "w5" });
+    const [check] = appended(host).filter((event) => event.type === RunEvent.IntegrationHealth);
+    assert.deepEqual(check?.payload.problems, [blank]);
+    assert.deepEqual(check?.payload.findings, ["blank"], "the host's codes ride beside its words");
+    const loads = host.calls.filter((call) => call.method === HostMethod.PreviewLoad);
+    assert.equal(loads.length, 1, "one load, no second pass");
+    assert.equal(loads[0]?.params.shot, true, "the load whose screenshot is the build's picture says so");
+  });
 });
