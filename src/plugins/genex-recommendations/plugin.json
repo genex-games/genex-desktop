@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "name": "Genex recommendations",
   "publisher": "Genex",
-  "description": "Genex's own optional advice for making games: multiplayer patterns, cover craft, where assets can come from and shop design. Skills an agent reads on demand; none of it is required.",
+  "description": "Genex's own optional advice for making games: multiplayer patterns, cover craft, where assets can come from, shop design and the player's experience on Genex. Skills an agent reads on demand; none of it is required.",
   "icon": "icon.png",
   "backend": "backend.mjs",
   "capabilities": [],
@@ -31,6 +31,12 @@
       "engines": ["web"],
       "summary": "Optional advice on a shop players want to buy from on Genex, and on compliant alternatives when a request crosses Genex's hard rules.",
       "file": "skills/shop-design/SKILL.md"
+    },
+    {
+      "name": "player-experience",
+      "engines": ["web"],
+      "summary": "Optional advice on how a Genex web game meets its players: booting before identity, preview builds and saves, capabilities a player can refuse, and pointer lock and fullscreen around Genex sheets.",
+      "file": "skills/player-experience/SKILL.md"
     }
   ],
   "panels": [],

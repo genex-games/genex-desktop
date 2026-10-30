@@ -18,8 +18,7 @@ page.** Nothing you run locally is inside the frame, so a call that passes your
 own test can still be dead for players. `npx genex preview` reads the game's
 source and warns about the calls it recognises; this page covers the rest.
 
-The SDK calls below are `@genex-ai/embed-sdk` **0.32.0+**
-(`npm i @genex-ai/embed-sdk@latest` if an import is missing). Three rules hold
+The SDK calls below are `@genex-ai/embed-sdk` **0.32.0+**. Three rules hold
 for all of them:
 
 - **Call them from a click or tap handler, before any `await`.** A browser lets
@@ -58,15 +57,14 @@ the link or the code on screen.
 | The game wants | On its Genex page | In the Genex app | On its own link | Do this |
 | --- | --- | --- | --- | --- |
 | The microphone: voice chat, `getUserMedia({ audio })`, speech recognition | only a build that declared `microphone`. An undeclared build is refused at once and the player is never asked | refused for every game, declared or not | the browser's own permission prompt | Declare it (below). Voice chat is `room.voice.join()` in `$genex-threejs-multiplayer`. Hide the button when `getShell() === "app"`. |
-| The camera: `getUserMedia({ video })` | only a build that declared `camera` | refused for every game | the browser's own permission prompt | Declare it. The game must play without it. |
-| The player's location: `navigator.geolocation` | only a build that declared `geolocation` | refused for every game | the browser's own permission prompt | Declare it. Offer a way to play without it, such as picking a place. |
+| The camera: `getUserMedia({ video })` | only a build that declared `camera` | refused for every game | the browser's own permission prompt | Declare it. |
+| The player's location: `navigator.geolocation` | only a build that declared `geolocation` | refused for every game | the browser's own permission prompt | Declare it. |
 
 **The declaration is made when the build ships, never at run time.**
 `npx genex preview` and `npx genex publish` read the game's own source and
 declare what they find: `.voice.join()` called with nothing or with an options
 object written at the call, `SpeechRecognition` or `getUserMedia` with `audio`
-for the microphone (the voice pack from `npx genex controller voice` declares
-it by itself); `facingMode` or `getUserMedia` with `video` for the camera;
+for the microphone; `facingMode` or `getUserMedia` with `video` for the camera;
 `navigator.geolocation` for location. A call the scan cannot see
 (`voice.join(opts)` with the options in a variable, `getUserMedia(constraints)`)
 is declared by hand, in the game's `package.json`:
@@ -86,8 +84,7 @@ to the build: preview or publish again after changing it.
 A declaration lets the Genex page pass the request on to the browser. What the
 player is asked, and when, is the browser's business, and the answer can be no
 in every shell: the player refuses, the app always does, and Genex can withdraw
-a capability from one game. **So every one of these needs a path that works
-without it.**
+a capability from one game.
 
 ## Goes through an SDK call
 

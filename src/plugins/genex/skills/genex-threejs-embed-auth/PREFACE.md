@@ -14,7 +14,7 @@ with the passages of advice Studio does not ship taken out. Where it disagrees w
   link to the user.
 - Server saves never persist on the draft: loads and saves resolve `{ staging: true }` there by
   design, as the card says. They persist only once the game is published to the gallery, which
-  happens only when the user wants it public. Keep the card's localStorage fallback.
+  happens only when the user wants it public.
 - Studio installs the version it pins. Never run `npm i` for this package yourself.
 - A game made from Studio's template has no `package.json`: there
   `genex__package {"package":"@genex-ai/embed-sdk"}` maps Studio's copy in the import map, as
@@ -29,9 +29,9 @@ Studio connects a template game to Genex itself: its connect module calls `initE
 game's own code runs, in local test mode in Studio's preview and with the game's project once it is
 published. Skip the card's Bootstrap step and `genex.config.ts`: never call `initEmbed()` and never
 write a slug. Import everything else from `"@genex-ai/embed-sdk"` as the card shows
-(`waitForPlayer`, `loadPlayerState`, `savePlayerState`, `submitScore`, `getLeaderboard`), with the
-renderer first and the awaits where a name or a save is needed. Keep the import-map entry and the
-connect module's `<script>` that `genex__package` added.
+(`waitForPlayer`, `loadPlayerState`, `savePlayerState`, `submitScore`, `getLeaderboard`). On a
+hosted page `waitForPlayer()` takes seconds to resolve. Keep the import-map entry and the connect
+module's `<script>` that `genex__package` added.
 
 ## Config without `genex init`
 

@@ -3491,7 +3491,7 @@ Genex:
   exactly once) take Genex's design and process advice out of the vendored text, and the prefaces
   carry the API facts those passages held. That advice, reworded as optional, is the bundled
   `genex-recommendations` plugin (skills only: multiplayer patterns, cover craft, asset sources, shop
-  design), which every new profile installs off (`seedEnabled`). Genex's currency is Nex (the cards
+  design, player experience), which every new profile installs off (`seedEnabled`). Genex's currency is Nex (the cards
   call it coin): a thing priced in Nex, or sold for real money with no currency named, is a store
   item listed with `shop add` and its picture; coins, gold or gems are the game's own currency
   unless the person says they are for real money. Dynamic payments

@@ -12,7 +12,7 @@ import { type CoreLite, coreLite } from "../helpers/core-lite.ts";
 
 const ID = GENEX_RECOMMENDATIONS_PLUGIN_ID;
 /** The advice the plugin holds, by skill name. */
-const SKILLS = ["multiplayer-patterns", "cover-craft", "asset-sources", "shop-design"];
+const SKILLS = ["multiplayer-patterns", "cover-craft", "asset-sources", "shop-design", "player-experience"];
 
 describe("genex-recommendations", () => {
   let lite: CoreLite;

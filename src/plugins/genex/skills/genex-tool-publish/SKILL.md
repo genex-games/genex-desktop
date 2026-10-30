@@ -27,7 +27,7 @@ this preface wins.
 - `npx genex doctor` is `genex__cli {"command":"doctor"}`. Other commands map onto Studio tools as
   the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.17 sha256 f79aa3b7143482778a1d2d993284811d8bc57d291c241271d6d277afc09401da -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-tool-publish/SKILL.md v1.36.17 sha256 42daa8bcd57c7693cbd2297ea5d66c0335b58cd019dcc3a60f88b09f5510f4a1 -->
 ---
 name: genex-tool-publish
 description: Put the game in this folder on the web with Genex — the draft page, `npx genex preview`, then `promote` / `publish`; the link you hand the user, the size limits, and what to do with the preflight lines. Installed once the folder is connected to a hosted Genex game (`npx genex init --convert`). Load it before the first preview.
@@ -49,9 +49,8 @@ a rework, a design document or a build plan.
    runtime — everything in `./assets` — must end up inside the build (Vite:
    a `public/` folder, or copy `assets/` into `dist/` in the build).
 2. **Player identity.** Load `$genex-threejs-embed-auth` and add the one
-   `initEmbed(...)` call at the very top of the boot code. Create the
-   renderer and draw a frame BEFORE any `await waitForPlayer()` — on a hosted
-   page identity takes seconds, and a game that awaits it first ships black.
+   `initEmbed(...)` call at the very top of the boot code. On a hosted
+   page `waitForPlayer()` takes seconds to resolve.
 3. **The CLI as a dev dependency** so plain `npx genex` keeps resolving here
    (setup already did this; check `package.json` if in doubt).
 

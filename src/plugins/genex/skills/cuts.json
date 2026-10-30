@@ -321,6 +321,36 @@
     {
       "from": "- [ ] Self-test evidence captured in local test mode is labeled as such in the",
       "to": "      handoff (\"local test mode — auth, saves, and multiplayer not exercised\")."
+    },
+    {
+      "section": "## Install"
+    },
+    {
+      "replace": "**Create the renderer and draw a frame BEFORE you await identity; `await\nwaitForPlayer()` only where you need the name or the token.** On a hosted page\nidentity takes seconds (the dashboard handshake, or the standalone bounce), so\na `main.ts` whose first statement is `const { user } = await waitForPlayer()`\nshows black for all of them — and forever when `initEmbed()` was never called,\nbecause nothing else resolves that promise. Renderer, scene, camera, first\nframe, then the await, down where the name or the avatar is actually used.",
+      "with": "On a hosted page identity takes seconds (the dashboard handshake, or the standalone bounce), and\n`waitForPlayer()` never resolves when `initEmbed()` was never called, because nothing else\nresolves that promise."
+    },
+    {
+      "replace": " Keep a local copy of progress\n(`localStorage`) so a preview stays playable — a cache for this device and\nthis shell, never the save — and if the game says anything about it, say\n\"Preview build — progress isn't saved to your account\". Never \"offline\" or\n\"unavailable\": the owner is testing their own game, and Genex is up.",
+      "with": ""
+    },
+    {
+      "section": "## Config wiring (already done — do NOT hand-write URLs)"
+    },
+    {
+      "replace": "throws in headless Chromium): for aim games validate the unlocked \"click\n  to aim\" cue and the wiring, not the lock itself.",
+      "with": "throws in headless Chromium)."
+    },
+    {
+      "from": "- [ ] `initEmbed(...)` is the very first call in `main.ts`, with all three",
+      "to": "- [ ] `genex.config.ts` includes `dashboardOrigins` (from `.genex/project.json`)."
+    },
+    {
+      "replace": "credential exists there. Validate multiplayer on the preview link (it plays in\n  rooms of its own; a normal and a private window are two players), and say\n  plainly when it wasn't.",
+      "with": "credential exists there. The preview link has one, and rooms of its own."
+    },
+    {
+      "replace": "Not an outage: keep the local copy (a cache for this device and\n  this shell, never the save) and tell the player \"Preview build — progress\n  isn't saved to your account\", never \"offline\".",
+      "with": "Not an outage."
     }
   ],
   "genex-threejs-embed-auth/references/shells.md": [
@@ -347,6 +377,26 @@
     {
       "replace": "Pause when pointer lock is lost. The lock is an extra for the game's own link (`$genex-threejs-game-ui`).",
       "with": "Escape also releases pointer lock. The lock works only on the game's own link."
+    },
+    {
+      "replace": "**0.32.0+**\n(`npm i @genex-ai/embed-sdk@latest` if an import is missing). Three rules hold",
+      "with": "**0.32.0+**. Three rules hold"
+    },
+    {
+      "replace": "| Declare it. The game must play without it. |",
+      "with": "| Declare it. |"
+    },
+    {
+      "replace": "| Declare it. Offer a way to play without it, such as picking a place. |",
+      "with": "| Declare it. |"
+    },
+    {
+      "replace": "for the microphone (the voice pack from `npx genex controller voice` declares\nit by itself); `facingMode`",
+      "with": "for the microphone; `facingMode`"
+    },
+    {
+      "replace": " **So every one of these needs a path that works\nwithout it.**",
+      "with": ""
     }
   ],
   "genex-tool-llm/SKILL.md": [
@@ -587,6 +637,10 @@
     {
       "replace": "\nAsk once per round of work, in one line, and keep working while you wait.",
       "with": ""
+    },
+    {
+      "replace": " Create the\n   renderer and draw a frame BEFORE any `await waitForPlayer()` — on a hosted\n   page identity takes seconds, and a game that awaits it first ships black.",
+      "with": " On a hosted\n   page `waitForPlayer()` takes seconds to resolve."
     }
   ],
   "genex-tool-texture/SKILL.md": [
