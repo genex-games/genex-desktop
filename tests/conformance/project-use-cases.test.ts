@@ -1682,7 +1682,9 @@ describe("assets only, a Blender pack: Blender workers, renders and the Assets t
     assert.match(answers[8] ?? "", /at most 8 run at once/, "the ninth is told why");
     for (const request of workers) {
       const plugins = namesOf(request.liveTools).filter((name) => name.includes("__"));
-      assert.deepEqual(plugins.sort(), [...model.tools].sort(), "each is offered its type's tools and no others");
+      // Flipped (Loop phase 3): its type was a fence of three tools; a worker has every tool its lead has.
+      for (const tool of model.tools) assert.ok(plugins.includes(tool), `offered its type's ${tool}`);
+      assert.ok(plugins.includes("blender__install"), "and the plugin's other tools besides");
       assert.notEqual(request.cwd, dir, "each works in its own copy");
     }
   });

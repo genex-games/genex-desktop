@@ -1646,7 +1646,9 @@ async function webWatchedSession(
   kit: TurnKit,
   turn: TurnAsk,
 ): Promise<Partial<DelegateResult>> {
-  const news = watchTurnNews(loopRun, { clock: kit.clock, turn: wake.turns });
+  // On the wall clock's timers, never the wake loop's: a test's loop clock that answers at once
+  // would spin this watch without ever yielding to the session it watches.
+  const news = watchTurnNews(loopRun, { clock: { sleep }, turn: wake.turns });
   let result: Partial<DelegateResult> | undefined;
   try {
     result = await withCapWatch(

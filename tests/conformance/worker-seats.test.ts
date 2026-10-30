@@ -20,7 +20,7 @@ import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { ENGINES, GODOT_ENGINE } from "../helpers/engines.ts";
 import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
-import { CODEX, closeWorkerChats, LOCAL, RUN_ID, realNearest, workerChat } from "../helpers/worker-chat.ts";
+import { CODEX, closeWorkerChats, LOCAL, RUN_ID, realNearest, SEATLESS, workerChat } from "../helpers/worker-chat.ts";
 
 after(closeWorkerChats);
 
@@ -305,6 +305,8 @@ describe("the host's worker seat", () => {
       { label: "a turn the chat is not answering", extra: turnGrant },
       { label: "a Studio thread", extra: turnGrant, thread: studioThread },
       { label: "a cwd outside the run's worktrees", extra: runWorker("w1", elsewhere) },
+      // An engine with no session of its own carries no seat: its work stays fenced as unattended work.
+      { label: "an engine that keeps no session", extra: runWorker(), engine: SEATLESS },
     ];
     for (const { label, extra, thread, engine } of rows) {
       await delegate({ ...extra, ...(thread ? { threadId: thread } : {}) }, engine);

@@ -753,7 +753,11 @@ describe("the studio's hands for a lead that writes nothing", () => {
     assert.equal(results.cleanAfter, "", "nothing is left to hold a merge off");
     assert.equal(finished.landed, true, String(finished.stoppedBecause));
     assert.equal(await readFile(path.join(project.dir, "src", "sky.js"), "utf8"), "export const sky = 'dusk';\n");
-    assert.equal(await readFile(path.join(project.dir, "built.txt"), "utf8"), "made by a build\n", "it landed with the run");
+    assert.equal(
+      await readFile(path.join(project.dir, "built.txt"), "utf8"),
+      "made by a build\n",
+      "it landed with the run",
+    );
   });
 });
 
