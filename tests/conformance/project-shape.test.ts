@@ -245,19 +245,22 @@ describe("a project's own shape", () => {
       kind: "three-vite",
       serve: "dist",
     });
-    // The template is the two things only the studio writes — its contract version and the
-    // import map that resolves `three` to the vendored copy. Either alone is somebody's game.
+    // The template is what the studio records, not what the page says: the starter's contract
+    // version in studio.json while the folder builds nothing. A page's import map or script path
+    // decides nothing, and a build script is a game of its own.
     const half = path.join(await tmpDir("studio-shape-"), "half");
     await mkdir(half, { recursive: true });
     await writeFile(path.join(half, "index.html"), `<script type="module" src="./src/main.js"></script>`);
     assert.equal((await detectProjectShape(half))!.own, true, "an entry named src/main.js is not the template");
     await writeFile(path.join(half, "studio.json"), JSON.stringify({ contractVersion: 1 }));
-    assert.equal((await detectProjectShape(half))!.own, true, "studio.json alone is not the template either");
+    assert.equal(await detectProjectShape(half), null, "the starter's record is the template");
     await writeFile(
       path.join(half, "index.html"),
-      `<script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>\n<script type="module" src="./src/main.js"></script>`,
+      `<script type="importmap">{"imports":{"three":"https://cdn.example/three.js"}}</script>\n<script type="module" src="./game.js"></script>`,
     );
-    assert.equal(await detectProjectShape(half), null, "contract version and the studio import map together");
+    assert.equal(await detectProjectShape(half), null, "what the page says does not change what studio.json records");
+    await writeFile(path.join(half, "package.json"), JSON.stringify({ scripts: { build: "vite build" } }));
+    assert.equal((await detectProjectShape(half))!.own, true, "a build script leaves the template");
   });
 
   it("takes an install command from studio.json only when it is a package manager's own", async () => {

@@ -117,9 +117,9 @@ export async function prepareFixture(core: StudioCore, id: string): Promise<Prep
 }
 
 /**
- * The fixture stands in for a game on the studio's own shape, so its page keeps the studio
- * import map: shape detection reads that map (with studio.json's contractVersion) as the one
- * proof a folder is the template's rather than somebody's own game.
+ * The fixture stands in for a game on the studio's own shape: its studio.json carries the starter's
+ * contractVersion, which is what shape detection reads as the proof a folder is the template's
+ * rather than somebody's own game.
  */
 async function writeFixtureGame(game: FixtureGame): Promise<void> {
   await fs.writeFile(path.join(game.project.dir, "index.html"), FIXTURE_PAGE);
