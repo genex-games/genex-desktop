@@ -23,7 +23,15 @@ import { ConsentChoice, consentChoices, consentIsStudios, consentLine, consentTi
 import { ExportReview } from "./ExportReview.tsx";
 import { PermissionRequest, permissionOwnAnswer } from "./PermissionRequest.tsx";
 import { PlanQuestion } from "./PlanQuestion.tsx";
-import { type OwnAnswer, type WaitingCard, waitingHead } from "./waiting-cards.ts";
+import {
+  answerAtPress,
+  consentCardKey,
+  type OwnAnswer,
+  permissionCardKey,
+  unansweredCards,
+  type WaitingCard,
+  waitingHead,
+} from "./waiting-cards.ts";
 import { trackPlanAction } from "./composer-cards.ts";
 import { PlanAction, QuestionVia } from "../analytics/chat-vocabulary.ts";
 import { sendQuestionAnswer } from "../analytics/events/chat.ts";
@@ -174,7 +182,7 @@ function waitingCards(props: ComposerDockProps): DockCard[] {
   const asks = [...props.consents, ...props.permissions].sort((a, b) => a.id.localeCompare(b.id));
   return [
     ...asks.map(({ permission, consentId, ...entry }) => ({
-      key: permission ? `permission:${permission.requestId}` : `consent:${consentId}`,
+      key: permission ? permissionCardKey(permission.requestId) : consentCardKey(consentId ?? ""),
       blocked: false,
       ...(permission
         ? { own: permissionOwnAnswer(permission, (answer) => onPermission(permission.requestId, answer)) }
@@ -247,12 +255,45 @@ function useWaitingHead(cards: readonly WaitingCard[], conversation: string | un
   return shown.current.head;
 }
 
+/** No card answered yet. */
+const NONE_ANSWERED: ReadonlySet<string> = new Set();
+
+/**
+ * The permission cards answered in this chat, each gone at its press (`answerAtPress`): the answer
+ * is all but sure to be taken, so nothing waits on the host to say so. Another chat starts afresh.
+ */
+function useAnsweredCards(conversation: string | undefined) {
+  const [state, setState] = useState({ conversation, keys: NONE_ANSWERED });
+  const keys = state.conversation === conversation ? state.keys : NONE_ANSWERED;
+  const mark = (key: string, answered: boolean): void =>
+    setState((current) => {
+      const next = new Set(current.conversation === conversation ? current.keys : NONE_ANSWERED);
+      if (answered) next.add(key);
+      else next.delete(key);
+      return { conversation, keys: next };
+    });
+  return { keys, answer: (key: string, send: () => Promise<void>) => answerAtPress(key, send, mark) };
+}
+
 /**
  * One waiting card at a time, and how many more wait behind it. The others stay mounted but
- * hidden, so a field half filled on one survives another taking its place. The cards open above
- * the composer and close once answered; the next one fades in as their height glides to its own.
+ * hidden, so a field half filled on one survives another taking its place, and so does an answered
+ * card until the host settles it (it comes back to say why should its answer fail). The cards open
+ * above the composer and close at the last answer; the next one fades in as their height glides to
+ * its own.
  */
-function WaitingCards({ cards, head, still }: { cards: DockCard[]; head: string | null; still: boolean }): JSX.Element {
+function WaitingCards({
+  cards,
+  waiting,
+  head,
+  still,
+}: {
+  cards: DockCard[];
+  /** How many of `cards` still wait: the rest were answered. */
+  waiting: number;
+  head: string | null;
+  still: boolean;
+}): JSX.Element {
   const block = (
     <AnimateHeight>
       <div data-pending-questions className="mb-2">
@@ -261,22 +302,30 @@ function WaitingCards({ cards, head, still }: { cards: DockCard[]; head: string 
             {card.node}
           </div>
         ))}
-        {cards.length > 1 && (
+        {waiting > 1 && (
           <p role="status" data-waiting-count className="mt-1.5 px-1.5 text-chat-sub text-ink-3">
-            {CHAT_WORDS.moreWaiting(cards.length - 1)}
+            {CHAT_WORDS.moreWaiting(waiting - 1)}
           </p>
         )}
       </div>
     </AnimateHeight>
   );
-  return <Presence still={still}>{cards.length > 0 ? [{ key: "cards", node: block }] : []}</Presence>;
+  return <Presence still={still}>{waiting > 0 ? [{ key: "cards", node: block }] : []}</Presence>;
 }
 
 export function ComposerDock(props: ComposerDockProps): JSX.Element {
   const { connectModel, signIn, children } = props;
-  const cards = waitingCards(props);
-  const head = useWaitingHead(cards, props.conversationKey);
-  const own = cards.find((card) => card.key === head)?.own ?? null;
+  const answered = useAnsweredCards(props.conversationKey);
+  const cards = waitingCards({
+    ...props,
+    onConsent: (consentId, ...rest) =>
+      answered.answer(consentCardKey(consentId), () => props.onConsent(consentId, ...rest)),
+    onPermission: (requestId, answer) =>
+      answered.answer(permissionCardKey(requestId), () => props.onPermission(requestId, answer)),
+  });
+  const waiting = unansweredCards(cards, answered.keys);
+  const head = useWaitingHead(waiting, props.conversationKey);
+  const own = waiting.find((card) => card.key === head)?.own ?? null;
   return (
     <div data-chat-composer className="max-h-full min-w-0 shrink-0 overflow-y-auto px-3.5 pb-3.5">
       {connectModel && (
@@ -291,8 +340,14 @@ export function ComposerDock(props: ComposerDockProps): JSX.Element {
         </div>
       )}
       {signIn ? <SignInCard {...signIn} /> : null}
-      <WaitingCards key={props.conversationKey} cards={cards} head={head} still={Boolean(props.loading)} />
-      {cards.length === 0 && !signIn ? props.steps : null}
+      <WaitingCards
+        key={props.conversationKey}
+        cards={cards}
+        waiting={waiting.length}
+        head={head}
+        still={Boolean(props.loading)}
+      />
+      {waiting.length === 0 && !signIn ? props.steps : null}
       {children(own)}
     </div>
   );

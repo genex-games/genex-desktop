@@ -1649,14 +1649,6 @@ button.chat-header-title:hover {
     background-color var(--duration-quick),
     color var(--duration-quick);
 }
-/* A header control that says something beside its icon: the Free button. */
-.header-control[data-label] {
-  display: flex;
-  gap: 6px;
-  width: auto;
-  padding-inline: 8px;
-  font: 12px / 1 var(--font-family-code);
-}
 .header-control:hover,
 .header-control[aria-expanded="true"] {
   background: var(--control-hover, var(--hover));
@@ -5110,8 +5102,12 @@ button.chat-header-title:hover {
   opacity: 0.5;
   cursor: default;
 }
+/* An answer on its way looks as it did when pressed: only the pointer says it is working. */
 .chat-answer[aria-busy="true"] {
-  opacity: 1;
+  cursor: progress;
+}
+.chat-answer[aria-disabled="true"]:not([aria-busy="true"]) {
+  cursor: default;
 }
 .chat-answer-primary {
   background: var(--ink);

@@ -67,7 +67,7 @@ import { useAsyncEffect } from "../use-async-effect.ts";
 import { useCoverAfterTurns } from "./plugins/genex/use-cover-after-turns.ts";
 import { PluginApproval } from "./PluginApproval.tsx";
 import { PluginPanelDialog } from "./PluginPanelDialog.tsx";
-import { useEngineSlot } from "./engine-slot.ts";
+import { HEADER_BUTTON, useEngineSlot } from "./engine-slot.ts";
 import { errorCode, isUserCancelled } from "../../shared/errors.ts";
 
 /** Status refreshes coalesce: a burst of change events wakes each plugin's process once. */
@@ -300,9 +300,6 @@ function ToolbarTip({
     </Tooltip>
   );
 }
-
-/** An engine's button in the chat header: the strip's button a step smaller, its name folding away when the header is narrow. */
-const HEADER_BUTTON = "relative px-2.5 text-body-sm has-[>svg]:px-2.5";
 
 /**
  * A plugin's button: the accent while its status says its action is due, the quiet pill otherwise;
