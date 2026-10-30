@@ -17,8 +17,7 @@ request and outcome; expanding shows captures, Play build and Open game chat. Em
 
 ## Learning and instructions
 
-Learning starts off (an older install is switched off once), as does **Apply suggestions
-automatically**. Activity's header switch toggles learning; Harness's own edits are listed
+Learning starts off (an older install is switched off once). Activity's header switch toggles learning; Harness's own edits are listed
 there, each undoable.
 Off, Harness learns nothing new and cannot edit its own code, prompts or skills; what it learned
 stays undoable, waiting suggestions actionable, runs recorded. An archive-epoch update
@@ -32,8 +31,7 @@ together; the file, the proposer's notes and the diff stay behind **See the exac
 when the row has nothing else. Applied changes name who let them land and keep
 their diff and **Undo this change**, reverting that change alone; later changes and per-game
 lessons stay. A suggestion written against since-changed instructions is
-applied on top when it still fits, else refused. **Look for
-improvements** (once runs exist) reviews recent builds; its button shows Found, Added or Nothing new. **Settings → Harness** owns automatic application, **Maximum concurrent workers**
+applied on top when it still fits, else refused. **Settings → Harness** owns **Maximum concurrent workers**
 (default four, up to twelve) and **How suggestions are tested**.
 Changes land through validated, recoverable host APIs, never by executing a chat reply; code
 changes are type-checked and started in a copy first, a failing one refused.
