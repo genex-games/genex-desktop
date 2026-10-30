@@ -10,13 +10,13 @@
     },
     "genex-threejs-multiplayer/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md",
-      "sha256": "f74f2cb0788bed506e9db280c47fcbf35da3d530a5ec022537741363b4082e0c",
-      "bytes": 43482
+      "sha256": "9e1be9fb9b87c75c58488776d2e49ac0a757a8f81e21966ed890f5e8915f0a3f",
+      "bytes": 37006
     },
     "genex-threejs-multiplayer/references/realtime-patterns.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/references/realtime-patterns.md",
-      "sha256": "65cba6aafdd0d209b4ac60919a7bb5eec5ab14eae55fd99535d480b02daf097b",
-      "bytes": 12322
+      "sha256": "7e2adcb04fa3a764362acf2e8f9c525c51ee078392d32fe9c7ffb7b71c252302",
+      "bytes": 10840
     },
     "genex-threejs-embed-auth/SKILL.md": {
       "source": "@genex-ai/cli-demo/templates/skills/genex-threejs-embed-auth/SKILL.md",

@@ -13,7 +13,7 @@
     {
       "name": "multiplayer-patterns",
       "engines": ["web"],
-      "summary": "Optional patterns for a multiplayer web game on @genex-ai/multiplayer: choosing connect or matchmake, menus and lobbies, teams, quorum, reconnects, testing with two players, and per-genre setups.",
+      "summary": "Optional patterns for a multiplayer web game on @genex-ai/multiplayer: choosing connect or matchmake and a preset, menus and lobbies, teams, host authority, quorum, reconnects, testing with two players, and per-genre setups.",
       "file": "skills/multiplayer-patterns/SKILL.md"
     },
     {
