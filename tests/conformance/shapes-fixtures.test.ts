@@ -41,7 +41,6 @@ interface FixtureManifest {
   backend: "webgl" | "webgpu";
   game: Record<string, unknown>;
   setup: { gesture?: boolean; actions?: unknown[]; settleMs?: number; verify?: { path: string } } | null;
-  cameras: string[];
   delta: Array<{ path: string; min: number }>;
   deterministic: boolean;
   readyBudgetMs: number;

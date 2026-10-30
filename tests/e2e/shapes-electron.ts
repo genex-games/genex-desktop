@@ -56,7 +56,6 @@ interface Manifest {
   backend: "webgl" | "webgpu";
   game: Record<string, unknown>;
   setup: Record<string, unknown> | null;
-  cameras: string[];
   delta: Array<{ path: string; min: number }>;
   deterministic: boolean;
   readyBudgetMs: number;

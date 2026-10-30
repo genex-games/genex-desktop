@@ -42,7 +42,6 @@
     "verify": { "path": "phase", "equals": "level" },
     "note": "Start, then the Blue Room card"
   },
-  "cameras": ["default"],
   "delta": [
     { "path": "player.x", "min": 0.5 },
     { "path": "player.z", "min": 0.5 }

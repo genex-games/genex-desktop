@@ -41,7 +41,7 @@ of anything.
    of that path.
 6. **A `manifest.json`** (version 1) recording what the studio must answer about the folder:
    the shape `detectProjectShape` returns, the files adoption may and may not add, the kind and
-   traits, the setup script, the cameras, and the state paths a play script must move.
+   traits, the setup script, and the state paths a play script must move.
 
 ## Adding a sixth shape
 

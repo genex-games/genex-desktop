@@ -31,7 +31,6 @@
     "keyboardMove": true
   },
   "setup": null,
-  "cameras": ["default"],
   "delta": [],
   "deterministic": true,
   "readyBudgetMs": 20000
