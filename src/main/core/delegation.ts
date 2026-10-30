@@ -218,7 +218,7 @@ interface WorkerFinding {
 const DIRECTOR_LOOK: LiveTool = {
   name: DirectorTool.Look,
   description:
-    'Point your window (the computer tool and capture) at a build of this run: "integration" (your worktree, the default), a worker id (its worktree, edits included), or "live" (the game folder the user sees). Reloads the build through its served entry, replays the requested-state setup, and returns a screenshot. Everything you then click, press and capture happens in that build.',
+    'Point your window (the computer tool and capture) at a build of this run: "integration" (your worktree, the default), a worker id (its worktree, edits included), or "live" (the game folder the user sees). Reloads the build through its served entry and returns a screenshot. Everything you then click, press and capture happens in that build.',
   parameters: {
     type: "object",
     properties: { target: { type: "string", description: "integration | live | <worker id>" } },

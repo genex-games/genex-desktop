@@ -141,15 +141,15 @@ const MESSAGE = {
       .join(", ")}).`,
   noPreview: "no preview is attached (headless mode)",
   benchRefused: (page: string, why: string) =>
-    `capture did not load the bench page "${page}": ${why}. Nothing was loaded. A bench page is a .html file inside this workspace, such as bench/<part>.html.`,
+    `capture did not load the page "${page}": ${why}. Nothing was loaded. \`page\` must be a .html file inside this workspace.`,
   benchUnnamed: "no page was named",
   benchNotHtml: "it is not a .html page",
   benchOutside: "it is outside this workspace",
   benchMissing: "there is no such file",
   benchBuilt:
-    "this game is served from its build output, not from this workspace, so a bench page cannot load; capture the game",
-  benchCaptured: (entry: string, workspace: string) => `Captured the bench page ${entry} (workspace ${workspace}):`,
-  benchAfter: "The window shows the bench page now: the computer tool loads your game again on its next action.",
+    "this game is served from its build output, not from this workspace, so a page of this workspace cannot load; capture the game",
+  benchCaptured: (entry: string, workspace: string) => `Captured the page ${entry} (workspace ${workspace}):`,
+  benchAfter: "The window shows that page now: the computer tool loads your game again on its next action.",
   previewChanged: () =>
     t("The selected preview changed while this build was preparing. Open the build again when ready."),
   noGameInSnapshot: () => t("that snapshot has no game to play"),
@@ -183,11 +183,11 @@ interface SkippedStill {
   why: string;
 }
 
-/** The only kind of page a bench capture loads. */
+/** The only kind of page a capture may load in place of the game. */
 const BENCH_EXTENSION = ".html";
 
 /**
- * A bench page a capture may load in place of the game, checked by its real path: an existing
+ * A page a capture may load in place of the game, checked by its real path: an existing
  * `.html` file inside the workspace, never a link out of it. Answers the served entry relative to
  * the workspace, or the sentence that refuses it; a refused page is never loaded.
  */

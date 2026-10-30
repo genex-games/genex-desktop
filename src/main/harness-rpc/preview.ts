@@ -1,7 +1,7 @@
 /** Harness RPC: previews — load, look, drive and measure a game in a window. */
 import { HostMethod, type HarnessHostHandlers, type HarnessParams } from "../../shared/harness-api.ts";
 import { availableMemory } from "../../substrate/hardware.ts";
-import type { CaptureSurface } from "../../substrate/preview-port.ts";
+import { CaptureSurface } from "../../shared/preview-contract.ts";
 import { LIVE_HANDLE, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget } from "../../substrate/preview-ready.ts";
 import { observeBuild } from "../../substrate/build-probe.ts";
@@ -119,9 +119,10 @@ async function screenshot(core: StudioCore, x: CoreInternals, p: HarnessParams<t
   // Stats ride along with the JPEG so the critic gets a ground truth the image cannot
   // lie about; a preview without the capability still yields the picture, stats null.
   // `surface` asks for the whole page, the canvas, or whichever the preview judges the
-  // game to live on. `page: true` is its permanent alias — an installed harness
+  // game to live on; a caller that names none gets the preview's judgement, as the builder's
+  // `capture` does. `page: true` is a permanent alias of `page` — an installed harness
   // workspace is an agent-editable copy of the seed and may keep sending it for ever.
-  const asked: CaptureSurface = p?.surface ?? (p?.page ? "page" : "canvas");
+  const asked: CaptureSurface = p?.surface ?? (p?.page ? CaptureSurface.Page : CaptureSurface.Auto);
   const shot = await captureSurface(preview, quality, asked);
   const { jpeg, stats } = shot;
   const label = p?.label ?? "shot";
