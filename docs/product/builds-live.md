@@ -3,8 +3,7 @@
 ## From a request to a game
 
 Auto edits directly or starts a Loop when asked; Loop: the chat leads and builds beside workers.
-Parts grow boldly within the ask; a round stays unless a passing check fails. Judges and the art
-director answer only when the lead asks. Other
+Judges answer only when the lead asks. Other
 projects' Loops run [in place](projects-engines.md#loops-in-place). Loop hours are a soft cap (the
 lead's finish ends it early, in place after the lead's named gaps; 15 minutes' grace).
 Acceptance survives workers and restarts. External blockers pause the run at its
@@ -38,10 +37,9 @@ below), then a finish check the lead asked for, tinted Checking, Not yet (reason
 chat line each round. In place, save points form one line showing each change; workers hang off
 it, solid under the save point taking their work, else ghosts.
 
-Agents test hidden, only while playing (Godot too), never Live; blind judges play when the lead
-asks; chat frames never certify a build. A finished worker, passing checks, integration and Live's
-revision are distinct facts; Builds and Studio report missing checks, coverage, revisions and
-studio-verified plays; chat shows a delivery's capture, failures too.
+Agents test hidden (Godot too), never Live; blind judges play when the lead asks. A finished worker, integration and Live's
+revision are distinct facts; chat shows a delivery's capture, failures too. Before integrating or
+landing, one health check: the page loads, throws nothing uncaught, and is not blank.
 
 ## Continuation and interruption
 

@@ -6,8 +6,8 @@ A project is any folder, several kinds at once: web, Unreal game or plugin, Robl
 Blender assets or a plugin's kind. Facts suggest; the first message or you decide. The
 sidebar names a non-game's kind.
 
-New game makes an empty folder; the first message picks its kind. A vague ask builds a web game;
-with an engine plugin on, a kindless game asks which engine. A port snapshots first, keeping
+New game makes an empty folder; the first message picks its kind. A vague ask builds a web game,
+a blank page owing Genex nothing. With an engine plugin on, a kindless game asks which engine. A port snapshots first, keeping
 the web files as reference.
 
 ## Plugins on or off

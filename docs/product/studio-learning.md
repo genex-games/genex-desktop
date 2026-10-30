@@ -21,7 +21,8 @@ Learning starts off (an older install is switched off once), as does **Apply sug
 automatically**. Activity's header switch toggles learning; Harness's own edits are listed
 there, each undoable.
 Off, Harness learns nothing new and cannot edit its own code, prompts or skills; what it learned
-stays in use and undoable, waiting suggestions actionable, runs recorded.
+stays undoable, waiting suggestions actionable, runs recorded. An archive-epoch update
+moves what it learned and edited to `archive/<date>/`.
 
 Harness learns from run evidence and proposes reusable instruction changes; proposed, applied,
 checked and game-quality results are distinct. A game chat shows one plain line about what
