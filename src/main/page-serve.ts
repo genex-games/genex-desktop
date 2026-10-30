@@ -42,8 +42,8 @@ export const HOOKED_KEYS = ["three", "three/webgpu"] as const;
  * The map the studio inserts into a page that has none — the template's five keys. It stays
  * because it changes nothing the page did without it: it only answers a bare `three` specifier
  * that a map-less page could not otherwise resolve (a black screen otherwise), a page that names
- * no `three` is served as it is, and the wrapper re-exports the page's own module record, so
- * there is still exactly one `three`. The hook behind it is how a capture reads the canvas of a
+ * no `three` only carries an inert map, and the wrapper re-exports the page's own module record,
+ * so there is still exactly one `three`. The hook behind it is how a capture reads the canvas of a
  * covered window. Nothing here asks the game for anything.
  */
 export const STUDIO_MAP: Record<string, string> = {

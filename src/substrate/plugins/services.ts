@@ -111,7 +111,6 @@ const isWholeWithin = (value: unknown, min: number, max: number): value is numbe
 
 /** The view a still names: the page's `default` one when it names none; refused unless a valid view name. */
 function stillView(still: Record<string, unknown>): string {
-  if ("demo" in still) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Demo));
   const camera = still.camera === undefined ? PLUGIN_STILL_DEFAULT_VIEW : still.camera;
   if (typeof camera !== "string" || !PLUGIN_STILL_VIEW_NAME.test(camera))
     throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.ViewName));
@@ -128,7 +127,8 @@ export function stillOrder(raw: unknown): PluginStillOrder {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw))
     throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.NotObject));
   const still = raw as Record<string, unknown>;
-  const unknown = Object.keys(still).find((key) => !STILL_KEYS.has(key) && key !== "demo");
+  if ("demo" in still) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.Demo));
+  const unknown = Object.keys(still).find((key) => !STILL_KEYS.has(key));
   if (unknown !== undefined) throw new Error(MESSAGE.InvalidStill(STILL_REFUSAL.UnknownKey(unknown)));
   const camera = stillView(still);
   if (!isWholeWithin(still.width, VIEWPORT_MIN.width, VIEWPORT_MAX.width))
