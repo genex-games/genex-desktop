@@ -320,7 +320,6 @@ describe("the open Loop past its grace with a claim", () => {
 });
 
 describe("the web director under its cap", () => {
-
   it("a close past the cap says no reviewer read a claim only when none reached one", () => {
     const softDeadline = T0 + HOUR_MS;
     const closing = (tally: Record<string, unknown> | null, more: Record<string, unknown> = {}) =>

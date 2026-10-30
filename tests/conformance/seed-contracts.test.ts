@@ -96,12 +96,7 @@ import {
 } from "../../src/shared/run-state.ts";
 import { applyEdits, SKILL_EDIT_OPS } from "../../src/shared/skill-edits.ts";
 import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
-import {
-  DIRECTOR_LOOP_ENV,
-  harnessRunEnv,
-  UNREAL_RUNNER_ENV,
-  UnrealRunnerChoice,
-} from "../../src/shared/protocol.ts";
+import { DIRECTOR_LOOP_ENV, harnessRunEnv, UNREAL_RUNNER_ENV, UnrealRunnerChoice } from "../../src/shared/protocol.ts";
 import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
 import * as seedLoopSwitch from "../../src/harness-seed/loop/loop-switch.ts";
 import { EngineKind, EngineStatusCode } from "../../src/shared/engine-descriptor.ts";

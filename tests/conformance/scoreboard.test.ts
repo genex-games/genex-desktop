@@ -69,4 +69,3 @@ describe("the loop's self-test (the architect's bar)", () => {
     assert.ok(result.passed.length >= 9);
   });
 });
-

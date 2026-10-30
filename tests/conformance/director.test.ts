@@ -34,9 +34,7 @@ import { StopWhy } from "../../src/harness-seed/loop/finish-contract.ts";
 import { buildRunGraph } from "../../src/renderer/run-graph.ts";
 import { EntryAction, EntryKind, toEntries } from "../../src/renderer/chat-entries.ts";
 import { summarizeRun } from "../../src/shared/run-summary.ts";
-import {
-  directorTool,
-} from "../../src/harness-seed/loop/director.ts";
+import { directorTool } from "../../src/harness-seed/loop/director.ts";
 
 const rigs: Rig[] = [];
 afterEach(async () => {
@@ -94,7 +92,6 @@ const planWithSingle = (singles: string[], ...ids: string[]): Record<string, unk
 };
 
 describe("the director's tools and brief", () => {
-
   it("answers a tool call for a run without a director with a sentence, never a throw", async () => {
     assert.match(
       String(await directorTool({ runId: "run_nobody", name: "run_status", args: {} })),
@@ -110,7 +107,6 @@ describe("the director's tools and brief", () => {
  * nothing had ever read one against a real state().
  */
 describe("a worker's contract: done, compiled and dry-run", () => {
-
   it("turns a running worker to finishing with worker_steer stage=, and back to building with a move", async () => {
     const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
     const ladder = [{ id: "rain", what: "rain slicks the street" }];
@@ -260,7 +256,6 @@ function workerFinishes(rec: { paramsOf: (method: string) => Array<Record<string
 }
 
 describe("the director's worker_mark and readers, in Genex's one worker model", () => {
-
   it("worker_mark rejected refuses a builder whose work is in the game already", async () => {
     const { handler } = await import("../../src/harness-seed/loop/director/tools.ts");
     const usedFirst = markingLoopRun("done");

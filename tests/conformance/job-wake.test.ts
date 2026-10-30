@@ -35,7 +35,6 @@ const ended = (over: Partial<JobView> = {}): JobView => ({
 });
 
 describe("a job's end wakes the lead", () => {
-
   it("the watcher reads ends after its cursor, once, and skips the lead's own stops", async () => {
     const answers = [
       {

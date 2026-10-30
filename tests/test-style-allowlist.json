@@ -5,8 +5,6 @@
     "tests/conformance/engines.test.ts",
     "tests/conformance/project-shape.test.ts",
     "tests/conformance/run-controls.test.ts",
-    "tests/conformance/scoreboard.test.ts",
-    "tests/conformance/shapes-fixtures.test.ts",
     "tests/conformance/sidebar.test.ts",
     "tests/conformance/verdict.test.ts",
     "tests/conformance/words.test.ts"

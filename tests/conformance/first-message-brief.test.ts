@@ -13,7 +13,7 @@ import { describe, it } from "node:test";
 import { GameEngine } from "../../src/harness-seed/loop/game-engine.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
-import { directorBrief, } from "../../src/harness-seed/loop/director/briefs.ts";
+import { directorBrief } from "../../src/harness-seed/loop/director/briefs.ts";
 import { WorkerIsolation } from "../../src/harness-seed/loop/workers/contract.ts";
 import { workerBrief } from "../../src/harness-seed/loop/workers/prompts.ts";
 import { CoreFact } from "../../src/harness-seed/loop/folder-facts.ts";
@@ -422,7 +422,6 @@ describe("who runs the brief", () => {
 const RUN = { runId: "run_w", project: NAME, goal: "a keep to explore", engine: CLAUDE };
 
 describe("every worker's brief", () => {
-
   it("a lead's brief names the plugin search and its card; a worker's names the search only", () => {
     const now = Date.now();
     const director = directorBrief({

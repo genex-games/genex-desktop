@@ -666,25 +666,10 @@ describe("a run the loop died in, resumed (the full journal)", () => {
             await call("finish", { land: "no", summary: "picked up on its own" });
             return { sessionId: "lead-1", summary: "finished" };
           }
-          await call("plan", {
-            summary: "This run: a dusk plaza.",
-            workers: JSON.stringify([
-              { id: "sky", title: "Dusk sky", seam: "the sky", owns: "src/sky.js", done: ["dusk"], minutes: 20 },
-            ]),
-            base: "the integration branch as it stands",
-            risks: "none",
-          });
-          await call("worker_start", {
-            id: "sky",
-            title: "Dusk sky",
-            brief: "Build a dusk sky over the plaza",
-            mode: "single",
-            minutes: "20",
-            owns: "src/sky.js",
-          });
+          await call("worker_start", { title: "Dusk sky", task: "Build a dusk sky over the plaza", isolation: "copy" });
           return { sessionId: "lead-1", summary: "the sky is building" };
         }
-        if (!request.selfCapture) return null;
+        // The worker, in its copy of the game, builds until the loop under it dies.
         return new Promise<Record<string, unknown>>((resolve) =>
           request.signal!.addEventListener("abort", () => resolve({ ok: false, stopReason: "stopped", summary: "" })),
         );
@@ -5164,12 +5149,8 @@ describe("a Loop chat whose turn made the game's project (an Unreal game)", () =
     const loopOn = factsReadyPrompt(unreal, "mcp__studio__start_autopilot");
     assert.match(loopOn, /mcp__studio__start_autopilot/);
     assert.match(loopOn, /start it now with mcp__studio__start_autopilot/);
-    assert.doesNotMatch(loopOn, /Go on with what you said you would build first/);
-    assert.match(
-      factsReadyPrompt(unreal),
-      /Go on with what you said you would build first/,
-      "without Loop it builds on",
-    );
+    assert.doesNotMatch(loopOn, /Go on with what you said you would do/);
+    assert.match(factsReadyPrompt(unreal), /Go on with what you said you would do/, "without Loop it builds on");
   });
 });
 

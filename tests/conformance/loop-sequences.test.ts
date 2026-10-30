@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ctxRecorder, } from "../helpers/ctx-recorder.ts";
+import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { runDelegatedTurn } from "../../src/harness-seed/loop/delegated-turn.ts";
 import { handleRunStart } from "../../src/harness-seed/loop/run-dispatch.ts";
 

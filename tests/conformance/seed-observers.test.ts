@@ -6,13 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  PREVIEW_OBSERVER,
-} from "../../src/harness-seed/loop/finish-contract.ts";
-import {
-  observeGame,
-  PLUGIN_OBSERVERS,
-} from "../../src/harness-seed/loop/observers.ts";
+import { PREVIEW_OBSERVER } from "../../src/harness-seed/loop/finish-contract.ts";
+import { observeGame, PLUGIN_OBSERVERS } from "../../src/harness-seed/loop/observers.ts";
 import type { Run } from "../../src/harness-seed/types/harness.d.ts";
 import { HostMethod } from "../../src/shared/harness-api.ts";
 import { type CtxRecorder, ctxRecorder } from "../helpers/ctx-recorder.ts";
@@ -33,7 +28,6 @@ function recorder(handlers: Parameters<typeof ctxRecorder>[0] = {}): CtxRecorder
 }
 
 describe("what the harness captures of a game", () => {
-
   it("a host that cannot capture is a problem, never a throw", async () => {
     const older = recorder();
     const fromOlder = await observeGame(

@@ -17,7 +17,7 @@ import {
   reopens,
   servesReopen,
 } from "../../src/harness-seed/loop/reopen-run.ts";
-import { coordinatorReopens, handleUserMessage, } from "../../src/harness-seed/loop/chat-dispatch.ts";
+import { coordinatorReopens, handleUserMessage } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import { coordinatorPrompt } from "../../src/harness-seed/loop/coordinator-prompts.ts";
 import * as coordinator from "../../src/harness-seed/loop/coordinator.ts";
 import * as coordinatorPrompts from "../../src/harness-seed/loop/coordinator-prompts.ts";
@@ -360,7 +360,6 @@ describe("a finished build the run's coordinator answers for", () => {
 });
 
 describe("reopening the finished build once the reply has ended", () => {
-
   it("R5. refused with nothing written, recorded or started, and one word to the chat: not the latest, not finished, a build under way, no journal, Stop", async () => {
     const rows: Array<{ label: string; set: (s: ReturnType<typeof studioWith>) => void; why: RegExp }> = [
       {

@@ -45,7 +45,7 @@ import { PluginRegistry } from "../../src/substrate/plugins/registry.ts";
 import { buildContractorBrief } from "../../src/harness-seed/loop/chat-session.ts";
 import { runUnrealLead } from "../../src/harness-seed/loop/unreal/lead.ts";
 import { CustomEvent, customRecord } from "../../src/shared/custom-events.ts";
-import { FinishCheckStep, } from "../../src/harness-seed/loop/finish-contract.ts";
+import { FinishCheckStep } from "../../src/harness-seed/loop/finish-contract.ts";
 import { GRACE_MS } from "../../src/harness-seed/loop/time-cap.ts";
 import type { Run } from "../../src/harness-seed/types/harness.d.ts";
 import { PERMISSION_MODES, PermissionMode, type ToolPermissionEvent } from "../../src/shared/permissions.ts";
