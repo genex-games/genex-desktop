@@ -1,4 +1,4 @@
-/** What the chat's agent is told when a run landed its build in a web game with Genex on (`cover-step.ts`). */
+/** What the chat's agent is told when a run landed its build in a game with Genex on (`cover-step.ts`). */
 export const COVER_STEP_PROMPT = [
   "Genex here: the build is in the game folder now. Make the game's Genex cover as a small step of its own:",
   "a cover image of the real game (PNG or JPEG, at least 1280×720) and, if you like, a short clip of it, made",

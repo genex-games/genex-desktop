@@ -273,8 +273,6 @@ export interface PreviewSetup {
   gesture?: true | { x?: number; y?: number; keys?: string[] };
   /** Input actions in order (tap, hold, click, wait …), capped like any script. */
   actions?: PreviewInputAction[];
-  /** A `config.demos` entry that reaches the state deterministically — preferred when it exists. */
-  demo?: string;
   /** Milliseconds to let the game settle after the script; default 400. */
   settleMs?: number;
   /** One sentence for the log and the briefs: what this reaches and why. */
@@ -293,8 +291,6 @@ export interface DelegateCaptureGrant {
   entry?: string;
   setup?: PreviewSetup | null;
   label?: string;
-  /** The worker's own cameras: what a capture that names none photographs (every registered camera when absent). */
-  cameras?: string[];
 }
 // ↑ src/shared/engine-requests.ts
 

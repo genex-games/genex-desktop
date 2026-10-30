@@ -841,8 +841,6 @@ function describeWebAction(request: ComputerRequest): string {
 export type { PreviewSetup };
 
 const MAX_SETUP_ACTIONS = 24;
-/** The longest demo name a setup keeps. */
-const MAX_DEMO_CHARS = 80;
 /** The longest settle a setup may ask for. */
 const MAX_SETTLE_MS = 10 * SECOND_MS;
 /** The longest note a setup keeps. */
@@ -885,11 +883,9 @@ export function normalizeSetup(raw: unknown): PreviewSetup | null {
     const actions = capActions(o.actions).slice(0, MAX_SETUP_ACTIONS);
     if (actions.length) setup.actions = actions;
   }
-  const demo = trimmedText(o.demo, MAX_DEMO_CHARS);
-  if (demo) setup.demo = demo;
   const settle = Number(o.settleMs);
   if (Number.isFinite(settle) && settle > 0) setup.settleMs = Math.min(MAX_SETTLE_MS, Math.round(settle));
   const note = trimmedText(o.note, MAX_SETUP_NOTE_CHARS);
   if (note) setup.note = note;
-  return setup.actions || setup.demo || setup.gesture ? setup : null;
+  return setup.actions || setup.gesture ? setup : null;
 }

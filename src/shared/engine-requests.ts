@@ -82,8 +82,6 @@ export interface DelegateCaptureGrant {
   entry?: string;
   setup?: PreviewSetup | null;
   label?: string;
-  /** The worker's own cameras: what a capture that names none photographs (every registered camera when absent). */
-  cameras?: string[];
 }
 
 /**

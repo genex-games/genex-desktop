@@ -32,13 +32,8 @@ exports work with no enabled plugins.
   its own). A host older than the option ignores it and answers an ordinary observation, so a
   caller checks the answer for `still`, then `stillProblem`, and handles neither (the SDK types the
   answer as `PluginStillAnswer | PluginStillIgnored`).
-- API 3's `observe` takes an optional `clip` the same way (additive, no field or capability of its
-  own; never beside `still` or files): `{ demo, width, height, seconds?, fps?, maxBytes? }` records
-  `seconds` of the game running from the moment the demo stages, after the host starts its clock
-  (`__studio.start()`), on a hidden window (`core/view-clip.ts`, budget: its seconds and a minute).
-  The page records the canvas a still reads with `MediaRecorder` (MP4/H.264, else WebM VP9/VP8) at
-  two bitrates and the host keeps the best that fits (`main/preview-clip.ts`). The answer is
-  `clip` (video, poster, `motion`) or `clipProblem` with a still's codes.
+- API 3's `observe` records no clip: a call with a `clip` is refused (`observe records no clip`).
+  A cover clip is a file the game's agent hands `genex__cover`.
 - Plugin tool parameters are scalar (`string` / `number` / `boolean` properties); API 3 also accepts `type: "object"`, optionally with `acceptJsonString` for a migrated scalar (`toolParameter` in `src/substrate/plugins/manifest.ts`; see the plugin guide's structured arguments). External MCP tools retain their full nested schemas.
 
 ## Package and distribution
@@ -1835,16 +1830,18 @@ Available services are capability checked and scoped to the calling plugin:
   payload of kind `toolbar` is a toolbar status update (see above).
 - `observe`: current game loading/capture/audio evidence for authorized local files. With
   `still` (API 3, additive) it photographs one named view instead: `{ project, root, files: [],
-  still: { demo | camera, width, height, maxBytes? } }` loads the bound game on a hidden window of
-  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play, runs the
-  `config.demos` entry to its end state or places the camera (one the page lists in `cameras()` or
-  `eyes()`, or `default`; any other name is never called), and reads the canvas. The answer is `{ still: { image, mimeType, width, height, source,
-  view, stats, preview } }`: a PNG, or the first JPEG at quality 95, 90 or 85 that fits `maxBytes`
-  (64 KiB–16 MiB, default 8 MiB), never larger than asked; `stats` holds `lumaMean`, `lumaStdDev`,
-  `nearBlackFraction` (luma below 0.10) and `litFraction`, each 0–1 on a small downscale; `preview`
-  is a JPEG at most 1280 px. Otherwise it is `{ stillProblem: { code, reason?, available? } }` with
-  `unavailable`, `load_failed`, `view_unknown` (with the names the game has, at most 32),
-  `view_failed`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  still: { camera?, width, height, maxBytes? } }` loads the bound game on a hidden window of
+  its own at `width`×`height` (whole pixels, 320–1920 × 240–1200), puts it in play and photographs
+  the page as a player sees it. It asks the game for nothing: there are no demos or cameras, so
+  `camera` may only be `default` (a request with a `demo` is refused, and any other camera name is
+  answered `view_unknown` with `available: ["default"]`, before a window is leased). The answer is
+  `{ still: { image, mimeType, width, height, source, stats, preview } }`: a PNG, or the first JPEG
+  at quality 95, 90 or 85 that fits `maxBytes` (64 KiB–16 MiB, default 8 MiB), never larger than
+  asked; `stats` holds `lumaMean`, `lumaStdDev`, `nearBlackFraction` (luma below 0.10) and
+  `litFraction`, each 0–1 on a small downscale; `preview` is a JPEG at most 1280 px. Otherwise it is
+  `{ stillProblem: { code, reason?, available? } }` with `unavailable`, `load_failed`,
+  `view_unknown`, `capture_failed`, `too_large` or `timeout` (one minute for the whole still). A
+  blank or loading frame is taken again up to three times, two seconds apart. A
   still never borrows Live: a build with no hidden window answers `unavailable`. Every field is
   checked before anything runs, and the window is given back however the still ends; once its
   budget gives a still up, nothing reaches that window again, and a closed preview refuses every
@@ -3357,18 +3354,10 @@ Genex:
   none once it runs over). A
   Genex plugin older than covers answers no record, and none of this shows. Genex-specific core UI, accepted
   by the owner; a second plugin with a cover would need a declared host surface instead.
-- A game that runs as its own program (a Unity, Godot or Unreal fact, or nothing served as a web
-  page: `takenFromReel` in `main/core/cover-reel.ts`) cannot be photographed, so its builder renders
-  the cover inside the engine: the session that owns its build is told to (`appCoverGuidance`,
-  `cover-reel-prompts.ts`, added to the brief in `core/delegation.ts`), with no Genex tool needed:
-  `.studio/cover/cover.png` (1920x1080) and `.studio/cover/clip/0001.png` onward (five seconds at
-  30 fps, 960x540), or one `clip.mp4`/`clip.webm`. A plugin's `observe` with a `still` or a `clip`
-  of such a game takes it of its cover reel (`throughCoverReel`, through `ViewStillOptions.open`):
-  the media copied, by `lstat` and never through a link, sniffed and capped, into a folder of the
-  host's scratch (`cover-reels/`) beside a page that plays them, removed when the take ends. The
-  Genex plugin itself no longer asks for a demo: an engine game's agent hands `genex__cover` its
-  picture and clip as a web game's does. With no media, or for a web game, the game is served as
-  before.
+- A game that runs as its own program (a Unity, Godot or Unreal fact) cannot be photographed by
+  Studio: its page shows nothing of it. Its agent renders the cover inside the engine and hands
+  `genex__cover` the file paths like a web game's; the landed-run cover step asks for it the same
+  way (`core/cover-step.ts`), and there is no cover reel or per-turn cover note for an engine.
 - The chat shows the game's kept Genex cover as one card (`chat/GenexCoverCard.tsx`) for the
   thread's latest `genex__cover` call from plugin `genex` whose operation is `shoot` and whose
   answer carried a picture (a call of the newer `{image, clip?}` shape names no operation and is

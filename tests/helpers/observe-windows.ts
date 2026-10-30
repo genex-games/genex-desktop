@@ -1,5 +1,5 @@
 /**
- * Fake preview windows for a plugin's `observe` with a `still` or a `clip`: Live and the pooled
+ * Fake preview windows for a plugin's `observe` with a `still`: Live and the pooled
  * windows a real core leases, each writing what it was asked into its own log (the pooled ones
  * also into one shared log, in order, beside the pool's `acquire`), and a page whose answers the
  * test scripts. `observeHost` puts a real core over them; the clocks here run only when the test
@@ -8,38 +8,23 @@
 import { setImmediate } from "node:timers/promises";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { PluginBinding, PluginClip, PluginStill, PluginStillProblem } from "../../src/shared/plugins.ts";
-import { PluginClipMimeType } from "../../src/shared/plugins.ts";
+import type { PluginBinding, PluginStill, PluginStillProblem } from "../../src/shared/plugins.ts";
 import { ReadyPhase, ReadyVia, StillMimeType } from "../../src/shared/preview-contract.ts";
-import type {
-  PreviewClipAnswer,
-  PreviewClipRequest,
-  PreviewPort,
-  PreviewStillAnswer,
-  PreviewStillRequest,
-} from "../../src/substrate/preview-port.ts";
+import type { PreviewPort, PreviewStillAnswer, PreviewStillRequest } from "../../src/substrate/preview-port.ts";
 import { coreLite } from "./core-lite.ts";
 import { tmpDir } from "./tmp.ts";
 
-/** What a fake page answers: its demos, the demo and camera calls, its load, its still and its clip. */
+/** What a fake page answers: its load and its still. */
 export interface PageScript {
-  demos?: unknown;
-  demo?: unknown;
-  cameras?: unknown;
-  eyes?: unknown;
-  debugCamera?: unknown;
   loadError?: string;
   /** Runs inside the load; a load that never settles is a page that never arrives. */
   load?: () => Promise<void>;
   still?: (request: PreviewStillRequest) => Promise<PreviewStillAnswer>;
-  clip?: (request: PreviewClipRequest) => Promise<PreviewClipAnswer>;
   /** A port that predates `still()`. */
   noStill?: boolean;
-  /** A port that predates `clip()`. */
-  noClip?: boolean;
   /** Told each time the studio asks the page whether it is ready. */
   onReadyProbe?: () => void;
-  /** Runs inside each `__studio` call before it answers; one that waits is a page slow to answer that call. */
+  /** Runs inside each studio call before it answers; one that waits is a page slow to answer that call. */
   answering?: (method: string) => Promise<void> | undefined;
 }
 
@@ -54,23 +39,7 @@ export const FRAME = {
   preview: Buffer.from("jpeg-preview"),
 } as const;
 
-/** The recording a fake port makes. */
-export const TAKE = {
-  video: Buffer.from("mp4-bytes"),
-  mimeType: PluginClipMimeType.Mp4,
-  width: 1280,
-  height: 720,
-  durationMs: 5000,
-  poster: Buffer.from("jpeg-poster"),
-  motion: 0.85,
-} as const;
-
-function pageAnswer(page: PageScript, method: string, arg: unknown): unknown {
-  if (method === "demos") return page.demos ?? ["hero-shot"];
-  if (method === "demo") return page.demo ?? { ok: true, demo: arg, result: null };
-  if (method === "cameras") return page.cameras ?? ["default", "close"];
-  if (method === "eyes") return page.eyes ?? ["eye:spawn", "eye:here", "eye:down"];
-  if (method === "debugCamera") return page.debugCamera ?? { ok: true, camera: arg };
+function pageAnswer(): unknown {
   return { ok: true };
 }
 
@@ -78,15 +47,12 @@ function pageAnswer(page: PageScript, method: string, arg: unknown): unknown {
 export type FakePort = PreviewPort & {
   log: string[];
   asked: PreviewStillRequest[];
-  clips: PreviewClipRequest[];
   /** Each page it loaded: its entry, and the folder it was served from when not the game's own. */
   loads: Array<{ entry: string | undefined; root: string | undefined }>;
   late: string[];
 };
 /** A still's answer as a plugin reads it: one of the two fields is set. */
 export type StillAnswer = { still?: PluginStill; stillProblem?: PluginStillProblem };
-/** A clip's answer as a plugin reads it: one of the two fields is set. */
-export type ClipAnswer = { clip?: PluginClip; clipProblem?: PluginStillProblem };
 
 /** The capture methods a fake window has unless the page says it predates them. */
 function captures(page: PageScript, note: (entry: string) => void, touch: (method: string) => void, port: FakePort) {
@@ -99,16 +65,6 @@ function captures(page: PageScript, note: (entry: string) => void, touch: (metho
             note("still");
             port.asked.push(request);
             return page.still ? page.still(request) : { still: { ...FRAME } };
-          },
-        }),
-    ...(page.noClip
-      ? {}
-      : {
-          async clip(request: PreviewClipRequest) {
-            touch("clip");
-            note("clip");
-            port.clips.push(request);
-            return page.clip ? page.clip(request) : { clip: { ...TAKE } };
           },
         }),
   };
@@ -134,7 +90,6 @@ export function windows(page: PageScript = {}) {
     const fake = {
       log: own,
       asked: [] as PreviewStillRequest[],
-      clips: [] as PreviewClipRequest[],
       loads: [] as FakePort["loads"],
       late,
       async load(_project: string, entry?: string, root?: string) {
@@ -168,7 +123,7 @@ export function windows(page: PageScript = {}) {
         touch(`studioCall:${method}`);
         note(arg === undefined ? `call:${method}` : `call:${method}:${String(arg)}`);
         await page.answering?.(method);
-        return pageAnswer(page, method, arg);
+        return pageAnswer();
       },
       async input() {
         touch("input");
@@ -213,7 +168,7 @@ export function windows(page: PageScript = {}) {
 /** The budget's clock: resolves once `ms` have passed and rejects when `signal` aborts. */
 export type BudgetWait = (ms: number, signal: AbortSignal) => Promise<unknown>;
 
-/** A real core over fake windows, and a plugin's still or clip of a game outside its library. */
+/** A real core over fake windows, and a plugin's still of a game outside its library. */
 export async function observeHost(
   page: PageScript = {},
   options: { hidden?: boolean; preview?: boolean; wait?: BudgetWait; inLibrary?: boolean } = {},
@@ -223,7 +178,7 @@ export async function observeHost(
     ...(options.preview === false ? {} : { preview: w.live }),
     ...(options.hidden === false ? {} : { createHeadlessPreview: w.create }),
     previewPoolMax: 4,
-    ...(options.wait ? { pluginStill: { wait: options.wait }, pluginClip: { wait: options.wait } } : {}),
+    ...(options.wait ? { pluginStill: { wait: options.wait } } : {}),
   });
   // A game in the library is one the core knows the kind of; any other is outside it.
   const game = options.inLibrary
@@ -235,8 +190,7 @@ export async function observeHost(
   const observe = (extra: Record<string, unknown>) =>
     lite.core.pluginServices.call("example", "observe", { project: "game", root: game, files: [], ...extra }, binding);
   const still = async (request: unknown): Promise<StillAnswer> => observe({ still: request }) as Promise<StillAnswer>;
-  const clip = async (request: unknown): Promise<ClipAnswer> => observe({ clip: request }) as Promise<ClipAnswer>;
-  return { ...w, still, clip, game, scratch: lite.core.layout.scratch };
+  return { ...w, still, observe, game, scratch: lite.core.layout.scratch };
 }
 
 /** The budget on a clock the test holds: it runs out only when the test says so. */
@@ -276,22 +230,10 @@ export function lateLoad() {
   return { script, started: g.reached, arrive: g.arrive };
 }
 
-/** A page that answers `__studio.<method>` only when the test lets it. */
+/** A page that answers the studio's `<method>` call only when the test lets it. */
 export function lateAnswer(method: string) {
   const g = gate();
   const script: PageScript = { answering: (called) => (called === method ? g.wait() : undefined) };
-  return { script, started: g.reached, arrive: g.arrive };
-}
-
-/** A page whose recording starts and then waits for the test to let it end. */
-export function lateClip() {
-  const g = gate();
-  const script: PageScript = {
-    clip: async () => {
-      await g.wait();
-      return { clip: { ...TAKE } };
-    },
-  };
   return { script, started: g.reached, arrive: g.arrive };
 }
 

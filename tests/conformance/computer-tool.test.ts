@@ -221,9 +221,9 @@ describe("the requested state — setup", () => {
       "a placeless knock lands at the view centre",
     );
     assert.equal(normalizeSetup({ gesture: false }), null);
-    const both = normalizeSetup({ gesture: true, demo: "opening" });
-    assert.equal(both!.gesture, true);
-    assert.equal(both!.demo, "opening");
+    const withDemo = normalizeSetup({ gesture: true, demo: "opening" });
+    assert.deepEqual(withDemo, { gesture: true }, "a demo name is not part of a setup: there are no demos to run");
+    assert.equal(normalizeSetup({ demo: "opening" }), null, "a setup of nothing but a demo reaches no state");
   });
 });
 
