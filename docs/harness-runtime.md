@@ -19,7 +19,8 @@ tools, works and ends), integrates (`worker_mark used` merges a copy worker's wo
 Genex runs one health check (`loop/health-check.ts`): it serves the build in a window of its own and
 asks the host's own check, `preview.observe` — the page loads, it throws no uncaught error, its frame
 is not blank — keeping a page screenshot as the check's picture; nothing is asked of the game's
-code. A head that fails is not made live: the lead hears what is wrong and goes on, or finishes with
+code. Its record (`integration_health`) names that picture, and after a merge the worker it checked
+(`worker`, `pool.w2`): Builds shows it on that worker and on the latest build. A head that fails is not made live: the lead hears what is wrong and goes on, or finishes with
 `land=no`. An engine that keeps no session of its own (Ollama's tool loop) leads no Loop: its chat is
 plain chat, and a run started on it closes at once with `refusal: "needs_session"` on its
 `run_finished` report (`run-dispatch.ts` `LoopRefusal`) beside the words the chat reads.

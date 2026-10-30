@@ -13,6 +13,7 @@ import { CLIP_DETAIL, CLIP_REASON } from "../text.ts";
 import { GIT_TIMEOUT_MS } from "../config.ts";
 import { SECOND_MS, sleep } from "../time.ts";
 import { NotLandedReason, VerdictPass, VerdictRule } from "../verdict.ts";
+import { poolWorkerId } from "../workers/events.ts";
 import { closeRunPool } from "../workers/run-pool.ts";
 import { StopWhy } from "../finish-contract.ts";
 import { yes } from "./args.ts";
@@ -121,8 +122,11 @@ async function commitLeadWork(loopRun: LoopRun): Promise<string | null> {
 /**
  * The one health check of the integration head: the page loads, logs no uncaught error, and its
  * screenshot is not blank. On the run's record (`integration_health`, a verdict) and on the run.
+ * The record names the screenshot the check kept, and the worker whose merge it checked (`worker`,
+ * as the worker's own records name it): the Builds graph shows that build on the worker and on
+ * the latest build.
  */
-export async function checkIntegration(loopRun: LoopRun, label: string): Promise<HealthCheck> {
+export async function checkIntegration(loopRun: LoopRun, label: string, worker?: string): Promise<HealthCheck> {
   const { ctx, integrationWorktree, run, state } = loopRun;
   await commitLeadWork(loopRun);
   const head = await loopRun.syncHead();
@@ -143,6 +147,8 @@ export async function checkIntegration(loopRun: LoopRun, label: string): Promise
     head,
     ok: check.ok,
     problems: check.problems.slice(0, HEALTH_CARD_PROBLEMS),
+    ...(check.picture ? { picture: check.picture } : {}),
+    ...(worker ? { worker } : {}),
   });
   await loopRun.recordVerdict({
     pass: VerdictPass.Health,
@@ -173,7 +179,8 @@ function withNestedLoss(check: HealthCheck, lost: readonly string[]): HealthChec
 
 /** What the lead hears once a worker's copy is merged into the integration worktree: the merged build's health check. */
 export async function afterMerge(loopRun: LoopRun, record: AnyRecord): Promise<string> {
-  const check = await checkIntegration(loopRun, `merge_${String(record.id ?? "worker")}`);
+  const id = String(record.id ?? "worker");
+  const check = await checkIntegration(loopRun, `merge_${id}`, record.id ? poolWorkerId(id) : undefined);
   return healthLine(check);
 }
 
