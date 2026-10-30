@@ -1,19 +1,24 @@
 /**
- * One Codex delegation turn on the app server (`codex app-server`, JSON-RPC over stdio), with the
- * studio's tools declared as Codex dynamic tools (`codex-dynamic-tools.ts`) instead of the file
- * bridge. Opt-in and experimental: `codex.ts` chooses it, and falls back to `codex exec` and the
- * bridge whenever it cannot be had.
+ * One Codex delegation turn on the app server (`codex app-server`, JSON-RPC over stdio), for two
+ * reasons `codex.ts` chooses it for, alone or together: the studio's tools declared as Codex
+ * dynamic tools (`codex-dynamic-tools.ts`) instead of the file bridge (opt-in and experimental),
+ * and a session in Auto whose asks the studio answers (`on-request` approvals, each one settled by
+ * the Auto check). It falls back to `codex exec` whenever the turn cannot be had.
  *
  * Opening a turn is the handshake: `initialize` with the experimental API (the capability
- * `dynamicTools` is gated on), `initialized`, then `thread/start` carrying the tools. A refusal
- * there (an older or differently built CLI) is reported, never thrown, so the caller can fall
- * back before anything has run. Running it is `turn/start` and the conversation after: each
- * `item/tool/call` is answered by the studio's handler, every other server request is declined,
- * and the notifications are written as the very events `codex exec --json` prints
+ * `dynamicTools` is gated on), `initialized`, then `thread/start` carrying the tools, or
+ * `thread/resume` of the session it continues. A refusal there (an older or differently built CLI)
+ * is reported, never thrown, so the caller can fall back before anything has run. Running it is
+ * `turn/start` and the conversation after: each `item/tool/call` is answered by the studio's
+ * handler, each approval by the studio's approver when the turn has one (a refusal's reason is
+ * steered into the turn first, `turn/steer`, so the model reads why), every other server request
+ * is declined, and the notifications are written as the very events `codex exec --json` prints
  * (`codex-exec-events.ts`), so one translation reads both paths. A stop sends `turn/interrupt`
  * and closes the server; closing it is what ends the process.
  *
- * Wire shapes as `codex app-server generate-json-schema --experimental` prints them for CLI 0.159.
+ * Wire shapes as `codex app-server generate-json-schema --experimental` prints them for CLI 0.159;
+ * the approvals, the steer and the resume as the real CLI 0.159.2 answers them
+ * (`codex-sandbox-cli.test.ts`).
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -28,12 +33,16 @@ import {
 } from "./codex-dynamic-tools.ts";
 import type { LiveToolResult } from "./types.ts";
 
-/** The id of each request a turn sends: one of each, in this order. */
+/**
+ * The id of each request a turn sends: one of each, in this order (`ThreadStart` is the resume
+ * too), and the steers, each the next id from `FirstSteer` on.
+ */
 const TurnRequestId = {
   Initialize: 1,
   ThreadStart: 2,
   TurnStart: 3,
   TurnInterrupt: 4,
+  FirstSteer: 100,
 } as const;
 
 /** JSON-RPC's code for a method the receiver does not handle. */
@@ -63,8 +72,14 @@ const UserInputType = {
   LocalImage: "localImage",
 } as const;
 
-/** Nobody is there to approve: a command the sandbox refuses fails honestly (`AskForApproval`). */
-const APPROVAL_NEVER = "never";
+/**
+ * Who approves what the box would not let run (`AskForApproval`): nobody, so such a command fails
+ * honestly; or the studio, asked first (`on-request`), which settles each ask with the Auto check.
+ */
+const ApprovalPolicy = {
+  Never: "never",
+  OnRequest: "on-request",
+} as const;
 
 /** A turn's status on `turn/completed`, as the app server spells it. */
 const TurnStatus = {
@@ -92,15 +107,51 @@ const AppServerItem = {
   WebSearch: "webSearch",
 } as const;
 
+/** What Codex asks to run beyond its box: a command, or a change to files. */
+export const CodexApprovalKind = {
+  Command: "command",
+  FileChange: "fileChange",
+} as const;
+export type CodexApprovalKind = (typeof CodexApprovalKind)[keyof typeof CodexApprovalKind];
+
+/** One approval the server asks for: what it is about, and its yes and no in its own vocabulary. */
+interface ApprovalWords {
+  kind: CodexApprovalKind;
+  yes: Record<string, unknown>;
+  no: Record<string, unknown>;
+}
+
+/** The approvals a turn answers: the v2 pair a thread asks with, and the legacy pair, in case one comes. */
+const APPROVALS: Partial<Record<AppServerMethod, ApprovalWords>> = {
+  [AppServerMethod.CommandApproval]: {
+    kind: CodexApprovalKind.Command,
+    yes: { decision: "accept" },
+    no: { decision: "decline" },
+  },
+  [AppServerMethod.FileChangeApproval]: {
+    kind: CodexApprovalKind.FileChange,
+    yes: { decision: "accept" },
+    no: { decision: "decline" },
+  },
+  [AppServerMethod.ExecCommandApproval]: {
+    kind: CodexApprovalKind.Command,
+    yes: { decision: "approved" },
+    no: { decision: "denied" },
+  },
+  [AppServerMethod.ApplyPatchApproval]: {
+    kind: CodexApprovalKind.FileChange,
+    yes: { decision: "approved" },
+    no: { decision: "denied" },
+  },
+};
+
 /**
- * How each approval the server might ask for is declined. The thread runs with `never`, so none
- * should come; one that does is answered "no" in its own vocabulary, never left hanging.
+ * How each request the server might send but a tool call is declined, when the turn does not
+ * answer it: a thread that runs with `never` gets no approvals, and one that comes anyway (or
+ * before the turn has an approver) is answered "no" in its own vocabulary, never left hanging.
  */
 const DECLINES: Partial<Record<AppServerMethod, Record<string, unknown>>> = {
-  [AppServerMethod.CommandApproval]: { decision: "decline" },
-  [AppServerMethod.FileChangeApproval]: { decision: "decline" },
-  [AppServerMethod.ExecCommandApproval]: { decision: "denied" },
-  [AppServerMethod.ApplyPatchApproval]: { decision: "denied" },
+  ...Object.fromEntries(Object.entries(APPROVALS).map(([method, words]) => [method, words.no])),
   [AppServerMethod.Elicitation]: { action: "decline" },
 };
 
@@ -120,11 +171,34 @@ type Message = Record<string, unknown>;
 /** The studio's handler for one tool call. */
 export type CodexToolHandler = (name: string, args: Record<string, unknown>) => Promise<LiveToolResult>;
 
-/** What a turn needs from the engine: the thread to start (tools included), its tool names, the stop. */
+/** One action Codex asks to run beyond its box, as the studio's approver reads it. */
+export interface CodexApproval {
+  kind: CodexApprovalKind;
+  /** The item (or call) it asks about, as the server names it. */
+  id: string;
+  /** The command as Codex would run it (its shell's whole line); empty for a change to files. */
+  command: string;
+  /** The files a change writes, as far as the turn has said; empty for a command. */
+  files: string[];
+  /** Where it would run; empty when the server did not say. */
+  cwd: string;
+  /** Codex's own words on why it asks: shown to the person, never to the Auto check. */
+  reason: string;
+}
+
+/** The studio's answer: it runs, or it does not and, when there are words for it, the model reads why. */
+export type CodexApprovalAnswer = { approved: true } | { approved: false; explain: string | null };
+
+/** The studio's approver for a turn whose session asks (`on-request`): one answer per ask. */
+export type CodexApprovalHandler = (approval: CodexApproval) => Promise<CodexApprovalAnswer>;
+
+/** What a turn needs from the engine: the thread to start or resume (tools included), its tool names, the stop. */
 export interface CodexTurnSetup {
-  /** `thread/start` params: cwd, model, sandbox, approvals and `dynamicTools`. */
+  /** `thread/start` params (cwd, model, sandbox, approvals and `dynamicTools`), or `thread/resume`'s. */
   thread: Record<string, unknown>;
-  /** The names declared in `dynamicTools`: the only tools a call may name. */
+  /** The thread is the session this continues: `thread/resume`, whose params name it. */
+  resumes?: boolean;
+  /** The names declared in `dynamicTools`: the only tools a call may name (none on a resume). */
   tools: ReadonlySet<string>;
   signal: AbortSignal;
   /** The handshake's ceiling; {@link HANDSHAKE_TIMEOUT_MS} when unset. A test seam. */
@@ -135,30 +209,51 @@ export interface CodexTurnSetup {
 export interface TurnPolicy {
   /** The folder the session starts in, which a confined session writes. */
   cwd: string;
-  /** Other folders a confined session writes beside `cwd`: the build a lead leads. */
+  /** Other folders a confined session writes beside `cwd`: a worker's write roots, the build a lead leads. */
   writes?: readonly string[];
   model?: string | undefined;
   /** The person's Bypass for their chat: no sandbox, no approvals. */
   bypass: boolean;
+  /**
+   * Codex asks before what its box would not let run (`on-request`), and the turn's approver
+   * answers (a session in Auto: `codex.ts`); otherwise it never asks and such a command fails.
+   */
+  approvals?: boolean;
 }
 
-/**
- * `thread/start` for a turn with the studio's tools: the same confinement `codex exec` gets for
- * the request (a workspace-write sandbox that never asks, or the person's Bypass), and the tools.
- */
-export function threadStartParams(policy: TurnPolicy & { tools: DynamicToolSpec[] }): Record<string, unknown> {
+/** The thread's approvals, as the policy has them. */
+function approvalPolicy(policy: TurnPolicy): string {
+  return policy.approvals && !policy.bypass ? ApprovalPolicy.OnRequest : ApprovalPolicy.Never;
+}
+
+/** What `thread/start` and `thread/resume` both say: where, on which model, asking whom, in which box. */
+function threadParams(policy: TurnPolicy): Record<string, unknown> {
   return {
     cwd: policy.cwd,
     ...(policy.model ? { model: policy.model } : {}),
-    approvalPolicy: APPROVAL_NEVER,
+    approvalPolicy: approvalPolicy(policy),
     sandbox: policy.bypass ? SandboxMode.DangerFullAccess : SandboxMode.WorkspaceWrite,
-    dynamicTools: policy.tools,
   };
 }
 
 /**
+ * `thread/start` for a turn: the same confinement `codex exec` gets for the request (a
+ * workspace-write sandbox, or the person's Bypass), its approvals, and the studio's tools when it
+ * declares any.
+ */
+export function threadStartParams(policy: TurnPolicy & { tools?: DynamicToolSpec[] }): Record<string, unknown> {
+  const tools = policy.tools ?? [];
+  return { ...threadParams(policy), ...(tools.length ? { dynamicTools: tools } : {}) };
+}
+
+/** `thread/resume` of the session a turn continues, in the same confinement and approvals as a new one. */
+export function threadResumeParams(policy: TurnPolicy & { threadId: string }): Record<string, unknown> {
+  return { threadId: policy.threadId, ...threadParams(policy) };
+}
+
+/**
  * `turn/start`'s params besides the thread: the brief, the stills as local images, and the
- * sandbox exec's `-c` config spells (one writable root, no network), restated for this turn.
+ * sandbox exec's `-c` config spells (its writable roots, no network), restated for this turn.
  */
 export function turnStartParams(
   policy: TurnPolicy,
@@ -169,7 +264,7 @@ export function turnStartParams(
     ? { type: SandboxPolicyType.DangerFullAccess }
     : {
         type: SandboxPolicyType.WorkspaceWrite,
-        writableRoots: [policy.cwd, ...(policy.writes ?? [])],
+        writableRoots: [...new Set([policy.cwd, ...(policy.writes ?? [])])],
         networkAccess: false,
       };
   return {
@@ -177,18 +272,30 @@ export function turnStartParams(
       { type: UserInputType.Text, text: prompt },
       ...images.map((file) => ({ type: UserInputType.LocalImage, path: file })),
     ],
-    approvalPolicy: APPROVAL_NEVER,
+    approvalPolicy: approvalPolicy(policy),
     sandboxPolicy,
   };
 }
 
-/** A thread open on the app server with the studio's tools, ready for its one turn. */
+/**
+ * A thread open on the app server, ready for its one turn: with the studio's tools as dynamic
+ * tools, or a session in Auto whose asks the studio answers, or both.
+ */
 export interface CodexDynamicTurn {
   readonly threadId: string;
+  /** Whether the studio's tools went to the thread as dynamic tools; else they keep the bridge. */
+  readonly declaresTools: boolean;
   /** Every tool call the model made, in order: the record interview tools are read from. */
   readonly calls: Array<{ name: string; args: Record<string, unknown> }>;
-  /** `turn/start` with these params, as the events `codex exec --json` would have printed. */
-  run(turn: Record<string, unknown>, onToolCall: CodexToolHandler): AsyncIterable<Message>;
+  /**
+   * `turn/start` with these params, as the events `codex exec --json` would have printed; each
+   * approval the server asks for goes to `onApproval`, or is declined when there is none.
+   */
+  run(
+    turn: Record<string, unknown>,
+    onToolCall: CodexToolHandler,
+    onApproval?: CodexApprovalHandler,
+  ): AsyncIterable<Message>;
   /** Close the server, which ends its process. Safe to call twice. */
   close(): void;
 }
@@ -204,6 +311,8 @@ interface Link {
   /** The turn in progress, once `turn/start` answered: what a stop interrupts. */
   turnId: string | null;
   threadId: string | null;
+  /** How many steers this turn has sent: the next one's id follows. */
+  steers: number;
   stop: () => void;
 }
 
@@ -213,6 +322,9 @@ interface TurnContext {
   tools: ReadonlySet<string>;
   calls: CodexDynamicTurn["calls"];
   onToolCall: CodexToolHandler;
+  onApproval: CodexApprovalHandler | null;
+  /** The files of each change the turn started, by item id: what a change's approval is about. */
+  changes: Map<string, string[]>;
 }
 
 /** What a turn has heard so far: the reply text by item, and the latest token count. */
@@ -292,6 +404,7 @@ export async function openCodexTurn(
     closed: false,
     turnId: null,
     threadId: null,
+    steers: 0,
     stop: () => {},
   };
   link.stop = () => stopTurn(link, setup.signal);
@@ -306,14 +419,15 @@ export async function openCodexTurn(
   }
 }
 
-/** `initialize` (opting into the experimental API), `initialized`, then `thread/start`. */
+/** `initialize` (opting into the experimental API), `initialized`, then `thread/start` or `thread/resume`. */
 async function handshake(link: Link, setup: CodexTurnSetup): Promise<CodexTurnOpening> {
   const capabilities = { experimentalApi: true };
   send(link, request(TurnRequestId.Initialize, AppServerMethod.Initialize, { clientInfo: CLIENT_INFO, capabilities }));
   const initError = responseError(await awaitResponse(link, TurnRequestId.Initialize));
   if (initError) return refused(link, setup.signal, initError);
   send(link, { method: AppServerMethod.Initialized });
-  send(link, request(TurnRequestId.ThreadStart, AppServerMethod.ThreadStart, setup.thread));
+  const opens = setup.resumes ? AppServerMethod.ThreadResume : AppServerMethod.ThreadStart;
+  send(link, request(TurnRequestId.ThreadStart, opens, setup.thread));
   const started = await awaitResponse(link, TurnRequestId.ThreadStart);
   const startError = responseError(started);
   if (startError) return refused(link, setup.signal, startError);
@@ -341,8 +455,19 @@ function dynamicTurn(link: Link, threadId: string, setup: CodexTurnSetup): Codex
   const calls: CodexDynamicTurn["calls"] = [];
   return {
     threadId,
+    declaresTools: setup.tools.size > 0,
     calls,
-    run: (turn, onToolCall) => turnEvents(link, { threadId, tools: setup.tools, calls, onToolCall }, turn),
+    run: (turn, onToolCall, onApproval) => {
+      const ctx = {
+        threadId,
+        tools: setup.tools,
+        calls,
+        onToolCall,
+        onApproval: onApproval ?? null,
+        changes: new Map(),
+      };
+      return turnEvents(link, ctx, turn);
+    },
     close: () => closeLink(link, setup.signal),
   };
 }
@@ -381,6 +506,7 @@ function readTurnMessage(
   const elsewhere = params.threadId !== undefined && params.threadId !== ctx.threadId;
   const mirror = NOTIFICATIONS[String(message.method)];
   if (elsewhere || !mirror) return { events: [], done: false };
+  if (message.method === AppServerMethod.ItemStarted) noteChange(ctx, record(params.item));
   const done = message.method === AppServerMethod.TurnCompleted && isThisTurn(link, params);
   return { events: mirror(params, state), done };
 }
@@ -399,8 +525,16 @@ function isThisTurn(link: Link, params: Message): boolean {
   return !link.turnId || !id || id === link.turnId;
 }
 
-/** A server request in a running turn: a tool call the studio answers, or anything else declined. */
+/**
+ * A server request in a running turn: a tool call the studio answers, an approval its approver
+ * answers (when the turn has one), or anything else declined.
+ */
 async function answerRequest(link: Link, ctx: TurnContext, message: Message): Promise<void> {
+  const approval = APPROVALS[message.method as AppServerMethod];
+  if (approval && ctx.onApproval) {
+    await answerApproval(link, ctx.onApproval, approval, message, ctx);
+    return;
+  }
   if (message.method !== AppServerMethod.ToolCall) {
     declineRequest(link, message);
     return;
@@ -412,6 +546,62 @@ async function answerRequest(link: Link, ctx: TurnContext, message: Message): Pr
   }
   ctx.calls.push({ name: parsed.call.name, args: parsed.call.args });
   send(link, { id: message.id, result: await toolAnswer(ctx, parsed.call) });
+}
+
+/**
+ * One approval, as the studio's approver answers it: yes, it runs; no, it does not, and the
+ * refusal's words are steered into the turn first, so the model's next step reads why (Codex
+ * itself only tells it "rejected by user"). An approver that fails says no.
+ */
+async function answerApproval(
+  link: Link,
+  approver: CodexApprovalHandler,
+  words: ApprovalWords,
+  message: Message,
+  ctx: TurnContext,
+): Promise<void> {
+  const params = record(message.params);
+  const answer = await approver(readApproval(words.kind, params, ctx)).catch(
+    (): CodexApprovalAnswer => ({ approved: false, explain: null }),
+  );
+  if (answer.approved) {
+    send(link, { id: message.id, result: words.yes });
+    return;
+  }
+  if (answer.explain) steer(link, text(params.turnId) || link.turnId, answer.explain);
+  send(link, { id: message.id, result: words.no });
+}
+
+/** An approval's params as the approver reads them, the v2 and the legacy spelling alike. */
+function readApproval(kind: CodexApprovalKind, params: Message, ctx: TurnContext): CodexApproval {
+  const id = text(params.itemId) || text(params.callId) || text(params.approvalId);
+  const command = Array.isArray(params.command) ? params.command.map(text).join(" ") : text(params.command);
+  const legacyFiles = Object.keys(record(params.fileChanges));
+  const grantRoot = text(params.grantRoot);
+  const files = ctx.changes.get(id) ?? (legacyFiles.length ? legacyFiles : [grantRoot].filter(Boolean));
+  return {
+    kind,
+    id,
+    command: kind === CodexApprovalKind.Command ? command : "",
+    files: kind === CodexApprovalKind.FileChange ? files : [],
+    cwd: text(params.cwd),
+    reason: text(params.reason),
+  };
+}
+
+/** A change the turn started: its files, kept for the approval that may follow it. */
+function noteChange(ctx: TurnContext, item: Message): void {
+  if (item.type !== AppServerItem.FileChange || !Array.isArray(item.changes)) return;
+  ctx.changes.set(text(item.id), item.changes.map((change: unknown) => text(record(change).path)).filter(Boolean));
+}
+
+/** Words steered into the running turn (`turn/steer`): the model reads them at its next step. */
+function steer(link: Link, turnId: string | null, words: string): void {
+  if (!turnId || !link.threadId) return;
+  const id = TurnRequestId.FirstSteer + link.steers;
+  link.steers += 1;
+  const input = [{ type: UserInputType.Text, text: words }];
+  send(link, request(id, AppServerMethod.TurnSteer, { threadId: link.threadId, expectedTurnId: turnId, input }));
 }
 
 /** The studio's answer to one call. A broken tool answers in words; it never ends the turn. */
@@ -497,8 +687,9 @@ function replyDelta(params: Message, state: TurnState): Message[] {
 }
 
 /**
- * The turn's end. Its tokens are the thread's running total: the turn runs on a thread it started,
- * so the total is this turn's (a resumed thread would need the difference).
+ * The turn's end. Its tokens are the thread's running total: on a thread the turn started, that is
+ * this turn's; on a resumed one it is the whole session's, as `codex exec resume` reports it too
+ * (seen on CLI 0.159.2), so both paths count a resumed turn alike.
  */
 function turnEnded(params: Message, state: TurnState): Message[] {
   const turn = record(params.turn);

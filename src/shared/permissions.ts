@@ -80,8 +80,9 @@ interface EnginePermissions {
 /**
  * Each engine's row. Claude Code asks mid-turn in every mode. Bonsai's tools run in the studio,
  * which asks before each edit or command; its commands always run in the studio's sandbox, so it
- * has no Bypass. Codex (`codex exec`) cannot ask mid-turn: Auto keeps its sandbox, Plan only reads,
- * Bypass drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
+ * has no Bypass. Codex has no Manual or Accept edits: Auto keeps its sandbox (on its app server, what
+ * the sandbox would not run is asked about and settled by the Auto check), Plan only reads, Bypass
+ * drops its sandbox. OpenRouter's and a local server's tools run in the studio's own session
  * loop, as Bonsai's do.
  * OpenCode (`opencode run`), Grok Build (`grok -p`) and Cursor (`cursor-agent --print`) cannot ask
  * mid-turn: Auto runs them in the studio's sandbox, Plan reads only, and Grok Build's Bypass runs it

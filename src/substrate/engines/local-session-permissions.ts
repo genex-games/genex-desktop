@@ -13,6 +13,9 @@
  * A worker of the chat's lead runs on a local session as on any engine that keeps sessions: in the
  * chat's mode its seat names (`DelegateRequest.worker`), asking through its seat (`seatAsks`), its
  * files and commands held to its write roots and never-touch list (local-session.ts).
+ *
+ * A Codex session in Auto settles each action it asks to run beyond its box the same way
+ * (`settleInAuto`, from codex.ts), asking the person with the same cards (`commandAsk`, `changeAsk`).
  */
 import path from "node:path";
 import { engineMode, PermissionDecision, PermissionMode } from "../../shared/permissions.ts";
@@ -114,13 +117,7 @@ export function localAsk(call: ToolCall, cwd: string, engine: string): Permissio
   const input = args as Record<string, unknown>;
   const base = { toolUseId: call.id, always: [] };
   const who = engineName(engine);
-  if (call.name === LocalTool.RunCommand)
-    return {
-      ...base,
-      tool: CardTool.Shell,
-      title: ASK_TITLE.command(who),
-      input: { command: text(input, "command") ?? "" },
-    };
+  if (call.name === LocalTool.RunCommand) return commandAsk(engine, text(input, "command") ?? "", call.id);
   const file = path.resolve(cwd, text(input, "path") ?? "");
   if (call.name === LocalTool.WriteFile)
     return {
@@ -134,6 +131,29 @@ export function localAsk(call: ToolCall, cwd: string, engine: string): Permissio
     tool: CardTool.Edit,
     title: ASK_TITLE.edit(who, file),
     input: { file_path: file, old_string: text(input, "oldText") ?? "", new_string: text(input, "newText") ?? "" },
+  };
+}
+
+/** A command a session wants to run, as the card asks about it in its engine's name. */
+export function commandAsk(engine: string, command: string, toolUseId: string): PermissionAsk {
+  return {
+    tool: CardTool.Shell,
+    title: ASK_TITLE.command(engineName(engine)),
+    input: { command },
+    toolUseId,
+    always: [],
+  };
+}
+
+/** Files a session wants to change, as the card asks about an edit of the first (all of them in its input). */
+export function changeAsk(engine: string, files: readonly string[], toolUseId: string): PermissionAsk {
+  const file = files[0] ?? "";
+  return {
+    tool: CardTool.Edit,
+    title: ASK_TITLE.edit(engineName(engine), file),
+    input: { file_path: file, files: [...files] },
+    toolUseId,
+    always: [],
   };
 }
 
@@ -169,15 +189,17 @@ export async function permitCall(input: {
   if (!check && (!permissions || !ASKS[mode].has(kind))) return null;
   const ask = localAsk(call, input.cwd, input.engine);
   if (!ask) return null;
-  if (check) return checkedInAuto(check, ask, permissions, input.signal);
+  if (check) return settleInAuto(check, ask, permissions, input.signal);
   return permissions ? refusal(await permissions.ask(ask, input.signal)) : null;
 }
 
 /**
- * A command in Auto, as the Auto check decides it: allowed, it runs; refused, the model reads why;
- * unsure, the person is asked (with the check's reason), or — nobody to ask — it does not run.
+ * An action in Auto, as the Auto check decides it: null when it runs, else the words the model
+ * reads instead. Allowed, it runs; refused, the model reads why; unsure, the person is asked (with
+ * the check's reason), or — nobody to ask — it does not run. A local session's command, and each
+ * action a Codex session in Auto asks to run beyond its box (codex.ts).
  */
-async function checkedInAuto(
+export async function settleInAuto(
   check: AutoCheck,
   ask: PermissionAsk,
   permissions: Pick<DelegatePermissions, "ask"> | undefined,

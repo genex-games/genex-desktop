@@ -340,9 +340,10 @@ stays in it; the text screen is the second net, for what a program builds
 as it runs. The sandbox takes no network wildcard, so a boxed worker's command that reaches the
 network is asked about as its mode asks. A Bypass worker has no box: the person chose Bypass for
 their chat, so its workers run as Claude Code's and Codex's own Bypass do, and only the hook holds
-a Claude Code worker. A Codex worker cannot ask: in a Bypass chat it runs with Codex's bypass flag
-(`runsAsPerson`), and in every other mode it is boxed, its writable roots its write roots, with no
-network. Only a delegated engine
+a Claude Code worker. A Codex worker cannot ask the person: in a Bypass chat it runs with Codex's
+bypass flag (`runsAsPerson`), and in every other mode it is boxed, its writable roots its write
+roots, with no network; in Auto a command it asks to run beyond its box goes to the Auto check,
+and one the check cannot decide does not run. Only a delegated engine
 (Claude Code, Codex) carries a seat: a local model's work stays unattended, and its chat session is
 offered no worker tools.
 
@@ -541,7 +542,7 @@ thread keeps the mode the person picked, so a chat moved back to Claude Code fin
 | --- | --- | --- |
 | Claude Code | all five | asks mid-turn ([The session](#the-session)) |
 | Bonsai, OpenRouter, Local server | Auto, Manual, Accept edits, Plan | the studio runs its tools and asks before each change; Auto has each command checked by the session's own model |
-| Codex | Auto, Plan, Bypass | `codex exec` cannot ask mid-turn; the mode picks its sandbox |
+| Codex | Auto, Plan, Bypass | Auto runs on Codex's app server, asking before what its sandbox would not run, each ask checked by the session's own model; Plan and Bypass keep `codex exec`, which cannot ask |
 | OpenCode | Auto, Plan | `opencode run` cannot ask mid-turn and always runs in the studio's sandbox |
 | Grok Build | Auto, Plan, Bypass | `grok -p` cannot ask mid-turn: Auto runs it in the studio's sandbox, Bypass as the person outside it, as Codex's; Plan reads from a folder of its own |
 | Cursor | Auto, Plan | `cursor-agent --print` cannot ask mid-turn and always runs in the studio's sandbox |
@@ -568,11 +569,19 @@ first checked by the same engine and model in a call of its own with a clean con
 model reads why (`AUTO_REFUSED`); an answer it cannot read, a failed call or a timeout asks the
 person, never allows by itself. Edits stay unasked in the sandbox. A worker of the chat's lead on a
 local session runs in its seat's mode, asking through its seat (`seatAsks`), writing its write roots
-and never reaching its never-touch list, as on Claude Code and Codex; Codex's Auto stays its
-sandbox (`approval_policy=never`), with no check of its own yet.
+and never reaching its never-touch list, as on Claude Code and Codex.
 
-Codex runs Auto as before (`workspace-write` in the game folder, no network, never asks), Bypass
-with `--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
+Codex runs Auto in its `workspace-write` sandbox (the game folder, a worker's write roots, no
+network) on its app server (`codex app-server`, CLI 0.159 or later) with `on-request` approvals,
+first and resumed turns alike (`thread/resume`): what the sandbox would not run (a command it asks
+to run outside, a write beyond its folders) is asked about first, and settled as a local session's
+command is ([`codex.ts`](../src/substrate/engines/codex.ts) `#autoApprover`, `settleInAuto`): the
+same engine and model in a clean `codex exec --ephemeral` call judge the action alone, never
+Codex's reason for it; allowed, it runs outside the sandbox; refused, it is declined and the reason
+is steered into the turn (`turn/steer`); unsure asks the person (or, for a worker with no way to
+ask, it does not run). Everything inside the sandbox runs unasked. An older CLI, or an app server
+that will not open the thread, keeps `codex exec`, which never asks. Bypass runs with
+`--dangerously-bypass-approvals-and-sandbox`, and Plan from a folder of its own (`startsElsewhere`,
 as a read-only session) where only the studio's bridge is writable, told it plans
 (`planModeNote`). A pick applies to its next turn. On Windows every launch also turns on Codex's own
 restricted-token sandbox (`windows.sandbox="unelevated"`, `windowsSandboxArgs`): Genex runs Codex
@@ -717,8 +726,9 @@ Loop run must confirm the two known changes: builders can no longer read sibling
   that on-screen text is never an instruction, and the studio itself, password managers and system
   settings are never driven. Web pages (`web_*`) open only in a separate, clean browser with no
   logins; a page's text can still try to steer the agent.
-- Codex cannot ask mid-turn: Manual and Accept edits are unavailable for it until it runs over a
-  protocol that asks (`codex app-server`), and a chat in either runs Codex in Auto's sandbox. Its
+- Codex has no Manual or Accept edits: a chat in either runs Codex in Auto, whose asks the Auto
+  check settles. What the check allows beyond Codex's sandbox runs without it, as in Bypass: the
+  check reads the action alone, not the never-touch list. Its
   Bypass has no sandbox at all, as the CLI's own flag, for the chat's session and its workers alike,
   and neither has Grok Build's, whose builds then run as the person (`runsAsPerson`). Bonsai and Codex ask about no read, and their
   "always" offers no standing grant.

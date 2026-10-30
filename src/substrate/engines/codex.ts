@@ -82,7 +82,18 @@ import {
   dynamicToolSpecs,
   meetsMinimumVersion,
 } from "./codex-dynamic-tools.ts";
-import { type CodexDynamicTurn, openCodexTurn, threadStartParams, turnStartParams } from "./codex-turns.ts";
+import {
+  type CodexApproval,
+  type CodexApprovalHandler,
+  CodexApprovalKind,
+  type CodexDynamicTurn,
+  openCodexTurn,
+  threadResumeParams,
+  threadStartParams,
+  turnStartParams,
+} from "./codex-turns.ts";
+import { autoApprove } from "./auto-approver.ts";
+import { type AutoCheck, changeAsk, commandAsk, settleInAuto } from "./local-session-permissions.ts";
 
 /** The bridge's tool list moved to `studio-bridge.ts`, shared with OpenCode; kept here for importers. */
 export { bridgeTools };
@@ -99,6 +110,7 @@ import {
   type EngineModel,
   type EngineStatus,
   ModelContextSource,
+  type PermissionAsk,
 } from "./types.ts";
 import {
   abortControllerFor,
@@ -850,10 +862,12 @@ export class CodexEngine implements Engine {
       : null;
     const metadata = this.#watchSessionMetadata(request, run, startedAt, model);
     try {
-      const argv = await this.#delegateArgv(request, model, runDir, stills.paths, bridgeRoots(this.#platform, bridge));
+      const roots = bridgeRoots(this.#platform, bridge);
+      const argv = await this.#delegateArgv(request, model, runDir, stills.paths, roots);
       const signal = controller.signal;
       const delivery = toolDelivery(dir);
-      const source = { argv, runDir, prompt, turn, images: stills.paths, delivery };
+      const writes = boxRoots(request, runDir, roots);
+      const source = { argv, runDir, writes, prompt, turn, images: stills.paths, delivery };
       await this.#readStream(request, run, { ...source, cwd, locks, model, signal });
       await metadata.refresh();
     } catch (err) {
@@ -944,15 +958,19 @@ export class CodexEngine implements Engine {
   async #openRunDir(request: DelegateRequest, ctx: RunDirContext): Promise<RunDir> {
     let scratch: string | null = null;
     let turn: CodexDynamicTurn | null = null;
+    let bridge: StudioBridge | null = null;
     try {
       // Its real path: on Windows the temp folder is often an 8.3 short name (`RUNNER~1`), and
       // Codex's Windows sandbox refuses a writable root it spells two ways ("split writable root sets").
       if (startsElsewhere(request)) scratch = await realpath(await mkdtemp(path.join(os.tmpdir(), "studio-playtest-")));
-      turn = await this.#openDynamicTurn(request, scratch ?? ctx.cwd, ctx);
-      const bridge = turn ? null : await this.#openBridge(request, scratch ?? ctx.cwd);
+      const runDir = scratch ?? ctx.cwd;
+      turn = await this.#openDynamicTurn(request, runDir, ctx);
+      bridge = turn ? null : await this.#openBridge(request, runDir);
+      turn ??= await this.#openCheckedTurn(request, runDir, ctx, bridge);
       return { scratch, bridge, turn };
     } catch (err) {
       turn?.close();
+      await bridge?.close().catch(() => {});
       await releaseLocks(ctx.cwd, ctx.locks, this.#lockRecovery).catch(() => {});
       if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
       throw err;
@@ -973,18 +991,73 @@ export class CodexEngine implements Engine {
     const tools = await this.#dynamicToolSpecs(request, ctx.signal);
     if (!tools) return null;
     const onStderr = (chunk: string) => keepStderr(ctx.run, request, chunk);
-    const args = await this.#turnServerArgs(request, runDir, ctx.signal);
+    const args = await this.#turnServerArgs(request, runDir, ctx.signal, []);
     const server = await this.#appServer(runDir, ctx.signal, { args, onStderr }).catch(() => null);
     if (!server) return null;
-    const bypass = runsAsPerson(request);
+    const policy = { cwd: runDir, model: ctx.model, bypass: runsAsPerson(request), approvals: checksInAuto(request) };
     const opening = await openCodexTurn(server, {
-      thread: threadStartParams({ cwd: runDir, model: ctx.model, bypass, tools }),
+      thread: threadStartParams({ ...policy, tools }),
       tools: new Set(tools.map((tool) => tool.name)),
       signal: ctx.signal,
     });
     if (opening.ok) return opening.turn;
     if (!ctx.signal.aborted) this.#dynamicToolsRefusedAt = Date.now();
     return null;
+  }
+
+  /**
+   * A thread on the app server for a session checked in Auto (`checksInAuto`) whose tools keep the
+   * bridge: a new thread, or the session it continues (`thread/resume`), so a resumed turn is
+   * checked as a first one is. Null keeps `codex exec`, where Codex never asks: a session not in
+   * Auto, a CLI older than the app server's approvals, or a server that would not open the thread.
+   */
+  async #openCheckedTurn(
+    request: DelegateRequest,
+    runDir: string,
+    ctx: RunDirContext,
+    bridge: StudioBridge | null,
+  ): Promise<CodexDynamicTurn | null> {
+    if (!checksInAuto(request) || !(await this.#asksOnServer(ctx.signal))) return null;
+    const onStderr = (chunk: string) => keepStderr(ctx.run, request, chunk);
+    const args = await this.#turnServerArgs(request, runDir, ctx.signal, bridgeRoots(this.#platform, bridge));
+    const server = await this.#appServer(runDir, ctx.signal, { args, onStderr }).catch(() => null);
+    if (!server) return null;
+    const policy = { cwd: runDir, model: ctx.model, bypass: false, approvals: true };
+    const resume = request.resume;
+    const opening = await openCodexTurn(server, {
+      thread: resume ? threadResumeParams({ ...policy, threadId: resume }) : threadStartParams(policy),
+      resumes: Boolean(resume),
+      tools: new Set(),
+      signal: ctx.signal,
+    });
+    return opening.ok ? opening.turn : null;
+  }
+
+  /** Whether the installed CLI's app server asks and answers as a checked turn needs (approvals, steers, resume). */
+  async #asksOnServer(signal: AbortSignal): Promise<boolean> {
+    const cli = await this.#resolveCli(EngineId.Codex, this.#executable, signal).catch(() => null);
+    return meetsMinimumVersion(cli?.status.version, CODEX_APP_SERVER_AUTO_MIN_VERSION);
+  }
+
+  /**
+   * What answers Codex's asks in a session checked in Auto: each action goes to the Auto check, this
+   * engine and the session's model in a call of its own with a clean context (`autoApprove`, its
+   * tokens the session's), then to the person (a worker's through its seat) when the check cannot
+   * say (`settleInAuto`). Allowed, it runs; otherwise Codex declines it and the model reads why.
+   */
+  #autoApprover(request: DelegateRequest, run: CodexRun, stream: StreamContext): CodexApprovalHandler {
+    const complete = async (call: CompleteRequest): Promise<CompleteResponse> => {
+      const answer = await this.complete(call);
+      mergeUsage(run.usage, answer.usage);
+      return answer;
+    };
+    const asks = request.worker ? request.worker.asks : request.permissions;
+    return async (approval) => {
+      const cwd = approval.cwd || stream.runDir;
+      const check: AutoCheck = (ask, signal) => autoApprove({ complete, model: stream.model, cwd, ask, signal });
+      const refused = await settleInAuto(check, codexAsk(approval), asks, stream.signal);
+      return refused === null ? { approved: true } : { approved: false, explain: refused };
+    };
   }
 
   /** The dynamic tools this delegation declares, when it is one that runs on the app server. */
@@ -1006,12 +1079,15 @@ export class CodexEngine implements Engine {
    * and approvals, effort, service tier, suppressed host skills, the features the studio owns),
    * plus what stands in for `--ignore-user-config`, which the app server lacks.
    */
-  async #turnServerArgs(request: DelegateRequest, runDir: string, signal: AbortSignal): Promise<string[]> {
+  async #turnServerArgs(
+    request: DelegateRequest,
+    runDir: string,
+    signal: AbortSignal,
+    bridge: string[],
+  ): Promise<string[]> {
     const { env, installation } = await this.#cli(signal, Boolean(this.#appServerFn));
     return [
-      ...(chatMode(request) === PermissionMode.Bypass
-        ? BYPASS_CONFIG_ARGS
-        : sandboxArgs(runDir, [runDir, ...leadBuildRoots(request)])),
+      ...serverBox(request, runDir, bridge),
       ...windowsSandboxArgs(this.#platform),
       ...effortArgs(request.effort),
       ...(await this.preferenceArgs(request.model, request.preferences)),
@@ -1069,7 +1145,7 @@ export class CodexEngine implements Engine {
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
-      ctx.turn ? dynamicToolsNote(bridgeTools(request).map((tool) => tool.name)) : "",
+      ctx.turn?.declaresTools ? dynamicToolsNote(bridgeTools(request).map((tool) => tool.name)) : "",
       request.blind ? BLIND_JUDGE_NOTE : "",
       ownershipNote,
       planScratch
@@ -1131,10 +1207,11 @@ export class CodexEngine implements Engine {
     stream: StreamContext,
   ): Promise<AsyncIterable<Record<string, unknown>>> {
     if (stream.turn) {
-      const bypass = runsAsPerson(request);
-      const policy = { cwd: stream.runDir, writes: leadBuildRoots(request), bypass };
+      const approvals = checksInAuto(request);
+      const policy = { cwd: stream.runDir, writes: stream.writes, bypass: runsAsPerson(request), approvals };
       const params = turnStartParams(policy, stream.prompt, stream.images);
-      return stream.turn.run(params, (name, args) => answerBridgeCall(name, args, request));
+      const approver = approvals ? this.#autoApprover(request, run, stream) : undefined;
+      return stream.turn.run(params, (name, args) => answerBridgeCall(name, args, request), approver);
     }
     return this.#exec({
       onInstallation: (installation) => {
@@ -1517,7 +1594,10 @@ interface RunDirContext {
   signal: AbortSignal;
 }
 
-/** Where a delegation runs and how its studio tools reach it: a dynamic-tool thread, a bridge, or neither. */
+/**
+ * Where a delegation runs and how its studio tools reach it: a dynamic-tool thread, a bridge, or
+ * neither; a thread checked in Auto keeps the bridge for its tools.
+ */
 interface RunDir {
   scratch: string | null;
   bridge: StudioBridge | null;
@@ -1526,12 +1606,13 @@ interface RunDir {
 
 /** Every studio tool call the session made, from whichever carried its tools. */
 function toolCalls(dir: RunDir): ReadonlyArray<{ name: string; args: Record<string, unknown> }> {
-  return dir.turn?.calls ?? dir.bridge?.calls ?? [];
+  if (dir.turn?.declaresTools) return dir.turn.calls;
+  return dir.bridge?.calls ?? [];
 }
 
 /** How the session's studio tools reached it, for its init event; null when it was granted none. */
 function toolDelivery(dir: RunDir): ToolDelivery | null {
-  if (dir.turn) return ToolDelivery.DynamicTools;
+  if (dir.turn?.declaresTools) return ToolDelivery.DynamicTools;
   return dir.bridge ? ToolDelivery.FileBridge : null;
 }
 
@@ -1545,12 +1626,14 @@ function keepStderr(run: CodexRun, request: DelegateRequest, chunk: string): voi
 interface StreamContext {
   argv: string[];
   runDir: string;
+  /** The folders its box writes (`boxRoots`), restated on the app server's `turn/start`. */
+  writes: string[];
   prompt: string;
   cwd: string;
   locks: OwnershipLocks | null;
   model: string | undefined;
   signal: AbortSignal;
-  /** The app server's thread, when the turn runs there with dynamic tools; null runs `codex exec`. */
+  /** The app server's thread, when the turn runs there (dynamic tools, or checked in Auto); null runs `codex exec`. */
   turn: CodexDynamicTurn | null;
   /** The stills, saved as files: `-i` for exec, `localImage` inputs on the app server. */
   images: string[];
@@ -2140,13 +2223,51 @@ function runsAsPerson(request: DelegateRequest): boolean {
 }
 
 /**
- * The session's box: the bypass flag for a session that runs as the person (`runsAsPerson`); a
- * worker's own box; else its folder and the build a lead leads. `bridge` is the bridge's own roots
- * (`bridgeRoots`).
+ * Whether Codex asks before what its box would not let run, for the studio's Auto check to answer
+ * (`on-request` on the app server; `#autoApprover`): a session in its chat's Auto, the chat's own
+ * (a lead's included) or a writing worker's. Codex honours no Manual or Accept edits, so a chat in
+ * either runs as Auto here too. Bypass, Plan, a reader and unattended work never ask.
+ */
+function checksInAuto(request: DelegateRequest): boolean {
+  if (startsElsewhere(request)) return false;
+  const mode = request.worker ? engineMode(EngineId.Codex, request.worker.mode) : chatMode(request);
+  return mode === PermissionMode.Auto;
+}
+
+/** What Codex asks to run beyond its box, as the studio's card asks the person and the Auto check reads it. */
+function codexAsk(approval: CodexApproval): PermissionAsk {
+  const ask =
+    approval.kind === CodexApprovalKind.FileChange
+      ? changeAsk(EngineId.Codex, approval.files, approval.id)
+      : commandAsk(EngineId.Codex, approval.command, approval.id);
+  // Codex's own reason is the person's to read; the check judges the action alone.
+  return approval.reason ? { ...ask, description: approval.reason } : ask;
+}
+
+/**
+ * The session's box: the bypass flag for a session that runs as the person (`runsAsPerson`); else
+ * a sandbox that writes its box's folders (`boxRoots`). A worker's search is its own. `bridge` is
+ * the bridge's own roots (`bridgeRoots`).
  */
 function sessionBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
-  if (request.worker) return [...workerBox(request, runDir, bridge), ...workerWebSearch(request)];
-  return runsAsPerson(request) ? BYPASS_ARGS : sandboxArgs(runDir, [runDir, ...bridge, ...leadBuildRoots(request)]);
+  const box = runsAsPerson(request) ? BYPASS_ARGS : sandboxArgs(runDir, boxRoots(request, runDir, bridge));
+  return request.worker ? [...box, ...workerWebSearch(request)] : box;
+}
+
+/**
+ * The session's box as the app server's config: the same box `codex exec` would get, asking first
+ * (`on-request`) when the session is checked in Auto (`checksInAuto`).
+ */
+function serverBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
+  if (runsAsPerson(request)) return BYPASS_CONFIG_ARGS;
+  const box = sandboxArgs(runDir, boxRoots(request, runDir, bridge), { asks: checksInAuto(request) });
+  return request.worker ? [...box, ...workerWebSearch(request)] : box;
+}
+
+/** The folders a boxed session writes: a worker's (`workerRoots`); else its folder, the bridge's and the build a lead leads. */
+function boxRoots(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
+  if (request.worker) return workerRoots(request, runDir, bridge);
+  return [runDir, ...bridge, ...leadBuildRoots(request)];
 }
 
 /**
@@ -2172,23 +2293,22 @@ function workerWebSearch(request: DelegateRequest): string[] {
 }
 
 /**
- * A worker's box. A writer of a Bypass chat has none: the person chose Bypass, so it runs as
- * Codex's own Bypass does (the never-touch list is then named in its brief only). In every other
- * mode it never asks (`approval_policy=never`), writes only its write roots and has no network; its
- * box never stops reads, so the never-touch list holds for its writes (and is named in its brief).
+ * A worker's box's folders. A writer of a Bypass chat has no box: the person chose Bypass, so it
+ * runs as Codex's own Bypass does (the never-touch list is then named in its brief only). In every
+ * other mode it writes only its write roots and has no network; its box never stops reads, so the
+ * never-touch list holds for its writes (and is named in its brief). In Auto it may ask to run a
+ * command beyond its box, which the Auto check settles (`checksInAuto`); otherwise it never asks.
  * Plan and a reader start elsewhere and write only the studio's bridge.
  */
-function workerBox(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
+function workerRoots(request: DelegateRequest, runDir: string, bridge: string[]): string[] {
   const seat = request.worker;
-  if (!seat || startsElsewhere(request)) return sandboxArgs(runDir, [runDir, ...bridge]);
-  if (runsAsPerson(request)) return BYPASS_ARGS;
+  if (!seat || startsElsewhere(request)) return [runDir, ...bridge];
   // Its box cannot deny inside a writable folder: none that is, holds or sits in a never-touch root.
   const writes = writableRoots(
     seat.writeRoots.map((dir) => path.resolve(dir)),
     seat.neverTouch,
   );
-  const roots = [...new Set([path.resolve(runDir), ...bridge, ...writes])];
-  return sandboxArgs(runDir, roots);
+  return [...new Set([path.resolve(runDir), ...bridge, ...writes])];
 }
 
 /**
@@ -2213,15 +2333,21 @@ const APP_SERVER_ISOLATION_ARGS = ["-c", "mcp_servers={}"];
  * pointed at (plus the run's own capture output, which it must be able to read and the studio
  * writes); a read-only session — the playtester — may look and talk but never touch.
  * `approval_policy=never` is what makes it non-interactive: there is nobody to ask, so a command
- * the sandbox refuses fails honestly instead of hanging on a prompt nobody will see.
+ * the sandbox refuses fails honestly instead of hanging on a prompt nobody will see. A session
+ * checked in Auto (`asks`, only on the app server, which answers each ask) runs `on-request`
+ * instead: Codex asks before such a command, and the Auto check decides.
  */
-function sandboxArgs(runDir: string, roots: string[] = [runDir], network = false): string[] {
+function sandboxArgs(
+  runDir: string,
+  roots: string[] = [runDir],
+  { network = false, asks = false }: { network?: boolean; asks?: boolean } = {},
+): string[] {
   return [
     "-c",
     'sandbox_mode="workspace-write"',
     "-c",
-    'approval_policy="never"',
-    // One writable place (a worker's write roots: `workerBox`). For a builder that is the workspace it was hired for; for a
+    asks ? 'approval_policy="on-request"' : 'approval_policy="never"',
+    // One writable place (a worker's write roots: `workerRoots`). For a builder that is the workspace it was hired for; for a
     // session that may look but never touch (the playtester) it is a scratch folder holding
     // nothing but the studio's own bridge, which leaves the build under test read-only at the
     // OS boundary rather than by request. Read stays wide: stills the user named and the run's
@@ -2300,6 +2426,12 @@ export function hostSkillSuppressionArgs(skillFiles: readonly string[]): string[
 const STUDIO_OWNED_FEATURE_ARGS = HOST_SKILL_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]);
 /** How long after the app server refused dynamic tools, or never answered, they are tried again. */
 const DYNAMIC_TOOLS_RETRY_MS = 30 * MINUTE_MS;
+/**
+ * The oldest Codex CLI whose app server a session checked in Auto runs on: its v2 approvals, its
+ * steer and its resume, as driven against CLI 0.159.2 (`codex-sandbox-cli.test.ts`). An older one
+ * keeps `codex exec`, where the session never asks.
+ */
+const CODEX_APP_SERVER_AUTO_MIN_VERSION = CODEX_DYNAMIC_TOOLS_MIN_VERSION;
 /** How long `codex features list` may take before its listing counts as unreadable. */
 const FEATURES_LIST_TIMEOUT_MS = 15 * SECOND_MS;
 /** A feature name as `codex features list` prints it. */

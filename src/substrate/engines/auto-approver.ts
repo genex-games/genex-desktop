@@ -2,9 +2,10 @@
  * Auto for an engine with no auto-approval classifier of its own: the same engine and model,
  * asked in a call of its own with a clean context (no session history, no tools), whether one risky
  * action may run. Claude Code keeps its own Auto; a local model's session (Bonsai, OpenRouter, a
- * local server) asks this check before each command it runs in Auto (local-session-permissions.ts).
- * The check never allows by default: an answer it cannot read, a failed call or a timeout asks the
- * person instead, as Manual would.
+ * local server) asks this check before each command it runs in Auto (local-session-permissions.ts),
+ * and a Codex session in Auto before each action Codex asks to run beyond its box (codex.ts, on the
+ * app server). The check never allows by default: an answer it cannot read, a failed call or a
+ * timeout asks the person instead, as Manual would.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import { AUTO_APPROVER_SYSTEM, autoApproverAsk } from "./auto-approver-prompts.ts";
@@ -30,7 +31,8 @@ export interface AutoApproval {
 /** What the check is asked with: the session's own engine's completion and model, the action, where. */
 export interface AutoApprovalAsk {
   complete: (request: CompleteRequest) => Promise<CompleteResponse>;
-  model: string;
+  /** The session's own model; none when it runs on its engine's default. */
+  model?: string | undefined;
   cwd: string;
   ask: PermissionAsk;
   signal: AbortSignal;
@@ -63,7 +65,7 @@ export async function autoApprove({ complete, model, cwd, ask, signal }: AutoApp
   const action = { title: ask.title ?? ask.tool, tool: ask.tool, input: inputOf(ask), cwd };
   try {
     const answer = await complete({
-      model,
+      ...(model ? { model } : {}),
       systemPrompt: AUTO_APPROVER_SYSTEM,
       messages: [{ role: "user", content: autoApproverAsk(action) }],
       maxTokens: AUTO_CHECK_TOKENS,
