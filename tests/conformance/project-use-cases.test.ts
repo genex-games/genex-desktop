@@ -162,7 +162,7 @@ before(async () => {
   await mkdir(cases);
   lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
     // Looks go to the stub and jobs to a recording spawn: nothing here sees the screen or runs a build.
     appLook: stubAppLook(),
     jobSpawn: recordingJobSpawn,

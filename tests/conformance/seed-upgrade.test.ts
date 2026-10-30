@@ -303,7 +303,6 @@ describe("seed upgrade baseline at boot", () => {
         engines: [],
         sandbox: false,
         execPath: process.execPath,
-        executionPolicy: { runBackgroundImprovement: false },
       });
       await core.init();
       return core;
@@ -1023,7 +1022,6 @@ describe("seed upgrade across the harness step flag", () => {
         engines: [],
         sandbox: false,
         execPath: process.execPath,
-        executionPolicy: { runBackgroundImprovement: false },
       });
       closeBeforeCleanup(() => core.stop());
       await core.init();

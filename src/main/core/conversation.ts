@@ -313,7 +313,6 @@ export class ConversationService {
 
   async #send(text: string, options: ComposerSendOptions): Promise<void> {
     const sentAt = Date.now();
-    this.#x.selfImprovement.touchActivity();
     if (await this.#requestPlanReview(text, options, sentAt)) return;
     const target = await this.#messageTarget(text, options);
     const tags = await this.#resolveTags(target, options);
@@ -1005,7 +1004,6 @@ export class ConversationService {
    * way but keeps the queue held (`resumeQueue: false`): what waits there leaves with the rewind.
    */
   async stopThread(threadId: string, options: { resumeQueue?: boolean } = {}): Promise<void> {
-    this.#x.selfImprovement.touchActivity();
     // A plan being written is a send still on its way: cancel it first, or waiting for sends below
     // would wait for the whole plan. A Stop pressed while its message was still sending is for that
     // message: let it reach the chat's queue first, or the harness would answer it after the Stop

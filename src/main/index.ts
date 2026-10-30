@@ -879,10 +879,7 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
     const chatFixture = isChatFixture(dev.fixture);
     return {
       gamesRoot: dev.games,
-      executionPolicy: {
-        allowedProjectRoot: dev.games,
-        ...(fixtureProviders ? { runBackgroundImprovement: false } : {}),
-      },
+      executionPolicy: { allowedProjectRoot: dev.games },
       ...(fixtureProviders
         ? {
             engines: fixtureEngines(
@@ -901,7 +898,6 @@ function launchCoreOptions(): Partial<ConstructorParameters<typeof StudioCore>[0
         new OllamaEngine({ ...(ollamaHost ? { host: ollamaHost } : {}) }),
         ...fixtureEngines().filter((e) => e.id !== EngineId.Ollama),
       ],
-      executionPolicy: { runBackgroundImprovement: false },
     };
   // Games live in a plain visible folder, not buried in Library — Finder should show them.
   return { gamesRoot: normalGamesFolder(app.getPath("home")) };
@@ -2180,11 +2176,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
     fullScreen: { enter: () => gameScreen?.enter(), active: () => gameScreen?.active() ?? false },
   });
   registerRunsIpc(handle, { core: studio, runSummaryReader, keepAwake, pushUiEvent, appendErrorDurably });
-  registerLearningIpc(handle, {
-    core: studio,
-    scriptedImprovementPass: fixtureProviders && dev?.fixture === FixtureName.StudioActivity,
-    pushUiEvent,
-  });
+  registerLearningIpc(handle, { core: studio });
   registerSettingsIpc(handle, {
     core: studio,
     diagnostics: () => diagnosticsReport(studio),

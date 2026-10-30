@@ -223,8 +223,8 @@ renderer or shared), and the seed cannot import the app.
 1. Test first: extend `tests/conformance/seed-contracts.test.ts` with the input both copies must
    answer the same way.
 2. Change the seed's copy in `src/harness-seed/loop/*.ts` and the app's typed copy in
-   `src/shared/` (`coordinator.ts`, `message-queue.ts`, `model-roles.ts`, `skill-edits.ts`, or a
-   new module beside them) in the same change.
+   `src/shared/` (`coordinator.ts`, `message-queue.ts`, `model-roles.ts`, or a new module beside
+   them) in the same change.
 3. An existing profile keeps an agent-edited seed file on upgrade, so the app's copy must still
    read records an older seed wrote.
 

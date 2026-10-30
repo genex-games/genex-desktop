@@ -247,11 +247,7 @@ export interface PreviewState {
 /** The self-improvement and recovery flags, timers and queues. */
 export interface ImprovementState {
   applyChain: Promise<unknown>;
-  architectRunning: boolean;
-  autoApplying: boolean;
   readonly changeDiffs: Map<string, string>;
-  idleTimer: NodeJS.Timeout | null;
-  lastActivity: number;
   pendingUpdateId: string | null;
   recovering: boolean;
   seedReport: SeedUpgradeReport | null;
@@ -380,11 +376,7 @@ export function unservedPreviews(): PreviewState {
 export function freshImprovementState(): ImprovementState {
   return {
     applyChain: Promise.resolve(),
-    architectRunning: false,
-    autoApplying: false,
     changeDiffs: new Map(),
-    idleTimer: null,
-    lastActivity: Date.now(),
     pendingUpdateId: null,
     recovering: false,
     seedReport: null,

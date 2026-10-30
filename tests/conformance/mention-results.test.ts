@@ -81,7 +81,7 @@ describe("sending and retrying @ tags", () => {
         return [`assets/library/job-1/${generationId}.glb`];
       },
     };
-    lite = await coreLite({ executionPolicy: { runBackgroundImprovement: false }, mentionSources: sources });
+    lite = await coreLite({ mentionSources: sources });
     core = lite.core;
     core.host.dispatch = async (action) => {
       sent.push(action);

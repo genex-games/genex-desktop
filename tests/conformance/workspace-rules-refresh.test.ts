@@ -346,7 +346,7 @@ describe("a folder whose ignore file says what no pattern can be made of", () =>
     await mkdir(cases);
     lite = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
     });
   });
   after(() => lite.close());

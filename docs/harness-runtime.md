@@ -112,8 +112,6 @@ reaches the agent as the tool result with the compiler's lines (bounded), and no
 snapshotted. A missing compiler, a timeout or a compiler failure refuses too; nothing reads them as
 a pass. A passing fork's code is remembered by fingerprint, and the after-snapshot the tool asks to
 be healthy is healthy when the live code is exactly that code — a rewind target without a restart.
-The architect's fork (`SelfImprovementService.runArchitectJob`) uses the same fork, type check and
-boot, plus the loop self-test.
 
 How the loop's code is laid out. The modes keep their own control flow — `director.ts` (the
 run, with its parts under `loop/director/`: `setup.ts` builds the run as one explicit object and opens its worker pool,

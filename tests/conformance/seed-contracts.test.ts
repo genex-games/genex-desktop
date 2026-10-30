@@ -38,7 +38,6 @@ import {
 import * as seedJudgeProvenance from "../../src/harness-seed/loop/judge-provenance.ts";
 import * as seedRunDispatch from "../../src/harness-seed/loop/run-dispatch.ts";
 import * as seedRunEvents from "../../src/harness-seed/loop/run-events.ts";
-import * as seedSkills from "../../src/harness-seed/loop/skills.ts";
 import { SteerDelivery as seedSteerDelivery } from "../../src/harness-seed/loop/steer-delivery.ts";
 import * as seedTime from "../../src/harness-seed/loop/time.ts";
 import { DelegationRefusal as seedDelegationRefusal } from "../../src/harness-seed/loop/director/lead-session.ts";
@@ -95,7 +94,6 @@ import {
   VerdictRule,
   recordedRunLoop,
 } from "../../src/shared/run-state.ts";
-import { applyEdits, SKILL_EDIT_OPS } from "../../src/shared/skill-edits.ts";
 import { EventKind, type EventEnvelope, MessageUsageSource } from "../../src/shared/event-log.ts";
 import { DIRECTOR_LOOP_ENV, harnessRunEnv, UNREAL_RUNNER_ENV, UnrealRunnerChoice } from "../../src/shared/protocol.ts";
 import * as seedEngineSeat from "../../src/harness-seed/loop/engine-seat.ts";
@@ -786,39 +784,6 @@ describe("the Unreal plugin's harness tools a save asks (plugins/unreal ↔ the 
     assert.deepEqual(seedLeadPluginTool, named);
     for (const name of Object.values(seedLeadPluginTool)) assert.ok(harness.has(name), name);
   });
-});
-
-describe("skill edits (shared/skill-edits.ts ↔ loop/skills.ts)", () => {
-  const skill =
-    "---\nname: pacing\ndescription: keep it moving\n---\n# Pacing\nShort rounds.\n<!-- SLOW_UPDATE -->\nNever touch this.\n<!-- SLOW_UPDATE -->\nTail.\n";
-  const edits: unknown[][] = [
-    SKILL_EDIT_OPS.map((op) => ({ op, anchor: "Short rounds.", text: "Shorter." })),
-    [{ op: "append", text: "- one more rule" }, { op: "append" }],
-    [
-      { op: "insert_after", anchor: "# Pacing", text: "Lead line." },
-      { op: "insert_after", text: "no anchor" },
-      { op: "insert_after", anchor: "  ", text: "blank" },
-    ],
-    [
-      { op: "replace", anchor: "Never touch this.", text: "x" },
-      { op: "delete", anchor: "Never" },
-      { op: "insert_after", anchor: "Never touch", text: "y" },
-    ],
-    [
-      { op: "replace", anchor: "missing", text: "x" },
-      { op: "delete", anchor: "Tail." },
-      { op: "rename", anchor: "Tail." },
-    ],
-    [
-      { op: "replace", anchor: "Short rounds.", text: 42 },
-      { op: "insert_after", anchor: "# Pacing" },
-    ],
-  ];
-  for (const list of edits) {
-    it(`replays ${JSON.stringify(list).slice(0, 80)} as the harness applied it`, () => {
-      assert.deepEqual(applyEdits(skill, list), seedSkills.applyEdits(skill, list as never));
-    });
-  }
 });
 
 describe("run budgets (shared/run-state.ts ↔ loop/chat-dispatch.ts)", () => {

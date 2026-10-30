@@ -121,7 +121,6 @@ import {
 import { HarnessHost, UpdateJournal, type UpdateRecord } from "../substrate/harness-host.ts";
 import { shortId } from "../substrate/ids.ts";
 import { ExportApprovals, sortedReview } from "./core/export-approvals.ts";
-import { ImprovementJournal } from "../substrate/improvement-journal.ts";
 import { McpRegistry } from "../substrate/mcp/registry.ts";
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { mcpSecretPort, type SecretPort } from "../substrate/mcp/store.ts";
@@ -300,7 +299,6 @@ const COVER_RENDERER = "renderer";
 
 /** settings.json as this build or an older one may have written it. */
 type SavedSettings = Partial<StudioSettings> & {
-  autoApplyImprovements?: boolean;
   /** The `DEFAULT_BUILDERS` in force when the file was written; older builds wrote none. */
   buildersDefault?: number;
   /** Written since self-improvement was stopped; a file without it was saved while learning started on. */
@@ -310,13 +308,6 @@ type SavedSettings = Partial<StudioSettings> & {
 /** Migration: self-improvement is stopped, so a file saved before the stop turns learning off once. */
 function savedLearning(saved: SavedSettings): boolean {
   return saved.learningStopped === true && saved.learning === true;
-}
-
-/** Migration: installs that had the old auto-apply switch off chose caution — keep it. */
-function savedSelfImproving(saved: SavedSettings): boolean {
-  if (saved.selfImproving !== undefined) return Boolean(saved.selfImproving);
-  if (saved.autoApplyImprovements !== undefined) return Boolean(saved.autoApplyImprovements);
-  return false;
 }
 
 /** The worker default in force when `saved` was written: the file's own record, else the older builds' default. */
@@ -388,7 +379,7 @@ export interface StudioCoreOptions {
   /** Notes each boot step as it finishes (`main/performance.ts`); a launch without diagnostics passes nothing. */
   markBoot?: (step: string) => void;
   engines?: Engine[];
-  executionPolicy?: { allowedProjectRoot?: string; runBackgroundImprovement?: boolean };
+  executionPolicy?: { allowedProjectRoot?: string };
   paths: StudioPaths;
   preview?: PreviewPort;
   /**
@@ -398,8 +389,6 @@ export interface StudioCoreOptions {
   createHeadlessPreview?: () => Promise<PreviewPort>;
   /** Max concurrent headless preview leases (default 4). */
   previewPoolMax?: number;
-  /** Idle-architect pacing — overridable so tests need not wait ten real minutes. */
-  improvementIdle?: { idleMs?: number; checkMs?: number; minGapMs?: number };
   /** `process.execPath`; in Electron this needs `runAsNode`. */
   execPath?: string;
   runAsNode?: boolean;
@@ -510,8 +499,6 @@ export class StudioCore {
   readonly ollamaSidecar: OllamaSidecar;
   /** Token bookkeeping + improvement-class caps, enforced at the engine seam (A9). */
   readonly budget: BudgetLedger;
-  /** Durable queued architect jobs, executed only when idle (A6, §6.5). */
-  readonly improvements: ImprovementJournal;
 
   // Set by init().
   store!: EventStore;
@@ -580,8 +567,6 @@ export class StudioCore {
   #started = false;
   #settings: StudioSettings = {
     learning: false,
-    selfImproving: false,
-    architect: false,
     buildersMax: DEFAULT_BUILDERS,
     agentsMax: DEFAULT_POOL_MAX,
     blender: true,
@@ -656,7 +641,6 @@ export class StudioCore {
     this.journal = new UpdateJournal(this.layout.updates);
     this.ollamaSidecar = new OllamaSidecar({ ...(options.ollamaHost ? { host: options.ollamaHost } : {}) });
     this.budget = new BudgetLedger({ file: path.join(options.paths.userData, "budget-ledger.json") });
-    this.improvements = new ImprovementJournal(path.join(options.paths.userData, "improvements"));
     this.#connections = new ConnectionService(this, (threadId) => this.#threadBusy(threadId));
     this.#x = this.#createInternals();
     this.hooks = new HookService(this, this.#x, options.hooks ?? {});
@@ -1638,11 +1622,6 @@ export class StudioCore {
     this.#activityWarmup = setTimeout(() => void this.activityItems().catch(() => {}), ACTIVITY_WARMUP_DELAY_MS);
     this.#activityWarmup.unref?.();
     void this.#probeSubscriptions();
-
-    // Self-improving background (A6): requeue any job the last shutdown interrupted, then
-    // watch for idle windows. No clock scheduling — "nightly" is dead.
-    await this.improvements.sweep().catch(() => {});
-    if (this.options.executionPolicy?.runBackgroundImprovement !== false) this.#selfImprovement.startIdleWatch();
     await this.#settlePendingUpdates(pending, rewound);
   }
 
@@ -1736,8 +1715,6 @@ export class StudioCore {
     await this.plugins?.sandboxJobs?.stopAll().catch(() => {});
     this.#consent.cancel({}, "stop");
     this.#permissions.cancel({}, ToolPermissionBy.Stop);
-    if (this.#x.idleTimer) clearInterval(this.#x.idleTimer);
-    this.#x.idleTimer = null;
     if (this.#activityWarmup) clearTimeout(this.#activityWarmup);
     // No orphan contractors: a delegation must not outlive the studio that briefed it. (The
     // first live build's contractor survived an app restart and collided with its successor.)
@@ -2067,14 +2044,7 @@ export class StudioCore {
     if (this.#x.previewPool && this.options.previewPoolMax === undefined)
       this.#x.previewPool.max = this.#settings.agentsMax;
     this.emit(UiEvent.SettingsChanged, this.settings);
-    // Turning automatic apply (or learning itself) on sweeps anything already waiting.
-    if (this.#autoApplies()) void this.#selfImprovement.autoApplyStaged().catch(() => {});
     return this.settings;
-  }
-
-  /** Learning and self-improving both on: a staged improvement applies itself. */
-  #autoApplies(): boolean {
-    return this.#settings.learning && this.#settings.selfImproving;
   }
 
   #settingsFile(): string {
@@ -2087,8 +2057,6 @@ export class StudioCore {
       const buildersMax = savedBuildersMax(parsed);
       this.#settings = {
         learning: savedLearning(parsed),
-        selfImproving: savedSelfImproving(parsed),
-        architect: parsed.architect === true,
         buildersMax,
         agentsMax: buildersMax + LEAD_WINDOWS,
         blender: parsed.blender !== false,
@@ -2478,7 +2446,7 @@ export class StudioCore {
       ...runsRpc(this, this.#x),
       ...jobsRpc(this, this.#x),
       ...engineRpc(this, this.#x),
-      ...studioRpc(this, this.#x),
+      ...studioRpc(this),
       ...previewRpc(this, this.#x),
       ...desktopRpc(this, this.#x),
     };
@@ -2957,7 +2925,6 @@ export class StudioCore {
   }
 
   async dispatchRun(run: Extract<DispatchAction, { type: typeof DispatchActionType.RunStart }>["run"]): Promise<void> {
-    this.#selfImprovement.touchActivity();
     // A run is that game's story: its briefs, iterations and verdict belong in its own chat.
     const threadId = await this.threadForGame(run.project);
     this.#rewind.assertNotRewinding(threadId);
@@ -3001,7 +2968,6 @@ export class StudioCore {
   }
 
   async #resumeAutopilot(runId: string): Promise<void> {
-    this.#selfImprovement.touchActivity();
     const loopPredatesResume =
       this.host.state === HarnessState.Ready && !this.host.hasCapability(HarnessCapability.Autopilot);
     if (loopPredatesResume) throw new CodedError(ResumeRefusal.Unsupported, MESSAGE.resumeUnsupported());
@@ -3035,38 +3001,7 @@ export class StudioCore {
     return this.planReviews.answer(thread, id, approved);
   }
 
-  // ── self-improvement ─────────────────────────────────────────────────────────────────────
-  runIdleCheckNow(
-    ...args: Parameters<SelfImprovementService["runIdleCheckNow"]>
-  ): ReturnType<SelfImprovementService["runIdleCheckNow"]> {
-    return this.#selfImprovement.runIdleCheckNow(...args);
-  }
-
-  /**
-   * Apply a staged SkillOpt proposal. By default this is the human-review path;
-   * with the auto-apply setting on it is also called with `approvedBy: "auto"` the moment a
-   * proposal is staged. Snapshot before and after, keep a `best_skill` copy, and record the
-   * approval in the log so the accepted-edit history is inspectable either way. `key` names
-   * the suggestion the person saw; the index is only a fallback for callers without one.
-   */
-  async acceptStagedProposal(
-    index: number,
-    approvedBy: "human" | "auto" = "human",
-    key?: { at?: string; skill?: string },
-  ): Promise<{ skill: string }> {
-    // One change at a time: with self-improving ON, the auto-sweep and a human Apply click can
-    // land together, and two concurrent snapshots fight over the same git index.lock.
-    return this.#selfImprovement.selfChangeTurn(() =>
-      this.#selfImprovement.acceptStagedProposal(index, approvedBy, key),
-    );
-  }
-
-  discardStagedProposal(
-    ...args: Parameters<SelfImprovementService["discardStagedProposal"]>
-  ): ReturnType<SelfImprovementService["discardStagedProposal"]> {
-    return this.#selfImprovement.discardStagedProposal(...args);
-  }
-
+  // ── the harness's own changes ────────────────────────────────────────────────────────────
   /**
    * Undo one learned change and nothing else. Its own diff is reversed on the file it wrote,
    * so later changes, the per-game lessons and the app's own updates stay where they are —

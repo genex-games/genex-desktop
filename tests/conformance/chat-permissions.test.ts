@@ -46,7 +46,7 @@ describe("game chat permissions", () => {
 
   before(async () => {
     // No project root policy: one test adopts a game from outside the studio's folders.
-    lite = await coreLite({ executionPolicy: { runBackgroundImprovement: false }, onUiEvent: (e) => uiEvents.push(e) });
+    lite = await coreLite({ onUiEvent: (e) => uiEvents.push(e) });
     core = lite.core;
     // No harness in a lite core: a dispatch reaches nothing, and a message is still the person's.
     core.host.dispatch = async () => undefined;

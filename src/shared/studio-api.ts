@@ -82,7 +82,6 @@ import type { BackdropShaderRequest, BackdropShaderResult } from "./backdrop-sha
 import type { FolderInspection, GameLocation, GameName, GameNameRequest, GameProject } from "./game-project.ts";
 import type { BuildProblem, InstallResult } from "./build-problem.ts";
 import type { LoopRunReview } from "./run-review.ts";
-import type { StagedTarget } from "./self-change-files.ts";
 import type { CodexLoginState } from "./codex-login.ts";
 import type { ClaudeLoginState } from "./claude-login.ts";
 import type { ProjectAsset, ProjectAssetRead, ProjectAssets } from "./game-assets.ts";
@@ -162,22 +161,6 @@ export interface SelfChange {
   at: string;
   healthy: boolean;
   diff: string;
-}
-
-export interface StagedProposal {
-  /** What it changes (`self-change-files.ts`): a skill when absent, or the lessons every brief carries. */
-  target?: StagedTarget;
-  skill: string;
-  file: string;
-  proposedText: string;
-  currentText: string;
-  /** The blind gate's verdict on a skill edit; lessons are not gated, so they carry none. */
-  gate?: { accept: boolean; votes: string; reason: string };
-  rationale: string;
-  /** Plain-language description for the person using the app; absent on older proposals. */
-  title?: string;
-  summary?: string[];
-  at: string;
 }
 
 /** One catalog model judged against this Mac (Settings → Local Models). */
@@ -422,7 +405,7 @@ export interface StudioApi {
   updateGame(project: string, patch: import("./game-library.ts").GameUpdate): Promise<GameProject>;
   removeGame(project: string): Promise<void>;
   snapshots(): Promise<SnapshotRecord[]>;
-  selfChanges(): Promise<{ changes: SelfChange[]; staged: StagedProposal[] }>;
+  selfChanges(): Promise<{ changes: SelfChange[] }>;
   studioActivity(): Promise<import("./studio-activity.ts").StudioActivityItem[]>;
   /** With `graphFrom`, `graphEvents` holds only the events after it; `graphEventsFrom` says where they start. */
   runSummary(
@@ -436,12 +419,9 @@ export interface StudioApi {
     listener: (summary: import("./run-summary.ts").RunSummary) => void,
   ): () => void;
   runReview(project: string, runId?: string): Promise<LoopRunReview>;
-  staged(): Promise<StagedProposal[]>;
   settings(): Promise<StudioSettingsView>;
   setSettings(patch: {
     learning?: boolean;
-    selfImproving?: boolean;
-    architect?: boolean;
     buildersMax?: number;
     agentsMax?: number;
     blender?: boolean;
@@ -850,10 +830,6 @@ export interface StudioApi {
   /** Wrap up: the builders finish what they are on, then the run integrates, checks and shows. */
   finishRun(runId: string, threadId: string): Promise<boolean>;
   resumeAutopilot(runId: string): Promise<boolean>;
-  startSkillOpt(): Promise<boolean>;
-  /** `key` names the suggestion the person saw; the index alone names whatever sits there now. */
-  acceptProposal(index: number, key?: { at?: string; skill?: string }): Promise<{ skill: string }>;
-  discardProposal(index: number, reason?: string, key?: { at?: string; skill?: string }): Promise<boolean>;
   exportGame(project: string): Promise<{ dir: string; files: number; included: string[]; excluded: string[] }>;
   modelInstallStatus(): Promise<import("./model-install.ts").ModelInstallJob | null>;
   /** Install Claude Code or Codex with its vendor's own installer, or join the install already running. */
@@ -920,11 +896,8 @@ export interface StudioApi {
 }
 
 export interface StudioSettingsView {
-  /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
+  /** Self-improvement: off, Studio changes nothing about itself. */
   learning: boolean;
-  /** Apply suggestions automatically, while learning is on. */
-  selfImproving: boolean;
-  architect?: boolean;
   /** Maximum builders a run may use at once; the lead decides how many it starts. */
   buildersMax?: number;
   agentsMax?: number;

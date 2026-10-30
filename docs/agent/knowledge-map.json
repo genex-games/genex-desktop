@@ -146,7 +146,6 @@
         "src/main/core/**",
         "src/shared/coordinator.ts",
         "src/shared/message-queue.ts",
-        "src/shared/skill-edits.ts",
         "scripts/check-boundaries.ts",
         "scripts/boundary-allowlist.json",
         "tests/conformance/seed-contracts.test.ts"

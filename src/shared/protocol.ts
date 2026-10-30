@@ -207,7 +207,6 @@ export type DispatchAction =
       /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
       judge?: string;
     }
-  | { type: "skillopt_start"; threadId: string; options?: Record<string, unknown> }
   | { type: "boot_notice"; notice: BootNotice };
 
 /** The `type` of a dispatch action: the work the host hands the harness. Wire names: never rename one. */
@@ -226,7 +225,6 @@ export const DispatchActionType = {
   DirectorTool: "director_tool",
   WorkerTool: "worker_tool",
   ChatJudge: "chat_judge",
-  SkilloptStart: "skillopt_start",
   BootNotice: "boot_notice",
 } as const satisfies Record<string, DispatchAction["type"]>;
 export type DispatchActionType = DispatchAction["type"];
@@ -245,7 +243,6 @@ export const HarnessCapability = {
   Autopilot: "autopilot",
   RunStart: "run.start",
   RunStop: "run.stop",
-  Skillopt: "skillopt",
   Compact: "compact",
   Selftest: "selftest",
   Scoreboard: "scoreboard",

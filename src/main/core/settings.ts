@@ -30,27 +30,11 @@ export const LEGACY_DEFAULT_BUILDERS = 2;
 export interface StudioSettings {
   /**
    * Self-improvement, the switch in Studio's header (default off: self-improvement is stopped, and
-   * an install saved before the stop is switched off once). Off, Studio learns nothing: no
-   * learning pass after a run or on request, no lessons, recipe or catalogue statistics (the
-   * harness asks `learning.enabled` before each), no automatic apply, no architect, and no change
-   * to the harness's own code, prompts or skills (`guardian.write_self` refuses). What it already
-   * learned stays in use and can still be undone; the log keeps recording.
+   * an install saved before the stop is switched off once). Off, the harness changes nothing of its
+   * own code, prompts or skills (`guardian.write_self` refuses). What it already changed stays in
+   * use and can still be undone; the log keeps recording.
    */
   learning: boolean;
-  /**
-   * Apply suggestions automatically (Settings → Harness, default off on a fresh install): staged SkillOpt proposals
-   * auto-apply the moment they land, and idle-time architect jobs may run. Off = they wait for
-   * review. Only while `learning` is on. Succeeds the old `autoApplyImprovements` key — an
-   * existing install that had auto-apply off keeps its choice.
-   */
-  selfImproving: boolean;
-  /**
-   * The idle-time architect (structural self-rewrites). Off by default since the v2 loop
-   * landed: a proposal must pass the loop's self-test in its fork, not just
-   * boot — and until the v2 seed has stabilised across runs, nobody should be rewriting it
-   * unattended. The check catalogue and recipe library are the self-improvement that runs.
-   */
-  architect: boolean;
   /**
    * Maximum concurrent workers (Settings → Harness): the most builders a run may use at once. A ceiling,
    * not a target — the lead decides how many it starts. Four by default; twelve is the most offered.

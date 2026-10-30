@@ -73,8 +73,8 @@ every user's workspace, where in-app engines read them.
 
 - `renderer/` and `shared/` are browser code: no Node, Electron, main, preload or substrate
   runtime imports (`npm run verify:architecture`). Contracts live in `shared/`, including the
-  host's copies of seed contracts (`coordinator.ts`, `message-queue.ts`, `model-roles.ts`,
-  `skill-edits.ts`); nothing in the app imports `harness-seed/`.
+  host's copies of seed contracts (`coordinator.ts`, `message-queue.ts`, `model-roles.ts`);
+  nothing in the app imports `harness-seed/`.
 - Renderer state is read only through the selector hooks in `renderer/state/hooks.ts`, and
   `localStorage` keys only through `renderer/storage.ts`. A large panel keeps its parts in a
   folder beside it (`panels/inspector/`, `panels/run-graph/`, `panels/stage/`, `panels/plugins/`,

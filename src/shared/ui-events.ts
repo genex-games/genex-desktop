@@ -201,16 +201,8 @@ export interface UiEventMap {
   "connections.changed": { revision: number };
   "connections.applied": { threadId: string; revision: number };
 
-  // — self-improvement —
+  // — settings and the harness's own changes —
   "settings.changed": StudioSettingsView;
-  "skillopt.accepted": { skill?: string; approvedBy?: "human" | "auto"; gate?: unknown };
-  "skillopt.discarded": { skill: string };
-  "skillopt.autoApplied": { skill: string };
-  "skillopt.autoApplyFailed": { error: string };
-  "skillopt.finished": HarnessRecord<{ note: string }>;
-  "skillopt.failed": { error?: string };
-  "improvement.finished": { id: string; status: "rejected" | "failed"; note: string };
-  "improvement.applied": { id: string; file: string; reason: string };
   "selfchange.undone": { snapshotId: string; file: string };
   "selfmod.edited": { file?: string; reason?: string };
   "selfmod.tool_installed": { file?: string; reason?: string };
@@ -312,14 +304,6 @@ export const UiEvent = {
   ConnectionsChanged: "connections.changed",
   ConnectionsApplied: "connections.applied",
   SettingsChanged: "settings.changed",
-  SkilloptAccepted: "skillopt.accepted",
-  SkilloptDiscarded: "skillopt.discarded",
-  SkilloptAutoApplied: "skillopt.autoApplied",
-  SkilloptAutoApplyFailed: "skillopt.autoApplyFailed",
-  SkilloptFinished: "skillopt.finished",
-  SkilloptFailed: "skillopt.failed",
-  ImprovementFinished: "improvement.finished",
-  ImprovementApplied: "improvement.applied",
   SelfchangeUndone: "selfchange.undone",
   SelfmodEdited: "selfmod.edited",
   SelfmodToolInstalled: "selfmod.tool_installed",

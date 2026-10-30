@@ -37,7 +37,6 @@ export const RunEvent = {
   IntegrationHealth: "integration_health",
   IntegrationLedger: "integration_ledger",
   IntegrationMerge: "integration_merge",
-  OptimizationUpdated: "optimization_updated",
   RunControl: "run_control",
   RunFinished: "run_finished",
   RunFollowupRequested: "run_followup_requested",

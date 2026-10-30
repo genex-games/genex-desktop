@@ -356,7 +356,7 @@ describe("plugin_check, the chat's own session's", () => {
     root = await realpath(await tmpDir("studio-plugin-check-"));
     lite = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
     });
   });
   after(async () => {
@@ -452,7 +452,7 @@ describe("plugins_find, the harness's", () => {
     const root = await realpath(await tmpDir("studio-plugins-find-local-"));
     const lite = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
     });
     try {
       assert.equal(lite.core.plugins.enabled(GENEX_PLUGIN_ID), true, "the Genex plugin is on");

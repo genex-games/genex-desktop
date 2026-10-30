@@ -998,11 +998,8 @@ export type LanguageChoice = Locale | "system";
 // ↑ src/shared/locale.ts
 
 export interface StudioSettingsView {
-  /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
+  /** Self-improvement: off, Studio changes nothing about itself. */
   learning: boolean;
-  /** Apply suggestions automatically, while learning is on. */
-  selfImproving: boolean;
-  architect?: boolean;
   /** Maximum builders a run may use at once; the lead decides how many it starts. */
   buildersMax?: number;
   agentsMax?: number;
@@ -1950,7 +1947,6 @@ export interface HarnessHostApi {
       settings: StudioSettingsView;
       games: Array<{ name: string; title: string }>;
       recentActivity: StudioActivityItem[];
-      pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
   /**
@@ -2411,6 +2407,5 @@ export type DispatchAction =
       /** The engine plugin's judge to play as (`PluginJudge.id`), checked by the host against the game's judges. */
       judge?: string;
     }
-  | { type: "skillopt_start"; threadId: string; options?: Record<string, unknown> }
   | { type: "boot_notice"; notice: BootNotice };
 // ↑ src/shared/protocol.ts

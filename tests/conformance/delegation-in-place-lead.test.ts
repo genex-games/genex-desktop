@@ -79,7 +79,7 @@ async function inPlaceWorld() {
   const announced: string[] = [];
   const lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
     consentTimeoutMs: CONSENT_WAIT_MS,
     onUiEvent: (event) => {
       announced.push(event.type);

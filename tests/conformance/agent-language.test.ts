@@ -61,7 +61,7 @@ describe("the agents' language", () => {
   });
 
   it("is named by the host as main speaks it", async () => {
-    const studio = studioRpc({} as Parameters<typeof studioRpc>[0], {} as Parameters<typeof studioRpc>[1]);
+    const studio = studioRpc({} as Parameters<typeof studioRpc>[0]);
     setLocale(Locale.Japanese, {});
     try {
       assert.deepEqual(await studio[HostMethod.StudioLanguage](), { tag: "ja", name: "日本語" });

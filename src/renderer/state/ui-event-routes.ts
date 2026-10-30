@@ -10,8 +10,6 @@ export interface UiEventReads {
   events: boolean;
   threads: boolean;
   games: boolean;
-  /** Self-improvement suggestions waiting. */
-  staged: boolean;
   engines: boolean;
   plugins: boolean;
   /** Watched asset inventories: one game's (`project`), or every watched one (`null`). */
@@ -87,10 +85,9 @@ export function uiEventReads(event: UiEvent): UiEventReads {
   const type = event.type;
   const coordinatorRecord = type !== UiEvent.CoordinatorStatus && isUiEventIn(event, "coordinator.");
   return {
-    events: LOGGED.has(type) || isUiEventIn(event, "improvement.") || coordinatorRecord,
+    events: LOGGED.has(type) || coordinatorRecord,
     threads: THREADS.has(type),
     games: type === UiEvent.GameChanged,
-    staged: isUiEventIn(event, "skillopt."),
     engines: enginesChanged(event),
     plugins: type === UiEvent.PluginsChanged,
     assets: assetsRead(event),

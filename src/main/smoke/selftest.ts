@@ -171,7 +171,6 @@ async function bootStudio(resources: string, userData: string, uiEvents: UiEvent
     runAsNode: true,
     ollamaHost,
     engines: [new OllamaEngine({ host: ollamaHost })],
-    executionPolicy: { runBackgroundImprovement: false },
     onUiEvent: (event) => uiEvents.push(event),
   });
   owned.core = core;

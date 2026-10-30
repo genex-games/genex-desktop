@@ -461,7 +461,6 @@ export interface HarnessHostApi {
       settings: StudioSettingsView;
       games: Array<{ name: string; title: string }>;
       recentActivity: StudioActivityItem[];
-      pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
   /**

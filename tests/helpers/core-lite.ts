@@ -48,8 +48,7 @@ export async function coreLite(options: CoreLiteOptions = {}): Promise<CoreLite>
     gamesRoot,
     // No engine unless the test brings one: nothing probes an account, a CLI or a local model.
     engines: [],
-    executionPolicy: { allowedProjectRoot: gamesRoot, runBackgroundImprovement: false },
-    improvementIdle: { idleMs: 0, minGapMs: 0 },
+    executionPolicy: { allowedProjectRoot: gamesRoot },
     // Seatbelt is a process-wide singleton with proxy servers that keep the file alive; tests that
     // assert containment opt back in with `sandbox: true`.
     sandbox: false,

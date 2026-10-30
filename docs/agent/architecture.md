@@ -223,8 +223,8 @@ or `as never`.
 **Seed contracts.** The app never loads [`src/harness-seed/`](../../src/harness-seed/), and nothing
 under `src/shared` resolves where the seed runs. A rule both apply has a typed host copy in
 `src/shared` — the coordinator's tools and run reading (`coordinator.ts`), the follow-up queue
-(`message-queue.ts`), the model-role tables and presets (`model-roles.ts`), SkillOpt's bounded
-edits (`skill-edits.ts`) — and the seed keeps its own. `tests/conformance/seed-contracts.test.ts`
+(`message-queue.ts`) and the model-role tables and presets (`model-roles.ts`) — and the seed keeps
+its own. `tests/conformance/seed-contracts.test.ts`
 and `tests/conformance/providers.test.ts` replay the same inputs through both copies. Another
 two-copy rule: the engine-export refusal (`ENGINE_EXPORT_REFUSAL` in
 [`shape-words.ts`](../../src/shared/shape-words.ts) and the seed's `loopRunRefusal`). See the
@@ -539,14 +539,12 @@ crash interrupted is repaired at boot as paused, keyed on its journal artifact; 
 journal ([the full journal](#the-run-director-workers-and-judging)). The Mac is held awake from
 `run.keepawake` until `run.settled`.
 
-**Learned changes** are applied, listed and undone by the host
-([`src/main/self-changes.ts`](../../src/main/self-changes.ts)): SkillOpt's staged records (only
-`skills/<skill>.md`, or `library/contract-lessons.md` for `target: "lessons"`, whole on their staged
-text or replaying all their anchored edits; a planted link refuses it), the architect's, and
-the agent's own. Each records `post_snapshot_id`; **Undo this change** (`studio:selfchange.undo`)
-reverses its diff alone, recording `self_change_undone`. Rewinds restore `library/games`;
-`rollbackTo` refuses during a run, contractor or user turn. `StudioSettings.learning` gates
-automatic apply, the sweep, the architect and `studio:skillopt.start`.
+**The harness's own changes** are listed and undone by the host
+([`src/main/self-changes.ts`](../../src/main/self-changes.ts)): the agent's edits of its own files
+(`write_own_file`, `write_skill`, `install_tool`). Each records `post_snapshot_id`; **Undo this
+change** (`studio:selfchange.undo`) reverses its diff alone, recording `self_change_undone`.
+`rollbackTo` refuses during a run, contractor or user turn. `StudioSettings.learning` gates the
+agent's changes to its own files (`guardian.write_self`).
 
 ## The run: director, workers and judging
 

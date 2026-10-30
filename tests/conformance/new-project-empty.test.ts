@@ -43,7 +43,7 @@ before(async () => {
   await mkdir(places);
   lite = await coreLite({
     gamesRoot: path.join(root, "games"),
-    executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+    executionPolicy: { allowedProjectRoot: root },
   });
 });
 after(async () => {
@@ -342,7 +342,7 @@ describe("new projects start empty", () => {
     const root = await realpath(await tmpDir("studio-start-plan-"));
     const own = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
       onUiEvent: (event) => {
         if (event.type === UiEvent.GameChanged) changed.push((event.payload as { project: string }).project);
       },

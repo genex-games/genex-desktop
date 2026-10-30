@@ -728,19 +728,11 @@ describe("what each UI event makes the renderer read again", () => {
   const ev = (type: string, payload: unknown = {}): UiEvent => ({ type, payload }) as UiEvent;
 
   it("pulls logged events in live, and lists on their own changes", () => {
-    for (const type of [
-      "chat.message",
-      "run.finished",
-      "delegated.event",
-      "plugin.consent",
-      "improvement.applied",
-      "coordinator.queued",
-    ]) {
+    for (const type of ["chat.message", "run.finished", "delegated.event", "plugin.consent", "coordinator.queued"]) {
       assert.deepEqual(reads(ev(type)), ["events"], type);
     }
     assert.deepEqual(reads(ev("thread.bound")), ["events", "threads"]);
     assert.deepEqual(reads(ev("game.changed")), ["events", "games", "threads"]);
-    assert.deepEqual(reads(ev("skillopt.staged")), ["staged"]);
     assert.deepEqual(reads(ev("engines.changed")), ["engines"]);
     assert.deepEqual(reads(ev("model.pull", { model: "m", progress: { status: "pulling" } })), []);
     assert.deepEqual(reads(ev("model.pull", { model: "m", progress: { status: "success" } })), ["engines"]);
@@ -1204,9 +1196,9 @@ function rendererFiles(): string[] {
 describe("Settings → Permissions: Let agents control your computer", () => {
   it("is off unless the host's settings say it is on, and offered only on macOS and Windows", () => {
     assert.equal(computerControlOn(null), false, "before the settings load");
-    assert.equal(computerControlOn({ learning: true, selfImproving: false }), false, "an older host's view");
-    assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: false }), false);
-    assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: true }), true);
+    assert.equal(computerControlOn({ learning: true }), false, "an older host's view");
+    assert.equal(computerControlOn({ learning: true, computerControl: false }), false);
+    assert.equal(computerControlOn({ learning: true, computerControl: true }), true);
     assert.equal(computerControlOffered(StudioPlatform.Mac), true);
     assert.equal(computerControlOffered(StudioPlatform.Windows), true, "the desktop driver ships on Windows too");
     for (const platform of [StudioPlatform.Linux, ""])
@@ -1232,7 +1224,7 @@ describe("Settings → Permissions: Let agents control your computer", () => {
 
   it("the switch sends only this setting and shows what the host saved", async () => {
     const fake = fakeStudioApi();
-    fake.stub("setSettings", async () => ({ learning: true, selfImproving: false, computerControl: false }));
+    fake.stub("setSettings", async () => ({ learning: true, computerControl: false }));
     const view = await setComputerControl(fake.api, true);
     assert.deepEqual(fake.callsOf("setSettings"), [[{ computerControl: true }]]);
     assert.equal(computerControlOn(view), false, "the switch follows the host's answer, not the click");

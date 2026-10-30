@@ -38,7 +38,6 @@ import { seedItemsStore } from "./fixture-items.ts";
 import { seedGenexTerms } from "./fixture-genex-terms.ts";
 import { seedUnrealGame } from "./fixture-unreal.ts";
 import { seedUnrealChat } from "./fixture-unreal-chat.ts";
-import { setTimeout as sleep } from "node:timers/promises";
 import { StopReason } from "../../shared/engine-requests.ts";
 
 /** Why a fixture cannot be seeded. */
@@ -70,8 +69,6 @@ const HISTORY_FIXTURES: ReadonlySet<string> = new Set([
 ]);
 /** Events that push prior runs out of the renderer's bootstrap tail. */
 const NOISE_EVENTS = 650;
-/** How long a scripted improvement pass takes, so its progress can be seen. */
-const IMPROVEMENT_PASS_MS = 1500;
 
 /** The fixture game's page: a canvas that counts clicks, on the studio's own import map. Nothing on it is the studio's. */
 const FIXTURE_PAGE = `<!doctype html><html><body style="margin:0;background:#14233b;color:white"><canvas width="800" height="500"></canvas>
@@ -308,12 +305,4 @@ export async function activateChatFixture(
     return;
   }
   if (isChatFixture(fixture.fixture)) await activateLiveChat(core, fixture);
-}
-
-/**
- * Fixture sessions park real improvement passes, and the scripted one does what the real pass does
- * now: self-improvement was removed, so after its moment of work it stages and records nothing.
- */
-export async function fixtureImprovementPass(_core: StudioCore): Promise<void> {
-  await sleep(IMPROVEMENT_PASS_MS);
 }

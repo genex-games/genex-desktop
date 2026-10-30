@@ -226,7 +226,7 @@ describe("suggesting a Genex plugin, through the core", () => {
     await mkdir(places);
     lite = await coreLite({
       gamesRoot: path.join(root, "games"),
-      executionPolicy: { allowedProjectRoot: root, runBackgroundImprovement: false },
+      executionPolicy: { allowedProjectRoot: root },
     });
     lite.core.plugins.catalog = async () => [GODOT_ENTRY, { ...GODOT_ENTRY, manifest: BLENDER_MANIFEST }];
   });

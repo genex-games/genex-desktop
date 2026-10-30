@@ -2871,22 +2871,9 @@ export function permissionWords(plugin: string, prompt: string | undefined): str
 
 // ── Harness activity ──────────────────────────────────────────────────────────────────────
 
-/** The suggestions card in Activity and its exact-edit view (`ui/ProposalsTable.tsx`). */
+/** The exact-edit view of a change in Activity (`ui/ProposalsTable.tsx`). */
 export const SUGGESTION_WORDS = {
-  title: (count: number) =>
-    t(
-      "{count, plural, one {Harness suggests # change to how it builds} other {Harness suggests # changes to how it builds}}",
-      { count },
-    ),
-  subtitle: t("Nothing changes until you apply."),
-  include: (title: string) => t("Include: {title}", { title }),
-  fallbackSummary: t("Suggested after reviewing your recent builds."),
-  whatChanges: t("What changes"),
   seeExactEdit: t("See the exact edit"),
-  selected: (included: number, total: number) =>
-    t("{included} of {total} selected · you can undo later", { included, total }),
-  discard: t("Discard"),
-  apply: (count: number) => t("{count, plural, one {Apply # change} other {Apply # changes}}", { count }),
 } as const;
 
 /** Activity's header and its Self-improvement switch (`panels/ReviewPanel.tsx`). */

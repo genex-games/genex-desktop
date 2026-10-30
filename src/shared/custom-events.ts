@@ -94,7 +94,6 @@ export const CustomEvent = {
   IntegrationHealth: "integration_health",
   IntegrationLedger: "integration_ledger",
   IntegrationMerge: "integration_merge",
-  OptimizationUpdated: "optimization_updated",
   /** The studio resumed a paused run on its own (`main/core/auto-resume.ts`); written by the host only. */
   RunAutoResumed: "run_auto_resumed",
   RunControl: "run_control",

@@ -39,9 +39,6 @@ export { loopRunRefusal } from "./run-dispatch.ts";
 /** The status a thread has when nothing is working on it; the host reads it as the empty line. */
 const IDLE_STATUS = "idle";
 
-/** What a self-improvement request is answered with: the harness no longer learns or rewrites itself. */
-const SELF_IMPROVEMENT_GONE = "self-improvement was removed: Genex learns nothing from runs";
-
 /**
  * What this self can dispatch, reported in the bootstrap's ready message. A stale copy of this
  * file simply lacks the property — that absence is how the host knows not to hand an unattended
@@ -219,10 +216,6 @@ async function dispatch({ studio, messages, compactions, busyThreads }: Loop, ac
         stopRunsOf(studio);
         abortEngineWork(host);
       }
-      return;
-    case "skillopt_start":
-      // Self-improvement is gone: Genex no longer learns from runs or rewrites its own files.
-      host.notify("skillopt.finished", { note: SELF_IMPROVEMENT_GONE });
       return;
     case "compact":
       return holdingChat(compactions, action.threadId, compactOnRequest(studio, action));

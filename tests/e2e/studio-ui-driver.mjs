@@ -143,25 +143,6 @@ async function acceptance() {
       await js(`!!document.querySelector('[data-studio-composer] [aria-label^="Effort:"]')`),
     );
     await key("Escape");
-    await click('[aria-label="Look for improvements in recent builds"]');
-    check(
-      "Look for improvements shows progress on the button",
-      await until(`document.querySelector('[data-look-state]').dataset.lookState==='looking'`),
-    );
-    await wait(400);
-    check(
-      "the in-progress label is never clipped",
-      await js(
-        `(() => {const b=document.querySelector('[data-look-state]'),box=b.firstElementChild.getBoundingClientRect(),label=b.querySelector('[data-look-label="looking"]').getBoundingClientRect();return label.left>=box.left-0.5 && label.right<=box.right+0.5;})()`,
-      ),
-    );
-    // Self-improvement was removed: the pass finds nothing, and no suggestion waits to be applied.
-    check(
-      "the button reports Nothing new, and no suggestion appears",
-      await until(
-        `document.querySelector('[data-look-state]').dataset.lookState==='none' && !document.querySelector('[data-suggestion]')`,
-      ),
-    );
     const learningSwitch = '[data-learning-switch] [role="switch"]';
     check(
       "Self-improvement is one switch at the top right of Studio, on by default",
@@ -171,17 +152,15 @@ async function acceptance() {
     );
     await click(learningSwitch);
     check(
-      "switched off, Studio says it is not learning and offers no look for improvements",
+      "switched off, Studio says it is not learning",
       await until(
-        `document.querySelector(${JSON.stringify(learningSwitch)}).getAttribute('aria-checked')==='false' && !document.querySelector('[data-look-state]') && document.querySelector('[data-studio-learned]').textContent.includes('Self-improvement is off')`,
+        `document.querySelector(${JSON.stringify(learningSwitch)}).getAttribute('aria-checked')==='false' && document.querySelector('[data-studio-learned]').textContent.includes('Self-improvement is off')`,
       ),
     );
     await click("[data-learning-switch]");
     check(
       "the label turns it back on",
-      await until(
-        `document.querySelector(${JSON.stringify(learningSwitch)}).getAttribute('aria-checked')==='true' && !!document.querySelector('[data-look-state]')`,
-      ),
+      await until(`document.querySelector(${JSON.stringify(learningSwitch)}).getAttribute('aria-checked')==='true'`),
     );
 
     await type("hi");
