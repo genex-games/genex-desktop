@@ -590,6 +590,8 @@ export interface HarnessHostApi {
       entry?: string;
       root?: string | null;
       handle?: string;
+      /** The health check's load: the page's address carries the `genex-shot` parameter (`SHOT_QUERY`). */
+      shot?: boolean;
     };
     result: string;
   };
@@ -933,7 +935,7 @@ export const HARNESS_PARAM_SCHEMAS = {
   "game.tree": z.object({ project }),
   "game.export": z.object({ project, target: optionalText }),
   "game.references": z.object({ project }),
-  "preview.load": z.object({ project, entry: optionalText, root: optionalText }),
+  "preview.load": z.object({ project, entry: optionalText, root: optionalText, shot: z.boolean().optional() }),
   "preview.crop": z.object({ runId: text, path: text }).nullish(),
   "run.artifact": z.object({ runId: text, name: text }),
   "guardian.validate_edit": z.object({ files: z.array(z.object({ file: text, contents: text })) }),

@@ -63,6 +63,11 @@ export interface ProjectAsset {
   runId?: string;
   facetId?: string;
   iteration?: number;
+  /**
+   * The file is only in a build of a run still going (its integration worktree, or the worker's
+   * copy `workspace` names), not in the game yet: it arrives when the run lands. Its `assetRef` reads it.
+   */
+  building?: { runId: string; workspace: string };
 }
 
 export interface ProjectAssets {

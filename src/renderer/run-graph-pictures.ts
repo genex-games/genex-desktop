@@ -11,6 +11,10 @@ import { type IterationNode, type Shot, thumbShot } from "./run-graph.ts";
 
 /** How much a frame changed when its camera is new since the save point before. */
 const NEW_CAMERA_CHANGE = 1;
+/** A pixel counts as changed when one of its colour channels moved by more than this: past JPEG noise. */
+const CHANGE_NOISE = 24;
+/** Below this share of changed pixels, two pictures of one frame read as the same picture. */
+export const UNCHANGED_SHARE = 0.002;
 /** The colour channels compared per pixel (red, green, blue); the fourth, alpha, is not. */
 const COLOUR_CHANNELS = 3;
 const CHANNELS_PER_PIXEL = 4;
@@ -113,4 +117,37 @@ export function frameDifference(a: ArrayLike<number>, b: ArrayLike<number>): num
     }
   }
   return total / (channels * CHANNEL_MAX);
+}
+
+/**
+ * The share of pixels, 0 to 1, whose colour moved past compression noise between two frames of one
+ * size: a small sprite changed counts, the same frame saved twice does not. Frames of different
+ * sizes changed entirely.
+ */
+export function changedShare(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  if (a.length !== b.length || a.length === 0) return 1;
+  let changed = 0;
+  for (let at = 0; at < a.length; at += CHANNELS_PER_PIXEL) {
+    for (let channel = 0; channel < COLOUR_CHANNELS; channel++) {
+      if (Math.abs((a[at + channel] ?? 0) - (b[at + channel] ?? 0)) > CHANGE_NOISE) {
+        changed += 1;
+        break;
+      }
+    }
+  }
+  return changed / (a.length / CHANNELS_PER_PIXEL);
+}
+
+/** How a card shows two pictures of one frame: the compare, the newer alone saying nothing changed, or the newer alone. */
+export const PairView = { Compare: "compare", Unchanged: "unchanged", Single: "single" } as const;
+export type PairView = (typeof PairView)[keyof typeof PairView];
+
+/**
+ * How to show `now` beside `before`, two pictures of the same frame, by `share`, their measured
+ * change: undefined while it is measured, null when either could not be read. Only a measured
+ * change at or past `UNCHANGED_SHARE` earns the compare; below it the picture did not visibly change.
+ */
+export function pairView(before: string | null, now: string | null, share: number | null | undefined): PairView {
+  if (!before || !now || before === now || share === undefined || share === null) return PairView.Single;
+  return share < UNCHANGED_SHARE ? PairView.Unchanged : PairView.Compare;
 }

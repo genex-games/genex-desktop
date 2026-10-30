@@ -6079,4 +6079,30 @@ export default {
   "Reviewers give a second opinion when the lead asks for one.":
     "メインエージェントが求めたとき、レビュアーがセカンドオピニオンを出します。",
   "Workers take parts of the build, several at once.": "ワーカーがビルドの各パートを分担し、いくつも同時に進めます。",
+  "After {worker}": "{worker} の後",
+  "Blank screen": "空の画面",
+  "Build {number}": "ビルド {number}",
+  "Compare with the earlier version": "前のバージョンと比べる",
+  "Did not pass": "不合格",
+  Errors: "エラー",
+  "Merged into Build {number}": "ビルド {number} にマージ済み",
+  "Started before the first build": "最初のビルドより前に開始",
+  "Started from Build {number}": "ビルド {number} から開始",
+  "The main agent's own changes": "メインエージェント自身の変更",
+  "The page crashed.": "ページがクラッシュしました。",
+  "The page did not load.": "ページが読み込まれませんでした。",
+  "The page threw an error it did not catch.": "ページが処理されないエラーを出しました。",
+  "The picture did not visibly change from Build {number}.": "ビルド {number} から画像は目に見えて変わっていません。",
+  "The picture did not visibly change from the earlier version.":
+    "前のバージョンから画像は目に見えて変わっていません。",
+  "The screen was blank: one flat colour, nothing drawn.": "画面が空でした：単色で、何も描かれていません。",
+  "What the check found": "チェックで見つかったこと",
+  commit: "コミット",
+  found: "検出",
+  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, other {+# ワーカー}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, other {ワーカーをあと # 件表示}}",
+  "In the running build": "実行中のビルド内",
+  "Not in your game yet. It arrives when the build lands.":
+    "まだゲームには入っていません。ビルドが反映されると入ります。",
 } satisfies LocaleCatalog;

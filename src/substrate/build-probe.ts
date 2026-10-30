@@ -4,7 +4,7 @@
  * itself: the load comes from the preview's status, the errors from the shim's own record of the
  * page's `error` and `unhandledrejection` events, and the frame from a page screenshot.
  */
-import { CaptureSurface } from "../shared/preview-contract.ts";
+import { CaptureSurface, HealthFinding } from "../shared/preview-contract.ts";
 import type { BuildObservation } from "../shared/preview-contract.ts";
 import { isBlankFrame } from "./pixel-stats.ts";
 import type { PreviewPort } from "./preview-port.ts";
@@ -45,22 +45,28 @@ async function clockReport(preview: PreviewPort): Promise<{ running: boolean | n
   return { running, fps };
 }
 
-/** The health check: page loads, no uncaught errors, not blank. */
+/** The health check: page loads, no uncaught errors, not blank. Each reason has its code in `findings`. */
 export async function observeBuild(preview: PreviewPort): Promise<BuildObservation> {
   const reasons: string[] = [];
+  const findings: HealthFinding[] = [];
+  const found = (finding: HealthFinding, reason: string): void => {
+    findings.push(finding);
+    reasons.push(reason);
+  };
   const status = preview.status();
-  if (status.loadError) reasons.push(MESSAGE.NotLoaded(status.loadError));
-  if (status.crashed) reasons.push(MESSAGE.Crashed);
+  if (status.loadError) found(HealthFinding.NotLoaded, MESSAGE.NotLoaded(status.loadError));
+  if (status.crashed) found(HealthFinding.Crashed, MESSAGE.Crashed);
   const uncaught = await uncaughtErrors(preview);
-  if (uncaught.count > 0) reasons.push(MESSAGE.Uncaught(uncaught.count, uncaught.messages));
+  if (uncaught.count > 0) found(HealthFinding.Uncaught, MESSAGE.Uncaught(uncaught.count, uncaught.messages));
   const pixels = preview.screenshotWithStats
     ? (await preview.screenshotWithStats(PROBE_SCREENSHOT_QUALITY, { surface: CaptureSurface.Page })).stats
     : null;
-  if (pixels && isBlankFrame(pixels)) reasons.push(MESSAGE.Blank);
+  if (pixels && isBlankFrame(pixels)) found(HealthFinding.Blank, MESSAGE.Blank);
   const clock = await clockReport(preview);
   return {
     ok: reasons.length === 0,
     reasons,
+    findings,
     pixels,
     // The game is never asked: there is no contract to miss, and no frame of its own to count.
     studioMissing: true,

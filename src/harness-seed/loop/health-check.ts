@@ -3,8 +3,10 @@
  * build lands: the page loads, it throws no uncaught error, and its frame is not blank. Genex looks
  * from outside only: it serves the build in a window of its own, waits for it, and asks the host's
  * own check (`preview.observe`), which reads the window's load, the page's uncaught errors and a
- * screenshot of the whole page. A screenshot is kept as the check's picture. Nothing is asked of the
- * game's code. It never throws: a window that never came is a check that could not be made, said so.
+ * screenshot of the whole page. A screenshot is kept as the check's picture. The page is loaded once,
+ * with the `genex-shot` parameter on its address (`preview.load` `shot`): a game may read it, and
+ * one that ignores it loses nothing. Nothing is asked of the game's code. It never throws: a window
+ * that never came is a check that could not be made, said so.
  */
 import { WINDOW_RETRIES_MS } from "./config.ts";
 import { HostMethod } from "./host-methods.ts";
@@ -25,6 +27,8 @@ export interface HealthCheck {
   ok: boolean;
   /** Each problem, a sentence: the host's own reasons, or why no check could be made. */
   problems: string[];
+  /** The host's code for each of its own reasons (`not_loaded`, `crashed`, `uncaught`, `blank`), when it gave them. */
+  findings?: string[];
   /** The screenshot the check kept, when the host kept a file of it. */
   picture: string | null;
   /** Why the check could not be made (no window, the host failed), else null. */
@@ -80,7 +84,7 @@ async function keepPicture(ctx: HarnessCtx, target: HealthTarget, handle: string
 /** The look itself, in a window of its own. */
 async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string, wait: Wait): Promise<HealthCheck> {
   const where = { ...(target.root ? { root: target.root } : {}), ...(target.entry ? { entry: target.entry } : {}) };
-  await ctx.call(HostMethod.PreviewLoad, { project: target.project, ...where, handle });
+  await ctx.call(HostMethod.PreviewLoad, { project: target.project, ...where, handle, shot: true });
   await ctx.call(HostMethod.PreviewReady, { handle, timeoutMs: READY_TIMEOUT_MS }).catch(() => null);
   await wait(SETTLE_MS);
   const observed = await ctx.call(HostMethod.PreviewObserve, { handle });
@@ -89,7 +93,8 @@ async function lookIn(ctx: HarnessCtx, target: HealthTarget, handle: string, wai
     clip(String(reason), CLIP_DETAIL),
   );
   const ok = observed.ok && problems.length === 0;
-  return { ok, problems, picture: await keepPicture(ctx, target, handle), unchecked: null };
+  const findings = Array.isArray(observed.findings) ? { findings: observed.findings.map(String) } : {};
+  return { ok, problems, ...findings, picture: await keepPicture(ctx, target, handle), unchecked: null };
 }
 
 /** A check that could not be made, and why. */

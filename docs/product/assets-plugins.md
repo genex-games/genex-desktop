@@ -10,7 +10,7 @@ deliveries and outside changes refresh it. Cards hide metadata; [jobs being made
 An opened file has only Reveal in Finder and Close: images (click: full size), audio/video, 3D
 models with clips, textures, bounded text; unsupported formats and decoder failures say why.
 
-Chat shows game-folder files with Open in Assets; Builds, a Loop's workspace assets until landing. Job completion or “seen in game” never proves integration or passing checks. [Save, Share, search](../play.md#asset-library-and-sharing).
+Chat shows game-folder files with Open in Assets. A running Loop's build-only deliveries show In the running build until it lands. Job completion or “seen in game” never proves integration or passing checks. [Save, Share, search](../play.md#asset-library-and-sharing).
 
 ## Tools and setup
 

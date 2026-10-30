@@ -30,17 +30,20 @@ preview's network is open, as a web page's. Other folders' views:
 
 **Builds** is a graph: You asked, a row per part, Your build, then the lead while no part
 works. Tries at one step fold into one node; what reached the build forms the line, the rest
-hangs below. Tries a pause cut off show Paused until added. An eye marks (and opens) the reviewers'
-notes. A new build is “Checking it starts…” until it runs. A working node shows its agent's
-screen and action; a selected one opens as a card. Workers show pictures they delivered. **Follow up in chat** notes the next message to its build.
-Tabs (one per build; past three, one picker, newest first) and chat cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs
-below), then, once the lead asks for one, a finish check: Checking, Not yet (reasons), Done or Stopped. In place, save points form one line showing each change; workers hang off
-it, solid under the save point taking their work, else ghosts.
+hangs below. Tries a pause cut off show Paused until added. An eye opens the reviewers' notes. A
+working node shows its agent's screen; a selected one opens as a card. **Follow up in chat** notes
+the next message to its build. Tabs (one per build; past three, one picker, newest first) and chat
+cards open earlier builds. A Loop, workers, jobs or a claim make a tree: the lead (jobs below),
+then, when asked, a finish check: Checking, Not yet, Done or Stopped. A web Loop's line is its
+builds (each health check's screenshot and outcome); workers hang off the build they merged into or
+started from; past three finished per build fold into “+N workers”. In place, workers hang off save
+points: solid under the one taking their work, else ghosts. Compares pair only one frame
+(consecutive builds, asset versions) whose pixels differ; else the card says nothing visibly changed.
 
 Agents test hidden (Godot too), never Live. A finished worker, integration and Live's
 revision are distinct facts; chat shows a delivery's capture, failures too. Before integrating or
-landing, one health check: the page loads, throws nothing uncaught, and is not blank. Its screenshot
-is Latest build's picture, and a merged worker's when it delivered none.
+landing, one health check loads the page once, with `?genex-shot=1` a game may read: it loads,
+throws nothing uncaught, is not blank.
 
 ## Continuation and interruption
 

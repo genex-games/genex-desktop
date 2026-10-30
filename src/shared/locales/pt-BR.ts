@@ -6156,4 +6156,30 @@ export default {
   "Reviewers give a second opinion when the lead asks for one.":
     "Os revisores dão uma segunda opinião quando o agente principal pede.",
   "Workers take parts of the build, several at once.": "Os ajudantes assumem partes do build, vários ao mesmo tempo.",
+  "After {worker}": "Depois de {worker}",
+  "Blank screen": "Tela em branco",
+  "Build {number}": "Build {number}",
+  "Compare with the earlier version": "Comparar com a versão anterior",
+  "Did not pass": "Não passou",
+  Errors: "Erros",
+  "Merged into Build {number}": "Integrado ao build {number}",
+  "Started before the first build": "Começou antes do primeiro build",
+  "Started from Build {number}": "Começou do build {number}",
+  "The main agent's own changes": "Mudanças do próprio agente principal",
+  "The page crashed.": "A página travou.",
+  "The page did not load.": "A página não carregou.",
+  "The page threw an error it did not catch.": "A página lançou um erro que não tratou.",
+  "The picture did not visibly change from Build {number}.": "A imagem não mudou visivelmente desde o build {number}.",
+  "The picture did not visibly change from the earlier version.":
+    "A imagem não mudou visivelmente desde a versão anterior.",
+  "The screen was blank: one flat colour, nothing drawn.": "A tela estava em branco: uma cor só, nada desenhado.",
+  "What the check found": "O que a verificação encontrou",
+  commit: "commit",
+  found: "encontrado",
+  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, one {+# ajudante} other {+# ajudantes}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, one {Mostrar mais # ajudante} other {Mostrar mais # ajudantes}}",
+  "In the running build": "No build em andamento",
+  "Not in your game yet. It arrives when the build lands.":
+    "Ainda não está no seu jogo. Chega quando o build for integrado.",
 } satisfies LocaleCatalog;

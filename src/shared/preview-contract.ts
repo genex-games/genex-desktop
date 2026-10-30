@@ -369,9 +369,35 @@ export interface ReadyResult {
   gesture: { needed: boolean; done: boolean; reasons: string[] };
 }
 
+/**
+ * What the build health check found wrong, as codes beside its words (`BuildObservation.findings`):
+ * the page did not load, its renderer crashed, it threw an error it did not catch, or its frame is
+ * blank. Wire values: the Loop's `integration_health` record carries them.
+ */
+export const HealthFinding = {
+  NotLoaded: "not_loaded",
+  Crashed: "crashed",
+  Uncaught: "uncaught",
+  Blank: "blank",
+} as const;
+export type HealthFinding = (typeof HealthFinding)[keyof typeof HealthFinding];
+
+const HEALTH_FINDINGS: ReadonlySet<string> = new Set(Object.values(HealthFinding));
+/** Whether a value is one of the health check's own codes. */
+export const isHealthFinding = (value: unknown): value is HealthFinding =>
+  typeof value === "string" && HEALTH_FINDINGS.has(value);
+
+/**
+ * The query parameter on a page the health check loads (`preview.load` with `shot`): the one load
+ * whose screenshot becomes the build's picture. A page may read it; one that ignores it loses nothing.
+ */
+export const SHOT_QUERY = "genex-shot";
+
 export interface BuildObservation {
   ok: boolean;
   reasons: string[];
+  /** One code per reason it found, in the same order. Absent from observations made before it. */
+  findings?: HealthFinding[];
   pixels: PreviewPixelStats | null;
   studioMissing: boolean;
   frameBefore: number | null;

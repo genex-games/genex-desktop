@@ -6226,4 +6226,32 @@ export default {
   "Reviewers give a second opinion when the lead asks for one.":
     "Prüfer geben eine zweite Meinung ab, wenn der Hauptagent darum bittet.",
   "Workers take parts of the build, several at once.": "Helfer übernehmen Teile des Builds, mehrere gleichzeitig.",
+  "After {worker}": "Nach {worker}",
+  "Blank screen": "Leerer Bildschirm",
+  "Build {number}": "Build {number}",
+  "Compare with the earlier version": "Mit der früheren Version vergleichen",
+  "Did not pass": "Nicht bestanden",
+  Errors: "Fehler",
+  "Merged into Build {number}": "In Build {number} eingeflossen",
+  "Started before the first build": "Vor dem ersten Build gestartet",
+  "Started from Build {number}": "Von Build {number} aus gestartet",
+  "The main agent's own changes": "Eigene Änderungen des Hauptagenten",
+  "The page crashed.": "Die Seite ist abgestürzt.",
+  "The page did not load.": "Die Seite hat nicht geladen.",
+  "The page threw an error it did not catch.": "Die Seite hat einen Fehler geworfen, den sie nicht abgefangen hat.",
+  "The picture did not visibly change from Build {number}.":
+    "Das Bild hat sich seit Build {number} nicht sichtbar verändert.",
+  "The picture did not visibly change from the earlier version.":
+    "Das Bild hat sich seit der früheren Version nicht sichtbar verändert.",
+  "The screen was blank: one flat colour, nothing drawn.":
+    "Der Bildschirm war leer: eine einzige Farbe, nichts gezeichnet.",
+  "What the check found": "Was die Prüfung gefunden hat",
+  commit: "Commit",
+  found: "gefunden",
+  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, one {+# Helfer} other {+# Helfer}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, one {# weiteren Helfer zeigen} other {# weitere Helfer zeigen}}",
+  "In the running build": "Im laufenden Build",
+  "Not in your game yet. It arrives when the build lands.":
+    "Noch nicht in deinem Spiel. Es kommt an, wenn der Build übernommen wird.",
 } satisfies LocaleCatalog;

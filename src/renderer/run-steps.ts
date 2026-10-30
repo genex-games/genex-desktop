@@ -391,6 +391,9 @@ function deliveriesOf(graph: RunGraph, facetId: string): Delivery[] {
   return [...own, ...folded].sort((a, b) => (a.at < b.at ? -1 : Number(a.at > b.at)));
 }
 
+/** The kinds of asset a node draws as the Assets stage does: a picture, a model or a clip's first frame. */
+const DRAWN_KINDS: ReadonlySet<ProjectAsset["kind"]> = new Set(["image", "model", "video"]);
+
 /**
  * A delivery's picture: the copy Genex kept of an image it delivered (readable before its build
  * lands), the image in the game, the modeller's render, else the model as the Assets stage draws it.
@@ -400,7 +403,9 @@ function deliveryPicture(delivery: Delivery): WorkerPicture | null {
   const image = delivery.files.find((file) => assetFormat(file)?.raster);
   if (image) return { source: PictureSource.File, file: image };
   if (delivery.render) return { source: PictureSource.Render, path: delivery.render };
-  return delivery.preview ? { source: PictureSource.Asset, asset: delivery.preview } : null;
+  // A sound has no picture to draw: a worker that made only sounds shows its build instead.
+  const drawable = delivery.preview && DRAWN_KINDS.has(delivery.preview.kind) ? delivery.preview : null;
+  return drawable ? { source: PictureSource.Asset, asset: drawable } : null;
 }
 
 /** The health check's screenshot of the build right after this part's worker was merged (its newest merge). */
@@ -887,12 +892,23 @@ export interface ResultStatus {
   state: StepState;
 }
 
+/**
+ * Whether the build on offer failed its health check: the merge record's word on its head, else
+ * (a Loop's merges write none) the newest check of that head.
+ */
+function failedItsCheck(graph: RunGraph, summary: RunSummary | null): boolean {
+  const head = summary?.head ?? null;
+  if (head === null) return false;
+  const merged = graph.mergedHead;
+  if (merged?.head === head && merged.healthy !== null) return !merged.healthy;
+  const checked = graph.health.findLast((look) => look.head === head);
+  return checked !== undefined && !checked.ok;
+}
+
 /** A running run's build: none yet, one that did not start, one being tried, or one to play. */
 function runningResultStatus(graph: RunGraph, summary: RunSummary | null): ResultStatus {
   if (!hasNewBuild(graph, summary)) return { word: t("Nothing yet"), tone: Tone.Muted, state: StepState.Waiting };
-  const merged = graph.mergedHead;
-  const didNotStart = merged !== null && summary !== null && merged.head === summary.head && merged.healthy === false;
-  if (didNotStart) return { word: t("Didn't start"), tone: Tone.Red, state: StepState.Undone };
+  if (failedItsCheck(graph, summary)) return { word: t("Didn't start"), tone: Tone.Red, state: StepState.Undone };
   if (checkingBuild(graph, summary))
     return { word: t("Checking it starts…"), tone: Tone.Accent, state: StepState.Judging };
   return { word: t("Ready to play"), tone: Tone.Green, state: StepState.InBuild };

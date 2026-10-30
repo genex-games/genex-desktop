@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { HealthFinding } from "../../src/shared/preview-contract.ts";
 import { observeBuild } from "../../src/substrate/build-probe.ts";
 import { makeFakePreview } from "../helpers/studio-rig.ts";
 
@@ -64,6 +65,22 @@ describe("build health", () => {
       assert.equal(observation.ok, false, JSON.stringify(flat));
       assert.match(observation.reasons.join("; "), /blank/);
     }
+  });
+
+  it("names what it found as codes beside its words, one per reason", async () => {
+    const passed = makeFakePreview();
+    passed.pixelStatsNext = LIT;
+    assert.deepEqual((await observeBuild(passed)).findings, []);
+    const blank = makeFakePreview();
+    blank.pixelStatsNext = { ...LIT, meanLuma: 0, litFraction: 0, contrast: 0 };
+    assert.deepEqual((await observeBuild(blank)).findings, [HealthFinding.Blank]);
+    const broken = makeFakePreview();
+    broken.pixelStatsNext = { ...LIT, meanLuma: 0, litFraction: 0, contrast: 0 };
+    broken.next = { ...broken.next, __loadError: "net::ERR_FILE_NOT_FOUND" };
+    broken.studioMethods.errors = () => ({ count: 1, messages: ["TypeError: x"] });
+    const observation = await observeBuild(broken);
+    assert.deepEqual(observation.findings, [HealthFinding.NotLoaded, HealthFinding.Uncaught, HealthFinding.Blank]);
+    assert.equal(observation.findings?.length, observation.reasons.length);
   });
 
   it("judges a frame with no contrast measure by its light alone", async () => {

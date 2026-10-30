@@ -37,6 +37,7 @@ import {
 } from "../shared/run-state.ts";
 import type { RunSummary } from "../shared/run-summary.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
+import { type HealthFinding, isHealthFinding } from "../shared/preview-contract.ts";
 import { isWorkerStopCode, poolWorkerId, type WorkerStopCode } from "../shared/workers.ts";
 import {
   type AssetLedger,
@@ -621,6 +622,12 @@ export interface HealthLook {
   picture: string | null;
   /** the part whose worker's merge it checked; null for any other check */
   worker: string | null;
+  /** what it found wrong, in the host's words */
+  problems: string[];
+  /** the host's code for each problem; null on records written before them */
+  findings: HealthFinding[] | null;
+  /** its record's place in the log */
+  seq: number;
 }
 
 export interface RunGraph {
@@ -1605,6 +1612,9 @@ function onHealth(graph: GraphDraft, payload: Payload): void {
     ok: payload.ok === true,
     picture: strOrNull(payload.picture),
     worker: worker ? partOfAsset(graph, restartOf(graph, worker).id) : null,
+    problems: strings(payload.problems),
+    findings: Array.isArray(payload.findings) ? payload.findings.filter(isHealthFinding) : null,
+    seq: graph.seq,
   });
 }
 

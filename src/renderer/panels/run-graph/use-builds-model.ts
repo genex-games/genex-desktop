@@ -1,5 +1,5 @@
 /** Everything the Builds tab draws, folded once from the run's graph, its recorded outcome and the game's assets. */
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import {
   type AssetsNode,
@@ -19,6 +19,7 @@ import {
   runStillPath,
   roundShot,
 } from "../../run-graph.ts";
+import { buildTimeline } from "../../run-graph-builds.ts";
 import { leadWorking, partRows, resultStatus, StepState } from "../../run-steps.ts";
 import { buildsLayout, graphLoaded, leadFace, leadNodeOf, readingNodes, readingOrder } from "../../run-tree.ts";
 import { useLibrary } from "../../state/hooks.ts";
@@ -91,7 +92,12 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
   const lead = useMemo(() => leadWorking(graph, outcome, rows), [graph, outcome, rows]);
   // A tree draws the lead for the whole run, saying what it is doing.
   const face = useMemo(() => (graph.tree ? leadFace(graph, outcome, rows) : null), [graph, outcome, rows]);
-  const layout = useSharedSnapshot(useMemo(() => buildsLayout(graph, rows, outcome), [graph, rows, outcome]));
+  const folds = useFolds();
+  // A Loop's build history: its builds on one line, each worker beside its build (null for any other graph).
+  const timeline = useMemo(() => buildTimeline(graph, rows, folds.open), [graph, rows, folds.open]);
+  const layout = useSharedSnapshot(
+    useMemo(() => buildsLayout(graph, rows, outcome, folds.open), [graph, rows, outcome, folds.open]),
+  );
   const steps = useMemo(() => rows.flatMap((row) => row.steps), [rows]);
   const stepById = useMemo(() => new Map(steps.map((step) => [step.id, step] as const)), [steps]);
   const rounds = useMemo(
@@ -124,6 +130,8 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       rounds,
       roundById,
       selectable,
+      timeline,
+      toggleFold: folds.toggle,
     }),
     [
       outcome,
@@ -144,8 +152,23 @@ export function useBuildsModel(suppliedGraph: RunGraphModel, project: string | n
       rounds,
       roundById,
       selectable,
+      timeline,
+      folds.toggle,
     ],
   );
+}
+
+/** Which builds' folded workers show (0: the lead's); pressing a fold card opens or closes it in place. */
+function useFolds() {
+  const [open, setOpen] = useState<ReadonlySet<number>>(() => new Set());
+  const toggle = useCallback((build: number) => {
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(build)) next.add(build);
+      return next;
+    });
+  }, []);
+  return { open, toggle };
 }
 
 /** Where the run's starting still is: the outcome's capture, else the run folder's. */
@@ -215,6 +238,8 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
   const resultSrc = finalSrc ?? checked.src ?? older.src;
   const resultPath = finalSrc ? finalStillPath : (checked.path ?? older.path);
   const borrowed = (result.state === StepState.Judging && !finalSrc) || checked.borrowed;
+  // Only the final capture is taken as the starting one was: any other picture is no pair for it.
+  const pairsWithBase = finalSrc !== null;
   return useMemo(
     () => ({
       baseSrc,
@@ -222,7 +247,8 @@ export function useRunStills(model: ReturnType<typeof useBuildsModel>) {
       resultPath,
       result,
       borrowed,
+      pairsWithBase,
     }),
-    [baseSrc, resultSrc, resultPath, result, borrowed],
+    [baseSrc, resultSrc, resultPath, result, borrowed, pairsWithBase],
   );
 }

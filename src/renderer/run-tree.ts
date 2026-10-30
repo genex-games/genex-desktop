@@ -35,6 +35,8 @@ import {
 } from "./run-steps.ts";
 import { backgroundCount, FINISH_CHECK_WORDS, jobStatusWords, LEAD_WORDS } from "./words.ts";
 import { isInPlaceTree, layoutComb } from "./run-graph-comb.ts";
+import { buildTimeline } from "./run-graph-builds.ts";
+import { layoutTimeline } from "./panels/run-graph/timeline-layout.ts";
 
 /** What the lead's node says it is doing: working itself, waiting for its workers, paused, done or stopped. */
 export const LeadFace = {
@@ -68,10 +70,17 @@ const asksWithPictures = (graph: RunGraph): boolean =>
  * The Builds tab's layout of a graph: today's options (the assets under the start, the
  * optimisation card, the result's gate, the lead while it has the run), plus the tree's when the
  * graph is one: the lead's background work when it has any, the finish check when it waits. A
- * lead's tree in place (workers and its own save points) hangs its workers off the save points
- * (`run-graph-comb.ts`); every other graph lays out a row per part.
+ * Loop with a build history draws its builds on one line, its workers beside them
+ * (`run-graph-builds.ts`; `open` names the builds whose folded workers show); a lead's tree in place
+ * (workers and its own save points) hangs its workers off the save points (`run-graph-comb.ts`);
+ * every other graph lays out a row per part.
  */
-export function buildsLayout(graph: RunGraph, rows: PartRow[], summary: RunSummary | null): StepsLayout {
+export function buildsLayout(
+  graph: RunGraph,
+  rows: PartRow[],
+  summary: RunSummary | null,
+  open: ReadonlySet<number> = new Set(),
+): StepsLayout {
   const lead = leadNodeOf(graph);
   const tree = graph.tree
     ? { tree: { jobs: (lead?.jobs.length ?? 0) > 0, finishCheck: hasNode(graph, GraphNodeKind.FinishCheck) } }
@@ -83,6 +92,8 @@ export function buildsLayout(graph: RunGraph, rows: PartRow[], summary: RunSumma
     lead: leadWorking(graph, summary, rows),
     ...tree,
   };
+  const timeline = buildTimeline(graph, rows, open);
+  if (timeline) return layoutTimeline(timeline, options);
   return graph.tree && isInPlaceTree(rows) ? layoutComb(rows, options) : layoutSteps(rows, options);
 }
 

@@ -6188,4 +6188,31 @@ export default {
     "Les vérificateurs donnent un deuxième avis quand l’agent principal le demande.",
   "Workers take parts of the build, several at once.":
     "Les assistants prennent en charge des parties du build, plusieurs à la fois.",
+  "After {worker}": "Après {worker}",
+  "Blank screen": "Écran vide",
+  "Build {number}": "Build {number}",
+  "Compare with the earlier version": "Comparer avec la version précédente",
+  "Did not pass": "Non validé",
+  Errors: "Erreurs",
+  "Merged into Build {number}": "Intégré au build {number}",
+  "Started before the first build": "Lancé avant le premier build",
+  "Started from Build {number}": "Lancé depuis le build {number}",
+  "The main agent's own changes": "Les changements de l’agent principal",
+  "The page crashed.": "La page a planté.",
+  "The page did not load.": "La page ne s’est pas chargée.",
+  "The page threw an error it did not catch.": "La page a levé une erreur qu’elle n’a pas gérée.",
+  "The picture did not visibly change from Build {number}.":
+    "L’image n’a pas changé de façon visible depuis le build {number}.",
+  "The picture did not visibly change from the earlier version.":
+    "L’image n’a pas changé de façon visible depuis la version précédente.",
+  "The screen was blank: one flat colour, nothing drawn.": "L’écran était vide : une seule couleur, rien de dessiné.",
+  "What the check found": "Ce que la vérification a trouvé",
+  commit: "commit",
+  found: "trouvé",
+  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, one {+# assistant} other {+# assistants}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, one {Afficher # assistant de plus} other {Afficher # assistants de plus}}",
+  "In the running build": "Dans le build en cours",
+  "Not in your game yet. It arrives when the build lands.":
+    "Pas encore dans ton jeu. Il arrive quand le build est intégré.",
 } satisfies LocaleCatalog;

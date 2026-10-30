@@ -26,6 +26,7 @@ import type { HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import type { ProjectShape } from "../../shared/game-project.ts";
 import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
+import { isBuildRef } from "../../shared/build-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
 import { buildFailureNote, servedAfterBuild } from "../game-build.ts";
@@ -70,7 +71,7 @@ import { errorMessage } from "../../shared/errors.ts";
 import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { ReadyPhase, CaptureSurface, GameClock, LiveLoadFailure } from "../../shared/preview-contract.ts";
+import { ReadyPhase, CaptureSurface, GameClock, LiveLoadFailure, SHOT_QUERY } from "../../shared/preview-contract.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { buildFinished, LiveGate, type LiveOffer, readBuild } from "./live-gate.ts";
 import { type LiveBehindEvent, WebBuildLoad } from "../../shared/live-behind.ts";
@@ -280,6 +281,11 @@ function consoleErrorsLine(errors: ReadonlyArray<{ message: string }>): string {
 function sourceEntry(game: GameProject | undefined, shape: ProjectShape): string {
   const folder = game ? webFolderOf(game) : null;
   return folder ? `${folder}/${TEMPLATE_SHAPE.entry}` : shape.entry;
+}
+
+/** The page the health check loads: the served entry with the shot parameter (`SHOT_QUERY`) on its address. */
+function shotEntry(entry: string): string {
+  return `${entry}${entry.includes("?") ? "&" : "?"}${SHOT_QUERY}=1`;
 }
 
 /** The address a load answers with when the build had nothing to serve. */
@@ -578,7 +584,8 @@ export class PreviewService {
       if (!served) return unservedUrl(p);
       // A load starts the page again, whether or not it then arrives: Live's game is no longer stopped.
       if (isLive) this.#liveStopped = false;
-      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      const entry = p.shot ? shotEntry(served.entry) : served.entry;
+      const url = await port.load(p.project, entry, served.root, { loopback: served.loopback });
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       if (isLive) this.#liveLoaded(webBuild);
@@ -1184,9 +1191,25 @@ export class PreviewService {
       const where = { root: this.#core.layout.itemPictures, game: this.#core.games.dirFor(p.project) };
       return readItemPicture(where, p.project, p.file, resize);
     }
-    if (isGenexRef(p.file)) return this.#readGenexOutput(p.project, p.file, resize);
-    if (!isAssetPath(p.file, await this.#x.assets.assetFolders(p.project))) return null;
-    return readContainedImage(this.#core.games.dirFor(p.project), p.file, { prefixes: [], ...resize });
+    return this.#readGameImage(p.project, p.file, resize);
+  }
+
+  /**
+   * One image of the game's own: a Genex job's output by its reference, a running Loop's delivery
+   * that is only in its build (from the workspace the host listed), else a file in its asset folders.
+   */
+  async #readGameImage(
+    project: string,
+    file: string,
+    resize: { resize?: (data: Buffer) => Promise<Buffer> },
+  ): Promise<{ mimeType: string; data: string } | null> {
+    if (isGenexRef(file)) return this.#readGenexOutput(project, file, resize);
+    if (isBuildRef(file)) {
+      const found = await this.#x.assets.buildFile(project, file).catch(() => null);
+      return found ? readContainedImage(found.root, found.file, { prefixes: [], ...resize }) : null;
+    }
+    if (!isAssetPath(file, await this.#x.assets.assetFolders(project))) return null;
+    return readContainedImage(this.#core.games.dirFor(project), file, { prefixes: [], ...resize });
   }
 
   /** A downscale to `maxPx` for an image read, when one is asked for and the preview can. */

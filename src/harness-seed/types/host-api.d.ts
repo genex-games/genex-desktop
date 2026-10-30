@@ -1608,9 +1608,14 @@ export interface ReadyResult {
 }
 // ↑ src/shared/preview-contract.ts
 
+export type HealthFinding = 'crashed' | 'not_loaded' | 'uncaught' | 'blank';
+// ↑ src/shared/preview-contract.ts
+
 export interface BuildObservation {
   ok: boolean;
   reasons: string[];
+  /** One code per reason it found, in the same order. Absent from observations made before it. */
+  findings?: HealthFinding[];
   pixels: PreviewPixelStats | null;
   studioMissing: boolean;
   frameBefore: number | null;
@@ -1980,6 +1985,8 @@ export interface HarnessHostApi {
       entry?: string;
       root?: string | null;
       handle?: string;
+      /** The health check's load: the page's address carries the `genex-shot` parameter (`SHOT_QUERY`). */
+      shot?: boolean;
     };
     result: string;
   };
