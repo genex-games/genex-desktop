@@ -21,7 +21,6 @@ import { seedBuildingCard } from "./fixture-building-card.ts";
 import { activateLiveChat, activatePlanReviews, seedChatFeedback, seedChatHistory } from "./fixture-chat.ts";
 import { hasLandedLoopRun, seedFirstLoopRun, seedLandedLoopRun } from "./fixture-history.ts";
 import {
-  appendSuggestion,
   FIXTURE_GAME,
   FIXTURE_MODEL,
   FIXTURE_VERSION,
@@ -74,13 +73,13 @@ const NOISE_EVENTS = 650;
 /** How long a scripted improvement pass takes, so its progress can be seen. */
 const IMPROVEMENT_PASS_MS = 1500;
 
-/** The fixture game's page: a canvas that counts clicks, on the studio's own import map. */
+/** The fixture game's page: a canvas that counts clicks, on the studio's own import map. Nothing on it is the studio's. */
 const FIXTURE_PAGE = `<!doctype html><html><body style="margin:0;background:#14233b;color:white"><canvas width="800" height="500"></canvas>
 <script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
 <script>
 const c=document.querySelector('canvas'),x=c.getContext('2d');let clicks=0;
 function draw(){x.fillStyle='#14233b';x.fillRect(0,0,800,500);x.fillStyle='#43ddaa';x.fillRect(80+clicks*10,80,160,160);x.fillStyle='white';x.font='28px sans-serif';x.fillText('AG-933 deterministic game',70,340)}
-window.__studio={state:()=>({fixture:1,clicks,phase:'playing'}),inspect:()=>({fixture:1}),capture:()=>c.toDataURL('image/png')};window.addEventListener('pointerdown',()=>{clicks++;draw()});draw();</script></body></html>`;
+window.addEventListener('pointerdown',()=>{clicks++;draw()});draw();</script></body></html>`;
 
 /** What a prepared fixture opens on. */
 export interface PreparedFixture {
@@ -177,7 +176,7 @@ async function seedGraphOnce(game: FixtureGame): Promise<void> {
   if (!seeded) await seedBuildGraph(game.core, game.project.name, game.threadId);
 }
 
-/** Another game with a long goal, enough noise to age the history, and SkillOpt's record. */
+/** Another game with a long goal, enough noise to age the history, and SkillOpt's past record. */
 async function seedStudioActivity(core: StudioCore, threadId: string): Promise<void> {
   const other = await core.games.scaffold("fixture-ashlands", { title: "Ashlands walk" });
   const otherThread = await core.threadForGame(other.name);
@@ -212,42 +211,6 @@ async function seedStudioActivity(core: StudioCore, threadId: string): Promise<v
       scope: SnapshotScope.Harness,
       snapshot_id: "fixture-recovery",
       reason: "Fixture recovery after a missed heartbeat; this record does not restore any files.",
-    },
-  ]);
-  await stageSuggestions(core);
-}
-
-/** Two staged suggestions waiting in Activity. */
-async function stageSuggestions(core: StudioCore): Promise<void> {
-  const currentText = await fs.readFile(path.join(core.layout.harnessWs, "skills/facet-decomposition.md"), "utf8");
-  const directorText = await fs.readFile(path.join(core.layout.harnessWs, "skills/director.md"), "utf8");
-  const gate = (votes: string) => ({
-    accept: true,
-    votes,
-    reason: "Synthetic instruction comparison for UI acceptance.",
-  });
-  await core.store.writeArtifact(core.mainThread, "skillopt_staged", [
-    {
-      ...appendSuggestion(
-        "facet-decomposition",
-        currentText,
-        // One long line, as real suggestions are: the exact edit must wrap it, never scroll sideways.
-        "Fixture review: judge on-screen markers from eye:here as well as from the default camera, and when a request says something vague like slightly thicker or a bit brighter, turn it into a measured target in the check before the facet starts.",
-      ),
-      rationale: "The trajectories repeat overlay markers judged only from the default camera.",
-      title: "Check the player’s view before finishing a scene",
-      summary: [
-        "Checks on-screen markers from the player’s own eyes, not just the overview camera.",
-        "Turns vague requests like “slightly thicker” into a measured target.",
-      ],
-      gate: gate("3/3 for the candidate"),
-      at: new Date().toISOString(),
-    },
-    {
-      ...appendSuggestion("director", directorText, "Fixture review: preserve ownership boundaries."),
-      rationale: "Make each task’s ownership explicit before work starts.",
-      gate: gate("2/3 for the candidate"),
-      at: new Date(Date.now() + 1).toISOString(),
     },
   ]);
 }
@@ -347,27 +310,10 @@ export async function activateChatFixture(
   if (isChatFixture(fixture.fixture)) await activateLiveChat(core, fixture);
 }
 
-/** Fixture sessions park real improvement passes; a manual check in Studio still shows its whole result. */
-export async function fixtureImprovementPass(core: StudioCore): Promise<void> {
+/**
+ * Fixture sessions park real improvement passes, and the scripted one does what the real pass does
+ * now: self-improvement was removed, so after its moment of work it stages and records nothing.
+ */
+export async function fixtureImprovementPass(_core: StudioCore): Promise<void> {
   await sleep(IMPROVEMENT_PASS_MS);
-  const currentText = await fs.readFile(path.join(core.layout.harnessWs, "skills/facet-decomposition.md"), "utf8");
-  const staged = ((await core.store.readArtifact(core.mainThread, "skillopt_staged")) ?? []) as unknown[];
-  staged.push({
-    ...appendSuggestion(
-      "facet-decomposition",
-      currentText,
-      "Fixture review: keep the last fifth of a run for playing and tuning difficulty.",
-    ),
-    rationale: "Balance tuning was repeatedly left to the final unplaytested minutes.",
-    title: "Leave time to tune difficulty",
-    summary: ["Keeps the last part of each run for playing and tuning, instead of rushing it at the end."],
-    gate: {
-      accept: true,
-      votes: "3/3 for the candidate",
-      reason: "Synthetic instruction comparison for UI acceptance.",
-    },
-    at: new Date().toISOString(),
-  });
-  await core.store.writeArtifact(core.mainThread, "skillopt_staged", staged);
-  await core.append([customEventData(CustomEvent.SkilloptPass, { tasks: 6, staged: 1, accepted: 0, rejected: 1 })]);
 }

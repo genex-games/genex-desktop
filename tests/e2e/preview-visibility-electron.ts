@@ -28,7 +28,6 @@ async function main() {
     const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
     window.framesDrawn=0;window.keys=0;addEventListener('keydown',()=>window.keys++);
     function draw(){framesDrawn++;ctx.fillStyle='#168b85';ctx.fillRect(0,0,320,200);requestAnimationFrame(draw)}draw();
-    window.__studio={capture:()=>canvas.toDataURL('image/png')};
   </script>`,
     );
     for (const mode of ["foreground", "background", "hidden", "minimized", "private"]) {
@@ -247,7 +246,7 @@ async function checkStandIn(): Promise<void> {
 
 /**
  * An agent's window is silent from the moment it is made, and its own ears still work: the page's
- * analyser measures a tone the speakers never play, as `__studio.audio()` reads one. Live's switch
+ * analyser measures a tone the speakers never play. Live's switch
  * turns the same speakers on and off.
  */
 async function checkMutedAgentWindow(): Promise<void> {

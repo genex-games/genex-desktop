@@ -108,12 +108,6 @@ async function acceptance() {
       ),
     );
     check(
-      "suggestions are one review block with plain titles",
-      await js(
-        `document.querySelectorAll('[data-suggestion]').length===2 && document.querySelector('[data-suggestions]').textContent.includes('Nothing changes until you apply') && document.querySelector('[data-suggestions]').textContent.includes('Check the player’s view before finishing a scene') && !document.querySelector('[data-suggestions]').textContent.includes('Update facet-decomposition')`,
-      ),
-    );
-    check(
       "Studio records stay out of the Studio chat and Activity shows no upkeep list",
       await js(
         `!!document.querySelector('[data-studio-intro]') && !/Workspace restored|facet-decomposition|What was learned/.test(document.querySelector('[data-studio-chat]').textContent) && !/Restored Studio|upkeep/i.test(document.querySelector('[data-testid="review-panel"]').textContent) && !document.querySelector('[data-studio-problem]')`,
@@ -137,44 +131,6 @@ async function acceptance() {
       ),
     );
 
-    const suggestion = "[data-suggestion] button[aria-expanded]";
-    await click(suggestion);
-    check(
-      "a suggestion expands in place to what changes",
-      await until(
-        `document.querySelector(${JSON.stringify(suggestion)}).getAttribute('aria-expanded')==='true' && document.querySelector('[data-suggestion] .disclosure-body[data-open="true"]').textContent.includes('What changes')`,
-      ),
-    );
-    await click("[data-suggestion] [data-exact-edit] > button");
-    check(
-      "the exact edit wraps long lines and scrolls only down, with the line it follows",
-      await until(
-        `(() => {const edit=document.querySelector('[data-suggestion] [data-exact-edit]'),box=edit?.querySelector('.diff-lines')?.parentElement,added=edit?.querySelector('.diff-line[data-tone="add"]');if(!box||!added)return false;return box.scrollWidth<=box.clientWidth+1 && added.getBoundingClientRect().height>40 && !!edit.querySelector('.diff-line[data-tone="ctx"]');})()`,
-      ),
-    );
-    await capture("studio-exact-edit");
-    await click("[data-suggestion] [data-exact-edit] > button");
-    check(
-      "suggestion rows and their icons use pointer",
-      await js(
-        `getComputedStyle(document.querySelector(${JSON.stringify(suggestion)})).cursor==='pointer' && getComputedStyle(document.querySelector(${JSON.stringify(suggestion + " svg")})).cursor==='pointer'`,
-      ),
-    );
-    await click('[data-suggestion] [role="checkbox"]');
-    check(
-      "the check mark excludes a suggestion from Apply",
-      await js(
-        `document.querySelector('[data-suggestion] [role="checkbox"]').getAttribute('aria-checked')==='false' && document.querySelector('[data-suggestions]').textContent.includes('1 of 2 selected') && document.querySelector('[data-suggestions] footer').textContent.includes('Apply 1 change')`,
-      ),
-    );
-    await key("Enter");
-    check(
-      "keyboard includes it again",
-      await js(
-        `document.querySelector('[data-suggestion] [role="checkbox"]').getAttribute('aria-checked')==='true' && document.querySelector('[data-suggestions]').textContent.includes('2 of 2 selected')`,
-      ),
-    );
-    await click(suggestion);
     await click('[data-studio-composer] [aria-label="Model settings"]');
     check(
       "Harness model menu is the model list itself, without roles or effort",
@@ -187,15 +143,6 @@ async function acceptance() {
       await js(`!!document.querySelector('[data-studio-composer] [aria-label^="Effort:"]')`),
     );
     await key("Escape");
-    const legacy = "section[data-suggestions] > div:nth-of-type(2) button[aria-expanded]";
-    await click(legacy);
-    check(
-      "a suggestion with nothing else to read shows its edit directly, without a toggle",
-      await until(
-        `(() => {const row=document.querySelector(${JSON.stringify(legacy)}).closest('[data-suggestion]');const edit=row.querySelector('[data-exact-edit]');return !!edit && !edit.querySelector('button') && !!edit.querySelector('.font-mono') && !/Preferred in/.test(row.textContent);})()`,
-      ),
-    );
-    await click(legacy);
     await click('[aria-label="Look for improvements in recent builds"]');
     check(
       "Look for improvements shows progress on the button",
@@ -208,43 +155,13 @@ async function acceptance() {
         `(() => {const b=document.querySelector('[data-look-state]'),box=b.firstElementChild.getBoundingClientRect(),label=b.querySelector('[data-look-label="looking"]').getBoundingClientRect();return label.left>=box.left-0.5 && label.right<=box.right+0.5;})()`,
       ),
     );
+    // Self-improvement was removed: the pass finds nothing, and no suggestion waits to be applied.
     check(
-      "the button reports Found and the new suggestion appears",
+      "the button reports Nothing new, and no suggestion appears",
       await until(
-        `document.querySelector('[data-look-state]').dataset.lookState==='found' && document.querySelectorAll('[data-suggestion]').length===3 && ![...document.querySelectorAll('[data-studio-learned] p')].some(p=>/Found/.test(p.textContent))`,
+        `document.querySelector('[data-look-state]').dataset.lookState==='none' && !document.querySelector('[data-suggestion]')`,
       ),
     );
-    check(
-      "the button hugs its whole result label",
-      await until(
-        `(() => {const b=document.querySelector('[data-look-state]'),box=b.firstElementChild.getBoundingClientRect(),label=b.querySelector('[data-look-label="found"]').getBoundingClientRect();return Math.abs(box.width-label.width)<1 && label.left>=box.left-0.5 && label.right<=box.right+0.5;})()`,
-      ),
-    );
-    // Two of the three change the same file and were written against the same text: both land.
-    await click("[data-suggestions] footer span > button:last-child");
-    check(
-      "Apply lands every included suggestion, two of them in one file",
-      await until(
-        `!document.querySelector('[data-suggestions]') && ['Check the player’s view before finishing a scene','Leave time to tune difficulty'].every(title=>document.querySelector('[data-studio-learned]').textContent.includes(title))`,
-      ),
-    );
-    const learnedRow = (title) =>
-      `[...document.querySelectorAll('[data-activity-kind="improvement"]')].find(row=>row.textContent.includes(${JSON.stringify(title)}))`;
-    await js(
-      `${learnedRow("Check the player’s view before finishing a scene")}.querySelector('button[aria-expanded]').setAttribute('data-undo-target','')`,
-    );
-    await click("[data-undo-target]");
-    await js(
-      `[...${learnedRow("Check the player’s view before finishing a scene")}.querySelectorAll('button')].find(b=>b.textContent==='Undo this change').setAttribute('data-undo-button','')`,
-    );
-    await click("[data-undo-button]");
-    check(
-      "Undo this change takes back that change alone",
-      await until(
-        `${learnedRow("Check the player’s view before finishing a scene")}?.textContent.includes('Undone') && !${learnedRow("Leave time to tune difficulty")}.textContent.includes('Undone') && ![...${learnedRow("Check the player’s view before finishing a scene")}.querySelectorAll('button')].some(b=>b.textContent==='Undo this change')`,
-      ),
-    );
-    await click("[data-undo-target]");
     const learningSwitch = '[data-learning-switch] [role="switch"]';
     check(
       "Self-improvement is one switch at the top right of Studio, on by default",

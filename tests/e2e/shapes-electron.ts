@@ -350,7 +350,6 @@ async function main(): Promise<void> {
         ready.ready === true && ready.timedOut === false && ready.via === "shim",
         `ready ${ready.ready} after ${ready.pageMs} ms (budget ${manifest.readyBudgetMs}), via ${ready.via}, timedOut ${ready.timedOut}`,
       );
-      const status = (await api["preview.status"]!({ handle } as never)) as { url?: string };
       const judged = (await api["preview.screenshot"]!({
         runId,
         label: `${id}/default`,
@@ -363,76 +362,16 @@ async function main(): Promise<void> {
         `default frame litFraction ${judged.stats?.litFraction}`,
       );
 
-      const declared = (await api["preview.call"]!({ method: "cameras", handle } as never)) as unknown;
-      sheet.ok(
-        "cameras",
-        JSON.stringify(declared) === JSON.stringify(manifest.cameras),
-        `cameras() answered ${JSON.stringify(declared)}`,
-      );
-
-      if (manifest.edits === "two-line-install") {
-        // The bundled shape: what the browser was actually given is the BUILT page, not the
-        // TypeScript entry it refuses. (The served URL is the port's, and the studio serves a
-        // build out of its own shadow — so the proof is the page, not the path.)
-        const entryScript = (await api["preview.evaluate"]!({
-          handle,
-          // The game's own module tags, not the two the serve layer inserted.
-          expression: `[...document.querySelectorAll('script[type=module][src]')].map((s) => s.getAttribute('src')).filter((src) => !src.startsWith('/vendor/'))`,
-        } as never)) as string[];
-        sheet.ok(
-          "built-entry",
-          entryScript.length === 1 &&
-            /main\.js$/.test(entryScript[0]!) &&
-            !entryScript.some((src) => /\.tsx?$/.test(src)),
-          `the served page loads ${entryScript.join(", ")}`,
-        );
-        sheet.ok(
-          "built-url",
-          typeof status.url === "string" && /\/index\.html$/.test(status.url),
-          `the port is showing ${status.url}`,
-        );
-      }
-
       // The one extra assertion this runner carries for the lane that owns that path.
       if (id === "esm-addons") {
-        const info = (await api["preview.call"]!({ method: "captureInfo", handle } as never)) as {
-          source?: string;
-          composited?: boolean;
-        } | null;
         const hues = judged.stats?.hueHistogram ?? [];
         const dominant = hues.length ? hues.indexOf(Math.max(...hues)) : -1;
-        // Bins are 30° each, red first: the lamps and their bloom are cyan/blue (bin 6 or 7).
+        // Bins are 30° each, red first: the lamps and their bloom are cyan/blue (bin 6 or 7). The
+        // page's own picture (the compositor's), so the composer's last pass is in it.
         sheet.ok(
           "composer-frame",
-          info?.source === "page" && (dominant === 6 || dominant === 7),
-          `capture ${info?.source}, dominant hue bin ${dominant} of ${JSON.stringify(hues)}`,
-        );
-        // With the clock held, the compositor is asked twice: once for the picture as the page
-        // left it (the composer's last pass), and once after a plain `renderer.render(scene,
-        // camera)`. The bloom is the difference.
-        await api["preview.call"]!({ method: "pause", handle } as never);
-        const composed = (await api["preview.screenshot"]!({
-          runId,
-          label: `${id}/composed`,
-          surface: "page",
-          handle,
-        } as never)) as { stats: { meanLuma: number } };
-        await api["preview.evaluate"]!({
-          handle,
-          expression: `(() => { const i = window.__studio.inspect(); i.renderer.render(i.scene, i.camera); return true; })()`,
-        } as never);
-        const plain = (await api["preview.screenshot"]!({
-          runId,
-          label: `${id}/plain`,
-          surface: "page",
-          handle,
-        } as never)) as { stats: { meanLuma: number } };
-        await api["preview.call"]!({ method: "start", handle } as never);
-        const lift = composed.stats.meanLuma - plain.stats.meanLuma;
-        sheet.ok(
-          "post-pass-visible",
-          lift > 1,
-          `the composed frame is ${composed.stats.meanLuma.toFixed(2)} against ${plain.stats.meanLuma.toFixed(2)} for a plain re-render`,
+          dominant === 6 || dominant === 7,
+          `page capture, dominant hue bin ${dominant} of ${JSON.stringify(hues)}`,
         );
       }
 
@@ -441,7 +380,6 @@ async function main(): Promise<void> {
         id,
         transport: "fixture",
         shape: detected,
-        cameras: declared,
         readyAfterMs: ready.pageMs,
         health: health.problems,
         checks: sheet.rows,

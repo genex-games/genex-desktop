@@ -14,7 +14,6 @@ import {
 } from "../../shared/boot.ts";
 import type { CustomEventType } from "../../shared/custom-events.ts";
 import { EventKind, type EventData } from "../../shared/event-log.ts";
-import { applyEdits } from "../../shared/skill-edits.ts";
 import { ShotKind, iterationDir } from "../core/run-shots.ts";
 
 export const FIXTURE_VERSION = 1;
@@ -206,10 +205,4 @@ export function fixtureRun(scope: Record<string, unknown>) {
     event_type: name,
     payload: { ...scope, ...payload },
   });
-}
-
-/** A staged suggestion as SkillOpt writes one: the edits, and the file as they leave it. */
-export function appendSuggestion(skill: string, currentText: string, text: string) {
-  const edits = [{ op: "append", text }];
-  return { skill, file: `skills/${skill}.md`, currentText, edits, proposedText: applyEdits(currentText, edits).text };
 }
