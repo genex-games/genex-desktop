@@ -20,8 +20,6 @@ import { compactSession } from "./session-compact.ts";
 import { directorTool } from "./director.ts";
 import { chatWorkerTool } from "./workers/chat-workers.ts";
 import { CHAT_JUDGE_CAPABILITY, judgeFromChat, servesChatJudge } from "./chat-judge.ts";
-import { runSkillOpt } from "./skillopt.ts";
-import { learningOn } from "./learning.ts";
 import { loadSkills } from "./skills.ts";
 import { runSelftest } from "./selftest.ts";
 import { MessageQueue } from "./message-queue.ts";
@@ -43,6 +41,9 @@ export { loopRunRefusal } from "./run-dispatch.ts";
 /** The status a thread has when nothing is working on it; the host reads it as the empty line. */
 const IDLE_STATUS = "idle";
 
+/** What a self-improvement request is answered with: the harness no longer learns or rewrites itself. */
+const SELF_IMPROVEMENT_GONE = "self-improvement was removed: Genex learns nothing from runs";
+
 /**
  * What this self can dispatch, reported in the bootstrap's ready message. A stale copy of this
  * file simply lacks the property — that absence is how the host knows not to hand an unattended
@@ -54,7 +55,6 @@ const CAPABILITIES = [
   "autopilot",
   "run.start",
   "run.stop",
-  "skillopt",
   "compact",
   "selftest",
   "scoreboard",
@@ -198,7 +198,7 @@ async function dispatch({ studio, messages, compactions, busyThreads }: Loop, ac
     case "run_stop": {
       const active = studio.activeRuns.get(action.runId);
       if (active) {
-        // The run's own Stop too: its learning pass keeps it whatever the chat does next.
+        // The run's own Stop: it holds whatever the chat does next.
         stopRun(active);
         studio.cancels.add(active.threadId);
         abortEngineWork(host, active.threadId);
@@ -231,7 +231,9 @@ async function dispatch({ studio, messages, compactions, busyThreads }: Loop, ac
       }
       return;
     case "skillopt_start":
-      return improveOnRequest(studio, action.threadId, action.options);
+      // Self-improvement is gone: Genex no longer learns from runs or rewrites its own files.
+      host.notify("skillopt.finished", { note: SELF_IMPROVEMENT_GONE });
+      return;
     case "compact":
       return holdingChat(compactions, action.threadId, compactOnRequest(studio, action));
     case "selftest":
@@ -272,28 +274,6 @@ export async function cancelThread(
 /** Stop must reach *into* a generation: abort the thread's in-flight completions (all, if no thread). */
 function abortEngineWork(host: Host, threadId?: string): Promise<unknown> {
   return host.call(HostMethod.EngineAbort, threadId ? { threadId } : {}).catch(() => {});
-}
-
-/** A self-improvement pass the user asked for, unless Self-improvement is switched off. */
-async function improveOnRequest(
-  studio: Studio,
-  threadId: string,
-  options: Record<string, unknown> | undefined,
-): Promise<void> {
-  const { host } = studio;
-  studio.cancels.delete(threadId);
-  const ctx = studio.scoped(threadId);
-  if (!(await learningOn(ctx))) {
-    host.notify("skillopt.finished", { note: "self-improvement is off" });
-    return;
-  }
-  ctx.setStatus("self-improving");
-  try {
-    const report = await runSkillOpt(ctx, { threadId, ...(options ?? {}) });
-    host.notify("skillopt.finished", report);
-  } finally {
-    ctx.setStatus("idle");
-  }
 }
 
 /** A chat's compaction, its queued messages held until it is over, whatever its outcome. */
