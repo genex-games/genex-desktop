@@ -1,6 +1,7 @@
 /**
- * The finish check of a Loop: when the lead claims the goal is reached, a reviewer that did none of
- * the work reads the proof and the captures and answers yes or no. Each step of a check is one
+ * The finish check of a Loop, a second opinion on the lead's claim: when the lead claims the goal is
+ * reached, a reviewer that did none of the work reads the proof and the captures and answers yes or
+ * no, which goes back to the lead to weigh. Each step of a check is one
  * `finish_check` record of the run, written by the app alone (`main/core/finish-review.ts`, from the
  * reviewer session it seated: the harness asks and settles, never records); the Builds graph and
  * the chat read them. The seed keeps copies of these names (`loop/finish-contract.ts`), held equal

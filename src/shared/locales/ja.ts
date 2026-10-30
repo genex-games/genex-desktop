@@ -883,9 +883,7 @@ export default {
   "Connect {name}": "{name}に接続",
   Connected: "接続済み",
   "Connected to {name}.": "{name}に接続しました。",
-  Connecting: "接続中",
   "Connecting tools": "ツールに接続中",
-  "Connecting your game to the studio": "ゲームをStudioに接続しています",
   "Connecting…": "接続中…",
   "Connection cancelled": "接続をキャンセルしました",
   Connections: "接続",
@@ -3106,8 +3104,6 @@ export default {
   "Reviewers model": "レビュアーのモデル",
   "Reviewers preferred it": "レビュアーはこちらを選びました",
   "Reviewers preferred the game you had": "レビュアーは前のゲームを選びました",
-  "Reviewers test every result and decide when the game is done.":
-    "レビュアーはすべての結果をテストし、ゲームが完成したかを判断します。",
   "A second opinion": "セカンドオピニオン",
   "Reviewers undid it": "レビュアーが取り消し",
   "Reviewers undid {count, plural, other {# tries}}": "レビュアーが{count, plural, other {#回}}取り消し",
@@ -3901,7 +3897,6 @@ export default {
   "The rest of this file is too long to show here.": "このファイルの残りは長すぎるため、ここには表示できません。",
   "The reviewer is satisfied with this part.": "レビュアーはこのパートに満足しています。",
   "The reviewer preferred the new build to the round before.": "レビュアーは前のラウンドより新しいビルドを選びました。",
-  "The reviewer preferred the round before.": "レビュアーは前のラウンドを選びました。",
   "The reviewers are looking at try {tryNumber}.": "レビュアーが{tryNumber}回目を見ています。",
   "The reviewers kept it on the first try.": "レビュアーが1回目の試行で採用しました。",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4597,7 +4592,6 @@ export default {
   "Worked on {count, plural, one {# step} other {# steps}}": "{count, plural, other {#ステップ}}の作業",
   Worker: "ワーカー",
   Workers: "ワーカー",
-  "Workers build the parts of the plan, several at once.": "ワーカーはプランの各パートを、いくつも同時につくります。",
   "Workers model": "ワーカーのモデル",
   "Workers: {model}": "ワーカー：{model}",
   Working: "作業中",
@@ -4866,10 +4860,6 @@ export default {
   "development build": "開発ビルド",
   done: "完了",
   "down {percent}%": "{percent}%減",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "各ラウンドは前のラウンドを上回る必要があり、どれがどれか見えないレビュアーが勝者を選びます",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "各ラウンドは前のラウンドを上回る必要があり、どのビルドがどれかを知らされずにレビューする{reviewer}が勝者を選びます",
   "edited itself": "自分のコードを編集しました",
   "edited the code": "コードを編集しました",
   "editor\u0004Waiting for you": "あなたを待っています",
@@ -4923,7 +4913,7 @@ export default {
   "had a judge play the game": "審査員にゲームをプレイしてもらいました",
   "handed the work to a worker": "ワーカーに作業を任せました",
   "heading\u0004Installed": "インストール済み",
-  'heading in the direction of "{name}" — {rule}': "「{name}」の方向を目指します：{rule}",
+  'heading in the direction of "{name}"': "「{name}」の方向を目指します",
   "how Genex runs this game": "Genexがこのゲームを動かす方法",
   "how Harness leads a build": "Harnessがビルドを進める方法",
   "how Harness plans a build": "Harnessがビルドを計画する方法",
@@ -5144,7 +5134,7 @@ export default {
   "that snapshot has no game to play": "そのスナップショットにはプレイできるゲームがありません",
   "the Claude Agent SDK is not installed": "Claude Agent SDKがインストールされていません",
   "the Genex CLI": "Genex CLI",
-  'the bar for this build is "{name}" — {rule}': "このビルドの基準は「{name}」：{rule}",
+  'the bar for this build is "{name}"': "このビルドの基準は「{name}」",
   "the build finished": "ビルドが完了しました",
   "the build finished but its output could not be kept": "ビルドは終わりましたが、出力を保存できませんでした",
   "the build finished but wrote nothing to {folder}/": "ビルドは終わりましたが、{folder}/に何も書き込まれませんでした",
@@ -5203,7 +5193,6 @@ export default {
   "the player's word": "プレイヤーの申告",
   "the preview shows the current build": "プレビューには現在のビルドが表示されています",
   "the reviewer preferred it to the round before": "レビュアーが前のラウンドよりこちらを選びました",
-  "the reviewer preferred the round before": "レビュアーが前のラウンドを選びました",
   "the reviewers are looking at try {tryNumber} of {step}": "レビュアーが「{step}」の{tryNumber}回目を見ています",
   "the run's record is incomplete": "ビルドの記録が不完全です",
   "the server": "サーバー",
@@ -5583,7 +5572,6 @@ export default {
   "{model} (selected)": "{model}（選択中）",
   "{model} animations": "{model}のアニメーション",
   "{model} is not installed in Ollama.": "{model}はOllamaにインストールされていません。",
-  "{model} on {provider}": "{provider}の{model}",
   "{model} ready": "{model}の準備ができました",
   "{name} account": "{name}のアカウント",
   "{name} already builds in {title}.": "{name}はすでに{title}で使われています。",
@@ -5652,8 +5640,6 @@ export default {
   "{part} · round {round}": "{part} · ラウンド{round}",
   "{part} · the model is busy — trying again in {seconds}s":
     "{part} · モデルが混み合っています。{seconds}秒後に再試行します",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · レビュアーが混み合っています。{seconds}秒後に再試行します",
   "{part} · undoing": "{part} · 取り消し中",
   "{part} · undoing something that broke": "{part} · 壊れた変更を取り消し中",
   "{part} · waiting": "{part} · 待機中",
@@ -6091,4 +6077,7 @@ export default {
   "Show us where Genex gets in your way.": "Genexで困っているところを教えてください。",
   "Where you go, what fails and how long it takes": "どこへ行き、何が失敗し、どれだけ時間がかかったか",
   "usage data\u0004Share": "共有する",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "メインエージェントが求めたとき、レビュアーがセカンドオピニオンを出します。",
+  "Workers take parts of the build, several at once.": "ワーカーがビルドの各パートを分担し、いくつも同時に進めます。",
 } satisfies LocaleCatalog;

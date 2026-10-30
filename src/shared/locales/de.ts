@@ -943,9 +943,7 @@ export default {
   "Connect {name}": "{name} verbinden",
   Connected: "Verbunden",
   "Connected to {name}.": "Mit {name} verbunden.",
-  Connecting: "Verbindet",
   "Connecting tools": "Verbindet Tools",
-  "Connecting your game to the studio": "Verbindet dein Spiel mit Studio",
   "Connecting…": "Verbindet…",
   "Connection cancelled": "Verbindung abgebrochen",
   Connections: "Verbindungen",
@@ -3181,8 +3179,6 @@ export default {
   "Reviewers model": "Modell der Prüfer",
   "Reviewers preferred it": "Prüfer fanden es besser",
   "Reviewers preferred the game you had": "Prüfer fanden dein bisheriges Spiel besser",
-  "Reviewers test every result and decide when the game is done.":
-    "Prüfer testen jedes Ergebnis und entscheiden, wann das Spiel fertig ist.",
   "A second opinion": "Eine zweite Meinung",
   "Reviewers undid it": "Prüfer haben es rückgängig gemacht",
   "Reviewers undid {count, plural, other {# tries}}":
@@ -3991,7 +3987,6 @@ export default {
   "The reviewer is satisfied with this part.": "Der Prüfer ist mit diesem Teil zufrieden.",
   "The reviewer preferred the new build to the round before.":
     "Der Prüfer fand den neuen Build besser als die Runde davor.",
-  "The reviewer preferred the round before.": "Der Prüfer fand die Runde davor besser.",
   "The reviewers are looking at try {tryNumber}.": "Die Prüfer sehen sich Versuch {tryNumber} an.",
   "The reviewers kept it on the first try.": "Die Prüfer haben es beim ersten Versuch behalten.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4697,7 +4692,6 @@ export default {
     "{count, plural, one {# Schritt} other {# Schritte}} erledigt",
   Worker: "Helfer",
   Workers: "Helfer",
-  "Workers build the parts of the plan, several at once.": "Helfer bauen die Teile des Plans, mehrere gleichzeitig.",
   "Workers model": "Modell der Helfer",
   "Workers: {model}": "Helfer: {model}",
   Working: "Arbeitet",
@@ -4967,10 +4961,6 @@ export default {
   "development build": "Entwicklungs-Build",
   done: "fertig",
   "down {percent}%": "um {percent} % gesunken",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "jede Runde muss die vorherige schlagen, und ein Prüfer, der nicht sieht, welcher welcher ist, wählt den Gewinner",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "jede Runde muss die vorherige schlagen, und {reviewer} prüft, ohne zu wissen, welcher Build welcher ist, und wählt den Gewinner",
   "edited itself": "eigenen Code bearbeitet",
   "edited the code": "Code bearbeitet",
   "editor\u0004Waiting for you": "Wartet auf dich",
@@ -5025,7 +5015,7 @@ export default {
   "had a judge play the game": "einen Juror das Spiel spielen lassen",
   "handed the work to a worker": "Arbeit an einen Helfer übergeben",
   "heading\u0004Installed": "Installiert",
-  'heading in the direction of "{name}" — {rule}': "Richtung „{name}“ – {rule}",
+  'heading in the direction of "{name}"': "Richtung „{name}“",
   "how Genex runs this game": "wie Genex dieses Spiel startet",
   "how Harness leads a build": "wie Harness einen Build leitet",
   "how Harness plans a build": "wie Harness einen Build plant",
@@ -5248,7 +5238,7 @@ export default {
   "that snapshot has no game to play": "in diesem Snapshot gibt es kein spielbares Spiel",
   "the Claude Agent SDK is not installed": "das Claude Agent SDK ist nicht installiert",
   "the Genex CLI": "die Genex-CLI",
-  'the bar for this build is "{name}" — {rule}': "die Messlatte für diesen Build ist „{name}“ – {rule}",
+  'the bar for this build is "{name}"': "die Messlatte für diesen Build ist „{name}“",
   "the build finished": "der Build ist fertig",
   "the build finished but its output could not be kept":
     "der Build ist fertig, aber sein Ergebnis konnte nicht behalten werden",
@@ -5313,7 +5303,6 @@ export default {
   "the player's word": "laut Spieler",
   "the preview shows the current build": "die Vorschau zeigt den aktuellen Build",
   "the reviewer preferred it to the round before": "der Prüfer fand sie besser als die Runde davor",
-  "the reviewer preferred the round before": "der Prüfer fand die Runde davor besser",
   "the reviewers are looking at try {tryNumber} of {step}": "die Prüfer sehen sich Versuch {tryNumber} von {step} an",
   "the run's record is incomplete": "die Aufzeichnung des Builds ist unvollständig",
   "the server": "Der Server",
@@ -5721,7 +5710,6 @@ export default {
   "{model} (selected)": "{model} (ausgewählt)",
   "{model} animations": "Animationen von {model}",
   "{model} is not installed in Ollama.": "{model} ist in Ollama nicht installiert.",
-  "{model} on {provider}": "{model} über {provider}",
   "{model} ready": "{model} bereit",
   "{name} account": "Konto für {name}",
   "{name} already builds in {title}.": "{name} wird schon von {title} genutzt.",
@@ -5791,8 +5779,6 @@ export default {
   "{part} · round {round}": "{part} · Runde {round}",
   "{part} · the model is busy — trying again in {seconds}s":
     "{part} · das Modell ist ausgelastet – neuer Versuch in {seconds} s",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · der Prüfer ist ausgelastet – neuer Versuch in {seconds} s",
   "{part} · undoing": "{part} · macht rückgängig",
   "{part} · undoing something that broke": "{part} · macht etwas rückgängig, das kaputtging",
   "{part} · waiting": "{part} · wartet",
@@ -6238,4 +6224,7 @@ export default {
   "Show us where Genex gets in your way.": "Zeig uns, wo Genex dir im Weg steht.",
   "Where you go, what fails and how long it takes": "Wohin du gehst, was schiefgeht und wie lange es dauert",
   "usage data\u0004Share": "Teilen",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "Prüfer geben eine zweite Meinung ab, wenn der Hauptagent darum bittet.",
+  "Workers take parts of the build, several at once.": "Helfer übernehmen Teile des Builds, mehrere gleichzeitig.",
 } satisfies LocaleCatalog;

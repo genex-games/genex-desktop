@@ -942,9 +942,7 @@ export default {
   "Connect {name}": "Connecter {name}",
   Connected: "Connecté",
   "Connected to {name}.": "Connecté à {name}.",
-  Connecting: "Connexion",
   "Connecting tools": "Connecte les outils",
-  "Connecting your game to the studio": "Connecte ton jeu à Studio",
   "Connecting…": "Connexion…",
   "Connection cancelled": "Connexion annulée",
   Connections: "Connexions",
@@ -3164,8 +3162,6 @@ export default {
   "Reviewers model": "Modèle des vérificateurs",
   "Reviewers preferred it": "Les vérificateurs l’ont préféré",
   "Reviewers preferred the game you had": "Les vérificateurs ont préféré le jeu que tu avais",
-  "Reviewers test every result and decide when the game is done.":
-    "Les vérificateurs testent chaque résultat et décident quand le jeu est fini.",
   "A second opinion": "Un deuxième avis",
   "Reviewers undid it": "Les vérificateurs l’ont annulé",
   "Reviewers undid {count, plural, other {# tries}}":
@@ -3967,7 +3963,6 @@ export default {
   "The reviewer is satisfied with this part.": "Le vérificateur est satisfait de cette partie.",
   "The reviewer preferred the new build to the round before.":
     "Le vérificateur a préféré le nouveau build au tour d’avant.",
-  "The reviewer preferred the round before.": "Le vérificateur a préféré le tour d’avant.",
   "The reviewers are looking at try {tryNumber}.": "Les vérificateurs regardent l’essai {tryNumber}.",
   "The reviewers kept it on the first try.": "Les vérificateurs l’ont gardé dès le premier essai.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4659,8 +4654,6 @@ export default {
     "{count, plural, one {# étape effectuée} other {# étapes effectuées}}",
   Worker: "Assistant",
   Workers: "Assistants",
-  "Workers build the parts of the plan, several at once.":
-    "Les assistants créent les parties du plan, plusieurs à la fois.",
   "Workers model": "Modèle des assistants",
   "Workers: {model}": "Assistants : {model}",
   Working: "En cours",
@@ -4932,10 +4925,6 @@ export default {
   "development build": "build de développement",
   done: "terminé",
   "down {percent}%": "en baisse de {percent} %",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "chaque tour doit battre le précédent, et un vérificateur qui ne sait pas lequel est lequel choisit le gagnant",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "chaque tour doit battre le précédent, et {reviewer}, qui vérifie sans savoir quel build est lequel, choisit le gagnant",
   "edited itself": "a modifié son propre code",
   "edited the code": "a modifié le code",
   "editor\u0004Waiting for you": "En attente de toi",
@@ -4990,7 +4979,7 @@ export default {
   "had a judge play the game": "a fait tester le jeu par un juge",
   "handed the work to a worker": "a confié le travail à un assistant",
   "heading\u0004Installed": "Installés",
-  'heading in the direction of "{name}" — {rule}': "cap sur « {name} » — {rule}",
+  'heading in the direction of "{name}"': "cap sur « {name} »",
   "how Genex runs this game": "comment Genex lance ce jeu",
   "how Harness leads a build": "la façon dont Harness dirige un build",
   "how Harness plans a build": "la façon dont Harness planifie un build",
@@ -5211,7 +5200,7 @@ export default {
   "that snapshot has no game to play": "cet instantané n’a aucun jeu à lancer",
   "the Claude Agent SDK is not installed": "le Claude Agent SDK n’est pas installé",
   "the Genex CLI": "la CLI Genex",
-  'the bar for this build is "{name}" — {rule}': "la référence pour ce build est « {name} » — {rule}",
+  'the bar for this build is "{name}"': "la référence pour ce build est « {name} »",
   "the build finished": "le build est terminé",
   "the build finished but its output could not be kept": "le build est terminé mais son résultat n’a pas pu être gardé",
   "the build finished but wrote nothing to {folder}/": "le build est terminé mais n’a rien écrit dans {folder}/",
@@ -5276,7 +5265,6 @@ export default {
   "the player's word": "selon le joueur",
   "the preview shows the current build": "l’aperçu montre le build actuel",
   "the reviewer preferred it to the round before": "le vérificateur l’a préféré au tour d’avant",
-  "the reviewer preferred the round before": "le vérificateur a préféré le tour d’avant",
   "the reviewers are looking at try {tryNumber} of {step}": "les vérificateurs regardent l’essai {tryNumber} de {step}",
   "the run's record is incomplete": "l’historique du build est incomplet",
   "the server": "le serveur",
@@ -5685,7 +5673,6 @@ export default {
   "{model} (selected)": "{model} (sélectionné)",
   "{model} animations": "Animations de {model}",
   "{model} is not installed in Ollama.": "{model} n’est pas installé dans Ollama.",
-  "{model} on {provider}": "{model} sur {provider}",
   "{model} ready": "{model} prêt",
   "{name} account": "Compte {name}",
   "{name} already builds in {title}.": "{name} est déjà utilisé par {title}.",
@@ -5755,8 +5742,6 @@ export default {
   "{part} · round {round}": "{part} · tour {round}",
   "{part} · the model is busy — trying again in {seconds}s":
     "{part} · le modèle est surchargé — nouvel essai dans {seconds} s",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · le vérificateur est occupé — nouvel essai dans {seconds} s",
   "{part} · undoing": "{part} · annulation",
   "{part} · undoing something that broke": "{part} · annule quelque chose qui a cassé",
   "{part} · waiting": "{part} · en attente",
@@ -6200,4 +6185,8 @@ export default {
   "Show us where Genex gets in your way.": "Montre-nous où Genex te gêne.",
   "Where you go, what fails and how long it takes": "Où tu vas, ce qui plante et combien de temps ça prend",
   "usage data\u0004Share": "Partager",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "Les vérificateurs donnent un deuxième avis quand l’agent principal le demande.",
+  "Workers take parts of the build, several at once.":
+    "Les assistants prennent en charge des parties du build, plusieurs à la fois.",
 } satisfies LocaleCatalog;

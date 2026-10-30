@@ -940,9 +940,7 @@ export default {
   "Connect {name}": "Conectar {name}",
   Connected: "Conectado",
   "Connected to {name}.": "Conectado a {name}.",
-  Connecting: "Conectando",
   "Connecting tools": "Conectando herramientas",
-  "Connecting your game to the studio": "Conectando tu juego con Studio",
   "Connecting…": "Conectando…",
   "Connection cancelled": "Conexión cancelada",
   Connections: "Conexiones",
@@ -3154,8 +3152,6 @@ export default {
   "Reviewers model": "Modelo de los revisores",
   "Reviewers preferred it": "Los revisores lo prefirieron",
   "Reviewers preferred the game you had": "Los revisores prefirieron el juego que tenías",
-  "Reviewers test every result and decide when the game is done.":
-    "Los revisores prueban cada resultado y deciden cuándo está terminado el juego.",
   "A second opinion": "Una segunda opinión",
   "Reviewers undid it": "Los revisores lo deshicieron",
   "Reviewers undid {count, plural, other {# tries}}":
@@ -3957,7 +3953,6 @@ export default {
   "The reviewer is satisfied with this part.": "El revisor está satisfecho con esta parte.",
   "The reviewer preferred the new build to the round before.":
     "El revisor prefirió el nuevo build a la ronda anterior.",
-  "The reviewer preferred the round before.": "El revisor prefirió la ronda anterior.",
   "The reviewers are looking at try {tryNumber}.": "Los revisores están mirando el intento {tryNumber}.",
   "The reviewers kept it on the first try.": "Los revisores lo conservaron al primer intento.",
   "The reviewers kept try {tryNumber} after undoing the one before it.":
@@ -4650,7 +4645,6 @@ export default {
   "Worked on {count, plural, one {# step} other {# steps}}": "Hizo {count, plural, one {# paso} other {# pasos}}",
   Worker: "Ayudante",
   Workers: "Ayudantes",
-  "Workers build the parts of the plan, several at once.": "Los ayudantes crean las partes del plan, varias a la vez.",
   "Workers model": "Modelo de los ayudantes",
   "Workers: {model}": "Ayudantes: {model}",
   Working: "Trabajando",
@@ -4921,10 +4915,6 @@ export default {
   "development build": "versión de desarrollo",
   done: "listo",
   "down {percent}%": "baja un {percent}%",
-  "each round has to beat the one before, and a reviewer that cannot see which is which picks the winner":
-    "cada ronda tiene que superar a la anterior, y un revisor que no sabe cuál es cuál elige al ganador",
-  "each round has to beat the one before, and {reviewer}, reviewing without being told which build is which, picks the winner":
-    "cada ronda tiene que superar a la anterior, y {reviewer}, que revisa sin saber qué build es cuál, elige al ganador",
   "edited itself": "editó su propio código",
   "edited the code": "editó el código",
   "editor\u0004Waiting for you": "Esperándote",
@@ -4978,7 +4968,7 @@ export default {
   "had a judge play the game": "puso a un juez a jugar el juego",
   "handed the work to a worker": "le pasó el trabajo a un ayudante",
   "heading\u0004Installed": "Instalados",
-  'heading in the direction of "{name}" — {rule}': "rumbo a “{name}”: {rule}",
+  'heading in the direction of "{name}"': "rumbo a “{name}”",
   "how Genex runs this game": "cómo ejecuta Genex este juego",
   "how Harness leads a build": "cómo dirige Harness un build",
   "how Harness plans a build": "cómo planifica Harness un build",
@@ -5200,7 +5190,7 @@ export default {
   "that snapshot has no game to play": "esa instantánea no tiene ningún juego para jugar",
   "the Claude Agent SDK is not installed": "el Claude Agent SDK no está instalado",
   "the Genex CLI": "la CLI de Genex",
-  'the bar for this build is "{name}" — {rule}': "la referencia de este build es “{name}”: {rule}",
+  'the bar for this build is "{name}"': "la referencia de este build es “{name}”",
   "the build finished": "el build terminó",
   "the build finished but its output could not be kept": "el build terminó, pero no se pudo guardar su resultado",
   "the build finished but wrote nothing to {folder}/": "el build terminó, pero no escribió nada en {folder}/",
@@ -5262,7 +5252,6 @@ export default {
   "the player's word": "según el jugador",
   "the preview shows the current build": "la vista previa muestra el build actual",
   "the reviewer preferred it to the round before": "el revisor la prefirió a la ronda anterior",
-  "the reviewer preferred the round before": "el revisor prefirió la ronda anterior",
   "the reviewers are looking at try {tryNumber} of {step}":
     "los revisores están mirando el intento {tryNumber} de {step}",
   "the run's record is incomplete": "el registro del build está incompleto",
@@ -5666,7 +5655,6 @@ export default {
   "{model} (selected)": "{model} (seleccionado)",
   "{model} animations": "Animaciones de {model}",
   "{model} is not installed in Ollama.": "{model} no está instalado en Ollama.",
-  "{model} on {provider}": "{model} en {provider}",
   "{model} ready": "{model} listo",
   "{name} account": "Cuenta de {name}",
   "{name} already builds in {title}.": "{name} ya se usa en {title}.",
@@ -5736,8 +5724,6 @@ export default {
   "{part} · round {round}": "{part} · ronda {round}",
   "{part} · the model is busy — trying again in {seconds}s":
     "{part} · el modelo está saturado: reintentando en {seconds} s",
-  "{part} · the reviewer is busy — trying again in {seconds}s":
-    "{part} · el revisor está ocupado: reintentando en {seconds} s",
   "{part} · undoing": "{part} · deshaciendo",
   "{part} · undoing something that broke": "{part} · deshaciendo algo que se rompió",
   "{part} · waiting": "{part} · esperando",
@@ -6178,4 +6164,8 @@ export default {
   "Show us where Genex gets in your way.": "Muéstranos dónde Genex te estorba.",
   "Where you go, what fails and how long it takes": "Adónde vas, qué falla y cuánto tarda",
   "usage data\u0004Share": "Compartir",
+  "Reviewers give a second opinion when the lead asks for one.":
+    "Los revisores dan una segunda opinión cuando el agente principal la pide.",
+  "Workers take parts of the build, several at once.":
+    "Los ayudantes se encargan de partes del build, varios a la vez.",
 } satisfies LocaleCatalog;
