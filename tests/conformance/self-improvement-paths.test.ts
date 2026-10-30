@@ -111,6 +111,8 @@ const HOSTILE: HostileRow[] = [
   {
     name: "a skill file linked to an existing outside file",
     plant: async (ws, outside) => {
+      // The seed ships no skills folder now; an older install's workspace may still hold one.
+      await mkdir(path.join(ws, "skills"), { recursive: true });
       await rm(path.join(ws, "skills", `${SKILL}.md`), { force: true });
       await symlink(path.join(outside, "secret.txt"), path.join(ws, "skills", `${SKILL}.md`));
       return skillRecord(OUTSIDE_SECRET);

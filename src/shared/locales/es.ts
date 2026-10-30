@@ -30,6 +30,8 @@ export default {
   "A GLB for the game plus reference renders to check it.":
     "Un GLB para el juego y renders de referencia para revisarlo.",
   "A Loop in {game} is using Unreal.": "Un Loop en {game} está usando Unreal.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Un Loop necesita un motor que mantenga una sesión propia, y el motor de este chat no la mantiene, así que no se construyó nada. El chat sigue respondiendo aquí.",
   "A bakery rush where orders pile up on a conveyor belt":
     "Locura en la panadería: los pedidos se acumulan en una cinta transportadora",
   "A balloon pop game with a hedgehog that rolls through the sky":
@@ -2204,6 +2206,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop terminado · Cambios guardados en tu proyecto",
   "Loop from {day}": "Loop, {day}",
   "Loop mode": "Modo Loop",
+  "Loop not started": "Loop no iniciado",
   "Loop time limit": "Límite de tiempo de Loop",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Loop necesita el proyecto de {engine} dentro de la carpeta de este juego para que Retroceder pueda deshacer cada paso; {project} está en {place}. Crea uno nuevo desde el botón {engine}, o mueve {project} a la carpeta de este juego y elígelo ahí. Hasta entonces, hace lo que pides y se detiene.",

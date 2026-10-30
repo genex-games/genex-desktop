@@ -24,11 +24,8 @@ const PULL_DONE = "success";
 /** Events whose record lands in the log: pull it in now rather than at the next poll. */
 const LOGGED: ReadonlySet<UiEventType> = new Set<UiEventType>([
   UiEvent.GameChanged,
-  UiEvent.RunIteration,
-  // Autopilot narrates itself into the log — facet rows and decision cards land live.
-  UiEvent.RunOptimization,
+  // A run narrates itself into the log — its rows and decision cards land live.
   UiEvent.AutopilotFacet,
-  UiEvent.JudgeFacet,
   UiEvent.ChatMessage,
   UiEvent.ToolFinished,
   UiEvent.ChatError,

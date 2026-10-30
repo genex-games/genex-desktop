@@ -28,6 +28,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "ChatGPT 连接已在更改中。",
   "A GLB for the game plus reference renders to check it.": "为游戏生成一个 GLB，并附带用于检查的参考渲染图。",
   "A Loop in {game} is using Unreal.": "{game} 中的 Loop 正在使用 Unreal。",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Loop 需要一个保有自身会话的引擎，而这个聊天的引擎没有，所以什么也没有构建。聊天仍会在这里回复。",
   "A bakery rush where orders pile up on a conveyor belt": "订单在传送带上越堆越多的面包店大作战",
   "A balloon pop game with a hedgehog that rolls through the sky": "刺猬在空中滚动、戳破气球的游戏",
   "A beekeeping game where you plan a garden to keep the hive happy": "规划花园、让蜂巢开心的养蜂游戏",
@@ -2024,6 +2026,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop 已结束 · 改动保留在你的项目中",
   "Loop from {day}": "{day}的 Loop",
   "Loop mode": "Loop 模式",
+  "Loop not started": "Loop 未启动",
   "Loop time limit": "Loop 时间限制",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Loop 需要 {engine} 项目位于这个游戏的文件夹内，回退才能撤销每一步；{project} 位于 {place}。用 {engine} 按钮新建一个，或把 {project} 移到这个游戏的文件夹里并在那里选择它。在此之前，它会按你说的做，然后停下。",

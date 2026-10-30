@@ -29,6 +29,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "Uma mudança na conexão com o ChatGPT já está em andamento.",
   "A GLB for the game plus reference renders to check it.": "Um GLB para o jogo e renders de referência para conferir.",
   "A Loop in {game} is using Unreal.": "Um Loop em {game} está usando o Unreal.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Um Loop precisa de um motor que mantenha uma sessão própria, e o motor deste chat não mantém, então nada foi construído. O chat continua respondendo aqui.",
   "A bakery rush where orders pile up on a conveyor belt": "Correria na padaria com pedidos se acumulando na esteira",
   "A balloon pop game with a hedgehog that rolls through the sky":
     "Um jogo de estourar balões com um ouriço que rola pelo céu",
@@ -2203,6 +2205,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop terminado · Mudanças guardadas no seu projeto",
   "Loop from {day}": "Loop, {day}",
   "Loop mode": "Modo Loop",
+  "Loop not started": "Loop não iniciado",
   "Loop time limit": "Limite de tempo do Loop",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "O Loop precisa do projeto do {engine} dentro da pasta deste jogo, para que Voltar possa desfazer cada passo; {project} está em {place}. Crie um novo pelo botão {engine} ou mova {project} para a pasta deste jogo e escolha-o lá. Até lá, faz o que você pede e para.",

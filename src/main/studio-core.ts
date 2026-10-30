@@ -2038,13 +2038,6 @@ export class StudioCore {
       if (runId) this.#stopRunJobs(runId);
       this.#previews.refreshVisibility();
     }
-    // Auto-mode: an improvement that won its blind gate lands the moment it is staged. The same
-    // path as the Apply button — snapshot first, logged, reversible — just without the wait.
-    if (event.type === UiEvent.SkilloptStaged && this.#autoApplies()) {
-      void this.#selfImprovement.autoApplyStaged().catch((err) => {
-        this.emit(UiEvent.SkilloptAutoApplyFailed, { error: errorMessage(err) });
-      });
-    }
   }
 
   // ── settings ─────────────────────────────────────────────────────────────────────────────

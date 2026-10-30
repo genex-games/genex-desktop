@@ -29,6 +29,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "Подключение ChatGPT уже меняется.",
   "A GLB for the game plus reference renders to check it.": "GLB для игры и референсные рендеры, чтобы его проверить.",
   "A Loop in {game} is using Unreal.": "Loop в игре «{game}» использует Unreal.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Для Loop нужен движок, который держит собственную сессию, а движок этого чата её не держит, поэтому ничего не построено. Чат по-прежнему отвечает здесь.",
   "A bakery rush where orders pile up on a conveyor belt": "Запарка в пекарне: заказы копятся на конвейере",
   "A balloon pop game with a hedgehog that rolls through the sky":
     "Игра с шариками, где ёжик катится по небу и лопает их",
@@ -2158,6 +2160,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop завершён · изменения сохранены в проекте",
   "Loop from {day}": "Loop, {day}",
   "Loop mode": "Режим Loop",
+  "Loop not started": "Loop не запущен",
   "Loop time limit": "Лимит времени Loop",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Для Loop проект {engine} должен лежать в папке этой игры, чтобы откат мог отменить каждый шаг; {project} лежит в {place}. Создай новый кнопкой {engine} или перенеси {project} в папку этой игры и выбери его там. А пока — делает, что просишь, и останавливается.",

@@ -28,6 +28,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "ChatGPTとの接続はすでに変更中です。",
   "A GLB for the game plus reference renders to check it.": "ゲーム用のGLBと、確認用の参考レンダー。",
   "A Loop in {game} is using Unreal.": "{game}のLoopがUnrealを使っています。",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Loopには自分のセッションを保つエンジンが必要ですが、このチャットのエンジンは保たないため、何も作られませんでした。チャットはここで引き続き応答します。",
   "A bakery rush where orders pile up on a conveyor belt": "ベルトコンベアに注文がたまっていく大忙しのパン屋",
   "A balloon pop game with a hedgehog that rolls through the sky": "空を転がるハリネズミで風船を割るゲーム",
   "A beekeeping game where you plan a garden to keep the hive happy": "巣箱のハチが喜ぶように庭を計画する養蜂ゲーム",
@@ -2153,6 +2155,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop終了 · 変更はプロジェクトに残っています",
   "Loop from {day}": "{day}のLoop",
   "Loop mode": "Loopモード",
+  "Loop not started": "Loopは開始されませんでした",
   "Loop time limit": "Loopの時間制限",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Loopには、巻き戻しで各ステップを元に戻せるよう、{engine}プロジェクトがこのゲームのフォルダー内にある必要があります。{project}は{place}にあります。{engine}ボタンから新しく作るか、{project}をこのゲームのフォルダーに移してそこで選んでください。それまでは、頼んだことをして止まります。",

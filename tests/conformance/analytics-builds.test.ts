@@ -501,21 +501,10 @@ describe("chat builds, jobs and plugin calls from the log", () => {
 });
 
 describe("main's run events", () => {
-  it("sends a reviewer's retry by kind, and a stop with the time the run worked", () => {
+  it("sends a stop with the time the run worked", () => {
     const memory = memoryWith();
     read(memory, [record(CustomEvent.RunStarted, { runId: "r1" }, 0)]);
-    const retry = buildsUiEvents(
-      { type: UiEvent.JudgeRetry, payload: { kind: EngineFailureKind.RateLimit, attempt: 2, waitMs: 3000 } },
-      memory,
-      T0,
-    );
     const stop = buildsUiEvents({ type: UiEvent.RunStopping, payload: { runId: "r1" } }, memory, T0 + MINUTE_MS);
-    assert.deepEqual(retry, [
-      {
-        event: BuildsEvent.ReviewerRetried,
-        properties: { kind: EngineFailureKind.RateLimit, attempt: 2, wait_ms: 3000 },
-      },
-    ]);
     assert.deepEqual(stop, [{ event: BuildsEvent.RunStopRequested, properties: { worked_ms: MINUTE_MS } }]);
   });
 });
@@ -954,14 +943,14 @@ describe("hostile input never reaches an event", () => {
   });
 
   it("main's events send no words of theirs", () => {
+    const memory = memoryWith();
+    read(memory, [record(CustomEvent.RunStarted, { runId: SECRET }, 0)]);
     const found = buildsUiEvents(
-      { type: UiEvent.JudgeRetry, payload: { engine: SECRET, kind: SECRET, message: PATH, attempt: SECRET } },
-      memoryWith(),
+      { type: UiEvent.RunStopping, payload: { runId: SECRET, engine: SECRET, message: PATH } },
+      memory,
       T0,
     );
-    assert.deepEqual(found, [
-      { event: BuildsEvent.ReviewerRetried, properties: { kind: null, attempt: null, wait_ms: null } },
-    ]);
+    assert.deepEqual(found, [{ event: BuildsEvent.RunStopRequested, properties: { worked_ms: 0 } }]);
   });
 
   it("the stage's builders read no words from the page, a plugin's card or the library", () => {

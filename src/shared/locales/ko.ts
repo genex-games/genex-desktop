@@ -28,6 +28,8 @@ export default {
   "A ChatGPT connection change is already in progress.": "ChatGPT 연결을 이미 바꾸는 중이에요.",
   "A GLB for the game plus reference renders to check it.": "게임용 GLB와 확인용 참고 렌더.",
   "A Loop in {game} is using Unreal.": "{game}의 Loop가 Unreal을 쓰고 있어요.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Loop에는 자체 세션을 유지하는 엔진이 필요하지만 이 채팅의 엔진은 그렇지 않아 아무것도 만들지 않았습니다. 채팅은 여기서 계속 답합니다.",
   "A bakery rush where orders pile up on a conveyor belt": "컨베이어 벨트에 주문이 쌓이는 정신없는 빵집",
   "A balloon pop game with a hedgehog that rolls through the sky": "하늘을 굴러다니는 고슴도치로 풍선을 터뜨리는 게임",
   "A beekeeping game where you plan a garden to keep the hive happy": "벌집이 행복하도록 정원을 계획하는 양봉 게임",
@@ -2103,6 +2105,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop 끝남 · 변경 사항은 프로젝트에 남아 있어요",
   "Loop from {day}": "{day} Loop",
   "Loop mode": "Loop 모드",
+  "Loop not started": "Loop가 시작되지 않음",
   "Loop time limit": "Loop 시간 제한",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Loop가 되감기로 각 단계를 되돌리려면 {engine} 프로젝트가 이 게임 폴더 안에 있어야 해요. {project} 프로젝트는 {place}에 있어요. {engine} 버튼으로 새로 만들거나, {project} 프로젝트를 이 게임 폴더로 옮긴 뒤 거기서 선택하세요. 그전까지는 요청한 일을 하고 멈춰요.",

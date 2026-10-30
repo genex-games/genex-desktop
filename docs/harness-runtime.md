@@ -868,9 +868,8 @@ game view's sandbox and disabled Blink features),
 `attach.test.ts` (renderer discovery and the world choice), `capture.test.ts` and
 `draw-counters.test.ts` (how a frame becomes a picture, and the counters at the graphics API),
 `shapes-fixtures.test.ts` (the five checked-in games are what their manifests say they are),
-`census.test.ts`, `engine-voice.test.ts` (every exported brief rendered once per engine: no bridge
-command in a Claude render, no `mcp__` name in a Codex render), `check-grammar.test.ts`,
-`facet-loop-v2.test.ts` and `evidence.test.ts`. `npm run verify:architecture` now walks `src/page`
+`census.test.ts` and `engine-voice.test.ts` (every exported brief rendered once per engine: no
+bridge command in a Claude render, no `mcp__` name in a Codex render). `npm run verify:architecture` now walks `src/page`
 as well as `src/renderer` and `src/shared`, following the `/vendor/studio/*.js` specifier back to
 the `src/page/*.ts` file it is built from, so the page world cannot reach main, preload or substrate either.
 
@@ -882,7 +881,7 @@ refuses every script, capture and input call at once with its load error: Electr
 script until a load stops, and none is coming, so each call would wait out its whole deadline.
 Reports include timestamped native events under `.studio-dev/evidence/preview-visibility`.
 `STUDIO_PACKAGE_DIR="out/Genex-darwin-arm64" node tests/e2e/run-computer-smoke.mjs`
-runs the existing scripted worker/playtester checks against the packaged application.
+runs the scripted computer-tool and Loop checks against the packaged application.
 
 `Options.skills` is a CONTEXT FILTER, not a sandbox. The studio's judge sessions run with
 `skills: []` (`ClaudeCodeEngineOptions.skills.judge`, default `[]`): a bundled skill's frontmatter

@@ -30,6 +30,8 @@ export default {
   "A GLB for the game plus reference renders to check it.":
     "Un GLB pour le jeu, plus des rendus de référence pour le vérifier.",
   "A Loop in {game} is using Unreal.": "Un Loop dans {game} utilise Unreal.",
+  "A Loop needs an engine that keeps a session of its own, and this chat's engine doesn't, so nothing was built. The chat still answers here.":
+    "Un Loop a besoin d’un moteur qui garde sa propre session, et le moteur de ce chat n’en garde pas : rien n’a été construit. Le chat répond toujours ici.",
   "A bakery rush where orders pile up on a conveyor belt":
     "Le rush d’une boulangerie où les commandes s’empilent sur un tapis roulant",
   "A balloon pop game with a hedgehog that rolls through the sky":
@@ -2212,6 +2214,7 @@ export default {
   "Loop finished · Changes kept in your project": "Loop terminé · Changements gardés dans ton projet",
   "Loop from {day}": "Loop, {day}",
   "Loop mode": "Mode Loop",
+  "Loop not started": "Loop non lancé",
   "Loop time limit": "Limite de temps de Loop",
   "Loops need the {engine} project inside this game’s folder, so Rewind can undo each step; {project} is in {place}. Make a new one from the {engine} button, or move {project} into this game’s folder and choose it there. Until then, it does what you ask, then stops.":
     "Loop a besoin du projet {engine} dans le dossier de ce jeu, pour que le retour en arrière puisse annuler chaque étape ; {project} est dans {place}. Crée-en un nouveau avec le bouton {engine}, ou déplace {project} dans le dossier de ce jeu et choisis-le là. D’ici là, l’agent fait ce que tu demandes, puis s’arrête.",

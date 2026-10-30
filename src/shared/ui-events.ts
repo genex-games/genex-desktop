@@ -144,26 +144,8 @@ export interface UiEventMap {
   "run.settled": { runId?: string };
   "run.failed": { runId?: string; error?: string };
   "run.feedback": { threadId: string; runId: string | null };
-  "run.iteration": HarnessRecord<{ runId: string }>;
-  "run.optimization": { runId?: string; sequence?: number };
   "run.summary.changed": { runId: string };
   "autopilot.facet": HarnessRecord<{ runId: string }>;
-  "autopilot.spike": { runId?: string; facetId?: string; checkId?: string; ok?: boolean; reason?: string };
-  "judge.verdict": HarnessRecord;
-  "judge.facet": HarnessRecord;
-  "judge.vision": HarnessRecord<{ checkId: string }>;
-  "judge.taste": HarnessRecord;
-  "judge.panel": HarnessRecord;
-  "judge.playtest": HarnessRecord;
-  "judge.retry": { engine?: string; kind?: string; attempt?: number; waitMs?: number; message?: string };
-  "judge.liveness": {
-    facetId?: string;
-    iterationId?: string;
-    critic?: string;
-    total?: number;
-    max?: number;
-    biggest?: unknown;
-  };
 
   // — preview —
   "preview.identity": NonNullable<RunSummary["preview"]>;
@@ -222,7 +204,6 @@ export interface UiEventMap {
   // — self-improvement —
   "settings.changed": StudioSettingsView;
   "skillopt.accepted": { skill?: string; approvedBy?: "human" | "auto"; gate?: unknown };
-  "skillopt.staged": { skill?: string; gate?: unknown };
   "skillopt.discarded": { skill: string };
   "skillopt.autoApplied": { skill: string };
   "skillopt.autoApplyFailed": { error: string };
@@ -307,19 +288,8 @@ export const UiEvent = {
   RunSettled: "run.settled",
   RunFailed: "run.failed",
   RunFeedback: "run.feedback",
-  RunIteration: "run.iteration",
-  RunOptimization: "run.optimization",
   RunSummaryChanged: "run.summary.changed",
   AutopilotFacet: "autopilot.facet",
-  AutopilotSpike: "autopilot.spike",
-  JudgeVerdict: "judge.verdict",
-  JudgeFacet: "judge.facet",
-  JudgeVision: "judge.vision",
-  JudgeTaste: "judge.taste",
-  JudgePanel: "judge.panel",
-  JudgePlaytest: "judge.playtest",
-  JudgeRetry: "judge.retry",
-  JudgeLiveness: "judge.liveness",
   PreviewIdentity: "preview.identity",
   PreviewScreen: "preview.screen",
   PreviewFrame: "preview.frame",
@@ -343,7 +313,6 @@ export const UiEvent = {
   ConnectionsApplied: "connections.applied",
   SettingsChanged: "settings.changed",
   SkilloptAccepted: "skillopt.accepted",
-  SkilloptStaged: "skillopt.staged",
   SkilloptDiscarded: "skillopt.discarded",
   SkilloptAutoApplied: "skillopt.autoApplied",
   SkilloptAutoApplyFailed: "skillopt.autoApplyFailed",

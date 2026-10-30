@@ -94,13 +94,10 @@ export const CustomEvent = {
   IntegrationHealth: "integration_health",
   IntegrationLedger: "integration_ledger",
   IntegrationMerge: "integration_merge",
-  ObservationOutage: "observation_outage",
   OptimizationUpdated: "optimization_updated",
   /** The studio resumed a paused run on its own (`main/core/auto-resume.ts`); written by the host only. */
   RunAutoResumed: "run_auto_resumed",
-  RunBackoff: "run_backoff",
   RunControl: "run_control",
-  RunControlApplied: "run_control_applied",
   RunFinished: "run_finished",
   RunFollowupRequested: "run_followup_requested",
   RunInteractionEvidence: "run_interaction_evidence",
@@ -127,29 +124,17 @@ export const CustomEvent = {
   FacetBuildStarted: "facet_build_started",
   FacetCheckAdded: "facet_check_added",
   FacetCheckReplanned: "facet_check_replanned",
-  FacetCheckRetired: "facet_check_retired",
   FacetCircuitBreak: "facet_circuit_break",
   FacetDefectRouted: "facet_defect_routed",
   FacetFix: "facet_fix",
   FacetFlag: "facet_flag",
-  FacetFollowup: "facet_followup",
   FacetIteration: "facet_iteration",
-  FacetLessons: "facet_lessons",
   FacetLiveness: "facet_liveness",
   FacetMachinePressure: "facet_machine_pressure",
   FacetMove: "facet_move",
-  FacetObservationOutage: "facet_observation_outage",
-  FacetPartialEvaluated: "facet_partial_evaluated",
   FacetProviderOutage: "facet_provider_outage",
-  FacetRebaselined: "facet_rebaselined",
-  FacetReview: "facet_review",
-  FacetReviewEnforced: "facet_review_enforced",
-  FacetSessionReset: "facet_session_reset",
-  FacetSpike: "facet_spike",
-  FacetSteered: "facet_steered",
   FacetStopped: "facet_stopped",
   FacetWindDown: "facet_wind_down",
-  RecipeOutcome: "recipe_outcome",
   // the conversation, its queue and its sessions
   /** Files too large to save that a chat checkpoint left out, or a rewind left as they were; written by the host only. */
   CheckpointSkipped: "checkpoint_skipped",
@@ -215,7 +200,6 @@ export const CustomEvent = {
   SkilloptStaged: "skillopt_staged",
   SnapshotHealthy: "snapshot_healthy",
   ThreadAdopted: "thread_adopted",
-  ToolFailure: "tool_failure",
   ToolInstalled: "tool_installed",
 } as const;
 export type CustomEvent = (typeof CustomEvent)[keyof typeof CustomEvent];
@@ -504,23 +488,6 @@ export interface SessionActivityPayload extends RunScope {
   delegationId?: string;
 }
 
-/**
- * What a round's code review enforced, by file. Logs written before the split carry every enforced
- * file under `reverted`, kept and quarantined ones included, and nothing under the other lists.
- */
-export interface FacetReviewEnforcedPayload extends RunScope {
-  /** Files outside the part's ownership, checked out from the diff base. */
-  reverted?: string[];
-  /** Files outside the part's ownership whose content arrived by merge, left as they are. */
-  kept?: string[];
-  /** New files outside the part's ownership, moved to `.studio/quarantine/`. */
-  quarantined?: string[];
-  /** Another part's changes a merge into this part dropped, checked out from the merged head. */
-  restored?: string[];
-  /** Checks the model reviewer marked as made to pass without the work. */
-  gamed?: string[];
-}
-
 /** A part-level notice: a circuit break, a replanned check, a raised flag, or the lead's plan. */
 export interface FacetNoticePayload extends RunScope {
   reason?: string;
@@ -765,7 +732,6 @@ export interface CustomEventMap {
   };
   /** `lost`: the provider was lost (an engine failure kind), and the round waits for it rather than retry on a ladder. */
   facet_provider_outage: RunScope & { phase?: string; wait?: number; attempt?: number; error?: string; lost?: string };
-  facet_review_enforced: FacetReviewEnforcedPayload;
   improvement_applied: { file?: string; reason?: string; snapshot_id?: string };
   /** `recap`: one line the agent wrote on what it found or did, shown above the question. */
   interview_question: { question?: string; recap?: string; choices?: InterviewChoice[] };

@@ -213,7 +213,6 @@ export const BuildsEvent = {
   BuildHealthChecked: "build_health_checked",
   RunRoundJudged: "run_round_judged",
   FinishCheckAnswered: "finish_check_answered",
-  ReviewerRetried: "reviewer_retried",
   RunPartStuck: "run_part_stuck",
   RunFinished: "run_finished",
   RunAutoResumed: "run_auto_resumed",
@@ -364,7 +363,6 @@ export type BuildsEventProperties = {
     reviewer_engine: EngineId | null;
     ms_checking: number | null;
   };
-  [BuildsEvent.ReviewerRetried]: { kind: EngineFailureKind | null; attempt: number | null; wait_ms: number | null };
   [BuildsEvent.RunPartStuck]: { kind: PartTrouble; lost: EngineFailureKind | null; attempt: number | null };
   [BuildsEvent.RunFinished]: RunFinishedProperties;
   [BuildsEvent.RunAutoResumed]: { cause: AutoResumeCause | null; attempt: number | null; paused_ms: number | null };
@@ -1098,17 +1096,6 @@ export function buildsUiEvents(
   now: number,
 ): BuildsTracked[] {
   const payload = fieldsOf(event.payload);
-  if (event.type === UiEvent.JudgeRetry)
-    return [
-      {
-        event: BuildsEvent.ReviewerRetried,
-        properties: {
-          kind: oneOf(EngineFailureKind, payload.kind),
-          attempt: amountOf(payload.attempt),
-          wait_ms: amountOf(payload.waitMs),
-        },
-      },
-    ];
   if (event.type !== UiEvent.RunStopping) return [];
   const run = memory.runs.get(runIdOf(payload) ?? "");
   return [{ event: BuildsEvent.RunStopRequested, properties: { worked_ms: run ? workedMs(run.worked, now) : null } }];
