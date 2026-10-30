@@ -53,7 +53,7 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
   "prompts/operating-rules.md":
     "Your edited prompts/operating-rules.md was kept, but a web game's rules (the preview, window.__studio, determinism) now live in prompts/operating-rules-web.md, read only for a web game: take them out of your copy, as the shipped copy does.",
   "loop/director/tool-specs.ts":
-    "Your edited loop/director/tool-specs.ts was kept, but the director uses Genex's worker tools (WorkerTool: worker_wait, worker_mark whose note the person reads, worker_start's task, isolation and research) and finish takes proof for its reviewer. Copy them from the shipped file.",
+    "Your edited loop/director/tool-specs.ts was kept, but the director uses Genex's worker tools (WorkerTool: worker_wait, worker_mark whose note the person reads, worker_start's task, isolation, research), and finish takes proof and review (a second opinion). Copy them from the shipped file.",
   "loop/director/tools.ts":
     "Your edited loop/director/tools.ts was kept, but it may lack the workers' worker_mark, the pool's readers, waitingBuilders, the finish moment (HookEvent.Finish, finishCallOf), judgeTheLanding's judgeBy, or no new workers from the cap on (capRefusesWorker). Copy them from the shipped file.",
   "loop/director/reopen.ts":
@@ -61,9 +61,9 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
   "loop/director.ts":
     "Your edited loop/director.ts was kept, but it may lack the run's moments (HookEvent.RunPrepare, RunEnd), what isn't done (notDoneOf, ranOutUnchecked), the close's latch (latchClose) or a Loop led in place (LoopProfile.Open, SERVES_OPEN_LOOP). Copy them from the shipped file.",
   "loop/director/wake-prompts.ts":
-    "Your edited loop/director/wake-prompts.ts was kept, but it may name the old wait tool (worker_wait now) or tell a timed Loop's lead to finish only in the wrap-up: a claim may come as soon as the goal is reached (a reviewer's yes ends the build). Copy the wording from the shipped file.",
+    "Your edited loop/director/wake-prompts.ts was kept, but it may name the old wait tool (worker_wait now) or tell a timed lead to finish only in the wrap-up, or that a reviewer's yes ends the build: the lead's word does. Copy the wording from the shipped file.",
   "loop/director/briefs.ts":
-    "Your edited loop/director/briefs.ts was kept, but it may name the old wait tool (worker_wait now), open a worker's brief without Genex's identity (builderIdentity), or tell a timed lead to finish only in the wrap-up (a reviewer's yes ends the build). Copy them from the shipped file.",
+    "Your edited loop/director/briefs.ts was kept, but it may name the old wait tool (worker_wait now), brief workers without Genex's identity (builderIdentity), or say a reviewer's yes ends the build: the lead's word does. Copy them from the shipped file.",
   "loop/director/workers.ts":
     "Your edited loop/director/workers.ts was kept, but it lacks its builders' worker grant (workerGrant), Genex's identity (runIdentity), the wait for room (withWorkerRoom), their records (recordBuilderStarted) or their moments (workerStartHooks, loop/hooks.ts). Copy them from the shipped file.",
   "loop/facet/phases/build.ts":
@@ -73,7 +73,7 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
   "loop/facet/phases/brief.ts":
     "Your edited loop/facet/phases/brief.ts was kept, but a director's facet worker does not open its brief with Genex's identity (withIdentity, loop/workers/identity.ts). Copy it from the shipped file.",
   "loop/director/wake.ts":
-    "Your edited loop/director/wake.ts was kept, but it may miss rejected workers (rejectedNews), watchJobs, HookEvent.TurnStart, noteTurnEnds, closeUnderWay, the cap's lines (withCapWatch, withCapWords, turnEndAtCap) or a Loop in place (activeWork, TurnEnd.Continue, turnReturnedAt, SERVES_OPEN_LOOP).",
+    "Your edited loop/director/wake.ts was kept, but it may miss rejected workers (rejectedNews), watchJobs, HookEvent.TurnStart, noteTurnEnds, closeUnderWay, the cap's lines (withCapWatch, withCapWords, turnEndAtCap), a Loop in place (activeWork, TurnEnd.Continue, turnReturnedAt, SERVES_OPEN_LOOP).",
   "loop/director/wake-schedule.ts":
     "Your edited loop/director/wake-schedule.ts was kept, but it lacks a job end's kind (NoteKind.JobEnded), a Loop in place's turn cap and idle rule (TurnEnd.Continue, turn.worked), its news (NoteKind.WorkerAsks, AppCrashed, AppStopping) or SERVES_OPEN_LOOP. Copy them from the shipped file.",
   "loop/director/loop-run.ts":
@@ -81,7 +81,21 @@ const CALL_NOTES: Readonly<Record<string, string>> = {
   "loop/director/journal.ts":
     "Your edited loop/director/journal.ts was kept, but it does not keep the run's job cursor (jobsCursor) or the reviewer's count (finishTally), so a resumed run hears its job ends again or forgets the no's. Copy recordLoopRun's and restoreLoopRun's lines from the shipped file.",
   "loop/director/integrate.ts":
-    "Your edited loop/director/integrate.ts was kept, but its close skips the run's readers (closeReaders, workers/director-pool.ts), or its finish skips a claim's check, latch, proof or early claim (checkClaim, keepProofOut, latchClose, finishWaitsForCap). Copy them from the shipped file.",
+    "Your edited loop/director/integrate.ts was kept, but it may skip the readers' close (closeReaders, workers/director-pool.ts), checkClaim, keepProofOut, latchClose or finishWaitsForCap, or let judges gate its finish and close (a claim is the lead's word now: args.review). Copy them.",
+  "loop/director/finish-claim.ts":
+    "Your edited loop/director/finish-claim.ts was kept, but a reviewer's no's, a missing reviewer or no time close the run there: a review the lead asks for decides nothing now and goes back to the lead (secondOpinionNo). Copy verdictOf from the shipped file.",
+  "loop/director/open/finish.ts":
+    "Your edited loop/director/open/finish.ts was kept, but every claim asks a reviewer and its no's close the Loop: a claim closes on the lead's word now, a reviewer reads it only with review=yes and its no decides nothing (CLAIM_WORDS, secondOpinionNo). Copy claimFinish from the shipped file.",
+  "loop/director/open/between.ts":
+    "Your edited loop/director/open/between.ts was kept, but it plays the game's judges after every save point: No judge plays between turns now, only when the lead asks (judge_play). Copy openBetweenTurns from the shipped file.",
+  "loop/facet/phases/verify.ts":
+    "Your edited loop/facet/phases/verify.ts was kept, but it asks a judge every round and fails a check a reviewer called gamed: a round is kept on its board now, undone only by a check that passed and now fails (keepOnBoard, facet/kept-round.ts). Copy it from the shipped file.",
+  "loop/facet/phases/publish.ts":
+    "Your edited loop/facet/phases/publish.ts was kept, but its exit waits for a judge's `satisfied`: a worker is done once its kept build holds its own checks and its ladder has no rung left (ladderHasRungsLeft, facet/kept-round.ts). Copy decideExit from the shipped file.",
+  "loop/facet/rules.ts":
+    "Your edited loop/facet/rules.ts was kept, but facetIsDone, acceptRound and moveVerdict still wait on a judge's word (`satisfied`, a veto, a move it saw): none does now (rungsLeft). Copy them from the shipped file.",
+  "loop/review.ts":
+    "Your edited loop/review.ts was kept, but it flags untagged new objects and a part drawing on a screen another part leads: neither is a rule now, a builder decides its screen and its scene (layoutFinding). Copy mechanicalReview and modelReview from the shipped file.",
   "loop/host-methods.ts":
     "Your edited loop/host-methods.ts was kept, but it lacks the host's newer methods (HooksFire, CheckpointTake, LocksHold, LocksRelease, ObserversCapture, FinishReview, FinishSettle), so moments, checkpoints, in-place workers, observers and finish checks fail. It is generated: copy the shipped file.",
   "loop/skillopt.ts":

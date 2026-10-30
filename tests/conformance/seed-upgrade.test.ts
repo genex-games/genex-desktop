@@ -2202,6 +2202,48 @@ describe("seed upgrade across live chat", () => {
  * loop/director/conflict-worker.ts); imported from a kept older copy it would fail to link, and the
  * harness would not load.
  */
+/**
+ * Loop phase 4 made judges a second opinion: a round kept on its board, a claim on the lead's word,
+ * a close with no judge. A seed upgrade keeps any module it touched once the agent edited it, so each
+ * name phase 4 needs comes from a module of its own (loop/facet/kept-round.ts,
+ * loop/director/second-opinion-prompts.ts); imported from a kept older copy it would fail to link.
+ */
+describe("seed upgrade across Loop phase 4", () => {
+  const vintage = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-free-loop.json", import.meta.url)), "utf8"),
+  ) as { modules: Record<string, string[]> };
+  const shipped = path.resolve(fileURLToPath(new URL("../../src/harness-seed", import.meta.url)));
+
+  it("an agent that edited a round, a finish or a close before phase 4 keeps it, and the harness still loads", async () => {
+    const root = await tmpDir("seed-free-loop-");
+    const ws = path.join(root, "workspace");
+    const manifest = path.join(root, "manifest.json");
+    await applySeed({ seedDir: shipped, workspaceDir: ws, manifestFile: manifest });
+    for (const rel of ["loop/facet/kept-round.ts", "loop/director/second-opinion-prompts.ts"])
+      assert.ok(await pathExists(path.join(ws, rel)), `${rel} is seeded`);
+    // The agent's copies of the older vintage: every name each exported then, and nothing newer.
+    for (const [rel, names] of Object.entries(vintage.modules)) {
+      const older = names.map((name) => `export const ${name} = () => ${JSON.stringify(name)};`);
+      await writeFile(path.join(ws, rel), `${older.join("\n")}\n// the agent's own change\n`);
+    }
+    const report = await applySeed({
+      seedDir: shipped,
+      workspaceDir: ws,
+      manifestFile: manifest,
+      backupDir: path.join(root, "backup"),
+    });
+    for (const rel of Object.keys(vintage.modules))
+      assert.ok(report.kept.includes(keptAt(rel)), `${rel} is the agent's`);
+    // A kept copy that still asks its judges is reported, so the agent can carry the change over.
+    for (const rel of ["loop/facet/phases/verify.ts", "loop/director/integrate.ts", "loop/review.ts"])
+      assert.ok(report.outdatedCalls?.includes(rel), `${rel} is reported`);
+    // What the bootstrap does: import the workspace's own main.ts. Phase 4 importing a name the kept
+    // copies never exported would throw here, at link time.
+    const main = await linkIsolated(path.join(ws, "loop", "main.ts"));
+    assert.equal(main.createStudio, "function");
+  });
+});
+
 describe("seed upgrade across one session", () => {
   const vintage = JSON.parse(
     readFileSync(fileURLToPath(new URL("../fixtures/seed-exports-pre-one-session.json", import.meta.url)), "utf8"),

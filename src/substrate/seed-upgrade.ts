@@ -456,9 +456,27 @@ export const SEED_CALL_CHANGES: readonly SeedCallChange[] = [
   { file: "loop/director/wake.ts", marker: "turnEndAtCap(" },
   { file: "loop/director/tools.ts", marker: "capRefusesWorker(" },
   { file: "loop/director.ts", marker: "ranOutUnchecked(" },
-  // ...and the web lead is told so: a claim may come as soon as the goal is reached.
-  { file: "loop/director/wake-prompts.ts", marker: "a reviewer's yes ends the build" },
-  { file: "loop/director/briefs.ts", marker: "a reviewer's yes ends the build" },
+  // ...and the web lead is told so: a claim may come as soon as the goal is reached, and since Loop
+  // phase 4 the lead's own word ends the build.
+  { file: "loop/director/wake-prompts.ts", marker: "your word ends the build" },
+  { file: "loop/director/briefs.ts", marker: "your word ends the build" },
+  // Loop phase 4: judges inform and decide nothing. A round is kept on its board (no taste judge, no
+  // facet judge for a prose-only plan, no liveness critic); a worker is done on its own checks and
+  // ladder, never on a judge's `satisfied`; a reviewer's "gamed" finding leaves a check unmeasured.
+  // A claim closes on the lead's word, a reviewer reads it only when asked (`review=yes`) and its no
+  // decides nothing; the close asks no judge; the open Loop's judges play only when the lead asks;
+  // the code review flags neither untagged objects nor a part drawing on another part's screen. A
+  // kept copy of any of these files from before still loads, but still asks its judges.
+  { file: "loop/facet/phases/verify.ts", marker: "keepOnBoard(" },
+  { file: "loop/facet/phases/publish.ts", marker: "ladderHasRungsLeft(" },
+  { file: "loop/facet/rules.ts", marker: "rungsLeft" },
+  { file: "loop/director/integrate.ts", marker: "args.review" },
+  { file: "loop/director/finish-claim.ts", marker: "secondOpinionNo(" },
+  { file: "loop/director/tool-specs.ts", marker: "review: {" },
+  { file: "loop/director/open/finish.ts", marker: "CLAIM_WORDS" },
+  { file: "loop/director/open/between.ts", marker: "No judge plays between turns" },
+  { file: "loop/director/wake.ts", marker: "second-opinion-prompts" },
+  { file: "loop/review.ts", marker: "layoutFinding(" },
 ];
 
 interface SeedManifest {
