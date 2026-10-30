@@ -72,7 +72,6 @@ it("AUDIT-STOP-RACE: cancellation is visible before a delayed queue-pause write"
 import { tmpDir } from "../helpers/tmp.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../../src/harness-seed/loop/time.ts";
 import { describeUnknownImage, sniffImage } from "../../src/substrate/image-sniff.ts";
-import { ownershipHook } from "../../src/substrate/engines/claude-code.ts";
 import { ctxRecorder } from "../helpers/ctx-recorder.ts";
 import { runTurn } from "../../src/harness-seed/loop/turn-loop.ts";
 import { materializePrompt } from "../../src/harness-seed/loop/prompt.ts";
@@ -3933,17 +3932,6 @@ describe("a run's close the log refuses once", () => {
     const close = { type: "custom", event_type: "run_finished", payload: { runId: "r1" } };
     await appendClose(ctx as never, "t1", [close] as never);
     assert.deepEqual(appended, [close], "the run is closed, not left running");
-  });
-});
-
-describe("the ownership hook against a climb", () => {
-  it("refuses a write that climbs out of an owned folder into a file the facet does not own", async () => {
-    const hook = ownershipHook({ facetId: "sky", owns: ["src/sky/"], ownsMain: false }, "/w/marsh");
-    const call = (file: string) =>
-      hook({ hook_event_name: "PreToolUse", tool_name: "Write", tool_input: { file_path: file } });
-    for (const file of ["src/sky/../../index.html", "/w/marsh/src/sky/../studio.js", "/w/marsh/src/sky/../../../x.js"])
-      assert.equal((await call(file)).decision, "block", file);
-    assert.equal((await call("/w/marsh/src/sky/stars.js")).decision, undefined, "its own files stay writable");
   });
 });
 

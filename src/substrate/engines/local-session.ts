@@ -36,7 +36,6 @@ import {
 } from "./local-session-tools.ts";
 import { neverTouchFence } from "./claude-permissions.ts";
 import { neverTouchWhole } from "./never-touch.ts";
-import { lockUnowned, releaseLocks } from "./ownership-locks.ts";
 import { type CommandSandbox, commandSandbox, leadBuildWrites } from "./session-commands.ts";
 import { StudioTool } from "./studio-tool-prompts.ts";
 import {
@@ -254,7 +253,6 @@ export class LocalSessions {
     steer: SteerSession | null,
   ): Promise<DelegateResult> {
     const run = await this.#open(request, model, cwd, id, steer);
-    const locks = request.ownership && !run.readonly ? await lockUnowned(cwd, request.ownership) : null;
     run.workspaceStamp = await stampWorkspace(cwd);
     const instructions = await run.tools
       .resolveFile("CLAUDE.md")
@@ -262,7 +260,6 @@ export class LocalSessions {
       .catch(() => "");
     run.system = localSystemPrompt({
       readonly: run.readonly,
-      ownership: request.ownership,
       instructions,
       mode: run.mode,
     });
@@ -294,7 +291,6 @@ export class LocalSessions {
       // Whatever still waits was never read: not reported, so the host queues it again.
       run.inbox.close();
       request.permissions?.onControl?.(null);
-      if (locks) await releaseLocks(cwd, locks);
       await run.tools.sandbox?.dispose();
     }
   }
@@ -329,7 +325,6 @@ export class LocalSessions {
       forbidden,
       deniedWrites,
       readonly,
-      ownership: request.ownership,
     });
     const definitions = localToolDefinitions(request, readonly);
     const studioToolCalls: NonNullable<DelegateResult["studioToolCalls"]> = [];

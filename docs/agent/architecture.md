@@ -85,7 +85,7 @@ host for arrives over the harness RPC, which is therefore an untrusted surface:
 `isInside`/`isBelow` compare resolved paths lexically (the filesystem root contains only itself,
 so a misconfigured root fails closed), and `containedReal(root, rel)` checks an untrusted relative
 path's shape (`assertRelativePath`) and then its realpath strictly under the root's. The coding-CLI
-resolver, the credential-home list and the ownership locks keep their own rule, because a denylist
+resolver, the credential-home list and the ownership-lock recovery keep their own rule, because a denylist
 must not change at `/`.
 
 **Child environments** come from the pure `childEnv`
@@ -110,10 +110,10 @@ list and residual risks are in
 **Contractor bridge and locks.** The bridge
 ([`src/substrate/engines/studio-bridge.ts`](../../src/substrate/engines/studio-bridge.ts)) checks
 with lstat that `.studio`, the bridge folder and `res/` are still the folders it made and writes
-answers with `O_EXCL|O_NOFOLLOW`. Ownership locks
-([`src/substrate/engines/ownership-locks.ts`](../../src/substrate/engines/ownership-locks.ts)) treat
-the marker as hostile, change modes only on in-root regular files and restore only the write bits
-they removed. Both read requests and markers with `fsx.readRegularFile`: non-blocking, no link,
+answers with `O_EXCL|O_NOFOLLOW`. The recovery of an older build's ownership locks
+([`src/substrate/engines/ownership-locks.ts`](../../src/substrate/engines/ownership-locks.ts); Genex
+takes none now) treats the marker as hostile, changes modes only on in-root regular files and
+restores only the write bits the locks removed. Both read requests and markers with `fsx.readRegularFile`: non-blocking, no link,
 regular files only, size-capped, so a planted FIFO cannot hold a libuv thread. Every no-link open
 goes through `fsx.openNoFollow` (Windows, lacking `O_NOFOLLOW`, lstat-checks the name before the
 open and matches device and file index after it; `O_TRUNC` waits for that). On Windows a lock is the read-only attribute. The locks' honest
@@ -225,9 +225,8 @@ under `src/shared` resolves where the seed runs. A rule both apply has a typed h
 `src/shared` — the coordinator's tools and run reading (`coordinator.ts`), the follow-up queue
 (`message-queue.ts`), the model-role tables and presets (`model-roles.ts`), SkillOpt's bounded
 edits (`skill-edits.ts`) — and the seed keeps its own. `tests/conformance/seed-contracts.test.ts`
-and `tests/conformance/providers.test.ts` replay the same inputs through both copies. Other
-two-copy rules: the ownership glob ([`src/substrate/ownership.ts`](../../src/substrate/ownership.ts)
-and the seed's `loop/review.ts`), and the engine-export refusal (`ENGINE_EXPORT_REFUSAL` in
+and `tests/conformance/providers.test.ts` replay the same inputs through both copies. Another
+two-copy rule: the engine-export refusal (`ENGINE_EXPORT_REFUSAL` in
 [`shape-words.ts`](../../src/shared/shape-words.ts) and the seed's `loopRunRefusal`). See the
 [seed contract recipe](recipes.md#seed-contract). `verify:architecture` fails any new import
 cycle in `src`; [`scripts/boundary-allowlist.json`](../../scripts/boundary-allowlist.json) is empty

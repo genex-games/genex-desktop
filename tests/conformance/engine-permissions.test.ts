@@ -1140,18 +1140,16 @@ describe("a build's lead asks from the chat's mode, and the host answers", () =>
     );
   });
 
-  it("keeps a facet's ownership hook beside nothing else", async () => {
+  // Flipped (phase 5): a part owns no files, so no ownership hook is laid on an edit; the field is ignored.
+  it("lays no edit hook for an ownership a request still names", async () => {
     const { fn, seen } = fakeQuery();
     await (await engineFor(fn)).delegate({
       prompt: "build the sky",
       cwd: "/tmp/game-workspace",
       ownership: { facetId: "sky", owns: ["src/sky"], ownsMain: false },
     } as never);
-    const matchers = (seen[0]!.hooks as { PreToolUse: Array<{ matcher?: string }> }).PreToolUse;
-    assert.deepEqual(
-      matchers.map((m) => m.matcher),
-      ["Edit|Write|MultiEdit|NotebookEdit"],
-    );
+    const hooks = seen[0]!.hooks as { PreToolUse?: Array<{ matcher?: string }> } | undefined;
+    assert.deepEqual(hooks?.PreToolUse ?? [], []);
   });
 
   it("reads the host's deny as it is written", async () => {

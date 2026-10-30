@@ -22,7 +22,6 @@ import { cliVersion, requireCodingCli, resolveCodingCli, invalidateCodingCli } f
  * instruction files the contractor reads (`CLAUDE.md`, skills), not the contractor itself. The
  * contractor is environment; the briefing layer is self.
  */
-import { allowedFile, ownershipReason, relativeGamePath, specOf } from "../ownership.ts";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -45,7 +44,6 @@ import {
   neverTouchHook,
   sessionHomeOpen,
   permissionRules,
-  preToolDeny,
   quietly,
   reportedMode,
   type RunningSession,
@@ -310,8 +308,6 @@ const WEB_TOOLS = ["WebSearch", "WebFetch"];
  * that is how a plan comes back for approval.
  */
 const ASKING_TOOLS = ["AskUserQuestion", "EnterPlanMode"];
-/** The PreToolUse matcher for every tool that writes a file. */
-const EDIT_TOOLS_MATCHER = "Edit|Write|MultiEdit|NotebookEdit";
 /** A judge looks at what it was given: no shell, no files, no helpers, nothing looked up. */
 const JUDGE_DISALLOWED_TOOLS = [
   ...MESSAGING_TOOLS,
@@ -1344,10 +1340,7 @@ export class ClaudeCodeEngine implements Engine {
       includePartialMessages: true,
       systemPrompt: claudeCodeSystemPrompt(request.system),
       ...permissionOptions(request, ctx.running),
-      // Edit-time ownership: a Write outside the facet's files is refused before it
-      // lands, with the reason in the contractor's face — the after-the-fact reviewer once
-      // "reverted" such files by deleting eleven merged modules. A lead's calls are screened by
-      // the host there too, ahead of every allow rule.
+      // A worker's never-touch list, and a lead's calls screened by the host ahead of every allow rule.
       ...sessionHooks(request, cwd, ctx.run),
       ...(maxTurns ? { maxTurns } : {}),
       ...(request.resume ? { resume: request.resume } : {}),
@@ -2269,15 +2262,13 @@ function delegatePrompt(request: DelegateRequest): unknown {
 
 /**
  * The session's PreToolUse hooks: a worker's never-touch screen first (`neverTouchHook`, every
- * call, reads included, in every mode), the one that refuses an edit outside the facet's files,
- * when the delegation has an owner map, and a lead's, coordinator's or asking worker's screen
+ * call, reads included, in every mode), and a lead's, coordinator's or asking worker's screen
  * (`leadScreenHook`), which sees every tool call before Claude Code's own rules do.
  */
 function sessionHooks(request: DelegateRequest, cwd: string, run: RunState): { hooks?: unknown } {
   const screen = request.leadAsks ?? askingWorker(request);
   const preToolUse = [
     ...(request.worker ? [{ hooks: [neverTouchHook(request.worker.neverTouch, cwd)] }] : []),
-    ...(request.ownership ? [{ matcher: EDIT_TOOLS_MATCHER, hooks: [ownershipHook(request.ownership, cwd)] }] : []),
     ...(screen ? [{ hooks: [leadScreenHook(screen)] }] : []),
   ];
   const hooks = {
@@ -2938,29 +2929,6 @@ export function claudeLaunchOptions(
       stdio: ["pipe", "pipe", "pipe"],
     }) as ClaudeSpawnedProcess;
   return options;
-}
-
-/**
- * The PreToolUse hook that enforces file ownership. Pure over its inputs; exported so
- * the conformance suite can prove what it blocks and what it lets through.
- */
-export function ownershipHook(ownership: NonNullable<DelegateRequest["ownership"]>, cwd: string) {
-  return async (input: unknown): Promise<Record<string, unknown>> => {
-    const hook = input as { hook_event_name?: string; tool_name?: string; tool_input?: Record<string, unknown> };
-    if (hook?.hook_event_name !== "PreToolUse") return {};
-    const toolInput = hook.tool_input ?? {};
-    const targets = [toolInput.file_path, toolInput.notebook_path, toolInput.path].filter(
-      (v): v is string => typeof v === "string" && v.length > 0,
-    );
-    for (const target of targets) {
-      const rel = relativeGamePath(target, cwd);
-      if (rel === null) continue;
-      if (rel === ".." || rel.startsWith("../"))
-        return preToolDeny(`${target} is outside the workspace — this facet edits only its own files under ${cwd}.`);
-      if (!allowedFile(rel, specOf(ownership), ownership.ownsMain)) return preToolDeny(ownershipReason(rel, ownership));
-    }
-    return {};
-  };
 }
 
 /** Flatten a complete() request into Claude content blocks — text plus stills, never file paths. */

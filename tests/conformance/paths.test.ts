@@ -87,7 +87,6 @@ describe("isInside, isBelow and samePath on Windows: names are case-blind, as NT
         forbidden: [path.join(dir, "secret")],
         deniedWrites: [],
         readonly: false,
-        ownership: undefined,
       });
       assert.equal(await resolve(path.join(dir.toLowerCase(), "a.js"), true), path.join(dir, "a.js"));
       await assert.rejects(resolve(path.join(dir.toUpperCase(), "SECRET", "b.js"), true));
@@ -115,7 +114,6 @@ describe("a local session's writes: its own folder, and the build a lead leads",
       forbidden: [],
       deniedWrites: [],
       readonly: false,
-      ownership: undefined,
     });
     const table: Array<[label: string, target: string, writes: boolean]> = [
       ["a file in its own folder", path.join(game, "src", "main.js"), true],

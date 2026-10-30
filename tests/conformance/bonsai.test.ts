@@ -519,7 +519,8 @@ it("a download that cannot get its bytes stops without losing or publishing any 
     });
   }
 });
-it("local worker writes obey ownership and shell execution stays inside the sandbox", async () => {
+// Flipped (phase 5): no write is refused for ownership any more; a part owns no files.
+it("local worker shell execution stays inside the sandbox", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-worker-"));
   const cwd = path.join(root, "game");
   await mkdir(cwd);
@@ -534,7 +535,6 @@ it("local worker writes obey ownership and shell execution stays inside the sand
       const last = request.messages.at(-1);
       if (last?.role === "tool") seen.push(last.content);
       const steps = [
-        { name: "write_file", arguments: { path: "src/other.js", content: "wrong" } },
         { name: "write_file", arguments: { path: "src/owned.js", content: "export const ok = true;" } },
         { name: "run_command", arguments: { command: "cat src/owned.js" } },
         { name: "run_command", arguments: { command: `echo denied > '${path.join(root, "outside.txt")}'` } },
@@ -548,17 +548,14 @@ it("local worker writes obey ownership and shell execution stays inside the sand
       {
         cwd,
         prompt: "Build owned part",
-        ownership: { facetId: "owned", owns: ["src/owned.js"], ownsMain: false, template: false },
       },
       model,
     );
     assert.equal(result.ok, true);
-    assert.match(seen[0]!, /outside worker/);
-    assert.equal(seen[1], "Written");
-    assert.match(seen[2]!, /export const ok/);
-    assert.match(seen[2]!, /"sandboxed":true/);
+    assert.equal(seen[0], "Written");
+    assert.match(seen[1]!, /export const ok/);
+    assert.match(seen[1]!, /"sandboxed":true/);
     await assert.rejects(readFile(path.join(root, "outside.txt")));
-    await assert.rejects(readFile(path.join(cwd, "src/other.js")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

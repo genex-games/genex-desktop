@@ -351,21 +351,6 @@ export interface DelegateImage {
 // ↑ src/shared/engine-requests.ts
 
 /**
- * Edit-time file ownership: the engine blocks Write/Edit outside `owns` (plus the facet's notes
- * and the wiring line of src/main.js) before the edit lands. See `DelegateRequest.ownership`.
- */
-export interface DelegateOwnership {
-  facetId: string;
-  owns: string[];
-  ownsMain: boolean;
-  main?: string;
-  studio?: string;
-  template?: boolean;
-  neverLock?: string[];
-}
-// ↑ src/shared/engine-requests.ts
-
-/**
  * The director's session: the run's integration worktree it orchestrates from (`root`). A waking
  * run's lead sits in the game folder instead and leads `root`, leaving the game's changes to its
  * workers: the host honours its grant only with `readOnly`, for this game's own run, and hands the
@@ -464,8 +449,6 @@ export interface HarnessDelegateParams {
   readOnly?: boolean;
   /** Stills into the builder's prompt. */
   images?: DelegateImage[];
-  /** Edit-time ownership the engine enforces before a Write lands. */
-  ownership?: DelegateOwnership;
   /** The computer: `false` withholds the builder's hands; default on with a capture grant. */
   computer?: boolean;
   /** The director: the run's orchestrating session, with the harness's run tools forwarded. */

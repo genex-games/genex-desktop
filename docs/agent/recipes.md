@@ -122,7 +122,7 @@ Durable history the UI or the harness reads later.
 1. Implement `Engine` from `src/substrate/engines/types.ts` in
    `src/substrate/engines/<name>.ts`. Direct engines implement `complete`, `models` and `status`
    (model on `ollama.ts`); session engines implement `delegate` and honor abort, timeout,
-   resume, read-only and ownership options (model on `codex.ts`). Map failures to
+   resume and read-only options (model on `codex.ts`). Map failures to
    `EngineError` kinds, never to matched message text.
 2. Add a row to `PROVIDERS` in `src/shared/providers.ts`: `id` (= `Engine.id`), the `label` a
    person says, `subscription`, `login` (`terminal` | `console` | `cli` | `none`), `roles` (`presets` |

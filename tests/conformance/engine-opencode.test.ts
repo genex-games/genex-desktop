@@ -8,7 +8,6 @@
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { setImmediate } from "node:timers/promises";
@@ -714,28 +713,6 @@ describe("OpenCode sessions", () => {
     assert.equal(byYou.billing, "api");
     const late = await (await engineWith(hang)).engine.delegate({ cwd, prompt: "x", timeoutMs: 20 });
     assert.equal(late.stopReason, "deadline");
-  });
-
-  it("keeps a worker to its seam while it runs, and gives the files back after", async () => {
-    const cwd = await game();
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "sword.js"), "// mine\n");
-    let lockedDuring = false;
-    const { engine } = await engineWith(async function* () {
-      lockedDuring = await access(path.join(cwd, "main.js"), constants.W_OK).then(
-        () => false,
-        () => true,
-      );
-      yield* replay([]);
-    });
-    await engine.delegate({
-      cwd,
-      prompt: "build the sword",
-      ownership: { facetId: "sword", owns: ["src/sword.js"], ownsMain: false },
-    });
-    if (os.platform() !== "win32" && process.getuid?.() !== 0)
-      assert.equal(lockedDuring, true, "an unowned file is read-only while it runs");
-    await access(path.join(cwd, "main.js"), constants.W_OK);
   });
 
   it("refuses Compact now: OpenCode compacts its own sessions", async () => {

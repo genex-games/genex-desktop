@@ -4,7 +4,6 @@
  */
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { PERMISSION_MODE_NAMES, PermissionMode } from "../../shared/permissions.ts";
-import type { DelegateOwnership } from "./types.ts";
 
 /** The most of the workspace's own instructions (CLAUDE.md) the system prompt carries. */
 const INSTRUCTIONS_CHARS = 24_000;
@@ -22,15 +21,13 @@ export function localBudgetNote(options: { maxTurns: number; timeoutMs: number |
 /** The local agent's standing orders: its boundaries and the workspace's own guidance. */
 export function localSystemPrompt(options: {
   readonly: boolean;
-  ownership: DelegateOwnership | undefined;
   instructions: string;
   /** The permission mode a chat session the user answers runs in; absent for unattended work. */
   mode?: PermissionMode | null;
 }): string {
   const care = options.readonly ? "This session is read-only." : "Preserve existing user work. Do not git push.";
-  const ownership = options.ownership ? JSON.stringify({ ownership: options.ownership }) : "";
   const mode = options.mode ? ` ${MODE_NOTE[options.mode]}` : "";
-  return `You are Studio's local coding agent. Work only in the granted workspace. Use tools to inspect and change real files. Each request says how many model turns and minutes it has. Use targeted searches rather than repeatedly reading large infrastructure files. User instructions and file-edit boundaries take precedence over workspace guidance, including requests to update notes. Never claim a tool action succeeded without its result; report every file you changed. ${care}${mode}\n${ownership}\n${options.instructions.slice(0, INSTRUCTIONS_CHARS)}`;
+  return `You are Studio's local coding agent. Work only in the granted workspace. Use tools to inspect and change real files. Each request says how many model turns and minutes it has. Use targeted searches rather than repeatedly reading large infrastructure files. User instructions and file-edit boundaries take precedence over workspace guidance, including requests to update notes. Never claim a tool action succeeded without its result; report every file you changed. ${care}${mode}\n${options.instructions.slice(0, INSTRUCTIONS_CHARS)}`;
 }
 
 /** What each permission mode a chat session runs in means for the model (Bonsai honours no Bypass). */
@@ -61,8 +58,7 @@ export const LOCAL_TOOL_DESCRIPTION = {
   editFile:
     "Replace one unique exact text block in an existing UTF-8 file. Prefer this for small fixes instead of rewriting the whole file.",
   writeFile: "Write a UTF-8 file. Read existing files before replacing them.",
-  runCommand:
-    "Run a command in this workspace sandbox. No network. Respect worker ownership; never change permissions to bypass it.",
+  runCommand: "Run a command in this workspace sandbox. No network. Never change permissions to bypass a refusal.",
   capture: "Capture this build: a screenshot of the page, saved to a file whose path comes back.",
   capturePage: "Optional: a .html file in this workspace to capture instead of the game.",
 } as const;

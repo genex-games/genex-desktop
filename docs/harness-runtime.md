@@ -979,9 +979,9 @@ hours named win, else the switch's, else until done.
 Worker plugin approvals are recorded in the run owner's conversation, resolved from host
 call attribution and persisted run starts. The original worker remains the cancellation
 scope. Ambiguous or mismatched run ownership is never guessed from a project name.
-Codex ownership recovery metadata lives beside the Codex engine home, never inside it (a folder
-there would read as a sign-in), rather than appearing as an untracked game edit; legacy in-game
-records remain recoverable with hostile-path checks.
+Genex takes no ownership locks any more; the records an older build's locks left (beside the
+Codex engine home, never inside it, where a folder would read as a sign-in, or legacy in-game
+markers) are released before a session starts in that folder, with hostile-path checks.
 The first independently verified milestone and latest checkpoint are retained in the journal
 and report, with immutable Git refs so later integration and cleanup cannot discard them. A one-time 30-minute review reports verified outcomes and blockers without ending
 healthy work. A reopen earns the checkpoints and the review anew. Existing Show build and safe

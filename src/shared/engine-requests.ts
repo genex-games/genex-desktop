@@ -160,20 +160,6 @@ export interface SteerMessage {
 }
 
 /**
- * Edit-time file ownership: the engine blocks Write/Edit outside `owns` (plus the facet's notes
- * and the wiring line of src/main.js) before the edit lands. See `DelegateRequest.ownership`.
- */
-export interface DelegateOwnership {
-  facetId: string;
-  owns: string[];
-  ownsMain: boolean;
-  main?: string;
-  studio?: string;
-  template?: boolean;
-  neverLock?: string[];
-}
-
-/**
  * Why a delegated build ended (`DelegateResult.stopReason`). A vendor's own subtype (such as
  * `error_max_turns`) may also arrive, so the field stays a string. Recorded in logs: never rename a value.
  */

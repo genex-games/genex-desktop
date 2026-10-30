@@ -9,7 +9,8 @@ import { fixtureCodingCli } from "../helpers/external-cli.ts";
  * edit-time hook, and how a subscription limit turns into a decision the run can act on.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -19,20 +20,12 @@ import {
   normaliseEffort,
   readCodexCatalogue,
   translateEvent,
-  chmodTarget,
   unwrapShell,
   type CodexExec,
 } from "../../src/substrate/engines/codex.ts";
 import type { CodexAppServer } from "../../src/substrate/engines/codex-app-server.ts";
 import { parseCodexAuthStatus } from "../../src/substrate/engines/codex-cli.ts";
-import {
-  lockUnowned,
-  ownershipBriefing,
-  reapplyLocks,
-  releaseLocks,
-  releaseStaleLocks,
-  LOCK_MARKER,
-} from "../../src/substrate/engines/ownership-locks.ts";
+import { releaseStaleLocks } from "../../src/substrate/engines/ownership-locks.ts";
 import { StudioBridge } from "../../src/substrate/engines/studio-bridge.ts";
 import { type DelegatePermissions, EngineError, type WorkerSeat } from "../../src/substrate/engines/types.ts";
 import { NeverTouchKind } from "../../src/substrate/engines/never-touch.ts";
@@ -933,9 +926,8 @@ describe("codex engine", () => {
     await mkdir(path.join(cwd, "src"), { recursive: true });
     await writeFile(path.join(cwd, "src", "enemies.js"), "export {};");
     await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    const ownership = { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false };
-    await engine.delegate({ prompt: "build the enemies", cwd, ownership });
-    await engine.delegate({ prompt: "and again", cwd, ownership });
+    await engine.delegate({ prompt: "build the enemies", cwd });
+    await engine.delegate({ prompt: "and again", cwd });
     assert.deepEqual(await engine.resolveLogin(), { source: "system", home: systemHome });
     assert.deepEqual(
       seen.map((call) => call.env.CODEX_HOME),
@@ -1259,158 +1251,6 @@ describe("studio bridge", () => {
   });
 });
 
-describe("ownership locks", () => {
-  it("makes a facet's non-owned files unwritable, and gives them back afterwards", async () => {
-    const cwd = await tmpDir("studio-locks-");
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "enemies.js"), "// mine");
-    await writeFile(path.join(cwd, "src", "studio.js"), "// the studio's contract");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-
-    const record = await lockUnowned(cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-    assert.ok(!(await readdir(cwd)).includes(LOCK_MARKER), "host recovery metadata must not appear as a game edit");
-    const locked = record.files.map((entry) => entry.file).sort();
-    assert.ok(locked.includes("index.html"));
-    assert.ok(locked.includes("src/studio.js"), "the frozen contract is not this facet's to edit");
-    assert.ok(!locked.includes("src/enemies.js"), "its own module stays writable");
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) === 0, true);
-
-    await releaseLocks(cwd, record);
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) !== 0, true);
-    assert.ok(!(await readdir(cwd)).includes(LOCK_MARKER));
-  });
-
-  it("puts a lock the contractor unlocked straight back, and says so in words", async () => {
-    const cwd = await tmpDir("studio-locks-chmod-");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    const record = await lockUnowned(cwd, { facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-
-    // What a contractor did on the first live build that met these locks.
-    await chmod(path.join(cwd, "index.html"), 0o644);
-    await reapplyLocks(cwd, record);
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) === 0, true);
-
-    assert.equal(
-      chmodTarget({
-        type: "item.completed",
-        item: { type: "command_execution", command: "/bin/zsh -lc 'chmod u+w index.html'" },
-      }),
-      "chmod u+w index.html",
-    );
-    assert.equal(chmodTarget({ type: "item.completed", item: { type: "command_execution", command: "ls -l" } }), null);
-
-    // The brief says the lock is the rule, so the contractor has no puzzle to solve.
-    const briefing = ownershipBriefing({ facetId: "enemies", owns: ["src/enemies.js"], ownsMain: false });
-    assert.match(briefing, /read-only on purpose/);
-    assert.match(briefing, /do not `chmod` it away/);
-    await releaseLocks(cwd, record);
-  });
-
-  it("M4.6: in a game the user brought the locks leave the lockfiles, the build output and the caches writable", async () => {
-    const cwd = await tmpDir("studio-locks-own-");
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await mkdir(path.join(cwd, "out"), { recursive: true });
-    await mkdir(path.join(cwd, ".vite"), { recursive: true });
-    await mkdir(path.join(cwd, "packages", "game", "out"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "hud.ts"), "// mine");
-    await writeFile(path.join(cwd, "src", "other.ts"), "// somebody else's, and it already worked");
-    await writeFile(path.join(cwd, "package-lock.json"), "{}");
-    await writeFile(path.join(cwd, "tsconfig.tsbuildinfo"), "{}");
-    await writeFile(path.join(cwd, "out", "index.html"), "<!doctype html>");
-    await writeFile(path.join(cwd, ".vite", "deps.js"), "export {};");
-    await writeFile(path.join(cwd, "packages", "game", "out", "bundle.js"), "export {};");
-
-    const record = await lockUnowned(cwd, {
-      facetId: "hud",
-      owns: ["src/hud.ts"],
-      ownsMain: false,
-      template: false,
-      main: "src/main.ts",
-      // A shape may serve from a nested folder, so the prefix is matched against the whole
-      // relative path — matching the last segment would never see `packages/game/out`.
-      neverLock: ["out", "packages/game/out"],
-    });
-    assert.deepEqual(record.files.map((entry) => entry.file).sort(), ["src/other.ts"], JSON.stringify(record.files));
-    for (const file of [
-      "package-lock.json",
-      "tsconfig.tsbuildinfo",
-      "out/index.html",
-      ".vite/deps.js",
-      "packages/game/out/bundle.js",
-    ]) {
-      assert.equal(
-        ((await stat(path.join(cwd, file))).mode & 0o200) !== 0,
-        true,
-        `${file} stays writable — npm install and the game's own build still run`,
-      );
-    }
-    await releaseLocks(cwd, record);
-
-    // The wording the contractor reads is the own-shape one: a seam, and no wiring block.
-    const briefing = ownershipBriefing({
-      facetId: "hud",
-      owns: ["app/hud.tsx"],
-      ownsMain: false,
-      template: false,
-      main: "src/main.ts",
-    });
-    assert.match(briefing, /this game is the user's own/);
-    assert.match(briefing, /Lockfiles, build output and bundler caches are left writable/);
-    assert.ok(!/FACET WIRING/.test(briefing), briefing);
-  });
-
-  it("M4.6: the seam is said out loud whenever there is one, even when nothing needed locking", async () => {
-    const { fn, seen } = fakeExec(successRun);
-    const { engine, root } = await signedInEngine(fn);
-    const cwd = path.join(root, "own-game");
-    await mkdir(path.join(cwd, "app"), { recursive: true });
-    // Every file in this workspace is the worker's own, so `lockUnowned` records nothing —
-    // and the rule used to go unsaid entirely on the engine that has no hook to say it with.
-    await writeFile(path.join(cwd, "app", "hud.tsx"), "// mine");
-    await engine.delegate({
-      prompt: "build the hud",
-      cwd,
-      ownership: { facetId: "hud", owns: ["app/hud.tsx"], ownsMain: false, template: false, main: "src/main.ts" },
-    });
-    assert.match(seen[0]!.prompt, /FILE OWNERSHIP/);
-    assert.match(seen[0]!.prompt, /this game is the user's own/);
-  });
-
-  it("a delegation whose bridge cannot open leaves no file locked", async () => {
-    const { fn, seen } = fakeExec(successRun);
-    const { engine, root } = await signedInEngine(fn);
-    const cwd = path.join(root, "planted");
-    await mkdir(path.join(cwd, "src"), { recursive: true });
-    await writeFile(path.join(cwd, "src", "other.js"), "// not the worker's");
-    // A `.studio` that is not a plain folder: the bridge refuses to open through it.
-    await writeFile(path.join(cwd, ".studio"), "planted");
-    await assert.rejects(
-      engine.delegate({
-        prompt: "build the hud",
-        cwd,
-        ownership: { facetId: "hud", owns: ["app/hud.tsx"], ownsMain: false, template: false, main: "src/main.ts" },
-      }),
-    );
-    assert.equal(seen.length, 0, "the CLI never started");
-    assert.equal(((await stat(path.join(cwd, "src", "other.js"))).mode & 0o200) !== 0, true, "still writable");
-    await assert.rejects(stat(path.join(cwd, LOCK_MARKER)), { code: "ENOENT" }, "no lock record left behind");
-  });
-
-  it("undoes locks a crashed build left behind, so a workspace is never stuck read-only", async () => {
-    const cwd = await tmpDir("studio-locks-stale-");
-    await writeFile(path.join(cwd, "index.html"), "<!doctype html>");
-    await writeFile(
-      path.join(cwd, LOCK_MARKER),
-      JSON.stringify({ facetId: "gone", at: new Date().toISOString(), files: [{ file: "index.html", mode: 0o644 }] }),
-    );
-    await chmod(path.join(cwd, "index.html"), 0o444);
-
-    assert.equal(await releaseStaleLocks(cwd), true);
-    assert.equal(((await stat(path.join(cwd, "index.html"))).mode & 0o200) !== 0, true);
-    assert.equal(await releaseStaleLocks(cwd), false, "nothing left to undo the second time");
-  });
-});
-
 async function waitForFile(file: string, timeoutMs = 5_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -1697,9 +1537,15 @@ it("host recovery restores original group write bits after a crash", {
   const recovery = await tmpDir("studio-host-record-");
   const file = path.join(cwd, "index.html");
   await writeFile(file, "game");
-  await chmod(file, 0o664);
-  await lockUnowned(cwd, { facetId: "rules", owns: ["rules.js"], ownsMain: false }, recovery);
-  assert.equal((await stat(file)).mode & 0o222, 0);
+  // What an older build's lock left after a crash: the file read-only, and the host's record of it.
+  await chmod(file, 0o444);
+  const key = createHash("sha256")
+    .update(await realpath(cwd))
+    .digest("hex");
+  await writeFile(
+    path.join(recovery, `${key}.json`),
+    JSON.stringify({ facetId: "rules", at: "", files: [{ file: "index.html", mode: 0o664 }] }),
+  );
   assert.equal(await releaseStaleLocks(cwd, recovery), true);
   assert.equal((await stat(file)).mode & 0o777, 0o664);
 });

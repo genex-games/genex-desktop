@@ -40,7 +40,6 @@ import type {
   DelegateCaptureGrant,
   DelegateDirectorGrant,
   DelegateImage,
-  DelegateOwnership,
   DelegatePlaytestGrant,
   DelegateResult,
   LiveToolResult,
@@ -55,7 +54,6 @@ export type {
   DelegateCaptureGrant,
   DelegateDirectorGrant,
   DelegateImage,
-  DelegateOwnership,
   DelegatePlaytestGrant,
   DelegateResult,
   LiveToolResult,
@@ -316,17 +314,6 @@ export interface DelegateRequest {
    * or vision check is failing. A path in a text prompt is not a picture.
    */
   images?: DelegateImage[];
-  /**
-   * Edit-time file ownership: the engine blocks Write/Edit outside `owns` (plus the
-   * facet's notes and the wiring line of src/main.js) before the edit lands, with a reason
-   * the contractor reads. `ownsMain` also allows src/main.js, src/studio.js and index.html.
-   *
-   * `template: false` is a game the user brought (M4.6): the entry has no wiring block to pass
-   * through, and a worker with no seam owns the repository minus the entry, the contract and
-   * the page. `neverLock` names directory prefixes the Codex locks must leave writable — a
-   * shape's own build output, on top of the lockfiles and caches every game has.
-   */
-  ownership?: DelegateOwnership;
   /**
    * This delegation is the chat's current turn, and the person's messages may reach it mid-turn
    * (only for an engine with `steersMidTurn`). The engine calls `ready` once, as soon as it knows

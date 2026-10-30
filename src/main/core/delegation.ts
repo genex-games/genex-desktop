@@ -28,7 +28,6 @@ import {
   DelegationRefusal,
   EngineFailureKind,
   StopReason,
-  type DelegateOwnership,
   type TurnFailure,
   turnFailure,
 } from "../../shared/engine-requests.ts";
@@ -539,7 +538,6 @@ function askedScope(p: DelegateParams, grants: AskedGrants = p) {
 function unattendedBrief(p: DelegateParams): boolean {
   const narrower = [
     p.readOnly,
-    p.ownership,
     p.candidateId,
     p.playtest,
     p.selfCapture?.runId,
@@ -681,7 +679,7 @@ function workerBrief(p: DelegateParams): DelegateParams {
 
 /**
  * A reviewer's brief: what it was asked and where it reads, and nothing else. Every other grant
- * (a director's, a worker's, a capture or playtest grant, run controls, the chat's turn, ownership,
+ * (a director's, a worker's, a capture or playtest grant, run controls, the chat's turn,
  * a folder of its own) is dropped; its reads are the lead's folder and the run's captures (on Codex,
  * whose box reads the whole disk, a brief rather than a boundary), it offers no plugin tool, and has
  * no computer of its own.
@@ -726,26 +724,6 @@ class DelegationRefusedError extends Error {
     this.name = "DelegationRefusedError";
     this.code = code;
   }
-}
-
-/**
- * Field by field, because the engine is handed only what the studio recognises. `template` and
- * `neverLock` are in this list for a reason nothing else would catch: dropping them typechecks,
- * every unit test passes, and a game the user brought silently keeps the template's locks and
- * the template's wiring rule.
- */
-export function normalizeOwnership(raw: DelegateOwnership | undefined): DelegateOwnership | undefined {
-  if (!raw || typeof raw.facetId !== "string") return undefined;
-  const neverLock = Array.isArray(raw.neverLock) && raw.neverLock.length ? raw.neverLock.map(String) : null;
-  return {
-    facetId: raw.facetId,
-    owns: Array.isArray(raw.owns) ? raw.owns.map(String) : [],
-    ownsMain: raw.ownsMain === true,
-    ...(typeof raw.main === "string" ? { main: raw.main } : {}),
-    ...(typeof raw.studio === "string" ? { studio: raw.studio } : {}),
-    ...(typeof raw.template === "boolean" ? { template: raw.template } : {}),
-    ...(neverLock ? { neverLock } : {}),
-  };
 }
 
 /** Is this a non-null object whose fields can be read? */
@@ -2601,7 +2579,6 @@ export class DelegationService {
   ): Promise<DelegateRequest> {
     const { engineId, optimization } = target;
     const { blindness, workCwd, extraReads, denyReads } = await this.#sessionReach(target, grants, reach);
-    const ownership = normalizeOwnership(p.ownership);
     return {
       ...blindness,
       contextPolicy: (await this.#core.contextPreferences.get(engineId, p.model ?? "", p.threadId)).policy,
@@ -2627,7 +2604,6 @@ export class DelegationService {
       ...(Array.isArray(p.images) && p.images.length
         ? { images: p.images.filter((i) => i?.data).slice(0, MAX_BRIEF_IMAGES) }
         : {}),
-      ...(ownership ? { ownership } : {}),
       ...this.#toolFields(p, target, grants, session, windows, tools),
       ...steerField(session),
       onEvent: this.#onEvent(session),

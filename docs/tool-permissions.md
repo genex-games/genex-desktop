@@ -25,7 +25,7 @@ The host alone decides, from what it recorded itself, never from anything the ha
 delegation asks only when all of these hold:
 
 - the brief has no narrower job: not read-only, no
-  director, coordinator, playtest, worker `ownership`, optimization candidate, own `cwd`, run
+  director, coordinator, playtest, optimization candidate, own `cwd`, run
   self-capture, own `timeoutMs` or improvement class, and it is the chat's own session
   (`isChatsOwnSession`), not a lead's turn;
 - it works in its game's own folder and answers a chat turn (`chatTurn`) whose message id the

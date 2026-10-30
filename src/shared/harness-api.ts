@@ -21,7 +21,6 @@ import type {
   DelegateCaptureGrant,
   DelegateDirectorGrant,
   DelegateImage,
-  DelegateOwnership,
   DelegatePlaytestGrant,
   DelegateResult,
   LiveToolResult,
@@ -223,8 +222,6 @@ export interface HarnessDelegateParams {
   readOnly?: boolean;
   /** Stills into the builder's prompt. */
   images?: DelegateImage[];
-  /** Edit-time ownership the engine enforces before a Write lands. */
-  ownership?: DelegateOwnership;
   /** The computer: `false` withholds the builder's hands; default on with a capture grant. */
   computer?: boolean;
   /** The director: the run's orchestrating session, with the harness's run tools forwarded. */

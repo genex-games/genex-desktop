@@ -30,9 +30,6 @@ import { codexSessionMetadata, type CodexSessionMetadata } from "./codex-session
  *  2. *Studio tools.* `codex exec` auto-denies MCP tool calls — a non-interactive session has
  *     nobody to approve them — and the only way round it is to give up the contractor's sandbox.
  *     Instead the studio's tools arrive as a command the contractor runs (`studio-bridge.ts`).
- *  3. *Ownership.* There is no `PreToolUse` hook to refuse a stray Write, so the facet's
- *     non-owned files are made read-only for the delegation (`ownership-locks.ts`) and the
- *     contractor's own sandbox does the refusing.
  */
 import { spawnCommand } from "../command-launch.ts";
 import {
@@ -62,15 +59,7 @@ import {
 import { credentialHomes } from "../credential-homes.ts";
 import { neverTouchWhole, writableRoots } from "./never-touch.ts";
 import { normalizeCodexUsage, type ProviderUsage } from "../../shared/provider-usage.ts";
-import {
-  type LockRecord,
-  LOCK_RECOVERY_DIR,
-  lockUnowned,
-  ownershipBriefing,
-  reapplyLocks,
-  releaseLocks,
-  releaseStaleLocks,
-} from "./ownership-locks.ts";
+import { LOCK_RECOVERY_DIR, releaseStaleLocks } from "./ownership-locks.ts";
 import { runCommand } from "./claude-cli.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { CodexEvent, CodexItem, CodexItemStatus } from "./codex-exec-events.ts";
@@ -831,15 +820,12 @@ export class CodexEngine implements Engine {
 
     // A build left half-locked by an app that died keeps this workspace unwritable forever.
     await releaseStaleLocks(cwd, this.#lockRecovery).catch(() => {});
-    const locks = request.ownership
-      ? await lockUnowned(cwd, request.ownership, this.#lockRecovery).catch(() => null)
-      : null;
 
     // A read-only session is started somewhere of its own, so the only folder its sandbox lets
     // it write is the studio's bridge — the build it is judging stays untouchable. A lead that is
     // its chat's own session is resumed from there by id (a Codex session is found by its id,
     // wherever it is started), and the chat resumes it from the game folder after the run.
-    const dir = await this.#openRunDir(request, { cwd, locks, run, model, signal: controller.signal });
+    const dir = await this.#openRunDir(request, { cwd, run, model, signal: controller.signal });
     const { scratch, bridge, turn } = dir;
     const runDir = scratch ?? cwd;
     // Interview tools are read off the session's own record of calls (the bridge's, or the app
@@ -853,7 +839,7 @@ export class CodexEngine implements Engine {
     });
 
     const stills = await writeDelegateStills(request.images ?? []);
-    const prompt = await this.#delegatePrompt(request, { cwd, scratch, locks, bridge, turn });
+    const prompt = await this.#delegatePrompt(request, { cwd, scratch, bridge, turn });
     const deadline = request.timeoutMs
       ? setTimeout(() => {
           run.deadlineHit = true;
@@ -868,7 +854,7 @@ export class CodexEngine implements Engine {
       const delivery = toolDelivery(dir);
       const writes = boxRoots(request, runDir, roots);
       const source = { argv, runDir, writes, prompt, turn, images: stills.paths, delivery };
-      await this.#readStream(request, run, { ...source, cwd, locks, model, signal });
+      await this.#readStream(request, run, { ...source, cwd, model, signal });
       await metadata.refresh();
     } catch (err) {
       await metadata.refresh();
@@ -878,7 +864,6 @@ export class CodexEngine implements Engine {
       if (deadline) clearTimeout(deadline);
       turn?.close();
       await bridge?.close().catch(() => {});
-      await releaseLocks(cwd, locks, this.#lockRecovery).catch(() => {});
       if (stills.dir) await rm(stills.dir, { recursive: true, force: true }).catch(() => {});
       if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
     }
@@ -951,9 +936,8 @@ export class CodexEngine implements Engine {
   /**
    * Where the session runs, and how its studio tools reach it: a thread on the app server with
    * dynamic tools, else the file bridge. A read-only session is started somewhere of its own, so
-   * the only folder its sandbox lets it write is the studio's bridge. The locks and the scratch
-   * folder are this call's: a bridge that cannot open (a planted `.studio`) must not leave the
-   * game read-only until the next delegation.
+   * the only folder its sandbox lets it write is the studio's bridge. The scratch folder is this
+   * call's: a bridge that cannot open (a planted `.studio`) must not leave it behind.
    */
   async #openRunDir(request: DelegateRequest, ctx: RunDirContext): Promise<RunDir> {
     let scratch: string | null = null;
@@ -971,7 +955,6 @@ export class CodexEngine implements Engine {
     } catch (err) {
       turn?.close();
       await bridge?.close().catch(() => {});
-      await releaseLocks(ctx.cwd, ctx.locks, this.#lockRecovery).catch(() => {});
       if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {});
       throw err;
     }
@@ -1108,13 +1091,12 @@ export class CodexEngine implements Engine {
     });
   }
 
-  /** The brief, plus what Codex can only be told: its tools, its seam, its folder, its limits. */
+  /** The brief, plus what Codex can only be told: its tools, its folder, its limits. */
   async #delegatePrompt(
     request: DelegateRequest,
     ctx: {
       cwd: string;
       scratch: string | null;
-      locks: OwnershipLocks | null;
       bridge: StudioBridge | null;
       turn: CodexDynamicTurn | null;
     },
@@ -1134,12 +1116,6 @@ export class CodexEngine implements Engine {
       // Only the roots no folder it works in sits inside: its own copy under Genex's data is its own.
       ...(request.worker ? neverTouchWhole(request.worker.neverTouch) : []),
     ];
-    // The rule is said whenever there is a seam to say, not only when a file happened to be
-    // locked: a worktree whose unowned files were already read-only (or a game whose only
-    // unowned files are lockfiles the locks leave alone) still has a seam the builder must
-    // keep to, and it used to be told nothing at all.
-    const hasSeam = request.ownership && (request.ownership.owns.length || ctx.locks?.files.length);
-    const ownershipNote = hasSeam && request.ownership ? `\n\n${ownershipBriefing(request.ownership)}` : "";
     // A chat session in Plan is told it plans, not that it tests a build.
     const planScratch = chatMode(request) === PermissionMode.Plan ? ctx.scratch : null;
     return [
@@ -1147,7 +1123,6 @@ export class CodexEngine implements Engine {
       ctx.bridge?.instructions() ?? "",
       ctx.turn?.declaresTools ? dynamicToolsNote(bridgeTools(request).map((tool) => tool.name)) : "",
       request.blind ? BLIND_JUDGE_NOTE : "",
-      ownershipNote,
       planScratch
         ? planModeNote(ctx.cwd, planScratch)
         : readOnlyNote(
@@ -1183,7 +1158,7 @@ export class CodexEngine implements Engine {
     ];
   }
 
-  /** The turn's event stream, read to the end: the chat's live rows, the lock guard, the log. */
+  /** The turn's event stream, read to the end: the chat's live rows and the log. */
   async #readStream(request: DelegateRequest, run: CodexRun, stream: StreamContext): Promise<void> {
     const streamingItems = new Map<string, string>();
     const events = await this.#events(request, run, stream);
@@ -1191,7 +1166,6 @@ export class CodexEngine implements Engine {
     for await (const event of events) {
       streamReplyText(event, streamingItems, request);
       this.#reportActivity(event, run, request);
-      await this.#guardLocks(event, stream.cwd, stream.locks, request);
       const translated = translateEvent(event, stream.cwd);
       if (translated) applyTranslated(translated, run, request, init);
     }
@@ -1241,32 +1215,6 @@ export class CodexEngine implements Engine {
         payload: { phase: ChatActivityPhase.Thinking, sessionId: run.sessionId, engine: this.id },
       });
     }
-  }
-
-  /**
-   * A contractor that tries to unlock a file it does not own gets the lock straight back — the
-   * re-apply usually lands between its `chmod` and its write — and the attempt itself goes into
-   * the log, where the reviewer and SkillOpt can see it. It is a narrower wall than Claude's
-   * edit-time hook, and it is meant to be read as one.
-   */
-  async #guardLocks(
-    event: Record<string, unknown>,
-    cwd: string,
-    locks: OwnershipLocks | null,
-    request: DelegateRequest,
-  ): Promise<void> {
-    const unlock = chmodTarget(event);
-    if (!unlock || !locks?.files.some((entry) => unlock.includes(entry.file))) return;
-    await reapplyLocks(cwd, locks).catch(() => {});
-    request.onEvent?.({
-      type: DelegateEventType.System,
-      payload: {
-        subtype: "permission_denied",
-        tool_name: "chmod",
-        decision_reason: `${unlock} is not this facet's to edit — the studio put the lock back.`,
-        message: null,
-      },
-    });
   }
 
   /**
@@ -1485,7 +1433,6 @@ export class CodexEngine implements Engine {
 // ── one delegation's state ─────────────────────────────────────────────────────────────────
 
 type CodexInstallation = Awaited<ReturnType<typeof requireCodingCli>>;
-type OwnershipLocks = LockRecord;
 
 /** Which login a session uses, and the home it lives in. */
 interface CodexLogin {
@@ -1588,7 +1535,6 @@ function recordedCalls(
 /** What opening a delegation's run folder needs besides the request. */
 interface RunDirContext {
   cwd: string;
-  locks: OwnershipLocks | null;
   run: CodexRun;
   model: string | undefined;
   signal: AbortSignal;
@@ -1630,7 +1576,6 @@ interface StreamContext {
   writes: string[];
   prompt: string;
   cwd: string;
-  locks: OwnershipLocks | null;
   model: string | undefined;
   signal: AbortSignal;
   /** The app server's thread, when the turn runs there (dynamic tools, or checked in Auto); null runs `codex exec`. */
@@ -2152,15 +2097,6 @@ function mcpResultText(result: unknown): string {
     .filter((part) => part?.type === "text")
     .map((part) => String(part.text ?? ""))
     .join("\n");
-}
-
-/** The file a `chmod`-ish command was aimed at, if the contractor just ran one. */
-export function chmodTarget(event: Record<string, unknown>): string | null {
-  if (event.type !== CodexEvent.ItemCompleted) return null;
-  const item = (event.item ?? {}) as Record<string, unknown>;
-  if (item.type !== CodexItem.CommandExecution) return null;
-  const command = unwrapShell(String(item.command ?? ""));
-  return /\b(chmod|chflags)\b/.test(command) ? command : null;
 }
 
 function assistant(parts: unknown[]): MirroredEvent {

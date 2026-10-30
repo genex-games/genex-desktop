@@ -148,11 +148,9 @@ limits the number of active workers/windows.
 Local text reads report their selected line range and total lines, including an explicit end-of-file
 response for out-of-range offsets. Sessions receive their turn/time budget up front.
 Local file tools resolve real paths, respect host read grants and deny lists, restrict writes
-to the session workspace and enforce worker ownership on writes. Shell commands use
+to the session workspace. Shell commands use
 ProcessSandbox, with workspace and Git metadata write roots, credential deny lists, no
-outbound domains, time/output ceilings and cancellation. Shell ownership additionally uses
-the same filesystem locks as Codex; as with Codex, those locks are advisory rather than an
-unbreakable edit boundary. Review and integration remain necessary. Read-only and coordinator
+outbound domains, time/output ceilings and cancellation. Read-only and coordinator
 sessions have no file-write or shell tool; a Loop chat that may launch a build keeps them, and
 its idle-round nudge asks it to finish or launch rather than implement. The host remains authoritative for
 which computer, capture, Blender, plugin, connector and director tools a role receives.
@@ -207,7 +205,7 @@ the instrumentation implementation. Existing imported projects retain their own 
 and contract-wiring path. Detailed quality work can follow the first captured, working scene.
 
 Writable local sessions offer an exact, unique-block `edit_file` tool for small corrections,
-with the same path and worker-ownership checks as full-file writes. Ambiguous matches fail
+with the same path checks as full-file writes. Ambiguous matches fail
 without changing the file.
 
 Unchanged duplicate file-section reads return guidance to use the existing information. Six
