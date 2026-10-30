@@ -216,7 +216,8 @@ describe("autopilot substrate over the real rig", () => {
     await assert.rejects(stat(path.join(harnessWs, "prompts", ".probe")), { code: "ENOENT" });
     assert.doesNotMatch(await readFile(path.join(harnessWs, "loop", "main.ts"), "utf8"), /\/\/ bent/);
     const notes = (await api["run.exec"]!({
-      command: "echo note > library/.probe && cat library/.probe && rm library/.probe",
+      // The seed ships no library/ folder now; a folder of the harness's own is as writable.
+      command: "mkdir -p library && echo note > library/.probe && cat library/.probe && rm library/.probe",
     })) as { code: number | null };
     assert.equal(notes.code, 0, "the rest of the harness folder stays writable");
 
