@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.46",
+  "version": "1.11.0",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -11,7 +11,7 @@
   "tools": [
     {
       "name": "asset",
-      "description": "Generate assets with Genex credits, or pick up an existing generation with wait. Generate only as needed: when Local Blender is enabled it comes first for hard-surface models (weapons, props, vehicles, buildings, kit pieces); respect explicit user preferences. Each lane's provider is fixed and there is no provider option: model, model.segment, model.rig and model.animate are Tripo; character, creature, character.preview and character.finalize are Meshy (rigged, biped-shaped bodies with clips); character.import rigs a humanoid GLB from this game with Uthana; status names every lane's live provider. When the user asks for a provider a lane lacks, say so once and name what you will use instead. Before first using a lane, read its card with genex__skill: genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio or genex-tool-image. Options differ by lane: the options parameter lists them. A model prompt is at most 1024 characters, the 3D provider's limit: describe the object itself and leave scene, style-guide and gameplay context out. Studio submits every create without waiting, so never pass wait or no-wait: pick results up with operation wait and the remote generationId, not the Studio job id. Re-running a create bills a new asset: never repeat an unresolved create request. Inspect Genex status first. Coding remains on your subscription. Other Genex commands run through genex__cli. After download use the returned local files. For inspect_use and verify_use, pass the id of the Studio job whose files array contains those delivered files. inspect_use captures the running game and checks loaded asset URLs; verify_use records your visual judgement using options.inspectionId and a specific prompt. inspect_use also measures currently playing DOM audio/video elements per delivered audio file; silent, muted, paused or unsupported players remain unverified. It never starts playback. Web Audio buffers and physical speaker output are not certified. Operations: status, model, image, texture, video, sfx, music, voice, model.import, model.segment, model.rig, model.animate, character, creature, character.preview, character.finalize, character.import, character.animate, creature.animate, character.motions, animations.search, wait, inspect_use, verify_use",
+      "description": "Generate assets with Genex credits, or pick up an existing generation with wait. Respect the user's explicit choices (procedural only, no paid assets, a budget, Local Blender), and use suitable assets the game already has before creating more. Each lane's provider is fixed and there is no provider option: model, model.segment, model.rig and model.animate are Tripo; character, creature, character.preview and character.finalize are Meshy (rigged, biped-shaped bodies with clips); character.import rigs a humanoid GLB from this game with Uthana; status names every lane's live provider and whether the account can generate. When the user asks for a provider a lane lacks, say so. Each lane has a card in genex__skill: genex-tool-model, genex-tool-character, genex-tool-texture, genex-tool-audio and genex-tool-image. Options differ by lane: the options parameter lists them. A model prompt is at most 1024 characters, the 3D provider's limit: describe the object itself and leave scene, style-guide and gameplay context out. Studio submits every create without waiting, so never pass wait or no-wait: pick results up with operation wait and the remote generationId, not the Studio job id. Re-running a create bills a new asset: never repeat an unresolved create request. Coding remains on your subscription. Other Genex commands run through genex__cli. After download use the returned local files. inspect_use and verify_use take the id of the Studio job whose files array contains the delivered files: inspect_use reports which of them the running game loaded, and for audio which playing DOM audio or video elements use them (silent, muted, paused or unsupported players stay unverified; it never starts playback; Web Audio buffers and speaker output are not certified); verify_use records a visual judgement under options.inspectionId with a prompt. Operations: status, model, image, texture, video, sfx, music, voice, model.import, model.segment, model.rig, model.animate, character, creature, character.preview, character.finalize, character.import, character.animate, creature.animate, character.motions, animations.search, wait, inspect_use, verify_use",
       "parameters": {
         "type": "object",
         "properties": {
@@ -35,7 +35,7 @@
     },
     {
       "name": "publish",
-      "description": "Put this game online on Genex. operation 'gallery' publishes it: Studio exports the game, updates its draft page and makes that same build the public version, listing it in the gallery the first time. operation 'draft' updates only the unlisted draft page, a test build that leaves the public version as it is. Studio exports the game itself and asks the user before either runs, so this call can wait several minutes for the answer. Other Genex commands run through genex__cli. Publishing, and a draft until the game is first public, also shoots the game's genex-cover demo again and, once the upload is recorded, sends that frame as its Genex cover; its outcome is publish-status's cover. So before either, the first publish or an update, check genex__cover {\"operation\":\"status\"}: with no kept shot and no cover the owner chose, stage the genex-cover demo and shoot it first. When this publish's own cover outcome is none (cover.last.jobId is its jobId), no frame was sent: offer once to make one, and never again in this chat once the user says no. Neither applies to a game whose owner keeps its code untouched (a folder brought only to publish). Returns a job: poll genex__publish-status with operation 'wait' and the jobId until state is done or failed, then give the user galleryUrl after publishing, or draftUrl for a draft.",
+      "description": "Put this game online on Genex. operation 'gallery' publishes it: Studio exports the game, updates its draft page and makes that same build the public version, listing it in the gallery the first time. operation 'draft' updates only the unlisted draft page, a test build that leaves the public version as it is. Studio exports the game itself and asks the user before either runs, so this call can wait several minutes for the answer. Other Genex commands run through genex__cli. A game on Genex shows a cover: a publish, and a draft until the game is first public, sends the picture kept with genex__cover once the upload is recorded (publish-status's cover says how it went) and takes no picture of its own; with none kept and none the owner chose, Genex keeps the cover it has. Returns a job: poll genex__publish-status with operation 'wait' and the jobId until state is done or failed, then give the user galleryUrl after publishing, or draftUrl for a draft.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -50,7 +50,7 @@
     },
     {
       "name": "publish-status",
-      "description": "Read this game's Genex publishing state, or wait for a running publish. operation 'status' returns immediately; operation 'wait' waits for the job named by jobId and then returns the same state. The state carries the job phase, the draft and gallery links, any error and warnings, and cover: the kept genex-cover shot and how its last send went (last.kind). 'wait' also waits for the cover a publish sends after its upload. Asks the user nothing and charges nothing.",
+      "description": "Read this game's Genex publishing state, or wait for a running publish. operation 'status' returns immediately; operation 'wait' waits for the job named by jobId and then returns the same state. The state carries the job phase, the draft and gallery links, any error and warnings, and cover: the kept cover picture and clip and how their last send went (last.kind). 'wait' also waits for the cover a publish sends after its upload. Asks the user nothing and charges nothing.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -131,21 +131,25 @@
     },
     {
       "name": "cover",
-      "description": "Check this game's Genex cover: the one real 16:9 frame genex.games shows on its gallery card, its page and every shared link (not Studio's own sidebar look, set_game_cover). operation 'shoot' runs the game's demo named genex-cover at 1920x1080 in a hidden window, keeps that frame as the game's shot, replacing the last one, and answers with its preview image and its brightness, contrast and near-black share (stats); 'clip' runs the game's demo named genex-clip (it starts a moment the game then plays by itself) and records five seconds of it at 960x540 as the game's clip, the video genex.games plays over the cover on its cards, answering with its first frame and how much moved (motion); 'status' reports the kept shot, the last send and, once the game is hosted and the account connected, Genex's current cover and who chose it (coverSource; the owner's pick always stands). Shoot once the game first looks like itself, before any publish while no shot is kept, and after a big visual change, and judge the preview before any send. Publish shoots it again and sends it, then sends the kept clip; genex__cover-set sends the kept shot now. Asks nothing, charges nothing and uploads nothing.",
+      "description": "Keep this game's Genex cover: the 16:9 picture genex.games shows on its gallery card, its page and every shared link (not Studio's own sidebar look, set_game_cover), and optionally the clip it plays over the cover on its cards. Make them of the real game by any means, save them inside this game's folder and pass their paths: image is a PNG or JPEG of at least 1280×720 and at most 8 MB (Genex shows 16:9 whole and crops other shapes to their middle 16:9); clip is a WebM or MP4 of at least 5.3 seconds of play (Genex keeps five) and at most 8 MB. Studio checks both and copies them into its own storage in place of the last cover; when either is refused nothing is kept. The answer has the kept picture's size and light (Genex refuses a picture too dark or one flat colour), the last send, who chose the cover on Genex (coverSource; the owner's pick always stands) and when it is sent: the next publish sends it (a draft only until the game is public), genex__cover-set sends it now. Asks nothing, charges nothing and uploads nothing.",
       "parameters": {
         "type": "object",
         "properties": {
-          "operation": {
+          "image": {
             "type": "string",
-            "description": "shoot, clip or status"
+            "description": "The cover picture: a path inside this game's folder to a PNG or JPEG of at least 1280×720."
+          },
+          "clip": {
+            "type": "string",
+            "description": "Optional: a path inside this game's folder to a WebM or MP4 of at least 5.3 seconds of play."
           }
         },
-        "required": ["operation"]
+        "required": ["image"]
       }
     },
     {
       "name": "cover-set",
-      "description": "Make the kept genex-cover shot this game's Genex cover now, without publishing: the picture on its gallery card, its page and every shared link. Shoot and judge it with genex__cover first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. With no hosted Genex project yet it sends nothing: the shot goes with the first publish. A cover the owner chose on genex.games always stays. Genex limits cover uploads per hour: send one judged frame, and never send a frame Genex turned down again unchanged. The answer's kind says how it went.",
+      "description": "Make the kept cover picture this game's Genex cover now, without publishing: the picture on its gallery card, its page and every shared link. Keep one with genex__cover first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. With no hosted Genex project yet it sends nothing: the picture goes with the first publish. A cover the owner chose on genex.games always stays. Genex limits cover uploads per hour, and a picture Genex turned down is never sent again unchanged. The answer's kind says how it went.",
       "parameters": {
         "type": "object",
         "properties": {}
@@ -167,7 +171,7 @@
     {
       "name": "publishing",
       "engines": ["web"],
-      "summary": "Putting a web game on Genex: genex__publish for the gallery or an unlisted draft, waiting on genex__publish-status, and what the person approves. Read when the person wants the game published or online.",
+      "summary": "Putting a web game on Genex: genex__publish for the gallery or an unlisted draft, waiting on genex__publish-status, and what the person approves.",
       "file": "skills/publishing/SKILL.md"
     },
     {
@@ -178,7 +182,7 @@
     {
       "name": "cover",
       "engines": ["web"],
-      "summary": "The game's Genex cover: the 16:9 frame genex.games shows, staged as the genex-cover demo and shot with genex__cover, when it is made and what it may show. Read when making the cover, before a publish, or when the person asks for another.",
+      "summary": "The game's Genex cover: what genex.games needs (a picture, an optional clip), how genex__cover keeps them and when Studio sends them.",
       "file": "skills/cover/SKILL.md"
     },
     {
