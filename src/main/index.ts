@@ -128,6 +128,7 @@ import { registerCliInstallIpc } from "./ipc/cli-install.ts";
 import { createCliInstalls } from "./cli-install.ts";
 import { registerMcpIpc } from "./ipc/mcp.ts";
 import { registerModelsIpc } from "./ipc/models.ts";
+import { hardwareReport } from "./core/hardware-report.ts";
 import { registerNotificationsIpc } from "./ipc/notifications.ts";
 import { registerPermissionsIpc } from "./ipc/permissions.ts";
 import { registerPluginsIpc } from "./ipc/plugins.ts";
@@ -1082,6 +1083,8 @@ function studioWindowOptions(): Electron.BrowserWindowConstructorOptions {
     show: false,
     // Fixed-size acceptance must not depend on the current display's work-area height.
     ...(isSmoke ? { enableLargerThanScreen: true } : {}),
+    // Windows mismeasures the resize frame offscreen; fixture viewports need exact client bounds.
+    ...(isSmoke && process.platform === StudioPlatform.Windows ? { thickFrame: false } : {}),
     ...parkedWindowOptions(),
     ...windowTitle(),
     webPreferences: {
@@ -2172,7 +2175,14 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerGamesIpc(handle, { core: studio, runSummaryReader, pushUiEvent });
   registerStorageIpc(handle, { core: studio });
   registerJobsIpc(handle, { core: studio, openExternal: (url) => shell.openExternal(url) });
-  registerModelsIpc(handle, { core: studio, subscription, pushUiEvent, openRouterLogin, usage: providerUsage });
+  registerModelsIpc(handle, {
+    core: studio,
+    subscription,
+    pushUiEvent,
+    openRouterLogin,
+    usage: providerUsage,
+    readHardware: isSmoke ? async () => smokeReads.hardware ?? hardwareReport() : undefined,
+  });
   registerPreviewIpc(handle, {
     core: studio,
     preview: () => preview,
