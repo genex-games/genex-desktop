@@ -5966,4 +5966,6 @@ export default {
   "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, other {+# 작업자}}",
   "{count, plural, one {Show # more worker} other {Show # more workers}}":
     "{count, plural, other {작업자 #명 더 보기}}",
+  "In the running build": "진행 중인 빌드에 있음",
+  "Not in your game yet. It arrives when the build lands.": "아직 게임에 없어요. 빌드가 반영되면 들어와요.",
 } satisfies LocaleCatalog;

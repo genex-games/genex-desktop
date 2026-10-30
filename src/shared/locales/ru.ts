@@ -6148,4 +6148,6 @@ export default {
     "{count, plural, one {+# помощник} few {+# помощника} many {+# помощников} other {+# помощника}}",
   "{count, plural, one {Show # more worker} other {Show # more workers}}":
     "{count, plural, one {Показать ещё # помощника} few {Показать ещё # помощников} many {Показать ещё # помощников} other {Показать ещё # помощника}}",
+  "In the running build": "В текущей сборке",
+  "Not in your game yet. It arrives when the build lands.": "Пока не в игре. Попадёт туда, когда сборка зальётся.",
 } satisfies LocaleCatalog;

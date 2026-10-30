@@ -6212,4 +6212,7 @@ export default {
   "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, one {+# assistant} other {+# assistants}}",
   "{count, plural, one {Show # more worker} other {Show # more workers}}":
     "{count, plural, one {Afficher # assistant de plus} other {Afficher # assistants de plus}}",
+  "In the running build": "Dans le build en cours",
+  "Not in your game yet. It arrives when the build lands.":
+    "Pas encore dans ton jeu. Il arrive quand le build est intégré.",
 } satisfies LocaleCatalog;

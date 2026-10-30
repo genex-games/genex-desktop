@@ -6102,4 +6102,7 @@ export default {
   "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, other {+# ワーカー}}",
   "{count, plural, one {Show # more worker} other {Show # more workers}}":
     "{count, plural, other {ワーカーをあと # 件表示}}",
+  "In the running build": "実行中のビルド内",
+  "Not in your game yet. It arrives when the build lands.":
+    "まだゲームには入っていません。ビルドが反映されると入ります。",
 } satisfies LocaleCatalog;

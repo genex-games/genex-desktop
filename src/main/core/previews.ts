@@ -26,6 +26,7 @@ import type { HarnessParams, HarnessResult } from "../../shared/harness-api.ts";
 import type { ProjectShape } from "../../shared/game-project.ts";
 import { templateLoadsGenexSdk } from "../../substrate/project-shape.ts";
 import { genexOutputFile, isGenexRef } from "../../shared/genex-ref.ts";
+import { isBuildRef } from "../../shared/build-ref.ts";
 import { type ProjectAssetRead, ProjectAssetScope } from "../../shared/game-assets.ts";
 import { resetToolchain } from "../../substrate/toolchain.ts";
 import { buildFailureNote, servedAfterBuild } from "../game-build.ts";
@@ -1191,6 +1192,11 @@ export class PreviewService {
       return readItemPicture(where, p.project, p.file, resize);
     }
     if (isGenexRef(p.file)) return this.#readGenexOutput(p.project, p.file, resize);
+    // A running Loop's delivery that is only in its build: read from the workspace the host listed.
+    if (isBuildRef(p.file)) {
+      const found = await this.#x.assets.buildFile(p.project, p.file).catch(() => null);
+      return found ? readContainedImage(found.root, found.file, { prefixes: [], ...resize }) : null;
+    }
     if (!isAssetPath(p.file, await this.#x.assets.assetFolders(p.project))) return null;
     return readContainedImage(this.#core.games.dirFor(p.project), p.file, { prefixes: [], ...resize });
   }

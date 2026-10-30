@@ -6,7 +6,16 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AssetInfo } from "../../src/renderer/run-graph.ts";
+import {
+  type AssetInfo,
+  type AssetsNode,
+  buildRunGraph,
+  GraphNodeKind,
+  joinBuildsView,
+} from "../../src/renderer/run-graph.ts";
+import { buildRef } from "../../src/shared/build-ref.ts";
+import { CustomEvent } from "../../src/shared/custom-events.ts";
+import { type EventEnvelope, EventKind } from "../../src/shared/event-log.ts";
 import { AssetCardState, earlierVersion } from "../../src/renderer/run-graph-assets.ts";
 import { type BuildCard, BuildOutcome, buildBefore } from "../../src/renderer/run-graph-builds.ts";
 import { changedShare, PairView, pairView, UNCHANGED_SHARE } from "../../src/renderer/run-graph-pictures.ts";
@@ -142,5 +151,50 @@ describe("which pictures may pair", () => {
     assert.equal(earlierVersion([front, side], side), null, "another view of it is no pair");
     const unpictured = delivered({ jobId: "job-d", at: "2026-01-01T09:30:00.000Z", picture: undefined });
     assert.equal(earlierVersion([first, unpictured], unpictured), null, "no picture of its own: nothing to compare");
+  });
+});
+
+describe("a delivery only in the running build, on the run's Assets card", () => {
+  it("is not in the game yet, and reads its picture from the build the Assets stage lists", () => {
+    const file = "assets/genex/shop-sign.png";
+    const at = (n: number) => new Date(Date.UTC(2026, 9, 31, 10, 0, n)).toISOString();
+    const record = (n: number, eventType: string, payload: Record<string, unknown>): EventEnvelope =>
+      ({
+        id: `e${n}`,
+        thread_id: "t1",
+        session_id: null,
+        turn_id: null,
+        created_at: at(n),
+        data: { type: EventKind.Custom, event_type: eventType, payload: { runId: "run-a", ...payload } },
+      }) as EventEnvelope;
+    const graph = buildRunGraph([
+      record(1, CustomEvent.RunStarted, { goal: "A shop", project: "game" }),
+      record(2, CustomEvent.AssetDelivered, {
+        project: "game",
+        source: "genex",
+        jobId: "job-sign",
+        files: [{ file, bytes: 1, kind: "image" }],
+        at: at(2),
+        workspace: "build",
+        facetId: "pool.w3",
+        picture: "/runs/run-a/deliveries/job-sign.png",
+      }),
+    ]);
+    assert.ok(graph);
+    const building = {
+      file,
+      kind: "image" as const,
+      bytes: 1,
+      mtime: at(2),
+      source: "genex",
+      jobId: "job-sign",
+      assetRef: buildRef("run-a", "integration", file),
+      building: { runId: "run-a", workspace: "integration" },
+    };
+    const joined = joinBuildsView(graph, null, { project: "game", assets: [building], truncated: false, skipped: [] });
+    const job = joined.nodes.find((node): node is AssetsNode => node.kind === GraphNodeKind.Assets)?.jobs[0];
+    assert.equal(job?.inGame, false, "listed under Not in your game yet");
+    assert.equal(job?.preview?.assetRef, building.assetRef, "its thumbnail reads the build's file");
+    assert.equal(job?.picture, "/runs/run-a/deliveries/job-sign.png");
   });
 });

@@ -5764,4 +5764,6 @@ export default {
   found: "发现",
   "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, other {+# 个助手}}",
   "{count, plural, one {Show # more worker} other {Show # more workers}}": "{count, plural, other {再显示 # 个助手}}",
+  "In the running build": "在进行中的构建里",
+  "Not in your game yet. It arrives when the build lands.": "还不在你的游戏里。构建合入后就会出现。",
 } satisfies LocaleCatalog;

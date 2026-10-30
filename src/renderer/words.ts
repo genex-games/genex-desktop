@@ -3985,6 +3985,9 @@ export const ASSET_LIBRARY_WORDS = {
   /** The tags on a card. */
   saved: t("Saved"),
   shared: t("Shared"),
+  /** A file only in the build of a run still going: it reaches the game when the run lands. */
+  building: t("In the running build"),
+  buildingTip: t("Not in your game yet. It arrives when the build lands."),
   save: t("Save"),
   saveTip: t("Save to your library"),
   unsaveTip: t("Remove from Saved"),
