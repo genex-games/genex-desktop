@@ -3,10 +3,12 @@
  * and how their answer reads to the model. Only a game chat's own session the person answers has a
  * mode (`DelegateRequest.permissions`); unattended work never asks. The studio runs these tools
  * itself, so it asks before each change as Claude Code does: Manual before every edit and command,
- * Accept edits before every command, Auto never; Plan refuses every change until the plan is
- * approved (the host asks for that once the turn ends: `main/core/plan-approval.ts`). The commands
- * of a session engine (Bonsai, OpenRouter) always run in the studio's sandbox, so it honours no Bypass
- * (`permissionModesFor`).
+ * Accept edits before every command; Plan refuses every change until the plan is approved (the host
+ * asks for that once the turn ends: `main/core/plan-approval.ts`). Auto asks nobody about an edit, and
+ * has each command checked first by the session's own model in a call of its own (auto-approver.ts),
+ * as Claude Code's Auto has its classifier: allowed, it runs; refused, the model reads why; unsure,
+ * the person is asked. The commands of a session engine (Bonsai, OpenRouter) always run in the
+ * studio's sandbox, so it honours no Bypass (`permissionModesFor`).
  *
  * A worker of the chat's lead runs on a local session as on any engine that keeps sessions: in the
  * chat's mode its seat names (`DelegateRequest.worker`), asking through its seat (`seatAsks`), its
@@ -19,7 +21,12 @@ import { t } from "../../shared/i18n.ts";
 import type { ToolCall } from "../types.ts";
 import { LocalTool } from "./local-session-tools.ts";
 import { deniedWithWords, LOCAL_NOTE } from "./local-session-prompts.ts";
+import { type AutoApproval, AutoVerdict } from "./auto-approver.ts";
+import { AUTO_REFUSED } from "./auto-approver-prompts.ts";
 import type { DelegatePermissions, DelegateRequest, PermissionAsk, PermissionReply } from "./types.ts";
+
+/** The Auto check of one action (auto-approver.ts `autoApprove`, bound to the session's own model). */
+export type AutoCheck = (ask: PermissionAsk, signal: AbortSignal) => Promise<AutoApproval>;
 
 /** What a change tool does, as the modes tell them apart. */
 const ChangeKind = { Edit: "edit", Command: "command" } as const;
@@ -142,7 +149,8 @@ function refusal(reply: PermissionReply): string | null {
  * Whether a call may run in the session's mode now: null to run it, else the words the model reads
  * instead of its result. A change in Plan is refused without asking, whoever could be asked; one the
  * mode asks about waits for the person's answer (or the work ending around it), and runs where there
- * is nobody to ask (a worker's seat that cannot ask).
+ * is nobody to ask (a worker's seat that cannot ask). A command in Auto goes to the Auto check first
+ * (`autoCheck`), when the session has one.
  */
 export async function permitCall(input: {
   engine: string;
@@ -151,12 +159,32 @@ export async function permitCall(input: {
   cwd: string;
   permissions: Pick<DelegatePermissions, "ask"> | undefined;
   signal: AbortSignal;
+  autoCheck?: AutoCheck;
 }): Promise<string | null> {
   const { mode, call, permissions } = input;
   if (!changesSomething(call.name) || mode === null) return null;
   if (mode === PermissionMode.Plan) return LOCAL_NOTE.planModeRefused;
-  if (!permissions || !ASKS[mode].has(CHANGE_TOOLS[call.name])) return null;
+  const kind = CHANGE_TOOLS[call.name];
+  const check = mode === PermissionMode.Auto && kind === ChangeKind.Command ? input.autoCheck : undefined;
+  if (!check && (!permissions || !ASKS[mode].has(kind))) return null;
   const ask = localAsk(call, input.cwd, input.engine);
   if (!ask) return null;
-  return refusal(await permissions.ask(ask, input.signal));
+  if (check) return checkedInAuto(check, ask, permissions, input.signal);
+  return permissions ? refusal(await permissions.ask(ask, input.signal)) : null;
+}
+
+/**
+ * A command in Auto, as the Auto check decides it: allowed, it runs; refused, the model reads why;
+ * unsure, the person is asked (with the check's reason), or — nobody to ask — it does not run.
+ */
+async function checkedInAuto(
+  check: AutoCheck,
+  ask: PermissionAsk,
+  permissions: Pick<DelegatePermissions, "ask"> | undefined,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const approval = await check(ask, signal);
+  if (approval.verdict === AutoVerdict.Allow) return null;
+  if (approval.verdict === AutoVerdict.Deny || !permissions) return AUTO_REFUSED(approval.reason);
+  return refusal(await permissions.ask({ ...ask, reason: approval.reason }, signal));
 }

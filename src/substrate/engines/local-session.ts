@@ -25,7 +25,8 @@ import {
   noProgressNote,
   progressCheckNote,
 } from "./local-session-prompts.ts";
-import { changesSomething, permitCall, seatAsks, sessionMode } from "./local-session-permissions.ts";
+import { type AutoCheck, changesSomething, permitCall, seatAsks, sessionMode } from "./local-session-permissions.ts";
+import { autoApprove } from "./auto-approver.ts";
 import { type LocalInbox, localInbox, steerUserMessage, takesSteer } from "./local-session-steer.ts";
 import {
   executeLocalTool,
@@ -145,6 +146,8 @@ interface LocalRun {
   workspaceStamp: string;
   /** The chat's permission mode it runs in (`local-session-permissions.ts`); null for unattended work. */
   mode: PermissionMode | null;
+  /** Auto's check of a command, by the session's own model in a call of its own (auto-approver.ts). */
+  autoCheck: AutoCheck;
   /** What the model reads at its next round about a mode the user switched to while it ran. */
   modeNote: string;
   /** The person's messages sent while it runs, read at the top of the next round (`local-session-steer.ts`). */
@@ -341,6 +344,13 @@ export class LocalSessions {
           deniedWrites: [...deniedWrites, ...fence.writes],
           writeRoots,
         });
+    // The Auto check's own calls are the session's usage too.
+    const usage: Usage = { input_tokens: 0, output_tokens: 0 };
+    const counted = async (asked: CompleteRequest): Promise<CompleteResponse> => {
+      const answer = await this.options.complete(asked);
+      addUsage(usage, answer.usage);
+      return answer;
+    };
     return {
       engine: this.engine,
       request,
@@ -368,7 +378,7 @@ export class LocalSessions {
         studioToolCalls,
       },
       system: "",
-      usage: { input_tokens: 0, output_tokens: 0 },
+      usage,
       turns: 0,
       summary: "",
       actualModel: model,
@@ -377,6 +387,7 @@ export class LocalSessions {
       outputRepairs: 0,
       workspaceStamp: "",
       mode: seatAsks(this.engine, request).mode,
+      autoCheck: (ask, asked) => autoApprove({ complete: counted, model, cwd, ask, signal: asked }),
       modeNote: "",
       inbox: localInbox(signal),
       steer,
@@ -771,6 +782,7 @@ async function callTool(run: LocalRun, call: ToolCall): Promise<{ answer: LiveTo
       call,
       cwd,
       permissions: seatAsks(run.engine, request).asks,
+      autoCheck: run.autoCheck,
       signal,
     });
     if (refused !== null) return { answer: refused, failed: true };

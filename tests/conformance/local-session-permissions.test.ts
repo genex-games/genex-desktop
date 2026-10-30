@@ -12,6 +12,7 @@ import { after, before, describe, it } from "node:test";
 import { BONSAI_MODELS } from "../../src/substrate/bonsai/manifest.ts";
 import { LocalSessions } from "../../src/substrate/engines/local-session.ts";
 import { deniedWithWords, LOCAL_NOTE, modeChangedNote } from "../../src/substrate/engines/local-session-prompts.ts";
+import { AUTO_APPROVER_SYSTEM, AUTO_REFUSED } from "../../src/substrate/engines/auto-approver-prompts.ts";
 import type { PermissionMode } from "../../src/shared/permissions.ts";
 import {
   type CompleteRequest,
@@ -35,6 +36,10 @@ const reply = (content: string, calls?: Array<Step & { id: string }>): CompleteR
   stopReason: calls ? "tool_calls" : "stop",
   message: { role: "assistant", content, ...(calls ? { tool_calls: calls } : {}) },
 });
+
+/** The Auto check's answers, as the session's own model gives them. */
+const AUTO_ALLOWS = '{"decision":"allow","reason":"ordinary game work"}';
+const AUTO_DENIES = '{"decision":"deny","reason":"it deletes files outside the game"}';
 
 const WRITE: Step = { name: "write_file", arguments: { path: "jump.js", content: "export const jump = 1;" } };
 const EDIT: Step = { name: "edit_file", arguments: { path: "jump.js", oldText: "1", newText: "2" } };
@@ -60,12 +65,14 @@ describe("a Bonsai chat session in the chat's mode", () => {
     replies: PermissionReply[] = [],
     onRound: (round: number, control: PermissionControl | null) => void = () => {},
     engine?: "openrouter",
+    check = AUTO_ALLOWS,
   ) {
     cwd = await mkdtemp(path.join(root, "game-"));
     await mkdir(cwd, { recursive: true });
     const asked: PermissionAsk[] = [];
     const answers: string[] = [];
     const requests: CompleteRequest[] = [];
+    const checks: CompleteRequest[] = [];
     const controls: Array<PermissionControl | null> = [];
     let round = 0;
     const events: DelegateEvent[] = [];
@@ -76,6 +83,11 @@ describe("a Bonsai chat session in the chat's mode", () => {
       protectedPaths: [path.join(root, "sessions")],
       contextWindow: 16384,
       complete: async (request) => {
+        // Auto's check: the same model, asked in a call of its own.
+        if (request.systemPrompt === AUTO_APPROVER_SYSTEM) {
+          checks.push(request);
+          return reply(check);
+        }
         requests.push(request);
         const last = request.messages.findLast((message) => message.role === "tool");
         if (round > 0 && last) answers.push(last.content);
@@ -109,7 +121,7 @@ describe("a Bonsai chat session in the chat's mode", () => {
       ...(permissions ? { permissions } : {}),
     };
     const result = await sessions.run(request, model);
-    return { result, asked, answers, requests, controls, events };
+    return { result, asked, answers, requests, checks, controls, events };
   }
 
   const exists = (file: string) =>
@@ -185,6 +197,37 @@ describe("a Bonsai chat session in the chat's mode", () => {
       assert.equal(await exists("jump.js"), true, String(mode));
       if (mode !== null) assert.doesNotMatch(run.requests[0]!.systemPrompt ?? "", /PLAN MODE/);
     }
+  });
+
+  it("in Auto has each command checked by its own model in a call of its own, and runs what the check allows", async () => {
+    const run = await session("auto", [WRITE, COMMAND]);
+    assert.equal(run.result.ok, true);
+    assert.deepEqual(run.asked, [], "nobody is asked");
+    assert.equal(run.checks.length, 1, "the command was checked; the edit was not");
+    const [check] = run.checks;
+    assert.equal(check!.model, model, "by the session's own model");
+    assert.equal(check!.tools, undefined, "with no tools");
+    assert.equal(check!.messages.length, 1, "with a clean context: the action alone");
+    assert.match(check!.messages[0]!.content, /Input: echo ran > ran\.txt/);
+    assert.equal(await exists("ran.txt"), true, "allowed, it ran");
+  });
+
+  it("in Auto a command the check refuses never runs, and the model reads why", async () => {
+    const run = await session("auto", [COMMAND], [], () => {}, undefined, AUTO_DENIES);
+    assert.deepEqual(run.asked, []);
+    assert.equal(await exists("ran.txt"), false, "refused, it did not run");
+    assert.equal(run.answers[0], AUTO_REFUSED("it deletes files outside the game"));
+  });
+
+  it("in Auto a check that cannot decide asks the person, never allows by itself", async () => {
+    const run = await session("auto", [COMMAND], [{ decision: "allow" }], () => {}, undefined, "no idea");
+    assert.deepEqual(
+      run.asked.map((ask) => ask.tool),
+      ["Bash"],
+      "an answer it cannot read goes to the person",
+    );
+    assert.match(String(run.asked[0]!.reason), /could not be read/);
+    assert.equal(await exists("ran.txt"), true, "and runs on their yes");
   });
 
   it("reads the host's own words when the work ended around its question", async () => {
