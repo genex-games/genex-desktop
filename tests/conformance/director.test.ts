@@ -882,10 +882,10 @@ describe("a worker's contract: done, compiled and dry-run", () => {
   });
 
   /**
-   * One owner of the screen, so no part draws readouts of its own beside the HUD part's. The part
-   * reviewed as a screen owns it; a second one is refused by name.
+   * The part reviewed as a screen is named its owner, for the others to coordinate with; who draws on
+   * the screen is the builders' and the lead's to decide, so a second one is never refused.
    */
-  it("makes the part reviewed as a screen the screen's one owner, and refuses a second while it runs", async () => {
+  it("makes the part reviewed as a screen the screen's owner, and refuses no second one", async () => {
     const { startRefusal } = await import("../../src/harness-seed/loop/director/workers.ts");
     const start = DIRECTOR_TOOLS.find((t) => t.name === "worker_start")!;
     assert.match(
@@ -906,7 +906,8 @@ describe("a worker's contract: done, compiled and dry-run", () => {
     };
     const refusal = async (id: string, args: Record<string, unknown>) =>
       String(await startRefusal(loopRun as never, id, { id, brief: "x", ...args }));
-    assert.match(await refusal("menus", { critic: "screen" }), /"hud" already owns the screen/);
+    // Flipped (Loop phase 4): a second part reviewed as a screen was refused while the first ran.
+    assert.doesNotMatch(await refusal("menus", { critic: "screen" }), /owns the screen/, "a second is not refused");
     assert.doesNotMatch(await refusal("race", {}), /owns the screen/, "a part that draws nothing is not refused");
     assert.doesNotMatch(
       await refusal("hud-2", { critic: "screen", replaces: "hud" }),

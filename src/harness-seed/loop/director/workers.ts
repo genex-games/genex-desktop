@@ -32,7 +32,7 @@ import { FINISH_SINGLE_REFUSAL, FINISH_START_MOVES } from "../facet/stage-prompt
 import { isOpenRung } from "../facet/growth.ts";
 import { isCommit } from "../shell.ts";
 import { addToScope, restoreScope, runScope, type RunScope } from "../scope.ts";
-import { linkScreenOwner, runningScreenOwner, SCREEN_CRITIC } from "../screen-owner.ts";
+import { linkScreenOwner } from "../screen-owner.ts";
 import { drawsTheHud } from "./hud-owner.ts";
 import { headLooked } from "./merge-hold.ts";
 import { CheckWeight, MAX_DONE, MAX_MILESTONES } from "../spec.ts";
@@ -800,8 +800,6 @@ export async function startRefusal(loopRun: LoopRun, id: string, args: AnyRecord
   if (stage.stage === FacetStage.Finish && workerModeOf(args) === WorkerMode.Single) return FINISH_SINGLE_REFUSAL;
   const seam = seamRefusal(loopRun, id, args);
   if (seam) return seam;
-  const screen = screenOwnerRefusal(runningWorkers(), id, args);
-  if (screen) return screen;
   const cap = await ctx.call(HostMethod.PreviewCapacity, {}).catch(() => null);
   // The wake digest's room line reads the newest pool the studio gave (the user may change the
   // setting mid-run).
@@ -814,18 +812,6 @@ export async function startRefusal(loopRun: LoopRun, id: string, args: AnyRecord
   if (remaining < WORKER_FLOOR_MS)
     return `only ${minutes(remaining)} minutes left in your session — too little for a worker; finish instead`;
   return { pooled, remaining, replaces, policySpec };
-}
-
-/**
- * One owner of the screen (loop/screen-owner.ts): a part reviewed as a screen owns it, so a second
- * one is refused while the first runs — the same way two owners of the entry are. The owner's own
- * restart (`replaces`) takes the screen over instead.
- */
-function screenOwnerRefusal(running: Worker[], id: string, args: AnyRecord): string | null {
-  if (String(args.critic ?? "").trim() !== SCREEN_CRITIC) return null;
-  const owner = runningScreenOwner(running);
-  if (!owner || owner === slug(args.replaces)) return null;
-  return `worker "${owner}" already owns the screen (critic=screen) for this run: one part draws the HUD, menus and layout. Start "${id}" without critic=screen and have it expose its values, steer "${owner}" to draw them, or wait for "${owner}" to finish.`;
 }
 
 /** A JSON-array argument: null when absent, the array, or the sentence that says what is wrong. */

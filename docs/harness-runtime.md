@@ -856,11 +856,11 @@ skyline, water, landmark or set-piece serving the mood the user asked for deepen
 system, mechanic or mode adds (the lead's rule cuts systems and deepens the world). An `adds`
 proposal is never a move: it becomes a decision card (`loop/facet/beyond.ts`, at most
 `BEYOND_CARDS_PER_PART` per part), and only a user steer answering one widens the scope. `plan cut=`
-joins the cut list; `added=` and a part marked `added:true` are cards too. One part owns the screen
-(`critic=screen`; `worker_start` refuses a second running one): while it runs, another template part
-that draws through the contract HUD is a `screen-owner` finding (`loop/screen-owner.ts`); each
-part's brief and opening prompt (and a direct engine's resumed one) say who owns the screen, and a
-finishing non-owner hands HUD polish to the owner (`loop/screen-owner-prompts.ts`). A check
+joins the cut list; `added=` and a part marked `added:true` are cards too. The part reviewed as a
+screen (`critic=screen`) leads it (`loop/screen-owner.ts`); each part's brief and opening prompt (and
+a direct engine's resumed one) say which part that is, for the parts to coordinate with, and a
+finishing non-owner coordinates HUD polish with it (`loop/screen-owner-prompts.ts`). Who draws on the
+screen is the builders' to decide: no start is refused and no finding is raised for it. A check
 asking that how much the build draws (HUD items, per-kind counts such as `hud.kinds.bar`, draw
 calls, triangles, vertices) be large is
 refused where checks are validated (`loop/check-lint.ts`, `draw-count-floor`); a ceiling or an

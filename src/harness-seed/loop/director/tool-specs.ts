@@ -209,7 +209,7 @@ export const DIRECTOR_TOOLS: LiveToolSpec[] = [
         },
         milestones: {
           type: "string",
-          description: `loop only: JSON array of ORDERED structural steps after the move — three concrete rungs with the move (at most ${MAX_MILESTONES}), each a transformation one accepted round builds (a system, a layer of depth, a reworked feel), never small fixes: [{"what":"herons wade","check":{"kind":"scene","js":"count('heron') >= 3"}}] (check optional) — then {"open":true}. One rung per accepted build; a rung the judge finds built is climbed. Every ladder ends open: when reached, the reviewers' best in-scope step fills it, mandatory like yours, or it is passed over. Once climbed the worker builds its reviewer's big move until worker_steer move= adds a rung.`,
+          description: `loop only: JSON array of ORDERED structural steps after the move — three concrete rungs with the move (at most ${MAX_MILESTONES}), each a transformation one accepted round builds (a system, a layer of depth, a reworked feel), never small fixes: [{"what":"herons wade","check":{"kind":"scene","js":"count('heron') >= 3"}}] (check optional) — then {"open":true}. One rung per kept round; a rung with a check climbs when it passes. Every ladder ends open: when reached, the reviewers' best in-scope step fills it, mandatory like yours, or it is passed over. Once climbed the worker builds its reviewer's big move until worker_steer move= adds a rung.`,
         },
         stage: {
           type: "string",
