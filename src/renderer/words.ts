@@ -74,6 +74,8 @@ import { RunSharingDeleteOutcome, type RunSharingDeleteResult } from "../shared/
 import type { ProviderBuilderUse } from "../shared/provider-skills.ts";
 import type { FinishCheckState, IterationStatus } from "./run-graph.ts";
 import type { LeadFace } from "./run-tree.ts";
+import type { BuildOutcome } from "./run-graph-builds.ts";
+import type { HealthFinding } from "../shared/preview-contract.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { formatList, intlLocale, t, tc } from "../shared/i18n.ts";
@@ -2453,6 +2455,58 @@ export const FINISH_CHECK_WORDS = {
   /** After a no, once the Loop has ended some other way. */
   endedAfterNo: t("The Loop ended before another look."),
 } as const;
+
+/**
+ * A Loop's builds on the Builds graph (`run-graph-builds.ts`): each one's name and health check
+ * outcome, where a worker hangs, the card that folds a build's finished workers, and the compare.
+ */
+export const BUILD_LINE_WORDS = {
+  name: (n: number) => t("Build {number}", { number: n }),
+  outcome: {
+    passed: t("Passed"),
+    blank: t("Blank screen"),
+    errors: t("Errors"),
+    failed: t("Did not pass"),
+  } satisfies Record<BuildOutcome, string>,
+  /** The card's line under its outcome: what made the build. */
+  merged: (worker: string) => t("After {worker}", { worker }),
+  leadsOwn: t("The main agent's own changes"),
+  /** A worker's first line on the graph: the build it hangs off, and why. */
+  mergedInto: (n: number) => t("Merged into Build {number}", { number: n }),
+  startedFrom: (n: number) => t("Started from Build {number}", { number: n }),
+  startedFirst: t("Started before the first build"),
+  /** The card that folds a build's finished workers, and what pressing it does. */
+  folded: (count: number) => t("{count, plural, one {+# worker} other {+# workers}}", { count }),
+  showAll: t("Show all"),
+  showFewer: t("Show fewer"),
+  foldLabel: (count: number) => t("{count, plural, one {Show # more worker} other {Show # more workers}}", { count }),
+  /** The compare, when the picture is the one before it, measured. */
+  unchanged: (n: number) => t("The picture did not visibly change from Build {number}.", { number: n }),
+  before: (n: number) => t("Build {number}", { number: n }),
+  problems: t("What the check found"),
+  finding: {
+    not_loaded: t("The page did not load."),
+    crashed: t("The page crashed."),
+    uncaught: t("The page threw an error it did not catch."),
+    blank: t("The screen was blank: one flat colour, nothing drawn."),
+  } satisfies Record<HealthFinding, string>,
+  /** The technical details' key for the check's own words. */
+  found: t("found"),
+} as const;
+
+/** An asset delivered again, beside the version before it on the run's Assets card. */
+export const ASSET_VERSION_WORDS = {
+  compare: t("Compare with the earlier version"),
+  earlier: t("Earlier"),
+  now: t("Now"),
+  unchanged: t("The picture did not visibly change from the earlier version."),
+} as const;
+
+/** A worker's first line on a Loop's build line: the build its work went into, or the one it started from. */
+export function workerPlaceWords(place: { build: number; merged: boolean }): string {
+  if (place.merged) return BUILD_LINE_WORDS.mergedInto(place.build);
+  return place.build ? BUILD_LINE_WORDS.startedFrom(place.build) : BUILD_LINE_WORDS.startedFirst;
+}
 
 /** A build in the stage's history, by what it was and the day it started; never a number or a count. */
 /** The Builds bar's tabs, one for each of the chat's builds. */

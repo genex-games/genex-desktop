@@ -13,6 +13,8 @@ export interface StepNodeProps {
   ghost: boolean;
   selected: boolean;
   onSelect: (id: string) => void;
+  /** A first line over its name: on a Loop's build line, the build a worker hangs off. */
+  eyebrow?: string | null;
 }
 
 /** Keep unchanged steps asleep when a different step is appended. */
@@ -21,7 +23,7 @@ export function sameStepNode(left: StepNodeProps, right: StepNodeProps): boolean
   const sameInteraction = left.selected === right.selected && left.onSelect === right.onSelect;
   const samePicture =
     left.ghost === right.ghost && sameSnapshot(left.rect, right.rect) && sameSnapshot(left.step, right.step);
-  return sameRun && sameInteraction && samePicture;
+  return sameRun && sameInteraction && samePicture && left.eyebrow === right.eyebrow;
 }
 
 /** Only the gate's own geometry, review state and stable actions affect its button. */

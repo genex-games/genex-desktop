@@ -3,7 +3,7 @@
  * job the run asked for, joined across the records one asset leaves in the log.
  */
 import { GENEX_LOOKUPS, genexEndedUnmade, genexRefused, isGenexSource } from "../shared/asset-making.ts";
-import { digestOperation } from "../shared/game-assets.ts";
+import { assetFormat, digestOperation } from "../shared/game-assets.ts";
 import { GenexOperation } from "../shared/genex.ts";
 import { t } from "../shared/i18n.ts";
 import type { AssetInfo, AssetState } from "./run-graph.ts";
@@ -206,6 +206,42 @@ export function blenderAsset(payload: Payload, place: AssetPlace): AssetInfo {
     state: ok ? AssetCardState.Delivered : AssetCardState.Failed,
     files: file ? [file] : [],
   };
+}
+
+/** The file a delivery's kept picture was copied from: its first picture (`main/delivery-picture.ts`). */
+const viewOf = (job: AssetInfo): string | null => job.files.find((file) => assetFormat(file)?.raster === true) ?? null;
+
+/** The name of a file without its folders. */
+const leafOf = (file: string): string => file.slice(file.lastIndexOf("/") + 1);
+
+/** Two delivered cards are one asset: the same game file again, or the same plugin tool's asset of the same name. */
+function oneAsset(a: AssetInfo, b: AssetInfo): boolean {
+  if (a.files.some((file) => b.files.includes(file))) return true;
+  return Boolean(a.name) && a.name === b.name && a.source === b.source && a.tool === b.tool;
+}
+
+/**
+ * The version of `job`'s asset delivered before it, for the compare: the newest earlier card of the
+ * same asset whose kept picture shows the same view (the same picture file). Null for a first
+ * version, another view, or a card without a kept picture: unrelated pictures are never paired.
+ */
+export function earlierVersion(jobs: readonly AssetInfo[], job: AssetInfo): AssetInfo | null {
+  const view = viewOf(job);
+  if (!job.picture || job.state !== AssetCardState.Delivered || !view) return null;
+  const sameView = (other: AssetInfo): boolean => {
+    const otherView = viewOf(other);
+    return otherView !== null && leafOf(otherView) === leafOf(view);
+  };
+  const earlier = jobs.filter(
+    (other) =>
+      other !== job &&
+      other.state === AssetCardState.Delivered &&
+      Boolean(other.picture) &&
+      other.at < job.at &&
+      oneAsset(other, job) &&
+      sameView(other),
+  );
+  return earlier.at(-1) ?? null;
 }
 
 /** The copy the host kept of a picture this card's files delivered, when it kept one. */

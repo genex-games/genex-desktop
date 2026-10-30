@@ -6124,4 +6124,28 @@ export default {
   "Reviewers give a second opinion when the lead asks for one.":
     "Проверяющие дают второе мнение, когда главный агент просит.",
   "Workers take parts of the build, several at once.": "Помощники берут части сборки, по несколько сразу.",
+  "After {worker}": "После: {worker}",
+  "Blank screen": "Пустой экран",
+  "Build {number}": "Сборка {number}",
+  "Compare with the earlier version": "Сравнить с прошлой версией",
+  "Did not pass": "Не прошла",
+  Errors: "Ошибки",
+  "Merged into Build {number}": "Влито в сборку {number}",
+  "Started before the first build": "Начат до первой сборки",
+  "Started from Build {number}": "Начат со сборки {number}",
+  "The main agent's own changes": "Изменения самого главного агента",
+  "The page crashed.": "Страница упала.",
+  "The page did not load.": "Страница не загрузилась.",
+  "The page threw an error it did not catch.": "Страница выбросила ошибку, которую не поймала.",
+  "The picture did not visibly change from Build {number}.": "Картинка заметно не изменилась со сборки {number}.",
+  "The picture did not visibly change from the earlier version.": "Картинка заметно не изменилась с прошлой версии.",
+  "The screen was blank: one flat colour, nothing drawn.":
+    "Экран был пустым: один сплошной цвет, ничего не нарисовано.",
+  "What the check found": "Что нашла проверка",
+  commit: "коммит",
+  found: "найдено",
+  "{count, plural, one {+# worker} other {+# workers}}":
+    "{count, plural, one {+# помощник} few {+# помощника} many {+# помощников} other {+# помощника}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, one {Показать ещё # помощника} few {Показать ещё # помощников} many {Показать ещё # помощников} other {Показать ещё # помощника}}",
 } satisfies LocaleCatalog;

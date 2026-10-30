@@ -661,6 +661,7 @@ describe("the stage", () => {
     assert.equal(nodeKindOf(GraphSelection.FinishCheck), GraphSelection.FinishCheck);
     assert.equal(nodeKindOf("part:facet-7"), NodeKind.Part);
     assert.equal(nodeKindOf("step-abc"), NodeKind.Step);
+    assert.equal(nodeKindOf("build:3"), NodeKind.Build, "a build of a Loop's line");
   });
 
   it("tells a press the person declined from one that failed", () => {

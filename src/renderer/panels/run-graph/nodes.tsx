@@ -36,7 +36,7 @@ import {
 } from "../../run-steps.ts";
 import { FinishLook, finishCheckFace, finishCheckLook, jobsTileStatus, LeadFace } from "../../run-tree.ts";
 import { useStill } from "../../stills.ts";
-import { Icon } from "../../ui/icons.tsx";
+import { Icon, type IconName } from "../../ui/icons.tsx";
 import { ASSET_THUMB_PX, assetsStatus, blenderRender, firstImage, isMaking } from "../inspector/asset-jobs.ts";
 import { IMAGE_OUTLINE } from "../inspector/pictures.tsx";
 import { GraphSelection } from "../inspector/selection.ts";
@@ -45,7 +45,8 @@ import { StateGlyph, TONE } from "../inspector/tone.tsx";
 import { sameStepNode, type StepNodeProps } from "./step-props.ts";
 import { useRoundStill, useSavePointShot, useWorkerStill } from "../run-stills.ts";
 import { AssetThumbnail } from "../AssetThumbnail.tsx";
-import { FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
+import { BUILD_LINE_WORDS, FINISH_CHECK_WORDS, JOBS_EYEBROW, LEAD_WORDS } from "../../words.ts";
+import { type BuildCard, type BuildHangers, BuildOutcome } from "../../run-graph-builds.ts";
 import { useNow } from "./use-builds-model.ts";
 import type { ReferenceFrame } from "../../../shared/protocol.ts";
 import type { ProjectAsset } from "../../../shared/game-assets.ts";
@@ -55,6 +56,8 @@ import { imageSrc, useMessageImages } from "../../chat/MessageImages.tsx";
 const ASSETS_SHOWN = 3;
 /** The largest side of the lead's picture. */
 const LEAD_PICTURE_PX = 640;
+/** The largest side of a build's picture on its node. */
+const BUILD_PICTURE_PX = 640;
 
 /** How a node's frame looks: settled, a ghost of what is not there yet, at work right now, or your build. */
 const Variant = {
@@ -354,6 +357,7 @@ export const StepNode = memo(function StepNode({
   ghost,
   selected,
   onSelect,
+  eyebrow = null,
 }: StepNodeProps): JSX.Element | null {
   const working = isLiveStep(step);
   const shown = step.shown;
@@ -386,6 +390,7 @@ export const StepNode = memo(function StepNode({
           fill={working ? Fill.Shimmer : Fill.Hatch}
           over={frame ? <NodeCursor frame={frame} box={rect} /> : null}
           chip={triesChip(tries, working)}
+          eyebrow={eyebrow}
           name={step.name}
           word={frame ? <ScreenWords frame={frame} state={checkingWord(step, word)} /> : word}
           tone={STATE_TONE[step.state]}
@@ -897,5 +902,101 @@ export function FinishCheckNode({
         glyph={look.glyph ? <StateGlyph state={look.glyph} /> : null}
       />
     </NodeFrame>
+  );
+}
+
+/** How each build outcome reads on its node and card: its ink and its glyph. */
+export const OUTCOME_LOOK: Record<BuildOutcome, { tone: Tone; icon: IconName }> = {
+  [BuildOutcome.Passed]: { tone: Tone.Green, icon: "check" },
+  [BuildOutcome.Blank]: { tone: Tone.Orange, icon: "image" },
+  [BuildOutcome.Errors]: { tone: Tone.Red, icon: "bug" },
+  [BuildOutcome.Failed]: { tone: Tone.Red, icon: "stop" },
+};
+
+/** A build outcome's glyph in its ink. */
+export function OutcomeGlyph({ outcome, size = 10 }: { outcome: BuildOutcome; size?: number }): JSX.Element {
+  const look = OUTCOME_LOOK[outcome];
+  return (
+    <span style={{ color: TONE[look.tone] }}>
+      <Icon name={look.icon} size={size} strokeWidth={2.4} />
+    </span>
+  );
+}
+
+/** One build of a Loop's line: its health check's screenshot, its name and what the check found. */
+export function BuildNode({
+  build,
+  rect,
+  selected,
+  onSelect,
+}: {
+  build: BuildCard;
+  rect: Rect | undefined;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}): JSX.Element | null {
+  const src = useStill(build.picture ? { run: build.picture, maxPx: BUILD_PICTURE_PX } : null);
+  if (!rect) return null;
+  const name = BUILD_LINE_WORDS.name(build.n);
+  const word = BUILD_LINE_WORDS.outcome[build.outcome];
+  return (
+    <NodeFrame
+      id={build.id}
+      rect={rect}
+      selected={selected}
+      label={t("{name}: {status}", { name, status: word })}
+      onSelect={() => onSelect(build.id)}
+    >
+      <NodeFace
+        src={src}
+        name={name}
+        word={word}
+        tone={OUTCOME_LOOK[build.outcome].tone}
+        glyph={<OutcomeGlyph outcome={build.outcome} />}
+      />
+    </NodeFrame>
+  );
+}
+
+/** The fold card's height: a pill on the middle of its lane, where the line into it arrives. */
+const FOLD_H = 44;
+
+/**
+ * The card that folds a build's finished workers: "+N workers" opens them in place; open, it folds
+ * them again. It names no node, so Previous and Next pass it by.
+ */
+export function FoldCard({
+  hangers,
+  rect,
+  onToggle,
+}: {
+  hangers: BuildHangers;
+  rect: Rect | undefined;
+  onToggle: (build: number) => void;
+}): JSX.Element | null {
+  if (!rect) return null;
+  const { folded, open } = hangers;
+  const top = rect.y + (rect.h - FOLD_H) / 2;
+  return (
+    <button
+      type="button"
+      data-graph-fold={hangers.build}
+      aria-expanded={open}
+      aria-label={open ? BUILD_LINE_WORDS.showFewer : BUILD_LINE_WORDS.foldLabel(folded)}
+      className="absolute flex cursor-pointer items-center justify-between gap-2 rounded-[12px] bg-surface px-3 text-left hover:bg-control-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      style={{ left: rect.x, top, width: rect.w, height: FOLD_H, boxShadow: IMAGE_OUTLINE }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle(hangers.build);
+      }}
+    >
+      <span className="truncate text-[13.5px] leading-[18px] font-semibold text-ink">
+        {open ? BUILD_LINE_WORDS.showFewer : BUILD_LINE_WORDS.folded(folded)}
+      </span>
+      <span className="flex shrink-0 items-center gap-1 text-[12px] text-ink-3 group-data-[zoom=far]/canvas:hidden">
+        {open ? null : BUILD_LINE_WORDS.showAll}
+        <Icon name="chevrons" size={12} />
+      </span>
+    </button>
   );
 }

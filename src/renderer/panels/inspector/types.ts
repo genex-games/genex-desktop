@@ -12,6 +12,7 @@ import type {
 } from "../../run-graph.ts";
 import type { NoteTarget } from "../../reply-about.ts";
 import type { PartRow, Step } from "../../run-steps.ts";
+import type { BuildTimeline } from "../../run-graph-builds.ts";
 import type { Notify } from "../../state/toasts.ts";
 import type { ReferenceFrame } from "../run-stills.ts";
 
@@ -51,6 +52,10 @@ export interface InspectorProps {
   resultPath: string | null;
   /** the result's picture is a part's, lent while the new build is being tried */
   resultBorrowed: boolean;
+  /** the result's picture was taken as the starting one was (the final capture): only then are they compared */
+  resultPairsWithBase: boolean;
+  /** a Loop's build history, when the graph draws one */
+  timeline: BuildTimeline | null;
   /** the lead's newest view of the game, while it has the run */
   leadFrame: AgentScreenFrame | null;
   onClose: () => void;

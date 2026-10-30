@@ -140,7 +140,7 @@ export const EmptyAction = {
 export type EmptyAction = (typeof EmptyAction)[keyof typeof EmptyAction];
 
 /** A Builds graph node that is not one of its fixed nodes: a part's row, or one of its steps. */
-export const NodeKind = { Part: "part", Step: "step" } as const;
+export const NodeKind = { Part: "part", Step: "step", Build: "build" } as const;
 export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind];
 
 /** How a Builds graph node was opened. */

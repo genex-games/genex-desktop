@@ -6167,4 +6167,29 @@ export default {
     "Los revisores dan una segunda opinión cuando el agente principal la pide.",
   "Workers take parts of the build, several at once.":
     "Los ayudantes se encargan de partes del build, varios a la vez.",
+  "After {worker}": "Después de {worker}",
+  "Blank screen": "Pantalla en blanco",
+  "Build {number}": "Build {number}",
+  "Compare with the earlier version": "Comparar con la versión anterior",
+  "Did not pass": "No pasó",
+  Errors: "Errores",
+  "Merged into Build {number}": "Integrado en el build {number}",
+  "Started before the first build": "Empezó antes del primer build",
+  "Started from Build {number}": "Empezó desde el build {number}",
+  "The main agent's own changes": "Cambios del propio agente principal",
+  "The page crashed.": "La página se colgó.",
+  "The page did not load.": "La página no cargó.",
+  "The page threw an error it did not catch.": "La página lanzó un error que no atrapó.",
+  "The picture did not visibly change from Build {number}.":
+    "La imagen no cambió visiblemente desde el build {number}.",
+  "The picture did not visibly change from the earlier version.":
+    "La imagen no cambió visiblemente desde la versión anterior.",
+  "The screen was blank: one flat colour, nothing drawn.":
+    "La pantalla estaba en blanco: un solo color, nada dibujado.",
+  "What the check found": "Lo que encontró la revisión",
+  commit: "commit",
+  found: "encontrado",
+  "{count, plural, one {+# worker} other {+# workers}}": "{count, plural, one {+# ayudante} other {+# ayudantes}}",
+  "{count, plural, one {Show # more worker} other {Show # more workers}}":
+    "{count, plural, one {Mostrar # ayudante más} other {Mostrar # ayudantes más}}",
 } satisfies LocaleCatalog;
