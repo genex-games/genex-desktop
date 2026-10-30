@@ -306,9 +306,10 @@ describe("the finish check", () => {
     ]);
     const tally = newTally();
     const outcome = await checkFinish(scopeOf(r, folder, { tally }), claimOf());
+    // Flipped (phase 5): the app's count stops nothing; a reviewer's no is advice.
     assert.ok(
-      !("noTime" in outcome) && outcome.step === FinishCheckStep.Rejected && outcome.stop,
-      "the app's count stops",
+      !("noTime" in outcome) && outcome.step === FinishCheckStep.Rejected && !outcome.stop,
+      "the app's count stops nothing",
     );
     assert.deepEqual(
       [outcome.rejections, tally.rejections, tally.round],
@@ -381,7 +382,7 @@ describe("the finish check", () => {
     assert.equal(last?.runId, RUN.runId);
   });
 
-  it("three no's in a row stop the Loop; an unanswered check neither counts nor breaks the row", async () => {
+  it("three no's in a row stop nothing; an unanswered check neither counts nor breaks the row", async () => {
     const folder = await leadFolder();
     const { r, checks } = host([
       verdict("no", NO_REASONS),
@@ -399,7 +400,8 @@ describe("the finish check", () => {
       FinishCheckStep.Rejected,
     ]);
     const last = outcomes.at(-1);
-    assert.ok(last && !("noTime" in last) && last.step === FinishCheckStep.Rejected && last.stop, "the third no stops");
+    // Flipped (phase 5): the third no used to stop the Loop.
+    assert.ok(last && !("noTime" in last) && last.step === FinishCheckStep.Rejected && !last.stop, "no no stops");
     const ends = checks().filter((check) => check.step !== FinishCheckStep.Checking);
     assert.deepEqual(
       ends.map((check) => check.rejections),
@@ -407,7 +409,7 @@ describe("the finish check", () => {
     );
     assert.deepEqual(
       ends.map((check) => check.stopped === true),
-      [false, false, false, true],
+      [false, false, false, false],
     );
     assert.deepEqual(
       checks()

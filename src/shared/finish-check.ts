@@ -28,7 +28,7 @@ export type FinishCheckStep = (typeof FinishCheckStep)[keyof typeof FinishCheckS
 export const StopWhy = {
   /** Its hours ran out. */
   Time: "time",
-  /** The reviewer's no's in a row stopped it. */
+  /** The reviewer's no's in a row stopped it: older runs only — a reviewer's no stops no Loop now. */
   Stuck: "stuck",
   /** The person stopped it. */
   Person: "person",
@@ -59,7 +59,10 @@ const FINISH_CHECK_STEPS: ReadonlySet<unknown> = new Set(Object.values(FinishChe
 /** Whether a record's `step` is one Genex knows; a reader ignores a record with any other. */
 export const isFinishCheckStep = (value: unknown): value is FinishCheckStep => FINISH_CHECK_STEPS.has(value);
 
-/** The reviewer's no's in a row that stop a Loop; an unanswered check neither counts nor breaks the row. */
+/**
+ * The row of no's an older Loop stopped at. The app stops no Loop on a reviewer's no now; the value
+ * stays because the seed's copy is held to it (`seed-contracts.test.ts`) and older records name it.
+ */
 export const MAX_FINISH_REJECTIONS = 3;
 /** The reasons a reviewer's answer keeps at most. */
 export const MAX_FINISH_REASONS = 6;
